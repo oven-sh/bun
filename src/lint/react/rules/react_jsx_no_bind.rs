@@ -18,7 +18,7 @@ const BIND_CALL: Message = Message::new("bindCall", "JSX props should not use .b
 const ARROW_FUNC: Message = Message::new("arrowFunc", "JSX props should not use arrow functions");
 const FUNC: Message = Message::new("func", "JSX props should not use functions");
 
-/// In the order in which upstream looks for a name in the sets of a block.
+/// In the order upstream looks a name up in a block's sets.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Violation {
     ArrowFunc,
@@ -36,7 +36,7 @@ impl Violation {
     }
 }
 
-/// What a name is declared as in a `BlockStatement`, which is the nearest around the declaration.
+/// A name's declaration in a `BlockStatement`, the nearest one around it.
 #[derive(Copy, Clone)]
 struct Declared {
     block: Span,
@@ -84,7 +84,7 @@ impl Rule for JsxNoBind {
             return;
         }
         for attribute in jsx.attrs() {
-            // A value that is not in braces is a string or an element.
+            // A value that isn't in braces is a string or an element.
             let Some(value) = attribute.value().filter(|_| attribute.kind() != PropKind::Spread) else {
                 continue;
             };
@@ -99,13 +99,14 @@ impl Rule for JsxNoBind {
         }
     }
 
-    /// Upstream fills the sets of the blocks while it walks: an attribute sees what is declared before it.
+    /// Upstream fills the blocks' sets during its traversal, so an attribute only sees declarations that come before
+    /// it.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut mentions = std::mem::take(&mut cx.state.identifiers);
         if mentions.is_empty() {
             return;
         }
-        // What each name is declared as in the blocks around the place that the last loop is at, the innermost last.
+        // What each name is declared as in the blocks around the final loop's current position, innermost last.
         let mut open: FxHashMap<Name<'_>, SmallVec<[Declared; 2]>> =
             mentions.iter().map(|it| (it.name, SmallVec::new())).collect();
         let mut blocks = AncestorMemo::default();
@@ -115,7 +116,7 @@ impl Rule for JsxNoBind {
                     && function.has_body()
                     && let Some(name) = function.name().map(Ident::name)
                     && open.contains_key(&name)
-                    && let Some(block) = block_around(statement, &mut blocks)
+                    && let Some(block) = enclosing_block(statement, &mut blocks)
                 {
                     let declared = Some(Declared { block, violation: Violation::Func });
                     mentions.push(Mention { name, span: statement.span(), declared });
@@ -130,7 +131,7 @@ impl Rule for JsxNoBind {
                 if let Some(name) = declaration.pat().as_ident()
                     && open.contains_key(&name)
                     && let Some(violation) = declaration.init().and_then(|it| self.get_node_violation_type(it))
-                    && let Some(block) = block_around(statement, &mut blocks)
+                    && let Some(block) = enclosing_block(statement, &mut blocks)
                 {
                     let declared = Some(Declared { block, violation });
                     mentions.push(Mention { name, span: declaration.span(), declared });
@@ -201,10 +202,10 @@ fn is_member_called_bind(callee: Expr<'_>) -> bool {
 }
 
 /// The first of upstream's `getBlockStatementAncestors`.
-fn block_around<'a>(statement: Stmt<'a>, known: &mut AncestorMemo<'a, Span>) -> Option<Span> {
+fn enclosing_block<'a>(statement: Stmt<'a>, known: &mut AncestorMemo<'a, Span>) -> Option<Span> {
     known.find(Node::Stmt(statement), |child, parent| match parent {
         Node::Stmt(it) if it.tag() == StmtTag::Block => Some(it.span()),
-        // The parameters are not in the body. A static block is no `BlockStatement`.
+        // The parameters aren't in the body. A static block isn't a `BlockStatement`.
         Node::Func(it) if matches!(child, Node::Stmt(_)) && it.kind() != FnKind::StaticBlock => it.body_span(),
         _ => None,
     })

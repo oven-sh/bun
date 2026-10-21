@@ -40,18 +40,8 @@ struct InheritsTraits<Bun::Bindgen::JSWrapper<Traits>> {
 
 namespace Bun::Bindgen {
 
-// One per class, defined by generated code.
-struct ClassDefinition {
-    const JSC::ClassInfo* info;
-    JSC::Structure* (*createStructure)(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
-    std::span<const JSC::HashTableValue> prototypeTableValues;
-    std::span<const JSC::HashTableValue> constructorTableValues;
-    // Properties a static table cannot describe (private names). May be null.
-    void (*finishPrototypeCreation)(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* prototype);
-    // Null: `new` from JavaScript is not allowed, and there is no constructor object.
-    JSC::NativeFunction construct;
-    unsigned constructorLength;
-};
+// Reports each field that holds a cell to a heap snapshot, as a property of that name.
+void analyzeInternalFields(JSC::JSCell*, JSC::HeapAnalyzer&, std::span<const JSC::WriteBarrier<JSC::Unknown>>, std::span<const WTF::ASCIILiteral> names);
 
 // JSDestructibleObject | WriteBarrier internalFields[numberOfInternalFields] | the Rust payload
 template<typename Traits>
@@ -59,10 +49,16 @@ class JSWrapper final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr unsigned numberOfInternalFields = Traits::numberOfInternalFields;
+    static constexpr unsigned numberOfInternalFields = Traits::internalFieldNames.size();
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
+
+    static void analyzeHeap(JSC::JSCell* cell, JSC::HeapAnalyzer& analyzer)
+    {
+        Base::analyzeHeap(cell, analyzer);
+        analyzeInternalFields(cell, analyzer, uncheckedDowncast<JSWrapper>(cell)->internalFields(), Traits::internalFieldNames);
+    }
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -118,14 +114,8 @@ private:
     JSWrapper(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
     {
-        // Rust reads the schema's `internalFields`, which start as `undefined`. The rest hold cached getters: empty until computed.
-        unsigned index = 0;
-        for (auto& field : internalFields()) {
-            if (index++ < numberOfInternalFields - Traits::numberOfCachedGetters)
-                new (NotNull, &field) JSC::WriteBarrier<JSC::Unknown>(JSC::UndefinedWriteBarrierTag);
-            else
-                new (NotNull, &field) JSC::WriteBarrier<JSC::Unknown>;
-        }
+        for (auto& field : internalFields())
+            new (NotNull, &field) JSC::WriteBarrier<JSC::Unknown>(JSC::UndefinedWriteBarrierTag);
     }
 
     DECLARE_DEFAULT_FINISH_CREATION;
@@ -138,7 +128,8 @@ void JSWrapper<Traits>::visitChildrenImpl(JSC::JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSWrapper>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.appendValues(thisObject->internalFields().data(), numberOfInternalFields);
+    // Hidden: `analyzeHeap` reports them by name.
+    visitor.appendValuesHidden(thisObject->internalFields().data(), numberOfInternalFields);
 }
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<typename Traits>, JSWrapper<Traits>);
@@ -159,15 +150,16 @@ public:
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
-    static JSClassConstructor* create(JSC::VM&, JSC::JSGlobalObject*, const ClassDefinition&, JSC::JSObject* prototype);
+    static JSClassConstructor* create(JSC::VM&, JSC::JSGlobalObject*, WTF::ASCIILiteral name, JSC::NativeFunction construct, unsigned length, std::span<const JSC::HashTableValue>, JSC::JSObject* prototype);
 
 private:
     JSClassConstructor(JSC::VM&, JSC::Structure*, JSC::NativeFunction construct);
 };
 
-// By index into Tables::classes (GeneratedBindings+Tables.h).
+// A plain object with the properties of the table.
+JSC::JSObject* createClassPrototype(JSC::VM&, JSC::JSGlobalObject*, const JSC::ClassInfo*, std::span<const JSC::HashTableValue>);
+
 JSC::Structure* structureForClass(JSC::JSGlobalObject*, unsigned classIndex);
-void setupClassStructure(JSC::LazyClassStructure::Initializer&, unsigned classIndex);
 JSC::JSObject* constructorForClass(JSC::JSGlobalObject*, unsigned classIndex);
 // The class's own, or one for `new.target` (a subclass, Reflect.construct). May throw.
 JSC::Structure* structureForNewTarget(JSC::JSGlobalObject*, JSC::CallFrame*, unsigned classIndex);

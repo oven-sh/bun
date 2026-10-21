@@ -457,6 +457,7 @@ JSC_DEFINE_HOST_FUNCTION(functionNeverInlineFunction,
 }
 
 extern "C" bool Bun__mkdirp(JSC::JSGlobalObject*, const char*);
+extern "C" void Bun__VirtualMachine__setSamplingProfilerDirectory(void* bunVM, const BunString* directory);
 
 JSC_DECLARE_HOST_FUNCTION(functionStartSamplingProfiler);
 JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
@@ -474,7 +475,12 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
         auto path = directoryValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         if (!path.isEmpty()) {
-            StringPrintStream pathOut;
+            if (path.contains(static_cast<UChar>(0))) {
+                throwVMError(
+                    globalObject, scope,
+                    createTypeError(globalObject, "directory must not contain null bytes"_s));
+                return {};
+            }
             auto pathCString = toUTF8CString(String(path));
             if (!Bun__mkdirp(globalObject, pathCString.legacyCStringPointer())) {
                 throwVMError(
@@ -483,8 +489,9 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
                 return {};
             }
 
-            Options::samplingProfilerPath() = pathCString.data();
-            samplingProfiler.registerForReportAtExit();
+            // JSC::Options is read-only after Config::finalize, so store the directory on the VM.
+            auto directory = Bun::toString(path);
+            Bun__VirtualMachine__setSamplingProfilerDirectory(bunVM(globalObject), &directory);
         }
     }
     if (sampleValue.isNumber()) {
@@ -513,9 +520,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSamplingProfilerStackTraces,
             createError(globalObject, "Sampling profiler was never started"_s)));
 
     WTF::String jsonString = vm.samplingProfiler()->stackTracesAsJSON()->toJSONString();
-    JSC::EncodedJSValue result = JSC::JSValue::encode(JSONParse(globalObject, jsonString));
-    scope.releaseAssertNoException();
-    return result;
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSONParse(globalObject, jsonString)));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionGetRandomSeed);
@@ -618,10 +623,14 @@ JSC_DEFINE_HOST_FUNCTION(functionGetProtectedObjects,
 {
     auto& vm = globalObject->vm();
     MarkedArgumentBuffer list;
-    vm.heap.forEachProtectedCell(
-        [&](JSCell* cell) { list.append(cell); });
+    // Skip protected cells that aren't objects (unlinked code blocks, structures). They aren't JavaScript values.
+    auto appendObject = [&](JSCell* cell) {
+        if (cell->isObject())
+            list.append(cell);
+    };
+    vm.heap.forEachProtectedCell(appendObject);
     for (auto* block = WebCore::clientData(vm)->m_strongRootBlockHead; block; block = block->next())
-        block->forEachOccupiedCell([&](JSCell* cell) { list.append(cell); });
+        block->forEachOccupiedCell(appendObject);
     RELEASE_ASSERT(!list.hasOverflowed());
     return JSC::JSValue::encode(constructArray(
         globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), list));

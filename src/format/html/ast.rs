@@ -1,9 +1,9 @@
-//! The tree: what `angular-html-parser` makes, with what Prettier's `parse/ast.js`, `parse/postprocess.js`
-//! and `print-preprocess.js` add to it.
+//! The tree that `angular-html-parser` builds, plus what Prettier's `parse/ast.js`, `parse/postprocess.js` and
+//! `print-preprocess.js` add to it.
 //!
-//! All nodes are in one list. A node knows its parent, the siblings next to it, and its first and last child, so
-//! that taking one out and putting one in costs the same wherever it is. Attributes are in a list of their own,
-//! those of an element next to each other.
+//! All nodes live in one list. A node stores its parent, its previous and next sibling, and its first and last child,
+//! so removing or inserting a node is O(1) anywhere. Attributes live in a separate list, with each element's attributes
+//! next to each other.
 
 use super::data::{Display, TagDefinition};
 pub(crate) use super::lexer::Span;
@@ -32,7 +32,7 @@ pub(crate) enum Kind {
 
 pub(crate) type Id = u32;
 
-/// In the place of an `Id`: there is no such node.
+/// Used as an `Id` when there's no such node.
 const NONE: Id = Id::MAX;
 
 bitflags::bitflags! {
@@ -41,7 +41,7 @@ bitflags::bitflags! {
         const HAS_START_SPAN = 1;
         const HAS_END_SPAN = 1 << 1;
         const HAS_EXPLICIT_NAMESPACE = 1 << 2;
-        /// Of a conditional comment: what is in it could be parsed.
+        /// Conditional comment: its contents could be parsed.
         const IS_COMPLETE = 1 << 3;
         const HAS_LEADING_SPACES = 1 << 4;
         const HAS_TRAILING_SPACES = 1 << 5;
@@ -53,10 +53,12 @@ bitflags::bitflags! {
         const IS_DANGLING_SPACE_SENSITIVE = 1 << 11;
         const IS_SELF_CLOSING = 1 << 12;
         const HAS_HTM_COMPONENT_CLOSING_TAG = 1 << 13;
-        /// Of an element: a conditional comment has been merged into its start tag.
+        /// Element: a conditional comment has been merged into its start tag.
         const HAS_CONDITION = 1 << 14;
         /// `shouldPreserveContent`
         const PRESERVES_CONTENT = 1 << 15;
+        /// Set on an element in a Vue file that has `v-pre` or an ancestor with `v-pre`.
+        const IS_IN_V_PRE = 1 << 16;
     }
 }
 
@@ -71,24 +73,24 @@ pub(crate) struct Node<'a> {
     /// `$children`: the `children`, the `cases` of an ICU expression, the `expression` of an ICU case.
     first_child: Id,
     last_child: Id,
-    /// Of a block: its parameters.
+    /// Block: its parameters.
     parameters: Id,
     /// `sourceSpan`
     pub(crate) span: Span,
     pub(crate) start_span: Span,
     pub(crate) end_span: Span,
-    /// Of a declaration: of the value.
+    /// Declaration: the span of the value.
     pub(crate) name_span: Span,
     /// A range of `Tree::attrs`.
     pub(crate) attrs: (u32, u32),
     /// A range of `Tree::start_tag_comments`.
     pub(crate) start_tag_comments: (u32, u32),
-    /// Of an element and a block. Of a declaration: the `id`. Of an ICU expression: the `type`.
+    /// The name of an element or a block, the `id` of a declaration, or the `type` of an ICU expression.
     pub(crate) name: Cow<'a, [u8]>,
-    /// Empty: none.
+    /// Empty if there's none.
     pub(crate) namespace: &'a [u8],
-    /// Of an ICU expression: the `switchValue`. Of a parameter of a block: the `expression`. Of a conditional
-    /// comment, and of an element that one has been merged into: the `condition`.
+    /// The `switchValue` of an ICU expression, the `expression` of a block parameter, or the `condition` of a
+    /// conditional comment or of an element that one has been merged into.
     pub(crate) value: Cow<'a, [u8]>,
     pub(crate) tag_definition: &'static TagDefinition,
 }
@@ -97,10 +99,10 @@ pub(crate) struct Node<'a> {
 pub(crate) struct Attribute<'a> {
     pub(crate) span: Span,
     pub(crate) name_span: Span,
-    /// With the quotes.
+    /// Includes the quotes.
     pub(crate) value_span: Option<Span>,
     pub(crate) name: Cow<'a, [u8]>,
-    /// Empty: none.
+    /// Empty if there's none.
     pub(crate) namespace: &'a [u8],
     pub(crate) has_explicit_namespace: bool,
     pub(crate) value: Option<&'a [u8]>,
@@ -111,7 +113,7 @@ pub(crate) struct Attribute<'a> {
 pub(crate) struct StartTagComment<'a> {
     pub(crate) span: Span,
     pub(crate) value: &'a [u8],
-    /// It ends with the line.
+    /// It ends at the end of the line.
     pub(crate) is_single_line: bool,
 }
 
@@ -208,7 +210,7 @@ impl<'a> Node<'a> {
         self.flags.set(Flags::HAS_END_SPAN, span.is_some());
     }
 
-    /// Whether there is a `children` property.
+    /// True if it has a `children` property.
     pub(crate) fn has_children_property(&self) -> bool {
         matches!(
             self.kind,
@@ -225,7 +227,7 @@ impl<'a> Node<'a> {
         is_full_name(self.namespace, &self.name, name)
     }
 
-    /// `rawName`, in two parts: the namespace, if it is written, and the name.
+    /// `rawName`, in two parts: the namespace, if it's written in the source, and the name.
     pub(crate) fn raw_name(&self) -> (&[u8], &[u8]) {
         (
             if self.has(Flags::HAS_EXPLICIT_NAMESPACE) {
@@ -275,7 +277,7 @@ fn some(id: Id) -> Option<Id> {
     (id != NONE).then_some(id)
 }
 
-/// The children of a node, from the first to the last.
+/// Iterates over a node's children in order.
 pub(crate) struct Children<'t, 'a> {
     tree: &'t Tree<'a>,
     next: Id,
@@ -335,7 +337,7 @@ impl<'a> Tree<'a> {
         self[id].first_child != NONE
     }
 
-    /// The child of `id`, if there is exactly one.
+    /// Returns the child of `id` if there's exactly one.
     pub(crate) fn only_child(&self, id: Id) -> Option<Id> {
         let node = &self[id];
         some(node.first_child).filter(|&first| first == node.last_child)
@@ -362,7 +364,7 @@ impl<'a> Tree<'a> {
             .unwrap_or_default()
     }
 
-    /// Makes `child`, which is nowhere, the last child of `parent`.
+    /// Makes `child`, which must be detached, the last child of `parent`.
     pub(crate) fn append_child(&mut self, parent: Id, child: Id) {
         let last = self[parent].last_child;
         let node = &mut self[child];
@@ -374,7 +376,7 @@ impl<'a> Tree<'a> {
         }
     }
 
-    /// Puts `added`, which is nowhere, before `target`.
+    /// Inserts `added`, which must be detached, before `target`.
     pub(crate) fn insert_before(&mut self, target: Id, added: Id) {
         let (parent, prev) = (self[target].parent, self[target].prev);
         let node = &mut self[added];
@@ -390,7 +392,7 @@ impl<'a> Tree<'a> {
         }
     }
 
-    /// Takes `child` out of its parent.
+    /// Detaches `child` from its parent.
     pub(crate) fn remove(&mut self, child: Id) {
         let node = &mut self[child];
         let (parent, prev, next) = (node.parent, node.prev, node.next);
@@ -413,21 +415,21 @@ impl<'a> Tree<'a> {
         }
     }
 
-    /// Puts `replacement`, which is nowhere, in the place of `target`.
+    /// Replaces `target` with `replacement`, which must be detached.
     pub(crate) fn replace(&mut self, target: Id, replacement: Id) {
         self.insert_before(target, replacement);
         self.remove(target);
     }
 
-    /// Takes all children out of `id`. They keep each other as siblings.
+    /// Detaches all children of `id`. They stay linked to each other as siblings.
     pub(crate) fn clear_children(&mut self, id: Id) {
         let node = &mut self[id];
         (node.first_child, node.last_child) = (NONE, NONE);
     }
 
-    /// `attrMap[name]`: `None` if there is no such attribute, `Some(None)` if it has no value.
+    /// `attrMap[name]`: `None` if there's no such attribute, `Some(None)` if it has no value.
     pub(crate) fn attribute(&self, id: Id, name: &[u8]) -> Option<Option<&'a [u8]>> {
-        // The last with the name counts.
+        // The last attribute with that name wins.
         self.attrs(id)
             .iter()
             .rev()
@@ -435,7 +437,7 @@ impl<'a> Tree<'a> {
             .map(|attr| attr.value)
     }
 
-    /// `attrMap[name]`, if it is a string that is not empty.
+    /// `attrMap[name]`, if it's a non-empty string.
     pub(crate) fn attribute_value(&self, id: Id, name: &[u8]) -> Option<&'a [u8]> {
         self.attribute(id, name)
             .flatten()

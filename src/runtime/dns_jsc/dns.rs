@@ -2258,8 +2258,10 @@ pub(crate) mod internal {
         // To preserve memory, we use a 32 bit timestamp
         // However, we're almost out of time to use 32 bit timestamps for anything
         // So we set the epoch to January 1st, 2024 instead.
+        //
+        // Every VM's JS thread and the HTTP thread share the cache, so ignore fake timers.
         fn get_cache_timestamp() -> u32 {
-            (bun::Timespec::now(bun::TimespecMockMode::AllowMockedTime).ms_unsigned() / 1000) as u32
+            (bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).ms_unsigned() / 1000) as u32
         }
 
         fn is_nearly_full(&self) -> bool {
@@ -3650,6 +3652,12 @@ pub(crate) struct UvDnsPoll {
     // `Resolver::deref`, which may write/free `*this`.
     pub parent: *mut Resolver,
     pub socket: c_ares::ares_socket_t,
+    /// Number of `on_dns_poll_uv` calls for this handle on the stack. libuv
+    /// reads `poll` again after each one returns.
+    poll_cb_depth: u32,
+    /// True if a nested `uv_run` called `on_close_uv` while `poll_cb_depth` was
+    /// non-zero. The outermost `on_dns_poll_uv` call then queues the free.
+    closed: bool,
     pub poll: libuv::uv_poll_t,
 }
 
@@ -3659,17 +3667,32 @@ impl UvDnsPoll {
         bun_core::heap::into_raw(Box::new(Self {
             parent,
             socket,
+            poll_cb_depth: 0,
+            closed: false,
             poll: bun_core::ffi::zeroed(),
         }))
     }
 
-    fn destroy(this: *mut Self) {
+    pub(crate) fn destroy(this: *mut Self) {
+        // SAFETY: `this` came from `heap::into_raw` in `new`, and nothing uses it after this call.
         unsafe { drop(bun_core::heap::take(this)) };
     }
 
     fn from_poll(poll: *mut libuv::uv_poll_t) -> *mut Self {
         // SAFETY: poll points to UvDnsPoll.poll
         unsafe { bun_core::from_field_ptr!(UvDnsPoll, poll, poll) }
+    }
+}
+
+#[cfg(windows)]
+impl bun_event_loop::Taskable for UvDnsPoll {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::UvDnsPollFree;
+    unsafe fn release_unrun(this: *mut Self) {
+        Self::destroy(this);
+    }
+    /// The task doesn't run JS.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -3837,20 +3860,8 @@ pub(crate) enum ChannelResult<'a> {
 
 // Canonical enum + parser live in `bun_dns` (lower tier so `cli` can parse
 // `--dns-result-order` without depending on the runtime). Re-export for
-// existing `crate::dns_jsc::Order` callers; `to_js` stays here as a tier-6
-// extension since it needs JSC.
+// existing `crate::dns_jsc::Order` callers.
 pub(crate) use bun_dns::Order;
-
-trait OrderJscExt {
-    fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue>;
-}
-
-impl OrderJscExt for Order {
-    fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        use jsc::StringJsc as _;
-        bun::String::static_(<&'static str>::from(self)).to_js(global_this)
-    }
-}
 
 #[repr(C)] // c_int
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -4663,34 +4674,44 @@ impl Resolver {
     ) {
         let poll = UvDnsPoll::from_poll(watcher);
         // SAFETY: `poll` is the live `UvDnsPoll` recovered from libuv's `watcher`
-        // via `from_poll` (libuv guarantees the handle outlives this callback).
+        // via `from_poll`. `on_close_uv` doesn't free it while `poll_cb_depth` is non-zero.
         // `parent` is the heap-allocated Resolver back-ptr (set in
         // `on_dns_socket_state`); it is kept alive across `Channel::process` by the
         // `_guard` below. `channel` is non-null because c-ares
         // must have been initialized for this poll callback to fire.
         unsafe {
+            (*poll).poll_cb_depth += 1;
             let parent: *mut Resolver = (*poll).parent;
             let vm = (*parent).vm.get();
-            let _exit = vm.enter_event_loop_scope();
-            // SAFETY: `parent` is the live heap-allocated Resolver back-ptr.
-            let _guard = RefPtr::init_ref(parent);
-            // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks
-            let channel = (*parent).channel.get().unwrap();
-            if status < 0 {
-                // an error occurred. just pretend that the socket is both readable and writable.
-                // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
-                (*channel).process((*poll).socket, true, true);
-            } else {
-                (*channel).process(
-                    (*poll).socket,
-                    events & libuv::UV_READABLE != 0,
-                    events & libuv::UV_WRITABLE != 0,
-                );
-            }
+            {
+                // Dropping `_exit` drains microtasks. That JS can run a nested `uv_run`,
+                // which calls `on_close_uv` for a socket c-ares closed below.
+                let _exit = vm.enter_event_loop_scope();
+                // SAFETY: `parent` is the live heap-allocated Resolver back-ptr.
+                let _guard = RefPtr::init_ref(parent);
+                // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks
+                let channel = (*parent).channel.get().unwrap();
+                if status < 0 {
+                    // an error occurred. just pretend that the socket is both readable and writable.
+                    // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
+                    (*channel).process((*poll).socket, true, true);
+                } else {
+                    (*channel).process(
+                        (*poll).socket,
+                        events & libuv::UV_READABLE != 0,
+                        events & libuv::UV_WRITABLE != 0,
+                    );
+                }
 
-            // See `on_dns_poll` for why this re-check follows `ares_process_fd`.
-            if !(*parent).any_requests_pending() {
-                (*parent).remove_timer();
+                // See `on_dns_poll` for why this re-check follows `ares_process_fd`.
+                if !(*parent).any_requests_pending() {
+                    (*parent).remove_timer();
+                }
+            }
+            (*poll).poll_cb_depth -= 1;
+            if (*poll).poll_cb_depth == 0 && (*poll).closed {
+                // The task queue isn't drained until this libuv callback returns.
+                vm.as_mut().enqueue_task(jsc::Task::init(poll));
             }
         }
     }
@@ -4701,6 +4722,13 @@ impl Resolver {
         // to `uv_close`, which was `&mut UvDnsPoll::poll` (a `uv_poll_t` whose
         // header is `uv_handle_t`); `from_poll` recovers the containing struct.
         let poll = UvDnsPoll::from_poll(watcher.cast());
+        // SAFETY: only the code below and the task `on_dns_poll_uv` queues free the struct.
+        unsafe {
+            if (*poll).poll_cb_depth > 0 {
+                (*poll).closed = true;
+                return;
+            }
+        }
         UvDnsPoll::destroy(poll);
     }
 
@@ -6000,21 +6028,16 @@ impl Resolver {
         Ok(promise)
     }
 
-    // FFI shim emitted by `export_host_fn!` below (JS2Native link name).
-    pub(crate) fn get_runtime_default_result_order_option(
-        global_this: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
+    pub(crate) fn get_runtime_default_result_order_option() -> bun::String {
         // `VirtualMachine.dns_result_order` is stored as a raw `u8` (the jsc
         // crate cannot depend on this crate's `Order`); cast through Order's repr(u8).
-        let raw = global_this.bun_vm().as_mut().dns_result_order;
+        let raw = VirtualMachine::get().dns_result_order;
         let order = match raw {
             4 => Order::Ipv4first,
             6 => Order::Ipv6first,
             _ => Order::Verbatim,
         };
-        order.to_js(global_this)
+        bun::String::static_(<&'static str>::from(order))
     }
 }
 
@@ -6068,10 +6091,6 @@ export_host_fn!(Resolver::global_lookup_service, "Bun__DNS__lookupService");
 export_host_fn!(
     Resolver::new_resolver,
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_newResolver"
-);
-export_host_fn!(
-    Resolver::get_runtime_default_result_order_option,
-    "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_getRuntimeDefaultResultOrderOption"
 );
 export_host_fn!(
     internal::seed_cache_for_testing,

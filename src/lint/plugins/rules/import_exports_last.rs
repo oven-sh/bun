@@ -17,8 +17,8 @@ impl Rule for ExportsLast {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let after_last_other = cx.file().body().iter().rev().skip_while(|it| is_exports_declaration(*it));
-        for stmt in after_last_other.filter(|it| is_exports_declaration(*it)) {
+        let up_to_last_non_export = cx.file().body().iter().rev().skip_while(|it| is_exports_declaration(*it));
+        for stmt in up_to_last_non_export.filter(|it| is_exports_declaration(*it)) {
             cx.report(export_declaration_span(stmt), EXPORTS_LAST);
         }
     }

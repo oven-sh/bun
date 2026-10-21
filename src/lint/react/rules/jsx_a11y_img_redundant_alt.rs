@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Enforce that `img` alt attributes do not contain redundant words like "image", "picture", or "photo".
 pub struct ImgRedundantAlt {
     components: Vec<String>,
-    /// In lower case, as far as they are ASCII.
+    /// With ASCII letters lowercased.
     words: Vec<String>,
 }
 
@@ -67,7 +67,7 @@ impl ImgRedundantAlt {
     }
 }
 
-/// Whether `word` is somewhere in `text` with no ASCII letter or digit before and after it.
+/// True if `text` contains `word` with no ASCII letter or digit right before or after it.
 fn has_word(text: &[u8], word: &[u8]) -> bool {
     let is_boundary = |at: usize| !text.get(at).is_some_and(u8::is_ascii_alphanumeric);
     let is_word_boundary = |start: usize, end: usize| (start == 0 || is_boundary(start - 1)) && is_boundary(end);

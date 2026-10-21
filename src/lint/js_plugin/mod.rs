@@ -1,22 +1,22 @@
-//! Rules that are written in JavaScript: the plugins of ESLint, as `jsPlugins` of an
-//! `.oxlintrc.json` names them and `plugins` of an `eslint.config.js` has them.
+//! Rules written in JavaScript: ESLint plugins, listed in `jsPlugins` of an `.oxlintrc.json` or in `plugins` of an
+//! `eslint.config.js`.
 //!
-//! They run in a JavaScript realm ([`Vm`]) that whoever uses this module provides ([`Engine`]): in Bun a VM that belongs to a
-//! thread which lints. What runs there is the [`PROGRAM`] in `worker/`: ESLint's API for rules, on top of what it asks this
-//! side for. [`Host`] is what the linter talks to.
+//! They run in a JavaScript realm ([`Vm`]) provided by the user of this module ([`Engine`]). In Bun that's a VM owned
+//! by a linting thread. The realm runs the [`PROGRAM`] in `worker/`, which implements ESLint's rule API on top of the
+//! data it requests from this side. The linter talks to [`Host`].
 //!
-//! The program is given the text of a file and which rules to run. Everything else it asks for the first time a rule needs
+//! The program gets a file's text and the list of rules to run. It requests everything else the first time a rule needs
 //! it, each in one piece, as arrays of numbers:
-//! - `ast.rs`: the ESTree, written straight from the table of [`crate::estree`], and which nodes
-//!   match the selectors that rules listen for, as [`crate::selector`] tells.
-//! - `tokens.rs`: the tokens and the comments of [`crate::tokens`].
-//! - `scopes.rs`: the scopes, variables and references of [`crate::semantic`].
+//! - `ast.rs`: the ESTree, written straight from the table in [`crate::estree`], and which nodes match the selectors
+//!   that rules listen for, according to [`crate::selector`].
+//! - `tokens.rs`: the tokens and comments from [`crate::tokens`].
+//! - `scopes.rs`: the scopes, variables and references from [`crate::semantic`].
 //! - [`crate::code_path::estree`]: the code paths, their segments and the events, if a rule listens for one.
 //!
-//! So a file for which every rule returns no listeners costs no more than its text. Nothing is kept here about a realm: one
-//! that lacks a plugin, the options of a rule or the number of a selector says so.
+//! So a file where no rule returns a listener only costs its text. This side keeps no per-realm state: a realm that's
+//! missing a plugin, a rule's options or a selector's number asks for it.
 //!
-//! All offsets that the program sees are in UTF-16 code units, without the byte order mark.
+//! All offsets the program sees are UTF-16 code units and don't count the byte order mark.
 
 mod ast;
 mod calls;
@@ -35,11 +35,11 @@ mod tokens;
 pub(crate) mod wire;
 
 pub use engine::{Demand, Engine, HEAVY, Serve, Vm, Work};
-pub use eslint::{Configuration, Linted, Refusal, Text};
+pub use eslint::{Configuration, EslintFailure, Linted, Text};
 pub use host::{Failure, Host, Loading, ParseAgain, Report, Suggested, ThrownAt};
 pub use prettier::Unformatted;
 pub use processor::{Block, Processor, Route, read_messages, write_messages};
-pub(crate) use rules::has_what_json_lacks;
+pub(crate) use rules::has_non_json_value;
 pub use rules::{Configured, FileSettings, Plugin, Rule, Schema};
 #[doc(hidden)]
 pub use schema::{eslint_patch, program};

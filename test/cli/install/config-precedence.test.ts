@@ -617,7 +617,7 @@ describe.concurrent("bun install config precedence", () => {
     });
     const { stderr, exitCode } = await install(String(dir));
     expect(stderr).not.toContain("error:");
-    // What is extracted goes here instead of the global cache.
+    // Extracted packages go here instead of the global cache.
     expect(await readdirSorted(join(String(dir), "project", "node_modules", ".cache"))).toEqual([
       "no-deps",
       expect.stringMatching(/^no-deps@1\.0\.0@@/),
@@ -970,7 +970,7 @@ describe.concurrent("bun install config precedence", () => {
   );
 
   test.each(lastLayers)(
-    "a scope with a token and no URL stays at the configured registry when %s names another host",
+    "a scope with a token and no URL stays at the configured registry when %s points to another host",
     async (_, args, env, files) => {
       using configured = capturingRegistry();
       using other = capturingRegistry();
@@ -1024,7 +1024,7 @@ describe.concurrent("bun install config precedence", () => {
 });
 
 describe.concurrent("directories named by config files", () => {
-  // Nothing but the config files and $HOME says where things go.
+  // Only the config files and $HOME determine where things go.
   const noDirs = {
     BUN_INSTALL: undefined,
     BUN_INSTALL_BIN: undefined,
@@ -1088,7 +1088,7 @@ describe.concurrent("directories named by config files", () => {
     });
   });
 
-  // It comes with the project. Where this user's global packages live is not for a project to say.
+  // It comes with the project, and a project doesn't get to decide where this user's global packages live.
   describe("globalDir and globalBinDir in ./bunfig.toml", () => {
     const project = () =>
       tempDir("config-global-dir-project", {
@@ -1156,7 +1156,7 @@ describe.concurrent("directories named by config files", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("named with --config it is the user's choice", async () => {
+    test("are honored when the file is passed with --config", async () => {
       using dir = tempDir("config-global-dir-named", files);
       const root = String(dir);
       await Bun.write(join(root, "project", "bunfig.toml"), globalDirs(join(root, "g"), join(root, "b")));
@@ -1235,7 +1235,7 @@ describe.concurrent("directories named by config files", () => {
     });
   });
 
-  // bun goes to the project's root before it reads most of these.
+  // Bun changes to the project's root before it reads most of these.
   describe.each(["project/packages/app", "project/src"])("relative paths, with bun run in %s", cwd => {
     const workspace = {
       "home/.keep": "",

@@ -6,7 +6,6 @@
     macro(Archive) \
     macro(FFI) \
     macro(FetchSession) \
-    macro(FileSystemRouter) \
     macro(Image) \
     macro(markdown) \
     macro(S3Client) \
@@ -34,7 +33,6 @@
     macro(file) \
     macro(jest) \
     macro(listen) \
-    macro(registerMacro) \
     macro(resolve) \
     macro(resolveSync) \
     macro(serve) \

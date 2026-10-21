@@ -1,13 +1,15 @@
-//! What the rules of oxlint for Jest and Vitest are written with, on the handles: its `utils/jest.rs`, `utils/jest/parse_jest_fn.rs`,
-//! `utils/vitest.rs`, `utils/vitest/valid_vitest_fn.rs` and what `frameworks.rs` says about tests. Each function has the name that it
-//! has there.
+//! The helpers that oxlint's Jest and Vitest rules are written with, ported to this crate's handles: its
+//! `utils/jest.rs`, `utils/jest/parse_jest_fn.rs`, `utils/vitest.rs`, `utils/vitest/valid_vitest_fn.rs`, and the
+//! test-related parts of `frameworks.rs`. Each function keeps its oxlint name.
 //!
-//! - A rule that several of `jest`, `vitest` and `bun:test` have is one file in `rules/`, with `RUNNER`. What it does is compiled
-//!   once, in `jest_*.rs` beside this file: a function there takes a [`Ctx`], which is not generic and has the [`Runner`].
-//! - The rules of `jest` and `vitest` see what oxlint sees, which knows nothing of `bun:test`. Those of `bun:test` see only what is
-//!   Bun's, and only in a file that imports from there: [`is_for`].
+//! - A rule shared by several of `jest`, `vitest` and `bun:test` is one file in `rules/`, generic over `RUNNER`. Its
+//!   logic is compiled once, in `jest_*.rs` next to this file: a function there takes a [`Ctx`], which isn't generic
+//!   and carries the [`Runner`].
+//! - The `jest` and `vitest` rules see what oxlint sees, and oxlint doesn't know about `bun:test`. The `bun:test` rules
+//!   only see Bun's functions, and only in a file that imports from `bun:test`. See [`is_for`].
 //! - A `CallExpression` is the `Expr` of a `Call`. Text is bytes.
-//! - Which calls may be calls of Jest is found once for a file, whatever the number of rules: [`iter_possible_jest_call_node`].
+//! - The calls that may be Jest calls are collected once per file, however many rules run. See
+//!   [`iter_possible_jest_call_node`].
 //! - oxlint recurses along `a.b().c().d..`. Here these are loops.
 
 use bun_core::strings;
@@ -16,7 +18,7 @@ use bun_lint::rule::Plugin;
 use bun_lint::source::mention_bit;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint_oxlint::ast_util::{
-    scope_made_by, static_property_info, static_property_name, static_string,
+    scope_owner, static_property_info, static_property_name, static_string,
 };
 use bun_lint_oxlint::codegen::Codegen;
 use bun_lint_oxlint::hash_order::UnresolvedOrder;
@@ -25,19 +27,19 @@ use bun_lint_oxlint::regex_flags::rust_regex;
 use smallvec::SmallVec;
 use std::cell::OnceCell;
 
-/// What a function that several rules share needs of the rule that it runs for: `Ctx { file: cx.file(), runner: Runner::of(RUNNER),
-/// report: &|at, message| cx.report(at, message) }`.
+/// The context that a function shared by several rules gets from the rule it runs for:
+/// `Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) }`.
 pub(crate) struct Ctx<'a, 'r> {
     pub(crate) file: &'a File<'a>,
     pub(crate) runner: Runner,
     pub(crate) report: &'r dyn Fn(Span, Message) -> Report<'a>,
 }
 
-/// To be called before a rule that oxlint calls with the calls of Jest reports: [`File::calls_in_turns`].
+/// Call this before reporting from a rule that oxlint runs on Jest calls. See [`File::jest_calls_in_oxlint_order`].
 #[inline]
 pub(crate) fn note_turns<'a>(file: &'a File<'a>, runner: Runner) {
     if file.language().is_oxlint {
-        file.calls_in_turns(|| OxlintOrder::turns(file, runner));
+        file.jest_calls_in_oxlint_order(|| OxlintOrder::turns(file, runner));
     }
 }
 
@@ -47,20 +49,20 @@ impl<'a> Ctx<'a, '_> {
         (self.report)(at.span(), message)
     }
 
-    /// The fix of a rule with [`meta_with_risky_fix`]. `message`: what the suggestion says.
+    /// Adds the fix of a rule with [`meta_with_risky_fix`]. `message` is the suggestion's message.
     pub(crate) fn risky_fix(&self, report: Report<'a>, message: Message, at: Span, text: String) {
         match self.runner {
             Runner::Jest | Runner::Vitest => report.fix(|fixer| fixer.replace(at, text)),
             Runner::Bun => {
-                let said = text.clone();
-                report.suggest_with(message, &[("code", said.as_bytes())], |fixer| {
+                let code_text = text.clone();
+                report.suggest_with(message, &[("code", code_text.as_bytes())], |fixer| {
                     fixer.replace(at, text)
                 })
             }
         };
     }
 
-    /// The same for a text that takes work to make. The suggestion says what the report says.
+    /// The same for a text that's expensive to build. The suggestion has the same message as the report.
     pub(crate) fn risky_fix_with(
         &self,
         report: Report<'a>,
@@ -73,15 +75,46 @@ impl<'a> Ctx<'a, '_> {
         };
     }
 
-    /// Whether a fix may write the name `name`. In a file that imports from `bun:test` nothing else is declared than what it
-    /// imports: `bun test` declares `it` and the like only where nothing is imported from there.
-    pub(crate) fn can_write(&self, name: &[u8]) -> bool {
-        self.runner != Runner::Bun
-            || (std::str::from_utf8(name).ok())
-                .is_some_and(|it| self.file.top_level_scope().get(it).is_some())
+    /// True if a fix may write `name` at `at`, because `name` refers to the runner's function there. For Jest and
+    /// Vitest it can be a global, an import, or a top-level `require`. For `bun:test` it has to be an import or a
+    /// `require`, because `bun test` only declares `it` and the other globals in files that don't import from
+    /// `bun:test`.
+    pub(crate) fn can_write(&self, name: &[u8], at: Expr<'a>) -> bool {
+        let is_bun = self.runner == Runner::Bun;
+        let Some(symbol) = Node::Expr(at).scope().resolve_bytes(name) else {
+            return !is_bun;
+        };
+        let is_runner_module = |source: &[u8]| match is_bun {
+            true => source == BUN_TEST,
+            false => source == b"@jest/globals" || is_vitest_import_source(source),
+        };
+        let is_required = || {
+            let properties = top_level_requires(self.file).filter_map(|(pattern, source)| {
+                match pattern.kind() {
+                    PatKind::Object(properties) if is_runner_module(source.bytes()) => {
+                        Some(properties)
+                    }
+                    _ => None,
+                }
+            });
+            properties.flatten().any(|it| {
+                it.value().symbol() == Some(symbol)
+                    && (it.key().and_then(|it| it.name())).is_some_and(|it| it.bytes() == name)
+            })
+        };
+        symbol.declarations().all(|it| match it {
+            Declaration::ImportSpec(it) => {
+                it.imported().bytes() == name
+                    && is_runner_module(it.import().spec().bytes())
+                    && !it.is_type_only()
+                    && !it.import().is_type_only()
+            }
+            Declaration::Var(_) => is_required(),
+            _ => false,
+        })
     }
 
-    /// Whether a fix may change a title. A snapshot in a file of its own is found by the titles.
+    /// True if a fix may change a title. A snapshot stored in a separate file is looked up by the titles.
     pub(crate) fn can_change_titles(&self) -> bool {
         self.runner != Runner::Bun
             || !mentions_any(
@@ -91,12 +124,12 @@ impl<'a> Ctx<'a, '_> {
     }
 }
 
-/// `RUNNER` of a rule of `jest`, of `vitest`, of `bun:test`.
+/// The `RUNNER` values for `jest`, `vitest` and `bun:test` rules.
 pub(crate) const JEST: u8 = 0;
 pub(crate) const VITEST: u8 = 1;
 pub(crate) const BUN: u8 = 2;
 
-/// Whose tests a rule is about.
+/// The test runner a rule is for.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Runner {
     Jest,
@@ -105,18 +138,18 @@ pub(crate) enum Runner {
 }
 
 impl Runner {
-    /// `runner`: the `RUNNER` of a rule.
+    /// `runner` is a rule's `RUNNER`.
     pub(crate) const fn of(runner: u8) -> Runner {
         match runner {
             JEST => Runner::Jest,
             VITEST => Runner::Vitest,
             BUN => Runner::Bun,
-            _ => panic!("no such runner"),
+            _ => panic!("invalid RUNNER"),
         }
     }
 }
 
-/// Of a rule with `RUNNER`. One of `bun:test` is Bun's own: it exists with every configuration.
+/// The `Meta` of a rule with `RUNNER`. A `bun:test` rule is Bun's own, so it's available under every kind of config.
 pub(crate) const fn meta(runner: u8, name: &'static str, kind: Kind) -> Meta {
     match Runner::of(runner) {
         Runner::Jest => Meta::oxlint(Plugin::Jest, name, kind),
@@ -125,7 +158,8 @@ pub(crate) const fn meta(runner: u8, name: &'static str, kind: Kind) -> Meta {
     }
 }
 
-/// The same for a rule whose fix can make a test fail that passes: oxlint applies it, for `bun:test` it is a suggestion.
+/// The same for a rule whose fix can make a passing test fail. oxlint applies it as a fix. For `bun:test` it's a
+/// suggestion.
 pub(crate) const fn meta_with_risky_fix(runner: u8, name: &'static str, kind: Kind) -> Meta {
     match Runner::of(runner) {
         Runner::Jest | Runner::Vitest => meta(runner, name, kind).fixable(Fixable::Code),
@@ -133,7 +167,7 @@ pub(crate) const fn meta_with_risky_fix(runner: u8, name: &'static str, kind: Ki
     }
 }
 
-/// [`mention_bit`] of each of `names`, for a constant.
+/// Returns the [`mention_bit`] of each of `names`. For use in a constant.
 pub(crate) const fn mention_bits<const N: usize>(names: [&str; N]) -> [u32; N] {
     let (mut bits, mut i) = ([0; N], 0);
     while i < N {
@@ -170,7 +204,7 @@ pub(crate) const JEST_METHOD_NAMES: [&str; 19] = [
     "xtest",
 ];
 const JEST_METHOD_BITS: [u32; 19] = mention_bits(JEST_METHOD_NAMES);
-/// Of what tests are imported from.
+/// The modules that test functions are imported from.
 const SOURCE_BITS: [u32; 4] = mention_bits([
     "vitest",
     "vite-plus/test",
@@ -178,7 +212,7 @@ const SOURCE_BITS: [u32; 4] = mention_bits([
     "@jest/globals",
 ]);
 const BUN_TEST: &[u8] = b"bun:test";
-const MODIFIERS_OF_BUN: [&str; 13] = [
+const BUN_MODIFIERS: [&str; 13] = [
     "concurrent",
     "concurrentIf",
     "each",
@@ -193,8 +227,8 @@ const MODIFIERS_OF_BUN: [&str; 13] = [
     "todo",
     "todoIf",
 ];
-/// What `bun test` declares in a test file that does not import it.
-const GLOBALS_OF_BUN: [&str; 14] = [
+/// The globals that `bun test` declares in a test file that doesn't import them.
+const BUN_GLOBALS: [&str; 14] = [
     "afterAll",
     "afterEach",
     "beforeAll",
@@ -253,30 +287,30 @@ pub(crate) enum JestGeneralFnKind {
     Bench,
 }
 
-// ───────────────────────────── what is known about a file ─────────────────────────────
+// ───────────────────────────── per-file caches ─────────────────────────────
 
-/// What is found out about a file once. It holds no handles: it is kept with the file.
+/// Facts computed once per file. It's stored with the file, so it can't hold handles.
 struct PerFile {
     /// `ctx.frameworks().is_jest()`: the file is named like a test, or imports something from `@jest/globals`.
     is_jest: bool,
     is_vitest: bool,
     /// The file imports something from `bun:test`.
     is_bun: bool,
-    /// The numbers of the identifiers that are named like one of [`JEST_METHOD_NAMES`], whatever they refer to.
+    /// The IDs of the identifiers named like one of [`JEST_METHOD_NAMES`], whatever they refer to.
     named_like_jest: OnceCell<Vec<u32>>,
-    /// For the rules of `jest` and `vitest`, and for those of `bun:test`.
-    seen: [Seen; 2],
+    /// One for the `jest` and `vitest` rules, and one for the `bun:test` rules.
+    per_runner: [PerRunner; 2],
 }
 
-/// What depends on whose tests count.
+/// The caches that depend on the runner.
 #[derive(Default)]
-struct Seen {
-    /// [`tests_as_written`]
-    tests_as_written: OnceCell<Vec<Span>>,
+struct PerRunner {
+    /// [`tests_by_name`]
+    tests_by_name: OnceCell<Vec<Span>>,
     possible_jest_nodes: OnceCell<PossibleJestNodes>,
 }
 
-/// Whose tables a call is checked with.
+/// The runners whose tables of valid calls apply.
 #[derive(Copy, Clone)]
 struct Frameworks {
     is_jest: bool,
@@ -286,14 +320,14 @@ struct Frameworks {
 
 #[derive(Default)]
 struct PossibleJestNodes {
-    /// The names under which something is imported from Jest or Vitest, or from `bun:test`.
+    /// The original names of what's imported from Jest or Vitest, or from `bun:test`.
     originals: Vec<Box<[u8]>>,
     calls: Vec<PossibleCall>,
-    /// [`Scopes::of`] each of `calls`, once a rule asks.
+    /// The [`Scopes::of`] result for each of `calls`, computed on first use.
     scopes: OnceCell<Vec<ScopeMaker>>,
 }
 
-/// What makes a scope, by its number.
+/// The node that creates a scope, by ID.
 #[derive(Copy, Clone)]
 enum ScopeMaker {
     File,
@@ -304,19 +338,19 @@ enum ScopeMaker {
 
 struct PossibleCall {
     span: Span,
-    /// The number of the expression.
+    /// The expression's ID.
     id: u32,
     /// The index in `originals`, if there is one.
     original: u32,
-    /// Of the name that the chain starts with, as it is where it is from.
+    /// The kind of the name that the chain starts with, going by its original name if it's imported.
     kind: JestFnKind,
-    /// The number of the identifier that the chain starts with.
+    /// The ID of the identifier that the chain starts with.
     reference: u32,
-    /// The how manyth of the names that the file imports it is. `u32::MAX` for a global.
+    /// Its index among the names that the file imports. `u32::MAX` for a global.
     import_index: u32,
     /// [`is_in_call_or_member`]
     is_in_call_or_member: bool,
-    /// For `it(..)`, where that identifier is what is called and is no `expect`: whether it is parsed as a call of Jest.
+    /// Only set for `it(..)`, where that identifier is the callee and isn't `expect`: true if it parses as a Jest call.
     without_members: Option<bool>,
 }
 
@@ -337,7 +371,7 @@ fn is_jestlike_file(path: &[u8]) -> bool {
     matches!(name_or_first_ext, Some(b"test" | b"spec")) || has_component_tests(path)
 }
 
-/// Not what [`is_jest`] says: it goes by other endings, and not by what is imported.
+/// Not the same as `PerFile::is_jest`: it goes by different file name endings, and ignores imports.
 pub(crate) fn is_jest_file(file: &File) -> bool {
     let path = file.path();
     has_component_tests(path)
@@ -349,7 +383,7 @@ pub(crate) fn is_jest_file(file: &File) -> bool {
         })
 }
 
-/// `None` only if something else is kept with the file.
+/// `None` only if the file's extension slots are taken by other types.
 fn per_file<'a>(file: &'a File<'a>) -> Option<&'a PerFile> {
     file.extension(|| {
         let imports_tests = mentions_any(file, &SOURCE_BITS);
@@ -361,13 +395,14 @@ fn per_file<'a>(file: &'a File<'a>) -> Option<&'a PerFile> {
             is_vitest: imports(is_vitest_import_source),
             is_bun: file.mentions_bit(const { mention_bit(BUN_TEST) }) && imports_bun_test(file),
             named_like_jest: OnceCell::new(),
-            seen: Default::default(),
+            per_runner: Default::default(),
         }
     })
 }
 
-/// The `{ test: t }` of `const { test: t } = require("bun:test")` and of `.. = await import("bun:test")`.
-fn required_from_bun_test(declarator: VarDecl<'_>) -> Option<Pat<'_>> {
+/// Returns the pattern and the module specifier: `{ test: t }` and `a` for `const { test: t } = require("a")` or
+/// `.. = await import("a")`.
+fn require_binding(declarator: VarDecl<'_>) -> Option<(Pat<'_>, Name<'_>)> {
     let init = declarator.init()?;
     let source = match init.kind() {
         ExprKind::Call(call) => common_js_require(call),
@@ -377,24 +412,29 @@ fn required_from_bun_test(declarator: VarDecl<'_>) -> Option<Pat<'_>> {
         },
         _ => None,
     };
-    (static_string(source?)?.bytes() == BUN_TEST).then(|| declarator.pat())
+    Some((declarator.pat(), static_string(source?)?))
 }
 
-/// The declarations at the top level of [`required_from_bun_test`].
-fn all_required_from_bun_test<'a>(file: &'a File<'a>) -> impl Iterator<Item = Pat<'a>> {
+/// Runs [`require_binding`] on every top-level variable declaration.
+fn top_level_requires<'a>(file: &'a File<'a>) -> impl Iterator<Item = (Pat<'a>, Name<'a>)> {
     let declarators = file.body().iter().filter_map(Stmt::as_var).flatten();
-    declarators.filter_map(required_from_bun_test)
+    declarators.filter_map(require_binding)
+}
+
+fn top_level_requires_of_bun_test<'a>(file: &'a File<'a>) -> impl Iterator<Item = Pat<'a>> {
+    top_level_requires(file)
+        .filter_map(|(pattern, source)| (source.bytes() == BUN_TEST).then_some(pattern))
 }
 
 fn imports_bun_test<'a>(file: &'a File<'a>) -> bool {
     let imports = |it: Import| it.spec().bytes() == BUN_TEST && !it.is_type_only();
     file.body().iter().filter_map(Stmt::as_import).any(imports)
-        || all_required_from_bun_test(file).next().is_some()
+        || top_level_requires_of_bun_test(file).next().is_some()
 }
 
 impl PerFile {
-    fn seen(&self, runner: Runner) -> &Seen {
-        &self.seen[usize::from(runner == Runner::Bun)]
+    fn per_runner(&self, runner: Runner) -> &PerRunner {
+        &self.per_runner[usize::from(runner == Runner::Bun)]
     }
 
     fn frameworks(&self, runner: Runner) -> Frameworks {
@@ -407,7 +447,8 @@ impl PerFile {
     }
 }
 
-/// Whether a rule with `RUNNER` is for `file` at all. One of `bun:test` is for a file that imports from there.
+/// True if a rule with `RUNNER` applies to `file` at all. A `bun:test` rule only applies to a file that imports from
+/// `bun:test`.
 #[inline(always)]
 pub(crate) fn is_for<'a>(file: &'a File<'a>, runner: u8) -> bool {
     runner != BUN || is_bun(file)
@@ -421,12 +462,13 @@ fn is_jest_or_vitest<'a>(file: &'a File<'a>) -> bool {
     per_file(file).is_some_and(|it| it.is_jest || it.is_vitest)
 }
 
-/// `ctx.frameworks().is_vitest()`: the file imports something from Vitest. Its name does not matter.
+/// `ctx.frameworks().is_vitest()`: the file imports something from Vitest. Its name doesn't matter.
 pub(crate) fn is_vitest<'a>(file: &'a File<'a>, runner: Runner) -> bool {
     per_file(file).is_some_and(|it| it.frameworks(runner).is_vitest)
 }
 
-/// `ctx.frameworks().is_test()`: in other files oxlint does not call `run_on_jest_node`. `runner`: the `RUNNER` of the rule.
+/// `ctx.frameworks().is_test()`: in other files oxlint doesn't call `run_on_jest_node`. `runner` is the rule's
+/// `RUNNER`.
 #[inline(always)]
 pub(crate) fn is_test<'a>(file: &'a File<'a>, runner: u8) -> bool {
     match runner {
@@ -435,28 +477,28 @@ pub(crate) fn is_test<'a>(file: &'a File<'a>, runner: u8) -> bool {
     }
 }
 
-/// A call that may be one of Jest.
+/// A call that may be a Jest call.
 #[derive(Copy, Clone)]
 pub(crate) struct PossibleJestNode<'a> {
     /// A `Call`.
     pub(crate) node: Expr<'a>,
-    /// The name that what is called has in `@jest/globals`, in Vitest or in `bun:test`, if it is imported by name from there.
+    /// The callee's name in `@jest/globals`, Vitest or `bun:test`, if it's imported by name from there.
     pub(crate) original: Option<&'a [u8]>,
-    /// For whose rules it is one.
+    /// The runner whose rules it was collected for.
     runner: Runner,
-    /// What is known of one of [`iter_possible_jest_call_node`]: most rules are about `expect` only, or not about it, and need not
-    /// parse the rest.
-    known: Option<&'a PossibleCall>,
+    /// The cached facts, for a node from [`iter_possible_jest_call_node`]. Most rules only care about `expect`, or
+    /// don't care about it, so they can skip parsing the other calls.
+    cached: Option<&'a PossibleCall>,
 }
 
 impl<'a> PossibleJestNode<'a> {
-    /// For a call that is looked at by what is written only.
+    /// For a call that's only judged by its syntax.
     pub(crate) fn new(node: Expr<'a>, runner: Runner) -> Self {
         PossibleJestNode {
             node,
             original: None,
             runner,
-            known: None,
+            cached: None,
         }
     }
 
@@ -470,14 +512,15 @@ impl<'a> PossibleJestNode<'a> {
             node: Expr::from_raw(file, call.id),
             original: originals.get(call.original as usize).map(|it| &**it),
             runner,
-            known: Some(call),
+            cached: Some(call),
         }
     }
 
-    /// What [`JestFnKind::from`] says of the name that the chain starts with. `None`: it starts with none, and is not parsed.
+    /// Returns [`JestFnKind::from`] for the name that the chain starts with, or `None` if it doesn't start with a name,
+    /// in which case it doesn't parse.
     fn kind(&self) -> Option<JestFnKind> {
-        match self.known {
-            Some(known) => Some(known.kind),
+        match self.cached {
+            Some(cached) => Some(cached.kind),
             None => {
                 let local = first_identifier_of_chain(self.node.as_call()?.callee())?;
                 Some(JestFnKind::from(
@@ -490,17 +533,18 @@ impl<'a> PossibleJestNode<'a> {
 
 fn possible_jest_nodes<'a>(file: &'a File<'a>, runner: Runner) -> Option<&'a PossibleJestNodes> {
     per_file(file).map(|it| {
-        (it.seen(runner).possible_jest_nodes)
+        (it.per_runner(runner).possible_jest_nodes)
             .get_or_init(|| collect_possible_jest_call_node(file, it, runner))
     })
 }
 
-/// Every call of a global of Jest, of what is imported from Jest or Vitest, and of what these calls and their members return: of
-/// `expect(1).toBe(1)` both `expect(1).toBe(1)` and `expect(1)`. For [`Runner::Bun`] of what `bun test` declares and of what is
-/// imported from `bun:test`.
+/// Returns every call to a Jest global, to anything imported from Jest or Vitest, and to anything those calls and their
+/// members return: for `expect(1).toBe(1)`, both `expect(1).toBe(1)` and `expect(1)`. For [`Runner::Bun`] it's the
+/// globals that `bun test` declares and the imports from `bun:test`.
 ///
-/// In the order of the source, what is around before what is in it. oxlint has them in another order, and most rules that depend on
-/// it sort them like this. For the others there is [`OxlintOrder`]. `collect_possible_jest_call_node` is the same.
+/// The calls are in source order, an outer call before the calls inside it. oxlint has them in a different order, and
+/// most rules that depend on the order sort them like this. The others use [`OxlintOrder`]. This is also the port of
+/// oxlint's `collect_possible_jest_call_node`.
 pub(crate) fn iter_possible_jest_call_node<'a>(
     file: &'a File<'a>,
     runner: Runner,
@@ -512,7 +556,7 @@ pub(crate) fn iter_possible_jest_call_node<'a>(
         .map(move |call| PossibleJestNode::of(file, runner, originals, call))
 }
 
-/// [`iter_possible_jest_call_node`], each with [`Scopes::of`] it.
+/// [`iter_possible_jest_call_node`], each node with its [`Scopes::of`] result.
 pub(crate) fn iter_possible_jest_call_node_with_scope<'a>(
     file: &'a File<'a>,
     runner: Runner,
@@ -526,7 +570,7 @@ pub(crate) fn iter_possible_jest_call_node_with_scope<'a>(
                     Some(Node::Func(func)) => ScopeMaker::Func(func.id().0),
                     Some(Node::Stmt(statement)) => ScopeMaker::Stmt(statement.id().0),
                     Some(Node::Class(class)) => ScopeMaker::Class(class.id().0),
-                    // Nothing else makes one.
+                    // Nothing else creates a scope.
                     _ => ScopeMaker::File,
                 })
                 .collect()
@@ -541,7 +585,7 @@ pub(crate) fn iter_possible_jest_call_node_with_scope<'a>(
     iter_possible_jest_call_node(file, runner).zip(scopes.iter().map(scope))
 }
 
-/// The one of [`iter_possible_jest_call_node`] that is the call `node`.
+/// Returns the [`iter_possible_jest_call_node`] entry for the call `node`.
 pub(crate) fn possible_jest_node_of<'a>(
     file: &'a File<'a>,
     runner: Runner,
@@ -589,7 +633,7 @@ fn collect_possible_jest_call_node<'a>(
         let references = symbol.references().filter_map(Reference::expr);
         references.for_each(|it| found.add_calls_of(it, original, import_index as u32, frameworks));
     }
-    for property in all_required_from_bun_test(file)
+    for property in top_level_requires_of_bun_test(file)
         .take_while(|_| frameworks.is_bun)
         .filter_map(|it| match it.kind() {
             PatKind::Object(properties) => Some(properties),
@@ -606,18 +650,18 @@ fn collect_possible_jest_call_node<'a>(
             references.for_each(|it| found.add_calls_of(it, original, 0, frameworks));
         }
     }
-    // What the names resolve to is asked only where one of them starts a chain.
+    // Only resolve a name if it starts a chain.
     let is_global = |e: &Expr<'a>| {
         parent_expression(*e).is_some_and(|it| {
             matches!(it.tag(), ExprTag::Call | ExprTag::TaggedTemplate) || is_member(it)
         }) && e.symbol().is_none()
-            && (!frameworks.is_bun || e.as_ident().is_some_and(|it| it.is_any(&GLOBALS_OF_BUN)))
+            && (!frameworks.is_bun || e.as_ident().is_some_and(|it| it.is_any(&BUN_GLOBALS)))
     };
     (per_file.named_like_jest(file).iter())
         .map(|id| Expr::from_raw(file, *id))
         .filter(is_global)
         .for_each(|it| found.add_calls_of(it, u32::MAX, u32::MAX, frameworks));
-    // A test file has hundreds, so not through a call for each comparison.
+    // A test file has hundreds of calls, so sort plain integer keys instead of calling a comparator.
     let keys = found.calls.iter().enumerate();
     let mut keys: Vec<u128> = keys.map(|(at, it)| it.span.sort_key(0, at)).collect();
     keys.sort();
@@ -637,7 +681,7 @@ impl PerFile {
             if names.is_empty() {
                 return Vec::new();
             }
-            // A bit for each of the names: nearly every identifier is told apart by that.
+            // One bit per name, which filters out nearly every other identifier.
             let bit = |name: Name| 1u64 << (name.atom().0 % 64);
             let bits = names.iter().fold(0, |bits, name| bits | bit(*name));
             file.exprs_of_kind(ExprTag::Ident)
@@ -651,7 +695,7 @@ impl PerFile {
     }
 }
 
-/// Calls `visit` with every call that is written like one of `kinds`: [`first_identifier_of_chain`] of what is called is such a
+/// Calls `visit` with every call that looks like one of `kinds`: the callee's [`first_identifier_of_chain`] is such a
 /// name, whatever it refers to.
 pub(crate) fn for_each_call_named_like<'a>(
     file: &'a File<'a>,
@@ -685,7 +729,7 @@ pub(crate) fn for_each_call_named_like<'a>(
 
 /// Calls that look like tests by name, whatever `it` and `test` actually refer to. Only the outermost ones, in source order.
 /// For `bun:test` each span is the test's callback, so `a || b` in `test.skipIf(a || b)(..)` isn't a condition in the test.
-pub(crate) fn tests_as_written<'a>(file: &'a File<'a>, runner: Runner) -> &'a [Span] {
+pub(crate) fn tests_by_name<'a>(file: &'a File<'a>, runner: Runner) -> &'a [Span] {
     let find = || {
         let mut tests: Vec<Span> = Vec::new();
         for_each_call_named_like(file, &[JestGeneralFnKind::Test], &mut |call_expr| {
@@ -706,19 +750,19 @@ pub(crate) fn tests_as_written<'a>(file: &'a File<'a>, runner: Runner) -> &'a [S
         utils::sort::sort_unstable_by_key(&mut tests, |it| (it.start, std::cmp::Reverse(it.end)));
         let mut end = 0;
         tests.retain(|it| {
-            let is_in_no_other = it.end > end;
+            let is_outermost = it.end > end;
             end = end.max(it.end);
-            is_in_no_other
+            is_outermost
         });
         tests
     };
     per_file(file).map_or(&[][..], |it| {
-        it.seen(runner).tests_as_written.get_or_init(find)
+        it.per_runner(runner).tests_by_name.get_or_init(find)
     })
 }
 
 impl PossibleJestNodes {
-    /// The longest chain of calls, members and tagged templates that starts with `reference`.
+    /// Adds the calls in the longest chain of calls, members and tagged templates that starts with `reference`.
     fn add_calls_of(
         &mut self,
         reference: Expr,
@@ -756,7 +800,8 @@ impl PossibleJestNodes {
                     });
                 }
                 ExprTag::Dot if !parent.is_private_member() => {}
-                // From the `b` of `a[b]` on oxlint goes by the `a`, unless `b` is imported by name.
+                // When the chain continues from the `b` of `a[b]`, oxlint goes by the `a`, unless `b` is imported by
+                // name.
                 ExprTag::Index
                     if parent.object() != Some(at)
                         && !frameworks.is_bun
@@ -773,8 +818,8 @@ impl PossibleJestNodes {
     }
 }
 
-/// The expression that `e` is directly part of. `None` where oxc has something between the two: parentheses, or the
-/// `ChainExpression` around an optional chain.
+/// Returns `e`'s parent expression, or `None` where oxc has a node in between: parentheses, or the `ChainExpression`
+/// around an optional chain.
 pub(crate) fn parent_expression(e: Expr<'_>) -> Option<Expr<'_>> {
     match e.parent() {
         Node::Expr(parent) if !e.is_parenthesized() && !e.is_chain_root() => Some(parent),
@@ -796,7 +841,7 @@ fn is_member(e: Expr) -> bool {
     }
 }
 
-// ───────────────────────────── the parser of calls ─────────────────────────────
+// ───────────────────────────── call parser ─────────────────────────────
 
 pub(crate) type Members<'a> = SmallVec<[KnownMemberExpressionProperty<'a>; 2]>;
 
@@ -820,7 +865,7 @@ pub(crate) struct ParsedGeneralJestFnCall<'a> {
     pub(crate) kind: JestFnKind,
     /// The `only` and the `each` of `it.only.each(..)(..)`.
     pub(crate) members: Members<'a>,
-    /// The `it`, as it is called where it is from.
+    /// The `it`, under its original name if it's imported.
     pub(crate) name: &'a [u8],
 }
 
@@ -828,11 +873,11 @@ pub(crate) struct ParsedExpectFnCall<'a> {
     pub(crate) kind: JestFnKind,
     pub(crate) members: Members<'a>,
     pub(crate) name: &'a [u8],
-    /// As it is called in the file.
+    /// The name used in the file.
     pub(crate) local: &'a [u8],
     /// The `expect`.
     pub(crate) head: KnownMemberExpressionProperty<'a>,
-    /// Those of the call that is parsed: the `2` of `expect(1).toBe(2)`, the `1` of `expect(1)`.
+    /// The arguments of the parsed call: the `2` of `expect(1).toBe(2)`, the `1` of `expect(1)`.
     pub(crate) args: List<'a, Expr<'a>>,
     /// The indices in `members` of `not`, `resolves` and `rejects`.
     pub(crate) modifier_indices: SmallVec<[usize; 2]>,
@@ -850,12 +895,13 @@ impl<'a> ParsedExpectFnCall<'a> {
         self.members.get(self.matcher_index?)
     }
 
-    /// How a fix that writes `expect(a)` again starts and ends: `expect(` and `)`. That is all that a fix of oxlint writes. For Bun
-    /// it is the name as the file has it, and with the `)` all that follows the first argument: the `, "why")` of `expect(a, "why")`.
-    pub(crate) fn around_first_argument(&self, runner: Runner) -> (&'a [u8], &'a [u8]) {
-        let written = (self.head.parent.filter(|_| runner == Runner::Bun))
+    /// Returns the name and the closing text for a fix that reprints `expect(a)`. oxlint's fixes always print `expect`
+    /// and `)`. For Bun it's the name used in the file, and everything after the first argument: the `, "why")` of
+    /// `expect(a, "why")`.
+    pub(crate) fn expect_prefix_and_suffix(&self, runner: Runner) -> (&'a [u8], &'a [u8]) {
+        let call_and_argument = (self.head.parent.filter(|_| runner == Runner::Bun))
             .zip(self.expect_arguments.and_then(List::first));
-        match written {
+        match call_and_argument {
             Some((call, first)) => {
                 let rest = Span::new(first.outer_span().end, call.span().end);
                 (self.local, call.file().slice(rest))
@@ -864,7 +910,7 @@ impl<'a> ParsedExpectFnCall<'a> {
         }
     }
 
-    /// In the order of the source.
+    /// In source order.
     pub(crate) fn modifiers(&self) -> impl Iterator<Item = &KnownMemberExpressionProperty<'a>> {
         self.modifier_indices
             .iter()
@@ -886,15 +932,15 @@ pub(crate) enum KnownMemberExpressionParentKind {
     TaggedTemplate,
 }
 
-/// A link of the chain: what it starts with, or the name of a member.
+/// A link of the chain: the identifier it starts with, or a member's name.
 #[derive(Copy, Clone)]
 pub(crate) struct KnownMemberExpressionProperty<'a> {
     pub(crate) element: MemberExpressionElement<'a>,
-    /// For the name of a member the `Dot` or the `Index`.
+    /// For a member's name, the `Dot` or the `Index`.
     pub(crate) parent: Option<Expr<'a>>,
     pub(crate) parent_kind: Option<KnownMemberExpressionParentKind>,
     pub(crate) grandparent_kind: Option<KnownMemberExpressionParentKind>,
-    /// Of the name, with its quotes.
+    /// The span of the name, including its quotes.
     pub(crate) span: Span,
 }
 
@@ -937,12 +983,13 @@ impl<'a> KnownMemberExpressionProperty<'a> {
     }
 }
 
-/// `get_node_chain`, after `resolve_first_ident`: the identifier that `callee` starts with, and the names of the members, in the
-/// order of the source. `None` if it starts with something else, or if there is something else on the way than members, calls and
-/// tagged templates. oxlint passes over the `[b]` of `a[b].c`. `knows_all_names`: that is `None` too.
+/// `get_node_chain`, after `resolve_first_ident`: returns the identifier that `callee` starts with, and the members'
+/// names in source order. Returns `None` if it starts with anything else, or if the chain has anything but members,
+/// calls and tagged templates. oxlint skips the `[b]` of `a[b].c`. With `requires_static_names`, that returns `None`
+/// too.
 fn get_node_chain(
     callee: Expr<'_>,
-    knows_all_names: bool,
+    requires_static_names: bool,
 ) -> Option<(KnownMemberExpressionProperty<'_>, Members<'_>)> {
     use KnownMemberExpressionParentKind::{Call, Member, TaggedTemplate};
     let mut chain = Members::new();
@@ -987,7 +1034,7 @@ fn get_node_chain(
                         grandparent_kind: parent_kind,
                         span,
                     });
-                } else if knows_all_names {
+                } else if requires_static_names {
                     return None;
                 }
                 (obj, Member)
@@ -1008,7 +1055,7 @@ pub(crate) fn parse_jest_fn_call<'a>(
     parse_jest_fn_call_in(file, possible_jest_node.node, possible_jest_node)
 }
 
-/// The identifier that [`get_node_chain`] of `callee` starts with. `None` where that is `None`.
+/// Returns the identifier that [`get_node_chain`] of `callee` starts with, or `None` where that returns `None`.
 pub(crate) fn first_identifier_of_chain(callee: Expr<'_>) -> Option<Name<'_>> {
     let mut at = callee;
     while !at.is_parenthesized() {
@@ -1022,7 +1069,8 @@ pub(crate) fn first_identifier_of_chain(callee: Expr<'_>) -> Option<Name<'_>> {
     None
 }
 
-/// Whether `name.a.b(..)` is a call of Jest, of Vitest or of Bun, whichever the file is for. In a file that is for none, every call is.
+/// True if `name.a.b(..)` is a valid call for Jest, Vitest or Bun, whichever the file uses. In a file that uses none of
+/// them, every call is valid.
 fn is_valid_call(
     frameworks: Frameworks,
     name: &[u8],
@@ -1039,7 +1087,8 @@ fn is_valid_call(
         || is_bun && is_valid_bun_call(name, members)
 }
 
-/// Parses the call `call_expr`. What it is part of is asked of the node of `possible_jest_node`: some rules pass another than the call.
+/// Parses the call `call_expr`. The parent checks use `possible_jest_node`'s node, because some rules pass a node other
+/// than the call.
 pub(crate) fn parse_jest_fn_call_in<'a>(
     file: &'a File<'a>,
     call_expr: Expr<'a>,
@@ -1051,12 +1100,13 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
         runner,
         ..
     } = possible_jest_node;
-    let known = possible_jest_node
-        .known
+    let cached = possible_jest_node
+        .cached
         .filter(|it| it.id == call_expr.id().0);
     let call_expr = call_expr.as_call()?;
     let callee = call_expr.callee();
-    let is_part = || known.map_or_else(|| is_in_call_or_member(node), |it| it.is_in_call_or_member);
+    let is_nested_in_chain =
+        || cached.map_or_else(|| is_in_call_or_member(node), |it| it.is_in_call_or_member);
 
     // `it(..)`, `expect(..)`
     if let Some(local) = callee.as_ident()
@@ -1067,7 +1117,7 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
         if local == b"each" {
             return None;
         }
-        let kind = known.map_or_else(|| JestFnKind::from(name), |it| it.kind);
+        let kind = cached.map_or_else(|| JestFnKind::from(name), |it| it.kind);
         if matches!(kind, JestFnKind::Expect | JestFnKind::ExpectTypeOf) {
             let head = KnownMemberExpressionProperty {
                 element: MemberExpressionElement::Expression(callee),
@@ -1085,9 +1135,9 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
             JestFnKind::General(JestGeneralFnKind::Jest | JestGeneralFnKind::Vitest) => true,
             _ => per_file(file).is_none_or(|it| is_valid_call(it.frameworks(runner), name, &[])),
         };
-        let is_call = match known.and_then(|it| it.without_members) {
+        let is_call = match cached.and_then(|it| it.without_members) {
             Some(is_call) => is_call,
-            None => !is_part() && is_valid(),
+            None => !is_nested_in_chain() && is_valid(),
         };
         return is_call.then(|| {
             ParsedJestFnCall::GeneralJest(ParsedGeneralJestFnCall {
@@ -1107,7 +1157,7 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
     let is_condition =
         runner == Runner::Bun && (last.name()).is_some_and(|it| it == b"if" || it.ends_with(b"If"));
 
-    // `.each()` is parsed with the call of what it returns: `.each()()`.
+    // `.each()` is parsed together with the call to its result: `.each()()`.
     if (is_each || is_condition) && !matches!(callee.tag(), ExprTag::Call | ExprTag::TaggedTemplate)
     {
         return None;
@@ -1123,8 +1173,8 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
         );
     }
 
-    // Only the whole of `x().y.z()` is a call of Jest, not the `x()`.
-    if is_part() {
+    // Only the whole of `x().y.z()` is a Jest call, not the `x()`.
+    if is_nested_in_chain() {
         return None;
     }
 
@@ -1139,7 +1189,7 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
         }));
     }
 
-    // All but the last are members: nothing before it is called.
+    // All links but the last have to be members: nothing before the last is called.
     if !members.is_empty() && head.parent_kind != Some(KnownMemberExpressionParentKind::Member) {
         return None;
     }
@@ -1182,7 +1232,7 @@ fn parse_jest_expect_fn_call<'a>(
             Err(error) => (SmallVec::new(), None, Some(error)),
         };
 
-    // Of a chain that is not valid only the topmost call is reported.
+    // For an invalid chain, only the topmost call is reported.
     if expect_error.is_some() && !is_top_most_call_expr(node) {
         return None;
     }
@@ -1211,7 +1261,7 @@ fn parse_jest_expect_fn_call<'a>(
     })
 }
 
-/// The indices of the modifiers and of the matcher.
+/// Returns the indices of the modifiers and of the matcher.
 fn find_modifiers_and_matcher(
     members: &[KnownMemberExpressionProperty],
     runner: Runner,
@@ -1219,17 +1269,18 @@ fn find_modifiers_and_matcher(
     use KnownMemberExpressionParentKind::{Call, Member};
     let mut modifiers = SmallVec::<[usize; 2]>::new();
     for (index, member) in members.iter().enumerate() {
-        // What is called is the matcher, and the end of the chain.
+        // The member that's called is the matcher, and it ends the chain.
         if member.parent_kind == Some(Member) && member.grandparent_kind == Some(Call) {
             return Ok((modifiers, index));
         }
         let is_known = match modifiers.first().and_then(|first| members.get(*first)) {
-            // In any order, and more than once. The last two are of `expect` itself: `expect.resolvesTo.stringContaining("a")`.
+            // Bun allows them in any order, and more than once. The last two are properties of `expect` itself:
+            // `expect.resolvesTo.stringContaining("a")`.
             _ if runner == Runner::Bun => {
                 member.is_any_of(&["not", "resolves", "rejects", "resolvesTo", "rejectsTo"])
             }
             None => member.is_any_of(&["not", "resolves", "rejects"]),
-            // After `resolves` and `rejects` there can be a `not`.
+            // A `not` can follow `resolves` or `rejects`.
             Some(first) => {
                 modifiers.len() == 1
                     && member.is_name_equal("not")
@@ -1258,7 +1309,8 @@ fn is_top_most_call_expr(node: Expr) -> bool {
     true
 }
 
-/// `VALID_JEST_FN_CALL_CHAINS`: whether a valid chain starts with `name` and the names of `members`, of which the first three count.
+/// `VALID_JEST_FN_CALL_CHAINS`: true if a valid chain starts with `name` and the names of `members`. Only the first
+/// three members count.
 fn is_valid_jest_call(name: &[u8], members: &[KnownMemberExpressionProperty]) -> bool {
     let chains: &[&str] = match name {
         b"afterAll" | b"afterEach" | b"beforeAll" | b"beforeEach" | b"bench" => &[""],
@@ -1284,14 +1336,14 @@ fn is_valid_jest_call(name: &[u8], members: &[KnownMemberExpressionProperty]) ->
     };
     members.is_empty()
         || chains.iter().any(|chain| {
-            // oxlint fills a chain up with empty names.
+            // oxlint pads a chain with empty names.
             let valid =
                 strings::split(chain.as_bytes(), b".").chain(std::iter::repeat(b"".as_slice()));
-            let written = members
+            let actual = members
                 .iter()
                 .filter_map(KnownMemberExpressionProperty::name)
                 .take(3);
-            written.zip(valid).all(|(written, valid)| written == valid)
+            actual.zip(valid).all(|(actual, valid)| actual == valid)
         })
 }
 
@@ -1302,7 +1354,7 @@ fn is_valid_vitest_call(name: &[u8], members: &[KnownMemberExpressionProperty]) 
             .iter()
             .filter_map(KnownMemberExpressionProperty::name)
     };
-    // `is_test`: there can be an `extend` at the start. For both, an `each` or a `for` at the end.
+    // With `is_test`, the chain can start with `extend`. Unless `is_bench`, it can end with `each` or `for`.
     let (valid, is_bench, is_test): (&[&str], bool, bool) = match name {
         b"afterAll" | b"afterEach" | b"beforeAll" | b"beforeEach" => {
             return modifiers().next().is_none();
@@ -1343,7 +1395,7 @@ fn is_valid_vitest_call(name: &[u8], members: &[KnownMemberExpressionProperty]) 
     modifiers().enumerate().all(|(i, modifier)| match modifier {
         b"each" | b"for" if !is_bench => i == last,
         b"extend" if is_test => i == 0,
-        // None twice.
+        // No modifier may appear twice.
         _ => valid
             .iter()
             .position(|it| it.as_bytes() == modifier)
@@ -1360,13 +1412,14 @@ fn is_valid_bun_call(name: &[u8], members: &[KnownMemberExpressionProperty]) -> 
     match name {
         b"afterAll" | b"afterEach" | b"beforeAll" | b"beforeEach" => members.is_empty(),
         b"describe" | b"it" | b"test" | b"xdescribe" | b"xit" | b"xtest" => {
-            members.iter().all(|it| it.is_any_of(&MODIFIERS_OF_BUN))
+            members.iter().all(|it| it.is_any_of(&BUN_MODIFIERS))
         }
         _ => false,
     }
 }
 
-/// What the arguments of `test(..)`, `describe(..)` and their like are. No rule of `bun:test` takes one by its place.
+/// The roles of the arguments of `test(..)`, `describe(..)` and the like. No `bun:test` rule picks an argument by
+/// position.
 #[derive(Copy, Clone)]
 pub(crate) struct Arguments<'a> {
     pub(crate) title: Option<Expr<'a>>,
@@ -1375,7 +1428,7 @@ pub(crate) struct Arguments<'a> {
     pub(crate) options: Option<Expr<'a>>,
 }
 
-/// Whether an argument is a function, as far as that can be told from what is written. `None`: a name, a call, ..
+/// True if an argument is a function, as far as its syntax shows. `None` for a name, a call and so on.
 fn is_function(argument: Expr) -> Option<bool> {
     match argument.tag() {
         ExprTag::Fn => Some(true),
@@ -1394,10 +1447,10 @@ fn is_function(argument: Expr) -> Option<bool> {
 }
 
 impl<'a> Arguments<'a> {
-    /// For Jest and Vitest the title is the first and the callback the second, as the rules of oxlint take them. `bun test` goes by
-    /// which is a function: `(title, callback, options)`, `(title, options, callback)`, `(callback, options)`, `(title, callback)`,
-    /// `(title)`, `(callback)`. Where only names are written, what is no function decides, then the usual order. A name alone
-    /// counts as the callback.
+    /// For Jest and Vitest the title is the first argument and the callback the second, as in oxlint's rules.
+    /// `bun test` goes by which argument is a function: `(title, callback, options)`, `(title, options, callback)`,
+    /// `(callback, options)`, `(title, callback)`, `(title)`, `(callback)`. Where an argument is just a name, the
+    /// arguments that clearly aren't functions decide, then the usual order. A single name counts as the callback.
     pub(crate) fn of(arguments: List<'a, Expr<'a>>, runner: Runner) -> Self {
         let [a, b, c] = [arguments.first(), arguments.get(1), arguments.get(2)];
         let is = |it: Option<Expr>| it.and_then(is_function);
@@ -1422,7 +1475,7 @@ impl<'a> Arguments<'a> {
         }
     }
 
-    /// Whether the callback can be a function.
+    /// True if the callback can be a function.
     pub(crate) fn can_have_callback(&self) -> bool {
         self.callback
             .is_some_and(|it| is_function(it) != Some(false))
@@ -1435,7 +1488,7 @@ pub(crate) fn is_type_of_jest_fn_call<'a>(
     kinds: &[JestFnKind],
 ) -> bool {
     (possible_jest_node.kind()).is_some_and(|it| kinds.contains(&it))
-        && match possible_jest_node.known.and_then(|it| it.without_members) {
+        && match possible_jest_node.cached.and_then(|it| it.without_members) {
             Some(is_call) => is_call,
             None => parse_jest_fn_call(file, possible_jest_node)
                 .is_some_and(|it| kinds.contains(&it.kind())),
@@ -1450,7 +1503,7 @@ pub(crate) fn parse_general_jest_fn_call<'a>(
     if matches!(kind, JestFnKind::Expect | JestFnKind::ExpectTypeOf) {
         return None;
     }
-    if let Some(is_call) = possible_jest_node.known.and_then(|it| it.without_members) {
+    if let Some(is_call) = possible_jest_node.cached.and_then(|it| it.without_members) {
         if !is_call {
             return None;
         }
@@ -1502,22 +1555,22 @@ pub(crate) fn parse_expect_and_typeof_vitest_fn_call<'a>(
 
 // ───────────────────────────── names ─────────────────────────────
 
-/// The names of a chain: `expect` and `toBe` of `expect(foo).toBe(bar)`, `Foo` and `bar` of `new Foo().bar`.
+/// Returns the names in a chain: `expect` and `toBe` for `expect(foo).toBe(bar)`, `Foo` and `bar` for `new Foo().bar`.
 pub(crate) fn get_node_name_vec(expr: Expr<'_>) -> SmallVec<[&[u8]; 4]> {
     let mut chain = SmallVec::new();
-    for_each_node_name_from_the_last(expr, |name| chain.push(name.bytes()));
+    for_each_node_name_reversed(expr, |name| chain.push(name.bytes()));
     chain.reverse();
     chain
 }
 
-/// The first of [`get_node_name_vec`].
+/// Returns the first name of [`get_node_name_vec`].
 pub(crate) fn get_first_node_name(expr: Expr<'_>) -> Option<Name<'_>> {
     let mut first = None;
-    for_each_node_name_from_the_last(expr, |name| first = Some(name));
+    for_each_node_name_reversed(expr, |name| first = Some(name));
     first
 }
 
-fn for_each_node_name_from_the_last<'a>(expr: Expr<'a>, mut visit: impl FnMut(Name<'a>)) {
+fn for_each_node_name_reversed<'a>(expr: Expr<'a>, mut visit: impl FnMut(Name<'a>)) {
     let mut at = Some(expr);
     while let Some(link) = at.filter(|it| !it.is_parenthesized() && !it.is_chain_root()) {
         at = match link.tag() {
@@ -1537,7 +1590,7 @@ fn for_each_node_name_from_the_last<'a>(expr: Expr<'a>, mut visit: impl FnMut(Na
     }
 }
 
-/// [`get_node_name_vec`] with dots.
+/// [`get_node_name_vec`] joined with dots.
 pub(crate) fn get_node_name(expr: Expr) -> Vec<u8> {
     get_node_name_vec(expr).join(&b"."[..])
 }
@@ -1546,10 +1599,10 @@ pub(crate) fn is_equality_matcher(matcher: &KnownMemberExpressionProperty) -> bo
     matcher.is_any_of(&["toBe", "toEqual", "toStrictEqual"])
 }
 
-// ───────────────────────────── what rules are run with ─────────────────────────────
+// ───────────────────────────── running rules ─────────────────────────────
 
-/// Calls `run` with every [`PossibleJestNode`] of the file, as oxlint calls `run_on_jest_node`. It does so in files for which
-/// [`is_test`] holds: a rule asks in `register`.
+/// Calls `run` with every [`PossibleJestNode`] of the file, the way oxlint calls `run_on_jest_node`. oxlint only does
+/// that in files where [`is_test`] is true, which a rule checks in `start`.
 pub(crate) fn run_on_jest_nodes<'a>(
     ctx: &Ctx<'a, '_>,
     run: &dyn Fn(PossibleJestNode<'a>, &Ctx<'a, '_>),
@@ -1559,7 +1612,7 @@ pub(crate) fn run_on_jest_nodes<'a>(
 
 /// For `bun:test`: calls to the functions in `names` that [`iter_possible_jest_call_node`] doesn't return. Those are the user's
 /// own wrappers around `test`. oxlint only compares `additionalTestBlockFunctions` with the names the runner declares.
-pub(crate) fn calls_of_own_test_blocks<'a>(
+pub(crate) fn custom_test_block_calls<'a>(
     ctx: &Ctx<'a, '_>,
     names: &[String],
 ) -> impl Iterator<Item = PossibleJestNode<'a>> {
@@ -1575,12 +1628,12 @@ pub(crate) fn calls_of_own_test_blocks<'a>(
         .map(move |it| PossibleJestNode::new(it, runner))
 }
 
-/// Whether [`iter_possible_jest_call_node`] can have anything, by what the file mentions. It computes nothing.
+/// Fast check: true if [`iter_possible_jest_call_node`] may return anything, judging by the names the file mentions.
 pub(crate) fn may_have_possible_jest_call_node(file: &File) -> bool {
     mentions_jest_method(file) || mentions_any(file, &SOURCE_BITS)
 }
 
-/// Whether the file mentions what a test is called with: `it`, `test`, `xit`, ..
+/// True if the file mentions a name that defines a test: `it`, `test`, `xit`, ..
 pub(crate) fn mentions_test(file: &File) -> bool {
     mentions_any(
         file,
@@ -1596,12 +1649,12 @@ pub(crate) fn mentions_describe(file: &File) -> bool {
     )
 }
 
-/// Whether the file mentions one of [`JEST_METHOD_NAMES`].
+/// True if the file mentions one of [`JEST_METHOD_NAMES`].
 pub(crate) fn mentions_jest_method(file: &File) -> bool {
     mentions_any(file, &JEST_METHOD_BITS)
 }
 
-/// `node.enclosing_function()`, asked of many nodes. A static block is not a function.
+/// A memo for calling `node.enclosing_function()` on many nodes. A static block isn't a function.
 #[derive(Default)]
 pub(crate) struct EnclosingFunctions<'a>(AncestorMemo<'a, Func<'a>>);
 
@@ -1615,29 +1668,28 @@ impl<'a> EnclosingFunctions<'a> {
     }
 }
 
-/// The function that encloses `func`.
 pub(crate) fn enclosing_function(func: Func<'_>) -> Option<Func<'_>> {
     std::iter::successors(func.enclosing(), |it| it.enclosing())
         .find(|it| it.kind() != FnKind::StaticBlock)
 }
 
-/// A node as oxc has it, for what goes up by `ctx.nodes().parent_node(..)` and looks at kinds. It has the levels that are not nodes
-/// here: parentheses, the `ChainExpression` around an optional chain, the body of a function. A function expression, an arrow
-/// function and a function declaration are the `Expr` or the `Stmt`.
+/// A node as oxc models it, for code that walks up with `ctx.nodes().parent_node(..)` and checks kinds. It has the
+/// levels that aren't nodes here: parentheses, the `ChainExpression` around an optional chain, and a function's body. A
+/// function expression, an arrow function and a function declaration are the `Expr` or the `Stmt`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum AstKind<'a> {
     Expr(Expr<'a>),
     /// Around this expression.
     ChainExpression(Expr<'a>),
-    /// Around this expression, after so many other pairs.
+    /// Around this expression and this many inner pairs of parentheses.
     ParenthesizedExpression(Expr<'a>, u32),
     /// `ExpressionStatement` is a `StmtKind::Expr`.
     Stmt(Stmt<'a>),
     FunctionBody(Func<'a>),
-    /// The `Function` of a member of a class.
+    /// The `Function` of a class member.
     Function(Func<'a>),
     Program,
-    /// `ObjectProperty`, `VariableDeclarator`, `SwitchCase`, and what no rule asks about.
+    /// `ObjectProperty`, `VariableDeclarator`, `SwitchCase`, and the kinds no rule checks for.
     Other(Node<'a>),
 }
 
@@ -1645,8 +1697,10 @@ impl<'a> AstKind<'a> {
     pub(crate) fn parent(self) -> AstKind<'a> {
         match self {
             AstKind::Expr(e) if e.is_chain_root() => AstKind::ChainExpression(e),
-            AstKind::Expr(e) | AstKind::ChainExpression(e) => AstKind::around(e, 0),
-            AstKind::ParenthesizedExpression(e, inner) => AstKind::around(e, inner + 1),
+            AstKind::Expr(e) | AstKind::ChainExpression(e) => AstKind::parent_outside_parens(e, 0),
+            AstKind::ParenthesizedExpression(e, inner) => {
+                AstKind::parent_outside_parens(e, inner + 1)
+            }
             AstKind::Stmt(statement) => AstKind::of(statement.parent(), true),
             AstKind::FunctionBody(func) => AstKind::of(Node::Func(func), false),
             AstKind::Function(func) => AstKind::of(func.owner(), false),
@@ -1655,15 +1709,16 @@ impl<'a> AstKind<'a> {
         }
     }
 
-    /// What is around `e` and `parens` pairs of parentheses.
-    fn around(e: Expr<'a>, parens: u32) -> AstKind<'a> {
+    /// Returns the node around `e` and `parens` pairs of parentheses.
+    fn parent_outside_parens(e: Expr<'a>, parens: u32) -> AstKind<'a> {
         match e.is_parenthesized() && (parens as usize) < e.parens().len() {
             true => AstKind::ParenthesizedExpression(e, parens),
             false => AstKind::of(e.parent(), false),
         }
     }
 
-    /// `is_from_statement`: a function is the parent of the statements of its body.
+    /// `is_from_statement` is true when coming from a statement, whose parent here is the function itself, not a body
+    /// node.
     fn of(node: Node<'a>, is_from_statement: bool) -> AstKind<'a> {
         match node {
             // All of `a, b, c` is one `SequenceExpression`.
@@ -1683,7 +1738,7 @@ impl<'a> AstKind<'a> {
         }
     }
 
-    /// Its parent, the parent of that, and so on. The last is the `Program`.
+    /// Returns its parent, that node's parent, and so on. The last is the `Program`.
     pub(crate) fn ancestors(self) -> impl Iterator<Item = AstKind<'a>> {
         std::iter::successors(Some(self.parent()), |it| {
             (*it != AstKind::Program).then(|| it.parent())
@@ -1697,7 +1752,7 @@ impl<'a> AstKind<'a> {
         }
     }
 
-    /// The expression that it is, or is around.
+    /// Returns the expression that it is, or that it wraps.
     pub(crate) fn innermost_expr(self) -> Option<Expr<'a>> {
         match self {
             AstKind::Expr(e)
@@ -1754,13 +1809,14 @@ impl<'a> AstKind<'a> {
     }
 }
 
-/// `node.scope_id()`, asked of many nodes: what makes the innermost scope of `oxc_semantic` around a node. `None` is the file.
+/// A memo for calling `node.scope_id()` on many nodes: returns the node that creates the innermost `oxc_semantic` scope
+/// around a node. `None` is the file.
 #[derive(Default)]
 pub(crate) struct Scopes<'a>(AncestorMemo<'a, Node<'a>>);
 
 impl<'a> Scopes<'a> {
     pub(crate) fn of(&mut self, node: Node<'a>) -> Option<Node<'a>> {
-        self.0.find(node, scope_made_by)
+        self.0.find(node, scope_owner)
     }
 }
 
@@ -1824,9 +1880,9 @@ pub(crate) fn convert_pattern(pattern: &str, runner: Runner) -> Option<Regex> {
     rust_regex(&converted, true)
 }
 
-// ───────────────────────────── the order of hash tables ─────────────────────────────
+// ───────────────────────────── hash table order ─────────────────────────────
 
-/// The order of oxlint's `collect_possible_jest_call_node`, which goes through `scoping.root_unresolved_references()`.
+/// The order of oxlint's `collect_possible_jest_call_node`, which iterates over `scoping.root_unresolved_references()`.
 pub(crate) struct OxlintOrder<'a> {
     names: UnresolvedOrder<'a>,
 }
@@ -1838,20 +1894,20 @@ impl<'a> OxlintOrder<'a> {
         }
     }
 
-    /// The one of `nodes` that oxlint has first in its list of possible nodes.
+    /// Returns the one of `nodes` that comes first in oxlint's list of possible nodes.
     pub(crate) fn first(
         file: &'a File<'a>,
         nodes: &[PossibleJestNode<'a>],
     ) -> Option<PossibleJestNode<'a>> {
-        // The table tells names apart.
+        // The table only orders different names, so it isn't needed if all the nodes are the same global.
         let global = |it: &PossibleJestNode<'a>| {
-            let known = it.known.filter(|it| it.import_index == u32::MAX)?;
-            Expr::from_raw(file, known.reference).as_ident()
+            let cached = it.cached.filter(|it| it.import_index == u32::MAX)?;
+            Expr::from_raw(file, cached.reference).as_ident()
         };
         let name = global(nodes.first()?);
         if name.is_some() && nodes.iter().all(|it| global(it) == name) {
             let key = |it: &PossibleJestNode<'a>| {
-                let reference = it.known.map(|it| Expr::from_raw(file, it.reference));
+                let reference = it.cached.map(|it| Expr::from_raw(file, it.reference));
                 (reference.map(|it| it.span().start), it.node.span().end)
             };
             return nodes.iter().copied().min_by_key(key);
@@ -1860,7 +1916,7 @@ impl<'a> OxlintOrder<'a> {
         nodes.iter().copied().min_by_key(|it| order.key(*it))
     }
 
-    /// [`File::calls_in_turns`]
+    /// Computes the argument for [`File::jest_calls_in_oxlint_order`].
     #[cold]
     fn turns(file: &'a File<'a>, runner: Runner) -> Box<[(Span, u32)]> {
         let order = OxlintOrder::new(file);
@@ -1878,21 +1934,21 @@ impl<'a> OxlintOrder<'a> {
         calls
     }
 
-    /// The place of `name` in the table.
+    /// Returns the position of `name` in the table.
     pub(crate) fn rank(&self, name: Name<'a>) -> u32 {
         self.names.rank(name)
     }
 
-    /// What is less for what oxlint has earlier in its list of possible nodes. First what is imported, in the order of the imports,
-    /// then the globals, in the order of the table. Of one name the references are in the order of the source, and of one chain the
-    /// calls from the inside.
+    /// Returns a sort key that orders nodes like oxlint's list of possible nodes: first the imports, in import order,
+    /// then the globals, in table order. References to the same name are in source order, and the calls of one chain go
+    /// from the innermost out.
     pub(crate) fn key(&self, possible_jest_node: PossibleJestNode<'a>) -> (bool, u32, u32, u32) {
         let (file, end) = (
             possible_jest_node.node.file(),
             possible_jest_node.node.span().end,
         );
         let reference = possible_jest_node
-            .known
+            .cached
             .map(|it| (Expr::from_raw(file, it.reference), it.import_index));
         match reference {
             Some((reference, u32::MAX)) => (

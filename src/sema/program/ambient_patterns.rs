@@ -232,9 +232,9 @@ impl<'s> Files<'s> {
             let mut same = with_same_pattern.iter();
             match same.find(|&&group| grouped[group].attributes == pattern.attributes) {
                 Some(&group) => {
-                    let target = grouped[group].symbol;
+                    let target = self.canonical(grouped[group].symbol);
                     // Scripts that declare the same name have been merged like any ambient module.
-                    if self.canonical(target) != self.canonical(pattern.symbol) {
+                    if target != self.canonical(pattern.symbol) {
                         grouped[group].symbol = self.merge_symbol(target, pattern.symbol, false);
                     }
                 }

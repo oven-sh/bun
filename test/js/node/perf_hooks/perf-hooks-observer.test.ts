@@ -36,8 +36,9 @@ const delivery = () => turns(2);
 const harness = typeof Bun !== "undefined" ? await import("harness") : undefined;
 // Runs `script` with the runtime that runs this file.
 const childEnv = harness?.bunEnv ?? process.env;
+const childExe = harness?.bunExe() ?? process.execPath;
 async function run(script: string) {
-  const child = spawn(process.execPath, ["-e", script], { env: childEnv, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(childExe, ["-e", script], { env: childEnv, stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
   child.stdout.setEncoding("utf8").on("data", chunk => (stdout += chunk));

@@ -8203,14 +8203,6 @@ pub(crate) fn print_with_writer_and_platform<
     })
 }
 
-/// Serializes ModuleInfo (its own string table, then its body) to an owned
-/// byte slice. Returns `None` on failure.
-pub fn serialize_module_info(
-    module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
-) -> Option<Box<[u8]>> {
-    module_info?.take_serialized()
-}
-
 /// Serializes only ModuleInfo's body, with its strings referenced through
 /// `table_ids` (from `ModuleInfoSlotTableBuilder::intern_all`) into a table of
 /// `table_count` strings that is stored once for many modules.

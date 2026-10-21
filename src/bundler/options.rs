@@ -1317,7 +1317,7 @@ pub struct BundleOptions<'a> {
     pub keep_names: bool,
     pub dead_code_elimination: bool,
     /// REPL mode: transforms code for interactive evaluation with vm.runInContext.
-    /// Hoists declarations as var for persistence, wraps code in IIFE, and
+    /// Hoists declarations for persistence, wraps code in IIFE, and
     /// captures the last expression in { value: expr } for result extraction.
     pub repl_mode: bool,
     pub css_chunking: bool,

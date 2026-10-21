@@ -1,10 +1,8 @@
 import { Glob } from "bun";
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, unprivilegedSpawnOptions } from "harness";
 import * as fs from "node:fs";
 import * as path from "node:path";
-
-const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
 // usage: keep-open <fd> <cmd> [args...]. Runs the command under a seccomp filter that makes
 // close(<fd>) fail with EINTR. The descriptor stays open. Exits 77 where it cannot do that.
@@ -56,6 +54,36 @@ int main(int argc, char **argv) {
   return 127;
 }
 `;
+
+let keepOpenDir: Disposable | undefined;
+afterAll(() => keepOpenDir?.[Symbol.dispose]());
+
+// The path of the helper. `undefined` where this machine cannot run it: not Linux, no C compiler,
+// no kernel headers, or a kernel that does not take the filter.
+async function buildKeepOpen(): Promise<string | undefined> {
+  const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+  if (!isLinux || !cc) return undefined;
+  const dir = tempDir("glob-scan-symlink-keep-open", { "keep-open.c": keepOpenSource });
+  keepOpenDir = dir;
+  const helper = path.join(String(dir), "keep-open");
+  await using compile = Bun.spawn({
+    cmd: [cc, "-o", helper, path.join(String(dir), "keep-open.c")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, compileErrors, compiled] = await Promise.all([compile.stdout.text(), compile.stderr.text(), compile.exited]);
+  if (compiled !== 0) {
+    if (/linux\/(seccomp|filter|audit)\.h|sys\/prctl\.h/.test(compileErrors)) return undefined;
+    throw new Error(`the compiler failed on keep-open.c:\n${compileErrors}`);
+  }
+  await using probe = Bun.spawn({ cmd: [helper, "63", "true"], env: bunEnv, stdout: "ignore", stderr: "pipe" });
+  const [probeErrors, probed] = await Promise.all([probe.stderr.text(), probe.exited]);
+  if (probed === 77) return undefined;
+  if (probed !== 0) throw new Error(`keep-open exited with code ${probed}:\n${probeErrors}`);
+  return helper;
+}
+const keepOpen = await buildKeepOpen();
 
 // The walker opens the directory that a followed symbolic link leads to. These tests are about a
 // link that does not open. POSIX only: Windows has no `ulimit` and no mode that forbids a
@@ -164,28 +192,12 @@ describe.skipIf(isWindows)("a followed link that does not open", () => {
   // `l` before that open. The helper installs a seccomp filter that fails `close` of the last
   // descriptor without closing it. The directory of `l` stays open there, and the open of `l/l`
   // gets EMFILE.
-  test.skipIf(!isLinux || !cc).each([
+  test.skipIf(!keepOpen).each([
     ["", {}],
     [", also with throwErrorOnBrokenSymlink", { throwErrorOnBrokenSymlink: true }],
   ])("no descriptor left: a link back to a followed directory does not fail the scan%s", async (_, options) => {
-    using dir = tempDir("glob-scan-symlink-cycle", {
-      "scan/plain.txt": "",
-      "keep-open.c": keepOpenSource,
-    });
+    using dir = tempDir("glob-scan-symlink-cycle", { "scan/plain.txt": "" });
     fs.symlinkSync(".", path.join(String(dir), "scan", "l"));
-    const helper = path.join(String(dir), "keep-open");
-    await using compile = Bun.spawn({
-      cmd: [cc!, "-o", helper, path.join(String(dir), "keep-open.c")],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [compileErrors, compiled] = await Promise.all([compile.stderr.text(), compile.exited]);
-    if (compiled !== 0) {
-      // No kernel headers on this machine.
-      if (/linux\/(seccomp|filter|audit)\.h|sys\/prctl\.h/.test(compileErrors)) return;
-      throw new Error(`the compiler failed on keep-open.c:\n${compileErrors}`);
-    }
 
     const last = 63;
     const fixture = /* js */ `
@@ -213,15 +225,23 @@ describe.skipIf(isWindows)("a followed link that does not open", () => {
         console.log(JSON.stringify({ free, keptOpen, exhausted }));
       `;
     await using proc = Bun.spawn({
-      cmd: ["/bin/sh", "-c", `ulimit -n ${last + 1} && exec "$@"`, "sh", helper, String(last), bunExe(), "-e", fixture],
+      cmd: [
+        "/bin/sh",
+        "-c",
+        `ulimit -n ${last + 1} && exec "$@"`,
+        "sh",
+        keepOpen!,
+        String(last),
+        bunExe(),
+        "-e",
+        fixture,
+      ],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // The kernel does not take the filter.
-    if (exitCode === 77) return;
 
     const list = ["l", "l/l", "l/plain.txt", "plain.txt"];
     expect(stderr).toBe("");

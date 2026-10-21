@@ -310,7 +310,7 @@ it.skipIf(!isLinux)("a writer finalized during spawnSync leaves its fd number us
       let listing = Bun.spawnSync({ ...list, get maxBuffer() { Bun.gc(true); globalThis.writers = null; } });
       let collectedDuringCall = 0;
       for (const ref of refs) if (ref.deref() === undefined) collectedDuringCall++;
-      // The fds are closed when the collected writers are finalized. Once they are, dup() hands their numbers out again.
+      // The fds are closed on the work pool. Once they are, dup() hands their numbers out again.
       const deadline = performance.now() + 3000;
       while (dupsOfStderr(listing) > 0 && performance.now() < deadline) listing = Bun.spawnSync(list);
       const stillOpen = dupsOfStderr(listing);

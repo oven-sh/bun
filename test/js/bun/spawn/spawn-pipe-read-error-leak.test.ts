@@ -99,8 +99,10 @@ async function once() {
 
   Bun.gc(true);
 
-  // The reader closes its fd when it handles the failed read. Poll a few
-  // times in case that is after the exit is reported.
+  // The fd close goes through bun.Async.Closer which schedules close() on
+  // a jsc.WorkPool thread; Bun.sleep(0) doesn't synchronize with that. Poll
+  // a few times so a briefly-starved close thread doesn't flag a false
+  // positive (same pattern as spawn-stdin-pipe-fd-leak.test.ts).
   let leaked = 0;
   for (let i = 0; i < 20; i++) {
     const final = snapshotFds();

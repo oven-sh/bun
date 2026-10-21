@@ -1,12 +1,19 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  fileDescriptorLeakChecker,
+  isASAN,
+  isDebug,
+  isLinux,
+  isPosix,
+  isWindows,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
-
-// For the file descriptor leak checker. On Windows the writer reports before
-// uv_fs_close completes. On POSIX the file is closed when end() returns.
-const closedOnWindows = () => (isWindows ? Bun.sleep(10) : undefined);
 
 describe("FileSink", () => {
   const fixturesInput = [
@@ -96,7 +103,9 @@ describe("FileSink", () => {
               sink.write(input[i]);
             }
             await sink.end();
-            await closedOnWindows();
+
+            // For the file descriptor leak checker.
+            await Bun.sleep(10);
           }
 
           if (!isPipe) {
@@ -123,7 +132,9 @@ describe("FileSink", () => {
               await sink.flush();
             }
             await sink.end();
-            await closedOnWindows();
+
+            // For the file descriptor leak checker.
+            await Bun.sleep(10);
           }
 
           if (!isPipe) {
@@ -148,7 +159,7 @@ describe("FileSink", () => {
               await sink.flush();
             }
             await sink.end();
-            await closedOnWindows();
+            await Bun.sleep(10); // For the file descriptor leak checker.
           }
 
           if (!isPipe) {
@@ -193,7 +204,7 @@ it("end does close when not backed by a file descriptor", async () => {
   const writer = file.writer();
   await writer.write(Buffer.from("1 Hello, world!"));
   await writer.end();
-  await closedOnWindows();
+  await Bun.sleep(10); // For the file descriptor leak checker.
 });
 
 it("write result is not cumulative", async () => {
@@ -665,52 +676,35 @@ it("Bun.file(fd).writer() write/end under GC pressure does not crash", async () 
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
 });
 
-// For the scripts below: the open descriptors that refer to `target` (a path or
-// a descriptor), found by device and inode.
-const fdsOfSource = `
-  function fdsOf(target) {
-    const { dev, ino } = typeof target === "number" ? fs.fstatSync(target) : fs.statSync(target);
-    const out = [];
-    for (let fd = 0; fd < 64; fd++) {
-      try {
-        const st = fs.fstatSync(fd);
-        if (st.dev === dev && st.ino === ino) out.push(fd);
-      } catch {}
-    }
-    return out;
-  }
-`;
-
-// Every POSIX FileSink and pipe reader closes through PollOrFd::close. It queued
-// the close(2) on the thread pool and told its owner "closed" right away. So
-// end() returned, and Bun.write() resolved, with the descriptor still open in
-// this process: a script that was written this way and then run got ETXTBSY,
-// and a child did not see the end of its stdin.
+// A POSIX FileSink on a file told its owner "closed" while the close(2) was
+// still in the queue of the thread pool. So end() returned, and Bun.write()
+// resolved, with the descriptor still open in this process: a script that was
+// written this way and then run got ETXTBSY.
 //
 // Each script parks both threads of the pool (UV_THREADPOOL_SIZE=2), so a close
 // that waits for one of them cannot run before the script looks for the
-// descriptor. A row is the number of descriptors that are still open where the
-// API reports done.
+// descriptor. A row has the number of descriptors that are still open where
+// the API reports done.
 //
 // Skipped on Windows: the writer there still reports before uv_fs_close completes.
-describe.skipIf(isWindows)("the descriptor is closed when its owner reports done", () => {
-  async function rowsWithParkedPool(
-    { fifos = [], files = {}, env = {} }: { fifos?: string[]; files?: Record<string, string>; env?: typeof bunEnv },
-    rows: string,
-  ) {
+describe.skipIf(isWindows)("a file is closed when its FileSink reports done", () => {
+  async function rowsWithParkedPool(files: Record<string, string>, rows: string) {
     using dir = tempDir("filesink-closed", files);
-    for (const fifo of ["parking.fifo", ...fifos]) mkfifo(join(String(dir), fifo), 0o666);
+    const parkingFifos = ["parking-1.fifo", "parking-2.fifo"];
+    for (const fifo of parkingFifos) mkfifo(join(String(dir), fifo), 0o666);
     const src = `
       const fs = require("node:fs");
       const { join } = require("node:path");
+      const { fileSinkInternals } = require("bun:internal-for-testing");
       const dir = ${JSON.stringify(String(dir))};
-      ${fdsOfSource}
-      function pipes() {
+      // The open descriptors that refer to a path, found by device and inode.
+      function fdsOf(path) {
+        const { dev, ino } = fs.statSync(path);
         const out = [];
         for (let fd = 0; fd < 64; fd++) {
           try {
             const st = fs.fstatSync(fd);
-            if (st.isFIFO() || st.isSocket()) out.push(fd);
+            if (st.dev === dev && st.ino === ino) out.push(fd);
           } catch {}
         }
         return out;
@@ -726,21 +720,34 @@ describe.skipIf(isWindows)("the descriptor is closed when its owner reports done
       const turn = () => new Promise(resolve => setImmediate(resolve));
       const script = "#!/bin/sh\\necho ran\\n";
 
-      // Each readFile() opens the FIFO and blocks a pool thread in read() until
-      // setFree() closes the write side. Holding the FIFO open read-write keeps
-      // the opens themselves from blocking; the loop waits for both to have
-      // opened.
-      const parkingFifo = join(dir, "parking.fifo");
-      const parkingWriter = fs.openSync(parkingFifo, "r+");
-      const parked = [1, 2].map(() => fs.promises.readFile(parkingFifo));
+      // Each readFile() opens a FIFO of its own and blocks a pool thread in
+      // read() until setFree() closes the write side of that FIFO. Holding the
+      // FIFO open read-write keeps the readFile()'s open from blocking; the
+      // loop waits for both to have opened. One FIFO for each thread: macOS
+      // reports the end to the first of two readers that wait on one FIFO and
+      // can leave the second one blocked.
+      const parking = ${JSON.stringify(parkingFifos)}.map(name => {
+        const path = join(dir, name);
+        const writer = fs.openSync(path, "r+");
+        return { path, writer, read: fs.promises.readFile(path) };
+      });
       const parkedBy = performance.now() + 5000;
-      while (fdsOf(parkingFifo).length < 3) {
-        if (performance.now() > parkedBy) throw new Error("the two readFile() calls never opened the FIFO");
+      while (parking.some(({ path }) => fdsOf(path).length < 2)) {
+        if (performance.now() > parkedBy) throw new Error("the two readFile() calls never opened their FIFOs");
         await Bun.sleep(1);
       }
       async function setFree() {
-        fs.closeSync(parkingWriter);
-        await Promise.all(parked);
+        for (const { writer } of parking) fs.closeSync(writer);
+        await Promise.all(parking.map(({ read }) => read));
+      }
+      // Nothing reports that a close job came back and its sink was released.
+      async function sinksReleased(baseline) {
+        const deadline = performance.now() + 5000;
+        while (fileSinkInternals.liveCount() > baseline && performance.now() < deadline) {
+          Bun.gc(true);
+          await Bun.sleep(1);
+        }
+        return fileSinkInternals.liveCount() - baseline;
       }
 
       const rows = {};
@@ -749,23 +756,24 @@ describe.skipIf(isWindows)("the descriptor is closed when its owner reports done
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", src],
-      env: { ...bunEnv, UV_THREADPOOL_SIZE: "2", ...env },
+      env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { rows: stdout && JSON.parse(stdout), stderr, exitCode };
   }
 
-  it("writer.end() and a stream that is read to its end", async () => {
+  // end() and close() report when they return: the file is closed by then.
+  it("writer.end() and writer.close()", async () => {
     const result = await rowsWithParkedPool(
-      { fifos: ["sink.fifo", "source.fifo"] },
+      {},
       `
       {
         const path = join(dir, "end");
         const writer = Bun.file(path).writer();
         writer.write(script);
         const result = writer.end();
-        rows["writer.end()"] = { returns: typeof result, open: fdsOf(path).length };
+        rows["writer.end()"] = { returns: typeof result, open: fdsOf(path).length, run: run(path) };
       }
       {
         const path = join(dir, "await-end");
@@ -773,6 +781,22 @@ describe.skipIf(isWindows)("the descriptor is closed when its owner reports done
         writer.write(script);
         await writer.end();
         rows["await writer.end()"] = { open: fdsOf(path).length, run: run(path) };
+      }
+      {
+        const path = join(dir, "close");
+        const writer = Bun.file(path).writer();
+        writer.write(script);
+        const result = writer.close();
+        rows["writer.close()"] = { returns: typeof result, open: fdsOf(path).length, run: run(path) };
+      }
+      {
+        // writer() does not truncate: the script is longer than what the file had.
+        const path = join(dir, "existing");
+        fs.writeFileSync(path, "old");
+        const writer = Bun.file(path).writer();
+        writer.write(script);
+        const result = writer.end();
+        rows["writer.end() over a file that exists"] = { returns: typeof result, open: fdsOf(path).length, run: run(path) };
       }
       {
         // The sink writes through its own duplicate of fd.
@@ -784,66 +808,32 @@ describe.skipIf(isWindows)("the descriptor is closed when its owner reports done
         rows["Bun.file(fd).writer()"] = { open: fdsOf(path).filter(other => other !== fd).length };
         fs.closeSync(fd);
       }
-      {
-        const path = join(dir, "sink.fifo");
-        const reader = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
-        const writer = Bun.file(path).writer();
-        writer.write("x");
-        await writer.end();
-        rows["FIFO"] = { open: fdsOf(path).filter(other => other !== reader).length };
-        fs.closeSync(reader);
-      }
-      {
-        const path = join(dir, "source");
-        fs.writeFileSync(path, script);
-        for await (const chunk of Bun.file(path).stream());
-        rows["Bun.file(path).stream()"] = { open: fdsOf(path).length };
-      }
-      {
-        const path = join(dir, "source.fifo");
-        const writer = fs.openSync(path, "r+");
-        const reader = Bun.file(path).stream().getReader();
-        fs.writeSync(writer, "x");
-        await reader.read();
-        await reader.cancel();
-        rows["FIFO reader.cancel()"] = { open: fdsOf(path).filter(other => other !== writer).length };
-        fs.closeSync(writer);
-      }
-      {
-        let code;
-        try {
-          for await (const chunk of Bun.file(dir).stream());
-        } catch (e) {
-          code = e.code;
-        }
-        rows["Bun.file(directory).stream()"] = { code, open: fdsOf(dir).length };
-      }
       await setFree();
       `,
     );
     expect(result).toEqual({
       rows: {
-        "writer.end()": { returns: "number", open: 0 },
+        "writer.end()": { returns: "number", open: 0, run: "ran" },
         "await writer.end()": { open: 0, run: "ran" },
+        "writer.close()": { returns: "undefined", open: 0, run: "ran" },
+        "writer.end() over a file that exists": { returns: "number", open: 0, run: "ran" },
         "Bun.file(fd).writer()": { open: 0 },
-        "FIFO": { open: 0 },
-        "Bun.file(path).stream()": { open: 0 },
-        "FIFO reader.cancel()": { open: 0 },
-        "Bun.file(directory).stream()": { code: "EISDIR", open: 0 },
       },
       stderr: "",
       exitCode: 0,
     });
   });
 
-  // Bun.write(path, stream) closes a new file where it ends. It closes a file
-  // whose contents it replaced on the pool, and the promise waits for that
-  // close. Each row looks for the descriptor in the first reaction of the
-  // promise, and the pool is set free before the promises are awaited.
-  it("Bun.write(path, stream) into a new file and over a file that exists", async () => {
+  // Bun.write(dest, stream) reports through its promise. The pool closes the
+  // file, and the promise waits for that close. Each row looks for the
+  // descriptor in the first reaction of the promise, and the pool is set free
+  // before the promises are awaited.
+  it("Bun.write(dest, stream) settles once the pool has closed the file", async () => {
     const result = await rowsWithParkedPool(
       {},
       `
+      const source = join(dir, "source");
+      fs.writeFileSync(source, script);
       const inline = () =>
         new Response(
           new ReadableStream({
@@ -870,61 +860,92 @@ describe.skipIf(isWindows)("the descriptor is closed when its owner reports done
         });
         return { stream, ended };
       }
+      const direct = pull => new ReadableStream({ type: "direct", pull });
       const writes = [];
       function write(row, body, ended) {
         const path = join(dir, String(writes.length));
         if (row.startsWith("replaced")) fs.writeFileSync(path, Buffer.alloc(4096, "old"));
-        const entry = { row, path, ended, settled: false };
-        entry.promise = Bun.write(path, body).then(bytes => {
+        // Bun.write(Bun.file(fd), stream) writes through its own duplicate of fd.
+        const fd = row.startsWith("Bun.file(fd)") ? fs.openSync(path, "w") : undefined;
+        const entry = { row, path, fd, ended, settled: false };
+        const report = result => {
           entry.settled = true;
-          rows[row] = { bytes, open: fdsOf(path).length };
-        });
+          rows[row] = { ...result, open: fdsOf(path).filter(other => other !== fd).length };
+        };
+        entry.promise = Bun.write(fd === undefined ? path : Bun.file(fd), body).then(
+          bytes => report({ bytes }),
+          error => report({ rejected: error.message }),
+        );
         writes.push(entry);
       }
       for (const file of ["new", "replaced"]) {
         write(file + " file, Response", inline());
         const { stream, ended } = later();
         write(file + " file, ReadableStream", stream, ended);
+        write(file + " file, Bun.file(source).stream()", Bun.file(source).stream());
       }
+      write("new file, direct ReadableStream", direct(controller => {
+        controller.write(script);
+        controller.end();
+      }));
+      write("Bun.file(fd), Response", inline());
+      write("new file, ReadableStream that fails", new ReadableStream({
+        pull(controller) {
+          controller.error(new Error("boom"));
+        },
+      }));
+      write("new file, direct ReadableStream whose pull throws", direct(() => {
+        throw new Error("boom");
+      }));
       // Every stream is at its end, and its sink with it, before the pool is set free.
       await Promise.all(writes.map(({ ended }) => ended));
       await turn();
       for (const entry of writes) entry.settledWithPoolParked = entry.settled;
       await setFree();
-      for (const { row, path, promise, settledWithPoolParked } of writes) {
+      for (const { row, path, fd, promise, settledWithPoolParked } of writes) {
         await promise;
-        Object.assign(rows[row], { settledWithPoolParked, run: run(path) });
+        if (fd !== undefined) fs.closeSync(fd);
+        rows[row].settledWithPoolParked = settledWithPoolParked;
+        if ("bytes" in rows[row]) rows[row].run = run(path);
       }
       `,
     );
+    const written = { bytes: 19, open: 0, settledWithPoolParked: false, run: "ran" };
+    const failed = { rejected: "boom", open: 0, settledWithPoolParked: false };
     expect(result).toEqual({
       rows: {
-        "new file, Response": { bytes: 19, open: 0, settledWithPoolParked: true, run: "ran" },
-        "new file, ReadableStream": { bytes: 19, open: 0, settledWithPoolParked: true, run: "ran" },
-        "replaced file, Response": { bytes: 19, open: 0, settledWithPoolParked: false, run: "ran" },
-        "replaced file, ReadableStream": { bytes: 19, open: 0, settledWithPoolParked: false, run: "ran" },
+        "new file, Response": written,
+        "new file, ReadableStream": written,
+        "new file, Bun.file(source).stream()": written,
+        "replaced file, Response": written,
+        "replaced file, ReadableStream": written,
+        "replaced file, Bun.file(source).stream()": written,
+        "new file, direct ReadableStream": written,
+        "Bun.file(fd), Response": written,
+        "new file, ReadableStream that fails": failed,
+        "new file, direct ReadableStream whose pull throws": failed,
       },
       stderr: "",
       exitCode: 0,
     });
   });
 
-  // The close of the worker's file is still in the queue of the pool when the worker is terminated.
+  // The close of the worker's file is still in the queue of the pool when the
+  // worker is terminated. The pool then closes it, or hands the job back and
+  // the worker's thread closes it: which of the two is a race.
   it("Bun.write(path, stream) in a worker that is terminated before the pool closes the file", async () => {
     const result = await rowsWithParkedPool(
       {
-        files: {
-          "worker.js": `
-            const body = new ReadableStream({
-              start(controller) {
-                controller.enqueue(new TextEncoder().encode("new"));
-                controller.close();
-              },
-            });
-            Bun.write(process.env.DESTINATION, body);
-            postMessage("ended");
-          `,
-        },
+        "worker.js": `
+          const body = new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("new"));
+              controller.close();
+            },
+          });
+          Bun.write(process.env.DESTINATION, body);
+          postMessage("ended");
+        `,
       },
       `
       const path = join(dir, "destination");
@@ -946,92 +967,109 @@ describe.skipIf(isWindows)("the descriptor is closed when its owner reports done
     });
   });
 
-  // A close job whose Bun.ModuleGraph was disposed comes back without its completion.
-  it("Bun.write(path, stream) in a Bun.ModuleGraph that is disposed before the pool closes the file", async () => {
+  // The completion of a close job can come back after its worker began to tear
+  // down. BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE (builds with debug assertions)
+  // holds it until then, and names the place where its ticket was taken.
+  it.skipIf(!isDebug && !isASAN)(
+    "Bun.write(path, stream) in a worker that exits before the close job comes back",
+    async () => {
+      using dir = tempDir("filesink-late-close", {});
+      const path = join(String(dir), "out.txt");
+      const worker = `
+        const body = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("new"));
+            controller.close();
+          },
+        });
+        Bun.write(${JSON.stringify(path)}, body);
+        setImmediate(() => setImmediate(() => process.exit(0)));
+      `;
+      const src = `
+        const { Worker } = require("node:worker_threads");
+        const worker = new Worker(${JSON.stringify(worker)}, { eval: true });
+        worker.on("exit", code => {
+          const contents = require("node:fs").readFileSync(${JSON.stringify(path)}, "utf8");
+          console.log(JSON.stringify({ code, contents }));
+        });
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: { ...bunEnv, BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE: "1" },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const late = stderr.split("\n").filter(line => line.startsWith("[vm] late completion from "));
+      expect({ stdout: stdout.trim(), late: late.map(line => line.includes("FileSink.rs")), exitCode }).toEqual({
+        stdout: JSON.stringify({ code: 0, contents: "new" }),
+        late: [true],
+        exitCode: 0,
+      });
+    },
+  );
+
+  // The close job belongs to the script that called Bun.write(), whichever
+  // script is running when the stream ends. A job of a Bun.ModuleGraph that was
+  // disposed comes back without its completion: its promise stays pending.
+  it("Bun.write(path, stream) and a Bun.ModuleGraph that is disposed before the pool closes the file", async () => {
     const result = await rowsWithParkedPool(
       {},
       `
-      const { fileSinkInternals } = require("bun:internal-for-testing");
-      const source = join(dir, "source");
-      const path = join(dir, "destination");
-      fs.writeFileSync(source, "new");
-      fs.writeFileSync(path, Buffer.alloc(4096, "old"));
-      const before = fileSinkInternals.liveCount();
-      const graph = new Bun.ModuleGraph();
-      graph.run(() => void Bun.write(path, Bun.file(source).stream()));
-      graph.dispose();
-      rows.disposed = { open: fdsOf(path).length };
-      await setFree();
-      // Nothing reports that the job came back and the sink was released.
-      const deadline = performance.now() + 2000;
-      while (fileSinkInternals.liveCount() > before && performance.now() < deadline) {
-        Bun.gc(true);
-        await Bun.sleep(1);
+      // finish() ends the stream in the script that calls it.
+      function open() {
+        const { promise: pulled, resolve } = Promise.withResolvers();
+        let controller;
+        const stream = new ReadableStream({
+          type: "direct",
+          pull(c) {
+            controller = c;
+            c.write("new");
+            return pulled;
+          },
+        });
+        return { stream, finish: () => (controller.end(), resolve()) };
       }
-      rows.released = {
-        sinks: fileSinkInternals.liveCount() - before,
-        open: fdsOf(path).length,
-        contents: fs.readFileSync(path, "utf8"),
-      };
+      const baseline = fileSinkInternals.liveCount();
+      const writes = {};
+      async function write(row, { writer, finisher }) {
+        const path = join(dir, row);
+        fs.writeFileSync(path, Buffer.alloc(4096, "old"));
+        const graph = new Bun.ModuleGraph();
+        const inGraph = fn => void graph.run(fn);
+        const inHost = fn => void fn();
+        const { stream, finish } = open();
+        let promise;
+        (writer === "graph" ? inGraph : inHost)(() => void (promise = Bun.write(path, stream)));
+        (finisher === "graph" ? inGraph : inHost)(finish);
+        // The pump of the stream runs to its end before the graph is disposed.
+        await turn();
+        graph.dispose();
+        writes[row] = { path, promise, openWithPoolParked: fdsOf(path).length };
+      }
+      await write("the graph writes and ends the stream", { writer: "graph", finisher: "graph" });
+      await write("the graph writes, the host ends the stream", { writer: "graph", finisher: "host" });
+      await write("the host writes, the graph ends the stream", { writer: "host", finisher: "graph" });
+      await setFree();
+      const sinks = await sinksReleased(baseline);
+      for (const row in writes) {
+        const { path, promise, openWithPoolParked } = writes[row];
+        rows[row] = {
+          openWithPoolParked,
+          open: fdsOf(path).length,
+          contents: fs.readFileSync(path, "utf8"),
+          promise: Bun.peek.status(promise),
+        };
+      }
+      rows.sinks = sinks;
       `,
     );
-    expect(result).toEqual({
-      rows: { disposed: { open: 1 }, released: { sinks: 0, open: 0, contents: "new" } },
-      stderr: "",
-      exitCode: 0,
-    });
-  });
-
-  it("the pipes of a child process", async () => {
-    const result = await rowsWithParkedPool(
-      { env: { BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" } },
-      `
-      // In each row the child's pipes are the only pipes or sockets that it opens.
-      const exited = {};
-      {
-        const before = pipes();
-        const child = Bun.spawn({ cmd: ["cat"], stdin: "pipe", stdout: "ignore", stderr: "inherit" });
-        exited["proc.stdin"] = child.exited;
-        child.stdin.write("x");
-        await child.stdin.end();
-        rows["proc.stdin"] = { open: pipes().filter(fd => !before.includes(fd)).length };
-      }
-      {
-        const before = pipes();
-        const child = require("node:child_process").spawn("cat", [], { stdio: ["pipe", "ignore", "inherit"] });
-        exited["child.stdin 'close'"] = new Promise(resolve => child.on("exit", resolve));
-        const closed = new Promise(resolve => child.stdin.on("close", resolve));
-        child.stdin.end("x");
-        await closed;
-        rows["child.stdin 'close'"] = { open: pipes().filter(fd => !before.includes(fd)).length };
-      }
-      {
-        // Bytes for stdin go through a pipe that Bun writes and then closes
-        // (BUN_FEATURE_FLAG_DISABLE_MEMFD: not through a memfd). That takes a
-        // few turns of the loop, and nothing reports it.
-        const before = pipes();
-        const child = Bun.spawn({ cmd: ["cat"], stdin: new TextEncoder().encode("x"), stdout: "ignore", stderr: "inherit" });
-        exited["Bun.spawn({ stdin: bytes })"] = child.exited;
-        for (let turns = 0; turns < 20 && pipes().some(fd => !before.includes(fd)); turns++) await turn();
-        rows["Bun.spawn({ stdin: bytes })"] = { open: pipes().filter(fd => !before.includes(fd)).length };
-      }
-      {
-        const before = pipes();
-        const child = Bun.spawn({ cmd: ["sh", "-c", "echo out; echo err >&2"], stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-        const [out, err] = await Promise.all([child.stdout.text(), child.stderr.text()]);
-        await child.exited;
-        rows["proc.stdout and proc.stderr"] = { out, err, open: pipes().filter(fd => !before.includes(fd)).length };
-      }
-      await setFree();
-      for (const row in exited) rows[row].exitCode = await exited[row];
-      `,
-    );
+    const closed = { openWithPoolParked: 1, open: 0, contents: "new" };
     expect(result).toEqual({
       rows: {
-        "proc.stdin": { open: 0, exitCode: 0 },
-        "child.stdin 'close'": { open: 0, exitCode: 0 },
-        "Bun.spawn({ stdin: bytes })": { open: 0, exitCode: 0 },
-        "proc.stdout and proc.stderr": { out: "out\n", err: "err\n", open: 0 },
+        "the graph writes and ends the stream": { ...closed, promise: "pending" },
+        "the graph writes, the host ends the stream": { ...closed, promise: "pending" },
+        "the host writes, the graph ends the stream": { ...closed, promise: "fulfilled" },
+        sinks: 0,
       },
       stderr: "",
       exitCode: 0,
@@ -1041,10 +1079,10 @@ describe.skipIf(isWindows)("the descriptor is closed when its owner reports done
 
 // Bun.file(fd).writer() dups the fd and registers the dup with the event loop.
 // When that registration fails, FileSink::setup closed the dup, but the writer
-// still held it in its poll, so tearing the sink down closed the same fd number
-// a second time. That close gets EBADF, which Fd::close asserts on in debug and
-// ASAN builds. A second close that came later would close the fd that has the
-// number by then (here: the /dev/null fd opened right after).
+// still held it in its poll, so tearing the sink down queued a second close of
+// the same fd number on the thread pool. By the time it ran the number usually
+// belonged to someone else (here: the /dev/null fd opened right after), and in
+// debug builds it tripped the EBADF assertion in Closer.
 //
 // Linux-only: the registration failure is provoked through epoll keying its
 // entries on (open file, fd number), so a registration whose fd number is
@@ -1052,11 +1090,38 @@ describe.skipIf(isWindows)("the descriptor is closed when its owner reports done
 // lands on that number fails with EEXIST. kqueue drops the registration with
 // the fd, so this cannot be set up on macOS.
 it.skipIf(!isLinux)("Bun.file(fd).writer() whose registration fails closes the dup exactly once", async () => {
+  const fifoPath = join(tmpdirSync(), "parking.fifo");
+  mkfifo(fifoPath, 0o666);
   const src = `
     const { createSocketPair } = require("bun:internal-for-testing");
     const fs = require("node:fs");
+    const fifoPath = ${JSON.stringify(fifoPath)};
     const [sock] = createSocketPair();
-    ${fdsOfSource}
+
+    function fdsOf(target) {
+      const { dev, ino } = typeof target === "number" ? fs.fstatSync(target) : fs.statSync(target);
+      const out = [];
+      for (let fd = 0; fd < 64; fd++) {
+        try {
+          const st = fs.fstatSync(fd);
+          if (st.dev === dev && st.ino === ino) out.push(fd);
+        } catch {}
+      }
+      return out;
+    }
+
+    // Park both thread-pool threads (UV_THREADPOOL_SIZE=2): each readFile opens
+    // the FIFO and blocks in read() until the write side is closed below, so a
+    // close queued on the pool by the failing writer() cannot run before we
+    // have reused its fd number. Holding the FIFO open read-write keeps the
+    // opens themselves from blocking; the loop waits for both to have opened.
+    const fifoWriter = fs.openSync(fifoPath, "r+");
+    const parked = [1, 2].map(() => fs.promises.readFile(fifoPath));
+    const parkedBy = performance.now() + 2000;
+    while (fdsOf(fifoPath).length < 3) {
+      if (performance.now() > parkedBy) throw new Error("the two readFile() calls never opened the FIFO");
+      await Bun.sleep(1);
+    }
 
     const before = fdsOf(sock);
     const first = Bun.file(sock).writer();
@@ -1076,7 +1141,12 @@ it.skipIf(!isLinux)("Bun.file(fd).writer() whose registration fails closes the d
     }
     // The failed writer() closed n; this unrelated fd gets the number back.
     const reused = fs.openSync("/dev/null", "r");
-    Bun.gc(true);
+
+    fs.closeSync(fifoWriter);
+    const parkedBytes = (await Promise.all(parked)).map(buf => buf.length);
+    // One more round trip through the now-free pool: whatever the failed
+    // writer() queued there has run by the time this resolves.
+    await fs.promises.stat("/dev/null");
 
     let reusedStillOpen = true;
     try {
@@ -1084,18 +1154,18 @@ it.skipIf(!isLinux)("Bun.file(fd).writer() whose registration fails closes the d
     } catch {
       reusedStillOpen = false;
     }
-    console.log(JSON.stringify({ code, reusedIsN: reused === n, reusedStillOpen }));
+    console.log(JSON.stringify({ code, reusedIsN: reused === n, parkedBytes, reusedStillOpen }));
     // first must outlive the check: ending or collecting it closes n as well.
     first.unref();
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", src],
-    env: bunEnv,
+    env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: JSON.stringify({ code: "EEXIST", reusedIsN: true, reusedStillOpen: true }),
+    stdout: JSON.stringify({ code: "EEXIST", reusedIsN: true, parkedBytes: [0, 0], reusedStillOpen: true }),
     stderr: "",
     exitCode: 0,
   });
@@ -1880,6 +1950,27 @@ describe.concurrent("start() on an open writer", () => {
       console.log(JSON.stringify({ ...out, closed: await closed() }));
     `);
     expect(result).toEqual({ target: "short", initial: "", closed: "all" });
+  });
+
+  // A restart onto a polled fd does not close the old handle of the writer: the file stayed open for good.
+  it.skipIf(!isLinux)("start({ path }) moves a writer from a regular file to a FIFO and closes the file", async () => {
+    const result = await run(`
+      const initial = join(dir, "initial.txt");
+      const fifo = join(dir, "target.fifo");
+      Bun.spawnSync(["mkfifo", fifo]);
+      const reader = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      const writer = Bun.file(initial).writer();
+      writer.start({ path: fifo });
+      // The reader and the writer's end of the FIFO.
+      const openAfterStart = openFiles();
+      writer.write("short");
+      await writer.end();
+      const target = Buffer.alloc(16);
+      const out = { openAfterStart, target: target.toString("utf8", 0, fs.readSync(reader, target)) };
+      fs.closeSync(reader);
+      console.log(JSON.stringify({ ...out, closed: await closed() }));
+    `);
+    expect(result).toEqual({ openAfterStart: 2, target: "short", closed: "all" });
   });
 
   // /dev/ptmx is a TTY that opens by path with no terminal attached, and `closed()` sees it on Linux.

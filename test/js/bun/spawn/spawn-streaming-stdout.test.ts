@@ -40,9 +40,9 @@ test("spawn can read from stdout multiple chunks", async () => {
     await Promise.all(promises);
     i += concurrency;
     if (maxFD === -1) {
-      // On Windows pipe handles are closed asynchronously after their streams
-      // finish, so the first batch's closes may still be in flight here; poll
-      // until the count settles so the baseline isn't inflated.
+      // Pipe fds are closed on a background thread after their streams finish,
+      // so the first batch's closes may still be in flight here; poll until the
+      // count settles so the baseline isn't inflated.
       maxFD = getMaxFD();
       for (let j = 0; j < 100; j++) {
         await Bun.sleep(10);

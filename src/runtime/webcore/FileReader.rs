@@ -2,6 +2,8 @@ use core::cell::{Cell, UnsafeCell};
 use core::mem;
 
 use bun_collections::VecExt;
+#[cfg(unix)]
+use bun_io as aio;
 #[cfg(not(windows))]
 use bun_io::FileType;
 use bun_io::{BufferedReader, Chunk, ReadState};
@@ -203,7 +205,7 @@ impl Lazy {
 
             let mode = stat.st_mode as _;
             if sys::S::ISDIR(mode) {
-                fd.close();
+                aio::Closer::close(fd, ());
                 return Err(sys::Error::from_code(sys::Errno::EISDIR, sys::Tag::fstat));
             }
 

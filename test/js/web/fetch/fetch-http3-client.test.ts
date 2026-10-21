@@ -1,7 +1,7 @@
 import { gunzipSync, gzipSync, type Server } from "bun";
 import { fetchH3Internals } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isIPv6, isLinux, tempDir, tls } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { join } from "node:path";
 import { listen } from "node:quic";
@@ -1219,6 +1219,799 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("proxied body=from-origin\ndirect body=from-origin sessions=0\n");
     expect(exitCode).toBe(0);
+  });
+
+  // RFC 7838 section 2.4: when the connection to the alternative fails, the
+  // client may fall back to the origin. A case is an origin (HTTPS over TCP),
+  // the UDP peer the origin advertises as its h3 alternative, and the client
+  // under test. `dials` is the number of QUIC connections the client opened to
+  // that peer, counted by the client's own connection IDs.
+  describe("when the QUIC connection to the alternative cannot be established", () => {
+    const fixture = /* ts */ `
+      import { createCipheriv, createHmac } from "node:crypto";
+      import { writeFileSync } from "node:fs";
+      const tls = ${JSON.stringify(tls)};
+
+      // A Version Negotiation packet (RFC 8999 section 6) that offers one
+      // version nobody speaks: the handshake of that connection fails at once.
+      function versionNegotiation(m) {
+        const dcid = m.subarray(6, 6 + m[5]);
+        const scid = m.subarray(7 + m[5], 7 + m[5] + m[6 + m[5]]);
+        return Buffer.concat([
+          Buffer.from([0x80, 0, 0, 0, 0, scid.length]),
+          scid,
+          Buffer.from([dcid.length]),
+          dcid,
+          Buffer.from([0x0a, 0x0a, 0x0a, 0x0a]),
+        ]);
+      }
+
+      // HKDF-Expand-Label of TLS 1.3 (RFC 8446 section 7.1), for one hash block at most.
+      const expand = (secret, label, length) =>
+        createHmac("sha256", secret)
+          .update(Buffer.concat([Buffer.from([0, length, 6 + label.length]), Buffer.from("tls13 " + label), Buffer.from([0, 1])]))
+          .digest()
+          .subarray(0, length);
+
+      // The answer of a server that refuses the connection: an Initial packet
+      // with CONNECTION_CLOSE (RFC 9000 section 19.19), under the Initial keys
+      // of the connection (RFC 9001 section 5).
+      function connectionClose(m) {
+        const dcid = m.subarray(6, 6 + m[5]);
+        const scid = m.subarray(7 + m[5], 7 + m[5] + m[6 + m[5]]);
+        const salt = Buffer.from("38762cf7f55934b34d179ae6a4c80cadccbb7f0a", "hex");
+        const secret = expand(createHmac("sha256", salt).update(dcid).digest(), "server in", 32);
+        // CONNECTION_CLOSE: error CONNECTION_REFUSED, no frame type, no reason. Then PADDING.
+        const frames = Buffer.concat([Buffer.from([0x1c, 0x02, 0x00, 0x00]), Buffer.alloc(20)]);
+        // The last three bytes: a length of two bytes, and packet number 0 in one.
+        const header = Buffer.concat([
+          Buffer.from([0xc0, 0, 0, 0, 1, scid.length]),
+          scid,
+          Buffer.from([dcid.length]),
+          dcid,
+          Buffer.from([0x00, 0x40, 1 + frames.length + 16, 0x00]),
+        ]);
+        const aead = createCipheriv("aes-128-gcm", expand(secret, "quic key", 16), expand(secret, "quic iv", 12));
+        aead.setAAD(header);
+        const sealed = Buffer.concat([aead.update(frames), aead.final(), aead.getAuthTag()]);
+        const mask = createCipheriv("aes-128-ecb", expand(secret, "quic hp", 16), null).update(sealed.subarray(3, 19));
+        header[0] ^= mask[0] & 0x0f;
+        header[header.length - 1] ^= mask[1];
+        return Buffer.concat([header, sealed]);
+      }
+
+      // What the UDP peer does with each connection it has not seen before.
+      // The last entry stays.
+      //   "fail":   it answers with Version Negotiation.
+      //   "refuse": it answers with CONNECTION_CLOSE, as a server does that
+      //             takes no connection now. That says nothing about the next one.
+      //   "hold":   it does not answer.
+      //   "live":   it passes the packets on to an HTTP/3 listener.
+      const plans = {
+        healthy: ["live"],
+        written: ["live"],
+        "written-refused": ["live"],
+        "strict-fails": ["live"],
+        resolver: ["live"],
+        deadline: ["fail", "live"],
+        "refused-once": ["refuse", "live"],
+        "refused-twice": ["refuse"],
+        "refused-twice-strict": ["refuse"],
+        "session-close": ["hold", "live"],
+        "session-close-redial": ["refuse", "hold", "live"],
+        "redial-unroutable": ["refuse"],
+        "redirect-to-refusing": ["refuse", "live"],
+        "refusing-site": ["refuse", "live"],
+        "live-site": ["live"],
+      };
+
+      // "refusing-site" and "live-site" are a second origin for another case:
+      // \`use\` gets its URL and its fetch, and the origin lives until \`use\` settles.
+      async function run(scenario, host, urlHost, use) {
+        const literal = host.includes(":") ? "[" + host + "]" : host;
+        // The shim cases name the origin by a hostname.
+        urlHost ??= literal;
+
+        let plan = [...(plans[scenario] ?? ["fail"])];
+        // The peer keeps the packets of a connection that it does not serve, and does not answer yet.
+        let holding = ["abort", "redial-unroutable"].includes(scenario);
+        let liveGone = false;
+        // Where a 302 of this case leads.
+        let elsewhere = "/landed";
+        const treatment = new Map();
+        const held = [];
+        const initial = Promise.withResolvers();
+        const written = Promise.withResolvers();
+        let client;
+        const listen = () =>
+          Bun.serve({
+            port: 0,
+            hostname: host,
+            tls,
+            http3: true,
+            http1: false,
+            async fetch(req) {
+              const path = new URL(req.url).pathname;
+              if (path === "/written") {
+                // The whole request is here, so the client wrote it. It gets no response.
+                await req.text();
+                written.resolve();
+                await new Promise(() => {});
+              }
+              if (path === "/redirect") return new Response(null, { status: 302, headers: { location: elsewhere } });
+              return new Response("alternative");
+            },
+          });
+        let live = plan.includes("live") || scenario === "moved" ? listen() : undefined;
+        const upstream = await Bun.udpSocket({
+          hostname: host,
+          socket: {
+            data(socket, m) {
+              // No client yet: the datagram is for a socket that had this port before.
+              if (client) alt.send(m, client.port, client.address);
+            },
+          },
+        });
+        const alt = await Bun.udpSocket({
+          hostname: host,
+          socket: {
+            data(socket, m, port, address) {
+              let to = "live";
+              // A long header names the client's connection ID.
+              if (m[0] & 0x80) {
+                const id = m.subarray(7 + m[5], 7 + m[5] + m[6 + m[5]]).toString("hex");
+                if (!treatment.has(id)) treatment.set(id, plan.length > 1 ? plan.shift() : plan[0]);
+                to = treatment.get(id);
+              }
+              if (to === "hold") {
+                initial.resolve();
+                return;
+              }
+              if (to !== "live") {
+                if (holding) {
+                  held.push({ m: Buffer.from(m), port, address, to });
+                  initial.resolve();
+                } else {
+                  socket.send(to === "fail" ? versionNegotiation(m) : connectionClose(m), port, address);
+                }
+                return;
+              }
+              if (!live || liveGone) return;
+              client = { port, address };
+              upstream.send(m, live.port, host);
+            },
+          },
+        });
+        // A second UDP peer that fails every connection. See drained().
+        const barrier = await Bun.udpSocket({
+          hostname: host,
+          socket: {
+            data(socket, m, port, address) {
+              if (m[0] & 0x80) socket.send(versionNegotiation(m), port, address);
+            },
+          },
+        });
+        // The shim refuses a UDP connect() to the port in this file.
+        if (scenario === "unroutable") writeFileSync(process.env.H3_REFUSE_UDP_PORT_FILE, String(alt.port));
+
+        // The port the origin names in Alt-Svc, on every response.
+        let advertised = alt.port;
+        const ma = scenario === "deadline" ? 100 : 3600;
+        const hits = [];
+        const origin = Bun.serve({
+          port: 0,
+          hostname: host,
+          tls,
+          async fetch(req) {
+            const path = new URL(req.url).pathname;
+            const body = await req.text();
+            hits.push(req.method + " " + path + (body && " got " + body));
+            const headers = { "alt-svc": 'h3=":' + advertised + '"; ma=' + ma };
+            if (path === "/redirect") {
+              return new Response(null, { status: 302, headers: { ...headers, location: elsewhere } });
+            }
+            return new Response("origin", { headers });
+          },
+        });
+        const url = "https://" + urlHost + ":" + origin.port;
+
+        const settle = promise =>
+          promise.then(
+            async r => r.status + " " + (await r.text()),
+            e => (typeof e.code === "string" ? e.code : e.name),
+          );
+        const lax = { tls: { rejectUnauthorized: false } };
+        const send = (path, init) => settle(fetch(url + path, { ...lax, ...init }));
+        // A request that names HTTP/3 itself, to the UDP peer.
+        const pinned = name => settle(fetch("https://" + name + ":" + alt.port + "/", { protocol: "http3", ...lax }));
+        // When this settles, the UDP peer has handled every packet the client
+        // sent before, and the client every answer. This request names HTTP/3
+        // itself and goes to the second peer: its packets are behind the others
+        // on the same sockets, and it takes several exchanges to fail.
+        const drained = () =>
+          settle(fetch("https://" + literal + ":" + barrier.port + "/", { protocol: "http3", ...lax }));
+        // The peer answers the packets that it kept, and keeps none from here.
+        const release = () => {
+          holding = false;
+          for (const { m, port, address, to } of held) {
+            alt.send(to === "fail" ? versionNegotiation(m) : connectionClose(m), port, address);
+          }
+        };
+
+        const out = {};
+        switch (scenario) {
+          case "sequential":
+          case "unroutable":
+          case "healthy":
+          case "refused-once":
+          case "refused-twice":
+            out.fetches = [await send("/0"), await send("/1"), await send("/2")];
+            break;
+          case "concurrent":
+            out.fetches = [await send("/0"), ...(await Promise.all([send("/a"), send("/b"), send("/c")]))];
+            hits.sort();
+            break;
+          case "stream-body":
+            out.fetches = [
+              await send("/0"),
+              await send("/upload", {
+                method: "POST",
+                body: new ReadableStream({
+                  start(controller) {
+                    controller.enqueue(new TextEncoder().encode("streamed"));
+                    controller.close();
+                  },
+                }),
+              }),
+            ];
+            break;
+          case "redirect":
+            out.fetches = [await send("/redirect")];
+            break;
+          case "pinned":
+            out.fetches = [await pinned(literal)];
+            break;
+          case "pinned-resolver":
+            // The shim fails the next lookup of the name.
+            writeFileSync(process.env.H3_FAIL_LOOKUP_FILE, "1");
+            out.fetches = [await pinned(urlHost)];
+            break;
+          case "resolver":
+            out.fetches = [await send("/0")];
+            writeFileSync(process.env.H3_FAIL_LOOKUP_FILE, "1");
+            out.fetches.push(await send("/1"), await send("/2"));
+            break;
+          case "strict-fails":
+            out.fetches = [
+              await send("/0"),
+              // The certificate of the test listeners is self-signed.
+              await send("/strict", { tls: { rejectUnauthorized: true } }),
+              await send("/2"),
+            ];
+            break;
+          case "lax-fails":
+            out.fetches = [await send("/0"), await send("/1"), await send("/strict", { tls: { rejectUnauthorized: true } })];
+            break;
+          case "refused-twice-strict":
+            out.fetches = [await send("/0"), await send("/strict", { tls: { rejectUnauthorized: true } }), await send("/2")];
+            break;
+          case "abort": {
+            const learned = await send("/0");
+            const controller = new AbortController();
+            const queued = send("/aborted", { signal: controller.signal });
+            // The request is on a connection that got no answer yet.
+            await Promise.race([initial.promise, queued]);
+            controller.abort();
+            const aborted = await queued;
+            release();
+            await drained();
+            out.fetches = [learned, aborted, await send("/next")];
+            break;
+          }
+          case "session-close":
+          case "session-close-redial": {
+            const session = new Bun.FetchSession();
+            const learned = await send("/0");
+            const controller = new AbortController();
+            const queued = send("/aborted", { session, signal: controller.signal });
+            // The request is on a connection that gets no answer.
+            await Promise.race([initial.promise, queued]);
+            controller.abort();
+            const aborted = await queued;
+            // The session closes its idle connection, which is still in its handshake.
+            session.close();
+            await drained();
+            out.fetches = [learned, aborted, await send("/next")];
+            break;
+          }
+          case "redial-unroutable": {
+            const learned = await send("/0");
+            const queued = send("/1");
+            await Promise.race([initial.promise, queued]);
+            // From here the shim refuses a UDP connect() to the peer: no second connection can start.
+            writeFileSync(process.env.H3_REFUSE_UDP_PORT_FILE, String(alt.port));
+            release();
+            out.fetches = [learned, await queued, await send("/2")];
+            break;
+          }
+          case "refusing-site":
+          case "live-site":
+            await use({ url, send });
+            break;
+          case "redirect-to-refusing":
+          case "redirect-to-live": {
+            // A second origin with its own UDP peer. The 302 of this origin leads there.
+            const site = scenario === "redirect-to-live" ? "live-site" : "refusing-site";
+            const other = await run(site, host, undefined, async there => {
+              elsewhere = there.url + "/landed";
+              out.fetches = [await send("/0"), await there.send("/0"), await send("/redirect"), await there.send("/next")];
+            });
+            out.there = { hits: other.hits, dials: other.dials };
+            break;
+          }
+          case "moved":
+            out.fetches = [await send("/0"), await send("/1")];
+            // From here the origin names the live listener itself, on another port.
+            advertised = live.port;
+            out.fetches.push(await send("/2"), await send("/3"));
+            break;
+          case "written": {
+            out.fetches = [await send("/0"), await send("/1")];
+            const inFlight = send("/written", { method: "PUT", body: "payload" });
+            await Promise.race([written.promise, inFlight]);
+            // The alternative goes away, and every new connection to it fails.
+            plan = ["fail"];
+            liveGone = true;
+            live.stop(true);
+            out.fetches.push(await inFlight, await send("/next"));
+            break;
+          }
+          case "written-refused": {
+            out.fetches = [await send("/0"), await send("/1")];
+            const inFlight = send("/written", { method: "PUT", body: "payload" });
+            await Promise.race([written.promise, inFlight]);
+            // The listener goes away, and its connection with it. A new listener
+            // takes its place, and the peer refuses the next connection only.
+            plan = ["refuse", "live"];
+            const gone = live;
+            live = listen();
+            gone.stop(true);
+            out.fetches.push(await inFlight, await send("/next"));
+            break;
+          }
+          case "deadline": {
+            // The shim moves the wall clock ahead by the seconds in this file.
+            const clock = seconds => writeFileSync(process.env.H3_CLOCK_FILE, String(seconds));
+            out.dialsAfterEachFetch = [];
+            const step = async path => {
+              const result = await send(path);
+              await drained();
+              out.dialsAfterEachFetch.push(treatment.size);
+              return result;
+            };
+            out.fetches = [await send("/0"), await step("/1"), await step("/2")];
+            for (const seconds of [200, 200, 400, 400]) {
+              clock(seconds);
+              out.fetches.push(await step("/at-" + seconds));
+            }
+            break;
+          }
+        }
+        await drained();
+        // The listener closes its connections through the peer, so it stops first.
+        live?.stop(true);
+        alt.close();
+        upstream.close();
+        barrier.close();
+        origin.stop(true);
+        return { ...out, hits, dials: treatment.size };
+      }
+
+      // Each argument is one case, "scenario@host". They run at the same time.
+      const specs = process.argv.slice(2);
+      const results = await Promise.all(specs.map(spec => run(...spec.split("@"))));
+      console.log(JSON.stringify(Object.fromEntries(specs.map((spec, i) => [spec, results[i]]))));
+    `;
+
+    async function run(specs: string[], env?: Record<string, string>) {
+      using dir = tempDir("h3-altsvc-fallback", { "fixture.ts": fixture });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--experimental-http3-fetch", "fixture.ts", ...specs],
+        env: { ...bunEnv, ...env },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      let results: Record<string, unknown> = {};
+      try {
+        results = JSON.parse(stdout);
+      } catch {}
+      return { results, stdout, stderr, exitCode };
+    }
+    type Run = Awaited<ReturnType<typeof run>>;
+    const resultOf = ({ results, stdout, stderr, exitCode }: Run, spec: string) => ({
+      result: results[spec] ?? { stdout, stderr },
+      exitCode,
+    });
+
+    const origin = "200 origin";
+    const alternative = "200 alternative";
+
+    // Each case has its own origin and its own UDP peers. The cases share one
+    // process and run at the same time: no case waits for another one.
+    describe("in one process", () => {
+      const hosts = isIPv6() ? ["127.0.0.1", "::1"] : ["127.0.0.1"];
+      const specs = [
+        ...hosts.flatMap(host => ["sequential@" + host, "abort@" + host]),
+        ...[
+          "concurrent",
+          "stream-body",
+          "redirect",
+          "session-close",
+          "session-close-redial",
+          "healthy",
+          "moved",
+          "written",
+          "written-refused",
+          "pinned",
+          "strict-fails",
+          "lax-fails",
+          "refused-once",
+          "refused-twice",
+          "refused-twice-strict",
+          "redirect-to-refusing",
+          "redirect-to-live",
+        ].map(scenario => scenario + "@127.0.0.1"),
+      ];
+      let shared: Run;
+      beforeAll(async () => {
+        shared = await run(specs);
+      });
+
+      for (const host of ["127.0.0.1", "::1"]) {
+        const skip = host === "::1" && !isIPv6();
+
+        // Fetch 2 is queued on a connection that fails its handshake, and goes
+        // to the origin. Fetch 3 opens no connection, although the response to
+        // fetch 2 advertised the alternative again.
+        test.skipIf(skip)(`the request goes to the origin, and so does the next one (${host})`, () => {
+          const { result, exitCode } = resultOf(shared, "sequential@" + host);
+          expect(result).toEqual({ fetches: [origin, origin, origin], hits: ["GET /0", "GET /1", "GET /2"], dials: 1 });
+          expect(exitCode).toBe(0);
+        });
+
+        // No request is left on the connection when it fails. The failure still
+        // keeps the next request off the alternative.
+        test.skipIf(skip)(`a connection that fails after its request was aborted counts (${host})`, () => {
+          const { result, exitCode } = resultOf(shared, "abort@" + host);
+          expect(result).toEqual({ fetches: [origin, "AbortError", origin], hits: ["GET /0", "GET /next"], dials: 1 });
+          expect(exitCode).toBe(0);
+        });
+      }
+
+      test("every request queued on the failed connection goes to the origin", () => {
+        const { result, exitCode } = resultOf(shared, "concurrent@127.0.0.1");
+        expect(result).toEqual({
+          fetches: [origin, origin, origin, origin],
+          hits: ["GET /0", "GET /a", "GET /b", "GET /c"],
+          dials: 1,
+        });
+        expect(exitCode).toBe(0);
+      });
+
+      test("a streamed request body reaches the origin", () => {
+        const { result, exitCode } = resultOf(shared, "stream-body@127.0.0.1");
+        expect(result).toEqual({ fetches: [origin, origin], hits: ["GET /0", "POST /upload got streamed"], dials: 1 });
+        expect(exitCode).toBe(0);
+      });
+
+      // The 302 is the first response of the origin, so the hop that follows it
+      // is the first request routed to the alternative.
+      test("a redirect hop goes to the origin", () => {
+        const { result, exitCode } = resultOf(shared, "redirect@127.0.0.1");
+        expect(result).toEqual({ fetches: [origin], hits: ["GET /redirect", "GET /landed"], dials: 1 });
+        expect(exitCode).toBe(0);
+      });
+
+      // The client closed that connection itself, so it says nothing about the
+      // alternative: fetch 3 is routed there.
+      test("a connection that a FetchSession closes in its handshake does not count", () => {
+        const { result, exitCode } = resultOf(shared, "session-close@127.0.0.1");
+        expect(result).toEqual({ fetches: [origin, "AbortError", alternative], hits: ["GET /0"], dials: 2 });
+        expect(exitCode).toBe(0);
+      });
+
+      // As above, but the peer refused the first connection of fetch 2, and the
+      // session closes the second one.
+      test("a second connection that a FetchSession closes in its handshake does not count", () => {
+        const { result, exitCode } = resultOf(shared, "session-close-redial@127.0.0.1");
+        expect(result).toEqual({ fetches: [origin, "AbortError", alternative], hits: ["GET /0"], dials: 3 });
+        expect(exitCode).toBe(0);
+      });
+
+      test("an alternative that works serves fetch 2 and fetch 3 on one connection", () => {
+        const { result, exitCode } = resultOf(shared, "healthy@127.0.0.1");
+        expect(result).toEqual({ fetches: [origin, alternative, alternative], hits: ["GET /0"], dials: 1 });
+        expect(exitCode).toBe(0);
+      });
+
+      // The failure belongs to the port that failed. After fetch 2 the origin
+      // names another port, and fetch 4 is served there.
+      test("a failed port does not keep requests off a port the origin names later", () => {
+        const { result, exitCode } = resultOf(shared, "moved@127.0.0.1");
+        expect(result).toEqual({
+          fetches: [origin, origin, origin, alternative],
+          hits: ["GET /0", "GET /1", "GET /2"],
+          dials: 1,
+        });
+        expect(exitCode).toBe(0);
+      });
+
+      // Fetch 3 is written on a working connection, which then closes. The
+      // connection that would carry it again fails its handshake. The origin
+      // must not see a request that the alternative may have acted on.
+      test("a request that was written does not go to the origin", () => {
+        const { result, exitCode } = resultOf(shared, "written@127.0.0.1");
+        expect(result).toEqual({
+          fetches: [origin, alternative, "HTTP3HandshakeFailed", origin],
+          hits: ["GET /0", "GET /next"],
+          dials: 2,
+        });
+        expect(exitCode).toBe(0);
+      });
+
+      // As above, but the connection that would carry fetch 3 again is only
+      // refused. That is one refused connection, after one that worked: it is
+      // no failure of the alternative, which serves fetch 4.
+      test("one refused connection after a working one does not count", () => {
+        const { result, exitCode } = resultOf(shared, "written-refused@127.0.0.1");
+        expect(result).toEqual({
+          fetches: [origin, alternative, "HTTP3HandshakeFailed", alternative],
+          hits: ["GET /0"],
+          dials: 3,
+        });
+        expect(exitCode).toBe(0);
+      });
+
+      // `protocol: "http3"` is not an Alt-Svc upgrade: the request gets its
+      // second connection, then rejects, and no origin sees it.
+      test("a request that names HTTP/3 itself does not leave it", () => {
+        const { result, exitCode } = resultOf(shared, "pinned@127.0.0.1");
+        expect(result).toEqual({ fetches: ["HTTP3HandshakeFailed"], hits: [], dials: 2 });
+        expect(exitCode).toBe(0);
+      });
+
+      // Fetch 2 checks the certificate, and the alternative fails that check:
+      // the request goes to the origin, which fails it too. Fetch 3 does not
+      // check it, and the failure of fetch 2 does not keep it off the alternative.
+      test("a failed certificate check does not count for a request that has none", () => {
+        const { result, exitCode } = resultOf(shared, "strict-fails@127.0.0.1");
+        expect(result).toEqual({
+          fetches: [origin, "DEPTH_ZERO_SELF_SIGNED_CERT", alternative],
+          hits: ["GET /0"],
+          dials: 2,
+        });
+        expect(exitCode).toBe(0);
+      });
+
+      // The connection of fetch 2 fails with no certificate check. One with the
+      // check fails the same way, so fetch 3 opens none.
+      test("a connection that fails with no certificate check counts for a request that has one", () => {
+        const { result, exitCode } = resultOf(shared, "lax-fails@127.0.0.1");
+        expect(result).toEqual({
+          fetches: [origin, origin, "DEPTH_ZERO_SELF_SIGNED_CERT"],
+          hits: ["GET /0", "GET /1"],
+          dials: 1,
+        });
+        expect(exitCode).toBe(0);
+      });
+
+      // The close of connection 1 says nothing about connection 2, which works.
+      test("a connection that the peer closes gets a second one, which serves the request", () => {
+        const { result, exitCode } = resultOf(shared, "refused-once@127.0.0.1");
+        expect(result).toEqual({ fetches: [origin, alternative, alternative], hits: ["GET /0"], dials: 2 });
+        expect(exitCode).toBe(0);
+      });
+
+      // Connection 2 is closed too: fetch 2 goes to the origin, and fetch 3
+      // opens no connection.
+      test("two connections that the peer closes send the request to the origin", () => {
+        const { result, exitCode } = resultOf(shared, "refused-twice@127.0.0.1");
+        expect(result).toEqual({ fetches: [origin, origin, origin], hits: ["GET /0", "GET /1", "GET /2"], dials: 2 });
+        expect(exitCode).toBe(0);
+      });
+
+      // Fetch 2 checks the certificate, but the peer closes both of its
+      // connections before it shows one. That is no result of the check, so
+      // it counts for fetch 3 too, which has no check and opens no connection.
+      test("a connection that closes before the certificate check counts for every request", () => {
+        const { result, exitCode } = resultOf(shared, "refused-twice-strict@127.0.0.1");
+        expect(result).toEqual({
+          fetches: [origin, "DEPTH_ZERO_SELF_SIGNED_CERT", origin],
+          hits: ["GET /0", "GET /2"],
+          dials: 2,
+        });
+        expect(exitCode).toBe(0);
+      });
+
+      // Fetch 3 uses its second connection on the first origin, which answers
+      // 302 to a second origin. The alternative of that origin closes its first
+      // connection: the hop has no second connection left and goes to that
+      // origin. One closed connection is no failure of the alternative, which
+      // serves fetch 4.
+      test("a redirect hop with no second connection left goes to the origin", () => {
+        const { result, exitCode } = resultOf(shared, "redirect-to-refusing@127.0.0.1");
+        expect(result).toEqual({
+          fetches: [origin, origin, origin, alternative],
+          hits: ["GET /0"],
+          dials: 2,
+          there: { hits: ["GET /0", "GET /landed"], dials: 2 },
+        });
+        expect(exitCode).toBe(0);
+      });
+
+      // Fetch 3 leaves its alternative for the first origin, which answers 302
+      // to a second origin. The hop is a new try: the alternative of the second
+      // origin serves it.
+      test("a redirect hop after a fallback uses the alternative of the new origin", () => {
+        const { result, exitCode } = resultOf(shared, "redirect-to-live@127.0.0.1");
+        expect(result).toEqual({
+          fetches: [origin, origin, alternative, alternative],
+          hits: ["GET /0", "GET /redirect"],
+          dials: 1,
+          there: { hits: ["GET /0"], dials: 1 },
+        });
+        expect(exitCode).toBe(0);
+      });
+    });
+
+    describe.skipIf(!isLinux || !cc)("with a shim", () => {
+      const shimSource = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <time.h>
+#include <unistd.h>
+
+static long number_in(const char *env) {
+    const char *path = getenv(env);
+    char buf[24] = {0};
+    int fd = path ? open(path, O_RDONLY) : -1;
+    if (fd < 0) return 0;
+    long n = read(fd, buf, sizeof(buf) - 1) > 0 ? atol(buf) : 0;
+    close(fd);
+    return n;
+}
+
+/* A UDP connect() to the port in H3_REFUSE_UDP_PORT_FILE fails, as on a host
+ * with no route for it. quic.c probes each resolved address that way. */
+int connect(int fd, const struct sockaddr *addr, socklen_t len) {
+    static int (*real)(int, const struct sockaddr *, socklen_t);
+    if (!real) real = dlsym(RTLD_NEXT, "connect");
+    int type = 0;
+    socklen_t type_len = sizeof(type);
+    if (addr && getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &type_len) == 0 && type == SOCK_DGRAM) {
+        int port = addr->sa_family == AF_INET ? ntohs(((const struct sockaddr_in *) addr)->sin_port)
+            : addr->sa_family == AF_INET6 ? ntohs(((const struct sockaddr_in6 *) addr)->sin6_port) : 0;
+        if (port != 0 && port == number_in("H3_REFUSE_UDP_PORT_FILE")) {
+            errno = ENETUNREACH;
+            return -1;
+        }
+    }
+    return real(fd, addr, len);
+}
+
+/* A name no resolver knows, answered with no resolver traffic. One lookup of
+ * it fails after H3_FAIL_LOOKUP_FILE is written. */
+int getaddrinfo(const char *node, const char *service, const struct addrinfo *hints, struct addrinfo **res) {
+    static int (*real)(const char *, const char *, const struct addrinfo *, struct addrinfo **);
+    if (!real) real = dlsym(RTLD_NEXT, "getaddrinfo");
+    if (node && strcmp(node, "alt-svc-origin.test") == 0) {
+        if (number_in("H3_FAIL_LOOKUP_FILE") != 0) {
+            unlink(getenv("H3_FAIL_LOOKUP_FILE"));
+            return EAI_AGAIN;
+        }
+        node = "127.0.0.1";
+    }
+    return real(node, service, hints, res);
+}
+
+/* The wall clock runs ahead by the seconds in H3_CLOCK_FILE. */
+int clock_gettime(clockid_t id, struct timespec *ts) {
+    static int (*real)(clockid_t, struct timespec *);
+    if (!real) real = dlsym(RTLD_NEXT, "clock_gettime");
+    int rc = real(id, ts);
+    if (rc == 0 && id == CLOCK_REALTIME) ts->tv_sec += number_in("H3_CLOCK_FILE");
+    return rc;
+}
+`;
+      let shimDir: ReturnType<typeof tempDir>;
+      let shim: string;
+      beforeAll(async () => {
+        shimDir = tempDir("h3-altsvc-shim", { "shim.c": shimSource });
+        shim = join(String(shimDir), "shim.so");
+        await using build = Bun.spawn({
+          cmd: [cc!, "-shared", "-fPIC", "-O1", "-o", shim, join(String(shimDir), "shim.c"), "-ldl"],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+        const [buildErr, buildExit] = await Promise.all([build.stderr.text(), build.exited]);
+        if (buildExit !== 0) throw new Error("shim compile failed: " + buildErr);
+      });
+      afterAll(() => shimDir?.[Symbol.dispose]());
+
+      // One process for `spec`, with the shim loaded.
+      async function withShim(spec: string, env?: Record<string, string>) {
+        using dir = tempDir("h3-altsvc-shim-files", {});
+        const files = String(dir);
+        return resultOf(
+          await run([spec], {
+            LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim,
+            H3_REFUSE_UDP_PORT_FILE: join(files, "refuse-udp-port"),
+            H3_FAIL_LOOKUP_FILE: join(files, "fail-lookup"),
+            H3_CLOCK_FILE: join(files, "clock"),
+            ...env,
+          }),
+          spec,
+        );
+      }
+      // With no DNS cache, a QUIC connect by name waits for the resolver.
+      const noDnsCache = { BUN_FEATURE_FLAG_DISABLE_DNS_CACHE: "1" };
+
+      // `localhost` resolves with no wait, so `connect()` fails before it
+      // returns. Nothing was dialed, so nothing keeps fetch 3 from the same try.
+      test("a QUIC connect that cannot start sends the request to the origin", async () => {
+        const { result, exitCode } = await withShim("unroutable@127.0.0.1@localhost");
+        expect(result).toEqual({ fetches: [origin, origin, origin], hits: ["GET /0", "GET /1", "GET /2"], dials: 0 });
+        expect(exitCode).toBe(0);
+      });
+
+      // The lookup for the QUIC connect of fetch 2 fails. That says nothing
+      // about the alternative, which serves fetch 3.
+      test("a QUIC connect whose lookup fails sends the request to the origin", async () => {
+        const { result, exitCode } = await withShim("resolver@127.0.0.1@alt-svc-origin.test", noDnsCache);
+        expect(result).toEqual({ fetches: [origin, origin, alternative], hits: ["GET /0", "GET /1"], dials: 1 });
+        expect(exitCode).toBe(0);
+      });
+
+      // The peer closes connection 1, and connection 2 cannot start: fetch 2
+      // goes to the origin.
+      test("a second QUIC connection that cannot start sends the request to the origin", async () => {
+        const { result, exitCode } = await withShim("redial-unroutable@127.0.0.1@alt-svc-origin.test");
+        expect(result).toEqual({ fetches: [origin, origin, origin], hits: ["GET /0", "GET /1", "GET /2"], dials: 1 });
+        expect(exitCode).toBe(0);
+      });
+
+      test("a request that names HTTP/3 itself rejects when its lookup fails", async () => {
+        const { result, exitCode } = await withShim("pinned-resolver@127.0.0.1@alt-svc-origin.test", noDnsCache);
+        expect(result).toEqual({ fetches: ["DNSResolutionFailed"], hits: [], dials: 0 });
+        expect(exitCode).toBe(0);
+      });
+
+      // Connection 1 carries fetch 2 and fails, and the alternative works from
+      // then on. The origin says `ma=100`, and the failure keeps requests off
+      // the alternative for 300 s. At 200 s the entry is out of date, but the
+      // failure still stands: neither fetch opens a connection, although the
+      // response to the first advertised again. At 400 s both are over: the
+      // first fetch learns the alternative again and the second one rides it.
+      test("the alternative is tried again 300 s after the failure", async () => {
+        const { result, exitCode } = await withShim("deadline@127.0.0.1");
+        expect(result).toEqual({
+          fetches: [origin, origin, origin, origin, origin, origin, alternative],
+          dialsAfterEachFetch: [1, 1, 1, 1, 1, 2],
+          hits: ["GET /0", "GET /1", "GET /2", "GET /at-200", "GET /at-200", "GET /at-400"],
+          dials: 2,
+        });
+        expect(exitCode).toBe(0);
+      });
+    });
   });
 });
 

@@ -1,6 +1,7 @@
+import { addBlockedSPKIForTesting, clearBlockedSPKIsForTesting } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { createPrivateKey, X509Certificate } from "node:crypto";
+import { createHash, createPrivateKey, X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { connect, listen, QuicEndpoint, type SessionOptions } from "node:quic";
@@ -183,6 +184,32 @@ test("opened reports the X509 code name for validationErrorCode", async () => {
     code: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
     reason: "unable to get local issuer certificate",
   });
+});
+
+test("opened reports CERT_REVOKED for a chain through a blocked public key", async () => {
+  // agent6 -> ca3 (intermediate, bundled in agent6-cert.pem) -> ca1 (root).
+  const identity = { keys: [createPrivateKey(readKey("agent6-key.pem"))], certs: [readKey("agent6-cert.pem")] };
+  await using server = await listen(ignoreErrors, { sni: { "*": identity }, alpn: ["quic-test"] });
+  async function validationError() {
+    const session = await connect(server.address!, {
+      alpn: "quic-test",
+      servername: "agent6",
+      verifyPeer: "manual",
+      ca: [readKey("ca1-cert.pem")],
+    } as SessionOptions);
+    const info = await session.opened;
+    await session.close();
+    return { code: info.validationErrorCode, reason: info.validationErrorReason };
+  }
+
+  expect(await validationError()).toEqual({ code: undefined, reason: undefined });
+  const intermediate = new X509Certificate(readKey("ca3-cert.pem")).publicKey.export({ type: "spki", format: "der" });
+  addBlockedSPKIForTesting(createHash("sha256").update(intermediate).digest());
+  try {
+    expect(await validationError()).toEqual({ code: "CERT_REVOKED", reason: "certificate revoked" });
+  } finally {
+    clearBlockedSPKIsForTesting();
+  }
 });
 
 test("connect() with the default verifyPeer refuses an unverifiable certificate before a pending stream reaches the server", async () => {

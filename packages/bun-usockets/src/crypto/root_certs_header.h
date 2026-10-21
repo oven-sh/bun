@@ -22,3 +22,12 @@ const us_system_certs_t &us_get_root_system_certs();
 
 CPPDECL X509_STORE *us_get_default_ca_store();
 CPPDECL X509_STORE *us_get_shared_default_ca_store();
+
+// blocked_spkis.cpp
+#define US_SPKI_HASH_LENGTH 32 // SHA-256
+// X509_verify_cert, then X509_V_ERR_CERT_REVOKED for a chain that holds a blocked public key.
+CPPDECL int us_verify_cert_chain(X509_STORE_CTX *ctx);
+// For an SSL_CTX built outside openssl.c. Replaces any earlier SSL_CTX_set_cert_verify_callback.
+CPPDECL void us_ssl_ctx_install_cert_verify_callback(SSL_CTX *ctx);
+CPPDECL void us_add_blocked_spki_for_testing(const uint8_t *hash);
+CPPDECL void us_clear_blocked_spkis_for_testing();

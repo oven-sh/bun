@@ -1183,7 +1183,7 @@ int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose) {
     }
     sk_X509_pop_free(same_subject, X509_free);
   }
-  return X509_verify_cert(ctx);
+  return us_verify_cert_chain(ctx);
 }
 
 /* Verifies the chain, then asks the owner of a client for the name: a wrong name is a verify error like any other. */

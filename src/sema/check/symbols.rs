@@ -3913,6 +3913,33 @@ impl<'p, 's> Checker<'p, 's> {
             if self.is_immediately_invoked(file, func) {
                 ty = self.widened_for_declaration(ty, Some((file, param.pat)));
             }
+            // `assignContextualParameterTypes`: a default that isn't assignable to the contextual
+            // type decides, if the contextual type is assignable to the widened type of the
+            // default. An immediately invoked function has no contextual signature.
+            if param.default.is_some()
+                && !param.flags.contains(Flags::REST)
+                && !self.is_immediately_invoked(file, func)
+            {
+                // `assignContextualParameterTypes` checks the default with no resolution pushed, so
+                // a default that refers back to the parameter reads its contextual type. Any other
+                // request for the type is one tsgo doesn't make.
+                let is_assigning = self.is_request_of_assign_parameter_type();
+                if !is_assigning {
+                    self.eager.push(self.stack.len());
+                }
+                let actual = self.type_of_declaration_initializer(file, param.default);
+                let actual = self.padded_for_pattern(file, param.pat, actual);
+                if !self.is_assignable(actual, ty) {
+                    let widened =
+                        self.widen_type_inferred_from_initializer(file, param.pat, actual);
+                    if self.is_assignable(ty, widened) {
+                        ty = widened;
+                    }
+                }
+                if !is_assigning {
+                    self.eager.pop();
+                }
+            }
             // `assignParameterType`: if the contextual type is just `unknown`, the pattern
             // determines the type.
             if ty == TypeId::UNKNOWN && !matches!(hir[param.pat].kind, PatKind::Ident(_)) {
@@ -3933,30 +3960,6 @@ impl<'p, 's> Checker<'p, 's> {
                 } else {
                     ty
                 };
-            }
-            // `assignContextualParameterTypes`: a default that isn't assignable to the contextual
-            // type decides, if the contextual type is assignable to the widened type of the
-            // default. An immediately invoked function has no contextual signature.
-            if !param.flags.contains(Flags::REST) && !self.is_immediately_invoked(file, func) {
-                // `assignContextualParameterTypes` checks the default with no resolution pushed, so
-                // a default that refers back to the parameter reads its contextual type. Any other
-                // request for the type is one tsgo doesn't make.
-                let is_assigning = self.is_request_of_assign_parameter_type();
-                if !is_assigning {
-                    self.eager.push(self.stack.len());
-                }
-                let actual = self.type_of_declaration_initializer(file, param.default);
-                let actual = self.padded_for_pattern(file, param.pat, actual);
-                if !self.is_assignable(actual, ty) {
-                    let widened =
-                        self.widen_type_inferred_from_initializer(file, param.pat, actual);
-                    if self.is_assignable(ty, widened) {
-                        ty = widened;
-                    }
-                }
-                if !is_assigning {
-                    self.eager.pop();
-                }
             }
             // The types excluded by the default are removed where the parameter is read or
             // destructured.
@@ -4088,8 +4091,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `padObjectLiteralType`, `padTupleType`: `ty`, the type of the default of a parameter or of a
-    /// part of one that `pat` destructures, is padded with the members the pattern has its own
-    /// defaults for.
+    /// part of one that `pat` destructures, is padded with the members that only the pattern has.
     pub(super) fn padded_for_pattern(&mut self, file: FileId, pat: PatId, ty: TypeId) -> TypeId {
         let hir = self.hir(file);
         match hir[pat].kind {
@@ -4097,16 +4099,14 @@ impl<'p, 's> Checker<'p, 's> {
                 let mut missing_elements = Vec::new();
                 for p in props.iter() {
                     let prop = &hir[p];
-                    if prop.default.is_none() {
+                    if prop.is_rest {
                         continue;
                     }
-                    // `getPropertyNameFromBindingElement`: `PropertyNameOrName` of a rest element
-                    // is the name it binds.
-                    let name = match (prop.key, hir[prop.value].kind) {
-                        (PropKey::None, PatKind::Ident(name)) => Some(name),
+                    // `getPropertyNameFromBindingElement`
+                    let name = match prop.key {
                         // `getLiteralTypeFromPropertyName` is `never`.
-                        (PropKey::Private(_), _) => None,
-                        (key, _) => self.member_name(file, key),
+                        PropKey::Private(_) => None,
+                        key => self.member_name(file, key),
                     };
                     if let Some(name) = name
                         && self.get_property_of_type(ty, name).is_none()
@@ -4147,7 +4147,7 @@ impl<'p, 's> Checker<'p, 's> {
                         value,
                         default,
                         IncludePatternInType::No,
-                        ReportErrors::No,
+                        ReportErrors::Yes,
                     );
                     shape.props.push(Prop {
                         name,

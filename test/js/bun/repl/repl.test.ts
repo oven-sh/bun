@@ -983,7 +983,9 @@ describe.concurrent("Bun REPL", () => {
           DATABASE_URL: `postgres://127.0.0.1:${sql.server.port}/repl`,
         },
       });
-      await Promise.all([http.opened, redis.opened, sql.opened]);
+      const connected = Promise.all([http.opened, redis.opened, sql.opened]).then(() => "connected");
+      const exited = proc.exited.then(code => `exited with code ${code}`);
+      expect(await Promise.race([connected, exited])).toBe("connected");
     });
 
     test("--fetch-preconnect refuses a URL that is not HTTP", async () => {
@@ -1043,8 +1045,8 @@ describe.concurrent("Bun REPL", () => {
       /** Connects to the inspector whose address `proc` prints to stderr. */
       async function connect(proc: Bun.Subprocess<any, any, "pipe">) {
         const address = Promise.withResolvers<string>();
-        let stderr = "";
         void (async () => {
+          let stderr = "";
           const decoder = new TextDecoder();
           for await (const chunk of proc.stderr) {
             stderr += decoder.decode(chunk, { stream: true });
@@ -1055,32 +1057,37 @@ describe.concurrent("Bun REPL", () => {
         })();
 
         const socket = new WebSocket(await address.promise);
-        const opened = Promise.withResolvers<void>();
-        socket.onopen = () => opened.resolve();
-        socket.onerror = () => opened.reject(new Error("Could not connect to the inspector"));
-        await opened.promise;
-
-        let lastId = 0;
-        const replies = new Map<number, (reply: any) => void>();
-        const events = new Map<string, (params: any) => void>();
+        // What waits for the reply to a request (by id) or for an event (by method).
+        const waiting = new Map<number | string, ReturnType<typeof Promise.withResolvers<any>>>();
+        const wait = (key: number | string) => {
+          const waiter = Promise.withResolvers<any>();
+          waiting.set(key, waiter);
+          return waiter.promise;
+        };
+        const fail = (error: Error) => {
+          for (const waiter of waiting.values()) waiter.reject(error);
+          waiting.clear();
+        };
+        const opened = wait("open");
+        socket.onopen = () => waiting.get("open")?.resolve(undefined);
+        socket.onerror = () => fail(new Error("The connection to the inspector failed"));
+        socket.onclose = () => fail(new Error("The inspector closed the connection"));
         socket.onmessage = ({ data }) => {
           const message = JSON.parse(String(data));
-          const resolve = "id" in message ? replies.get(message.id) : events.get(message.method);
-          resolve?.("id" in message ? message : message.params);
+          const key = "id" in message ? message.id : message.method;
+          waiting.get(key)?.resolve("id" in message ? message : message.params);
+          waiting.delete(key);
         };
+        await opened;
+
+        let lastId = 0;
         return {
           send(method: string, params: object = {}) {
             const id = ++lastId;
-            const { promise, resolve } = Promise.withResolvers<any>();
-            replies.set(id, resolve);
             socket.send(JSON.stringify({ id, method, params }));
-            return promise;
+            return wait(id);
           },
-          event(method: string) {
-            const { promise, resolve } = Promise.withResolvers<any>();
-            events.set(method, resolve);
-            return promise;
-          },
+          event: (method: string) => wait(method),
           /** The process does not exit while a debugger is connected. */
           [Symbol.dispose]: () => socket.close(),
         };
@@ -1120,8 +1127,9 @@ describe.concurrent("Bun REPL", () => {
             inspector.send("Debugger.setPauseOnDebuggerStatements", { enabled: true }),
           ]);
           const paused = inspector.event("Debugger.paused");
-          void inspector.send("Inspector.initialized");
+          const initialized = inspector.send("Inspector.initialized");
           expect((await paused).reason).toBe("DebuggerStatement");
+          await initialized;
           const started = await inspector.send("Runtime.evaluate", { expression: "typeof globalThis.started" });
           expect(started.result.result.value).toBe("undefined");
           await inspector.send("Debugger.resume");

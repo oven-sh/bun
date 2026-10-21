@@ -2,7 +2,7 @@
 //! `internal/testutil/contentmappertest`. They run in this process. No test starts a program.
 
 use bun_core::strings;
-use bun_sema::content_mapper::{Call, CallError, Transport};
+use bun_sema::content_mapper::{Call, CallError, Mapper, Transport};
 use bun_sema::json::Json;
 use bun_threading::Guarded;
 
@@ -126,6 +126,7 @@ impl Transport for TestMappers {
         Ok(Some(result))
     }
 
+    fn stop(&self, _: &Mapper) {}
     fn close(&self) {}
 }
 

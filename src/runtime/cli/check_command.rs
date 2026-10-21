@@ -174,13 +174,21 @@ fn parse(args: &[&ZStr]) -> Options {
         true => Some(false),
         false => bun_sema_driver::tristate(&command_line.compiler_options, b"pretty"),
     };
-    // Arguments from `BUN_OPTIONS` come first. If they include `check`, what follows it may be from there too.
-    let typed = bun_core::argv()
-        .len()
-        .saturating_sub(1 + bun_core::bun_options_argc());
-    options.runs_external_code = command_line.runs_external_code && args.len() < typed;
+    options.runs_external_code = command_line.runs_external_code && is_allowed_to_run_code(args);
     options.command_line = command_line;
     options
+}
+
+/// True if the person who ran the command typed `--runExternalCode` after `check`. `args` is everything after `check`.
+/// `CommandLine::runs_external_code` also counts what `BUN_OPTIONS` has after a word that reads like the command, as in
+/// `--env-file check --runExternalCode`.
+fn is_allowed_to_run_code(args: &[&ZStr]) -> bool {
+    // The arguments from `BUN_OPTIONS` follow the name of the program.
+    let typed = (bun_core::argv().len()).saturating_sub(1 + bun_core::bun_options_argc());
+    let typed = &args[args.len().saturating_sub(typed)..];
+    (typed.iter().map(|arg| arg.as_bytes()))
+        .take_while(|arg| *arg != b"--")
+        .any(bun_sema_driver::is_run_external_code_flag)
 }
 
 fn reject(rejected: &RejectedFlag) -> ! {

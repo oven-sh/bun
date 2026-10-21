@@ -20,6 +20,7 @@ use bun_core::strings;
 use bun_threading::Guarded;
 use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 /// `contentmapper.Mapper`: an entry of `contentMappers`, with what its package's `package.json` says about it.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -537,7 +538,9 @@ pub trait Transport: Send + Sync {
     /// Sends `call` to the process with the mapper's identity, which is started first if it isn't running, and waits for
     /// the response. Returns the response's `result`, or `None` if it has neither a result nor an error.
     fn call(&self, call: &Call) -> Result<Option<Json>, CallError>;
-    /// Stops every process. Calls that are waiting for a response fail, and so do later calls.
+    /// Stops the process with the mapper's identity. Calls that are waiting for its response fail, and so do later calls.
+    fn stop(&self, mapper: &Mapper);
+    /// Stops every process.
     fn close(&self);
 }
 
@@ -724,9 +727,8 @@ impl Connection {
 
     /// The second half of `Call`: blocks until the call `id` has a response, the connection has ended, or the time is
     /// up.
-    pub fn wait(&self, id: u64, timeout_seconds: Option<u32>) -> Result<Option<Json>, CallError> {
-        use std::time::{Duration, Instant};
-        let deadline = timeout_seconds.map(|it| Instant::now() + Duration::from_secs(it.into()));
+    pub fn wait(&self, id: u64, timeout: Option<Duration>) -> Result<Option<Json>, CallError> {
+        let deadline = timeout.map(|it| Instant::now() + it);
         let mut state = self.state.lock();
         loop {
             let Some(at) = state.pending.iter().position(|it| it.id == id) else {
@@ -1069,7 +1071,8 @@ pub struct Transformed {
 /// `OptionDiagnostic`: an error that a mapper reports about its `options` in the configuration file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OptionDiagnostic {
-    /// The mapper's index in `contentMappers`, among the entries that are in use.
+    /// The mapper's index among the entries of `contentMappers` that are in use. `GetContentMapperOptionDiagnosticLocation`
+    /// looks up the entry with that index in the list as it's written, which is another entry if one before it is dropped.
     pub mapper: usize,
     /// The property names and array indices that lead from `options` to the value.
     pub path: Vec<OptionPathSegment>,
@@ -1130,6 +1133,10 @@ impl Processes {
             return known.initialized.clone();
         }
         let initialized = self.initialize(mapper);
+        // `dialFunc`: `rwc.Close()`
+        if initialized.is_err() {
+            self.transport.stop(mapper);
+        }
         connections.push(Handshake {
             identity,
             initialized: initialized.clone(),

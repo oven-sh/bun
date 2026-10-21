@@ -286,6 +286,58 @@ ${isVirtual}`,
     );
   });
 
+  const withoutErrors = { "App.vue": app.replace(`"one"`, "1"), "main.ts": `import "./App.vue";\n` };
+
+  /** Returns the column at which `text` begins in the project's `tsconfig.json`, which is one line. */
+  const columnOf = async (dir: { toString(): string }, text: string) =>
+    (await Bun.file(join(String(dir), "tsconfig.json")).text()).indexOf(text) + 1;
+
+  describe("errors about its options", () => {
+    const mapper = `serve({ openProject: () => ({ optionDiagnostics: [{ path: ["x"], messageText: "bad x", code: 3 }] }) });`;
+    const entry = { package: "m", extensions: [".vue"], options: { x: 1 } };
+
+    test("are reported at the option", async () => {
+      using dir = project({ mapper, files: withoutErrors, config: { contentMappers: [entry] } });
+      const { stdout } = await check(dir, ["--runExternalCode"]);
+      expect(stdout).toBe(`tsconfig.json(1,${(await columnOf(dir, `"x":1`)) + 4}): error m3: bad x`);
+    });
+
+    // `tsc` counts the mappers that are left, and then counts that far in the list as it's written.
+    test("are reported at another entry if an entry before it is dropped", async () => {
+      const dropped = { package: "gone", extensions: [".a"], options: { x: 0 } };
+      using dir = project({ mapper, files: withoutErrors, config: { contentMappers: [dropped, entry] } });
+      const { stdout } = await check(dir, ["--runExternalCode"]);
+      expect(stdout).toBe(
+        `tsconfig.json(1,${await columnOf(dir, `"gone"`)}): error TS18075: The content mapper package 'gone' could not be resolved.
+tsconfig.json(1,${(await columnOf(dir, `"x":0`)) + 4}): error m3: bad x`,
+      );
+    });
+  });
+
+  describe("the package's outputExtensions", () => {
+    const manifest = { outputExtensions: { ".vue": ".js" } };
+    const run = async (entry: object) => {
+      const contentMappers = [{ package: "m", extensions: [".vue"], ...entry }];
+      using dir = project({ mapper: `serve();`, files: withoutErrors, manifest, config: { contentMappers } });
+      const { stdout } = await check(dir, ["--runExternalCode"]);
+      return stdout.replace(/\(1,\d+\)/, "");
+    };
+    const needsRewrite = (target: string) =>
+      `tsconfig.json: error TS18120: Content mapper output extension mapping from '.vue' to '${target}' requires 'rewriteRelativeImportExtensions' to be enabled.`;
+
+    test("apply if tsconfig.json has none", async () => {
+      expect(await run({})).toBe(needsRewrite(".js"));
+    });
+
+    test("are replaced by those in tsconfig.json", async () => {
+      expect(await run({ outputExtensions: { ".vue": ".mjs" } })).toBe(needsRewrite(".mjs"));
+    });
+
+    test.each([null, {}])("are turned off by %j in tsconfig.json", async outputExtensions => {
+      expect(await run({ outputExtensions })).toBe("");
+    });
+  });
+
   test("two entries with the same package share a process", async () => {
     using dir = project({
       mapper: `fs.appendFileSync(__dirname + "/started.txt", "x"); serve();`,
@@ -520,8 +572,60 @@ describe.concurrent("a mapper's process", () => {
     await expectErrors({ mapper: `serve({ transform: (params, id) => { ${body}; } });` }, requestFailed);
   });
 
-  test.skipIf(isWindows)("is killed in the middle of a request", async () => {
+  test("is killed in the middle of a request", async () => {
     await expectErrors({ mapper: `serve({ transform: () => process.kill(process.pid, "SIGKILL") });` }, requestFailed);
+  });
+
+  test("never answers the first request", async () => {
+    using dir = project({ mapper: `setInterval(() => {}, 1000);` });
+    // The limit is five seconds, as in `tsc`.
+    const { stdout } = await check(dir, ["--runExternalCode"], { BUN_DEBUG_TEST_CONTENT_MAPPER_TIMEOUT_MS: "1" });
+    expect(stdout).toBe(
+      notInitialized("The content mapper did not respond to the 'initialize' request within 5 seconds."),
+    );
+  });
+
+  // The second mapper answers once the process of the first one is gone, so this never ends if that process is only
+  // killed at the end of the check.
+  test("is killed as soon as the first request has failed", async () => {
+    const first = `fs.writeFileSync(__dirname + "/pid.txt", String(process.pid));
+    serve({ initialize: () => ({ positionEncoding: "utf-32", diagnosticSource: "a" }) });`;
+    const second = `serve({ transform: (params, id) => {
+      const wait = () => {
+        try {
+          process.kill(Number(fs.readFileSync(__dirname + "/../a/pid.txt", "utf8")), 0);
+        } catch (error) {
+          if (error.code === "ESRCH") return send({ id, result: script(params.content) });
+        }
+        setTimeout(wait, 5);
+      };
+      wait();
+      return SKIP;
+    } });`;
+    await expectErrors(
+      {
+        mapper: second,
+        config: {
+          contentMappers: [
+            { package: "a", extensions: [".aa"] },
+            { package: "m", extensions: [".vue"] },
+          ],
+          files: ["A.aa", "App.vue"],
+          include: undefined,
+        },
+        files: {
+          "node_modules/a/package.json": JSON.stringify({
+            name: "a",
+            version: "1.0.0",
+            typescript: { contentMapper: { exec: [bunExe(), "mapper.js"] } },
+          }),
+          "node_modules/a/mapper.js": prelude + first,
+          "A.aa": app,
+        },
+      },
+      `error TS18099: The content mapper 'a' could not be initialized.
+  The content mapper selected unsupported position encoding 'utf-32'.`,
+    );
   });
 
   // `tsc` prints the errors and then waits forever.
@@ -537,11 +641,11 @@ describe.concurrent("a mapper's process", () => {
     expect(stdout).toBe(errorsOfApp);
   });
 
-  test.skipIf(isWindows)("a command that doesn't exist", async () => {
+  test("a command that doesn't exist", async () => {
     await expectErrors(
       { mapper: `serve();`, manifest: { exec: ["does-not-exist-anywhere"] } },
       notInitialized(
-        `The content mapper command 'does-not-exist-anywhere' could not be started: exec: "does-not-exist-anywhere": executable file not found in $PATH`,
+        `The content mapper command 'does-not-exist-anywhere' could not be started: exec: "does-not-exist-anywhere": executable file not found in ${isWindows ? "%PATH%" : "$PATH"}`,
       ),
     );
     await expectErrors(
@@ -635,6 +739,29 @@ ${withoutPlace}`,
   test("in BUN_OPTIONS", async () => {
     expect(await expectNotStarted({}, [], { BUN_OPTIONS: "--runExternalCode" })).toBe(withoutPlace);
     await expectNotStarted({}, [], { BUN_OPTIONS: "check --runExternalCode" });
+  });
+
+  test.each(["--env-file", "--preload", "--define"])("in BUN_OPTIONS, after `check` as the value of %s", async flag => {
+    // `check`, as it's typed, is then also a path to check.
+    const files = { "check/x.ts": `import "../App.vue";\n` };
+    const stdout = await expectNotStarted({ files }, [], { BUN_OPTIONS: `${flag} check --runExternalCode` });
+    expect(stdout).toContain("error TS18068");
+  });
+
+  test("typed, with `check` in BUN_OPTIONS, it counts", async () => {
+    using dir = project({ mapper: started });
+    await using proc = spawn({
+      cmd: [bunExe(), "--runExternalCode", "--no-pretty"],
+      cwd: String(dir),
+      env: { ...env, BUN_OPTIONS: "check" },
+      timeout: longLimit,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The mapper gets the same `BUN_OPTIONS`, so what starts isn't the mapper.
+    expect(stdout).toContain("error TS18099");
+    expect(stdout).not.toContain("error TS18068");
   });
 
   test("before `check`", async () => {

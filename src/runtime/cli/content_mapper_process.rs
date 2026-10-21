@@ -6,6 +6,7 @@
 //! `Connection::wait`. What a program writes is passed on as is. The checker decodes and validates it.
 
 use core::ffi::CStr;
+use core::time::Duration;
 use std::ffi::CString;
 use std::sync::Arc;
 
@@ -18,7 +19,7 @@ use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteResult, WriteStatu
 #[cfg(unix)]
 use bun_io::{FilePollFlag, PosixFlags};
 use bun_sema_driver::host::{
-    Call, CallError, Connection, Json, Transport, receive_from_content_mapper, to_native,
+    Call, CallError, Connection, Json, Mapper, Transport, receive_from_content_mapper, to_native,
 };
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
@@ -46,7 +47,8 @@ enum Command {
         program: Arc<Program>,
         bytes: Vec<u8>,
     },
-    /// Stop every program, then end the thread.
+    Kill(Arc<Program>),
+    /// Kill every program, then end the thread.
     Stop,
 }
 
@@ -140,7 +142,23 @@ impl Transport for Programs {
         if !self.send(write) {
             program.connection.end(closed());
         }
-        program.connection.wait(begun.id, call.timeout_seconds)
+        let timeout = call.timeout_seconds.map(|seconds| {
+            let for_tests = bun_core::env_var::BUN_DEBUG_TEST_CONTENT_MAPPER_TIMEOUT_MS.get();
+            match for_tests.filter(|_| seconds > 0) {
+                Some(milliseconds) => Duration::from_millis(milliseconds),
+                None => Duration::from_secs(seconds.into()),
+            }
+        });
+        program.connection.wait(begun.id, timeout)
+    }
+
+    fn stop(&self, mapper: &Mapper) {
+        let identity = mapper.identity();
+        let programs = self.programs.lock();
+        if let Some(program) = programs.iter().find(|it| it.identity == identity) {
+            program.connection.end(closed());
+            self.send(Command::Kill(Arc::clone(program)));
+        }
     }
 
     fn close(&self) {
@@ -167,6 +185,13 @@ fn closed() -> CallError {
     }
 }
 
+/// Returns the process of `program`, unless it couldn't be started. `children` are live.
+fn child_of(children: &[*mut Child], program: &Arc<Program>) -> Option<*mut Child> {
+    // SAFETY: the caller's contract. Nothing ever borrows this field mutably.
+    let is_of_program = |it: &&*mut Child| unsafe { Arc::ptr_eq(&(***it).program, program) };
+    children.iter().find(is_of_program).copied()
+}
+
 fn run_io_thread(inbox: &Guarded<Inbox>) {
     // `Output`'s writers are per-thread state, and this thread isn't from Bun's pool. So are the bounds of the stack,
     // which the JSON parser asks for.
@@ -182,12 +207,15 @@ fn run_io_thread(inbox: &Guarded<Inbox>) {
             match command {
                 Command::Start(program) => children.extend(Child::start(program, event_loop)),
                 Command::Write { program, bytes } => {
-                    // SAFETY: the children are live until the end of this function.
-                    let is_for =
-                        |it: &&*mut Child| unsafe { Arc::ptr_eq(&(***it).program, &program) };
-                    if let Some(&child) = children.iter().find(is_for) {
-                        // SAFETY: as above, and nothing borrows the child.
+                    if let Some(child) = child_of(&children, &program) {
+                        // SAFETY: the children are live until the end of this function, and nothing borrows this one.
                         unsafe { Child::write(child, &bytes) };
+                    }
+                }
+                Command::Kill(program) => {
+                    if let Some(child) = child_of(&children, &program) {
+                        // SAFETY: as above.
+                        unsafe { Child::kill(child) };
                     }
                 }
                 Command::Stop => {

@@ -14,7 +14,7 @@ use bun_paths::resolve_path::{dirname, windows_volume_name_len, z};
 use bun_paths::{basename_posix, path_buffer_pool};
 use bun_sema::atom::Interner;
 use bun_sema::content_mapper::Processes;
-pub use bun_sema::content_mapper::{Call, CallError, Connection, Transport};
+pub use bun_sema::content_mapper::{Call, CallError, Connection, Mapper, Transport};
 use bun_sema::hir;
 pub use bun_sema::json::Json;
 use bun_sema::resolve::{

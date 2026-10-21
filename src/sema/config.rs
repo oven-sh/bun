@@ -1337,6 +1337,7 @@ fn content_mappers(
     }
     let mut resolved = Vec::new();
     for (index, mut mapper) in mappers {
+        // `null` has no mappings, and it turns the package's off.
         let has_own_outputs = (list.items.iter().flatten().nth(index))
             .is_some_and(|element| element.get(b"outputExtensions").is_some());
         if let Err(mut problem) = resolve_content_mapper_manifest(

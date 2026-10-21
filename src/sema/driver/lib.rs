@@ -645,6 +645,12 @@ fn get_input_option_name(flag: &[u8]) -> &[u8] {
     long.map_or(name, |(_, long)| &long[2..])
 }
 
+/// True if the argument `s` is `--runExternalCode`, with or without a value after `=`.
+pub fn is_run_external_code_flag(s: &[u8]) -> bool {
+    let flag = strings::split_once_char(s, b'=').map_or(s, |it| it.0);
+    flag.starts_with(b"-") && get_input_option_name(flag).eq_ignore_ascii_case(b"runExternalCode")
+}
+
 /// `commandLineParser`
 struct CommandLineParser<'a> {
     /// `currentDirectory`, in the checker's path format.
@@ -741,7 +747,7 @@ impl CommandLineParser<'_> {
             self.parsed.build = true;
             return i;
         }
-        if name.eq_ignore_ascii_case(b"runExternalCode") {
+        if is_run_external_code_flag(s) {
             let is_value = |next: &&[u8]| matches!(*next, b"true" | b"false" | b"null");
             let next = args.get(i).copied().filter(is_value);
             let next = next.filter(|_| inline_value.is_none());

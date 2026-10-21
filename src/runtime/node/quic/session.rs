@@ -1829,7 +1829,7 @@ impl QuicSession {
             .iter()
             .map(|&(_, qs)| {
                 // SAFETY: entries are live here -- a stream is only downgraded
-                // after `remove_stream` drops it from `self.streams`.
+                // after it leaves `self.streams`.
                 Strong::create(unsafe { (*qs).handle() }, _global)
             })
             .collect();

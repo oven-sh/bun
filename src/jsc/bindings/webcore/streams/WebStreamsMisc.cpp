@@ -270,8 +270,8 @@ JSValue structuredCloneStreamChunk(JSGlobalObject* globalObject, JSValue chunk)
             structure = globalObject->typedArrayStructure(type, false);
         JSArrayBufferView* result = nullptr;
         switch (type) {
-#define CLONE_TYPED_ARRAY(name) \
-    case Type##name:            \
+#define CLONE_TYPED_ARRAY(name)                                                                                              \
+    case Type##name:                                                                                                         \
         result = JS##name##Array::create(globalObject, structure, WTF::move(copy), 0, byteLength / elementSize(Type##name)); \
         break;
             FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(CLONE_TYPED_ARRAY)

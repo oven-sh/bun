@@ -1281,6 +1281,39 @@ describe("SubtleCrypto.supports for deriveBits and deriveKey", () => {
     });
   });
 
+  it.each([
+    ["X25519", "X25519", "Ed25519"],
+    ["ECDH", { name: "ECDH", namedCurve: "P-256" }, { name: "ECDSA", namedCurve: "P-256" }],
+  ] as const)("%s: answers false for a `public` that the real call rejects", async (name, keyAlgorithm, other) => {
+    const [own, peer, otherAlgorithm] = (await Promise.all([
+      crypto.subtle.generateKey(keyAlgorithm, false, ["deriveBits", "deriveKey"]),
+      crypto.subtle.generateKey(keyAlgorithm, false, ["deriveBits"]),
+      crypto.subtle.generateKey(other, false, ["sign", "verify"]),
+    ])) as CryptoKeyPair[];
+    const aes256 = { name: "AES-GCM", length: 256 };
+    const rows = async (publicKey: CryptoKey) => ({
+      deriveBits: await deriveBitsRow({ name, public: publicKey }, own.privateKey, 256),
+      deriveKey: await deriveKeyRow({ name, public: publicKey }, own.privateKey, aes256, ["encrypt"]),
+    });
+    const notPublic = "InvalidAccessError: The requested operation is not valid for the provided key";
+    const mismatch = "InvalidAccessError: key algorithm mismatch";
+    expect({
+      "public key of the peer": await rows(peer.publicKey),
+      "private key of the peer": await rows(peer.privateKey),
+      "public key of another algorithm": await rows(otherAlgorithm.publicKey),
+    }).toEqual({
+      "public key of the peer": { deriveBits: yes, deriveKey: { supports: true, deriveKey: "fulfils" } },
+      "private key of the peer": {
+        deriveBits: { supports: false, deriveBits: notPublic },
+        deriveKey: { supports: false, deriveKey: notPublic },
+      },
+      "public key of another algorithm": {
+        deriveBits: { supports: false, deriveBits: mismatch },
+        deriveKey: { supports: false, deriveKey: mismatch },
+      },
+    });
+  });
+
   // supports converts the length as deriveBits does, not by the typed overloads of the
   // current WICG draft, so it throws what deriveBits rejects with.
   it.each([

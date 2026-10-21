@@ -66,6 +66,16 @@ void CryptoAlgorithmECDH::generateKey(const CryptoAlgorithmParameters& parameter
     callback(WTF::move(pair));
 }
 
+ExceptionOr<void> CryptoAlgorithmECDH::validateDeriveBits(const CryptoAlgorithmEcdhKeyDeriveParams& parameters)
+{
+    ASSERT(parameters.publicKey);
+    if (parameters.publicKey->type() != CryptoKey::Type::Public)
+        return Exception { InvalidAccessError };
+    if (parameters.publicKey->algorithmIdentifier() != s_identifier)
+        return Exception { InvalidAccessError, "key algorithm mismatch"_s };
+    return {};
+}
+
 void CryptoAlgorithmECDH::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, std::optional<size_t> length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
     auto& ecParameters = downcast<CryptoAlgorithmEcdhKeyDeriveParams>(parameters);
@@ -74,13 +84,8 @@ void CryptoAlgorithmECDH::deriveBits(const CryptoAlgorithmParameters& parameters
         exceptionCallback(InvalidAccessError, ""_s);
         return;
     }
-    ASSERT(ecParameters.publicKey);
-    if (ecParameters.publicKey->type() != CryptoKey::Type::Public) {
-        exceptionCallback(InvalidAccessError, ""_s);
-        return;
-    }
-    if (baseKey->algorithmIdentifier() != ecParameters.publicKey->algorithmIdentifier()) {
-        exceptionCallback(InvalidAccessError, "key algorithm mismatch"_s);
+    if (auto result = validateDeriveBits(ecParameters); result.hasException()) {
+        exceptionCallback(result.exception().code(), result.exception().message());
         return;
     }
     auto& ecBaseKey = downcast<CryptoKeyEC>(baseKey.get());

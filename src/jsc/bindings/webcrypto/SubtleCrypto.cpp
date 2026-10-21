@@ -52,9 +52,11 @@
 #include "JSMlDsaParams.h"
 #include "JSX25519Params.h"
 #include "AsymmetricKeyValue.h"
+#include "CryptoAlgorithmECDH.h"
 #include "CryptoAlgorithmHKDF.h"
 #include "CryptoAlgorithmMLDSA.h"
 #include "CryptoAlgorithmPBKDF2.h"
+#include "CryptoAlgorithmX25519.h"
 #include "CryptoKeyAKP.h"
 #include "CryptoKeyEC.h"
 #include "CryptoKeyRSA.h"
@@ -1991,12 +1993,14 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
         case CryptoAlgorithmIdentifier::PBKDF2:
             return !CryptoAlgorithmPBKDF2::validateDeriveBits(downcast<CryptoAlgorithmPbkdf2Params>(params), length).hasException();
         case CryptoAlgorithmIdentifier::X25519:
+            if (CryptoAlgorithmX25519::validateDeriveBits(downcast<CryptoAlgorithmX25519Params>(params)).hasException())
+                return false;
             return !length || *length <= 256;
         case CryptoAlgorithmIdentifier::ECDH: {
-            auto* publicKey = downcast<CryptoAlgorithmEcdhKeyDeriveParams>(params).publicKey.get();
-            if (!publicKey || !is<CryptoKeyEC>(*publicKey))
+            auto& ecdhParams = downcast<CryptoAlgorithmEcdhKeyDeriveParams>(params);
+            if (CryptoAlgorithmECDH::validateDeriveBits(ecdhParams).hasException())
                 return false;
-            auto namedCurve = downcast<CryptoKeyEC>(*publicKey).namedCurveString();
+            auto namedCurve = downcast<CryptoKeyEC>(*ecdhParams.publicKey).namedCurveString();
             unsigned maxLength = namedCurve == "P-256"_s ? 256 : namedCurve == "P-384"_s ? 384
                                                                                          : 528;
             return !length || *length <= maxLength;

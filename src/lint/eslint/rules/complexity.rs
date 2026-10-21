@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap;
 
 /// Enforce a maximum cyclomatic complexity allowed in a program.
 pub struct Complexity {
-    /// `None`: nothing is too complex.
+    /// `None` means nothing is too complex.
     threshold: Option<usize>,
     is_modified: bool,
 }
@@ -18,8 +18,7 @@ const COMPLEX: Message = Message::new(
 
 const THRESHOLD_DEFAULT: usize = 20;
 
-/// Whether `node` is the value of the `PropertyDefinition` `member`, which has a code path of its
-/// own.
+/// True if `node` is the value of the `PropertyDefinition` `member`, which has its own code path.
 fn is_field_initializer<'a>(member: Member<'a>, node: Node<'a>) -> bool {
     member.init().map(Node::Expr) == Some(node)
         && !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
@@ -27,12 +26,12 @@ fn is_field_initializer<'a>(member: Member<'a>, node: Node<'a>) -> bool {
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// What adds to the complexity of the code path that it is in: where it starts, how much it adds, and what it is.
+    /// Nodes that add to the complexity of their code path: the node's start, how much it adds, and the node.
     found: Vec<(u32, usize, Node<'a>)>,
-    /// By the index of a function: the complexity of its code path. 0: it is not known to have more than one route.
-    of_functions: Vec<usize>,
-    /// The same for the initializers of fields, of which few have more than one.
-    of_fields: FxHashMap<Member<'a>, usize>,
+    /// The complexity of each function's code path, by function index. 0 if it isn't known to have more than one path.
+    function_complexity: Vec<usize>,
+    /// Same for field initializers, few of which have more than one path.
+    field_complexity: FxHashMap<Member<'a>, usize>,
     owners: AncestorMemo<'a, Node<'a>>,
 }
 
@@ -41,15 +40,15 @@ impl Complexity {
         cx.state.found.push((node.span().start, by, node.into()));
     }
 
-    /// Finds the complexity of each code path that can be above `threshold`.
+    /// Computes the complexity of each code path that could exceed `threshold`.
     fn count<'a>(threshold: usize, cx: &mut Cx<'a, Self>) {
         let found = std::mem::take(&mut cx.state.found);
-        // A complexity is one more than what is added to it.
+        // A code path's complexity is one more than the sum of what's added to it.
         if found.iter().map(|it| it.1).sum::<usize>() < threshold {
             return;
         }
-        // For each function that is in no function: where all that is written is in it, and how much that adds, be it to the
-        // function or to a code path in it.
+        // For each outermost function: the span in which everything belongs to it, and how much complexity that code
+        // adds in total, whether to the function itself or to a code path nested in it.
         let inside = |func: Func<'a>| {
             let whole = func.span();
             let start = match func.open_paren() {
@@ -67,9 +66,9 @@ impl Complexity {
             .filter(|it| it.has_body() && it.enclosing().is_none());
         let mut outermost: Vec<(Span, usize)> = outermost.map(inside).collect();
         utils::sort::sort_unstable_by_key(&mut outermost, |it| it.0.start);
-        // The last that starts before what has been found.
+        // The index of the last function that starts before the found node.
         let mut at = 0;
-        let mut around = Vec::with_capacity(found.len());
+        let mut enclosing_indices = Vec::with_capacity(found.len());
         for &(start, by, _) in &found {
             let is_at = outermost.get(at).is_some_and(|it| it.0.start <= start)
                 && outermost.get(at + 1).is_none_or(|it| start < it.0.start);
@@ -78,7 +77,7 @@ impl Complexity {
                     .partition_point(|it| it.0.start <= start)
                     .wrapping_sub(1);
             }
-            around.push(match outermost.get_mut(at).filter(|it| start < it.0.end) {
+            enclosing_indices.push(match outermost.get_mut(at).filter(|it| start < it.0.end) {
                 Some(function) => {
                     function.1 += by;
                     at
@@ -86,15 +85,18 @@ impl Complexity {
                 None => usize::MAX,
             });
         }
-        for (&(_, by, node), around) in found.iter().zip(around) {
-            if outermost.get(around).is_none_or(|it| it.1 >= threshold) {
+        for (&(_, by, node), enclosing_index) in found.iter().zip(enclosing_indices) {
+            if outermost
+                .get(enclosing_index)
+                .is_none_or(|it| it.1 >= threshold)
+            {
                 Self::add(node, by, cx);
             }
         }
     }
 
-    /// Adds to the complexity of what has the code path that `node` is in: the `Func` of a function
-    /// or of a static block, or the `Member` whose initializer it is in. Nothing at the top level.
+    /// Adds to the complexity of whatever owns `node`'s code path: the `Func` of a function or static block, or the
+    /// `Member` whose initializer it's in. Does nothing at the top level.
     fn add<'a>(node: Node<'a>, by: usize, cx: &mut Cx<'a, Self>) {
         let owner = cx
             .state
@@ -106,13 +108,15 @@ impl Complexity {
             });
         match owner {
             Some(Node::Func(func)) => Self::increase_function(func, by, cx),
-            Some(Node::Member(member)) => *cx.state.of_fields.entry(member).or_insert(1) += by,
+            Some(Node::Member(member)) => {
+                *cx.state.field_complexity.entry(member).or_insert(1) += by
+            }
             _ => {}
         }
     }
 
     fn increase_function<'a>(func: Func<'a>, by: usize, cx: &mut Cx<'a, Self>) {
-        let (at, known) = (func.id().idx(), &mut cx.state.of_functions);
+        let (at, known) = (func.id().idx(), &mut cx.state.function_complexity);
         if at >= known.len() {
             known.resize(at + 1, 0);
         }
@@ -127,7 +131,7 @@ impl Complexity {
         };
         let is_oxlint = cx.language().is_oxlint;
         let (name, loc) = match owner {
-            // oxlint points at the parentheses too.
+            // oxlint's span includes the parentheses.
             Node::Member(member) if is_oxlint => (
                 b"class field initializer".to_vec(),
                 member
@@ -140,7 +144,7 @@ impl Complexity {
             ),
             Node::Func(func) if func.kind() == FnKind::StaticBlock => {
                 let whole = func.span();
-                // oxlint points at the whole block.
+                // oxlint reports the whole block.
                 match is_oxlint {
                     true => (b"class static block".to_vec(), whole),
                     false => {
@@ -149,7 +153,7 @@ impl Complexity {
                     }
                 }
             }
-            // oxlint points at the function.
+            // oxlint reports the whole function.
             Node::Func(func) if is_oxlint => (
                 oxlint::get_function_name_with_kind(func),
                 func.estree_span(),
@@ -242,7 +246,7 @@ impl Rule for Complexity {
             // A `Cond`.
             None => true,
             // A default value in the target of a destructuring assignment.
-            // oxlint does not count it.
+            // oxlint doesn't count it.
             Some(None) => {
                 !cx.language().is_oxlint
                     && matches!(e.parent(), Node::Expr(_) | Node::Prop(_))
@@ -312,7 +316,7 @@ impl Rule for Complexity {
         if let Some(init) = member.init()
             && is_field_initializer(member, Node::Expr(init))
         {
-            cx.state.of_fields.entry(member).or_insert(1);
+            cx.state.field_complexity.entry(member).or_insert(1);
         }
     }
 
@@ -333,18 +337,19 @@ impl Rule for Complexity {
             return;
         };
         Self::count(threshold, cx);
-        // oxlint reports an initializer that is a function and the function at one place: the initializer first.
+        // oxlint reports an initializer that's a function and the function itself at the same location, the initializer
+        // first.
         for (&member, &complexity) in
-            utils::sort::in_order_of(&cx.state.of_fields, |it| it.0.span().start)
+            utils::sort::collect_sorted_by_key(&cx.state.field_complexity, |it| it.0.span().start)
         {
             self.report(Node::Member(member), complexity, cx);
         }
-        let of_functions = &cx.state.of_functions;
-        if of_functions.iter().all(|it| *it <= threshold) {
+        let function_complexity = &cx.state.function_complexity;
+        if function_complexity.iter().all(|it| *it <= threshold) {
             return;
         }
         for func in cx.file().funcs() {
-            let complexity = of_functions.get(func.id().idx());
+            let complexity = function_complexity.get(func.id().idx());
             self.report(Node::Func(func), complexity.copied().unwrap_or(0), cx);
         }
     }

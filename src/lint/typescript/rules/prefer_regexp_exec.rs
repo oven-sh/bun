@@ -53,7 +53,7 @@ enum StaticArgumentValue<'a> {
     Other,
 }
 
-/// tsgolint's `isStringLiteral`: the value of a string literal that is not in parentheses.
+/// tsgolint's `isStringLiteral`: the value of an unparenthesized string literal.
 fn as_string_literal(node: Expr<'_>) -> Option<Name<'_>> {
     match node.kind() {
         ExprKind::String(value) if !node.is_parenthesized() => Some(value),
@@ -70,7 +70,7 @@ fn as_reg_exp_constructor_call(node: Expr<'_>) -> Option<Call<'_>> {
     callee.is_ident("RegExp").then_some(call)
 }
 
-/// The initializer of the variable, if a `const` declares it.
+/// The variable's initializer, if it's declared with `const`.
 fn initializer_of_const<'a>(variable: Symbol<'a>) -> Option<Expr<'a>> {
     let pat = variable.declarations().find_map(|it| match it {
         Declaration::Var(pat) => Some(pat),
@@ -84,7 +84,7 @@ fn initializer_of_const<'a>(variable: Symbol<'a>) -> Option<Expr<'a>> {
     }
 }
 
-/// The value of a call of the `RegExp` constructor, which tsgolint knows if the arguments are string literals.
+/// The value of a `RegExp` constructor call, which tsgolint only evaluates if the arguments are string literals.
 fn get_static_reg_exp_constructor_call_value(node: Expr<'_>) -> StaticArgumentValue<'_> {
     let Some(call) = as_reg_exp_constructor_call(node) else {
         return StaticArgumentValue::Unknown;
@@ -125,8 +125,8 @@ fn get_static_argument_value(mut node: Expr<'_>) -> StaticArgumentValue<'_> {
     }
 }
 
-/// `new RegExp(/a/g)`, also with `undefined` for the flags: tsgolint takes it for a pattern without flags. Its fix would give
-/// one match where `match` gave all.
+/// `new RegExp(/a/g)`, also with `undefined` as the flags. tsgolint treats it as a pattern without flags, so its fix
+/// would return one match where `match` returned all of them.
 fn is_reg_exp_of_global_literal(node: Expr) -> bool {
     as_reg_exp_constructor_call(node).is_some_and(|call| {
         let args = call.args();
@@ -140,10 +140,10 @@ fn is_reg_exp_of_global_literal(node: Expr) -> bool {
     })
 }
 
-/// Whether the syntax proves that there is no `g` flag. If not, there may or may not be one.
+/// True if the syntax proves that there's no `g` flag. False means there may or may not be one.
 fn definitely_does_not_contain_global_flag(node: Expr) -> bool {
     if node.file().language().is_oxlint {
-        // tsgolint looks at the syntax of the flags only.
+        // tsgolint only looks at the syntax of the flags.
         let Some(call) = as_reg_exp_constructor_call(node) else {
             return false;
         };
@@ -168,8 +168,8 @@ fn definitely_does_not_contain_global_flag(node: Expr) -> bool {
         .is_some_and(|value| !value.as_str().is_some_and(|flags| strings::contains_char(flags, b'g')))
 }
 
-/// tsgolint's `buildStringToRegExpLiteral`: a `\` before every `/`. Unlike it, not before one that
-/// has one, and an empty pattern and a line terminator are as in `source`.
+/// tsgolint's `buildStringToRegExpLiteral`, which puts a `\` before every `/`. Unlike tsgolint, this doesn't escape a
+/// `/` that's already escaped, and it prints an empty pattern or a line terminator the way `source` does.
 fn build_string_to_reg_exp_literal(reg_exp: &Regex, pattern: &[u8]) -> Vec<u8> {
     let mut literal = Vec::with_capacity(pattern.len() + 4);
     literal.push(b'/');
@@ -189,8 +189,8 @@ fn build_string_to_reg_exp_literal(reg_exp: &Regex, pattern: &[u8]) -> Vec<u8> {
     literal
 }
 
-/// tsgolint's `IsStrongPrecedenceNode`: also all of an optional chain and a template without
-/// substitutions. Unlike it, not `new C`: `new C.exec(a)` is `new (C.exec)(a)`.
+/// tsgolint's `IsStrongPrecedenceNode`, which also accepts a whole optional chain and a template without substitutions.
+/// Unlike tsgolint, this rejects `new C`, because `new C.exec(a)` is `new (C.exec)(a)`.
 fn is_strong_precedence_node(node: Expr<'_>) -> bool {
     match node.tag() {
         ExprTag::True
@@ -215,7 +215,8 @@ fn is_strong_precedence_node(node: Expr<'_>) -> bool {
     }
 }
 
-/// tsgolint's `isWeakPrecedenceParent`: also an assignment and `,`, and not `typeof`, `void` and `delete`.
+/// tsgolint's `isWeakPrecedenceParent`, which also accepts an assignment and `,`, but not `typeof`, `void` and
+/// `delete`.
 fn is_weak_precedence_parent(node: Expr<'_>) -> bool {
     let Node::Expr(parent) = node.parent() else {
         return false;
@@ -229,8 +230,8 @@ fn is_weak_precedence_parent(node: Expr<'_>) -> bool {
     }
 }
 
-/// The code of an inner node of tsgolint's `buildWrappingFix`: with the parentheses it has, or in
-/// new ones if it is not a strong precedence node.
+/// The code of an inner node in tsgolint's `buildWrappingFix`. It keeps its own parentheses, or gets new ones if it
+/// isn't a strong precedence node.
 fn inner_code<'a>(node: Expr<'a>) -> Cow<'a, [u8]> {
     if node.is_parenthesized() {
         return Cow::Borrowed(node.file().slice(node.outer_span()));
@@ -241,8 +242,8 @@ fn inner_code<'a>(node: Expr<'a>) -> Cow<'a, [u8]> {
     }
 }
 
-/// tsgolint's `buildWrappingFix`. Unlike it, with a `;` before code that would continue the
-/// statement before.
+/// tsgolint's `buildWrappingFix`. Unlike tsgolint, this adds a `;` before code that would otherwise continue the
+/// previous statement.
 fn build_wrapping_fix<'a>(fixer: Fixer<'a>, node: Expr<'a>, mut code: Vec<u8>) -> Fix {
     if is_weak_precedence_parent(node) && !node.is_parenthesized() {
         code.insert(0, b'(');
@@ -268,7 +269,8 @@ impl Rule for PreferRegexpExec {
         .presets(Presets::STYLISTIC_TYPE_CHECKED)
         .requires_types();
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    /// Whether the value of a variable can have the global flag. All its references are looked at to find its value.
+    /// Caches whether a variable's value can have the global flag. Finding the value means looking at all its
+    /// references.
     type State<'a> = IdMap<Symbol<'a>, bool>;
 
     fn new(_: &Options) -> Self {
@@ -309,7 +311,7 @@ impl Rule for PreferRegexpExec {
             return;
         }
 
-        // Regular expressions with the global flag are not reported.
+        // Regular expressions with the global flag aren't reported.
         let is_static_value_unknown = if is_oxlint {
             match get_static_argument_value(argument_node) {
                 StaticArgumentValue::RegExp { flags } if strings::contains_char(flags, b'g') => return,
@@ -332,7 +334,7 @@ impl Rule for PreferRegexpExec {
         };
 
         if let ExprKind::String(pattern) = argument_node.kind()
-            // For tsgolint a string literal in parentheses is not one.
+            // tsgolint doesn't treat a parenthesized string literal as one.
             && !(is_oxlint && argument_node.is_parenthesized())
         {
             let reg_exp = match Regex::from_bytes(pattern.bytes(), b"") {
@@ -359,7 +361,7 @@ impl Rule for PreferRegexpExec {
         }
 
         let argument_types = collect_argument_types(argument_node.ty());
-        // tsgolint gives up on a value that it does not know only if its type has `RegExp`.
+        // tsgolint only gives up on an unknown value if its type includes `RegExp`.
         if is_static_value_unknown
             && matches!(argument_types, ArgumentType::RegExp | ArgumentType::Both)
             && !definitely_does_not_contain_global_flag(argument_node)

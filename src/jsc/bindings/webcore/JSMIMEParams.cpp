@@ -20,6 +20,7 @@
 #include "ZigGlobalObject.h"
 #include "NodeValidator.h" // For Bun::V::
 #include "ErrorCode.h" // For Bun::ERR::
+#include "StringSizeLimit.h"
 #include "JavaScriptCore/JSMapInlines.h"
 
 namespace WebCore {
@@ -516,7 +517,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncToString, (JSGlobalObject * global
     }
 
     JSMap* map = thisObject->jsMap();
-    StringBuilder builder;
+    StringBuilder builder { OverflowPolicy::RecordOverflow };
     bool first = true;
 
     JSMapIterator* iterator = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map, IterationKind::Entries);
@@ -546,6 +547,11 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncToString, (JSGlobalObject * global
         builder.append(key);
         builder.append('=');
         encodeParamValue(value, builder);
+    }
+
+    if (builder.hasOverflowed() || Bun::exceedsStringLimit(builder.length())) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
     }
 
     return JSValue::encode(jsString(vm, builder.toString()));

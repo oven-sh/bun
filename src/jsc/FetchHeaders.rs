@@ -27,12 +27,18 @@ unsafe extern "C" {
         arg1: &JSGlobalObject,
     ) -> *mut FetchHeaders;
     fn WebCore__FetchHeaders__copyTo(
-        arg0: *mut FetchHeaders,
+        arg0: &FetchHeaders,
         arg1: *mut StringPointer,
         arg2: *mut StringPointer,
-        arg3: *mut u8,
+        arg3: u32,
+        arg4: *mut u8,
+        arg5: u32,
     );
-    safe fn WebCore__FetchHeaders__count(arg0: &FetchHeaders, arg1: &mut u32, arg2: &mut u32);
+    safe fn WebCore__FetchHeaders__count(
+        arg0: &FetchHeaders,
+        arg1: &mut u32,
+        arg2: &mut u32,
+    ) -> bool;
     safe fn WebCore__FetchHeaders__createEmpty() -> *mut FetchHeaders;
     // safe: `arg0`/`arg1` are opaque handles to C++-owned request structs
     // (PicoHeaders / uWS HttpRequest); never dereferenced as Rust data — same
@@ -213,7 +219,7 @@ impl FetchHeaders {
         Some(str)
     }
 
-    pub fn fast_has_(&mut self, name_: u8) -> bool {
+    pub fn fast_has_(&self, name_: u8) -> bool {
         WebCore__FetchHeaders__fastHas_(self, name_)
     }
 
@@ -244,8 +250,11 @@ impl FetchHeaders {
         WebCore__FetchHeaders__toJS(self, global_this)
     }
 
-    pub fn count(&mut self, names: &mut u32, buf_len: &mut u32) {
-        WebCore__FetchHeaders__count(self, names, buf_len)
+    /// Returns the header count and the total size of all names and values in bytes, or `None` if
+    /// the size exceeds `u32::MAX`.
+    pub fn count(&self) -> Option<(u32, u32)> {
+        let (mut names, mut buf_len) = (0, 0);
+        WebCore__FetchHeaders__count(self, &mut names, &mut buf_len).then_some((names, buf_len))
     }
 
     pub fn clone_this(
@@ -261,9 +270,27 @@ impl FetchHeaders {
         WebCore__FetchHeaders__deref(self)
     }
 
-    pub fn copy_to(&mut self, names: *mut StringPointer, values: *mut StringPointer, buf: *mut u8) {
-        // SAFETY: caller guarantees names/values/buf are sized per a prior `count()` call
-        unsafe { WebCore__FetchHeaders__copyTo(self, names, values, buf) }
+    /// Aborts if `names`, `values` or `buf` is smaller than what `count()` reported.
+    pub fn copy_to(
+        &self,
+        names: &mut [StringPointer],
+        values: &mut [StringPointer],
+        buf: &mut [u8],
+    ) {
+        // Clamping a longer slice is fine because C++ writes at most `u32::MAX` entries or bytes.
+        let columns = u32::try_from(names.len().min(values.len())).unwrap_or(u32::MAX);
+        let buf_len = u32::try_from(buf.len()).unwrap_or(u32::MAX);
+        // SAFETY: C++ asserts that it writes at most `columns` entries and `buf_len` bytes.
+        unsafe {
+            WebCore__FetchHeaders__copyTo(
+                self,
+                names.as_mut_ptr(),
+                values.as_mut_ptr(),
+                columns,
+                buf.as_mut_ptr(),
+                buf_len,
+            )
+        }
     }
 }
 

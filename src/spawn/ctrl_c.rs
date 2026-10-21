@@ -44,14 +44,7 @@ extern "C" fn handler(sig: core::ffi::c_int) {
         RECEIVED.store(true, Ordering::SeqCst);
         return;
     }
-    // SAFETY: SIG_DFL is a valid disposition; SIGINT is blocked while we run,
-    // so the re-raise is delivered (fatally) once we return.
-    unsafe {
-        let mut sa: libc::sigaction = bun_core::ffi::zeroed();
-        sa.sa_sigaction = libc::SIG_DFL;
-        libc::sigaction(sig, &raw const sa, core::ptr::null_mut());
-        libc::raise(sig);
-    }
+    bun_core::Global::raise_default_action(sig);
 }
 
 #[cfg(windows)]

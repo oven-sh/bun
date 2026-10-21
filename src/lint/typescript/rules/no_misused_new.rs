@@ -10,8 +10,7 @@ const ERROR_MESSAGE_INTERFACE: Message = Message::new(
     "Interfaces cannot be constructed, only classes.",
 );
 
-/// Whether the return type of `func` is a reference to `parent`, the name of the class or the
-/// interface.
+/// True if `func`'s return type is a reference to `parent`, the name of the class or interface.
 fn is_matching_parent_type<'a>(parent: Option<Ident<'a>>, func: Func<'a>) -> bool {
     let (Some(parent), Some(ty)) = (parent, func.return_type()) else {
         return false;
@@ -20,7 +19,7 @@ fn is_matching_parent_type<'a>(parent: Option<Ident<'a>>, func: Func<'a>) -> boo
         if name.as_ident().is_some_and(|it| it.name() == parent.name()))
 }
 
-/// `key.name === name`: of an `Identifier`, also in brackets, or a `PrivateIdentifier`.
+/// `key.name === name` for an `Identifier`, even in brackets, or a `PrivateIdentifier`.
 fn is_key_named(key: Key, name: &str) -> bool {
     match key.kind() {
         KeyKind::Ident(it) => it.is(name),
@@ -31,7 +30,7 @@ fn is_key_named(key: Key, name: &str) -> bool {
 }
 
 /// oxlint points at the name.
-fn place<'a>(member: Member<'a>, key: Key<'a>, cx: &Cx<'a, NoMisusedNew>) -> Span {
+fn report_span<'a>(member: Member<'a>, key: Key<'a>, cx: &Cx<'a, NoMisusedNew>) -> Span {
     if cx.language().is_oxlint { key.inner_span(cx.file()) } else { member.span() }
 }
 
@@ -66,7 +65,7 @@ impl Rule for NoMisusedNew {
                 };
                 if member.is_signature() {
                     if is_key_named(key, "constructor") {
-                        cx.report(place(member, key, cx), ERROR_MESSAGE_INTERFACE);
+                        cx.report(report_span(member, key, cx), ERROR_MESSAGE_INTERFACE);
                     }
                 } else if is_key_named(key, "new")
                     && !func.has_body()
@@ -74,7 +73,7 @@ impl Rule for NoMisusedNew {
                     && let Node::Class(class) = member.parent()
                     && is_matching_parent_type(class.name(), func)
                 {
-                    cx.report(place(member, key, cx), ERROR_MESSAGE_CLASS);
+                    cx.report(report_span(member, key, cx), ERROR_MESSAGE_CLASS);
                 }
             }
             _ => {}

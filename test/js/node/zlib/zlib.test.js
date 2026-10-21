@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { isDebug, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
@@ -106,6 +106,21 @@ describe("zlib", () => {
     expect(() => gunzipSync(data, { library: "zlib" })).toThrow(new Error("incorrect header check"));
   });
 
+  it("flush() takes a numeric string or a BigInt, and any kind after end()", async () => {
+    for (const kind of ["2", 2n]) {
+      const gzip = zlib.createGzip();
+      expect(Object.keys(gzip)).not.toContain("_flushBoundIdx");
+      const chunks = [];
+      gzip.on("data", chunk => chunks.push(chunk));
+      gzip.write("hello");
+      await new Promise(done => gzip.flush(kind, done));
+      const flushed = zlib.gunzipSync(Buffer.concat(chunks), { finishFlush: zlib.constants.Z_SYNC_FLUSH });
+      expect(flushed.toString()).toBe("hello");
+      gzip.end();
+      await new Promise(done => gzip.flush("none", done));
+    }
+  });
+
   describe("libdeflate level validation", () => {
     const data = Buffer.alloc(64, "a");
     // libdeflate_alloc_compressor returns NULL for level outside [0, 12]; that NULL must
@@ -135,6 +150,71 @@ describe("zlib", () => {
       });
     }
   });
+
+  // libdeflate never emits a block bigger than a stored one, so output longer than the input plus
+  // its overhead (5 bytes, plus 18 for gzip) means it wrote past the allocation.
+  it.concurrent.each(["gzip", "deflate"])(
+    "libdeflate %s doesn't write past its output buffer while another thread writes to the shared input",
+    async kind => {
+      const fixture = `
+        import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+
+        const size = 4096;
+        if (isMainThread) {
+          const input = new SharedArrayBuffer(size);
+          const worker = new Worker(new URL(import.meta.url), { workerData: input });
+          const ready = Promise.withResolvers();
+          worker.on("message", ready.resolve);
+          await ready.promise;
+          worker.unref();
+
+          const raw = process.argv[2] === "deflate";
+          const reserved = size + (raw ? 5 : 23);
+          const compress = raw ? Bun.deflateSync : Bun.gzipSync;
+          const decompress = raw ? Bun.inflateSync : Bun.gunzipSync;
+          const view = new Uint8Array(input);
+          for (let i = 0; i < 500; i++) {
+            const out = compress(view, { library: "libdeflate", level: 1 + (i % 12) });
+            if (out.length > reserved) throw new Error("wrote " + out.length + " bytes into " + reserved);
+            const back = decompress(out, { library: "libdeflate" });
+            if (back.length !== size) throw new Error("round trip returned " + back.length + " bytes");
+          }
+          console.log("ok");
+          process.exit(0);
+        } else {
+          // Alternate between bytes that encode in a few bits and bytes that need more.
+          const view = new Uint8Array(workerData);
+          let seed = 88172645;
+          const next = () => ((seed ^= seed << 13), (seed ^= seed >>> 17), (seed ^= seed << 5), seed >>> 0);
+          const cheap = new Uint8Array(size);
+          const costly = new Uint8Array(size);
+          for (let i = 0; i < size; i++) {
+            cheap[i] = next() & 127;
+            costly[i] = 0xf0 + (next() & 15);
+          }
+          for (let i = 0; i < 16; i++) cheap[next() % size] = 0xf0 + i;
+          parentPort.postMessage("ready");
+          for (;;) {
+            view.set(cheap);
+            for (let i = next() % 50000; i > 0; i--);
+            view.set(costly);
+            for (let i = next() % 5000; i > 0; i--);
+          }
+        }
+      `;
+      using dir = tempDir("libdeflate-shared", { "fixture.mjs": fixture });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.mjs", kind],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "ok\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
 
   describe("memLevel and strategy", () => {
     const data = Buffer.from(Array.from({ length: 4000 }, (_, i) => Math.imul(i, 2654435761).toString(36)).join(" "));
@@ -473,6 +553,19 @@ describe("zlib.brotli", () => {
     await promise;
     expect(all.length).toBeGreaterThanOrEqual(7);
   }, 15_000);
+
+  it.each(["createBrotliCompress", "createBrotliDecompress"])(
+    "%s().flush() rejects a zlib-only flush value",
+    factory => {
+      const stream = zlib[factory]();
+      stream.write(Buffer.alloc(128, 0x61));
+      expect(() => stream.flush(zlib.constants.Z_FINISH)).toThrow(
+        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      );
+      expect(() => stream.flush(zlib.constants.Z_BLOCK)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
+      stream.destroy();
+    },
+  );
 
   it("should accept params", async () => {
     const ZLIB = zlib.constants;
@@ -977,6 +1070,39 @@ describe("dictionary buffer lifetime", () => {
   });
 });
 
+it("params() between two writes changes the level for the second write", async () => {
+  const a = Buffer.alloc(32 * 1024, "a");
+  const b = Buffer.alloc(32 * 1024, "b");
+  const deflate = zlib.createDeflate({ level: 9 });
+  const order = [];
+  deflate.write(a, () => order.push("a"));
+  deflate.params(0, zlib.constants.Z_FILTERED, () => order.push("params"));
+  deflate.write(b, () => order.push("b"));
+  deflate.end();
+  const compressed = Buffer.concat(await deflate.toArray());
+  expect(order).toEqual(["a", "params", "b"]);
+  expect(deflate._level).toBe(0);
+  expect(zlib.inflateSync(compressed)).toEqual(Buffer.concat([a, b]));
+  // Level 0 stores "b".
+  expect(compressed.length).toBeGreaterThan(b.length);
+  expect(compressed.length).toBeLessThan(b.length + 200);
+});
+
+// With the small sizes, the last chunk waits for a reader before it is done.
+it.each([{}, { chunkSize: 64, highWaterMark: 64 }])(
+  "params() after 'finish' calls back while the output is unread (%j)",
+  async options => {
+    const input = Buffer.from(Array.from({ length: 1000 }, (_, i) => (i * 2654435761) >>> 24));
+    const gzip = zlib.createGzip({ level: 9, ...options });
+    gzip.write(input, () => gzip.end());
+    await new Promise(resolve => gzip.once("finish", resolve));
+    await new Promise(resolve => gzip.params(0, zlib.constants.Z_FILTERED, resolve));
+    await new Promise(resolve => gzip.params(1, zlib.constants.Z_FILTERED, resolve));
+    expect(gzip._level).toBe(1);
+    expect(zlib.gunzipSync(Buffer.concat(await gzip.toArray()))).toEqual(input);
+  },
+);
+
 describe("crc32", () => {
   it("rejects String objects", () => {
     expect(() => zlib.crc32(new String("abc"))).toThrow(TypeError);
@@ -1010,4 +1136,71 @@ describe("crc32", () => {
       }),
     );
   });
+});
+
+// Only ASAN can detect the out-of-bounds write.
+it.skipIf(!isASAN)(
+  "libdeflate doesn't write past its output buffer when another thread rewrites a mapped input",
+  async () => {
+    using dir = tempDir("libdeflate-race", { "bytes.bin": Buffer.alloc(4096) });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        resolve(import.meta.dir, "libdeflate-racing-input-fixture.ts"),
+        resolve(String(dir), "bytes.bin"),
+      ],
+      env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "done", stderr: "", exitCode: 0 });
+  },
+  20_000,
+);
+
+// `grow()` detaches a `WebAssembly.Memory`'s buffer and frees the old block even if the buffer is pinned.
+it("zstdCompress compresses the bytes the caller passed when a WebAssembly.Memory grows after the call", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+      import { zstdCompress, zstdDecompressSync, constants } from "node:zlib";
+      import { randomFillSync } from "node:crypto";
+      const PAGES = 16; // 1 MB
+      const newMemory = () => new WebAssembly.Memory({ initial: PAGES, maximum: PAGES + 4 });
+
+      const mem = newMemory();
+      const input = new Uint8Array(mem.buffer);
+      // Incompressible input at a high level keeps the job reading until after the block is freed.
+      randomFillSync(input);
+      const original = Buffer.from(input);
+
+      const { promise, resolve } = Promise.withResolvers();
+      const options = { chunkSize: 12 << 20, params: { [constants.ZSTD_c_compressionLevel]: 12 } };
+      zstdCompress(input, options, (err, out) =>
+        resolve(err ? String(err) : Buffer.compare(zstdDecompressSync(out), original) === 0),
+      );
+      mem.grow(2);
+      // Reuse the freed block so a stale read can't see the caller's bytes.
+      const claim = Array.from({ length: 4 }, () => {
+        const memory = newMemory();
+        new Uint8Array(memory.buffer).fill(0xee);
+        return memory;
+      });
+
+      console.log(JSON.stringify({ detachedAfterGrow: input.byteLength === 0, roundTripMatches: await promise }));
+    `,
+    ],
+    // Without fast memory, `grow()` moves the block on every platform. With system malloc, the freed block is unmapped.
+    env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe(JSON.stringify({ detachedAfterGrow: true, roundTripMatches: true }));
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });

@@ -2283,7 +2283,6 @@ mod stdio_stores {
                 mode,
                 ..Default::default()
             }),
-            mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             is_all_ascii: IsAllAscii::default(),
         })

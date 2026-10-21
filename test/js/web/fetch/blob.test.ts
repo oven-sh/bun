@@ -784,6 +784,107 @@ test.skipIf(!isASAN).each(["Blob", "File"] as const)(
   },
 );
 
+// https://github.com/oven-sh/bun/issues/35284: a Blob's type is its own. Blobs that share bytes do not share it.
+describe("a Blob reports its own type, never one another Blob put on the shared bytes", () => {
+  test("reading a Response or a Request body does not retype the Blob it was made from", async () => {
+    const blob = new Blob(["hello world"]);
+    const sliceTakenFirst = blob.slice(0, 5);
+    await new Response(blob, { headers: { "content-type": "application/x-attacker-controlled" } }).blob();
+
+    const body = new Blob(["hi"]);
+    const sliceOfBody = body.slice(0, 1);
+    await new Request("http://example.com/", {
+      method: "POST",
+      body,
+      headers: { "content-type": "image/png" },
+    }).blob();
+
+    expect({
+      blob: blob.type,
+      sliceTakenFirst: sliceTakenFirst.type,
+      body: body.type,
+      sliceOfBody: sliceOfBody.type,
+    }).toEqual({ blob: "", sliceTakenFirst: "", body: "", sliceOfBody: "" });
+  });
+
+  test("an empty type stays empty, and a slice of a body reports the type its readers get", async () => {
+    const typedBody = await new Response("hi", { headers: { "content-type": "image/png" } }).blob();
+    const htmlBody = await new Response("hi", { headers: { "content-type": "text/html" } }).blob();
+    const searchParams = await new Response(new URLSearchParams("h=i")).blob();
+    const slice = typedBody.slice(0, 1);
+    const form = new FormData();
+    form.append("part", slice, "part.bin");
+
+    expect({
+      typedBody: typedBody.type,
+      emptyTypeOverBody: new Blob([typedBody], { type: "" }).type,
+      emptyTypeOverSearchParams: new Blob([searchParams], { type: "" }).type,
+      // slice() keeps an interned parent type. A header value such as image/png is a heap copy, so the slice has
+      // no type: a multipart part and a Response made from it never had one.
+      slice: slice.type,
+      sliceInFormData: /content-type: ([^\r\n]*)/i.exec(await new Response(form).text())?.[1],
+      sliceInResponse: new Response(slice).headers.get("content-type"),
+      sliceOfHtmlBody: htmlBody.slice(0, 1).type,
+      sliceOfSearchParams: searchParams.slice(0, 1).type,
+    }).toEqual({
+      typedBody: "image/png",
+      emptyTypeOverBody: "",
+      emptyTypeOverSearchParams: "",
+      slice: "",
+      sliceInFormData: "application/octet-stream",
+      sliceInResponse: null,
+      sliceOfHtmlBody: "text/html;charset=utf-8",
+      sliceOfSearchParams: "application/x-www-form-urlencoded;charset=UTF-8",
+    });
+  });
+
+  test("a Blob made from the stream of a Bun.build() output, and a Bun.Archive(), take no type from the bytes", async () => {
+    using dir = tempDir("blob-own-type-build", { "entry.js": "export default 1;" });
+    const build = await Bun.build({ entrypoints: [path.join(String(dir), "entry.js")] });
+    const output = build.outputs[0];
+    const fromStream = await Bun.readableStreamToBlob(output.stream());
+
+    const archive = await new Bun.Archive({ "a.txt": "hi" }).blob();
+    await new Response(archive, { headers: { "content-type": "application/x-tar" } }).blob();
+
+    expect({
+      output: output.type,
+      // The stream of an output carries no type, so a Response made from the new Blob never sent one.
+      fromStream: fromStream.type,
+      fromStreamInResponse: new Response(fromStream).headers.get("content-type"),
+      archive: archive.type,
+      archiveRead: (await new Bun.Archive(archive).blob()).type,
+    }).toEqual({
+      output: "text/javascript;charset=utf-8",
+      fromStream: "",
+      fromStreamInResponse: null,
+      archive: "",
+      archiveRead: "",
+    });
+  });
+
+  test("an import of a blob: URL picks its loader from the Blob's own type", async () => {
+    const load = async (blob: Blob) => {
+      const url = URL.createObjectURL(blob);
+      try {
+        return await import(url).then(
+          module => module.default,
+          error => error.name,
+        );
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    };
+
+    expect({
+      typedSlice: await load(new Blob(['{"a":1}']).slice(0, 7, "application/json")),
+      typedBlob: await load(new Blob(['{"a":2}'], { type: "application/json" })),
+      dataUrl: await load(await (await fetch('data:application/json,{"a":3}')).blob()),
+      untyped: await load(new Blob(["export default 4"])),
+    }).toEqual({ typedSlice: { a: 1 }, typedBlob: { a: 2 }, dataUrl: { a: 3 }, untyped: 4 });
+  });
+});
+
 // File-backed twin of "slice bounds are respected when streaming and serving"
 // above: the File arm of resolve_size()/resolved_size() must not widen a
 // sliced Bun.file() to the end of the file either.

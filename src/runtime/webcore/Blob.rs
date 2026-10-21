@@ -801,22 +801,17 @@ impl BlobExt for Blob {
     ) -> Blob {
         let mut converter = URLSearchParamsConverter { buf: Vec::new() };
         search_params.to_string(&mut converter, URLSearchParamsConverter::convert);
-        let store = Store::init(converter.buf);
-        // SAFETY: `store` is the sole +1 on this freshly-allocated Store.
-        unsafe {
-            (*store.as_ptr()).mime_type = bun_http_types::MimeType::Compact::from(
+        let blob = Blob::init_with_store(Store::init(converter.buf), global_this);
+        blob.content_type.set(BlobContentType::from(
+            bun_http_types::MimeType::Compact::from(
                 // The bare tag, *without* `;charset=UTF-8` (charset promotion is
                 // Compact::to_mime_type's job, applied when read).
                 bun_http_types::MimeType::Table::from_mime_literal(
                     "application/x-www-form-urlencoded",
                 ),
             )
-            .to_mime_type();
-        }
-        let content_type = BlobContentType::from_mime(&store.mime_type);
-
-        let blob = Blob::init_with_store(store, global_this);
-        blob.content_type.set(content_type);
+            .to_mime_type(),
+        ));
         blob.content_type_was_set.set(true);
         blob
     }
@@ -1877,19 +1872,17 @@ impl BlobExt for Blob {
     }
 
     fn get_mime_type_or_content_type(&self) -> Option<MimeType> {
-        if self.content_type_was_set.get() {
-            return Some(MimeType::init(self.content_type_slice(), false, None));
+        let content_type = self.content_type_slice();
+        if content_type.is_empty() {
+            return None;
         }
-        self.store().map(|s| s.mime_type.clone())
+        Some(MimeType::init(content_type, false, None))
     }
 
     fn get_type(&self, global_this: &JSGlobalObject) -> JSValue {
         let ct = self.content_type_slice();
         if !ct.is_empty() {
             return EncodedSlice::latin1(ct).to_js(global_this);
-        }
-        if let Some(store) = self.store.get() {
-            return EncodedSlice::latin1(&store.mime_type.value).to_js(global_this);
         }
         JSValue::js_empty_string(global_this)
     }
@@ -2281,7 +2274,6 @@ impl BlobExt for Blob {
                 {
                     let store = RefPtr::new(Store {
                         data: store::Data::Bytes(result),
-                        mime_type: bun_http_types::MimeType::NONE,
                         ref_count: bun_ptr::ThreadSafeRefCount::init(),
                         is_all_ascii: store::IsAllAscii::default(),
                     });
@@ -3305,11 +3297,17 @@ impl BlobExt for Blob {
     // is_detached: defined once above; duplicate removed to fix E0034.
 
     fn calculate_estimated_byte_size(&self) {
+        // A heap block comes in steps of 16 bytes.
+        const BLOB: usize = core::mem::size_of::<Blob>().next_multiple_of(16);
+        const STORE: usize = core::mem::size_of::<Store>().next_multiple_of(16);
+        // JSC drops a report of 256 bytes or less (`Heap::minExtraMemory`).
+        const _: () = assert!(BLOB + STORE > 256);
+
         // in-memory size. not the size on disk.
-        let mut size: usize = core::mem::size_of::<Blob>();
+        let mut size: usize = BLOB;
 
         if let Some(store) = self.store.get() {
-            size += core::mem::size_of::<Store>();
+            size += STORE;
             match &store.data {
                 store::Data::Bytes(bytes) => {
                     size += bytes.stored_name.len();

@@ -36,9 +36,8 @@ fn template_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleG
             )
         };
         bytes.stored_name = file.name.to_vec().into_boxed_slice();
-        let mut store = Store {
+        let store = Store {
             data: Data::Bytes(bytes),
-            mime_type: MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             is_all_ascii: IsAllAscii::default(),
         };
@@ -50,7 +49,6 @@ fn template_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleG
             blob.content_type
                 .set(crate::webcore::blob::BlobContentType::from_mime(&mime));
             blob.content_type_was_set.set(true);
-            store.mime_type = mime;
         }
         let store = RefPtr::new(store);
         // make it never free

@@ -5420,6 +5420,13 @@ impl VirtualMachine {
                 ResultUnion::Failure(e) => return Err(e.into()),
                 ResultUnion::Pending(_) | ResultUnion::NotFound => {
                     if !retry_on_not_found {
+                        if let Some(chai) = self.resolve_chai_next_to_vitest(
+                            normalized_specifier,
+                            source_to_use,
+                            import_kind,
+                        ) {
+                            break chai;
+                        }
                         return Err(crate::CrateError::ModuleNotFound);
                     }
                     retry_on_not_found = false;
@@ -5497,6 +5504,34 @@ impl VirtualMachine {
         ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
 
         Ok(())
+    }
+
+    /// `import { assert } from "vitest"` imports "chai". pnpm links it next to vitest, not into the project's node_modules.
+    fn resolve_chai_next_to_vitest(
+        &mut self,
+        specifier: &[u8],
+        source_dir: &[u8],
+        kind: bun_ast::ImportKind,
+    ) -> Option<bun_resolver::Result> {
+        use bun_resolver::{GlobalCache, ResultUnion};
+        if specifier != b"chai" || !self.transpiler.options.rewrite_jest_for_tests {
+            return None;
+        }
+        let resolver = &mut self.transpiler.resolver;
+        let ResultUnion::Success(vitest) = resolver.resolve_and_auto_install(
+            source_dir,
+            b"vitest/package.json",
+            kind,
+            GlobalCache::disable,
+        ) else {
+            return None;
+        };
+        let vitest_dir =
+            bun_resolver::fs::PathName::init(vitest.path_const()?.text).dir_with_trailing_slash();
+        match resolver.resolve_and_auto_install(vitest_dir, b"chai", kind, GlobalCache::disable) {
+            ResultUnion::Success(chai) => Some(chai),
+            _ => None,
+        }
     }
 
     /// Module-resolution core: resolves `specifier` relative to `source`, with

@@ -2,7 +2,7 @@
 // Expected outputs were taken from Vitest 5.0.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isCI, tempDir } from "harness";
-import { readdirSync } from "node:fs";
+import { readdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 // Kills a hung child before this test's own timeout, which would leave it running and lose its output.
@@ -3081,6 +3081,28 @@ describe.concurrent("exports", () => {
       ],
       exitCode: 0,
     });
+  });
+
+  test(`"assert" is imported from the chai that pnpm links next to vitest`, async () => {
+    const store = "node_modules/.pnpm/vitest@1.0.0/node_modules";
+    using dir = tempDir("vitest-flavor-pnpm", {
+      [`${store}/vitest/package.json`]: `{ "name": "vitest", "exports": { "./package.json": "./package.json" } }`,
+      [`${store}/chai/package.json`]: chai["node_modules/chai/package.json"],
+      [`${store}/chai/index.js`]: chai["node_modules/chai/index.js"],
+      "a.test.js": `import { assert, test } from "vitest"; test("test", () => console.log(assert()));`,
+    });
+    symlinkSync(join(String(dir), store, "vitest"), join(String(dir), "node_modules", "vitest"), "junction");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("(pass) test");
+    expect(stdout).toContain("the project's assert\n");
+    expect(exitCode).toBe(0);
   });
 
   test(`importing "assert" without chai installed says what's missing`, async () => {

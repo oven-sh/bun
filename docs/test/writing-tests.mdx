@@ -518,7 +518,7 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 
 `"vitest"` also exports `suite`, `vitest`, `onTestFailed`, `assertType` and `TestRunner.getCurrentTest()`, which returns the running test's [`task`](#test-context). It exports `inject` too, which always returns `undefined`, because `bun test` has no `provide` option or global setup file to provide a value.
 
-`import { assert, should } from "vitest"` imports them from the `chai` package in your `node_modules`, which Vitest depends on. They aren't available through `import * as`, `import()` or a re-export of `"vitest"`.
+`import { assert, should } from "vitest"` imports them from the `chai` package in your `node_modules`, which Vitest depends on. If `chai` isn't there, as with pnpm, Bun looks next to the installed `vitest`. They aren't available through `import * as`, `import()` or a re-export of `"vitest"`.
 
 In a file that imports from `"vitest"`, the globals (`test`, `describe`, `beforeEach`, ...) come from `"vitest"` too. Set [`globals = "vitest"`](/test/configuration#globals) in `bunfig.toml` to do that for every file.
 

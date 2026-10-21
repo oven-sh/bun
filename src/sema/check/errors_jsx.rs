@@ -1,15 +1,14 @@
-//! Errors about JSX: 17004 2874 2875 2879 and the codes that replace them, 7026 and 2339 for tags
-//! that are not components, 2604 2322 2769 6229 for the attributes a tag accepts, 2558 2743 2344
-//! for its type arguments, 2745 2746 2747 2710 for children, 2783 for attributes a spread
-//! overwrites, 2786, 2609 17016 17017, and the grammar: 17000 17001 2639 18007.
+//! Errors about JSX: 17004 2874 2875 2879 and the codes that replace them, 7026 and 2339 for tags that aren't
+//! components, 2604 2322 2769 6229 for the attributes a tag accepts, 2558 2743 2344 for its type arguments, 2745 2746
+//! 2747 2710 for children, 2783 for attributes a spread overwrites, 2786, 2609 17016 17017, and the grammar: 17000
+//! 17001 2639 18007. `resolve_call` reports 2769, 2743 and 2344, and the assignability checks report 2322.
 //!
-//! Follows `checkJsxOpeningLikeElementOrOpeningFragment`, `checkJsxPreconditions`,
-//! `getIntrinsicTagSymbol`, `getJsxNamespace`, `getJsxFactoryEntity`,
-//! `getJsxNamespaceContainerForImplicitImport`, `getJSXFragmentType`,
-//! `resolveJsxOpeningLikeElement`, `elaborateJsxComponents` and
-//! `checkJsxReturnAssignableToAppropriateBound` of TypeScript 7.0.2's jsx.go, and
+//! Mirrors `checkJsxOpeningLikeElementOrOpeningFragment`, `checkJsxPreconditions`, `getIntrinsicTagSymbol`,
+//! `getJsxNamespace`, `getJsxFactoryEntity`, `getJSXFragmentType`, `resolveJsxOpeningLikeElement`,
+//! `elaborateJsxComponents` and `checkJsxReturnAssignableToAppropriateBound` in TypeScript 7.0.2's jsx.go, and
 //! `markJsxAliasReferenced`, `checkSpreadPropOverrides`, `getTypeArgumentArityError` and
-//! `getCandidateForOverloadFailure` of its checker.go.
+//! `getCandidateForOverloadFailure` in its checker.go. `getJsxNamespaceContainerForImplicitImport` mirrors TypeScript
+//! 7.1.
 
 use super::call::{CallLike, ExpectsReturn};
 use super::errors_names_and_exports::is_valid_type_only_alias_use_site;
@@ -18,7 +17,7 @@ use super::jsx::{JsxName, JsxReferenceKind};
 use super::relate::Relation;
 use super::symbols::IterationUse;
 use super::*;
-use crate::bind::ScopeId;
+use crate::bind::{Parent, ScopeId};
 use crate::resolve::JsxEmit;
 use crate::util::SharedSort;
 
@@ -37,8 +36,7 @@ impl Checker<'_, '_> {
         let runtime = crate::program::jsx_runtime_of(options, hir, &self.p.files.atoms)
             .filter(|_| crate::resolve::is_jsx_file_name(path))
             .map(|spec| atoms.intern(&spec));
-        // `getJsxNamespaceContainerForImplicitImport`: the JSX runtime module is imported
-        // implicitly, and must exist.
+        // `getJsxNamespaceContainerForImplicitImport`: the JSX runtime module is imported implicitly, and must exist.
         let runtime_is_missing =
             runtime.is_some_and(|spec| self.files().module_of_specifier(file, spec).is_none());
         let (factory, fragment_factory) = (
@@ -53,7 +51,7 @@ impl Checker<'_, '_> {
         let checks_fragment_type = has_no_imports
             && names_fragment_factory
             && (jsx == JsxEmit::React || !options.jsx_fragment_factory.is_empty());
-        // Where tags are emitted unchanged, an enum does not qualify.
+        // Where tags are emitted unchanged, an enum doesn't qualify.
         let meaning = if matches!(jsx, JsxEmit::Preserve | JsxEmit::ReactNative) {
             SymFlags::VALUE.difference(SymFlags::ENUM)
         } else {
@@ -70,29 +68,55 @@ impl Checker<'_, '_> {
         ) && (specifies_factory || hir.jsx_pragmas.factory.is_some())
             && options.jsx_fragment_factory.is_empty()
             && hir.jsx_pragmas.fragment_factory.is_none();
-        let mut elements: Vec<ExprId> = self
-            .exprs_by_kind(file)
-            .of(ExprTag::Jsx)
-            .iter()
-            .copied()
-            .filter(|e| !bound.is_unchecked(e.idx()))
-            .collect();
+        let mut elements: Vec<ExprId> = self.exprs_by_kind(file).of(ExprTag::Jsx).to_vec();
+        elements.retain(|&e| !matches!(bound.parent_of_expr(e), Parent::None));
         elements.shared_sort_unstable_by_key(|&e| hir[e].pos);
-        // An error reported once per file is reported on the element that is checked first.
-        // Elements the walk does not reach come last, in source order.
-        let (mut first, mut first_fragment) = (None, None);
-        if runtime.is_some() || checks_fragment_type {
-            // Only this task stores the entry of a JSX element of the file (`is_noted_for_check_file`), so it has evaluated each itself.
-            let reached = match self.first_jsx {
-                (of, first, first_fragment) if of == file => (first, first_fragment),
-                _ => (None, None),
+        let first_jsx_tag_in_file = elements.first().copied();
+        elements.retain(|e| !bound.is_unchecked(e.idx()));
+        // `getJsxNamespaceContainerForImplicitImport` of TypeScript 7.1. Whichever element triggers the error, it's
+        // reported at `firstJSXTagInFile`, even if that tag is never checked.
+        if let (Some(spec), Some(first)) = (runtime, first_jsx_tag_in_file)
+            && let ExprKind::Jsx(j) = hir[first].kind
+            && (elements.iter()).any(|&e| !self.is_never_checked(hir[e].pos))
+        {
+            // The error spans the whole element, or only the opening of a fragment.
+            let has_closing_element = hir[j].tag.is_some() && hir[j].close_pos != u32::MAX;
+            let end = if has_closing_element {
+                hir[j].end
+            } else {
+                hir[j].opening_end
             };
-            let is_fragment =
-                |e: &ExprId| matches!(hir[*e].kind, ExprKind::Jsx(j) if hir[j].tag.is_none());
-            first = reached.0.or_else(|| elements.first().copied());
-            first_fragment = reached
-                .1
-                .or_else(|| elements.iter().copied().find(is_fragment));
+            // `getJSXRuntimeImportSpecifier`. The loader added this specifier as a synthetic import. It has no import
+            // clause and doesn't appear in the source text.
+            let specifier = SpecifierUse {
+                spec,
+                pos: u32::MAX,
+                kind: SpecifierKind::Import,
+                mode: self.files().module(file).default_mode,
+            };
+            let (site, location) = (SpecifierSite::default(), (file, hir[first].pos, end));
+            let since = self.reported.len();
+            self.resolve_external_module_at(file, specifier, site, location, Some(2875));
+            for diagnostic in &mut self.reported[since..] {
+                diagnostic.by_another_node = true;
+            }
+        }
+        // `getJSXFragmentType` reports once per file, on the fragment that's checked first. Fragments that the walk
+        // doesn't reach come last, in source order.
+        let is_fragment =
+            |e: &ExprId| matches!(hir[*e].kind, ExprKind::Jsx(j) if hir[j].tag.is_none());
+        let mut first_fragment = None;
+        if checks_fragment_type {
+            let mut fragments = elements.iter().copied().filter(is_fragment);
+            let (in_source_order, is_only_one) = (fragments.next(), fragments.next().is_none());
+            if !is_only_one {
+                self.follow_check(file, false, &mut |_, _, e, _| {
+                    let is_sought = is_fragment(&e) && !bound.is_unchecked(e.idx());
+                    first_fragment = is_sought.then_some(e);
+                    is_sought
+                });
+            }
+            first_fragment = first_fragment.or(in_source_order);
         }
         for e in elements {
             let ExprKind::Jsx(j) = hir[e].kind else {
@@ -100,7 +124,7 @@ impl Checker<'_, '_> {
             };
             let element = &hir[j];
             let start = hir[e].pos;
-            // End of the opening tag, which is the whole of a self-closing element.
+            // End of the opening tag, which is all of a self-closing element.
             let end = element.opening_end;
             if element.tag.is_some() {
                 self.check_grammar_jsx_element(file, j);
@@ -110,26 +134,6 @@ impl Checker<'_, '_> {
             }
             self.resolved_signature(file, e);
             self.report_call_resolution(file, e);
-            if first == Some(e)
-                && let Some(spec) = runtime
-            {
-                // `checkJsxElement` passes the whole element to `getJsxElementTypeAt`. In a file that is emitted before it is checked,
-                // `MarkLinkedReferencesRecursively` comes first, where `markJsxAliasReferenced` passes the opening element.
-                let is_whole_element = self.p.files.options.no_emit
-                    && element.tag.is_some()
-                    && element.close_pos != u32::MAX;
-                let end = if is_whole_element { element.end } else { end };
-                // `getJSXRuntimeImportSpecifier`: the specifier of the synthetic import the loader
-                // added, which has no import clause and is nowhere in the text.
-                let specifier = SpecifierUse {
-                    spec,
-                    pos: u32::MAX,
-                    kind: SpecifierKind::Import,
-                    mode: self.files().module(file).default_mode,
-                };
-                let (site, location) = (SpecifierSite::default(), (file, start, end));
-                self.resolve_external_module_at(file, specifier, site, location, Some(2875));
-            }
             // `resolveName`, starting at `jsxFactoryLocation`: the tag name, or the opening fragment.
             let scope = bound.expr_scope.get(&e).copied().unwrap_or(ScopeId(0));
             let jsx_factory_sym = checks_factory
@@ -146,7 +150,6 @@ impl Checker<'_, '_> {
                     self.on_failed_to_resolve_symbol(
                         file,
                         location,
-                        None,
                         scope,
                         name,
                         meaning,
@@ -181,9 +184,7 @@ impl Checker<'_, '_> {
             }
             if factory_is_missing {
                 let location = hir.node(element.tag);
-                self.on_failed_to_resolve_symbol(
-                    file, location, None, scope, factory, meaning, 2874,
-                );
+                self.on_failed_to_resolve_symbol(file, location, scope, factory, meaning, 2874);
             }
             if let Some(result) = jsx_factory_sym {
                 self.check_type_only_jsx_factory(file, j, result);
@@ -201,8 +202,8 @@ impl Checker<'_, '_> {
                 self.check_spread_overrides(file, element.attrs);
             }
             self.check_jsx_component(file, e);
-            // `checkJsxElementDeferred`: `getIntrinsicTagSymbol` of the opening element, then of the closing one, each by its own name.
-            // A closing name that is not intrinsic is an expression, checked like any other.
+            // `checkJsxElementDeferred`: `getIntrinsicTagSymbol` of the opening element, then of the closing one, each
+            // by its own name. A closing name that isn't intrinsic is an expression, checked like any other.
             let opening_name = self.jsx_intrinsic_tag_name(file, element.tag);
             let closing_name = if element.close_tag.is_some() {
                 self.jsx_intrinsic_tag_name(file, element.close_tag)
@@ -234,9 +235,9 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `onSuccessfullyResolvedSymbol` for `result`, the first name of the factory, which
-    /// `markJsxAliasReferenced` resolved at the tag name of `j`: 1361, 1362. An opening fragment is
-    /// no expression node, so it is a valid use site.
+    /// `onSuccessfullyResolvedSymbol` for `result`, the first name of the factory, which `markJsxAliasReferenced`
+    /// resolved at the tag name of `j`: 1361, 1362. An opening fragment isn't an expression node, so it's a valid use
+    /// site.
     fn check_type_only_jsx_factory(&mut self, file: FileId, j: JsxId, result: Sym) {
         let (hir, files) = (self.hir(file), self.files());
         let flags = files.flags(result);
@@ -247,7 +248,7 @@ impl Checker<'_, '_> {
         if is_valid_type_only_alias_use_site(hir, hir.node(tag)) {
             return;
         }
-        let type_only = files.type_only_alias_declaration_ex(result, SymFlags::VALUE);
+        let type_only = files.type_only_alias_declaration_ex(result);
         let Some(type_only) = type_only else {
             return;
         };
@@ -261,9 +262,9 @@ impl Checker<'_, '_> {
         );
     }
 
-    /// `createJsxAttributesTypeFromAttributesProperty`: 2710 for `explicitlySpecifyChildrenAttribute`.
-    /// `c.error` reports it, so it is no part of the errors of a candidate, and every path of
-    /// `resolveJsxOpeningLikeElement` checks the attributes of an opening element.
+    /// `createJsxAttributesTypeFromAttributesProperty`: 2710 for `explicitlySpecifyChildrenAttribute`. `c.error`
+    /// reports it, so it isn't one of a candidate's errors, and every path of `resolveJsxOpeningLikeElement` checks the
+    /// attributes of an opening element.
     fn check_explicit_children_attribute(&mut self, file: FileId, e: ExprId, j: JsxId) {
         let hir = self.hir(file);
         let jsx = &hir[j];
@@ -275,8 +276,8 @@ impl Checker<'_, '_> {
             return;
         };
         // `GetSemanticJsxChildren`
-        let is_nothing = |child: ExprId| matches!(hir[child].kind, ExprKind::Missing);
-        if hir.ids(jsx.children).all(is_nothing) {
+        let is_missing_child = |child: ExprId| matches!(hir[child].kind, ExprKind::Missing);
+        if hir.ids(jsx.children).all(is_missing_child) {
             return;
         }
         let mut explicitly_specify_children_attribute = false;
@@ -299,12 +300,10 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// Whether nothing checks the attributes of the element `e`. `chooseOverload` checks them for
-    /// a candidate that takes the type arguments. If there is none,
-    /// `getCandidateForOverloadFailure` defers the node, and `checkDeferredNode` goes on to
-    /// `resolveUntypedCall` for an opening element, but not for a self-closing one.
-    /// `reportCallResolutionErrors` reports at the type arguments only if
-    /// `candidatesForArgumentError` is empty.
+    /// True if nothing checks the attributes of the element `e`. `chooseOverload` checks them for a candidate that
+    /// takes the type arguments. If there's none, `getCandidateForOverloadFailure` defers the node, and
+    /// `checkDeferredNode` continues to `resolveUntypedCall` for an opening element, but not for a self-closing one.
+    /// `reportCallResolutionErrors` reports at the type arguments only if `candidatesForArgumentError` is empty.
     pub(super) fn are_jsx_attributes_never_checked(&mut self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         let ExprKind::Jsx(j) = hir[e].kind else {
@@ -324,11 +323,12 @@ impl Checker<'_, '_> {
             .is_some_and(|reported| reported.iter().any(|d| list.contains(&d.start)))
     }
 
-    /// `checkGrammarJsxElement`. The call to `checkGrammarTypeArguments` is not ported here.
+    /// `checkGrammarJsxElement`. The call to `checkGrammarTypeArguments` isn't ported here.
     fn check_grammar_jsx_element(&mut self, file: FileId, j: JsxId) -> bool {
         let hir = self.hir(file);
         let jsx = &hir[j];
-        // `checkGrammarJsxName`: a namespaced name `a:b` is lowered to a string. `IsIntrinsicJsxName` tests the namespace.
+        // `checkGrammarJsxName`: a namespaced name `a:b` is lowered to a string. `IsIntrinsicJsxName` tests the
+        // namespace.
         if matches!(
             self.p.files.options.jsx,
             JsxEmit::React | JsxEmit::ReactJsx | JsxEmit::ReactJsxDev
@@ -381,8 +381,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkJsxExpression` for a child. A tuple type is not an array type. `t != c.anyType`: the
-    /// error type is reported too.
+    /// `checkJsxExpression` for a child. A tuple type isn't an array type. `t != c.anyType`: the error type is reported
+    /// too.
     fn check_jsx_expression(&mut self, file: FileId, child: ExprId) {
         let hir = self.hir(file);
         let ExprKind::Spread(spread) = hir[child].kind else {
@@ -422,7 +422,7 @@ impl Checker<'_, '_> {
             let result = result.unwrap_or(TypeId::ERROR);
             let fake_signature = self.jsx_intrinsic_signature(file, node, result);
             let param_type = self.jsx_effective_first_argument(file, e, fake_signature);
-            // As `CallState::checks_arguments_once`.
+            // Same as `CallState::checks_arguments_once`.
             let is_checked_once = self.resolution_start == self.stack.len()
                 && self.stack.last() == Some(&Query::Call(file, e));
             let source = self.check_jsx_attributes_with_contextual_type(
@@ -452,8 +452,7 @@ impl Checker<'_, '_> {
         } else {
             self.type_of_expr(file, jsx.tag)
         };
-        // `resolveUntypedCall`, `resolveErrorCall`: the attributes are checked regardless of how
-        // the tag resolves.
+        // `resolveUntypedCall`, `resolveErrorCall`: the attributes are checked regardless of how the tag resolves.
         let unresolved = |c: &mut Self, ret: TypeId| {
             if !is_jsx_open_fragment {
                 c.jsx_attributes_type(file, e);
@@ -476,7 +475,7 @@ impl Checker<'_, '_> {
             self.error_at(error_node, 2604, &[text]);
             return unresolved(self, TypeId::ERROR);
         }
-        self.look_at_type_nodes(file, jsx.type_args);
+        self.precheck_type_nodes(file, jsx.type_args);
         let type_args = self.types_from_nodes(file, jsx.type_args);
         let node = CallLike::Jsx(j);
         let args = self.effective_call_arguments(file, e, node);
@@ -510,8 +509,9 @@ impl Checker<'_, '_> {
         if let Some(info) = self.find_contextual_node(file, e, true) {
             return info.t;
         }
-        // `getContextualTypeForArgumentAtIndex`: `resolvingSignature` is not resolved again. That state belongs to this checker, so it
-        // is read from its own query stack. Like `anySignature` and `unknownSignature`, it has no parameters.
+        // `getContextualTypeForArgumentAtIndex`: `resolvingSignature` isn't resolved again. That state belongs to this
+        // checker, so it's read from its own query stack. Like `anySignature` and `unknownSignature`, it has no
+        // parameters.
         let is_this_element = |r: &(FileId, ExprId, ResolvedCall)| r.0 == file && r.1 == e;
         if !self.resolved_meanwhile.iter().any(is_this_element)
             && self.stack.contains(&Query::Call(file, e))
@@ -536,12 +536,12 @@ impl Checker<'_, '_> {
     /// `isContextSensitive` for `JsxAttributes`. A fragment has none.
     pub(super) fn is_jsx_attributes_context_sensitive(&self, file: FileId, j: JsxId) -> bool {
         let hir = self.hir(file);
-        // There is no case for a `JsxSpreadAttribute`.
+        // There's no case for a `JsxSpreadAttribute`.
         let attributes = hir[j].attrs.iter();
         let values = attributes
             .filter(|&p| hir[p].kind != PropKind::Spread)
             .map(|p| hir[p].value);
-        // `JsxExpression`, which `{...x}` is too.
+        // `JsxExpression`, which includes `{...x}`.
         let children = hir.ids(hir[j].children).map(|child| match hir[child].kind {
             ExprKind::Spread(x) => x,
             _ => child,
@@ -560,7 +560,7 @@ impl Checker<'_, '_> {
         e: ExprId,
         signature: SigId,
         check_mode: CheckMode,
-        context: &mut Inference,
+        context: &mut Box<Inference>,
     ) -> MapperId {
         let param_type = self.jsx_effective_first_argument(file, e, signature);
         let check_attr_type = self.check_jsx_attributes_with_contextual_type(
@@ -575,14 +575,15 @@ impl Checker<'_, '_> {
         self.inference_mapper(context)
     }
 
-    /// `checkExpressionWithContextualType(node.Attributes(), ..)`. `getContextNode`: it is pushed for the element, "so it encompasses
-    /// the attributes and the children". `is_checked_once`: FOR SPEED, see `CallState::checks_arguments_once` and `cached_arg_type_for_param`.
+    /// `checkExpressionWithContextualType(node.Attributes(), ..)`. `getContextNode`: it's pushed for the element, "so
+    /// it encompasses the attributes and the children". `is_checked_once` is FOR SPEED, see
+    /// `CallState::checks_arguments_once` and `cached_arg_type_for_param`.
     fn check_jsx_attributes_with_contextual_type(
         &mut self,
         file: FileId,
         e: ExprId,
         contextual_type: TypeId,
-        inference_context: Option<&mut Inference>,
+        inference_context: Option<&mut Box<Inference>>,
         check_mode: CheckMode,
         is_checked_once: bool,
     ) -> TypeId {
@@ -594,8 +595,8 @@ impl Checker<'_, '_> {
                 context: None,
             });
             let outer = self.suspend_recheck();
-            // `checkJsxAttribute`: each is checked immediately, while its contextual type is
-            // pushed. Here they are evaluated lazily when they are read, which is after the pop.
+            // `checkJsxAttribute`: each is checked immediately, while its contextual type is pushed. Here they're
+            // evaluated lazily when they're read, which is after the pop.
             let hir = self.hir(file);
             if let ExprKind::Jsx(j) = hir[e].kind {
                 for p in hir[j].attrs.iter() {
@@ -679,12 +680,12 @@ impl Checker<'_, '_> {
                 ExprKind::Ident(name) => self
                     .symbol_of_identifier(file, tag, name)
                     .filter(|&sym| self.files().flags(sym).intersects(SymFlags::VALUE))
-                    .and_then(|sym| self.place_of_symbol(sym)),
+                    .and_then(|sym| self.span_of_symbol(sym)),
                 ExprKind::Dot { obj, name, .. } => {
                     let object = self.type_of_expr(file, obj);
                     let object = self.apparent_type(object);
                     let prop = self.prop_ref(object, name);
-                    prop.and_then(|(prop, _)| self.place_of_prop(prop))
+                    prop.and_then(|(prop, _)| self.span_of_prop(prop))
                 }
                 _ => None,
             };
@@ -699,9 +700,8 @@ impl Checker<'_, '_> {
         self.check_jsx_attributes_related_to(file, e, source, target, relation, error_node)
     }
 
-    /// `checkTypeRelatedToAndOptionallyElaborate(source, target, relation, errorNode,
-    /// node.Attributes(), ..)` for the element `e`. When undecided they are treated as related,
-    /// except in the subtype pass.
+    /// `checkTypeRelatedToAndOptionallyElaborate(source, target, relation, errorNode, node.Attributes(), ..)` for the
+    /// element `e`. When undecided they're treated as related, except in the subtype pass.
     fn check_jsx_attributes_related_to(
         &mut self,
         file: FileId,
@@ -740,9 +740,9 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkTagNameDoesNotExpectTooManyArguments`: whether every call signature of the tag of `e`
-    /// requires more arguments than the JSX factory passes to a function it receives. If so: the
-    /// smallest required count, the factory, and the largest count it passes.
+    /// `checkTagNameDoesNotExpectTooManyArguments`: checks whether every call signature of the tag of `e` requires more
+    /// arguments than the JSX factory passes to a function it receives. If so, returns the smallest required count, the
+    /// factory, and the largest count it passes.
     fn jsx_tag_expects_too_many_arguments(
         &mut self,
         file: FileId,
@@ -775,14 +775,14 @@ impl Checker<'_, '_> {
             .resolve_entity(file, scope, &names, SymFlags::VALUE)
             .and_then(|found| files.resolve_alias_if_needed(found));
         let factory_type = self.type_of_symbol(factory?);
-        // The largest argument count with which any function accepted as the first argument is
-        // called. `None`: no function is accepted there.
+        // The largest argument count with which any function accepted as the first argument is called. `None` if no
+        // function is accepted there.
         let mut most: Option<usize> = None;
         for sig in self.signatures(factory_type, false) {
             let params = self.sig_params(sig);
             let first = self.param_type_at(&params, 0).unwrap_or(TypeId::ANY);
-            for taken in self.signatures(first, false) {
-                let params = self.sig_params(taken);
+            for callback_sig in self.signatures(first, false) {
+                let params = self.sig_params(callback_sig);
                 if self.has_effective_rest_parameter(&params) {
                     return None;
                 }
@@ -835,9 +835,8 @@ impl Checker<'_, '_> {
             reported |= self.elaborate_element(
                 source, target, at, prop.value, false, name_type, None, output,
             );
-            // `elaborateDidYouMeanToCallOrConstruct` runs on the braces around the value before it
-            // runs on the value: its diagnostic, the only one at the start of the value, is
-            // reported at the start of the braces.
+            // `elaborateDidYouMeanToCallOrConstruct` runs on the braces around the value before it runs on the value.
+            // So its diagnostic, the only one at the start of the value, is reported at the start of the braces.
             let value = prop.value.some().map(|value| self.start_of(file, value));
             let braces = (prop.value.some()).and_then(|value| jsx_expression_around(hir, value));
             for mut diagnostic in diags {
@@ -873,8 +872,8 @@ impl Checker<'_, '_> {
             return reported;
         };
         let more_than_one_real_children = valid_children.next().is_some();
-        // `getGlobalIterableType() != emptyGenericType`. Where there is no such `Iterable`, a list is
-        // an array-like or tuple-like type.
+        // `getGlobalIterableType() != emptyGenericType`. If there's no such `Iterable`, a list is an array-like or
+        // tuple-like type.
         let has_iterable = self.global_type_of_arity(known::Iterable, 3).is_some();
         let any_iterable = self.global_ref(
             known::Iterable,
@@ -918,8 +917,7 @@ impl Checker<'_, '_> {
                 let output = element.is_text.then_some(&mut diags);
                 let elaborated = self
                     .elaborate_element(source, target, prop, next, false, name_type, None, output);
-                // `diagnosticFactory`: the diagnostic about text takes the place of the one about
-                // the two types.
+                // `diagnosticFactory`: the diagnostic about text replaces the one about the two types.
                 for replaced in diags {
                     let mut diagnostic =
                         self.invalid_textual_child_diagnostic(file, e, at, expected);
@@ -940,14 +938,14 @@ impl Checker<'_, '_> {
             Arg::Type(children_target_type),
         ];
         let diagnostic = self.new_diagnostic((file, tag.pos, tag.end), arity_mismatch, &args);
-        // `c.error` reports it by itself, and `reportDiagnostic` among the errors of the candidate.
+        // `c.error` reports it on its own, and `reportDiagnostic` among the candidate's errors.
         (self.call_resolution_errors.get_or_insert_default()).push(diagnostic.clone());
         self.add_diagnostic(diagnostic);
         true
     }
 
-    /// `getInvalidTextualChildDiagnostic` for the text from `start` to `end` in the element `e`.
-    /// `expected`: the name of the children attribute, and the type the tag accepts for it.
+    /// `getInvalidTextualChildDiagnostic` for the text from `start` to `end` in the element `e`. `expected` is the name
+    /// of the children attribute and the type the tag accepts for it.
     fn invalid_textual_child_diagnostic(
         &mut self,
         file: FileId,
@@ -968,8 +966,7 @@ impl Checker<'_, '_> {
         self.new_diagnostic((file, start, end), 2747, &args)
     }
 
-    /// `generateJsxChildren`. Text of white space only, which raises `memberOffset`, is not stored
-    /// among the children.
+    /// `generateJsxChildren`. Whitespace-only text, which raises `memberOffset`, isn't stored among the children.
     fn generate_jsx_children(&self, file: FileId, j: JsxId) -> Vec<JsxElaborationElement> {
         let hir = self.hir(file);
         let children = hir.ids(hir[j].children).enumerate();
@@ -981,8 +978,8 @@ impl Checker<'_, '_> {
             .collect()
     }
 
-    /// `elaborateIterableOrArrayLikeTargetElementwise` for the children of `e`.
-    /// `expected`: the name of the children attribute, and the whole type the tag accepts for it.
+    /// `elaborateIterableOrArrayLikeTargetElementwise` for the children of `e`. `expected` is the name of the children
+    /// attribute and the whole type the tag accepts for it.
     fn elaborate_iterable_or_array_like_target_elementwise(
         &mut self,
         file: FileId,
@@ -1016,7 +1013,7 @@ impl Checker<'_, '_> {
                 (Some(a), None) | (None, Some(a)) => a,
                 (None, None) => continue,
             };
-            let source_prop_type = self.indexed_access_if_any(source, name_type, false);
+            let source_prop_type = self.indexed_access_if_any(source, name_type);
             let Some(source_prop_type) = source_prop_type else {
                 continue;
             };
@@ -1086,17 +1083,17 @@ impl Checker<'_, '_> {
         target: TypeId,
         name_type: TypeId,
     ) -> Option<TypeId> {
-        if let Some(idx) = self.indexed_access_if_any(target, name_type, false) {
+        if let Some(idx) = self.indexed_access_if_any(target, name_type) {
             return Some(idx);
         }
         if !self.is_union(target) {
             return None;
         }
         let best = self.best_matching_type(source, target, &mut |c, s, t| c.is_assignable(s, t))?;
-        self.indexed_access_if_any(best, name_type, false)
+        self.indexed_access_if_any(best, name_type)
     }
 
-    /// `checkSpreadPropOverrides`: 2783 for a property that is overwritten by a later spread.
+    /// `checkSpreadPropOverrides`: 2783 for a property that a later spread overwrites.
     pub(super) fn check_spread_overrides(&mut self, file: FileId, props: Span<PropId>) {
         let hir = self.hir(file);
         if !self.p.files.options.strict_null_checks
@@ -1104,9 +1101,9 @@ impl Checker<'_, '_> {
         {
             return;
         }
-        // `allPropertiesTable`, which excludes accessors: `prop.Name` and `prop.ValueDeclaration`,
-        // which is that of the symbol all declarations of the name share.
-        let mut written: Vec<(Atom, PropId)> = Vec::new();
+        // `allPropertiesTable`, which excludes accessors: `prop.Name` and `prop.ValueDeclaration`, which is that of the
+        // symbol that all declarations of the name share.
+        let mut explicit_props: Vec<(Atom, PropId)> = Vec::new();
         for p in props.iter() {
             let prop = &hir[p];
             if prop.kind != PropKind::Spread {
@@ -1116,12 +1113,12 @@ impl Checker<'_, '_> {
                 ) && let Some(name) = self.member_name(file, prop.key)
                 {
                     let value_declaration = self.first_declaration_of_literal_member(file, p);
-                    written.retain(|w| w.0 != name);
-                    written.push((name, value_declaration));
+                    explicit_props.retain(|w| w.0 != name);
+                    explicit_props.push((name, value_declaration));
                 }
                 continue;
             }
-            if written.is_empty() {
+            if explicit_props.is_empty() {
                 continue;
             }
             let ty = self.type_of_expr(file, prop.value);
@@ -1132,7 +1129,7 @@ impl Checker<'_, '_> {
             // `tryMergeUnionOfObjectTypeAndEmptyObject`
             let merged = self.try_merge_union_of_object_type_and_empty_object(ty);
             let parts = self.parts(merged);
-            for &(name, overwritten) in &written {
+            for &(name, overwritten) in &explicit_props {
                 // Neither optional nor partial: every constituent is guaranteed to have it.
                 let mut always = !parts.is_empty();
                 for &part in parts {
@@ -1145,7 +1142,7 @@ impl Checker<'_, '_> {
                     }
                 }
                 if always {
-                    // The spread starts at its `...`, that of an attribute at the `{`.
+                    // The spread starts at its `...`, or at the `{` for an attribute.
                     let spread = (file, prop.start, self.end_of_prop(file, p));
                     let spread = self.new_diagnostic(spread, 2785, &[]);
                     self.error(file, overwritten, 2783, &[Arg::Atom(name)])
@@ -1230,8 +1227,8 @@ pub(super) fn jsx_namespace(
     is_opening_fragment: bool,
 ) -> Atom {
     if is_opening_fragment {
-        // `getJsxFragmentFactoryEntity`: a `@jsxFrag` pragma overrides `jsxFragmentFactory` even if
-        // the pragma does not parse.
+        // `getJsxFragmentFactoryEntity`: a `@jsxFrag` pragma overrides `jsxFragmentFactory` even if the pragma doesn't
+        // parse.
         let pragma = hir.jsx_pragmas.fragment_factory;
         let text = if pragma.is_some() {
             atoms.bytes(pragma)
@@ -1245,8 +1242,8 @@ pub(super) fn jsx_namespace(
     jsx_factory_entity(files, atoms, hir, !is_opening_fragment)[0]
 }
 
-/// `getJsxFactoryEntity`, returned as its identifiers from left to right. `is_local`:
-/// `localJsxFactory` is considered, which is the `@jsx` pragma if it parses.
+/// `getJsxFactoryEntity`, returned as its identifiers from left to right. If `is_local`, `localJsxFactory` is
+/// considered, which is the `@jsx` pragma if it parses.
 fn jsx_factory_entity(
     files: &Files,
     atoms: Atoms<'_, '_>,
@@ -1261,8 +1258,7 @@ fn jsx_factory_entity(
     {
         return entity;
     }
-    // `_jsxFactoryEntity`: `reactNamespace` is read only if `jsxFactory` is not set, and is used
-    // verbatim.
+    // `_jsxFactoryEntity`: `reactNamespace` is read only if `jsxFactory` isn't set, and is used verbatim.
     parse_isolated_entity_name(atoms, &options.jsx_factory).unwrap_or_else(|| {
         let namespace = if options.jsx_factory.is_empty() && !options.react_namespace.is_empty() {
             atoms.intern(&options.react_namespace)
@@ -1273,7 +1269,7 @@ fn jsx_factory_entity(
     })
 }
 
-/// `parseIsolatedEntityName`, returned as the identifiers of the name. Empty text is not a name.
+/// `parseIsolatedEntityName`, returned as the name's identifiers. Empty text isn't a name.
 fn parse_isolated_entity_name(atoms: Atoms<'_, '_>, text: &[u8]) -> Option<Vec<Atom>> {
     let entity = crate::verify::parse_isolated_entity_name(text)?;
     Some(entity.iter().map(|name| atoms.intern(name)).collect())
@@ -1283,7 +1279,7 @@ fn text_of<'a>(hir: &'a hir::File<'_>, start: u32, end: u32) -> &'a [u8] {
     &hir.text[start as usize..end as usize]
 }
 
-/// Whether the `child` of an element is `JsxText`: a string that is not in braces.
+/// True if the `child` of an element is `JsxText`: a string that isn't in braces.
 fn is_jsx_text(hir: &hir::File, child: ExprId) -> bool {
     matches!(hir[child].kind, ExprKind::String(_)) && jsx_expression_around(hir, child).is_none()
 }
@@ -1298,7 +1294,7 @@ fn range_of_jsx_child(hir: &hir::File, child: ExprId) -> (u32, u32) {
 struct JsxElaborationElement {
     /// The span of `errorNode`.
     error_node: (u32, u32),
-    /// `NONE`: there is none.
+    /// `NONE` if there's none.
     inner_expression: ExprId,
     name_type: TypeId,
     /// `createDiagnostic != nil`

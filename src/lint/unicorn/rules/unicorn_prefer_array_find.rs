@@ -40,19 +40,19 @@ fn is_filter_call(call: Call) -> bool {
         && call.args().first().is_some_and(|it| it.tag() != ExprTag::Spread)
 }
 
-/// `[a]`, `[a = 1]`: not `[]`, `[,]`, `[...a]`, `[a, b]`.
+/// `[a]` or `[a = 1]`, but not `[]`, `[,]`, `[...a]` or `[a, b]`.
 fn is_array_pattern_of_one(pat: Pat) -> bool {
     matches!(pat.kind(), PatKind::Array(elements)
         if elements.len() == 1 && elements.first().is_some_and(|it| it.pat().is_some() && !it.is_rest()))
 }
 
-/// The same for the target of an assignment.
+/// The same for an assignment target.
 fn is_array_target_of_one(target: Expr) -> bool {
     matches!(target.kind(), ExprKind::Array(elements) if elements.len() == 1
         && elements.first().is_some_and(|it| !matches!(it.tag(), ExprTag::Missing | ExprTag::Spread)))
 }
 
-/// `filter_call`: `a.filter(f)`
+/// `filter_call` is `a.filter(f)`.
 fn is_only_first_or_last_used(filter_call: Expr) -> bool {
     if !filter_call.is_parenthesized() && !filter_call.is_chain_root() {
         match filter_call.parent() {
@@ -97,7 +97,7 @@ fn is_only_first_or_last_used(filter_call: Expr) -> bool {
     }
 }
 
-/// `declarator`: `.. = a.filter(f)`
+/// `declarator` is `.. = a.filter(f)`.
 fn is_first_declared(declarator: VarDecl) -> bool {
     let pat = declarator.pat();
     if pat.tag() != PatTag::Ident {
@@ -113,7 +113,7 @@ fn is_first_declared(declarator: VarDecl) -> bool {
     let mut is_first_used = false;
     for reference in symbol.references() {
         let Some(ident) = reference.expr().filter(|it| !it.is_parenthesized()) else {
-            // The name in a declaration is none for oxlint.
+            // oxlint doesn't count the name in a declaration as a reference.
             if matches!(reference.node(), Node::Pat(_)) {
                 continue;
             }
@@ -134,7 +134,7 @@ fn is_first_declared(declarator: VarDecl) -> bool {
     is_first_used
 }
 
-/// `member`: `a.filter(f)[0]`
+/// `member` is `a.filter(f)[0]`.
 fn is_left_hand_side(member: Expr) -> bool {
     let Node::Expr(parent) = member.parent() else {
         return false;

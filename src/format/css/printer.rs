@@ -4,36 +4,36 @@ use super::Parser as Syntax;
 use super::media_query::{MediaKind, MediaNode};
 use super::memo::Memo;
 use super::misc::{
-    adjust_numbers, adjust_strings, ends_before_escaped_blank, last_line_has_inline_comment,
-    maybe_to_lower_case, print_css_number, print_string, print_unit, quote_attribute_value,
-    to_lower_case,
+    adjust_numbers, adjust_strings, ends_with_hex_escape, ends_with_unescaped_backslash,
+    last_line_has_inline_comment, maybe_to_lower_case, print_css_number, print_string, print_unit,
+    quote_attribute_value, to_lower_case,
 };
 use super::parse::{Context, CssNode, Params, Parsed, Value};
 use super::postcss::{Kind, Node, NodeId, Tree};
 use super::selector_parser::{Namespace, SelectorId, SelectorKind, Selectors};
 use super::sink::Sink;
-use super::value_parser::{Before, ValueId, ValueKind, Values};
+use super::value_parser::{Before, ValueId, ValueKind, ValueRef, Values};
 use crate::FormatError;
 use crate::syntax_error::{Message, SyntaxError};
 use crate::text::{self, has_newline_backwards, is_next_line_empty};
 use std::borrow::Cow;
 
-/// A node and the nodes that it is in.
+/// A node and its chain of ancestors.
 #[derive(Copy, Clone)]
 pub(crate) struct Scope<'s, 'a> {
     pub(crate) node: &'s CssNode<'a>,
     pub(crate) parent: Option<&'s Scope<'s, 'a>>,
-    /// What `node` is a node of.
+    /// The tree that `node` belongs to.
     tree: &'s Tree,
 }
 
-/// The node that is being printed, with what has been parsed of it.
+/// The node being printed, with its parsed selectors and values.
 #[derive(Copy, Clone)]
 pub(crate) struct Statement<'s, 'a> {
     pub(crate) scope: &'s Scope<'s, 'a>,
     pub(crate) selectors: &'s Selectors,
     pub(crate) values: &'s Values,
-    /// The at-rule that it is or is in.
+    /// The nearest at-rule, which can be the node itself.
     pub(crate) at_rule: Option<&'s CssNode<'a>>,
 }
 
@@ -57,8 +57,8 @@ impl<'s, 'a> Statement<'s, 'a> {
         self.scope.parent.map(|parent| parent.node)
     }
 
-    /// `path.findAncestor((node) => node.type === kind)`, for what is in a selector, a value or
-    /// parameters: the node of the style sheet that it belongs to counts.
+    /// `path.findAncestor((node) => node.type === kind)`, as seen from inside a selector, a value or params. So the
+    /// statement's own node counts as an ancestor.
     pub(crate) fn css_ancestor(&self, kind: Kind) -> Option<&'s CssNode<'a>> {
         std::iter::successors(Some(self.scope), |scope| scope.parent)
             .map(|scope| scope.node)
@@ -72,6 +72,14 @@ impl<'s, 'a> Statement<'s, 'a> {
                 .iter()
                 .any(|name| node.name.eq_ignore_ascii_case(name))
         })
+    }
+
+    /// True for a custom property. Scripts read its value exactly as it is, and `style()` queries compare it that
+    /// way. So its tokens are printed unchanged, spaces aren't added where there were none, and lines don't break after
+    /// a comma that touches the next token. Prettier and oxfmt format it like any other value: `#FFF` becomes `#fff`,
+    /// `.50` becomes `0.5`, `'a'` becomes `"a"`, `1,000` becomes `1, 000`, and in Prettier `16:9` becomes `16: 9`.
+    pub(crate) fn is_custom_property(&self) -> bool {
+        self.node().kind == Kind::Decl && self.node().prop.starts_with(b"--")
     }
 
     fn is_in_keyframes(&self) -> bool {
@@ -95,34 +103,32 @@ pub(crate) struct Printer<'a, 'o> {
     pub(crate) single_quote: bool,
     /// `trailingComma` is `"es5"` or `"all"`.
     pub(crate) trailing_comma: bool,
-    /// Nothing depends on it, but for what is kept of one flavor not to be taken for the other if that changes.
+    /// Part of the memo key, so output cached for one flavor is never reused for the other.
     pub(crate) is_oxfmt: bool,
-    /// Prettier's `__isHTMLStyleAttribute`: the declarations are on one line if they fit. It is not in the key of the memo: the
-    /// sink has to be `Sink::to_document()`, for which nothing is kept.
+    /// Prettier's `__isHTMLStyleAttribute`: the declarations go on one line if they fit. It isn't part of the memo key
+    /// because it requires `Sink::to_document()`, which never caches.
     pub(crate) is_html_style_attribute: bool,
-    /// oxfmt's `sortTailwindcss`, for the classes behind `@apply`.
+    /// oxfmt's `sortTailwindcss`, for the classes after `@apply`.
     pub(crate) tailwind: Option<std::sync::Arc<crate::tailwind::Tailwind>>,
-    /// The nodes of the value that what is being printed is in.
+    /// The ancestors, within the value, of the value node being printed.
     pub(crate) value_stack: Vec<ValueId>,
-    /// Not 0: the comment at the start of what follows a comma that has been written behind the comma.
-    pub(crate) comment_behind_comma: ValueId,
-    /// Which of a `value-comma_group` is being written.
+    /// If nonzero, the comment that starts the item after a comma and has already been printed right after that comma.
+    pub(crate) comment_after_comma: ValueId,
+    /// Index of the `value-comma_group` member being printed.
     pub(crate) index_in_comma_group: usize,
-    /// An item of a list, and how many of the comments that it starts with have been written before it.
+    /// A list item, and how many of its leading comments have already been printed above it.
     pub(crate) comments_above_item: (ValueId, usize),
-    /// For a text that is made to be written.
+    /// Scratch buffer for building text to print.
     pub(crate) scratch: Vec<u8>,
-    /// Prettier throws an error for the style sheet.
+    /// Set if Prettier would throw on this style sheet.
     pub(crate) failure: Option<SyntaxError>,
     pub(crate) sink: Sink<'o>,
     pub(crate) memo: &'o mut Memo,
-    /// What has been printed of the declaration depends on nothing but its text and what `memo_context` takes into
-    /// account.
+    /// True while the current declaration's output depends only on its text and on what `memo_context` covers.
     pub(crate) is_memoizable: bool,
 }
 
-/// `text.replace(/\s*!\s*important/i, " !important")`, and the same for other words.
-/// Whether the first of the selectors `selector` has what is in the place of a `${}` of JavaScript in it.
+/// True if the first selector in the list `selector` contains the placeholder of a JavaScript `${}`.
 fn has_placeholder_in_first_selector(selector: &[u8]) -> bool {
     let Some(at) = bun_core::strings::index_of(selector, b"@prettier-placeholder-") else {
         return false;
@@ -145,12 +151,13 @@ fn has_placeholder_in_first_selector(selector: &[u8]) -> bool {
     true
 }
 
-/// Whether oxfmt leaves `value`, of a custom property, as it is: there is something in it that is no value in the language,
-/// as in `--a: [{"b":1}]`, `--a: b:c` and `--a: 1px !b`. Prettier takes it for values all the same. Only what is on one line.
-fn is_more_than_values(value: &[u8], syntax: Syntax) -> bool {
+/// True if oxfmt prints a custom property's `value` verbatim because part of it isn't a valid value in the language, as
+/// in `--a: [{"b":1}]`, `--a: b:c` and `--a: 1px !b`. Prettier formats it as a value anyway. Only applies to
+/// single-line values.
+fn has_non_value_syntax(value: &[u8], syntax: Syntax) -> bool {
     let is_name_part =
         |byte: u8| bun_core::strings::is_regexp_word_byte(byte) || byte == b'-' || byte >= 0x80;
-    // How many `(` are open.
+    // The number of open `(`.
     let mut depth = 0u32;
     let mut at = 0;
     while let Some(&byte) = value.get(at) {
@@ -168,13 +175,13 @@ fn is_more_than_values(value: &[u8], syntax: Syntax) -> bool {
             }
             b':' | b'{' | b'}' | b'!' => break,
             b'<' | b'>' if syntax == Syntax::Css => break,
-            // What stands for a `${}` in a template of JavaScript is a value.
+            // The placeholder of a JavaScript `${}` counts as a value.
             b'@' if value[at..].starts_with(b"@prettier-placeholder-") => {}
             b'@' if syntax != Syntax::Less || next == Some(b'{') => break,
             b'(' if at >= 3 && value[at - 3..at].eq_ignore_ascii_case(b"url") => {
                 at += bun_core::strings::index_of_char_usize(&value[at..], b')').unwrap_or(0);
             }
-            // In the parentheses of a function there can be others.
+            // Bare parentheses are only fine inside a function's parentheses.
             b'(' if syntax != Syntax::Scss
                 && depth == 0
                 && !at.checked_sub(1).is_some_and(|it| is_name_part(value[it])) =>
@@ -190,8 +197,9 @@ fn is_more_than_values(value: &[u8], syntax: Syntax) -> bool {
     at < value.len() && !bun_core::strings::contains_char(&value[at..], b'\n')
 }
 
-/// Whether `text`, which is in parentheses, is more than a name and a value: `(width>=1px)`, `((color) or (hover))`. Not what
-/// starts with a variable or an interpolation, which oxfmt does not read either. The `(` of a function does not count.
+/// True if the parenthesized `text` is more than a name and a value: `(width>=1px)`, `((color) or (hover))`. False if
+/// it starts with a variable or an interpolation, which oxfmt doesn't parse either. A function call's `(` doesn't
+/// count.
 fn is_range_or_condition(text: &[u8]) -> bool {
     let inner = text.get(1..).unwrap_or_default();
     if matches!(
@@ -215,9 +223,9 @@ fn is_range_or_condition(text: &[u8]) -> bool {
     false
 }
 
-/// For oxfmt there is a blank on both sides of `<`, `>`, `=`, `<=` and `>=` in a media query, one behind a `:`, and none
-/// behind a `(` or before a `)`. Prettier knows a name, a `:` and a value, and leaves the rest as it is.
-fn with_blanks_in_media_feature(text: &[u8]) -> Vec<u8> {
+/// In a media query, oxfmt puts a space on both sides of `<`, `>`, `=`, `<=` and `>=`, one after a `:`, and none after
+/// a `(` or before a `)`. Prettier only understands a name, a `:` and a value, and leaves everything else alone.
+fn with_spaces_in_media_feature(text: &[u8]) -> Vec<u8> {
     let mut result: Vec<u8> = Vec::with_capacity(text.len() + 8);
     let mut at = 0;
     while let Some(&byte) = text.get(at) {
@@ -265,12 +273,12 @@ fn with_blanks_in_media_feature(text: &[u8]) -> Vec<u8> {
     result
 }
 
-/// `f($a)-1` in a media query of SCSS is `f($a) - 1` for oxfmt, as it is in a value. Prettier leaves it as it is.
+/// oxfmt prints `f($a)-1` in an SCSS media query as `f($a) - 1`, as it does in a value. Prettier leaves it alone.
 ///
-/// - `*` always has blanks around it.
-/// - `+` and `-` have if there is none before them and a variable, a name or a function is next to them: not `1+2`. A `-`
-///   behind anything but a `)` is a part of a name, and so is one before a letter.
-fn with_blanks_around_operators(value: &[u8]) -> Cow<'_, [u8]> {
+/// - `*` always gets spaces around it.
+/// - `+` and `-` get them if there's no space before them and a variable, a name or a function is next to them, so not
+///   in `1+2`. A `-` after anything but a `)` is part of a name, and so is one before a letter.
+fn with_spaces_around_operators(value: &[u8]) -> Cow<'_, [u8]> {
     if bun_core::strings::index_of_any(value, b"+-*").is_none() {
         return Cow::Borrowed(value);
     }
@@ -318,6 +326,7 @@ fn with_blanks_around_operators(value: &[u8]) -> Cow<'_, [u8]> {
     Cow::Owned(result)
 }
 
+/// `text.replace(/\s*!\s*important/i, " !important")`, and the same for other words.
 fn normalize_bang(text: &[u8], word: &[u8], allows_space: bool) -> Vec<u8> {
     let mut from = 0;
     while let Some(bang) = bun_core::strings::index_of_char_pos(text, b'!', from) {
@@ -351,10 +360,10 @@ impl<'a> Printer<'a, '_> {
 
     // ───────────────────────────── the style sheet ─────────────────────────────
 
-    /// Has `write` write something that no group is around and that a line break follows. See `Sink`. Whatever
-    /// `write` does besides writing, doing it twice has to be the same as doing it once.
+    /// Runs `write` to print a unit: output that isn't inside a group and is followed by a line break. See `Sink`.
+    /// `write` may run twice, so any side effects besides writing must be idempotent.
     ///
-    /// `is_too_long`: it will hardly fit on the line.
+    /// `is_too_long` is a hint that the unit probably won't fit on the line.
     fn unit(&mut self, is_too_long: bool, mut write: impl FnMut(&mut Self)) {
         let mark = self.sink.start_unit();
         if !(is_too_long && mark.is_some()) {
@@ -372,7 +381,7 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    /// The style sheet is refused. The first reason is the one that is given.
+    /// Rejects the style sheet. Only the first error is reported.
     #[cold]
     pub(crate) fn fail(&mut self, error: SyntaxError) {
         self.failure.get_or_insert(error);
@@ -381,7 +390,7 @@ impl<'a> Printer<'a, '_> {
     pub(crate) fn print_root(&mut self, tree: &Tree, parsed: &mut Parsed) {
         let root = match self.context.convert(tree, 0, parsed) {
             Ok(root) => root,
-            Err(_) => return self.fail(self.context.refusal.reason()),
+            Err(_) => return self.fail(self.context.rejection.reason()),
         };
         let mut after = bun_core::strings::trim_js_whitespace(root.after);
         if let Some(rest) = after.strip_prefix(b";") {
@@ -398,7 +407,7 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    /// Whether no block is printed for `raw`.
+    /// True if `raw` is printed without a block.
     fn has_no_block(&self, raw: &Node) -> bool {
         match raw.kind {
             Kind::Root | Kind::Rule => false,
@@ -415,7 +424,7 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    /// `Memo::context` for the declarations in the block of `scope`. `None`: nothing is kept of them.
+    /// Returns the `Memo::context` for the declarations in `scope`'s block, or `None` if they can't be cached.
     fn memo_context(&mut self, scope: &Scope<'_, 'a>) -> Option<u32> {
         let parent = scope.node;
         if matches!(parent.value, Value::Rule(_)) || !self.context.is_original_text {
@@ -445,7 +454,8 @@ impl<'a> Printer<'a, '_> {
         )
     }
 
-    /// The text of the declaration `raw`, if it has all that `postcss` says of it.
+    /// Returns the source text of the declaration `raw`, if that text determines everything `postcss` recorded about
+    /// it.
     fn memo_text(&self, raw: &Node) -> Option<&'a [u8]> {
         let is_plain = raw.kind == Kind::Decl
             && !raw.is_nested
@@ -456,7 +466,7 @@ impl<'a> Printer<'a, '_> {
                 .of(raw.before)
                 .iter()
                 .all(u8::is_ascii_whitespace);
-        // Everything that it is made of is in the text, from where it starts on.
+        // All of its parts must be in the text, at or after its start.
         let parts = [
             raw.prop,
             raw.between,
@@ -475,7 +485,8 @@ impl<'a> Printer<'a, '_> {
             .filter(|_| is_in_order)
     }
 
-    /// `printSequence` for the nodes of `block`, which `scope` is for, and `after` behind a blank unless it is empty.
+    /// `printSequence` for the children of `block`, whose scope is `scope`. Then prints a space and `after`, unless
+    /// `after` is empty.
     fn print_sequence(
         &mut self,
         scope: &Scope<'_, 'a>,
@@ -492,7 +503,7 @@ impl<'a> Printer<'a, '_> {
             self.sink.text(after);
         }
         while first != 0 {
-            // The nodes from `first` up to `end` are on one line.
+            // The nodes from `first` up to, but not including, `end` go on one line.
             let mut last = &tree.nodes[first as usize];
             while let Some(next) = tree
                 .nodes
@@ -508,8 +519,8 @@ impl<'a> Printer<'a, '_> {
             }
             let end = last.next_sibling;
 
-            // What has a block takes care of the line that its `{` ends. Everything else goes with the rest of the
-            // line.
+            // Leading comments and nodes with a block are printed directly. A node with a block makes its own unit for
+            // the line that ends with its `{`. The rest of the line is one unit.
             let mut id = first;
             while id != end
                 && let raw = &tree.nodes[id as usize]
@@ -532,7 +543,8 @@ impl<'a> Printer<'a, '_> {
                 write_after(self);
             } else {
                 let raw = &tree.nodes[id as usize];
-                // What has been parsed of it is still there when it is written again, if nothing else is parsed.
+                // If the unit's closure runs twice, the node's parse results can be reused, as long as nothing else on
+                // the line overwrites `parsed`.
                 let mut node = None;
                 let is_only_one_parsed = std::iter::successors(Some(raw.next_sibling), |&id| {
                     Some(tree.nodes[id as usize].next_sibling)
@@ -556,7 +568,7 @@ impl<'a> Printer<'a, '_> {
                     let (mut id, mut previous) = (id, previous);
                     while id != end {
                         let raw = &tree.nodes[id as usize];
-                        // oxfmt does not count a `//` comment at the end of the line when it asks what fits.
+                        // oxfmt ignores a trailing `//` comment when it measures whether the line fits.
                         let is_line_suffix = printer.is_oxfmt
                             && id != first
                             && raw.kind == Kind::Comment
@@ -607,8 +619,8 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    /// Prints the node `id`, which is in the block of `parent` behind `previous`. `converted`: for what is made of it
-    /// if it is not a comment. It is not made again if it is there.
+    /// Prints the node `id`, a child of `parent` that follows `previous`. `converted` caches the converted node, unless
+    /// it's a comment, so a second call doesn't convert it again.
     fn print_in_sequence(
         &mut self,
         parent: &Scope<'_, 'a>,
@@ -651,7 +663,7 @@ impl<'a> Printer<'a, '_> {
         if let Some(((context, text), _)) = position
             && let Some((output, has_group)) = self.memo.get(context, text)
         {
-            return self.sink.write_again(output, has_group);
+            return self.sink.replay_output(output, has_group);
         }
 
         let mut own = None;
@@ -660,7 +672,7 @@ impl<'a> Printer<'a, '_> {
             *converted = self.context.convert(tree, id, parsed).ok();
         }
         let Some(node) = converted else {
-            return self.fail(self.context.refusal.reason());
+            return self.fail(self.context.rejection.reason());
         };
         let scope = Scope {
             node,
@@ -683,7 +695,7 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    /// What is in `block`, each on a line of its own, and `}`. The `{` has been written.
+    /// Prints `block`'s children, one per line, and the `}`. The `{` is already printed.
     fn print_block(
         &mut self,
         scope: &Scope<'_, 'a>,
@@ -745,8 +757,8 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    /// What oxfmt does with selectors in JavaScript from the first that has a `${}` in it: the lines stay, each with one
-    /// blank where it has blanks, and none is indented.
+    /// Prints a selector list in JavaScript whose first selector has a `${}` the way oxfmt does: keeps the line breaks,
+    /// collapses the whitespace within each line to one space and doesn't indent any line.
     fn print_lines_of_selector(&mut self, selector: &[u8]) {
         let mut is_first = true;
         for line in bun_core::strings::split(selector, b"\n") {
@@ -771,7 +783,7 @@ impl<'a> Printer<'a, '_> {
     fn print_declaration(&mut self, scope: &Scope<'_, 'a>, raw: &Node, parsed: &mut Parsed) {
         let node = scope.node;
         if let Value::Rule(tree) = &node.value {
-            // The lines of the block are written as they come.
+            // This unit spans the whole block. The block's lines still go straight to the output, as nested units.
             return self.unit(false, |printer| {
                 let is_on_its_own_line = printer.print_name(scope);
                 printer.sink.token("{");
@@ -798,11 +810,13 @@ impl<'a> Printer<'a, '_> {
                 Value::Parsed(_)
                     if printer.is_oxfmt
                         && node.prop.starts_with(b"--")
-                        && is_more_than_values(printer.context.of(raw.value), printer.syntax()) =>
+                        // The raw text includes `!default` and `!global`, which are also printed after the value.
+                        && !(node.scss_default || node.scss_global)
+                        && has_non_value_syntax(printer.context.of(raw.value), printer.syntax()) =>
                 {
-                    printer.sink.text(bun_core::strings::trim_js_whitespace(
-                        printer.context.of(raw.value),
-                    ));
+                    printer
+                        .sink
+                        .text(printer.context.original_text_of(raw.value));
                 }
                 Value::Parsed(value) => {
                     // `hasComposesNode`
@@ -815,7 +829,7 @@ impl<'a> Printer<'a, '_> {
                     if is_without_lines {
                         printer.sink.end_without_lines();
                     }
-                    // `$a: 1,` is a list of one in SCSS, and for oxfmt it stays one.
+                    // `$a: 1,` is a one-item list in SCSS, and oxfmt keeps the comma.
                     if printer.is_oxfmt
                         && node.prop.starts_with(b"$")
                         && bun_core::strings::trim_js_whitespace_end(printer.context.of(raw.value))
@@ -835,8 +849,8 @@ impl<'a> Printer<'a, '_> {
                 printer.sink.end_indent();
                 printer.sink.end_indent();
             }
-            // Or the backslash would escape the `;`, as in what Prettier prints.
-            if ends_before_escaped_blank(printer.context.of(raw.value).trim_ascii_end()) {
+            // Otherwise the backslash would escape the `;`, as it does in Prettier's output.
+            if ends_with_unescaped_backslash(printer.context.of(raw.value).trim_ascii_end()) {
                 printer.sink.token(" ");
             }
             printer.print_rest_of_declaration(scope, raw);
@@ -850,13 +864,14 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    /// The name of a declaration whose value is a block. See `print_name_and_extend`.
+    /// Prints the name of a declaration whose value is a block. See `print_name_and_extend`.
     fn print_name(&mut self, scope: &Scope<'_, 'a>) -> bool {
         let (selectors, values) = Default::default();
         self.print_name_and_extend(Statement::new(scope, &selectors, &values))
     }
 
-    /// What is before the value. Returns whether an `indent` and a `dedent` in it have been started for the value.
+    /// Prints everything before the value. Returns true if it opened an `indent` and a `dedent` inside it for the
+    /// value, which the caller must close.
     fn print_name_and_extend(&mut self, statement: Statement<'_, 'a>) -> bool {
         let node = statement.node();
         let trimmed_between = bun_core::strings::trim_js_whitespace(&node.between);
@@ -880,7 +895,19 @@ impl<'a> Printer<'a, '_> {
         let is_in_less_variable = statement
             .parent()
             .is_some_and(|parent| parent.kind == Kind::AtRule && parent.variable);
-        match is_in_less_variable || statement.inside_icss_rule() {
+        // Tailwind `@plugin` options are JavaScript object keys, and the names in `@font-feature-values` blocks are
+        // chosen by the author. Both are case-sensitive. Prettier prints `className` as `classname`.
+        let is_author_defined_name = statement.inside_at_rule(&[
+            b"plugin",
+            b"stylistic",
+            b"historical-forms",
+            b"styleset",
+            b"character-variant",
+            b"swash",
+            b"ornaments",
+            b"annotation",
+        ]);
+        match is_in_less_variable || is_author_defined_name || statement.inside_icss_rule() {
             true => self.sink.text(&node.prop),
             false => self.sink.text(&maybe_to_lower_case(&node.prop)),
         }
@@ -888,14 +915,14 @@ impl<'a> Printer<'a, '_> {
             self.sink.token(" ");
         }
         self.sink.text(trimmed_between);
-        // `a:${b} { .. }` in a template of JavaScript.
-        let is_placeholder_right_behind_colon = node.is_nested
+        // `a:${b} { .. }` in a JavaScript template.
+        let is_placeholder_right_after_colon = node.is_nested
             && !(is_colon && node.between.ends_with(b" "))
             && matches!(node.value, Value::Parsed(value) if top_level_group(statement.values, value).is_some_and(|group| {
                 is_at_word_placeholder(statement.values, group)
                     || statement.values.groups(group).first().is_some_and(|&first| is_at_word_placeholder(statement.values, first))
             }));
-        if !(node.extend || is_value_all_space || is_placeholder_right_behind_colon) {
+        if !(node.extend || is_value_all_space || is_placeholder_right_after_colon) {
             self.sink.token(" ");
         }
         if let Some(selector) = node
@@ -937,10 +964,11 @@ impl<'a> Printer<'a, '_> {
         is_on_its_own_line
     }
 
-    /// What follows the value, up to the `{` if there is a block.
+    /// Prints everything after the value, through the `{` if there's a block.
     fn print_rest_of_declaration(&mut self, scope: &Scope<'_, 'a>, raw: &Node) {
         let node = scope.node;
-        // `!default /* comment */ ;`: for oxfmt there is nothing before a `;`. Prettier has the text from `postcss` as it is.
+        // `!default /* comment */ ;`: oxfmt trims the whitespace before the `;`. Prettier prints the text from
+        // `postcss` as is.
         let is_oxfmt = self.is_oxfmt;
         let mut bang =
             |raw: Option<&[u8]>, is_set: bool, word: &'static str, allows_space: bool| match raw {
@@ -972,20 +1000,21 @@ impl<'a> Printer<'a, '_> {
             }
             false => self.sink.token(";"),
         }
+        self.print_line_comment(node);
     }
 
-    /// Whether there is no semicolon behind the node of `scope`.
+    /// True if there's no semicolon after `scope`'s node.
     fn has_no_semicolon(&mut self, scope: &Scope<'_, 'a>) -> bool {
         self.is_memoizable = false;
         let parent = scope.parent.map(|parent| parent.node);
-        // What Prettier makes of `--a: { .. }` has no `raws` to look at.
+        // Prettier's node for `--a: { .. }` has no `raws`, so it throws when it reads them.
         if parent.is_some_and(|parent| matches!(parent.value, Value::Rule(_))) {
             self.fail(SyntaxError(
                 Message::UnreadableValue,
                 scope.node.start as u32,
             ));
         }
-        // For oxfmt it is a statement of its own, wherever it is.
+        // oxfmt always treats it as a separate statement.
         (self.is_oxfmt || parent.is_some_and(|parent| !parent.semicolon))
             && scope
                 .node
@@ -1011,7 +1040,7 @@ impl<'a> Printer<'a, '_> {
     }
 
     fn semicolon_of_at_rule(&mut self, scope: &Scope<'_, 'a>) -> &'static str {
-        // `isTemplatePlaceholderNode`: an expression in a template of JavaScript.
+        // `isTemplatePlaceholderNode`: an expression in a JavaScript template.
         if scope.node.name.starts_with(b"prettier-placeholder") && self.has_no_semicolon(scope) {
             ""
         } else {
@@ -1019,7 +1048,7 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    /// All of an at-rule, or what is before its block and the `{`.
+    /// Prints a whole at-rule or, if it has a block, everything through the `{`.
     fn print_at_rule_up_to_block(&mut self, statement: Statement<'_, 'a>) {
         let node = statement.node();
         let is_placeholder = node.name.starts_with(b"prettier-placeholder");
@@ -1038,7 +1067,8 @@ impl<'a> Printer<'a, '_> {
                 if node.important {
                     self.sink.token(" !important");
                 }
-                return self.sink.token(semicolon);
+                self.sink.token(semicolon);
+                return self.print_line_comment(node);
             }
             if node.function {
                 self.sink.text(node.name);
@@ -1074,7 +1104,7 @@ impl<'a> Printer<'a, '_> {
         if !matches!(&node.params, Params::None)
             && !matches!(&node.params, Params::Text(params) if params.is_empty())
         {
-            // How many line breaks there are before the first other character of `raws.afterName`.
+            // Count the line breaks in the leading whitespace of `raws.afterName`.
             let spaces = &node.after_name[..text::leading_white_space_len(node.after_name)];
             match bun_core::strings::count_char(spaces, b'\n') {
                 _ if is_detached_ruleset_call => {}
@@ -1090,7 +1120,8 @@ impl<'a> Printer<'a, '_> {
             }
             match &node.params {
                 Params::None => {}
-                // For oxfmt the quotes of the name of `@keyframes` and of what `@error` and `@warn` say are as everywhere.
+                // oxfmt normalizes the quotes in a `@keyframes` name and in `@error` and `@warn` messages like
+                // everywhere else.
                 Params::Text(params) | Params::Unknown(params)
                     if self.is_oxfmt
                         && (statement.is_in_keyframes()
@@ -1104,7 +1135,7 @@ impl<'a> Printer<'a, '_> {
                 {
                     self.print_lines_of_selector(params);
                 }
-                // `prettier-plugin-tailwindcss` has them parsed like those of `@import`.
+                // `prettier-plugin-tailwindcss` makes Prettier parse these params like the params of `@import`.
                 Params::Text(params) | Params::Unknown(params)
                     if !self.is_oxfmt
                         && self.tailwind.is_some()
@@ -1114,11 +1145,12 @@ impl<'a> Printer<'a, '_> {
                 }
                 Params::Text(params) | Params::Unknown(params) => {
                     let is_sorted = node.name == b"apply" && !node.has_block;
-                    // To the plugin the parts of a comment are classes like others. oxfmt leaves such a list alone.
+                    // The plugin sorts the words of a comment as if they were classes. oxfmt doesn't sort a list with a
+                    // comment.
                     let has_comment = bun_core::strings::contains(params, b"/*");
                     let sorted = (self.tailwind.as_deref())
                         .filter(|it| is_sorted && (it.follows_plugin || !has_comment))
-                        .and_then(|tailwind| tailwind.sorted_to_apply(params));
+                        .and_then(|tailwind| tailwind.sorted_apply_params(params));
                     self.sink.text(sorted.as_deref().unwrap_or(params));
                 }
                 Params::Media(list) => self.print_media(list, true),
@@ -1131,6 +1163,10 @@ impl<'a> Printer<'a, '_> {
             self.print_selector(statement, selector, None, None);
             self.sink.end_indent();
         }
+        let ends_with_space = match node.value {
+            Value::Parsed(_) => is_control_directive,
+            _ => node.name == b"else",
+        };
         match node.value {
             Value::Parsed(value) => {
                 // `hasParensAroundNode`
@@ -1155,6 +1191,14 @@ impl<'a> Printer<'a, '_> {
             && matches!(node.params, Params::Value(value)
                 if statement.values.node(value).kind == ValueKind::Unknown && statement.values.value(value).is_some_and(|it| it.ends_with(b";")));
         match node.has_block {
+            true if !node.line_comment.is_empty() => {
+                if !ends_with_space {
+                    self.sink.token(" ");
+                }
+                self.sink.text(node.line_comment);
+                self.sink.hard_line();
+                self.sink.token("{");
+            }
             true => {
                 let has_inline_comment = match (node.selector, &node.params) {
                     (Some(selector), _) => {
@@ -1173,18 +1217,28 @@ impl<'a> Printer<'a, '_> {
             }
             false if is_import_that_ends_with_semicolon => {}
             false => {
-                // Or the backslash would escape the `;`, as in what Prettier prints. Behind the value of `@if` there is a blank.
-                if ends_before_escaped_blank(&node.raw_params) && !is_control_directive {
+                // Otherwise the backslash would escape the `;`, as it does in Prettier's output. The value of `@if` is
+                // already followed by a space.
+                if ends_with_unescaped_backslash(&node.raw_params) && !is_control_directive {
                     self.sink.token(" ");
                 }
                 self.sink.token(semicolon);
+                self.print_line_comment(node);
             }
         }
     }
 
-    /// `atRuleAncestorNode`, for a value. For oxfmt, only its parameters are in an at-rule: what is in its block is
-    /// printed as it is anywhere else.
-    pub(crate) fn at_rule_around<'s>(
+    /// Prints `CssNode::line_comment` after a `;`.
+    fn print_line_comment(&mut self, node: &CssNode<'a>) {
+        if !node.line_comment.is_empty() {
+            self.sink.token(" ");
+            self.sink.text(node.line_comment);
+        }
+    }
+
+    /// `atRuleAncestorNode`, for a value. In oxfmt only an at-rule's own params count as inside it. The contents of its
+    /// block are printed as they would be anywhere else.
+    pub(crate) fn enclosing_at_rule<'s>(
         &self,
         statement: Statement<'s, 'a>,
     ) -> Option<&'s CssNode<'a>> {
@@ -1236,7 +1290,7 @@ impl<'a> Printer<'a, '_> {
                 let is_expression =
                     node.kind == MediaKind::Value && self.is_oxfmt && self.syntax() == Syntax::Scss;
                 let value = match is_expression {
-                    true => with_blanks_around_operators(node.value),
+                    true => with_spaces_around_operators(node.value),
                     false => Cow::Borrowed(node.value),
                 };
                 self.sink
@@ -1245,7 +1299,7 @@ impl<'a> Printer<'a, '_> {
             MediaKind::FeatureExpression => match &node.nodes {
                 None => self.sink.text(node.value),
                 Some(_) if self.is_oxfmt && is_range_or_condition(node.value) => {
-                    let text = with_blanks_in_media_feature(node.value);
+                    let text = with_spaces_in_media_feature(node.value);
                     self.sink
                         .text(&adjust_numbers(&maybe_to_lower_case(&adjust_strings(
                             &text,
@@ -1257,10 +1311,10 @@ impl<'a> Printer<'a, '_> {
                     for child in children {
                         self.print_media(child, false);
                     }
-                    // `(a\ )`, of which Prettier prints `(a\)`.
+                    // `(a\ )`, which Prettier prints as `(a\)`.
                     if let Some(inner) = node.value.strip_suffix(b")")
                         && inner.last().is_some_and(u8::is_ascii_whitespace)
-                        && ends_before_escaped_blank(inner.trim_ascii_end())
+                        && ends_with_unescaped_backslash(inner.trim_ascii_end())
                     {
                         self.sink.token(" ");
                     }
@@ -1325,7 +1379,7 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    /// `parent`: the selector that `id` is in. `previous`: what is before it there.
+    /// `parent` is the selector node that contains `id`, and `previous` is `id`'s previous sibling.
     pub(crate) fn print_selector(
         &mut self,
         statement: Statement<'_, 'a>,
@@ -1348,7 +1402,7 @@ impl<'a> Printer<'a, '_> {
                 };
                 let is_on_one_line =
                     statement.inside_at_rule(&[b"extend", b"custom-selector", b"nest"]);
-                // One on each line, which the group is broken by.
+                // One selector per line, and those hard line breaks break the group.
                 self.sink
                     .start_group(!is_on_one_line && node.child_count > 1);
                 if let Some(name) = custom_selector {
@@ -1402,11 +1456,11 @@ impl<'a> Printer<'a, '_> {
                     false => self.sink.text(&adjust_numbers(value)),
                 }
             }
-            // With the `#` before it.
+            // Include the `#` before it.
             SelectorKind::Id => self
                 .sink
                 .text(selectors.text((node.value.0.saturating_sub(1), node.value.1))),
-            // For oxfmt, `.50%` in `@keyframes` is a number.
+            // oxfmt treats `.50%` in `@keyframes` as a number.
             SelectorKind::Class
                 if self.is_oxfmt
                     && previous.is_none()
@@ -1418,7 +1472,7 @@ impl<'a> Printer<'a, '_> {
             }
             SelectorKind::Class => {
                 match (adjust_strings(value, single_quote), adjust_numbers(value)) {
-                    // With the `.` before it.
+                    // Include the `.` before it.
                     (Cow::Borrowed(_), Cow::Borrowed(_)) => self
                         .sink
                         .text(selectors.text((node.value.0.saturating_sub(1), node.value.1))),
@@ -1440,8 +1494,12 @@ impl<'a> Printer<'a, '_> {
                         .unwrap_or_default(),
                 );
                 if node.has_value {
-                    let adjusted =
-                        adjust_strings(bun_core::strings::trim_js_whitespace(value), single_quote);
+                    let value = bun_core::strings::trim_js_whitespace_start(value);
+                    let mut len = bun_core::strings::trim_js_whitespace_end(value).len();
+                    if len < value.len() && ends_with_unescaped_backslash(&value[..len]) {
+                        len += 1;
+                    }
+                    let adjusted = adjust_strings(&value[..len], single_quote);
                     // `replaceEndOfLine(.., literallineWithoutBreakParent)`
                     for (index, line) in bun_core::strings::split(
                         &quote_attribute_value(adjusted, single_quote),
@@ -1467,12 +1525,37 @@ impl<'a> Printer<'a, '_> {
                         self.sink.line();
                     }
                     self.sink.text(value);
-                    if node.next_sibling != 0 {
+                    // `:nth-child(+n+3)` and the keyframe selector `+50%`. Prettier prints a space after the sign,
+                    // which makes them invalid.
+                    let is_sign = is_first
+                        && value == b"+"
+                        && (selectors.text((node.value.1, node.value.1 + 1)).first())
+                            .is_some_and(|next| !next.is_ascii_whitespace())
+                        && parent.is_some_and(|parent| {
+                            let container = selectors.node(selectors.node(parent).parent);
+                            match container.kind {
+                                SelectorKind::Pseudo => (selectors.text(container.value).get(..5))
+                                    .is_some_and(|it| it.eq_ignore_ascii_case(b":nth-")),
+                                SelectorKind::Root => statement.is_in_keyframes(),
+                                _ => false,
+                            }
+                        });
+                    if node.next_sibling != 0 && !is_sign {
                         self.sink.token(" ");
                     }
                     return;
                 }
                 if value.iter().all(u8::is_ascii_whitespace) {
+                    // The first space of `.\31  .b` ends the escape and the second is the combinator. Prettier prints
+                    // `.\31 .b`, which is a compound selector.
+                    if value.len() > 1
+                        && previous.is_some_and(|it| {
+                            let name = (selectors.node(it).value.0, node.value.0);
+                            ends_with_hex_escape(selectors.text(name))
+                        })
+                    {
+                        self.sink.token(" ");
+                    }
                     return self.sink.line();
                 }
                 if bun_core::strings::trim_js_whitespace_start(value).starts_with(b"(") {
@@ -1529,7 +1612,7 @@ impl<'a> Printer<'a, '_> {
                 .text(&adjust_numbers(&adjust_strings(&value, self.single_quote)));
         }
         let values = statement.values;
-        // In the parentheses of `selector()`.
+        // Inside the parentheses of `selector()`.
         if let [.., func, paren_group] = self.value_stack[..]
             && let paren_group = values.node(paren_group)
             && paren_group.kind == ValueKind::ParenGroup
@@ -1556,7 +1639,7 @@ impl<'a> Printer<'a, '_> {
             }
             return self.sink.text(selector);
         }
-        // The text is taken from the style sheet, for the sake of Less.
+        // Use the original text, because the parsed copy of a Less file has some characters blanked out.
         let parent = statement.node();
         if self.value_stack.is_empty() && !parent.raw_selector.is_empty() {
             let end = parent.start + parent.raw_selector.len();
@@ -1571,7 +1654,7 @@ impl<'a> Printer<'a, '_> {
 
     // ───────────────────────────── values ─────────────────────────────
 
-    /// The name of the function that what is being printed is in.
+    /// Returns the name of the innermost function around the value node being printed.
     pub(crate) fn value_function<'v>(&self, values: &'v Values) -> Option<&'v [u8]> {
         let function = self
             .value_stack
@@ -1587,7 +1670,7 @@ impl<'a> Printer<'a, '_> {
             .is_some_and(|value| value.eq_ignore_ascii_case(name))
     }
 
-    /// `previous`: what is before `id` in the group that it is in.
+    /// `previous` is the node before `id` in its group.
     pub(crate) fn print_value(
         &mut self,
         statement: Statement<'_, 'a>,
@@ -1636,10 +1719,19 @@ impl<'a> Printer<'a, '_> {
                 self.print_child_value(statement, id, node.group);
             }
             ValueKind::Number => {
-                self.scratch.clear();
-                print_css_number(value, &mut self.scratch);
-                self.sink.text(&self.scratch);
-                self.sink.text(print_unit(values.text(node.unit)));
+                let source_text = match statement.is_custom_property() {
+                    true => (ValueRef { values, id }).number_source_text(),
+                    false => None,
+                };
+                match source_text {
+                    Some(number) => self.sink.text(number),
+                    None => {
+                        self.scratch.clear();
+                        print_css_number(value, &mut self.scratch);
+                        self.sink.text(&self.scratch);
+                        self.sink.text(print_unit(values.text(node.unit)));
+                    }
+                }
             }
             ValueKind::Paren
             | ValueKind::Operator
@@ -1653,7 +1745,9 @@ impl<'a> Printer<'a, '_> {
                 let is_wide_keyword = ["initial", "inherit", "unset", "revert"]
                     .iter()
                     .any(|it| value.eq_ignore_ascii_case(it.as_bytes()));
-                match (node.is_color && node.is_hex) || is_wide_keyword {
+                match ((node.is_color && node.is_hex) || is_wide_keyword)
+                    && !statement.is_custom_property()
+                {
                     true => self.sink.text(&to_lower_case(value)),
                     false => self.sink.text(value),
                 }
@@ -1664,12 +1758,15 @@ impl<'a> Printer<'a, '_> {
                     .is_some_and(|it| it.ends_with(b"\\"));
                 self.sink.start_group(false);
                 self.sink.token(":");
-                if !(is_escaped || self.inside_value_function(values, b"url")) {
+                let is_verbatim = statement.is_custom_property()
+                    && (ValueRef { values, id }).whitespace_after() == 0;
+                if !(is_escaped || is_verbatim || self.inside_value_function(values, b"url")) {
                     self.sink.line();
                 }
                 self.sink.end_group();
             }
-            // `@import "a" source('b')`: oxfmt knows `url()`. A string in another function keeps its quotes.
+            // `@import "a" source('b')`: oxfmt only normalizes quotes inside `url()`. A string in any other function
+            // keeps its quotes.
             ValueKind::String
                 if self.is_oxfmt
                     && statement.inside_at_rule(&[b"import"])
@@ -1679,6 +1776,9 @@ impl<'a> Printer<'a, '_> {
             {
                 self.sink.text(values.raw_string(id));
             }
+            ValueKind::String if statement.is_custom_property() => {
+                self.sink.text(values.raw_string(id));
+            }
             ValueKind::String => {
                 self.scratch.clear();
                 print_string(values.raw_string(id), self.single_quote, &mut self.scratch);
@@ -1686,7 +1786,7 @@ impl<'a> Printer<'a, '_> {
             }
             ValueKind::AtWord => {
                 self.sink.token("@");
-                // For oxfmt `@a!important` is `@a !important`.
+                // oxfmt prints `@a!important` as `@a !important`.
                 match value.len().checked_sub(b"!important".len()).filter(|&at| {
                     self.is_oxfmt && at > 0 && value[at..].eq_ignore_ascii_case(b"!important")
                 }) {
@@ -1701,7 +1801,6 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    /// Prints `child`, which is in `parent`.
     pub(crate) fn print_child_value(
         &mut self,
         statement: Statement<'_, 'a>,
@@ -1730,8 +1829,8 @@ pub(crate) fn top_level_group(values: &Values, root: ValueId) -> Option<ValueId>
     Some(value.group)
 }
 
-/// `-apple-system`, `+3em`: to postcss-value-parser a sign that is not the first thing in a value is an operator,
-/// so to Prettier this is two things.
+/// `-apple-system`, `+3em`: postcss-value-parser treats a sign that isn't at the start of a value as an operator, so
+/// Prettier sees two nodes.
 fn is_signed_word(values: &Values, id: ValueId) -> bool {
     matches!(*values.groups(id), [sign, word]
         if values.node(sign).kind == ValueKind::Operator
@@ -1739,7 +1838,7 @@ fn is_signed_word(values: &Values, id: ValueId) -> bool {
             && values.node(word).before == Before::Empty)
 }
 
-/// The first condition of `shouldBreakList`. `signed_word_is_one`: as for oxfmt, which keeps
+/// The first condition of `shouldBreakList`. `signed_word_is_one` is oxfmt's behavior, which keeps
 /// `font-family: a, -apple-system` on one line.
 pub(crate) fn is_list_with_comma_group(
     values: &Values,

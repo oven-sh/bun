@@ -30,7 +30,7 @@ impl Rule for JsxNewline {
         let ExprKind::Jsx(parent) = e.kind() else {
             return;
         };
-        // An element, and another after the text that follows it.
+        // A report needs an element, and another one after the text that follows it.
         if parent.children().len() < 2 {
             return;
         }
@@ -72,14 +72,17 @@ impl Rule for JsxNewline {
             cx.report(at, message).fix(|fixer| {
                 let (newlines, replacement): (&[u8], &[u8]) =
                     if is_doubled { (b"\n", b"\n\n") } else { (b"\n\n", b"\n") };
-                fixer.replace(between, with_the_last_replaced(file.slice(between), newlines, replacement))
+                let raw = file.slice(between);
+                let replaced = replace_last_newlines(raw, newlines, replacement);
+                // `{a} and {b}` on one line has no line break to double.
+                (replaced != raw).then(|| fixer.replace(between, replaced))
             });
         }
     }
 }
 
-/// upstream's `isNonBlockComment`: the range of a `JSXElement` or a `JSXExpressionContainer` that does not begin with
-/// `{/*`.
+/// upstream's `isNonBlockComment`: returns the range of a `JSXElement`, or of a `JSXExpressionContainer` that doesn't
+/// start with `{/*`.
 fn non_block_comment(element: JsxChild<'_>) -> Option<Span> {
     let JsxChild::Expr(element) = element else {
         return None;
@@ -109,14 +112,14 @@ fn is_without_new_line(value: &[u8]) -> bool {
 /// `raw.replace(/(newlines)(?!.*\1)/g, replacement)`, where `newlines` is one line feed or two.
 #[cold]
 #[inline(never)]
-fn with_the_last_replaced(raw: &[u8], newlines: &[u8], replacement: &[u8]) -> Vec<u8> {
+fn replace_last_newlines(raw: &[u8], newlines: &[u8], replacement: &[u8]) -> Vec<u8> {
     let mut replaced = Vec::with_capacity(raw.len() + 1);
     let mut rest = raw;
     while let Some(at) = strings::index_of(rest, newlines) {
         let (before, found) = rest.split_at(at);
         let after = found.get(newlines.len()..).unwrap_or_default();
         replaced.extend_from_slice(before);
-        // `.*` takes what is before the next line break.
+        // `.*` matches up to the next line break.
         let next = strings::find_js_line_break(after).and_then(|it| after.get(it.0..));
         if next.is_some_and(|it| it.starts_with(newlines)) {
             replaced.push(b'\n');

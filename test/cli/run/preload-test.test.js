@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, realpathSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 const preloadModule = `
@@ -221,5 +221,86 @@ plugin({
       expect(stdout.toString()).toBe("");
       expect(exitCode).toBe(1);
     }
+  });
+
+  test("reports a preloaded node: module that doesn't exist", async () => {
+    using dir = tempDir("preload-missing-builtin", { "main.js": `console.log("main ran");` });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "node:does_not_exist", "main.js"],
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining("error: No such built-in module: node:does_not_exist\n"),
+      exitCode: 1,
+    });
+  });
+
+  describe("with --hot", () => {
+    function spawnHot(dir) {
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "--hot", "--no-clear-screen", "--preload", "./first.js", "--preload", "./second.js", "main.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      // Resolves to all the text read so far once it includes `expected` or the stream ends.
+      const collect = stream => {
+        const reader = stream.getReader();
+        const decoder = new TextDecoder();
+        let text = "";
+        return async expected => {
+          while (!text.includes(expected)) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            text += decoder.decode(value, { stream: true });
+          }
+          return text;
+        };
+      };
+      return { proc, stdout: collect(proc.stdout), stderr: collect(proc.stderr) };
+    }
+
+    test("waits for the preloads to finish when a reload arrives while they load", async () => {
+      using dir = tempDir("preload-hot", {
+        "first.js": `
+          if (!globalThis.savedOnce) {
+            globalThis.savedOnce = true;
+            const fs = require("node:fs");
+            fs.writeFileSync(__filename, fs.readFileSync(__filename));
+          }
+          console.log("first ran");
+        `,
+        "second.js": `console.log("second ran");`,
+        "main.js": `console.log("main ran");`,
+      });
+      const { proc, stdout } = spawnHot(dir);
+      await using _ = proc;
+      expect(await stdout("main ran\nmain ran\n")).toStartWith("first ran\nsecond ran\nmain ran\nmain ran\n");
+    });
+
+    test("reports a preload that was deleted before a reload, and the next reload still runs", async () => {
+      using dir = tempDir("preload-hot", {
+        // After a preload fails, every reload loads the preloads again.
+        "first.js": `throw new Error("from first.js");`,
+        "second.js": `console.log("second ran");`,
+        "main.js": `console.log("main ran");`,
+      });
+      const { proc, stdout, stderr } = spawnHot(dir);
+      await using _ = proc;
+      expect(await stderr("error: from first.js")).toContain("error: from first.js");
+      rmSync(join(String(dir), "first.js"));
+      writeFileSync(join(String(dir), "main.js"), `console.log("main ran");`);
+      expect(await stderr('preload not found "./first.js"')).toContain('preload not found "./first.js"');
+      writeFileSync(join(String(dir), "first.js.new"), `console.log("first ran");`);
+      renameSync(join(String(dir), "first.js.new"), join(String(dir), "first.js"));
+      writeFileSync(join(String(dir), "main.js"), `console.log("main ran");`);
+      expect(await stdout("main ran\n")).toContain("first ran\nsecond ran\nmain ran\n");
+    });
   });
 });

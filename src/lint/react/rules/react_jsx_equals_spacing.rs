@@ -4,7 +4,7 @@ use bun_lint::rule::Plugin;
 
 /// Enforce or disallow spaces around equal signs in JSX attributes
 pub struct JsxEqualsSpacing {
-    /// `"always"`, not `"never"`
+    /// True for `"always"`, false for `"never"`.
     always: bool,
 }
 
@@ -57,7 +57,7 @@ impl Rule for JsxEqualsSpacing {
     }
 }
 
-/// `isSpaceBetweenTokens` of `first` and the token that starts at `second`, the next one.
+/// `isSpaceBetweenTokens` for `first` and the next token, which starts at `second`.
 fn is_spaced<'a>(file: &'a File<'a>, first: Span, second: u32) -> bool {
     match file.slice(Span::after(first, second)).first() {
         None => false,

@@ -49,3 +49,7 @@ test("buffer.resolveObjectURL args", async () => {
   ).toBeUndefined();
   URL.revokeObjectURL(id);
 });
+
+test("buffer.resolveObjectURL is not a constructor", () => {
+  expect(() => Reflect.construct(resolveObjectURL, ["foo"])).toThrow(TypeError);
+});

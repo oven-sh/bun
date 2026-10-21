@@ -1,20 +1,24 @@
-//! Tests for the buffer, `Task::finish`, `publish`, the merge and `follow` of ids and handles, and
-//! the underlying containers.
+//! Tests for `Task`, its buffer, commits and immediate writes, and the underlying containers.
+//!
+//! Miri needs half a minute to build a `TypeStore`, so it runs only a few of the tests that have one. It also skips
+//! the tests that insert thousands of entries.
 
 use super::*;
-use crate::atom::{Atom, Atoms, Interner};
+use crate::atom::Interner;
 use crate::bind::SymbolId;
-use crate::local::{Hashed, LOCAL, MaybeLocal, SlotNumber, spread_word};
+use crate::check::commit::Commits;
+use crate::local::{HashIndex, Hashed, LOCAL, MaybeLocal, SlotNumber, spread_word};
 use crate::program::Sym;
 use crate::session::Session;
 use crate::table::{
-    Bases, Buffered, ById, ByIdIndirect, ByKey, ByNode, ByNodeIndirect, Cell as _, FileLocal,
+    At, Bases, Buffered, ById, ByIdIndirect, ByKey, ByNode, ByNodeIndirect, Cell as _, FileLocal,
+    Handle, Id as _, OfExpressions,
 };
 use crate::types::{
-    ElemFlags, List, MapperId, OriginKey, Provenance, ProvenanceKey, TypeData, TypeId, TypeKey,
-    TypeStore, Types, UnionOrigin,
+    ElemFlags, List, MapperId, OriginKey, Provenance, ProvenanceKey, Sharing, ShortList,
+    TypeArguments, TypeData, TypeId, TypeKey, TypeStore, Types, UnionOrigin,
 };
-use crate::util::{GrowingPlaces, ShardedMap};
+use crate::util::{ShardedMap, WindowedMap, shard_among, spread_in_window};
 use bun_sema_standalone as _;
 use std::alloc::Global;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
@@ -22,11 +26,11 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 type Node = (FileId, u32);
 
 fn numbered(number: u32) -> SlotNumber {
-    // SAFETY: a test gives each of its tables another number.
+    // SAFETY: each test gives every one of its tables a different number.
     unsafe { SlotNumber::new(number) }
 }
 
-/// A value that holds a handle of another table, as `CachedMembers` does.
+/// A value that holds a handle into another table, like `CachedMembers`.
 #[derive(Copy, Clone, PartialEq, Debug)]
 struct Holder {
     shape: Handle,
@@ -40,15 +44,14 @@ impl Holder {
     }
 }
 
-/// One table of each kind, and the type store that their ids belong to.
+/// One table of each kind, and the type store their ids belong to.
 struct Tables<'s> {
-    atoms: Interner<'s>,
     types: TypeStore<'s>,
     by_node: ByNode<Node, TypeId, Buffered, &'s Session>,
     set: ByNode<Node, (), Buffered, &'s Session>,
     by_id: ById<TypeId, TypeId, Buffered, &'s Session>,
     shapes: ByIdIndirect<TypeId, Box<[TypeId]>, Buffered, &'s Session>,
-    kept_by_node: ByNodeIndirect<Node, Box<[TypeId]>, Buffered, &'s Session>,
+    indirect_by_node: ByNodeIndirect<Node, Box<[TypeId]>, Buffered, &'s Session>,
     members: ByIdIndirect<TypeId, Holder, Buffered, &'s Session>,
     by_key: ByKey<(TypeId, TypeId), TypeId, Buffered, &'s Session>,
 }
@@ -62,13 +65,12 @@ impl<'s> Tables<'s> {
     fn new(session: &'s Session) -> Tables<'s> {
         let bases = Bases::new_in([100, 100, 100].into_iter(), &session);
         let mut tables = Tables {
-            atoms: Interner::new_in(session),
-            types: TypeStore::new_in(session),
+            types: TypeStore::new_in(session, Interner::new_in(session)),
             by_node: ByNode::new_in(&bases, session),
             set: ByNode::new_in(&bases, session),
             by_id: ById::new_in(session),
             shapes: ByIdIndirect::new_in(session),
-            kept_by_node: ByNodeIndirect::new_in(&bases, session),
+            indirect_by_node: ByNodeIndirect::new_in(&bases, session),
             members: ByIdIndirect::new_in(session),
             by_key: ByKey::new_in(session),
         };
@@ -76,10 +78,10 @@ impl<'s> Tables<'s> {
         tables.set.set_slot(numbered(1));
         tables.by_id.set_slot(numbered(2));
         tables.shapes.set_slot(numbered(3));
-        tables.kept_by_node.set_slot(numbered(4));
+        tables.indirect_by_node.set_slot(numbered(4));
         tables.members.set_slot(numbered(5));
         tables.by_key.set_slot(numbered(6));
-        (tables.members).hold_handles_of(&mut tables.shapes, Holder::shape_mut);
+        (tables.members).hold_handles_of(&tables.shapes, Holder::shape_mut);
         tables
     }
 
@@ -89,18 +91,18 @@ impl<'s> Tables<'s> {
             &self.set,
             &self.by_id,
             &self.shapes,
-            &self.kept_by_node,
+            &self.indirect_by_node,
             &self.members,
             &self.by_key,
         ]
     }
 
-    /// `keyof of`, which no store contains initially.
+    /// Returns `keyof of`, which isn't in any store initially.
     fn keyof(&self, task: &Task<'s>, of: TypeId) -> TypeId {
         Types::new(&self.types, &task.own).intern(TypeData::Keyof(of))
     }
 
-    /// The `this` type of a class of `file`: a type that references `file`.
+    /// Returns the `this` type of a class in `file`, which is a type that references `file`.
     fn this_of(&self, task: &Task<'s>, file: FileId) -> TypeId {
         let class = Sym {
             file,
@@ -108,32 +110,6 @@ impl<'s> Tables<'s> {
         };
         Types::new(&self.types, &task.own).intern(TypeData::ThisParam(class))
     }
-
-    fn finish(&self, task: &mut Task<'s>) -> Finished<'s> {
-        task.finish_tables(&self.all(), Vec::new())
-    }
-
-    fn link(&self, finished: &mut [Finished<'s>], in_parallel: InParallel<'_>) {
-        let own = finished.iter_mut().map(|it| std::mem::take(&mut it.own));
-        let (links, _) = (self.types).link(&self.atoms, own.collect(), in_parallel, &|_| {});
-        for (finished, link) in finished.iter_mut().zip(links) {
-            finished.link = link;
-        }
-    }
-
-    /// Merge, then publish.
-    fn barrier(&self, finished: &mut [Finished<'s>], in_parallel: InParallel<'_>) -> Published {
-        self.link(finished, in_parallel);
-        publish_tables(&self.all(), finished, in_parallel, Some(&self.atoms))
-    }
-}
-
-fn forwards(count: usize, work: &(dyn Fn(usize) + Sync)) {
-    (0..count).for_each(work);
-}
-
-fn backwards(count: usize, work: &(dyn Fn(usize) + Sync)) {
-    (0..count).rev().for_each(work);
 }
 
 fn on_threads(count: usize, work: &(dyn Fn(usize) + Sync)) {
@@ -153,114 +129,29 @@ fn on_threads(count: usize, work: &(dyn Fn(usize) + Sync)) {
     });
 }
 
-const POOLS: [fn(usize, &(dyn Fn(usize) + Sync)); 3] = [forwards, backwards, on_threads];
-
-fn begin(session: &Session, index: u32) -> Task<'_> {
-    let mut task = Task::new_in(session.arena());
-    task.begin(0, index, true);
+fn begin<'s>(session: &'s Session, types: &TypeStore<'s>, index: u32) -> Task<'s> {
+    let mut task = Task::new_in(session.arena(), types);
+    task.begin(0, index);
     task
 }
 
-fn begin_in(session: &Session, index: u32, file: FileId) -> Task<'_> {
-    let mut task = begin(session, index);
+fn begin_in<'s>(session: &'s Session, types: &TypeStore<'s>, index: u32, file: FileId) -> Task<'s> {
+    let mut task = begin(session, types, index);
     task.begin_file(file, true);
     task
-}
-
-fn counts(published: &Published) -> (u64, u64, u64) {
-    let sum = |of: fn(&(u64, u64)) -> u64| published.by_table.iter().map(of).sum::<u64>();
-    assert_eq!(
-        (sum(|it| it.0), sum(|it| it.1)),
-        (published.buffered, published.published)
-    );
-    assert_eq!(published.buffered, published.published + published.lost);
-    (published.buffered, published.published, published.lost)
 }
 
 fn stored() -> Stored {
     Stored::new()
 }
 
-fn diagnostic(code: u32) -> Reported {
-    Reported::bare((A, 0, 0), code)
-}
-
 // ───────────────────────────── the buffer ─────────────────────────────
 
 #[test]
-#[cfg_attr(miri, ignore)]
-fn a_task_reads_the_published_state_and_its_own_buffer_and_nothing_else() {
+fn insert_keeps_existing_entry_and_rewrite_replaces_it() {
     let session = Session::new();
     let tables = Tables::new(&session);
-    let (mut first, second) = (begin_in(&session, 0, A), begin_in(&session, 1, B));
-    let own = tables.keyof(&first, TypeId::STRING);
-    assert!(own.is_local());
-    // A node of the task's file, a node of another file, a published id, a task-local id, a key of
-    // several ids.
-    tables.by_node.insert(&first, (A, 1), own, stored());
-    tables
-        .by_node
-        .insert(&first, (C, 2), TypeId::NUMBER, stored());
-    tables.by_id.insert(&first, TypeId::STRING, own, stored());
-    tables.by_id.insert(&first, own, TypeId::STRING, stored());
-    tables
-        .by_key
-        .insert(&first, (own, TypeId::ANY), own, stored());
-    (tables.by_key).insert(&first, (TypeId::ANY, TypeId::ANY), own, stored());
-    assert_eq!(tables.by_node.get(&first, &(A, 1)), Some(own));
-    assert_eq!(tables.by_node.get(&first, &(C, 2)), Some(TypeId::NUMBER));
-    assert_eq!(tables.by_id.get(&first, &TypeId::STRING), Some(own));
-    assert_eq!(tables.by_id.get(&first, &own), Some(TypeId::STRING));
-    assert_eq!(tables.by_key.get(&first, &(own, TypeId::ANY)), Some(own));
-    assert_eq!(
-        tables.by_key.get(&first, &(TypeId::ANY, TypeId::ANY)),
-        Some(own)
-    );
-    // The neighbouring keys have no entry.
-    assert_eq!(tables.by_node.get(&first, &(A, 2)), None);
-    assert_eq!(tables.by_node.get(&first, &(C, 1)), None);
-    assert_eq!(tables.by_id.get(&first, &TypeId::NUMBER), None);
-
-    // During the step no other task sees any of it. In the other task the id `own` is a different
-    // type, or none.
-    assert_eq!(tables.by_node.get(&second, &(A, 1)), None);
-    assert_eq!(tables.by_node.get(&second, &(C, 2)), None);
-    assert_eq!(tables.by_id.get(&second, &TypeId::STRING), None);
-    assert_eq!(tables.by_id.get(&second, &own), None);
-    assert_eq!(
-        tables.by_key.get(&second, &(TypeId::ANY, TypeId::ANY)),
-        None
-    );
-    assert_eq!(tables.by_node.footprint().entries, 0);
-    assert_eq!(tables.by_id.footprint().entries, 0);
-    assert_eq!(tables.by_key.footprint().entries, 0);
-
-    // After the barrier every task sees all of it, under published ids.
-    let published = tables.barrier(&mut [tables.finish(&mut first)], &forwards);
-    assert_eq!(counts(&published), (6, 6, 0));
-    let reader = Task::new_in(session.arena());
-    let keyof = tables.keyof(&reader, TypeId::STRING);
-    assert!(!keyof.is_local());
-    assert_eq!(tables.by_node.get(&reader, &(A, 1)), Some(keyof));
-    assert_eq!(tables.by_node.get(&reader, &(C, 2)), Some(TypeId::NUMBER));
-    assert_eq!(tables.by_id.get(&reader, &TypeId::STRING), Some(keyof));
-    assert_eq!(tables.by_id.get(&reader, &keyof), Some(TypeId::STRING));
-    assert_eq!(
-        tables.by_key.get(&reader, &(keyof, TypeId::ANY)),
-        Some(keyof)
-    );
-    assert_eq!(
-        tables.by_key.get(&reader, &(TypeId::ANY, TypeId::ANY)),
-        Some(keyof)
-    );
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn insert_keeps_what_is_there_and_rewrite_replaces_the_tasks_entry() {
-    let session = Session::new();
-    let tables = Tables::new(&session);
-    let task = begin_in(&session, 0, A);
+    let task = begin_in(&session, &tables.types, 0, A);
     let own = tables.keyof(&task, TypeId::STRING);
     let (one, two) = (TypeId::STRING, TypeId::NUMBER);
     for key in [(A, 5), (B, 5)] {
@@ -277,62 +168,21 @@ fn insert_keeps_what_is_there_and_rewrite_replaces_the_tasks_entry() {
     }
     assert_eq!(tables.by_key.insert(&task, (own, one), one, stored()), one);
     assert_eq!(tables.by_key.insert(&task, (own, one), two, stored()), one);
-    let (first, kept) = (tables.shapes).insert_ref(&task, own, Box::new([one]), stored());
-    assert_eq!(**kept, [one]);
-    let (second, kept) = (tables.shapes).insert_ref(&task, own, Box::new([two]), stored());
-    assert_eq!((second, &**kept), (first, &[one][..]));
-    // No node.
+    let (first, in_table) = (tables.shapes).insert_ref(&task, own, Box::new([one]), stored());
+    assert_eq!(**in_table, [one]);
+    let (second, in_table) = (tables.shapes).insert_ref(&task, own, Box::new([two]), stored());
+    assert_eq!((second, &**in_table), (first, &[one][..]));
+    // `u32::MAX` isn't a node, so nothing is stored.
     tables.by_node.insert(&task, (A, u32::MAX), one, stored());
     assert_eq!(tables.by_node.get(&task, &(A, u32::MAX)), None);
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn a_published_entry_stays_what_it_is() {
+fn unplanned_task_drops_its_writes() {
     let session = Session::new();
     let tables = Tables::new(&session);
-    let mut first = begin_in(&session, 0, A);
-    tables
-        .by_node
-        .insert(&first, (A, 1), TypeId::STRING, stored());
-    tables
-        .by_id
-        .insert(&first, TypeId::ANY, TypeId::STRING, stored());
-    (tables.by_key).insert(&first, (TypeId::ANY, TypeId::ANY), TypeId::STRING, stored());
-    tables.barrier(&mut [tables.finish(&mut first)], &forwards);
-
-    // `insert` returns the value that `get` returns from then on, and buffers nothing.
-    let mut later = Task::new_in(session.arena());
-    later.begin(1, 0, true);
-    let kept = tables
-        .by_node
-        .insert(&later, (A, 1), TypeId::NUMBER, stored());
-    assert_eq!(kept, TypeId::STRING);
-    let kept = tables
-        .by_id
-        .insert(&later, TypeId::ANY, TypeId::NUMBER, stored());
-    assert_eq!(kept, TypeId::STRING);
-    let kept = (tables.by_key).insert(&later, (TypeId::ANY, TypeId::ANY), TypeId::NUMBER, stored());
-    assert_eq!(kept, TypeId::STRING);
-    // The value that `rewrite` stores is shadowed by the published entry, and loses at the barrier.
-    tables
-        .by_node
-        .rewrite(&later, (A, 1), TypeId::NUMBER, stored());
-    assert_eq!(tables.by_node.get(&later, &(A, 1)), Some(TypeId::STRING));
-    let published = tables.barrier(&mut [tables.finish(&mut later)], &forwards);
-    assert_eq!(counts(&published), (1, 0, 1));
-    assert_eq!(
-        tables.by_node.get(&Task::new_in(session.arena()), &(A, 1)),
-        Some(TypeId::STRING)
-    );
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn what_a_task_outside_the_plan_writes_is_dropped_with_it() {
-    let session = Session::new();
-    let tables = Tables::new(&session);
-    let task = Task::new_in(session.arena());
+    let task = Task::new_in(session.arena(), &tables.types);
     assert!(!task.is_planned());
     tables
         .by_node
@@ -340,88 +190,24 @@ fn what_a_task_outside_the_plan_writes_is_dropped_with_it() {
     assert_eq!(tables.by_node.get(&task, &(A, 1)), Some(TypeId::STRING));
     drop(task);
     assert_eq!(
-        tables.by_node.get(&Task::new_in(session.arena()), &(A, 1)),
+        tables
+            .by_node
+            .get(&Task::new_in(session.arena(), &tables.types), &(A, 1)),
         None
     );
 }
 
+/// A chunk of files that nothing imports. No node of a file is evaluated before the task reaches the file, and the
+/// entries can still be looked up afterwards.
 #[test]
 #[cfg_attr(miri, ignore)]
-fn begin_and_finish_leave_the_task_empty() {
+fn task_visits_unimported_files() {
     let session = Session::new();
     let tables = Tables::new(&session);
-    let mut task = begin_in(&session, 0, A);
-    assert!(task.is_planned());
-    let own = tables.keyof(&task, TypeId::STRING);
-    tables.by_node.insert(&task, (A, 1), own, stored());
-    tables.shapes.insert(&task, own, Box::new([own]), stored());
-    task.diagnostics.push((None, diagnostic(1)));
-    task.closed_a_cycle = true;
-    task.foreign_evaluations[3] = 2;
-    let finished = tables.finish(&mut task);
-    assert!(finished.closed_a_cycle);
-    assert_eq!(finished.foreign_evaluations[3], 2);
-    assert!(!task.is_planned() && task.file.is_none() && task.own.is_empty());
-    assert!(task.diagnostics.is_empty() && !task.closed_a_cycle);
-    assert_eq!(task.foreign_evaluations, [0; 14]);
-    assert_eq!(tables.by_node.get(&task, &(A, 1)), None);
-    // The number of the first task-local type is reused.
-    task.begin(1, 0, true);
-    assert_eq!(tables.keyof(&task, TypeId::NUMBER), own);
-    assert_eq!(tables.shapes.get(&task, &own), None);
-}
-
-/// A task that visits the files of a cycle evaluates nodes of a later file while visiting an
-/// earlier one.
-#[test]
-#[cfg_attr(miri, ignore)]
-fn a_task_that_goes_through_several_files_has_one_entry_for_each_key() {
-    let session = Session::new();
-    let tables = Tables::new(&session);
-    let mut task = begin_in(&session, 0, A);
-    let (one, two) = (TypeId::STRING, TypeId::NUMBER);
-    tables.by_node.insert(&task, (A, 1), one, stored());
-    tables.by_node.insert(&task, (B, 1), one, stored());
-    tables.set.insert(&task, (B, 1), (), stored());
-    task.begin_file(B, true);
-    // Before anything of `B` is dense, and after.
-    assert_eq!(tables.by_node.get(&task, &(B, 1)), Some(one));
-    tables.by_node.insert(&task, (B, 2), two, stored());
-    assert_eq!(tables.by_node.get(&task, &(B, 1)), Some(one));
-    assert_eq!(tables.by_node.get(&task, &(B, 2)), Some(two));
-    assert_eq!(tables.by_node.get(&task, &(A, 1)), Some(one));
-    // The earlier entry wins.
-    assert_eq!(tables.by_node.insert(&task, (B, 1), two, stored()), one);
-    tables.by_node.rewrite(&task, (B, 1), two, stored());
-    assert_eq!(tables.by_node.get(&task, &(B, 1)), Some(two));
-    task.begin_file(C, true);
-    tables.by_node.insert(&task, (C, 1), one, stored());
-    for key in [(A, 1), (C, 1)] {
-        assert_eq!(tables.by_node.get(&task, &key), Some(one));
-    }
-    for key in [(B, 1), (B, 2)] {
-        assert_eq!(tables.by_node.get(&task, &key), Some(two));
-    }
-    // Each key once: 4 in `by_node`, 1 in `set`, and none loses.
-    let published = tables.barrier(&mut [tables.finish(&mut task)], &forwards);
-    assert_eq!(counts(&published), (5, 5, 0));
-    assert_eq!(
-        tables.by_node.get(&Task::new_in(session.arena()), &(B, 1)),
-        Some(two)
-    );
-}
-
-/// A chunk of files that nothing imports: no node of a file is evaluated before the task reaches
-/// it, and the entries can still be looked up afterwards.
-#[test]
-#[cfg_attr(miri, ignore)]
-fn a_task_that_goes_through_files_that_nothing_imports() {
-    let session = Session::new();
-    let tables = Tables::new(&session);
-    let mut task = begin(&session, 0);
+    let mut task = begin(&session, &tables.types, 0);
     for file in [A, B, C] {
         task.begin_file(file, false);
-        // A hashed entry, before the first entry keyed by a node of the file and after it.
+        // A hashed entry before each file's first node-keyed entry, so hashed and node-keyed entries alternate.
         tables
             .by_id
             .insert(&task, TypeId(file.0), TypeId::ANY, stored());
@@ -435,719 +221,71 @@ fn a_task_that_goes_through_files_that_nothing_imports() {
     for file in [A, B, C] {
         for node in 0..3 {
             assert_eq!(tables.by_node.get(&task, &(file, node)), Some(TypeId(node)));
-            let kept = tables
+            let in_table = tables
                 .by_node
                 .insert(&task, (file, node), TypeId::ANY, stored());
-            assert_eq!(kept, TypeId(node));
+            assert_eq!(in_table, TypeId(node));
         }
     }
-    // A file that the task visits a second time.
+    // The task visits a file a second time.
     task.begin_file(A, false);
     assert_eq!(tables.by_node.get(&task, &(A, 1)), Some(TypeId(1)));
     tables.by_node.insert(&task, (A, 5), TypeId::ANY, stored());
     assert_eq!(tables.by_node.get(&task, &(A, 1)), Some(TypeId(1)));
-    let kept = tables.by_node.insert(&task, (A, 1), TypeId::ANY, stored());
-    assert_eq!(kept, TypeId(1));
-}
-
-/// A chunk of many files, checked against a model. Every second file is imported, so its nodes are
-/// also evaluated before the task reaches it.
-#[test]
-#[cfg_attr(miri, ignore)]
-fn a_task_that_goes_through_many_files_does_what_the_model_says() {
-    let session = Session::new();
-    use crate::util::FxHashMap;
-    const FILES: u32 = 40;
-    const NODES: u32 = 30;
-    let is_imported = |file: u32| file.is_multiple_of(2);
-    for seed in 1..=8u64 {
-        let mut state = seed;
-        let mut random = |below: u32| {
-            state = (state.wrapping_mul(6364136223846793005)).wrapping_add(1442695040888963407);
-            (state >> 33) as u32 % below
-        };
-        let bases = Bases::new_in((0..FILES).map(|_| NODES as usize), &Global);
-        let mut table = ByNode::<Node, TypeId, Buffered>::new_in(&bases, Global);
-        table.set_slot(numbered(0));
-        let mut task = begin(&session, 0);
-        let mut model: FxHashMap<Node, TypeId> = FxHashMap::default();
-        let mut has_come_to = [false; FILES as usize];
-        // Some files are visited a second time.
-        for _ in 0..FILES * 2 {
-            let at_hand = random(FILES);
-            task.begin_file(FileId(at_hand), is_imported(at_hand));
-            has_come_to[at_hand as usize] = true;
-            for _ in 0..60 {
-                // Mostly the current file.
-                let file = if random(3) != 0 {
-                    at_hand
-                } else {
-                    random(FILES)
-                };
-                // Nothing references a file that nothing imports before the task reaches it.
-                if !is_imported(file) && !has_come_to[file as usize] {
-                    continue;
-                }
-                let (key, value) = ((FileId(file), random(NODES)), TypeId(random(20)));
-                assert_eq!(table.get(&task, &key), model.get(&key).copied());
-                match random(4) {
-                    0 => {}
-                    1 => {
-                        table.rewrite(&task, key, value, stored());
-                        model.insert(key, value);
-                    }
-                    _ => {
-                        let kept = table.insert(&task, key, value, stored());
-                        assert_eq!(kept, *model.entry(key).or_insert(value));
-                    }
-                }
-                assert_eq!(table.get(&task, &key), model.get(&key).copied());
-            }
-        }
-        for file in 0..FILES {
-            for node in 0..NODES {
-                let key = (FileId(file), node);
-                assert_eq!(table.get(&task, &key), model.get(&key).copied());
-            }
-        }
-        // Each key once, and an entry keyed by a node of a file that nothing imports is bound.
-        model.retain(|key, _| is_imported(key.0.0));
-        let mut finished = [task.finish_tables(&[&table], Vec::new())];
-        let published = publish_tables(&[&table], &mut finished, &forwards, None);
-        assert_eq!(
-            counts(&published),
-            (model.len() as u64, model.len() as u64, 0)
-        );
-        let reader = Task::new_in(session.arena());
-        for file in 0..FILES {
-            for node in 0..NODES {
-                let key = (FileId(file), node);
-                assert_eq!(table.get(&reader, &key), model.get(&key).copied());
-            }
-        }
-    }
+    let in_table = tables.by_node.insert(&task, (A, 1), TypeId::ANY, stored());
+    assert_eq!(in_table, TypeId(1));
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn a_reference_to_a_kept_value_stays_good_while_the_task_keeps_more() {
+fn reference_to_stored_value_survives_later_inserts() {
     let session = Session::new();
     let tables = Tables::new(&session);
-    let task = begin(&session, 0);
+    let task = begin(&session, &tables.types, 0);
     let first = tables.keyof(&task, TypeId::STRING);
-    let (handle, kept) = (tables.shapes).insert_ref(&task, first, Box::new([first]), stored());
+    let (handle, in_table) = (tables.shapes).insert_ref(&task, first, Box::new([first]), stored());
     assert!(handle.is_local());
     let mut of = first;
     for _ in 0..5000 {
         of = tables.keyof(&task, of);
         tables.shapes.insert(&task, of, Box::new([of]), stored());
     }
-    assert_eq!(**kept, [first]);
-    assert!(std::ptr::eq(kept, tables.shapes.at(&task, handle)));
+    assert_eq!(**in_table, [first]);
+    assert!(std::ptr::eq(in_table, tables.shapes.at(&task, handle)));
     assert_eq!(tables.shapes.handle(&task, &first), Some(handle));
 }
 
-// ───────────────────────────── the order of publishing ─────────────────────────────
-
 #[test]
 #[cfg_attr(miri, ignore)]
-fn the_entry_of_the_lowest_task_stays_however_the_pool_runs() {
+fn permission_detects_hold_back_since_computation_began() {
     let session = Session::new();
-    for pool in POOLS {
-        let tables = Tables::new(&session);
-        let values = [TypeId::STRING, TypeId::NUMBER, TypeId::BIGINT];
-        let mut finished: Vec<Finished> = (values.iter().enumerate())
-            .map(|(index, &value)| {
-                let mut task = begin_in(&session, index as u32, FileId(index as u32));
-                // Every task has (C, 9) and the like. Only the last two have (C, 8).
-                tables.by_node.insert(&task, (C, 9), value, stored());
-                tables.by_id.insert(&task, TypeId::ANY, value, stored());
-                (tables.by_key).insert(&task, (TypeId::ANY, TypeId::ANY), value, stored());
-                tables
-                    .shapes
-                    .insert(&task, TypeId::ANY, Box::new([value]), stored());
-                (tables.kept_by_node).insert(&task, (C, 9), Box::new([value]), stored());
-                if index != 0 {
-                    tables.by_node.insert(&task, (C, 8), value, stored());
-                }
-                tables.finish(&mut task)
-            })
-            .collect();
-        let published = tables.barrier(&mut finished, &pool);
-        // `by_node`, `set`, `by_id`, `shapes`, `kept_by_node`, `members`, `by_key`.
-        let by_table = [(5, 2), (0, 0), (3, 1), (3, 1), (3, 1), (0, 0), (3, 1)];
-        assert_eq!(published.by_table, by_table);
-        assert_eq!(counts(&published), (17, 6, 11));
-        let reader = Task::new_in(session.arena());
-        assert_eq!(tables.by_node.get(&reader, &(C, 9)), Some(values[0]));
-        assert_eq!(tables.by_node.get(&reader, &(C, 8)), Some(values[1]));
-        assert_eq!(tables.by_id.get(&reader, &TypeId::ANY), Some(values[0]));
-        assert_eq!(
-            tables.by_key.get(&reader, &(TypeId::ANY, TypeId::ANY)),
-            Some(values[0])
-        );
-        assert_eq!(
-            tables.shapes.get(&reader, &TypeId::ANY),
-            Some(Box::from([values[0]]))
-        );
-        assert_eq!(
-            tables.kept_by_node.get(&reader, &(C, 9)),
-            Some(Box::from([values[0]]))
-        );
-        // A value is pushed when its entry wins.
-        assert_eq!(tables.shapes.footprint().kept, 1);
-        assert_eq!(tables.kept_by_node.footprint().kept, 1);
-    }
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn a_task_that_is_not_read_later_hands_over_nothing_but_its_diagnostics() {
-    let session = Session::new();
-    let tables = Tables::new(&session);
-    let mut task = Task::new_in(session.arena());
-    task.begin(0, 0, false);
-    task.begin_file(A, true);
-    let own = tables.keyof(&task, TypeId::STRING);
-    tables.by_node.insert(&task, (A, 1), own, stored());
-    tables.by_id.insert(&task, own, own, stored());
-    tables.by_key.insert(&task, (own, own), own, stored());
-    let (shape, _) = tables.shapes.insert_ref(&task, own, Box::new([]), stored());
-    let held = Holder { shape, of: own };
-    tables.members.insert(&task, own, held, stored());
-    let query = Query::Symbol(Sym {
-        file: A,
-        id: SymbolId(1),
-    });
-    let diagnostics = vec![(Some(query), diagnostic(0)), (None, diagnostic(1))];
-    let mut finished = [task.finish_tables(&tables.all(), diagnostics.clone())];
-    // In their original order.
-    assert!(finished[0].diagnostics == diagnostics);
-    let published = tables.barrier(&mut finished, &forwards);
-    assert_eq!(published.digest, 0);
-    assert_eq!(counts(&published), (0, 0, 0));
-    assert!(
-        tables
-            .keyof(&Task::new_in(session.arena()), TypeId::STRING)
-            .is_local()
+    let task = begin(
+        &session,
+        &TypeStore::new_in(&session, Interner::new_in(&session)),
+        0,
     );
+    let outer = Stored::since(task.held_back());
+    assert!(!task.has_held_back_since(outer));
+    task.hold_back();
+    let inner = Stored::since(task.held_back());
+    assert!(task.has_held_back_since(outer));
+    assert!(!task.has_held_back_since(inner));
+    assert!(task.has_held_back_since(Stored::new()));
 }
 
-#[test]
-#[cfg_attr(miri, ignore)]
-fn the_digest_tells_the_content_of_what_was_stored_and_not_how_the_pool_ran() {
-    let session = Session::new();
-    let digest = |pool: InParallel<'_>, value: TypeId, with_digest: bool| {
-        let tables = Tables::new(&session);
-        let mut finished: Vec<Finished> = (0..3)
-            .map(|index| {
-                let mut task = begin_in(&session, index, A);
-                let own = tables.keyof(&task, TypeId::STRING);
-                tables.by_node.insert(&task, (A, index), own, stored());
-                tables.set.insert(&task, (B, index), (), stored());
-                tables.by_id.insert(&task, own, TypeId::ANY, stored());
-                tables
-                    .by_key
-                    .insert(&task, (own, TypeId(index)), own, stored());
-                // Of the three values for one key the first is stored.
-                let kept = if index == 0 { value } else { TypeId::ANY };
-                tables.shapes.insert(&task, own, Box::new([kept]), stored());
-                tables.finish(&mut task)
-            })
-            .collect();
-        tables.link(&mut finished, pool);
-        let atoms = with_digest.then_some(&tables.atoms as &dyn Intern);
-        publish_tables(&tables.all(), &mut finished, pool, atoms).digest
-    };
-    let expected = digest(&forwards, TypeId::STRING, true);
-    assert_ne!(expected, 0);
-    assert_eq!(digest(&backwards, TypeId::STRING, true), expected);
-    assert_eq!(digest(&on_threads, TypeId::STRING, true), expected);
-    // One id in one value of an indirect table.
-    assert_ne!(digest(&forwards, TypeId::NUMBER, true), expected);
-    assert_eq!(digest(&forwards, TypeId::STRING, false), 0);
-}
-
-/// The parser threads number the atoms in a different order in every run.
-#[test]
-#[cfg_attr(miri, ignore)]
-fn the_digest_takes_an_atom_as_its_text() {
-    let session = Session::new();
-    let digest = |texts: [&[u8]; 3], used: [&[u8]; 2]| {
-        let atoms = Interner::new_in(&session);
-        for text in texts {
-            atoms.intern(text);
-        }
-        let used = used.map(|text| atoms.lookup(text).unwrap());
-        let mut by_id = ById::<Atom, TypeId, Buffered>::default();
-        let mut by_key = ByKey::<(TypeId, Atom), TypeId, Buffered>::default();
-        let mut kept = ByIdIndirect::<TypeId, Box<[Atom]>, Buffered>::default();
-        by_id.set_slot(numbered(0));
-        by_key.set_slot(numbered(1));
-        kept.set_slot(numbered(2));
-        let mut task = begin(&session, 0);
-        // As a key indexed by number, in a composite key, in a value.
-        by_id.insert(&task, used[0], TypeId::ANY, stored());
-        by_key.insert(&task, (TypeId::ANY, used[1]), TypeId::ANY, stored());
-        kept.insert(
-            &task,
-            TypeId::ANY,
-            Box::new([used[0], Atom::NONE]),
-            stored(),
-        );
-        let tables: [&dyn Publish; 3] = [&by_id, &by_key, &kept];
-        let mut finished = [task.finish_tables(&tables, Vec::new())];
-        let published = publish_tables(&tables, &mut finished, &forwards, Some(&atoms));
-        assert_eq!(published.published, 3);
-        (used, published.digest)
-    };
-    let (atoms, expected) = digest(
-        [b"first text", b"second text", b"third text"],
-        [b"first text", b"second text"],
-    );
-    let (other_atoms, same) = digest(
-        [b"third text", b"second text", b"first text"],
-        [b"first text", b"second text"],
-    );
-    assert_ne!(atoms[0], other_atoms[0]);
-    assert_eq!(same, expected);
-    // The same numbers, different texts.
-    let (same_atoms, other) = digest(
-        [b"other text", b"second text", b"third text"],
-        [b"other text", b"second text"],
-    );
-    assert_eq!(atoms, same_atoms);
-    assert_ne!(other, expected);
-}
-
-// ───────────────────────────── link and follow ─────────────────────────────
+// ───────────────────────────── rows and pages ─────────────────────────────
 
 #[test]
-#[cfg_attr(miri, ignore)]
-fn a_type_that_two_tasks_create_is_one_key_after_the_link() {
-    let session = Session::new();
-    for pool in POOLS {
-        let tables = Tables::new(&session);
-        let mut finished: Vec<Finished> = (0..2)
-            .map(|index| {
-                let mut task = begin(&session, index);
-                // So that the two tasks have different numbers for `keyof string`.
-                if index == 1 {
-                    let other = tables.keyof(&task, TypeId::NUMBER);
-                    tables.by_id.insert(&task, other, other, stored());
-                }
-                let own = tables.keyof(&task, TypeId::STRING);
-                let nested = tables.keyof(&task, own);
-                tables.by_id.insert(&task, own, nested, stored());
-                tables.by_key.insert(&task, (own, nested), own, stored());
-                tables
-                    .shapes
-                    .insert(&task, own, Box::new([own, nested]), stored());
-                tables.finish(&mut task)
-            })
-            .collect();
-        let published = tables.barrier(&mut finished, &pool);
-        assert_eq!(counts(&published), (7, 4, 3));
-        let reader = Task::new_in(session.arena());
-        let keyof = tables.keyof(&reader, TypeId::STRING);
-        let nested = tables.keyof(&reader, keyof);
-        let other = tables.keyof(&reader, TypeId::NUMBER);
-        assert!(!keyof.is_local() && !nested.is_local() && !other.is_local());
-        assert_eq!(tables.by_id.get(&reader, &keyof), Some(nested));
-        assert_eq!(tables.by_id.get(&reader, &other), Some(other));
-        assert_eq!(tables.by_key.get(&reader, &(keyof, nested)), Some(keyof));
-        assert_eq!(
-            tables.shapes.get(&reader, &keyof),
-            Some(Box::from([keyof, nested]))
-        );
-    }
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn an_atom_that_two_tasks_create_is_one_key_after_the_link() {
-    let session = Session::new();
-    let tables = Tables::new(&session);
-    let mut names = ById::<Atom, TypeId, Buffered>::default();
-    names.set_slot(numbered(0));
-    let all: [&dyn Publish; 1] = [&names];
-    let values = [TypeId::STRING, TypeId::NUMBER];
-    let mut finished: Vec<Finished> = (0..2)
-        .map(|index| {
-            let mut task = begin(&session, index);
-            let atoms = Atoms::new(&tables.atoms, &task.own);
-            // So that the two tasks have different numbers for the text they share.
-            if index == 1 {
-                let other = atoms.intern(b"only the second task has it");
-                names.insert(&task, other, TypeId::ANY, stored());
-            }
-            let own = atoms.intern(b"new at check time");
-            assert!(own.is_own());
-            names.insert(&task, own, values[index as usize], stored());
-            assert_eq!(names.get(&task, &own), Some(values[index as usize]));
-            task.finish_tables(&all, Vec::new())
-        })
-        .collect();
-    assert_eq!(tables.atoms.lookup(b"new at check time"), None);
-    tables.link(&mut finished, &forwards);
-    let published = publish_tables(&all, &mut finished, &forwards, Some(&tables.atoms));
-    assert_eq!(counts(&published), (3, 2, 1));
-    let atom = tables.atoms.lookup(b"new at check time").unwrap();
-    assert!(!atom.is_own());
-    assert_eq!(
-        names.get(&Task::new_in(session.arena()), &atom),
-        Some(values[0])
-    );
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn an_own_type_without_an_entry_dies_with_its_task() {
-    let session = Session::new();
-    let tables = Tables::new(&session);
-    let mut task = begin(&session, 0);
-    let temporary = tables.keyof(&task, TypeId::STRING);
-    let kept = tables.keyof(&task, TypeId::NUMBER);
-    assert!(temporary.is_local());
-    tables.by_id.insert(&task, kept, TypeId::ANY, stored());
-    tables.barrier(&mut [tables.finish(&mut task)], &forwards);
-    let reader = Task::new_in(session.arena());
-    assert!(!tables.keyof(&reader, TypeId::NUMBER).is_local());
-    assert!(tables.keyof(&reader, TypeId::STRING).is_local());
-}
-
-/// `shapes` and `members`. A handle is not a value.
-#[test]
-#[cfg_attr(miri, ignore)]
-fn a_handle_in_a_value_becomes_the_handle_that_has_won() {
-    let session = Session::new();
-    for pool in POOLS {
-        let tables = Tables::new(&session);
-        let values = [TypeId::STRING, TypeId::NUMBER];
-        let mut finished: Vec<Finished> = (0..2)
-            .map(|index| {
-                let mut task = begin(&session, index);
-                let shared = tables.keyof(&task, TypeId::STRING);
-                // So that a handle of the higher task is not the number it has in the lower one.
-                if index == 1 {
-                    tables
-                        .shapes
-                        .insert(&task, TypeId::ANY, Box::new([]), stored());
-                }
-                let value = Box::new([values[index as usize]]);
-                let (shape, _) = tables.shapes.insert_ref(&task, shared, value, stored());
-                assert!(shape.is_local());
-                // Each task has an entry of its own that holds the handle.
-                let holder = tables.keyof(&task, values[index as usize]);
-                let held = Holder { shape, of: holder };
-                tables.members.insert(&task, holder, held, stored());
-                tables.finish(&mut task)
-            })
-            .collect();
-        tables.barrier(&mut finished, &pool);
-        let reader = Task::new_in(session.arena());
-        let shared = tables.keyof(&reader, TypeId::STRING);
-        let winner = tables.shapes.handle(&reader, &shared).unwrap();
-        assert!(!winner.is_local());
-        assert_eq!(**tables.shapes.at(&reader, winner), [values[0]]);
-        for value in values {
-            let holder = tables.keyof(&reader, value);
-            let expected = Holder {
-                shape: winner,
-                of: holder,
-            };
-            assert_eq!(tables.members.get(&reader, &holder), Some(expected));
-        }
-        // The loser's value was not pushed.
-        assert_eq!(tables.shapes.footprint().kept, 2);
-    }
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn a_value_that_owns_memory_of_an_arena_is_followed_and_published() {
-    let session = Session::new();
-    for pool in POOLS {
-        let tables = Tables::new(&session);
-        let mut lists = ByIdIndirect::<TypeId, List<'_, TypeId>, Buffered, _>::new_in(&session);
-        lists.set_slot(numbered(7));
-        let mut all = tables.all().to_vec();
-        all.push(&lists);
-        let mut finished: Vec<Finished<'_>> = (0..2)
-            .map(|index| {
-                let mut task = begin(&session, index);
-                let own = tables.keyof(&task, TypeId::STRING);
-                let value = List::copy_from_slice_in(&[own, TypeId(index)], session.arena());
-                let (_, kept) = lists.insert_ref(&task, TypeId::ANY, value, stored());
-                assert_eq!(**kept, [own, TypeId(index)]);
-                task.finish_tables(&all, Vec::new())
-            })
-            .collect();
-        tables.link(&mut finished, &pool);
-        publish_tables(&all, &mut finished, &pool, None);
-        let reader = Task::new_in(session.arena());
-        let published = tables.keyof(&reader, TypeId::STRING);
-        assert!(!published.is_local());
-        let kept = lists.get_ref(&reader, &TypeId::ANY).unwrap();
-        assert_eq!(**kept, [published, TypeId(0)]);
-    }
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn a_published_handle_in_a_value_stays() {
-    let session = Session::new();
-    let tables = Tables::new(&session);
-    let mut first = begin(&session, 0);
-    (tables.shapes).insert(&first, TypeId::ANY, Box::new([TypeId::ANY]), stored());
-    tables.barrier(&mut [tables.finish(&mut first)], &forwards);
-    let mut second = Task::new_in(session.arena());
-    second.begin(1, 0, true);
-    let shape = tables.shapes.handle(&second, &TypeId::ANY).unwrap();
-    let held = Holder {
-        shape,
-        of: TypeId::ANY,
-    };
-    tables
-        .members
-        .insert(&second, TypeId::STRING, held, stored());
-    tables.barrier(&mut [tables.finish(&mut second)], &forwards);
-    assert_eq!(
-        tables
-            .members
-            .get(&Task::new_in(session.arena()), &TypeId::STRING),
-        Some(held)
-    );
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn the_keys_of_a_by_key_reach_every_part_and_each_is_counted_once() {
-    let session = Session::new();
-    let outcomes = POOLS.map(|pool| {
-        let tables = Tables::new(&session);
-        let mut finished: Vec<Finished> = (0..3)
-            .map(|index| {
-                let mut task = begin(&session, index);
-                let mut of = TypeId::STRING;
-                // The tasks overlap: 0..2000, 500..2500, 1000..3000 of one chain of types. Enough for the pool to be used.
-                for link in 0..3000 {
-                    let next = tables.keyof(&task, of);
-                    if (index * 500..index * 500 + 2000).contains(&link) {
-                        let value =
-                            [TypeId::STRING, TypeId::NUMBER, TypeId::BIGINT][index as usize];
-                        tables.by_key.insert(&task, (of, next), value, stored());
-                    }
-                    of = next;
-                }
-                tables.finish(&mut task)
-            })
-            .collect();
-        let published = tables.barrier(&mut finished, &pool);
-        assert!(published.buffered >= FEW_ENTRIES);
-        assert_eq!(counts(&published), (6000, 3000, 3000));
-        assert_eq!(tables.by_key.footprint().entries, 3000);
-        let (reader, mut of) = (Task::new_in(session.arena()), TypeId::STRING);
-        (0..3000)
-            .map(|_| {
-                let next = tables.keyof(&reader, of);
-                assert!(!next.is_local());
-                let value = tables.by_key.get(&reader, &(of, next)).unwrap();
-                of = next;
-                (next, value)
-            })
-            .collect::<Vec<_>>()
-    });
-    // The lowest task that has the key.
-    for (link, &(_, value)) in outcomes[0].iter().enumerate() {
-        let expected =
-            [TypeId::STRING, TypeId::NUMBER, TypeId::BIGINT][link.saturating_sub(1500) / 500];
-        assert_eq!(value, expected);
-    }
-    // Published ids and values do not depend on how the pool schedules the work.
-    assert!(outcomes[0] == outcomes[1] && outcomes[0] == outcomes[2]);
-}
-
-/// Against a model: for each key the first entry of the lowest task that has one.
-#[test]
-#[cfg_attr(miri, ignore)]
-fn random_tasks_publish_what_the_model_says() {
-    let session = Session::new();
-    use crate::util::FxHashMap;
-    const DEPTHS: usize = 200;
-    // A type is named by its depth: `string`, `keyof string`, `keyof keyof string`, ..
-    fn chain<'s>(tables: &Tables<'s>, task: &Task<'s>) -> Vec<TypeId> {
-        let mut chain = vec![TypeId::STRING];
-        for depth in 1..DEPTHS {
-            chain.push(tables.keyof(task, chain[depth - 1]));
-        }
-        chain
-    }
-    for (seed, pool) in (1..=12u64).zip(POOLS.into_iter().cycle()) {
-        let mut state = seed;
-        let mut random = |below: usize| {
-            state = (state.wrapping_mul(6364136223846793005)).wrapping_add(1442695040888963407);
-            (state >> 33) as usize % below
-        };
-        let tables = Tables::new(&session);
-        let mut by_node: FxHashMap<Node, usize> = FxHashMap::default();
-        let mut by_id: FxHashMap<usize, usize> = FxHashMap::default();
-        let mut by_key: FxHashMap<(usize, usize), usize> = FxHashMap::default();
-        let mut shapes: FxHashMap<usize, usize> = FxHashMap::default();
-        let mut buffered = 0;
-        let mut finished: Vec<Finished> = (0..6)
-            .map(|index| {
-                let mut task = begin_in(&session, index, FileId(index % 3));
-                let ids = chain(&tables, &task);
-                for _ in 0..2000 {
-                    let (a, b, value) = (random(DEPTHS), random(DEPTHS), random(DEPTHS));
-                    let node = (FileId(random(3) as u32), random(100) as u32);
-                    // Whether the task has no entry for the key yet.
-                    let is_new = match random(4) {
-                        0 => {
-                            let is_new = tables.by_node.get(&task, &node).is_none();
-                            tables.by_node.insert(&task, node, ids[value], stored());
-                            by_node.entry(node).or_insert(value);
-                            is_new
-                        }
-                        1 => {
-                            let is_new = tables.by_id.get(&task, &ids[a]).is_none();
-                            tables.by_id.insert(&task, ids[a], ids[value], stored());
-                            by_id.entry(a).or_insert(value);
-                            is_new
-                        }
-                        2 => {
-                            let is_new = tables.by_key.get(&task, &(ids[a], ids[b])).is_none();
-                            (tables.by_key).insert(&task, (ids[a], ids[b]), ids[value], stored());
-                            by_key.entry((a, b)).or_insert(value);
-                            is_new
-                        }
-                        _ => {
-                            let is_new = tables.shapes.get(&task, &ids[a]).is_none();
-                            (tables.shapes).insert(&task, ids[a], Box::new([ids[value]]), stored());
-                            shapes.entry(a).or_insert(value);
-                            is_new
-                        }
-                    };
-                    buffered += u64::from(is_new);
-                }
-                tables.finish(&mut task)
-            })
-            .collect();
-        let published = tables.barrier(&mut finished, &pool);
-        // Enough for the pool to be used.
-        assert!(published.buffered >= FEW_ENTRIES);
-        let stored = (by_node.len() + by_id.len() + by_key.len() + shapes.len()) as u64;
-        assert_eq!(counts(&published), (buffered, stored, buffered - stored));
-        let reader = Task::new_in(session.arena());
-        let ids = chain(&tables, &reader);
-        for (node, value) in by_node {
-            assert_eq!(tables.by_node.get(&reader, &node), Some(ids[value]));
-        }
-        for (a, value) in by_id {
-            assert_eq!(tables.by_id.get(&reader, &ids[a]), Some(ids[value]));
-        }
-        for ((a, b), value) in by_key {
-            let found = tables.by_key.get(&reader, &(ids[a], ids[b]));
-            assert_eq!(found, Some(ids[value]));
-        }
-        for (a, value) in shapes {
-            let found = tables.shapes.get(&reader, &ids[a]);
-            assert_eq!(found, Some(Box::from([ids[value]])));
-        }
-    }
-}
-
-// ───────────────────────────── bound ─────────────────────────────
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn nothing_that_is_bound_is_published() {
-    let session = Session::new();
-    let tables = Tables::new(&session);
-    let mut task = begin(&session, 0);
-    // Nothing imports `A`.
-    task.begin_file(A, false);
-    let bound = tables.this_of(&task, A);
-    let on_bound = tables.keyof(&task, bound);
-    let free = tables.keyof(&task, TypeId::STRING);
-    let any = TypeId::ANY;
-
-    // A key that is a node of the file. A value that references the file, directly or through
-    // another type. A key that does.
-    tables.by_node.insert(&task, (A, 1), any, stored());
-    tables.set.insert(&task, (A, 1), (), stored());
-    tables
-        .kept_by_node
-        .insert(&task, (A, 1), Box::new([any]), stored());
-    tables.by_node.insert(&task, (B, 1), bound, stored());
-    tables.by_node.insert(&task, (B, 2), on_bound, stored());
-    tables.by_id.insert(&task, any, on_bound, stored());
-    tables.by_id.insert(&task, bound, any, stored());
-    tables.by_id.insert(&task, on_bound, any, stored());
-    tables.by_key.insert(&task, (any, bound), any, stored());
-    tables.by_key.insert(&task, (any, any), on_bound, stored());
-    (tables.kept_by_node).insert(&task, (B, 1), Box::new([any, bound]), stored());
-    // A bound shape under a key that is not bound, and the entry that holds its handle, which
-    // itself references nothing bound.
-    let (shape, _) = (tables.shapes).insert_ref(&task, free, Box::new([on_bound]), stored());
-    let held = Holder { shape, of: free };
-    tables.members.insert(&task, free, held, stored());
-    // The task itself finds all of it.
-    assert_eq!(tables.by_node.get(&task, &(A, 1)), Some(any));
-    assert_eq!(tables.by_node.get(&task, &(B, 1)), Some(bound));
-    assert_eq!(tables.by_id.get(&task, &any), Some(on_bound));
-    assert_eq!(tables.members.get(&task, &free), Some(held));
-
-    // Entries that are not bound, interleaved with the others.
-    tables.by_node.insert(&task, (B, 3), free, stored());
-    tables.by_id.insert(&task, free, any, stored());
-    tables.by_key.insert(&task, (free, any), free, stored());
-    tables.shapes.insert(&task, any, Box::new([free]), stored());
-
-    let published = tables.barrier(&mut [tables.finish(&mut task)], &forwards);
-    assert_eq!(counts(&published), (4, 4, 0));
-    let entries = tables.all().map(|table| table.slot());
-    assert_eq!(entries, [0, 1, 2, 3, 4, 5, 6]);
-    assert_eq!(tables.by_node.footprint().entries, 1);
-    assert_eq!(tables.set.footprint().entries, 0);
-    assert_eq!(tables.by_id.footprint().entries, 1);
-    assert_eq!(tables.shapes.footprint().kept, 1);
-    assert_eq!(tables.kept_by_node.footprint().kept, 0);
-    assert_eq!(tables.members.footprint().kept, 0);
-    assert_eq!(tables.by_key.footprint().entries, 1);
-    let reader = Task::new_in(session.arena());
-    let free = tables.keyof(&reader, TypeId::STRING);
-    assert!(!free.is_local());
-    assert_eq!(tables.by_node.get(&reader, &(B, 3)), Some(free));
-    assert_eq!(tables.by_key.get(&reader, &(free, any)), Some(free));
-    // The bound types are not in the shared store.
-    assert!(tables.this_of(&reader, A).is_local());
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn a_node_without_a_published_cell_has_an_entry_in_the_task_only() {
-    let session = Session::new();
-    // The second file is not counted.
-    let bases = Bases::new_in([10, 0].into_iter(), &Global);
-    let mut table = ByNode::<Node, TypeId, Buffered>::new_in(&bases, Global);
-    table.set_slot(numbered(0));
-    let mut task = begin(&session, 0);
-    task.begin_file(B, false);
-    assert_eq!(table.get(&task, &(B, 5)), None);
-    table.insert(&task, (B, 5), TypeId::STRING, stored());
-    assert_eq!(table.get(&task, &(B, 5)), Some(TypeId::STRING));
-    let mut finished = [task.finish_tables(&[&table], Vec::new())];
-    let published = publish_tables(&[&table], &mut finished, &forwards, None);
-    assert_eq!(counts(&published), (0, 0, 0));
+#[should_panic]
+fn table_with_fixed_slot_rejects_another_slot() {
+    let mut table = ById::<TypeId, TypeId, Buffered<At<3>>>::default();
+    table.set_slot(numbered(4));
 }
 
 // ───────────────────────────── bit storage ─────────────────────────────
 
 #[test]
-#[cfg_attr(miri, ignore)]
-fn the_fields_of_a_shared_cell() {
+fn shared_cell_fields_keep_first_value() {
     let cell = AtomicU32::new(0);
     assert_eq!(cell.put_field_if_empty(4, 3, 2), 2);
     // The first value wins.
@@ -1159,43 +297,18 @@ fn the_fields_of_a_shared_cell() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn published_values_of_a_bit_share_a_cell() {
-    let session = Session::new();
-    let tables = Tables::new(&session);
-    // 300 nodes, a bit each.
-    assert_eq!(tables.set.footprint().allocated, 300usize.div_ceil(32) * 4);
-    let in_set = [(A, 0), (A, 31), (A, 32), (A, 99), (B, 0), (C, 99)];
-    let mut finished: Vec<Finished> = (0..2)
-        .map(|index| {
-            let mut task = begin_in(&session, index, A);
-            for key in in_set {
-                tables.set.insert(&task, key, (), stored());
-            }
-            tables.finish(&mut task)
-        })
-        .collect();
-    let published = tables.barrier(&mut finished, &forwards);
-    assert_eq!(counts(&published), (12, 6, 6));
-    let reader = Task::new_in(session.arena());
-    for file in [A, B, C] {
-        for index in 0..100 {
-            let expected = in_set.contains(&(file, index)).then_some(());
-            assert_eq!(tables.set.get(&reader, &(file, index)), expected);
-        }
-    }
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn file_local_values_of_a_bit_or_two_share_a_word() {
+fn one_and_two_bit_file_local_values_share_a_word() {
     let session = Session::new();
     let mut set = ByNode::<Node, (), FileLocal>::new_in(&Bases::none_in(&Global), Global);
     let mut flags = ByNode::<Node, bool, FileLocal>::new_in(&Bases::none_in(&Global), Global);
     set.set_slot(numbered(0));
     flags.set_slot(numbered(1));
-    let mut task = Task::new_in(session.arena());
+    let mut task = Task::new_in(
+        session.arena(),
+        &TypeStore::new_in(&session, Interner::new_in(&session)),
+    );
     task.begin_file(FileId(3), true);
-    // The nodes of the task's file have dense words. Those of another file have sparse ones.
+    // Nodes of the task's file use dense words. Nodes of other files use sparse ones.
     for file in [FileId(3), FileId(4)] {
         for index in [0, 1, 31, 32, 63, 64, 1000] {
             assert_eq!(set.get(&task, &(file, index)), None);
@@ -1205,7 +318,7 @@ fn file_local_values_of_a_bit_or_two_share_a_word() {
         set.insert(&task, (file, 1000), ());
         assert!(flags.insert(&task, (file, 31), true));
         assert!(!flags.insert(&task, (file, 32), false));
-        // `insert` keeps, `rewrite` replaces.
+        // `insert` keeps the existing value, `rewrite` replaces it.
         assert!(flags.insert(&task, (file, 31), false));
         flags.rewrite(&task, (file, 32), true);
         let in_set = [62, 63, 64, 999, 1000, 1001].map(|index| set.get(&task, &(file, index)));
@@ -1213,7 +326,7 @@ fn file_local_values_of_a_bit_or_two_share_a_word() {
         let known = [30, 31, 32, 33].map(|index| flags.get(&task, &(file, index)));
         assert_eq!(known, [None, Some(true), Some(true), None]);
     }
-    // No node.
+    // `u32::MAX` isn't a node, so nothing is stored.
     set.insert(&task, (FileId(3), u32::MAX), ());
     assert_eq!(set.get(&task, &(FileId(3), u32::MAX)), None);
     // The entries are dropped at the end of the file.
@@ -1224,66 +337,84 @@ fn file_local_values_of_a_bit_or_two_share_a_word() {
 
 /// `TypeKey` is hashed and compared like the equivalent `TypeData`.
 #[test]
-#[cfg_attr(miri, ignore)]
-fn a_borrowed_key_finds_the_type_that_was_interned_with_its_lists() {
+fn borrowed_key_finds_type_interned_with_owned_lists() {
     let session = Session::new();
     let tables = Tables::new(&session);
-    let task = begin(&session, 0);
+    let task = begin(&session, &tables.types, 0);
     let types = Types::new(&tables.types, &task.own);
-    let (arena, members) = (session.arena(), [TypeId::STRING, TypeId::NUMBER]);
-    let list = || List::copy_from_slice_in(&members, arena);
+    let arena = session.arena();
     let target = Sym {
         file: A,
         id: SymbolId(1),
     };
-    let flags = [ElemFlags::REQUIRED, ElemFlags::OPTIONAL];
-    let decls = [(A, crate::hir::FnId(3))];
     let mapper = MapperId::IDENTITY;
-    let pairs = [
-        (TypeData::Union(list()), TypeKey::Union(&members)),
-        (
-            TypeData::Intersection(list()),
-            TypeKey::Intersection(&members),
-        ),
-        (
-            TypeData::Ref {
-                target,
-                args: list().into(),
-            },
-            TypeKey::Ref {
-                target,
-                args: &members,
-            },
-        ),
-        (
-            TypeData::Tuple {
-                elems: list().into(),
-                flags: List::copy_from_slice_in(&flags, arena),
-                readonly: true,
-            },
-            TypeKey::Tuple {
-                elems: &members,
-                flags: &flags,
-                readonly: true,
-            },
-        ),
-        (
-            TypeData::Fns {
-                decls: List::copy_from_slice_in(&decls, arena),
-                mapper,
-            },
-            TypeKey::Fns {
-                decls: &decls,
-                mapper,
-            },
-        ),
-    ];
-    for (data, key) in pairs {
-        let id = types.intern(data);
-        assert_eq!(types.intern_key(key), id);
-        assert_eq!(types.intern_key(TypeKey::Data(types.get(id))), id);
+    // A record stores a list of up to 2, 3 or 7 items inline.
+    for len in [0, 1, 2, 3, 4, 7, 8, 40] {
+        let members: Vec<TypeId> = (0..len).map(|i| TypeId(1 + i % 16)).collect();
+        let flags = vec![ElemFlags::OPTIONAL; len as usize];
+        let decls: Vec<_> = (0..len).map(|f| (A, crate::hir::FnId(f))).collect();
+        let short = || ShortList::copy_from_slice_in(&members, arena);
+        let pairs = [
+            (TypeData::Union(short()), TypeKey::Union(&members)),
+            (
+                TypeData::Intersection(short()),
+                TypeKey::Intersection(&members),
+            ),
+            (
+                TypeData::Ref {
+                    target,
+                    args: TypeArguments::given_in(&members, arena),
+                },
+                TypeKey::Ref {
+                    target,
+                    args: &members,
+                },
+            ),
+            (
+                TypeData::Tuple {
+                    elems: TypeArguments::given_in(&members, arena),
+                    flags: List::copy_from_slice_in(&flags, arena),
+                    readonly: true,
+                },
+                TypeKey::Tuple {
+                    elems: &members,
+                    flags: &flags,
+                    readonly: true,
+                },
+            ),
+            (
+                TypeData::Fns {
+                    decls: ShortList::copy_from_slice_in(&decls, arena),
+                    mapper,
+                },
+                TypeKey::Fns {
+                    decls: &decls,
+                    mapper,
+                },
+            ),
+        ];
+        // Interns the owned form first for even lengths and the borrowed form first for odd ones.
+        for (data, key) in pairs {
+            let first = (len % 2 == 1).then(|| types.intern_key(key));
+            let id = types.intern(data);
+            assert!(first.is_none_or(|first| first == id));
+            assert_eq!(types.intern_key(key), id);
+            assert_eq!(types.intern_key(TypeKey::Data(types.get(id))), id);
+            match types.get(id) {
+                TypeData::Union(list) | TypeData::Intersection(list) => {
+                    assert_eq!(**list, *members);
+                }
+                TypeData::Ref { args, .. } | TypeData::Tuple { elems: args, .. } => {
+                    assert_eq!(args.actual(), Some(&members[..]));
+                }
+                TypeData::Fns { decls: list, .. } => assert_eq!(**list, *decls),
+                _ => unreachable!(),
+            }
+        }
     }
-    // The other way round, with an alias and an origin.
+    let members = [TypeId::STRING, TypeId::NUMBER];
+    let list = || List::copy_from_slice_in(&members, arena);
+    // Borrowed first, then owned, with an alias and an origin.
     let borrowed = ProvenanceKey {
         alias: Some((target, &members)),
         origin: OriginKey::Union(&members),
@@ -1303,7 +434,8 @@ fn a_borrowed_key_finds_the_type_that_was_interned_with_its_lists() {
         is_array_pattern: false,
         has_other_instantiation: false,
     };
-    assert_eq!(types.intern_with(TypeData::Union(list()), owned), id);
+    let union = TypeData::Union(ShortList::copy_from_slice_in(&members, arena));
+    assert_eq!(types.intern_with(union, owned), id);
     assert_ne!(types.intern_key(TypeKey::Union(&members)), id);
 }
 
@@ -1313,66 +445,111 @@ fn a_borrowed_key_finds_the_type_that_was_interned_with_its_lists() {
 #[cfg_attr(miri, ignore)]
 fn hashed_lists_its_entries_in_insertion_order() {
     let mut hashed = Hashed::<u64, u32>::default();
-    // Not in the order of the keys, nor of their hashes.
+    // Neither in key order nor in hash order.
     let keys: Vec<u64> = (0..1000u64).map(|i| i.wrapping_mul(7919) % 1009).collect();
-    for (place, &key) in keys.iter().enumerate() {
+    for (position, &key) in keys.iter().enumerate() {
         assert_eq!(
-            *hashed.insert(spread_word(key), key, place as u32),
-            place as u32
+            *hashed.insert(spread_word(key), key, position as u32),
+            position as u32
         );
     }
-    // `insert` does not overwrite. `replace` overwrites, and the entry keeps its position.
+    // `insert` doesn't overwrite. `replace` does, and the entry keeps its position.
     assert_eq!(*hashed.insert(spread_word(keys[5]), keys[5], 77), 5);
     hashed.replace(spread_word(keys[6]), keys[6], 77);
-    assert_eq!(hashed.place(spread_word(keys[6]), &keys[6]), Some(6));
+    assert_eq!(hashed.index_of(spread_word(keys[6]), &keys[6]), Some(6));
     assert_eq!(hashed.get(spread_word(5000), &5000), None);
-    let listed = hashed.take();
-    assert!(hashed.is_empty());
-    assert_eq!(listed.len(), 1000);
-    for (place, &(key, value)) in listed.iter().enumerate() {
-        let expected = if place == 6 { 77 } else { place as u32 };
-        assert_eq!((key, value), (keys[place], expected));
+    assert_eq!(hashed.len(), 1000);
+    for (position, &key) in keys.iter().enumerate() {
+        let expected = if position == 6 { 77 } else { position as u32 };
+        assert_eq!(hashed.entry(position as u32), Some(&(key, expected)));
     }
-    assert_eq!(hashed.get(spread_word(keys[5]), &keys[5]), None);
+    assert_eq!(hashed.entry(1000), None);
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn the_nodes_of_many_files_have_different_hashes() {
+fn stale_vacancy_does_not_overwrite_an_entry() {
+    let is = |number: u32| move |found: u32| found == number;
+    // A vacancy in a table that has no slots yet.
+    let found = HashIndex::default();
+    assert_eq!(found.find(7, |_| true), None);
+    let Err(vacancy) = found.find_or_vacancy(7, |_| true) else {
+        unreachable!()
+    };
+    found.fill(vacancy, 7, 1);
+    assert_eq!(found.find_or_vacancy(7, is(1)).ok(), Some(1));
+    // Two searches for the same hash end at the same slot, and only the first entry gets it.
+    let vacancies = [0; 2].map(|_| found.find_or_vacancy(9, |_| false).unwrap_err());
+    found.fill(vacancies[0], 9, 2);
+    found.fill(vacancies[1], 9, 3);
+    assert_eq!(found.find(9, is(2)), Some(2));
+    assert_eq!(found.find(9, is(3)), Some(3));
+    // A stale vacancy: the table grows several times before it's filled.
+    let stale = found.find_or_vacancy(11, |_| false).unwrap_err();
+    for number in 4..3000 {
+        found.add(spread_word(u64::from(number)), number);
+    }
+    found.fill(stale, 11, 3000);
+    assert_eq!(found.find(11, is(3000)), Some(3000));
+    for number in 4..3000 {
+        let spread = spread_word(u64::from(number));
+        assert_eq!(found.find(spread, is(number)), Some(number));
+        assert_eq!(found.find(spread, |_| false), None);
+    }
+    assert_eq!(found.find(7, is(1)), Some(1));
+    assert_eq!(found.find(9, is(3)), Some(3));
+}
+
+/// The table is replaced when an entry would make it more than three quarters full.
+#[test]
+fn entries_survive_table_growth() {
+    // The first table has 256 slots.
+    for count in [1, 191, 192, 193, 384, 385] {
+        let mut found = HashIndex::default();
+        for number in 0..count {
+            found.add(spread_word(u64::from(number)), number);
+            for earlier in [0, number / 2, number] {
+                let spread = spread_word(u64::from(earlier));
+                assert_eq!(found.find(spread, |it| it == earlier), Some(earlier));
+            }
+        }
+        assert_eq!(found.find(spread_word(u64::from(count)), |_| true), None);
+        found.clear();
+        assert_eq!(found.find(spread_word(0), |_| true), None);
+        found.add(spread_word(0), 5);
+        assert_eq!(found.find(spread_word(0), |_| true), Some(5));
+    }
+}
+
+#[test]
+fn shard_is_top_bits_of_hash() {
+    for shards in [1, 2, 8, 64, 256] {
+        for top in 0..256 {
+            for rest in [0, (1 << 56) - 1] {
+                let shard = shard_among((top as u64) << 56 | rest, shards);
+                assert_eq!(shard, top / (256 / shards));
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn nodes_of_many_files_rarely_collide() {
     let mut tags = crate::util::FxHashSet::default();
     for file in 0..512u64 {
         for index in 0..512u64 {
             tags.insert(spread_word(file << 32 | index) as u32);
         }
     }
-    // A few of 2^18 tags among 2^32 collide by chance: 8 collisions are expected.
+    // A few of the 2^18 tags collide by chance in a space of 2^32. About 8 collisions are expected.
     assert!(tags.len() > (1 << 18) - 64);
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
-fn places_are_added_in_one_batch_and_found_without_a_lock() {
-    let places = GrowingPlaces::<Global>::default();
-    assert_eq!(places.find_frozen(spread_word(1), |_| true), None);
-    places.extend(0, std::iter::empty());
-    for batch in 0..3u32 {
-        let added = batch * 1000..(batch + 1) * 1000;
-        places.extend(1000, added.map(|i| (spread_word(u64::from(i)), i)));
-    }
-    for i in 0..3000u32 {
-        let found = places.find_frozen(spread_word(u64::from(i)), |index| index == i);
-        assert_eq!(found, Some(i));
-    }
-    assert_eq!(
-        places.find_frozen(spread_word(3000), |index| index == 3000),
-        None
-    );
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
 fn threads_fill_and_read_a_sharded_map() {
-    let map = ShardedMap::<u32, Box<u32>>::default();
+    // About 75 keys in each of four shards, so a shard's table is replaced three times while other threads read it.
+    let map = ShardedMap::<u32, Box<u32>, Global, 4>::default();
     on_threads(4, &|thread| {
         for i in 0..300 {
             let key = (i * 7 + thread as u32) % 300;
@@ -1387,19 +564,767 @@ fn threads_fill_and_read_a_sharded_map() {
 }
 
 #[test]
+fn threads_fill_and_read_a_windowed_map() {
+    // Miri needs four minutes for 3,000 keys.
+    const KEYS: u32 = if cfg!(miri) { 200 } else { 3000 };
+    // With a step of 37 a window has two keys, so the threads keep adding windows. With a step of 3 it has 21 or 22, so
+    // its table is replaced twice while other threads read it.
+    for step in [37, 3] {
+        let map = WindowedMap::<(TypeId, TypeId), u32>::new_in(Global);
+        let key_of = |i: u32| (TypeId(i * step), TypeId(i % 5));
+        on_threads(4, &|thread| {
+            for i in 0..KEYS {
+                let i = (i * 7 + thread as u32) % KEYS;
+                let key = key_of(i);
+                map.add_if_absent(spread_in_window(&key), &key, i);
+                assert_eq!(map.get_acquire(spread_in_window(&key), &key), Some(&i));
+                let other = key_of((i + 11) % KEYS);
+                if let Some(value) = map.get_acquire(spread_in_window(&other), &other) {
+                    assert_eq!(*value, (i + 11) % KEYS);
+                }
+            }
+        });
+        assert_eq!(map.entries(), KEYS as usize);
+        for i in 0..KEYS {
+            let key = key_of(i);
+            assert_eq!(map.get_frozen(spread_in_window(&key), &key), Some(&i));
+        }
+        let absent = (TypeId(1), TypeId(1));
+        assert_eq!(map.get_frozen(spread_in_window(&absent), &absent), None);
+    }
+}
+
+#[test]
+fn local_is_bit_30() {
+    assert_eq!(LOCAL, 1 << 30);
+    assert!(TypeId(LOCAL).is_local() && !TypeId(LOCAL - 1).is_local());
+    assert!((TypeId::ANY, TypeId(LOCAL | 5)).is_local());
+}
+
+// ───────────────────────────── commits ─────────────────────────────
+
+const STRING: TypeId = TypeId::STRING;
+const NUMBER: TypeId = TypeId::NUMBER;
+
+/// Returns a task that commits while it runs and writes nothing immediately.
+fn begin_committing<'s>(
+    session: &'s Session,
+    tables: &Tables<'s>,
+    commits: &Commits<'s>,
+    index: u32,
+) -> Task<'s> {
+    let mut task = begin(session, &tables.types, index);
+    let view = commits.view(3);
+    task.see_commits(view, false, 0);
+    task
+}
+
+/// Like `begin_committing`, but the task writes immediately to the tables of `Tables` that are keyed by a record.
+fn begin_writing_immediately<'s>(
+    session: &'s Session,
+    tables: &Tables<'s>,
+    commits: &Commits<'s>,
+    index: u32,
+) -> Task<'s> {
+    let mut task = begin(session, &tables.types, index);
+    let view = commits.view(3);
+    task.see_commits(view, false, 1 << 2 | 1 << 3 | 1 << 5 | 1 << 6);
+    task
+}
+
+/// Returns permission to store the result of a computation that begins now.
+fn from_now(task: &Task) -> Stored {
+    Stored::since(task.held_back())
+}
+
+/// Runs commit `number` for `task`. Returns the number of entries it stored.
+fn commit<'s>(tables: &Tables<'s>, commits: &Commits<'s>, task: &Task<'s>, number: u32) -> u64 {
+    let mut log = task.buffer().take_log();
+    let stored = commits.store(&tables.all(), task, &mut log, number, None);
+    task.view().unwrap().has_committed(number);
+    task.resume_writing_immediately();
+    stored
+}
+
+fn next_statement(task: &Task) {
+    task.view().unwrap().forget();
+}
+
+#[test]
+fn commit_publishes_every_kind_of_entry() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let mut first = begin_committing(&session, &tables, &commits, 0);
+    first.begin_file(A, true);
+    let second = begin_committing(&session, &tables, &commits, 1);
+    tables.by_node.insert(&first, (A, 1), STRING, stored());
+    tables.by_node.insert(&first, (B, 2), NUMBER, stored());
+    tables.set.insert(&first, (A, 3), (), stored());
+    tables.by_id.insert(&first, STRING, NUMBER, stored());
+    let (shape, _) = (tables.shapes).insert_ref(&first, STRING, Box::new([NUMBER]), stored());
+    // The value is already where every task can read it. Only the handle waits for the commit.
+    assert!(shape.local_number().is_none());
+    (tables.indirect_by_node).insert_ref(&first, (A, 4), Box::new([STRING]), stored());
+    let holder = Holder { shape, of: NUMBER };
+    tables.members.insert(&first, STRING, holder, stored());
+    (tables.by_key).insert(&first, (STRING, NUMBER), STRING, stored());
+    assert_eq!(tables.by_node.get(&second, &(A, 1)), None);
+    assert_eq!(tables.by_id.get(&second, &STRING), None);
+    assert_eq!(tables.shapes.get_ref(&second, &STRING), None);
+    assert_eq!(tables.by_key.get(&second, &(STRING, NUMBER)), None);
+    assert_eq!(commit(&tables, &commits, &first, 1), 8);
+    for task in [&first, &second] {
+        next_statement(task);
+        assert_eq!(tables.by_node.get(task, &(A, 1)), Some(STRING));
+        assert_eq!(tables.by_node.get(task, &(B, 2)), Some(NUMBER));
+        assert_eq!(tables.set.get(task, &(A, 3)), Some(()));
+        assert_eq!(tables.set.get(task, &(A, 2)), None);
+        assert_eq!(tables.by_id.get(task, &STRING), Some(NUMBER));
+        assert_eq!(tables.shapes.handle(task, &STRING), Some(shape));
+        assert_eq!(tables.shapes.at(task, shape)[..], [NUMBER]);
+        let in_table = tables.indirect_by_node.get_ref(task, &(A, 4));
+        assert_eq!(in_table.map(|it| &it[..]), Some(&[STRING][..]));
+        assert_eq!(tables.members.get(task, &STRING), Some(holder));
+        assert_eq!(tables.by_key.get(task, &(STRING, NUMBER)), Some(STRING));
+    }
+    assert_eq!(first.buffer().logged(), 0);
+}
+
+#[test]
+fn begin_drops_earlier_entries() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let mut task = begin_committing(&session, &tables, &commits, 0);
+    task.begin_file(A, true);
+    tables.by_node.insert(&task, (A, 1), STRING, stored());
+    tables.by_node.insert(&task, (B, 2), NUMBER, stored());
+    tables.set.insert(&task, (A, 3), (), stored());
+    tables.by_id.insert(&task, STRING, NUMBER, stored());
+    (tables.shapes).insert_ref(&task, STRING, Box::new([NUMBER]), stored());
+    (tables.indirect_by_node).insert_ref(&task, (A, 4), Box::new([STRING]), stored());
+    (tables.by_key).insert(&task, (STRING, NUMBER), STRING, stored());
+    assert_ne!(task.buffer().logged(), 0);
+    // Nothing was committed, so a new task finds nothing.
+    task.begin(0, 1);
+    task.see_commits(commits.view(3), false, 0);
+    task.begin_file(A, true);
+    assert_eq!(task.buffer().logged(), 0);
+    assert_eq!(tables.by_node.get(&task, &(A, 1)), None);
+    assert_eq!(tables.by_node.get(&task, &(B, 2)), None);
+    assert_eq!(tables.set.get(&task, &(A, 3)), None);
+    assert_eq!(tables.by_id.get(&task, &STRING), None);
+    assert_eq!(tables.shapes.get_ref(&task, &STRING), None);
+    assert_eq!(tables.indirect_by_node.get_ref(&task, &(A, 4)), None);
+    assert_eq!(tables.by_key.get(&task, &(STRING, NUMBER)), None);
+}
+
+/// True if `task` is in the state that `Task::new_in` returns. The pattern lists every field, so adding a field without
+/// checking it here is a compile error.
+fn is_like_new(task: &mut Task) -> bool {
+    let Task {
+        round_and_index,
+        file,
+        uncommitted_files,
+        diagnostics,
+        closed_a_cycle,
+        order_dependent_variances,
+        held_back,
+        view,
+        was_discarded,
+        is_trusted,
+        can_recheck_early,
+        is_first_in_order,
+        is_first_in_component,
+        cycle_members,
+        cycle_since_idle,
+        logged_at_cycles,
+        logged_when_idle,
+        immediate_tables,
+        immediate_tables_after_commit,
+        diagnostics_logged_before_stop,
+        own,
+        buffer,
+        file_local,
+    } = task;
+    round_and_index.is_none()
+        && file.is_none()
+        && uncommitted_files.is_empty()
+        && diagnostics.is_empty()
+        && !*closed_a_cycle
+        && order_dependent_variances.is_empty()
+        && held_back.get() == 0
+        && view.is_none()
+        && !was_discarded.get()
+        && !*is_trusted
+        && !can_recheck_early.get()
+        && !is_first_in_order.get()
+        && !is_first_in_component.get()
+        && cycle_members.get_mut().is_empty()
+        && cycle_since_idle.get().is_none()
+        && logged_at_cycles.borrow().is_empty()
+        && logged_when_idle.get() == [0; 2]
+        && immediate_tables.get() == 0
+        && *immediate_tables_after_commit == 0
+        && diagnostics_logged_before_stop.get() == usize::MAX
+        && own.is_like_new()
+        && buffer.get_mut().is_like_new()
+        && file_local.get_mut().is_like_new()
+}
+
+/// Applies `change` to a new task, checks that the task no longer looks new, ends it, and checks that it looks new
+/// again.
+fn ends_like_new<'s>(
+    tables: &Tables<'s>,
+    session: &'s Session,
+    change: impl FnOnce(&mut Task<'s>),
+) {
+    let mut task = Task::new_in(session.arena(), &tables.types);
+    assert!(is_like_new(&mut task));
+    change(&mut task);
+    assert!(!is_like_new(&mut task));
+    tables.types.reclaim_ids(&task.own);
+    task.drop_everything();
+    assert!(is_like_new(&mut task));
+}
+
+#[test]
 #[cfg_attr(miri, ignore)]
-fn for_each_mut_gives_every_item_to_one_call() {
-    for pool in POOLS {
-        let mut items = vec![0u32; 100];
-        for_each_mut(&mut items, &pool, &|item| *item += 1);
-        assert!(items.iter().all(|&item| item == 1));
+fn ended_task_is_like_new() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let check = |change: &dyn Fn(&mut Task<'_>)| ends_like_new(&tables, &session, change);
+    let sym = Sym {
+        file: A,
+        id: SymbolId(7),
+    };
+    check(&|task| task.round_and_index = Some((0, 1)));
+    check(&|task| task.file = Some(A));
+    check(&|task| task.uncommitted_files.push(A));
+    check(&|task| {
+        let reported = Reported::bare((A, 0, 0), 2322);
+        task.diagnostics.push((None, reported));
+    });
+    check(&|task| task.closed_a_cycle = true);
+    check(&|task| {
+        task.order_dependent_variances.push(OrderDependent {
+            sym,
+            variances: &[],
+            compared: 0,
+            failed: 0,
+            void_targets: 0,
+            inferred: 0,
+        });
+    });
+    check(&|task| task.hold_back());
+    ends_like_new(&tables, &session, |task| {
+        task.view = Some(commits.view(3));
+    });
+    check(&|task| task.was_discarded.set(true));
+    check(&|task| task.is_trusted = true);
+    check(&|task| task.can_recheck_early.set(true));
+    check(&|task| task.set_first_in_order(true, false));
+    check(&|task| task.set_first_in_order(false, true));
+    check(&|task| task.cycle_members.get_mut().push(1));
+    check(&|task| task.cycle_since_idle.set(Some([0; 2])));
+    check(&|task| task.logged_at_cycles.borrow_mut().push([[0; 2]; 2]));
+    check(&|task| task.logged_when_idle.set([0, 1]));
+    check(&|task| task.immediate_tables.set(1));
+    check(&|task| task.immediate_tables_after_commit = 1);
+    check(&|task| task.diagnostics_logged_before_stop.set(0));
+    // The task's own records.
+    check(&|task| task.own.add_visited_file(A));
+    check(&|task| task.own.add_unimported_file(A));
+    check(&|task| task.own.set_sharing(Sharing::Publishes));
+    // The task-local parts of the tables.
+    check(&|task| task.buffer().begin_log());
+    check(&|task| task.buffer().begin_file(A.0, false));
+    check(&|task| task.file_local().begin_file(A.0));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn ended_task_has_no_records_or_entries() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let mut flags = ByNode::<Node, bool, FileLocal>::new_in(&Bases::none_in(&Global), Global);
+    flags.set_slot(numbered(0));
+    // A task-local record.
+    ends_like_new(&tables, &session, |task| {
+        assert!(tables.keyof(task, STRING).is_local());
+    });
+    // A record the task publishes under one of its reserved ids.
+    ends_like_new(&tables, &session, |task| {
+        task.own.set_sharing(Sharing::Publishes);
+        assert!(!tables.keyof(task, NUMBER).is_local());
+    });
+    // A record bound to a file that nothing imports.
+    ends_like_new(&tables, &session, |task| {
+        task.own.set_sharing(Sharing::Publishes);
+        task.begin_file(C, false);
+        assert!(tables.this_of(task, C).is_local());
+    });
+    // One entry of each kind at a time: in a row, in a page, under an id, an indirect value, under a key.
+    type Store<'a, 's> = &'a dyn Fn(&Task<'s>);
+    let stores: [Store; 8] = [
+        &|task| _ = tables.by_node.insert(task, (A, 1), STRING, stored()),
+        &|task| _ = tables.by_node.insert(task, (B, 2), NUMBER, stored()),
+        &|task| tables.set.insert(task, (A, 3), (), stored()),
+        &|task| _ = tables.by_id.insert(task, STRING, NUMBER, stored()),
+        &|task| _ = (tables.shapes).insert_ref(task, STRING, Box::new([NUMBER]), stored()),
+        &|task| {
+            _ = (tables.indirect_by_node).insert_ref(task, (A, 4), Box::new([STRING]), stored())
+        },
+        &|task| _ = (tables.by_key).insert(task, (STRING, NUMBER), STRING, stored()),
+        &|task| _ = flags.insert(task, (B, 5), true),
+    ];
+    for store in stores {
+        ends_like_new(&tables, &session, |task| {
+            task.begin(0, 0);
+            task.see_commits(commits.view(3), false, 0);
+            task.begin_file(A, true);
+            store(task);
+        });
     }
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn local_is_bit_30() {
-    assert_eq!(LOCAL, 1 << 30);
-    assert!(TypeId(LOCAL).is_local() && !TypeId(LOCAL - 1).is_local());
-    assert!((TypeId::ANY, TypeId(LOCAL | 5)).is_local());
+fn file_snapshot_lasts_until_next_statement() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let first = begin_committing(&session, &tables, &commits, 0);
+    let second = begin_committing(&session, &tables, &commits, 1);
+    // A miss takes the file's snapshot too.
+    assert_eq!(tables.by_node.get(&second, &(A, 1)), None);
+    for key in [(A, 1), (A, 2), (B, 1)] {
+        tables.by_node.insert(&first, key, STRING, stored());
+    }
+    tables.by_id.insert(&first, STRING, NUMBER, stored());
+    assert_eq!(commit(&tables, &commits, &first, 1), 4);
+    assert_eq!(tables.by_node.get(&second, &(A, 1)), None);
+    assert_eq!(tables.by_node.get(&second, &(A, 2)), None);
+    assert_eq!(tables.by_node.get(&second, &(B, 1)), Some(STRING));
+    assert_eq!(tables.by_id.get(&second, &STRING), Some(NUMBER));
+    next_statement(&second);
+    assert_eq!(tables.by_node.get(&second, &(A, 1)), Some(STRING));
+    assert_eq!(tables.by_node.get(&second, &(A, 2)), Some(STRING));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn visited_file_snapshot_lasts_for_the_visit() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let first = begin_committing(&session, &tables, &commits, 0);
+    let mut second = begin_committing(&session, &tables, &commits, 1);
+    second.begin_file(A, true);
+    tables.by_node.insert(&first, (A, 1), STRING, stored());
+    assert_eq!(commit(&tables, &commits, &first, 1), 1);
+    next_statement(&second);
+    assert_eq!(tables.by_node.get(&second, &(A, 1)), None);
+    // It computes its own entry, which loses to the committed one.
+    let in_table = tables.by_node.insert(&second, (A, 1), NUMBER, stored());
+    assert_eq!(in_table, NUMBER);
+    assert_eq!(commit(&tables, &commits, &second, 2), 0);
+    assert_eq!(tables.by_node.commit_of((A, 1)), Some(1));
+    assert_eq!(tables.by_node.commit_of((A, 2)), None);
+    assert_eq!(tables.by_node.get(&second, &(A, 1)), Some(NUMBER));
+    second.begin_file(B, true);
+    assert_eq!(tables.by_node.get(&second, &(A, 1)), Some(STRING));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn own_entry_loses_to_earlier_commit() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let first = begin_committing(&session, &tables, &commits, 0);
+    let mut second = begin_committing(&session, &tables, &commits, 1);
+    second.begin_file(B, true);
+    assert_eq!(
+        tables.by_node.insert(&second, (A, 1), NUMBER, stored()),
+        NUMBER
+    );
+    assert_eq!(
+        tables.by_node.insert(&second, (A, 2), NUMBER, stored()),
+        NUMBER
+    );
+    tables.by_node.insert(&first, (A, 1), STRING, stored());
+    assert_eq!(commit(&tables, &commits, &first, 1), 1);
+    assert_eq!(tables.by_node.get(&second, &(A, 1)), Some(NUMBER));
+    // The row now has the committed entries the task can see, and the task's own entries where there are none.
+    second.begin_file(A, true);
+    assert_eq!(tables.by_node.get(&second, &(A, 1)), Some(STRING));
+    assert_eq!(tables.by_node.get(&second, &(A, 2)), Some(NUMBER));
+    assert_eq!(
+        tables.by_node.insert(&second, (A, 1), NUMBER, stored()),
+        STRING
+    );
+    assert_eq!(commit(&tables, &commits, &second, 2), 1);
+    assert_eq!(tables.by_node.commit_of((A, 1)), Some(1));
+    assert_eq!(tables.by_node.commit_of((A, 2)), Some(2));
+    second.begin_file(B, true);
+    assert_eq!(tables.by_node.get(&second, &(A, 1)), Some(STRING));
+    assert_eq!(tables.by_node.get(&second, &(A, 2)), Some(NUMBER));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn expression_entries_of_visited_file_stay_local() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let bases = Bases::new_in([10, 10, 10].into_iter(), &Global);
+    let mut table = ByNode::<Node, TypeId, Buffered<OfExpressions<0>>>::new_in(&bases, Global);
+    table.set_slot(numbered(0));
+    let mut task = begin_writing_immediately(&session, &tables, &commits, 0);
+    task.begin_file(A, true);
+    table.insert(&task, (A, 1), STRING, stored());
+    table.rewrite(&task, (A, 1), NUMBER, stored());
+    assert_eq!((task.buffer().logged(), task.held_back()), (0, 0));
+    // An expression of another file, evaluated to get the type of a declaration there.
+    table.insert(&task, (B, 1), STRING, stored());
+    assert_eq!((task.buffer().logged(), task.held_back()), (1, 1));
+    let mut log = task.buffer().take_log();
+    assert_eq!(commits.store(&[&table], &task, &mut log, 1, None), 1);
+    let mut other = begin_committing(&session, &tables, &commits, 1);
+    assert_eq!(table.get(&other, &(A, 1)), None);
+    assert_eq!(table.get(&other, &(B, 1)), Some(STRING));
+    other.begin_file(B, true);
+    assert_eq!(table.get(&other, &(B, 1)), Some(STRING));
+    assert_eq!(table.get(&task, &(A, 1)), Some(NUMBER));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn commit_skips_bound_entries() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let mut task = begin_committing(&session, &tables, &commits, 0);
+    task.begin_file(C, false);
+    let bound = tables.this_of(&task, C);
+    // An entry under a node of an unimported file isn't even logged.
+    tables.by_node.insert(&task, (C, 1), STRING, stored());
+    assert_eq!(task.buffer().logged(), 0);
+    tables.by_node.insert(&task, (A, 1), bound, stored());
+    tables.by_id.insert(&task, STRING, bound, stored());
+    let (shape, _) = (tables.shapes).insert_ref(&task, STRING, Box::new([bound]), stored());
+    assert!(shape.local_number().is_some());
+    // Only the handle in it is bound.
+    let holder = Holder { shape, of: NUMBER };
+    tables.members.insert(&task, NUMBER, holder, stored());
+    (tables.by_key).insert(&task, (STRING, STRING), bound, stored());
+    assert_eq!(task.buffer().logged(), 5);
+    assert_eq!(commit(&tables, &commits, &task, 1), 0);
+    let other = begin_committing(&session, &tables, &commits, 1);
+    assert_eq!(tables.by_node.get(&other, &(A, 1)), None);
+    assert_eq!(tables.by_id.get(&other, &STRING), None);
+    assert_eq!(tables.shapes.handle(&other, &STRING), None);
+    assert_eq!(tables.members.get(&other, &NUMBER), None);
+    assert_eq!(tables.by_key.get(&other, &(STRING, STRING)), None);
+    assert_eq!(tables.members.get(&task, &NUMBER), Some(holder));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn record_keys_are_logged_in_store_order() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let task = begin_committing(&session, &tables, &commits, 0);
+    (tables.by_key).insert(&task, (STRING, STRING), STRING, stored());
+    tables.by_id.insert(&task, STRING, NUMBER, stored());
+    tables.by_node.insert(&task, (A, 1), STRING, stored());
+    (tables.by_key).insert(&task, (NUMBER, STRING), STRING, stored());
+    (tables.shapes).insert_ref(&task, NUMBER, Box::new([STRING]), stored());
+    let log = task.buffer().take_log();
+    let record_keys = [[6, 0], [2, STRING.0], [6, 1], [3, NUMBER.0]];
+    assert_eq!(log.record_keys, record_keys);
+    assert_eq!(log.node_keys, [[0, A.0, 1]]);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn commit_publishes_latest_value_and_first_commit_wins() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let task = begin_committing(&session, &tables, &commits, 0);
+    tables.by_id.insert(&task, STRING, NUMBER, stored());
+    tables.by_id.rewrite(&task, STRING, STRING, stored());
+    (tables.by_key).insert(&task, (STRING, STRING), NUMBER, stored());
+    (tables.by_key).rewrite(&task, (STRING, STRING), STRING, stored());
+    assert_eq!(commit(&tables, &commits, &task, 1), 2);
+    let other = begin_committing(&session, &tables, &commits, 1);
+    assert_eq!(tables.by_id.get(&other, &STRING), Some(STRING));
+    assert_eq!(tables.by_key.get(&other, &(STRING, STRING)), Some(STRING));
+    assert_eq!(
+        tables.by_id.insert(&other, STRING, NUMBER, stored()),
+        STRING
+    );
+    tables.by_id.rewrite(&other, STRING, NUMBER, stored());
+    assert_eq!(commit(&tables, &commits, &other, 2), 0);
+    assert_eq!(tables.by_id.get(&task, &STRING), Some(STRING));
+}
+
+#[test]
+fn node_entries_of_a_commit_appear_atomically() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let writer = begin_committing(&session, &tables, &commits, 0);
+            for i in 0..50 {
+                for at in [i, 99 - i] {
+                    tables.by_node.insert(&writer, (A, at), STRING, stored());
+                }
+                assert_eq!(commit(&tables, &commits, &writer, i + 1), 2);
+            }
+        });
+        for index in 1..3 {
+            let (session, tables, commits) = (&session, &tables, &commits);
+            scope.spawn(move || {
+                let reader = begin_committing(session, tables, commits, index);
+                let mut seen = 0;
+                while seen < 50 {
+                    next_statement(&reader);
+                    let is_stored = |at: u32| tables.by_node.get(&reader, &(A, at)).is_some();
+                    // Later entries first, so a commit that finishes during the scan would be noticed.
+                    let pairs = (0..50).rev().map(|i| (is_stored(99 - i), is_stored(i)));
+                    let pairs: Vec<(bool, bool)> = pairs.collect();
+                    assert!(pairs.iter().all(|pair| pair.0 == pair.1));
+                    seen = pairs.iter().filter(|pair| pair.0).count();
+                }
+            });
+        }
+    });
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn entry_is_written_immediately_unless_held_back_since_computation_began() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let task = begin_writing_immediately(&session, &tables, &commits, 0);
+    let other = begin_writing_immediately(&session, &tables, &commits, 1);
+    let outer = from_now(&task);
+    tables.by_id.insert(&task, STRING, NUMBER, from_now(&task));
+    (tables.by_key).insert(&task, (STRING, STRING), NUMBER, from_now(&task));
+    let (shape, _) = (tables.shapes).insert_ref(&task, STRING, Box::new([NUMBER]), outer);
+    let holder = Holder { shape, of: NUMBER };
+    tables.members.insert(&task, STRING, holder, outer);
+    assert_eq!(task.buffer().logged(), 0);
+    assert_eq!(tables.by_id.get(&other, &STRING), Some(NUMBER));
+    assert_eq!(tables.by_key.get(&other, &(STRING, STRING)), Some(NUMBER));
+    assert_eq!(tables.shapes.handle(&other, &STRING), Some(shape));
+    assert_eq!(tables.members.get(&other, &STRING), Some(holder));
+    // An entry keyed by a node waits for the commit, and so does every computation that was in progress when it was
+    // stored.
+    (tables.by_node).insert(&task, (A, 1), STRING, from_now(&task));
+    tables.by_id.insert(&task, NUMBER, STRING, outer);
+    (tables.by_key).insert(&task, (NUMBER, NUMBER), STRING, outer);
+    assert_eq!(task.buffer().logged(), 3);
+    assert_eq!(tables.by_id.get(&other, &NUMBER), None);
+    assert_eq!(tables.by_key.get(&other, &(NUMBER, NUMBER)), None);
+    assert_eq!(tables.by_id.get(&task, &NUMBER), Some(STRING));
+    // A computation that begins afterwards doesn't wait.
+    (tables.by_id).insert(&task, TypeId::BOOLEAN, STRING, from_now(&task));
+    assert_eq!(tables.by_id.get(&other, &TypeId::BOOLEAN), Some(STRING));
+    // This computation's start is unknown, so its result waits.
+    tables.by_id.insert(&task, TypeId::ANY, STRING, stored());
+    assert_eq!(tables.by_id.get(&other, &TypeId::ANY), None);
+    assert_eq!(commit(&tables, &commits, &task, 1), 4);
+    assert_eq!(tables.by_id.get(&other, &TypeId::ANY), Some(STRING));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn first_immediate_write_wins() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let first = begin_writing_immediately(&session, &tables, &commits, 0);
+    let second = begin_writing_immediately(&session, &tables, &commits, 1);
+    (tables.by_id).rewrite(&first, STRING, NUMBER, from_now(&first));
+    (tables.by_key).rewrite(&first, (STRING, STRING), NUMBER, from_now(&first));
+    (tables.shapes).insert_ref(&first, STRING, Box::new([NUMBER]), from_now(&first));
+    // The second task stores the same value.
+    let in_table = (tables.by_id).rewrite(&second, STRING, NUMBER, from_now(&second));
+    assert_eq!(in_table, NUMBER);
+    // `rewrite` only looks in the task's own part, as it does for a key that `get` didn't find.
+    (tables.by_id).rewrite(&second, STRING, STRING, from_now(&second));
+    let spread = spread_in_window(&(STRING, STRING));
+    let key = (STRING, STRING);
+    let in_table = (tables.by_key).insert_absent(&second, spread, key, STRING, from_now(&second));
+    assert_eq!(in_table, NUMBER);
+    for task in [&first, &second] {
+        assert_eq!(tables.by_id.get(task, &STRING), Some(NUMBER));
+        assert_eq!(tables.by_key.get(task, &(STRING, STRING)), Some(NUMBER));
+    }
+    assert_eq!(second.buffer().logged(), 0);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn immediate_writes_resume_after_next_commit() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let task = begin_writing_immediately(&session, &tables, &commits, 0);
+    let other = begin_writing_immediately(&session, &tables, &commits, 1);
+    task.stop_writing_immediately();
+    assert!(!task.writes_immediately());
+    tables.by_id.insert(&task, STRING, NUMBER, from_now(&task));
+    assert_eq!(tables.by_id.get(&other, &STRING), None);
+    assert_eq!(commit(&tables, &commits, &task, 1), 1);
+    assert_eq!(tables.by_id.get(&other, &STRING), Some(NUMBER));
+    tables.by_id.insert(&task, NUMBER, NUMBER, from_now(&task));
+    assert_eq!(tables.by_id.get(&other, &NUMBER), Some(NUMBER));
+    // A discarded task doesn't resume.
+    task.discard();
+    assert_eq!(commit(&tables, &commits, &task, 2), 0);
+    assert!(!task.writes_immediately() && !task.shares_what_it_stores());
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn task_that_hit_a_limit_is_not_rechecked_early() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let task = begin_writing_immediately(&session, &tables, &commits, 0);
+    assert!(!task.can_recheck_early());
+    task.discard_until_recheck();
+    assert!(task.was_discarded() && task.can_recheck_early());
+    // Hitting a limit later doesn't matter, because the task was already discarded.
+    task.discard();
+    assert!(task.can_recheck_early());
+    let other = begin_writing_immediately(&session, &tables, &commits, 1);
+    other.discard();
+    other.discard_until_recheck();
+    assert!(!other.can_recheck_early());
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn commit_lists_log_ranges_from_each_cycle_to_next_idle_moment() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let mut task = begin_committing(&session, &tables, &commits, 0);
+    task.set_first_in_order(true, true);
+    let resolve_a_cycle = |task: &Task| task.close_cycle(|| false, std::iter::once(1));
+    // Before the first cycle.
+    tables.by_id.insert(&task, STRING, NUMBER, stored());
+    assert!(!task.has_resolved_a_cycle());
+    resolve_a_cycle(&task);
+    assert!(task.has_resolved_a_cycle());
+    tables.by_id.insert(&task, NUMBER, NUMBER, stored());
+    // A second cycle in the same statement doesn't start another part.
+    resolve_a_cycle(&task);
+    tables.by_node.insert(&task, (A, 1), STRING, stored());
+    task.note_idle();
+    // A statement without a cycle.
+    tables.by_node.insert(&task, (A, 2), STRING, stored());
+    task.note_idle();
+    assert!(task.has_resolved_a_cycle());
+    // The commit follows this cycle without an idle moment in between.
+    resolve_a_cycle(&task);
+    tables.by_node.insert(&task, (A, 3), STRING, stored());
+    assert_eq!(
+        task.take_logged_at_cycles(),
+        [[[1, 0], [2, 1]], [[2, 2], [2, 3]]]
+    );
+    assert!(!task.has_resolved_a_cycle());
+    assert_eq!(task.take_logged_at_cycles(), [[[0; 2]; 2]; 0]);
+    // `begin` forgets the resolved cycles.
+    resolve_a_cycle(&task);
+    task.note_idle();
+    resolve_a_cycle(&task);
+    task.begin(0, 1);
+    assert!(!task.has_resolved_a_cycle());
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn held_back_entry_wins_over_later_immediate_write() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let task = begin_writing_immediately(&session, &tables, &commits, 0);
+    let other = begin_writing_immediately(&session, &tables, &commits, 1);
+    tables.by_id.insert(&task, STRING, NUMBER, stored());
+    (tables.by_key).insert(&task, (STRING, STRING), NUMBER, stored());
+    let in_table = tables.by_id.insert(&task, STRING, STRING, from_now(&task));
+    assert_eq!(in_table, NUMBER);
+    let in_table = (tables.by_key).insert(&task, (STRING, STRING), STRING, from_now(&task));
+    assert_eq!(in_table, NUMBER);
+    assert_eq!(tables.by_id.get(&other, &STRING), None);
+    assert_eq!(tables.by_key.get(&other, &(STRING, STRING)), None);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn bound_entries_are_not_written_immediately() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let mut task = begin_writing_immediately(&session, &tables, &commits, 0);
+    task.begin_file(C, false);
+    let other = begin_writing_immediately(&session, &tables, &commits, 1);
+    let bound = tables.this_of(&task, C);
+    let outer = from_now(&task);
+    tables.by_id.insert(&task, STRING, bound, from_now(&task));
+    (tables.by_key).insert(&task, (STRING, STRING), bound, from_now(&task));
+    let (shape, _) = (tables.shapes).insert_ref(&task, STRING, Box::new([bound]), outer);
+    assert!(shape.local_number().is_some());
+    assert_eq!(tables.by_id.get(&other, &STRING), None);
+    assert_eq!(tables.by_key.get(&other, &(STRING, STRING)), None);
+    assert_eq!(tables.shapes.handle(&other, &STRING), None);
+    // No other task could hit those entries, so they don't defer anything.
+    tables.by_id.insert(&task, NUMBER, STRING, outer);
+    assert_eq!(tables.by_id.get(&other, &NUMBER), Some(STRING));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn entries_about_records_of_visited_file_stay_local() {
+    let session = Session::new();
+    let (mut tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    tables.types.share_records();
+    let begin_publishing = |index: u32| {
+        let mut task = begin_writing_immediately(&session, &tables, &commits, index);
+        task.own.set_sharing(crate::types::Sharing::Publishes);
+        task
+    };
+    let (mut task, other) = (begin_publishing(0), begin_publishing(1));
+    task.begin_file(A, true);
+    let file_type = tables.this_of(&task, A);
+    let derived_type = tables.keyof(&task, file_type);
+    assert!(!file_type.is_local() && !derived_type.is_local());
+    let outer = from_now(&task);
+    tables
+        .by_id
+        .insert(&task, file_type, NUMBER, from_now(&task));
+    (tables.by_key).insert(&task, (derived_type, NUMBER), NUMBER, from_now(&task));
+    let (shape, _) = (tables.shapes).insert_ref(&task, derived_type, Box::new([NUMBER]), outer);
+    assert!(shape.local_number().is_some());
+    assert_eq!(tables.by_id.get(&task, &file_type), Some(NUMBER));
+    assert_eq!(
+        tables.by_key.get(&task, &(derived_type, NUMBER)),
+        Some(NUMBER)
+    );
+    assert_eq!(tables.shapes.handle(&task, &derived_type), Some(shape));
+    assert_eq!(tables.by_id.get(&other, &file_type), None);
+    assert_eq!(tables.by_key.get(&other, &(derived_type, NUMBER)), None);
+    assert_eq!(tables.shapes.handle(&other, &derived_type), None);
+    // No commit stores them, and they don't defer anything.
+    assert_eq!(task.buffer().logged(), 0);
+    assert!(!task.has_held_back_since(outer));
+    // An entry that doesn't mention any of the task's files is published.
+    let unrelated_type = tables.keyof(&task, STRING);
+    tables
+        .by_id
+        .insert(&task, unrelated_type, NUMBER, from_now(&task));
+    assert_eq!(tables.by_id.get(&other, &unrelated_type), Some(NUMBER));
+    // A task that isn't visiting the file publishes its results about the file's records.
+    assert_eq!(tables.this_of(&other, A), file_type);
+    tables
+        .by_id
+        .insert(&other, file_type, NUMBER, from_now(&other));
+    assert_eq!(
+        tables.by_id.get(&begin_publishing(2), &file_type),
+        Some(NUMBER)
+    );
 }

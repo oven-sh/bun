@@ -1,4 +1,4 @@
-//! `@param` tags are put in the order of the parameters of the function behind the comment.
+//! Reorders `@param` tags to match the parameters of the function after the comment.
 
 use bun_lint::ast::jsdoc::JSDocTag;
 use bun_lint::ast::{
@@ -6,8 +6,8 @@ use bun_lint::ast::{
     Node, PropKind, StmtKind,
 };
 
-/// `comment_end`: where the comment ends in `file`. Only if every `@param` has a type and a name, and the names
-/// are those of the parameters.
+/// `comment_end` is the offset where the comment ends in `file`. This only reorders if every `@param` has a type and a
+/// name, and the names match the parameters' names.
 pub(super) fn reorder_param_tags<'a>(
     effective_tags: &mut [(JSDocTag<'a>, &'a [u8])],
     file: &'a File<'a>,
@@ -33,7 +33,8 @@ pub(super) fn reorder_param_tags<'a>(
             _ => return,
         }
     }
-    let function_params = function_behind(file, comment_end).map_or_else(Vec::new, parameter_names);
+    let function_params =
+        function_after_comment(file, comment_end).map_or_else(Vec::new, parameter_names);
     if function_params.len() != names.len()
         || names == function_params
         || !names.iter().all(|name| function_params.contains(name))
@@ -52,8 +53,8 @@ pub(super) fn reorder_param_tags<'a>(
     });
 }
 
-/// The function whose head starts with what follows the comment that ends at `comment_end`.
-fn function_behind<'a>(file: &'a File<'a>, comment_end: u32) -> Option<Func<'a>> {
+/// Returns the function whose head starts right after the comment that ends at `comment_end`.
+fn function_after_comment<'a>(file: &'a File<'a>, comment_end: u32) -> Option<Func<'a>> {
     let after = file.text().get(comment_end as usize..)?;
     let start = comment_end
         + (after.len() - bun_core::strings::trim_unicode_whitespace_start(after).len()) as u32;
@@ -74,22 +75,24 @@ fn function_behind<'a>(file: &'a File<'a>, comment_end: u32) -> Option<Func<'a>>
     }
 }
 
-/// The function that `node` is or declares. oxfmt looks for the `(` of the parameters in the text behind the
-/// comment, and finds it behind these heads only.
+/// Returns the function that `node` is or declares. oxfmt searches the text after the comment for the `(` of the
+/// parameters, and only finds it after these heads.
 fn function_with_known_head<'a>(node: Node<'a>) -> Option<Func<'a>> {
     match node {
-        Node::Stmt(statement) if are_passed_over(statement.modifiers()) => match statement.kind() {
-            StmtKind::Fn(func) => Some(func),
-            // `const f = (a, b) => {}`
-            StmtKind::Var(declarations) => {
-                let first = declarations.first()?;
-                let has_plain_name = first.pat().as_ident().is_some_and(is_plain_name);
-                arrow_function(first.init()?).filter(|_| has_plain_name && first.ty().is_none())
+        Node::Stmt(statement) if are_skipped_modifiers(statement.modifiers()) => {
+            match statement.kind() {
+                StmtKind::Fn(func) => Some(func),
+                // `const f = (a, b) => {}`
+                StmtKind::Var(declarations) => {
+                    let first = declarations.first()?;
+                    let has_plain_name = first.pat().as_ident().is_some_and(is_plain_name);
+                    arrow_function(first.init()?).filter(|_| has_plain_name && first.ty().is_none())
+                }
+                // `return (a, b) => {}`
+                StmtKind::Return(value) => arrow_function(value?).filter(|it| !it.is_async()),
+                _ => None,
             }
-            // `return (a, b) => {}`
-            StmtKind::Return(value) => arrow_function(value?).filter(|it| !it.is_async()),
-            _ => None,
-        },
+        }
         Node::Expr(e) => match e.kind() {
             ExprKind::Fn(func) => (func.kind() == FnKind::Expr).then_some(func),
             // `f = (a, b) => {}`
@@ -104,7 +107,8 @@ fn function_with_known_head<'a>(node: Node<'a>) -> Option<Func<'a>> {
             _ => None,
         },
         Node::Member(member)
-            if are_passed_over(member.modifiers()) && !member.flags().contains(Flags::OPTIONAL) =>
+            if are_skipped_modifiers(member.modifiers())
+                && !member.flags().contains(Flags::OPTIONAL) =>
         {
             match member.kind() {
                 MemberKind::Constructor | MemberKind::ConstructSignature => member.func(),
@@ -125,15 +129,15 @@ fn function_with_known_head<'a>(node: Node<'a>) -> Option<Func<'a>> {
     }
 }
 
-/// Whether there is nothing but `export`, `default` and `async`.
-fn are_passed_over<'a>(modifiers: List<'a, Modifier<'a>>) -> bool {
+/// True if the only modifiers are `export`, `default` and `async`, which oxfmt skips.
+fn are_skipped_modifiers<'a>(modifiers: List<'a, Modifier<'a>>) -> bool {
     modifiers.iter().all(|it| {
         it.flag()
             .intersects(Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC)
     })
 }
 
-/// `(a, b) => {}` that is not in parentheses and has no type parameters.
+/// Returns `(a, b) => {}` if it isn't parenthesized and has no type parameters.
 fn arrow_function(e: Expr<'_>) -> Option<Func<'_>> {
     e.as_fn()
         .filter(|it| it.is_arrow() && it.type_params().is_empty() && !e.is_parenthesized())
@@ -143,7 +147,7 @@ fn is_identifier_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
 }
 
-/// It is in ASCII, and none of the words that are passed over.
+/// True if the name is ASCII and isn't one of the skipped keywords.
 fn is_plain_name(name: Name<'_>) -> bool {
     let name = name.bytes();
     name.iter().all(|&byte| is_identifier_byte(byte))
@@ -154,8 +158,8 @@ fn is_plain_key(key: Option<Key<'_>>) -> bool {
     matches!(key.map(Key::kind), Some(KeyKind::Ident(name)) if is_plain_name(name))
 }
 
-/// What oxfmt takes for the names of the parameters: the word that each starts with, behind `...`. That is a
-/// modifier if it has one. A pattern has none.
+/// Returns what oxfmt takes to be the parameter names: the first word of each parameter, after any `...`. That's a
+/// modifier if the parameter has one. A pattern yields no name.
 fn parameter_names(func: Func<'_>) -> Vec<&[u8]> {
     func.params_with_this()
         .filter_map(|param| {

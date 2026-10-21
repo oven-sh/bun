@@ -18,7 +18,7 @@ pub struct NoImplicitCoercion {
     checks_concatenation: bool,
     /// `` `${foo}` ``
     checks_templates: bool,
-    /// The option `string`, without which oxlint does not look at templates.
+    /// The `string` option. Without it oxlint doesn't check templates.
     checks_strings: bool,
 }
 
@@ -29,7 +29,7 @@ const IMPLICIT_COERCION: Message = Message::new(
 const USE_RECOMMENDATION: Message =
     Message::new("useRecommendation", "Use `{{recommendation}}` instead.");
 
-/// What is offered besides the message.
+/// The kind of change offered along with the message.
 #[derive(Copy, Clone)]
 enum Remedy {
     Nothing,
@@ -37,7 +37,7 @@ enum Remedy {
     Fix,
 }
 
-/// A `Literal` whose value is `value`.
+/// True for a `Literal` whose value is `value`.
 fn is_number(e: Expr, value: f64) -> bool {
     e.as_number() == Some(value)
 }
@@ -47,13 +47,12 @@ fn is_binary_expression(e: Expr) -> bool {
     (e.binary_op()).is_some_and(|op| !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma))
 }
 
-/// The name of the function, if `e` is a `CallExpression` of an identifier. `f?.()` is a
-/// `ChainExpression`.
+/// Returns the function's name if `e` is a `CallExpression` of an identifier. `f?.()` is a `ChainExpression`.
 fn called_name(e: Expr<'_>) -> Option<Name<'_>> {
     e.as_call().filter(|call| call.chain() == Chain::No)?.callee().as_ident()
 }
 
-/// The operand, if `e` is the unary operator `op`.
+/// Returns the operand if `e` is the unary operator `op`.
 fn operand_of(e: Expr<'_>, op: UnOp) -> Option<Expr<'_>> {
     e.operand().filter(|_| e.unary_op() == Some(op))
 }
@@ -66,18 +65,19 @@ fn is_multiply_by_fraction_of_one<'a>(e: Expr<'a>, right: Expr<'a>) -> bool {
             if matches!(parent.kind(), ExprKind::Binary { op: BinOp::Div, left, .. } if left == e))
 }
 
-/// ESLint's `isNumeric`: a number, or a call of `Number`, `parseInt` or `parseFloat`.
+/// ESLint's `isNumeric`: a number, or a call to `Number`, `parseInt` or `parseFloat`.
 fn is_numeric(e: Expr) -> bool {
     e.tag() == ExprTag::Number
         || called_name(e).is_some_and(|it| it.is_any(&["Number", "parseInt", "parseFloat"]))
 }
 
-/// `*`, `/`, `%`, `-`, `**`: what makes a number for oxlint.
+/// `*`, `/`, `%`, `-`, `**`: the operators whose result oxlint knows is a number.
 fn is_arithmetic(op: BinOp) -> bool {
     matches!(op, BinOp::Mul | BinOp::Div | BinOp::Rem | BinOp::Sub | BinOp::Pow)
 }
 
-/// oxlint's `is_already_numeric`, which is in the place of `isNumeric` there: also a `bigint`, which `Number()` would change.
+/// oxlint's `is_already_numeric`, which it uses instead of `isNumeric`. It also accepts a `bigint`, which `Number()`
+/// would change.
 fn is_already_numeric(e: Expr) -> bool {
     match e.kind() {
         ExprKind::BigInt(_) => true,
@@ -87,14 +87,14 @@ fn is_already_numeric(e: Expr) -> bool {
     }
 }
 
-/// oxlint's `is_part_of_larger_binary_expression`: parentheses are a node of their own for it.
+/// oxlint's `is_part_of_larger_binary_expression`. Parentheses are a separate node for it.
 fn is_operand_of_arithmetic(e: Expr) -> bool {
     !e.is_parenthesized()
         && matches!(e.parent(), Node::Expr(parent)
             if parent.binary_op().is_some_and(is_arithmetic))
 }
 
-/// What oxlint takes for the operand of `1 * a` and `a * 1`.
+/// Returns what oxlint treats as the operand of `1 * a` and `a * 1`.
 fn operand_for_oxlint<'a>(e: Expr<'a>, left: Expr<'a>, right: Expr<'a>) -> Option<Expr<'a>> {
     if is_number(left, 1.0) && !is_already_numeric(right) {
         return Some(right);
@@ -124,7 +124,8 @@ fn is_empty_string(e: Expr) -> bool {
     }
 }
 
-/// `callee(operand)`. ESLint's `getOperandText`: the commas of a sequence would separate arguments. oxlint lets them.
+/// Returns `callee(operand)`. ESLint's `getOperandText` wraps a sequence, whose commas would otherwise separate
+/// arguments. oxlint doesn't.
 fn call_of(callee: &str, operand: Expr) -> Vec<u8> {
     let (open, close) = match operand.kind() {
         ExprKind::Binary { op: BinOp::Comma, .. } if !operand.file().language().is_oxlint => ("((", "))"),
@@ -133,21 +134,22 @@ fn call_of(callee: &str, operand: Expr) -> Vec<u8> {
     [callee.as_bytes(), open.as_bytes(), operand.text(), close.as_bytes()].concat()
 }
 
-/// Whether `Boolean` at `node` is the global variable.
+/// True if `Boolean` at `node` is the global variable.
 fn is_boolean_available(node: Expr) -> bool {
     (!node.file().mentions("Boolean") || Node::Expr(node).scope().resolve("Boolean").is_none())
         && node.file().global(b"Boolean").is_some()
 }
 
-/// The first token of `recommendation`, if it starts with a call of one of the three functions. All of it otherwise.
+/// Returns the first token of `recommendation` if it starts with a call to one of the three functions, otherwise all of
+/// it.
 fn first_token_of(recommendation: &[u8]) -> &[u8] {
     let is_called = |name: &&[u8]| recommendation.strip_prefix(*name).is_some_and(|rest| rest.starts_with(b"("));
     [&b"Boolean"[..], b"Number", b"String"].into_iter().find(is_called).unwrap_or(recommendation)
 }
 
 fn fix<'a>(fixer: Fixer<'a>, node: Expr<'a>, recommendation: &[u8]) -> Fix {
-    // A text is split into tokens to its end, which for each of `!!!!..a` is the rest of the chain.
-    // oxlint does not look at what is before.
+    // `can_tokens_be_adjacent` tokenizes a whole text, which for each link of `!!!!..a` is the rest of the chain, so it
+    // only gets the first token. oxlint doesn't look at the previous token.
     let needs_space = !fixer.file().language().is_oxlint
         && fixer.file().token_before(node).is_some_and(|before| {
             before.end() == node.span().start
@@ -159,7 +161,7 @@ fn fix<'a>(fixer: Fixer<'a>, node: Expr<'a>, recommendation: &[u8]) -> Fix {
     }
 }
 
-/// What `node` makes of its operand, which is what oxlint says.
+/// Returns the type that `node` converts its operand to, for oxlint's message.
 fn type_of_coercion(node: Expr) -> &'static str {
     match (node.unary_op(), node.binary_op()) {
         (Some(UnOp::Not | UnOp::BitNot), _) => "boolean",
@@ -182,19 +184,19 @@ fn report<'a>(node: Expr<'a>, recommendation: &[u8], remedy: Remedy, cx: &Cx<'a,
             _ => "Use `String(value)` instead",
         });
     }
-    // What ESLint suggests is a fix for oxlint.
+    // ESLint's suggestion is a fix in oxlint.
     let remedy = match remedy {
         Remedy::Suggestion if cx.language().is_oxlint => Remedy::Fix,
         _ => remedy,
     };
+    // The fix only copies the operand, so the comment in `!!(a /* b */)` would be dropped. ESLint and oxlint drop it.
+    let keeping_comments = |fixer: Fixer<'a>| Some(fix(fixer, node, recommendation)).filter(|it| fixer.keeps_comments(it));
     match remedy {
         Remedy::Nothing => report,
-        Remedy::Suggestion => report.suggest_with(
-            USE_RECOMMENDATION,
-            &[("recommendation", recommendation)],
-            |fixer| fix(fixer, node, recommendation),
-        ),
-        Remedy::Fix => report.fix(|fixer| fix(fixer, node, recommendation)),
+        Remedy::Suggestion => {
+            report.suggest_with(USE_RECOMMENDATION, &[("recommendation", recommendation)], keeping_comments)
+        }
+        Remedy::Fix => report.fix(keeping_comments),
     };
 }
 
@@ -256,7 +258,7 @@ impl NoImplicitCoercion {
                     report(e, &call_of("Number", operand), Remedy::Suggestion, cx);
                 }
             }
-            // `(0)` is no `0` for it.
+            // For oxlint `(0)` isn't a `0`.
             BinOp::Sub if is_oxlint && (right.is_parenthesized() || is_already_numeric(left)) => {}
             BinOp::Mul if self.checks_multiplication => {
                 if (is_number(left, 1.0) || is_number(right, 1.0))
@@ -290,7 +292,7 @@ impl NoImplicitCoercion {
             && is_empty_string(value)
         {
             let code = target.text();
-            // oxlint changes nothing here.
+            // oxlint has no fix here.
             let remedy = if cx.language().is_oxlint { Remedy::Nothing } else { Remedy::Suggestion };
             report(e, &[code, b" = String(", code, b")"].concat(), remedy, cx);
         }
@@ -379,7 +381,7 @@ impl Rule for NoImplicitCoercion {
         }
     }
 
-    /// One operand has to be a `1`, a `0` or an empty string.
+    /// Fast path: one operand has to be a `1`, a `0` or an empty string.
     #[inline]
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some((op, left, right)) = e.as_binary() else {

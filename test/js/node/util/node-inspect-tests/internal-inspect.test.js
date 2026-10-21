@@ -1,11 +1,14 @@
 import assert from "assert";
-import { Statement } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, nodeExe, tempDir, withoutAggressiveGC } from "harness";
 import { Console } from "node:console";
+import { join } from "node:path";
 import { Writable } from "node:stream";
-import vm from "node:vm";
+import { pathToFileURL } from "node:url";
 import util from "util";
+import constructorNameRows from "./constructor-name-fixture.cjs";
+
+const { constructorNames, builtinNames, differsFromNode, getterRuns, builtinName } = constructorNameRows;
 
 test("no assertion failures", () => {
   // Errors in accessors are not triggered
@@ -112,206 +115,71 @@ test("util.inspect reports the non-index keys of a typed array", () => {
   );
 });
 
-// Node.js takes the name of a value whose prototype chain has no usable constructor from V8's GetConstructorName.
-// That lookup reads data properties only: no getter and no Proxy trap runs. UtilInspect.cpp has a port of its walk
-// of the chain and of V8's word for a type. V8 first asks for the constructor that made the value, which
-// JavaScriptCore does not record. Only the kind of a function stands in for it.
-// Every expected string is the output of Node.js v26.3.0, but for the first strings of `differsFromNode`.
-const getterRuns = [];
-// An accessor that records each run. It throws, or returns `result` when one is given.
-const accessor = (key, result) => ({
-  get() {
-    getterRuns.push(key);
-    if (result === undefined) throw new Error(`the ${key} getter ran`);
-    return result;
-  },
-  configurable: true,
-});
-const data = value => ({ value, writable: true, configurable: true });
-const bare = () => ({ __proto__: null });
-const define = Object.defineProperty;
-const child = Object.create;
-const reproto = Object.setPrototypeOf;
-const tag = Symbol.toStringTag;
-const tagged = () => define(bare(), tag, data("Tag"));
-const parsed = json => Object.assign(bare(), JSON.parse(json));
-const pastDepth = value => util.inspect({ a: value }, { depth: 0 });
-const firstLine = text => text.slice(0, text.indexOf("\n"));
-const asPrototype = value => (reproto({}, value), value);
-// A function of another realm, so that no function of this realm becomes a prototype.
-const native = name => vm.runInNewContext(name);
-function Foo() {}
-class Baz {}
-class NameGetter {
-  static get name() {
-    getterRuns.push("name");
-    return "FromGetter";
-  }
-}
-const renamed = define(function Renamed() {}, "name", { value: "NewName" });
-const noName = new Function("return function () {}")();
-const namedByProperty = { expression: function () {} };
-
-// prettier-ignore
-const constructorNames = [
-  // A `constructor` accessor does not run.
-  ["own constructor getter that throws", () => util.inspect(define(bare(), "constructor", { ...accessor("constructor"), enumerable: true })), "[Object: null prototype] { constructor: [Getter] }"],
-  ["own constructor getter that returns a function", () => util.inspect(define(bare(), "constructor", { ...accessor("constructor", Foo), enumerable: true })), "[Object: null prototype] { constructor: [Getter] }"],
-  ["constructor getter that throws, on the prototype", () => util.inspect(child(define(bare(), "constructor", accessor("constructor")))), "Object <[Object: null prototype] {}> {}"],
-  ["constructor getter that returns a function, on the prototype", () => util.inspect(child(define(bare(), "constructor", accessor("constructor", Foo)))), "Object <[Object: null prototype] {}> {}"],
-  ["constructor getter that throws, two prototypes up", () => util.inspect(child(child(define(bare(), "constructor", accessor("constructor"))))), "Object <Object <[Object: null prototype] {}>> {}"],
-  ["own constructor getter that throws, past the depth", () => pastDepth(define(bare(), "constructor", { ...accessor("constructor"), enumerable: true })), "{ a: [Object: null prototype] }"],
-  ["constructor getter that throws, on the prototype, past the depth", () => pastDepth(child(define(bare(), "constructor", accessor("constructor")))), "{ a: Object <Complex prototype> {} }"],
-
-  // Parsed data under the key `constructor` is not a name.
-  ["parsed data whose constructor.name is an object", () => util.inspect(parsed('{"constructor":{"name":{"toString":1}}}')), "[Object: null prototype] { constructor: { name: { toString: 1 } } }"],
-  ["parsed data whose constructor.name is a string", () => util.inspect(parsed('{"constructor":{"name":"Evil\\nname"}}')), "[Object: null prototype] { constructor: { name: 'Evil\\nname' } }"],
-  ["child of parsed data whose constructor.name is a string", () => util.inspect(child(parsed('{"constructor":{"name":"Evil\\nname"}}'))), "Object <[Object: null prototype]> {}"],
-
-  // A `constructor` data property counts when it is a function with a name, and not on the value itself.
-  ["own constructor", () => util.inspect(define(bare(), "constructor", data(Foo))), "[Object: null prototype] {}"],
-  ["constructor on the prototype", () => util.inspect(child(define(bare(), "constructor", data(Foo)))), "Foo <[Object: null prototype] {}> {}"],
-  ["class on the prototype", () => util.inspect(child(define(bare(), "constructor", data(Baz)))), "Baz <[Object: null prototype] {}> {}"],
-  ["built-in constructor on the prototype", () => util.inspect(child(define(bare(), "constructor", data(Map)))), "Map <[Object: null prototype] {}> {}"],
-  ["constructor that is not a function", () => util.inspect(child(define(bare(), "constructor", data({ name: "Fake" })))), "Object <[Object: null prototype] {}> {}"],
-  ["constructor that is a bound function", () => util.inspect(child(define(bare(), "constructor", data(Foo.bind(null))))), "Object <[Object: null prototype] {}> {}"],
-  ["constructor that is a Proxy of a function", () => util.inspect(child(define(bare(), "constructor", data(new Proxy(Foo, {}))))), "Object <[Object: null prototype] {}> {}"],
-  ["constructor that is a function of a ShadowRealm", () => util.inspect(child(define(bare(), "constructor", data(new ShadowRealm().evaluate("(function Remote() {})"))))), "Object <[Object: null prototype] {}> {}"],
-  ["constructor with no name", () => util.inspect(child(define(bare(), "constructor", data(noName)))), "Object <[Object: null prototype] {}> {}"],
-  ["constructor that the Function constructor made", () => util.inspect(child(define(bare(), "constructor", data(new Function(""))))), "Object <[Object: null prototype] {}> {}"],
-  ["constructor named Object", () => util.inspect(child(define(bare(), "constructor", data(function Object() {})))), "Object <[Object: null prototype] {}> {}"],
-  ["constructor with no name, below a constructor with a name", () => util.inspect(child(define(child(define(bare(), "constructor", data(Foo))), "constructor", data(noName)))), "Foo <Foo <[Object: null prototype] {}>> {}"],
-  ["constructor named by the property it was written in", () => util.inspect(child(define(bare(), "constructor", data(namedByProperty.expression)))), "expression <[Object: null prototype] {}> {}"],
-  ["constructor whose name was redefined", () => util.inspect(child(define(bare(), "constructor", data(renamed)))), "Renamed <[Object: null prototype] {}> {}"],
-  // Node's JS reads the `name` property three times before the lookup. The lookup does not read it.
-  ["constructor whose name is a getter", () => util.inspect(child(define(bare(), "constructor", data(NameGetter)))), "NameGetter <[Object: null prototype] {}> {}", ["name", "name", "name"]],
-
-  // A Symbol.toStringTag data property that is a string counts, on the value too. A tag accessor runs only
-  // where formatRaw reads the tag: once for each value it prints.
-  ["own tag getter", () => util.inspect(define(bare(), tag, { ...accessor("tag", "FromGetter"), enumerable: true })), "[Object: null prototype] { Symbol(Symbol.toStringTag): [Getter] }", ["tag"]],
-  ["own tag getter that throws", () => util.inspect(define(bare(), tag, { ...accessor("tag"), enumerable: true })), "[Object: null prototype] { Symbol(Symbol.toStringTag): [Getter] }", ["tag"]],
-  ["own tag getter that is not enumerable", () => util.inspect(define(bare(), tag, accessor("tag", "FromGetter"))), "[Object: null prototype] [FromGetter] {}", ["tag"]],
-  ["tag getter on the prototype", () => util.inspect(child(define(bare(), tag, accessor("tag", "FromGetter")))), "Object <[Object: null prototype] [FromGetter] {}> [FromGetter] {}", ["tag", "tag"]],
-  ["tag getter that throws, on the prototype", () => util.inspect(child(define(bare(), tag, accessor("tag")))), "Object <[Object: null prototype] {}> {}", ["tag", "tag"]],
-  ["own tag", () => util.inspect(tagged()), "[Object: null prototype] [Tag] {}"],
-  ["own tag that is not a string", () => util.inspect(define(bare(), tag, data(42))), "[Object: null prototype] {}"],
-  ["tag on the prototype", () => util.inspect(child(tagged())), "Tag <[Object: null prototype] [Tag] {}> [Tag] {}"],
-  ["empty tag on the prototype", () => util.inspect(child(define(bare(), tag, data("")))), " <[Object: null prototype] {}> {}"],
-  ["tag and constructor on the prototype", () => util.inspect(child(define(tagged(), "constructor", data(Foo)))), "Tag <[Object: null prototype] [Tag] {}> [Tag] {}"],
-  ["own tag, constructor on the prototype", () => util.inspect(define(child(define(bare(), "constructor", data(Foo))), tag, data("Own"))), "Own <[Object: null prototype] {}> [Own] {}"],
-  ["constructor on the prototype, tag above it", () => util.inspect(child(define(child(define(bare(), tag, data("Top"))), "constructor", data(Foo)))), "Foo <Top <[Object: null prototype] [Top] {}>> [Top] {}"],
-  ["tag on the prototype, constructor above it", () => util.inspect(child(define(child(define(bare(), "constructor", data(Foo))), tag, data("Mid")))), "Mid <Mid <[Object: null prototype] {}>> [Mid] {}"],
-
-  // The chain names a built-in value first. The word for its type names it when the chain has no name.
-  ["instance of a subclass of Map, with a tag on the prototype", () => util.inspect(reproto(new (class M extends Map {})(), tagged())), "Tag <[Object: null prototype] [Tag] {}> [Tag] {}"],
-  ["Buffer with a tag on the prototype", () => util.inspect(reproto(Buffer.alloc(1), tagged())), "Tag <[Object: null prototype] [Tag] {}> [Tag] { '0': 0 }"],
-  ["Map that is a prototype, with a tag on the prototype", () => util.inspect(asPrototype(reproto(new Map(), tagged()))), "Tag <[Object: null prototype] [Tag] {}> [Tag] {}"],
-  ["Map that is the prototype property of a function, with a tag on the prototype", () => util.inspect(Object.assign(function F() {}, { prototype: reproto(new Map(), tagged()) }).prototype), "Tag <[Object: null prototype] [Tag] {}> [Tag] {}"],
-  ["generator object with a tag on the prototype", () => util.inspect(reproto((function* () {})(), tagged())), "Tag <[Object: null prototype] [Tag] {}> [Tag] {}"],
-  ["Buffer", () => util.inspect(reproto(Buffer.alloc(2), bare())), "Uint8Array <[Object: null prototype] {}> { '0': 0, '1': 0 }"],
-  ["instance of a subclass of RangeError", () => firstLine(util.inspect(reproto(new (class E extends RangeError {})("m"), bare()))), "Error <[Object: null prototype] {}>: m"],
-  ["instance of a subclass of Promise", () => util.inspect(reproto(new (class P extends Promise {})(() => {}), bare())), "Object <[Object: null prototype] {}> { <pending> }"],
-  ["Promise that is the prototype property of a function", () => util.inspect(Object.assign(function F() {}, { prototype: reproto(Promise.resolve(1), bare()) }).prototype), "Object <[Object: null prototype] {}> { 1 }"],
-  ["WeakMap with no prototype, past the depth", () => pastDepth(reproto(new WeakMap(), null)), "{ a: [WeakMap: null prototype] }"],
-  ["SharedArrayBuffer with no prototype, past the depth", () => pastDepth(reproto(new SharedArrayBuffer(1), null)), "{ a: [SharedArrayBuffer: null prototype] }"],
-
-  // The kind of a function names it, unless the function is a prototype. A class and a bound function get
-  // their name from the chain.
-  ["function", () => util.inspect(reproto(function f() {}, bare())), "[Function: f] Function <[Object: null prototype] {}>"],
-  ["async function", () => util.inspect(reproto(async function f() {}, bare())), "[AsyncFunction: f] AsyncFunction <[Object: null prototype] {}>"],
-  ["generator function", () => util.inspect(reproto(function* f() {}, bare())), "[GeneratorFunction: f] GeneratorFunction <[Object: null prototype] {}>"],
-  ["async generator function", () => util.inspect(reproto(async function* f() {}, bare())), "[AsyncGeneratorFunction: f] AsyncGeneratorFunction <[Object: null prototype] {}>"],
-  ["class", () => util.inspect(reproto(class K {}, bare())), "[class K [Function <[Object: null prototype] {}>]]"],
-  ["bound function", () => util.inspect(reproto(function f() {}.bind(null), bare())), "[Function: bound f] Function <[Object: null prototype] {}>"],
-  ["function with a tag on the prototype", () => util.inspect(reproto(function f() {}, tagged())), "[Function: f] Function <[Object: null prototype] [Tag] {}> [Tag]"],
-  ["class with a tag on the prototype", () => util.inspect(reproto(class K {}, tagged())), "[class K [Tag <[Object: null prototype] [Tag] {}>] [Tag]]"],
-  ["bound function with a tag on the prototype", () => util.inspect(reproto(function f() {}.bind(null), tagged())), "[Function: bound f] Tag <[Object: null prototype] [Tag] {}> [Tag]"],
-  ["native function with a tag on the prototype", () => util.inspect(reproto(native("parseInt"), tagged())), "[Function: parseInt] Function <[Object: null prototype] [Tag] {}> [Tag]"],
-  ["native function with a constructor on the prototype", () => util.inspect(reproto(native("parseInt"), define(bare(), "constructor", data(Foo)))), "[Function: parseInt] Function <[Object: null prototype] {}>"],
-  ["native constructor with a tag on the prototype", () => util.inspect(reproto(native("Map"), tagged())), "[Function: Map] Function <[Object: null prototype] [Tag] {}> [Tag]"],
-  ["native function that is a prototype, with a tag on the prototype", () => util.inspect(asPrototype(reproto(native("parseInt"), tagged()))), "[Function: parseInt] Tag <[Object: null prototype] [Tag] {}> [Tag]"],
-  ["object whose prototype is an async function", () => util.inspect(child(reproto(async function f() {}, bare()))), "Object <Function <[Object: null prototype] {}>> {}"],
-  ["async function that is a prototype", () => util.inspect(asPrototype(reproto(async function f() {}, bare()))), "[AsyncFunction: f] Function <[Object: null prototype] {}>"],
-  ["async function with no prototype, past the depth", () => pastDepth(Object.assign(reproto(async function f() {}, null), { x: 1 })), "{ a: [AsyncFunction: null prototype] }"],
-  ["generator function with no prototype, past the depth", () => pastDepth(Object.assign(reproto(function* f() {}, null), { x: 1 })), "{ a: [GeneratorFunction: null prototype] }"],
-
-  // The lookup stops at a Proxy.
-  ["object whose prototype is a Proxy of an object with a constructor", () => util.inspect(child(new Proxy(child(define(bare(), "constructor", data(Foo))), {}))), "Object <Object <[Object: null prototype] {}>> {}"],
-];
-
+// The rows and what they test are in the fixture.
 test.each(constructorNames)("util.inspect names a value from data properties: %s", (_, print, expected, runs = []) => {
   getterRuns.length = 0;
   expect({ printed: print(), getterRuns }).toEqual({ printed: expected, getterRuns: runs });
 });
 
-// The word for each built-in type, on a chain with no name. It is the word of V8's class_name(), which Node.js
-// prints for a value that is or was a prototype. A fourth string is the word that Node.js prints for a value
-// that never was a prototype: the name of the constructor that made it.
-const argumentsOf = fn => fn(1);
-// prettier-ignore
-const builtinNames = [
-  ["arguments", () => argumentsOf(function () { return arguments; }), "Arguments"],
-  ["arguments of a function that closes over a parameter", () => argumentsOf(function (a) { (() => a)(); return arguments; }), "Arguments"],
-  ["arguments of a strict function", () => argumentsOf(function () { "use strict"; return arguments; }), "Arguments"],
-  ["Array", () => [1], "Array"],
-  ["ArrayBuffer", () => new ArrayBuffer(1), "ArrayBuffer"],
-  ["SharedArrayBuffer", () => new SharedArrayBuffer(1), "SharedArrayBuffer"],
-  ["DataView", () => new DataView(new ArrayBuffer(1)), "Object", "DataView"],
-  ["Date", () => new Date(0), "Date"],
-  ["RegExp", () => /x/, "RegExp"],
-  ["Error", () => new Error("m"), "Error"],
-  ["TypeError", () => new TypeError("m"), "Error", "TypeError"],
-  ["AggregateError", () => new AggregateError([], "m"), "Error", "AggregateError"],
-  ["Map", () => new Map(), "Map"],
-  ["Set", () => new Set(), "Set"],
-  ["WeakMap", () => new WeakMap(), "WeakMap"],
-  ["WeakSet", () => new WeakSet(), "WeakSet"],
-  ["WeakRef", () => new WeakRef({}), "Object", "WeakRef"],
-  ["FinalizationRegistry", () => new FinalizationRegistry(() => {}), "Object", "FinalizationRegistry"],
-  ["Promise", () => Promise.resolve(1), "Object", "Promise"],
-  ["Boolean", () => new Boolean(true), "Boolean"],
-  ["Number", () => new Number(1), "Number"],
-  ["String", () => new String("s"), "String"],
-  ["Symbol", () => Object(Symbol("s")), "Symbol"],
-  ["BigInt", () => Object(1n), "BigInt"],
-  ["generator object", () => (function* () {})(), "Generator"],
-  ["async generator object", () => (async function* () {})(), "Generator"],
-  ["Array iterator", () => [][Symbol.iterator](), "Array Iterator"],
-  ["Map iterator", () => new Map().entries(), "Map Iterator", "MapIterator"],
-  ["Set iterator", () => new Set().values(), "Set Iterator", "SetIterator"],
-  ...[Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float16Array, Float32Array, Float64Array, BigInt64Array, BigUint64Array].map(
-    TypedArray => [TypedArray.name, () => new TypedArray(1), TypedArray.name],
-  ),
-];
-
 test.each(builtinNames)("util.inspect names a built-in value by its type: %s", (_, make, name) => {
-  const nameOf = value => /([\w ]+) <\[Object: null prototype\] \{\}>/.exec(util.inspect(value))?.[1];
-  expect({
-    value: nameOf(reproto(make(), bare())),
-    prototype: nameOf(asPrototype(reproto(make(), bare()))),
-  }).toEqual({ value: name, prototype: name });
+  expect(builtinName(make)).toEqual({ value: name, prototype: name });
 });
-
-// What the port cannot know: V8 keeps the constructor that made a value, and names the value by it first.
-// The last string of each row is the output of Node.js.
-// prettier-ignore
-const differsFromNode = [
-  ["an instance of a class, with no prototype", () => util.inspect(reproto(new (class Foo {})(), null)), "[Object: null prototype] {}", "[Foo: null prototype] {}"],
-  ["the object of a generator function that has a name", () => util.inspect(reproto((function* gen() {})(), bare())), "Generator <[Object: null prototype] {}> {}", "gen <[Object: null prototype] {}> {}"],
-  ["an instance of a class whose own constructor is the class, with no prototype", () => { class Foo {} return util.inspect(reproto(Object.assign(new Foo(), { constructor: Foo }), null)); }, "[Object: null prototype] { constructor: [class Foo] }", "[Foo: null prototype] { constructor: [class Foo] }"],
-  ["a Map with a tag on the prototype", () => util.inspect(reproto(new Map(), tagged())), "Tag <[Object: null prototype] [Tag] {}> [Tag] {}", "Map <[Object: null prototype] [Tag] {}> [Tag] {}"],
-  ["a Map with a constructor on the prototype", () => util.inspect(reproto(new Map(), define(bare(), "constructor", data(Foo)))), "Foo <[Object: null prototype] {}> {}", "Map <[Object: null prototype] {}> {}"],
-  ["a RangeError on a chain with no name", () => firstLine(util.inspect(reproto(new RangeError("m"), bare()))), "Error <[Object: null prototype] {}>: m", "RangeError <[Object: null prototype] {}>: m"],
-  ["a Promise with no prototype, past the depth", () => pastDepth(reproto(Promise.resolve(1), null)), "{ a: [Object: null prototype] }", "{ a: [Promise: null prototype] }"],
-];
 
 test.each(differsFromNode)("util.inspect does not name %s as Node.js does", (_, print, printed) => {
   expect(print()).toBe(printed);
 });
 
-test("util.inspect prints a value of Bun whose Symbol.toStringTag getter throws", () => {
-  // The getter reads a private field, which the prototype does not have.
-  expect(util.inspect(Statement.prototype)).toBe("{}");
+// The expected strings are those of the Node.js version that Bun reports. Another version can print other names.
+const node = nodeExe();
+async function nodeVersion() {
+  if (!node) return undefined;
+  await using proc = Bun.spawn({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
+  return (await proc.stdout.text()).trim();
+}
+
+test.skipIf((await nodeVersion()) !== process.versions.node)(
+  "Node.js prints the names that the rows expect",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [node, "--experimental-shadow-realm", join(import.meta.dir, "constructor-name-fixture.cjs")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ printed: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+      printed: {
+        constructorNames: constructorNames.map(([label, , printed, getterRuns = []]) => ({
+          label,
+          printed,
+          getterRuns,
+        })),
+        builtinNames: builtinNames.map(([label, , name, value = name]) => ({ label, value, prototype: name })),
+        differsFromNode: differsFromNode.map(([label, , , printed]) => ({ label, printed })),
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+test("util.inspect does not take the name of a module namespace from an export named constructor", async () => {
+  // Each key of a JSON file is an export. The namespace object of Bun has a prototype, so the lookup names it.
+  using dir = tempDir("inspect-namespace", { "data.json": '{"constructor":{"name":{"toString":1}}}' });
+  const namespace = await import(pathToFileURL(join(String(dir), "data.json")).href);
+  expect({ value: util.inspect(namespace), pastDepth: util.inspect({ a: namespace }, { depth: 0 }) }).toEqual({
+    value:
+      "Module <[Object: null prototype] {}> [Module] {\n" +
+      "  constructor: { name: { toString: 1 } },\n" +
+      "  default: { constructor: { name: [Object] } }\n" +
+      "}",
+    pastDepth: "{ a: [Module <Complex prototype> [Module]] }",
+  });
+});
+
+test("util.inspect does not read the prototype that import.meta hides", () => {
+  // import.meta reports no prototype. The object in its structure has the tag ImportMeta.
+  expect(util.inspect(Object.create(import.meta))).toStartWith("Object <[Object: null prototype]");
 });
 
 test("util.inspect calls no Proxy trap to name a value", () => {
@@ -328,7 +196,7 @@ test("util.inspect calls no Proxy trap to name a value", () => {
     },
   );
   // Both the Proxy and the child of the Proxy get a name from the lookup.
-  const printed = util.inspect(child(new Proxy(child(bare()), handler)));
+  const printed = util.inspect(Object.create(new Proxy(Object.create({ __proto__: null }), handler)));
   expect({
     printed,
     // formatRaw reads the tag of the printed value once, through the Proxy.
@@ -343,7 +211,7 @@ test("util.inspect calls no Proxy trap to name a value", () => {
 test("every way into util.inspect prints a value whose constructor getter throws", () => {
   let runs = 0;
   const make = () =>
-    child({
+    Object.create({
       __proto__: null,
       get constructor() {
         runs++;

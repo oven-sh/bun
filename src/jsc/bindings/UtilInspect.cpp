@@ -15,6 +15,7 @@
 #include "JavaScriptCore/FunctionExecutable.h"
 #include "JavaScriptCore/InternalFunction.h"
 #include "JavaScriptCore/JSArrayBuffer.h"
+#include "JavaScriptCore/JSArrayBufferView.h"
 #include "JavaScriptCore/JSBoundFunction.h"
 #include "JavaScriptCore/JSFunctionInlines.h"
 #include "JavaScriptCore/JSRemoteFunction.h"
@@ -134,8 +135,12 @@ static ASCIILiteral v8ClassName(JSObject* object)
     if (object->isCallable())
         return "Function"_s;
     auto type = object->type();
-    if (isTypedArrayType(type))
+    if (isTypedArrayType(type)) {
+        // V8 has a second set of elements kinds (RAB_GSAB_*) for a view of a resizable buffer and for a length-tracking view of a growable shared buffer. class_name() lists only the first set.
+        if (!uncheckedDowncast<JSArrayBufferView>(object)->canUseRawFieldsDirectly())
+            return {};
         return object->classInfo()->className;
+    }
     switch (type) {
     case DirectArgumentsType:
     case ScopedArgumentsType:
@@ -203,7 +208,7 @@ static ASCIILiteral functionKindName(JSFunction* function)
     return "Function"_s;
 }
 
-// The name a function was made with, which V8 calls its debug name. Null when V8 does not take the value for a constructor.
+// The name a function was made with, or null when V8 does not take the value for a constructor. V8's debug name can also be a name that V8 infers from the source (`ns.Widget = function () {}`), which JSC does not keep.
 static JSString* constructorDebugName(JSGlobalObject* globalObject, JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -233,6 +238,16 @@ static JSString* constructorDebugName(JSGlobalObject* globalObject, JSValue valu
     return name;
 }
 
+// An own data property, read from the structure of the object alone: no getter, no Proxy trap and no lookup hook of a class runs.
+static JSValue ownDataProperty(VM& vm, JSObject* object, PropertyName name)
+{
+    unsigned attributes;
+    JSValue value = object->getDirect(vm, name, attributes);
+    if (!value || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+        return {};
+    return value;
+}
+
 // V8's GetConstructorHelper: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/deps/v8/src/objects/js-objects.cc#L594-L686
 static JSString* getConstructorName(JSGlobalObject* globalObject, JSObject* receiver)
 {
@@ -248,30 +263,24 @@ static JSString* getConstructorName(JSGlobalObject* globalObject, JSObject* rece
             return jsNontrivialString(vm, kind);
     }
 
-    for (JSObject* object = receiver; object && object->type() != ProxyObjectType;) {
-        // JSObject::getOwnPropertySlot is the lookup of the base class. It reads the structure and the static table, so it cannot throw, and no override of a class runs (V8 skips interceptors here).
-        PropertySlot tagSlot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-        bool hasTag = JSObject::getOwnPropertySlot(object, globalObject, vm.propertyNames->toStringTagSymbol, tagSlot);
-        scope.assertNoException();
-        if (hasTag && tagSlot.isValue()) {
-            JSValue tag = tagSlot.getValue(globalObject, vm.propertyNames->toStringTagSymbol);
-            if (tag.isString())
-                return asString(tag);
-        }
+    for (JSObject* object = receiver; object;) {
+        JSValue tag = ownDataProperty(vm, object, vm.propertyNames->toStringTagSymbol);
+        if (tag && tag.isString())
+            return asString(tag);
 
         // The `constructor` of the receiver itself does not count: it names what the receiver is a prototype of.
         if (object != receiver) {
-            PropertySlot constructorSlot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-            bool hasConstructor = JSObject::getOwnPropertySlot(object, globalObject, vm.propertyNames->constructor, constructorSlot);
-            scope.assertNoException();
-            if (hasConstructor && constructorSlot.isValue()) {
-                JSString* name = constructorDebugName(globalObject, constructorSlot.getValue(globalObject, vm.propertyNames->constructor));
+            if (JSValue constructor = ownDataProperty(vm, object, vm.propertyNames->constructor)) {
+                JSString* name = constructorDebugName(globalObject, constructor);
                 RETURN_IF_EXCEPTION(scope, nullptr);
                 if (name)
                     return name;
             }
         }
 
+        // A Proxy, the global of a node:vm context and `import.meta` answer getPrototypeOf themselves. The prototype in their structure is not the one they report, so the walk ends.
+        if (object->structure()->typeInfo().overridesGetPrototype())
+            break;
         JSValue prototype = object->getPrototypeDirect();
         object = prototype.isObject() ? asObject(prototype) : nullptr;
     }

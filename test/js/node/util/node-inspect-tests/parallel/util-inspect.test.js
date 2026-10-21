@@ -1445,7 +1445,7 @@ test("no assertion failures 2", () => {
       }
     }
 
-    assert.strictEqual(util.inspect(new ThrowingClass()), "ThrowingClass {}");
+    assert.throws(() => util.inspect(new ThrowingClass()), /toStringTag error/);
 
     class NotStringClass {
       get [Symbol.toStringTag]() {

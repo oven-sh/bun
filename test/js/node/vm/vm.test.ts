@@ -2254,6 +2254,13 @@ describe("DONT_CONTEXTIFY", () => {
   });
 });
 
+test("a store reaches the sandbox when the global inherits from the global of another context", () => {
+  const sandbox = createContext({});
+  Object.setPrototypeOf(runInContext("globalThis", sandbox), runInNewContext("globalThis"));
+  runInContext("a = 1; s = Symbol.iterator; z = 2", sandbox);
+  expect(Object.keys(sandbox)).toEqual(["a", "s", "z"]);
+});
+
 test.concurrent("a sandbox that inherits from the global of its own context", async () => {
   const code = `
     const vm = require("node:vm");

@@ -1164,23 +1164,29 @@ bool NodeVMGlobalObject::putOwnOrInherited(JSGlobalObject* globalObject, Propert
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // As in JSObject::put(), the value leaves the global object for an object with its own put(), a setter or a read-only property.
     JSValue prototype = globalThis()->getPrototypeDirect();
-    if (prototype.isObject()) {
-        // Only a setter, a read-only property or a Proxy in the chain takes the value away from the global object.
-        bool isIntercepted;
-        {
-            PropertySlot inheritedSlot(prototype, PropertySlot::InternalMethodType::VMInquiry, &vm);
-            bool isInherited = asObject(prototype)->getPropertySlot(globalObject, propertyName, inheritedSlot);
-            RETURN_IF_EXCEPTION(scope, false);
-            isIntercepted = inheritedSlot.isTaintedByOpaqueObject() || (isInherited && (inheritedSlot.attributes() & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessor));
+    bool isIntercepted = false;
+    for (JSValue next = prototype; next.isObject(); next = asObject(next)->getPrototypeDirect()) {
+        JSObject* object = asObject(next);
+        if (object->structure()->typeInfo().overridesPut()) {
+            isIntercepted = true;
+            break;
         }
-        if (isIntercepted) {
-            PropertySlot ownSlot(this, PropertySlot::InternalMethodType::GetOwnProperty);
-            bool isOwn = Base::getOwnPropertySlot(this, globalObject, propertyName, ownSlot);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (!isOwn)
-                RELEASE_AND_RETURN(scope, asObject(prototype)->methodTable()->put(asObject(prototype), globalObject, propertyName, value, slot));
+        PropertySlot inheritedSlot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool isInherited = object->methodTable()->getOwnPropertySlot(object, globalObject, propertyName, inheritedSlot);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isInherited) {
+            isIntercepted = inheritedSlot.attributes() & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessor;
+            break;
         }
+    }
+    if (isIntercepted) {
+        PropertySlot ownSlot(this, PropertySlot::InternalMethodType::GetOwnProperty);
+        bool isOwn = Base::getOwnPropertySlot(this, globalObject, propertyName, ownSlot);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!isOwn)
+            RELEASE_AND_RETURN(scope, asObject(prototype)->methodTable()->put(asObject(prototype), globalObject, propertyName, value, slot));
     }
 
     RELEASE_AND_RETURN(scope, Base::put(this, globalObject, propertyName, value, slot));

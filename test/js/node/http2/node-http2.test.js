@@ -6530,6 +6530,41 @@ it.skipIf(!isLinux)("a stream closes without an error when its write finds the c
   expect(events).toEqual(["aborted", "close:8"]);
 });
 
+it.skipIf(!isLinux)("a TLS session closes without an error when its write finds the connection reset", async () => {
+  // :method GET, :scheme https and :path / from the static table, then a literal :authority.
+  const requestBlock = Buffer.concat([Buffer.from([0x82, 0x87, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
+  for (const endStream of [true, false]) {
+    const errors = [];
+    const server = http2.createSecureServer(TLS_CERT);
+    server.on("sessionError", err => errors.push(`sessionError:${err.code}`));
+    const streamClosed = Promise.withResolvers();
+    let socket;
+    server.on("stream", stream => {
+      stream.on("error", err => errors.push(`error:${err.code}`));
+      stream.on("close", streamClosed.resolve);
+      socket.resetAndDestroy();
+      stream.respond({ ":status": 200 });
+      stream.end("hello");
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    socket = net.connect(server.address().port, "127.0.0.1");
+    socket.on("error", () => {});
+    const peer = tls.connect({ socket, ALPNProtocols: ["h2"], ...TLS_OPTIONS, servername: "localhost" }, () => {
+      peer.write(
+        Buffer.concat([
+          http2utils.kClientMagic,
+          new http2utils.SettingsFrame().data,
+          new http2utils.HeadersFrame(1, requestBlock, 0, true, endStream).data,
+        ]),
+      );
+    });
+    peer.on("error", () => {});
+    await streamClosed.promise;
+    await new Promise(resolve => server.close(resolve));
+    expect(errors).toEqual([]);
+  }
+});
+
 it("pushStream() reports ERR_HTTP2_OUT_OF_STREAMS through its callback", async () => {
   const server = http2.createServer();
   const pushed = Promise.withResolvers();

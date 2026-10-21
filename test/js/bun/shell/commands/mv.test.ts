@@ -66,6 +66,38 @@ describe("mv", async () => {
     .stderr("mv: a: Not a directory\n")
     .runAsTest("move dir -> file fails");
 
+  test("-n does not overwrite an existing destination", async () => {
+    using dir = tempDir("mv-n", { a: "new a", b: "new b", c: "new c", dst: "old", d: { a: "old a" } });
+    const read = (name: string) => readFileSync(join(String(dir), name), "utf8");
+    const mv = async (args: string) => {
+      const { exitCode, stdout, stderr } = await $`mv ${{ raw: args }}`.cwd(String(dir)).quiet();
+      return { exitCode, output: stdout.toString() + stderr.toString() };
+    };
+    const silent = { exitCode: 0, output: "" };
+
+    expect(await mv("-n a dst")).toEqual(silent);
+    expect(await mv("-f -n a dst")).toEqual(silent);
+    expect({ a: read("a"), dst: read("dst") }).toEqual({ a: "new a", dst: "old" });
+
+    // `d/a` exists, `d/b` does not.
+    expect(await mv("-n a b d")).toEqual(silent);
+    expect({ a: read("a"), "d/a": read("d/a"), "d/b": read("d/b") }).toEqual({
+      a: "new a",
+      "d/a": "old a",
+      "d/b": "new b",
+    });
+    expect(existsSync(join(String(dir), "b"))).toBe(false);
+
+    expect((await mv("-n missing dst")).exitCode).not.toBe(0);
+
+    expect(await mv("-n c fresh")).toEqual(silent);
+    expect(read("fresh")).toBe("new c");
+
+    // The last of -n and -f wins.
+    expect(await mv("-n -f a dst")).toEqual(silent);
+    expect(read("dst")).toBe("new a");
+  });
+
   test("fails when a source name is longer than the path buffers", async () => {
     const segment = Buffer.alloc(240, "d").toString();
     const deep = join(segment, segment);

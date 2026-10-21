@@ -1169,6 +1169,28 @@ enum {
   US_IDENTITY_UNCHECKED = 2,
 };
 
+/* A blocked public key (blocked_spkis.cpp) is reported the way X509_verify_cert reports its own errors: to the SSL's
+ * verify callback, which says whether to go on. Without one, as in quic.c and node:quic, this returns 0 as it would. */
+static int us_x509_verify_chain(X509_STORE_CTX *ctx) {
+  int ok = X509_verify_cert(ctx);
+  int error = us_x509_store_ctx_blocked_key_error(ctx);
+  if (error == X509_V_OK) return ok;
+  X509_STORE_CTX_set_error(ctx, error);
+  SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
+  int (*verify_callback)(int, X509_STORE_CTX *) = ssl ? SSL_get_verify_callback(ssl) : NULL;
+  return verify_callback ? verify_callback(0, ctx) : 0;
+}
+
+static int us_x509_verify_chain_cb(X509_STORE_CTX *ctx, void *arg) {
+  (void)arg;
+  return us_x509_verify_chain(ctx);
+}
+
+/* For node:quic, which builds its own SSL_CTX. */
+void us_ssl_ctx_reject_blocked_keys(SSL_CTX *ctx) {
+  SSL_CTX_set_cert_verify_callback(ctx, us_x509_verify_chain_cb, NULL);
+}
+
 /* A self-issued leaf that may not sign certificates is its own anchor when the store holds that very certificate (#44365). */
 int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose) {
   X509 *leaf = X509_STORE_CTX_get0_cert(ctx);
@@ -1183,7 +1205,7 @@ int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose) {
     }
     sk_X509_pop_free(same_subject, X509_free);
   }
-  return X509_verify_cert(ctx);
+  return us_x509_verify_chain(ctx);
 }
 
 /* Verifies the chain, then asks the owner of a client for the name: a wrong name is a verify error like any other. */

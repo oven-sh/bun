@@ -509,6 +509,37 @@ it("process.env coerces the value to a string every time the same assignment run
   }
 });
 
+it.concurrent("process.env coerces the value to a string in every JIT tier", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        function setPort(n) { process.env.PORT = n; return process.env.PORT; }
+        let result = "all strings";
+        for (let i = 0; i < 20000; i++) {
+          const value = setPort(3000 + (i % 10));
+          if (typeof value !== "string") {
+            result = "call " + i + " read back a " + typeof value;
+            break;
+          }
+        }
+        console.log(result);
+      `,
+    ],
+    // Compiling on the main thread makes every run reach the last tier at the same call.
+    env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    stdout: "all strings\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it.concurrent("process.env stores the value when its toString() modifies process.env", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -539,7 +570,7 @@ it.concurrent("process.env stores the value when its toString() modifies process
 });
 
 it("process.env reads are never stale after a write (JIT inline-cache soundness)", async () => {
-  // process.env only sets OverridesPut (not ProhibitsPropertyCaching), so
+  // process.env does not set ProhibitsPropertyCaching, so
   // reads hit the ordinary self-access IC. This test verifies that writes
   // through the overridden put() still invalidate that IC: same-key Replace,
   // delete-then-set, and a hot read loop that FTL constant-folds before a
@@ -3617,4 +3648,18 @@ it("native functions that define a property on `this` throw a TypeError when the
     stderr: "",
     exitCode: 0,
   });
+});
+
+it("the EventEmitter methods that node:process exports act on process", async () => {
+  const ns = await import("node:process");
+  const { emit, listenerCount } = ns;
+  const received = [];
+  const listener = value => received.push(value);
+  expect(ns.on("namespace-event", listener)).toBe(process);
+  expect(process.listeners("namespace-event")).toEqual([listener]);
+  expect(listenerCount("namespace-event")).toBe(1);
+  expect(emit("namespace-event", "hello")).toBe(true);
+  expect(received).toEqual(["hello"]);
+  expect(ns.off("namespace-event", listener)).toBe(process);
+  expect(process.listenerCount("namespace-event")).toBe(0);
 });

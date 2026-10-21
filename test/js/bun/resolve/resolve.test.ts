@@ -2029,6 +2029,43 @@ it.skipIf(isWindows)("reports a resolution error for an absolute specifier of th
   expect(exitCode).toBe(0);
 });
 
+it.skipIf(isWindows)("does not find a file whose folder fits a path buffer and whose own path does not", async () => {
+  using dir = tempDir("resolver-deep-folder", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const fs = require("fs");
+      fs.mkdirSync("pages");
+      process.chdir("pages");
+      const root = process.cwd();
+      let folder = root;
+      for (let rest = ${isMacOS ? 1024 : 4096} - 4 - root.length; rest > 0; ) {
+        const name = Buffer.alloc((rest > 201 ? 100 : rest) - 1, "d").toString();
+        fs.mkdirSync(name);
+        process.chdir(name);
+        folder += "/" + name;
+        rest -= name.length + 1;
+      }
+      fs.writeFileSync("index.js", "");
+      for (const load of [
+        () => require(folder + "/index.js"),
+        () => require(folder),
+        () => new Bun.FileSystemRouter({ dir: root, style: "nextjs" }),
+      ]) {
+        try { load(); console.log("loaded"); } catch (e) { console.log(e.code ?? e.message.slice(0, 27)); }
+      }`,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("MODULE_NOT_FOUND\nMODULE_NOT_FOUND\nENAMETOOLONG opening route:\n");
+  expect(exitCode).toBe(0);
+});
+
 // https://github.com/oven-sh/bun/issues/36968
 describe.concurrent("dot specifiers resolve to the directory index, not a sibling file", () => {
   const conflictFixture = {

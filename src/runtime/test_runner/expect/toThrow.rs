@@ -42,7 +42,7 @@ impl Expect {
                 )));
             }
             if value.is_object() {
-                if ExpectAny::from_js(value).is_some() {
+                if ExpectAny::from_js_direct(value).is_some() {
                     if let Some(inner_constructor_value) =
                         js_ExpectAny::constructor_value_get_cached(value)
                     {

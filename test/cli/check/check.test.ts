@@ -22641,13 +22641,14 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(exitCode).toBe(1);
     });
 
+    // Instead of the library files, which a debug build takes seconds to load.
+    const globals = "Array<T> Boolean CallableFunction Function IArguments NewableFunction Number Object RegExp String"
+      .split(" ")
+      .map(name => `interface ${name} {}\n`)
+      .join("");
+
     // Declarations are emitted even after syntax errors. `app` parses the .d.ts files that `lib` emits.
     test("emits an export declaration whose module specifier is missing or parenthesized", async () => {
-      const globals =
-        "Array<T> Boolean CallableFunction Function IArguments NewableFunction Number Object RegExp String"
-          .split(" ")
-          .map(name => `interface ${name} {}\n`)
-          .join("");
       const config = (rest: object = {}) =>
         JSON.stringify({
           compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, noEmit: false, noLib: true, composite: true },
@@ -22673,6 +22674,190 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
         lib/star.d.ts(1,15): error TS1109: Expression expected."
       `);
       expect(exitCode).toBe(1);
+    });
+
+    // A string ends where TypeScript's scanner ends it: after the closing quote, before the line break if it isn't
+    // closed, and before the `*/` of a JSDoc comment. A backslash before a line break, CR LF included, continues it.
+    // Each snapshot is what tsc 7.0.2 and tsc 7.1 Beta print, and the `::error` lines have the columns they underline.
+    describe("a module specifier or a string name ends where the scanner ends it", () => {
+      const options = {
+        ...JSON.parse(tsconfig).compilerOptions,
+        lib: undefined,
+        noEmit: undefined,
+        noLib: true,
+        allowJs: true,
+        checkJs: true,
+      };
+      const config = (more: object, rest: object = {}) =>
+        JSON.stringify({ compilerOptions: { ...options, ...more }, ...rest });
+      const emits = { composite: true, emitDeclarationOnly: true };
+      // `app` parses the declaration file that `lib` emits for each of `sources`.
+      const referenced = (sources: Record<string, string>) => ({
+        "tsconfig.json": `{ "files": [], "references": [{ "path": "./lib" }, { "path": "./app" }] }`,
+        "lib/tsconfig.json": config({ ...emits, module: "es2020" }),
+        "lib/globals.d.ts": globals,
+        "lib/m.ts": `export const a = 1;\nexport type A = number;\n`,
+        ...Object.fromEntries(Object.entries(sources).map(([name, text]) => [`lib/${name}`, text])),
+        "app/tsconfig.json": config(emits, { references: [{ path: "../lib" }] }),
+        "app/globals.d.ts": globals,
+        "app/main.ts":
+          Object.keys(sources)
+            .map(name => `import "../lib/${name.slice(0, -3)}";\n`)
+            .join("") + `export const planted: number = "x";\n`,
+      });
+      // The declaration file needs the import for the type of `v`.
+      const use = `/** @type {A} */\nexport const v = 1;\n`;
+
+      // Valid programs. No declaration file has an error, so `app` is checked.
+      test("after a backslash and CR LF", async () => {
+        using dir = tempDir(
+          "bun-check",
+          referenced({
+            "star.ts": `export * from "./m\\\r\n";\r\n`,
+            "side.ts": `import "./m\\\r\n";\r\nexport {};\r\n`,
+            "named.ts": `const a = 1;\r\nexport { a as "b\\\r\nc" };\r\n`,
+            "again.ts": `export const a = 2;\n`,
+            "twice.ts": `export * from "./m\\\r\n";\r\nexport * from "./again";\r\n`,
+          }),
+        );
+        const { stdout, exitCode } = await check(dir, ["-b"]);
+        // TS2308 has the specifier as the source has it. `check` makes a slash of its backslash.
+        expect(stdout.replaceAll("\r\n", "\n")).toMatchInlineSnapshot(`
+          "lib/named.ts(2,15): error TS18057: String literal import and export names are not supported when the '--module' flag is set to 'es2015' or 'es2020'.
+          lib/twice.ts(3,1): error TS2308: Module "./m/
+          " has already exported a member named 'a'. Consider explicitly re-exporting to resolve the ambiguity.
+          app/main.ts(6,14): error TS2322: Type 'string' is not assignable to type 'number'."
+        `);
+        expect(exitCode).toBe(1);
+      });
+
+      // `export * from "./m;`: the `;` that the declaration gets is on the line of the literal. In `decorator.ts` the
+      // specifier of the declaration is closed, and the one in its decorator isn't.
+      test("before the line break, in an emitted declaration", async () => {
+        using dir = tempDir(
+          "bun-check",
+          referenced({
+            "star.ts": `export * from "./m\n`,
+            "side.ts": `import "./m\r\nexport {};\r\n`,
+            "required.ts": `export import x = require("./m\n`,
+            "decorator.ts": `@(function () { import x = require("./m\n) }) export * from "./m";\n`,
+            "cut.js": `/** @import { A } from "./m */\n${use}`,
+          }),
+        );
+        const { stdout, exitCode } = await check(dir, ["-b"]);
+        expect(stdout).toMatchInlineSnapshot(`
+          "lib/decorator.ts(1,40): error TS1002: Unterminated string literal.
+          lib/required.ts(1,31): error TS1002: Unterminated string literal.
+          lib/required.ts(2,1): error TS1005: ')' expected.
+          lib/side.ts(1,12): error TS1002: Unterminated string literal.
+          lib/star.ts(1,19): error TS1002: Unterminated string literal.
+          lib/cut.d.ts(1,30): error TS1002: Unterminated string literal.
+          lib/required.d.ts(1,33): error TS1002: Unterminated string literal.
+          lib/required.d.ts(2,1): error TS1005: ')' expected.
+          lib/side.d.ts(1,13): error TS1002: Unterminated string literal.
+          lib/star.d.ts(1,20): error TS1002: Unterminated string literal."
+        `);
+        expect(exitCode).toBe(1);
+      });
+
+      // tsc underlines `"./missing `, 11 columns. `--explainFiles` shows a specifier as the source has it: `"./inside`,
+      // and a template up to its closing backtick.
+      test("before the `*/` of a JSDoc comment, and at the backtick of a template", async () => {
+        using dir = tempDir("bun-check", {
+          "tsconfig.json": config({ noEmit: true, paths: { "*": ["./inside.ts"] } }),
+          "globals.d.ts": globals,
+          "inside.ts": `export type A = number;\n`,
+          "found.js": `/** @import { A } from "./inside*/\n${use}`,
+          "missing.js": `/** @import { A } from "./missing */\n${use}`,
+          "template.js": "require(`a\nb`);\n",
+        });
+        const { stdout, exitCode } = await check(dir, ["--explainFiles"], { GITHUB_ACTIONS: "true" });
+        expect(stdout).toMatchInlineSnapshot(`
+          "found.js(1,33): error TS1002: Unterminated string literal.
+          missing.js(1,24): error TS2307: Cannot find module './missing ' or its corresponding type declarations.
+          missing.js(1,35): error TS1002: Unterminated string literal.
+          ::error file=found.js,line=1,col=33,endLine=1,endColumn=33,title=TS1002::Unterminated string literal.
+          ::error file=missing.js,line=1,col=24,endLine=1,endColumn=35,title=TS2307::Cannot find module './missing ' or its corresponding type declarations.
+          ::error file=missing.js,line=1,col=35,endLine=1,endColumn=35,title=TS1002::Unterminated string literal.
+          inside.ts
+             Imported via "./inside from file 'found.js'
+             Matched by default include pattern '**/*'
+             Imported via \`a
+          b\` from file 'template.js'
+          found.js
+             Matched by default include pattern '**/*'
+          globals.d.ts
+             Matched by default include pattern '**/*'
+          missing.js
+             Matched by default include pattern '**/*'
+          template.js
+             Matched by default include pattern '**/*'"
+        `);
+        expect(exitCode).toBe(1);
+      });
+
+      // tsc prints `'"a '` and `'"m '`, and underlines 3 columns.
+      test("before the `*/` of a JSDoc comment, for the name of a property", async () => {
+        using dir = tempDir("bun-check", {
+          "tsconfig.json": config({ noEmit: true }),
+          "globals.d.ts": globals,
+          "property.js": `/** @type {{ "a ": number, "a */\nexport const v = { "a ": 1 };\n`,
+          "method.js": `/** @type {{ m(): void, "m */\nexport const w = { m() {} };\n`,
+        });
+        const { stdout, exitCode } = await check(dir, [], { GITHUB_ACTIONS: "true" });
+        expect(stdout).toMatchInlineSnapshot(`
+          "method.js(1,25): error TS7008: Member '"m ' implicitly has an 'any' type.
+          method.js(1,28): error TS1002: Unterminated string literal.
+          method.js(2,14): error TS2741: Property '"m ' is missing in type '{ m(): void; }' but required in type '{ m(): void; "m ": any; }'.
+          property.js(1,14): error TS2300: Duplicate identifier '"a "'.
+          property.js(1,28): error TS2300: Duplicate identifier '"a "'.
+          property.js(1,28): error TS2717: Subsequent property declarations must have the same type.  Property '"a ' must be of type 'number', but here has type 'any'.
+          property.js(1,31): error TS1002: Unterminated string literal.
+          ::error file=method.js,line=1,col=25,endLine=1,endColumn=28,title=TS7008::Member '"m ' implicitly has an 'any' type.
+          ::error file=method.js,line=1,col=28,endLine=1,endColumn=28,title=TS1002::Unterminated string literal.
+          ::error file=method.js,line=2,col=14,endLine=2,endColumn=15,title=TS2741::Property '"m ' is missing in type '{ m(): void; }' but required in type '{ m(): void; "m ": any; }'.
+          ::error file=property.js,line=1,col=14,endLine=1,endColumn=18,title=TS2300::Duplicate identifier '"a "'.
+          ::error file=property.js,line=1,col=28,endLine=1,endColumn=31,title=TS2300::Duplicate identifier '"a "'.
+          ::error file=property.js,line=1,col=28,endLine=1,endColumn=31,title=TS2717::Subsequent property declarations must have the same type.  Property '"a ' must be of type 'number', but here has type 'any'.
+          ::error file=property.js,line=1,col=31,endLine=1,endColumn=31,title=TS1002::Unterminated string literal."
+        `);
+        expect(exitCode).toBe(1);
+      });
+
+      // The second call is no part of the first, whose specifier ends with its line.
+      test("before the line break, for `--traceResolution` of an `import()`", async () => {
+        using dir = tempDir("bun-check", {
+          "tsconfig.json": config({ noEmit: true }),
+          "globals.d.ts": globals,
+          "index.ts": `import("./m\nimport("./n");\n`,
+          "m.ts": `export const m = 1;\n`,
+          "n.ts": `export const n = 1;\n`,
+        });
+        const { stdout, exitCode } = await check(dir, ["--traceResolution"]);
+        const resolved = [...stdout.matchAll(/^======== Resolving module '(.*?)'/gm)].map(it => it[1]);
+        expect(resolved).toEqual(["./m", "./n"]);
+        expect(exitCode).toBe(1);
+      });
+
+      // The two errors are at the same specifier, so tsc orders them by their code.
+      test("after a backslash and CR LF, for the range of TS6054", async () => {
+        using dir = tempDir("bun-check", {
+          "tsconfig.json": config({ noEmit: true }),
+          "globals.d.ts": globals,
+          "index.ts": `import { a } from "pkg\\\r\n";\r\nexport const b = a;\r\n`,
+          "node_modules/pkg/package.json": `{ "name": "pkg", "version": "1.0.0", "types": "index.d.ts" }`,
+          "store/real.txt": `export const a: number;\n`,
+        });
+        symlinkSync(join(String(dir), "store/real.txt"), join(String(dir), "node_modules/pkg/index.d.ts"), "file");
+        const { stdout, exitCode } = await check(dir, [], { GITHUB_ACTIONS: "true" });
+        expect(stdout).toMatchInlineSnapshot(`
+          "index.ts(1,19): error TS2307: Cannot find module 'pkg' or its corresponding type declarations.
+          index.ts(1,19): error TS6054: File '<dir>/store/real.txt' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.
+          ::error file=index.ts,line=1,col=19,endLine=2,endColumn=2,title=TS2307::Cannot find module 'pkg' or its corresponding type declarations.
+          ::error file=index.ts,line=1,col=19,endLine=2,endColumn=2,title=TS6054::File '<dir>/store/real.txt' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'."
+        `);
+        expect(exitCode).toBe(1);
+      });
     });
   });
 

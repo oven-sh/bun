@@ -2660,11 +2660,7 @@ fn dynamic_imports<'a>(hir: &'a hir::File) -> Vec<&'a SpecifierUse> {
         };
         let mut end = open + 1;
         if uses[u].kind.is_call() {
-            end = specifier + 1;
-            while end < text.len() && text[end] != text[specifier] {
-                end += if text[end] == b'\\' { 2 } else { 1 };
-            }
-            end = skip_trivia(text, end + 1);
+            end = skip_trivia(text, Spans::of(hir).string(uses[u].pos) as usize);
         }
         ranges.push((skip_trivia_back(text, at), end, uses[u]));
     }
@@ -3250,24 +3246,6 @@ fn find_import_or_require(text: &[u8]) -> Vec<(usize, usize)> {
     words
 }
 
-/// The end of the string literal that starts at `start`.
-fn end_of_string_literal(text: &[u8], start: u32) -> u32 {
-    let Some(&quote) = text.get(start as usize) else {
-        return start;
-    };
-    let mut at = start as usize + 1;
-    while let Some(&c) = text.get(at) {
-        at += 1;
-        match c {
-            b'\\' => at += 1,
-            b'\n' => return at as u32 - 1,
-            _ if c == quote => break,
-            _ => {}
-        }
-    }
-    at.min(text.len()) as u32
-}
-
 /// `getModeForUsageLocation`. `default_mode`: that of the file that contains the use.
 pub(crate) fn mode_for_usage_location(
     options: &Options,
@@ -3564,7 +3542,7 @@ impl Included<'_, '_> {
         let calls = (uses.iter().any(|u| u.kind.is_call())).then(|| ExprsByKind::new(hir));
         for u in &uses {
             let mode = mode_for_usage_location(options, module.default_mode, u);
-            let end = end_of_string_literal(text, u.pos);
+            let end = Spans::of(hir).string(u.pos);
             let times = calls.as_ref().filter(|_| u.kind.is_call());
             let times = times.map_or(1, |calls| times_among_imports(hir, calls, text, u));
             specifiers.extend(std::iter::repeat_n((u.spec, mode, 1393, u.pos, end), times));
@@ -6582,7 +6560,7 @@ impl<'s> Files<'s> {
                 let uses = hir.specifier_uses.iter();
                 let uses = uses.filter(|u| u.spec == spec && mode_of(u) == mode);
                 let first = uses.min_by_key(|u| u.pos);
-                let span = first.map(|u| (u.pos, end_of_string_literal(&hir.text, u.pos)));
+                let span = first.map(|u| (u.pos, Spans::of(hir).string(u.pos)));
                 UnsupportedExtension { code, span }
             });
             imports.push(Resolution {

@@ -517,8 +517,9 @@ impl Checker<'_, '_> {
         if container.module.is_some() {
             if !container.is_ambient_module {
                 if let Some(specifier_use) = specifier_use {
+                    let end = self.end_of_string_at(cx.file, specifier_use.pos);
                     self.error_at(
-                        (cx.file, specifier_use.pos, 0),
+                        (cx.file, specifier_use.pos, end),
                         if is_export { 1194 } else { 1147 },
                         &[],
                     );
@@ -983,8 +984,9 @@ impl Checker<'_, '_> {
                         })
                     })
             {
+                let end = self.end_of_string_at(cx.file, specifier_use.pos);
                 self.error_at(
-                    (cx.file, specifier_use.pos, 0),
+                    (cx.file, specifier_use.pos, end),
                     1543,
                     &[Arg::Bytes(files.options.module.name())],
                 );
@@ -1284,9 +1286,10 @@ impl Checker<'_, '_> {
                 ModuleKind::Es2015 | ModuleKind::Es2020
             )
             && self.hir(cx.file).kind != FileKind::Declaration
-            && let Some(end) = string_end(cx.text, pos as usize)
+            && matches!(cx.text.get(pos as usize), Some(b'"' | b'\''))
         {
-            self.error_at((cx.file, pos, end as u32), 18057, &[]);
+            let end = self.end_of_string_at(cx.file, pos);
+            self.error_at((cx.file, pos, end), 18057, &[]);
         }
     }
 
@@ -1442,7 +1445,8 @@ impl Checker<'_, '_> {
                 // `hasExportAssignmentSymbol`
                 if files.export(module, known::export_equals).is_some() {
                     if let Some(specifier_use) = cx.specifier(pos, spec) {
-                        self.error_at((cx.file, specifier_use.pos, 0), 2498, &[Arg::Sym(module)]);
+                        let end = self.end_of_string_at(cx.file, specifier_use.pos);
+                        self.error_at((cx.file, specifier_use.pos, end), 2498, &[Arg::Sym(module)]);
                     }
                 } else {
                     let is_ambient = self.modules_is_ambient(cx, s, container);
@@ -1853,23 +1857,6 @@ fn first_token_start(text: &[u8]) -> u32 {
     skip_trivia(text, at) as u32
 }
 
-/// The position after the string literal that opens at `at`.
-fn string_end(text: &[u8], at: usize) -> Option<usize> {
-    let quote = *text.get(at)?;
-    if quote != b'"' && quote != b'\'' {
-        return None;
-    }
-    let mut i = at + 1;
-    loop {
-        match *text.get(i)? {
-            b'\\' => i += 2,
-            b'\n' | b'\r' => return None,
-            c if c == quote => return Some(i + 1),
-            _ => i += 1,
-        }
-    }
-}
-
 /// The start of the string literal that ends at `end`.
 fn string_start(text: &[u8], end: usize) -> Option<usize> {
     let mut open = end.checked_sub(1)?;
@@ -1885,7 +1872,7 @@ fn string_start(text: &[u8], end: usize) -> Option<usize> {
             % 2
             == 0
         {
-            return (string_end(text, open) == Some(end)).then_some(open);
+            return (token_end(text, open, false) == end).then_some(open);
         }
     }
 }

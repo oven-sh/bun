@@ -83,8 +83,8 @@ async function runInstall(ctx: TestContext, ...args: string[]) {
   return out;
 }
 
-// An update that moved something saves the lockfile and one that found nothing to move says nothing; callers pin
-// which of the two happened where it is the point of the case.
+// An update that moved something saves the lockfile, and one that found nothing to move prints nothing. Callers check
+// which of the two happened where it matters.
 async function runUpdate(ctx: TestContext, args: string[], cwd = "") {
   const result = await run(ctx, ["update", ...args], cwd);
   expect(result.err).toMatch(/^(?:Saved lockfile\n)?$/);
@@ -356,7 +356,7 @@ it.concurrent("lockfile should not be modified when there are no version changes
 
   urls.length = 0;
   for (let i = 0; i < 2; i++) {
-    // Nothing moved, so the update must not even re-save the lockfile.
+    // Nothing moved, so the update must not even save the lockfile again.
     expect((await runUpdate(ctx, [])).err).toBe("");
     expect(await readFile(join(ctx.package_dir, "bun.lockb"))).toStrictEqual(lockb);
   }
@@ -474,7 +474,7 @@ it.concurrent("--omit dev keeps the nested copies of the dev dependencies it ski
   expect(await installedBazVersions()).toEqual({ root: "0.0.5", moo: "0.0.3", pkgA: "0.0.3" });
 });
 
-it.concurrent("--filter excluding a workspace leaves that workspace's node_modules alone", async () => {
+it.concurrent("--filter excluding a workspace doesn't touch that workspace's node_modules", async () => {
   using ctx = await testContext();
   const written = await nestedBazRepo(ctx, "0.0.3", "0.0.5", { root: "~0.0.3" });
   expect((await runUpdate(ctx, ["--filter", "root"])).err).toBe("Saved lockfile\n");
@@ -532,7 +532,7 @@ async function fanOutRepo(ctx: TestContext, versions: Versions = BAZ_0_0_3_AND_0
   return { texts, lock: await lockText(ctx) };
 }
 
-// What an update that reaches pkg-a alone leaves behind: its file changes, and only in its version.
+// What an update that only reaches pkg-a leaves behind: its file changes, and only in its version.
 const PKG_A_MOVED = { ...FAN_OUT, "packages/pkg-a": { name: "pkg-a", dependencies: { baz: "~0.0.5" } } };
 const pkgAMovedTexts = (texts: Record<string, string>) => ({
   ...texts,
@@ -1152,7 +1152,7 @@ const installedShared = (ctx: TestContext, parent = ""): Promise<Json> =>
 
 // A named update only re-resolves the rows of the workspace it runs in; another workspace's own entry is left alone.
 it.concurrent(
-  "bun update <name> from the root leaves a member's own entry alone; running it inside the member moves it",
+  "bun update <name> from the root doesn't change a workspace's own entry; running it inside the workspace does",
   async () => {
     using ctx = await testContext();
     await perNameRegistry(ctx, { shared: { versions: { "1.0.0": {}, "1.1.0": {}, "2.0.0": {} }, latest: "2.0.0" } });
@@ -2654,7 +2654,7 @@ describe("bun update <name> semantics", () => {
       },
     );
 
-    it.concurrent("bun update -g does not replace what bun did not put into the global bin dir", async () => {
+    it.concurrent("bun update -g doesn't replace files in the global bin dir that bun didn't create", async () => {
       const { globalBinDir, runGlobal } = await globalRepo(BINS_PINNED, BINS_WIDENED);
       const foreign = join(globalBinDir, isWindows ? "map-bin.exe" : "map-bin");
       await writeFile(foreign, "not a bin of map-bin");
@@ -2689,7 +2689,7 @@ describe("bun update <name> semantics", () => {
     });
 
     // map-bin and map-bin-multiple declare the same two bins. The package the user named last owns them.
-    it.concurrent("bun update -g leaves the bins of a package it did not update alone", async () => {
+    it.concurrent("bun update -g doesn't touch the bins of a package that it didn't update", async () => {
       const { globalBinDir, runGlobal } = await globalRepo(
         { "bin-change-dir": "1.0.0", "map-bin": "1.0.2" },
         { "bin-change-dir": "^1.0.0", "map-bin": "1.0.2" },

@@ -6,6 +6,7 @@ use core::ptr::NonNull;
 
 use bun_ptr::{RefCount, RefPtr};
 
+use bun_jsc::bindgen::JsPayload as _;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult,
     VirtualMachine,
@@ -387,7 +388,7 @@ impl Subprocess<'_> {
 
             return Ok(JSValue::UNDEFINED);
         };
-        ResourceUsage::create(&rusage, global_object)
+        Ok(ResourceUsage { rusage }.into_js_value(global_object))
     }
 
     pub(crate) fn has_exited(&self) -> bool {

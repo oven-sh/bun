@@ -17,11 +17,11 @@ pub struct NoUnusedState;
 
 const UNUSED_STATE_FIELD: Message = Message::new("unusedStateField", "Unused state field: '{{name}}'");
 
-/// `quasis[0].value.raw`, of what is written between the backticks: espree has a `\n` for each line break in it.
-fn raw_of<'a>(file: &File<'a>, written: &'a [u8]) -> Cow<'a, [u8]> {
+/// `quasis[0].value.raw` for the text between the backticks. espree normalizes each line break in it to `\n`.
+fn raw_of<'a>(file: &File<'a>, raw_text: &'a [u8]) -> Cow<'a, [u8]> {
     match file.uses_typescript_parser() {
-        true => Cow::Borrowed(written),
-        false => strings::crlf_as_lf(written),
+        true => Cow::Borrowed(raw_text),
+        false => strings::crlf_as_lf(raw_text),
     }
 }
 
@@ -39,9 +39,9 @@ fn get_name_of_key<'a>(file: &'a File<'a>, key: Key<'a>) -> Option<Cow<'a, [u8]>
         KeyKind::Ident(name) | KeyKind::String(name) | KeyKind::Number(name) | KeyKind::ComputedNumber(name) => {
             Some(Cow::Borrowed(name.bytes()))
         }
-        // Of a template it is the text as it is written.
+        // For a template literal, use the raw source text.
         KeyKind::ComputedString(name) => Some(match file.slice(key.inner_span(file)) {
-            [b'`', written @ .., b'`'] => raw_of(file, written),
+            [b'`', raw_text @ .., b'`'] => raw_of(file, raw_text),
             _ => Cow::Borrowed(name.bytes()),
         }),
         KeyKind::Private(_) => None,
@@ -62,7 +62,8 @@ fn is_this_expression(node: Expr<'_>) -> bool {
     unwrap_ts_as_expression(node).tag() == ExprTag::This
 }
 
-/// Whether `node`, reached from above, is a `MemberExpression` of `this` whose property has the `getName` `name`.
+/// True if `node`, as its parent sees it, is a `MemberExpression` on `this` whose property's `getName` is `name`. A
+/// chain root doesn't count, because its parent sees a `ChainExpression`.
 fn is_member_of_this(node: Expr<'_>, name: &[u8]) -> bool {
     ast_utils::is_member_expression(node)
         && !node.is_chain_root()
@@ -70,13 +71,13 @@ fn is_member_of_this(node: Expr<'_>, name: &[u8]) -> bool {
         && get_name_of_property(node).is_some_and(|it| *it == *name)
 }
 
-/// `isDirectStateReference`: also `this[state]` and `this.#state`, not `this["state"]`.
+/// `isDirectStateReference`. Also matches `this[state]` and `this.#state`, but not `this["state"]`.
 fn is_direct_state_reference(node: Expr<'_>) -> bool {
     get_property_name(Node::Expr(node)).is_some_and(|it| it == b"state")
         && node.object().is_some_and(is_this_expression)
 }
 
-/// Whether ESTree has a node that is none here, and no `ChainExpression`, between `e` and `parent`, its parent here.
+/// True if ESTree has a node between `e` and `parent` that this AST doesn't have, other than a `ChainExpression`.
 fn is_wrapped<'a>(e: Expr<'a>, parent: Node<'a>) -> bool {
     let is_in_braces = e.jsx_container_span().is_some() && e.tag() != ExprTag::Spread;
     is_in_braces
@@ -94,7 +95,7 @@ fn name_of_param(param: Param<'_>) -> Option<Name<'_>> {
     param.pat().as_ident().filter(|_| estree_type_name(Node::Param(param)) == "Identifier")
 }
 
-/// The `name` of the second parameter, if `function` has one and is a method that `isStateParameterReference` knows.
+/// The second parameter's `name`, if `function` has one and is a method that `isStateParameterReference` recognizes.
 fn state_parameter(function: Func<'_>) -> Option<Option<Name<'_>>> {
     let Node::Member(parent) = function.owner() else {
         return None;
@@ -116,38 +117,39 @@ fn state_parameter(function: Func<'_>) -> Option<Option<Name<'_>>> {
 
 #[derive(Default)]
 struct ClassInfo<'a> {
-    /// Each with the `getName` of its key.
+    /// Each property with its key's `getName`.
     state_fields: Vec<(Prop<'a>, Cow<'a, [u8]>)>,
     used_state_fields: FxHashSet<Cow<'a, [u8]>>,
     aliases: Option<FxHashSet<Name<'a>>>,
 }
 
-/// Upstream's listeners. It has one `classInfo` and no stack: what is in a component can replace it or end it.
+/// Upstream's listeners. Upstream has one `classInfo` and no stack, so anything nested in a component can replace or
+/// end it.
 struct Walk<'a> {
     file: &'a File<'a>,
     pragmas: Pragmas<'a>,
     class_info: Option<ClassInfo<'a>>,
-    /// [`state_parameter`] of the functions around the node.
+    /// [`state_parameter`] of each function enclosing the current node.
     state_parameters: Vec<Option<Name<'a>>>,
-    /// The innermost function around a node.
+    /// Innermost function enclosing a node.
     enclosing_functions: AncestorMemo<'a, Func<'a>>,
-    /// What is reported.
+    /// The fields to report.
     unused: Vec<(Prop<'a>, Cow<'a, [u8]>)>,
 }
 
 impl<'a> Walk<'a> {
-    /// The functions around `node`, the innermost first.
-    fn functions_around(&mut self, node: Node<'a>) -> impl Iterator<Item = Func<'a>> + use<'a> {
+    /// Functions enclosing `node`, innermost first.
+    fn functions_enclosing(&mut self, node: Node<'a>) -> impl Iterator<Item = Func<'a>> + use<'a> {
         successors(self.enclosing_functions.find(node, |_, parent| parent.as_func()), |it| it.enclosing())
     }
 
-    /// `isES5Component`, of an `ObjectExpression`.
+    /// `isES5Component`, for an `ObjectExpression`.
     fn is_es5_component(&self, node: Expr<'a>) -> bool {
         matches!(node.parent(), Node::Expr(parent) if parent.callee().is_some())
             && is_es5_component(Node::Expr(node), &self.pragmas)
     }
 
-    /// `isES5Component(node.parent.parent)`, of the `FunctionExpression` that `function` is.
+    /// `isES5Component(node.parent.parent)`, where `node` is the `FunctionExpression` `function`.
     fn is_in_es5_component(&self, function: Expr<'a>) -> bool {
         let parent = estree_parent(Node::Expr(function));
         if is_wrapped(function, parent) {
@@ -155,10 +157,11 @@ impl<'a> Walk<'a> {
             return !is_deeper && is_es5_component(parent, &self.pragmas);
         }
         let above = estree_parent(parent);
-        let grandparent = match parent.as_written() {
+        let grandparent = match parent.owner_or_self() {
             Node::Prop(property) if property.is_jsx_attribute() => return false,
             Node::Prop(_) | Node::Param(_) => above,
-            // A `ChainExpression`: the callee of the call that it is in gets the same answer.
+            // The grandparent is a `ChainExpression`, which this AST doesn't have. The enclosing call's callee has the
+            // same parent, so it gets the same answer.
             Node::Expr(e) if e.is_chain_root() => match above.as_expr().and_then(Expr::callee) {
                 Some(callee) if e.jsx_container_span().is_none() => Node::Expr(callee),
                 _ => return false,
@@ -169,14 +172,14 @@ impl<'a> Walk<'a> {
         is_es5_component(grandparent, &self.pragmas)
     }
 
-    /// `isAliasedStateReference || isStateParameterReference(node)`, of a node with this `name`. What has none is taken
-    /// for a parameter without one.
+    /// `isAliasedStateReference || isStateParameterReference(node)`, for a node with this `name`. A node without a name
+    /// matches a state parameter without a name.
     fn is_name_of_state(&self, name: Option<Name<'a>>) -> bool {
         let aliases = self.class_info.as_ref().and_then(|it| it.aliases.as_ref());
         name.is_some_and(|name| aliases.is_some_and(|it| it.contains(&name))) || self.state_parameters.contains(&name)
     }
 
-    /// `isStateReference`, of a `node` reached from above.
+    /// `isStateReference`, for `node` as its parent sees it.
     fn is_state_reference(&self, node: Expr<'a>) -> bool {
         (is_direct_state_reference(node) && !node.is_chain_root()) || self.is_name_of_state(node.as_ident())
     }
@@ -198,7 +201,7 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// `addStateFields`. Nothing for what is no `ObjectExpression`.
+    /// `addStateFields`. Does nothing unless `node` is an `ObjectExpression`.
     fn add_state_fields(&mut self, node: Expr<'a>) {
         let (Some(class_info), ExprKind::Object(properties)) = (&mut self.class_info, node.kind()) else {
             return;
@@ -210,7 +213,7 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// `addUsedStateField`, with the `getName` of the node.
+    /// `addUsedStateField`, given the node's `getName`.
     fn add_used_state_field(&mut self, name: Option<Cow<'a, [u8]>>) {
         if let (Some(class_info), Some(name)) = (&mut self.class_info, name)
             && !name.is_empty()
@@ -241,7 +244,7 @@ impl<'a> Walk<'a> {
             TargetKind::Object if is_this_expression(unwrapped_right) && self.has_aliases() => {
                 for property in left.elements() {
                     let name = property.key.and_then(|key| get_name_of_key(self.file, key));
-                    // With a default the value is an `AssignmentPattern`.
+                    // With a default, the value is an `AssignmentPattern`.
                     if !name.is_some_and(|it| *it == *b"state") || property.default.is_some() {
                         continue;
                     }
@@ -256,7 +259,7 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// `reportUnusedFields`, and the end of the `classInfo`.
+    /// `reportUnusedFields`. Also ends the `classInfo`.
     fn report_unused_fields(&mut self) {
         if let Some(ClassInfo { state_fields, used_state_fields, .. }) = self.class_info.take() {
             self.unused.extend(state_fields.into_iter().filter(|(_, name)| !used_state_fields.contains(name)));
@@ -313,9 +316,9 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// What the second of these does if `isGDSFP(node)`: `function` is `node.value`.
+    /// The `isGDSFP(node)` branch of the second of those listeners. `function` is `node.value`.
     fn get_derived_state_from_props(&mut self, function: Func<'a>) {
-        // The scope that upstream finds for a function with a name has that name and nothing else.
+        // For a named function expression, upstream finds the scope that declares only the function's name.
         if function.name().is_some() {
             return;
         }
@@ -333,7 +336,7 @@ impl<'a> Walk<'a> {
     }
 
     fn function_expression(&mut self, node: Func<'a>) {
-        // The parent of a method of a class is in a `ClassBody`.
+        // A class method's `parent.parent` is a `ClassBody`, never an ES5 component.
         let Node::Expr(function) = node.owner() else {
             return;
         };
@@ -365,12 +368,12 @@ impl<'a> Walk<'a> {
         let unwrapped_left = unwrap_ts_as_expression(target);
         let unwrapped_right = unwrap_ts_as_expression(value);
         if unwrapped_right.tag() == ExprTag::Object && is_member_of_this(unwrapped_left, b"state") {
-            let mut functions = self.functions_around(Node::Expr(node));
+            let mut functions = self.functions_enclosing(Node::Expr(node));
             let function = functions.find(|it| estree_type_name(Node::Func(*it)) == "FunctionExpression");
             if function.is_some_and(|it| matches!(it.owner(), Node::Member(parent) if parent.is_constructor())) {
                 self.add_state_fields(unwrapped_right);
             }
-        // What is under an `as` is no pattern.
+        // An object literal under an `as` isn't a pattern.
         } else if unwrapped_left == target || unwrapped_left.tag() != ExprTag::Object {
             self.handle_assignment(Target::Expr(unwrapped_left), unwrapped_right);
         }
@@ -395,7 +398,8 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// The same for the `a.b.c` after `implements` or after the `extends` of an interface, which is no expression here.
+    /// Same as `member_expression`, for the `a.b.c` after `implements` or an interface's `extends`, which isn't an
+    /// expression in this AST.
     fn qualified_name(&mut self, name: EntityName<'a>) {
         for (index, property) in name.parts().enumerate().skip(1) {
             let object = name.first().filter(|_| index == 1);
@@ -509,7 +513,7 @@ impl Rule for NoUnusedState {
         .then_some(())
     }
 
-    /// Outside of a component no listener of upstream does anything: each component is walked, with all that is in it.
+    /// Upstream's listeners do nothing outside a component, so only the components and their contents are walked.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         let pragmas = Pragmas::new(file);
@@ -534,7 +538,7 @@ impl Rule for NoUnusedState {
                 continue;
             }
             walked_to = component.span().end;
-            walk.state_parameters = walk.functions_around(component).filter_map(state_parameter).collect();
+            walk.state_parameters = walk.functions_enclosing(component).filter_map(state_parameter).collect();
             walk_node(component, &mut walk);
         }
         for (node, name) in walk.unused {

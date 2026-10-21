@@ -23,7 +23,7 @@ fn report<'a>(e: Expr<'a>, first_argument: Expr<'a>, cx: &Cx<'a, PreferStructure
     });
 }
 
-/// The only argument of `call`, which is not `...a`.
+/// `call`'s only argument, unless it's `...a`.
 fn only_argument(call: Call<'_>) -> Option<Expr<'_>> {
     call.args().first().filter(|it| call.args().len() == 1 && !call.is_optional() && it.tag() != ExprTag::Spread)
 }

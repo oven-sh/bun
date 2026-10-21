@@ -175,7 +175,7 @@ it("an entry that matches no workspace warns and the rest still applies", async 
   ]);
 });
 
-it("what the workspace no longer needs leaves its node_modules", async () => {
+it("packages that the workspace no longer needs are removed from its node_modules", async () => {
   const desktop = { name: "desktop", version: "1.0.0", installConfig: { hoistingLimits: "workspaces" } };
   await writeProject(desktop, {});
   expect((await install(package_dir)).code).toBe(0);

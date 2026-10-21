@@ -1,24 +1,22 @@
-//! Reachability: 7027 7028 7029, 2355 2366 2534 7030.
-//! Whether a generator matches the return type annotation of its generator function.
+//! Reachability: 7027, 2355 2366 2534 7030. Also checks that a generator matches its generator function's return type
+//! annotation.
 //!
-//! Follows `checkSourceElementUnreachable`, `checkLabeledStatement`, `checkSwitchStatement`,
-//! `checkAllCodePathsInNonVoidFunctionReturnOrThrow`, `checkReturnStatement`,
-//! `checkGeneratorInstantiationAssignabilityToReturnType`, `isPostSuperFlowNode` and
-//! `checkGrammarBreakOrContinueStatement` of TypeScript 7.0.2's checker.go, flow.go and
-//! grammarchecks.go.
+//! Mirrors `checkSourceElementUnreachable`, `checkAllCodePathsInNonVoidFunctionReturnOrThrow` and
+//! `checkGeneratorInstantiationAssignabilityToReturnType` in TypeScript 7.0.2's checker.go.
 
 use super::*;
 use crate::bind::{FnOwner, Parent, UNREACHABLE};
 
 impl Checker<'_, '_> {
     /// `IsPotentiallyExecutableNode`
+    #[inline(always)]
     fn is_potentially_executable(&self, file: FileId, s: StmtId) -> bool {
         let hir = self.hir(file);
         match hir[s].kind {
             StmtKind::Var(decls) => decls
                 .iter()
                 .any(|d| hir[d].kind != VarKind::Var || hir[d].init.is_some()),
-            // Neither a block nor `;` is. But `with (e) s` is stored as a block.
+            // A block and `;` aren't executable, but `with (e) s` is stored as a block.
             StmtKind::Block(_) => super::errors_statements::is_with_statement(hir, s),
             StmtKind::Empty
             | StmtKind::Fn(_)
@@ -38,13 +36,13 @@ impl Checker<'_, '_> {
     /// `isSourceElementUnreachable` for a potentially executable node.
     fn is_source_element_unreachable(&mut self, file: FileId, s: StmtId) -> bool {
         let hir = self.hir(file);
-        let flow = self.bound(file).stmt_flow[s.idx()];
+        let flow = self.bound(file).flow_of_stmt(s);
         // `ShouldPreserveConstEnums`
         let preserves_const_enums =
             self.p.files.options.preserve_const_enums || self.p.files.options.isolated_modules;
         match hir[s].kind {
-            // The binder gives a class, an enum or a namespace no flow node: only the reachability
-            // the binder itself determines applies to them.
+            // The binder doesn't give a class, an enum or a namespace a flow node, so only the reachability that the
+            // binder itself determines applies to them.
             StmtKind::Class(_) => flow == UNREACHABLE,
             StmtKind::Enum(e) => {
                 flow == UNREACHABLE
@@ -73,7 +71,7 @@ impl Checker<'_, '_> {
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `parent.Statements()`
-        let statements = match bound.stmt_parent[s.idx()] {
+        let statements = match bound.parent_of_stmt(s) {
             Parent::File => Some(hir.body),
             Parent::Module(m) => Some(hir[m].body),
             Parent::FnBody(f) => match hir[f].body {
@@ -110,11 +108,11 @@ impl Checker<'_, '_> {
 
     /// `maybeTypeOfKind(t, TypeFlagsVoid)`
     fn maybe_void(&self, t: TypeId) -> bool {
-        self.maybe_type_of_kind(t, |_, t| t == TypeId::VOID)
+        self.maybe_type_of_kind(t, tf::VOID)
     }
 
-    /// `checkFunctionOrMethodDeclaration`, `checkFunctionExpressionOrObjectLiteralMethod`: 8030 for
-    /// a `@type` tag on a function.
+    /// `checkFunctionOrMethodDeclaration`, `checkFunctionExpressionOrObjectLiteralMethod`: 8030 for a `@type` tag on a
+    /// function.
     pub(super) fn check_full_signature(&mut self, file: FileId, func: FnId) {
         let hir = self.hir(file);
         let node = hir.jsdoc_type(JsDocTypeOwner::Fn(func));
@@ -162,7 +160,7 @@ impl Checker<'_, '_> {
         {
             return;
         }
-        // `errorNode`: the return type, or else the type of a `@type` tag on the function.
+        // `errorNode`: the return type, falling back to the type of a `@type` tag on the function.
         let error_node = if f.ret.is_some() {
             f.ret
         } else {
@@ -175,7 +173,7 @@ impl Checker<'_, '_> {
                 let symbol = self.symbol_of_member(file, m);
                 Some(self.type_of_symbol(symbol))
             }
-            FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
+            FnOwner::Expr(e) => match bound.parent_of_expr(e) {
                 Parent::Prop(p) => Some(self.type_of_literal_prop(file, p)),
                 _ => None,
             },
@@ -192,8 +190,8 @@ impl Checker<'_, '_> {
         let declared = if let Some(declared) = annotated {
             Some(self.unwrap_return_type(file, func, declared))
         } else if f.kind == FnKind::Getter {
-            // A getter without a symbol: the setter's parameter annotation, or else the type
-            // inferred from the body.
+            // A getter without a symbol: the setter's parameter annotation, falling back to the type inferred from the
+            // body.
             Some(self.return_type_of_fn(file, func))
         } else if self.p.files.options.no_implicit_returns {
             None
@@ -251,8 +249,8 @@ impl Checker<'_, '_> {
         self.error_at((file, start, end), code, &[]);
     }
 
-    /// `checkSignatureDeclaration`, `checkGeneratorInstantiationAssignabilityToReturnType`: the generator type built from the iteration
-    /// types of a generator function's return type annotation must be assignable to that annotation.
+    /// `checkSignatureDeclaration`, `checkGeneratorInstantiationAssignabilityToReturnType`: the generator type built
+    /// from the iteration types of a generator function's return type annotation must be assignable to that annotation.
     pub(super) fn check_generator_return_annotation(&mut self, file: FileId, func: FnId) {
         let hir = self.hir(file);
         let f = &hir[func];

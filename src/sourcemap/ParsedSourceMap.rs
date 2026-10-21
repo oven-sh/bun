@@ -2,6 +2,7 @@ use core::ffi::c_void;
 use core::fmt;
 
 use crate::Ordinal;
+use crate::internal_source_map::ObjectBrace;
 
 use crate::mapping;
 use crate::vlq::VLQ;
@@ -13,7 +14,6 @@ use crate::{
 /// ParsedSourceMap can be acquired by different threads via the thread-safe
 /// source map store (SavedSourceMap), so the reference count must be thread-safe.
 pub struct ParsedSourceMap {
-    pub input_line_count: usize,
     pub mappings: mapping::List,
     /// Set when this map's mappings are backed by an InternalSourceMap blob
     /// instead of a materialized `Mapping.List`. The blob is *owned* (freed in
@@ -63,7 +63,6 @@ impl Drop for ParsedSourceMap {
 impl Default for ParsedSourceMap {
     fn default() -> Self {
         Self {
-            input_line_count: 0,
             mappings: mapping::List::default(),
             internal: None,
             external_source_names: Vec::new(),
@@ -227,7 +226,6 @@ impl ParsedSourceMap {
     /// [`Self::is_standalone_module_graph`].
     pub fn from_internal(internal: InternalSourceMap) -> Self {
         Self {
-            input_line_count: internal.input_line_count(),
             mappings: mapping::List::default(),
             internal: Some(internal),
             external_source_names: Vec::new(),
@@ -247,8 +245,31 @@ impl ParsedSourceMap {
         self.mappings.find(line, column)
     }
 
-    pub fn internal_cursor(&self) -> Option<crate::internal_source_map::Cursor> {
-        self.internal.as_ref().map(|ism| ism.cursor())
+    /// Every mapping, in generated order.
+    pub fn for_each_mapping(&self, mut each: impl FnMut(Mapping)) {
+        if let Some(ism) = &self.internal {
+            return ism.for_each(each);
+        }
+        let (generated, original, source_index) = (
+            self.mappings.generated(),
+            self.mappings.original(),
+            self.mappings.source_index(),
+        );
+        for i in 0..generated.len() {
+            each(Mapping {
+                generated: generated[i],
+                original: original[i],
+                source_index: source_index[i],
+                name_index: -1,
+            });
+        }
+    }
+
+    /// The mappings of the braces of object literals, if the printer marked them.
+    pub fn for_each_object_brace(&self, each: impl FnMut(ObjectBrace)) {
+        if let Some(ism) = &self.internal {
+            ism.for_each_object_brace(each);
+        }
     }
 
     pub(crate) fn standalone_module_graph_data(&self) -> *mut crate::SerializedSourceMap::Loaded {

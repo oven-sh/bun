@@ -797,6 +797,8 @@ describe("a namespace import beside a default import that a macro remap replaces
     "used.ts": `import d, * as ns from "fakepkg";\nconsole.log(d(), ns.other());\n`,
     // Nothing reads the namespace. In JavaScript that is still an import of the package.
     "unused.js": `import d, * as ns from "fakepkg";\nconsole.log(d());\n`,
+    // TypeScript removes an import that nothing reads.
+    "unused.ts": `import d, * as ns from "fakepkg";\nconsole.log(d());\n`,
     // The package of these two is not installed.
     "missing-namespace.js": `import d, * as ns from "missing";\nconsole.log(d());\n`,
     "missing-named.js": `import d, { other } from "missing";\nconsole.log(d());\n`,
@@ -845,6 +847,17 @@ describe("a namespace import beside a default import that a macro remap replaces
     expect(await run(String(dir), "unused.js")).toEqual({ lines: ["fakepkg loads", "7"], stderr: "", exitCode: 0 });
   });
 
+  test.concurrent("TypeScript still removes a namespace that nothing reads", async () => {
+    using dir = tempDir("macro-remap-namespace", files);
+    const printed = await run(String(dir), "build", "--no-bundle", "./unused.ts");
+    expect({ ...printed, lines: printed.lines.filter(line => line.startsWith("import")) }).toEqual({
+      lines: [],
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(await run(String(dir), "unused.ts")).toEqual({ lines: ["7"], stderr: "", exitCode: 0 });
+  });
+
   // A statement with a named binding beside the remapped one has always stayed. The namespace form is now the same.
   test.concurrent("a package that is not installed is the same error as with a named import", async () => {
     using dir = tempDir("macro-remap-namespace", files);
@@ -866,9 +879,19 @@ describe("a namespace import beside a default import that a macro remap replaces
   });
 
   test("scanImports() lists the package", () => {
-    const transpiler = new Bun.Transpiler({ loader: "js", macro: { fakepkg: { default: "./macro.ts" } } });
-    const imports = transpiler.scanImports(`import d, * as ns from "fakepkg";\nconsole.log(d(), ns.other());\n`);
-    // The import that the remap adds for the macro is not one of them.
-    expect(imports).toEqual([{ kind: "import-statement", path: "fakepkg" }]);
+    const scan = (loader: "js" | "ts", body: string) =>
+      new Bun.Transpiler({ loader, macro: { fakepkg: { default: "./macro.ts" } } }).scanImports(
+        `import d, * as ns from "fakepkg";\n${body}\n`,
+      );
+    const read = `console.log(d(), ns.other());`;
+    const unread = `console.log(d());`;
+    // The import that the remap adds for the macro is not one of them. A scan does not trim what nothing reads.
+    const listed = [{ kind: "import-statement", path: "fakepkg" }];
+    expect({
+      js: scan("js", read),
+      ts: scan("ts", read),
+      unreadJs: scan("js", unread),
+      unreadTs: scan("ts", unread),
+    }).toEqual({ js: listed, ts: listed, unreadJs: listed, unreadTs: listed });
   });
 });

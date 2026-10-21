@@ -281,6 +281,14 @@ enum Visited {
     Late(StmtId),
 }
 
+/// What `transformExportAssignment` declares for an expression that isn't a name.
+struct ExportedExpression {
+    name: Vec<u8>,
+    declaration: Statement,
+    /// True if the export assignment comes before the declaration.
+    is_hoisted: bool,
+}
+
 /// `CreateModifiersFromModifierFlags`: the modifiers in the order it creates them.
 const MODIFIERS: [(Flags, &[u8]); 15] = [
     (Flags::EXPORT, b"export"),
@@ -4822,6 +4830,31 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             emitted.comments = comments(self);
             return vec![emitted];
         }
+        self.tracker.get_symbol_accessibility_diagnostic = Context::DefaultExport(input);
+        self.tracker.fallback_stack.push(assignment);
+        let emitted = self.transform_exported_expression(assignment, e, is_export_equals);
+        self.tracker.fallback_stack.pop();
+        let ExportedExpression {
+            name,
+            mut declaration,
+            is_hoisted,
+        } = emitted;
+        declaration.comments = comments(self);
+        if is_hoisted {
+            vec![export_of(&name), declaration]
+        } else {
+            vec![declaration, export_of(&name)]
+        }
+    }
+
+    /// The part of `transformExportAssignment` that declares the expression `e` under a name.
+    fn transform_exported_expression(
+        &mut self,
+        assignment: Node,
+        e: ExprId,
+        is_export_equals: bool,
+    ) -> ExportedExpression {
+        let hir = self.c.hir(self.file());
         // `SkipOuterExpressions(expression, OEKExpressionTypePassthrough)`
         let mut unwrapped = e;
         loop {
@@ -4867,42 +4900,55 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         } else {
             Vec::new()
         };
-        match hir[unwrapped].kind {
-            ExprKind::Class(c) => {
-                let mut class = self.transform_class_expression(c, &name, declare);
-                class.comments = comments(self);
-                return vec![export_of(&name), class];
-            }
-            ExprKind::Fn(f) => {
-                let signature = self.transform_signature(f);
-                let function = Statement {
-                    kind: StatementKind::Other,
-                    comments: comments(self),
-                    modifiers: declare,
-                    text: [b"function ", &name[..], &signature[..], b";"].concat(),
-                };
-                return vec![export_of(&name), function];
-            }
-            _ => {}
-        }
-        self.tracker.get_symbol_accessibility_diagnostic = Context::DefaultExport(input);
-        // `IsPrimitiveLiteralValue`: it's emitted verbatim.
-        let ensured = if self.c.iso_is_primitive_literal(self.file(), e, true) {
-            let literal = self.c.type_of_expr(self.file(), e);
-            Ensured::Initializer(self.create_literal_const_value(literal))
-        } else {
-            self.tracker.fallback_stack.push(assignment);
-            let ensured = self.ensure_type(assignment, false);
-            self.tracker.fallback_stack.pop();
-            ensured
-        };
-        let variable = Statement {
+        let constant = |ensured: &Ensured, declare: Vec<Flags>| Statement {
             kind: StatementKind::Other,
-            comments: comments(self),
+            comments: Vec::new(),
             modifiers: declare,
             text: [b"const ", &name[..], &ensured.text()[..], b";"].concat(),
         };
-        vec![variable, export_of(&name)]
+        let (declaration, is_hoisted) = match hir[unwrapped].kind {
+            ExprKind::Class(c) => (self.transform_class_expression(c, &name, declare), true),
+            // `transformFunctionLikeToDeclaration`
+            ExprKind::Fn(f) => {
+                let mut full_signature = hir.jsdoc_type(JsDocTypeOwner::Fn(f));
+                if full_signature.is_none() {
+                    full_signature = match hir.data(assignment) {
+                        NodeData::Expr(e) => hir.jsdoc_type(JsDocTypeOwner::Assign(e)),
+                        NodeData::Stmt(s) => hir.jsdoc_type(JsDocTypeOwner::Export(s)),
+                        _ => TypeNodeId::NONE,
+                    };
+                }
+                if full_signature.is_some() {
+                    self.visit_type(full_signature, false);
+                    let ty = self.text_of(ReusedNode::Type(full_signature));
+                    (constant(&Ensured::Type(ty), declare), true)
+                } else {
+                    let signature = self.transform_signature(f);
+                    let function = Statement {
+                        kind: StatementKind::Other,
+                        comments: Vec::new(),
+                        modifiers: declare,
+                        text: [b"function ", &name[..], &signature[..], b";"].concat(),
+                    };
+                    (function, true)
+                }
+            }
+            // `IsPrimitiveLiteralValue`: it's emitted verbatim.
+            _ if self.c.iso_is_primitive_literal(self.file(), e, true) => {
+                let literal = self.c.type_of_expr(self.file(), e);
+                let value = Ensured::Initializer(self.create_literal_const_value(literal));
+                (constant(&value, declare), false)
+            }
+            _ => {
+                let ensured = self.ensure_type(assignment, false);
+                (constant(&ensured, declare), false)
+            }
+        };
+        ExportedExpression {
+            name,
+            declaration,
+            is_hoisted,
+        }
     }
 
     // ───────────────────────────── members and signatures ─────────────────────────────

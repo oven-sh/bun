@@ -1650,7 +1650,7 @@ declare module "bun" {
        * hyphens becomes one hyphen, and every other character is dropped. Each
        * ID is unique in its document: when an ID is taken, the heading gets `-1`
        * after it, or the next number that gives a free ID. A heading with no
-       * letter and no digit gets an empty ID.
+       * letter, digit, or combining mark gets an empty ID.
        *
        * These IDs are Bun's own. GitHub's anchors differ for some headings:
        * GitHub keeps `_`, writes one hyphen for each space, and keeps a hyphen

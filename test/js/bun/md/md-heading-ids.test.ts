@@ -114,6 +114,8 @@ describe("headingIds option", () => {
     expectIds({
       "Cafe\u0301": "cafe\u0301",
       "Tie\u0302\u0301ng Vie\u0323\u0302t": "tie\u0302\u0301ng-vie\u0323\u0302t",
+      // A mark stays when it has no letter too, so this id is not empty.
+      "\u0301": "\u0301",
     });
   });
 
@@ -123,6 +125,11 @@ describe("headingIds option", () => {
       "Ⱥ": "ⱥ",
       "ȾȺȾ end": "ⱦⱥⱦ-end",
     });
+  });
+
+  test("each letter becomes lowercase by itself", () => {
+    // GitHub gives this heading the same anchor: it writes σ for Σ at the end of a word too.
+    expectIds({ "ΟΔΗΓΙΕΣ ΧΡΗΣΗΣ ΤΟΥ ΠΡΟΓΡΑΜΜΑΤΟΣ": "οδηγιεσ-χρησησ-του-προγραμματοσ" });
   });
 
   test("punctuation, symbols and emoji outside ASCII are stripped from slug", () => {
@@ -156,6 +163,7 @@ describe("headingIds option", () => {
       "entity&nbsp;space": "entityspace",
       "em\u2003space": "emspace",
       "日本語\u3000ガイド": "日本語ガイド",
+      "1.\u3000はじめに": "1はじめに",
     });
   });
 

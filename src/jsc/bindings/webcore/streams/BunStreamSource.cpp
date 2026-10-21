@@ -21,7 +21,7 @@
 #include "JSStreamsRuntime.h"
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
-#include "ZigGeneratedClasses.h"
+#include "GeneratedReadableStream.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSArray.h>
@@ -171,11 +171,11 @@ static constexpr size_t nativeSourceMaxChunkSize = 2 * 1024 * 1024;
 // The native source wrapper's `closeAdapter` slot: what `NewSource::on_close` (ReadableStream.rs) notifies, and the GC edge that keeps the adapter alive for it.
 static void setNativeSourceCloseAdapter(JSC::VM& vm, JSObject* handle, JSValue adapter)
 {
-    if (auto* source = dynamicDowncast<WebCore::JSBytesInternalReadableStreamSource>(handle))
+    if (auto* source = dynamicDowncast<Bun::Bindgen::Generated::JSBytesInternalReadableStreamSource>(handle))
         source->m_closeAdapter.set(vm, source, adapter);
-    else if (auto* source = dynamicDowncast<WebCore::JSFileInternalReadableStreamSource>(handle))
+    else if (auto* source = dynamicDowncast<Bun::Bindgen::Generated::JSFileInternalReadableStreamSource>(handle))
         source->m_closeAdapter.set(vm, source, adapter);
-    else if (auto* source = dynamicDowncast<WebCore::JSBlobInternalReadableStreamSource>(handle))
+    else if (auto* source = dynamicDowncast<Bun::Bindgen::Generated::JSBlobInternalReadableStreamSource>(handle))
         source->m_closeAdapter.set(vm, source, adapter);
     else
         ASSERT_NOT_REACHED();
@@ -328,7 +328,7 @@ extern "C" size_t Bun__ByteBlobLoader__remaining(void* source);
 // A slab the size of what a blob has left is filled whole and handed over uncopied; one byte finds out that nothing is left.
 static size_t nativeSlabSize(JSNativeStreamSourceAdapter* adapter)
 {
-    if (auto* blob = dynamicDowncast<WebCore::JSBlobInternalReadableStreamSource>(adapter->handle()))
+    if (auto* blob = dynamicDowncast<Bun::Bindgen::Generated::JSBlobInternalReadableStreamSource>(adapter->handle()))
         return std::min(adapter->m_chunkSize, std::max<size_t>(Bun__ByteBlobLoader__remaining(blob->wrapped()), 1));
     return adapter->m_chunkSize;
 }

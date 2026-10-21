@@ -861,9 +861,9 @@ impl ByteStream {
         self.buffered.capacity()
     }
 
-    /// NOTE: not `impl Drop` — `ByteStream` is the `context` payload of a `.classes.ts`
+    /// NOTE: not `impl Drop` — `ByteStream` is the `context` payload of a
     /// `ReadableStreamSource`; teardown is driven by the GC finalizer via `Source::finalize`,
-    /// which calls this. Per §JSC, `.classes.ts` payloads use `finalize`, not `deinit`/`Drop`.
+    /// which calls this.
     fn finalize(&self) {
         bun_jsc::mark_binding!();
         self.buffered.clear();

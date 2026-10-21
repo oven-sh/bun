@@ -9,7 +9,7 @@
 #include "JSReadableStream.h"
 #include "JSReadableStreamDefaultController.h"
 #include "WebCoreJSBuiltins.h"
-#include "ZigGeneratedClasses.h"
+#include "GeneratedReadableStream.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/CallData.h>
@@ -56,15 +56,15 @@ static int32_t tagOfStream(JSReadableStream* stream, void** ptr)
     if (handle.isEmpty() || !handle.isCell())
         return 0;
     JSCell* handleCell = handle.asCell();
-    if (auto* blobSource = dynamicDowncast<JSBlobInternalReadableStreamSource>(handleCell)) {
+    if (auto* blobSource = dynamicDowncast<Bun::Bindgen::Generated::JSBlobInternalReadableStreamSource>(handleCell)) {
         *ptr = blobSource->wrapped();
         return 1;
     }
-    if (auto* fileSource = dynamicDowncast<JSFileInternalReadableStreamSource>(handleCell)) {
+    if (auto* fileSource = dynamicDowncast<Bun::Bindgen::Generated::JSFileInternalReadableStreamSource>(handleCell)) {
         *ptr = fileSource->wrapped();
         return 2;
     }
-    if (auto* bytesSource = dynamicDowncast<JSBytesInternalReadableStreamSource>(handleCell)) {
+    if (auto* bytesSource = dynamicDowncast<Bun::Bindgen::Generated::JSBytesInternalReadableStreamSource>(handleCell)) {
         *ptr = bytesSource->wrapped();
         return 4;
     }
@@ -217,9 +217,9 @@ extern "C" void ReadableStream__closeConsumedAsBody(JSC::EncodedJSValue possible
 // The `lockedStream` slot (streams.classes.ts): the only way from a natively locked stream's source back to the stream.
 static WriteBarrier<Unknown>* lockedStreamSlot(JSCell* handle)
 {
-    if (auto* bytesSource = dynamicDowncast<JSBytesInternalReadableStreamSource>(handle))
+    if (auto* bytesSource = dynamicDowncast<Bun::Bindgen::Generated::JSBytesInternalReadableStreamSource>(handle))
         return &bytesSource->m_lockedStream;
-    if (auto* fileSource = dynamicDowncast<JSFileInternalReadableStreamSource>(handle))
+    if (auto* fileSource = dynamicDowncast<Bun::Bindgen::Generated::JSFileInternalReadableStreamSource>(handle))
         return &fileSource->m_lockedStream;
     return nullptr;
 }

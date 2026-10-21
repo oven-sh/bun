@@ -3,8 +3,9 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::webcore::jsc::SysErrorJsc as _;
+use crate::webcore::jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use crate::webcore::jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult,
+    self as jsc, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult,
 };
 // `bun_jsc` not yet a dep; alias to local shim so `bun_jsc::Strong` etc. resolve.
 use crate::webcore::jsc as bun_jsc;
@@ -787,12 +788,12 @@ impl Source {
 
 /// Per-context configuration and callbacks for `NewSource<C>`.
 pub trait SourceContext: Sized {
-    /// `name_` — used to look up `jsc.Codegen.JS{NAME}InternalReadableStreamSource`.
+    /// The class is `{NAME}InternalReadableStreamSource`.
     const NAME: &'static str;
     /// `setRefUnrefFn != null`
     const SUPPORTS_REF: bool = false;
 
-    // ─── codegen accessors (`.classes.ts` → `generated_classes.rs`) ───────────
+    // ─── codegen accessors (`ReadableStream.bind.ts`) ───────────
     // Each context binds its per-type codegen module via `source_context_codegen!`.
     /// `js_${NAME}InternalReadableStreamSource::to_js` — `ptr` is the
     /// type-erased `*mut NewSource<Self>` (cast inside the macro impl).
@@ -831,7 +832,7 @@ pub trait SourceContext: Sized {
         Vec::<u8>::default()
     }
 
-    /// `memoryCostFn` — default returns 0; `NewSource::memory_cost` adds `size_of::<Self>()`.
+    /// `memoryCostFn` — default returns 0.
     fn memory_cost_fn(&self) -> usize {
         0
     }
@@ -856,12 +857,6 @@ pub trait SourceContext: Sized {
     fn set_flowing(&self, _flag: bool) {}
 }
 
-// Hand-wired JSC class (the `#[bun_jsc::JsClass]` derive cannot be used on a
-// type generic over `C`): codegen name is "JS{C::NAME}InternalReadableStreamSource".
-// The toJS/fromJS/fromJSDirect aliases are wired
-// manually below; cached-property accessors (pendingPromiseSetCached,
-// closeAdapter{Get,Set}Cached) are emitted by the .classes.ts generator.
-//
 // `repr(C)` keeps `context` at offset 0: C++ `wrapped()` returns `*mut NewSource<C>` and
 // [`ReadableStream::from_js`] casts that straight to `*mut C`.
 // With Rust's default repr the field is reordered and the cast reads
@@ -945,9 +940,7 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
 
 // ─── per-type codegen accessors ──────────────────────────────────────────────
 // Each `SourceContext` impl carries the per-type codegen
-// extern symbols as associated consts (bound via `source_context_codegen!`).
-// The `.classes.ts` → `.rs` generator (when re-run with Rust output) is expected
-// to emit those `const JS_*` bindings directly.
+// accessors (bound via `source_context_codegen!`).
 pub(crate) trait NewSourceCodegen {
     fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue;
     fn pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
@@ -958,9 +951,7 @@ pub(crate) trait NewSourceCodegen {
 }
 
 /// Binds the `SourceContext::js_*` accessors to the codegen'd
-/// `crate::generated_classes::js_${Name}InternalReadableStreamSource` module
-/// (one per `.classes.ts` entry: `Blob`, `File`, `Bytes`). The extern symbols
-/// are declared exactly once inside that module — no local `extern "C"` block.
+/// `js_${Name}InternalReadableStreamSource` module (`Blob`, `File`, `Bytes`).
 ///
 /// Invoke *inside* an `impl SourceContext for Foo { ... }` block.
 #[macro_export]
@@ -971,7 +962,7 @@ macro_rules! source_context_codegen {
             ptr: *mut ::core::ffi::c_void,
             global: &$crate::webcore::jsc::JSGlobalObject,
         ) -> $crate::webcore::jsc::JSValue {
-            $crate::generated_classes::$gen::to_js(ptr.cast(), global)
+            $crate::generated_bindgen::readable_stream::$gen::to_js(ptr.cast(), global)
         }
         #[inline]
         fn js_pending_promise_set_cached(
@@ -979,7 +970,9 @@ macro_rules! source_context_codegen {
             global: &$crate::webcore::jsc::JSGlobalObject,
             value: $crate::webcore::jsc::JSValue,
         ) {
-            $crate::generated_classes::$gen::pending_promise_set_cached(this, global, value)
+            $crate::generated_bindgen::readable_stream::$gen::pending_promise_set_cached(
+                this, global, value,
+            )
         }
         #[inline]
         fn js_close_adapter_set_cached(
@@ -987,13 +980,15 @@ macro_rules! source_context_codegen {
             global: &$crate::webcore::jsc::JSGlobalObject,
             value: $crate::webcore::jsc::JSValue,
         ) {
-            $crate::generated_classes::$gen::close_adapter_set_cached(this, global, value)
+            $crate::generated_bindgen::readable_stream::$gen::close_adapter_set_cached(
+                this, global, value,
+            )
         }
         #[inline]
         fn js_close_adapter_get_cached(
             this: $crate::webcore::jsc::JSValue,
         ) -> Option<$crate::webcore::jsc::JSValue> {
-            $crate::generated_classes::$gen::close_adapter_get_cached(this)
+            $crate::generated_bindgen::readable_stream::$gen::close_adapter_get_cached(this)
         }
         #[inline]
         fn js_owner_set_cached(
@@ -1001,7 +996,7 @@ macro_rules! source_context_codegen {
             global: &$crate::webcore::jsc::JSGlobalObject,
             value: $crate::webcore::jsc::JSValue,
         ) {
-            $crate::generated_classes::$gen::owner_set_cached(this, global, value)
+            $crate::generated_bindgen::readable_stream::$gen::owner_set_cached(this, global, value)
         }
         #[inline]
         fn js_sink_owner_set_cached(
@@ -1009,7 +1004,9 @@ macro_rules! source_context_codegen {
             global: &$crate::webcore::jsc::JSGlobalObject,
             value: $crate::webcore::jsc::JSValue,
         ) {
-            $crate::generated_classes::$gen::sink_owner_set_cached(this, global, value)
+            $crate::generated_bindgen::readable_stream::$gen::sink_owner_set_cached(
+                this, global, value,
+            )
         }
     };
 }
@@ -1017,7 +1014,7 @@ macro_rules! source_context_codegen {
 impl<C: SourceContext> NewSourceCodegen for NewSource<C> {
     fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
         // `self` is a heap-allocated `NewSource<C>` produced by [`NewSource::new`]
-        // (`heap::alloc`); ownership transfers to the JS wrapper as `m_ctx`. C++ side
+        // (`heap::alloc`); its ref becomes the JS wrapper's. C++ side
         // stores it as `void*` and the GC finalizer drives `decrement_count` → `deinit`.
         C::js_create(
             std::ptr::from_mut::<Self>(self).cast::<c_void>(),
@@ -1317,33 +1314,24 @@ impl<C: SourceContext> NewSource<C> {
         self.to_readable_stream_with(cx, ReadableStream::from_native_text)
     }
 
-    pub fn set_raw_mode_from_js(
-        this: &Self,
-        global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let flag = call_frame.argument(0);
+    pub fn set_raw_mode_from_js(&self, cx: &mut JsScope<'_>, flag: JsLocal<'_>) -> JSValue {
+        let flag = flag.to_js();
         debug_assert!(flag.is_boolean());
-        match this.context.set_raw_mode(flag == JSValue::TRUE) {
-            Some(Ok(())) => Ok(JSValue::UNDEFINED),
-            Some(Err(e)) => Ok(e.to_js(global)),
+        match self.context.set_raw_mode(flag == JSValue::TRUE) {
+            Some(Ok(())) => JSValue::UNDEFINED,
+            Some(Err(e)) => e.to_js(cx.global()),
             None => unreachable!("setRawMode is not implemented on {}", C::NAME),
         }
     }
 
-    pub fn set_flowing_from_js(
-        this: &Self,
-        _global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let flag = call_frame.argument(0);
+    pub fn set_flowing_from_js(&self, flag: JsLocal<'_>) {
+        let flag = flag.to_js();
         debug_assert!(flag.is_boolean());
-        this.context.set_flowing(flag == JSValue::TRUE);
-        Ok(JSValue::UNDEFINED)
+        self.context.set_flowing(flag == JSValue::TRUE);
     }
 
     pub fn memory_cost(&self) -> usize {
-        self.context.memory_cost_fn() + core::mem::size_of::<Self>()
+        self.context.memory_cost_fn()
     }
 
     // Teardown is folded into [`Self::decrement_count`]'s
@@ -1353,44 +1341,37 @@ impl<C: SourceContext> NewSource<C> {
 }
 
 // ─── codegen-facing inherent methods ─────────────────────────────────────────
-// The `.classes.ts` → `generated_classes.rs` thunks call these by exact name on
-// `NewSource<C>` (aliased as `{Blob,Bytes,File}InternalReadableStreamSource`).
+// The thunks of `ReadableStream.bind.ts` call these by exact name on `NewSource<C>`.
 impl<C: SourceContext> NewSource<C> {
     pub fn pull_from_js(
         &self,
-        global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        view: JsLocal<'_>,
+        flags: JsLocal<'_>,
     ) -> JsResult<JSValue> {
+        let cx = cx.js_thread();
+        let global_this = cx.global();
         // Cancelled with its graph: a read its leftover code still makes stays pending. ("Done"
         // would let that code carry on with what it takes for the whole of the data.)
         if self.abort_handle.context_stopped() {
             return Ok(jsc::JSPromise::create(global_this).to_js());
         }
-        let this_jsvalue = call_frame.this();
-        let [view, flags] = call_frame.arguments_as_array::<2>();
+        let view = view.to_js();
         view.ensure_still_alive();
         let Some(mut buffer) = view.as_array_buffer(global_this) else {
             return Ok(JSValue::UNDEFINED);
         };
         let result = self.on_pull_from_js(buffer.slice_mut(), view);
-        Self::process_result(
-            this_jsvalue,
-            &global_this.js_thread_of_caller(call_frame),
-            flags,
-            result,
-        )
+        Self::process_result(this_value.to_js(), &cx, flags.to_js(), result)
     }
 
-    pub fn start_from_js(
-        &self,
-        global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn start_from_js(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let cx = cx.js_thread();
+        let global_this = cx.global();
         self.global_this
             .set(Some(bun_ptr::BackRef::new(global_this)));
-        self.reader_context.set(Some(
-            global_this.bun_vm().context_of_caller(call_frame).id(),
-        ));
+        self.reader_context.set(Some(cx.context().id()));
         match self.on_start_from_js() {
             streams::Start::Empty => Ok(JSValue::js_number(0.0)),
             streams::Start::Ready => Ok(JSValue::js_number(16384.0)),
@@ -1400,8 +1381,8 @@ impl<C: SourceContext> NewSource<C> {
         }
     }
 
-    pub fn get_is_closed_from_js(&self, _global_object: &JSGlobalObject) -> JSValue {
-        JSValue::from(self.is_closed.get())
+    pub fn get_is_closed(&self) -> bool {
+        self.is_closed.get()
     }
 
     fn process_result(
@@ -1438,23 +1419,8 @@ impl<C: SourceContext> NewSource<C> {
         }
     }
 
-    pub fn cancel_from_js(
-        &self,
-        _global_object: &JSGlobalObject,
-        _call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        self.cancel();
-        Ok(JSValue::UNDEFINED)
-    }
-
-    pub fn update_ref_from_js(
-        &self,
-        _global_object: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let ref_or_unref = call_frame.argument(0).to_boolean();
-        self.set_ref(ref_or_unref);
-        Ok(JSValue::UNDEFINED)
+    pub fn update_ref_from_js(&self, enable: JsLocal<'_>) {
+        self.set_ref(enable.to_js().to_boolean());
     }
 
     pub fn finalize(&self) {
@@ -1465,11 +1431,7 @@ impl<C: SourceContext> NewSource<C> {
         }
     }
 
-    pub fn drain_from_js(
-        &self,
-        global_this: &JSGlobalObject,
-        _call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn drain_from_js(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let mut list = self.drain();
         if list.len() > 0 {
             // Ownership of the buffer transfers to JSC: `to_js` installs
@@ -1478,7 +1440,7 @@ impl<C: SourceContext> NewSource<C> {
             // here on scope exit, once by the GC). Mirrors `streams::Start::to_js`.
             let ab = jsc::ArrayBuffer::from_bytes(list.slice_mut(), jsc::JSType::Uint8Array);
             let _ = core::mem::ManuallyDrop::new(list);
-            return ab.to_js(global_this);
+            return ab.to_js(cx.global());
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -1487,61 +1449,33 @@ impl<C: SourceContext> NewSource<C> {
     // `BufferActionTag`. Collapsed into one helper to avoid 5× drift.
     fn to_buffered_value_from_js(
         &self,
-        global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
+        cx: &mut JsScope<'_>,
         action: streams::BufferActionTag,
     ) -> JsResult<JSValue> {
-        let context = global_this.bun_vm().context_of_caller(call_frame);
-        if let Some(r) = self
-            .context
-            .to_buffered_value(&global_this.js_thread(context), action)
-        {
+        let cx = cx.js_thread();
+        if let Some(r) = self.context.to_buffered_value(&cx, action) {
             return r;
         }
-        Err(global_this.throw_todo(b"This is not implemented yet"))
+        Err(cx.global().throw_todo(b"This is not implemented yet"))
     }
 
-    pub fn text_from_js(
-        &self,
-        global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        self.to_buffered_value_from_js(global_this, call_frame, streams::BufferActionTag::Text)
+    pub fn text_from_js(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.to_buffered_value_from_js(cx, streams::BufferActionTag::Text)
     }
 
-    pub fn array_buffer_from_js(
-        &self,
-        global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        self.to_buffered_value_from_js(
-            global_this,
-            call_frame,
-            streams::BufferActionTag::ArrayBuffer,
-        )
+    pub fn array_buffer_from_js(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.to_buffered_value_from_js(cx, streams::BufferActionTag::ArrayBuffer)
     }
 
-    pub fn blob_from_js(
-        &self,
-        global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        self.to_buffered_value_from_js(global_this, call_frame, streams::BufferActionTag::Blob)
+    pub fn blob_from_js(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.to_buffered_value_from_js(cx, streams::BufferActionTag::Blob)
     }
 
-    pub fn bytes_from_js(
-        &self,
-        global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        self.to_buffered_value_from_js(global_this, call_frame, streams::BufferActionTag::Bytes)
+    pub fn bytes_from_js(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.to_buffered_value_from_js(cx, streams::BufferActionTag::Bytes)
     }
 
-    pub fn json_from_js(
-        &self,
-        global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        self.to_buffered_value_from_js(global_this, call_frame, streams::BufferActionTag::Json)
+    pub fn json_from_js(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.to_buffered_value_from_js(cx, streams::BufferActionTag::Json)
     }
 }

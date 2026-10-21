@@ -1,18 +1,19 @@
-//! How comments are written.
+//! How comments are printed.
 //!
-//! [`Comments`](super::comments::Comments) says which comments a node owns. The functions here write them, with the spaces and
-//! line breaks around them, and mark them as printed. They are Prettier's `printLeadingComments`, `printTrailingComments` and
-//! `printDanglingComments`.
+//! [`Comments`](super::comments::Comments) tracks which comments a node owns. The functions here print them, with the
+//! spaces and line breaks around them, and mark them as printed. They're Prettier's `printLeadingComments`,
+//! `printTrailingComments` and `printDanglingComments`.
 
 use super::ast_nodes::AstNodes;
 use super::comments::{Comment, CommentExt, CommentList};
 use crate::prelude::*;
 use crate::write;
 
-/// 0 if something is before `comment` on its line, 1 if nothing is, 2 if the line before is empty
-/// as well: Prettier's `hasNewline(.., { backwards: true })` and `isPreviousLineEmpty`.
+/// 0 if something is before `comment` on its line, 1 if nothing is, 2 if the previous line is also empty: Prettier's
+/// `hasNewline(.., { backwards: true })` and `isPreviousLineEmpty`.
 fn lines_before(comment: Comment<'_>, f: &Formatter<'_>) -> usize {
-    /// Without the blanks at the end of `text` and the line break before them, if there is one.
+    /// Strips `text`'s trailing spaces and tabs and the line break before them. Returns `None` if there's no line break
+    /// there.
     fn without_last_line(text: &[u8]) -> Option<&[u8]> {
         let text = bun_core::strings::trim_right(text, b" \t");
         match bun_core::strings::js_line_break_len_back(text) {
@@ -53,31 +54,30 @@ impl<'a> Format<'a> for FormatLeadingComments<'a> {
     }
 }
 
-/// `a ⏎ /* comment */; ⏎ b`: the `;`, which is that of `a`, is written before the comment. For oxfmt
-/// the comment stays on a line of its own, so the line breaks after it are counted from the end of the `;`.
-/// For Prettier it is on the line of `b`.
+/// `a ⏎ /* comment */; ⏎ b`: the `;`, which belongs to `a`, is printed before the comment. oxfmt keeps the comment on
+/// its own line, so the line breaks after it are counted from the end of the `;`. Prettier puts it on `b`'s line.
 pub(crate) fn comment_before_semicolon_keeps_its_line(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// Where `comment`, which leads something, ends. See [`comment_before_semicolon_keeps_its_line`].
-fn end_with_semicolon_of_statement_before(comment: Comment<'_>, f: &Formatter<'_>) -> u32 {
+/// The end of `comment`, which leads something. See [`comment_before_semicolon_keeps_its_line`].
+fn end_including_previous_statement_semicolon(comment: Comment<'_>, f: &Formatter<'_>) -> u32 {
     let end = comment.span().end;
     if !comment.has_newline_before() || !comment_before_semicolon_keeps_its_line(f) {
         return end;
     }
     let rest = f.source_text().as_bytes().get(end as usize..);
-    let blanks = (rest.unwrap_or_default().iter())
+    let whitespace_len = (rest.unwrap_or_default().iter())
         .take_while(|b| b.is_ascii_whitespace())
         .count() as u32;
-    match f.source_text().byte_at(end + blanks) {
-        Some(b';') => end + blanks + 1,
+    match f.source_text().byte_at(end + whitespace_len) {
+        Some(b';') => end + whitespace_len + 1,
         _ => end,
     }
 }
 
-/// Prettier's `mergeNestledJsdocComments`: `/** .. *//** .. */`, which JSDoc uses for the overloads of a function. The two
-/// comments stay together, without a space between them.
+/// Prettier's `mergeNestledJsdocComments`: `/** .. *//** .. */`, which JSDoc uses for a function's overloads. The two
+/// comments stay together, with no space between them.
 fn is_nestled_jsdoc_comment(comment: Comment<'_>, next: Option<Comment<'_>>) -> bool {
     next.is_some_and(|next| {
         next.span().start == comment.span().end
@@ -103,7 +103,7 @@ fn write_leading_comments<'a>(comments: CommentList<'a>, f: &mut Formatter<'a>) 
 
         let lines_after = (f.source_text().lines_after(comment.span().end)).max(
             f.source_text()
-                .lines_after(end_with_semicolon_of_statement_before(comment, f)),
+                .lines_after(end_including_previous_statement_semicolon(comment, f)),
         );
         match (comment.is_block(), lines_after) {
             (true, 0) => write!(f, space()),
@@ -143,7 +143,7 @@ impl<'a> Format<'a> for FormatTrailingComments<'a> {
 #[cold]
 fn write_trailing_comments<'a>(comments: CommentList<'a>, f: &mut Formatter<'a>) {
     let mut total_lines_before = 0;
-    // `a; // b` and `; // c` on the next line: the one before the empty statement has been written by itself.
+    // `a; // b` and `; // c` on the next line: the comment before the empty statement was printed separately.
     let mut previous_comment: Option<Comment<'a>> = comments.first().and_then(|first| {
         let previous = f.comments().last_printed()?;
         if first.span().start < previous.span().end {
@@ -174,8 +174,8 @@ fn write_trailing_comments<'a>(comments: CommentList<'a>, f: &mut Formatter<'a>)
 
         let is_after_line_comment = previous_comment.is_some_and(|previous| previous.is_line());
 
-        // A comment on a line of its own at the end of a block or an object is a trailing comment
-        // of what is before it, and stays on its own line:
+        // An own-line comment at the end of a block or an object is a trailing comment of the node before it, and stays
+        // on its own line:
         //
         //     {
         //       x: 1,
@@ -199,7 +199,7 @@ fn write_trailing_comments<'a>(comments: CommentList<'a>, f: &mut Formatter<'a>)
                 ]
             );
         } else {
-            // Nothing but a byte order mark is before it.
+            // Only a byte order mark is before it.
             let is_first_in_file =
                 f.source_text().text_for(&Span::before(0, comment.span())) == b"\xEF\xBB\xBF";
             let content = format_with(|f| write!(f, [maybe_space(!is_first_in_file), comment]));
@@ -236,9 +236,9 @@ pub(crate) enum FormatDanglingComments<'a> {
 
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum DanglingIndentMode {
-    /// On lines of their own, indented.
+    /// On their own lines, indented.
     Block,
-    /// On lines of their own, indented, unless it is a single block comment that fits.
+    /// On their own lines, indented, unless it's a single block comment that fits.
     Soft,
     /// Each on its own line.
     None,
@@ -308,9 +308,8 @@ fn write_dangling_comments<'a>(
     }
 }
 
-/// For oxfmt the comments between the head of something and its body, between a `}` and the keyword
-/// after it, and between what is called and the `(` stay where they are. Prettier attaches each to a
-/// node, which can be in the body, or in the parentheses.
+/// oxfmt leaves comments in place between a head and its body, between a `}` and the keyword after it, and between a
+/// callee and the `(`. Prettier attaches each to a node, which can be in the body or in the parentheses.
 ///
 /// ```js
 /// function a() // comment      function a() {
@@ -321,7 +320,7 @@ pub(crate) fn comments_stay_between_head_and_body(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// oxfmt hands its document for a script of a Vue file to Prettier, whose printer takes away the blanks before a line
+/// oxfmt hands its document for a Vue file's script to Prettier, whose printer strips the whitespace before a line
 /// break.
 fn is_printed_by_prettier_for_oxfmt(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt() && f.options().in_html.root != HtmlRoot::None
@@ -348,16 +347,16 @@ impl<'a> Format<'a> for Comment<'a> {
                 && !is_printed_by_prettier_for_oxfmt(f);
             let mut lines = bun_core::strings::split_crlf_lines(content).peekable();
             let first = lines.next().unwrap_or_default();
-            // A comment that waits for the end of the line would be written at the first line break in this one. Prettier
-            // prints `a; /**⏎// b⏎ * c⏎ */` for `a // b⏎; /**⏎ * c⏎ */`.
+            // A comment waiting in a line suffix would otherwise be printed at this comment's first line break.
+            // Prettier prints `a; /**⏎// b⏎ * c⏎ */` for `a // b⏎; /**⏎ * c⏎ */`.
             write!(f, line_suffix_boundary());
             write!(f, text(bun_core::strings::trim_js_whitespace_end(first)));
             while let Some(line) = lines.next() {
                 let trimmed = bun_core::strings::trim_js_whitespace(line);
                 write!(f, [hard_line_break(), " ", text(trimmed)]);
                 if is_jsdoc && trimmed != b"*" && line.ends_with(b"  ") && lines.peek().is_some() {
-                    // A line break in a text keeps the spaces before it. The one that follows
-                    // only indents.
+                    // A line break inside a text keeps the spaces before it. The hard line break that follows only
+                    // indents.
                     write!(f, text(b"  \n"));
                 }
             }

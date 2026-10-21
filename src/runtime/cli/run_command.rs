@@ -3277,7 +3277,7 @@ pub(crate) enum Filter {
     ScriptAndDescriptions,
 }
 
-/// One wait for all the remote images of a document. Nothing prints until it ends.
+/// All remote images of a document share it, request setup included. Nothing prints until it ends.
 const REMOTE_IMAGE_DEADLINE: Duration = Duration::from_secs(3);
 
 /// The body bytes that all the remote images of a document may add up to.
@@ -3496,7 +3496,7 @@ impl RunCommand {
             signals: bun_http::signals::Store::default(),
             received: AtomicUsize::new(0),
             state: bun_threading::Guarded::new(RemoteImageBatchState {
-                pending: count,
+                pending: 0,
                 over_budget: false,
                 closed: false,
                 images: (0..count).map(|_| RemoteImage::Pending).collect(),
@@ -3509,9 +3509,14 @@ impl RunCommand {
             .response_body_streaming
             .store(true, Ordering::SeqCst);
 
+        let deadline = Instant::now() + REMOTE_IMAGE_DEADLINE;
         let mut request_ids: Vec<u32> = Vec::with_capacity(count);
         let mut tasks = bun_threading::thread_pool::Batch::default();
         for (index, url) in batch.urls.iter().enumerate() {
+            // An image that gets no request stays `Pending` and renders as alt text.
+            if Instant::now() >= deadline {
+                break;
+            }
             let download = bun_core::heap::into_raw(Box::new(RemoteImageDownload {
                 async_http: None,
                 batch: Arc::clone(&batch),
@@ -3559,7 +3564,7 @@ impl RunCommand {
             request_ids.push(async_http.async_http_id);
             async_http.schedule(&mut tasks);
         }
-        let deadline = Instant::now() + REMOTE_IMAGE_DEADLINE;
+        batch.state.lock().pending = request_ids.len();
         bun_http::HTTPThread::schedule(tasks);
         let images = batch.settle(deadline, &request_ids);
 

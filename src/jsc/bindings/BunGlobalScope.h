@@ -11,7 +11,7 @@ class GlobalScope : public JSC::JSGlobalObject {
     using Base = JSC::JSGlobalObject;
 
 protected:
-    void finishCreation(JSC::VM& vm);
+    void finishCreation(JSC::VM& vm, JSC::JSObject* globalThis = nullptr);
 
 public:
     GlobalScope(JSC::VM& vm, JSC::Structure* structure)

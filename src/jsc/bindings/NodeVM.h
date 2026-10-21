@@ -5,6 +5,7 @@
 #include "BunGlobalScope.h"
 
 #include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/JSGlobalProxy.h>
 #include <JavaScriptCore/VM.h>
 
 #include "headers-handwritten.h"
@@ -102,7 +103,7 @@ class NodeVMGlobalObject final : public Bun::GlobalScope {
 public:
     using Base = Bun::GlobalScope;
 
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | JSC::OverridesPut | JSC::OverridesGetOwnPropertyNames | JSC::OverridesGetPrototype | JSC::GetOwnPropertySlotMayBeWrongAboutDontEnum | JSC::ProhibitsPropertyCaching;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | JSC::OverridesPut | JSC::OverridesGetOwnPropertyNames | JSC::GetOwnPropertySlotMayBeWrongAboutDontEnum | JSC::ProhibitsPropertyCaching;
     static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
@@ -133,8 +134,6 @@ public:
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
     static bool defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow);
     static bool deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot);
-    static bool setPrototype(JSObject*, JSGlobalObject*, JSC::JSValue prototype, bool shouldThrowIfCantSet);
-    static JSC::JSValue getPrototype(JSObject*, JSGlobalObject*);
     static JSC::JSPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin&, bool deferred);
 
 private:
@@ -144,6 +143,30 @@ private:
     NodeVMContextOptions m_contextOptions {};
 
     NodeVMGlobalObject(VM& vm, Structure* structure, NodeVMContextOptions contextOptions, JSValue importer);
+
+    bool putOwnOrInherited(JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
+};
+
+// The `globalThis` of a vm context. JSC doesn't support a Proxy in the prototype chain of a global object,
+// so the global object has no prototype, and its proxy has the prototype that scripts see and set.
+class NodeVMGlobalProxy final : public JSC::JSGlobalProxy {
+public:
+    using Base = JSC::JSGlobalProxy;
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags & ~JSC::OverridesGetPrototype;
+
+    DECLARE_INFO;
+
+    static NodeVMGlobalProxy* create(JSC::VM&, NodeVMGlobalObject* target);
+
+    using JSC::JSObject::getPrototype;
+    using JSC::JSObject::setPrototype;
+
+private:
+    NodeVMGlobalProxy(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* target)
+        : Base(vm, structure, target)
+    {
+    }
 };
 
 // Helper functions to create vm contexts and run code

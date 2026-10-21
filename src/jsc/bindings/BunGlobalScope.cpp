@@ -14,9 +14,12 @@ namespace Bun {
 
 using namespace JSC;
 
-void GlobalScope::finishCreation(JSC::VM& vm)
+void GlobalScope::finishCreation(JSC::VM& vm, JSObject* globalThis)
 {
-    Base::finishCreation(vm);
+    if (globalThis)
+        Base::finishCreation(vm, globalThis);
+    else
+        Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
     m_encodeIntoObjectStructure.initLater(

@@ -2204,6 +2204,21 @@ describe("DONT_CONTEXTIFY", () => {
     expect(runInContext("typeof behindProxy", ctx)).toBe("undefined");
   });
 
+  test("a name that isn't defined throws when the global's prototype chain has a Proxy", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    Object.setPrototypeOf(ctx, Object.create(new Proxy({}, {})));
+    expect(runInContext("try { missing; 'did not throw' } catch (e) { e.name }", ctx)).toBe("ReferenceError");
+    expect(runInContext("typeof missing", ctx)).toBe("undefined");
+  });
+
+  test("scripts run when a Proxy goes under the global's prototype later", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    const prototype = { beforeProxy: 1 };
+    Object.setPrototypeOf(ctx, prototype);
+    Object.setPrototypeOf(prototype, new Proxy({ behindProxy: 2 }, {}));
+    expect(runInContext("[beforeProxy, behindProxy]", ctx)).toEqual([1, 2]);
+  });
+
   test("a global cannot be in its own prototype chain", () => {
     const ctx = createContext(constants.DONT_CONTEXTIFY);
     const cyclic = "cyclic __proto__ value";

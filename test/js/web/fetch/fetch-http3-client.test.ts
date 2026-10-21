@@ -504,6 +504,36 @@ describe("fetch protocol: http3", () => {
     await expect(fetch(`${base}/hello`, { protocol: "http3" } as any)).rejects.toThrow();
   });
 
+  test("a trusted certificate with a blocked public key fails the handshake", async () => {
+    using dir = tempDir("h3-blocked-key", { "ca.pem": tls.cert });
+    const script = /* js */ `
+      import { addBlockedSPKIForTesting } from "bun:internal-for-testing";
+      import { createHash, X509Certificate } from "node:crypto";
+      import { readFileSync } from "node:fs";
+      if (process.env.H3_BLOCK_KEY) {
+        const cert = new X509Certificate(readFileSync(process.env.NODE_EXTRA_CA_CERTS));
+        addBlockedSPKIForTesting(
+          createHash("sha256").update(cert.publicKey.export({ type: "spki", format: "der" })).digest(),
+        );
+      }
+      console.log(await fetch(process.env.H3_URL, { protocol: "http3" }).then(res => res.text(), err => err.code));
+    `;
+    async function run(env: Record<string, string>) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(String(dir), "ca.pem"), H3_URL: `${base}/hello`, ...env },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      return { stdout: stdout.trim(), exitCode };
+    }
+    expect(await Promise.all([run({}), run({ H3_BLOCK_KEY: "1" })])).toEqual([
+      { stdout: "hello over h3", exitCode: 0 },
+      { stdout: "HTTP3HandshakeFailed", exitCode: 0 },
+    ]);
+  });
+
   test("session retired on GOAWAY: rapid serve/stop cycles", async () => {
     // Each stop(true) sends GOAWAY; the client must mark the pooled session
     // unusable so the next fetch (new port → new session) isn't disrupted by
@@ -1257,5 +1287,48 @@ test("custom TLS trust options are rejected on protocol: http3 and excluded from
   // stay off QUIC: the live h3 session count stays at 0 after the second fetch.
   expect(stdout).toMatch(/^first alt-svc=h3=":\d+"; ma=\d+ sessions=0\n/);
   expect(stdout).toMatch(/second status=200 sessions=0\n$/);
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/32234
+test("connects to a server with an Ed25519 certificate", async () => {
+  const fixtures = join(import.meta.dir, "..", "..", "node", "tls", "fixtures");
+  const server = Bun.serve({
+    port: 0,
+    tls: { key: Bun.file(join(fixtures, "ed25519-key.pem")), cert: Bun.file(join(fixtures, "ed25519-cert.pem")) },
+    http3: true,
+    http1: false,
+    fetch: () => new Response("ed25519 over h3"),
+  });
+  try {
+    const res = await fetch(`https://127.0.0.1:${server.port}/`, h3);
+    expect(await res.text()).toBe("ed25519 over h3");
+  } finally {
+    // As in afterAll: the pooled session drains on lsquic's idle timeout, so stop(true) is not awaited.
+    server.stop(true);
+  }
+});
+
+test("protocol: http3 is refused once tls.DEFAULT_CIPHERS is assigned, as it is with a ciphers option", async () => {
+  const fixture = `
+    import tls from "node:tls";
+    const server = Bun.serve({ port: 0, tls: ${JSON.stringify(tls)}, http3: true, fetch: () => new Response("ok") });
+    const attempt = options =>
+      fetch(server.url, { protocol: "http3", tls: { rejectUnauthorized: false, ...options } }).then(
+        res => res.text(),
+        error => error.code,
+      );
+    const ciphers = "ECDHE-RSA-AES256-GCM-SHA384";
+    const results = { nothing: await attempt(), option: await attempt({ ciphers }) };
+    tls.DEFAULT_CIPHERS = ciphers;
+    results.assigned = await attempt();
+    console.log(JSON.stringify(results));
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // The HTTP/3 client has one context, which takes no option. QUIC is TLS 1.3, so the list would not apply to it.
+  expect(JSON.parse(stdout)).toEqual({ nothing: "ok", option: "HTTP3Unsupported", assigned: "HTTP3Unsupported" });
   expect(exitCode).toBe(0);
 });

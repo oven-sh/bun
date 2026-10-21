@@ -356,11 +356,6 @@ impl Ref {
         // User-bit lane is not part of identity — see type-level doc.
         self.as_u64() == other.as_u64()
     }
-    /// deprecated alias
-    #[inline]
-    pub const fn is_null(self) -> bool {
-        self.is_empty()
-    }
     /// `Ref::NONE` → `None`, otherwise `Some(self)`. For sites that previously
     /// stored `Option<Ref>` and want option combinators on the sentinel form.
     #[inline]
@@ -599,25 +594,6 @@ impl Default for Loc {
 impl Loc {
     pub const EMPTY: Loc = Loc { start: -1 };
 
-    /// Whether `start` is not a source offset but an index, marked by bit 30. Only the parse for
-    /// the type checker creates such a location (`bun_js_parser::sema::notes`).
-    #[inline]
-    pub const fn is_index(self) -> bool {
-        self.start >= 1 << 30
-    }
-
-    #[inline]
-    pub const fn from_index(index: usize) -> Loc {
-        Loc {
-            start: index as i32 | 1 << 30,
-        }
-    }
-
-    #[inline]
-    pub const fn index(self) -> usize {
-        (self.start & !(1 << 30)) as usize
-    }
-
     #[inline]
     pub fn to_nullable(self) -> Option<Loc> {
         if self.start == -1 { None } else { Some(self) }
@@ -718,6 +694,37 @@ impl Default for Location {
 }
 
 impl Location {
+    /// Writes `at file:line:column` on its own line, under a message of `kind`. Writes nothing if there's no file.
+    pub fn write_place<const ENABLE_ANSI_COLORS: bool>(
+        &self,
+        to: &mut impl fmt::Write,
+        kind: Kind,
+    ) -> fmt::Result {
+        if self.file.is_empty() {
+            return Ok(());
+        }
+        to.write_str("\n")?;
+        write_n_bytes(to, b' ', (kind.string().len() + ": ".len()) - "at ".len())?;
+        bun_core::write_pretty!(
+            to,
+            ENABLE_ANSI_COLORS,
+            "<d>at <r><cyan>{}<r>",
+            bun_core::fmt::EscapeControlChars(bstr::BStr::new(&self.file))
+        )?;
+        if self.line > 0 && self.column > -1 {
+            bun_core::write_pretty!(
+                to,
+                ENABLE_ANSI_COLORS,
+                "<d>:<r><yellow>{}<r><d>:<r><yellow>{}<r>",
+                self.line,
+                self.column,
+            )?;
+        } else if self.line > -1 {
+            bun_core::write_pretty!(to, ENABLE_ANSI_COLORS, "<d>:<r><yellow>{}<r>", self.line)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
         cost += self.file.len();
@@ -814,7 +821,6 @@ impl Location {
                     offset: 0,
                 });
             }
-            debug_assert!(!r.loc.is_index());
             let data = match tracker {
                 Some(tracker) => tracker.error_position(source, r.loc),
                 None => source.init_error_position(r.loc),
@@ -983,16 +989,17 @@ impl Data {
         }
 
         // `pub const &'static str` — accepted by `const_format::concatcp!` below.
-        use bun_core::output::ansi::{BLUE, BOLD as B, DIM as D, RED};
+        use bun_core::output::ansi::{BLUE, BOLD as B, DIM as D, RED, YELLOW};
 
         let message_color: &'static str = match kind {
-            Kind::Err => B,
+            Kind::Err | Kind::Warn => B,
             Kind::Note => BLUE,
             _ => const_format::concatcp!(D, B),
         };
 
         let color_name: &'static str = match kind {
             Kind::Err => RED,
+            Kind::Warn => YELLOW,
             Kind::Note => BLUE,
             _ => D,
         };
@@ -1006,8 +1013,10 @@ impl Data {
                     bun_core::strings::split(line_text, b"\n").collect();
                 let line_text = lines_before.pop().unwrap_or_default();
                 if location.column > 0 && !line_text.is_empty() {
-                    let mut line_offset_for_second_line: usize =
-                        usize::try_from(location.column - 1).expect("int cast");
+                    let mut line_offset_for_second_line: usize = width_before(
+                        line_text,
+                        usize::try_from(location.column - 1).expect("int cast"),
+                    );
                     let gutter = bun_core::fmt::digit_count(location.line);
                     for (line, text) in
                         (location.line - lines_before.len() as i32..).zip(lines_before)
@@ -1017,7 +1026,7 @@ impl Data {
                             to,
                             "{}",
                             bun_core::fmt::fmt_javascript(
-                                text,
+                                &printable(text),
                                 bun_core::fmt::HighlighterOptions {
                                     enable_colors: ENABLE_ANSI_COLORS,
                                     redact_sensitive_information,
@@ -1044,7 +1053,7 @@ impl Data {
                         to,
                         "{}",
                         bun_core::fmt::fmt_javascript(
-                            line_text,
+                            &printable(line_text),
                             bun_core::fmt::HighlighterOptions {
                                 enable_colors: ENABLE_ANSI_COLORS,
                                 redact_sensitive_information,
@@ -1085,26 +1094,41 @@ impl Data {
         pretty_write!("{}<r>", bstr::BStr::new(&*self.text))?;
 
         if let Some(location) = &self.location {
-            if !location.file.is_empty() {
-                to.write_str("\n")?;
-                write_n_bytes(to, b' ', (kind.string().len() + ": ".len()) - "at ".len())?;
-
-                pretty_write!("<d>at <r><cyan>{}<r>", bstr::BStr::new(&location.file))?;
-
-                if location.line > 0 && location.column > -1 {
-                    pretty_write!(
-                        "<d>:<r><yellow>{}<r><d>:<r><yellow>{}<r>",
-                        location.line,
-                        location.column,
-                    )?;
-                } else if location.line > -1 {
-                    pretty_write!("<d>:<r><yellow>{}<r>", location.line)?;
-                }
-            }
+            location.write_place::<ENABLE_ANSI_COLORS>(to, kind)?;
         }
 
         Ok(())
     }
+}
+
+/// Returns a source line as it is shown in a diagnostic: control characters other than tabs are
+/// written as escape sequences such as `\x1b`.
+fn printable(line: &[u8]) -> Vec<u8> {
+    let mut printed = Vec::with_capacity(line.len());
+    // NUL bytes are copied through unescaped because a terminal ignores them.
+    for (i, part) in bun_core::strings::split(line, b"\0").enumerate() {
+        if i > 0 {
+            printed.push(0);
+        }
+        let part = bun_core::fmt::escape_control_chars_multiline(part);
+        printed.extend_from_slice(part.to_string().as_bytes());
+    }
+    printed
+}
+
+/// Width in terminal columns of the first `units` UTF-16 code units of `line`, as `printable`
+/// renders them. A tab counts as one column.
+fn width_before(line: &[u8], units: usize) -> usize {
+    use bun_core::strings;
+    let before = &line[..strings::wtf8_offset_of_utf16_index(line, units as u32)];
+    let past_the_end = units.saturating_sub(strings::wtf8_len_utf16(before) as usize);
+    let before = printable(before);
+    if strings::is_all_ascii(line) {
+        return before.len() + past_the_end;
+    }
+    // The width of a tab is 0 there.
+    let tabs = strings::count_char(&before, b'\t');
+    strings::visible::width::exclude_ansi_colors::utf8(&before) + tabs + past_the_end
 }
 
 fn write_n_bytes(to: &mut impl fmt::Write, b: u8, n: usize) -> fmt::Result {
@@ -1148,7 +1172,10 @@ impl BabyString {
         if substring.is_empty() {
             return BabyString::new(0, 0);
         }
-        let off = bun_core::strings::index_of(container, substring).expect("unreachable");
+        // `container` is formatted lossily, so a `substring` with invalid UTF-8 may not be in it.
+        let Some(off) = bun_core::strings::index_of(container, substring) else {
+            return BabyString::new(0, 0);
+        };
         BabyString::new(off as u16, substring.len() as u16) // @truncate
     }
 
@@ -1924,6 +1951,25 @@ impl Log {
             Box::default(),
             false,
         )
+    }
+
+    /// A warning at `loc` that never prints the source line, which may hold a secret the redactor cannot recognise.
+    #[cold]
+    pub fn add_warning_fmt_no_excerpt(
+        &mut self,
+        source: &Source,
+        loc: Loc,
+        args: fmt::Arguments<'_>,
+    ) {
+        if !Kind::Warn.should_print(self.level) {
+            return;
+        }
+        let range = Range { loc, len: 1 };
+        let text = alloc_print(args);
+        self.add_formatted_msg(Kind::Warn, Some(source), range, text, Box::default(), false);
+        if let Some(location) = self.msgs.last_mut().and_then(|m| m.data.location.as_mut()) {
+            location.line_text = None;
+        }
     }
 
     #[cold]
@@ -2927,7 +2973,6 @@ pub mod server_component_boundary;
 pub mod stmt;
 pub mod symbol;
 pub mod ts;
-pub mod ts_syntax;
 pub mod use_directive;
 
 pub mod lexer_log;

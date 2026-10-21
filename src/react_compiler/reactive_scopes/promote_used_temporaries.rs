@@ -8,8 +8,9 @@
 //!
 //! Corresponds to `src/ReactiveScopes/PromoteUsedTemporaries.ts`.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
+use crate::collections::IdBitSet;
 use crate::collections::IdMap;
 use crate::hir::ArrayElement;
 use crate::hir::DeclarationId;
@@ -33,15 +34,18 @@ use crate::hir::ReactiveValue;
 use crate::hir::ScopeId;
 use crate::hir::environment::Environment;
 use crate::hir::is_primitive_type;
+use crate::hir::visitors::Places;
 
 // =============================================================================
 // State
 // =============================================================================
 
 struct State {
-    tags: HashSet<DeclarationId>,
-    promoted: HashSet<DeclarationId>,
+    tags: IdBitSet<DeclarationId>,
+    promoted: IdBitSet<DeclarationId>,
     pruned: IdMap<DeclarationId, PrunedInfo>,
+    /// `promote_identifier` was asked for one that has a name.
+    has_promoted_a_variable: bool,
 }
 
 struct PrunedInfo {
@@ -59,11 +63,12 @@ pub(crate) fn promote_used_temporaries(
     func: &mut ReactiveFunction,
     env: &mut Environment,
     inline_macro_operands: &HashSet<IdentifierId>,
-) {
+) -> Result<(), crate::diagnostics::CompilerDiagnostic> {
     let mut state = State {
-        tags: HashSet::new(),
-        promoted: HashSet::new(),
+        tags: IdBitSet::new(),
+        promoted: IdBitSet::new(),
         pruned: IdMap::new(),
+        has_promoted_a_variable: false,
     };
 
     // Phase 1: collect promotable temporaries (jsx tags, pruned scope usage)
@@ -83,8 +88,8 @@ pub(crate) fn promote_used_temporaries(
     promote_temporaries_block(&func.body, &mut state, env);
 
     // Phase 3: promote interposed temporaries
-    let mut consts: HashSet<IdentifierId> = HashSet::new();
-    let mut globals: HashSet<IdentifierId> = HashSet::new();
+    let mut consts: IdBitSet<IdentifierId> = IdBitSet::new();
+    let mut globals: IdBitSet<IdentifierId> = IdBitSet::new();
     for param in &func.params {
         match param {
             ParamPattern::Place(p) => {
@@ -108,6 +113,10 @@ pub(crate) fn promote_used_temporaries(
     // Phase 4: promote all instances of promoted declaration IDs
     promote_all_instances_params(func, &mut state, env);
     promote_all_instances_block(&func.body, &mut state, env);
+    crate::diagnostics::invariant(
+        !state.has_promoted_a_variable,
+        "promoteTemporary: Expected to be called only for temporary variables",
+    )
 }
 
 // =============================================================================
@@ -120,6 +129,10 @@ fn collect_promotable_block(
     active_scopes: &mut Vec<ScopeId>,
     env: &Environment,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     for stmt in block {
         match stmt {
             ReactiveStatement::Instruction(instr) => {
@@ -185,11 +198,15 @@ fn collect_promotable_value(
     active_scopes: &mut Vec<ScopeId>,
     env: &Environment,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     match value {
         ReactiveValue::Instruction(instr_value) => {
             // Visit operands
-            for place in crate::hir::visitors::each_instruction_value_operand(instr_value, env) {
-                collect_promotable_place(&place, state, active_scopes, env);
+            for place in crate::hir::visitors::operands(instr_value, &env.functions) {
+                collect_promotable_place(place, state, active_scopes, env);
             }
             // Check for JSX tag
             if let InstructionValue::JsxExpression {
@@ -330,6 +347,10 @@ fn collect_promotable_terminal(
 // =============================================================================
 
 fn promote_temporaries_block(block: &ReactiveBlock, state: &mut State, env: &mut Environment) {
+    if !env.has_stack() {
+        return;
+    }
+
     for stmt in block {
         match stmt {
             ReactiveStatement::Instruction(instr) => {
@@ -381,6 +402,10 @@ fn promote_temporaries_block(block: &ReactiveBlock, state: &mut State, env: &mut
 }
 
 fn promote_temporaries_value(value: &ReactiveValue, state: &mut State, env: &mut Environment) {
+    if !env.has_stack() {
+        return;
+    }
+
     match value {
         ReactiveValue::Instruction(instr_value) => {
             // Visit inner functions: promote params and recurse into nested functions
@@ -510,6 +535,10 @@ fn promote_temporaries_terminal(
 /// Other `visitHirFunction` behaviors (visitPlace on terminal operands, visitInstruction
 /// on all instructions) are no-ops for this phase and are intentionally omitted.
 fn visit_hir_function_for_promotion(func_id: FunctionId, state: &mut State, env: &mut Environment) {
+    if !env.has_stack() {
+        return;
+    }
+
     // Promote params of this function
     let param_ids: Vec<IdentifierId> = {
         let func = &env.functions[func_id.0 as usize];
@@ -583,7 +612,7 @@ struct InterState<'a> {
     value_block_statements: Option<Statements>,
     /// fbt wants these inside the macro call: they stay inline and their operands get the names.
     inline_macro_operands: &'a HashSet<IdentifierId>,
-    operands_of_macro_operands: IdMap<DeclarationId, Vec<Place>>,
+    operands_of_macro_operands: IdMap<DeclarationId, Places>,
 }
 
 impl<'a> InterState<'a> {
@@ -657,10 +686,14 @@ fn promote_interposed_block(
     block: &ReactiveBlock,
     state: &mut State,
     inter_state: &mut InterState<'_>,
-    consts: &mut HashSet<IdentifierId>,
-    globals: &mut HashSet<IdentifierId>,
+    consts: &mut IdBitSet<IdentifierId>,
+    globals: &mut IdBitSet<IdentifierId>,
     env: &mut Environment,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     for stmt in block {
         match stmt {
             ReactiveStatement::Instruction(instr) => {
@@ -709,7 +742,7 @@ fn inline_temporary(
     env: &Environment,
 ) -> Option<Temporary> {
     let identifier = &env.identifiers[place.identifier.0 as usize];
-    if identifier.name.is_some() || state.promoted.contains(&identifier.declaration_id) {
+    if identifier.name.is_some() || state.promoted.contains(identifier.declaration_id) {
         return None;
     }
     inter_state
@@ -723,13 +756,13 @@ fn promote_interposed_place(
     place: &Place,
     state: &mut State,
     inter_state: &mut InterState<'_>,
-    consts: &HashSet<IdentifierId>,
+    consts: &IdBitSet<IdentifierId>,
     env: &mut Environment,
 ) -> Effect {
     let Some(temporary) = inline_temporary(place, state, inter_state, env) else {
         return Effect::None;
     };
-    if !inter_state.conflicts(temporary) || consts.contains(&place.identifier) {
+    if !inter_state.conflicts(temporary) || consts.contains(place.identifier) {
         return temporary.effect;
     }
     if inter_state
@@ -752,12 +785,15 @@ fn promote_interposed_place(
 
 /// Last defined first: a promoted operand becomes a statement ahead of the earlier operands.
 fn promote_interposed_operands(
-    mut operands: Vec<Place>,
+    mut operands: Places,
     state: &mut State,
     inter_state: &mut InterState<'_>,
-    consts: &HashSet<IdentifierId>,
+    consts: &IdBitSet<IdentifierId>,
     env: &mut Environment,
 ) -> Effect {
+    if !env.has_stack() {
+        return Effect::None;
+    }
     operands.sort_by_key(|place| {
         let declaration_id = env.identifiers[place.identifier.0 as usize].declaration_id;
         std::cmp::Reverse(
@@ -781,17 +817,17 @@ fn promote_interposed_operands(
 }
 
 /// A const cannot change between being loaded and being used.
-fn is_reassignable(id: IdentifierId, consts: &HashSet<IdentifierId>, env: &Environment) -> bool {
+fn is_reassignable(id: IdentifierId, consts: &IdBitSet<IdentifierId>, env: &Environment) -> bool {
     let identifier = &env.identifiers[id.0 as usize];
-    matches!(identifier.name, Some(IdentifierName::Named(_))) && !consts.contains(&id)
+    matches!(identifier.name, Some(IdentifierName::Named(_))) && !consts.contains(id)
 }
 
 /// The effect of the instruction itself, without the operands that print inside it.
 fn instruction_effect(
     iv: &InstructionValue,
     operands: &[Place],
-    consts: &HashSet<IdentifierId>,
-    globals: &HashSet<IdentifierId>,
+    consts: &IdBitSet<IdentifierId>,
+    globals: &IdBitSet<IdentifierId>,
     env: &Environment,
 ) -> Effect {
     match iv {
@@ -830,7 +866,7 @@ fn instruction_effect(
         }
         InstructionValue::PropertyLoad { object, .. }
         | InstructionValue::ComputedLoad { object, .. } => {
-            if globals.contains(&object.identifier) {
+            if globals.contains(object.identifier) {
                 Effect::None
             } else {
                 Effect::Read
@@ -877,8 +913,8 @@ fn promote_interposed_instruction(
     instr: &ReactiveInstruction,
     state: &mut State,
     inter_state: &mut InterState<'_>,
-    consts: &mut HashSet<IdentifierId>,
-    globals: &mut HashSet<IdentifierId>,
+    consts: &mut IdBitSet<IdentifierId>,
+    globals: &mut IdBitSet<IdentifierId>,
     env: &mut Environment,
 ) -> Effect {
     let effect = match &instr.value {
@@ -902,7 +938,7 @@ fn promote_interposed_instruction(
                     if lvalue.kind == InstructionKind::Const
                         || lvalue.kind == InstructionKind::HoistedConst
                     {
-                        for operand in crate::hir::visitors::each_pattern_operand(&lvalue.pattern) {
+                        for operand in crate::hir::visitors::pattern_operands(&lvalue.pattern) {
                             consts.insert(operand.identifier);
                         }
                     }
@@ -914,7 +950,7 @@ fn promote_interposed_instruction(
                 InstructionValue::PropertyLoad { object, .. }
                 | InstructionValue::ComputedLoad { object, .. } => {
                     if let Some(lvalue) = &instr.lvalue {
-                        if globals.contains(&object.identifier) {
+                        if globals.contains(object.identifier) {
                             globals.insert(lvalue.identifier);
                         }
                     }
@@ -938,7 +974,7 @@ fn promote_interposed_instruction(
     };
     let temporary = instr.lvalue.as_ref().and_then(|lvalue| {
         let identifier = &env.identifiers[lvalue.identifier.0 as usize];
-        (identifier.name.is_none() && !state.promoted.contains(&identifier.declaration_id))
+        (identifier.name.is_none() && !state.promoted.contains(identifier.declaration_id))
             .then_some(identifier.declaration_id)
     });
     match temporary {
@@ -966,10 +1002,14 @@ fn promote_interposed_value(
     value: &ReactiveValue,
     state: &mut State,
     inter_state: &mut InterState<'_>,
-    consts: &mut HashSet<IdentifierId>,
-    globals: &mut HashSet<IdentifierId>,
+    consts: &mut IdBitSet<IdentifierId>,
+    globals: &mut IdBitSet<IdentifierId>,
     env: &mut Environment,
 ) -> Effect {
+    if !env.has_stack() {
+        return Effect::None;
+    }
+
     match value {
         ReactiveValue::Instruction(iv) => {
             let operands = crate::hir::visitors::each_instruction_value_operand(iv, env);
@@ -1031,8 +1071,8 @@ fn promote_interposed_terminal_value(
     value: &ReactiveValue,
     state: &mut State,
     inter_state: &mut InterState<'_>,
-    consts: &mut HashSet<IdentifierId>,
-    globals: &mut HashSet<IdentifierId>,
+    consts: &mut IdBitSet<IdentifierId>,
+    globals: &mut IdBitSet<IdentifierId>,
     env: &mut Environment,
 ) {
     let outer = inter_state.enter_value_block();
@@ -1045,7 +1085,7 @@ fn promote_interposed_terminal_place(
     place: &Place,
     state: &mut State,
     inter_state: &mut InterState<'_>,
-    consts: &HashSet<IdentifierId>,
+    consts: &IdBitSet<IdentifierId>,
     env: &mut Environment,
 ) {
     let effect = promote_interposed_place(place, state, inter_state, consts, env);
@@ -1056,8 +1096,8 @@ fn promote_interposed_terminal(
     stmt: &ReactiveTerminalStatement,
     state: &mut State,
     inter_state: &mut InterState<'_>,
-    consts: &mut HashSet<IdentifierId>,
-    globals: &mut HashSet<IdentifierId>,
+    consts: &mut IdBitSet<IdentifierId>,
+    globals: &mut IdBitSet<IdentifierId>,
     env: &mut Environment,
 ) {
     match &stmt.terminal {
@@ -1165,13 +1205,17 @@ fn promote_all_instances_params(func: &ReactiveFunction, state: &mut State, env:
     for param in &func.params {
         let place = param.place();
         let identifier = &env.identifiers[place.identifier.0 as usize];
-        if identifier.name.is_none() && state.promoted.contains(&identifier.declaration_id) {
+        if identifier.name.is_none() && state.promoted.contains(identifier.declaration_id) {
             promote_identifier(place.identifier, state, env);
         }
     }
 }
 
 fn promote_all_instances_block(block: &ReactiveBlock, state: &mut State, env: &mut Environment) {
+    if !env.has_stack() {
+        return;
+    }
+
     for stmt in block {
         match stmt {
             ReactiveStatement::Instruction(instr) => {
@@ -1214,28 +1258,32 @@ fn promote_all_instances_scope_identifiers(
 
     for id in decl_ids {
         let identifier = &env.identifiers[id.0 as usize];
-        if identifier.name.is_none() && state.promoted.contains(&identifier.declaration_id) {
+        if identifier.name.is_none() && state.promoted.contains(identifier.declaration_id) {
             promote_identifier(id, state, env);
         }
     }
     for id in dep_ids {
         let identifier = &env.identifiers[id.0 as usize];
-        if identifier.name.is_none() && state.promoted.contains(&identifier.declaration_id) {
+        if identifier.name.is_none() && state.promoted.contains(identifier.declaration_id) {
             promote_identifier(id, state, env);
         }
     }
     for id in reassign_ids {
         let identifier = &env.identifiers[id.0 as usize];
-        if identifier.name.is_none() && state.promoted.contains(&identifier.declaration_id) {
+        if identifier.name.is_none() && state.promoted.contains(identifier.declaration_id) {
             promote_identifier(id, state, env);
         }
     }
 }
 
 fn promote_all_instances_place(place: &Place, state: &mut State, env: &mut Environment) {
-    let identifier = &env.identifiers[place.identifier.0 as usize];
-    if identifier.name.is_none() && state.promoted.contains(&identifier.declaration_id) {
-        promote_identifier(place.identifier, state, env);
+    promote_all_instances_id(place.identifier, state, env);
+}
+
+fn promote_all_instances_id(id: IdentifierId, state: &mut State, env: &mut Environment) {
+    let identifier = &env.identifiers[id.0 as usize];
+    if identifier.name.is_none() && state.promoted.contains(identifier.declaration_id) {
+        promote_identifier(id, state, env);
     }
 }
 
@@ -1251,10 +1299,14 @@ fn promote_all_instances_instruction(
 }
 
 fn promote_all_instances_value(value: &ReactiveValue, state: &mut State, env: &mut Environment) {
+    if !env.has_stack() {
+        return;
+    }
+
     match value {
         ReactiveValue::Instruction(iv) => {
-            for place in crate::hir::visitors::each_instruction_value_operand(iv, env) {
-                promote_all_instances_place(&place, state, env);
+            for id in crate::hir::visitors::each_instruction_value_operand_ids(iv, env) {
+                promote_all_instances_id(id, state, env);
             }
             // Visit inner functions
             match iv {
@@ -1270,7 +1322,7 @@ fn promote_all_instances_value(value: &ReactiveValue, state: &mut State, env: &m
                     for id in param_ids {
                         let identifier = &env.identifiers[id.0 as usize];
                         if identifier.name.is_none()
-                            && state.promoted.contains(&identifier.declaration_id)
+                            && state.promoted.contains(identifier.declaration_id)
                         {
                             promote_identifier(id, state, env);
                         }
@@ -1408,12 +1460,12 @@ fn promote_all_instances_terminal(
 
 fn promote_identifier(identifier_id: IdentifierId, state: &mut State, env: &mut Environment) {
     let identifier = &env.identifiers[identifier_id.0 as usize];
-    assert!(
-        identifier.name.is_none(),
-        "promoteTemporary: Expected to be called only for temporary variables"
-    );
+    if identifier.name.is_some() {
+        state.has_promoted_a_variable = true;
+        return;
+    }
     let decl_id = identifier.declaration_id;
-    if state.tags.contains(&decl_id) {
+    if state.tags.contains(decl_id) {
         env.promote_temporary_jsx_tag(identifier_id);
     } else {
         env.promote_temporary(identifier_id);

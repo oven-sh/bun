@@ -19,7 +19,7 @@ const { isAnyArrayBuffer } = require("node:util/types");
 const eos = require("internal/streams/end-of-stream");
 const { kEosNodeSynchronousCallback } = eos;
 
-const normalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
+const normalizeEncoding = $bindgen("node_util_binding.bind.ts", "normalizeEncoding");
 
 const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeMap = Array.prototype.map;
@@ -120,25 +120,19 @@ class ReadableFromWeb extends Readable {
   _destroy(error, callback) {
     if (!this.#closed) {
       this.#closed = true;
+      // As in Node, a cancel() that rejects doesn't error the Readable.
+      const done = () => callback(error);
       var reader = this.#reader;
       if (reader) {
         this.#reader = undefined;
-        PromisePrototypeThen.$call(
-          reader.cancel(error),
-          () => callback(error),
-          cancelError => callback(error ?? cancelError),
-        );
+        PromisePrototypeThen.$call(reader.cancel(error), done, done);
         return;
       }
       var stream = this.#stream;
       if (stream) {
         this.#stream = undefined;
         if (!this.#takenByResponse(stream)) {
-          PromisePrototypeThen.$call(
-            stream.cancel(error),
-            () => callback(error),
-            cancelError => callback(error ?? cancelError),
-          );
+          PromisePrototypeThen.$call(stream.cancel(error), done, done);
           return;
         }
       }
@@ -258,7 +252,8 @@ function newWritableStreamFromStreamWritable(streamWritable) {
         closed.reject(error);
         closed = undefined;
       }
-      controller.error(error);
+      // close() clears the controller when the stream has already ended.
+      controller?.error(error);
       controller = undefined;
       return;
     }
@@ -268,7 +263,7 @@ function newWritableStreamFromStreamWritable(streamWritable) {
       closed = undefined;
       return;
     }
-    controller.error($makeAbortError());
+    controller?.error($makeAbortError());
     controller = undefined;
   });
 
@@ -558,6 +553,8 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
     streamReadable.pause();
 
     streamReadable.on("data", function onData(chunk) {
+      // Buffered data can still be emitted after cancel() destroys the stream.
+      if (wasCanceled) return;
       // Copy the Buffer to detach it from the pool.
       if (Buffer.isBuffer(chunk) && !objectMode) chunk = new Uint8Array(chunk);
       controller.enqueue(chunk);

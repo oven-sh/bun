@@ -2278,7 +2278,9 @@ describe("direct stream edge cases over Bun.serve", () => {
     });
   });
 
-  test("async generator body: client abort between yields throws the connection-closed error into the generator once, then finally", async () => {
+  // The connection-closed error is the reason of a direct stream's cancel(). A generator body
+  // gets no reason: it is returned, the way `for await` leaves an iterator.
+  test("async generator body: client abort between yields returns the generator: finally runs, catch does not", async () => {
     const events: string[] = [];
     const finished = Promise.withResolvers<void>();
     using server = Bun.serve({
@@ -2304,7 +2306,7 @@ describe("direct stream edge cases over Bun.serve", () => {
     });
     await abortAfter(server, "first");
     await finished.promise;
-    expect(events).toEqual([expect.stringMatching(/^catch:.*closed/i), "finally"]);
+    expect(events).toEqual(["finally"]);
   });
 
   test("Readable.toWeb(nodeReadable) body destroyed mid-response aborts the response instead of hanging", async () => {
@@ -2404,4 +2406,45 @@ describe("direct stream edge cases over Bun.serve", () => {
     // Server still answers.
     expect(await (await fetch(server.url, { method: "POST", body: "again" })).text()).toBe("again");
   });
+});
+
+test("survives server.stop(true) called while a body chunk is converted to a string", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      let server;
+      const chunk = Object.assign(new String("x"), {
+        [Symbol.toPrimitive]() { server.stop(true); return "payload"; },
+      });
+      server = Bun.serve({
+        port: 0,
+        fetch: () => new Response(new ReadableStream({
+          async pull(controller) {
+            controller.enqueue("seed");
+            await new Promise(resolve => setImmediate(resolve));
+            controller.enqueue(chunk);
+            controller.close();
+          },
+        })),
+      });
+      try {
+        const res = await fetch(server.url);
+        console.log("status", res.status);
+        console.log("body", JSON.stringify(await res.text()));
+      } catch (e) {
+        console.log("read failed", e.code);
+      }
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // The connection can reset before or after the client reads the headers.
+  expect(stdout).toMatch(/^(status 200\n)?read failed ECONNRESET\n$/);
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });

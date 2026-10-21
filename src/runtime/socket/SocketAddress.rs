@@ -210,7 +210,6 @@ impl SocketAddress {
             }
         };
         debug_assert!(host.tag() != bun_core::Tag::Dead);
-        debug_assert!(host.length() >= 2);
 
         // NOTE: parsed host cannot be used as presentation string. e.g.
         // - "[::1]" -> "::1"
@@ -221,7 +220,7 @@ impl SocketAddress {
         // `ares_inet_pton` does not accept it, so we strip and parse it here.
         // (WHATWG URL host parsing rejects zone identifiers, so in practice
         // `URL::host_()` should not yield one — handled defensively.)
-        let addr = if paddr[0] == b'[' && paddr[paddr.len() - 1] == b']' {
+        let addr = if paddr.len() >= 2 && paddr[0] == b'[' && paddr[paddr.len() - 1] == b']' {
             let mut inner = &paddr[1..paddr.len() - 1];
             let mut scope_id: u32 = 0;
             if let Some(pct) = strings::index_of_char_usize(inner, b'%') {
@@ -407,7 +406,12 @@ impl SocketAddress {
                 };
                 if let Some(address_str) = options.address {
                     presentation = address_str;
-                    let slice = presentation.to_owned_slice_z();
+                    let mut slice = presentation.to_owned_slice_z();
+                    // As in libuv's `uv_inet_pton`, the address ends at a zone id.
+                    if let Some((address, _)) = strings::split_once_char(slice.as_bytes(), b'%') {
+                        slice = bun_core::ZBox::from_bytes(address);
+                        presentation = BunString::DEAD;
+                    }
                     pton(
                         global,
                         inet::AF_INET6,

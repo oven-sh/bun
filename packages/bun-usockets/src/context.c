@@ -74,6 +74,17 @@ void us_socket_group_deinit(struct us_socket_group_t *group) {
  * closes it in finalize(), so closing+freeing it here turns that into a UAF
  * (the original LSAN was only the *accepted* sockets, not the listener). */
 void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_listeners) {
+    struct us_loop_t *loop = group->loop;
+    if (!loop) {
+        /* A Windows named-pipe Listener never initializes its group. */
+        return;
+    }
+
+    /* A close handler can tick the loop (waitForPromise). Bump tick_depth so
+     * that nested tick doesn't free the sockets closed here while this loop and
+     * Listener.stop still read them. */
+    loop->data.tick_depth++;
+
     if (also_listeners) {
         /* Listeners first — stops new sockets from being accepted into
          * head_sockets while we're draining it. */
@@ -141,6 +152,8 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
         }
         US_ASSERT(group->low_prio_count == 0);
     }
+
+    loop->data.tick_depth--;
 }
 
 void us_socket_group_close_all(struct us_socket_group_t *group) {
@@ -262,7 +275,7 @@ void us_internal_socket_group_unlink_connecting_socket(struct us_socket_group_t 
 struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_group_t *group,
                                     unsigned char kind, int old_ext_size, int ext_size) {
     if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
-        return s;
+        return NULL;
     }
     struct us_socket_group_t *old_group = s->group;
     struct us_loop_t *loop = old_group->loop;
@@ -307,9 +320,6 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
             us_internal_socket_group_unlink_connecting_socket(old_group, c);
             us_internal_socket_group_link_connecting_socket(group, c);
         }
-    }
-    if (old_group != group && new_s->ssl) {
-        us_internal_ssl_socket_left_group(new_s);
     }
     new_s->group = group;
     new_s->kind = kind;
@@ -359,8 +369,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     ls->accept_kind = kind;
     ls->ssl_ctx = ssl_ctx;
     if (ssl_ctx) us_internal_ssl_ctx_up_ref(ssl_ctx);
-    ls->sni = NULL;
-    ls->on_server_name = NULL;
+    ls->server_names = NULL;
     ls->socket_ext_size = socket_ext_size;
     ls->deferred_accept = 0;
     ls->accept_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx;
@@ -468,7 +477,7 @@ void us_listen_socket_close(struct us_listen_socket_t *ls) {
         struct us_socket_group_t *group = ls->accept_group;
         struct us_loop_t *loop = s->group->loop;
         us_poll_stop((struct us_poll_t *) s, loop);
-        bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
+        us_internal_poll_close_fd((struct us_poll_t *) s);
 
         us_internal_listen_socket_ssl_free(ls);
 

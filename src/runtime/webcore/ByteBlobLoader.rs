@@ -103,33 +103,36 @@ impl ByteBlobLoader {
         streams::Start::ChunkSize(self.chunk_size)
     }
 
+    /// The bytes `drain` and `on_pull` have yet to hand over.
+    fn remaining(&self) -> &[u8] {
+        let Some(store) = &self.store else {
+            return &[];
+        };
+        let view = store.shared_view();
+        let view = &view[(self.offset as usize).min(view.len())..];
+        &view[..view.len().min(self.remain as usize)]
+    }
+
     pub(crate) fn on_pull(&mut self, buffer: &mut [u8], array: JSValue) -> streams::Result {
         array.ensure_still_alive();
         let _keep = bun_jsc::EnsureStillAlive(array);
-        let Some(store) = self.store.clone() else {
-            return streams::Result::Done;
-        };
-        if self.done {
+        if self.store.is_none() || self.done {
             return streams::Result::Done;
         }
 
-        let temporary = store.shared_view();
-        let temporary = &temporary[(self.offset as usize).min(temporary.len())..];
-
-        let take = buffer.len().min(temporary.len().min(self.remain as usize));
-        let temporary = &temporary[..take];
-        if temporary.is_empty() {
+        let rest = self.remaining();
+        let take = buffer.len().min(rest.len());
+        if take == 0 {
             self.clear_data();
             self.done = true;
             return streams::Result::Done;
         }
+        debug_assert!(buffer.as_ptr() != rest.as_ptr());
+        buffer[..take].copy_from_slice(&rest[..take]);
 
-        let copied = blob::SizeType::try_from(temporary.len()).expect("int cast");
-
+        let copied = blob::SizeType::try_from(take).expect("int cast");
         self.remain = self.remain.saturating_sub(copied);
         self.offset = self.offset.saturating_add(copied);
-        debug_assert!(buffer.as_ptr() != temporary.as_ptr());
-        buffer[..temporary.len()].copy_from_slice(temporary);
         if self.remain == 0 {
             return streams::Result::IntoArrayAndDone(streams::IntoArray {
                 value: array,
@@ -200,16 +203,10 @@ impl ByteBlobLoader {
     }
 
     pub(crate) fn drain(&mut self) -> Vec<u8> {
-        let Some(store) = self.store.clone() else {
-            return Vec::new();
-        };
-        let temporary = store.shared_view();
-        let temporary = &temporary[self.offset as usize..];
-        let take = 16384usize.min(temporary.len().min(self.remain as usize));
-        let temporary = &temporary[..take];
+        let rest = self.remaining();
 
         // A single owning copy (avoids a `ManuallyDrop` borrow dance).
-        let cloned = Vec::<u8>::from_slice(temporary);
+        let cloned = Vec::<u8>::from_slice(&rest[..rest.len().min(16384)]);
         self.offset = self.offset.saturating_add(cloned.len() as blob::SizeType);
         self.remain = self.remain.saturating_sub(cloned.len() as blob::SizeType);
 
@@ -244,4 +241,10 @@ impl ByteBlobLoader {
         }
         0
     }
+}
+
+/// What the stream has left, for its reader to size the buffer it pulls into.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__ByteBlobLoader__remaining(source: &Source) -> usize {
+    source.context.remaining().len()
 }

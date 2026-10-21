@@ -15,7 +15,8 @@ if($env:VSINSTALLDIR -eq $null) {
     throw "Command not found: vswhere (did you install Visual Studio?)"
   }
 
-  $vsDir = (& $vswhere -prerelease -latest -property installationPath)
+  # -products *: without it vswhere leaves out Build Tools, which is what CI's images have.
+  $vsDir = (& $vswhere -products * -prerelease -latest -property installationPath)
   if ($vsDir -eq $null) {
     # Check common VS installation paths
     $searchPaths = @(

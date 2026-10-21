@@ -3263,16 +3263,24 @@ console.log(<div {...obj} key="after" />);`),
           });
         });
 
-        it("keeps default, aliased and namespace imports", () => {
-          const kept = ["./default", "./aliased", "./namespace", "./d"];
+        it("keeps default and aliased imports", () => {
+          const kept = ["./default", "./aliased", "./d"];
           const source = `
             import Default from "./default";
             import { Foo as Aliased } from "./aliased";
-            import * as ns from "./namespace";
             import { d } from "./d";
-            class C { @d m(a: Default, b: Aliased, c: ns.Foo) {} }
+            class C { @d m(a: Default, b: Aliased) {} }
           `;
           expect(both(metadata, source)).toEqual({ scanImports: kept, scan: kept });
+        });
+
+        it("keeps a namespace import", () => {
+          const source = `
+            import * as ns from "./namespace";
+            import { d } from "./d";
+            class C { @d m(a: ns.Foo, b: ns.inner.Bar) {} }
+          `;
+          expect(paths(metadata.scanImports(source))).toEqual(["./namespace", "./d"]);
         });
 
         it.each([

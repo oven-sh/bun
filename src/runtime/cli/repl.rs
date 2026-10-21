@@ -2145,11 +2145,12 @@ impl<'a> Repl<'a> {
         let mut opts = bun_js_parser::ParserOptions::init(
             vm.transpiler.options.jsx.clone(),
             bun_ast::Loader::Tsx,
-            // Legacy decorators: the transform below makes the temporaries of a TC39 class
-            // global, where the next input replaces them.
             bun_js_parser::TsconfigOptions {
+                // Legacy decorators: the transform below makes the temporaries of a TC39 class
+                // global, where the next input replaces them.
                 experimental_decorators: true,
-                ..bun_js_parser::TsconfigOptions::NONE
+                emit_decorator_metadata: false,
+                use_define_for_class_fields: vm.transpiler.options.use_define_for_class_fields,
             },
         );
         opts.repl_mode = true;

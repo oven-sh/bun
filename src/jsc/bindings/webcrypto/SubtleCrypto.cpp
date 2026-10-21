@@ -52,7 +52,9 @@
 #include "JSMlDsaParams.h"
 #include "JSX25519Params.h"
 #include "AsymmetricKeyValue.h"
+#include "CryptoAlgorithmHKDF.h"
 #include "CryptoAlgorithmMLDSA.h"
+#include "CryptoAlgorithmPBKDF2.h"
 #include "CryptoKeyAKP.h"
 #include "CryptoKeyEC.h"
 #include "CryptoKeyRSA.h"
@@ -1985,8 +1987,9 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
     auto checkDeriveBitsLength = [&](const CryptoAlgorithmParameters& params, std::optional<unsigned> length) -> bool {
         switch (params.identifier) {
         case CryptoAlgorithmIdentifier::HKDF:
+            return !CryptoAlgorithmHKDF::validateDeriveBits(downcast<CryptoAlgorithmHkdfParams>(params), length).hasException();
         case CryptoAlgorithmIdentifier::PBKDF2:
-            return length && *length && !(*length % 8);
+            return !CryptoAlgorithmPBKDF2::validateDeriveBits(downcast<CryptoAlgorithmPbkdf2Params>(params), length).hasException();
         case CryptoAlgorithmIdentifier::X25519:
             return !length || *length <= 256;
         case CryptoAlgorithmIdentifier::ECDH: {
@@ -2084,11 +2087,9 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
         if (!check(op == "wrapKey"_s ? "exportKey"_s : "importKey"_s, *additional, std::nullopt))
             return false;
     } else if (op == "deriveBits"_s) {
-        if (!lengthOrAdditionalAlgorithm.isNull()) {
-            auto converted = convert<IDLUnsignedLong>(state, lengthOrAdditionalAlgorithm);
-            RETURN_IF_EXCEPTION(throwScope, false);
-            length = converted;
-        }
+        // The conversion of the length argument of deriveBits: undefined and null are a null length.
+        length = convert<IDLNullable<IDLUnsignedLong>>(state, lengthOrAdditionalAlgorithm);
+        RETURN_IF_EXCEPTION(throwScope, false);
     } else if (op == "getPublicKey"_s) {
         auto params = normalize(algorithmIdentifier, Operations::ImportKey);
         if (!params)

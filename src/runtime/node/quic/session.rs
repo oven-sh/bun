@@ -1090,7 +1090,7 @@ impl QuicSession {
                         cb,
                         global,
                         self.handle(),
-                        &[buf],
+                        &[buf, self.remote_addr.get().to_js_socket_address(global)],
                     );
                 }
             }

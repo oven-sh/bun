@@ -5,8 +5,9 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, normalizeBunSnapshot, tempDir } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { createSocket } from "node:dgram";
+import dc from "node:diagnostics_channel";
 import { readFileSync } from "node:fs";
-import { BlockList } from "node:net";
+import { BlockList, SocketAddress } from "node:net";
 import { join } from "node:path";
 import { connect, listen, QuicEndpoint, type EndpointOptions, type SessionOptions } from "node:quic";
 
@@ -402,4 +403,62 @@ describe("endpoint.close() with an unsent stateless reset", () => {
     // LeakSanitizer needs more than the default 5 s on a debug build.
     60_000,
   );
+});
+
+// Every address a session hands to JS is a net.SocketAddress, from the moment
+// JS holds the session. Node's Session::Config takes both addresses
+// (node/src/quic/session.h), and `session.path` keeps what it reads first.
+describe("session addresses", () => {
+  const sniOpt = { "*": { keys: [key], certs: [cert] } };
+  const tp = { maxIdleTimeout: 1 };
+  const plain = (addr: unknown) => {
+    const { address, port, family } = (addr ?? {}) as Partial<SocketAddress>;
+    return { isSocketAddress: addr instanceof SocketAddress, address, port, family };
+  };
+  // "closed" when the session ends first, so a missing event shows in the diff and not as a timeout.
+  const orClosed = <T>(event: Promise<T>, session: { closed: Promise<unknown> }) =>
+    Promise.race([
+      event,
+      session.closed.then(
+        () => "closed" as const,
+        () => "closed" as const,
+      ),
+    ]);
+
+  // Node's Session::EmitNewToken passes remote_address() (node/src/quic/session.cc).
+  test("onnewtoken and quic.session.new.token get the server's address", async () => {
+    const published = Promise.withResolvers<unknown>();
+    const onToken = (msg: any) => published.resolve(plain(msg.address));
+    dc.subscribe("quic.session.new.token", onToken);
+    try {
+      const delivered = Promise.withResolvers<unknown>();
+      await using server = await listen((s: any) => s.closed.catch(() => {}), {
+        sni: sniOpt,
+        alpn: ["quic-test"],
+        transportParams: tp,
+      });
+      await using endpoint = new QuicEndpoint();
+      const client = await connect(server.address!, {
+        endpoint,
+        alpn: "quic-test",
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams: tp,
+        onnewtoken(token: Buffer, address: unknown) {
+          delivered.resolve({ tokenBytes: token.length > 0, address: plain(address) });
+        },
+      } as SessionOptions);
+      await client.opened;
+      const address = plain(server.address);
+      const result = {
+        delivered: await orClosed(delivered.promise, client),
+        published: await orClosed(published.promise, client),
+      };
+      client.close();
+
+      expect(result).toEqual({ delivered: { tokenBytes: true, address }, published: address });
+    } finally {
+      dc.unsubscribe("quic.session.new.token", onToken);
+    }
+  });
 });

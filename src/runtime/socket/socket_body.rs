@@ -2439,7 +2439,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         ];
 
         Ok(match this.write_or_end::<false>(global, &mut args, false) {
-            WriteResult::Fail => JSValue::ZERO,
+            WriteResult::Fail => return Err(jsc::JsError::Thrown),
             // The errno of a fatal send (< -1) is for node:net; this API documents -1.
             WriteResult::Success { wrote, .. } => JSValue::js_number_from_int32(wrote.max(-1)),
         })
@@ -2631,7 +2631,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         Ok(
             match this.write_or_end_buffered::<false>(global, data.to_js(), encoding.to_js()) {
-                WriteResult::Fail => JSValue::ZERO,
+                WriteResult::Fail => return Err(jsc::JsError::Thrown),
                 WriteResult::Success { wrote, total } => {
                     if wrote < -1 {
                         // Fatal send (peer gone): hand JS the negative errno so
@@ -2665,7 +2665,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let _guard = this.ref_guard();
         let result =
             match this.write_or_end_buffered::<true>(global, data.to_js(), encoding.to_js()) {
-                WriteResult::Fail => JSValue::ZERO,
+                WriteResult::Fail => return Err(jsc::JsError::Thrown),
                 WriteResult::Success { wrote, total } => {
                     if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
                         let _ = this.internal_flush();
@@ -3205,7 +3205,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             encoding.to_js(),
         ];
         let result = match this.write_or_end::<true>(global, &mut args, false) {
-            WriteResult::Fail => JSValue::ZERO,
+            WriteResult::Fail => return Err(jsc::JsError::Thrown),
             WriteResult::Success { wrote, total } => {
                 if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
                     let _ = this.internal_flush();

@@ -9,7 +9,12 @@ export const SocketAddress = b.class({
     /** Not an instance of a subclass. */
     isSocketAddress: { args: { value: b.any }, returns: b.bool },
     /** `undefined` if `input` is not an address with an optional `:port`. */
-    parse: { args: { input: b.string }, expected: { input: ["string"] }, returns: b.self.optional, capability: "heap" },
+    parse: {
+      args: { input: b.string.allowStringObject },
+      expected: { input: ["string"] },
+      returns: b.self.optional,
+      capability: "heap",
+    },
   },
   proto: {
     address: { getter: b.any, cache: true, capability: "js", throws: true },

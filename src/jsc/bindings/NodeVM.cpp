@@ -966,7 +966,7 @@ const ClassInfo NodeVMGlobalProxy::s_info = { "NodeVMGlobalProxy"_s, &Base::s_in
 
 NodeVMGlobalProxy* NodeVMGlobalProxy::create(VM& vm, NodeVMGlobalObject* target)
 {
-    Structure* structure = Structure::create(vm, target, jsNull(), TypeInfo(GlobalProxyType, StructureFlags), info());
+    Structure* structure = Structure::create(vm, target, target->getPrototypeDirect(), TypeInfo(GlobalProxyType, StructureFlags), info());
     auto* proxy = new (NotNull, allocateCell<NodeVMGlobalProxy>(vm)) NodeVMGlobalProxy(vm, structure, target);
     proxy->finishCreation(vm);
     return proxy;
@@ -1035,10 +1035,10 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmWasmCompileDisallowed, (JSC::JSGlobalObject * g
 void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* proxy = NodeVMGlobalProxy::create(vm, this);
-    Base::finishCreation(vm, proxy);
+    Base::finishCreation(vm);
     RETURN_IF_EXCEPTION(scope, );
-    proxy->setPrototypeDirect(vm, getPrototypeDirect());
+
+    addressOfGlobalThis()->set(vm, this, NodeVMGlobalProxy::create(vm, this));
     setPrototypeDirect(vm, jsNull());
 
     // microtaskMode: "afterEvaluate" — give this context its own microtask
@@ -1158,20 +1158,32 @@ void NodeVMGlobalObject::drainOwnMicrotasks()
     microtaskQueue().performMicrotaskCheckpoint</* useCallOnEachMicrotask */ true>(vm, [](JSGlobalObject*, JSGlobalObject*) {});
 }
 
-// The step of [[Set]] that goes on to the prototype, which is on the proxy.
+// JSObject::put() can't see the prototype chain, which is on the proxy.
 bool NodeVMGlobalObject::putOwnOrInherited(JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    PropertySlot ownSlot(this, PropertySlot::InternalMethodType::GetOwnProperty);
-    bool isOwn = Base::getOwnPropertySlot(this, globalObject, propertyName, ownSlot);
-    RETURN_IF_EXCEPTION(scope, false);
-
     JSValue prototype = globalThis()->getPrototypeDirect();
-    if (isOwn || !prototype.isObject())
-        RELEASE_AND_RETURN(scope, Base::put(this, globalObject, propertyName, value, slot));
-    RELEASE_AND_RETURN(scope, asObject(prototype)->methodTable()->put(asObject(prototype), globalObject, propertyName, value, slot));
+    if (prototype.isObject()) {
+        // Only a setter, a read-only property or a Proxy in the chain takes the value away from the global object.
+        bool isIntercepted;
+        {
+            PropertySlot inheritedSlot(prototype, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            bool isInherited = asObject(prototype)->getPropertySlot(globalObject, propertyName, inheritedSlot);
+            RETURN_IF_EXCEPTION(scope, false);
+            isIntercepted = inheritedSlot.isTaintedByOpaqueObject() || (isInherited && (inheritedSlot.attributes() & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessor));
+        }
+        if (isIntercepted) {
+            PropertySlot ownSlot(this, PropertySlot::InternalMethodType::GetOwnProperty);
+            bool isOwn = Base::getOwnPropertySlot(this, globalObject, propertyName, ownSlot);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!isOwn)
+                RELEASE_AND_RETURN(scope, asObject(prototype)->methodTable()->put(asObject(prototype), globalObject, propertyName, value, slot));
+        }
+    }
+
+    RELEASE_AND_RETURN(scope, Base::put(this, globalObject, propertyName, value, slot));
 }
 
 bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)

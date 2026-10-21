@@ -383,7 +383,10 @@ function f() {
         const f = `f${rows++}`;
         const read = (form.read ?? (b => b))(b);
         const steps = [
-          [prefix + relation.input(form.stmt(b), b, read, f), relation.input((form.script ?? form.stmt)(b), b, read, f)],
+          [
+            prefix + relation.input(form.stmt(b), b, read, f),
+            relation.input((form.script ?? form.stmt)(b), b, read, f),
+          ],
         ];
         if (relation.next) steps.push([relation.next(b, f), relation.next(b, f)]);
         const got: string[][] = [];

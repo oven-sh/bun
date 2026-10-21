@@ -1952,7 +1952,7 @@ nativeTests.test_ungated_calls_worker_terminate = async () => {
 nativeTests.test_async_work_worker_terminate = async () => {
   const { Worker } = require("node:worker_threads");
   const path = require("node:path");
-  const report = new Int32Array(new SharedArrayBuffer(12));
+  const report = new Int32Array(new SharedArrayBuffer(8));
   const worker = new Worker(
     `globalThis.buffer = require(${JSON.stringify(path.join(__dirname, "build/Debug/napitests.node"))})
       .async_work_with_external_buffer(require("node:worker_threads").workerData);`,
@@ -1963,7 +1963,7 @@ nativeTests.test_async_work_worker_terminate = async () => {
   });
   while (Atomics.load(report, 0) === 0) await new Promise(resolve => setImmediate(resolve));
   console.log("terminate() resolved with", await worker.terminate());
-  console.log("during execute(): finalizer", report[1], "cleanup hook", report[2]);
+  console.log("finalized during execute():", report[1]);
 };
 
 nativeTests.test_gated_calls_worker_terminate = async () => {

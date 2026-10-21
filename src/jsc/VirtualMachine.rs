@@ -2576,6 +2576,15 @@ impl VirtualMachine {
             (*this).release_queued_work();
             let _ = Self::stop_phase_sweep(this, kind);
         });
+        // Node-API finalizers that `NapiEnv::cleanup` held back for an `execute()` on the pool.
+        // SAFETY: fn contract (statement-scoped exclusive access).
+        unsafe {
+            if let Some(rare) = (*this).rare_data.as_deref_mut() {
+                let held_back = core::mem::take(&mut rare.cleanup_hooks_after_teardown_wait);
+                rare.cleanup_hooks.extend(held_back);
+            }
+            (*this).run_cleanup_hooks();
+        }
         // SAFETY: fn contract (statement-scoped exclusive access).
         unsafe { (*this).stop_import_watcher() };
         // The exiting main thread now parks the process-wide HTTP thread —

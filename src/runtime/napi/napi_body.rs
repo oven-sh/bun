@@ -109,7 +109,7 @@ unsafe extern "C" {
     fn NapiEnv__setCompletingForStoppedContext(env: *mut NapiEnv, value: bool) -> bool;
     /// `NapiStatus::ok`, or the status Node's `NAPI_PREAMBLE` returns at entry (`NapiEnv::entryStatus`).
     fn NapiEnv__entryStatus(env: *mut NapiEnv) -> napi_status;
-    /// `NapiEnv::cleanup` waits until each of these has its `NapiEnv__asyncWorkLeftThreadPool`.
+    /// `NapiEnv::cleanup` runs no finalizer until each of these has its `NapiEnv__asyncWorkLeftThreadPool`.
     fn NapiEnv__asyncWorkEnteredThreadPool(env: *mut NapiEnv);
     fn NapiEnv__asyncWorkLeftThreadPool(env: *mut NapiEnv);
     fn NapiEnv__deref(env: *mut NapiEnv);
@@ -2460,6 +2460,24 @@ extern "C" fn Bun__napi_register_cleanup_zig(env_: napi_env) {
 }
 
 #[unsafe(no_mangle)]
+extern "C" fn Bun__napi_run_finalizers_after_teardown_wait(env_: napi_env) {
+    unsafe extern "C" {
+        safe fn NapiEnv__runFinalizers(env: *mut c_void);
+    }
+    // SAFETY: caller guarantees env_ is non-null.
+    let env = unsafe { &*env_ };
+    env.to_js()
+        .bun_vm()
+        .as_mut()
+        .rare_data()
+        .push_cleanup_hook_after_teardown_wait(
+            env.to_js(),
+            env_.cast::<c_void>(),
+            NapiEnv__runFinalizers,
+        );
+}
+
+#[unsafe(no_mangle)]
 extern "C" fn Bun__napi_suppress_crash_on_abort_if_desired() {
     if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT
         .get()
@@ -2987,8 +3005,7 @@ impl ThreadSafeFunction {
     fn enqueue(&mut self, ctx: *mut c_void, block: bool) -> (napi_status, bool) {
         let _g = self.lock.lock_guard();
         if block {
-            // Nobody makes room in the queue of a VM that is stopping.
-            while self.queue.is_blocked() && !self.is_closing() && self.handle.script_allowed() {
+            while self.queue.is_blocked() && !self.is_closing() {
                 self.blocking_condvar.wait(&self.lock);
             }
         } else if self.queue.is_blocked() && !self.is_closing() {
@@ -2999,7 +3016,7 @@ impl ThreadSafeFunction {
             return (NapiStatus::queue_full as napi_status, false);
         }
 
-        if self.is_closing() || (block && self.queue.is_blocked()) {
+        if self.is_closing() {
             // `env_teardown` sets `closing` under this same lock, so an env that
             // dies while we wait above lands here, never below.
             if self.thread_count.load(Ordering::SeqCst) <= 0 {
@@ -3295,16 +3312,6 @@ impl ThreadSafeFunction {
 
         (NapiStatus::ok as napi_status, false)
     }
-}
-
-/// Called from `NapiEnv::cleanup()` (JS thread), with the VM stopping, for every threadsafe
-/// function registered with the env: `enqueue` looks at the VM again.
-#[unsafe(no_mangle)]
-extern "C" fn Bun__napi_threadsafe_function_wake_blocked_calls(tsfn: *mut c_void) {
-    // SAFETY: the registry only holds live TSFN pointers, and only this thread removes them.
-    let this = unsafe { &*tsfn.cast::<ThreadSafeFunction>() };
-    let _g = this.lock.lock_guard();
-    this.blocking_condvar.broadcast();
 }
 
 /// Called from `NapiEnv::cleanup()` (JS thread) for every threadsafe function

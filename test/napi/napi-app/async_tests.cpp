@@ -780,15 +780,13 @@ napi_value late_finalizer_run_count(const Napi::CallbackInfo &info) {
 struct ExternalBufferWork {
   std::atomic<int32_t> *report;
   std::atomic<bool> finalized{false};
-  std::atomic<bool> cleanup_hook_ran{false};
   napi_async_work work;
 };
 
 // async_work_with_external_buffer(report: Int32Array on a SharedArrayBuffer):
 // queues work on an external ArrayBuffer. report[0] is set when execute()
-// starts. execute() returns once the buffer's finalizer or the env's cleanup
-// hook has run, or after half a second. report[1] and report[2] say whether
-// the finalizer and the hook ran during execute().
+// starts. execute() returns once the buffer's finalizer has run, or after half
+// a second, and report[1] says which: 1 if the finalizer ran during execute().
 static napi_value
 async_work_with_external_buffer(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
@@ -806,14 +804,6 @@ async_work_with_external_buffer(const Napi::CallbackInfo &info) {
                                true;
                          },
                          nullptr, &buffer));
-  NODE_API_CALL(
-      env, napi_add_env_cleanup_hook(
-               env,
-               [](void *data) {
-                 static_cast<ExternalBufferWork *>(data)->cleanup_hook_ran =
-                     true;
-               },
-               data));
   NODE_API_CALL(env,
                 napi_create_string_utf8(env, "work", NAPI_AUTO_LENGTH, &name));
   NODE_API_CALL(
@@ -825,12 +815,11 @@ async_work_with_external_buffer(const Napi::CallbackInfo &info) {
             data->report[0] = 1;
             const auto deadline = std::chrono::steady_clock::now() +
                                   std::chrono::milliseconds(500);
-            while (!data->finalized && !data->cleanup_hook_ran &&
+            while (!data->finalized &&
                    std::chrono::steady_clock::now() < deadline) {
               std::this_thread::yield();
             }
             data->report[1] = data->finalized;
-            data->report[2] = data->cleanup_hook_ran;
           },
           [](napi_env env, napi_status, void *opaque) {
             napi_delete_async_work(

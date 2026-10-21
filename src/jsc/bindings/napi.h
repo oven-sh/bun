@@ -21,7 +21,6 @@
 
 #include <wtf/HashSet.h>
 #include <wtf/ListHashSet.h>
-#include <wtf/Condition.h>
 #include <wtf/Lock.h>
 
 #include <optional>
@@ -31,7 +30,7 @@
 
 extern "C" void Bun__napi_register_cleanup_zig(napi_env env);
 extern "C" void Bun__napi_threadsafe_function_env_teardown(void* tsfn);
-extern "C" void Bun__napi_threadsafe_function_wake_blocked_calls(void* tsfn);
+extern "C" void Bun__napi_run_finalizers_after_teardown_wait(napi_env env);
 extern "C" void Bun__napi_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
@@ -216,12 +215,6 @@ public:
         // error path escalates to napi_fatal_error. See #30286.
         clearExceptionsBetweenFinalizers();
 
-        // An execute() that is still running can use what a cleanup hook or a finalizer frees. Node settles its thread
-        // pool requests before it runs either. The VM is stopping, so work that has not started is cancelled, and a
-        // blocking napi_call_threadsafe_function inside execute() no longer waits for room in the queue.
-        wakeBlockedThreadSafeFunctionCalls();
-        waitForAsyncWorkOnThreadPool();
-
         while (!m_cleanupHooks.empty()) {
             drain();
         }
@@ -246,6 +239,17 @@ public:
         m_cleanupHooks = Napi::HookSet();
         clearExceptionsBetweenFinalizers();
 
+        // An execute() that is still running can use what a finalizer frees. The VM's teardown waits for the thread
+        // pool, so the finalizers run after that wait. Node settles its thread pool requests before them too.
+        if (m_asyncWorkOnThreadPool.load()) {
+            Bun__napi_run_finalizers_after_teardown_wait(this);
+            return;
+        }
+        runFinalizers();
+    }
+
+    void runFinalizers()
+    {
         m_isFinishingFinalizers = true;
         // A cleanup hook may itself have leaked an exception; the first
         // finalizer starts clean too.
@@ -287,26 +291,9 @@ public:
     }
 
     // JS thread, when async work goes to the thread pool.
-    void asyncWorkEnteredThreadPool()
-    {
-        WTF::Locker locker { m_asyncWorkLock };
-        m_asyncWorkOnThreadPool++;
-    }
-
+    void asyncWorkEnteredThreadPool() { m_asyncWorkOnThreadPool++; }
     // Pool thread, once execute() has returned or the work was cancelled.
-    void asyncWorkLeftThreadPool()
-    {
-        WTF::Locker locker { m_asyncWorkLock };
-        if (!--m_asyncWorkOnThreadPool)
-            m_asyncWorkCondition.notifyAll();
-    }
-
-    void waitForAsyncWorkOnThreadPool()
-    {
-        WTF::Locker locker { m_asyncWorkLock };
-        while (m_asyncWorkOnThreadPool)
-            m_asyncWorkCondition.wait(m_asyncWorkLock);
-    }
+    void asyncWorkLeftThreadPool() { m_asyncWorkOnThreadPool--; }
 
     // Threadsafe-function registry. Entries are raw ThreadSafeFunction* owned
     // by the Rust side, added and removed on the JS thread only: at creation,
@@ -327,18 +314,6 @@ public:
     {
         WTF::Locker locker { m_threadSafeFunctionsLock };
         m_threadSafeFunctions.remove(tsfn);
-    }
-
-    void wakeBlockedThreadSafeFunctionCalls()
-    {
-        WTF::Vector<void*> tsfns;
-        {
-            WTF::Locker locker { m_threadSafeFunctionsLock };
-            tsfns = WTF::copyToVector(m_threadSafeFunctions);
-        }
-        for (void* tsfn : tsfns) {
-            Bun__napi_threadsafe_function_wake_blocked_calls(tsfn);
-        }
     }
 
     void abortThreadSafeFunctions()
@@ -700,9 +675,7 @@ private:
     WTF::Lock m_threadSafeFunctionsLock;
     WTF::HashSet<void*> m_threadSafeFunctions WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock);
     bool m_threadSafeFunctionsTornDown WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock) = false;
-    WTF::Lock m_asyncWorkLock;
-    WTF::Condition m_asyncWorkCondition;
-    unsigned m_asyncWorkOnThreadPool WTF_GUARDED_BY_LOCK(m_asyncWorkLock) = 0;
+    std::atomic<unsigned> m_asyncWorkOnThreadPool { 0 };
 
     // Drop any pending exception -- VM-scope or env-scope -- between
     // finalizers run from cleanup(). Used by cleanup() only. Defined

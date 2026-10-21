@@ -213,6 +213,8 @@ pub struct RareData {
     // TODO: make this per JSGlobalObject instead of global
     // This does not handle ShadowRealm correctly!
     pub(crate) cleanup_hooks: Vec<CleanupHook>,
+    /// Joins `cleanup_hooks` once `VirtualMachine::teardown` has everything back from other threads.
+    pub(crate) cleanup_hooks_after_teardown_wait: Vec<CleanupHook>,
 
     pub(crate) file_polls: Option<Box<FilePollStore>>,
 
@@ -293,6 +295,7 @@ impl Default for RareData {
             entropy_cache: None,
             hot_map: None,
             cleanup_hooks: Vec::new(),
+            cleanup_hooks_after_teardown_wait: Vec::new(),
             file_polls: None,
             spawn_ipc_group: SocketGroup::default(),
             test_parallel_ipc_group: SocketGroup::default(),
@@ -831,6 +834,16 @@ impl RareData {
         func: CleanupHookFunction,
     ) {
         self.cleanup_hooks
+            .push(CleanupHook::from(global_this, ctx, func));
+    }
+
+    pub fn push_cleanup_hook_after_teardown_wait(
+        &mut self,
+        global_this: &JSGlobalObject,
+        ctx: *mut c_void,
+        func: CleanupHookFunction,
+    ) {
+        self.cleanup_hooks_after_teardown_wait
             .push(CleanupHook::from(global_this, ctx, func));
     }
 

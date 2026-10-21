@@ -311,6 +311,7 @@ function checkForEmptyInterfaces(program: ts.Program) {
 const PUBLISHED_AS: Record<string, string | null> = {
   "Archive.bind.ts": "typeof Bun",
   "Blob.bind.ts": "{ Blob: Class<Bun.BunFile> }",
+  "BlockList.bind.ts": null,
   "BunObject.bind.ts": "typeof Bun & { braces: typeof Bun.$.braces; shellEscape: typeof Bun.$.escape }",
   "BunObjectInternals.bind.ts": null,
   "Crypto.bind.ts":
@@ -339,7 +340,9 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "S3Client.bind.ts": "typeof Bun",
   "S3Stat.bind.ts": "{ S3Stat: Class<Bun.S3Stats> }",
   "SSLConfig.bind.ts": null,
+  "SecureContext.bind.ts": null,
   "SemverObject.bind.ts": "typeof Bun.semver",
+  "SocketAddress.bind.ts": null,
   "SocketConfig.bind.ts": null,
   "TOMLObject.bind.ts": "typeof Bun.TOML",
   "Terminal.bind.ts": "typeof Bun",
@@ -360,6 +363,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "filesystem_router.bind.ts":
     "typeof Bun & { FrameworkFileSystemRouter: Class<{ match(path: string): any; toJSON(): any }> }",
   "fmt_jsc.bind.ts": null,
+  "h2_frame_parser.bind.ts": null,
   "html_rewriter.bind.ts": "{ HTMLRewriter: typeof HTMLRewriter }",
   "interpreter.bind.ts": null,
   "jest.bind.ts": null,
@@ -375,6 +379,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "node_tls_binding.bind.ts": null,
   "node_util_binding.bind.ts": null,
   "node_zlib_binding.bind.ts": null,
+  "quic.bind.ts": null,
   "resolve_message.bind.ts": "{ ResolveMessage: Class<ResolveMessage>; BuildMessage: Class<BuildMessage> }",
   "response.bind.ts":
     '{ Request: Class<Omit<Request, "keepalive" | "duplex">>; Response: typeof Response & { prototype: Response } }',

@@ -3,15 +3,16 @@ use core::ffi::{c_int, c_void};
 use core::ptr::null_mut;
 use std::collections::VecDeque;
 
+use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::{
-    ArrayBuffer, CallFrame, JSGlobalObject, JSType, JSValue, JsCell, JsRef, JsResult, StringJsc,
-    Strong,
+    ArrayBuffer, JSGlobalObject, JSType, JSValue, JsCell, JsRef, JsResult, StringJsc, Strong,
 };
 use bun_lsquic_sys as lsquic;
 
 use super::endpoint::alloc_exposed_array_buffer;
 use super::ffi::lsquic_callback;
 use super::session::{QuicSession, SessionEvent};
+use crate::generated_bindgen::quic::js_QuicStream;
 
 const QUIC_STREAM_HEADERS_KIND_HINTS: u32 = 0;
 const QUIC_STREAM_HEADERS_KIND_INITIAL: u32 = 1;
@@ -137,6 +138,15 @@ pub(crate) struct QuicStream {
     destroyed: Cell<bool>,
 }
 
+impl Drop for QuicStream {
+    fn drop(&mut self) {
+        if let Some(s) = self.ls() {
+            // SAFETY: a non-null `raw` is live (see `ls()`).
+            unsafe { s.set_ctx(null_mut()) };
+        }
+    }
+}
+
 impl QuicStream {
     pub(super) fn create(
         global: &JSGlobalObject,
@@ -170,8 +180,8 @@ impl QuicStream {
             close_reported: Cell::new(false),
             destroyed: Cell::new(false),
         };
-        let raw_ptr = bun_core::heap::into_raw(Box::new(stream));
-        let handle = crate::generated_classes::js_QuicStream::to_js(raw_ptr, global);
+        let handle = stream.into_js_value(global);
+        let raw_ptr = js_QuicStream::from_js(handle).unwrap().as_ptr();
 
         let state_ptr = alloc_exposed_array_buffer(
             global,
@@ -188,7 +198,7 @@ impl QuicStream {
         handle.put(global, b"stateByteOffset", JSValue::js_number(0.0));
         handle.put(global, b"statsByteOffset", JSValue::js_number(0.0));
 
-        // SAFETY: `raw_ptr` was just created and is uniquely owned.
+        // SAFETY: inside `handle`.
         let this = unsafe { &*raw_ptr };
         #[expect(
             clippy::cast_ptr_alignment,
@@ -629,28 +639,18 @@ impl QuicStream {
         }
     }
 
-    #[expect(
-        clippy::boxed_local,
-        reason = "codegen's host_fn_finalize calls this as `|b| QuicStream::finalize(b)` and requires `self: Box<Self>`"
-    )]
-    pub(crate) fn finalize(self: Box<Self>) {
-        if let Some(s) = self.ls() {
-            // SAFETY: a non-null `raw` is live (see `ls()`).
-            unsafe { s.set_ctx(null_mut()) };
-        }
-    }
-
-    pub(crate) fn get_reader(&self, _g: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn get_reader<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
         self.with_state(|s| s.has_reader = 1);
-        Ok(frame.this())
+        this_value
     }
 
     pub(crate) fn set_wakeup(
         &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        cx: &mut JsScope<'_>,
+        callback: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        let cb = frame.arguments_as_array::<1>()[0];
+        let global = cx.global();
+        let cb = callback.to_js();
 
         if cb.is_empty_or_undefined_or_null() {
             self.wakeup.set(None);
@@ -660,8 +660,9 @@ impl QuicStream {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn pull(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let cb = frame.arguments_as_array::<1>()[0];
+    pub(crate) fn pull(&self, cx: &mut JsScope<'_>, callback: JsLocal<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
+        let cb = callback.to_js();
         if !cb.is_callable() {
             return Ok(JSValue::UNDEFINED);
         }
@@ -700,13 +701,14 @@ impl QuicStream {
 
     pub(crate) fn attach_source(
         &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        cx: &mut JsScope<'_>,
+        source: JsLocal<'_>,
     ) -> JsResult<JSValue> {
+        let global = cx.global();
         if self.destroyed.get() {
             return Ok(JSValue::UNDEFINED);
         }
-        let source = frame.arguments_as_array::<1>()[0];
+        let source = source.to_js();
         let bytes = if source.is_empty_or_undefined_or_null() {
             Vec::new()
         } else if let Some(buf) = source.as_array_buffer(global) {
@@ -726,11 +728,7 @@ impl QuicStream {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn init_streaming_source(
-        &self,
-        _g: &JSGlobalObject,
-        _f: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn init_streaming_source(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
         if self.destroyed.get() {
             return Ok(JSValue::UNDEFINED);
         }
@@ -742,11 +740,12 @@ impl QuicStream {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn write(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn write(&self, cx: &mut JsScope<'_>, batch: JsLocal<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
         if self.destroyed.get() {
             return Ok(JSValue::UNDEFINED);
         }
-        let batch = frame.arguments_as_array::<1>()[0];
+        let batch = batch.to_js();
         let mut queued: u64 = 0;
         let mut append = |bytes: &[u8]| {
             queued += bytes.len() as u64;
@@ -773,7 +772,7 @@ impl QuicStream {
         Ok(JSValue::js_number(queued as f64))
     }
 
-    pub(crate) fn end_write(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn end_write(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
         if self.destroyed.get() {
             return Ok(JSValue::UNDEFINED);
         }
@@ -793,11 +792,12 @@ impl QuicStream {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn destroy(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn destroy(&self, cx: &mut JsScope<'_>, error: JsLocal<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
         if self.destroyed.get() {
             return Ok(JSValue::UNDEFINED);
         }
-        let arg = frame.arguments_as_array::<1>()[0];
+        let arg = error.to_js();
         let cascading = arg.is_boolean() && arg.to_boolean();
         let code = if arg.is_object() {
             arg.get(global, "code")?.map(error_code_arg).unwrap_or(0)
@@ -843,11 +843,11 @@ impl QuicStream {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn reset_stream(&self, _g: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn reset_stream(&self, _: &mut JsScope<'_>, code: JsLocal<'_>) -> JsResult<JSValue> {
         if self.destroyed.get() {
             return Ok(JSValue::UNDEFINED);
         }
-        let code = error_code_arg(frame.arguments_as_array::<1>()[0]);
+        let code = error_code_arg(code.to_js());
         self.with_state(|s| {
             s.write_ended = 1;
             s.reset = 1;
@@ -864,11 +864,11 @@ impl QuicStream {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn stop_sending(&self, _g: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn stop_sending(&self, _: &mut JsScope<'_>, code: JsLocal<'_>) -> JsResult<JSValue> {
         if self.destroyed.get() {
             return Ok(JSValue::UNDEFINED);
         }
-        let code = error_code_arg(frame.arguments_as_array::<1>()[0]);
+        let code = error_code_arg(code.to_js());
         if let Some(s) = self.ls() {
             s.stop_sending(code);
         }
@@ -887,13 +887,15 @@ impl QuicStream {
     /// Node parity for streams created and abandoned in one turn.
     pub(crate) fn abort_for_destroy(
         &self,
-        _g: &JSGlobalObject,
-        frame: &CallFrame,
+        _: &mut JsScope<'_>,
+        stop_arg: JsLocal<'_>,
+        reset_arg: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         if self.destroyed.get() {
             return Ok(JSValue::UNDEFINED);
         }
-        let [stop_arg, reset_arg] = frame.arguments_as_array::<2>();
+        let stop_arg = stop_arg.to_js();
+        let reset_arg = reset_arg.to_js();
         let stop = (!stop_arg.is_empty_or_undefined_or_null()).then(|| error_code_arg(stop_arg));
         let reset = (!reset_arg.is_empty_or_undefined_or_null()).then(|| error_code_arg(reset_arg));
         if let Some(code) = stop {
@@ -935,10 +937,11 @@ impl QuicStream {
 
     pub(crate) fn set_priority(
         &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        cx: &mut JsScope<'_>,
+        priority: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        let packed = frame.arguments_as_array::<1>()[0].coerce_to_i32(global)? as u32;
+        let global = cx.global();
+        let packed = priority.to_js().coerce_to_i32(global)? as u32;
         let (urgency, incremental) = ((packed >> 1) as u8, packed & 1 != 0);
         let previous = self.priority.replace((urgency, incremental));
         // Only an actual change goes on the wire: set_http_prio writes a
@@ -951,24 +954,27 @@ impl QuicStream {
         }
         Ok(JSValue::UNDEFINED)
     }
-    pub(crate) fn get_priority(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn get_priority(&self) -> u32 {
         let (urgency, incremental) = self
             .ls()
             .and_then(|s| s.get_http_prio())
             .unwrap_or_else(|| self.priority.get());
-        Ok(JSValue::js_number(f64::from(
-            (u32::from(urgency) << 1) | u32::from(incremental),
-        )))
+        (u32::from(urgency) << 1) | u32::from(incremental)
     }
     pub(crate) fn send_headers(
         &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        cx: &mut JsScope<'_>,
+        kind_arg: JsLocal<'_>,
+        header_tuple: JsLocal<'_>,
+        flags: JsLocal<'_>,
     ) -> JsResult<JSValue> {
+        let global = cx.global();
         if self.destroyed.get() {
             return Ok(JSValue::js_boolean(false));
         }
-        let [kind_arg, header_tuple, flags] = frame.arguments_as_array::<3>();
+        let kind_arg = kind_arg.to_js();
+        let header_tuple = header_tuple.to_js();
+        let flags = flags.to_js();
         // `buildNgHeaderString` returns [nul-joined string, pair count]; the
         // count is what keeps the latin1 encode below unspliceable.
         let header_string = header_tuple.get_index(global, 0)?;

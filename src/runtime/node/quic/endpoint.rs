@@ -7,9 +7,9 @@ use core::ptr::{null, null_mut};
 
 use bun_collections::smallvec::SmallVec;
 use bun_io::KeepAlive;
+use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSType, JSValue, JsCell, JsRef, JsResult,
-    StringJsc,
+    self as jsc, ArrayBuffer, JSGlobalObject, JSType, JSValue, JsCell, JsRef, JsResult, StringJsc,
 };
 use bun_lsquic_sys as lsquic;
 use bun_uws as uws;
@@ -382,7 +382,7 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     if user.is_null() {
         return;
     }
-    // SAFETY: `user` is the heap-allocated QuicEndpoint, live until close.
+    // SAFETY: `user` is the QuicEndpoint, live until close.
     let this = unsafe { &*user.cast::<QuicEndpoint>() };
     if this.closed.get() {
         return;
@@ -978,7 +978,9 @@ fn apply_transport_params(
             let Some(addr_js) = tp.get(global, key)?.filter(|v| v.is_object()) else {
                 continue;
             };
-            let Some(addr) = crate::generated_classes::js_SocketAddress::from_js(addr_js) else {
+            let Some(addr) =
+                crate::generated_bindgen::socket_address::js_SocketAddress::from_js(addr_js)
+            else {
                 continue;
             };
             // SAFETY: `from_js` returned a live SocketAddress.
@@ -1096,11 +1098,11 @@ pub(super) fn alloc_exposed_array_buffer(
 }
 
 impl QuicEndpoint {
-    pub(crate) fn constructor(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-        this_value: JSValue,
-    ) -> JsResult<*mut Self> {
+    pub(crate) fn constructor<'a>(
+        cx: &mut JsScope<'a>,
+        structure: JsStructure<'a, Self>,
+        options: JsLocal<'a>,
+    ) -> JsResult<JsWrapper<'a, Self>> {
         static INIT: std::sync::Once = std::sync::Once::new();
         INIT.call_once(|| {
             // SAFETY: pure library init.
@@ -1166,15 +1168,12 @@ impl QuicEndpoint {
             nq_registered: Cell::new(false),
             defer_closes: Cell::new(false),
             send_scope_depth: Cell::new(0),
-            global: Cell::new(core::ptr::from_ref(global)),
+            global: Cell::new(core::ptr::from_ref(cx.global())),
         };
-        // Codegen installs the pointer on the JS object only after this
-        // returns Ok, so a throw from any option read below would leak the
-        // endpoint, its vtable and any Strong already stored in it.
-        let mut raw = scopeguard::guard(bun_core::heap::into_raw(Box::new(this)), |r| {
-            // SAFETY: `r` is the box we just created; nothing else owns it yet.
-            unsafe { bun_core::heap::destroy(r) };
-        });
+        let wrapper = structure.create(&cx.heap, this);
+        let this_value = wrapper.to_js();
+        let raw: *mut Self = wrapper.as_ptr().as_ptr();
+        let global = cx.global();
 
         let vt = Box::new(lsquic::NqVtable {
             owner: raw.cast(),
@@ -1203,19 +1202,21 @@ impl QuicEndpoint {
             packets_out,
             on_mini_conn_failed,
         });
-        // SAFETY: `raw` was just created and is uniquely owned by the wrapper.
+        // SAFETY: `raw` was just created and nothing else has the wrapper.
         unsafe {
-            (**raw).vtable_ptr = &raw const *vt;
-            (**raw).vtable.set(Some(vt));
+            (*raw).vtable_ptr = &raw const *vt;
+            (*raw).vtable.set(Some(vt));
         }
 
-        let [options] = frame.arguments_as_array::<1>();
+        let options = options.to_js();
         if options.is_object() {
             if let Some(addr_js) = options
                 .get(global, "address")?
                 .filter(|v| !v.is_empty_or_undefined_or_null())
             {
-                if let Some(addr) = crate::generated_classes::js_SocketAddress::from_js(addr_js) {
+                if let Some(addr) =
+                    crate::generated_bindgen::socket_address::js_SocketAddress::from_js(addr_js)
+                {
                     // SAFETY: `from_js` returned a live SocketAddress owned by
                     // the JS value.
                     let stored = StoredAddr::from_socket_address(unsafe { addr.as_ref() });
@@ -1238,7 +1239,7 @@ impl QuicEndpoint {
                         host_nul.push(0);
                         // SAFETY: `raw` is uniquely owned here.
                         unsafe {
-                            (**raw).bind_config.set(BindConfig {
+                            (*raw).bind_config.set(BindConfig {
                                 host: host_nul,
                                 port,
                             })
@@ -1247,13 +1248,14 @@ impl QuicEndpoint {
                 }
             }
             if let Some(bl_js) = options.get(global, "blockList")?.filter(|v| v.is_object()) {
-                if let Some(bl) = crate::generated_classes::js_BlockList::from_js(bl_js) {
+                if let Some(bl) = crate::generated_bindgen::block_list::js_BlockList::from_js(bl_js)
+                {
                     // SAFETY: `raw` is uniquely owned here; the Strong keeps
                     // the BlockList wrapper (and thus the native object)
                     // alive for the endpoint's lifetime.
                     unsafe {
-                        (**raw).block_list.set(Some(bl.as_ptr()));
-                        (**raw)
+                        (*raw).block_list.set(Some(bl.as_ptr()));
+                        (*raw)
                             .block_list_js
                             .with_mut(|s| *s = Some(bun_jsc::Strong::create(bl_js, global)));
                     }
@@ -1265,14 +1267,14 @@ impl QuicEndpoint {
             {
                 let policy = bun_core::String::from_js(policy, global)?.to_owned_slice();
                 // SAFETY: as above.
-                unsafe { (**raw).block_list_allow.set(policy == b"allow") };
+                unsafe { (*raw).block_list_allow.set(policy == b"allow") };
             }
             if let Some(v) = options
                 .get(global, "disableStatelessReset")?
                 .filter(|v| v.is_boolean())
             {
                 // SAFETY: as above.
-                unsafe { (**raw).disable_stateless_reset.set(v.to_boolean()) };
+                unsafe { (*raw).disable_stateless_reset.set(v.to_boolean()) };
             }
             if let Some(v) = options
                 .get(global, "statelessResetBurst")?
@@ -1280,14 +1282,14 @@ impl QuicEndpoint {
             {
                 let burst = v.as_number().max(0.0).min(u32::MAX as f64) as u32;
                 // SAFETY: as above.
-                unsafe { (**raw).stateless_reset_burst.set(burst) };
+                unsafe { (*raw).stateless_reset_burst.set(burst) };
             }
             if let Some(v) = options
                 .get(global, "statelessResetRate")?
                 .filter(|v| v.is_number())
             {
                 // SAFETY: as above.
-                unsafe { (**raw).stateless_reset_rate.set(v.as_number().max(0.0)) };
+                unsafe { (*raw).stateless_reset_rate.set(v.as_number().max(0.0)) };
             }
         }
 
@@ -1307,12 +1309,12 @@ impl QuicEndpoint {
         this_value.put(global, b"statsByteOffset", JSValue::js_number(0.0));
         // SAFETY: `state`/`stats` are write-once before any other access.
         unsafe {
-            (**raw).state = state_ptr.cast();
-            (**raw).stats = stats_ptr.cast();
-            (**raw).write_stat(IDX_STATS_CREATED_AT, now_ns());
+            (*raw).state = state_ptr.cast();
+            (*raw).stats = stats_ptr.cast();
+            (*raw).write_stat(IDX_STATS_CREATED_AT, now_ns());
         }
 
-        Ok(scopeguard::ScopeGuard::into_inner(raw))
+        Ok(wrapper)
     }
 
     fn state_mut(&self) -> *mut EndpointState {
@@ -2212,7 +2214,13 @@ impl QuicEndpoint {
         self.vtable.set(None);
     }
 
-    pub(crate) fn listen(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn listen(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        options: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        let global = cx.global();
         if self.closed.get() || self.closing.get() {
             return Err(global
                 .err(
@@ -2221,11 +2229,11 @@ impl QuicEndpoint {
                 )
                 .throw());
         }
-        if !self.ensure_bound(global, frame.this())? {
+        if !self.ensure_bound(global, this_value.to_js())? {
             return Ok(JSValue::UNDEFINED);
         }
         if self.server_engine.get().is_null() {
-            let [options] = frame.arguments_as_array::<1>();
+            let options = options.to_js();
             if options.is_object() {
                 self.server_session_options
                     .set(Some(bun_jsc::Strong::create(options, global)));
@@ -2274,7 +2282,15 @@ impl QuicEndpoint {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn connect(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn connect(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        address: JsLocal<'_>,
+        options: JsLocal<'_>,
+        session_ticket_arg: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        let global = cx.global();
         if self.closed.get() || self.closing.get() {
             return Err(global
                 .err(
@@ -2283,11 +2299,15 @@ impl QuicEndpoint {
                 )
                 .throw());
         }
-        if !self.ensure_bound(global, frame.this())? {
+        if !self.ensure_bound(global, this_value.to_js())? {
             return Ok(JSValue::UNDEFINED);
         }
-        let [address, options, session_ticket_arg] = frame.arguments_as_array::<3>();
-        let Some(addr) = crate::generated_classes::js_SocketAddress::from_js(address) else {
+        let address = address.to_js();
+        let options = options.to_js();
+        let session_ticket_arg = session_ticket_arg.to_js();
+        let Some(addr) =
+            crate::generated_bindgen::socket_address::js_SocketAddress::from_js(address)
+        else {
             return Err(global
                 .err(
                     jsc::ErrorCode::INVALID_ARG_TYPE,
@@ -2303,7 +2323,13 @@ impl QuicEndpoint {
         {
             let min_version = read_u64_option(global, options, "minVersion")?
                 .map_or(QUIC_VERSION_1, |v| v as u32);
-            return self.connect_verneg_probe(global, frame.this(), remote, version, min_version);
+            return self.connect_verneg_probe(
+                global,
+                this_value.to_js(),
+                remote,
+                version,
+                min_version,
+            );
         }
         let tls = options.get(global, "tls")?.unwrap_or(JSValue::UNDEFINED);
         let config = TlsConfig::from_js(global, tls, false)?;
@@ -2366,7 +2392,7 @@ impl QuicEndpoint {
             global,
             self.vtable_ptr,
             core::ptr::from_ref(self).cast_mut(),
-            frame.this(),
+            this_value.to_js(),
             null_mut(),
             false,
             self.application(false),
@@ -2550,8 +2576,8 @@ impl QuicEndpoint {
 
     pub(crate) fn close_gracefully(
         &self,
-        _global: &JSGlobalObject,
-        frame: &CallFrame,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
     ) -> JsResult<JSValue> {
         if self.closed.get() || self.closing.get() {
             return Ok(JSValue::UNDEFINED);
@@ -2563,7 +2589,7 @@ impl QuicEndpoint {
         });
         if self.this_value.get().is_empty() {
             self.this_value
-                .with_mut(|r| r.set_strong(frame.this(), _global));
+                .with_mut(|r| r.set_strong(this_value.to_js(), cx.global()));
         }
         if self.sessions.get().is_empty() && self.engine_conn_count() == 0 {
             self.finish_close();
@@ -2573,21 +2599,21 @@ impl QuicEndpoint {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn release_socket(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn release_socket(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
         self.pending_endpoint_close.set(false);
         self.teardown();
         self.poll_ref.with_mut(|p| p.disable());
         Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn address(&self, global: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
         Ok(self.local_addr.get().to_js_socket_address(global))
     }
-    pub(crate) fn mark_busy(&self, _g: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let busy = frame.arguments_as_array::<1>()[0].to_boolean();
+    pub(crate) fn mark_busy(&self, busy: JsLocal<'_>) {
+        let busy = busy.to_js().to_boolean();
         // SAFETY: state buffer is live.
         self.with_state(|s| s.busy = busy as u8);
-        Ok(JSValue::UNDEFINED)
     }
     fn build_sni_contexts(
         global: &JSGlobalObject,
@@ -2624,9 +2650,11 @@ impl QuicEndpoint {
 
     pub(crate) fn set_sni_contexts(
         &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        cx: &mut JsScope<'_>,
+        entries: JsLocal<'_>,
+        replace: JsLocal<'_>,
     ) -> JsResult<JSValue> {
+        let global = cx.global();
         if self.closed.get() {
             return Err(global
                 .err(
@@ -2635,7 +2663,8 @@ impl QuicEndpoint {
                 )
                 .throw());
         }
-        let [entries, replace] = frame.arguments_as_array::<2>();
+        let entries = entries.to_js();
+        let replace = replace.to_js();
         if !entries.is_object() {
             return Err(global
                 .err(
@@ -2683,12 +2712,10 @@ impl QuicEndpoint {
             }
         });
     }
+}
 
-    #[expect(
-        clippy::boxed_local,
-        reason = "codegen's host_fn_finalize calls this as `|b| QuicEndpoint::finalize(b)` and requires `self: Box<Self>`"
-    )]
-    pub(crate) fn finalize(self: Box<Self>) {
+impl Drop for QuicEndpoint {
+    fn drop(&mut self) {
         // Remove the timer before the backing storage drops, or a later heap
         // operation dereferences the freed node.
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {

@@ -4373,17 +4373,19 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             if !self.suppresses_new_contexts {
                 self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(d));
             }
-            if let PatKind::Ident(name) = hir[pat].kind {
+            if has_any_binding_initializers(hir, pat) {
+                let names = self.recreate_binding_pattern(pat, true);
+                declarations.extend(names.into_iter().map(|text| Element { range: None, text }));
+            } else {
                 self.suppresses_new_contexts = true;
+                self.visit_binding_name(pat);
+                let name = self.text_of(ReusedNode::BindingName(pat));
                 let ensured = self.ensure_type(hir.node(d), false);
                 let loc = hir[d].loc;
                 declarations.push(Element {
                     range: (loc.end != 0).then_some((loc.pos as usize, loc.end as usize)),
-                    text: [self.name(name), &ensured.text()[..]].concat(),
+                    text: [&name[..], &ensured.text()[..]].concat(),
                 });
-            } else {
-                let names = self.recreate_binding_pattern(pat, true);
-                declarations.extend(names.into_iter().map(|text| Element { range: None, text }));
             }
             (
                 self.enclosing,
@@ -5522,6 +5524,10 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             NodeData::Expr(e) if hir.is_js && !self.c.bound(file).is_expando_declaration(e) => {
                 let ty = self.type_of_commonjs_declaration(e);
                 ty.map(|ty| self.c.widen_literal(ty))
+            }
+            // `getTypeForVariableLikeDeclaration`: a declaration whose name is a pattern has no symbol.
+            NodeData::VarDecl(d) if !matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => {
+                Some(self.c.type_of_pat(file, hir[d].pat))
             }
             _ if self.c.iso_has_inferred_type(file, node) => {
                 self.c.iso_type_of_declared(file, node)
@@ -7032,6 +7038,19 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         (specifier, mode)
+    }
+}
+
+/// `hasAnyBindingInitializers`
+fn has_any_binding_initializers(hir: &hir::File, pat: PatId) -> bool {
+    match hir[pat].kind {
+        PatKind::Object(props) => props
+            .iter()
+            .any(|p| hir[p].default.is_some() || has_any_binding_initializers(hir, hir[p].value)),
+        PatKind::Array(elems) => elems
+            .iter()
+            .any(|e| hir[e].default.is_some() || has_any_binding_initializers(hir, hir[e].pat)),
+        PatKind::Ident(_) | PatKind::Missing => false,
     }
 }
 

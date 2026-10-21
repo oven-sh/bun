@@ -4405,6 +4405,7 @@ pub(crate) fn write_file_with_source_destination(
             return Ok(copy_file::CopyFileWindows::init(
                 destination_store,
                 source_store,
+                cx.global(),
                 cx.vm().event_loop_shared(),
                 cx.context(),
                 options.mkdirp_if_not_exists.unwrap_or(true),

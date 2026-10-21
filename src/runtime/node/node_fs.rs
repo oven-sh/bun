@@ -1550,6 +1550,8 @@ mod _async_tasks {
 
     pub(crate) struct NewAsyncCpTask<const IS_SHELL: bool> {
         pub(crate) promise: JSPromiseStrong,
+        /// `fs.cp`: the global `promise` was made in, which `promise` keeps alive. The shell's `cp` has none.
+        pub(crate) global: Option<bun_jsc::GlobalRef>,
         pub args: ThreadIsolated<args::Cp<'static>>,
         /// Owning-thread uses (global object, keep-alive context).
         pub(crate) evtloop: EventLoopHandle,
@@ -1744,6 +1746,7 @@ mod _async_tasks {
             tracker.did_schedule(cx.global());
             let task = Self::schedule_new(
                 JSPromiseStrong::init(cx.global()),
+                Some(bun_jsc::GlobalRef::new(cx.global())),
                 cp_args,
                 EventLoopHandle::init(vm.event_loop.cast()),
                 bun_jsc::ConcurrentPoster::Js(vm.ticket()),
@@ -1766,6 +1769,7 @@ mod _async_tasks {
         ) -> *mut Self {
             Self::schedule_new(
                 JSPromiseStrong::default(),
+                None,
                 cp_args,
                 evtloop,
                 poster,
@@ -1778,6 +1782,7 @@ mod _async_tasks {
 
         fn schedule_new(
             promise: JSPromiseStrong,
+            global: Option<bun_jsc::GlobalRef>,
             cp_args: ThreadIsolated<args::Cp<'static>>,
             evtloop: EventLoopHandle,
             poster: bun_jsc::ConcurrentPoster,
@@ -1787,6 +1792,7 @@ mod _async_tasks {
         ) -> *mut Self {
             let mut task = Box::new(Self {
                 promise,
+                global,
                 context,
                 args: cp_args,
                 has_result: AtomicBool::new(false),
@@ -1914,14 +1920,10 @@ mod _async_tasks {
                 unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                 return Ok(());
             }
-            let go_ptr = self.evtloop.global_object();
-            if go_ptr.is_null() {
-                panic!(
-                    "No global object, this indicates a bug in Bun. Please file a GitHub issue."
-                );
-            }
-            // SAFETY: non-null erased *mut JSGlobalObject from the JS event loop vtable.
-            let global_object: &JSGlobalObject = unsafe { &*go_ptr.cast::<JSGlobalObject>() };
+            let global = self
+                .global
+                .expect("fs.cp records the global of its promise");
+            let global_object: &JSGlobalObject = &global;
             let success = (*self.result.get_mut()).is_ok();
             let promise_value = self.promise.value();
             // Captured as a raw pointer because `Self::destroy(self)` runs *before* the
@@ -4708,6 +4710,8 @@ pub(crate) struct NodeFS {
     /// Scratch for a temporary file path that might appear in a returned error message.
     pub(crate) sync_error_buf: bun_paths::path_buffer_pool::Guard,
     pub(crate) vm: Option<NonNull<VirtualMachine>>,
+    /// This `node:fs` binding's global, kept alive by its wrapper: sync results are built in it.
+    pub(crate) global: Option<bun_jsc::GlobalRef>,
 }
 
 impl Default for NodeFS {
@@ -4715,6 +4719,7 @@ impl Default for NodeFS {
         Self {
             sync_error_buf: bun_paths::path_buffer_pool::get(),
             vm: None,
+            global: None,
         }
     }
 }
@@ -7200,11 +7205,10 @@ impl NodeFS {
             return match args.encoding {
                 Encoding::Buffer => {
                     if flavor == Flavor::Sync && string_type == ReadFileStringType::Default {
-                        if let Some(vm) = self.vm.map(bun_ptr::BackRef::from) {
+                        if let Some(global) = self.global {
                             // Attempt to create the buffer in JSC's heap.
                             // This avoids creating a WastefulTypedArray.
-                            // `self.vm` is the live owning `VirtualMachine` (per-thread singleton) — `BackRef` invariant holds.
-                            let global = vm.global();
+                            let global: &JSGlobalObject = &global;
                             let Ok(array_buffer) = bun_jsc::ArrayBuffer::create_buffer(
                                 global,
                                 temporary_read_buffer_before_stat_call,

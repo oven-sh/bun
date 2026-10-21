@@ -1057,6 +1057,8 @@ pub(crate) struct CopyFileWindows<'a> {
 
     pub(crate) io_request: libuv::fs_t,
     pub(crate) promise: jsc::JSPromiseStrong,
+    /// The global `promise` was made in, which `promise` keeps alive.
+    pub(crate) global: jsc::GlobalRef,
     pub(crate) mkdirp_if_not_exists: bool,
     pub(crate) destination_mode: Option<Mode>,
     // per LIFETIMES.tsv: JSC_BORROW → &jsc::EventLoop
@@ -1354,9 +1356,11 @@ impl<'a> CopyFileWindows<'a> {
         Box::new(init)
     }
 
+    /// `global`: the one `Bun.write` was called in.
     pub(crate) fn init(
         destination_file_store: RefPtr<Store>,
         source_file_store: RefPtr<Store>,
+        global: &jsc::JSGlobalObject,
         event_loop: &'a jsc::event_loop::EventLoop,
         context: &jsc::ScriptExecutionContext,
         mkdirp_if_not_exists: bool,
@@ -1364,11 +1368,11 @@ impl<'a> CopyFileWindows<'a> {
         destination_mode: Option<Mode>,
     ) -> JSValue {
         // destination_file_store.ref() / source_file_store.ref() — Arc clone
-        let global = event_loop.global_ref();
         let result = bun_core::heap::into_raw(CopyFileWindows::new(CopyFileWindows {
             destination_file_store,
             source_file_store,
             promise: jsc::JSPromiseStrong::init(global),
+            global: jsc::GlobalRef::new(global),
             // SAFETY: all-zero is a valid libuv::fs_t
             io_request: bun_core::ffi::zeroed::<libuv::fs_t>(),
             event_loop,
@@ -1624,7 +1628,8 @@ impl<'a> CopyFileWindows<'a> {
 
     pub(crate) fn throw(&mut self, err: bun_sys::Error) {
         let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
-        let global_this = self.event_loop.global_ref();
+        let global = self.global;
+        let global_this: &jsc::JSGlobalObject = &global;
         // `swap()` returns a `&mut JSPromise` into a GC-owned cell (not into
         // `self`), but its lifetime is elided to `&mut self`. Decay to a raw pointer so
         // borrowck doesn't tie it to `self` across `destroy` below.
@@ -1710,7 +1715,8 @@ impl<'a> CopyFileWindows<'a> {
 
     fn resolve_promise(&mut self, written: usize) {
         let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
-        let global_this = self.event_loop.global_ref();
+        let global = self.global;
+        let global_this: &jsc::JSGlobalObject = &global;
         // see `throw` — re-type the GC cell via the ZST opaque deref so it
         // outlives `destroy(self)` for borrowck.
         let promise = JSPromise::opaque_mut(self.promise.swap());

@@ -56,6 +56,19 @@ impl<'a> JsThread<'a> {
     pub fn context(&self) -> &'a crate::ScriptExecutionContext {
         self.context
     }
+
+    /// Calls a job's `callback` through the VM's own global, where an uncaught throw is reported.
+    #[inline(never)]
+    pub fn run_callback(&self, callback: crate::JSValue, arguments: &[crate::JSValue]) {
+        let vm = self.vm();
+        vm.event_loop_mut().run_callback(
+            crate::ContextId::NONE,
+            callback,
+            vm.global(),
+            crate::JSValue::UNDEFINED,
+            arguments,
+        );
+    }
 }
 
 impl JSGlobalObject {
@@ -219,6 +232,7 @@ pub trait JobContext: Sized + 'static {
 
     /// JS thread, VM still running script: the completion. Both halves are
     /// handed over to use and drop normally.
+    /// `cx.global()` is the global the job was scheduled from.
     fn then(off: Self::OffThread, js: Self::Js, cx: &JsThread<'_>) -> JsResult<()>;
 
     /// JS thread, the VM's stop phase (possibly more than once): make a job
@@ -312,6 +326,62 @@ impl JobList {
     }
 }
 
+/// The non-VM global a job was scheduled from (a `ShadowRealm`'s), GC-protected while this lives.
+pub(crate) struct Realm {
+    global: crate::GlobalRef,
+    _protected: Protected,
+    /// The job's own [`JobHeader::complete`] and [`JobHeader::release_unrun`].
+    complete: unsafe fn(*mut JobHeader, &JsThread<'_>) -> JsResult<()>,
+    release_unrun: unsafe fn(*mut JobHeader),
+}
+
+/// The [`Realm`]s of a VM's live jobs, by job (JS thread only).
+#[derive(Default)]
+pub(crate) struct JobRealms(bun_collections::ArrayHashMap<NonNull<JobHeader>, Realm>);
+
+impl JobRealms {
+    /// Routes `header`'s job, scheduled from the non-VM `global`, through the `*_in_realm` pair.
+    #[cold]
+    #[inline(never)]
+    fn record(header: &mut JobHeader, global: &JSGlobalObject) {
+        let realm = Realm {
+            global: crate::GlobalRef::new(global),
+            _protected: Protected::new(global.to_js_value()),
+            complete: core::mem::replace(&mut header.complete, complete_in_realm),
+            release_unrun: core::mem::replace(&mut header.release_unrun, release_unrun_in_realm),
+        };
+        global
+            .bun_vm()
+            .job_realms
+            .with_mut(|realms| bun_core::handle_oom(realms.0.put(NonNull::from(header), realm)));
+    }
+
+    /// The realm of `job`, which is ending: the caller holds it until the job is gone.
+    fn take(job: *mut JobHeader) -> Realm {
+        VirtualMachine::get()
+            .job_realms
+            .with_mut(|realms| realms.0.fetch_swap_remove(&NonNull::new(job)?))
+            .expect("a job that has a realm is recorded until it ends")
+            .1
+    }
+}
+
+/// [`JobHeader::complete`] of a job that has a [`Realm`], with the contract of the job's own.
+unsafe fn complete_in_realm(header: *mut JobHeader, cx: &JsThread<'_>) -> JsResult<()> {
+    // Dropped after `then` has returned.
+    let realm = JobRealms::take(header);
+    // SAFETY: fn contract.
+    unsafe { (realm.complete)(header, &realm.global.js_thread(cx.context())) }
+}
+
+/// [`JobHeader::release_unrun`] of a job that has a [`Realm`], with the contract of the job's own.
+unsafe fn release_unrun_in_realm(header: *mut JobHeader) {
+    // Dropped once the job is gone.
+    let realm = JobRealms::take(header);
+    // SAFETY: fn contract.
+    unsafe { (realm.release_unrun)(header) }
+}
+
 /// One pool-then-complete job. Heap-allocated by [`Job::schedule`]; freed on
 /// the JS thread by its completion or by the teardown's release.
 #[repr(C)]
@@ -346,6 +416,7 @@ impl<C: JobContext> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
     #[track_caller]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
+        let (global, vm) = (cx.global(), cx.vm());
         let mut keep_alive = KeepAlive::default();
         keep_alive.ref_(bun_io::js_vm_ctx());
         let job = bun_core::heap::into_raw(Box::new(Self {
@@ -373,6 +444,10 @@ impl<C: JobContext> Job<C> {
             off,
             js,
         }));
+        if !core::ptr::eq(global, vm.global) {
+            // SAFETY: live, and this thread's alone until the pool gets it below.
+            JobRealms::record(unsafe { &mut (*job).header }, global);
+        }
         // SAFETY: live until completed/released on this thread; the pool owns it now.
         unsafe {
             if C::CANCELLABLE {

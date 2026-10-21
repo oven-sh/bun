@@ -5,9 +5,8 @@ export default [
     name: "FSWatcher",
     construct: false,
     noConstructor: true,
-    finalize: true,
+    refCounted: true,
     configurable: false,
-    hasPendingActivity: true,
     klass: {},
     JSType: "0b11101110",
     proto: {

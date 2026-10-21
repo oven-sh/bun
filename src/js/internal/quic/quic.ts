@@ -36,7 +36,8 @@ const {
   isSharedArrayBuffer,
   isKeyObject,
 } = require("node:util/types");
-const { SocketAddress, BlockList } = require("node:net");
+const SocketAddress = $rust("node_net_binding.rs", "SocketAddress");
+const BlockList = $rust("node_net_binding.rs", "BlockList");
 
 // The native binding hands certificates over as DER bytes; expose them as
 // X509Certificate objects like Node does.
@@ -147,8 +148,9 @@ function ERR_QUIC_VERSION_NEGOTIATION_ERROR() {
 const kClientHttp = Symbol("kClientHttp");
 const kNoteClientHttp = Symbol("kNoteClientHttp");
 
+const { defineBuiltinProperty } = require("internal/shared");
 const kSocketAddressHandle = Symbol("kSocketAddressHandle");
-Object.defineProperty(SocketAddress.prototype, kSocketAddressHandle, {
+defineBuiltinProperty(SocketAddress.prototype, kSocketAddressHandle, {
   __proto__: null,
   get() {
     return this;
@@ -156,7 +158,7 @@ Object.defineProperty(SocketAddress.prototype, kSocketAddressHandle, {
   configurable: true,
 });
 const kBlockListHandle = Symbol("kBlockListHandle");
-Object.defineProperty(BlockList.prototype, kBlockListHandle, {
+defineBuiltinProperty(BlockList.prototype, kBlockListHandle, {
   __proto__: null,
   get() {
     return this;
@@ -168,7 +170,7 @@ function InternalSocketAddress(handle): void {
 }
 
 const kBlobHandle = Symbol("kBlobHandle");
-Object.defineProperty(Blob.prototype, kBlobHandle, {
+defineBuiltinProperty(Blob.prototype, kBlobHandle, {
   __proto__: null,
   get() {
     return this;

@@ -55,6 +55,9 @@ private:
 // For a message built with `tryMakeString`: a null `message` did not fit, and is thrown as `RangeError: Out of memory`.
 void throwTypeErrorOrOutOfMemory(JSC::JSGlobalObject*, JSC::ThrowScope&, const WTF::String& message);
 
+// For a native setter that keeps its value outside of `owner`'s properties, which JSC does not guard on every route. True if it threw.
+bool throwIfSetterOwnerIsImmutable(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* owner);
+
 class ErrorCodeCache : public JSC::JSInternalFieldObjectImpl<NODE_ERROR_COUNT> {
 public:
     using Base = JSInternalFieldObjectImpl<NODE_ERROR_COUNT>;

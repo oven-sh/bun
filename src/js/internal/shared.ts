@@ -180,33 +180,27 @@ function guardCallback(callback) {
 }
 
 const nodeModulesRE = /[\\/]node_modules[\\/]/;
-const ErrorCaptureStackTrace = Error.captureStackTrace;
-function returnStackFrames(_err: unknown, frames: unknown[]) {
-  return frames;
-}
+const captureCallSites = $newCppFunction("FormatStackTraceForJS.cpp", "jsFunctionCaptureCallSites", 2) as (
+  frameLimit: number,
+  startFunction: Function,
+) => NodeJS.CallSite[];
+const setStackTraceLimitOverride = $newCppFunction(
+  "FormatStackTraceForJS.cpp",
+  "jsFunctionSetStackTraceLimitOverride",
+  1,
+) as (limit: number | undefined) => number | undefined;
+
+// Object.defineProperty(), `delete` and Object.setPrototypeOf() that also work on what BUN_JSC_immutableGlobals covers.
+const defineBuiltinProperty = $newCppFunction("BunClientData.cpp", "jsFunctionDefineBuiltinProperty", 3);
+const deleteBuiltinProperty = $newCppFunction("BunClientData.cpp", "jsFunctionDeleteBuiltinProperty", 2);
+const setBuiltinPrototype = $newCppFunction("BunClientData.cpp", "jsFunctionSetBuiltinPrototype", 2);
+// Makes immutable, if BUN_JSC_immutableGlobals is on, an object a built-in module creates for a native class.
+const didCreateBuiltin = $newCppFunction("BunClientData.cpp", "jsFunctionDidCreateBuiltin", 1);
 
 // Port of node's IsInsideNodeModules: first real user frame inside node_modules?
-// Guarded so a tampered Error.* never escapes to callers like url.parse.
 // https://github.com/nodejs/node/blob/main/src/node_util.cc
-function isInsideNodeModules(frameLimit: number): boolean {
-  let prevLimit: unknown, prevPrepare: unknown;
-  let frames: { getFileName(): string | null }[] | undefined;
-  try {
-    prevLimit = Error.stackTraceLimit;
-    prevPrepare = Error.prepareStackTrace;
-    Error.stackTraceLimit = frameLimit;
-    Error.prepareStackTrace = returnStackFrames;
-    const target: { stack?: unknown } = {};
-    ErrorCaptureStackTrace(target, isInsideNodeModules);
-    frames = target.stack as typeof frames;
-  } catch {
-  } finally {
-    try {
-      Error.stackTraceLimit = prevLimit as typeof Error.stackTraceLimit;
-      Error.prepareStackTrace = prevPrepare as typeof Error.prepareStackTrace;
-    } catch {}
-  }
-  if (!$isJSArray(frames)) return false;
+function isInsideNodeModules(frameLimit: number = 10): boolean {
+  const frames = captureCallSites(frameLimit, isInsideNodeModules);
   try {
     for (const frame of frames) {
       const filename = frame.getFileName();
@@ -435,6 +429,12 @@ export default {
   once,
   getLazy,
   guardCallback,
+  captureCallSites,
+  setStackTraceLimitOverride,
+  defineBuiltinProperty,
+  deleteBuiltinProperty,
+  setBuiltinPrototype,
+  didCreateBuiltin,
   isInsideNodeModules,
   resistStopPropagation,
 

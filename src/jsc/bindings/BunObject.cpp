@@ -398,9 +398,15 @@ static EncodedJSValue lazyBunObjectValue(JSGlobalObject* lexicalGlobalObject, En
     auto scope = DECLARE_THROW_SCOPE(vm);
     // A CustomValue getter's thisValue is the property's owner, not the receiver.
     JSObject* bunObject = JSValue::decode(thisValue).getObject();
-    JSValue value = create(vm, defaultGlobalObject(bunObject->globalObject()));
+    auto* globalObject = defaultGlobalObject(bunObject->globalObject());
+    JSValue value = create(vm, globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    bunObject->putDirect(vm, propertyName, value, PropertyAttribute::DontDelete | 0);
+    {
+        JSC::AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+        bunObject->putDirect(vm, propertyName, value, PropertyAttribute::DontDelete | 0);
+    }
+    if (value.isObject())
+        globalObject->didCreateBuiltin(vm, asObject(value));
     return JSValue::encode(value);
 }
 
@@ -465,7 +471,7 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
         JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirect(vm, JSC::Identifier::fromString(vm, "V4MAPPED"_s), jsNumber(AI_V4MAPPED),
         JSC::PropertyAttribute::DontDelete | 0);
-    return dnsObject;
+    return namespaceObjectOf(vm, bunObject, dnsObject);
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParse);
@@ -668,7 +674,7 @@ static JSValue constructJSONLObject(VM& vm, JSObject* bunObject)
         JSC::PropertyAttribute::DontDelete | 0);
     jsonlObject->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, "JSONL"_s),
         JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
-    return jsonlObject;
+    return namespaceObjectOf(vm, bunObject, jsonlObject);
 }
 
 static JSValue constructBunPeekObject(VM& vm, JSObject* bunObject)
@@ -1130,7 +1136,10 @@ static JSC_DEFINE_CUSTOM_SETTER(setBunObjectMain, (JSC::JSGlobalObject * globalO
 {
     (void)thisEncoded;
     (void)propertyName;
-    return BunObject_setter_main(globalObject, encodedValue);
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    if (throwIfSetterOwnerIsImmutable(globalObject, scope, defaultGlobalObject(globalObject)->bunObject()))
+        return false;
+    RELEASE_AND_RETURN(scope, BunObject_setter_main(globalObject, encodedValue));
 }
 
 // LazyProperty wrappers for stdin/stderr/stdout
@@ -1176,7 +1185,7 @@ static JSValue constructModuleGraphObject(VM& vm, JSObject* bunObject)
 static JSValue constructSecretsObject(VM& vm, JSObject* bunObject)
 {
     auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
-    return Bun::createSecretsObject(vm, zigGlobalObject);
+    return namespaceObjectOf(vm, bunObject, Bun::createSecretsObject(vm, zigGlobalObject));
 }
 
 static JSValue constructWebViewObject(VM& vm, JSObject* bunObject)

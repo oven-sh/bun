@@ -6,6 +6,7 @@ const {
   hasObserver,
   PerformanceNodeEntry,
   kEmptyObject,
+  defineBuiltinProperty,
 } = require("internal/shared");
 const { validateFunction, validateObject } = require("internal/validators");
 
@@ -276,7 +277,8 @@ const nodeTiming = createPerformanceNodeTiming();
 // timerify/eventLoopUtilization/nodeTiming go on Performance.prototype,
 // non-enumerable, per lib/internal/perf/performance.js.
 if (Performance) {
-  Object.defineProperties(Performance.prototype, {
+  const additions = {
+    __proto__: null,
     nodeTiming: {
       __proto__: null,
       configurable: true,
@@ -298,7 +300,9 @@ if (Performance) {
       writable: true,
       value: eventLoopUtilization,
     },
-  });
+  };
+  const prototype = Performance.prototype;
+  for (const name in additions) defineBuiltinProperty(prototype, name, additions[name]);
 }
 
 export default {

@@ -141,6 +141,14 @@ namespace Bun {
 // once-per-class setup paths, so each wrapper class doesn't inline them.
 JSC::Structure* createClassStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype, JSC::TypeInfo, const JSC::ClassInfo*, JSC::IndexingType = JSC::NonArray, unsigned inlineCapacity = 0);
 void reifyStaticPropertyTable(JSC::VM&, const JSC::ClassInfo*, std::span<const JSC::HashTableValue>, JSC::JSObject&);
+// For an object of `owner`'s that is API (`Bun.dns`, `process.versions`), not state (`Bun.env`): immutable if `owner` is, with the objects it holds.
+JSC::JSValue namespaceObjectOf(JSC::VM&, JSC::JSObject* owner, JSC::JSValue namespaceObject);
+// For built-in modules, through internal/shared: Object.defineProperty(), `delete` and Object.setPrototypeOf() that work on an immutable built-in too. No JavaScript runs while the write is allowed.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionDefineBuiltinProperty);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionDeleteBuiltinProperty);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetBuiltinPrototype);
+// JSGlobalObject::didCreateBuiltin() for a built-in module.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionDidCreateBuiltin);
 // `JSC::allocateCell` for a fieldless `JSNonFinalObject` subclass living in `vm.plainObjectSpace()` (prototype objects).
 void* allocatePlainObjectCell(JSC::VM&, size_t);
 // `JSC_TO_STRING_TAG_WITHOUT_TRANSITION()`, out of line.

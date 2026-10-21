@@ -74,6 +74,10 @@ WTF::String formatStackTrace(
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace);
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace);
+// (frameLimit, startFunction): call sites as Error.prepareStackTrace gets them, without using Error's properties.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionCaptureCallSites);
+// (limit | undefined): JSGlobalObject::setStackTraceLimitOverride(), with a number read as Error.stackTraceLimit is. Returns the override there was, to be put back.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetStackTraceLimitOverride);
 
 // JSC Custom Accessors - error.stack getter/setter
 JSC_DECLARE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter);

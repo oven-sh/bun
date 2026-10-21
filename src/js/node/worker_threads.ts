@@ -12,7 +12,13 @@ type WebWorker = InstanceType<typeof globalThis.Worker> & {
 
 const EventEmitter = require("node:events");
 const { SafeMap } = require("internal/primordials");
-const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
+const {
+  throwNotImplemented,
+  warnNotImplementedOnce,
+  defineBuiltinProperty,
+  setBuiltinPrototype,
+  didCreateBuiltin,
+} = require("internal/shared");
 const {
   validateString,
   validateObject,
@@ -291,7 +297,8 @@ function injectFakeEmitter(Class) {
   for (const [methodName, value] of emitterMethods) {
     Object.defineProperty(inherited, methodName, { value, writable: true, enumerable: false, configurable: true });
   }
-  Object.setPrototypeOf(proto, inherited);
+  didCreateBuiltin(inherited);
+  setBuiltinPrototype(proto, inherited);
 }
 
 injectFakeEmitter(_MessagePort);
@@ -302,7 +309,7 @@ const MessagePort = _MessagePort;
 // closedMessagePorts lets moveMessagePortToContext report ERR_CLOSED_MESSAGE_PORT.
 const closedMessagePorts = new WeakSet();
 const nativeMessagePortClose = MessagePort.prototype.close;
-Object.defineProperty(MessagePort.prototype, "close", {
+defineBuiltinProperty(MessagePort.prototype, "close", {
   value: function close(cb) {
     closedMessagePorts.add(this);
     // node's mechanism is literally `this.once('close', cb)`, so cb interleaves
@@ -320,7 +327,7 @@ Object.defineProperty(MessagePort.prototype, "close", {
 // node-style util.inspect output for MessagePort (shows whether the channel is
 // still active). Symbol-keyed so it does not appear in getOwnPropertyNames.
 const kInspectCustom = Symbol.for("nodejs.util.inspect.custom");
-Object.defineProperty(MessagePort.prototype, kInspectCustom, {
+defineBuiltinProperty(MessagePort.prototype, kInspectCustom, {
   value: function (_depth, _options) {
     return `MessagePort [EventTarget] { active: ${_isMessagePortActive(this)}, refed: ${this.hasRef()} }`;
   },
@@ -355,7 +362,7 @@ function setupWorkerStdio(stdio) {
   // node routes console.log through process.stdout/stderr; Bun's global console
   // writes the fd directly, so rebind it to the port-backed streams.
   const { Console } = require("node:console");
-  (globalThis as { console: unknown }).console = new Console(stdoutStream, stderrStream);
+  defineBuiltinProperty(globalThis, "console", { __proto__: null, value: new Console(stdoutStream, stderrStream) });
 }
 
 // Emulation of Node's JSTransferable protocol (kTransfer/kTransferList/kDeserialize) for
@@ -730,7 +737,7 @@ function applyWorkerProcessOverrides() {
   // node defaults debugPort to 9229 in workers (still settable). Per-object property:
   // the static accessor's setter writes a process-global shared across threads.
   try {
-    Object.defineProperty(proc, "debugPort", { value: 9229, writable: true, configurable: true, enumerable: true });
+    defineBuiltinProperty(proc, "debugPort", { value: 9229, writable: true, configurable: true, enumerable: true });
   } catch {}
   // process.umask(setMask) is unsupported in workers; the getter still works.
   const realUmask = proc.umask;
@@ -738,7 +745,7 @@ function applyWorkerProcessOverrides() {
     if (mask === undefined) return realUmask.$call(proc);
     throw $ERR_WORKER_UNSUPPORTED_OPERATION("Setting process.umask() is not supported in workers");
   }
-  proc.umask = umask;
+  defineBuiltinProperty(proc, "umask", { __proto__: null, value: umask });
   // Disabled, throwing stubs (each carries `.disabled === true`, like node).
   const disabled = ["abort", "chdir"];
   if (process.platform !== "win32") {
@@ -755,12 +762,12 @@ function applyWorkerProcessOverrides() {
       throw $ERR_WORKER_UNSUPPORTED_OPERATION(`process.${name}() is not supported in workers`);
     };
     stub.disabled = true;
-    Object.defineProperty(proc, name, { configurable: true, writable: true, enumerable: true, value: stub });
+    defineBuiltinProperty(proc, name, { configurable: true, writable: true, enumerable: true, value: stub });
   }
   // IPC accessors throw on access only in a worker that inherited an IPC channel.
   if (hasIpc) {
     for (const name of ["channel", "connected"]) {
-      Object.defineProperty(proc, name, {
+      defineBuiltinProperty(proc, name, {
         configurable: true,
         enumerable: false,
         get() {

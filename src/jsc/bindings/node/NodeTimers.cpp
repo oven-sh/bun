@@ -278,6 +278,12 @@ JSValue createSetTimeoutFunction(VM& vm, JSObject* globalObject)
     return createTimerFunction(vm, globalObject, "setTimeout"_s, functionSetTimeout, setTimeoutPromisifyCustomGetter);
 }
 
+extern "C" bool Bun__isSetTimeoutFunction(EncodedJSValue value)
+{
+    auto* function = dynamicDowncast<JSFunction>(JSValue::decode(value));
+    return function && function->isHostFunction() && function->nativeFunction() == functionSetTimeout;
+}
+
 JSValue createSetIntervalFunction(VM& vm, JSObject* globalObject)
 {
     return createTimerFunction(vm, globalObject, "setInterval"_s, functionSetInterval, setIntervalPromisifyCustomGetter);

@@ -11,6 +11,7 @@ use crate::timer::{
 unsafe extern "C" {
     safe fn JSMock__setOverridenDateNow(global: &JSGlobalObject, value: f64);
     safe fn JSMock__getCurrentUnixTimeMs() -> f64;
+    safe fn Bun__isSetTimeoutFunction(value: JSValue) -> bool;
 }
 
 #[derive(Default)]
@@ -323,11 +324,15 @@ fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) -> JsResult<()>
     }
     // testing-library/react checks Object.hasOwnProperty.call(setTimeout, 'clock')
     // to detect if fake timers are enabled.
+    // Only Bun's own function: what a program put there may run JavaScript, which must not happen while the write is allowed.
+    let allow_materialization = Bun__isSetTimeoutFunction(set_timeout_fn)
+        .then(|| global.vm().allow_lazy_materialization_of_immutable_properties());
     if enabled {
         bun_jsc::cpp::JSMock__defineFakeTimersMarker(global, set_timeout_fn)?;
     } else {
         set_timeout_fn.delete_property(global, "clock")?;
     }
+    drop(allow_materialization);
     Ok(())
 }
 

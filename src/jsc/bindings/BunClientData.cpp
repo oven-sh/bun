@@ -234,7 +234,128 @@ namespace Bun {
 
 JSC::Structure* createClassStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype, JSC::TypeInfo typeInfo, const JSC::ClassInfo* classInfo, JSC::IndexingType indexingType, unsigned inlineCapacity)
 {
+    if (prototype.isObject())
+        globalObject->didCreateBuiltin(vm, asObject(prototype));
     return JSC::Structure::create(vm, globalObject, prototype, typeInfo, classInfo, indexingType, inlineCapacity);
+}
+
+JSC::JSValue namespaceObjectOf(JSC::VM& vm, JSC::JSObject* owner, JSC::JSValue namespaceObject)
+{
+    if (!owner->hasImmutableProperties() || !namespaceObject || !namespaceObject.isObject()) [[likely]]
+        return namespaceObject;
+
+    // The objects it holds are part of it too: `Bun.FFI.read`, `process.config.variables`.
+    JSC::DeferGC deferGC(vm);
+    Vector<JSC::JSObject*, 8> objects { asObject(namespaceObject) };
+    while (!objects.isEmpty()) {
+        auto* object = objects.takeLast();
+        if (object->hasImmutableProperties())
+            continue;
+        owner->globalObject()->makeObjectAndItsFunctionsImmutable(vm, object);
+        object->structure()->forEachProperty(vm, [&](const JSC::PropertyTableEntry& entry) {
+            if (JSC::JSValue value = object->getDirect(entry.offset()); value.isObject())
+                objects.append(asObject(value));
+            return true;
+        });
+    }
+    return namespaceObject;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionDefineBuiltinProperty, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* builtin = callFrame->argument(0).getObject();
+    if (!builtin)
+        return throwVMTypeError(globalObject, scope, "Properties can only be defined on Objects."_s);
+    auto key = callFrame->argument(1).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::PropertyDescriptor descriptor;
+    JSC::toPropertyDescriptor(globalObject, callFrame->argument(2), descriptor);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    bool isImmutable = builtin->hasImmutableProperties();
+    if (isImmutable) {
+        // Building a lazy property may run JavaScript, which must not happen while the write is allowed.
+        JSC::PropertySlot slot(builtin, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+        builtin->methodTable()->getOwnPropertySlot(builtin, globalObject, key, slot);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    {
+        std::optional<JSC::AllowLazyMaterializationOfImmutableProperties> allowMaterialization;
+        if (isImmutable)
+            allowMaterialization.emplace(vm);
+        builtin->methodTable()->defineOwnProperty(builtin, globalObject, key, descriptor, true);
+    }
+    RETURN_IF_EXCEPTION(scope, {});
+    if (isImmutable) {
+        for (JSC::JSValue added : { descriptor.value(), descriptor.isAccessorDescriptor() ? descriptor.getter() : JSC::JSValue(), descriptor.isAccessorDescriptor() ? descriptor.setter() : JSC::JSValue() }) {
+            if (added && added.isCallable())
+                globalObject->makeObjectAndItsFunctionsImmutable(vm, asObject(added));
+        }
+    }
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionDeleteBuiltinProperty, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* builtin = callFrame->argument(0).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto key = callFrame->argument(1).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    bool isImmutable = builtin->hasImmutableProperties();
+    if (isImmutable && !builtin->staticPropertiesReified()) {
+        // Building a lazy property may run JavaScript, which must not happen while the write is allowed.
+        builtin->reifyAllStaticProperties(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    bool didDelete;
+    {
+        std::optional<JSC::AllowLazyMaterializationOfImmutableProperties> allowMaterialization;
+        if (isImmutable)
+            allowMaterialization.emplace(vm);
+        didDelete = JSC::JSCell::deleteProperty(builtin, globalObject, key);
+    }
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!didDelete)
+        return throwVMTypeError(globalObject, scope, JSC::UnableToDeletePropertyError);
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetBuiltinPrototype, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* builtin = callFrame->argument(0).getObject();
+    JSC::JSValue prototype = callFrame->argument(1);
+    if (!builtin || !(prototype.isObject() || prototype.isNull()))
+        return throwVMTypeError(globalObject, scope, "Object prototype may only be an Object or null"_s);
+
+    std::optional<JSC::AllowLazyMaterializationOfImmutableProperties> allowMaterialization;
+    if (builtin->hasImmutableProperties())
+        allowMaterialization.emplace(vm);
+    scope.release();
+    builtin->setPrototype(vm, globalObject, prototype, true);
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionDidCreateBuiltin, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    if (auto* builtin = callFrame->argument(0).getObject())
+        globalObject->didCreateBuiltin(JSC::getVM(globalObject), builtin);
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+// JSC::AllowLazyMaterializationOfImmutableProperties for Rust, which pairs the two calls in a guard.
+extern "C" void JSC__VM__allowLazyMaterializationOfImmutableProperties(JSC::VM* vm, bool allow)
+{
+    vm->allowLazyMaterializationOfImmutablePropertiesCount += allow ? 1 : -1;
+#if ASSERT_ENABLED
+    vm->disallowVMEntryCount += allow ? 1 : -1;
+#endif
 }
 
 void reifyStaticPropertyTable(JSC::VM& vm, const JSC::ClassInfo* classInfo, std::span<const JSC::HashTableValue> values, JSC::JSObject& object)

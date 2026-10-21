@@ -33,7 +33,7 @@ const {
   validateString,
 } = require("internal/validators");
 const { addAbortListener } = require("internal/abort_listener");
-const { resistStopPropagation } = require("internal/shared");
+const { resistStopPropagation, setBuiltinPrototype } = require("internal/shared");
 
 const types = require("node:util/types");
 let inspect: ((value: unknown, opts?: object) => string) | undefined;
@@ -1047,7 +1047,7 @@ try {
     processPrototype !== Object.prototype &&
     !(processPrototype instanceof EventEmitter)
   ) {
-    Object.setPrototypeOf(processPrototype, EventEmitter.prototype);
+    setBuiltinPrototype(processPrototype, EventEmitter.prototype);
   }
 } catch {
   // If the prototype is not relinkable, process simply keeps its native

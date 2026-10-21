@@ -4176,8 +4176,10 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__putMayBeIndex(JSC::Enco
     JSC::Identifier identifier = Bun::toIdentifier(vm, *key);
 
     JSC::JSObject* object = JSC::JSValue::decode(target).asCell()->getObject();
-    object->putDirectMayBeIndex(globalObject, JSC::PropertyName(identifier), JSC::JSValue::decode(value));
+    bool didPut = object->putDirectMayBeIndex(globalObject, JSC::PropertyName(identifier), JSC::JSValue::decode(value));
     RETURN_IF_EXCEPTION(scope, );
+    if (!didPut) [[unlikely]]
+        throwTypeError(globalObject, scope, JSC::ReadonlyPropertyWriteError);
 }
 
 extern "C" bool JSC__JSValue__deleteProperty(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const EncodedSlice* key)

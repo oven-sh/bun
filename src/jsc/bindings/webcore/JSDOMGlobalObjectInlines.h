@@ -41,6 +41,7 @@ inline JSC::JSObject* getDOMConstructor(JSC::VM& vm, const Zig::GlobalObject& gl
     ASSERT(!globalObject.constructors().array()[static_cast<unsigned>(constructorID)].get());
     Zig::GlobalObject& mutableGlobalObject = const_cast<Zig::GlobalObject&>(globalObject);
     mutableGlobalObject.constructors().array()[static_cast<unsigned>(constructorID)].set(vm, &globalObject, constructor);
+    mutableGlobalObject.didCreateBuiltin(vm, constructor);
     return constructor;
 }
 

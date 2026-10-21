@@ -431,7 +431,7 @@ ${namespace.functions
       `    object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, ${asciiLiteral(fn.name)}), ${fn.length}, ${hostFunctionName(fn)}, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, 0);`,
   )
   .join("\n")}
-    return object;
+    return Bun::namespaceObjectOf(vm, owner, object);
 }
 }
 `;
@@ -951,6 +951,7 @@ export function cppSource(file: SchemaFile): string {
   headers.delete(`Generated${file.origin.namespace}.h`);
   const accepted = file.types.filter(type => type instanceof DictionaryType && type.accepted) as DictionaryType[];
   if (accepted.length > 0) headers.add("Bindgen/DictionaryMemberReader.h");
+  if (file.namespaces.length > 0) headers.add("BunClientData.h");
   const systemHeaders = ["JavaScriptCore/JSFunction.h"];
   if (accepted.some(type => !type.allowArray)) systemHeaders.unshift("JavaScriptCore/ArrayConstructor.h");
   if (file.namespaces.length > 0) systemHeaders.push("JavaScriptCore/ObjectConstructor.h");

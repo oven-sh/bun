@@ -318,7 +318,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
 #undef STRINGIFY
 #undef STRINGIFY_IMPL
 
-    return object;
+    return namespaceObjectOf(vm, processObject, object);
 }
 
 static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
@@ -332,7 +332,7 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     putDirectNamed(vm, release, "headersUrl"_s, jsOwnedString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/node-v" REPORTED_NODEJS_VERSION "-headers.tar.gz"_s)));
 
     RETURN_IF_EXCEPTION(scope, {});
-    return release;
+    return namespaceObjectOf(vm, processObject, release);
 }
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
@@ -346,7 +346,10 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
     if (vm.hasTerminationRequest() || vm.hasExceptionsAfterHandlingTraps())
         return;
 
-    putDirectNamed(vm, process, "_exiting"_s, jsBoolean(true));
+    {
+        JSC::AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+        putDirectNamed(vm, process, "_exiting"_s, jsBoolean(true));
+    }
     auto event = Identifier::fromString(vm, "exit"_s);
     if (!emitter.hasEventListeners(event)) {
         return;
@@ -1870,7 +1873,7 @@ static JSValue constructFinalization(VM& vm, JSObject* processObject)
     auto* globalObject = defaultGlobalObject(processObject->globalObject());
     JSC::MarkedArgumentBuffer args;
     args.append(processObject);
-    return callLazyProcessBuilder(vm, globalObject, processObjectInternalsCreateProcessFinalizationCodeGenerator, JSC::ArgList(args));
+    return namespaceObjectOf(vm, processObject, callLazyProcessBuilder(vm, globalObject, processObjectInternalsCreateProcessFinalizationCodeGenerator, JSC::ArgList(args)));
 }
 
 static JSValue constructAllowedNodeEnvironmentFlags(VM& vm, JSObject* processObject)
@@ -2395,6 +2398,8 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessExitCode, (JSC::JSGlobalObject * lexicalGloba
         return false;
     }
     auto throwScope = DECLARE_THROW_SCOPE(process->vm());
+    if (throwIfSetterOwnerIsImmutable(lexicalGlobalObject, throwScope, process))
+        return false;
     auto code = JSValue::decode(value);
 
     RELEASE_AND_RETURN(throwScope, setProcessExitCodeInner(lexicalGlobalObject, process, code));
@@ -2862,7 +2867,7 @@ static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)
     putDirectNamed(vm, report, "excludeEnv"_s, JSC::jsString(vm, String("SIGUSR2"_s)));
     putDirectNamed(vm, report, "writeReport"_s, JSC::JSFunction::create(vm, globalObject, 1, String("writeReport"_s), Process_functionWriteReport, ImplementationVisibility::Public));
     RETURN_IF_EXCEPTION(scope, {});
-    return report;
+    return namespaceObjectOf(vm, processObject, report);
 }
 
 __attribute__((minsize)) static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
@@ -3001,7 +3006,7 @@ __attribute__((minsize)) static JSValue constructProcessConfigObject(VM& vm, JSO
 
     config->freeze(vm);
     RETURN_IF_EXCEPTION(scope, {});
-    return config;
+    return namespaceObjectOf(vm, processObject, config);
 }
 
 static JSValue constructProcessHrtimeObject(VM& vm, JSObject* processObject)
@@ -3269,10 +3274,13 @@ void Process::setArgv(JSGlobalObject* globalObject, JSValue value)
 
 JSC_DEFINE_CUSTOM_SETTER(setProcessArgv, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName))
 {
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     Process* process = getProcessObject(globalObject, JSValue::decode(thisValue));
     if (!process) {
         return true;
     }
+    if (throwIfSetterOwnerIsImmutable(globalObject, scope, process))
+        return false;
 
     JSValue value = JSValue::decode(encodedValue);
     process->setArgv(globalObject, value);
@@ -3319,10 +3327,13 @@ void Process::setExecArgv(JSGlobalObject* globalObject, JSValue value)
 
 JSC_DEFINE_CUSTOM_SETTER(setProcessExecArgv, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName))
 {
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     Process* process = getProcessObject(globalObject, JSValue::decode(thisValue));
     if (!process) {
         return true;
     }
+    if (throwIfSetterOwnerIsImmutable(globalObject, scope, process))
+        return false;
 
     JSValue value = JSValue::decode(encodedValue);
     process->setExecArgv(globalObject, value);
@@ -4705,7 +4716,7 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     putDirectNamed(vm, object, "typescript"_s, jsString(vm, String("transform"_s)));
 
     RETURN_IF_EXCEPTION(scope, {});
-    return object;
+    return namespaceObjectOf(vm, processObject, object);
 }
 
 static uint16_t debugPort = 9229;
@@ -4715,11 +4726,10 @@ JSC_DEFINE_CUSTOM_GETTER(processDebugPort, (JSC::JSGlobalObject * globalObject, 
     return JSC::JSValue::encode(jsNumber(debugPort));
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName))
+static bool setDebugPort(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue value = JSValue::decode(encodedValue);
 
     double port = value.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -4735,6 +4745,24 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort, (JSC::JSGlobalObject * globalObjec
 
     debugPort = floor(port);
     return true;
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (throwIfSetterOwnerIsImmutable(globalObject, scope, getProcessObject(globalObject, JSValue::decode(thisValue))))
+        return false;
+    RELEASE_AND_RETURN(scope, setDebugPort(globalObject, JSValue::decode(encodedValue)));
+}
+
+// For node:inspector, which reports the port it bound even if the process object is immutable.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetDebugPort, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    setDebugPort(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
@@ -4777,6 +4805,8 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
     if (!thisObject || !jsString) {
         return false;
     }
+    if (throwIfSetterOwnerIsImmutable(globalObject, scope, getProcessObject(globalObject, thisObject)))
+        return false;
     WTF::String wtfStr = jsString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 #if !OS(WINDOWS)

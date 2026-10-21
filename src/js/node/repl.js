@@ -56,7 +56,6 @@ const {
   ArrayPrototypeShift,
   ArrayPrototypeSort,
   Boolean,
-  Error: MainContextError,
   FunctionPrototypeBind,
   FunctionPrototypeCall,
   JSONStringify,
@@ -156,8 +155,8 @@ const {
     ERR_MISSING_ARGS,
     ERR_SCRIPT_EXECUTION_INTERRUPTED,
   },
-  isErrorStackTraceLimitWritable,
 } = require("internal/repl/node-errors");
+const { setStackTraceLimitOverride } = require("internal/shared");
 const { sendInspectorCommand } = require("internal/repl/node-shims");
 const { getOptionValue } = require("internal/repl/node-shims");
 const { validateFunction, validateObject } = require("internal/validators");
@@ -650,10 +649,9 @@ class REPLServer extends Interface {
           if (self.breakEvalOnSigint) {
             const interrupt = new Promise((resolve, reject) => {
               sigintListener = () => {
-                const tmp = MainContextError.stackTraceLimit;
-                if (isErrorStackTraceLimitWritable()) MainContextError.stackTraceLimit = 0;
+                const previous = setStackTraceLimitOverride(0);
                 const err = new ERR_SCRIPT_EXECUTION_INTERRUPTED();
-                if (isErrorStackTraceLimitWritable()) MainContextError.stackTraceLimit = tmp;
+                setStackTraceLimitOverride(previous);
                 reject(err);
               };
               prioritizedSigintQueue.add(sigintListener);

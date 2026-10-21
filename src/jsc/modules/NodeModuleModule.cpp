@@ -613,6 +613,8 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
         JSC::EncodedJSValue value,
         JSC::PropertyName propertyName))
 {
+    // The property is Module.prototype's; the global object, which may be immutable, only stores its value.
+    JSC::AllowLazyMaterializationOfImmutableProperties allowMaterialization(globalObject->vm());
     globalObject->putDirect(globalObject->vm(),
         WebCore::clientData(globalObject->vm())
             ->builtinNames()

@@ -3,7 +3,7 @@ import type { ClusterWorker } from "internal/cluster/Worker";
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
 const path = require("node:path");
-const { kClusterOwner: owner_symbol, kInternalSendOptions } = require("internal/shared");
+const { kClusterOwner: owner_symbol, kInternalSendOptions, defineBuiltinProperty } = require("internal/shared");
 
 const onInternalMessage = $bindgen("node_cluster_binding.bind.ts", "onInternalMessageChild");
 const closeRawHandle = $bindgen("node_cluster_binding.bind.ts", "clusterCloseHandle");
@@ -74,7 +74,13 @@ cluster._setupWorker = function () {
   // before calling, check if the channel is refd. if it isn't, then unref it after calling process.once();
   $bindgen("node_cluster_binding.bind.ts", "channelIgnoreOneDisconnectEventListener")();
   process.once("disconnect", () => {
-    (process as { channel: unknown }).channel = null;
+    defineBuiltinProperty(process, "channel", {
+      __proto__: null,
+      value: null,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
     worker.emit("disconnect");
 
     if (!worker.exitedAfterDisconnect) {

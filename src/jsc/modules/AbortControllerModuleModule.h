@@ -37,6 +37,7 @@ inline void generateNativeModule_AbortControllerModule(
     exportValues.append(jsBoolean(true));
 
     // https://github.com/mysticatea/abort-controller/blob/a935d38e09eb95d6b633a8c42fcceec9969e7b05/dist/abort-controller.js#L125
+    JSC::AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
     abortController->putDirect(
         vm, signalIdent, abortSignal,
         static_cast<unsigned>(PropertyAttribute::DontDelete));

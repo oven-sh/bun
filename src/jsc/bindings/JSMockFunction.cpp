@@ -1544,6 +1544,11 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
     if (object->type() == JSC::JSType::GlobalProxyType)
         object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
 
+    if (object->hasImmutableProperties()) [[unlikely]] {
+        throwTypeError(globalObject, scope, "spyOn(target, prop) cannot replace a property of a target that has immutable properties"_s);
+        return {};
+    }
+
     // A WebAssembly GC object's Structure can't change, so the direct stores below would abort.
     if (object->type() == JSC::JSType::WebAssemblyGCObjectType) {
         throwTypeError(globalObject, scope, "spyOn(target, prop) does not support WebAssembly GC objects"_s);

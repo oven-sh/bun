@@ -2548,6 +2548,7 @@ void GlobalObject::finishCreation(VM& vm)
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSDOMFileConstructor), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              JSObject* fileConstructor = Bun::createJSDOMFileConstructor(init.vm, init.owner);
+             init.owner->didCreateBuiltin(init.vm, fileConstructor);
              init.set(fileConstructor);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_cryptoObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
@@ -2556,6 +2557,7 @@ void GlobalObject::finishCreation(VM& vm)
              // Node defines `subtle` on Crypto.prototype with a brand check, not on
              // the instance; the getter above enforces the brand.
              JSObject* prototype = crypto->getPrototypeDirect().getObject();
+             JSC::AllowLazyMaterializationOfImmutableProperties allowMaterialization(init.vm);
              prototype->putDirectCustomAccessor(
                  init.vm,
                  Identifier::fromString(init.vm, "subtle"_s),
@@ -2642,22 +2644,26 @@ void GlobalObject::finishCreation(VM& vm)
              init.set(toJS(init.owner, globalObject, globalObject->performance().get()).getObject());
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_requireFunctionUnbound), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+             auto* prototype = RequireFunctionPrototype::create(init.owner);
+             init.owner->didCreateBuiltin(init.vm, prototype);
              init.set(
                  JSFunction::create(
                      init.vm,
                      init.owner,
                      commonJSRequireCodeGenerator(init.vm),
                      init.owner->globalScope(),
-                     JSFunction::createStructure(init.vm, init.owner, RequireFunctionPrototype::create(init.owner))));
+                     JSFunction::createStructure(init.vm, init.owner, prototype)));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_requireResolveFunctionUnbound), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+             auto* prototype = RequireResolveFunctionPrototype::create(init.owner);
+             init.owner->didCreateBuiltin(init.vm, prototype);
              init.set(
                  JSFunction::create(
                      init.vm,
                      init.owner,
                      commonJSRequireResolveCodeGenerator(init.vm),
                      init.owner->globalScope(),
-                     JSFunction::createStructure(init.vm, init.owner, RequireResolveFunctionPrototype::create(init.owner))));
+                     JSFunction::createStructure(init.vm, init.owner, prototype)));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_processBindingBuffer), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              init.set(
@@ -2699,7 +2705,10 @@ void GlobalObject::finishCreation(VM& vm)
 
     static const LazyPropertyInit<JSFunction> lazyFunctionInits[] = {
         { OBJECT_OFFSETOF(GlobalObject, m_errorConstructorPrepareStackTraceInternalValue), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
-             init.set(JSFunction::create(init.vm, init.owner, 2, "ErrorPrepareStackTrace"_s, jsFunctionDefaultErrorPrepareStackTrace, ImplementationVisibility::Public));
+             auto* function = JSFunction::create(init.vm, init.owner, 2, "ErrorPrepareStackTrace"_s, jsFunctionDefaultErrorPrepareStackTrace, ImplementationVisibility::Public);
+             init.set(function);
+             // A native getter of Error returns this function, so JSC does not find it among Error's properties.
+             init.owner->didCreateBuiltin(init.vm, function);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_utilInspectStylizeNoColorFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
              init.set(JSC::JSFunction::create(init.vm, init.owner, utilInspectStylizeWithNoColorCodeGenerator(init.vm), init.owner));
@@ -2801,6 +2810,8 @@ void GlobalObject::finishCreation(VM& vm)
 
     addBuiltinGlobals(vm);
 
+    applyImmutableGlobalsOption(vm);
+
     ASSERT(classInfo());
 }
 
@@ -2820,7 +2831,12 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
         throwException(globalObject, scope, returnedException.get());
         return {};
     }
-    console->putDirect(vm, property, result, 0);
+    {
+        JSC::AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+        console->putDirect(vm, property, result, 0);
+    }
+    if (result.isObject())
+        globalObject->didCreateBuiltin(vm, asObject(result));
     return JSValue::encode(result);
 }
 
@@ -3182,7 +3198,10 @@ JSC_DEFINE_HOST_FUNCTION(functionJsGc,
 extern "C" [[ZIG_EXPORT(nothrow)]] void JSC__JSGlobalObject__addGc(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "gc"_s), 0, functionJsGc, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
+    auto* function = JSC::JSFunction::create(vm, globalObject, 0, "gc"_s, functionJsGc, ImplementationVisibility::Public);
+    globalObject->didCreateBuiltin(vm, function);
+    JSC::AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+    globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "gc"_s), function, PropertyAttribute::DontEnum | 0);
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] double JSC__JSGlobalObject__jsDateNow(JSC::JSGlobalObject* globalObject)

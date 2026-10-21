@@ -4,6 +4,8 @@
 // file, worker, or `-e` eval — is evaluated. Must stay cheap: one execArgv
 // scan, bail early when nothing applies.
 
+const { defineBuiltinProperty, setStackTraceLimitOverride } = require("internal/shared");
+
 let writeSync: typeof import("node:fs").writeSync;
 let envTracePrintMessage = false;
 let envTracePrintJsStack = false;
@@ -126,10 +128,13 @@ function printEnvTrace(kind: EnvOpKind, key: string | null): void {
       // The capture burns 3 frames on trace machinery (printEnvTrace, the
       // proxy trap, and the Error line); widen the limit so the user still
       // sees `Error.stackTraceLimit` real frames.
-      const limit = Error.stackTraceLimit;
-      Error.stackTraceLimit = limit + 3;
-      const stack = new Error().stack!.split("\n");
-      Error.stackTraceLimit = limit;
+      const previousOverride = setStackTraceLimitOverride(Error.stackTraceLimit + 3);
+      let stack: string[];
+      try {
+        stack = new Error().stack!.split("\n");
+      } finally {
+        setStackTraceLimitOverride(previousOverride);
+      }
       // stack[0] = "Error", [1] = printEnvTrace, [2] = the proxy trap.
       let corrected = false;
       for (let i = 3; i < stack.length; i++) {
@@ -196,7 +201,7 @@ function installEnvTracing(): void {
       return ReflectOwnKeys(target);
     },
   });
-  Object.defineProperty(process, "env", {
+  defineBuiltinProperty(process, "env", {
     value: proxy,
     writable: true,
     enumerable: true,
@@ -250,7 +255,7 @@ function installExitTracing(): void {
     writeStderr(out);
     return realExit.$call(process, code);
   }
-  process.exit = exit as typeof process.exit;
+  defineBuiltinProperty(process, "exit", { __proto__: null, value: exit });
 }
 
 {
@@ -297,7 +302,7 @@ function installExitTracing(): void {
 
   if (stackTraceLimit !== null) {
     const limit = Number(stackTraceLimit);
-    if (Number.isFinite(limit)) Error.stackTraceLimit = limit;
+    if (Number.isFinite(limit)) defineBuiltinProperty(Error, "stackTraceLimit", { __proto__: null, value: limit });
   }
 
   // CLI-driven tracing runs in worker VMs too (workers inherit the parent's

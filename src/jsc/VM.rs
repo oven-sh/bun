@@ -35,6 +35,7 @@ unsafe extern "C" {
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
     safe fn JSC__VM__isEntered(vm: &VM) -> bool;
+    safe fn JSC__VM__allowLazyMaterializationOfImmutableProperties(vm: &VM, allow: bool);
     safe fn JSC__VM__terminationException(vm: &VM) -> JSValue;
     safe fn JSC__VM__throwError(vm: &VM, global_object: &JSGlobalObject, value: JSValue);
     safe fn JSC__VM__releaseWeakRefs(vm: &VM);
@@ -137,6 +138,14 @@ impl VM {
         JSC__VM__isEntered(self)
     }
 
+    /// While the guard is alive, native code can put and delete the properties of what `BUN_JSC_immutableGlobals` covers. No JavaScript may run.
+    pub fn allow_lazy_materialization_of_immutable_properties(
+        &self,
+    ) -> AllowLazyMaterializationOfImmutableProperties<'_> {
+        JSC__VM__allowLazyMaterializationOfImmutableProperties(self, true);
+        AllowLazyMaterializationOfImmutableProperties { vm: self }
+    }
+
     /// The VM's TerminationException cell (created on demand) — what a pending one reads as; inert
     /// until thrown.
     pub fn termination_exception(&self) -> JSValue {
@@ -164,6 +173,16 @@ impl VM {
     /// This is faster than checking the heap size
     pub(crate) fn block_bytes_allocated(&self) -> usize {
         JSC__VM__blockBytesAllocated(self)
+    }
+}
+
+pub struct AllowLazyMaterializationOfImmutableProperties<'a> {
+    vm: &'a VM,
+}
+
+impl Drop for AllowLazyMaterializationOfImmutableProperties<'_> {
+    fn drop(&mut self) {
+        JSC__VM__allowLazyMaterializationOfImmutableProperties(self.vm, false)
     }
 }
 

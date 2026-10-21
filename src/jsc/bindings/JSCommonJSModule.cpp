@@ -226,11 +226,14 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         // https://github.com/nodejs/node/blob/592c6907bfe1922f36240e9df076be1864c3d1bd/lib/internal/process/execution.js#L92
         auto exports = moduleObject->exportsObject();
         RETURN_IF_EXCEPTION(scope, {});
-        globalObject->putDirect(vm, builtinNames(vm).exportsPublicName(), exports, 0);
-        globalObject->putDirect(vm, builtinNames(vm).requirePublicName(), requireFunction, 0);
-        Bun::putDirectNamed(vm, globalObject, "module"_s, moduleObject);
-        Bun::putDirectNamed(vm, globalObject, "__filename"_s, filename);
-        Bun::putDirectNamed(vm, globalObject, "__dirname"_s, dirname);
+        {
+            JSC::AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+            globalObject->putDirect(vm, builtinNames(vm).exportsPublicName(), exports, 0);
+            globalObject->putDirect(vm, builtinNames(vm).requirePublicName(), requireFunction, 0);
+            Bun::putDirectNamed(vm, globalObject, "module"_s, moduleObject);
+            Bun::putDirectNamed(vm, globalObject, "__filename"_s, filename);
+            Bun::putDirectNamed(vm, globalObject, "__dirname"_s, dirname);
+        }
 
         // The 3-arg JSC::evaluate overload catches the exception into a
         // discarded NakedPtr (Completion.h), so a require() failure or any

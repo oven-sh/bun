@@ -1,6 +1,10 @@
 $overriddenName = "[Symbol.asyncIterator]";
 export function asyncIterator(this: Console) {
-  var stream = Bun.stdin.stream();
+  const stdin = Bun.stdin as typeof Bun.stdin & { $consoleAsyncIterator: (() => AsyncGenerator<string>) | undefined };
+  const existing = $getByIdDirectPrivate(stdin, "consoleAsyncIterator");
+  if (existing) return existing();
+
+  var stream = stdin.stream();
 
   var decoder = new TextDecoder("utf-8", { fatal: false });
   var indexOf = Bun.indexOfLine;
@@ -110,8 +114,7 @@ export function asyncIterator(this: Console) {
     }
   }
 
-  const symbol = globalThis.Symbol.asyncIterator;
-  this[symbol] = ConsoleAsyncIterator;
+  $putByIdDirectPrivate(stdin, "consoleAsyncIterator", ConsoleAsyncIterator);
   return ConsoleAsyncIterator();
 }
 
@@ -119,14 +122,15 @@ interface ConsoleWriter extends Bun.FileSink {
   flush(wait?: boolean): number | Promise<number>;
 }
 
-export function write(this: Console & { $writer: ConsoleWriter | undefined }, input) {
+export function write(this: Console, input) {
   if (!$isObject(this)) throw $ERR_INVALID_THIS("Console");
 
-  var writer = $getByIdDirectPrivate(this, "writer");
+  const stdout = Bun.stdout as typeof Bun.stdout & { $writer: ConsoleWriter | undefined };
+  var writer = $getByIdDirectPrivate(stdout, "writer");
   if (!writer) {
     var length = $toLength(input?.length ?? 0);
-    writer = Bun.stdout.writer({ highWaterMark: length > 65536 ? length : 65536 });
-    $putByIdDirectPrivate(this, "writer", writer);
+    writer = stdout.writer({ highWaterMark: length > 65536 ? length : 65536 });
+    $putByIdDirectPrivate(stdout, "writer", writer);
   }
 
   var wrote = writer.write(input) as number;

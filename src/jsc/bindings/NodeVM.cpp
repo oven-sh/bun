@@ -1120,6 +1120,8 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
         if (parentGlobalObject->isAsyncContextTrackingEnabled())
             setAsyncContextTrackingEnabled(true);
     }
+
+    applyImmutableGlobalsOption(vm);
 }
 
 void NodeVMGlobalObject::destroy(JSCell* cell)

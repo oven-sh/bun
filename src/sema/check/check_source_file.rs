@@ -499,8 +499,8 @@ impl<'s> Checker<'_, 's> {
         if !hir.param_modifiers(p).is_empty() {
             self.check_grammar_modifiers(file, p);
         }
-        for &(owner, decorator) in hir.decorators.iter() {
-            if owner == DecoratorOwner::Param(p) {
+        for modifier in hir.modifier_list(hir.param_modifiers(p)) {
+            if let ModifierKind::Decorator(decorator) = modifier.kind {
                 self.check_decorator_expression(file, decorator);
             }
         }

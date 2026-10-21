@@ -11,7 +11,9 @@ import {
 } from "../../../../bun-debug-adapter-protocol";
 import type { JSC } from "../../../../bun-inspector-protocol";
 
-const DEFAULT_TEST_PATTERN = "**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts,cjs,mjs}";
+const DEFAULT_TEST_PATTERN = "**/*{.test,_test,.spec,_spec}.{js,ts,tsx,jsx,mts,cts,cjs,mjs}";
+// The names DEFAULT_TEST_PATTERN matches, for the check of an opened document.
+const DEFAULT_TEST_FILE = /[._](test|spec)\.(js|jsx|ts|tsx|cjs|mjs|mts|cts)$/;
 
 export const debug = vscode.window.createOutputChannel("Bun - Test Runner");
 
@@ -154,9 +156,7 @@ export class BunTestController implements vscode.Disposable {
 
   private isTestFile(document: vscode.TextDocument): boolean {
     if (document?.uri?.scheme !== "file") return false;
-    if (this.filePattern === null) {
-      return /\.(test|spec)\.(js|jsx|ts|tsx|cjs|mjs|mts|cts)$/.test(document.uri.fsPath);
-    }
+    if (this.filePattern === null) return DEFAULT_TEST_FILE.test(document.uri.fsPath);
 
     // As findFiles does, match the pattern against the path inside the workspace folder of the document.
     const folder = vscode.workspace.getWorkspaceFolder(document.uri);

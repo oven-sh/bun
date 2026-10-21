@@ -506,6 +506,12 @@ describe("BunTestController - Test Discovery and Management", () => {
 
       const underscoreSpecDoc = { uri: { scheme: "file", fsPath: "/path/to/helpers.spec.jsx" } } as any;
       expect(internal.isTestFile(underscoreSpecDoc)).toBe(true);
+
+      const testSuffixDoc = { uri: { scheme: "file", fsPath: "/path/to/utils_test.ts" } } as any;
+      expect(internal.isTestFile(testSuffixDoc)).toBe(true);
+
+      const specSuffixDoc = { uri: { scheme: "file", fsPath: "/path/to/helpers_spec.mjs" } } as any;
+      expect(internal.isTestFile(specSuffixDoc)).toBe(true);
     });
 
     test("should reject non-test files", () => {
@@ -528,6 +534,12 @@ describe("BunTestController - Test Discovery and Management", () => {
 
       const testSuffixDoc = { uri: { scheme: "file", fsPath: "/path/to/mytest.ts" } } as any;
       expect(internal.isTestFile(testSuffixDoc)).toBe(false);
+
+      const noDotDoc = { uri: { scheme: "file", fsPath: "/path/to/utils_test_ts" } } as any;
+      expect(internal.isTestFile(noDotDoc)).toBe(false);
+
+      const trailingUnderscoreDoc = { uri: { scheme: "file", fsPath: "/path/to/utils_test_.ts" } } as any;
+      expect(internal.isTestFile(trailingUnderscoreDoc)).toBe(false);
     });
 
     test("should handle various test file patterns", () => {
@@ -560,17 +572,30 @@ describe("BunTestController - Test Discovery and Management", () => {
   describe("customFilePattern", () => {
     test("should return the default test pattern", () => {
       const pattern = internal.customFilePattern();
-      expect(pattern).toBe("**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts,cjs,mjs}");
+      expect(pattern).toBe("**/*{.test,_test,.spec,_spec}.{js,ts,tsx,jsx,mts,cts,cjs,mjs}");
     });
 
-    test("should return a valid glob pattern", () => {
-      const pattern = internal.customFilePattern();
-      expect(pattern).toMatch(/^\*\*\/\*/);
-      expect(pattern).toContain(".test.");
-      expect(pattern).toContain(".spec.");
-      expect(pattern).toContain("_test_");
-      expect(pattern).toContain("_spec_");
-      expect(pattern).toContain("{js,ts,tsx,jsx,mts,cts,cjs,mjs}");
+    test("should match the file names that `bun test` takes as test files", () => {
+      const glob = new Bun.Glob(internal.customFilePattern());
+      const names = [
+        "a.test.ts",
+        "a_test.ts",
+        "a.spec.ts",
+        "a_spec.ts",
+        "b_test.tsx",
+        "c_spec.mjs",
+        "a_test_ts",
+        "a_test_.ts",
+        "mytest.ts",
+      ];
+      expect(names.filter(name => glob.match(`src/${name}`))).toEqual([
+        "a.test.ts",
+        "a_test.ts",
+        "a.spec.ts",
+        "a_spec.ts",
+        "b_test.tsx",
+        "c_spec.mjs",
+      ]);
     });
   });
 
@@ -606,7 +631,7 @@ describe("BunTestController - Test Discovery and Management", () => {
     test("should use the default pattern for a value that is not a glob pattern", async () => {
       for (const value of ["", "  ", ["**/*.test.ts"]]) {
         const { opened, customFilePattern } = await controllerWith(value);
-        expect(customFilePattern()).toBe("**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts,cjs,mjs}");
+        expect(customFilePattern()).toBe("**/*{.test,_test,.spec,_spec}.{js,ts,tsx,jsx,mts,cts,cjs,mjs}");
         expect(opened("/test/workspace/src/a.spec.ts")).toBe(true);
         expect(opened("/outside/notes.md")).toBe(false);
       }

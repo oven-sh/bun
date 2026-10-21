@@ -776,7 +776,9 @@ impl<'p> Checker<'p, '_> {
         if enums.iter().any(is_checked_before) {
             return;
         }
-        let enum_is_const = self.hir(file)[e].flags.contains(Flags::CONST);
+        // `GetDeclarationOfKind(enumSymbol, KindEnumDeclaration)`
+        let (first_file, first) = enums[0];
+        let enum_is_const = self.hir(first_file)[first].flags.contains(Flags::CONST);
         for &(f, e) in &enums {
             if self.hir(f)[e].flags.contains(Flags::CONST) != enum_is_const {
                 self.error(f, self.hir(f).name(self.hir(f).node(e)), 2473, &[]);

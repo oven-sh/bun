@@ -280,10 +280,7 @@ impl Checker<'_, '_> {
         self.save_deferred_diagnostics = true;
         let logged = self.task.diagnostics.len();
         if self.emits_first() {
-            self.is_emitting = true;
-            self.mark_property_aliases_referenced(file);
             self.inline_const_enums(file);
-            self.is_emitting = false;
         }
         self.check_required_global_types(Some(file));
         self.check_source_file(file);
@@ -334,10 +331,8 @@ impl Checker<'_, '_> {
         let (semantic, in_other_files): (Vec<_>, Vec<_>) = reported.partition(|d| d.file == file);
         self.reported = in_other_files;
         self.log_reported_from(0);
-        let emits_later = !self.emits_first();
-        self.is_type_checked = emits_later;
-        let declaration = self.get_declaration_diagnostics(file);
         self.is_type_checked = true;
+        let declaration = self.get_declaration_diagnostics(file);
         let mut directives = Directives::default();
         let semantic = semantic.into_iter();
         let mut semantic: Vec<Reported> =

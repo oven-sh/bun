@@ -3991,8 +3991,7 @@ fn check_named_files(
     report.files_checked = to_check.len();
     // `SkipTypeChecking`: besides its syntax errors, such a file only has what `Emit` reports, which is called after
     // the semantic and global diagnostics of the whole program are collected. So these files come after the
-    // type-checked ones, or before them under `Options::emits_first`. If there are no others, they go through the queue
-    // themselves.
+    // type-checked ones. If there are no others, they go through the queue themselves.
     // A `Checker` is about 30 KB. Boxing keeps this function's stack frame small.
     let boxed_checker = |spare| Box::new(program.checker_reusing(spare));
     let checker = boxed_checker(None);
@@ -4729,8 +4728,7 @@ fn check_named_files(
                 break 'stages;
             }
         }
-        let emits_first = options.emits_first && !options.no_emit_on_error;
-        for type_checked in [!emits_first, emits_first] {
+        for type_checked in [true, false] {
             check_files(wanted, type_checked);
             per_file_lists.append(&mut found.lock());
             // Errors without a file that a checker reports after this point are never collected.

@@ -5942,10 +5942,7 @@ impl<'p, 's> Checker<'p, 's> {
                 assignment_declaration(declaration)
                     .is_none_or(|(of, e)| !matches!(self.hir(of)[e].kind, ExprKind::Call(_)))
             });
-            if !is_requested_by_check
-                && !self.is_emitting
-                && !self.is_reported_in_time_on_request(file)
-            {
+            if !is_requested_by_check && !self.is_reported_in_time_on_request(file) {
                 // A single checker would already have collected `file`'s diagnostics. Nothing is
                 // stored, so the task of a file that requests this in time evaluates it and
                 // reports.

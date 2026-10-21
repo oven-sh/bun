@@ -208,47 +208,6 @@ impl Checker<'_, '_> {
         options.emits_first && !options.no_emit_on_error
     }
 
-    /// `emitJSFile`, `sourceFileMayBeEmitted`: true if `file` is TypeScript that's emitted as JavaScript. Whether
-    /// JavaScript is emitted depends on `outDir`.
-    pub(super) fn emits_js_file(&self, file: FileId) -> bool {
-        let (files, hir) = (self.files(), self.hir(file));
-        let (options, module) = (&files.options, files.module(file));
-        !options.no_emit
-            && !options.emit_declaration_only
-            && matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
-            && !hir.is_js
-            && !module.is_from_external_library
-    }
-
-    /// `markPropertyAliasReferenced`, as `MarkLinkedReferencesRecursively` calls it for every `a.b` in the file:
-    /// `checkExpressionCached(a)`, before `ConstEnumInliningTransformer` checks any access.
-    pub(super) fn mark_property_aliases_referenced(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // `importElisionEnabled`. Under `GetIsolatedModules` it returns before it requests a type.
-        if !self.emits_js_file(file) || self.p.files.options.isolated_modules {
-            return;
-        }
-        let index = self.exprs_by_kind(file);
-        let mut lefts: Vec<ExprId> = (index.of(ExprTag::Dot).iter())
-            .filter_map(|&e| match hir[e].kind {
-                ExprKind::Dot { obj, .. }
-                    if matches!(hir[obj].kind, ExprKind::Ident(_))
-                        && !is_parenthesized(hir, obj)
-                        && !bound.is_unchecked(e.idx())
-                        && !bound.is_in_type_query(e)
-                        && !hir.is_ambient(hir.node(e)) =>
-                {
-                    Some(obj)
-                }
-                _ => None,
-            })
-            .collect();
-        lefts.shared_sort_unstable_by_key(|&left| hir[left].pos);
-        for left in lefts {
-            self.type_of_expr(file, left);
-        }
-    }
-
     /// `ConstEnumInliningTransformer`, the last transformer of `emitJSFile`: `GetConstantValue` calls
     /// `checkExpressionCached` on every property and element access that's emitted, a node before its children. tsgo's
     /// test harness writes `.types` and `.symbols` from a program that has emitted before it's checked

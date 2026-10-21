@@ -863,9 +863,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.relation_too_complex = saved;
         // `getDeclarationDiagnostics` returns the transformer's diagnostics. The checker's are read by
         // `checkSourceFile`, which has already run.
-        if !self.emits_first() {
-            self.reported.truncate(reported);
-        }
+        self.reported.truncate(reported);
         // `emitDeclarationFile`: `emitSkipped`, if the transformer has diagnostics.
         let mut is_skipped = !found.is_empty();
         if let Some(isolated_declarations) = isolated_declarations {

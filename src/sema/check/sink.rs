@@ -852,10 +852,7 @@ impl Checker<'_, '_> {
         {
             return self.mark_tainted_from(0);
         }
-        if diagnostic.file != NOWHERE.0
-            && !self.is_emitting
-            && self.defers_to_earlier_file(owner, diagnostic.file)
-        {
+        if diagnostic.file != NOWHERE.0 && self.defers_to_earlier_file(owner, diagnostic.file) {
             // Not every error goes through `add_diagnostic`.
             return self.note_error_in(diagnostic.file);
         }

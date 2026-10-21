@@ -1137,7 +1137,6 @@ impl<'p, 's> Checker<'p, 's> {
             // reports the error.
             if let TypeData::Ref { target, .. } = *self.data(apparent)
                 && let Some(height) = self.stack.iter().position(|&q| q == Query::Bases(target))
-                && !self.is_emitting
                 && !self.is_reported_in_time_under_resolution(height, file)
             {
                 self.mark_tainted_from(self.frames.len().saturating_sub(1));

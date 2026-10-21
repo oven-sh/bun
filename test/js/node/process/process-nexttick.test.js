@@ -1140,7 +1140,7 @@ it("process.nextTick and AsyncLocalStorage.enterWith don't conflict", async () =
 });
 
 // https://github.com/oven-sh/bun/issues/42723
-it("process.nextTick drains the queue when Array.prototype has an index setter", async () => {
+it.concurrent("process.nextTick drains the queue when Array.prototype has an index setter", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1158,11 +1158,10 @@ it("process.nextTick drains the queue when Array.prototype has an index setter",
   expect(exitCode).toBe(0);
 });
 
-it("child_process.exec does not hang when Array.prototype has an index setter", async () => {
-  // A spawn schedules several nextTicks. The setter also corrupts the argv
-  // that child_process builds with unshift, as it does in Node. So the exec
-  // call either throws at once (Windows) or the callback gets an error
-  // (POSIX). Either way the process must exit.
+it.concurrent("child_process.exec does not hang when Array.prototype has an index setter", async () => {
+  // A spawn schedules several nextTicks. The setter also swallows the third
+  // element of the arrays child_process builds (argv, env keys), as in Node.
+  // exec throws at once on Windows and the callback gets an error on POSIX.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

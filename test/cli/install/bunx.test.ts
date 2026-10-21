@@ -2699,9 +2699,9 @@ describe("flags", () => {
   // Skipping a flag made the value of `--flag value` the package that is downloaded and run.
   it.concurrent.each([
     [["--nope"]],
-    [["--registry", "hello"]],
+    [["--nope", "hello"]],
     [["--cwdx=sub"]],
-    [["-c", "hello"]],
+    [["-Z", "hello"]],
     [["--trust=true"]],
     [["-"]],
   ])("a flag bunx does not have is an error: %j", async flags => {
@@ -2718,6 +2718,38 @@ describe("flags", () => {
     if (flags.length === 1 && flags[0].startsWith("--")) {
       expect(await box.run(["x", "tool"], { bunx: [bunExe(), ...flags] })).toEqual(expected);
     }
+  });
+
+  // `bun run` runs `bun x` where a script says `npx`.
+  it.concurrent("the flags of npx and npm are skipped", async () => {
+    const flags = "--no --quiet -q -dd --prefer-offline --loglevel=error --registry=http://localhost:1 --yes=true --";
+    using box = sandbox(undefined, {
+      cwd: { "package.json": JSON.stringify({ scripts: { tool: `npx ${flags} local-tool ${flags}` } }) },
+    });
+    addLocalBin(box.cwd, "local-tool", `console.log("local", ...process.argv.slice(2));`);
+    const expected = { stdout: `local ${flags}\n`, stderr: "", exitCode: 0, requests: [] };
+
+    expect(await box.run([...flags.split(" "), "local-tool", ...flags.split(" ")])).toEqual(expected);
+    if (isWindows) return;
+    symlinkSync(bunExe(), join(box.dir, isDebug ? "bun-debug" : "bun"));
+    const env = { ...box.env, PATH: box.dir + delimiter + box.env.PATH };
+    expect(await box.run(["run", "--silent", "tool"], { env, bunx: [bunExe()] })).toEqual(expected);
+  });
+
+  it.concurrent.each([
+    [["--registry", "hello"]],
+    [["--loglevel", "hello"]],
+    [["--node-arg", "hello"]],
+    [["-c", "hello"]],
+    [["-w", "hello"]],
+  ])("the value of npm's %j is not the package", async flags => {
+    using registry = await localRegistry(fixturePackage("hello", "1.0.0", "hello"), ...toolWithDep());
+    using box = sandbox(registry);
+
+    const { stdout, exitCode, requests } = await box.run([...flags, "tool"]);
+    expect(stdout).toBe("tool 1.1.0 with dep 1.0.0\n");
+    expect(requests).not.toContain("/hello");
+    expect(exitCode).toBe(0);
   });
 
   it.concurrent("--yes, -y and -- are accepted", async () => {

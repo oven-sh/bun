@@ -438,8 +438,9 @@ const FOREIGN_FLAGS: &[(&[u8], ForeignFlag)] = &[
     (b"--node-linker=pnpm", AliasOf(b"--linker=isolated")),
 ];
 
-/// Flags of npm, yarn and pnpm that Bun has no equivalent for. `bun install`, `add`, `remove` and
-/// `update` skip them, like Bun 1.4 and earlier did, so scripts written for those tools keep working.
+/// Flags of npm, yarn and pnpm that Bun has no equivalent for. `bun install`, `add`, `remove`,
+/// `update` and `bunx` skip them, like Bun 1.4 and earlier did, so scripts written for those tools
+/// keep working.
 const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
     #[rustfmt::skip]
     flags: &[
@@ -470,6 +471,11 @@ const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
     b"ignore-engines", b"ignore-optional", b"immutable", b"legacy-peer-deps", b"non-interactive",
     b"package-lock-only", b"prefer-frozen-lockfile", b"save-catalog", b"save-dev", b"save-exact",
     b"save-optional", b"save-peer", b"save-prod", b"shamefully-hoist", b"unsafe-perm",
+    // `npx` and `pnpm dlx`.
+    b"always-spawn", b"ignore-existing", b"local", b"no", b"shell-auto-fallback", b"shell-mode",
+    // Bun has these too, but without a value. Only `bunx` skips them if they have one.
+    b"dry-run", b"force", b"global", b"if-present", b"ignore-scripts", b"offline",
+    b"prefer-offline", b"production", b"save", b"workspaces",
     ],
     #[rustfmt::skip]
     options: &[
@@ -489,10 +495,17 @@ const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
     b"script-shell", b"state-dir", b"store-dir", b"tag", b"test-pattern", b"umask", b"use-yarnrc",
     b"user-agent", b"userconfig", b"virtual-store-dir", b"workspace", b"workspace-concurrency",
     b"workspace-packages",
+    // `npx`.
+    b"call", b"node-arg", b"npm", b"reg", b"shell",
     ],
     // pnpm's `--config.<setting>=<value>`.
     prefixes: &[b"config."],
 };
+
+/// npm's one-letter flags that `bunx` doesn't have.
+const FOREIGN_SHORT_FLAGS: &[u8] = b"adfgqsyBDEHOPS?";
+/// The ones that take a value.
+const FOREIGN_SHORT_OPTIONS: &[u8] = b"cmnwCL";
 
 /// `bun update` accepts these flags too, but there they select which dependencies to update, so no
 /// entry in `FOREIGN_FLAGS` is rewritten to them for `bun update`.
@@ -1377,6 +1390,41 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         clap::simple_help(&params.concat());
         pretty_help(outro_text);
         Output::flush();
+    }
+
+    /// `bun run` runs `bun x` where a script says `npx`, so `bunx` skips the flags of the other
+    /// package managers and the flags that only `bun add` has. Returns `None` if `arg` is neither.
+    /// Otherwise returns whether `next`, the argument after `arg`, is its value.
+    pub fn bunx_skips_flag(arg: &[u8], next: &[u8]) -> Option<bool> {
+        let name_end = strings::index_of_char_usize(arg, b'=').unwrap_or(arg.len());
+        let has_value = name_end < arg.len();
+        let value_is_next_arg = if let Some(name) = arg[..name_end].strip_prefix(b"--") {
+            let own = |name: &[u8]| {
+                (ADD_PARAMS.iter().copied().flatten()).find(|param| param.names.matches_long(name))
+            };
+            match own(name).map(|param| param.takes_value) {
+                Some(clap::Values::One | clap::Values::Many) => !next.starts_with(b"-"),
+                Some(clap::Values::OneOptional) => false,
+                Some(clap::Values::None) if !has_value => false,
+                _ => IGNORED_FOREIGN_FLAGS
+                    .value_is_next_arg(name, next, |name| own(name).is_some())?,
+            }
+        } else {
+            match arg[..name_end].strip_prefix(b"-")? {
+                [letter] if FOREIGN_SHORT_OPTIONS.contains(letter) => !next.starts_with(b"-"),
+                // `-dd`, `-yq`
+                [first, rest @ ..]
+                    if FOREIGN_SHORT_FLAGS.contains(first)
+                        && rest
+                            .iter()
+                            .all(|letter| FOREIGN_SHORT_FLAGS.contains(letter)) =>
+                {
+                    false
+                }
+                _ => return None,
+            }
+        };
+        Some(value_is_next_arg && !has_value)
     }
 
     pub fn parse(subcommand: Subcommand) -> Result<CommandLineArguments, crate::Error> {

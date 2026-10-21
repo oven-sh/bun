@@ -716,15 +716,15 @@ pub fn install_with_manager(
             clean_lockfile(manager, log_level)?;
             root = *manager.lockfile.packages.get(0);
         }
-        if !manager.lockfile.overrides.is_empty() && !manager.options.dry_run {
+        // A frozen install takes the versions that the lockfile has.
+        let is_frozen = manager.options.enable.frozen_lockfile()
+            && !matches!(load_result, lockfile::LoadResult::NotFound);
+        if !manager.lockfile.overrides.is_empty() && !manager.options.dry_run && !is_frozen {
             let outside = rows_outside_overrides(&manager.lockfile);
             if !outside.is_empty() {
-                let frozen = manager.options.enable.frozen_lockfile()
-                    && !matches!(load_result, lockfile::LoadResult::NotFound);
                 moved_by_overrides = reresolve_rows_outside_overrides(
                     manager,
                     outside,
-                    frozen.then(|| loaded_lockfile_name(&load_result)),
                     root_package_json_path,
                     &mut root,
                     log_level,
@@ -2434,14 +2434,12 @@ fn is_as_yarn_resolves(lockfile: &Lockfile, row: DependencyID, package_id: Packa
     })
 }
 
-/// Resolves the rows in `outside` again and returns the packages that they now resolve to. If the
-/// lockfile is frozen, `frozen` is its file name, and this exits with an error instead.
+/// Resolves the rows in `outside` again and returns the packages that they now resolve to.
 #[cold]
 #[inline(never)]
 fn reresolve_rows_outside_overrides(
     manager: &mut PackageManager,
     mut outside: Vec<(DependencyID, PackageID)>,
-    frozen: Option<&'static str>,
     root_package_json_path: &ZStr,
     root: &mut lockfile::Package,
     log_level: Options::LogLevel,
@@ -2492,38 +2490,8 @@ fn reresolve_rows_outside_overrides(
                 })
             })
     });
-    let Some(&(first_row, first_package)) = outside.first() else {
+    if outside.is_empty() {
         return Ok(Vec::new());
-    };
-    if let Some(lockfile_name) = frozen {
-        if log_level != Options::LogLevel::Silent {
-            let field = overrides_field(manager, root_package_json_path);
-            let lockfile: &Lockfile = &manager.lockfile;
-            let dependency = &lockfile.buffers.dependencies[first_row as usize];
-            let wanted = match field {
-                lockfile::override_map::Field::Overrides => {
-                    crate::dedupe::effective_version(lockfile, first_row, dependency)
-                }
-                lockfile::override_map::Field::Resolutions => {
-                    crate::dedupe::effective_version_as_yarn(lockfile, first_row, dependency)
-                }
-            }
-            .map_or(dependency.version.literal, |version| version.literal);
-            bun_core::pretty_errorln!(
-                "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen"
-            );
-            bun_core::note!(
-                "{} has {}, {} in package.json wants {}",
-                lockfile_name,
-                bstr::BStr::new(&crate::dedupe::label(lockfile, first_package)),
-                field.json_name(),
-                bun_core::fmt::for_terminal(wanted.fmt(lockfile.buffers.string_bytes.as_slice())),
-            );
-            bun_core::note!(
-                "try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile"
-            );
-        }
-        Global::crash();
     }
 
     manager.lockfile.mark_loaded_packages()?;

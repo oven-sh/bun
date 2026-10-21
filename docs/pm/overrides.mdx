@@ -60,7 +60,7 @@ Add `bar` to the `"overrides"` field in `package.json`. Bun defers to the specif
 
 Bun only reads overrides from the root `package.json`, not from workspace packages. Overrides apply to `peerDependencies` as well.
 
-Every install also checks the lockfile against the overrides whose value is a version or a range. If the lockfile has a version that such an override does not allow (after a merge, or a migration from another package manager), `bun install` resolves that package again, and `bun install --frozen-lockfile` fails and names it. The check leaves these entries as they are:
+`bun install` also checks the lockfile against the overrides whose value is a version or a range. If the lockfile has a version that such an override does not allow (after a merge, or a migration from another package manager), `bun install` resolves that package again. `bun install --frozen-lockfile` installs the version in the lockfile. The check leaves these entries as they are:
 
 - a bundled dependency and an optional peer dependency
 - a peer or optional dependency that shares its version with a dependency the override does not apply to

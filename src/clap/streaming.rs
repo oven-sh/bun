@@ -158,28 +158,12 @@ where
                 }
 
                 if self.unknown_long_flags_are_errors && !self.iter.last_is_from_bun_options() {
-                    let ignored = self.ignored_long_flags;
                     let next = self.iter.remain().first().copied().unwrap_or_default();
-                    let value_is_next_arg = if ignored.options.contains(&name) {
-                        !next.starts_with(b"-")
-                    } else if ignored.flags.contains(&name)
-                        || name.strip_prefix(b"no-").is_some_and(|positive| {
-                            ignored.flags.contains(&positive)
-                                || ignored.options.contains(&positive)
-                                || (!ignored.flags.is_empty()
-                                    && params
-                                        .iter()
-                                        .any(|param| param.names.matches_long(positive)))
-                        })
-                    {
-                        next == b"true" || next == b"false"
-                    } else if ignored
-                        .prefixes
-                        .iter()
-                        .any(|prefix| name.starts_with(prefix))
-                    {
-                        false
-                    } else {
+                    let is_own_flag =
+                        |name: &[u8]| params.iter().any(|param| param.names.matches_long(name));
+                    let Some(value_is_next_arg) =
+                        (self.ignored_long_flags).value_is_next_arg(name, next, is_own_flag)
+                    else {
                         return Err(self.err(arg, None, Some(name), ArgError::InvalidArgument));
                     };
                     if value_is_next_arg && maybe_value.is_none() {

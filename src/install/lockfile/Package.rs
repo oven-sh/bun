@@ -893,7 +893,7 @@ pub struct DiffSummary {
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,
     /// Indexes, in the new root's dependencies, of the workspaces that a lockfile from Bun 1.4 or
-    /// older has no entry for, because the root also depends on a registry version of that name.
+    /// older has no entry for, because the root also depends on a registry version of that package.
     pub(crate) members_left_out: Vec<u32>,
 }
 
@@ -1139,6 +1139,19 @@ impl Diff {
             });
 
             let Some(cur_to_i) = found else {
+                // A name in `optionalDependencies` and in another group is one optional dependency.
+                // Bun 1.4 and older kept both if the name is a workspace's.
+                let is_optional_twin = |dep: &Dependency| {
+                    dep.name_hash == from_dep.name_hash && dep.behavior.is_optional()
+                };
+                if is_root
+                    && !from_dep.behavior.is_workspace()
+                    && !from_dep.behavior.is_peer()
+                    && from_deps.iter().any(is_optional_twin)
+                    && to_deps!().iter().any(is_optional_twin)
+                {
+                    continue;
+                }
                 if is_root
                     && from_dep.behavior.is_workspace()
                     && lockfile::pruned_workspaces::workspace_is_missing_on_disk(
@@ -1191,8 +1204,27 @@ impl Diff {
             to_i = cur_to_i + 1;
             paired.set(cur_to_i);
 
+            if is_root {
+                let row = to.dependencies.off as usize + cur_to_i;
+                Self::keep_older_link(from_dep, from_buf!(), &mut to_lockfile.buffers, row);
+                to_deps = to
+                    .dependencies
+                    .get(to_lockfile.buffers.dependencies.as_slice())
+                    .into();
+            }
             let to_version = &to_deps!()[cur_to_i].version;
             let same = Dependency::eql(&to_deps!()[cur_to_i], from_dep, to_buf!(), from_buf!());
+            // Bun 1.4 and older wrote an optional peer with a workspace's name twice.
+            if !same
+                && is_root
+                && from_deps.iter().any(|twin| {
+                    twin.name_hash == from_dep.name_hash
+                        && twin.behavior == from_dep.behavior
+                        && Dependency::eql(&to_deps!()[cur_to_i], twin, to_buf!(), from_buf!())
+                })
+            {
+                continue;
+            }
             // A migration writes `file:x` for `file:./x`.
             let same_folder = !same
                 && from_dep.version.tag == dependency::version::Tag::Folder
@@ -1228,6 +1260,10 @@ impl Diff {
                         to_deps!(),
                         cur_to_i,
                     )
+                    // Bun 1.4 and older could leave out the packages that a workspace depends on.
+                    || (from.resolution.tag == ResolutionTag::Workspace
+                        && from_resolutions[i] as usize >= from_lockfile.packages.len()
+                        && !lockfile::bun_lock::may_stay_unresolved(from_dep))
                 {
                     summary.update += 1;
                     continue;
@@ -1435,17 +1471,16 @@ impl Diff {
             summary.members_left_out = (to_deps!().iter().enumerate())
                 .filter(|(to_i, member)| {
                     // Bun 1.4 and older replaced the root's entry for a workspace with the root's
-                    // own dependency of that name if the workspace did not satisfy its range.
+                    // own dependency on that package if the workspace did not satisfy its range.
                     member.behavior.is_workspace()
                         && !paired.is_set(*to_i)
                         && to_lockfile.workspace_versions.contains(&member.name_hash)
-                        && (to_deps!().iter().enumerate()).any(|(own_i, own)| {
-                            own.name_hash == member.name_hash
-                                && paired.is_set(own_i)
-                                && !own.behavior.is_workspace()
+                        && from_deps.iter().any(|own| {
+                            !own.behavior.is_workspace()
                                 && own.version.try_npm().is_some_and(|npm| {
-                                    semver::string::Builder::string_hash(npm.name.slice(to_buf!()))
-                                        == member.name_hash
+                                    semver::string::Builder::string_hash(
+                                        npm.name.slice(from_buf!()),
+                                    ) == member.name_hash
                                 })
                         })
                 })
@@ -1658,6 +1693,46 @@ impl Diff {
         resolution.tag == ResolutionTag::Npm
             && (npm.name).eql(packages.items_name()[locked as usize], to_buf, from_buf)
             && (npm.version).satisfies(resolution.npm().version, to_buf, from_buf)
+    }
+
+    /// Bun 1.4 and older took a dist-tag of a workspace's name from the registry, and linked the
+    /// workspace for a `file:` path to its folder under any name. While package.json says the same,
+    /// the root's dependency `row` is read the way the lockfile has it.
+    fn keep_older_link(
+        from_dep: &Dependency,
+        from_buf: &[u8],
+        to: &mut lockfile::Buffers,
+        row: usize,
+    ) {
+        use dependency::version::Tag;
+        let to_buf = to.string_bytes.as_slice();
+        let to_dep = &mut to.dependencies[row];
+        if !(to_dep.version.literal).eql(from_dep.version.literal, to_buf, from_buf) {
+            return;
+        }
+        match (from_dep.version.tag, to_dep.version.tag) {
+            (Tag::DistTag, Tag::Workspace) => {
+                let literal = to_dep.version.literal.sliced(to_buf);
+                if let Some(version) = dependency::parse(
+                    to_dep.name,
+                    to_dep.name_hash,
+                    literal.slice,
+                    &literal,
+                    None,
+                    None,
+                ) {
+                    to_dep.version = version;
+                }
+            }
+            (Tag::Workspace, Tag::Folder) => {
+                let folder = *to_dep.version.folder();
+                if folder.eql(*from_dep.version.workspace(), to_buf, from_buf) {
+                    to_dep.version.tag = Tag::Workspace;
+                    to_dep.version.value.workspace = folder;
+                }
+            }
+            _ => {}
+        }
     }
 
     /// A one-sided merge can leave a pin that the unchanged range rules out. Only flags clear cases.

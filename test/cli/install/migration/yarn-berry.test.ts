@@ -675,13 +675,11 @@ describe("yarn berry migration", () => {
       await Bun.write(join(dir, "bun.lock"), bunLock.replace(row(bunLock, version), row(other, "1.1.0")));
     }
 
-    async function expectFrozenInstallToFail(dir: string, wanted: string, field = "resolutions") {
-      const { stderr, exitCode } = await run(dir, "install", "--frozen-lockfile");
-      expect(stderr).toContain(
-        "error: lockfile had changes, but lockfile is frozen\n" +
-          `note: bun.lock has no-deps@1.1.0, ${field} in package.json wants ${wanted}\n`,
-      );
-      expect(exitCode).toBe(1);
+    /** A frozen install takes no-deps@1.1.0 as it is. `bun install` resolves it again if a rule doesn't allow it. */
+    async function expectInstallToLock(dir: string, locked: string[]) {
+      await expectFrozenInstall(dir);
+      await expectToPass(dir, "install", "--lockfile-only");
+      expect(lockedVersions(await bunLockOf(dir))).toEqual(locked);
     }
 
     // Both keys overlap with the root's `^1.0.1`. yarn uses the key whose range is exactly `^1.0.1`.
@@ -722,7 +720,8 @@ describe("yarn berry migration", () => {
       await expectFrozenInstall(dir);
 
       await lockAt110(dir, "1.0.1");
-      await expectFrozenInstallToFail(dir, "1.0.1");
+      // Resolving again takes the first key that overlaps.
+      await expectInstallToLock(dir, ["no-deps@1.0.0", "one-range-dep@1.0.0"]);
     });
 
     // yarn treats `npm:^1.0.0` and `^1.0.0` as the same range.
@@ -743,7 +742,7 @@ describe("yarn berry migration", () => {
         await expectFrozenInstall(dir);
 
         await lockAt110(dir, "1.0.0");
-        await expectFrozenInstallToFail(dir, "1.0.0");
+        await expectInstallToLock(dir, ["no-deps@1.0.0"]);
       },
     );
 
@@ -764,15 +763,7 @@ describe("yarn berry migration", () => {
         expect(lockedVersions(await bunLockOf(dir))).toEqual(["no-deps@1.0.0"]);
         await lockAt110(dir, "1.0.0");
 
-        if (field === "resolutions") {
-          await expectFrozenInstall(dir);
-        } else {
-          await expectFrozenInstallToFail(dir, "1.0.0", field);
-        }
-        await expectToPass(dir, "install", "--lockfile-only");
-        expect(lockedVersions(await bunLockOf(dir))).toEqual([
-          field === "resolutions" ? "no-deps@1.1.0" : "no-deps@1.0.0",
-        ]);
+        await expectInstallToLock(dir, [field === "resolutions" ? "no-deps@1.1.0" : "no-deps@1.0.0"]);
       },
     );
   });

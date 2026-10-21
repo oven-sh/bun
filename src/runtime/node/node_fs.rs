@@ -7721,11 +7721,24 @@ impl NodeFS {
             };
             let _close = scopeguard::guard(fd, |fd| fd.close());
 
-            let buf = match Syscall::get_fd_path(fd, &mut outbuf) {
+            let buf = match Syscall::get_fd_path_z(fd, &mut outbuf) {
                 Err(err) => return Err(err.with_path(path)),
                 Ok(buf_) => buf_,
             };
 
+            // Linux appends " (deleted)" to the path of a file that has been unlinked.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if buf.as_bytes().ends_with(b" (deleted)") {
+                let is_real_name = matches!(
+                    (Syscall::fstat(fd), Syscall::lstat(buf)),
+                    (Ok(a), Ok(b)) if a.st_dev == b.st_dev && a.st_ino == b.st_ino
+                );
+                if !is_real_name {
+                    return Err(sys::Error::from_code(E::ENOENT, sys::Tag::realpath));
+                }
+            }
+
+            let buf = buf.as_bytes();
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {

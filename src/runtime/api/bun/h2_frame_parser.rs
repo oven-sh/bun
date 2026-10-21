@@ -3067,6 +3067,17 @@ impl H2FrameParser {
         }
     }
 
+    /// The kernel rejected a send of the session's TLS socket. The TLS layer closes the socket
+    /// once it has read what the peer sent before.
+    fn transport_send_rejected(&self) -> bool {
+        match self.native_socket.get() {
+            BunSocket::Tls(socket) | BunSocket::TlsWriteonly(socket) => {
+                socket.get().socket.get().ssl_send_rejected()
+            }
+            _ => false,
+        }
+    }
+
     fn close_socket_for_dead_transport<const SSL: bool>(socket: &crate::socket::NewSocket<SSL>) {
         let handler = socket.socket.get();
         if !handler.is_established() {
@@ -3816,7 +3827,9 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         let Some(chunk) = self.or_stop(self.handlers.get().binary_type.to_js(debug, &g)) else {
             return;
         };
-        if lib_error_code != 0 {
+        // The peer is gone, so no GOAWAY reaches it and its responses are still queued. The session
+        // ends without an error, as it does at the close that follows.
+        if lib_error_code != 0 && !self.transport_send_rejected() {
             self.dispatch_with_2_extra(
                 JSH2FrameParser::Gc::onError,
                 JSValue::js_number(lib_error_code as f64),

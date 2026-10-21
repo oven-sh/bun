@@ -2263,10 +2263,9 @@ one-range-dep@1.0.0:
       });
 
       const frozen = await install(dir, "--frozen-lockfile");
-      expect(diagnostics(frozen.err)).toContain(
-        `note: ${name} has no-deps@1.1.0, overrides in package.json wants 1.0.0`,
-      );
-      expect(frozen.exitCode).toBe(1);
+      expect(frozen.err).not.toContain("error:");
+      expect(frozen.exitCode).toBe(0);
+      expect(await versionSeenBy(dir, "one-range-dep", "no-deps")).toBe("1.1.0");
 
       const { err, exitCode } = await install(dir);
       expect(diagnostics(err)).toEqual([`migrated lockfile from ${name}`]);

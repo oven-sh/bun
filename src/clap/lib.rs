@@ -403,6 +403,33 @@ pub struct IgnoredLongFlags {
     pub prefixes: &'static [&'static [u8]],
 }
 
+impl IgnoredLongFlags {
+    /// Returns `None` if `--name` isn't skipped. Otherwise returns whether `next`, the argument
+    /// after it, is its value. `is_own_flag` tells whether the command has a flag of that name.
+    pub fn value_is_next_arg(
+        &self,
+        name: &[u8],
+        next: &[u8],
+        is_own_flag: impl Fn(&[u8]) -> bool,
+    ) -> Option<bool> {
+        if self.options.contains(&name) {
+            return Some(!next.starts_with(b"-"));
+        }
+        if self.flags.contains(&name)
+            || name.strip_prefix(b"no-").is_some_and(|positive| {
+                self.flags.contains(&positive)
+                    || self.options.contains(&positive)
+                    || (!self.flags.is_empty() && is_own_flag(positive))
+            })
+        {
+            return Some(next == b"true" || next == b"false");
+        }
+        (self.prefixes.iter())
+            .any(|prefix| name.starts_with(prefix))
+            .then_some(false)
+    }
+}
+
 // Help/usage/error rendering — none of this is on the cold-start hot chain
 // (`bun -p '1+1'` / `bun --version` / plain `bun <file>` never call into the
 // help or diagnostics path). Mark every entry point `#[cold]` + `#[inline(never)]`

@@ -12,6 +12,7 @@ use bun_ast::ExprData;
 use bun_bundler::Transpiler;
 use bun_core::{self, Global, Output};
 use bun_core::{ZBox, ZStr, strings};
+use bun_install::CommandLineArguments;
 use bun_install::dependency::VersionTag;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
@@ -217,9 +218,13 @@ impl Options {
                 } else if positional == b"--help" || positional == b"-h" {
                     crate::cli::command::tag_print_help(Command::Tag::BunxCommand, false);
                     Global::exit(0);
-                } else if !matches!(positional, b"--" | b"--yes" | b"-y")
-                    && !is_from_bun_options(argv[i])
-                {
+                } else if positional == b"--" || is_from_bun_options(argv[i]) {
+                } else if let Some(value_is_next_arg) = CommandLineArguments::bunx_skips_flag(
+                    positional,
+                    argv.get(i + 1).map_or(b"".as_slice(), |arg| arg.as_bytes()),
+                ) {
+                    i += usize::from(value_is_next_arg);
+                } else {
                     // Skipping it would make the value of `--flag value` the package that is downloaded and run.
                     Output::err_generic(
                         "bunx has no <b>{}<r> flag. Flags for the package go after its name.",

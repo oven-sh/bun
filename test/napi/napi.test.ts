@@ -10,10 +10,11 @@ import {
   isMacOS,
   isMusl,
   isWindows,
+  mergeWindowEnvs,
   nodeExeMatchingAbi,
   tempDir,
 } from "harness";
-import { join } from "path";
+import { dirname, join } from "path";
 
 // The napi-app addons don't link against bun, so existing binaries stay valid
 // across bun builds. `bun install` runs a full `node-gyp rebuild` (clean + build
@@ -454,6 +455,18 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("PASS: caller retains ownership on failure with pending exception");
       expect(result).not.toContain("FAIL");
     });
+  });
+
+  // Node wraps this length around, so this only runs on Bun.
+  it("creating an external buffer larger than 2 ** 32 bytes fails with ERR_BUFFER_TOO_LARGE", async () => {
+    const result = await runOn(bunExe(), "test_external_buffer_length_limit", [2 ** 32 + 1]);
+    expect(result.trim().split(/\r?\n/)).toEqual(
+      [
+        "napi_create_external_arraybuffer",
+        "napi_create_external_buffer",
+        "node_api_create_external_sharedarraybuffer",
+      ].map(api => `${api}: status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE finalized=0 result=untouched`),
+    );
   });
 
   // The finalizer of an external buffer belongs to the env that created it, and that env's
@@ -1237,6 +1250,12 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("propagates exceptions", async () => {
       await checkSameOutput("test_napi_run_script", ["(()=>{ throw new TypeError('oops'); })()"]);
     });
+    it("passes the thrown value to napi_get_and_clear_last_exception", async () => {
+      const result = await checkSameOutput("test_napi_run_script_exception_value", ['throw new RangeError("boom")']);
+      expect(result).toContain("run status=9 pending=1");
+      expect(result).toContain("typeof status=0 type=6 is_error=1");
+      expect(result).toContain("message=boom");
+    });
     it("cannot see locals from around its invocation", async () => {
       // variable should_not_exist is declared on main.js:18, but it should not be in scope for the eval'd code
       // this doesn't use await checkSameOutput because V8 and JSC use different error messages for a missing variable
@@ -1782,6 +1801,41 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("runs the outer module's init function when the module.exports getter loads another addon", async () => {
+    // process.dlopen reads module.exports a second time to pass it to the init function.
+    const script = `
+      const build = ${JSON.stringify(join(__dirname, "napi-app", "build", "Debug"))};
+      const exports = {};
+      let reads = 0;
+      const outer = {
+        get exports() {
+          if (++reads === 2) process.dlopen({ exports: {} }, build + "/reentrant_register_addon.node");
+          return exports;
+        },
+      };
+      process.dlopen(outer, build + "/constructor_order_addon.node");
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // On Windows each addon has its own stdout buffer, so line order is only guaranteed within one addon.
+    const lines = stdout.split(/\r?\n/).filter(Boolean);
+    const outer = ["call_register", "init_static", "register_cb"];
+    expect({
+      outer: lines.filter(line => outer.includes(line)),
+      inner: lines.filter(line => !outer.includes(line)),
+    }).toEqual({
+      outer,
+      inner: ["register_cb_a", "register_cb_b", "register_cb_reentrant x 64"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
   it("behaves as expected when performing operations with an exception pending", async () => {
     await checkSameOutput("test_deferred_exceptions", []);
   });
@@ -2062,6 +2116,59 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     },
     25_000,
   );
+
+  // Off Windows these fixtures are ordinary addons, so this only checks that they load.
+  describe("an addon that imports node.exe without win_delay_load_hook", () => {
+    const fixtures = {
+      no_delay_load_hook_addon: { delayLoad: true, missing: false },
+      regular_node_exe_import_addon: { delayLoad: false, missing: false },
+      no_delay_load_hook_ctor_addon: { delayLoad: true, missing: false },
+      regular_node_exe_import_ctor_addon: { delayLoad: false, missing: false },
+      regular_node_exe_import_missing_addon: { delayLoad: false, missing: true },
+    } as const;
+    type Fixture = keyof typeof fixtures;
+    const fixtureNames = Object.keys(fixtures) as Fixture[];
+
+    // PATH is a single directory and the cwd is empty, so the DLL search path contains at most one node.exe.
+    async function load(target: Fixture, nodeOnPath: boolean) {
+      using dir = tempDir("napi-node-exe-import", {});
+      const addon = join(__dirname, `napi-app/build/Debug/${target}.node`);
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `try { console.log(require(${JSON.stringify(addon)}).hello()); } catch (e) { console.log(e.code + ": " + e.message); process.exit(1); }`,
+        ],
+        env: mergeWindowEnvs([bunEnv, { PATH: nodeOnPath ? dirname(await nodeExeMatchingAbi()) : String(dir) }]),
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }
+    const loaded = { stdout: "hello", stderr: "", exitCode: 0 };
+
+    it.each(fixtureNames)("%s loads with node.exe on PATH", async target => {
+      const result = await load(target, true);
+      if (isWindows && fixtures[target].missing) {
+        expect(result.stdout).toStartWith("ERR_DLOPEN_FAILED: Cannot load native addon ");
+        expect(result.stdout).toEndWith(
+          `${target}.node imports 'OpenSSL_version_num' from node.exe, which Bun does not provide`,
+        );
+        expect(result.exitCode).toBe(1);
+      } else {
+        expect(result).toEqual(loaded);
+      }
+    });
+
+    it.skipIf(!isWindows).each(fixtureNames.filter(target => fixtures[target].delayLoad))(
+      "%s loads without a node.exe on the DLL search path",
+      async target => {
+        expect(await load(target, false)).toEqual(loaded);
+      },
+    );
+  });
 });
 
 // Kept outside describe.concurrent("napi") so RSS measurement isn't skewed by

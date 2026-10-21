@@ -591,21 +591,23 @@ impl IntermediateOutput {
 
     /// The (prefix, path) pair that replaces a placeholder, shared by the sizing and writing pass.
     fn spliced_path_parts<'a>(
-        file_path: &'a [u8],
+        file_path: &[u8],
         import_prefix: &'a [u8],
         from_chunk_dir: &[u8],
         use_outdir_relative_path: bool,
-        file_path_buf: &'a mut [u8],
-        relative_platform_buf: &'a mut [u8],
+        file_path_posix: &'a mut Vec<u8>,
     ) -> [&'a [u8]; 2] {
-        let file_path = bun_paths::resolve_path::platform_to_posix_buf(file_path, file_path_buf);
+        // Normalize Windows paths to '/' in a copy because the source is borrowed immutably.
+        file_path_posix.clear();
+        file_path_posix.extend_from_slice(file_path);
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(file_path_posix);
+        let file_path: &'a [u8] = file_path_posix;
         cheap_prefix_normalizer(
             import_prefix,
             if use_outdir_relative_path {
                 file_path
             } else {
-                bun_paths::resolve_path::relative_platform_buf::<bun_paths::platform::Posix, false>(
-                    relative_platform_buf,
+                bun_paths::resolve_path::relative_platform::<bun_paths::platform::Posix, false>(
                     from_chunk_dir,
                     file_path,
                 )
@@ -771,8 +773,7 @@ impl IntermediateOutput {
         let additional_files = graph.input_files.items_additional_files();
         let unique_key_for_additional_files =
             graph.input_files.items_unique_key_for_additional_file();
-        let mut relative_platform_buf = bun_paths::path_buffer_pool::get();
-        let mut file_path_buf = bun_paths::path_buffer_pool::get();
+        let mut file_path_posix: Vec<u8> = Vec::new();
         match self {
             IntermediateOutput::Pieces(pieces) => {
                 let entry_point_chunks_for_scb = linker_graph.files.items_entry_point_chunk_index();
@@ -893,8 +894,7 @@ impl IntermediateOutput {
                                 import_prefix,
                                 from_chunk_dir,
                                 use_outdir_relative_path,
-                                &mut file_path_buf[..],
-                                &mut relative_platform_buf[..],
+                                &mut file_path_posix,
                             ) {
                                 let mut counter = bun_io::DiscardingWriter::new();
                                 Self::write_spliced_path(&mut counter, part, escape)
@@ -1078,8 +1078,7 @@ impl IntermediateOutput {
                                 import_prefix,
                                 from_chunk_dir,
                                 use_outdir_relative_path,
-                                &mut file_path_buf[..],
-                                &mut relative_platform_buf[..],
+                                &mut file_path_posix,
                             ) {
                                 let written = {
                                     let mut stream =

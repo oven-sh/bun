@@ -434,14 +434,11 @@ WTF::String formatStackTrace(
 
         if (!sourceURLForFrame.isEmpty()) {
             sb.append(sourceURLForFrame);
-            if (displayLine.zeroBasedInt() > 0 || displayColumn.zeroBasedInt() > 0) {
+            if (frame.hasLineAndColumnInfo()) {
                 sb.append(':');
                 sb.append(displayLine.oneBasedInt());
-
-                if (displayColumn.zeroBasedInt() > 0) {
-                    sb.append(':');
-                    sb.append(displayColumn.oneBasedInt());
-                }
+                sb.append(':');
+                sb.append(displayColumn.oneBasedInt());
             }
         }
 
@@ -739,6 +736,11 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
     if (!source || !destination) {
         throwTypeError(lexicalGlobalObject, scope, "First & second argument must be an Error object"_s);
         return {};
+    }
+
+    // appendVector() can't append a vector to itself, and the clear() below would drop the trace.
+    if (source == destination) {
+        return JSC::JSValue::encode(jsUndefined());
     }
 
     // A destination that is materialized, or is being formatted right now, never renders frames again.

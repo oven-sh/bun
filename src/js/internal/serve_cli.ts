@@ -6,6 +6,8 @@ const path = require("node:path");
 
 const env = Bun.env;
 
+const isRestarting = $newRustFunction("bake/config/plugins.rs", "isRestarting", 0);
+
 type ServeFlags = {
   /** `undefined` until `--host` or `--hostname` sets it. */
   hostname: string | undefined;
@@ -207,10 +209,15 @@ function printBannerAndHandleShortcuts(banner: Banner) {
 
   // Keyboard shortcuts
   if (!installed && process.stdin.isTTY) {
-    // Handle Ctrl+C and other termination signals
-    process.on("SIGINT", () => process.exit());
-    process.on("SIGHUP", () => process.exit());
-    process.on("SIGTERM", () => process.exit());
+    // Handle Ctrl+C and other termination signals. Not during a restart, which sends one of them to
+    // run the app's listeners: `process.exit()` would end the restart before the listeners after
+    // this one run.
+    const exit = () => {
+      if (!isRestarting()) process.exit();
+    };
+    process.on("SIGINT", exit);
+    process.on("SIGHUP", exit);
+    process.on("SIGTERM", exit);
     process.stdin.on("data", data => {
       const key = data.toString().toLowerCase().replaceAll("\r\n", "\n");
 

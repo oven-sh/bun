@@ -105,7 +105,7 @@ test("Error inside minified file (no color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:86:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:87:5)"
     `);
   }
 });
@@ -134,7 +134,7 @@ test("Error inside minified file (color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:114:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:115:5)"
     `);
   }
 });
@@ -509,4 +509,90 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
     expect(stderr).toContain("across 2 files");
     expect(exitCode).toBe(1);
   });
+});
+
+describe("an error with a circular reference to itself", () => {
+  // Drops the source preview, stack frames, blank lines and the version line.
+  function rendered(text) {
+    return text
+      .split("\n")
+      .filter(line => !/^\s*\d+ \| /.test(line) && !/^\s*\^\s*$/.test(line) && !/^\s+at /.test(line))
+      .filter(line => line.trim() !== "" && !line.startsWith("Bun v"));
+  }
+
+  test("prints [Circular] under the key that closes the cycle", () => {
+    const self = new Error("x");
+    self.self = self;
+    expect(rendered(Bun.inspect(self))).toEqual(["error: x", " self: [Circular],"]);
+
+    const a = new Error("a");
+    a.cause = new Error("b", { cause: a });
+    expect(rendered(Bun.inspect(a))).toEqual(["error: a", "error: b", " cause: [Circular],"]);
+
+    const outer = new Error("a");
+    const inner = new Error("b");
+    outer.x = [inner];
+    inner.y = inner;
+    expect(rendered(Bun.inspect(outer))).toEqual(["error: a", " x: [", "error: b", " y: [Circular],", "],"]);
+  });
+
+  test("is printed once when thrown", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", 'const e = new Error("cyc"); e.cause = e; e.errors = [e]; throw e;'],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ lines: rendered(stderr), exitCode }).toEqual({
+      lines: ["error: cyc", "  cause: [Circular],", " errors: [", "  [Circular]", "],"],
+      exitCode: 1,
+    });
+  });
+
+  test("an error that appears twice without a cycle is printed in full each time", () => {
+    const e = new Error("twice");
+    e.meta = {};
+    const lines = rendered(Bun.inspect([e, { a: e, b: { c: e } }]));
+    expect(lines.filter(line => line.trim() === "error: twice").length).toBe(3);
+    expect(lines.filter(line => line.includes("[Circular]"))).toEqual([]);
+  });
+});
+
+// `Malloc=1` lets ASAN catch a read past the end of the source.
+test.concurrent("prints the source preview for an error positioned at the end of the source text", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `(0, eval)("xyz");`],
+    env: { ...bunEnv, NO_COLOR: "1", Malloc: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, excerpt: stderr.split("\n").slice(0, 3) }).toEqual({
+    stdout: "",
+    excerpt: ["1 | xyz", "       ^", "ReferenceError: xyz is not defined"],
+  });
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent("reports the right position for a multi-line `new` expression in a 16-bit source", async () => {
+  const source = `/* 中 */
+function code() {
+  throw new (class Boom extends Error {
+    constructor(message) {
+      super(message);
+    }
+  })("boom");
+}
+code();`;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `(0, eval)(${JSON.stringify(source)});`],
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(stderr).toMatch(/error: boom\n +at code \(.*:3:9\)\n/);
+  expect(exitCode).toBe(1);
 });

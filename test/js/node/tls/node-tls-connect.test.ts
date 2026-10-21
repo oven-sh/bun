@@ -5627,7 +5627,8 @@ describe("connect(port) on a TLSSocket that runs over a transport the caller han
       const transport = proxied ? new SocketProxy(raw) : raw;
       const client = wrap(transport);
       try {
-        await once(client, established);
+        // The server's handshake ends after the client's: it has yet to read the client's Finished.
+        await Promise.all([once(client, established), once(server, "secureConnection")]);
         // Not from inside the handshake callback.
         await new Promise(resolve => setImmediate(resolve));
         const errored = once(client, "error");

@@ -50,3 +50,19 @@ for (let i = 0; i < 3; i++) {
   setTimeout(() => console.log(i)); // 0, 1, 2
 }
 ```
+
+`declare var` isn't reported, and neither is a `var` inside `declare global`, `declare module` or `declare namespace`. It runs no code. It tells TypeScript that a global exists, and only a `var` becomes a property of `globalThis` and can be declared in more than one file:
+
+{/* good */}
+```ts
+declare var BUILD_ID: string;
+
+console.log(globalThis.BUILD_ID);
+```
+
+With an ESLint config the rule reports what ESLint reports, so that a `// eslint-disable-next-line no-var` above a `declare var` is still needed: every `var`, except one directly inside `declare global`, which only ESLint 8 reports. With an oxlint config it reports what oxlint reports: `declare var`, but no `var` inside `declare global`, `declare module` or `declare namespace`.
+
+{/* bad {"config": "oxlint"} */}
+```ts
+declare var BUILD_ID: string;
+```

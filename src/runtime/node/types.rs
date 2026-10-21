@@ -6,7 +6,7 @@ use crate::jsc::{self, JSGlobalObject, JSValue, JsResult};
 use bun_core::WStr;
 use bun_core::ZStr;
 use bun_core::{self, Utf8Bytes, Utf8WithString, fmt as bun_fmt};
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::{JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{StringJsc as _, Utf8WithStringJsc as _};
 pub(crate) use bun_jsc::{ThreadIsolated, ThreadIsolatedArg};
@@ -289,8 +289,33 @@ impl StringOrBuffer<'static> {
         unsafe { ThreadIsolated::new(Self::owned(bytes)) }
     }
 
+    /// Copies a `Sync`-parsed buffer's current bytes, or isolates a string, for a work-pool job.
+    pub(crate) fn make_thread_isolated_copy(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+        match self {
+            Self::Buffer(buffer) => {
+                buffer.buffer = jsc::ArrayBuffer::from_typed_array(global, buffer.buffer.value);
+                let mut bytes = Vec::new();
+                if bytes.try_reserve_exact(buffer.slice().len()).is_err() {
+                    return Err(global.throw_out_of_memory());
+                }
+                bytes.extend_from_slice(buffer.slice());
+                global.vm().report_extra_memory(bytes.len());
+                *self = Self::owned(bytes);
+            }
+            Self::String(str) => {
+                str.make_thread_isolated();
+                *self = Self::ThreadIsolatedString(core::mem::take(str));
+            }
+            Self::ThreadIsolatedString(_) | Self::Utf8(_) => {}
+            Self::PinnedBuffer(_) => {
+                unreachable!("make_thread_isolated_copy on a value parsed with Flavor::Async")
+            }
+        }
+        Ok(())
+    }
+
     /// `value` is ArrayBuffer-like (the caller checked): borrowed for `Sync`,
-    /// pinned and GC-rooted for `Async`.
+    /// [`PinnedArrayBuffer::root_read_only`] for `Async`.
     pub(crate) fn buffer_from_js(
         global: &JSGlobalObject,
         value: JSValue,
@@ -299,7 +324,7 @@ impl StringOrBuffer<'static> {
         if flavor == Flavor::Sync {
             return Ok(Self::Buffer(Buffer::from_array_buffer(global, value)));
         }
-        match PinnedArrayBuffer::root(global, value) {
+        match PinnedArrayBuffer::root_read_only(global, value) {
             Some(buffer) => Ok(Self::PinnedBuffer(buffer)),
             None => Err(global.throw_out_of_memory()),
         }
@@ -328,13 +353,8 @@ impl StringOrBuffer<'static> {
     /// directly into `*out` and returns
     /// `Ok(true)` on success, `Ok(false)` if `value` is not a string/buffer
     /// type. `*out` is left untouched on `Ok(false)` / `Err`.
-    ///
-    /// Hot callers (e.g. `NodeHTTPResponse::write_or_end`) should use this
-    /// directly — returning `JsResult<Option<StringOrBuffer>>` by value lowers
-    /// to ~128B of `vmovups` stack-to-stack copies per call which the
-    /// `Option<>`-returning wrappers below cannot always NRVO away.
     #[inline]
-    pub(crate) fn from_js_maybe_async_into(
+    fn from_js_maybe_async_into(
         out: &mut Self,
         global: &JSGlobalObject,
         value: JSValue,
@@ -402,21 +422,39 @@ impl StringOrBuffer<'static> {
         Self::from_js_maybe_async(global, value, Flavor::Sync, StringObjects::Allow)
     }
 
-    /// [`from_js`](Self::from_js) for a work-pool job that reads the bytes itself: strings thread-isolated, buffers pinned and GC-rooted, a resizable buffer copied ([`PinnedArrayBuffer::copy_if_resizable`]).
-    #[inline]
-    pub(crate) fn from_js_async(
+    /// Like [`from_js`](Self::from_js), but copies a buffer that
+    /// [`can_change_under_borrow`](jsc::ArrayBuffer::can_change_under_borrow).
+    /// Use it for parsers that read a byte more than once.
+    pub(crate) fn from_js_stable(
         global: &JSGlobalObject,
         value: JSValue,
-    ) -> JsResult<Option<ThreadIsolated<Self>>> {
-        let mut parsed =
-            Self::from_js_maybe_async(global, value, Flavor::Async, StringObjects::Allow)?;
-        if let Some(Self::PinnedBuffer(buffer)) = &mut parsed
-            && !buffer.copy_if_resizable(global)
+    ) -> JsResult<Option<Self>> {
+        let parsed = Self::from_js(global, value)?;
+        if let Some(Self::Buffer(buffer)) = &parsed
+            && buffer.buffer.can_change_under_borrow()
         {
-            return Err(global.throw_out_of_memory());
+            return match buffer.buffer.try_copy_bytes() {
+                Some(copy) => Ok(Some(Self::owned(copy))),
+                None => Err(global.throw_out_of_memory()),
+            };
         }
-        // SAFETY: parsed with `Flavor::Async`.
-        Ok(parsed.map(|v| unsafe { ThreadIsolated::new(v) }))
+        Ok(parsed)
+    }
+
+    /// For a work-pool job that reads the bytes.
+    #[inline]
+    pub(crate) fn thread_isolated_string(
+        global: &JSGlobalObject,
+        str: bun_core::String,
+    ) -> ThreadIsolated<Self> {
+        let isolated = shared_or_utf8(
+            global,
+            str.into_utf8_with_string_thread_isolated(),
+            Self::ThreadIsolatedString,
+            Self::Utf8,
+        );
+        // SAFETY: `ThreadIsolatedString` or `Utf8`.
+        unsafe { ThreadIsolated::new(isolated) }
     }
 
     #[inline]
@@ -434,29 +472,11 @@ impl StringOrBuffer<'static> {
         )
     }
 
-    /// Out-param convenience wrapper — see [`from_js_with_encoding_maybe_async_into`].
-    #[inline]
-    pub(crate) fn from_js_with_encoding_into(
-        out: &mut Self,
-        global: &JSGlobalObject,
-        value: JSValue,
-        encoding: Encoding,
-    ) -> JsResult<bool> {
-        Self::from_js_with_encoding_maybe_async_into(
-            out,
-            global,
-            value,
-            encoding,
-            Flavor::Sync,
-            StringObjects::Allow,
-        )
-    }
-
     /// Out-param core of [`from_js_with_encoding_maybe_async`]. Writes into
     /// `*out` and returns `Ok(true)` on success, `Ok(false)` for not-a-
     /// string-or-buffer. See [`from_js_maybe_async_into`] for rationale.
     #[inline]
-    pub(crate) fn from_js_with_encoding_maybe_async_into(
+    fn from_js_with_encoding_maybe_async_into(
         out: &mut Self,
         global: &JSGlobalObject,
         value: JSValue,
@@ -479,15 +499,36 @@ impl StringOrBuffer<'static> {
                 return Self::from_js_maybe_async_into(out, global, value, flavor, string_objects);
             }
 
-            use crate::webcore::encoding::BunStringEncode as _;
-            let encoded = str.encode(encoding);
-            global.vm().report_extra_memory(encoded.len());
-
-            *out = Self::owned(encoded);
+            *out = Self::encoded(global, &str, encoding);
             return Ok(true);
         }
 
         Ok(false)
+    }
+
+    fn encoded(global: &JSGlobalObject, str: &bun_core::String, encoding: Encoding) -> Self {
+        use crate::webcore::encoding::BunStringEncode as _;
+        let encoded = str.encode(encoding);
+        global.vm().report_extra_memory(encoded.len());
+        Self::owned(encoded)
+    }
+
+    /// For a synchronous call: a string encoded as `encoding`, a buffer borrowed.
+    #[inline]
+    pub(crate) fn from_string_or_js_bytes(
+        global: &JSGlobalObject,
+        value: StringOrJsBytes<'_>,
+        encoding: Encoding,
+    ) -> Self {
+        match value {
+            StringOrJsBytes::Bytes(bytes) => {
+                Self::Buffer(Buffer::from_array_buffer(global, bytes.to_js()))
+            }
+            StringOrJsBytes::String(str) if encoding == Encoding::Utf8 || str.is_empty() => {
+                Self::String(str.into_utf8_with_string())
+            }
+            StringOrJsBytes::String(str) => Self::encoded(global, &str, encoding),
+        }
     }
 
     #[inline]
@@ -1060,8 +1101,9 @@ impl PathLikeExt for PathLike<'_> {
                     PinnedArrayBuffer::pin(ctx, arg)
                 }
                 .ok_or_else(|| ctx.throw_out_of_memory())?;
-                // Read after this call (pool thread, a later argument's getter, a `Blob` store): a shrink in between unmaps the pages.
-                if !buffer.copy_if_resizable(ctx) {
+                // The path is read after this call returns. By then a later argument's getter can
+                // shrink the buffer or grow its `WebAssembly.Memory`, which frees the pages.
+                if !buffer.copy_if_freeable_while_pinned(ctx) {
                     return Err(ctx.throw_out_of_memory());
                 }
                 Valid::path_buffer(buffer.slice(), ctx)?;
@@ -1225,18 +1267,27 @@ impl Valid {
     }
 
     pub(crate) fn path_null_bytes(slice: &[u8], global: &JSGlobalObject) -> JsResult<()> {
-        if strings::index_of_char(slice, 0).is_some() {
-            return Err(global
-                .err(
-                    jsc::ErrorCode::INVALID_ARG_VALUE,
-                    format_args!(
-                        "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received {}",
-                        bun_fmt::quote(slice)
-                    ),
-                )
-                .throw());
+        Self::no_null_bytes(slice, "path", "a string, Uint8Array, or URL", global)
+    }
+
+    pub(crate) fn no_null_bytes(
+        slice: &[u8],
+        name: &str,
+        accepts: &str,
+        global: &JSGlobalObject,
+    ) -> JsResult<()> {
+        if strings::index_of_char(slice, 0).is_none() {
+            return Ok(());
         }
-        Ok(())
+        Err(global
+            .err(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!(
+                    "The argument '{name}' must be {accepts} without null bytes. Received {}",
+                    bun_fmt::quote(slice)
+                ),
+            )
+            .throw())
     }
 }
 

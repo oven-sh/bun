@@ -74,7 +74,6 @@
 #include "wtf/NakedPtr.h"
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/FunctionPrototype.h>
-#include "JSCommonJSModule.h"
 #include "wtf/text/ASCIIFastPath.h"
 #include "JavaScriptCore/WeakInlines.h"
 #include <JavaScriptCore/BuiltinNames.h>
@@ -743,78 +742,55 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
 }
 
 extern "C" size_t Bun__napi_module_register_count;
-void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject)
+void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject, const napi_module& mod, void* dlopenHandle, JSC::JSObject* object)
 {
     JSC::VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ASSERT(globalObject->m_pendingNapiModule);
+    if (!mod.nm_register_func) {
+        JSValue errorInstance = createError(globalObject, makeString("Module has no declared entry point."_s));
+        JSC::throwException(globalObject, scope, errorInstance);
+        return;
+    }
 
-    auto& mod = *globalObject->m_pendingNapiModule;
     Ref<NapiEnv> env = globalObject->makeNapiEnv(mod);
     auto keyStr = WTF::String::fromUTF8(mod.nm_modname);
-    JSValue pendingNapiModule = globalObject->m_pendingNapiModuleAndExports[0].get();
-    JSObject* object = (pendingNapiModule && pendingNapiModule.isObject()) ? pendingNapiModule.getObject()
-                                                                           : nullptr;
 
-    JSC::Strong<JSC::JSObject> strongExportsObject;
+    JSValue exportsObject = object->get(globalObject, WebCore::builtinNames(vm).exportsPublicName());
+    RETURN_IF_EXCEPTION(scope, void());
 
-    if (!object) {
-        auto* exportsObject = JSC::constructEmptyObject(globalObject);
-        RETURN_IF_EXCEPTION(scope, void());
+    // Like Node, convert exports to an object. null and undefined throw, and a primitive gets a wrapper object.
+    JSObject* exports = exportsObject.toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
 
-        object = Bun::JSCommonJSModule::create(globalObject, keyStr, exportsObject, false, jsUndefined());
-        RETURN_IF_EXCEPTION(scope, void());
-        strongExportsObject = { vm, exportsObject };
-    } else {
-        JSValue exportsObject = object->get(globalObject, WebCore::builtinNames(vm).exportsPublicName());
-        RETURN_IF_EXCEPTION(scope, void());
-
-        // Convert exports to object, matching Node.js behavior.
-        // This throws for null/undefined and creates wrapper objects for primitives.
-        JSObject* exports = exportsObject.toObject(globalObject);
-        RETURN_IF_EXCEPTION(scope, void());
-
-        ASSERT(exports);
-        strongExportsObject = { vm, exports };
-    }
+    ASSERT(exports);
+    JSC::Strong<JSC::JSObject> strongExportsObject = { vm, exports };
 
     JSC::Strong<JSC::JSObject> strongObject = { vm, object };
 
     Bun::NapiHandleScope handleScope(globalObject);
-    JSValue resultValue;
-
-    if (mod.nm_register_func) {
-        resultValue = toJS(mod.nm_register_func(env.ptr(), toNapi(object, globalObject)));
-    } else {
-        JSValue errorInstance = createError(globalObject, makeString("Module has no declared entry point."_s));
-        globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, errorInstance);
-        return;
-    }
-
+    JSValue resultValue = toJS(mod.nm_register_func(env.ptr(), toNapi(object, globalObject)));
     RETURN_IF_EXCEPTION(scope, void());
 
     if (resultValue.isEmpty()) {
         JSValue errorInstance = createError(globalObject, makeString("Node-API module \""_s, keyStr, "\" returned an error"_s));
-        globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, errorInstance);
+        JSC::throwException(globalObject, scope, errorInstance);
         return;
     }
 
     if (!resultValue.isObject()) {
         JSValue errorInstance = createError(globalObject, makeString("Expected Node-API module \""_s, keyStr, "\" to return an exports object"_s));
-        globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, errorInstance);
+        JSC::throwException(globalObject, scope, errorInstance);
         return;
     }
 
-    auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
+    auto* meta = new Bun::NapiModuleMeta(dlopenHandle);
 
     // TODO: think about the finalizer here
     Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr, env.ptr());
 
     bool success = resultValue.getObject()->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     ASSERT(success);
-
-    globalObject->m_pendingNapiModuleDlopenHandle = nullptr;
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_api.cc#L734-L742
     // https://github.com/oven-sh/bun/issues/1288
@@ -823,26 +799,21 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject)
         strongObject->put(strongObject.get(), globalObject, WebCore::builtinNames(vm).exportsPublicName(), resultValue, slot);
         RETURN_IF_EXCEPTION(scope, void());
     }
-
-    globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, object);
 }
 
 extern "C" void napi_module_register(napi_module* mod)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject();
-    JSC::VM& vm = JSC::getVM(globalObject);
     // Increment this one even if the module is invalid so that functionDlopen
     // knows that napi_module_register was attempted
     globalObject->napiModuleRegisterCallCount++;
 
     // Append to vector to accumulate ALL module registrations during dlopen
+    // This runs inside dlopen() and can't throw, so queue a module without an entry point too and let executePendingNapiModule throw.
+    globalObject->m_pendingNapiModules.append(mod ? *mod : napi_module {});
     if (mod && mod->nm_register_func) {
-        globalObject->m_pendingNapiModules.append(*mod);
         // Increment the counter to signal that a module registered itself
         Bun__napi_module_register_count++;
-    } else {
-        JSValue errorInstance = createError(globalObject, makeString("Module has no declared entry point."_s));
-        globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, errorInstance);
     }
 }
 
@@ -1392,7 +1363,10 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
     if (scope.exception()) [[unlikely]] {
         *result = toNapi(JSValue(scope.exception()->value()), globalObject);
     } else if (std::optional<JSValue> pending = env->pendingException()) {
-        *result = toNapi(pending.value(), globalObject);
+        JSValue value = pending.value();
+        if (auto* latched = dynamicDowncast<JSC::Exception>(value)) [[unlikely]]
+            value = latched->vm().isTerminationException(latched) ? JSC::jsNull() : latched->value();
+        *result = toNapi(value, globalObject);
         env->clearPendingException();
     } else {
         *result = toNapi(JSC::jsUndefined(), globalObject);
@@ -1738,6 +1712,25 @@ extern "C" JS_EXPORT napi_status node_api_create_sharedarraybuffer(napi_env env,
     NAPI_RETURN_SUCCESS(env);
 }
 
+// Node 15 through 21 had the same limit and error: https://github.com/nodejs/node/blob/v20.18.0/src/node_buffer.cc#L457-L461
+static NEVER_INLINE void throwBufferTooLarge(napi_env env)
+{
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    static_assert(MAX_ARRAY_BUFFER_SIZE == 0x100000000ull);
+    scope.throwException(globalObject, createErrorWithCode(vm, globalObject, "ERR_BUFFER_TOO_LARGE"_s, "Cannot create a Buffer larger than 0x100000000 bytes"_s, JSC::ErrorType::Error));
+}
+
+// Node also runs finalize_cb on this failure. Bun doesn't, because node-addon-api would then free its finalizer data twice.
+#define NAPI_RETURN_IF_BUFFER_TOO_LARGE(_env, _length)                   \
+    do {                                                                 \
+        if ((_length) > MAX_ARRAY_BUFFER_SIZE) [[unlikely]] {            \
+            throwBufferTooLarge(_env);                                   \
+            NAPI_RETURN_STATUS_IF_EXCEPTION(_env, napi_generic_failure); \
+        }                                                                \
+    } while (0)
+
 // SharedArrayBuffer backing stores can outlive the creating napi_env (they
 // may be posted to other agents), so Node-API specifies a finalizer with no
 // env parameter. This destructor mirrors NapiExternalBufferDestructor but
@@ -1775,6 +1768,7 @@ extern "C" JS_EXPORT napi_status node_api_create_external_sharedarraybuffer(napi
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
     NAPI_RETURN_EARLY_IF_FALSE(env, !env->hasPendingException(), napi_pending_exception);
+    NAPI_RETURN_IF_BUFFER_TOO_LARGE(env, byte_length);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
@@ -2439,6 +2433,8 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
+    // Like Node, check this before the NULL-data branch: https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L478-L484
+    NAPI_RETURN_IF_BUFFER_TOO_LARGE(env, length);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
@@ -2490,6 +2486,7 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
+    NAPI_RETURN_IF_BUFFER_TOO_LARGE(env, byte_length);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
@@ -3423,6 +3420,16 @@ extern "C" bool NapiEnv__setCompletingForStoppedContext(napi_env env, bool value
 extern "C" bool NapiEnv__hasPendingException(napi_env env)
 {
     if (env->hasPendingException()) {
+        return true;
+    }
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(env->vm());
+    return scope.exception() != nullptr;
+}
+
+// The wrapper that bun:ffi cc() generates calls this after the compiled function returns.
+extern "C" bool NapiEnv__throwPendingException(napi_env env)
+{
+    if (env->throwPendingException()) {
         return true;
     }
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(env->vm());

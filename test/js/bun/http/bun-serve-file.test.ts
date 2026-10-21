@@ -2,7 +2,7 @@ import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, openSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, constants, openSync, readdirSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -1454,6 +1454,24 @@ test("file routes frame a slice that reaches or starts past EOF by the bytes the
   });
 });
 
+// kqueue doesn't wake a FIFO reader when an empty pipe's last writer closes.
+test.skipIf(!isLinux)("Response(Bun.file(fifo)) ends the body when the EOF arrives after the data", async () => {
+  using dir = tempDir("serve-fifo-eof", {});
+  const fifo = join(String(dir), "body.fifo");
+  mkfifo(fifo);
+  // Open for read and write so that neither the open nor the write blocks until the server opens the FIFO.
+  const writer = openSync(fifo, "r+");
+  writeSync(writer, "hello");
+  await using server = Bun.serve({ port: 0, fetch: () => new Response(Bun.file(fifo)) });
+
+  const response = await fetch(server.url);
+  const reader = response.body!.getReader();
+  const first = await reader.read();
+  closeSync(writer);
+  const last = await reader.read();
+  expect({ first: Buffer.from(first.value!).toString(), done: last.done }).toEqual({ first: "hello", done: true });
+});
+
 // A request that declares a body arms the request-body (onData) callback on
 // the uWS response before the fetch handler runs. uWS keeps a single shared
 // userdata slot per response, so when the handler returns a file response
@@ -1904,4 +1922,71 @@ test.skipIf(!isLinux)("sendfile serves an intact >=1MB file over a unix socket l
   const body = Buffer.from(await res.arrayBuffer());
   expect(body.length).toBe(data.length);
   expect(body.compare(data)).toBe(0);
+});
+
+// Sends a request, waits for the response head and then resets the connection.
+async function abortAfterResponseHead(port: number) {
+  const { promise: sawBytes, resolve } = Promise.withResolvers<void>();
+  const client = await Bun.connect({
+    hostname: "127.0.0.1",
+    port,
+    socket: {
+      open(s) {
+        s.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      },
+      data: () => resolve(),
+      close: () => resolve(),
+      error: () => resolve(),
+    },
+  });
+  await sawBytes;
+  client.terminate();
+}
+
+test.skipIf(isWindows)("aborted Response(Bun.file(FIFO)) without a writer closes its fd", async () => {
+  using dir = tempDir("serve-fifo-abort-leak", {});
+  const fifoPath = join(String(dir), "unwritten.fifo");
+  mkfifo(fifoPath);
+
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch: () => new Response(Bun.file(fifoPath)),
+  });
+
+  const countFds = () => readdirSync(isLinux ? "/proc/self/fd" : "/dev/fd").length;
+  const baseline = countFds();
+  for (let i = 0; i < 16; i++) await abortAfterResponseHead(server.port);
+
+  const deadline = Date.now() + 5000;
+  while (countFds() > baseline + 4 && Date.now() < deadline) await Bun.sleep(10);
+  expect(countFds()).toBeLessThanOrEqual(baseline + 4);
+});
+
+test.skipIf(isWindows)("the next response can read a FIFO fd after an aborted Response(Bun.file(fd))", async () => {
+  using dir = tempDir("serve-fifo-fd-abort", {});
+  const fifoPath = join(String(dir), "fd.fifo");
+  mkfifo(fifoPath);
+  const fd = openSync(fifoPath, constants.O_RDONLY | constants.O_NONBLOCK);
+  // Without a writer, macOS reads EOF and the first response ends before the abort.
+  const writer = openSync(fifoPath, "w");
+  try {
+    const aborted = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        req.signal.addEventListener("abort", () => aborted.resolve());
+        return new Response(Bun.file(fd));
+      },
+    });
+    await abortAfterResponseHead(server.port);
+    await aborted.promise;
+
+    writeSync(writer, "hello");
+    closeSync(writer);
+    expect(await fetch(server.url).then(res => res.text())).toBe("hello");
+  } finally {
+    closeSync(fd);
+  }
 });

@@ -17,8 +17,9 @@ impl Url {
         let start_pos = input.position();
         let loc = input.current_source_location();
         let url = input.expect_url_cloned()?;
+        let end_pos = input.position();
         let import_record_idx =
-            input.add_import_record(url, start_pos, bun_ast::ImportKind::Url)?;
+            input.add_import_record(url, start_pos, end_pos, bun_ast::ImportKind::Url)?;
         Ok(Url {
             import_record_idx,
             loc: crate::dependencies::Location::from_source_location(loc),

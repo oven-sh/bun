@@ -5146,6 +5146,157 @@ it("http2 stream.respond accepts raw-headers arrays; respondWithFD/respondWithFi
     server.close();
   }
 });
+it("http2 respondWithFile/respondWithFD send an empty range and reset the stream on an invalid offset", async () => {
+  using dir = tempDir("h2-respond-file-range", {
+    "empty.css": "",
+    "full.txt": "hello world",
+    "main.mjs": `
+      import http2 from "node:http2";
+      import fs from "node:fs";
+      process.on("uncaughtException", e => {
+        console.log(JSON.stringify({ uncaughtException: e.code }));
+        process.exit(70);
+      });
+      const cases = [
+        ["empty-file", "empty.css", {}],
+        ["empty-fd", "empty.css", { fd: true }],
+        ["offset=size", "full.txt", { offset: 11 }],
+        ["offset=size+1", "full.txt", { offset: 12 }],
+        ["offset=NaN", "full.txt", { offset: NaN }],
+        ["offset=1.5", "full.txt", { offset: 1.5 }],
+        ["length=0", "full.txt", { offset: 0, length: 0 }],
+        ["offset=6", "full.txt", { offset: 6 }],
+      ];
+      const results = {};
+      const server = http2.createServer();
+      server.on("stream", (stream, headers) => {
+        const [name, file, opts] = cases[+headers[":path"].slice(1)];
+        const result = (results[name] ??= {});
+        stream.on("error", e => (result.serverError = e.code));
+        const options = { ...opts, onError: e => (result.onError = e.code) };
+        if (opts.fd) {
+          delete options.fd;
+          const fd = fs.openSync(file, "r");
+          stream.on("close", () => fs.closeSync(fd));
+          stream.respondWithFD(fd, {}, options);
+        } else {
+          stream.respondWithFile(file, {}, options);
+        }
+      });
+      server.listen(0, async () => {
+        const client = http2.connect("http://127.0.0.1:" + server.address().port);
+        for (let i = 0; i < cases.length; i++) {
+          const result = (results[cases[i][0]] ??= {});
+          await new Promise(resolve => {
+            const req = client.request({ ":path": "/" + i });
+            let body = "";
+            req.setEncoding("utf8");
+            req.on("response", h => {
+              result.status = h[":status"];
+              result.contentLength = h["content-length"];
+            });
+            req.on("data", d => (body += d));
+            req.on("error", e => (result.clientError = e.code));
+            req.on("close", () => {
+              result.body = body;
+              result.rstCode = req.rstCode;
+              resolve();
+            });
+          });
+        }
+        client.close();
+        server.close();
+        console.log(JSON.stringify(results));
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const ok = { status: 200, contentLength: "0", body: "", rstCode: 0 };
+  const reset = {
+    serverError: "ERR_OUT_OF_RANGE",
+    clientError: "ERR_HTTP2_STREAM_ERROR",
+    body: "",
+    rstCode: http2.constants.NGHTTP2_INTERNAL_ERROR,
+  };
+  expect(JSON.parse(stdout.trim())).toEqual({
+    "empty-file": ok,
+    "empty-fd": ok,
+    "offset=size": ok,
+    "offset=size+1": reset,
+    "offset=NaN": reset,
+    "offset=1.5": reset,
+    "length=0": ok,
+    "offset=6": { status: 200, contentLength: "5", body: "world", rstCode: 0 },
+  });
+  expect(exitCode).toBe(0);
+}, 15_000);
+it("http2 native setNextStreamID, pushPromise and altsvc throw for bad arguments", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const http2 = require("node:http2");
+      const { Duplex } = require("node:stream");
+      const socket = new Duplex({ write(chunk, encoding, callback) { callback(); }, read() {} });
+      const session = http2.performServerHandshake(socket);
+      const native = session[Symbol.for("::bunhttp2native::")];
+      const outcome = fn => {
+        try {
+          return "returned " + fn();
+        } catch (err) {
+          return (err.code ?? err.name) + ": " + err.message;
+        }
+      };
+      const value = 'h2=":443"';
+      const fill = length => Buffer.alloc(length, "x").toString();
+      // U+4E2D is three bytes in UTF-8.
+      const wide = bytes => fill(bytes % 3) + Buffer.alloc(bytes - (bytes % 3), "\u4e2d").toString();
+      console.log(JSON.stringify([
+        outcome(() => native.setNextStreamID()),
+        outcome(() => native.setNextStreamID("3")),
+        outcome(() => native.setNextStreamID(3)),
+        outcome(() => native.pushPromise("1", 2, {}, {})),
+        outcome(() => native.pushPromise(1, undefined, {}, {})),
+        outcome(() => native.pushPromise(NaN, 2, {}, {})),
+        outcome(() => native.pushPromise(1, 0, {}, {})),
+        outcome(() => native.altsvc(fill(16382 - value.length), value, 0)),
+        outcome(() => native.altsvc(fill(16383 - value.length), value, 0)),
+        outcome(() => native.altsvc(fill(65536), value, 0)),
+        outcome(() => session.altsvc(value, { origin: wide(16383 - value.length) })),
+      ], null, 1));
+      process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const tooLong = "ERR_HTTP2_ALTSVC_LENGTH: HTTP/2 ALTSVC frames are limited to 16382 bytes";
+  expect(JSON.parse(stdout || "[]")).toEqual([
+    "Error: Expected stream_id to be a number",
+    "Error: Expected stream_id to be a number",
+    "returned undefined",
+    "Error: Expected parentId to be a number",
+    "Error: Expected promisedId to be a number",
+    "Error: Invalid stream id",
+    "Error: Invalid stream id",
+    "returned undefined",
+    tooLong,
+    tooLong,
+    tooLong,
+  ]);
+  expect(exitCode).toBe(0);
+});
 it("http2 client.request() on a destroyed or closed session uses the right error codes", async () => {
   // Node: destroyed session -> ERR_HTTP2_INVALID_SESSION,
   // closed (GOAWAY-pending) session -> ERR_HTTP2_GOAWAY_SESSION.

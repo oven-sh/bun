@@ -6,8 +6,8 @@ pub struct NoExtraLabel;
 
 const UNEXPECTED: Message = Message::new("unexpected", "This label '{{name}}' is unnecessary.");
 
-/// Whether the innermost loop or `switch` around `statement` has the label `label`. Then no statement in between has it: a label
-/// cannot be declared twice.
+/// True if the innermost loop or `switch` around `statement` has the label `label`. No statement in between can have
+/// it, because a label can't be declared twice.
 fn is_unnecessary<'a>(statement: Stmt<'a>, label: Name<'a>, cx: &mut Cx<'a, NoExtraLabel>) -> bool {
     let breakable = cx.state.find(Node::Stmt(statement), |_, ancestor| match ancestor {
         Node::Stmt(ancestor) => ast_utils::is_breakable_statement(ancestor).then_some(Some(ancestor)),

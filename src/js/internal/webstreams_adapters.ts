@@ -258,7 +258,8 @@ function newWritableStreamFromStreamWritable(streamWritable) {
         closed.reject(error);
         closed = undefined;
       }
-      controller.error(error);
+      // close() clears the controller when the stream has already ended.
+      controller?.error(error);
       controller = undefined;
       return;
     }
@@ -268,7 +269,7 @@ function newWritableStreamFromStreamWritable(streamWritable) {
       closed = undefined;
       return;
     }
-    controller.error($makeAbortError());
+    controller?.error($makeAbortError());
     controller = undefined;
   });
 
@@ -558,6 +559,8 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
     streamReadable.pause();
 
     streamReadable.on("data", function onData(chunk) {
+      // Buffered data can still be emitted after cancel() destroys the stream.
+      if (wasCanceled) return;
       // Copy the Buffer to detach it from the pool.
       if (Buffer.isBuffer(chunk) && !objectMode) chunk = new Uint8Array(chunk);
       controller.enqueue(chunk);

@@ -232,6 +232,7 @@ function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
   this._defaultFlushFlag = flush;
   this._finishFlushFlag = finishFlush;
   this._defaultFullFlushFlag = fullFlush;
+  this._flushBoundIdx = flushBoundIdx;
   this._info = opts && opts.info;
   this._maxOutputLength = maxOutputLength;
 }
@@ -305,6 +306,8 @@ ZlibBase.prototype.flush = function (kind, callback) {
     callback = kind;
     kind = this._defaultFullFlushFlag;
   }
+  const flushBound = FLUSH_BOUND[this._flushBoundIdx];
+  kind = checkRangesOrGetDefault(kind, "kind", flushBound[0], flushBound[1], this._defaultFullFlushFlag);
   if (this.writableFinished) {
     if (callback) process.nextTick(callback);
   } else if (this.writableEnded) {

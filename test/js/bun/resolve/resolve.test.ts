@@ -299,6 +299,13 @@ it("import long string should not segfault", async () => {
   } catch {}
 });
 
+it.skipIf(isWindows)("resolves an absolute specifier that is longer than a path buffer until it is normalized", () => {
+  using dir = tempDir("resolve-long-specifier", { "index.js": "" });
+  expect(Bun.resolveSync(`${dir}${Buffer.alloc(5000, "/").toString()}index.js`, String(dir))).toBe(
+    join(String(dir), "index.js"),
+  );
+});
+
 it("import override to node builtin", async () => {
   // @ts-expect-error
   expect(await import("#async_hooks")).toBeDefined();
@@ -332,6 +339,15 @@ it.if(isWindows)("directory cache key computation", () => {
   expect(import(`\\\\Test\\\\\\\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
   expect(import(`\\\\Test\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
   expect(import(`\\\\\\Test\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
+});
+
+// The failed resolution busts the directory cache for the dirname, which for `C:\\\x` is `C:\\`.
+it.if(isWindows)("import() of a missing file at the drive root rejects", async () => {
+  const drive = process.cwd().slice(0, 2);
+  for (const separators of [2, 3, 4]) {
+    await expect(import(drive + "\\".repeat(separators) + "doesnotexist.ts")).rejects.toThrow();
+  }
+  await expect(import(`${drive}///doesnotexist.ts`)).rejects.toThrow();
 });
 
 describe("NODE_PATH test", () => {
@@ -839,6 +855,81 @@ describe("package.json exports targets longer than the maximum path length", () 
       expect({ stdout, exitCode }).toEqual({ stdout: "caught MODULE_NOT_FOUND\n", exitCode: 0 });
     },
   );
+});
+
+describe("package.json sideEffects entries longer than the maximum path length", () => {
+  // Parsing a package.json joins every "sideEffects" entry onto the package directory.
+  const longSegment = Buffer.alloc(100_000, "s").toString();
+
+  it.concurrent.each([
+    ["exact", [`./${longSegment}.js`]],
+    ["glob", [`./${longSegment}/*.js`]],
+    ["mixed", ["./index.js", `./${longSegment}.js`, `./${longSegment}/*.js`]],
+  ])("requires a package whose sideEffects array has an oversized %s entry", async (_kind, sideEffects) => {
+    using dir = tempDir("resolver-side-effects-long-entry", {
+      "node_modules/long-side-effects/package.json": JSON.stringify({
+        name: "long-side-effects",
+        main: "index.js",
+        sideEffects,
+      }),
+      "node_modules/long-side-effects/index.js": "module.exports = 3;\n",
+      "index.js": `console.log(require("long-side-effects"));\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "3\n", stderr: "", exitCode: 0 });
+  });
+});
+
+// The resolver uses more stack per nesting level of an `exports` target than the JSON parser does.
+describe("package.json exports targets nested too deeply", () => {
+  const targets = {
+    array: Buffer.alloc(40000, "[").toString() + '"./t.js"' + Buffer.alloc(40000, "]").toString(),
+    conditions:
+      Array.from({ length: 30000 }, (_, i) => (i % 2 ? '{"node":' : '{"default":')).join("") +
+      '"./t.js"' +
+      Buffer.alloc(30000, "}").toString(),
+  };
+
+  it.concurrent.each(Object.entries(targets))("nested %s doesn't overflow the stack", async (shape, target) => {
+    using dir = tempDir(`resolver-exports-deep-${shape}`, {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/test-pkg/package.json": `{"name":"test-pkg","exports":{".":${target}}}`,
+      "node_modules/test-pkg/t.js": "module.exports = 1;\n",
+      "index.js": `
+        try {
+          require.resolve("test-pkg");
+          console.log("resolved");
+        } catch (e) {
+          console.log("caught " + e.code);
+        }
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The target resolves if the stack is large enough.
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: expect.stringMatching(/^(caught MODULE_NOT_FOUND|resolved)\n$/),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 // A package.json `imports` entry whose value is a bare package specifier

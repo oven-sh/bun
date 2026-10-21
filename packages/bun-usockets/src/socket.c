@@ -214,7 +214,7 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
         us_internal_socket_group_unlink_socket(s->group, s);
 
         us_poll_stop((struct us_poll_t *) s, s->group->loop);
-        bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
+        us_internal_poll_close_fd((struct us_poll_t *) s);
 
         /* Link this socket to the close-list and let it be deleted after this iteration */
         s->next = s->group->loop->data.closed_head;
@@ -322,7 +322,7 @@ static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_
             setsockopt(us_poll_fd((struct us_poll_t *)s), SOL_SOCKET, SO_LINGER, (const char*)&l, sizeof(l));
         }
 
-        bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
+        us_internal_poll_close_fd((struct us_poll_t *) s);
 
         /* Mark the socket as closed */
         s->flags.is_closed = 1;
@@ -886,8 +886,10 @@ void us_socket_resume(struct us_socket_t *s) {
     if (us_poll_change(&s->p, s->group->loop, events) != 0) {
         /* The dispatcher parked this socket while it was paused (loop.c) and the
          * kernel refused to take it back: nothing would ever deliver its tail,
-         * end or close again, so fail it now like a failed first registration. */
+         * end or close again, so fail it like a failed first registration. Defer
+         * the close to the loop because the close handler frees state that
+         * resume's callers (uWS ending a response, a body read in JS) still use. */
         int err = LIBUS_ERR;
-        us_internal_socket_close_raw(s, err > 2 ? err : LIBUS_ECONNRESET, NULL);
+        us_internal_loop_close_unresumable_socket(s->group->loop, s, err > 2 ? err : LIBUS_ECONNRESET);
     }
 }

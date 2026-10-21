@@ -4513,18 +4513,24 @@ function closeSocketHandle(self, handle, isException, isCleanupPending = false) 
   // The owner of a wrapped socket destroyed it: the TLS socket goes first, so the close of their fd is nothing to report.
   handle[kAdoptedTLSRaw]?.destroy();
   handle.close(onSocketHandleClosed);
-  setImmediate(() => {
-    $debug("emit close", isCleanupPending);
-    self.emit("close", isException);
-    if (isCleanupPending) {
-      // self._handle may have been detached or replaced since.
-      handle.onread = noop;
-      if (self._handle === handle) {
-        self._handle = null;
-        self._sockname = null;
-      }
-    }
-  });
+  // Arguments instead of a closure, so no scope keeps the closed handle alive.
+  if (isCleanupPending) setImmediate(emitCloseAndDetachHandle, self, isException, handle);
+  else setImmediate(emitClose, self, isException);
+}
+
+function emitClose(self, isException) {
+  $debug("emit close");
+  self.emit("close", isException);
+}
+
+function emitCloseAndDetachHandle(self, isException, handle) {
+  emitClose(self, isException);
+  // self._handle may have been detached or replaced since.
+  handle.onread = noop;
+  if (self._handle === handle) {
+    self._handle = null;
+    self._sockname = null;
+  }
 }
 
 // Reformat a native listen error to Node's "listen <CODE>: <description> <addr>"

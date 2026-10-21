@@ -147,7 +147,7 @@ pub(super) fn ensure_route_is_bundled(
                                     .as_ref()
                                     .expect("infallible: server bound")
                                     .get_or_load_plugins(
-                                        crate::server::ServePluginsCallback::DevServer(dev),
+                                        crate::server::ServePluginsCallback::DevServer,
                                     );
                                 match load_result {
                                     crate::server::GetOrStartLoadResult::Pending => {
@@ -403,13 +403,6 @@ fn check_route_failures(
     resp: AnyResponse,
 ) -> crate::Result<CheckResult> {
     let mut gts = dev.init_graph_trace_state(0)?;
-    // Note: erase to a raw pointer so the deferred cleanup only fires on
-    // scope exit when no other borrow of `dev` is live.
-    let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
-    scopeguard::defer! {
-        // SAFETY: see Note above.
-        unsafe { (*dev_ptr).incremental_result.failures_added.clear() }
-    };
     let _lock_guard = dev.graph_safety_lock.guard();
     let route_bundle = std::ptr::from_mut::<RouteBundle>(dev.route_bundle_ptr(route_bundle_index));
     // SAFETY: `trace_all_route_imports` reads `route_bundle.data` but never
@@ -421,7 +414,7 @@ fn check_route_failures(
         &mut gts,
         TraceImportGoal::FindErrors,
     )?;
-    if !dev.incremental_result.failures_added.is_empty() {
+    if !gts.failures.is_empty() {
         // See comment on this field for information
         if !dev.assume_perfect_incremental_bundling {
             // Cache bust EVERYTHING reachable
@@ -440,11 +433,7 @@ fn check_route_failures(
             return Ok(CheckResult::Rebuild);
         }
 
-        // SAFETY: `send_serialized_failures` does not mutate
-        // `incremental_result.failures_added`; reborrow through raw ptr to
-        // satisfy borrowck.
-        let failures = unsafe { &(*dev_ptr).incremental_result.failures_added };
-        dev.send_serialized_failures(resp, failures, None)?;
+        dev.send_serialized_failures(resp, &gts.failures, None)?;
         Ok(CheckResult::Stop)
     } else {
         // Failures are unreachable by this route, so it is OK to load.

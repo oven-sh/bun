@@ -18,6 +18,7 @@ import {
   isPosix,
   isWindows,
   libcPathForDlopen,
+  MAX_PATH_BYTES,
   runFixtureMaxRSS,
   tempDir,
   tls,
@@ -493,6 +494,61 @@ it("logs the invalid-response diagnostic when a synchronous fetch handler return
   });
   expect(stderr).toContain(`received '"plain string"'`);
   expect(stderr).toContain("received '42'");
+});
+
+it("passes the error to error() when inspecting a non-Response return value throws", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { inspect } from "node:util";
+      const events = [];
+      const throwsOnInspect = message => ({ [inspect.custom]() { throw new Error(message); } });
+      process.on("uncaughtException", err => events.push("uncaughtException: " + err.message));
+      async function hit(label, firstResult) {
+        let calls = 0;
+        await using server = Bun.serve({
+          port: 0,
+          development: false,
+          routes: { "/:id": req => (calls++ === 0 ? firstResult(req) : new Response("ok")) },
+          error: err => new Response("error(): " + err.message, { status: 500 }),
+        });
+        for (let i = 0; i < 2; i++) {
+          const res = await fetch(new URL("/1", server.url));
+          events.push(label + ": " + res.status + " " + (await res.text()));
+        }
+      }
+      await hit("sync", () => throwsOnInspect("sync inspect"));
+      await hit("pending promise", async () => {
+        await new Promise(resolve => setImmediate(resolve));
+        return throwsOnInspect("pending promise inspect");
+      });
+      await hit("request", req => {
+        req.params.nested = throwsOnInspect("request inspect");
+        return req;
+      });
+      console.log(JSON.stringify(events));
+    `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr.match(/^error: Expected a Response object.*$/gm) ?? stderr).toEqual(
+    new Array(3).fill("error: Expected a Response object"),
+  );
+  expect(stdout.trim()).toBe(
+    JSON.stringify(
+      ["sync", "pending promise", "request"].flatMap(label => [
+        `${label}: 500 error(): ${label} inspect`,
+        `${label}: 200 ok`,
+      ]),
+    ),
+  );
+  expect(exitCode).toBe(0);
 });
 
 it("request.signal works in trivial case", async () => {
@@ -5590,6 +5646,47 @@ describe("requests pipelined in one read", () => {
       );
       expect({ ran, responses: responses(reply) }).toEqual({ ran: expected as any, responses: expected.length });
     });
+  });
+});
+
+it("survives a handler that import()s a request path longer than the path buffer", async () => {
+  // Joined to the routes directory, this is longer than the path buffer but shorter than the specifier length that
+  // import() rejects up front. A request line is too short to overflow a Windows path buffer.
+  const pathLength = isWindows ? 4090 : MAX_PATH_BYTES - 6;
+  using dir = tempDir("serve-import-request-path", {
+    "routes/hello.js": `export default "hello";`,
+    "server.js": `
+      import { join } from "node:path";
+      const ROOT = join(import.meta.dir, "routes");
+      using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          try {
+            const route = await import(join(ROOT, new URL(req.url).pathname));
+            return new Response(route.default);
+          } catch {
+            return new Response("no such route", { status: 404 });
+          }
+        },
+      });
+      const long = await fetch(new URL("/" + Buffer.alloc(${pathLength}, "a").toString(), server.url));
+      const good = await fetch(new URL("/hello.js", server.url));
+      console.log(JSON.stringify({ long: long.status, good: [good.status, await good.text()] }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ long: 404, good: [200, "hello"] }),
+    stderr: "",
+    exitCode: 0,
   });
 });
 

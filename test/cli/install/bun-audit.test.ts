@@ -864,7 +864,7 @@ describe("`bun audit`", () => {
       expect(exitCode).toBe(0);
     });
 
-    // No answer says nothing about the packages. `npm audit` fails on it too.
+    // No response says nothing about the packages. `npm audit` fails in that case too.
     test.concurrent.each([
       ["", 200],
       [" \n", 200],
@@ -903,7 +903,7 @@ describe("`bun audit`", () => {
           "ms\x1b[31m": [{ severity: "critical", title: "not a real package", url: "https://example.com/fake" }],
         }),
       );
-      // Not normalizeBunSnapshot: it rewrites the backslashes the escapes are made of.
+      // Doesn't use normalizeBunSnapshot, because it rewrites the backslashes in the escapes.
       expect(withoutHeader(stdout)).toBe(
         [
           "ms@0.7.0",
@@ -2903,7 +2903,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("an override written as a $reference is reported as the blocker and left alone", async () => {
+  test.concurrent("an override written as a $reference is reported as the blocker and isn't changed", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, {
       name: "foo",
@@ -5127,7 +5127,8 @@ describe("`bun audit fix --latest`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  // Both dependents declare no-deps@^1.0.0, which also rejects 2.0.0; the override is what the user can change, so it alone is reported.
+  // Both dependents declare no-deps@^1.0.0, which also rejects 2.0.0. The override is what the user can change, so only
+  // the override is reported.
   test.concurrent(
     "a range held by an overrides entry is blocked on the override, which --latest rewrites",
     async () => {

@@ -195,8 +195,8 @@ fn key_pair(
     Some((o, n, as_written))
 }
 
-/// Whether `old` and `shown` have the same comparison key, which makes them the same program apart
-/// from layout and the names of locals.
+/// Returns true if `old` and `shown` have the same comparison key, which makes them the same
+/// program apart from layout and the names of locals.
 ///
 /// `removed` lists the lines of `shown` (0-based, ascending) that the diff marks as removed. A name
 /// mismatch there is accepted, because such a line may still use a local's old name.
@@ -254,8 +254,8 @@ fn same_key(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32], options: Opt
     }
 }
 
-/// Whether `shown`, a re-print of the file `raw` that is displayed in its place, still parses as
-/// the same file. If `renamed` is set, the names of locals may differ.
+/// Returns true if `shown`, a re-print of the file `raw` that's displayed in its place, still
+/// parses as the same file. If `renamed` is set, the names of locals may differ.
 pub(crate) fn stands_for(
     path: &[u8],
     raw: &[u8],
@@ -425,14 +425,10 @@ fn print_js<'a>(
                 None => (line, col),
             }
         };
-        let printed_lines = printed
-            .as_ref()
-            .map_or_else(|| bun_core::strings::count_char(&text, b'\n') + 1, Vec::len);
         if let Ok(parsed) = bun_sourcemap::mapping::parse(
             chunk.buffer.list.as_slice(),
             None,
             1,
-            printed_lines,
             bun_sourcemap::mapping::ParseOptions {
                 allow_names: false,
                 sort: true,

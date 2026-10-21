@@ -113,7 +113,8 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
         WTF::move(sourceCode), moduleWrapper, initializeImportMeta);
     ptr->finishCreation(vm);
 
-    if (cachedData.isEmpty()) {
+    // Like Node, reject an empty cachedData.
+    if (cachedDataValue.isUndefined()) {
         return ptr;
     }
 
@@ -127,11 +128,12 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
 
     // Decoding checks the format and the source key. Linking would need
     // the module's JSModuleEnvironment, which does not exist yet.
-    LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
-    SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ModuleType, lexicallyScopedFeatures, JSParserScriptMode::Module, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
-    Ref<CachedBytecode> cachedBytecode = NodeVM::createOwnedCachedBytecode(cachedData.span());
-    if (decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, WTF::move(cachedBytecode)))
-        return ptr;
+    if (RefPtr<CachedBytecode> cachedBytecode = unwrapCachedData(cachedData.span())) {
+        LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
+        SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ModuleType, lexicallyScopedFeatures, JSParserScriptMode::Module, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
+        if (decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, cachedBytecode.releaseNonNull()))
+            return ptr;
+    }
 
     throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_CACHED_DATA_REJECTED, "cachedData buffer was rejected"_s);
     return nullptr;
@@ -201,26 +203,22 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     const Identifier& attributesIdentifier = builtinNames.attributesPublicName();
     const Identifier& hostDefinedImportTypeIdentifier = builtinNames.hostDefinedImportTypePublicName();
 
-    WTF::Vector<ImportAttributesListNode*, 8> attributesNodes;
-    attributesNodes.reserveInitialCapacity(requests.size());
-
+    // JSC dedupes requests by specifier and type and keeps the first declaration's, so a declaration's position isn't its request's index.
+    ModuleMap<ImportAttributesListNode*> attributesLists;
     for (StatementNode* statement = node->statements()->firstStatement(); statement; statement = statement->next()) {
-        // Assumption: module declarations occur here in the same order they occur in `requestedModules`.
-        if (statement->isModuleDeclarationNode()) {
-            ModuleDeclarationNode* moduleDeclaration = static_cast<ModuleDeclarationNode*>(statement);
-            if (moduleDeclaration->isImportDeclarationNode()) {
-                ImportDeclarationNode* importDeclaration = static_cast<ImportDeclarationNode*>(moduleDeclaration);
-                ASSERT_WITH_MESSAGE(attributesNodes.size() < requests.size(), "More attributes nodes than requests");
-                ASSERT_WITH_MESSAGE(importDeclaration->moduleName()->moduleName().string().string() == requests.at(attributesNodes.size()).m_specifier.string(), "Module name mismatch");
-                attributesNodes.append(importDeclaration->attributesList());
-            } else if (moduleDeclaration->hasAttributesList()) {
-                // Necessary to make the indices of `attributesNodes` and `requests` match up
-                attributesNodes.append(nullptr);
+        if (!statement->isModuleDeclarationNode() || !static_cast<ModuleDeclarationNode*>(statement)->isImportDeclarationNode())
+            continue;
+        auto* importDeclaration = static_cast<ImportDeclarationNode*>(statement);
+        ImportAttributesListNode* attributesList = importDeclaration->attributesList();
+        auto type = ScriptFetchParameters::Type::JavaScript;
+        if (attributesList) {
+            for (auto [key, value] : attributesList->attributes()) {
+                if (*key == vm.propertyNames->type)
+                    type = ScriptFetchParameters::parseType(value->impl()).value_or(type);
             }
         }
+        attributesLists.add(ModuleMapKey { importDeclaration->moduleName()->moduleName().impl(), type }, attributesList);
     }
-
-    ASSERT_WITH_MESSAGE(attributesNodes.size() >= requests.size(), "Attributes node count doesn't match request count (%zu < %zu)", attributesNodes.size(), requests.size());
 
     for (unsigned i = 0; i < requests.size(); ++i) {
         const auto& request = requests[i];
@@ -270,10 +268,11 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
             }
         }
 
-        if (ImportAttributesListNode* attributesNode = attributesNodes.at(i)) {
-            for (auto [key, value] : attributesNode->attributes()) {
+        if (ImportAttributesListNode* attributesList = attributesLists.get(ModuleMapKey { request.m_specifier.impl(), request.m_attributes ? request.m_attributes->type() : ScriptFetchParameters::Type::JavaScript })) {
+            for (auto [key, value] : attributesList->attributes()) {
                 attributeMap.set(key->string(), value->string());
-                attributesObject->putDirect(vm, *key, JSC::jsString(vm, value->string()));
+                attributesObject->putDirectMayBeIndex(globalObject, *key, JSC::jsString(vm, value->string()));
+                RETURN_IF_EXCEPTION(scope, {});
             }
         }
 
@@ -503,8 +502,12 @@ JSUint8Array* NodeVMSourceTextModule::cachedData(JSGlobalObject* globalObject)
     if (!m_cachedBytecodeBuffer) {
         RefPtr<CachedBytecode> cachedBytecode = bytecode(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        std::span<const uint8_t> bytes = cachedBytecode->span();
-        JSUint8Array* buffer = WebCore::createBuffer(globalObject, bytes);
+        // getBytecode can return null without throwing (serialization failure).
+        if (!cachedBytecode) [[unlikely]] {
+            throwVMError(globalObject, scope, "createCachedData failed"_s);
+            return nullptr;
+        }
+        JSUint8Array* buffer = createCachedDataBuffer(globalObject, cachedBytecode->span());
         RETURN_IF_EXCEPTION(scope, nullptr);
         m_cachedBytecodeBuffer.set(vm, this, buffer);
     }

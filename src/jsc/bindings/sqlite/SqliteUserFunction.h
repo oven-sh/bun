@@ -85,6 +85,22 @@ inline bool SqliteColumnNames::changed(sqlite3_stmt* stmt)
     return true;
 }
 
+// True if resetting or finalizing `stmt` commits a write that iterate() stopped on a row. At that commit, a full-text
+// index writes to its own tables with statements that call the connection's update hook, user functions and authorizer.
+inline bool sqliteCommitsWhenFinalized(sqlite3_stmt* stmt)
+{
+    return sqlite3_stmt_busy(stmt) && !sqlite3_stmt_readonly(stmt);
+}
+
+// JS can't run during GC or at process exit. SQLite won't start a statement on an interrupted connection while another
+// one is open, so interrupting makes a commit that needs to run a statement fail, and the write is rolled back.
+inline void sqliteFinalize(sqlite3_stmt* stmt, bool mayCallScript)
+{
+    if (!mayCallScript && sqliteCommitsWhenFinalized(stmt))
+        sqlite3_interrupt(sqlite3_db_handle(stmt));
+    sqlite3_finalize(stmt);
+}
+
 // Where an SQL value comes from: a column of the current row, or an argument of a user function.
 struct SqliteColumn {
     sqlite3_stmt* statement;

@@ -892,8 +892,7 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// The position of entry point `source_index` in the user's entry point list:
-    /// after the runtime, bake's two virtual modules, and the browser runtime if it came first.
+    /// Position of entry point `source_index` in the user's list, after the reserved sources.
     pub(crate) fn bake_entry_point_index(&self, source_index: u32) -> u32 {
         let reserved: u32 = if self
             .framework

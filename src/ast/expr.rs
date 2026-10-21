@@ -337,37 +337,6 @@ impl Expr {
 // Expr — property/object/string accessor methods.
 
 impl Expr {
-    pub fn has_any_property_named(&self, names: &'static [&'static [u8]]) -> bool {
-        if let Data::EObjectJSON(obj) = &self.data {
-            return obj
-                .get()
-                .properties()
-                .iter()
-                .any(|p| bun_core::eql_any_comptime(p.key.slice(), names));
-        }
-        let Data::EObject(obj) = &self.data else {
-            return false;
-        };
-        if obj.properties.len_u32() == 0 {
-            return false;
-        }
-
-        for prop in obj.properties.slice() {
-            if prop.value.is_none() {
-                continue;
-            }
-            let Some(key) = &prop.key else { continue };
-            let Data::EString(key_str) = &key.data else {
-                continue;
-            };
-            if bun_core::eql_any_comptime(&key_str.data, names) {
-                return true;
-            }
-        }
-
-        false
-    }
-
     // toJS alias deleted — `to_js` lives in `bun_js_parser_jsc::expr_jsc` extension trait.
 
     /// Don't use this if you care about performance.

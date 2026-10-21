@@ -353,6 +353,11 @@ JSModuleNamespaceObject* NodeVMModule::namespaceObject(JSC::JSGlobalObject* glob
 
     AbstractModuleRecord* amr = this->moduleRecord(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    // link() can still change the modules that the exports of this one come from.
+    if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(amr); cyclic && cyclic->status() < JSC::CyclicModuleRecord::Status::Linked) {
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module status must not be unlinked or linking"_s);
+        return {};
+    }
     object = amr->getModuleNamespace(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (object) {
@@ -694,6 +699,13 @@ void NodeVMModule::propagateLinked()
         NodeVMModule* module = worklist.takeLast();
         if (!visited.add(module).isNewEntry)
             continue;
+
+        // An importer that got its modules before replaceUnlinkedRecords() links the replaced records, not this one.
+        if (auto* sourceTextModule = dynamicDowncast<NodeVMSourceTextModule>(module)) {
+            JSC::JSModuleRecord* record = sourceTextModule->moduleRecordIfExists();
+            if (!record || record->status() < JSC::CyclicModuleRecord::Status::Linked)
+                continue;
+        }
 
         if (module->status() == Status::Unlinked)
             module->status(Status::Linked);

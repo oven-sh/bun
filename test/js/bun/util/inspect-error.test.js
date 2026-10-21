@@ -237,6 +237,25 @@ test("error.stack throwing an error doesn't lead to a crash", () => {
   }).toThrow();
 });
 
+test("an uncaught error whose message getter throws exits with code 1", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `class E extends Error { get message() { throw new RangeError("from the getter"); } }
+      setTimeout(() => { setImmediate(() => console.log("immediate")); throw new E(); }, 0);
+      console.log("after");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("throw new E()");
+  expect(stdout).toBe("after\nimmediate\n");
+  expect(exitCode).toBe(1);
+});
+
 describe("source map remapping of the printed stack", () => {
   // The "at ..." lines that mention one of `files`, with the temp dir removed
   // from the paths.

@@ -71,7 +71,8 @@ server_exports = {
     return response;
   },
   async registerUpdate(modules, componentManifestAdd, componentManifestDelete) {
-    replaceModules(modules);
+    // A module that fails to load here fails the same way for the next request that needs it.
+    replaceModules(modules).catch(err => console.error(err));
 
     if (componentManifestAdd) {
       for (const uid of componentManifestAdd) {

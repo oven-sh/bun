@@ -841,9 +841,6 @@ fn export_replacement_value(
     global: &JSGlobalObject,
     arena: &Arena,
 ) -> JsResult<Option<bun_ast::Expr>> {
-    // The result outlives every parse, so don't allocate it in the thread-local store.
-    let _guard = bun_ast::expr::Disabler::scope();
-
     if value.is_boolean() {
         return Ok(Some(Expr {
             data: bun_ast::ExprData::EBoolean(bun_ast::E::Boolean {
@@ -882,6 +879,7 @@ fn export_replacement_value(
         // `E::EString::init` erases the borrow to `'static` per the AST
         // crate's `Str` convention (see ast/E.rs).
         let data = arena.alloc_slice_copy(utf8.slice());
+        // The result outlives every parse, so don't allocate it in the thread-local store.
         return Ok(Some(Expr::allocate(
             arena,
             bun_ast::E::EString::init(data),

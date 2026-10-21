@@ -2229,6 +2229,15 @@ impl<const SSL: bool> NewSocket<SSL> {
                 "C"
             }
         );
+        // Like Node, an http2 session reports a failed read, not a send that the kernel rejected.
+        let err = if SSL
+            && matches!(this.native_callback.get(), NativeCallbacks::H2(_))
+            && socket.ssl_send_rejected()
+        {
+            0
+        } else {
+            err
+        };
         this.detach_native_callback();
         this.socket.set(SocketHandler::<SSL>::DETACHED);
         // Declared first so it drops last: ticks drain ahead of the teardown.

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
-import { readdirSync, readFileSync } from "node:fs";
+import { closeSync, constants, openSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // On Windows, when the initial uv_read_start on a subprocess stdout/stderr
@@ -694,6 +694,46 @@ describe.skipIf(!isLinux || !cc)("a stdio stream whose sink fails to register wi
     await closed.promise;
     expect(output.replaceAll("\r\n", "\n")).toBe('{"refused":"ENOSPC"}\n' + Buffer.alloc(64, PATTERN).toString());
     expect(await proc.exited).toBe(0);
+  });
+
+  // A non-ASCII string is buffered before it is written. Once its write has failed it must not go out with a later one.
+  test.concurrent("process.stdout does not send a chunk after its write failed", async () => {
+    using fifoDir = tempDir("unpolled-sink", {});
+    const fifo = join(String(fifoDir), "fifo");
+    mkfifo(fifo);
+    // The write end opens only while the fifo has a reader. The child waits on stdin until the parent has closed both.
+    const reader = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+    const writer = openSync(fifo, "w");
+    const script = /* js */ `
+      const fs = require("fs");
+      fs.readSync(0, Buffer.alloc(1));
+      const results = [];
+      process.stdout.on("error", () => {});
+      process.stdout.write("\\u00e9", err => {
+        results.push(err ? err.code : null);
+        const reader = fs.openSync(process.argv[1], fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        process.stdout.write("second", err => {
+          results.push(err ? err.code : null);
+          const buffer = Buffer.alloc(64);
+          results.push(buffer.toString("utf8", 0, fs.readSync(reader, buffer)));
+          fs.writeSync(2, JSON.stringify(results) + "\\n");
+        });
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script, fifo],
+      env: shim(),
+      stdin: "pipe",
+      stdout: writer,
+      stderr: "pipe",
+    });
+    closeSync(writer);
+    closeSync(reader);
+    proc.stdin.write("go");
+    await proc.stdin.end();
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe('["EPIPE",null,"second"]\n');
+    expect(exitCode).toBe(0);
   });
 
   // The sink writes to its own duplicate of the fd. The read shows that the byte went through it.

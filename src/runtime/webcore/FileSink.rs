@@ -1610,6 +1610,11 @@ impl FileSink {
                 streams::Writable::Temporary(amt as u64)
             }
             WriteResult::Err(err) => {
+                // The writer keeps a chunk that it buffered before the write failed, and no poll drops it here.
+                #[cfg(unix)]
+                if self.poll_refused.get() {
+                    self.writer.with_mut(|w| w.outgoing.reset());
+                }
                 // A backpressured `write()` left its promise outstanding. `Writable::Err` becomes a
                 // second, already rejected promise, and the caller of `write()` is awaiting the first:
                 // the failure would be reported twice, once as an unhandled rejection. As in `end()`,

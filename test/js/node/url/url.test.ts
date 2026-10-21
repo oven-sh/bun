@@ -162,6 +162,14 @@ describe("url.parse() from a package in node_modules", () => {
   `;
   // Not a tail call: JavaScriptCore drops the frame of a strict function that makes one.
   const strictSome = `(check, limit) => ([limit].some(check) ? "inside" : "outside")`;
+  // What a fixture printed: its results, or the text when that is not JSON.
+  const results = (stdout: string) => {
+    try {
+      return JSON.parse(stdout);
+    } catch {
+      return stdout;
+    }
+  };
 
   // This fixture gives the same results with "node --expose-internals" (v26.3.0), except for bun:sqlite and bun:jsc.
   test.concurrent("isInsideNodeModules() does not list engine frames", async () => {
@@ -241,49 +249,52 @@ describe("url.parse() from a package in node_modules", () => {
       env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
       cwd: String(dir),
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(JSON.parse(stdout)).toEqual({
-      // The package is the first frame listed: an engine frame takes none of the limit.
-      direct: 1,
-      some: 1,
-      map: 1,
-      filter: 1,
-      reduce: 1,
-      arrayFrom: 1,
-      typedArrayMap: 1,
-      stacked: [1, 1, 1, 1],
-      strict: "inside",
-      esm: "inside",
-      fieldInitializer: true,
-      replace: true,
-      jsonParse: true,
-      // The same in code that the DFG compiled, and for a frame of each other kind of code.
-      hot: [10000, true],
-      esmTopLevel: true,
-      evalCode: true,
-      globalCode: true,
-      // A frame of a built-in module, or of a script named "node:", takes one of the limit and does not decide.
-      asyncHooks: [2, 3, 4],
-      sqliteTransaction: 2,
-      nodeName: 2,
-      // No argument means 10 frames. A limit can be a double.
-      defaultLimit: [true, false],
-      doubleLimit: false,
-      // A WebAssembly frame decides. A promise reaction has no caller.
-      wasm: null,
-      then: false,
-      application: null,
-      applicationCallback: null,
-      // "node_modules" with a separator of either kind on each side.
-      paths: [true, true, true, true, false, false],
-      insidePrepareStackTrace: true,
-      errorAccessors: [true, 0],
-      frozenError: true,
+    expect({ results: results(stdout), stderr, exitCode }).toEqual({
+      results: {
+        // The package is the first frame listed: an engine frame takes none of the limit.
+        direct: 1,
+        some: 1,
+        map: 1,
+        filter: 1,
+        reduce: 1,
+        arrayFrom: 1,
+        typedArrayMap: 1,
+        stacked: [1, 1, 1, 1],
+        strict: "inside",
+        esm: "inside",
+        fieldInitializer: true,
+        replace: true,
+        jsonParse: true,
+        // The same in code that the DFG compiled, and for a frame of each other kind of code.
+        hot: [10000, true],
+        esmTopLevel: true,
+        evalCode: true,
+        globalCode: true,
+        // A frame of a built-in module, or of a script named "node:", takes one of the limit and does not decide.
+        asyncHooks: [2, 3, 4],
+        sqliteTransaction: 2,
+        nodeName: 2,
+        // No argument means 10 frames. A limit can be a double.
+        defaultLimit: [true, false],
+        doubleLimit: false,
+        // A WebAssembly frame decides. A promise reaction has no caller.
+        wasm: null,
+        then: false,
+        application: null,
+        applicationCallback: null,
+        // "node_modules" with a separator of either kind on each side.
+        paths: [true, true, true, true, false, false],
+        insidePrepareStackTrace: true,
+        errorAccessors: [true, 0],
+        frozenError: true,
+      },
+      stderr: "",
+      exitCode: 0,
     });
-    expect(exitCode).toBe(0);
   });
 
   const parseLibrary = `
@@ -344,29 +355,33 @@ describe("url.parse() from a package in node_modules", () => {
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "main.js"],
-      env: bunEnv,
+      // The process still emits the "warning" event. Nothing prints it.
+      env: { ...bunEnv, NODE_NO_WARNINGS: "1" },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(JSON.parse(stdout)).toEqual({
-      "map(url.parse)": [],
-      "forEach(url.parse)": [],
-      "replace(url.parse)": [],
-      "3 engine frames, url.parse": [],
-      "map(url.format)": [],
-      "3 engine frames, url.format": [],
-      "reduce(url.resolve)": [],
-      "reduce(url.resolveObject)": [],
-      "map(Url.prototype.resolve)": [],
-      "headers.forEach(url.parse)": [],
-      "new ReadableStream({ start: url.parse })": [],
-      application: ["DEP0169"],
-      afterTheWarning: [],
+    expect({ results: results(stdout), stderr, exitCode }).toEqual({
+      results: {
+        "map(url.parse)": [],
+        "forEach(url.parse)": [],
+        "replace(url.parse)": [],
+        "3 engine frames, url.parse": [],
+        "map(url.format)": [],
+        "3 engine frames, url.format": [],
+        "reduce(url.resolve)": [],
+        "reduce(url.resolveObject)": [],
+        "map(Url.prototype.resolve)": [],
+        "headers.forEach(url.parse)": [],
+        "new ReadableStream({ start: url.parse })": [],
+        application: ["DEP0169"],
+        afterTheWarning: [],
+      },
+      stderr: "",
+      exitCode: 0,
     });
-    expect(exitCode).toBe(0);
   });
 
   // A bundle is one file outside node_modules. Its source map names the files it was built from.
@@ -394,9 +409,8 @@ describe("url.parse() from a package in node_modules", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toBe("example.com\n");
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "example.com\n", stderr: "", exitCode: 0 });
   });
 });

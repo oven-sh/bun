@@ -93,12 +93,23 @@ describe("v class sets are a SyntaxError when the grammar says so, at any patter
       "[\\d\\w&&a]",
       "[a[b]&&c]",
       "[^a\\q{ab}&&\\d]",
+      "[^a\\q{ab}&&b]",
       "[a&&\\da]",
       "[a&&b[c]]",
     ];
+    const messageOf = (set: string) => {
+      try {
+        new RegExp(set, "v");
+        return "no error";
+      } catch (e) {
+        return (e as Error).message;
+      }
+    };
 
     expect(sets.filter(acornAccepts)).toEqual([]);
     expect(differences(sets)).toEqual([]);
+    // The grammar refuses a negated one too, before the rule for a negated class that may contain strings.
+    expect(sets.map(messageOf)).toEqual(sets.map(() => "Invalid regular expression: invalid operation in class set"));
   });
 
   // A nested class is a class of its own, whatever is before it in the class around it.

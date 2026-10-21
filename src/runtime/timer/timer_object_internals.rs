@@ -572,7 +572,11 @@ impl TimerObjectInternals {
             s.this_value.with_mut(|r| r.downgrade());
         } else {
             time_before_call = Timespec::ms_from_now(
-                TimespecMockMode::AllowMockedTime,
+                if s.fakeable {
+                    TimespecMockMode::AllowMockedTime
+                } else {
+                    TimespecMockMode::ForceRealTime
+                },
                 i64::from(s.interval.get()),
             );
         }
@@ -790,10 +794,19 @@ impl TimerObjectInternals {
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
 
-        let now = Timespec::now(TimespecMockMode::AllowMockedTime);
-        // Only `Bun.sleep()` has an `interval` below 1.
+        let now = Timespec::now(if self.fakeable {
+            TimespecMockMode::AllowMockedTime
+        } else {
+            TimespecMockMode::ForceRealTime
+        });
         // SAFETY: `state` is the boxed per-thread `RuntimeState`; field read only.
-        let min_delay = unsafe { (*state).timer.fake_timers.min_delay_ms() };
+        let min_delay = if self.fakeable {
+            // SAFETY: `state` is the boxed per-thread `RuntimeState`; field read only.
+            unsafe { (*state).timer.fake_timers.min_delay_ms() }
+        } else {
+            0
+        };
+        // Only `Bun.sleep()` has an `interval` below 1.
         let scheduled_time = now.add_ms(i64::from(self.interval.get().max(min_delay)));
         let was_active = self.event_loop_timer_state() == EventLoopTimerState::ACTIVE;
         if was_active {

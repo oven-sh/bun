@@ -45,7 +45,6 @@ const {
   NodeHTTPHeaderState,
   kPendingCallbacks,
   kRememberPeer,
-  kRequest,
   kCloseCallback,
   kClosedWithUnsentData,
   NodeHTTPResponseFlags,
@@ -248,11 +247,13 @@ function releaseServerParserShim(socket, req?) {
   if (req != null && req.parser != null) req.parser = null;
 }
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L891-L900
 function onNodeHTTPServerSocketTimeout() {
-  const req = this[kRequest];
-  // Like Node.js's socketOnTimeout: the request only sees 'timeout' while its
-  // message is still being received.
-  const reqTimeout = req && !req.complete && req.emit("timeout", this);
+  // The request whose message the connection still receives, also after its response finished.
+  const req = this.parser?.incoming;
+  // Not in Node.js: a request that the stream destroyer took off its connection never turns complete here (Node's
+  // parser completes it when its body has arrived), so it is told only while a response is on the socket.
+  const reqTimeout = req && !req.complete && !(req.destroyed && !this._httpMessage) && req.emit("timeout", this);
   const res = this._httpMessage;
   const resTimeout = res && res.emit("timeout", this);
   const serverTimeout = this.server.emit("timeout", this);
@@ -927,8 +928,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           server.emit("connection", socket);
         }
 
-        // Target of the socket 'timeout' handler until this request's response detaches.
-        socket[kRequest] = http_req;
         // Node.js (llhttp) only flags a request as an upgrade when it carries
         // both an Upgrade header and a Connection header with the "upgrade"
         // token; the server then consults shouldUpgradeCallback (default: an
@@ -1493,6 +1492,8 @@ function detachSocketListenersForHandoff(socket) {
 function resolveHandoffPromise(promise) {
   $resolvePromise(promise, undefined);
 }
+// The socket's inactivity Timeout. After a keep-alive idle timer fired and a 'timeout' listener kept the socket, a
+// stand-in with only refresh(), which arms a new timer (rearmFiredKeepAliveTimer).
 const kSocketTimeoutTimer = Symbol("socketTimeoutTimer");
 const kStreamingEnabled = Symbol("kStreamingEnabled");
 // destroySoon() was called: native lets the read that is being parsed reach the request, then closes right behind the FIN.
@@ -1626,8 +1627,25 @@ function onSocketTimeoutTimerExpired(socket) {
   // like net.Socket.
   if (socket[kKeepAliveTimeoutSet]) {
     socket[kSocketTimeoutTimer] = undefined;
+    const msecs = socket.timeout;
+    try {
+      socket._onTimeout();
+    } finally {
+      // A 'timeout' listener kept the socket and its timeout. _unrefTimer() finds this in place of the fired timer.
+      if (!socket.destroyed && socket[kSocketTimeoutTimer] === undefined && socket.timeout === msecs) {
+        socket[kSocketTimeoutTimer] = { refresh: rearmFiredKeepAliveTimer, socket, msecs };
+      }
+    }
+    return;
   }
   socket._onTimeout();
+}
+
+// Node's refresh() arms a fired timer again. A request that came since has ended that idle period.
+function rearmFiredKeepAliveTimer(this: { socket: NodeHTTPServerSocket; msecs: number }) {
+  const socket = this.socket;
+  socket[kSocketTimeoutTimer] = undefined;
+  if (socket[kKeepAliveTimeoutSet]) socket.setTimeout(this.msecs);
 }
 
 // Extends net.Socket so server connection sockets satisfy Node's class
@@ -1876,14 +1894,10 @@ function getNodeHTTPServerSocket() {
       // not yet finished (`resOnFinish` does `incoming.shift()`). Our
       // equivalent of "still in the queue" is `_httpMessage` being non-null:
       // `detachSocket()` (called from `res.end()` / on `"finish"`) clears it.
-      // Do NOT fall back to `this[kRequest]` here — `_httpMessage` is the
-      // canonical "response still attached" indicator. (`detachSocket()` now
-      // clears `kRequest` alongside `_httpMessage`, so the two agree after a
-      // finished response; historically `kRequest` was never cleared and the
-      // fallback aborted the request on every keep-alive close even after a
-      // fully successful response, racing `req._dump()`'s nextTick into a
-      // spurious `"aborted"` — seen as flakes in the express `res.sendFile`
-      // suite where supertest closes the socket right after reading the body.)
+      // Do NOT abort a request whose response already finished: that raced
+      // `req._dump()`'s nextTick into a spurious `"aborted"` on a keep-alive
+      // close (flakes in the express `res.sendFile` suite, where supertest
+      // closes the socket right after reading the body).
       //
       // Gate on `!req.destroyed` rather than `!req.complete`: a body-less GET
       // flips `complete` before the response is written, so an aborted
@@ -3898,12 +3912,6 @@ ServerResponse.prototype.detachSocket = function (socket) {
     if (socket[kCloseCallback]) socket[kCloseCallback] = undefined;
     socket.removeListener("close", onServerResponseClose);
     socket._httpMessage = null;
-    // Drop the request reference so a kept-alive idle connection does not
-    // pin the last request in memory (Node.js frees the parser's incoming
-    // reference when the response finishes).
-    if (socket[kRequest] === this.req) {
-      socket[kRequest] = undefined;
-    }
   }
 
   this.socket = null;

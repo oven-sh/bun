@@ -2000,7 +2000,9 @@ pub mod bv2_impl {
 
             ct.options.target = Target::Browser;
             // Client assets are ES modules whatever the server format is.
-            ct.options.output_format = options::Format::Esm;
+            if self.has_browser_runtime() {
+                ct.options.output_format = options::Format::Esm;
+            }
             // Don't inherit SSR mode from the server target: the SSR pass
             // drops hook setter bindings, which is invalid for browser code.
             if ct.options.react_compiler.is_ssr() {
@@ -4832,8 +4834,9 @@ pub mod bv2_impl {
                                 };
 
                             // SAFETY: see `self_ptr` note above — `transpiler_for_target` needs
-                            // `&mut self` only to pick between two stored `*mut Transpiler`s; it
-                            // never touches `graph.input_files`.
+                            // `&mut self` only to pick between two stored `*mut Transpiler`s. Its
+                            // lazy arm, which appends to `graph.input_files`, is not reached: a
+                            // browser-target file exists only once the client transpiler does.
                             let asset_naming = unsafe {
                                 &(*self_ptr)
                                     .transpiler_for_target(target)

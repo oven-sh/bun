@@ -62,7 +62,9 @@ function expectClientChunkToRunInBrowser(chunk: string) {
 function expectServerChunkToKeepServerRuntime(chunk: string, target: "bun" | "node", format: "esm" | "cjs" | "iife") {
   expect(chunk).not.toContain("Dynamic require of");
   if (format === "cjs") {
+    // The bare global, not the runtime's `__require`.
     expect(chunk).toContain("require(name)");
+    expect(chunk).not.toContain("__require");
   } else if (format === "iife") {
     expect(chunk.startsWith("// @bun\n(() => {")).toBe(true);
   } else if (target === "bun") {

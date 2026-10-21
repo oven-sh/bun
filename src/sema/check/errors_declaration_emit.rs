@@ -750,6 +750,8 @@ struct DeclarationEmit<'c, 'p, 's> {
     expando_hosts: FxHashMap<StmtId, Vec<Statement>>,
     /// `expandoMembers`, keyed by the host's statement.
     expando_members: FxHashMap<StmtId, Vec<Statement>>,
+    /// `deferredExpandoAssignments`, keyed by the host's statement.
+    deferred_expando_assignments: FxHashMap<StmtId, Vec<ExprId>>,
 }
 
 impl Checker<'_, '_> {
@@ -913,6 +915,7 @@ impl<'c, 'p, 's> DeclarationEmit<'c, 'p, 's> {
             witnessed_cjs_exports: Vec::new(),
             expando_hosts: FxHashMap::default(),
             expando_members: FxHashMap::default(),
+            deferred_expando_assignments: FxHashMap::default(),
         }
     }
 
@@ -3270,222 +3273,231 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     /// `visitNestedExpression`, `transformExpandoAssignment` for each `f.name = value` that declares a property. They
     /// come before all statements.
     fn transform_expando_assignments(&mut self) {
+        for &e in self.c.bound(self.file()).expando_declarations.iter() {
+            self.transform_expando_assignment(e);
+        }
+    }
+
+    /// `transformExpandoAssignment`
+    fn transform_expando_assignment(&mut self, e: ExprId) {
         let file = self.file();
         let files = self.c.files();
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
-        for &e in bound.expando_declarations.iter() {
-            let ExprKind::Assign {
-                op: None,
-                target,
-                value,
-            } = hir[e].kind
-            else {
-                continue;
-            };
-            // `GetLeftmostAccessExpression`
-            let mut root = target;
-            while let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir[root].kind {
-                if is_parenthesized(hir, root) {
-                    break;
-                }
-                root = obj;
-            }
-            let ExprKind::Ident(name) = hir[root].kind else {
-                continue;
-            };
+        let ExprKind::Assign {
+            op: None,
+            target,
+            value,
+        } = hir[e].kind
+        else {
+            return;
+        };
+        // `GetLeftmostAccessExpression`
+        let mut root = target;
+        while let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir[root].kind {
             if is_parenthesized(hir, root) {
-                continue;
+                break;
             }
-            // `GetReferencedValueDeclaration`
-            let Some(host) = self.c.symbol_of_identifier(file, root, name) else {
-                continue;
-            };
-            let host = files.export_symbol_of_value_symbol_if_exported(host);
-            let declaration = files.decls_of(host).iter().copied().find(|&(_, decl)| {
-                !matches!(
-                    decl,
-                    Decl::Interface(_) | Decl::Alias(_) | Decl::TypeParam(_)
-                )
-            });
-            let Some((of, declaration)) = declaration else {
-                continue;
-            };
-            if of != file {
-                continue;
-            }
-            let loc = files.loc_of_declaration(file, declaration);
-            if loc.is_some_and(|loc| self.c.should_strip_internal(file, loc.pos)) {
-                continue;
-            }
-            // The function that's emitted for a variable.
-            let mut variable: Option<(VarDeclId, FnId)> = None;
-            match declaration {
-                Decl::Var(pat) => {
-                    let PatParent::Var(d) = bound.pat_parent[pat.idx()] else {
-                        continue;
-                    };
-                    let decl = &hir[d];
-                    if decl.ty.is_some() || decl.init.is_none() || is_parenthesized(hir, decl.init)
-                    {
-                        continue;
-                    }
-                    let ExprKind::Fn(f) = hir[decl.init].kind else {
-                        continue;
-                    };
-                    variable = Some((d, f));
-                }
-                Decl::Fn(f) => {
-                    if hir.jsdoc_type(JsDocTypeOwner::Fn(f)).is_some() {
-                        continue;
-                    }
-                }
-                Decl::Class(_) | Decl::Enum(_) | Decl::Module(_) => {}
-                _ => continue,
-            }
-            // `tryGetPropertyName`
-            let property = match hir[target].kind {
-                ExprKind::Dot { name, .. } => Some(name),
-                ExprKind::Index { index, .. } => match hir[index].kind {
-                    ExprKind::String(name) => Some(name),
-                    // `tryGetNameFromEntityNameExpression`
-                    _ if is_entity_name_expression(hir, index)
-                        && self
-                            .c
-                            .resolve_entity_name_expression(file, index, SymFlags::VALUE)
-                            .is_some_and(|sym| {
-                                files
-                                    .flags(sym)
-                                    .intersects(SymFlags::CONST | SymFlags::ENUM_MEMBER)
-                            }) =>
-                    {
-                        self.c.member_name(file, PropKey::Computed(index))
-                    }
-                    _ => None,
-                },
-                _ => None,
-            };
-            let Some(property) =
-                property.filter(|&name| bun_core::lexer::is_identifier(self.c.atoms().bytes(name)))
-            else {
-                continue;
-            };
-            // `isDeclarationAndNotVisible`
-            let is_visible = match declaration {
-                Decl::Var(pat) => self.is_binding_name_visible(pat),
-                _ => self.c.is_declaration_visible(file, declaration),
-            };
-            if !is_visible {
-                continue;
-            }
-            // `shouldEmitFunctionProperties`
-            if let Decl::Fn(f) = declaration
-                && matches!(hir[f].body, FnBody::None)
-                && !files.decls_of(host).iter().any(|&(file, decl)| {
-                    matches!(decl, Decl::Fn(f) if !matches!(self.c.hir(file)[f].body, FnBody::None))
-                })
-            {
-                continue;
-            }
-            // `transformExpandoHost`: it's emitted as a function, replacing the whole statement. A function declaration
-            // emits the same when it's visited. `getExpandoHostId`
-            let root = match variable {
-                Some((d, _)) => bound.var_stmt[d.idx()].some(),
-                None => self.c.files().statement_of_declaration(file, declaration),
-            };
-            if let Some((d, function)) = variable {
-                let statement = bound.var_stmt[d.idx()];
-                if statement.is_some() && !self.expando_hosts.contains_key(&statement) {
-                    let saved = self.tracker.get_symbol_accessibility_diagnostic;
-                    self.tracker.get_symbol_accessibility_diagnostic =
-                        Context::ForNode(hir.node(d));
-                    let outer = self.indent;
-                    self.set_indent(self.indent_of_statements(bound.parent_of_stmt(statement)));
-                    let signature = self.transform_signature(function);
-                    self.set_indent(outer);
-                    self.tracker.get_symbol_accessibility_diagnostic = saved;
-                    let host = self.expando_host(statement, name, &signature);
-                    self.expando_hosts.insert(statement, host);
-                    if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
-                        self.c
-                            .iso_report_expandos(isolated_declarations, hir.node(d));
-                    }
-                }
-            }
-            let saved = (
-                self.tracker.error_name_node,
-                self.tracker.get_symbol_accessibility_diagnostic,
-            );
-            self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(e));
-            let export_of = |names: Vec<u8>| {
-                let text = [b"export { ", &names[..], b" };"].concat();
-                Statement::new(StatementKind::ExportDeclaration, text)
-            };
-            let export_name = self.name(property);
-            let mut added = Vec::new();
-            if let ExprKind::Ident(right) = hir[value].kind
-                && !is_parenthesized(hir, value)
-            {
-                // `transformBinaryExpressionToExportDeclaration`: it's emitted as `export { right as name }`.
-                self.check_entity_name_visibility(right, hir[value].pos, Meaning::ValueOfName);
-                added.push(export_of(if right == property {
-                    export_name.to_vec()
-                } else {
-                    [self.name(right), b" as ", export_name].concat()
-                }));
-            } else {
-                let holder = self.c.type_of_symbol(host);
-                if let Some(ty) = self.c.type_of_property(holder, property) {
-                    self.tracker.error_name_node = Node::NONE;
-                    // It's emitted in its host's namespace.
-                    let host_parent = root.map_or(Parent::None, |root| bound.parent_of_stmt(root));
-                    let outer = self.indent;
-                    self.set_indent(self.indent_of_statements(host_parent) + 1);
-                    let ty = self.create_type_of_declaration(
-                        Some(hir.node(e)),
-                        ty,
-                        DECLARATION_EMIT_NODE_BUILDER_FLAGS,
-                    );
-                    self.set_indent(outer);
-                    // "use exportName as localName if there won't be any conflicts or keyword issues"
-                    let any = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
-                    let scope = self.enclosing.scope;
-                    let local_name = if files.resolve_name(file, scope, property, any).is_some()
-                        || is_non_contextual_keyword(export_name)
-                    {
-                        // `NewGeneratedNameForNode` for the assignment
-                        self.temp_variable_name()
-                    } else {
-                        export_name.to_vec()
-                    };
-                    added.push(Statement::new(
-                        StatementKind::Other,
-                        [b"var ", &local_name[..], b": ", &ty[..], b";"].concat(),
-                    ));
-                    if local_name != export_name {
-                        added.push(export_of([&local_name[..], b" as ", export_name].concat()));
-                    }
-                }
-            }
-            if let Some(root) = root {
-                let members = self.expando_members.entry(root).or_default();
-                let is_export = |it: &Statement| it.kind == StatementKind::ExportDeclaration;
-                let had_export = members.iter().any(is_export);
-                // "so they remain exported after the `export {}` is added"
-                if added.len() > 1 && !had_export {
-                    for member in members.iter_mut().filter(|it| !it.is_exported()) {
-                        member.modifiers.insert(0, Flags::EXPORT);
-                    }
-                }
-                if had_export && let Some(first) = added.first_mut().filter(|it| !is_export(it)) {
-                    first.modifiers.push(Flags::EXPORT);
-                }
-                members.append(&mut added);
-            }
-            (
-                self.tracker.error_name_node,
-                self.tracker.get_symbol_accessibility_diagnostic,
-            ) = saved;
+            root = obj;
         }
+        let ExprKind::Ident(name) = hir[root].kind else {
+            return;
+        };
+        if is_parenthesized(hir, root) {
+            return;
+        }
+        // `GetReferencedValueDeclaration`
+        let Some(host) = self.c.symbol_of_identifier(file, root, name) else {
+            return;
+        };
+        let host = files.export_symbol_of_value_symbol_if_exported(host);
+        let declaration = files.decls_of(host).iter().copied().find(|&(_, decl)| {
+            !matches!(
+                decl,
+                Decl::Interface(_) | Decl::Alias(_) | Decl::TypeParam(_)
+            )
+        });
+        let Some((of, declaration)) = declaration else {
+            return;
+        };
+        if of != file {
+            return;
+        }
+        let loc = files.loc_of_declaration(file, declaration);
+        if loc.is_some_and(|loc| self.c.should_strip_internal(file, loc.pos)) {
+            return;
+        }
+        // The function that's emitted for a variable.
+        let mut variable: Option<(VarDeclId, FnId)> = None;
+        match declaration {
+            Decl::Var(pat) => {
+                let PatParent::Var(d) = bound.pat_parent[pat.idx()] else {
+                    return;
+                };
+                let decl = &hir[d];
+                if decl.ty.is_some() || decl.init.is_none() || is_parenthesized(hir, decl.init) {
+                    return;
+                }
+                let ExprKind::Fn(f) = hir[decl.init].kind else {
+                    return;
+                };
+                variable = Some((d, f));
+            }
+            Decl::Fn(f) => {
+                if hir.jsdoc_type(JsDocTypeOwner::Fn(f)).is_some() {
+                    return;
+                }
+            }
+            Decl::Class(_) | Decl::Enum(_) | Decl::Module(_) => {}
+            _ => return,
+        }
+        // `tryGetPropertyName`
+        let property = match hir[target].kind {
+            ExprKind::Dot { name, .. } => Some(name),
+            ExprKind::Index { index, .. } => match hir[index].kind {
+                ExprKind::String(name) => Some(name),
+                // `tryGetNameFromEntityNameExpression`
+                _ if is_entity_name_expression(hir, index)
+                    && self
+                        .c
+                        .resolve_entity_name_expression(file, index, SymFlags::VALUE)
+                        .is_some_and(|sym| {
+                            files
+                                .flags(sym)
+                                .intersects(SymFlags::CONST | SymFlags::ENUM_MEMBER)
+                        }) =>
+                {
+                    self.c.member_name(file, PropKey::Computed(index))
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(property) =
+            property.filter(|&name| bun_core::lexer::is_identifier(self.c.atoms().bytes(name)))
+        else {
+            return;
+        };
+        // `isDeclarationAndNotVisible`
+        let is_visible = match declaration {
+            Decl::Var(pat) => self.is_binding_name_visible(pat),
+            _ => self.c.is_declaration_visible(file, declaration),
+        };
+        // `getExpandoHostId`
+        let root = match variable {
+            Some((d, _)) => bound.var_stmt[d.idx()].some(),
+            None => self.c.files().statement_of_declaration(file, declaration),
+        };
+        if !is_visible {
+            // "printing the type of a visible declaration may still late-mark it as visible"
+            if let Some(root) = root {
+                let deferred = self.deferred_expando_assignments.entry(root).or_default();
+                deferred.push(e);
+            }
+            return;
+        }
+        // `shouldEmitFunctionProperties`
+        if let Decl::Fn(f) = declaration
+            && matches!(hir[f].body, FnBody::None)
+            && !files.decls_of(host).iter().any(|&(file, decl)| {
+                matches!(decl, Decl::Fn(f) if !matches!(self.c.hir(file)[f].body, FnBody::None))
+            })
+        {
+            return;
+        }
+        // `transformExpandoHost`: it's emitted as a function, replacing the whole statement. A function declaration
+        // emits the same when it's visited.
+        if let Some((d, function)) = variable {
+            let statement = bound.var_stmt[d.idx()];
+            if statement.is_some() && !self.expando_hosts.contains_key(&statement) {
+                let saved = self.tracker.get_symbol_accessibility_diagnostic;
+                self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(d));
+                let outer = self.indent;
+                self.set_indent(self.indent_of_statements(bound.parent_of_stmt(statement)));
+                let signature = self.transform_signature(function);
+                self.set_indent(outer);
+                self.tracker.get_symbol_accessibility_diagnostic = saved;
+                let host = self.expando_host(statement, name, &signature);
+                self.expando_hosts.insert(statement, host);
+                if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
+                    self.c
+                        .iso_report_expandos(isolated_declarations, hir.node(d));
+                }
+            }
+        }
+        let saved = (
+            self.tracker.error_name_node,
+            self.tracker.get_symbol_accessibility_diagnostic,
+        );
+        self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(e));
+        let export_of = |names: Vec<u8>| {
+            let text = [b"export { ", &names[..], b" };"].concat();
+            Statement::new(StatementKind::ExportDeclaration, text)
+        };
+        let export_name = self.name(property);
+        let mut added = Vec::new();
+        if let ExprKind::Ident(right) = hir[value].kind
+            && !is_parenthesized(hir, value)
+        {
+            // `transformBinaryExpressionToExportDeclaration`: it's emitted as `export { right as name }`.
+            self.check_entity_name_visibility(right, hir[value].pos, Meaning::ValueOfName);
+            added.push(export_of(if right == property {
+                export_name.to_vec()
+            } else {
+                [self.name(right), b" as ", export_name].concat()
+            }));
+        } else {
+            let holder = self.c.type_of_symbol(host);
+            if let Some(ty) = self.c.type_of_property(holder, property) {
+                self.tracker.error_name_node = Node::NONE;
+                // It's emitted in its host's namespace.
+                let host_parent = root.map_or(Parent::None, |root| bound.parent_of_stmt(root));
+                let outer = self.indent;
+                self.set_indent(self.indent_of_statements(host_parent) + 1);
+                let ty = self.create_type_of_declaration(
+                    Some(hir.node(e)),
+                    ty,
+                    DECLARATION_EMIT_NODE_BUILDER_FLAGS,
+                );
+                self.set_indent(outer);
+                // "use exportName as localName if there won't be any conflicts or keyword issues"
+                let any = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
+                let scope = self.enclosing.scope;
+                let local_name = if files.resolve_name(file, scope, property, any).is_some()
+                    || is_non_contextual_keyword(export_name)
+                {
+                    // `NewGeneratedNameForNode` for the assignment
+                    self.temp_variable_name()
+                } else {
+                    export_name.to_vec()
+                };
+                added.push(Statement::new(
+                    StatementKind::Other,
+                    [b"var ", &local_name[..], b": ", &ty[..], b";"].concat(),
+                ));
+                if local_name != export_name {
+                    added.push(export_of([&local_name[..], b" as ", export_name].concat()));
+                }
+            }
+        }
+        if let Some(root) = root {
+            let members = self.expando_members.entry(root).or_default();
+            let is_export = |it: &Statement| it.kind == StatementKind::ExportDeclaration;
+            let had_export = members.iter().any(is_export);
+            // "so they remain exported after the `export {}` is added"
+            if added.iter().any(is_export) && !had_export {
+                for member in members.iter_mut().filter(|it| !it.is_exported()) {
+                    member.modifiers.insert(0, Flags::EXPORT);
+                }
+            }
+            if had_export && let Some(first) = added.first_mut().filter(|it| !is_export(it)) {
+                first.modifiers.push(Flags::EXPORT);
+            }
+            members.append(&mut added);
+        }
+        (
+            self.tracker.error_name_node,
+            self.tracker.get_symbol_accessibility_diagnostic,
+        ) = saved;
     }
 
     /// `PrecalculateDeclarationEmitVisibility`
@@ -3924,6 +3936,14 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             && self.is_implementation_of_overload(f)
         {
             return None;
+        }
+        // `createFullExpandoBlock`
+        for e in self
+            .deferred_expando_assignments
+            .remove(&s)
+            .unwrap_or_default()
+        {
+            self.transform_expando_assignment(e);
         }
         if let Some(host) = self.expando_hosts.get(&s) {
             let host = host.clone();

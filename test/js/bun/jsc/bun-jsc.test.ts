@@ -26,7 +26,9 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isWindows } from "harness";
+import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 describe("bun:jsc", () => {
   function count() {
@@ -282,8 +284,20 @@ describe("bun:jsc", () => {
       return acc;
     };
 
+    // On a busy machine the sampler thread may still not get to run in that
+    // window, so profile again until it has. A profiler that no longer samples
+    // uses up the time limit, which has to be here: this never yields.
+    const deadline = performance.now() + 5000;
+    const profileUntilSampled = () => {
+      let result;
+      do {
+        result = profile(work, sampleInterval);
+      } while (result.stackTraces.traces.length === 0 && performance.now() < deadline);
+      return result;
+    };
+
     // First profile call
-    const result1 = profile(work, sampleInterval);
+    const result1 = profileUntilSampled();
     expect(result1).toBeDefined();
     expect(result1.functions).toBeDefined();
     expect(result1.stackTraces).toBeDefined();
@@ -291,14 +305,14 @@ describe("bun:jsc", () => {
 
     // Second profile call - should work after first one completed
     // This verifies that shutdown() -> pause() fix works
-    const result2 = profile(work, sampleInterval);
+    const result2 = profileUntilSampled();
     expect(result2).toBeDefined();
     expect(result2.functions).toBeDefined();
     expect(result2.stackTraces).toBeDefined();
     expect(result2.stackTraces.traces.length).toBeGreaterThan(0);
 
     // Third profile call - verify profiler can be reused multiple times
-    const result3 = profile(work, sampleInterval);
+    const result3 = profileUntilSampled();
     expect(result3).toBeDefined();
     expect(result3.functions).toBeDefined();
     expect(result3.stackTraces).toBeDefined();
@@ -326,6 +340,16 @@ describe("bun:jsc", () => {
     expect(stdout).toBe("ok\n");
     expect(exitCode).toBe(0);
   });
+});
+
+it("deserialize returns a Date whose getTime() is NaN when the timestamp is a NaN with a payload", () => {
+  const nan = Buffer.alloc(8);
+  nan.writeDoubleLE(NaN, 0);
+  const bytes = Buffer.from(serialize(new Date(NaN)));
+  const at = bytes.indexOf(nan);
+  expect(at).toBeGreaterThan(0);
+  bytes.writeBigUInt64LE(0xfffe000000000007n, at);
+  expect(deserialize(bytes).getTime()).toBeNaN();
 });
 
 it("deserialize rejects an object reference index outside the deserialized object pool", async () => {
@@ -464,6 +488,26 @@ it("deserialize rejects a RegExp record whose pattern does not parse", async () 
     ].join("\n"),
   );
   expect(exitCode).toBe(0);
+});
+
+it("getProtectedObjects returns only objects", async () => {
+  const script = `
+    import { getProtectedObjects } from "bun:jsc";
+    const list = getProtectedObjects();
+    for (const value of list) {
+      if (Object(value) !== value) throw new Error("getProtectedObjects returned a non-object: " + typeof value);
+      Object.prototype.toString.call(value);
+    }
+    console.log("ok", list.length > 0);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "ok true\n", exitCode: 0 });
 });
 
 it("serialize rejects a CryptoKey created with extractable set to false", async () => {
@@ -686,5 +730,39 @@ describe("JsRef::Weak liveness", () => {
     expect(stillLive).toBeLessThan(dropped.length / 2);
     expect(jscInternals.isLiveCellAtRawAddress(keptAddr)).toBe(true);
     expect(kept.keep).toBe(true);
+  });
+});
+
+describe.concurrent("sampling profiler report at exit", () => {
+  const work = `let x = 0; for (let i = 0; i < 2e6; i++) x += Math.sqrt(i); console.log("done", x > 0);`;
+
+  async function run(script: string, env: Record<string, string> = {}) {
+    using dir = tempDir("sampling-profiler", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const profiles = join(String(dir), "missing", "profiles");
+    const reports = existsSync(profiles) ? readdirSync(profiles) : [];
+    return {
+      stdout,
+      stderr,
+      reports: reports.map(name => readFileSync(join(profiles, name), "utf8").includes("Top functions as")),
+      exitCode,
+    };
+  }
+  const expected = { stdout: "done true\n", stderr: "", reports: [true], exitCode: 0 };
+
+  it("is written when startSamplingProfiler is given a missing directory", async () => {
+    expect(await run(`require("bun:jsc").startSamplingProfiler("missing/profiles"); ${work}`)).toEqual(expected);
+  });
+
+  it("is written on process.exit() when BUN_JSC_samplingProfilerPath is a missing directory", async () => {
+    const env = { BUN_JSC_useSamplingProfiler: "1", BUN_JSC_samplingProfilerPath: "missing/profiles" };
+    expect(await run(`${work} process.exit(0);`, env)).toEqual(expected);
   });
 });

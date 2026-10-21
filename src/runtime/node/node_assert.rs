@@ -5,6 +5,7 @@ use bun_jsc::{FromAny, JSGlobalObject, JSObject, JSValue, JsError, JsResult, Str
 
 use super::assert::myers_diff as MyersDiff;
 use super::assert::myers_diff::{Diff, DiffKind, Line};
+use crate::generated_bindgen::node_assert_binding::Colors;
 
 /// Compare `actual` and `expected`, producing a diff that would turn `actual`
 /// into `expected`, and hand it to JS in the shape `output` asks for.
@@ -139,21 +140,13 @@ pub(crate) enum Output<'a> {
         check_comma_disparity: bool,
     },
     /// The `printSimpleMyersDiff` string for a char diff.
-    Simple(&'a Colors),
+    Simple(&'a Colors<'a>),
     /// The `printMyersDiff` `{ message, skipped }` object for a line diff.
     Lines {
-        colors: &'a Colors,
+        colors: &'a Colors<'a>,
         /// Lines that differ only by a trailing comma compare equal.
         check_comma_disparity: bool,
     },
-}
-
-/// ANSI sequences from internal/util/colors (empty when colors are off).
-pub(crate) struct Colors {
-    pub green: Vec<u8>,
-    pub red: Vec<u8>,
-    pub white: Vec<u8>,
-    pub blue: Vec<u8>,
 }
 
 /// Output code unit: Latin-1 bytes or UTF-16.
@@ -237,25 +230,28 @@ where
 }
 
 /// internal/assert/myers_diff `printSimpleMyersDiff`: the char diff inline, colored per op.
-fn render_simple<C: CodeUnit, T: DiffText<C>>(diff: &[Diff<T>], colors: &Colors) -> Vec<C> {
+fn render_simple<C: CodeUnit, T: DiffText<C>>(diff: &[Diff<T>], colors: &Colors<'_>) -> Vec<C> {
     let mut out: Vec<C> = Vec::with_capacity(diff.len() + 1);
     append_ascii(&mut out, b"\n");
     for d in diff.iter().rev() {
         let color = match d.kind {
-            DiffKind::Insert => &colors.green,
-            DiffKind::Delete => &colors.red,
-            DiffKind::Equal => &colors.white,
+            DiffKind::Insert => colors.green,
+            DiffKind::Delete => colors.red,
+            DiffKind::Equal => colors.white,
         };
         append_ascii(&mut out, color);
         d.value.append_to(&mut out);
-        append_ascii(&mut out, &colors.white);
+        append_ascii(&mut out, colors.white);
     }
     out
 }
 
 /// internal/assert/myers_diff `printMyersDiff`: one line per entry with `+`/`-`/`  `
 /// prefixes, collapsing runs of more than 5 unchanged lines into `...`.
-fn render_lines<C: CodeUnit, T: DiffText<C>>(diff: &[Diff<T>], colors: &Colors) -> (Vec<C>, bool) {
+fn render_lines<C: CodeUnit, T: DiffText<C>>(
+    diff: &[Diff<T>],
+    colors: &Colors<'_>,
+) -> (Vec<C>, bool) {
     const NOP_LINES_TO_COLLAPSE: usize = 5;
     let mut out: Vec<C> = Vec::new();
     append_ascii(&mut out, b"\n");
@@ -263,7 +259,7 @@ fn render_lines<C: CodeUnit, T: DiffText<C>>(diff: &[Diff<T>], colors: &Colors) 
     let mut nop_count: usize = 0;
 
     let equal_line = |out: &mut Vec<C>, value: T| {
-        append_ascii(out, &colors.white);
+        append_ascii(out, colors.white);
         append_ascii(out, b"  ");
         value.append_to(out);
         append_ascii(out, b"\n");
@@ -286,9 +282,9 @@ fn render_lines<C: CodeUnit, T: DiffText<C>>(diff: &[Diff<T>], colors: &Colors) 
                 equal_line(&mut out, diff[idx + 1].value);
             }
             if nop_count >= NOP_LINES_TO_COLLAPSE + 3 {
-                append_ascii(&mut out, &colors.blue);
+                append_ascii(&mut out, colors.blue);
                 append_ascii(&mut out, b"...");
-                append_ascii(&mut out, &colors.white);
+                append_ascii(&mut out, colors.white);
                 append_ascii(&mut out, b"\n");
                 equal_line(&mut out, diff[idx + 1].value);
                 skipped = true;
@@ -298,17 +294,17 @@ fn render_lines<C: CodeUnit, T: DiffText<C>>(diff: &[Diff<T>], colors: &Colors) 
 
         match kind {
             DiffKind::Insert => {
-                append_ascii(&mut out, &colors.green);
+                append_ascii(&mut out, colors.green);
                 append_ascii(&mut out, b"+");
-                append_ascii(&mut out, &colors.white);
+                append_ascii(&mut out, colors.white);
                 append_ascii(&mut out, b" ");
                 value.append_to(&mut out);
                 append_ascii(&mut out, b"\n");
             }
             DiffKind::Delete => {
-                append_ascii(&mut out, &colors.red);
+                append_ascii(&mut out, colors.red);
                 append_ascii(&mut out, b"-");
-                append_ascii(&mut out, &colors.white);
+                append_ascii(&mut out, colors.white);
                 append_ascii(&mut out, b" ");
                 value.append_to(&mut out);
                 append_ascii(&mut out, b"\n");

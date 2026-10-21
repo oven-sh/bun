@@ -531,6 +531,38 @@ it("Bun.inspect.custom exists", () => {
   expect(Bun.inspect.custom).toBe(util.inspect.custom);
 });
 
+it("native inspect.custom functions return undefined when called without a receiver", () => {
+  const classes = [
+    ByteLengthQueuingStrategy,
+    CountQueuingStrategy,
+    CryptoKey,
+    PerformanceEntry,
+    ReadableByteStreamController,
+    ReadableStream,
+    ReadableStreamBYOBReader,
+    ReadableStreamBYOBRequest,
+    ReadableStreamDefaultController,
+    ReadableStreamDefaultReader,
+    TransformStream,
+    TransformStreamDefaultController,
+    URL,
+    URLSearchParams,
+    WritableStream,
+    WritableStreamDefaultController,
+    WritableStreamDefaultWriter,
+  ];
+  const results = classes.map(klass => {
+    const inspectCustom = klass.prototype[util.inspect.custom];
+    // When a closed-over binding is called bare, JSC passes the scope object as `this`.
+    const bare = () => inspectCustom(-1, {});
+    // util.inspect falls back to its default formatting when inspect.custom returns its receiver unchanged.
+    const ordinaryReceiver = {};
+    const roundTripped = inspectCustom.call(ordinaryReceiver, -1, {}) === ordinaryReceiver;
+    return [klass.name, typeof inspectCustom, bare(), roundTripped];
+  });
+  expect(results).toEqual(classes.map(klass => [klass.name, "function", undefined, true]));
+});
+
 describe("Functions with names", () => {
   const closures = [
     () => function f() {},
@@ -1321,4 +1353,142 @@ it("object property enumeration scales linearly with property count", () => {
     // Vector-based visited-property dedup was O(n^2), giving a ~9x ratio here.
     expect(l.ms / 30000 / (s.ms / 3000)).toBeLessThan(3);
   });
+});
+
+// Each case runs in a fresh child so the formatter hasn't loaded util.inspect before the failing call.
+describe.concurrent("Bun.inspect when loading util.inspect for a custom inspect function throws", () => {
+  async function inspectInChild(code) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const obj = { [Bun.inspect.custom]() { return "custom"; } };
+          const styled = { [Bun.inspect.custom](depth, options) { return options.stylize("x", "number"); } };
+          ${code}
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("throws while a global the module needs is replaced, and works once it's restored", async () => {
+    const result = await inspectInChild(`
+      const RealSymbol = Symbol;
+      globalThis.Symbol = 0;
+      try {
+        console.log(Bun.inspect(styled, { colors: true }));
+      } catch {
+        console.log("threw");
+      }
+      globalThis.Symbol = RealSymbol;
+      console.log(Bun.inspect(obj));
+      console.log(Bun.inspect(styled, { colors: true }) === "\\u001b[33mx\\u001b[39m");
+      Bun.gc(true);
+      console.log(Bun.inspect(styled, { colors: true }) === "\\u001b[33mx\\u001b[39m");
+    `);
+    expect(result).toEqual({ stdout: "threw\ncustom\ntrue\ntrue\n", stderr: "", exitCode: 0 });
+  });
+
+  it("throws the RangeError at the stack limit, and works afterwards", async () => {
+    const result = await inspectInChild(`
+      let deep;
+      function recurse() {
+        try {
+          recurse();
+        } catch {
+          try {
+            deep = Bun.inspect(obj);
+          } catch (e) {
+            deep = e;
+          }
+        }
+      }
+      recurse();
+      console.log(String(deep));
+      console.log(Bun.inspect(obj));
+    `);
+    expect(result).toEqual({
+      stdout: "RangeError: Maximum call stack size exceeded.\ncustom\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("passes the real inspect function while util.inspect is replaced", async () => {
+    const result = await inspectInChild(`
+      const util = require("node:util");
+      const realInspect = util.inspect;
+      util.inspect = 42;
+      const receives = { [Bun.inspect.custom](depth, options, inspect) { return String(inspect === realInspect); } };
+      console.log(Bun.inspect(receives));
+    `);
+    expect(result).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+  });
+});
+
+// Runs in a subprocess because a native stack overflow would kill the test runner.
+it.concurrent.each([
+  [
+    "circular jsx",
+    `const children = { $$typeof: Symbol.for("react.element"), type: "div", key: null };
+     children.props = { children };
+     console.log(Bun.inspect(children));
+     const key = { $$typeof: Symbol.for("react.element"), type: "div", props: {} };
+     key.key = key;
+     console.log(Bun.inspect(key));`,
+    "<div>\n  [Circular]\n</div>\n<div key=[Circular] />",
+  ],
+  [
+    "a deep Proxy chain",
+    `let proxy = { ok: 1 };
+     for (let i = 0; i < 100000; i++) proxy = new Proxy(proxy, {});
+     console.log(Bun.inspect(proxy));`,
+    "{\n  ok: 1,\n}",
+  ],
+  [
+    "deep jsx",
+    `let element = { $$typeof: Symbol.for("react.element"), type: "div", props: {}, key: null };
+     for (let i = 0; i < 100000; i++)
+       element = { $$typeof: Symbol.for("react.element"), type: "div", props: { children: element }, key: null };
+     try { Bun.inspect(element); } catch (e) { console.log(e.name); }`,
+    "RangeError",
+  ],
+])("Bun.inspect of %s doesn't overflow the stack", async (_, script, expected) => {
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe(expected);
+  expect(exitCode).toBe(0);
+});
+
+// A substring rope's characters live in its base string, and only the rope references the base.
+// Malloc=1 makes bmalloc use the system heap so ASAN can catch a read of freed characters.
+it.skipIf(!isASAN)("prints a substring-rope jsx type after a prop's inspect.custom resolves the rope", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const type = Buffer.from("_div-abcdefghijklmnopqrstuvwxyz").toString().slice(1);
+       const custom = {
+         [Bun.inspect.custom]() {
+           // Using the rope as a property key atomizes it, which copies its characters and drops the base.
+           ({})[type];
+           Bun.gc(true);
+           return "x";
+         },
+       };
+       const props = { custom, children: "text" };
+       console.log(Bun.inspect({ $$typeof: Symbol.for("react.element"), type, key: null, props }));`,
+    ],
+    env: { ...bunEnv, Malloc: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toEndWith("</div-abcdefghijklmnopqrstuvwxyz>\n");
+  expect(exitCode).toBe(0);
 });

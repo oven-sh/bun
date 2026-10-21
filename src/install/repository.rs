@@ -83,13 +83,15 @@ impl GitEnv {
     }
 }
 
-/// The domain of a shorthand host: `gitlab.com` for the `gitlab` in `gitlab:user/repo`.
+/// Returns the domain of a shorthand host, e.g. `gitlab.com` for the `gitlab` in
+/// `gitlab:user/repo`.
 fn shorthand_domain(host: &[u8]) -> Option<&'static [u8]> {
     hosted_git_info::HostProvider::from_shortcut(host, false).map(|provider| provider.domain())
 }
 
-/// The `repo` to record in the lockfile for `host:path`: `ssh://host:path`, which is what reading
-/// bun.lock's `git+ssh://host:path` gives back. A shorthand (`gitlab:user/repo`) becomes a URL.
+/// Returns the `repo` to record in the lockfile for `host:path`. That's `ssh://host:path`, which is
+/// what reading `git+ssh://host:path` from bun.lock gives back. A shorthand (`gitlab:user/repo`)
+/// becomes a URL.
 pub(crate) fn locked_scp_like(repo: &[u8]) -> Option<Vec<u8>> {
     if !Dependency::is_scp_like_path(repo) {
         return None;
@@ -101,6 +103,9 @@ pub(crate) fn locked_scp_like(repo: &[u8]) -> Option<Vec<u8>> {
     })
 }
 
+/// The tag becomes part of a cache folder name that must fit in a path buffer.
+pub(crate) const MAX_RESOLVED_TAG_LEN: usize = 256;
+
 /// `resolved` is the `.bun-tag` value persisted to the lockfile (a commit SHA for
 /// `git`, or `<owner>-<repo>-<sha>` for `github`). It is concatenated into a cache
 /// directory name and passed to `git checkout`, so it must be a single safe path
@@ -108,7 +113,7 @@ pub(crate) fn locked_scp_like(repo: &[u8]) -> Option<Vec<u8>> {
 /// option.
 pub(crate) fn is_safe_resolved_tag(resolved: &[u8]) -> bool {
     !resolved.is_empty()
-        && resolved.len() <= 256
+        && resolved.len() <= MAX_RESOLVED_TAG_LEN
         && resolved[0] != b'-'
         && resolved != b"."
         && resolved != b".."
@@ -252,7 +257,7 @@ impl RepositoryExt for Repository {
 
         if let Some(path) = scp_like_path(url) {
             let host_end = strings::index_of_any(path, b":/").unwrap_or(path.len());
-            // A user that looks like an option stays behind `git@`.
+            // A user that looks like a command-line option is kept behind `git@`.
             let has_user = path[0] != b'-' && strings::contains_char(&path[..host_end], b'@');
             let prefix: &[u8] = if has_user { b"ssh://" } else { b"ssh://git@" };
             return Some(scp_like_to_url(prefix, path));

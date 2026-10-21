@@ -1,4 +1,4 @@
-//! `getTypeOfNode`: the type at a node of a file that has been checked.
+//! `getTypeOfNode`: the type at a node in a checked file.
 
 use super::super::*;
 use super::visited::VisitedKind;
@@ -10,7 +10,7 @@ use crate::node::{Kind, Node, NodeData, Part};
 impl Checker<'_, '_> {
     /// `getTypeOfNode`
     ///
-    /// `kind`: what `visited_kind` says that the node is. `start`: where it starts.
+    /// `kind` is the node's classification from `visited_kind`. `start` is its start offset.
     pub(in crate::check) fn get_type_of_visited_node(
         &mut self,
         file: FileId,
@@ -18,7 +18,7 @@ impl Checker<'_, '_> {
         start: u32,
     ) -> TypeId {
         let hir = self.hir(file);
-        // Semantic queries are not answered inside a `with` block.
+        // Semantic queries aren't answered inside a `with` block.
         if hir.is_in_with(start) {
             return TypeId::ERROR;
         }
@@ -88,7 +88,7 @@ impl Checker<'_, '_> {
             VisitedKind::ImportEqualsName(import, index) => {
                 self.type_of_import_equals_name(file, import, index as usize)
             }
-            // Nothing applies.
+            // No case of `getTypeOfNode` applies.
             VisitedKind::BindingPropertyName(_)
             | VisitedKind::Label(_)
             | VisitedKind::TypeReferenceName(..)
@@ -137,7 +137,9 @@ impl Checker<'_, '_> {
         // `getTypeOfNode` of its name is the type of the alias target.
         let required = self.bound(file).pat_symbol[pat.idx()];
         if required.is_some()
-            && self.bound(file).symbols[required.idx()]
+            && self
+                .bound(file)
+                .symbol(required)
                 .flags
                 .contains(SymFlags::ALIAS)
         {
@@ -173,8 +175,8 @@ impl Checker<'_, '_> {
     }
 
     /// `getSymbolOfPartOfRightHandSideOfImportEquals`: in `import x = a.b.c`, `a` and `a.b` have
-    /// the namespace meaning, and so does the `a` of `import x = a`. `getTypeOfNode`: the declared
-    /// type of the symbol a name resolves to, or else the type of that symbol.
+    /// the namespace meaning, and so does the `a` of `import x = a`. `getTypeOfNode` returns the
+    /// declared type of the symbol a name resolves to, falling back to that symbol's type.
     fn type_of_import_equals_name(
         &mut self,
         file: FileId,
@@ -223,15 +225,15 @@ impl Checker<'_, '_> {
     }
 
     /// `getTypeOfNode` of the bare name in `export = a` or `export default a`, which
-    /// `IsInExpressionContext` does not count as an expression
-    /// (`isInRightSideOfImportOrExportAssignment`): the declared type of the symbol it resolves to,
-    /// or else the type of that symbol.
+    /// `IsInExpressionContext` doesn't count as an expression
+    /// (`isInRightSideOfImportOrExportAssignment`). Returns the declared type of the symbol it
+    /// resolves to, falling back to that symbol's type.
     fn type_of_export_assignment_name(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         let ExprKind::Ident(name) = hir[e].kind else {
             return None;
         };
-        let crate::bind::Parent::Stmt(stmt) = bound.expr_parent[e.idx()] else {
+        let crate::bind::Parent::Stmt(stmt) = bound.parent_of_expr(e) else {
             return None;
         };
         if stmt.is_none()
@@ -249,21 +251,23 @@ impl Checker<'_, '_> {
             .get(&e)
             .and_then(|&scope| files.resolve_name(file, scope, name, meaning))
             .and_then(|found| files.resolve_alias(found));
-        // `undefined` and `globalThis` have no symbol here, and the expression has the error type if the name does not resolve.
+        // `undefined` and `globalThis` have no symbol here, and the expression has the error type if the name doesn't
+        // resolve.
         let symbol = symbol?;
         Some(if self.files().flags(symbol).intersects(SymFlags::TYPE) {
             self.declared_type(symbol)
         } else {
-            // The target of a namespace import can be a copy of the module (`resolveESModuleSymbol`): its type is that of the alias.
-            let written = bound
+            // A namespace import's target can be a copy of the module (`resolveESModuleSymbol`), so the type is read
+            // from the alias.
+            let unresolved_symbol = bound
                 .expr_scope
                 .get(&e)
                 .and_then(|&scope| files.resolve_name(file, scope, name, meaning));
-            self.type_of_symbol(written.unwrap_or(symbol))
+            self.type_of_symbol(unresolved_symbol.unwrap_or(symbol))
         })
     }
 
-    /// `getTypeOfNode` of the name of `decl`, which starts at `start`. `symbol`: that of `decl`.
+    /// `getTypeOfNode` of `decl`'s name, which starts at `start`. `symbol` is `decl`'s symbol.
     fn type_of_declaration_name(
         &mut self,
         file: FileId,
@@ -288,14 +292,15 @@ impl Checker<'_, '_> {
                 ClassOwner::Stmt(_) => true,
             },
             Decl::Enum(_) | Decl::Alias(_) | Decl::Interface(_) | Decl::TypeParam(_) => true,
-            // `import type a from`, `import type { a }`, `export type { a }`: the `type` of the clause, not of the specifier.
+            // `import type a from`, `import type { a }`, `export type { a }`: only the clause's `type` counts, not the
+            // specifier's.
             Decl::ImportDefault(import) => hir[import].type_only,
             Decl::ImportSpec(spec) => hir[hir[spec].import].type_only,
             Decl::ExportSpec(spec) => hir[hir[spec].export].type_only,
             _ => false,
         };
-        // `IsTypeDeclarationName`: a name that is a string literal is not one.
-        // `parseImportSpecifier` converts it to an identifier.
+        // `IsTypeDeclarationName` is false for a name that's a string literal, but
+        // `parseImportSpecifier` converts one to an identifier.
         let is_identifier = matches!(decl, Decl::ImportSpec(_))
             || !matches!(hir.text.get(start as usize), Some(b'"' | b'\''));
         if is_type_declaration && is_identifier {
@@ -305,7 +310,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `getTypeOfSymbol` of the symbol the member `m` of a class, an interface or a type literal declares.
+    /// `getTypeOfSymbol` of the symbol declared by `m`, a member of a class, interface or type literal.
     fn type_of_member_name(&mut self, file: FileId, m: MemberId) -> TypeId {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let member = hir[m];
@@ -325,7 +330,7 @@ impl Checker<'_, '_> {
             MemberOwner::TypeLiteral(node) => self.type_from_node(file, node),
             MemberOwner::None => return TypeId::ERROR,
         };
-        // A member that is not a property of its container has the type of its own declaration:
+        // A member that isn't a property of its container has the type of its own declaration:
         // `[e]` whose `e` has no type usable as a property name, or is not syntactically a name
         // (`isLateBindableAST`); `#x` outside a class; `1n`.
         let prop = self
@@ -358,10 +363,11 @@ impl Checker<'_, '_> {
         // name rejected has its own symbol.
         let has_own_symbol = match Self::value_declaration(&prop) {
             Some(in_table @ PropSource::Symbol(_)) => *in_table != own,
-            // Put together of declarations that have type parameters of their own: what the binder says. `prototype`, which
-            // `bindClassLikeDeclaration` declares without a declaration, refuses a late bound member too.
+            // The property is combined from declarations with their own type parameters, so ask the binder.
+            // `prototype`, which `bindClassLikeDeclaration` declares without a declaration, also rejects a late-bound
+            // member.
             _ => {
-                bound.is_member_in_no_table(m)
+                bound.is_member_not_in_table(m)
                     || name == known::prototype
                         && member.flags.contains(Flags::STATIC)
                         && flags_of_member(&member)
@@ -373,7 +379,8 @@ impl Checker<'_, '_> {
         } else {
             prop
         };
-        // `getTypeOfSymbol` of the symbol the member declares, which is not instantiated: `this` is the type parameter.
+        // `getTypeOfSymbol` of the symbol the member declares, which isn't instantiated, so `this` is the type
+        // parameter.
         self.type_of_prop(&prop, MapperId::IDENTITY)
     }
 
@@ -406,8 +413,8 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         e: ExprId,
     ) -> TypeId {
-        // `getTypeOfExpression` asks for the quick type first: the arguments of such a call are not looked at. The first
-        // check of what is called resolves the calls enclosing `e`.
+        // `getTypeOfExpression` tries the quick type first, which doesn't look at the call's arguments. The first check
+        // of the callee resolves the calls enclosing `e`.
         let mut called = e;
         while let ExprKind::Await(awaited) = self.hir(file)[called].kind {
             called = awaited;
@@ -470,7 +477,7 @@ impl<'p, 's> Checker<'p, 's> {
 impl Services<'_, '_, '_> {
     /// `getTypeAtLocation`, `getTypeOfNode`
     pub fn type_at_location(&mut self, node: NodeRef) -> TypeId {
-        // While the control flow analysis is disabled a reference has the error type that had another before.
+        // While control flow analysis is disabled, a reference that had a real type before has the error type.
         if !self.c.flow_analysis_disabled.is_empty() {
             return self.type_at_location_uncached(node);
         }
@@ -478,7 +485,7 @@ impl Services<'_, '_, '_> {
             return known;
         }
         let ty = self.type_at_location_uncached(node);
-        // What the checker gave up on it can find when it knows more.
+        // Don't cache a type the checker gave up on. It may resolve later, when more is known.
         if self.c.flow_analysis_disabled.is_empty() && !self.type_test(TypeTest::Unresolved, ty) {
             self.types_at.insert(node, ty);
         }
@@ -499,14 +506,14 @@ impl Services<'_, '_, '_> {
             };
         }
         let start = hir.start(at);
-        // Semantic queries are not answered inside a `with` block, nor for what is reparsed from a
+        // Semantic queries aren't answered inside a `with` block, or for nodes reparsed from a
         // JSDoc comment.
         if hir.is_in_with(start) || hir.is_in_jsdoc(start) {
             return TypeId::ERROR;
         }
         let kind = hir.kind(at);
-        // `isPartOfTypeNode` is true of every `null`, also of the expression, which so has the type
-        // of the type node and not the one that widens.
+        // `isPartOfTypeNode` is true for every `null`, even the expression, so the expression gets
+        // the type node's type instead of the widening one.
         if kind == Kind::NullKeyword && matches!(hir.data(at), NodeData::Expr(_)) {
             return TypeId::NULL;
         }
@@ -518,7 +525,7 @@ impl Services<'_, '_, '_> {
         if is_visited && let Some(visited) = self.visited_kind(node) {
             return self.c.get_type_of_visited_node(file, visited, start);
         }
-        // The `ExpressionWithTypeArguments` after the `extends` of a class: the base type.
+        // The `ExpressionWithTypeArguments` after a class's `extends` has the base type.
         if at.part() == Some(Part::Base) {
             let class = self.c.class_sym(file, hir.class_of(at.row()));
             return match self.c.base_types(class).first() {
@@ -530,7 +537,7 @@ impl Services<'_, '_, '_> {
             };
         }
         let bound = self.c.bound(file);
-        // `node.Symbol`, also where another declaration has the name.
+        // `node.Symbol`, even if another declaration owns the name.
         let symbol_of = |services: &Self, decl: Decl| match bound.symbol_of_declaration(decl) {
             SymbolId::NONE => services.symbol_of_rejected_declaration(file, decl),
             symbol => symbol,
@@ -639,7 +646,7 @@ impl Services<'_, '_, '_> {
             .unwrap_or(TypeId::ERROR)
     }
 
-    /// `getTypeFromTypeNode` of what `isPartOfTypeNode` holds for.
+    /// `getTypeFromTypeNode` for a node that satisfies `isPartOfTypeNode`.
     fn type_of_part_of_type_node(&mut self, node: NodeRef) -> TypeId {
         let Some((hir, at)) = self.valid(node) else {
             return TypeId::ERROR;
@@ -647,7 +654,8 @@ impl Services<'_, '_, '_> {
         let file = node.file;
         match hir.data(at) {
             NodeData::Type(t) => {
-                // `isReadonlyTypeOperator(node.parent)`: the `T[]` of `readonly T[]` is that type.
+                // `isReadonlyTypeOperator(node.parent)`: the `T[]` of `readonly T[]` has the
+                // operator's type.
                 let t = match (hir[t].kind, hir.data(hir.parent(at))) {
                     (TypeNodeKind::Array(_) | TypeNodeKind::Tuple(_), NodeData::Type(operator))
                         if matches!(hir[operator].kind, TypeNodeKind::Readonly(_)) =>
@@ -683,10 +691,10 @@ impl Services<'_, '_, '_> {
                     false => ty,
                 }
             }
-            // The type parameter of a mapped type or of an `infer` counts as part of a type node,
-            // and is no type node.
+            // The type parameter of a mapped type or of an `infer` counts as part of a type node
+            // but isn't a type node.
             NodeData::TypeParam(_) => TypeId::ERROR,
-            // A keyword that is the literal of a `LiteralType`, `null`.
+            // A keyword that's the literal of a `LiteralType`: `null`.
             NodeData::Part(Part::Literal, row) => match hir.data(row) {
                 NodeData::Type(t) => self.c.type_from_node(file, t),
                 _ => TypeId::ERROR,

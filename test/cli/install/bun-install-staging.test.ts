@@ -133,15 +133,14 @@ const stagingDirs = (dir: string) =>
         .filter(isStagingDir)
         .map(name => join(dir, name))
     : [];
-// The install that links a package again removes what a killed one left in its staging
-// directory. Not on Windows: a directory cannot be locked there, so the names are unique to
-// each process (two installs at once must never share one) and nothing finds them again.
+// An install that links a package again removes what a killed install left in its staging directory. This doesn't work
+// on Windows: a directory can't be locked there, so the names are unique to each process (two concurrent installs must
+// never share one), and nothing finds them again.
 const entriesOf = (dir: string) => readdirSync(dir).filter(name => !(isWindows && isStagingDir(name)));
 
-// Where bun can be made to stop at an exact system call, it is: an LD_PRELOAD
-// shim lets the first `after` calls of one system call through, and the next one
-// kills the process or fails with ENOSPC. That needs Linux, a dynamically linked
-// bun (not musl) and a C compiler.
+// Where possible, bun is stopped at an exact system call. An LD_PRELOAD shim lets the first `after` calls of one system
+// call through, and the next one kills the process or fails with ENOSPC. That needs Linux, a dynamically linked bun
+// (not musl) and a C compiler.
 type Interrupt = { syscall: "linkat" | "unlinkat"; after: number };
 
 const shimSource = /* c */ `
@@ -176,8 +175,8 @@ static void meet(void) {
   while (__sync_add_and_fetch(&here, 0) < atoi(threads)) usleep(100);
 }
 
-// A file called held.js is not linked before there is a file "released" in STAGING_TEST_HOLD.
-// A file "holding" there says that one is waiting.
+// A file called held.js isn't linked until a file named "released" exists in STAGING_TEST_HOLD. A file named "holding"
+// there means that one is waiting.
 static void hold(const char *path) {
   const char *dir = getenv("STAGING_TEST_HOLD");
   size_t length = strlen(path);
@@ -198,7 +197,7 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
   return real_linkat(olddirfd, oldpath, newdirfd, newpath, flags);
 }
 
-// As overlayfs, which moves no directory of a lower layer.
+// Like overlayfs, which can't move a directory from a lower layer.
 int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath) {
   static int (*real_renameat)(int, const char *, int, const char *);
   if (!real_renameat) real_renameat = dlsym(RTLD_NEXT, "renameat");
@@ -222,8 +221,8 @@ int unlinkat(int dirfd, const char *path, int flags) {
 }
 `;
 
-// Stands in for an install that is linking: holds the lock an install takes on the
-// project's node_modules until its stdin is closed.
+// Simulates an install that's linking. It holds the lock that an install takes on the project's node_modules until its
+// stdin is closed.
 const lockHolderSource = /* c */ `
 #include <fcntl.h>
 #include <sys/file.h>
@@ -275,8 +274,8 @@ const shimEnv = ({ syscall, after }: Interrupt, kill: boolean) => ({
   STAGING_TEST_KILL: kill ? "1" : undefined,
 });
 
-// Kills `bun install` at `interrupt` with the shim, elsewhere once `underWay()`
-// holds. Returns false if the install finished first.
+// Kills `bun install` at `interrupt` with the shim, or without the shim, once `underWay()` is true. Returns false if
+// the install finished first.
 async function installAndKill(cwd: string, args: string[], interrupt: Interrupt, underWay: () => boolean) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "install", ...args],
@@ -312,9 +311,8 @@ const packageDirs = {
   isolated: (root: string) => join(root, "node_modules", ".bun", "many-files@1.0.0", "node_modules", "many-files"),
 };
 
-// Not concurrent: without the shim the kill has to land while the package is
-// still being linked, which a poll loop sharing the event loop with another
-// test's assertions cannot guarantee.
+// Not concurrent. Without the shim, the kill has to happen while the package is still being linked, and a poll loop
+// that shares the event loop with another test's assertions can't guarantee that.
 for (const [linker, packageDir] of Object.entries(packageDirs)) {
   test(`${linker} linker: a package whose install was interrupted is installed again`, async () => {
     const tgz = await new Bun.Archive(archiveEntries, { compress: "gzip" }).bytes();
@@ -377,7 +375,7 @@ test("isolated linker: a package whose replacement was interrupted is installed 
   const installed = packageDirs.isolated(root);
   const installedParent = join(installed, "..");
 
-  // One file per directory: whichever directory goes first, the replacement is noticed.
+  // One file per directory, so the replacement is noticed no matter which directory comes first.
   const sentinels = Array.from({ length: DIR_COUNT }, (_, dir) => join(installed, `d${dir}`, "f0.js"));
   const replacing = () => stagingDirs(installedParent).length > 0 || !sentinels.every(file => existsSync(file));
 
@@ -402,70 +400,67 @@ test("isolated linker: a package whose replacement was interrupted is installed 
   expect(entriesOf(installedParent)).toEqual(["many-files"]);
 });
 
-// Only the install that holds the lock on the project's node_modules uses the names that
-// the next one finds again. Any other uses names of its own and leaves the rest alone.
-describe.skipIf(!shimDir)("what a killed install left in a staging directory", () => {
+// Only the install that holds the lock on the project's node_modules uses names that the next install can find again.
+// Any other install uses unique names and doesn't touch the rest.
+describe.skipIf(!shimDir)("leftovers of a killed install in a staging directory", () => {
   for (const [linker, packageDir] of Object.entries(packageDirs)) {
-    test.concurrent(
-      `${linker} linker: is left alone while another install is linking, removed afterwards`,
-      async () => {
-        const tgz = await new Bun.Archive(archiveEntries, { compress: "gzip" }).bytes();
-        using registry = serveRegistry({ "many-files": { tgz } });
-        using dir = tempDir(`staging-lock-${linker}`, {
-          "package.json": JSON.stringify({ name: "app", dependencies: { "many-files": "1.0.0" } }),
-          "bunfig.toml": ({ root }) =>
-            Bun.TOML.stringify({ install: { registry: registry.url.href, cache: join(root, ".bun-cache"), linker } }),
+    test.concurrent(`${linker} linker: are kept while another install is linking, and removed afterwards`, async () => {
+      const tgz = await new Bun.Archive(archiveEntries, { compress: "gzip" }).bytes();
+      using registry = serveRegistry({ "many-files": { tgz } });
+      using dir = tempDir(`staging-lock-${linker}`, {
+        "package.json": JSON.stringify({ name: "app", dependencies: { "many-files": "1.0.0" } }),
+        "bunfig.toml": ({ root }) =>
+          Bun.TOML.stringify({ install: { registry: registry.url.href, cache: join(root, ".bun-cache"), linker } }),
+      });
+      const root = String(dir);
+      const installed = packageDir(root);
+      const installedParent = join(installed, "..");
+
+      const warm = await install(root);
+      expect(warm.stderr).not.toContain("error");
+      expect(warm.exitCode).toBe(0);
+      const finishedParentListing = readdirSync(installedParent).sort();
+
+      rmSync(join(root, "node_modules"), { recursive: true });
+      expect(await installAndKill(root, [], { syscall: "linkat", after: FILE_COUNT - 10 }, () => false)).toBe(true);
+      const left = stagingDirs(installedParent);
+      expect(left).toHaveLength(1);
+      const leftEntries = readdirSync(left[0], { recursive: true }).length;
+
+      {
+        await using holder = Bun.spawn({
+          cmd: [join(String(shimDir), "lock-holder"), join(root, "node_modules")],
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "inherit",
         });
-        const root = String(dir);
-        const installed = packageDir(root);
-        const installedParent = join(installed, "..");
+        const reader = holder.stdout.getReader();
+        expect(new TextDecoder().decode((await reader.read()).value)).toBe("locked");
+        reader.releaseLock();
 
-        const warm = await install(root);
-        expect(warm.stderr).not.toContain("error");
-        expect(warm.exitCode).toBe(0);
-        const finishedParentListing = readdirSync(installedParent).sort();
-
-        rmSync(join(root, "node_modules"), { recursive: true });
-        expect(await installAndKill(root, [], { syscall: "linkat", after: FILE_COUNT - 10 }, () => false)).toBe(true);
-        const left = stagingDirs(installedParent);
-        expect(left).toHaveLength(1);
-        const leftEntries = readdirSync(left[0], { recursive: true }).length;
-
-        {
-          await using holder = Bun.spawn({
-            cmd: [join(String(shimDir), "lock-holder"), join(root, "node_modules")],
-            stdin: "pipe",
-            stdout: "pipe",
-            stderr: "inherit",
-          });
-          const reader = holder.stdout.getReader();
-          expect(new TextDecoder().decode((await reader.read()).value)).toBe("locked");
-          reader.releaseLock();
-
-          const beside = await install(root);
-          expect(beside.stderr).not.toContain("error");
-          expect(beside.exitCode).toBe(0);
-          expect(compareWithExpectedTree(installed)).toEqual(completeTree);
-          const prune = await bun(root, ["prune"]);
-          expect(prune.stderr).not.toContain("error");
-          expect(prune.exitCode).toBe(0);
-          expect({
-            left: stagingDirs(installedParent),
-            leftEntries: readdirSync(left[0], { recursive: true }).length,
-          }).toEqual({ left, leftEntries });
-
-          holder.stdin.end();
-          expect(await holder.exited).toBe(0);
-        }
-
-        rmSync(installed, { recursive: true });
-        const alone = await install(root);
-        expect(alone.stderr).not.toContain("error");
-        expect(alone.exitCode).toBe(0);
+        const beside = await install(root);
+        expect(beside.stderr).not.toContain("error");
+        expect(beside.exitCode).toBe(0);
         expect(compareWithExpectedTree(installed)).toEqual(completeTree);
-        expect(readdirSync(installedParent).sort()).toEqual(finishedParentListing);
-      },
-    );
+        const prune = await bun(root, ["prune"]);
+        expect(prune.stderr).not.toContain("error");
+        expect(prune.exitCode).toBe(0);
+        expect({
+          left: stagingDirs(installedParent),
+          leftEntries: readdirSync(left[0], { recursive: true }).length,
+        }).toEqual({ left, leftEntries });
+
+        holder.stdin.end();
+        expect(await holder.exited).toBe(0);
+      }
+
+      rmSync(installed, { recursive: true });
+      const alone = await install(root);
+      expect(alone.stderr).not.toContain("error");
+      expect(alone.exitCode).toBe(0);
+      expect(compareWithExpectedTree(installed)).toEqual(completeTree);
+      expect(readdirSync(installedParent).sort()).toEqual(finishedParentListing);
+    });
 
     test.concurrent(`${linker} linker: a symlink in its place is removed, not followed`, async () => {
       const tgz = await new Bun.Archive(archiveEntries, { compress: "gzip" }).bytes();
@@ -638,7 +633,7 @@ test.skipIf(isWindows)(
       expect(compareWithExpectedTree(installed)).toEqual(completeTree);
     }
 
-    // What the reporter did next: take the trust away and install again.
+    // This is what the reporter did next: remove the trust and install again.
     writeFileSync(join(root, "package.json"), JSON.stringify(rootPackageJson));
     const second = await install(root);
     expect(second.stderr).not.toContain("error");
@@ -952,6 +947,37 @@ test.concurrent.skipIf(!isLinux)(
   },
 );
 
+test.concurrent.skipIf(!isLinux).each(["hoisted", "isolated"])(
+  "%s linker: a project so deep that a package's absolute path exceeds PATH_MAX fails with ENAMETOOLONG",
+  async linker => {
+    const scripts = { postinstall: "echo ran > ran.txt" };
+    const tgz = await new Bun.Archive(
+      { "package/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", scripts }) },
+      { compress: "gzip" },
+    ).bytes();
+    using registry = serveRegistry({ pkg: { tgz, scripts } });
+    using dir = tempDir("deep-project", {});
+    const rootBytes = 4096 + 1 - "/node_modules/pkg".length;
+    let root = String(dir);
+    // The last name has to stay under NAME_MAX (255).
+    while (rootBytes - root.length > 256) root = join(root, Buffer.alloc(200, "d").toString());
+    root = join(root, Buffer.alloc(rootBytes - root.length - 1, "d").toString());
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { pkg: "1.0.0" }, trustedDependencies: ["pkg"] }),
+    );
+    writeFileSync(
+      join(root, "bunfig.toml"),
+      Bun.TOML.stringify({ install: { registry: registry.url.href, cache: join(String(dir), ".bun-cache"), linker } }),
+    );
+
+    const { stderr, exitCode } = await install(root);
+    expect(stderr).toContain("ENAMETOOLONG");
+    expect(exitCode).toBe(1);
+  },
+);
+
 // The hoisted linker links the packages of the cache on the thread pool, several at a time. All
 // else about them happens on the main thread, in the order in which it links them itself where
 // few files can be open.
@@ -985,7 +1011,7 @@ describe("hoisted linker: packages linked by the thread pool", () => {
   }
 
   // On Windows no tree that exists is longer than the buffers its paths are built in.
-  test.concurrent.skipIf(isWindows)("packages that cannot be linked fail alone, and in their turn", async () => {
+  test.concurrent.skipIf(isWindows)("packages that can't be linked only fail themselves, in order", async () => {
     const names = ["a-first", "b-deep", "c-deep", "d-last"];
     using registry = serveRegistry(await packAll(names));
     using dir = project("pool-enametoolong", registry, {
@@ -1182,7 +1208,7 @@ describe("hoisted linker: packages linked by the thread pool", () => {
       [],
       (nodeModules: string) =>
         ["one", "two"].forEach(name => {
-          // Not through the hard link, which is the cache's file too.
+          // Don't write through the hard link, because it's also the cache's file.
           rmSync(join(nodeModules, name, "package.json"));
           writeFileSync(join(nodeModules, name, "package.json"), JSON.stringify({ name, version: "0.0.1" }));
           writeFileSync(join(nodeModules, name, "only-in-the-other-version.js"), "");
@@ -1301,7 +1327,7 @@ describe("hoisted linker: packages linked by the thread pool", () => {
 
     await warmUp(root);
     for (const name of names) {
-      // Not through the hard link, which is the cache's file too.
+      // Don't write through the hard link, because it's also the cache's file.
       rmSync(join(root, "node_modules", name, "package.json"));
       writeFileSync(join(root, "node_modules", name, "package.json"), JSON.stringify({ name, version: "0.0.1" }));
       writeFileSync(join(root, "node_modules", name, "only-in-the-other-version.js"), "");
@@ -1373,9 +1399,9 @@ describe("hoisted linker: packages linked by the thread pool", () => {
   });
 
   // `scripted` sits below `a-host`, and its scripts start when that tree is done. `held-1` and
-  // `held-2` sit two levels below `b-host`, and are linked after that. Their links wait for the
+  // `lifecycle scripts keep running while the thread pool links` sit two levels below `b-host`, and are linked after that. Their links wait for the
   // second script, which bun starts when it has seen the first one end, which waits for the links.
-  test.concurrent.skipIf(!shimDir)("lifecycle scripts go on while the pool links", async () => {
+  test.concurrent.skipIf(!shimDir)("lifecycle scripts keep running while the thread pool links", async () => {
     const scripts = {
       install: `until [ -e "$STAGING_TEST_HOLD/holding" ]; do :; done`,
       postinstall: `: > "$STAGING_TEST_HOLD/released"`,
@@ -1518,7 +1544,8 @@ describe.skipIf(!shimDir)("after a failed script, a package that cannot be fully
       });
       expect(repaired.exitCode).toBe(0);
 
-      // The isolated linker's next install deletes what was left. The hoisted linker's stays until `bun prune`.
+      // With the isolated linker, the next install deletes the leftovers. With the hoisted linker, they stay until `bun
+      // prune`.
       if (linker === "isolated") expect(readdirSync(join(installed, ".."))).toEqual(["scripted"]);
       expect(movedAside()).toHaveLength(linker === "hoisted" && movesAside ? 1 : 0);
       const prune = await bun(root, ["prune"], { ...installEnv, ...env });

@@ -19,7 +19,8 @@ use crate::bun_json as json;
 use crate::initialize_store;
 
 pub struct MapEntry {
-    /// Nodes are in the process heap and never freed: a mimalloc heap per entry costs 30 KB.
+    /// The nodes are allocated in the process heap and never freed, because a mimalloc heap per
+    /// entry would cost 30 KB.
     pub root: Expr,
     pub source: Source,
     pub indentation: Indentation,
@@ -116,7 +117,7 @@ impl WorkspacePackageJSONCache {
         self.get_or_insert(log, abs_package_json_path, opts, None)
     }
 
-    /// `contents` stands for a package.json that is never written (`bun add --dry-run`).
+    /// `contents` is the text of a package.json that's never written to disk (`bun add --dry-run`).
     pub(crate) fn insert_unwritten(
         &mut self,
         log: &mut Log,

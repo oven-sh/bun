@@ -15,22 +15,37 @@ declare module "bun" {
       : never;
 
     type Adapter = NonNullable<Bun.SQL.Options["adapter"]>;
+    type ChannelBinding = "disable" | "prefer" | "require";
+
+    type AnyOptions = Omit<Bun.SQL.PostgresOrMySQLOptions, "adapter"> &
+      Omit<Bun.SQL.SQLiteOptions, "adapter"> & {
+        adapter?: Adapter;
+        socket?: unknown;
+        channelBinding?: ChannelBinding;
+        foundRows?: boolean;
+        transform?: any;
+      };
 
     /**
      * Represents the result of the `parseOptions()` function in the sqlite path
      */
-    type DefinedSQLiteOptions = Define<Bun.SQL.SQLiteOptions, "filename">;
+    type DefinedSQLiteOptions = Define<Bun.SQL.SQLiteOptions> & {
+      filename: string;
+      transform?: import("internal/sql/shared").Transform;
+    };
 
     /**
      * Represents the result of the `parseOptions()` function in the postgres, mysql or mariadb path
      */
-    type DefinedPostgresOrMySQLOptions = Define<Bun.SQL.PostgresOrMySQLOptions, "max" | "prepare" | "max"> & {
-      sslMode: import("internal/sql/shared").SSLMode;
+    type DefinedPostgresOrMySQLOptions = Define<Bun.SQL.PostgresOrMySQLOptions, "max" | "prepare"> & {
+      sslMode: import("internal/sql/options").SSLMode;
+      channelBinding: ChannelBinding;
+      foundRows: boolean;
       query: string;
+      transform?: import("internal/sql/shared").Transform;
     };
 
     type DefinedOptions = DefinedSQLiteOptions | DefinedPostgresOrMySQLOptions;
-    type OptionsWithDefinedAdapter = Define<Bun.SQL.Options, "adapter">;
   }
 }
 
@@ -73,7 +88,6 @@ declare module "bun" {
   namespace Serve {
     interface NodeHTTPServeOptions<WebSocketData> extends HostnamePortServeOptions<WebSocketData> {
       unix?: string;
-      websocket: WebSocketHandler<WebSocketData>;
       onNodeHTTPRequest(
         bunServer: Server<WebSocketData>,
         url: string,
@@ -212,8 +226,6 @@ type RequireMap = Map<string, JSCommonJSModule>;
 interface JSCommonJSModule {
   /** The require cache the module reads and writes: the global one, or its Bun.ModuleGraph's. */
   readonly $requireMap: RequireMap;
-  $require(id: string, mod: any, args_count: number, args: Array): any;
-  $requireNativeModule(id: string): any;
   children: JSCommonJSModule[];
   exports: any;
   id: string;

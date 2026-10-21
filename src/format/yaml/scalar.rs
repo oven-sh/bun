@@ -1,4 +1,4 @@
-//! `yaml` 2.9: `compose/resolve-flow-scalar.js`: what a scalar that is not a block says.
+//! `yaml` 2.9's `compose/resolve-flow-scalar.js`: computes the value of a scalar that isn't a block scalar.
 
 use super::ast::Kind;
 use bun_core::strings;
@@ -49,7 +49,7 @@ fn fold_lines(source: &[u8]) -> Cow<'_, [u8]> {
     Cow::Owned(result)
 }
 
-/// `scalar.source`, for a scalar of `kind` that is written `source`.
+/// `scalar.source`, for a scalar of `kind` whose source text is `source`.
 pub(crate) fn scalar_source(kind: Kind, source: &[u8]) -> Cow<'_, [u8]> {
     match kind {
         Kind::QuoteSingle => single_quoted_value(source),
@@ -87,7 +87,7 @@ fn double_quoted_value(source: &[u8]) -> Cow<'_, [u8]> {
         return Cow::Borrowed(inner);
     }
     let at = |i: usize| source.get(i).copied();
-    let is_blank = |ch: Option<u8>| matches!(ch, Some(b' ' | b'\t'));
+    let is_space_or_tab = |ch: Option<u8>| matches!(ch, Some(b' ' | b'\t'));
     let mut result = Vec::with_capacity(inner.len());
     let mut i = 1;
     while i < end {
@@ -132,8 +132,8 @@ fn double_quoted_value(source: &[u8]) -> Cow<'_, [u8]> {
             if let Some(escape) = escape {
                 result.extend_from_slice(escape.as_bytes());
             } else if next == b'\n' {
-                // An escaped line break is nothing, and neither is the indentation of the next line.
-                while is_blank(at(i + 1)) {
+                // An escaped line break produces nothing, and the next line's indentation is skipped too.
+                while is_space_or_tab(at(i + 1)) {
                     i += 1;
                 }
             } else if matches!(next, b'x' | b'u' | b'U') {
@@ -166,9 +166,9 @@ fn double_quoted_value(source: &[u8]) -> Cow<'_, [u8]> {
                 result.extend_from_slice(&source[i - 1..=i]);
             }
         } else if matches!(ch, b' ' | b'\t') {
-            // White space at the end of a line is nothing.
+            // Whitespace at the end of a line is dropped.
             let start = i;
-            while is_blank(at(i + 1)) {
+            while is_space_or_tab(at(i + 1)) {
                 i += 1;
             }
             if at(i + 1) != Some(b'\n') {

@@ -1189,7 +1189,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
                 // No list yet: send the `Content-Type` that `.headers` would report.
                 if let Some(content_type) = req.pending_content_type() {
-                    headers = Some(from_fetch_headers(None, Some(content_type)));
+                    headers = Some(from_fetch_headers(global_this, None, Some(content_type))?);
                 }
                 break 'brk None;
             }
@@ -1237,9 +1237,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
 
             Some(from_fetch_headers(
+                global_this,
                 Some(headers_ref),
                 any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
-            ))
+            )?)
         } else {
             headers
         };
@@ -1331,6 +1332,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         };
         let url_path_decoded = &path_buf2[0..decoded_len as usize];
+        // `open` would truncate the path at a decoded `%00`. `Bun.file(url)` and node:fs reject it the same way.
+        if url_type == URLType::File {
+            crate::node::types::Valid::path_null_bytes(url_path_decoded, global_this)?;
+        }
 
         let url_string: BunString;
 
@@ -1399,15 +1404,18 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     }
                 };
                 #[cfg(not(windows))]
-                let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
+                let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
 
                 // SAFETY: bun_vm() returns the live thread-local VM pointer.
-                let main = global_this.bun_vm().as_mut().main();
+                // Relative to the folder of the entry module, or to the working directory when there
+                // is none (`bun bake`).
+                let parts: &[&[u8]] = match global_this.bun_vm().as_mut().main() {
+                    Some(main) => &[main, b"../", url_path_decoded],
+                    None => &[url_path_decoded],
+                };
                 let fullpath = bun_paths::resolve_path::join_abs_string_buf::<
                     bun_paths::platform::Auto,
-                >(
-                    cwd, &mut path_buf, &[main, b"../", url_path_decoded]
-                );
+                >(cwd, &mut path_buf, parts);
                 #[cfg(windows)]
                 {
                     break 'brk match PosixToWinNormalizer::resolve_cwd_with_external_buf_z(
@@ -1491,9 +1499,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     if headers.is_none() && body.has_body() && body.has_content_type_from_user() {
         headers = Some(from_fetch_headers(
+            global_this,
             None,
             any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
-        ));
+        )?);
     }
 
     // Userinfo in the URL is the request's credentials, like curl and

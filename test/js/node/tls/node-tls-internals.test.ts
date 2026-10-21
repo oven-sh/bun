@@ -1,10 +1,21 @@
-import { canonicalizeIP } from "bun:internal-for-testing";
+import { addBlockedSPKIForTesting, canonicalizeIP, clearBlockedSPKIsForTesting } from "bun:internal-for-testing";
 import { createTest } from "node-harness";
 import { createHash, X509Certificate } from "node:crypto";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
-import { getCACertificates, rootCertificates } from "tls";
-const { describe, expect } = createTest(import.meta.path);
+import {
+  connect,
+  createServer,
+  getCACertificates,
+  rootCertificates,
+  type ConnectionOptions,
+  type Server,
+  type TlsOptions,
+  type TLSSocket,
+} from "tls";
+const { afterEach, describe, expect } = createTest(import.meta.path);
 
 describe("NodeTLS.cpp", () => {
   test("canonicalizeIP", () => {
@@ -147,5 +158,185 @@ describe("NodeTLS.cpp", () => {
     }
     const bundled = rootCertificates.map(pem => createHash("sha1").update(new X509Certificate(pem).raw).digest("hex"));
     expect(bundled.toSorted()).toEqual(trusted.toSorted());
+  });
+});
+
+// Port of node's test/parallel/test-tls-spki-blocklist.js. The chain is agent6 -> ca3 (intermediate) -> ca1 (root), and
+// agent6-cert.pem bundles ca3. ca1 signs agent1 directly. ca2 is unrelated to both.
+describe("blocked public keys", () => {
+  const readKey = (name: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", name), "utf8");
+  const spkiSha256 = (pem: string) =>
+    createHash("sha256")
+      .update(new X509Certificate(pem).publicKey.export({ type: "spki", format: "der" }))
+      .digest();
+
+  const rootCert = readKey("ca1-cert.pem");
+  const leafKey = readKey("agent6-key.pem");
+  const leafChain = readKey("agent6-cert.pem");
+  const unaffectedKey = readKey("agent1-key.pem");
+  const unaffectedCert = readKey("agent1-cert.pem");
+  const unrelatedCert = readKey("ca2-cert.pem");
+
+  const intermediateSpkiHash = spkiSha256(readKey("ca3-cert.pem"));
+  const leafSpkiHash = spkiSha256(leafChain);
+  const unrelatedSpkiHash = spkiSha256(unrelatedCert);
+
+  const servers: Server[] = [];
+  // A TLS 1.3 client is done before the server has read its certificate, so clients stay open until the test is over.
+  const clients: TLSSocket[] = [];
+  afterEach(() => {
+    clearBlockedSPKIsForTesting();
+    for (const client of clients.splice(0)) client.destroy();
+    for (const server of servers.splice(0)) server.close();
+  });
+
+  async function listen(options: TlsOptions) {
+    const server = createServer(options, socket => socket.resume());
+    servers.push(server);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return server;
+  }
+
+  const authorization = ({ authorized, authorizationError }: TLSSocket) => ({ authorized, authorizationError });
+
+  /** What the client saw: the error that ended the handshake, or how the connection was authorized. */
+  function connectTo(server: Server, options: ConnectionOptions) {
+    const { promise, resolve } = Promise.withResolvers<object>();
+    const client = connect({
+      host: "127.0.0.1",
+      port: (server.address() as AddressInfo).port,
+      checkServerIdentity: () => undefined,
+      ...options,
+    });
+    clients.push(client);
+    client.once("error", err => resolve({ error: (err as NodeJS.ErrnoException).code }));
+    client.once("secureConnect", () => resolve(authorization(client)));
+    client.once("close", () => resolve({ closed: true }));
+    return promise;
+  }
+
+  /** What the server saw of its next client: the same, from the other side. */
+  function nextClientOf(server: Server) {
+    const { promise, resolve } = Promise.withResolvers<object>();
+    server.once("secureConnection", socket => resolve(authorization(socket)));
+    server.once("tlsClientError", (err, socket) =>
+      resolve({ error: (err as NodeJS.ErrnoException).code, ...authorization(socket) }),
+    );
+    return promise;
+  }
+
+  describe("in the server's chain", () => {
+    const server = () => listen({ key: leafKey, cert: leafChain });
+
+    test("nothing blocked: the chain is accepted", async () => {
+      expect(await connectTo(await server(), { ca: rootCert })).toEqual({ authorized: true, authorizationError: null });
+    });
+
+    test("a blocked intermediate is rejected", async () => {
+      addBlockedSPKIForTesting(intermediateSpkiHash);
+      expect(await connectTo(await server(), { ca: rootCert })).toEqual({ error: "CERT_REVOKED" });
+    });
+
+    test("a blocked leaf is rejected", async () => {
+      addBlockedSPKIForTesting(leafSpkiHash);
+      expect(await connectTo(await server(), { ca: rootCert })).toEqual({ error: "CERT_REVOKED" });
+    });
+
+    test("rejectUnauthorized: false reports CERT_REVOKED", async () => {
+      addBlockedSPKIForTesting(intermediateSpkiHash);
+      expect(await connectTo(await server(), { ca: rootCert, rejectUnauthorized: false })).toEqual({
+        authorized: false,
+        authorizationError: "CERT_REVOKED",
+      });
+    });
+
+    test("a blocked key takes precedence over an untrusted root", async () => {
+      expect(await connectTo(await server(), { ca: unrelatedCert })).toEqual({
+        error: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+      });
+      addBlockedSPKIForTesting(intermediateSpkiHash);
+      expect(await connectTo(await server(), { ca: unrelatedCert })).toEqual({ error: "CERT_REVOKED" });
+    });
+
+    test("clearing the list accepts the chain again", async () => {
+      addBlockedSPKIForTesting(intermediateSpkiHash);
+      clearBlockedSPKIsForTesting();
+      expect(await connectTo(await server(), { ca: rootCert })).toEqual({ authorized: true, authorizationError: null });
+    });
+
+    test("the hook validates its argument", () => {
+      // @ts-expect-error
+      expect(() => addBlockedSPKIForTesting("not a buffer")).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+      );
+      expect(() => addBlockedSPKIForTesting(Buffer.alloc(31))).toThrow(
+        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      );
+    });
+  });
+
+  describe("outside the verified chain", () => {
+    const server = () => listen({ key: leafKey, cert: `${leafChain}\n${unrelatedCert}` });
+
+    test("an unused certificate the peer sent is ignored when the chain verifies", async () => {
+      addBlockedSPKIForTesting(unrelatedSpkiHash);
+      expect(await connectTo(await server(), { ca: rootCert })).toEqual({ authorized: true, authorizationError: null });
+    });
+
+    test("every certificate the peer sent is checked when the chain does not verify", async () => {
+      addBlockedSPKIForTesting(unrelatedSpkiHash);
+      expect(await connectTo(await server(), { ca: unrelatedCert })).toEqual({ error: "CERT_REVOKED" });
+    });
+  });
+
+  describe("in the client's chain", () => {
+    const server = (rejectUnauthorized: boolean) =>
+      listen({ key: unaffectedKey, cert: unaffectedCert, ca: rootCert, requestCert: true, rejectUnauthorized });
+    const client = { key: leafKey, cert: leafChain, ca: rootCert };
+
+    test("nothing blocked: the chain is accepted", async () => {
+      const listening = await server(true);
+      const seen = nextClientOf(listening);
+      connectTo(listening, client);
+      expect(await seen).toEqual({ authorized: true, authorizationError: null });
+    });
+
+    test("rejectUnauthorized: false reports CERT_REVOKED", async () => {
+      addBlockedSPKIForTesting(intermediateSpkiHash);
+      const listening = await server(false);
+      const seen = nextClientOf(listening);
+      connectTo(listening, client);
+      expect(await seen).toEqual({ authorized: false, authorizationError: "CERT_REVOKED" });
+    });
+
+    test("rejectUnauthorized: true rejects the client", async () => {
+      addBlockedSPKIForTesting(intermediateSpkiHash);
+      const listening = await server(true);
+      const seen = nextClientOf(listening);
+      connectTo(listening, client);
+      expect(await seen).toEqual({ error: "CERT_REVOKED", authorized: false, authorizationError: "CERT_REVOKED" });
+    });
+  });
+
+  // fetch() runs its handshakes on another thread than the one that fills the list.
+  describe("fetch", () => {
+    const serve = () =>
+      Bun.serve({ port: 0, tls: { key: leafKey, cert: leafChain }, fetch: () => new Response("reached") });
+    const get = (url: URL) =>
+      fetch(url, { tls: { ca: rootCert, checkServerIdentity: () => undefined } }).then(
+        res => res.text(),
+        err => err.code,
+      );
+
+    test("nothing blocked: the chain is accepted", async () => {
+      using server = serve();
+      expect(await get(server.url)).toBe("reached");
+    });
+
+    test("a blocked intermediate is rejected", async () => {
+      addBlockedSPKIForTesting(intermediateSpkiHash);
+      using server = serve();
+      expect(await get(server.url)).toBe("CERT_REVOKED");
+    });
   });
 });

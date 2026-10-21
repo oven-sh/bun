@@ -11,12 +11,16 @@ on:
       - "packages/bun-types/**"
       - "test/integration/bun-types/**"
       - "src/cli/init/tsconfig.default.json"
+      - "src/**/*.bind.ts"
+      - "src/codegen/**"
       - ".github/workflows/bun-types.yml"
   pull_request:
     paths:
       - "packages/bun-types/**"
       - "test/integration/bun-types/**"
       - "src/cli/init/tsconfig.default.json"
+      - "src/**/*.bind.ts"
+      - "src/codegen/**"
       - ".github/workflows/bun-types.yml"
 
 env:

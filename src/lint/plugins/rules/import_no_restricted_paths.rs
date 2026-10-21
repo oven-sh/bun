@@ -11,14 +11,14 @@ use std::sync::OnceLock;
 
 /// Enforce which files can be imported in a given folder.
 pub struct NoRestrictedPaths {
-    zones: Vec<Written>,
+    zones: Vec<ZoneOptions>,
     base_path: Option<Box<[u8]>>,
-    /// With absolute paths. All files of a run have the same working directory.
+    /// The zones with absolute paths. Every file in a run has the same working directory.
     read: OnceLock<Vec<Zone>>,
 }
 
-/// A zone as the options have it.
-struct Written {
+/// A zone as it appears in the options.
+struct ZoneOptions {
     target: Vec<Box<[u8]>>,
     from: Vec<Box<[u8]>>,
     except: Vec<Box<[u8]>>,
@@ -36,26 +36,28 @@ const FROM_IS_MIXED: Message =
 const EXCEPTION_IS_NO_GLOB: Message =
     Message::new("", "Restricted path exceptions must be glob patterns when `from` contains glob patterns");
 
-enum Place {
+enum Target {
     Glob(Glob),
-    /// It, and all that is in it.
+    /// The path itself and everything under it.
     Path(Vec<u8>),
 }
 
-/// The validators of a zone.
+/// A zone's validators.
 enum Validators {
     /// `computeMixedGlobAndAbsolutePathValidator`
     Mixed,
-    /// `computeGlobPatternPathValidator`, for each. The exceptions are the same for all. `None`: one is no pattern.
+    /// `computeGlobPatternPathValidator` for each glob. They all share the exceptions, which are `None` if one of them
+    /// isn't a glob.
     Globs(Vec<Glob>, Option<Vec<Glob>>),
-    /// `computeAbsolutePathValidator`: each with its exceptions. `None`: one of them is not in it.
+    /// `computeAbsolutePathValidator`: each path with its exceptions, which are `None` if one of them isn't under the
+    /// path.
     Paths(Vec<(Vec<u8>, Option<Vec<Vec<u8>>>)>),
 }
 
 struct Zone {
-    target: Vec<Place>,
+    target: Vec<Target>,
     from: Validators,
-    /// After a blank. It is a part of the message that ESLint fills in.
+    /// Starts with a space. ESLint interpolates it as part of the message.
     message: Box<str>,
 }
 
@@ -64,52 +66,53 @@ fn contains_path(filepath: &[u8], target: &[u8]) -> bool {
     match filepath.strip_prefix(target) {
         Some([]) => true,
         Some([b'/', rest @ ..]) => !rest.starts_with(b".."),
-        // Only in a path of Windows, or in a root, can there be more to it.
+        // Only a Windows path or a root can need the full comparison.
         _ if target.len() > 1 && target.starts_with(b"/") && !target.starts_with(b"//") => false,
         _ => !paths::relative(target, filepath).starts_with(b".."),
     }
 }
 
-impl Place {
+impl Target {
     /// `isMatchingTargetPath`
     fn has(&self, filename: &[u8]) -> bool {
         match self {
-            Place::Glob(pattern) => pattern.matches(filename),
-            Place::Path(target) => contains_path(filename, target),
+            Target::Glob(pattern) => pattern.matches(filename),
+            Target::Path(target) => contains_path(filename, target),
         }
     }
 }
 
 impl Zone {
     /// `makePathValidators`
-    fn new(written: &Written, base_path: &[u8]) -> Zone {
+    fn new(zone_options: &ZoneOptions, base_path: &[u8]) -> Zone {
         let absolute = |it: &[u8]| paths::resolve(base_path, it);
-        let globs = written.from.iter().filter(|it| is_glob(it)).count();
+        let globs = zone_options.from.iter().filter(|it| is_glob(it)).count();
         let from = if globs == 0 {
             let with_exceptions = |from: &[u8]| {
                 let from = absolute(from);
-                let exceptions: Vec<Vec<u8>> = written.except.iter().map(|it| paths::resolve(&from, it)).collect();
+                let exceptions: Vec<Vec<u8>> = zone_options.except.iter().map(|it| paths::resolve(&from, it)).collect();
                 // `importType(..) !== 'parent'`
                 let are_valid = exceptions.iter().all(|it| !paths::is_external(&paths::relative(&from, it)));
                 (from, are_valid.then_some(exceptions))
             };
-            Validators::Paths(written.from.iter().map(|it| with_exceptions(it)).collect())
-        } else if globs == written.from.len() {
-            let are_valid = written.except.iter().all(|it| is_glob(it));
-            let exceptions = || written.except.iter().map(|it| Glob::new(it)).collect::<Vec<Glob>>();
-            let from = written.from.iter().map(|it| Glob::new(&absolute(it))).collect();
+            Validators::Paths(zone_options.from.iter().map(|it| with_exceptions(it)).collect())
+        } else if globs == zone_options.from.len() {
+            let are_valid = zone_options.except.iter().all(|it| is_glob(it));
+            let exceptions = || zone_options.except.iter().map(|it| Glob::new(it)).collect::<Vec<Glob>>();
+            let from = zone_options.from.iter().map(|it| Glob::new(&absolute(it))).collect();
             Validators::Globs(from, are_valid.then(exceptions))
         } else {
             Validators::Mixed
         };
-        let place = |it: &[u8]| match absolute(it) {
-            target if is_glob(&target) => Place::Glob(Glob::new(&target)),
-            target => Place::Path(target),
+        let to_target = |it: &[u8]| match absolute(it) {
+            target if is_glob(&target) => Target::Glob(Glob::new(&target)),
+            target => Target::Path(target),
         };
-        Zone { target: written.target.iter().map(|it| place(it)).collect(), from, message: written.message.clone() }
+        Zone { target: zone_options.target.iter().map(|it| to_target(it)).collect(), from, message: zone_options.message.clone() }
     }
 
-    /// What `checkForRestrictedImportPath` reports for the zone. `found`: the file that `import_path` means.
+    /// Reports what `checkForRestrictedImportPath` reports for the zone. `found`: the file that `import_path` resolves
+    /// to.
     fn check<'a>(&self, (import_path, found, cwd): (&[u8], &[u8], &[u8]), report: &dyn Fn(Message) -> Report<'a>) {
         let restricted = || {
             let message = interpolate_text(&self.message, |name| (name == "importPath").then_some(import_path));
@@ -141,7 +144,7 @@ impl Zone {
     }
 }
 
-/// `[].concat(value)`, of strings.
+/// `[].concat(value)`, keeping only the strings.
 fn strings_of(value: Option<&Json>) -> Vec<Box<[u8]>> {
     match value {
         Some(Json::Array(items)) => items.iter().filter_map(Json::as_str).map(Box::from).collect(),
@@ -153,12 +156,12 @@ fn strings_of(value: Option<&Json>) -> Vec<Box<[u8]>> {
 impl Rule for NoRestrictedPaths {
     const META: Meta = Meta::plugin(Plugin::Import, "no-restricted-paths", Kind::Problem).needs_modules();
     const ON: On = On::new().finish();
-    /// The zones that have the file as a target: where they are in [`NoRestrictedPaths::read`].
+    /// The indices in [`NoRestrictedPaths::read`] of the zones that target this file.
     type State<'a> = SmallVec<[u32; 8]>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
-        let zone = |it: &Json| Written {
+        let zone = |it: &Json| ZoneOptions {
             target: strings_of(it.get(b"target")),
             from: strings_of(it.get(b"from")),
             except: strings_of(it.get(b"except")),

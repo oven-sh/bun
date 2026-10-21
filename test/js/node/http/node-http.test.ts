@@ -28,6 +28,7 @@ import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";
+import { text } from "node:stream/consumers";
 import { connect as tlsConnect } from "node:tls";
 import { inspect } from "node:util";
 import tunnel from "tunnel";
@@ -7573,6 +7574,175 @@ it("req.socket.setKeepAlive() and resetAndDestroy() return the socket", async ()
   }
 });
 
+it("the native response's cork() treats a missing callback as undefined", async () => {
+  const { promise, resolve } = Promise.withResolvers<unknown>();
+  const server = http.createServer((req, res) => {
+    const handle = res[Object.getOwnPropertySymbols(res).find(s => s.description === "handle")!];
+    try {
+      resolve(handle.cork());
+    } catch (error) {
+      resolve(error);
+    }
+    res.end();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+    expect(await promise).toMatchObject({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: "callback must be a function",
+    });
+  } finally {
+    server.close();
+  }
+});
+
+it.each([NaN, 99, 1000, null, undefined, "abc"])("end() throws when statusCode is %p", async statusCode => {
+  const { promise, resolve } = Promise.withResolvers<unknown>();
+  const server = http.createServer((req, res) => {
+    // @ts-expect-error
+    res.statusCode = statusCode;
+    try {
+      resolve(res.end());
+    } catch (error) {
+      resolve(error);
+      res.statusCode = 500;
+      res.end();
+    }
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+    expect(await promise).toMatchObject({
+      name: "RangeError",
+      code: "ERR_HTTP_INVALID_STATUS_CODE",
+      message: `Invalid status code: ${statusCode}`,
+    });
+    expect(response.status).toBe(500);
+  } finally {
+    server.close();
+  }
+});
+
+it.each([
+  ["404", 404],
+  [200.5, 200],
+  [2 ** 32 + 200, 200],
+])("end() sends statusCode %p as %d", async (statusCode, expected) => {
+  const server = http.createServer((req, res) => {
+    // @ts-expect-error
+    res.statusCode = statusCode;
+    res.end();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+    expect(response.status).toBe(expected);
+  } finally {
+    server.close();
+  }
+});
+
+it("end() sends 200 after statusCode is deleted", async () => {
+  const server = http.createServer((req, res) => {
+    // @ts-expect-error
+    delete res.statusCode;
+    try {
+      res.end();
+    } catch {
+      res.statusCode = 500;
+      res.end();
+    }
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+    expect(response.status).toBe(200);
+  } finally {
+    server.close();
+  }
+});
+
+it.each(["write", "end"] as const)("%s(body) sends no body when statusCode is the string 304", async method => {
+  const server = http.createServer((req, res) => {
+    // @ts-expect-error
+    res.statusCode = "304";
+    res[method]("body");
+    res.end();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    socket.end("GET / HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n");
+    const [head, body] = (await text(socket)).split("\r\n\r\n");
+    expect(head).toStartWith("HTTP/1.1 304 Not Modified\r\n");
+    expect(body).toBe("");
+  } finally {
+    server.close();
+  }
+});
+
+it.each(["write", "end"] as const)("%s() reports a wrong chunk before an unknown encoding", async method => {
+  const { promise, resolve } = Promise.withResolvers<unknown>();
+  const server = http.createServer((req, res) => {
+    try {
+      // @ts-expect-error
+      resolve(res[method](5, "nope"));
+    } catch (error) {
+      resolve(error);
+    }
+    res.end();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+    expect(await promise).toMatchObject({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message:
+        'The "chunk" argument must be of type string or an instance of Buffer or Uint8Array. Received type number (5)',
+    });
+  } finally {
+    server.close();
+  }
+});
+
+it.each([
+  { invalid: "chunk", status: 201, chunk: { ok: true } },
+  { invalid: "status code", status: null, chunk: "body" },
+])(
+  "end() that throws for its $invalid sends nothing, and the next end() sends the status and headers",
+  async ({ status, chunk }) => {
+    const { promise, resolve } = Promise.withResolvers<unknown>();
+    const server = http.createServer((req, res) => {
+      // @ts-expect-error
+      res.statusCode = status;
+      res.setHeader("x-kept", "yes");
+      try {
+        // @ts-expect-error
+        res.end(chunk);
+        resolve("did not throw");
+      } catch {
+        resolve(res.headersSent);
+        res.statusCode = 201;
+        res.end("fallback");
+      }
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+      expect(await promise).toBe(false);
+      expect({ status: response.status, kept: response.headers.get("x-kept"), body: await response.text() }).toEqual({
+        status: 201,
+        kept: "yes",
+        body: "fallback",
+      });
+    } finally {
+      server.close();
+    }
+  },
+);
+
 it("addTrailers() and end() don't crash on the response of a request that was upgraded to a WebSocket", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -7626,5 +7796,39 @@ it("addTrailers() and end() don't crash on the response of a request that was up
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr }).toEqual({ stdout: "alive\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+it("a listener can cancel Readable.toWeb(req) and end the response in the same tick", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const http = require("node:http");
+        const { Readable } = require("node:stream");
+        const server = http.createServer((req, res) => {
+          const socket = req.socket;
+          req.on("error", () => {});
+          res.on("finish", () => console.log("keep-alive timeout", socket.timeout));
+          Readable.toWeb(req).cancel();
+          res.end("ok");
+        });
+        server.keepAliveTimeout = 4000;
+        server.keepAliveTimeoutBuffer = 0;
+        server.listen(0, "127.0.0.1", async () => {
+          const response = await fetch("http://127.0.0.1:" + server.address().port);
+          console.log(response.status, await response.text());
+          server.close();
+          server.closeAllConnections();
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "keep-alive timeout 4000\n200 ok\n", stderr: "" });
   expect(exitCode).toBe(0);
 });

@@ -3,7 +3,9 @@ use core::ptr;
 
 use crate as jsc;
 use crate::SysErrorJsc;
-use crate::{ComptimeStringMapExt as _, JSGlobalObject, JSType, JSValue, JsResult};
+use crate::{
+    ComptimeStringMapExt as _, JSGlobalObject, JSType, JSValue, JsResult, ProtectedJSValue,
+};
 use bun_alloc::mimalloc;
 use bun_sys::{self, Fd, FdExt};
 
@@ -141,6 +143,8 @@ unsafe extern "C" {
     // safe: by-value `JSValue`; false for non-buffer values.
     safe fn JSC__JSValue__isNonSharedWasmMemory(v: JSValue) -> bool;
     safe fn JSC__JSValue__canBeFreedWhilePinned(v: JSValue) -> bool;
+    // safe: by-value `JSValue`; empty for non-buffer values.
+    safe fn JSC__JSValue__findWasmMemory(v: JSValue, out_offset: &mut usize) -> JSValue;
     // safe: by-value `JSValue`; the callee always fills both out-params.
     safe fn JSC__JSValue__arrayBufferExtent(v: JSValue, out_ptr: &mut *mut u8, out_len: &mut usize);
 }
@@ -189,6 +193,28 @@ impl ArrayBuffer {
     /// A call instead of a field, so that `as_array_buffer` callers that never ask don't pay for the answer.
     pub fn can_be_freed_while_pinned(&self) -> bool {
         JSC__JSValue__canBeFreedWhilePinned(self.value)
+    }
+
+    /// Returns the live non-shared `WebAssembly.Memory` that this is a view of and where the view starts in it.
+    /// `grow()` detaches the view but keeps that offset valid.
+    pub fn find_wasm_memory(&self) -> Option<(JSValue, usize)> {
+        let mut view_offset = 0;
+        let memory = JSC__JSValue__findWasmMemory(self.value, &mut view_offset);
+        (!memory.is_empty()).then_some((memory, view_offset))
+    }
+
+    /// Copies as much of `bytes` as fits at `offset` in the current range of `target`, which is a
+    /// buffer, a view or a `WebAssembly.Memory`. Returns false if it copied nothing, which means that
+    /// `target` is detached or out of bounds, or ends at or before `offset`.
+    pub fn write_to_live(target: JSValue, offset: usize, bytes: &[u8]) -> bool {
+        let mut live = ArrayBuffer::default();
+        JSC__JSValue__arrayBufferExtent(target, &mut live.ptr, &mut live.byte_len);
+        let Some(target) = live.byte_slice_mut().get_mut(offset..) else {
+            return false;
+        };
+        let n = bytes.len().min(target.len());
+        target[..n].copy_from_slice(&bytes[..n]);
+        n > 0
     }
 
     // require('buffer').kMaxLength.
@@ -693,23 +719,19 @@ pub struct PinnedArrayBuffer {
 /// Native bytes that `buffer.ptr` points to instead of the JS storage.
 struct NativeCopy {
     bytes: Vec<u8>,
-    /// Offset in the view where [`write_back`](PinnedArrayBuffer::write_back) copies `bytes`. `None` for a read-only snapshot.
-    write_back_at: Option<usize>,
+    /// The `WebAssembly.Memory` and the offset in it where [`write_back`](PinnedArrayBuffer::write_back) copies `bytes`.
+    /// `grow()` detaches the view but keeps the offset valid. `None` for a read-only snapshot.
+    write_back_to: Option<(ProtectedJSValue, usize)>,
 }
 
 impl NativeCopy {
-    /// Copies the first `len` bytes to `write_back_at` in `view`'s current range.
-    fn write_back(&self, view: JSValue, len: usize) {
-        let Some(offset) = self.write_back_at else {
+    /// Copies the first `len` bytes to `write_back_to`.
+    fn write_back(&self, len: usize) {
+        let Some((memory, offset)) = &self.write_back_to else {
             return;
         };
-        let mut live = ArrayBuffer::default();
-        JSC__JSValue__arrayBufferExtent(view, &mut live.ptr, &mut live.byte_len);
-        let Some(target) = live.byte_slice_mut().get_mut(offset..) else {
-            return;
-        };
-        let n = len.min(self.bytes.len()).min(target.len());
-        target[..n].copy_from_slice(&self.bytes[..n]);
+        let n = len.min(self.bytes.len());
+        ArrayBuffer::write_to_live(memory.value(), *offset, &self.bytes[..n]);
     }
 }
 
@@ -751,6 +773,17 @@ impl PinnedArrayBuffer {
         this.copy_if_freeable_while_pinned(global).then_some(this)
     }
 
+    /// Limits the borrow to at most `len` bytes at `offset`, so that
+    /// [`copy_if_freeable_while_pinned`](Self::copy_if_freeable_while_pinned) copies only what the job reads.
+    #[inline]
+    pub fn narrow(&mut self, offset: usize, len: usize) {
+        debug_assert!(self.copy.is_none());
+        let offset = offset.min(self.buffer.byte_len);
+        self.buffer.ptr = self.buffer.ptr.wrapping_add(offset);
+        self.buffer.byte_len = len.min(self.buffer.byte_len - offset);
+        self.buffer.len = self.buffer.byte_len;
+    }
+
     /// Copies the bytes if they [`can_be_freed_while_pinned`](ArrayBuffer::can_be_freed_while_pinned),
     /// so a later read can't fault. Returns `false` if the copy can't be allocated.
     pub fn copy_if_freeable_while_pinned(&mut self, global: &JSGlobalObject) -> bool {
@@ -770,41 +803,45 @@ impl PinnedArrayBuffer {
         self.buffer.ptr = copy.as_mut_ptr();
         self.copy = Some(Box::new(NativeCopy {
             bytes: copy,
-            write_back_at: None,
+            write_back_to: None,
         }));
         true
     }
 
     /// Swaps in `len` bytes of scratch space if `grow()` could free the block while a job writes to
     /// it. If this returns true, the job writes from index 0 and [`write_back`](Self::write_back)
-    /// copies the bytes to `offset`.
+    /// copies the bytes to `offset`, even if `grow()` detached the view.
     #[inline]
     pub fn write_to_scratch_if_wasm(&mut self, offset: usize, len: usize) -> bool {
         if len == 0 || !JSC__JSValue__isNonSharedWasmMemory(self.buffer.value) {
             return false;
         }
+        // Nothing can detach the view of a collected memory.
+        let target = match self.buffer.find_wasm_memory() {
+            Some((memory, view_offset)) => (memory.protected(), view_offset + offset),
+            None => (self.buffer.value.protected(), offset),
+        };
         let mut scratch = vec![0u8; len];
         self.buffer.ptr = scratch.as_mut_ptr();
         self.buffer.len = len;
         self.buffer.byte_len = len;
         self.copy = Some(Box::new(NativeCopy {
             bytes: scratch,
-            write_back_at: Some(offset),
+            write_back_to: Some(target),
         }));
         true
     }
 
-    /// Call on the JS thread after the job is done. Copies the `len` bytes it wrote into the view,
-    /// clamped to the view's current size. No-op unless
-    /// [`write_to_scratch_if_wasm`](Self::write_to_scratch_if_wasm) returned true.
+    /// Call on the JS thread after the job is done. Copies the `len` bytes it wrote into the memory.
+    /// No-op unless [`write_to_scratch_if_wasm`](Self::write_to_scratch_if_wasm) returned true.
     #[inline]
     pub fn write_back(&mut self, len: usize) {
-        if let Some(scratch) = self.copy.take_if(|copy| copy.write_back_at.is_some()) {
+        if let Some(scratch) = self.copy.take_if(|copy| copy.write_back_to.is_some()) {
             self.buffer.ptr = ptr::null_mut();
             self.buffer.len = 0;
             self.buffer.byte_len = 0;
             // Don't pass a pointer to `self` to the out-of-line call, so a job that owns `self` by value can keep it in registers.
-            scratch.write_back(self.buffer.value, len);
+            scratch.write_back(len);
         }
     }
 
@@ -813,7 +850,7 @@ impl PinnedArrayBuffer {
         debug_assert!(
             self.copy
                 .as_ref()
-                .is_none_or(|copy| copy.write_back_at.is_some()),
+                .is_none_or(|copy| copy.write_back_to.is_some()),
             "a read-only root is not writable"
         );
         self.buffer.byte_slice_mut()

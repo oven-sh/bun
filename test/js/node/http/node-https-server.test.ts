@@ -529,3 +529,35 @@ test.skipIf(!isLinux)(
   },
   30_000,
 );
+
+// Linux still hands over what it received ahead of the reset that the first answer provokes.
+test.skipIf(!isLinux)("every request of one read is dispatched when the client leaves without reading", async () => {
+  let requests = 0;
+  let closed = 0;
+  const connectionClosed = Promise.withResolvers<void>();
+  const server = https.createServer(validCert, (req, res) => {
+    if (++requests === 1) req.socket.once("close", () => connectionClosed.resolve());
+    res.once("close", () => closed++);
+    req.resume().once("end", () => res.end("stored"));
+  });
+  const port = await listen(server);
+  // In a process of its own: it is gone while this loop still answers.
+  await using client = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const socket = require("node:tls").connect({ port: ${port}, host: "127.0.0.1", rejectUnauthorized: false }, () => {
+        socket.write("POST / HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 5\\r\\n\\r\\nhello".repeat(20));
+        socket.destroy();
+      });
+      socket.on("error", () => {});`,
+    ],
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  expect(await client.exited).toBe(0);
+  await connectionClosed.promise;
+  await new Promise<void>(resolve => server.close(() => resolve()));
+  expect({ requests, closed }).toEqual({ requests: 20, closed: 20 });
+});

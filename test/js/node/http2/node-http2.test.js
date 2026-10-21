@@ -6565,6 +6565,58 @@ it.skipIf(!isLinux)("a TLS session closes without an error when its write finds 
   }
 });
 
+it.skipIf(!isLinux)("streams build no frames for what they have buffered when the transport closes", async () => {
+  // :method GET, :scheme https and :path / from the static table, then a literal :authority.
+  const requestBlock = Buffer.concat([Buffer.from([0x82, 0x87, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
+  const chunk = Buffer.alloc(1000, "x");
+  const errors = [];
+  let streams = 0;
+  let completed = 0;
+  let batches = 0;
+  const server = http2.createSecureServer(TLS_CERT);
+  server.on("sessionError", err => errors.push(`sessionError:${err.code}`));
+  const sessionClosed = Promise.withResolvers();
+  server.on("session", session => session.on("close", sessionClosed.resolve));
+  let socket;
+  server.on("stream", stream => {
+    streams++;
+    stream.on("error", err => errors.push(`error:${err.code}`));
+    socket.resetAndDestroy();
+    stream.respond({ ":status": 200 });
+    for (let i = 0; i < 4000; i++) {
+      stream.write(chunk, err => (err ? errors.push(`write:${err.code}`) : completed++));
+    }
+    stream.end();
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  socket = net.connect(server.address().port, "127.0.0.1");
+  socket.on("error", () => {});
+  const peer = tls.connect({ socket, ALPNProtocols: ["h2"], ...TLS_OPTIONS, servername: "localhost" });
+  peer.on("error", () => {});
+  await once(peer, "secureConnect");
+  // A stream joins its buffered chunks before it frames them.
+  const concat = Buffer.concat;
+  Buffer.concat = function (list, ...rest) {
+    if (list.length > 1000) batches++;
+    return concat.call(this, list, ...rest);
+  };
+  try {
+    peer.write(
+      concat([
+        http2utils.kClientMagic,
+        new http2utils.SettingsFrame().data,
+        ...[1, 3, 5, 7, 9].map(id => new http2utils.HeadersFrame(id, requestBlock, 0, true, true).data),
+      ]),
+    );
+    await sessionClosed.promise;
+  } finally {
+    Buffer.concat = concat;
+  }
+  await new Promise(resolve => server.close(resolve));
+  // Only the first stream's write completed while the transport was open.
+  expect({ errors, streams, completed, batches }).toEqual({ errors: [], streams: 5, completed: 20000, batches: 1 });
+});
+
 it.skipIf(!isLinux)("a session reports ECONNRESET when its read finds the connection reset", async () => {
   for (const secure of [false, true]) {
     const server = secure ? http2.createSecureServer(TLS_CERT) : http2.createServer();

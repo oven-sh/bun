@@ -18,7 +18,7 @@ impl Rule for NoEmptyNamedBlocks {
         .has_suggestions()
         .reports_at_the_end();
     const ON: On = On::new().stmts(&[StmtTag::Import]);
-    /// What `up_to_from` says, which is the same for every import of a file.
+    /// The cached result of `up_to_from`, which is the same for every import in a file.
     type State<'a> = OnceCell<Option<(u32, &'static str)>>;
 
     fn new(_: &Options) -> Self {
@@ -36,7 +36,7 @@ impl Rule for NoEmptyNamedBlocks {
         if !import.named().is_empty() {
             return;
         }
-        // oxlint looks at the tree, the plugin at every `{` that a `}` follows: that of `with {}` too.
+        // oxlint checks the AST. The plugin checks the tokens for any `{` followed by a `}`, including `with {}`.
         if !cx.language().is_oxlint {
             if import.has_named_imports() || import.attributes().is_some_and(|it| it.entries().is_empty()) {
                 check_tokens(stmt, cx);
@@ -47,7 +47,8 @@ impl Rule for NoEmptyNamedBlocks {
             return;
         }
         let Some(specifier) = import.default() else {
-            // Without an `import {} from "a"` the module `a` is not run. An `import type` runs nothing.
+            // Removing `import {} from "a"` means the module `a` no longer runs, so that's only a suggestion. An
+            // `import type` never runs anything.
             if import.has_named_imports() {
                 let report = cx.report(stmt, NO_EMPTY_NAMED_BLOCKS);
                 match import.is_type_only() {
@@ -57,7 +58,8 @@ impl Rule for NoEmptyNamedBlocks {
             }
             return;
         };
-        // As oxlint: a `,` and a `from` anywhere in what follows, also in the specifier and in the attributes.
+        // Like oxlint, finds a `,` and a `from` anywhere in the rest of the statement, even in the specifier or the
+        // attributes.
         let (start, end) = (specifier.span().end, stmt.span().end);
         if let Some(comma) = find_next_token_within(cx.file(), Span::new(start, end), b",")
             && let Some(from) = find_next_token_within(cx.file(), Span::new(comma, end), b"from")
@@ -101,8 +103,9 @@ fn check_tokens<'a>(stmt: Stmt<'a>, cx: &Cx<'a, NoEmptyNamedBlocks>) {
     }
 }
 
-/// Where the suggestion that leaves `import 'mod'` ends, and what it puts there. Upstream takes the first `from` and
-/// the first `import` of the program, whichever import it is at. Without a `from`, or with nothing after it, it throws.
+/// Returns where the suggestion that leaves `import 'mod'` ends its replacement, and the replacement text. Upstream
+/// uses the program's first `from` and first `import`, no matter which import it's fixing. It throws if there's no
+/// `from` or nothing after it.
 fn up_to_from<'a>(file: &'a File<'a>) -> Option<(u32, &'static str)> {
     let from = file.tokens().find(|it| has_value(*it, &["from"]))?;
     let import = file.tokens().find(|it| has_value(*it, &["import"]))?;

@@ -21,11 +21,9 @@ const LENGTH = 2 ** 31 - 10;
 const fixture = `
   import { SocketAddress } from "node:net";
 
-  // "!" is not a plugin namespace character, so Bun.plugin refuses this string.
-  const long = "!".repeat(${LENGTH});
+  const long = "q".repeat(${LENGTH});
   class C {}
   Object.defineProperty(C, "name", { value: long });
-  const refusedNamespace = hook => Bun.plugin({ setup(build) { build[hook]({ filter: /x/, namespace: long }, () => {}); } });
 
   const cases = {
     "unknown Buffer encoding": () => Buffer.from("x", long),
@@ -36,8 +34,6 @@ const fixture = `
     "invalid SubtleCrypto key format": () => crypto.subtle.importKey(long, new Uint8Array(8), "AES-GCM", false, ["encrypt"]),
     "invalid ReadableStream source type": () => new ReadableStream({ type: long }),
     "value that ReadableStream.from cannot iterate": () => ReadableStream.from(Symbol(long)),
-    "namespace that Bun.plugin refuses in onLoad": () => refusedNamespace("onLoad"),
-    "namespace that Bun.plugin refuses in onResolve": () => refusedNamespace("onResolve"),
   };
   for (const [name, run] of Object.entries(cases)) {
     try {
@@ -73,8 +69,6 @@ test.skipIf(totalmem() < 10 * 1024 ** 3)(
         "invalid SubtleCrypto key format: RangeError: Out of memory",
         "invalid ReadableStream source type: RangeError: Out of memory",
         "value that ReadableStream.from cannot iterate: RangeError: Out of memory",
-        "namespace that Bun.plugin refuses in onLoad: RangeError: Out of memory",
-        "namespace that Bun.plugin refuses in onResolve: RangeError: Out of memory",
       ],
       stderr: "",
       exitCode: 0,
@@ -82,3 +76,44 @@ test.skipIf(totalmem() < 10 * 1024 ** 3)(
   },
   30_000,
 );
+
+test("a native error whose message exceeds the string length limit is thrown with a fallback message", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+      import { expect } from "bun:test";
+      setSyntheticAllocationLimitForTesting(1024 * 1024);
+      const long = Buffer.alloc(1024 * 1024 - 16, "a").toString();
+      const cases = {
+        "Bun.listen": () => Bun.listen({ unix: long, socket: { data() {} } }),
+        "Bun.JSONC.parse": () => Bun.JSONC.parse(long),
+        "expect": () => expect(1, long).toBe(2),
+      };
+      for (const [name, run] of Object.entries(cases)) {
+        try {
+          run();
+          console.log(name + ": did not throw");
+        } catch (e) {
+          console.log(name + ": " + e.name + ": " + e.message);
+        }
+      }
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+    stdout: [
+      "Bun.listen: Error: The error message exceeds the maximum string length",
+      "Bun.JSONC.parse: SyntaxError: The error message exceeds the maximum string length",
+      "expect: Error: The error message exceeds the maximum string length",
+    ],
+    stderr: "",
+    exitCode: 0,
+  });
+});

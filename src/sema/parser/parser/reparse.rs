@@ -1,4 +1,4 @@
-//! reparser.go: the tags of JSDoc comments become ordinary nodes, in JavaScript. Where it clones a type, the type is parsed again.
+//! reparser.go: in JavaScript, JSDoc tags become ordinary nodes. Where reparser.go clones a type, this reparses it.
 
 use super::jsdoc::{Attached, Reach};
 use super::{ListKind, Parser};
@@ -26,9 +26,9 @@ pub(super) enum Host {
     /// A function declaration, a function expression or an arrow function.
     Function(FnId),
     Class(ClassId),
-    /// A member of a class, before it is on the stack of members. Its modifiers are on their stack: `modifiers` is empty.
+    /// A class member that isn't on `s.members` yet. Its modifiers are still on `s.modifiers`, so `modifiers` is empty.
     ClassMember(Member),
-    /// A property of an object literal, before it is on the stack of properties, and the type of its `@type` tag.
+    /// An object literal property that isn't on `s.props` yet, and the type from its `@type` tag.
     Property(Prop, TypeNodeId),
 }
 
@@ -37,8 +37,7 @@ fn modifiers_of(flags: Flags) -> Flags {
     flags.difference(Flags::GENERATOR | Flags::OPTIONAL | Flags::MISSING_BODY)
 }
 
-/// `entityNameToString`
-/// The names of those of `tags` that no parameter matches, with the code of what is said about each.
+/// Pushes the names of the `tags` that no parameter matches, each with the code of the error to report.
 fn push_unmatched_names<'d, 't>(
     tags: &[&'d Property<'t>],
     is_matched: &[bool],
@@ -56,6 +55,7 @@ fn push_unmatched_names<'d, 't>(
     }
 }
 
+/// `entityNameToString`
 fn entity_name_to_string(name: &[Name<'_>]) -> Vec<u8> {
     let parts: Vec<&[u8]> = name.iter().map(|part| &*part.text).collect();
     parts.join(&b'.')
@@ -68,9 +68,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.atom(&name.text)
     }
 
-    /// The outermost parentheses around `e`: their start and end.
+    /// Start and end of the outermost parentheses around `e`.
     fn paren_of(&self, e: ExprId) -> Option<(u32, u32)> {
-        // An expression is added after its operands, its parentheses after it: the list is in the order of the ids.
+        // An expression is added after its operands, and its parentheses after it, so the list is ordered by id.
         let outermost = parentheses_around(&self.f, e).last()?;
         Some((outermost.1, outermost.2))
     }
@@ -155,7 +155,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         }
     }
 
-    /// `skipSatisfiesExpressions`: the function that `e` is then. `NONE`: it is no function.
+    /// Returns the function that `e` is after `skipSatisfiesExpressions`, or `NONE` if it isn't a function.
     fn function_of_expression(&self, mut e: ExprId) -> FnId {
         while e.is_some() && self.paren_of(e).is_none() {
             match self.f[e].kind {
@@ -211,7 +211,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.jsdoc.full_signatures.contains(&func.0)
     }
 
-    /// `checkNonIdentifierName`. It is an error of the parser, not of the comment.
+    /// `checkNonIdentifierName`. It reports a parser error, not a JSDoc error.
     fn check_non_identifier_name(&mut self, name: &Name<'_>) {
         if bun_core::lexer::is_identifier(&name.text) {
             return;
@@ -234,14 +234,14 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         // `checkSourceElementWorker` has no case for a `JSDocVariadicType` or a `JSDocOptionalType`.
         let wrappers = TypeShape::VARIADIC | TypeShape::OPTIONAL;
         match expr.shape.intersects(wrappers) {
-            true => self.parse_type_again(expr, Reach::Resolved),
-            false => self.parse_type_again(expr, Reach::Checked),
+            true => self.reparse_jsdoc_type(expr, Reach::Resolved),
+            false => self.reparse_jsdoc_type(expr, Reach::Checked),
         }
     }
 
-    /// The same for a type that `checkSourceFile` never reaches: only `getTypeFromTypeNode` is called for it.
+    /// Like `reparse_type`, for a type `checkSourceFile` never reaches. Only `getTypeFromTypeNode` is called for it.
     fn reparse_unchecked_type(&mut self, expr: TypeExpr) -> TypeNodeId {
-        self.parse_type_again(expr, Reach::Resolved)
+        self.reparse_jsdoc_type(expr, Reach::Resolved)
     }
 
     /// `reparseJSDocTypeLiteral`
@@ -268,7 +268,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 continue;
             };
             let mut flags = Flags::REPARSED;
-            // A name that is not an identifier is still a name, as a string.
+            // A name that isn't an identifier becomes a string-literal name.
             if !bun_core::lexer::is_identifier(&name.text) {
                 flags |= Flags::STRING_NAME | Flags::LITERAL_NAME;
             }
@@ -348,9 +348,11 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                     Some(default) => self.reparse_type(default),
                     None => TypeNodeId::NONE,
                 };
-                let written = param.modifiers.iter();
-                let written = written.fold(Flags::empty(), |all, modifier| all | modifier.0);
-                let flags = Flags::REPARSED | written & (Flags::CONST | Flags::IN | Flags::OUT);
+                let modifier_flags = param.modifiers.iter();
+                let modifier_flags =
+                    modifier_flags.fold(Flags::empty(), |all, modifier| all | modifier.0);
+                let flags =
+                    Flags::REPARSED | modifier_flags & (Flags::CONST | Flags::IN | Flags::OUT);
                 let modifiers: SmallVec<[Modifier; 2]> = param
                     .modifiers
                     .iter()
@@ -400,9 +402,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
 
     // ───────────────────────────── tags ─────────────────────────────
 
-    /// `reparseTags`, in JavaScript only, and what the checker reads from the tags of `host` in every file.
+    /// `reparseTags` (JavaScript only), plus what the checker reads from `host`'s tags in every file.
     pub(super) fn reparse_tags(&mut self, host: &mut Host, attached: &Attached<'a>) {
-        // Reading the comments has ended the file.
+        // Parsing the comments already failed the file.
         if self.has_failed() {
             return;
         }
@@ -428,7 +430,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         }
     }
 
-    /// The type alias for a `@typedef` or a `@callback`, in the namespaces of its name (`wrapInJSDocNamespace`).
+    /// Adds the type alias for a `@typedef` or a `@callback`, wrapped in the namespaces of its name
+    /// (`wrapInJSDocNamespace`).
     fn reparse_alias(
         &mut self,
         name: &DeclaredName<'_>,
@@ -456,7 +459,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             pos: tag.pos,
             end: tag.end,
         };
-        // `IsImplicitlyExportedJSDocDeclaration`: the binder exports the outermost one, only from a module.
+        // `IsImplicitlyExportedJSDocDeclaration`: the binder exports the outermost one, and only from a module.
         for (depth, namespace) in name.namespaces.iter().enumerate().rev() {
             let module = Module {
                 name: ModuleName::Ident(self.name_atom(namespace)),
@@ -481,7 +484,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 end: name.name.end,
             };
         }
-        // `parseListIndex` passes only type aliases and imports on: the namespace is a member of the class.
+        // `parseListIndex` only passes on type aliases and imports, so the namespace becomes a member of the class.
         if let (Some(outermost), Host::ClassMember(_)) = (name.namespaces.first(), host) {
             self.flag(DiagnosticKind::Grammar, 1235, (outermost.start, 0), &[]);
         }
@@ -518,7 +521,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                     pos: tag.pos,
                     end: tag.end,
                 };
-                let statement = self.parse_import_again(*import, loc, reach);
+                let statement = self.reparse_jsdoc_import(*import, loc, reach);
                 self.jsdoc.reparsed.push(statement);
             }
             TagKind::Overload(signature) => {
@@ -562,7 +565,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         }
     }
 
-    /// The name of the parameter for the tag `index` of a signature, which names `text`: `_` stands for what no identifier has.
+    /// Parameter name for tag number `index` of a signature, whose name is `text`. Characters that aren't valid in an
+    /// identifier become `_`.
     fn parameter_name(&mut self, text: &[u8], index: usize) -> Atom {
         if bun_core::lexer::is_identifier(text) {
             return self.atom(text);
@@ -582,7 +586,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.atom(&spelled)
     }
 
-    /// `reparseJSDocSignature`. `like`: the function an `@overload` tag is on. `None`: the function type of a `@callback`.
+    /// `reparseJSDocSignature`. `like`: the function an `@overload` tag is on. `None`: a `@callback`'s function type.
     fn reparse_signature(
         &mut self,
         signature: &Signature<'_>,
@@ -591,7 +595,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         tag: &Tag<'_>,
     ) -> FnId {
         let like = like.map(|like| self.f[like]);
-        // `checkNonIdentifierName(fun.Name())`: of the names that the parser accepts only a missing one is not valid.
+        // `checkNonIdentifierName(fun.Name())`: the only invalid name the parser accepts is a missing one.
         if let Some(like) = like
             && matches!(like.kind, FnKind::Decl | FnKind::Method)
             && like.name == known::empty
@@ -749,7 +753,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                     };
                     let this = self.f.add_param(this);
                     self.f[func].this_param = this;
-                    // `checkParameter`: the position of the parameter is that of the tag's name.
+                    // `checkParameter`: the parameter is positioned at the tag's name.
                     let code = match self.f[func].kind {
                         FnKind::Arrow => Some(2730),
                         FnKind::Constructor => Some(2681),
@@ -816,7 +820,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             return;
         }
         self.f[param].flags |= Flags::OPTIONAL | Flags::REPARSED;
-        // `checkGrammarParameterList`, `checkGrammarAccessor`: the position of the `?` is that of the tag.
+        // `checkGrammarParameterList`, `checkGrammarAccessor`: the `?` is positioned at the tag.
         let Func {
             kind,
             type_params,
@@ -851,12 +855,14 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
 
     fn reparse_type_arguments(&mut self, class_name: &ClassName<'_>) -> IdList<TypeNodeId> {
         match class_name.type_args {
-            Some(type_args) => self.parse_type_arguments_again(type_args),
+            Some(type_args) => self.reparse_jsdoc_type_arguments(type_args),
             None => IdList::EMPTY,
         }
     }
 
-    /// `checkGrammarClassDeclarationHeritageClauses`, the first `@augments` tag of any comment whose last name is not that of the `extends` clause. `Checker::check_grammar_augments_tags` decides between it and the other errors.
+    /// `checkGrammarClassDeclarationHeritageClauses`: reports the first `@augments` tag, in any comment, whose last
+    /// name differs from the `extends` clause's. `Checker::check_grammar_augments_tags` chooses between this error and
+    /// the others.
     fn check_grammar_augments_tags(&mut self, class: ClassId, attached: &Attached<'_>) {
         let extends = self.f[class].extends;
         if extends.is_none() || self.paren_of(extends).is_some() {
@@ -882,7 +888,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         }
     }
 
-    /// `@augments`, `@extends`: the type arguments go to the `extends` clause, if it names the same class.
+    /// `@augments`, `@extends`: moves the type arguments to the `extends` clause if it names the same class.
     fn reparse_augments_tag(&mut self, class_name: &ClassName<'_>, class: ClassId) {
         let Class {
             extends,
@@ -893,7 +899,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             return;
         }
         // From the last name to the first.
-        let mut written = Vec::new();
+        let mut extends_names = Vec::new();
         let mut at = extends;
         let is_entity_name = loop {
             if self.paren_of(at).is_some() {
@@ -901,11 +907,11 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             }
             match self.f[at].kind {
                 ExprKind::Ident(name) => {
-                    written.push(name);
+                    extends_names.push(name);
                     break true;
                 }
                 ExprKind::Dot { obj, name, .. } => {
-                    written.push(name);
+                    extends_names.push(name);
                     at = obj;
                 }
                 _ => break false,
@@ -913,8 +919,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         };
         // `HasSamePropertyAccessName`
         let is_same = is_entity_name
-            && written.len() == class_name.name.len()
-            && written
+            && extends_names.len() == class_name.name.len()
+            && extends_names
                 .iter()
                 .rev()
                 .zip(&class_name.name)
@@ -994,7 +1000,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             Host::ExpressionStatement(stmt) => {
                 let e = self.statement_expression(*stmt);
                 if e.is_some() && self.is_assignment_declaration(e) {
-                    // `SetType` without a test: the last tag replaces the others.
+                    // `SetType` is unconditional here, so the last tag wins.
                     if is_last_type_tag {
                         let ty = self.reparse_unchecked_type(ty);
                         let owner = JsDocTypeOwner::Assign(e);
@@ -1102,7 +1108,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             }
             Host::ClassMember(member) => {
                 let is_modified = match member.kind {
-                    // They are not modifiers in an object literal, nor in anything nested in one.
+                    // They aren't modifiers in an object literal or in anything nested in one.
                     MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
                         !self.is_in_object_literal()
                     }
@@ -1152,10 +1158,11 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         matching.map(|(_, param)| param)
     }
 
-    /// `checkUnmatchedJSDocParameters`, as far as syntax decides. `getAllJSDocTags`: only the nearest comment counts, which gets here first.
+    /// `checkUnmatchedJSDocParameters`, as far as syntax can decide. `getAllJSDocTags`: only the nearest comment
+    /// counts, and it gets here first.
     fn note_unmatched_parameters(&mut self, host: &Host, doc: &JsDoc<'_>) {
         let func = match *host {
-            // `GetNextJSDocCommentLocation` does not go through an assignment.
+            // `GetNextJSDocCommentLocation` doesn't look through an assignment.
             Host::ExpressionStatement(stmt) => {
                 self.function_of_expression(self.statement_expression(stmt))
             }

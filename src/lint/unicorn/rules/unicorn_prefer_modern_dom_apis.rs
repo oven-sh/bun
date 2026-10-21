@@ -12,7 +12,7 @@ impl Rule for PreferModernDomApis {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-modern-dom-apis", Kind::Suggestion).has_suggestions();
     const ON: On =
         On::new().method_calls(&["replaceChild", "insertBefore", "insertAdjacentText", "insertAdjacentElement"]);
-    /// The names of the methods.
+    /// The methods' names.
     type State<'a> = [Name<'a>; 4];
 
     fn new(_: &Options) -> Self {
@@ -39,13 +39,13 @@ impl Rule for PreferModernDomApis {
             return;
         };
         let method = property.bytes();
-        // What the new method is called on, and with.
+        // The receiver and the argument of the new method.
         let (preferred_method, reference, content, can_fix) = match method {
             b"replaceChild" | b"insertBefore" => {
                 if plain(obj).is_none_or(|it| it.tag() != ExprTag::Ident) || call_expr.is_optional() {
                     return;
                 }
-                // Another order could change what complex arguments do.
+                // Reordering complex arguments could change what they do.
                 let is_safe = |it: Expr| plain(it).and_then(Expr::as_ident).is_some_and(|name| !name.is("undefined"));
                 let preferred_method = if method == b"replaceChild" { "replaceWith" } else { "before" };
                 (preferred_method, second, first, is_safe(first) && is_safe(second) && is_expression_statement(e))

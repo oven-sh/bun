@@ -103,6 +103,9 @@ pub(crate) fn locked_scp_like(repo: &[u8]) -> Option<Vec<u8>> {
     })
 }
 
+/// The tag becomes part of a cache folder name that must fit in a path buffer.
+pub(crate) const MAX_RESOLVED_TAG_LEN: usize = 256;
+
 /// `resolved` is the `.bun-tag` value persisted to the lockfile (a commit SHA for
 /// `git`, or `<owner>-<repo>-<sha>` for `github`). It is concatenated into a cache
 /// directory name and passed to `git checkout`, so it must be a single safe path
@@ -110,7 +113,7 @@ pub(crate) fn locked_scp_like(repo: &[u8]) -> Option<Vec<u8>> {
 /// option.
 pub(crate) fn is_safe_resolved_tag(resolved: &[u8]) -> bool {
     !resolved.is_empty()
-        && resolved.len() <= 256
+        && resolved.len() <= MAX_RESOLVED_TAG_LEN
         && resolved[0] != b'-'
         && resolved != b"."
         && resolved != b".."

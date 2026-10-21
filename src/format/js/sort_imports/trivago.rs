@@ -22,7 +22,7 @@ pub(super) const SEPARATOR: &[u8] = b"<SEPARATOR>";
 pub(super) struct Group {
     pub(super) text: Box<[u8]>,
     pub(super) regex: Regex,
-    /// The first element with the same text: they are one group.
+    /// The first element with the same text. They form one group.
     pub(super) same_as: usize,
 }
 
@@ -53,7 +53,7 @@ impl std::fmt::Debug for Exclude {
 
 #[derive(Debug)]
 pub(super) struct Options {
-    /// `importOrder`, with `<THIRD_PARTY_MODULES>` before it if it does not have it.
+    /// `importOrder`, with `<THIRD_PARTY_MODULES>` prepended if it's missing.
     pub(super) order: Vec<Group>,
     pub(super) is_case_insensitive: bool,
     pub(super) separation: bool,
@@ -108,11 +108,14 @@ impl Options {
 
 /// `isSortImportsIgnored`
 fn is_ignored(model: &Model, comments: super::babel::List) -> bool {
-    let is_js_blank = |byte: &u8| byte.is_ascii_whitespace() || *byte == 0x0B;
+    let is_js_whitespace = |byte: &u8| byte.is_ascii_whitespace() || *byte == 0x0B;
     model.list(comments).iter().any(|comment| {
         let value = model.comment_value(*comment);
-        let blanks = value.iter().take_while(|byte| is_js_blank(byte)).count();
-        value[blanks..].starts_with(b"sort-imports-ignore")
+        let whitespace_len = value
+            .iter()
+            .take_while(|byte| is_js_whitespace(byte))
+            .count();
+        value[whitespace_len..].starts_with(b"sort-imports-ignore")
     })
 }
 
@@ -272,8 +275,8 @@ fn sorted_nodes(model: &mut Model, options: &Options) -> Vec<Node> {
     nodes
 }
 
-/// The text that the plugin hands to Prettier in place of the file of `model`. `None`: it is
-/// formatted the same.
+/// The text that the plugin hands to Prettier in place of `model`'s file. Returns `None` if that wouldn't change the
+/// formatted output.
 pub(super) fn preprocess(
     model: &mut Model,
     options: &Options,
@@ -321,7 +324,7 @@ pub(super) fn preprocess(
     let mut comments = model.comments.iter().enumerate().peekable();
     let mut at = 0;
     let mut is_injected = false;
-    // Appends the text from `at` to `to`, with the code in it.
+    // Appends the text from `at` to `to`, injecting the generated code where it belongs.
     let mut keep = |out: &mut Vec<u8>, at: u32, to: u32| {
         let mut at = at;
         if !is_injected && inject_at <= to {

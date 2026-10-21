@@ -326,6 +326,13 @@ jsc::impl_abort_handle_owner!(FetchTasklet, abort_handle, |this, cause| {
     unsafe {
         match cause {
             jsc::AbortCause::Signal(reason) => (*this).abort_listener(reason),
+            jsc::AbortCause::ContextStopped(jsc::StopReason::VmTeardown) => {
+                (*this).abort_task();
+                if (*this).detach_native_request_body_sink() {
+                    FetchTasklet::deref(this);
+                }
+            }
+            // The VM keeps running, so the final progress update cancels the request body sink.
             jsc::AbortCause::ContextStopped(_) => (*this).abort_task(),
         }
     }
@@ -2490,6 +2497,29 @@ impl FetchTasklet {
             // `write_end_request(Some(_))` is just the balancing deref.
             self.write_end_request(Some(reason));
         }
+    }
+
+    /// Ends a request body sink that's wired to a native source. VM teardown drops the progress
+    /// update without running it and destroys the source without ending its sink. A sink fed by
+    /// a JS pump is finalized by its controller cell instead.
+    /// Returns true if the caller must release the ref from `start_request_stream`.
+    fn detach_native_request_body_sink(&mut self) -> bool {
+        let global_this = self.global_this;
+        let Some(sink) = self.sink_mut() else {
+            return false;
+        };
+        if sink.ended
+            || !matches!(
+                sink.source,
+                SourceHandle::ByteStream(_) | SourceHandle::FileReader(_)
+            )
+        {
+            return false;
+        }
+        sink.ended = true;
+        sink.done = true;
+        sink.source.detach(&global_this);
+        sink.task.take().is_some()
     }
 
     pub(crate) fn queue(

@@ -15,18 +15,18 @@ fn is_normal_member_access(e: Expr<'_>) -> bool {
         if parent.as_dot().is_some_and(|(obj, ..)| obj == e))
 }
 
-/// For the `arguments` that are referred to many times.
+/// Keeps the rule linear for an `arguments` with many references.
 pub struct State<'a> {
-    /// `arguments`
+    /// The name `arguments`.
     name: Name<'a>,
     counted: IdSet<Symbol<'a>>,
-    /// How many of the references to what is `counted` an identifier is.
+    /// For an identifier of a `counted` symbol: how many of the symbol's references are that identifier.
     references: IdMap<Expr<'a>, u32>,
 }
 
 impl<'a> State<'a> {
-    /// How many of the references to `symbol` are `e`. In total it takes time in proportion to the
-    /// number of references.
+    /// Returns how many of the references to `symbol` are `e`. All calls together take time linear in the number of
+    /// references.
     fn count(&mut self, symbol: Symbol<'a>, e: Expr<'a>) -> u32 {
         if self.counted.insert(symbol) {
             for identifier in symbol.references().filter_map(Reference::expr) {
@@ -71,8 +71,8 @@ impl PreferRestParams {
         if is_normal_member_access(e) {
             return;
         }
-        // oxlint: every one that the file does not declare, anywhere in a function that is no arrow function, in a default
-        // value of a parameter too.
+        // oxlint reports every `arguments` that the file doesn't declare, anywhere in a non-arrow function, including a
+        // parameter's default value.
         if cx.language().is_oxlint {
             let is_function = |it: Node| matches!(it, Node::Func(func) if !func.is_arrow() && func.kind() != FnKind::StaticBlock);
             let symbol = e.reference().and_then(Reference::symbol);
@@ -84,11 +84,11 @@ impl PreferRestParams {
         let Some(symbol) = e.reference().and_then(Reference::symbol) else {
             return;
         };
-        // The top level of a CommonJS file has an `arguments` too, which ESLint does not look at.
+        // The top level of a CommonJS file has an `arguments` too, which ESLint ignores.
         if !symbol.is_implicit_arguments() || !matches!(symbol.scope().node(), Node::Func(_)) {
             return;
         }
-        // It is several references where it is given several values at once.
+        // An identifier is several references where one expression assigns it several values.
         for _ in 0..cx.state.count(symbol, e) {
             cx.report(e, PREFER_REST_PARAMS);
         }

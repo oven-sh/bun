@@ -212,7 +212,7 @@ In an ESLint flat config, a file can have a `language` from a plugin: `json/json
 
 To add one:
 
-1. **The plugin**: add a line to `plugins!` in `rule.rs` with `Languages("<package>", "<version>")`, and with `Part` until all of its rules are ported. Add a line to `directory_of_docs` in `docs.rs`.
+1. **The plugin**: add a line to `plugins!` in `rule.rs` with `Languages("<package>", "<version>")`, and with `Part` until all of its rules are ported. Add a line to `docs_directory` in `docs.rs`.
 2. **The language**: `impl Language` (`languages.rs`). `names` lists what can follow the `/` in `language`. `configure` is `validateLanguageOptions`. `parse` takes the text, without a byte order mark, and returns a tree and the comments. The tree can be any type that is `'static + Send + Sync`, so it stores offsets into the text, not slices of it. Each comment has its span and the span of the text between its delimiters. A comment that the source interrupts, like one that spans lines in a Markdown block quote, where each line starts with `> `, also gets a `JoinedComment`, which says which parts of the span aren't part of the comment. If `parse` returns syntax errors instead, no rule runs. Reject the same input as the plugin, except where the plugin's parser gets it wrong: there, follow the language's spec. The error message and its location come from Bun's parser. Don't port the plugin's. `line_breaks` says what counts as a line break.
 3. **The rules**: a crate with `bun_lint::rules! { .. }`, like every other. A rule sets `.languages(&["json/json", ..])` on its `Meta`, which is upstream's `meta.languages`. If upstream's `meta` has no `languages`, as in `@eslint/markdown`, it also sets `.on_in_any_language()`, because ESLint then allows the rule to be enabled for any file. The rule has `ON = On::new().finish()`, gets the tree in `start` with `file.tree::<Tree>()`, and walks it in `finish`. It reports spans with `cx.report(..)`. The `File` has the text and no JavaScript. Where two reports can start at the same position, `.listened_on(node)` and `.on_exit(true)` say which node upstream listens on.
 4. **The lists**: add the crate to `rule_sets!` and the language to `LANGUAGES` (`driver/rules.rs`), and its `RULES` to the two `Registry::new(..)` calls (`driver/run.rs`, `driver/for_tests.rs`).
@@ -336,11 +336,9 @@ If the API lacks something you need (a position, a flag, a helper several rules 
 ## Testing
 
 ```sh
-cargo build --release -p bun_sema_standalone                         # bun-sema
 zstd -dc test/cli/lint/conformance/bundle.zst > /tmp/bundle.txt         # the test cases
 bun bd lint --run-eslint-tests /tmp/bundle.txt --rule=eqeqeq --verbose
 bun bd lint --run-eslint-tests /tmp/bundle.txt --report=/tmp/report
-target/release/bun-sema hir file.ts --print                          # the HIR of a file
 bun bd test test/cli/lint/conformance.test.ts                        # the test cases on `bun lint` itself, those with types too
 ```
 

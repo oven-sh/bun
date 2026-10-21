@@ -372,6 +372,7 @@ impl<'a> Formatter<'a> {
         if value == self.to_json_exempt
             || !value.is_object()
             || matches!(js_type, JSType::JSDate | JSType::WeakMap | JSType::WeakSet)
+            || has_bun_only_to_json(value)
         {
             return Ok(None);
         }
@@ -383,6 +384,15 @@ impl<'a> Formatter<'a> {
         };
         Ok(Some(to_json.call(self.global_this, value, &[])?))
     }
+}
+
+/// Bun gives these classes a `toJSON()`. Node does not, so under Jest
+/// pretty-format prints them as `Headers {}` and so on.
+fn has_bun_only_to_json(value: JSValue) -> bool {
+    matches!(
+        value.get_class_info_name(),
+        Some(name) if name == b"Headers" || name == b"FormData" || name == b"URLSearchParams"
+    )
 }
 
 // The node is acquired lazily inside `print_as` via `visited::Pool::get_node()`;

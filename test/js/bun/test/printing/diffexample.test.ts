@@ -943,4 +943,26 @@ test("toEqual diffs print values through toJSON like jest-diff", () => {
       }).toEqual({ b: 2 });
     }),
   ).toContain('\n  {\n-   "b": 2,\n+   "a": 1,\n+   "toJSON": [Function: toJSON],\n  }\n');
+
+  // .not prints the expected value only, through toJSON like jest's stringify
+  const toJSON = () => "same";
+  expect(
+    failureMessage(() => {
+      expect({ a: 1, toJSON }).not.toEqual({ a: 1, toJSON });
+    }),
+  ).toEndWith('Expected: not "same"\n');
+
+  // toMatchObject diffs the object shape: Jest diffs a plain-object subset of
+  // the received value, which has no prototype toJSON
+  class Duration {
+    constructor(public ms: number) {}
+    toJSON() {
+      return "PT1S";
+    }
+  }
+  expect(
+    failureMessage(() => {
+      expect(new Duration(1000)).toMatchObject({ ms: 2000 });
+    }),
+  ).toContain('\n- {\n-   "ms": 2000,\n+ Duration {\n+   "ms": 1000,\n  }\n');
 });

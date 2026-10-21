@@ -1170,7 +1170,7 @@ impl Expect {
             }
         }
 
-        value.jest_snapshot_pretty_format(pretty_value, global_this)
+        value.jest_snapshot_pretty_format(pretty_value, global_this, property_matchers.is_none())
     }
 
     pub(crate) fn snapshot(

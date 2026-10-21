@@ -40,7 +40,7 @@ pub(crate) fn to_match_object(
     }
 
     // handle failure
-    let diff_formatter = DiffFormatter::new(global, received_object, property_matchers, not)?;
+    let diff_formatter = DiffFormatter::new_without_to_json(global, received_object, property_matchers, not)?;
 
     if not {
         let signature: &str = get_signature("toMatchObject", "<green>expected<r>", true);

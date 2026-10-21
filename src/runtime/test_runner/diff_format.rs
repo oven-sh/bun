@@ -25,15 +25,33 @@ impl<'a> DiffFormatter<'a> {
     ) -> JsResult<DiffFormatter<'static>> {
         // jest-diff formats with `callToJSON: true` first. When both sides print the
         // same text, or a `toJSON` throws, it formats again without `toJSON` so the
-        // diff shows the shape that differs.
+        // diff shows the shape that differs. With `not` there is no diff, only
+        // `Expected: not <expected>`, so identical text needs no second pass.
         let (received_buf, expected_buf) = match Self::format_pair(global_this, received, expected, true) {
-            Ok((r, e)) if r != e => (r, e),
+            Ok((r, e)) if not || r != e => (r, e),
             Ok(_) => Self::format_pair(global_this, received, expected, false)?,
             Err(JsError::Thrown) if global_this.clear_exception_except_termination() => {
                 Self::format_pair(global_this, received, expected, false)?
             }
             Err(err) => return Err(err),
         };
+        Ok(DiffFormatter {
+            received_string: Cow::Owned(trim_one_newline(received_buf)),
+            expected_string: Cow::Owned(trim_one_newline(expected_buf)),
+            not,
+        })
+    }
+
+    /// Formats both values by their properties, never through `toJSON`. For
+    /// `toMatchObject`: Jest diffs a plain-object subset of the received value,
+    /// so a prototype `toJSON` on the received object never runs there.
+    pub(crate) fn new_without_to_json(
+        global_this: &JSGlobalObject,
+        received: JSValue,
+        expected: JSValue,
+        not: bool,
+    ) -> JsResult<DiffFormatter<'static>> {
+        let (received_buf, expected_buf) = Self::format_pair(global_this, received, expected, false)?;
         Ok(DiffFormatter {
             received_string: Cow::Owned(trim_one_newline(received_buf)),
             expected_string: Cow::Owned(trim_one_newline(expected_buf)),

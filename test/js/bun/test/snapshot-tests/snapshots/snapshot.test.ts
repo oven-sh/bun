@@ -1026,6 +1026,23 @@ test("toJSON is called like pretty-format", () => {
       },
     }
   `);
+
+  // Node's Headers, FormData and URLSearchParams have no toJSON, so Jest never
+  // calls one. Bun's toJSON on them is skipped. (URLSearchParams keeps the
+  // JSON text bun printed before.)
+  expect(new Headers({ a: "1" })).toMatchInlineSnapshot(`Headers {}`);
+  expect(new URLSearchParams("a=1")).toMatchInlineSnapshot(`{"a":"1"}`);
+  const fd = new FormData();
+  fd.append("a", "1");
+  expect(fd).toMatchInlineSnapshot(`FormData {}`);
+
+  // property matchers: Jest merges them into a plain copy of the received
+  // object, which has no prototype toJSON, so the shape is printed
+  expect(new Duration(1000)).toMatchInlineSnapshot({ values: expect.any(Object) }, `
+    Duration {
+      "values": Any<Object>,
+    }
+  `);
 });
 
 test("a throwing toJSON fails the snapshot matcher", () => {

@@ -44,6 +44,8 @@ const kIoDone = Symbol("kIoDone");
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
 const kFs = Symbol("kFs");
+// POSIX. `Bun.file(fd).writer()`, but the sink also opens when the event loop refuses to poll the fd.
+const openSinkForStream = $bindgen("FileSink.bind.ts", "openForStream");
 
 const {
   read: fileHandlePrototypeRead,
@@ -464,7 +466,7 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
   let fastWriter;
   if (fastPath && fd != null) {
     try {
-      fastWriter = Bun.file(fd).writer();
+      fastWriter = process.platform === "win32" ? Bun.file(fd).writer() : openSinkForStream(fd);
     } catch {
       fastPath = false;
     }

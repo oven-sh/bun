@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -629,5 +630,115 @@ describe.skipIf(!isLinux || !cc)("a Bun.Terminal whose writer fails to re-arm it
       stderr: "",
       exitCode: 0,
     });
+  });
+});
+
+// An fs.WriteStream on an open fd asks for a sink that opens without a poll too: process.stdout, process.stderr and
+// tty.WriteStream then write synchronously. With no sink their writes went to the thread pool, and process.exit()
+// lost them.
+describe.skipIf(!isLinux || !cc)("a stdio stream whose sink fails to register with the event loop still writes", () => {
+  const shim = () => ({ ...bunEnv, LD_PRELOAD: join(String(dir), "shim.so") });
+  const PATTERN = "0123456789abcdefghijklmnopqrstuvwxyz\n";
+  // Bun.file(fd).writer() still reports the refusal, which shows the state. The report goes to the other stdio fd.
+  const WRITE_THEN_EXIT = /* js */ `
+    const [which, size] = process.argv.slice(1);
+    const fd = which === "stdout" ? 1 : 2;
+    let refused = null;
+    try {
+      Bun.file(fd).writer();
+    } catch (e) {
+      refused = e.code;
+    }
+    require("fs").writeSync(3 - fd, JSON.stringify({ refused }) + "\\n");
+    process[which].write(Buffer.alloc(Number(size), ${JSON.stringify(PATTERN)}));
+    process.exit(0);
+  `;
+
+  // 1 MiB is more than a pipe holds, so that write has to wait for the reader.
+  test.concurrent.each([
+    ["stderr", 64],
+    ["stdout", 1 << 20],
+  ] as const)("process.%s delivers %d bytes written before process.exit() to a pipe", async (which, size) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", WRITE_THEN_EXIT, which, String(size)],
+      env: shim(),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.bytes(), proc.exited]);
+    const [data, report] = which === "stdout" ? [stdout, stderr] : [stderr, stdout];
+    expect({
+      report: Buffer.from(report).toString(),
+      length: data.length,
+      intact: Buffer.alloc(size, PATTERN).equals(data),
+    }).toEqual({ report: '{"refused":"ENOSPC"}\n', length: size, intact: true });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("process.stdout delivers bytes written before process.exit() to a terminal", async () => {
+    let output = "";
+    const closed = Promise.withResolvers<void>();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", WRITE_THEN_EXIT, "stdout", "64"],
+      env: shim(),
+      terminal: {
+        data(_terminal, chunk) {
+          output += Buffer.from(chunk).toString();
+        },
+        exit() {
+          closed.resolve();
+        },
+      },
+    });
+    await closed.promise;
+    expect(output.replaceAll("\r\n", "\n")).toBe('{"refused":"ENOSPC"}\n' + Buffer.alloc(64, PATTERN).toString());
+    expect(await proc.exited).toBe(0);
+  });
+
+  // The sink writes to its own duplicate of the fd. The read shows that the byte went through it.
+  test.concurrent("tty.WriteStream closes its sink's fd when it is destroyed", async () => {
+    using fifoDir = tempDir("unpolled-sink", {});
+    const fifo = join(String(fifoDir), "fifo");
+    mkfifo(fifo);
+    const script = /* js */ `
+      const fs = require("fs");
+      const fd = fs.openSync(process.argv[1], fs.constants.O_RDWR | fs.constants.O_NONBLOCK);
+      // The fds that are open, but for the stream's own. The fd of the listing is closed by the time it is checked.
+      const openFds = () =>
+        fs.readdirSync("/proc/self/fd").filter(name => {
+          try {
+            return Number(name) !== fd && fs.fstatSync(Number(name)) !== undefined;
+          } catch {
+            return false;
+          }
+        }).length;
+      const before = openFds();
+      const stream = new (require("tty").WriteStream)(fd);
+      const opened = openFds() - before;
+      const written = await new Promise(resolve => stream.write("x", err => resolve(err ? err.code : null)));
+      let read;
+      try {
+        read = fs.readSync(fd, Buffer.alloc(8));
+      } catch (e) {
+        read = e.code;
+      }
+      stream.destroy();
+      await new Promise(resolve => stream.once("close", resolve));
+      // The close runs on the work pool.
+      const deadline = performance.now() + 2000;
+      while (openFds() > before && performance.now() < deadline) await Bun.sleep(1);
+      console.log(JSON.stringify({ opened, written, read, left: openFds() - before }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script, fifo],
+      env: shim(),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: '{"opened":1,"written":null,"read":1,"left":0}\n', stderr: "" });
+    expect(exitCode).toBe(0);
   });
 });

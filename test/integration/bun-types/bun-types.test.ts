@@ -315,6 +315,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
     'typeof Bun & { Crypto: Class<Omit<Crypto, "subtle">>; timingSafeEqual: typeof import("node:crypto").timingSafeEqual }',
   "CryptoHasher.bind.ts": "typeof Bun",
   "DevServer.bind.ts": null,
+  "FileSink.bind.ts": null,
   "Glob.bind.ts": "typeof Bun",
   "HashObject.bind.ts": "typeof Bun.hash & { wyhash: typeof Bun.hash }",
   "JSON5Object.bind.ts": "typeof Bun.JSON5",

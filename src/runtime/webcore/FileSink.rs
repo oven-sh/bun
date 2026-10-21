@@ -5,6 +5,7 @@ use core::sync::atomic::{AtomicI32, Ordering};
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{self, WriteResult, WriteStatus};
 use bun_jsc::JsCell;
+use bun_jsc::bindgen::JsScope;
 use bun_ptr::RefPtr;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
@@ -49,6 +50,9 @@ pub struct FileSink {
     pub(crate) force_sync: Cell<bool>,
     #[cfg(unix)]
     pub(crate) is_tty: Cell<bool>,
+    /// The event loop refused this sink's fd, so no poll finishes a partial write: `to_result` waits for room itself.
+    #[cfg(unix)]
+    poll_refused: Cell<bool>,
 
     pub(crate) is_socket: Cell<bool>,
     pub(crate) fd: Cell<Fd>,
@@ -167,6 +171,9 @@ pub struct Options {
     pub(crate) truncate: bool,
     /// `Bun.write(path, stream)`: create missing parent directories.
     pub(crate) mkdirp: bool,
+    /// An `fs.WriteStream`: if the event loop refuses the fd, open anyway and write synchronously.
+    #[cfg(unix)]
+    pub(crate) poll_optional: bool,
 }
 
 impl Default for Options {
@@ -176,6 +183,8 @@ impl Default for Options {
             mode: 0o664,
             truncate: false,
             mkdirp: false,
+            #[cfg(unix)]
+            poll_optional: false,
         }
     }
 }
@@ -274,6 +283,36 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
 
         // Fallback to WriteFile() if it fails.
         this.force_sync.set(true);
+    }
+}
+
+/// `Bun.file(fd).writer()` for an `fs.WriteStream`: if the event loop refuses the fd, the sink opens anyway and
+/// writes synchronously. POSIX only. On Windows the stream calls `writer()`, which registers nothing at open.
+pub(crate) fn open_for_stream(cx: &mut JsScope<'_>, fd: i32) -> sys::Result<JSValue> {
+    #[cfg(windows)]
+    {
+        let _ = (cx, fd);
+        Err(sys::Error::from_code_int(
+            sys::SystemErrno::ENOTSUP as core::ffi::c_int,
+            sys::Tag::open,
+        ))
+    }
+    #[cfg(unix)]
+    {
+        let global = cx.global();
+        let vm = global.bun_vm();
+        let sink = FileSink::init(
+            Fd::INVALID,
+            EventLoopHandle::init(vm.as_mut().event_loop().cast::<()>()),
+        );
+        let start = streams::Start::FileSink(Options {
+            input_path: PathOrFileDescriptor::Fd(Fd::from_native(fd)),
+            poll_optional: true,
+            ..Default::default()
+        });
+        sink.start(&start, vm.context_of_caller_no_frame())?;
+        // SAFETY: `sink` is live and not yet shared. `to_js` takes the wrapper's ref; the one from `init` drops here.
+        Ok(unsafe { (*sink.as_ptr()).to_js(global) })
     }
 }
 
@@ -788,6 +827,16 @@ impl FileSink {
 
         // SAFETY(JsCell): `start` is pure I/O setup; no JS.
         match self.writer.with_mut(|w| w.start(fd, self.pollable.get())) {
+            // An `O_PATH` fifo, `/dev/tty` under kqueue, a full epoll watch list.
+            #[cfg(unix)]
+            sys::Result::Err(_) if options.poll_optional => {
+                self.poll_refused.set(true);
+                self.force_sync.set(true);
+                self.writer.with_mut(|w| {
+                    w.force_sync = true;
+                    let _ = w.start(fd, false);
+                });
+            }
             sys::Result::Err(err) => {
                 fd.close();
                 return sys::Result::Err(err);
@@ -1574,6 +1623,10 @@ impl FileSink {
                 streams::Writable::Err(err)
             }
             WriteResult::Pending(_) => {
+                #[cfg(unix)]
+                if self.poll_refused.get() {
+                    return self.write_rest_without_poll(accepted);
+                }
                 if !self.must_be_kept_alive_until_eof.get() {
                     self.must_be_kept_alive_until_eof.set(true);
                     self.ref_();
@@ -1596,6 +1649,19 @@ impl FileSink {
                 });
                 streams::Writable::Pending(self.pending.as_ptr())
             }
+        }
+    }
+
+    #[cfg(unix)]
+    #[cold]
+    fn write_rest_without_poll(&self, accepted: u64) -> streams::Writable {
+        match self.writer.with_mut(|w| w.drain_without_poll()) {
+            WriteResult::Wrote(written) => {
+                self.written.set(self.written.get() + written);
+                streams::Writable::Owned(accepted)
+            }
+            // `Done` or `Err`: the drain never returns `Pending`, which would come back here.
+            rc => self.to_result(rc, 0),
         }
     }
 
@@ -1625,6 +1691,8 @@ impl FileSink {
             force_sync: Cell::new(false),
             #[cfg(unix)]
             is_tty: Cell::new(false),
+            #[cfg(unix)]
+            poll_refused: Cell::new(false),
             is_socket: Cell::new(false),
             fd: Cell::new(fd),
             auto_flusher: JsCell::new(AutoFlusher::default()),

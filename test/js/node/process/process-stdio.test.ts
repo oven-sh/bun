@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
 import { release } from "node:os";
 import path from "path";
 import { isatty } from "tty";
@@ -184,6 +185,81 @@ describe.concurrent("process-stdio", () => {
     expect({ stdout, stderr }).toEqual({ stdout: "written\n", stderr: "callback null\n" });
     expect(exitCode).toBe(0);
   });
+
+  // kqueue refuses the /dev/tty device on macOS (#24158), so the stream's sink has no poll there.
+  test.skipIf(isWindows).each([
+    ["tty.WriteStream", `new (require("tty").WriteStream)(require("fs").openSync("/dev/tty", "w"))`, ""],
+    ["process.stdout", "process.stdout", ">/dev/tty"],
+    ["process.stderr", "process.stderr", "2>/dev/tty"],
+  ])("%s on /dev/tty delivers a write made before process.exit()", async (_name, stream, redirect) => {
+    let output = "";
+    const done = Promise.withResolvers<void>();
+    await using proc = spawn({
+      cmd: [
+        "sh",
+        "-c",
+        `exec "$0" -e "$1" ${redirect}`,
+        bunExe(),
+        `${stream}.write("written before exit\\n"); process.exit(0);`,
+      ],
+      env: bunEnv,
+      terminal: {
+        data(_terminal, chunk) {
+          output += Buffer.from(chunk).toString();
+          if (output.includes("written before exit")) done.resolve();
+        },
+        // The terminal closed: the check below then shows what arrived.
+        exit() {
+          done.resolve();
+        },
+      },
+    });
+    await done.promise;
+    expect(output).toContain("written before exit");
+    expect(await proc.exited).toBe(0);
+  });
+
+  // An O_PATH descriptor on a fifo: epoll_ctl refuses it, and every write to it fails with EBADF.
+  test.skipIf(!isLinux).each(["stdout", "stderr"] as const)(
+    "process.%s on an fd that cannot be polled reports every failed write to its callback",
+    async which => {
+      using dir = tempDir("stdio-unpolled", {});
+      const fifo = path.join(String(dir), "fifo");
+      mkfifo(fifo);
+      const script = `
+        const fs = require("fs");
+        const [which, fifo] = process.argv.slice(1);
+        const fd = which === "stdout" ? 1 : 2;
+        fs.closeSync(fd);
+        const O_PATH = 0o10000000;
+        if (fs.openSync(fifo, O_PATH) !== fd) throw new Error("the fifo did not land on fd " + fd);
+        const stream = process[which];
+        const callbacks = [], errors = [];
+        const write = chunk => stream.write(chunk, err => callbacks.push(err ? err.code : null));
+        // Write again only after the stream has reported the first failure.
+        stream.on("error", err => {
+          if (errors.push(err.code) === 1) for (let i = 0; i < 5; i++) write("y");
+        });
+        write("x");
+        process.on("exit", () => fs.writeSync(3 - fd, JSON.stringify({ callbacks, errors }) + "\\n"));
+      `;
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", script, which, fifo],
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const report = which === "stdout" ? stderr : stdout;
+      const line = report.split("\n").find(line => line.startsWith('{"callbacks"'));
+      expect(line === undefined ? report : JSON.parse(line)).toEqual({
+        callbacks: ["EBADF", "EBADF", "EBADF", "EBADF", "EBADF", "EBADF"],
+        errors: ["EBADF"],
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 // Like Node, process.stdout/stderr put O_NONBLOCK on fd 1/2 when they are pipes or sockets. The flag lives on the shared open

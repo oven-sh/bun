@@ -1087,6 +1087,34 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         rc
     }
 
+    /// For a handle with no poll, after a write returned `Pending`: nothing else sends what is buffered, so this
+    /// waits for room and sends it, as `bun_sys::write_all_to_stdio` does. Never returns `Pending`.
+    #[cfg(unix)]
+    #[cold]
+    pub fn drain_without_poll(&mut self) -> WriteResult {
+        let mut total = 0;
+        loop {
+            match self.flush() {
+                WriteResult::Pending(wrote) => {
+                    total += wrote;
+                    let mut fds = [sys::posix::PollFd {
+                        fd: self.get_fd().native(),
+                        events: sys::posix::POLL_OUT,
+                        revents: 0,
+                    }];
+                    if let Err(err) = sys::posix::poll(&mut fds, -1) {
+                        self.outgoing.reset();
+                        self.backed_up.set(false);
+                        return WriteResult::Err(err);
+                    }
+                }
+                WriteResult::Wrote(wrote) => return WriteResult::Wrote(total + wrote),
+                WriteResult::Done(wrote) => return WriteResult::Done(total + wrote),
+                WriteResult::Err(err) => return WriteResult::Err(err),
+            }
+        }
+    }
+
     pub fn enable_keeping_process_alive(&self, event_loop: EventLoopHandle) {
         if self.is_done {
             return;

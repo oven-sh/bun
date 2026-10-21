@@ -342,7 +342,6 @@ impl Checker<'_, '_> {
         self.report_unresolved_identifiers();
         self.check_property_accesses(file);
         self.check_calls(file);
-        self.check_unused(file);
         self.check_grammar(file);
         self.check_duplicates(file);
         self.check_jsx(file);
@@ -364,6 +363,8 @@ impl Checker<'_, '_> {
         self.check_enums_and_names(file);
         self.report_unresolved_identifiers();
         self.check_external_emit_helpers(file);
+        // `checkUnusedIdentifiers` comes last in `checkSourceFile`: every pass above resolves nodes, which marks symbols.
+        self.check_unused(file);
         // Removes the diagnostics reported for misplaced decorators.
         self.report_decorators(file);
         self.check_strict_mode_statements(file);

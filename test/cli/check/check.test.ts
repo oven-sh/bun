@@ -14814,6 +14814,38 @@ export const value = 1;
       expect(exitCode).toBe(1);
     });
 
+    test("the options of an import type are always checked, its type arguments only if the module resolves", async () => {
+      using dir = project({
+        "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "noUnusedLocals": true, "noUnusedParameters": true}}`,
+        "a.ts": `type A1 = 1;
+type A2 = 1;
+type A3 = 1;
+type A4 = 1;
+type A5 = 1;
+const v1 = 1;
+const v2 = 1;
+export type T1 = import("./missing", { with: { a: 0 as A1 } }).G<A2>;
+export type T2 = import("./m", { with: { a: 0 as A3 } }).G<A4>;
+export type T3 = import("./missing", { with: { a: v1 } });
+export type G1<X> = import("./missing", { with: { a: 0 as X } });
+export type G2<X> = import("./missing").G<X>;
+export type G3<X> = import("./m").G<X>;
+export type G4<X> = import("./m", { with: { a: (p: X, q: number) => p } }).G<1>;
+export const c1 = import("./m", { with: { a: v2 as A5 } });
+export function f<X>() { let u: import("./missing", { with: { a: 0 as X } }) | undefined; return u; }
+`,
+        "m.ts": `export type G<T> = T;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n").filter(line => /TS6\d\d\d:/.test(line))).toEqual([
+        "a.ts(2,6): error TS6196: 'A2' is declared but never used.",
+        "a.ts(12,16): error TS6196: 'X' is declared but never used.",
+        "a.ts(14,55): error TS6133: 'q' is declared but its value is never read.",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     test("a reference counts whichever file's check resolves it first", async () => {
       // Every other file asks for types that are inferred from the only references to `Local`, `local` and the private members.
       const users = Object.fromEntries(

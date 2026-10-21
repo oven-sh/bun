@@ -549,6 +549,12 @@ describe.concurrent("a mapper's process", () => {
     );
   });
 
+  test("`node` is Bun if there's no `node` in $PATH", async () => {
+    using dir = project({ mapper: `serve();`, manifest: { exec: ["node", "mapper.js"] } });
+    const { stdout } = await check(dir, ["--runExternalCode"], { PATH: String(dir), Path: undefined });
+    expect(stdout).toBe(errorsOfApp);
+  });
+
   test("arguments are passed as they are, without a shell", async () => {
     const marker = "$(touch shell-ran.txt); `touch shell-ran.txt` && touch shell-ran.txt";
     using dir = project({

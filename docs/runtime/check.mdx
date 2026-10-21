@@ -677,7 +677,7 @@ tsconfig.json(2,3): error TS18068: Content mappers require the '--runExternalCod
 
 `bun --check`, `bun test --check`, `bun build --check`, `Bun.build({ check: true })`, and `bun lint` never run a content mapper.
 
-Each mapper runs once per `bun check`, in its package's directory, and stops when the check ends. What it prints to standard error appears in your terminal. `bun check` does not trust what a mapper answers: an answer that is malformed or points outside of the file is an error on that file, and after five such files the mapper is not used again.
+Each mapper runs once per `bun check`, in its package's directory, and stops when the check ends. A mapper whose command is `node` runs with Bun if `node` is not installed. What it prints to standard error appears in your terminal. `bun check` does not trust what a mapper answers: an answer that is malformed or points outside of the file is an error on that file, and after five such files the mapper is not used again.
 
 ## Differences from `tsc`
 

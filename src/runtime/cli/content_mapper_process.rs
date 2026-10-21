@@ -260,6 +260,11 @@ impl Child {
         let mut buffer = bun_paths::path_buffer_pool::get();
         let search_path = bun_core::env_var::PATH.get().unwrap_or_default();
         let found = bun_which::which_for_spawn(&mut buffer, search_path, directory, name);
+        // A mapper that asks for `node` also runs where only Bun is installed.
+        let found = match found {
+            None if name == b"node" => bun_core::self_exe_path().ok(),
+            found => found,
+        };
         let Some(executable) = found else {
             if bun_core::strings::index_of_any(name, b"/\\").is_none() {
                 let variable: &[u8] = if cfg!(windows) { b"%PATH%" } else { b"$PATH" };

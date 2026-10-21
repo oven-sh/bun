@@ -9334,6 +9334,20 @@ pub fn write_all_to_stdio(fd: Fd, mut bytes: &[u8]) -> Maybe<()> {
     Ok(())
 }
 
+/// Whether a write to `fd` failed with `errno` because the reader of a pipe or a socket left (`| head`).
+pub fn reader_left(fd: Fd, errno: E) -> bool {
+    // A socket whose reader left with unread bytes is reset. macOS says ENOTCONN for the write that the close lands in.
+    let hung_up = errno == E::EPIPE
+        || errno == E::ECONNRESET
+        || (cfg!(target_os = "macos") && errno == E::ENOTCONN);
+    // From a file the same errno is a loss: on Windows, ECONNRESET is also a network share that went away.
+    hung_up
+        && matches!(
+            File::borrow(&fd).kind(),
+            Ok(FileKind::NamedPipe | FileKind::UnixDomainSocket)
+        )
+}
+
 /// Best-effort write-all loop. Returns `false` on I/O error / zero-write so
 /// `ScopedLogger::log` can disable the scope; "quiet" callers discard the bool.
 fn fd_write_all_quiet(fd: Fd, bytes: &[u8]) -> bool {
@@ -9374,6 +9388,22 @@ impl SysQuietWriterAdapter {
         // `copy_nonoverlapping` and are initialized. Borrow tied to `&self`.
         unsafe { core::slice::from_raw_parts(self.buf, self.pos) }
     }
+
+    #[inline]
+    fn write(&self, bytes: &[u8]) {
+        if let Err(err) = write_all_to_stdio(self.fd, bytes) {
+            self.write_failed(err);
+        }
+    }
+
+    /// Keeps the errno of a failed write to stdout for `Output::stdout_is_the_result`.
+    #[cold]
+    #[inline(never)]
+    fn write_failed(&self, err: Error) {
+        if self.fd == Fd::stdout() {
+            bun_core::output::record_stdout_write_error(i32::from(err.errno));
+        }
+    }
 }
 
 unsafe fn adapter_write_all(
@@ -9383,18 +9413,18 @@ unsafe fn adapter_write_all(
     // SAFETY: `w` points at the first field of a SysQuietWriterAdapter (repr(C)).
     let this = unsafe { &mut *w.cast::<SysQuietWriterAdapter>() };
     if this.cap == 0 {
-        let _ = fd_write_all_quiet(this.fd, bytes);
+        this.write(bytes);
         return Ok(());
     }
     if this.pos + bytes.len() > this.cap {
         // Drain buffered bytes first.
         if this.pos > 0 {
-            let _ = fd_write_all_quiet(this.fd, this.buffered());
+            this.write(this.buffered());
             this.pos = 0;
         }
         // Large writes bypass the buffer so the next small write still coalesces.
         if bytes.len() >= this.cap {
-            let _ = fd_write_all_quiet(this.fd, bytes);
+            this.write(bytes);
             return Ok(());
         }
     }
@@ -9411,7 +9441,7 @@ unsafe fn adapter_flush(w: *mut bun_core::io::Writer) -> core::result::Result<()
     // SAFETY: `w` points at the first field of a SysQuietWriterAdapter (repr(C)).
     let this = unsafe { &mut *w.cast::<SysQuietWriterAdapter>() };
     if this.pos > 0 {
-        let _ = fd_write_all_quiet(this.fd, this.buffered());
+        this.write(this.buffered());
         this.pos = 0;
     }
     Ok(())
@@ -9491,6 +9521,7 @@ bun_core::link_impl_OutputSink! {
         quiet_writer_fd(qw) => qw_fd(qw),
         tty_winsize(fd) => sink_tty_winsize(fd),
         is_terminal(fd) => isatty(fd),
+        reader_left(fd, errno) => u16::try_from(errno).is_ok_and(|errno| reader_left(fd, E::from_raw(errno))),
         read(fd, buf) => read(fd, buf).map_err(|_| bun_core::Error::Unexpected),
     }
 }

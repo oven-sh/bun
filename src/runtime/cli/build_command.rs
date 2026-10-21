@@ -770,6 +770,7 @@ impl BuildCommand {
                 {
                     // if --no-bundle is passed, it won't have an output dir
                     if let options::OutputFileValue::Buffer { bytes } = &output_files[0].value {
+                        Output::stdout_is_the_result();
                         writer.write_all(bytes)?;
                     }
                     Output::flush();

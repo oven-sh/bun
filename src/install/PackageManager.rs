@@ -2859,6 +2859,10 @@ pub fn init(
             [None, None],
             subcommand,
         )?;
+        // What a dry run prints is its result. `bun pm` can still print its usage, so it declares later.
+        if manager.options.dry_run && subcommand != Subcommand::Pm {
+            Output::stdout_is_the_result();
+        }
 
         // `install.prefer = "offline"` in bunfig (also what `bun --prefer-offline` sets
         // for the runtime's auto-install) means prefer-offline for `bun install` too,

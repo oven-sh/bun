@@ -1085,6 +1085,60 @@ pub fn flush_guard() -> FlushGuard {
     FlushGuard(())
 }
 
+/// errno of the first failed write to stdout, 0 if none. Process-wide, as fd 1 is.
+static STDOUT_WRITE_ERRNO: AtomicI32 = AtomicI32::new(0);
+static STDOUT_IS_THE_RESULT: AtomicBool = AtomicBool::new(false);
+
+/// Called by the sink when a write to stdout failed.
+pub fn record_stdout_write_error(errno: i32) {
+    let _ = STDOUT_WRITE_ERRNO.compare_exchange(0, errno, Ordering::SeqCst, Ordering::SeqCst);
+}
+
+/// For a form that exists to print: if a write to stdout fails, `Global::exit` reports it and exits 1.
+pub fn stdout_is_the_result() {
+    // A write that failed before this call counts too: call it past every help and usage exit.
+    STDOUT_IS_THE_RESULT.store(true, Ordering::SeqCst);
+}
+
+/// The exit code for a process that is about to exit with `code`, after its last flush.
+#[inline]
+pub(crate) fn exit_code_after_stdout_writes(code: u32) -> u32 {
+    let errno = STDOUT_WRITE_ERRNO.load(Ordering::SeqCst);
+    if errno == 0 {
+        return code;
+    }
+    report_stdout_write_error(errno, code)
+}
+
+#[cold]
+#[inline(never)]
+fn report_stdout_write_error(errno: i32, code: u32) -> u32 {
+    if !STDOUT_IS_THE_RESULT.load(Ordering::SeqCst)
+        || output_sink().reader_left(Fd::stdout(), errno)
+    {
+        return code;
+    }
+    // Two threads can be here: the HTTP thread crashes on a CA file it cannot load while the main thread exits.
+    static REPORT: std::sync::Once = std::sync::Once::new();
+    REPORT.call_once(|| {
+        // `flush` allows for a thread that has no `Source`. A print needs one.
+        Source::configure_thread_no_js();
+        err_stdout_write_failed(errno);
+        flush();
+    });
+    code.max(1)
+}
+
+/// Says on stderr that a write to stdout failed with `errno`, in the same words for every command.
+pub fn err_stdout_write_failed(errno: i32) {
+    let name = crate::ErrnoNames::SYS.name(errno);
+    let why = name.and_then(crate::coreutils_error_map::get_by_name);
+    err_generic(
+        "Cannot write standard output: {}: {}",
+        (name.unwrap_or("UNKNOWN"), why.unwrap_or("unknown error")),
+    );
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // ElapsedFormatter
 // ──────────────────────────────────────────────────────────────────────────

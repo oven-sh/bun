@@ -595,6 +595,7 @@ bun_dispatch::link_interface! {
         fn quiet_writer_fd(qw: &output::QuietWriter) -> Fd;
         fn tty_winsize(fd: Fd) -> Option<Winsize>;
         fn is_terminal(fd: Fd) -> bool;
+        fn reader_left(fd: Fd, errno: i32) -> bool;
         fn read(fd: Fd, buf: &mut [u8]) -> core::result::Result<usize, Error>;
     }
 }

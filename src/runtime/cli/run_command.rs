@@ -3689,6 +3689,7 @@ impl RunCommand {
             Ok(Some(r)) => r,
         };
 
+        Output::stdout_is_the_result();
         let _ = Output::writer().write_all(&rendered);
         Output::flush();
         // Temp files prefetchRemoteImages() wrote are deliberately NOT

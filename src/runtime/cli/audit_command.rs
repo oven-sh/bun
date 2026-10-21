@@ -177,6 +177,7 @@ impl AuditCommand {
             );
         }
 
+        Output::stdout_is_the_result();
         let code = Self::audit(manager, json_output, audit_level, audit_ignore_list)?;
         Global::exit(code);
     }

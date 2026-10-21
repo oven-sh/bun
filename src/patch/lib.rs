@@ -403,8 +403,8 @@ fn open_target_file(
     #[cfg(windows)]
     reject_reparse_point(parent, base)?;
     // Without `O_NONBLOCK`, opening a FIFO blocks before the `!ISREG` rejection below.
-    let nonblock = if cfg!(windows) { 0 } else { sys::O::NONBLOCK };
-    let fd = sys::openat(parent, base, flags | sys::O::NOFOLLOW | nonblock, mode)
+    let flags = flags | sys::O::NOFOLLOW | sys::O::NONBLOCK;
+    let fd = sys::openat(parent, base, flags, mode)
         .map_err(|e| symlink_component_err(parent, base, e))?;
     let stat = match sys::fstat(fd) {
         Ok(st) => st,

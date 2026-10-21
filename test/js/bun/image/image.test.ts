@@ -489,7 +489,7 @@ describe("Bun.Image", () => {
     });
 
     // A negative start on a size that is not read yet counts back from the largest size a Blob can have, not from
-    // the end of the file. That offset is not a place in the file, so the body is the whole file.
+    // the end of the file (#41257). That offset is not a place in the file, so the body is the whole file.
     test.failing("slice(-n) of a Bun.file() with an unread size is the last n bytes", async () => {
       using dir = threeIn();
       const last = three(String(dir)).slice(-c);

@@ -12,6 +12,7 @@ use crate::napi;
 use bun_collections::StringArrayHashMap;
 use bun_core::{EncodedSlice, ZStr};
 use bun_core::{ZBox, env_var, fmt as bun_fmt, zstr};
+use bun_jsc::bindgen::{JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, CallFrame, EncodedSliceJsc, ErrorCode, JSGlobalObject, JSObject,
@@ -20,6 +21,8 @@ use bun_jsc::{
 #[cfg(target_os = "macos")]
 use bun_paths as path;
 use bun_resolver::fs as Fs;
+
+use crate::generated_bindgen::ffi::js_FFI as js;
 
 // ─── Local shims for upstream surfaces not yet wired (Phase D) ───────────────
 
@@ -189,12 +192,6 @@ fn new_runtime_function(
     }
 }
 
-/// `jsc::codegen::JSFFI::symbols_value_set_cached` thin wrapper.
-#[inline]
-fn symbols_value_set_cached(js_object: JSValue, global: &JSGlobalObject, obj: JSValue) {
-    crate::generated_classes::js_FFI::symbols_value_set_cached(js_object, global, obj)
-}
-
 impl Offsets {
     fn load_once() {
         // SAFETY: extern "C" fn populating a static
@@ -208,12 +205,6 @@ impl Offsets {
     }
 }
 
-// R-2 (host-fn re-entrancy): the JS-exposed `close()` method takes `&self`;
-// per-field interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
-// `close()` does not itself re-enter JS, but routing mutation through
-// `UnsafeCell`-backed fields suppresses `noalias` on the `&Self` the codegen
-// shim materialises from `m_ctx`, which is the systemic R-2 guarantee.
-#[bun_jsc::JsClass(no_constructor)]
 pub(crate) struct FFI {
     pub dylib: JsCell<Option<bun_sys::DynLib>>,
     pub functions: JsCell<StringArrayHashMap<Function>>,
@@ -232,13 +223,11 @@ impl Default for FFI {
     }
 }
 
-impl FFI {
+impl Drop for FFI {
     // Intentional leak when not close()d: dlclose on GC is unsound because .ptr addresses escape the collector's view.
-    pub(crate) fn finalize(self: Box<Self>) {
-        if self.closed.get() {
-            drop(self);
-        } else {
-            let _ = bun_core::heap::release(self);
+    fn drop(&mut self) {
+        if !self.closed.get() {
+            core::mem::forget(self.functions.replace(StringArrayHashMap::default()));
         }
     }
 }
@@ -987,7 +976,6 @@ impl StringArray {
 impl FFI {
     // No `#[bun_jsc::host_fn]` here — the `Free` shim it emits is a bare
     // `bun_ffi_cc(__g, __f)` call, which doesn't resolve inside `impl FFI`.
-    // The C-ABI shim (`Bun__FFI__cc`) is supplied by the `.classes.ts` codegen.
     pub(crate) fn bun_ffi_cc(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1242,21 +1230,16 @@ impl FFI {
             }
         }
 
-        // TODO: pub const new = bun.TrivialNew(FFI)
-        let lib = Box::new(FFI {
+        let lib = FFI {
             dylib: JsCell::new(None),
             shared_state: Cell::new(scopeguard::ScopeGuard::into_inner(_tcc_guard).take()),
             functions: JsCell::new(core::mem::take(&mut compile_c.symbols.map)),
             closed: Cell::new(false),
-        });
+        };
 
         let js_object = lib.to_js(global_this);
-        symbols_value_set_cached(js_object, global_this, obj);
-        crate::generated_classes::js_FFI::functions_value_set_cached(
-            js_object,
-            global_this,
-            functions,
-        );
+        js::symbols_value_set_cached(js_object, global_this, obj);
+        js::functions_value_set_cached(js_object, global_this, functions);
         Ok(js_object)
     }
 
@@ -1328,18 +1311,13 @@ impl FFI {
         Ok(cb)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn close(
-        &self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn close<'a>(&self, this_value: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) {
         unsafe extern "C" {
             fn Bun__FFI__closeFunctions(global: *const JSGlobalObject, library: JSValue) -> bool;
         }
         jsc::mark_binding();
         // SAFETY: thin FFI wrapper. The C++ side type-checks the cell (dynamicDowncast) before use.
-        let is_running = unsafe { Bun__FFI__closeFunctions(global_this, callframe.this()) };
+        let is_running = unsafe { Bun__FFI__closeFunctions(cx.global(), this_value.to_js()) };
         if is_running {
             // The running call returns into the compiled code, so leak it instead of letting `do_close` free it.
             self.shared_state.set(None);
@@ -1350,7 +1328,6 @@ impl FFI {
             });
         }
         self.do_close();
-        Ok(JSValue::UNDEFINED)
     }
 
     fn do_close(&self) {
@@ -1553,10 +1530,9 @@ impl FFI {
         let obj = JSValue::create_empty_object(global, size);
         let _obj_guard = obj.protected();
 
-        let lib_ptr: *mut FFI = bun_core::heap::into_raw(Box::new(FFI::default()));
-        // SAFETY: `lib_ptr` is the fresh allocation from into_raw above.
-        let js_object = unsafe { FFI::to_js_ptr(lib_ptr, global) };
+        let js_object = FFI::default().to_js(global);
         let _js_object_guard = js_object.protected();
+        let lib = js_object.as_class_ref::<FFI>().expect("made above");
 
         for function in symbols.values_mut() {
             let function_name = ZBox::from_bytes(function.base_name.as_bytes());
@@ -1571,8 +1547,7 @@ impl FFI {
                         BStr::new(name)
                     ));
                     dylib.close();
-                    // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
-                    unsafe { &*lib_ptr }.do_close();
+                    lib.do_close();
                     return Ok(ret);
                 };
 
@@ -1581,8 +1556,7 @@ impl FFI {
 
             if let Some(err) = function.reject_napi_types_error(global) {
                 dylib.close();
-                // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
-                unsafe { &*lib_ptr }.do_close();
+                lib.do_close();
                 return Ok(err);
             }
             let target = function
@@ -1602,8 +1576,7 @@ impl FFI {
                             ))
                         });
                         dylib.close();
-                        // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
-                        unsafe { &*lib_ptr }.do_close();
+                        lib.do_close();
                         return ret;
                     }
                 };
@@ -1611,24 +1584,15 @@ impl FFI {
             let key = bun_core::String::borrow_utf8(function_name.as_bytes());
             if let Err(err) = obj.put_may_be_index(global, &key, cb) {
                 dylib.close();
-                // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
-                unsafe { &*lib_ptr }.do_close();
+                lib.do_close();
                 return Err(err);
             }
         }
 
-        // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
-        let lib_ref = unsafe { &*lib_ptr };
-        lib_ref.functions.set(symbols);
-        lib_ref.dylib.set(Some(dylib));
-        symbols_value_set_cached(js_object, global, obj);
+        lib.functions.set(symbols);
+        lib.dylib.set(Some(dylib));
+        js::symbols_value_set_cached(js_object, global, obj);
         Ok(js_object)
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_symbols(_this: &FFI, _: &JSGlobalObject) -> JSValue {
-        // This shouldn't be called. The cachedValue is what should be called.
-        JSValue::UNDEFINED
     }
 
     pub(crate) fn link_symbols(
@@ -1658,10 +1622,9 @@ impl FFI {
         obj.ensure_still_alive();
         let _keep = jsc::EnsureStillAlive(obj);
 
-        let lib_ptr: *mut FFI = bun_core::heap::into_raw(Box::new(FFI::default()));
-        // SAFETY: `lib_ptr` is the fresh allocation from into_raw above.
-        let js_object = unsafe { FFI::to_js_ptr(lib_ptr, global) };
+        let js_object = FFI::default().to_js(global);
         let _js_object_guard = js_object.protected();
+        let lib = js_object.as_class_ref::<FFI>().expect("made above");
 
         for function in symbols.values_mut() {
             let function_name = ZBox::from_bytes(function.base_name.as_bytes());
@@ -1671,14 +1634,12 @@ impl FFI {
                     "Symbol \"{}\" is missing a \"ptr\" field. When using linkSymbols() or CFunction(), you must provide a \"ptr\" field with the memory address of the native function.",
                     BStr::new(function_name.as_bytes())
                 ));
-                // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
-                unsafe { &*lib_ptr }.do_close();
+                lib.do_close();
                 return Ok(ret);
             }
 
             if let Some(err) = function.reject_napi_types_error(global) {
-                // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
-                unsafe { &*lib_ptr }.do_close();
+                lib.do_close();
                 return Ok(err);
             }
             let target = function.symbol_from_dynamic_library.expect("checked above");
@@ -1694,23 +1655,20 @@ impl FFI {
                                 BStr::new(function_name.as_bytes())
                             ))
                         });
-                        // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
-                        unsafe { &*lib_ptr }.do_close();
+                        lib.do_close();
                         return err;
                     }
                 };
             // Symbol names are user input, so one can be an array index like "0".
             let key = bun_core::String::borrow_utf8(function_name.as_bytes());
             if let Err(err) = obj.put_may_be_index(global, &key, cb) {
-                // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
-                unsafe { &*lib_ptr }.do_close();
+                lib.do_close();
                 return Err(err);
             }
         }
 
-        // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
-        unsafe { &*lib_ptr }.functions.set(symbols);
-        symbols_value_set_cached(js_object, global, obj);
+        lib.functions.set(symbols);
+        js::symbols_value_set_cached(js_object, global, obj);
         Ok(js_object)
     }
 

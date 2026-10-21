@@ -397,13 +397,9 @@ static JSValue sqliteValueToJS(JSGlobalObject* globalObject, TopExceptionScope& 
     (void)outer;
 }
 
-// The bytes node:sqlite stores as a BLOB: an ArrayBufferView, an ArrayBuffer
-// or a SharedArrayBuffer (nodejs/node#62061). std::nullopt for anything else.
-// A null data pointer makes sqlite3_bind_blob64 / sqlite3_result_blob64 bind
-// NULL. Node (src/util-inl.h, ArrayBufferViewContents) gives a view with null
-// data stack storage, and passes V8's ArrayBuffer::Data() through for a
-// buffer: nullptr when detached or fixed-length at byteLength 0, non-null for
-// a resizable, growable or WebAssembly.Memory buffer.
+// The BLOB sources, as in Node (nodejs/node#62061). A null data pointer binds
+// NULL: Node's ArrayBufferViewContents (src/util-inl.h) passes one through
+// only for a detached or a fixed-length empty ArrayBuffer.
 static std::optional<std::span<const uint8_t>> sqliteBlobSpan(JSGlobalObject* globalObject, JSValue value)
 {
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
@@ -2674,10 +2670,8 @@ bool JSStatementSync::bindParams(JSGlobalObject* globalObject, ThrowScope& scope
     size_t argc = callFrame->argumentCount();
     int paramCount = sqlite3_bind_parameter_count(m_stmt);
 
-    // Named parameters: Node treats a first argument that is an object and
-    // not a BLOB source (sqliteBlobSpan, the same predicate bindValue uses)
-    // as a named-params bag. Arrays are not special-cased: their
-    // own-enumerable keys ("0", "1", …) go through the named-param path.
+    // Named parameters: as in Node, a first argument that is an object and not
+    // a BLOB source is a named-params bag. Arrays bind by their own keys here.
     if (argc > 0) {
         JSValue arg0 = callFrame->argument(0);
         if (arg0.isObject() && !sqliteBlobSpan(globalObject, arg0)) {

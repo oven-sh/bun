@@ -7887,7 +7887,8 @@ impl<'p, 's> Checker<'p, 's> {
             if (file, flow) == (self.last_flow_node.0, self.last_flow_node.1) {
                 break self.last_flow_node.2;
             }
-            if bound.is_shared(flow) {
+            // With a label reduced, the answer isn't the one for the node by itself.
+            if bound.is_shared(flow) && reduced.is_empty() {
                 if let Some(cached_reachable) =
                     self.p.flow_node_reachable.get(&self.task, &(file, flow))
                 {

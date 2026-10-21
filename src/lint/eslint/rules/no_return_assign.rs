@@ -14,8 +14,7 @@ const ARROW_ASSIGNMENT: Message =
 impl Rule for NoReturnAssign {
     const META: Meta = Meta::eslint("no-return-assign", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Assign]);
-    /// The `return` statement or the arrow function that an expression is returned by, with whether it
-    /// is an arrow function.
+    /// The `return` statement or arrow function that returns an expression, and true if it's an arrow function.
     type State<'a> = AncestorMemo<'a, Option<(Span, bool)>>;
 
     fn new(options: &Options) -> Self {
@@ -29,7 +28,7 @@ impl Rule for NoReturnAssign {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        // Most are statements.
+        // Fast path: most assignments are expression statements.
         if !matches!(e.parent(), Node::Stmt(statement) if statement.tag() != StmtTag::Return) {
             self.check(e, cx);
         }
@@ -52,7 +51,7 @@ impl NoReturnAssign {
         let Some(Some((at, is_arrow))) = found else {
             return;
         };
-        // For ESLint the parentheses of the call `f(a = 1)` are around the assignment, for oxlint they are not.
+        // ESLint counts the call's parentheses in `f(a = 1)` as parentheses around the assignment. oxlint doesn't.
         let is_parenthesized = match cx.language().is_oxlint {
             true => e.is_parenthesized(),
             false => ast_utils::is_parenthesised(e),

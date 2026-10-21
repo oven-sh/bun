@@ -33,15 +33,15 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_collections::HashMap;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::ZBox;
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_core::strings;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_core::{Output, zstr};
 use bun_core::{ZStr, handle_oom};
 use bun_paths as path;
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_paths::platform;
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_paths::resolve_path::join_z_buf_spill;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_sys::FdExt;
@@ -565,11 +565,107 @@ pub(crate) fn watch(
 // Platform backends
 // ────────────────────────────────────────────────────────────────────────────────
 
-/// Shared recursive directory walk for Linux and Kqueue: open `abs_dir`, iterate,
-/// and for every entry call `cb` with (abs, rel, is_file); recurse into
-/// subdirectories. When `dirs_only`, non-directory entries are skipped entirely
-/// (inotify delivers file events on the parent dir's wd so we only need a watch
-/// per directory; kqueue needs an fd per file too). Best-effort — an unreadable
+/// Scratch buffers that `walk_subtree` reuses across directories.
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+#[derive(Default)]
+struct WalkScratch {
+    /// NUL-terminated absolute path of the directory being read, or of the entry passed to `cb`.
+    abs: Vec<u8>,
+    /// Same path, relative to the watch root.
+    rel: Vec<u8>,
+    /// Unvisited entries as `[is_file][name][0]` records, innermost directory last.
+    pending: Vec<u8>,
+    /// Directories with records in `pending`, outermost first.
+    levels: Vec<WalkLevel>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+struct WalkLevel {
+    /// Length of the directory's path in `abs` (without the NUL) and in `rel`.
+    abs_len: usize,
+    rel_len: usize,
+    /// Offset of the directory's first record in `pending`.
+    start: usize,
+    /// Offset of the first unvisited record.
+    next: usize,
+}
+
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+impl WalkScratch {
+    /// Truncates `abs` and `rel` to the directory's path, then appends `name`.
+    fn set_entry(
+        abs: &mut Vec<u8>,
+        rel: &mut Vec<u8>,
+        abs_len: usize,
+        rel_len: usize,
+        name: &[u8],
+    ) {
+        abs.truncate(abs_len);
+        // Only the root directory ends with a separator.
+        if abs.last() != Some(&path::SEP) {
+            abs.push(path::SEP);
+        }
+        abs.extend_from_slice(name);
+        abs.push(0);
+        rel.truncate(rel_len);
+        if rel_len != 0 {
+            rel.push(path::SEP);
+        }
+        rel.extend_from_slice(name);
+    }
+
+    /// Reads every entry of the directory at `self.abs` and closes it before the walk descends.
+    #[inline(never)]
+    fn read_dir<const DIRS_ONLY: bool>(&mut self, cb: &mut impl FnMut(&ZStr, &[u8], bool)) {
+        let abs_len = self.abs.len() - 1;
+        let rel_len = self.rel.len();
+        let start = self.pending.len();
+        let Ok(dir) = sys::open(
+            ZStr::from_slice_with_nul(&self.abs),
+            sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC,
+            0,
+        ) else {
+            return;
+        };
+        let _close = sys::CloseOnDrop::new(dir);
+        let mut it = sys::dir_iterator::iterate(dir);
+        let mut found_dir = false;
+        while let Ok(Some(entry)) = it.next() {
+            let is_file = entry.kind != sys::EntryKind::Directory;
+            if DIRS_ONLY && is_file {
+                continue;
+            }
+            // The iterator caches the UTF-8 transcode and exposes it as `slice_u8()`.
+            let name = entry.name.slice_u8();
+            if is_file && !found_dir {
+                // No subdirectory precedes this file, so it's next in walk order.
+                Self::set_entry(&mut self.abs, &mut self.rel, abs_len, rel_len, name);
+                cb(ZStr::from_slice_with_nul(&self.abs), &self.rel, true);
+                continue;
+            }
+            // Copy the name because this entry is visited after the directory is closed.
+            found_dir = true;
+            self.pending.push(u8::from(is_file));
+            self.pending.extend_from_slice(name);
+            self.pending.push(0);
+        }
+        if self.pending.len() > start {
+            self.levels.push(WalkLevel {
+                abs_len,
+                rel_len,
+                start,
+                next: start,
+            });
+        }
+    }
+}
+
+/// Shared directory walk for Linux and Kqueue. Calls `cb` with (abs, rel, is_file) for
+/// every entry below `abs_dir`, visiting a directory before its contents. When `DIRS_ONLY`,
+/// non-directory entries are skipped entirely (inotify delivers file events on the
+/// parent dir's wd so we only need a watch per directory; kqueue needs an fd per file
+/// too). The walk is iterative and keeps one directory open at a time, so neither the
+/// stack nor the open-file limit caps the tree's depth. Best-effort — an unreadable
 /// subdirectory just stops that branch (matches Node).
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 fn walk_subtree<const DIRS_ONLY: bool>(
@@ -577,50 +673,38 @@ fn walk_subtree<const DIRS_ONLY: bool>(
     rel_dir: &[u8],
     cb: &mut impl FnMut(&ZStr, &[u8], bool),
 ) {
-    let dfd = match sys::open(
-        abs_dir,
-        sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC,
-        0,
-    ) {
-        Err(_) => return,
-        Ok(f) => f,
+    let mut scratch = WalkScratch {
+        abs: abs_dir.as_bytes_with_nul().to_vec(),
+        rel: rel_dir.to_vec(),
+        ..Default::default()
     };
-    let _close = sys::CloseOnDrop::new(dfd);
-    let mut it = sys::dir_iterator::iterate(dfd);
-    let mut abs_buf = path::path_buffer_pool::get();
-    let mut abs_spill: Vec<u8> = Vec::new();
-    let mut rel_buf = path::path_buffer_pool::get();
-    let mut rel_spill: Vec<u8> = Vec::new();
-    loop {
-        let entry = match it.next() {
-            Err(_) => return,
-            Ok(None) => return,
-            Ok(Some(e)) => e,
-        };
-        let child_is_file = entry.kind != sys::EntryKind::Directory;
-        if DIRS_ONLY && child_is_file {
+    scratch.read_dir::<DIRS_ONLY>(cb);
+    while let Some(level) = scratch.levels.last_mut() {
+        if level.next == scratch.pending.len() {
+            scratch.pending.truncate(level.start);
+            scratch.levels.pop();
             continue;
         }
-        // The iterator caches the UTF-8 transcode and exposes it as `slice_u8()`.
-        let name = entry.name.slice_u8();
-        let child_abs = join_z_buf_spill::<platform::Posix>(
-            abs_buf.as_mut_slice(),
-            &mut abs_spill,
-            &[abs_dir.as_bytes(), name],
+        let record = &scratch.pending[level.next..];
+        let is_file = record[0] != 0;
+        let name = &record[1..];
+        let name = &name[..strings::index_of_char_usize(name, 0).unwrap_or(name.len())];
+        level.next += 1 + name.len() + 1;
+        WalkScratch::set_entry(
+            &mut scratch.abs,
+            &mut scratch.rel,
+            level.abs_len,
+            level.rel_len,
+            name,
         );
-        let child_rel: &[u8] = if rel_dir.is_empty() {
-            name
-        } else {
-            join_z_buf_spill::<platform::Posix>(
-                rel_buf.as_mut_slice(),
-                &mut rel_spill,
-                &[rel_dir, name],
-            )
-            .as_bytes()
-        };
-        cb(child_abs, child_rel, child_is_file);
-        if !child_is_file {
-            walk_subtree::<DIRS_ONLY>(child_abs, child_rel, cb);
+        cb(
+            ZStr::from_slice_with_nul(&scratch.abs),
+            &scratch.rel,
+            is_file,
+        );
+        if !is_file {
+            // `cb` already watches this directory, so entries created during the read still get events.
+            scratch.read_dir::<DIRS_ONLY>(cb);
         }
     }
 }

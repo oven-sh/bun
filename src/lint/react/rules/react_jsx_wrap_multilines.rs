@@ -23,7 +23,7 @@ enum Wrap {
 
 /// upstream's `type`
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Place {
+enum Context {
     Declaration,
     Assignment,
     Return,
@@ -45,11 +45,11 @@ impl Rule for JsxWrapMultilines {
 
     fn new(options: &Options) -> Self {
         let user_options = options.object(0);
-        let get_option = |place, default| match (user_options.str(place), user_options.bool(place)) {
+        let get_option = |context, default| match (user_options.str(context), user_options.bool(context)) {
             (Some("parens"), _) | (_, Some(true)) => Wrap::Parens,
             (Some("parens-new-line"), _) => Wrap::ParensNewLine,
             (Some("never"), _) => Wrap::Never,
-            _ if user_options.has(place) => Wrap::Ignore,
+            _ if user_options.has(context) => Wrap::Ignore,
             _ => default,
         };
         JsxWrapMultilines {
@@ -63,14 +63,14 @@ impl Rule for JsxWrapMultilines {
         }
     }
 
-    /// upstream's `check`. Where it looks, a `(` before the JSX is one around it.
+    /// upstream's `check`. In every position it checks, a `(` before the JSX is a parenthesis around it.
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(place) = self.place_of(node) else {
+        let Some(context) = self.context_of(node) else {
             return;
         };
         let (file, span) = (cx.file(), node.span());
-        let report = |message| cx.report(node, message).listened_on(node.parent()).on_exit(place == Place::Arrow);
-        match self.get_option(place) {
+        let report = |message| cx.report(node, message).listened_on(node.parent()).on_exit(context == Context::Arrow);
+        match self.get_option(context) {
             Wrap::Ignore => {}
             Wrap::Parens => {
                 if !node.is_parenthesized() && !ast_utils::is_on_one_line(file, span) {
@@ -105,51 +105,52 @@ impl Rule for JsxWrapMultilines {
 }
 
 impl JsxWrapMultilines {
-    fn get_option(&self, place: Place) -> Wrap {
-        match place {
-            Place::Declaration => self.declaration,
-            Place::Assignment => self.assignment,
-            Place::Return => self.return_,
-            Place::Arrow => self.arrow,
-            Place::Condition => self.condition,
-            Place::Logical => self.logical,
-            Place::Prop => self.prop,
+    fn get_option(&self, context: Context) -> Wrap {
+        match context {
+            Context::Declaration => self.declaration,
+            Context::Assignment => self.assignment,
+            Context::Return => self.return_,
+            Context::Arrow => self.arrow,
+            Context::Condition => self.condition,
+            Context::Logical => self.logical,
+            Context::Prop => self.prop,
         }
     }
 
-    /// As what one of upstream's listeners hands `node` to `check`.
-    fn place_of(&self, node: Expr<'_>) -> Option<Place> {
+    /// Returns the `type` that one of upstream's listeners passes to `check` along with `node`.
+    fn context_of(&self, node: Expr<'_>) -> Option<Context> {
         match node.parent() {
             Node::Expr(parent) => match parent.kind() {
                 ExprKind::Jsx(_) => None,
                 ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, right, .. } => {
-                    (right == node).then_some(Place::Logical)
+                    (right == node).then_some(Context::Logical)
                 }
                 ExprKind::Cond { test, .. } if test == node => None,
-                ExprKind::Cond { .. } if self.condition != Wrap::Ignore => Some(Place::Condition),
-                // Without `condition`, the branches of what is declared or assigned are checked as that.
+                ExprKind::Cond { .. } if self.condition != Wrap::Ignore => Some(Context::Condition),
+                // Without `condition`, the branches of a declared or assigned `?:` are checked as a declaration or
+                // assignment.
                 ExprKind::Cond { .. } => declaration_or_assignment(parent),
                 _ => declaration_or_assignment(node),
             },
-            Node::Stmt(parent) => (parent.tag() == StmtTag::Return).then_some(Place::Return),
+            Node::Stmt(parent) => (parent.tag() == StmtTag::Return).then_some(Context::Return),
             // Only an arrow function has an expression as its body.
-            Node::Func(_) => Some(Place::Arrow),
+            Node::Func(_) => Some(Context::Arrow),
             Node::Prop(parent) => {
                 let is_in_container = parent.is_jsx_attribute() && parent.kind() != PropKind::Spread;
-                (is_in_container && node.jsx_container_span().is_some()).then_some(Place::Prop)
+                (is_in_container && node.jsx_container_span().is_some()).then_some(Context::Prop)
             }
             _ => declaration_or_assignment(node),
         }
     }
 }
 
-/// `node` is the `init` of a `VariableDeclarator` or the `right` of an `AssignmentExpression`.
-fn declaration_or_assignment(node: Expr<'_>) -> Option<Place> {
+/// Returns the `type` if `node` is a `VariableDeclarator`'s `init` or an `AssignmentExpression`'s `right`.
+fn declaration_or_assignment(node: Expr<'_>) -> Option<Context> {
     match node.parent() {
-        Node::VarDecl(_) => Some(Place::Declaration),
+        Node::VarDecl(_) => Some(Context::Declaration),
         Node::Expr(parent) => match parent.kind() {
             ExprKind::Assign { value, .. } => {
-                (value == node && !parent.is_assignment_target()).then_some(Place::Assignment)
+                (value == node && !parent.is_assignment_target()).then_some(Context::Assignment)
             }
             _ => None,
         },
@@ -157,7 +158,7 @@ fn declaration_or_assignment(node: Expr<'_>) -> Option<Place> {
     }
 }
 
-/// The fix of `parens-new-line` for JSX without parentheses.
+/// The `parens-new-line` fix for JSX without parentheses.
 #[cold]
 #[inline(never)]
 fn wrap_on_new_lines<'a>(fixer: Fixer<'a>, node: Expr<'a>) -> Option<Fix> {
@@ -173,7 +174,7 @@ fn wrap_on_new_lines<'a>(fixer: Fixer<'a>, node: Expr<'a>) -> Option<Fix> {
     let column = file.position(span.start).column as usize;
     // In column 1 upstream throws: `" ".repeat(-1)`.
     let closing_column = if column > 0 { column.checked_sub(2)? } else { 0 };
-    // Of a comment that is its text, without `//` or `/*`.
+    // A comment's `value` is its text without the `//` or `/*`.
     let value = token_before.value();
     let mut fixed = strings::trim_js_whitespace(value).to_vec();
     if !matches!(value, b"{" | b"[") {

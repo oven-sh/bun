@@ -1,11 +1,11 @@
-//! Errors in display form.
+//! Diagnostics formatted for display.
 
 use super::Checker;
 use super::sink::{Args, Reported};
 use crate::messages::{self, Category};
 use crate::program::FileId;
 
-/// One line of a message: `DiagnosticMessageChain`.
+/// One line of a `DiagnosticMessageChain`.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Line {
     pub code: u32,
@@ -14,7 +14,7 @@ pub struct Line {
     pub level: u32,
 }
 
-/// The location of an item that has none: a line of a chain, related information without a
+/// Placeholder location for items without one: chain lines, and related information that has no
 /// location.
 pub(super) const NOWHERE: (FileId, u32, u32) = (FileId(u32::MAX), 0, 0);
 
@@ -22,7 +22,8 @@ pub(super) const NOWHERE: (FileId, u32, u32) = (FileId(u32::MAX), 0, 0);
 /// nodes and at bare positions.
 pub(super) const NO_LENGTH: u32 = u32::MAX;
 
-/// Adds `lines` to `chain`, each under the last line of the level above. The first is at level 1.
+/// Appends `lines` to `chain`, nesting each under the last line one level up. The first line is at
+/// level 1.
 pub(super) fn add_lines(chain: &mut Vec<Reported>, lines: Vec<Line>) {
     for line in lines {
         let mut under = &mut *chain;
@@ -36,7 +37,7 @@ pub(super) fn add_lines(chain: &mut Vec<Reported>, lines: Vec<Line>) {
     }
 }
 
-/// An element of `MessageChain`.
+/// One entry of a diagnostic's `MessageChain`.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct MessageChain {
     pub code: u32,
@@ -45,11 +46,11 @@ pub struct MessageChain {
 }
 
 impl MessageChain {
-    fn of(chain: Vec<Reported>) -> Vec<MessageChain> {
-        let chain = chain.into_iter().map(|one| MessageChain {
-            code: one.code,
-            args: one.args,
-            message_chain: MessageChain::of(one.message_chain),
+    fn from_reported(chain: Vec<Reported>) -> Vec<MessageChain> {
+        let chain = chain.into_iter().map(|reported_entry| MessageChain {
+            code: reported_entry.code,
+            args: reported_entry.args,
+            message_chain: MessageChain::from_reported(reported_entry.message_chain),
         });
         chain.collect()
     }
@@ -66,7 +67,7 @@ impl MessageChain {
     }
 }
 
-/// Related information in display form.
+/// Related information formatted for display.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct RelatedExplained {
     pub at: Option<(FileId, u32, u32)>,
@@ -77,59 +78,59 @@ pub struct RelatedExplained {
     pub message_chain: Vec<MessageChain>,
 }
 
-/// An error in display form.
+/// A diagnostic formatted for display.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Explained {
     pub start: u32,
     pub end: u32,
     pub code: u32,
     pub category: Category,
-    /// The lines of the message. Those after the first are indented by two spaces for each level.
+    /// The message's lines. Each line after the first is indented two spaces per level.
     pub text: Vec<u8>,
-    /// What `text` is made of, which `CompareDiagnostics` compares.
+    /// The arguments `text` was formatted from. `CompareDiagnostics` compares them.
     pub args: Args,
     pub message_chain: Vec<MessageChain>,
     pub related: Vec<RelatedExplained>,
 }
 
 impl Checker<'_, '_> {
-    /// Whether `GetSuggestionDiagnostics` are reported as well.
+    /// True if `GetSuggestionDiagnostics` results are reported too.
     pub(super) fn captures_suggestions(&self) -> bool {
         self.files().options.captures_suggestions
     }
 
-    /// `name` as printed in a message.
+    /// Returns `name`'s text for use in a message.
     pub(super) fn atom_text(&self, name: crate::atom::Atom) -> Vec<u8> {
         self.atoms().bytes(name).to_vec()
     }
 
-    /// The source text of `file` from `start` to `end`.
+    /// Returns `file`'s source text from `start` to `end`.
     pub(super) fn source_text(&self, file: FileId, start: u32, end: u32) -> Vec<u8> {
         let text = &self.hir(file).text;
         let end = (end as usize).min(text.len());
         text[(start as usize).min(end)..end].to_vec()
     }
 
-    /// Computes the end of `d`, if it has not been set.
-    pub(super) fn settle_place(&self, d: &mut Reported) {
+    /// Computes `d`'s end if it isn't set yet.
+    pub(super) fn resolve_span_end(&self, d: &mut Reported) {
         d.was_bare = d.is_bare();
         d.end = super::spans::Spans::of(self.hir(d.file)).diagnostic_end(d.start, d.end);
     }
 }
 
 impl Explained {
-    /// `d` in display form.
+    /// Formats `d` for display.
     pub(super) fn new(d: Reported) -> Explained {
-        // `WriteFlattenedDiagnosticMessage`, and the chain of `d`.
+        // `WriteFlattenedDiagnosticMessage`. Also returns `d`'s chain.
         fn reported(
             d: &mut Reported,
-            otherwise: Category,
+            default_category: Category,
         ) -> (Category, Vec<u8>, Vec<MessageChain>) {
             let (category, template) =
-                messages::message(d.code).unwrap_or((otherwise, "Unknown error."));
+                messages::message(d.code).unwrap_or((default_category, "Unknown error."));
             let mut text = Vec::new();
             messages::format(&mut text, template, &d.args);
-            let message_chain = MessageChain::of(std::mem::take(&mut d.message_chain));
+            let message_chain = MessageChain::from_reported(std::mem::take(&mut d.message_chain));
             for chain in &message_chain {
                 chain.flatten(&mut text, 1);
             }

@@ -1,4 +1,4 @@
-//! The lexer for the expressions of Angular: `_Scanner` of `@angular/compiler`.
+//! The lexer for Angular expressions: `_Scanner` in `@angular/compiler`.
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Kind {
@@ -13,7 +13,7 @@ pub(crate) enum Kind {
     TemplatePart,
     /// The text of a template up to its end.
     TemplateEnd,
-    /// It is what it is written as.
+    /// The operator is the token's source text.
     Operator,
     Number,
     RegExpBody,
@@ -56,7 +56,7 @@ fn is_identifier_part(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$')
 }
 
-/// What a `}` ends.
+/// The construct that a `}` closes.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Brace {
     Expression,
@@ -67,19 +67,23 @@ struct Scanner<'i, 't> {
     input: &'i [u8],
     index: usize,
     tokens: &'t mut Vec<Token>,
-    /// Where there is white space that is none to TypeScript.
-    odd_blanks: &'t mut Vec<u32>,
+    /// Offsets of characters that are whitespace to Angular but not to TypeScript.
+    angular_only_whitespace: &'t mut Vec<u32>,
     brace_stack: Vec<Brace>,
 }
 
-/// Appends the tokens of `input` to `tokens`, and to `odd_blanks` where there is a character between them that is white
-/// space to Angular and not to TypeScript.
-pub(crate) fn tokenize(input: &[u8], tokens: &mut Vec<Token>, odd_blanks: &mut Vec<u32>) {
+/// Appends the tokens of `input` to `tokens`. Appends to `angular_only_whitespace` the offset of every character
+/// between tokens that's whitespace to Angular but not to TypeScript.
+pub(crate) fn tokenize(
+    input: &[u8],
+    tokens: &mut Vec<Token>,
+    angular_only_whitespace: &mut Vec<u32>,
+) {
     let mut scanner = Scanner {
         input,
         index: 0,
         tokens,
-        odd_blanks,
+        angular_only_whitespace,
         brace_stack: Vec::new(),
     };
     while let Some(token) = scanner.scan_token() {
@@ -88,7 +92,7 @@ pub(crate) fn tokenize(input: &[u8], tokens: &mut Vec<Token>, odd_blanks: &mut V
 }
 
 impl Scanner<'_, '_> {
-    /// 0 at the end, as a NUL is.
+    /// Returns 0 at the end, the same as for a NUL.
     #[inline]
     fn peek(&self) -> u8 {
         self.input.get(self.index).copied().unwrap_or(0)
@@ -107,7 +111,7 @@ impl Scanner<'_, '_> {
         }
     }
 
-    /// `start`: where what cannot be read starts.
+    /// `start` is where the invalid text starts.
     fn error(&self, start: usize) -> Token {
         self.token(Kind::Error, start)
     }
@@ -118,7 +122,7 @@ impl Scanner<'_, '_> {
                 [] => return None,
                 [b'\t'..=b'\r' | b' ', ..] => self.index += 1,
                 [0..=b' ', ..] => {
-                    self.odd_blanks.push(self.index as u32);
+                    self.angular_only_whitespace.push(self.index as u32);
                     self.index += 1;
                 }
                 // A no-break space.
@@ -231,7 +235,7 @@ impl Scanner<'_, '_> {
             }
             b'&' | b'|' => self.scan_complex_operator(start, peek, Some(b'=')),
             _ => {
-                // All of a character that is not ASCII.
+                // Skip the whole non-ASCII character.
                 self.advance();
                 while matches!(self.peek(), 0x80..=0xBF) {
                     self.advance();
@@ -269,7 +273,7 @@ impl Scanner<'_, '_> {
         )
     }
 
-    /// `start`: where the number starts, which is at the character before if that is a `.`.
+    /// `start` is where the number starts, which is one character back if that's a `.`.
     fn scan_number(&mut self, start: usize) -> Token {
         let input = self.input;
         let is_digit_at = |index: usize| input.get(index).is_some_and(u8::is_ascii_digit);
@@ -298,7 +302,7 @@ impl Scanner<'_, '_> {
         self.token(Kind::Number, start)
     }
 
-    /// What follows a `\`. Returns whether it can.
+    /// Scans what follows a `\`. Returns false if it's invalid.
     fn scan_string_backslash(&mut self) -> bool {
         self.advance();
         if self.peek() != b'u' {
@@ -370,7 +374,8 @@ impl Scanner<'_, '_> {
         match self.tokens.as_slice() {
             [] => true,
             [before @ .., previous] if is_operator(previous, b"!") => {
-                // It negates what follows it. After one of these it asserts that what is before it is not null.
+                // Here `!` negates what follows. After one of these tokens it's a non-null assertion on what comes
+                // before.
                 !before.last().is_some_and(|it| {
                     matches!(it.kind, Kind::Identifier | Kind::Character(b')' | b']'))
                 })

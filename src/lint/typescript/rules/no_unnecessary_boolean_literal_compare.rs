@@ -52,8 +52,8 @@ fn is_boolean_type(expression_type: Type) -> bool {
     expression_type.has_flags(TypeFlags::BOOLEAN | TypeFlags::BOOLEAN_LITERAL)
 }
 
-/// A union that has `null` or `undefined`, has `true`, `false` or `boolean`, and has nothing else.
-/// tsgolint does not ask for the last: `boolean | string | undefined` is a nullable boolean there.
+/// A union that has `null` or `undefined`, has `true`, `false` or `boolean`, and has nothing else. tsgolint skips the
+/// last condition, so `boolean | string | undefined` is a nullable boolean there.
 fn is_nullable_boolean(expression_type: Type, is_oxlint: bool) -> bool {
     if !expression_type.is_union() {
         return false;
@@ -119,7 +119,7 @@ fn fix<'a>(fixer: Fixer<'a>, node: Expr<'a>, comparison: BooleanComparison<'a>) 
     };
     let mutated_node = unary_negation.unwrap_or(node);
 
-    // Whether the truth table of all that is replaced is negated, apart from the nullish cases.
+    // True if the truth table of everything being replaced is negated, ignoring the nullish cases.
     let is_overall_negated = unary_negation.is_some() ^ comparison.negated ^ !comparison.boolean_literal;
 
     let mut replacement_text = comparison.expression.text().to_vec();
@@ -155,7 +155,7 @@ fn fix<'a>(fixer: Fixer<'a>, node: Expr<'a>, comparison: BooleanComparison<'a>) 
     fixer.replace(mutated_node, replacement_text)
 }
 
-/// tsgolint's `isConditionalTest`: through `&&` and `||` only, and all under a `!` is one.
+/// tsgolint's `isConditionalTest`: it only looks through `&&` and `||`, and everything under a `!` counts as a test.
 fn is_conditional_test_as_tsgolint(node: Expr<'_>) -> bool {
     let mut node = node;
     loop {
@@ -183,7 +183,7 @@ fn is_conditional_test_as_tsgolint(node: Expr<'_>) -> bool {
     }
 }
 
-/// Whether `node` begins what a `return`, a `throw` or a `yield` has after it: a line break there ends the statement.
+/// True if `node` is the first thing after a `return`, `throw` or `yield`, where a line break would end the statement.
 fn is_in_restricted_production(node: Expr<'_>) -> bool {
     let mut node = node;
     loop {
@@ -199,7 +199,7 @@ fn is_in_restricted_production(node: Expr<'_>) -> bool {
     }
 }
 
-/// Whether a statement begins with `node`, with no parenthesis before it.
+/// True if a statement begins with `node`, with no parenthesis before it.
 fn is_at_statement_start(node: Expr<'_>) -> bool {
     let mut parent = node.parent();
     loop {
@@ -211,8 +211,8 @@ fn is_at_statement_start(node: Expr<'_>) -> bool {
     }
 }
 
-/// The fix of tsgolint 7.0. What it puts in place of the comparison begins where the token before the expression ends:
-/// `a = b === true` becomes `a =  b`. None where tsgolint's text would do something else than the comparison.
+/// tsgolint 7.0's fix. Its replacement text starts at the end of the token before the expression, so `a = b === true`
+/// becomes `a =  b`. Returns `None` where tsgolint's text would behave differently from the comparison.
 fn fix_as_tsgolint<'a>(fixer: Fixer<'a>, node: Expr<'a>, comparison: BooleanComparison<'a>) -> Option<Fix> {
     let unary_negation = match node.parent() {
         Node::Expr(parent) if matches!(parent.kind(), ExprKind::Unary { op: UnOp::Not, .. }) => Some(parent),
@@ -222,8 +222,8 @@ fn fix_as_tsgolint<'a>(fixer: Fixer<'a>, node: Expr<'a>, comparison: BooleanComp
     let (file, expression) = (fixer.file(), comparison.expression);
     let is_nullable = comparison.expression_is_nullable_boolean;
     if is_nullable {
-        // tsgolint also rewrites `boolean | string | undefined`, where `x === true` is not `!!x`.
-        // A `void` member is `undefined`, and one that is always falsy, as `0`, is never `true`.
+        // tsgolint also rewrites `boolean | string | undefined`, where `x === true` isn't `!!x`. A `void` member is
+        // `undefined`, and an always-falsy member such as `0` is never `true`.
         let constraint_type = get_constraint_info(expression.ty()).constraint_type?;
         for member in constraint_type.types() {
             let is_boolean_or_nullish = is_boolean_type(member)
@@ -235,7 +235,7 @@ fn fix_as_tsgolint<'a>(fixer: Fixer<'a>, node: Expr<'a>, comparison: BooleanComp
     }
     let whole = expression.outer_span();
     let mut text = file.slice(Span::new(file.end_of_token_before(whole.start), whole.end));
-    // For tsgolint every member access and every call is strong, an optional chain too.
+    // For tsgolint every member access and call is strong, even an optional chain.
     let is_strong = expression.is_parenthesized()
         || is_strong_precedence_node(expression)
         || matches!(expression.tag(), ExprTag::Call | ExprTag::Dot | ExprTag::Index);
@@ -259,7 +259,8 @@ fn fix_as_tsgolint<'a>(fixer: Fixer<'a>, node: Expr<'a>, comparison: BooleanComp
             before.push(b'(');
             after.extend_from_slice(b" ?? true)");
         }
-        // tsgolint has no parentheses here: `return true ===\n x` would return nothing, `!!(a < b !== true)` be `!a < b`.
+        // tsgolint adds no parentheses here, so `return true ===\n x` would return nothing and `!!(a < b !== true)`
+        // would become `!a < b`.
         let breaks_line = mutated_node.span().start != whole.start
             && text.strip_suffix(file.slice(whole)).is_some_and(strings::contains_js_line_break)
             && is_in_restricted_production(mutated_node);
@@ -279,7 +280,7 @@ fn fix_as_tsgolint<'a>(fixer: Fixer<'a>, node: Expr<'a>, comparison: BooleanComp
             after.push(b')');
         }
     }
-    // tsgolint has no `;` here: `a()\n(!!x)` would be a call.
+    // tsgolint adds no `;` here, so `a()\n(!!x)` would be a call.
     if before.first() == Some(&b'(') && is_at_statement_start(mutated_node) && is_missing_semicolon_before(mutated_node) {
         before.insert(0, b';');
     }

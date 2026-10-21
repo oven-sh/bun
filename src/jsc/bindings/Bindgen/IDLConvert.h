@@ -18,6 +18,10 @@ template<typename IDL>
 struct IDLHumanReadableName<Bindgen::IDLFalsyAsNull<IDL>>
     : IDLHumanReadableName<WebCore::IDLNullable<IDL>> {};
 
+template<typename IDL>
+struct IDLHumanReadableName<Bindgen::IDLEmptyStringAsNull<IDL>>
+    : IDLHumanReadableName<WebCore::IDLNullable<IDL>> {};
+
 template<HasIDLHumanReadableName IDL>
 struct IDLHumanReadableName<Bindgen::IDLArray<IDL>> : BaseIDLHumanReadableName {
     static constexpr bool hasPreposition = true;
@@ -46,6 +50,10 @@ template<bool allowShared> struct IDLHumanReadableName<Bindgen::IDLRawBufferSour
     static constexpr auto humanReadableName = std::to_array("ArrayBuffer or ArrayBufferView");
 };
 
+template<> struct IDLHumanReadableName<Bindgen::IDLRawCallable> : BaseIDLHumanReadableName {
+    static constexpr auto humanReadableName = std::to_array("function");
+};
+
 template<typename JSClass, auto name> struct IDLHumanReadableName<Bindgen::IDLWrappedInterface<JSClass, name>> : BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = name;
 };
@@ -60,7 +68,8 @@ template<typename T, IDLConversionContext Ctx>
 void convertDictionaryInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, T& result, Ctx& ctx)
 {
     // The dictionary names itself. `expected` names the argument.
-    if constexpr (std::is_same_v<Ctx, NodeArgumentContext> || std::is_same_v<Ctx, ArgumentMessageContext>) {
+    using Context = std::remove_const_t<Ctx>;
+    if constexpr (std::is_same_v<Context, NodeArgumentContext> || std::is_same_v<Context, ArgumentMessageContext>) {
         if (!value.isObject()) [[unlikely]] {
             auto scope = DECLARE_THROW_SCOPE(JSC::getVM(&globalObject));
             ctx.throwNotObject(globalObject, scope);
@@ -211,6 +220,22 @@ struct WebCore::Converter<Bun::Bindgen::IDLRawBufferSource<allowShared>> : Bun::
     }
 };
 
+template<> struct WebCore::Converter<Bun::Bindgen::IDLRawCallable> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawCallable> {
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<JSC::JSValue> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    {
+        if (!value.isCallable())
+            return std::nullopt;
+        return value;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwTypeMustBe(globalObject, scope, "a function"_s);
+    }
+};
+
 template<typename JSClass>
 struct WebCore::Converter<Bun::Bindgen::IDLRawInterface<JSClass>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawInterface<JSClass>> {
     template<Bun::IDLConversionContext Ctx>
@@ -264,6 +289,28 @@ struct WebCore::Converter<Bun::Bindgen::IDLFalsyAsNull<IDL>>
     static ReturnType convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
     {
         if (!value.toBoolean(&globalObject))
+            return IDL::nullValue();
+        return Bun::convertIDL<IDL>(globalObject, value, ctx);
+    }
+};
+
+namespace Bun::Bindgen {
+inline bool isUndefinedOrNullOrEmptyString(JSC::JSValue value)
+{
+    return value.isUndefinedOrNull() || (value.isString() && !asString(value)->length());
+}
+}
+
+template<typename IDL>
+struct WebCore::Converter<Bun::Bindgen::IDLEmptyStringAsNull<IDL>>
+    : Bun::DefaultContextConverter<Bun::Bindgen::IDLEmptyStringAsNull<IDL>> {
+
+    using ReturnType = WebCore::Converter<WebCore::IDLNullable<IDL>>::ReturnType;
+
+    template<Bun::IDLConversionContext Ctx>
+    static ReturnType convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
+    {
+        if (Bun::Bindgen::isUndefinedOrNullOrEmptyString(value))
             return IDL::nullValue();
         return Bun::convertIDL<IDL>(globalObject, value, ctx);
     }

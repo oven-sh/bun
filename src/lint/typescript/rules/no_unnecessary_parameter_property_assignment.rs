@@ -13,7 +13,7 @@ const UNNECESSARY_ASSIGN: Message = Message::new(
     "This assignment is unnecessary since it is already assigned by a parameter property.",
 );
 
-/// What is known about the body of a class.
+/// What's been collected about a class body.
 #[derive(Default)]
 struct ReportInfo<'a> {
     assigned_before_constructor: FxHashSet<Cow<'a, [u8]>>,
@@ -21,14 +21,14 @@ struct ReportInfo<'a> {
     unnecessary_assignments: Vec<(Cow<'a, [u8]>, Expr<'a>)>,
 }
 
-/// What is looked up for every assignment.
+/// Lookups that are needed for every assignment, cached.
 #[derive(Default)]
 struct Memo<'a> {
-    /// For each name that a scope refers to: whether the first reference is to a parameter.
+    /// For each name a scope refers to: true if the first reference is to a parameter.
     from_parameter: IdMap<Scope<'a>, FxHashMap<Name<'a>, bool>>,
-    /// The names of the parameter properties of a constructor.
+    /// The names of a constructor's parameter properties.
     parameter_properties: IdMap<Func<'a>, FxHashSet<Name<'a>>>,
-    /// What is around something: the property definition, the function, and the class whose body it is in.
+    /// Memoized ancestor lookups: the property definition, the function, and the class whose body contains a node.
     property_definitions: AncestorMemo<'a, Member<'a>>,
     functions: AncestorMemo<'a, Func<'a>>,
     class_bodies: AncestorMemo<'a, Class<'a>>,
@@ -38,7 +38,7 @@ fn is_this_member_expression(e: Expr<'_>) -> bool {
     e.object().is_some_and(|obj| obj.tag() == ExprTag::This)
 }
 
-/// The `x` of `this.x` and `this["x"]`. Never empty.
+/// The `x` in `this.x` and `this["x"]`. Never empty.
 fn get_property_name(e: Expr<'_>) -> Option<Cow<'_, [u8]>> {
     if !is_this_member_expression(e) {
         return None;
@@ -63,7 +63,7 @@ fn find_parent_property_definition<'a>(e: Expr<'a>, memo: &mut Memo<'a>) -> Opti
         })
 }
 
-/// ESLint's `getUpperFunction`, of what is not a function.
+/// ESLint's `getUpperFunction`, for a node that isn't a function.
 fn get_upper_function<'a>(e: Expr<'a>, memo: &mut Memo<'a>) -> Option<Func<'a>> {
     memo.functions
         .find(Node::Expr(e), |_, it| ast_utils::as_function(it))
@@ -76,7 +76,7 @@ fn is_constructor_function_expression(func: Func<'_>) -> bool {
 
 impl<'a> Memo<'a> {
     fn is_reference_from_parameter(&mut self, identifier: Expr<'a>, name: Name<'a>) -> bool {
-        // oxlint asks what the identifier itself refers to.
+        // oxlint checks what the identifier itself refers to.
         if identifier.file().language().is_oxlint {
             let declaration = identifier.symbol().and_then(|it| it.declarations().next());
             return matches!(declaration, Some(Declaration::Param(_)));
@@ -112,7 +112,7 @@ impl<'a> Memo<'a> {
 }
 
 fn get_identifier(mut e: Expr<'_>) -> Option<(Expr<'_>, Name<'_>)> {
-    // oxlint's `get_inner_expression` looks through all that only TypeScript has.
+    // oxlint's `get_inner_expression` looks through all TypeScript-only wrappers.
     let is_oxlint = e.file().language().is_oxlint;
     loop {
         e = match e.kind() {
@@ -129,15 +129,15 @@ fn get_identifier(mut e: Expr<'_>) -> Option<(Expr<'_>, Name<'_>)> {
     }
 }
 
-/// `isArrowIIFE`: the call that the arrow function `func` is directly in.
-fn call_around_arrow(func: Func<'_>) -> Option<Expr<'_>> {
+/// `isArrowIIFE`: returns the call whose callee is the arrow function `func`.
+fn arrow_iife_call(func: Func<'_>) -> Option<Expr<'_>> {
     if !func.is_arrow() {
         return None;
     }
-    call_around(func)
+    iife_call(func)
 }
 
-fn call_around(func: Func<'_>) -> Option<Expr<'_>> {
+fn iife_call(func: Func<'_>) -> Option<Expr<'_>> {
     func.owner()
         .as_expr()?
         .parent()
@@ -145,7 +145,7 @@ fn call_around(func: Func<'_>) -> Option<Expr<'_>> {
         .filter(|it| it.tag() == ExprTag::Call)
 }
 
-/// The innermost class whose body `e` is in.
+/// Returns the innermost class whose body contains `e`.
 fn enclosing_class_body<'a>(e: Expr<'a>, memo: &mut Memo<'a>) -> Option<Class<'a>> {
     memo.class_bodies.find(Node::Expr(e), |child, it| match it {
         Node::Class(class) if class.body_span().contains(child.span()) => Some(class),
@@ -153,7 +153,7 @@ fn enclosing_class_body<'a>(e: Expr<'a>, memo: &mut Memo<'a>) -> Option<Class<'a
     })
 }
 
-/// Whether oxc has a write for the name `e`. It looks through `as`, `satisfies` and `!`, and not through `<T>`.
+/// True if oxc records a write for the name `e`. It looks through `as`, `satisfies` and `!`, but not `<T>`.
 fn is_written_for_oxc(mut e: Expr<'_>) -> bool {
     loop {
         let Node::Expr(parent) = e.parent() else {
@@ -174,8 +174,8 @@ fn is_written_for_oxc(mut e: Expr<'_>) -> bool {
     }
 }
 
-/// For oxlint: something in `constructor` writes to what `parameter` refers to before `before`. It can be in an arrow function
-/// that is called at once.
+/// For oxlint: true if something in `constructor` writes to the variable `parameter` refers to before `before`. The
+/// write can be in an immediately invoked arrow function.
 fn is_written_before<'a>(
     parameter: Expr<'a>,
     before: u32,
@@ -190,7 +190,7 @@ fn is_written_before<'a>(
             return false;
         }
         let function = get_upper_function(it, memo);
-        let function = match function.and_then(call_around_arrow) {
+        let function = match function.and_then(arrow_iife_call) {
             Some(call) => get_upper_function(call, memo),
             None => function,
         };
@@ -198,7 +198,7 @@ fn is_written_before<'a>(
     })
 }
 
-/// The assignment `e` is in `constructor`, at most in an arrow function that is called at once.
+/// Handles the assignment `e`, which is in `constructor`, possibly inside an immediately invoked arrow function.
 fn check_in_constructor<'a>(
     e: Expr<'a>,
     constructor: Func<'a>,
@@ -208,8 +208,7 @@ fn check_in_constructor<'a>(
     let Some((op, target, value)) = e.as_assign() else {
         return;
     };
-    // After a write to the parameter, `this.x = x` may copy another value than the parameter
-    // property got.
+    // After a write to the parameter, `this.x = x` may copy a different value than the parameter property got.
     if let Some(name) = target.as_ident() {
         if memo.is_reference_from_parameter(target, name) {
             info.assigned_before_unnecessary
@@ -239,8 +238,7 @@ fn check_in_constructor<'a>(
     }
 }
 
-/// Whether the assignment `e`, whose innermost function is `function`, is made while a field is
-/// initialized.
+/// True if the assignment `e`, whose innermost function is `function`, runs while a field is initialized.
 fn is_in_field_initializer<'a>(
     e: Expr<'a>,
     function: Option<Func<'a>>,
@@ -251,9 +249,9 @@ fn is_in_field_initializer<'a>(
     };
     match function {
         None => true,
-        // For oxlint it can be a function expression too.
+        // For oxlint it can also be a function expression.
         Some(function) if function.is_arrow() || function.file().language().is_oxlint => {
-            call_around(function)
+            iife_call(function)
                 .is_some_and(|call| field.init() == Some(call) && !call.is_chain_root())
         }
         Some(_) => false,
@@ -262,14 +260,14 @@ fn is_in_field_initializer<'a>(
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// There is a `this.x = x` for an `x` that is a parameter property.
+    /// True if there's a `this.x = x` for an `x` that's a parameter property.
     has_copy: bool,
-    /// The names of all parameter properties. Listed at the first `this.x = x`.
+    /// The names of all parameter properties. Collected at the first `this.x = x`.
     parameter_properties: Option<FxHashSet<Name<'a>>>,
 }
 
 impl NoUnnecessaryParameterPropertyAssignment {
-    /// Notes whether `e` is a `this.x = x`. Without one there is nothing to report.
+    /// Records whether `e` is a `this.x = x`. Without one there's nothing to report.
     fn look_for_copy<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if !cx.state.has_copy
             && let Some((_, target, value)) = e.as_assign()
@@ -317,7 +315,7 @@ impl Rule for NoUnnecessaryParameterPropertyAssignment {
         if !cx.state.has_copy {
             return;
         }
-        // The assignments to a variable or to a property of `this`.
+        // Assignments to a variable or to a property of `this`.
         let is_relevant = |e: &Expr<'a>| {
             matches!(e.as_assign(), Some((_, target, _))
                 if target.tag() == ExprTag::Ident || is_this_member_expression(target))
@@ -341,7 +339,7 @@ impl Rule for NoUnnecessaryParameterPropertyAssignment {
             let info = infos.entry(class).or_default();
 
             let function = get_upper_function(e, &mut memo);
-            let constructor = match function.and_then(call_around_arrow) {
+            let constructor = match function.and_then(arrow_iife_call) {
                 Some(call) => get_upper_function(call, &mut memo),
                 None => function,
             };
@@ -359,11 +357,11 @@ impl Rule for NoUnnecessaryParameterPropertyAssignment {
             }
         }
 
-        for (_, info) in utils::sort::in_order_of(&infos, |it| it.0.span().start) {
+        for (_, info) in utils::sort::collect_sorted_by_key(&infos, |it| it.0.span().start) {
             for (name, e) in &info.unnecessary_assignments {
                 if !info.assigned_before_constructor.contains(name) {
                     let report = cx.report(*e, UNNECESSARY_ASSIGN);
-                    // oxlint suggests to remove the statement that it is.
+                    // oxlint suggests removing the statement, if the assignment is one.
                     if cx.language().is_oxlint
                         && !e.is_parenthesized()
                         && let Node::Stmt(statement) = e.parent()

@@ -3614,6 +3614,250 @@ describe("bundler", () => {
       `,
     },
   });
+
+  // An 8-bit string is UTF-8, and the lexer makes only ASCII ones. A string that
+  // skips the lexer can have a character that is not ASCII: a `define` value, an
+  // inlined `process.env` value, `module.filename`. A literal with such a
+  // character is UTF-16, and so is a fold that has one. Constant propagation
+  // joined an 8-bit string to a UTF-16 string with one code unit per byte:
+  // `"中" + ACCENT` was "中Ã©".
+  for (const backend of ["cli", "api"] as const) {
+    // Only a build in another process has the environment that the test gives.
+    const withEnv = backend === "cli";
+    const envForms = /* jsx */ `
+          export function Utf16ThenEnv() {
+            return <div>{"中" + process.env.REACT_COMPILER_TEST_ACCENT}</div>;
+          }
+          // A byte that is not UTF-8 is U+FFFD, as in a join of two 8-bit strings.
+          export function Utf16ThenBadByte() {
+            return <div>{"中" + process.env.REACT_COMPILER_TEST_BAD_BYTE}</div>;
+          }
+          export function AsciiThenBadByte() {
+            return <div>{"x" + process.env.REACT_COMPILER_TEST_BAD_BYTE}</div>;
+          }
+          export function Utf16ThenThreeBadBytes() {
+            return <div>{"中" + process.env.REACT_COMPILER_TEST_BAD_BYTES}</div>;
+          }
+          export function AsciiThenThreeBadBytes() {
+            return <div>{"x" + process.env.REACT_COMPILER_TEST_BAD_BYTES}</div>;
+          }`;
+    const expected: Record<string, string> = {
+      Utf16ThenDefine: "4e2d e9",
+      DefineThenUtf16: "e9 4e2d",
+      AstralDefine: "4e2d d842 dfb7 4e2d",
+      HighHalfThenAstralDefine: "d83d d842 dfb7",
+      HighHalfThenLowHalfDefine: "d83d de00",
+      HighHalfDefineThenLowHalf: "d83d de00",
+      ThreeDefines: "e9 e9 e9",
+      DefineThenTwoDefines: "e9 e9 e9",
+      TemplateThenDefine: "61 e9 e9",
+      CompoundAssignment: "4e2d e9",
+      ReadInANestedFunction: "4e2d e9",
+      LengthOfTheJoin: "2",
+      JoinIsEqualToTheLiteral: "true",
+      BranchOnTheJoinIsTaken: "true",
+      // "中modé.jsx"
+      ModuleFilename: "4e2d 6d 6f 64 e9 2e 6a 73 78",
+      Utf16ThenAscii: "4e2d 78",
+      AsciiThenUtf16: "78 4e2d",
+      Utf16ThenEmpty: "4e2d",
+      Utf16ThenLongAscii: "true",
+      AsciiThenDefine: "78 e9",
+      DefineThenDefine: "e9 d842 dfb7",
+      HighHalfDefineThenLowHalfDefine: "d83d de00",
+      TemplateOfADefine: "4e2d e9",
+      ...(withEnv && {
+        Utf16ThenEnv: "4e2d e9",
+        Utf16ThenBadByte: "4e2d fffd",
+        AsciiThenBadByte: "78 fffd",
+        Utf16ThenThreeBadBytes: "4e2d fffd fffd fffd",
+        AsciiThenThreeBadBytes: "78 fffd fffd fffd",
+      }),
+    };
+    itBundled(`react-compiler/JoinOfAUtf16StringAndAUtf8String-${backend}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import * as forms from "./forms";
+          const units = (s: string) => Array.from({ length: s.length }, (_, i) => s.charCodeAt(i).toString(16)).join(" ");
+          for (const name of Object.keys(forms).sort()) {
+            const children = forms[name]({}).props.children;
+            console.log(name + "=" + (typeof children === "string" ? units(children) : children));
+          }
+        `,
+        "/forms.jsx": /* jsx */ `
+          export { ModuleFilename } from "./modé";
+
+          export function Utf16ThenDefine() {
+            return <div>{"中" + ACCENT}</div>;
+          }
+          export function DefineThenUtf16() {
+            return <div>{ACCENT + "中"}</div>;
+          }
+          ${withEnv ? envForms : ""}
+          // U+20BB7 is two code units.
+          export function AstralDefine() {
+            return <div>{"中" + ASTRAL + "中"}</div>;
+          }
+          export function HighHalfThenAstralDefine() {
+            return <div>{"\\uD83D" + ASTRAL}</div>;
+          }
+          // The two halves make one code point.
+          export function HighHalfThenLowHalfDefine() {
+            return <div>{"\\uD83D" + LOW}</div>;
+          }
+          export function HighHalfDefineThenLowHalf() {
+            return <div>{HIGH + "\\uDE00"}</div>;
+          }
+          // The join of the first two is UTF-16.
+          export function ThreeDefines() {
+            return <div>{ACCENT + ACCENT + ACCENT}</div>;
+          }
+          export function DefineThenTwoDefines() {
+            return <div>{ACCENT + (ACCENT + ACCENT)}</div>;
+          }
+          export function TemplateThenDefine() {
+            return <div>{\`a\${ACCENT}\` + ACCENT}</div>;
+          }
+          export function CompoundAssignment() {
+            let joined = "中";
+            joined += ACCENT;
+            return <div>{joined}</div>;
+          }
+          export function ReadInANestedFunction() {
+            const joined = "中" + ACCENT;
+            const read = () => joined;
+            return <div>{read()}</div>;
+          }
+          export function LengthOfTheJoin() {
+            return <div>{("中" + ACCENT).length}</div>;
+          }
+          export function JoinIsEqualToTheLiteral() {
+            return <div>{("中" + ACCENT) === "中é"}</div>;
+          }
+          export function BranchOnTheJoinIsTaken() {
+            if (ACCENT + ACCENT + ACCENT === "ééé") {
+              return <div>{true}</div>;
+            }
+            return <div>{false}</div>;
+          }
+          // These were correct, and the ASCII string goes through the same lines.
+          export function Utf16ThenAscii() {
+            return <div>{"中" + "x"}</div>;
+          }
+          export function AsciiThenUtf16() {
+            return <div>{"x" + "中"}</div>;
+          }
+          export function Utf16ThenEmpty() {
+            return <div>{"中" + ""}</div>;
+          }
+          // 64 bytes. The right side of \`===\` is made at run time.
+          export function Utf16ThenLongAscii() {
+            return <div>{"中" + "${Buffer.alloc(64, "x").toString()}" === "中" + "x".repeat(64)}</div>;
+          }
+          // These were correct: no operand is UTF-16.
+          export function AsciiThenDefine() {
+            return <div>{"x" + ACCENT}</div>;
+          }
+          export function DefineThenDefine() {
+            return <div>{ACCENT + ASTRAL}</div>;
+          }
+          export function HighHalfDefineThenLowHalfDefine() {
+            return <div>{HIGH + LOW}</div>;
+          }
+          export function TemplateOfADefine() {
+            return <div>{\`中\${ACCENT}\`}</div>;
+          }
+        `,
+        "/modé.jsx": /* jsx */ `
+          export function ModuleFilename() {
+            return <div>{"中" + module.filename}</div>;
+          }
+        `,
+        ...(withEnv && {
+          "/.env": Buffer.from(
+            "REACT_COMPILER_TEST_BAD_BYTE=\xE9\nREACT_COMPILER_TEST_BAD_BYTES=\x80\x80\x80\n",
+            "latin1",
+          ),
+        }),
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": ``,
+        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+          export const jsxDEV = (type, props) => ({ type, props });
+        `,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          export function c(size) {
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          }
+        `,
+      },
+      define: {
+        ACCENT: '"é"',
+        ASTRAL: '"𠮷"',
+        HIGH: '"\\ud83d"',
+        LOW: '"\\ude00"',
+      },
+      ...(withEnv && { dotenv: "inline", env: { REACT_COMPILER_TEST_ACCENT: "é" } }),
+      reactCompiler: true,
+      backend,
+      target: "browser",
+      run: {
+        stdout: Object.keys(expected)
+          .sort()
+          .map(name => `${name}=${expected[name]}`)
+          .join("\n"),
+      },
+    });
+  }
+});
+
+// `bun lint` gives the compiler every string literal as UTF-8 bytes, so it
+// needs no `define` for the same join: `"é" + "é"` is UTF-16, and the third
+// "é" was joined to it as two code units. `"é" + "é" + "é" === "ééé"` was
+// false, so the branch that always runs was dead code to the rules of the
+// compiler, and the branch that never runs was not.
+test("react-compiler joins strings that are not ASCII as JavaScript does in bun lint", async () => {
+  const component = (condition: string) => `import { useState } from "react";
+
+export function Component() {
+  const [state, setState] = useState(0);
+  if (${condition}) {
+    setState(1);
+  }
+  return <div>{state}</div>;
+}
+`;
+  using dir = tempDir("react-compiler-lint-join", {
+    ".oxlintrc.json": JSON.stringify({
+      plugins: ["react"],
+      categories: { correctness: "off" },
+      rules: { "react/set-state-in-render": "error" },
+    }),
+    "always.jsx": component(`"é" + "é" + "é" === "ééé"`),
+    "always-from-the-right.jsx": component(`"é" + ("é" + "é") === "ééé"`),
+    "never.jsx": component(`"é" + "é" + "é" !== "ééé"`),
+    "ascii.jsx": component(`"e" + "e" + "e" === "eee"`),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "lint", "-f", "json"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (!stdout.startsWith("{")) throw new Error(`No report (exit ${exitCode}): ${stderr}`);
+  const { diagnostics } = JSON.parse(stdout) as {
+    diagnostics: { code: string; filename: string; labels: { span: { line: number; column: number } }[] }[];
+  };
+  // The `setState` call of each file in which the branch always runs.
+  expect(
+    diagnostics.map(it => [it.filename, it.code, it.labels[0].span.line, it.labels[0].span.column]).sort(),
+  ).toEqual([
+    ["always-from-the-right.jsx", "react(set-state-in-render)", 6, 5],
+    ["always.jsx", "react(set-state-in-render)", 6, 5],
+    ["ascii.jsx", "react(set-state-in-render)", 6, 5],
+  ]);
+  expect(exitCode).toBe(1);
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

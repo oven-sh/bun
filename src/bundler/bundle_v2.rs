@@ -3775,6 +3775,7 @@ pub mod bv2_impl {
         ) -> Result<(), Error> {
             self.enqueue_entry_points_common()?;
             self.reserve_source_indexes_for_bake()?;
+            self.ensure_browser_runtime()?;
 
             let num_entry_points = data.files.count();
             self.graph.entry_points.reserve(num_entry_points);
@@ -3804,7 +3805,6 @@ pub mod bv2_impl {
                     continue;
                 };
             }
-            self.ensure_browser_runtime()?;
             Ok(())
         }
 

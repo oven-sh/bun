@@ -1322,14 +1322,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     module_info_index,
                     side: Some(side),
                     entry_point_index: if output_kind == options::OutputKind::EntryPoint {
-                        Some(
-                            chunk.entry_point.source_index()
-                                - (if let Some(fw) = c.framework {
-                                    if fw.server_components.is_some() { 3 } else { 1 }
-                                } else {
-                                    1
-                                }) as u32,
-                        )
+                        Some(c.bake_entry_point_index(chunk.entry_point.source_index()))
                     } else {
                         None
                     },

@@ -549,14 +549,7 @@ pub(crate) fn write_output_files_to_disk(
             data: OutputFileData::Saved(0),
             side: Some(c.chunk_side(chunk)),
             entry_point_index: if output_kind == options::OutputKind::EntryPoint {
-                // Server-components builds insert 2 extra synthetic sources
-                // before user entry points, so the source-index offset is 3.
-                let offset: u32 = if c.framework.is_some_and(|fw| fw.server_components.is_some()) {
-                    3
-                } else {
-                    1
-                };
-                Some(chunk.entry_point.source_index() - offset)
+                Some(c.bake_entry_point_index(chunk.entry_point.source_index()))
             } else {
                 None
             },

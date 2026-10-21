@@ -894,6 +894,23 @@ impl<'a> LinkerContext<'a> {
 
     /// Whether `chunk` is one that bytecode (and, in an executable, module info) is made for. The output file list
     /// counts those files with this before they are made (`OutputFileList::calculate_output_file_list_capacity`).
+    /// The position of the entry point `source_index` in the user's entry point
+    /// list: the sources before it are the runtime, the two bake virtual modules
+    /// of a server-components build, and the browser runtime when it comes first.
+    pub(crate) fn bake_entry_point_index(&self, source_index: u32) -> u32 {
+        let reserved: u32 = if self
+            .framework
+            .is_some_and(|fw| fw.server_components.is_some())
+        {
+            3
+        } else {
+            1
+        };
+        let browser_runtime = self.graph.browser_runtime;
+        let shifted = browser_runtime.is_valid() && browser_runtime.get() < source_index;
+        source_index - reserved - u32::from(shifted)
+    }
+
     pub(crate) fn chunk_gets_bytecode(&self, chunk: &Chunk) -> bool {
         // The CSS chunk of a JavaScript entry point has that entry point's loader.
         let loader = if chunk.entry_point.is_entry_point() {

@@ -355,6 +355,19 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// Close reporting the error that ended the connection (see
+    /// [`us_socket_t::close_with_error_code`]). Only a connected socket carries
+    /// a code: the other kinds own their own failure delivery.
+    pub fn close_with_error_code(&self, code: c_int) {
+        on_socket!(self.socket;
+            connected s => s.close_with_error_code(code),
+            connecting c => c.close(),
+            detached => {},
+            duplex d => d.close(),
+            pipe p => p.close(),
+        )
+    }
+
     /// Closes with a FIN before it returns; TLS sends close_notify but does not wait for the peer's, which `CloseCode::Normal` does.
     pub fn close_now(&self) {
         match self.socket {

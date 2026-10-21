@@ -210,6 +210,65 @@ test("math.pow", () => {
   expect(20.4 ** -0.5 + "").toEqual("0.22140372138502384");
 });
 
+// The init of a C-style for statement forbids a bare `in`. The ban ends at the parameters and at the
+// block body of an arrow function, and inside a destructuring pattern. The printer prints none of the
+// parentheses a source can carry there, so each file loads only if the engine parses those places
+// with `in` allowed.
+test("`in` inside an arrow function or a pattern in the init of a for statement", async () => {
+  const sources = {
+    "block-body": `for (var f = () => { return "a" in { a: 1 } }; ; ) { R = f(); break }`,
+    "parentheses-round-the-in": `for (var f = () => { return ("a" in { a: 1 }) }; ; ) { R = f(); break }`,
+    "parentheses-round-the-arrow": `for (var f = (() => { return "a" in { a: 1 } }), i = 0; i < 1; i++) R = f();`,
+    "parameter-default": `for (var f = (p = "a" in { a: 1 }) => p; ; ) { R = f(); break }`,
+    // The printer declares a module-level `var` on its own and leaves an assignment pattern in the init.
+    "binding-pattern-default": `for (var [y = "a" in { a: 1 }] = []; ; ) { R = y; break }`,
+    "assignment-pattern-default": `var y; for ([y = "a" in { a: 1 }] = []; ; ) { R = y; break }`,
+    // What a minifier writes when it moves the `var` statements in front of a loop into its init.
+    "minifier-merged-init": `for (var o = { a: 1 }, f = (p = "a" in o) => p, i = 0; i < 1; i++) R = f();`,
+    // The engine parses the body of t() a second time when t() is first called, and takes f from
+    // its function cache then. The init has to parse the same way both times.
+    "second-parse-at-first-call": `
+      function t() {
+        for (var f = () => { for (var k in {}) {} return 1 }, g = (p = "a" in { a: 1 }) => p; false; ) {}
+        return g();
+      }
+      R = t();`,
+  };
+
+  const files: Record<string, string> = {
+    "type-assertion-round-the-in.ts": `var R: unknown;\nfor (var f = (): boolean => { return ("a" in { a: 1 }) as boolean }; ; ) { R = f(); break }\nexport default R;\n`,
+    "run.mjs": `
+      const out = {};
+      for (const file of JSON.parse(process.argv[2])) {
+        try {
+          out[file] = (await import("./" + file)).default;
+        } catch (e) {
+          out[file] = e.name + ": " + e.message;
+        }
+      }
+      console.log(JSON.stringify(out));`,
+  };
+  for (const [name, source] of Object.entries(sources)) {
+    files[`${name}.cjs`] = `var R;\n${source}\nmodule.exports = R;\n`;
+    files[`${name}.mjs`] = `var R;\n${source}\nexport default R;\n`;
+  }
+  const names = Object.keys(files).filter(name => name !== "run.mjs");
+
+  using dir = tempDir("transpiler-in-inside-for-init", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.mjs", JSON.stringify(names)],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(Object.fromEntries(names.map(name => [name, true])));
+  expect(exitCode).toBe(0);
+});
+
 describe("unterminated string literals in large files", () => {
   test("reports an unterminated string literal at the end of a large JavaScript file", async () => {
     using dir = tempDir("transpiler-long-unterminated-js", {

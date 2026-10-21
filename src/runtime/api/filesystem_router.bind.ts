@@ -66,3 +66,14 @@ export const FileSystemRouter = b.class({
     style: { getter: RouterStyle, cache: true },
   },
 });
+
+/** `frameworkRouterInternals.FrameworkRouter` of `bun:internal-for-testing`. */
+export const FrameworkFileSystemRouter = b.class({
+  rustPath: "crate::bake::router::JSFrameworkRouter",
+  configurable: false,
+  construct: { args: { options: b.any }, capability: "js", throws: true, length: 0 },
+  proto: {
+    match: { args: { path: b.string.loose.utf8 }, returns: b.any, capability: "js", throws: true },
+    toJSON: { returns: b.any, capability: "js", throws: true },
+  },
+});

@@ -700,13 +700,13 @@ impl Checker<'_, '_> {
             }
         }
         let is_import_equals = matches!(decl, Decl::ImportEquals(_));
-        let is_variable_declaration = matches!(decl, Decl::Require(pat)
-            if matches!(bound.pat_parent[pat.idx()], PatParent::Var(_)));
+        // `IsVariableDeclaration(node) || IsBindingElement(node)`
+        let is_require = matches!(decl, Decl::Require(_));
         if !is_import_equals && self.modules_emits_commonjs(file) {
             if is_verbatim && !hir.is_js {
                 let code = self.verbatim_module_syntax_error_message(file);
                 self.error_at(at, code, &[]);
-            } else if options.module == ModuleKind::Preserve && !is_variable_declaration {
+            } else if options.module == ModuleKind::Preserve && !is_require {
                 self.error_at(at, 1293, &[]);
             }
         }

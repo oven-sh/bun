@@ -121,8 +121,7 @@ pub(crate) fn load(log: &mut Log, source: &Source, comment: Span) -> Option<Box<
     }
 }
 
-/// `Ok(None)`: not a regular file. The path comes from file content, so a device or a pipe
-/// must not be read to EOF, and the read stops at the size `fstat` reports.
+/// `Ok(None)`: not a regular file. The read stops at the size `fstat` reports (the path is untrusted).
 fn read_regular_file(path: &[u8]) -> bun_sys::Maybe<Option<Vec<u8>>> {
     let file = bun_sys::File::openat(
         bun_sys::Fd::cwd(),

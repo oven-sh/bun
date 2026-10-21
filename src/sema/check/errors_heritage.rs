@@ -848,8 +848,9 @@ impl Checker<'_, '_> {
         let mut own: Vec<Atom> = (self.resolve_declared_members(sym).props.iter())
             .map(|prop| prop.name)
             .collect();
-        // Many names are sorted so that lookups can binary search.
-        let is_sorted = own.len() > 32;
+        // A long list of names is sorted, so that lookups can binary search.
+        const LONG: usize = 32;
+        let is_sorted = own.len() > LONG;
         if is_sorted {
             own.shared_sort_unstable_by_key(|name| name.0);
         }

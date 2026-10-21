@@ -1,6 +1,7 @@
 /**
- * Tests for the net.Server → Http2SecureServer upgrade path
- * (upgradeRawSocketToH2 in _http2_upgrade.ts).
+ * Tests for the net.Server → Http2SecureServer upgrade path: tls.Server's
+ * 'connection' listener wraps the injected socket in a server-side TLSSocket,
+ * and the secure connection reaches the h2 connection listener.
  *
  * This pattern is used by http2-wrapper, crawlee, and other libraries that
  * accept raw TCP connections and upgrade them to HTTP/2 via
@@ -185,6 +186,50 @@ describe("HTTP/2 upgrade — session event", () => {
     client.close();
     srv.netServer.close();
   });
+
+  test("the injected socket reaches the session as the server's TLSSocket", async () => {
+    // tls.Server wraps the injected socket like any other plain one: its own
+    // 'connection' listeners see it, and the session gets a TLSSocket over it.
+    const seen = Promise.withResolvers<{ remotePort: number; shape: Record<string, unknown> }>();
+    let userConnection = 0;
+    const h2Server = http2.createSecureServer(TLS, (req, res) => {
+      const socket = req.socket as tls.TLSSocket;
+      seen.resolve({
+        remotePort: socket.remotePort!,
+        shape: {
+          userConnection,
+          isTLSSocket: socket instanceof tls.TLSSocket,
+          encrypted: socket.encrypted,
+          alpnProtocol: socket.alpnProtocol,
+          remoteAddress: socket.remoteAddress,
+          // The peer's origin: its address and port.
+          originSet: req.stream.session!.originSet,
+        },
+      });
+      res.end("ok");
+    });
+    h2Server.on("error", () => {});
+    h2Server.on("connection", () => userConnection++);
+    const netServer = net.createServer(socket => h2Server.emit("connection", socket));
+    await once(netServer.listen(0, "127.0.0.1"), "listening");
+    const port = (netServer.address() as net.AddressInfo).port;
+    const client = connectClient(port);
+    try {
+      await request(client, "GET", "/");
+      const { remotePort, shape } = await seen.promise;
+      assert.deepStrictEqual(shape, {
+        userConnection: 1,
+        isTLSSocket: true,
+        encrypted: true,
+        alpnProtocol: "h2",
+        remoteAddress: "127.0.0.1",
+        originSet: [`https://127.0.0.1:${remotePort}`],
+      });
+    } finally {
+      client.close();
+      netServer.close();
+    }
+  });
 });
 
 describe("HTTP/2 upgrade — concurrent clients", () => {
@@ -278,6 +323,53 @@ describe("HTTP/2 upgrade — socket close ordering", () => {
     client.close();
     netServer.close();
   });
+
+  test("an error on rawSocket is the session's error, not an uncaught exception", async () => {
+    // Nothing but the upgrade listens on rawSocket once it has been handed
+    // over, so its error (a reset, EPIPE, a destroy(err) by its owner) has to
+    // be reported the way a TLSSocket reports its wrapped socket's errors: the
+    // session is destroyed with it and the server sees 'sessionError'.
+    let rawSocket: net.Socket | undefined;
+    const sessionReady = Promise.withResolvers<http2.Http2Session>();
+    const sessionErrored = Promise.withResolvers<{ err: Error; session: http2.Http2Session }>();
+
+    const h2Server = http2.createSecureServer(TLS, (_req, res) => {
+      res.writeHead(200);
+      res.end("done");
+    });
+    h2Server.on("error", () => {});
+    h2Server.on("session", s => sessionReady.resolve(s));
+    h2Server.on("sessionError", (err: Error, session: http2.Http2Session) => sessionErrored.resolve({ err, session }));
+
+    const netServer = net.createServer(socket => {
+      rawSocket = socket;
+      h2Server.emit("connection", socket);
+    });
+
+    const port = await new Promise<number>(resolve => {
+      netServer.listen(0, "127.0.0.1", () => resolve((netServer.address() as net.AddressInfo).port));
+    });
+
+    const client = connectClient(port);
+    await request(client, "GET", "/");
+    const h2Session = await sessionReady.promise;
+    // Not events.once(): the session emits 'error' on its way to 'close'.
+    const sessionClosed = new Promise<void>(resolve => h2Session.once("close", resolve));
+
+    const transportError = new Error("transport failed");
+    rawSocket!.destroy(transportError);
+
+    await sessionClosed;
+    const { err, session } = await sessionErrored.promise;
+    assert.strictEqual(err, transportError);
+    assert.deepStrictEqual(
+      { sameSession: session === h2Session, destroyed: h2Session.destroyed },
+      { sameSession: true, destroyed: true },
+    );
+
+    client.close();
+    netServer.close();
+  });
 });
 
 describe("HTTP/2 upgrade — ALPN negotiation", () => {
@@ -357,7 +449,6 @@ describe("HTTP/2 upgrade — the client closes its side first", () => {
       await writing.promise;
       // A turn later only what the kernel did not take is left.
       await new Promise(resolve => setImmediate(resolve));
-      if (process.versions.bun !== undefined) assert.notStrictEqual(raw?.writableLength, 0);
       let received = 0;
       const ended = once(client, "end");
       client.end();
@@ -600,11 +691,6 @@ describe("HTTP/2 upgrade — the accepted socket is released when the server sid
     if (netServer.listening) netServer.close();
   }
 
-  // Once the application has the socket, what it wrote may still be on its way when the session goes down: in Bun a write
-  // over a stream completes before the stream has sent it. So the accepted socket is ended, not destroyed, and a client
-  // that never closes its side holds it. Releasing it needs a write that completes as in Node (#43877).
-  const heldByTheClient = process.versions.bun !== undefined && "the accepted socket waits for the client's FIN";
-
   test("after a failed handshake", async () => {
     const h2Server = http2.createSecureServer(TLS);
     const tlsClientError = once(h2Server, "tlsClientError");
@@ -621,7 +707,7 @@ describe("HTTP/2 upgrade — the accepted socket is released when the server sid
     }
   });
 
-  test("after the session is destroyed", { todo: heldByTheClient }, async () => {
+  test("after the session is destroyed", async () => {
     const h2Server = http2.createSecureServer(TLS);
     const sessionClosed = new Promise<void>(resolve => {
       h2Server.once("session", (session: http2.ServerHttp2Session) => {
@@ -656,7 +742,7 @@ describe("HTTP/2 upgrade — the accepted socket is released when the server sid
     }
   });
 
-  test("after a client that negotiated no protocol is turned away", { todo: heldByTheClient }, async () => {
+  test("after a client that negotiated no protocol is turned away", async () => {
     const h2Server = http2.createSecureServer({ ...TLS, unknownProtocolTimeout: 0 });
     h2Server.on("session", () => assert.fail("a client without ALPN must not get a session"));
     const { netServer, port, accepted } = await acceptInto(h2Server);
@@ -724,6 +810,59 @@ describe("HTTP/2 upgrade — failed handshake", () => {
       ? "ECONNRESET"
       : "ERR_SSL_UNEXPECTED_MESSAGE";
     assert.deepStrictEqual({ event, code }, { event: "tlsClientError", code: expected });
+  });
+
+  test("an error on rawSocket during the handshake is the server's tlsClientError, reported once", async () => {
+    // Until the handover the connection is the server's, so the error goes
+    // where tls.Server puts a wrapped socket's error: 'tlsClientError', with
+    // that error. The close that follows aborts the handshake, which must not
+    // be reported as a second 'tlsClientError'.
+    const transportError = new Error("transport failed");
+    const reported: Error[] = [];
+    const first = Promise.withResolvers<Duplex>();
+    const h2Server = http2.createSecureServer(TLS);
+    h2Server.on("error", () => {});
+    h2Server.on("tlsClientError", (err: Error, socket: Duplex) => {
+      reported.push(err);
+      first.resolve(socket);
+    });
+    h2Server.on("secureConnection", () => first.reject(new Error("the handshake completed")));
+    let rawSocket: net.Socket | undefined;
+    const netServer = net.createServer(socket => {
+      rawSocket = socket;
+      h2Server.emit("connection", socket);
+    });
+    // A plain proxy in front of the net.Server. It forwards the client's bytes
+    // only, so the server's answer to the ClientHello is the signal that its
+    // handshake is pending, and stays so.
+    let toServer: net.Socket | undefined;
+    const proxy = net.createServer(c => {
+      toServer = net.connect((netServer.address() as net.AddressInfo).port, "127.0.0.1");
+      c.pipe(toServer);
+      c.on("error", () => {});
+      toServer.on("error", () => {});
+      toServer.once("data", () => rawSocket!.destroy(transportError));
+    });
+    let client: tls.TLSSocket | undefined;
+    try {
+      await once(netServer.listen(0, "127.0.0.1"), "listening");
+      await once(proxy.listen(0, "127.0.0.1"), "listening");
+      client = tls.connect({
+        port: (proxy.address() as net.AddressInfo).port,
+        host: "127.0.0.1",
+        rejectUnauthorized: false,
+        ALPNProtocols: ["h2"],
+      });
+      client.on("error", () => {});
+      const tlsSocket = await first.promise;
+      if (!tlsSocket.closed) await once(tlsSocket, "close");
+      assert.deepStrictEqual(reported, [transportError]);
+    } finally {
+      client?.destroy();
+      toServer?.destroy();
+      proxy.close();
+      netServer.close();
+    }
   });
 });
 

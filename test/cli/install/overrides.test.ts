@@ -3,8 +3,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, nodeModulesPackages, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
-import { pathToFileURL } from "url";
 import { parsePackageName, TestRegistry } from "registry";
+import { pathToFileURL } from "url";
 
 // Fixtures from ./registry/packages used below:
 //   no-deps        1.0.0, 1.0.1, 1.1.0 and 2.0.0 (latest), the package the overrides target

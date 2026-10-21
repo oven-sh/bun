@@ -72,6 +72,7 @@ export function conformance(shard: number, shards: number) {
     ["Symbols", "the symbol of every name", ".symbols"],
     ["Declarations", "the declaration files", ".js, except for the JavaScript in it"],
     ["Traces", "the log of module resolution", ".trace.json"],
+    ["ContentMappers", "the files that content mappers produce", ".contentmapper"],
   ])(
     "%s: TypeScript's tests have %s that TypeScript has (%s)",
     async kind => {

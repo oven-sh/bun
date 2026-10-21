@@ -166,7 +166,7 @@ bun_core::comptime_string_map! {
 
 bun_core::comptime_string_set! {
     /// The options declared `IsCommandLineOnly` (tsoptions).
-    static COMMAND_LINE_ONLY_OPTIONS = { b"help", b"ignoreConfig", b"listFilesOnly", b"locale", b"showConfig", b"watch" };
+    static COMMAND_LINE_ONLY_OPTIONS = { b"help", b"ignoreConfig", b"listFilesOnly", b"locale", b"runExternalCode", b"showConfig", b"watch" };
 }
 
 bun_core::comptime_string_set! {
@@ -396,6 +396,7 @@ impl Declaration {
                     b"include",
                     b"exclude",
                     b"references",
+                    b"contentMappers",
                     b"extends",
                     b"compileOnSave",
                     b"compilerOptions",
@@ -442,7 +443,7 @@ impl Declaration {
 fn kind_of_root(name: &[u8]) -> Option<Kind> {
     Some(match name {
         b"files" | b"include" | b"exclude" => Kind::List(Element::String),
-        b"references" => Kind::List(Element::Object),
+        b"references" | b"contentMappers" => Kind::List(Element::Object),
         b"extends" => Kind::ListOrElement,
         b"compileOnSave" => Kind::Boolean,
         b"compilerOptions" | b"typeAcquisition" => Kind::Object,

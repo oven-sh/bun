@@ -2621,6 +2621,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             }
             let attributes =
                 self.import_attributes_for_module_specifier(chain[0], &specifier, mode);
+            let rewritten = self.rewrite_content_mapped_module_specifier(&specifier);
+            let specifier = rewritten.unwrap_or(specifier);
             self.approximate_length += specifier.len() + 10;
             let query: &[u8] = if is_type_of { b"typeof " } else { b"" };
             let specifier = self.string_literal(&specifier, b'"');
@@ -2809,6 +2811,19 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             text: symbol_name,
             topmost_indexed_access: None,
         }
+    }
+
+    /// `rewriteContentMappedModuleSpecifier`. Returns `None` if `specifier` doesn't change.
+    pub(super) fn rewrite_content_mapped_module_specifier(
+        &self,
+        specifier: &[u8],
+    ) -> Option<Vec<u8>> {
+        // `InternalFlagsRewriteModuleSpecifiers`, which only the declaration transformer sets.
+        if self.tracker.is_none() && !self.is_transformer {
+            return None;
+        }
+        let options = &self.c.files().options;
+        options.rewritten_module_specifier(specifier)
     }
 
     /// `getSpecifierForModuleSymbol`, and `importModeOverride` of `symbolToTypeNode`.

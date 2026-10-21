@@ -32,7 +32,9 @@
 
 use super::explain::NOWHERE;
 use super::*;
+use crate::content_mapper::ExternalDiagnostic;
 use crate::util::SharedSort;
+use crate::verify::Problem;
 use bun_threading::Guarded;
 
 /// `args ...any` of `NewDiagnostic` and `reportError`.
@@ -107,6 +109,9 @@ pub(super) struct Reported {
     /// Set for an `addDeferredDiagnostic` callback that hasn't been called yet. `args` is then
     /// empty.
     pub(super) deferred: Option<Deferred>,
+    /// `Source() != ""`: a content mapper wrote it. `args` are its text and its source, and its span is in the original
+    /// text.
+    pub(super) is_external: bool,
 }
 
 /// What an `addDeferredDiagnostic` callback captures besides the error node.
@@ -161,7 +166,39 @@ impl Reported {
             was_bare: false,
             by_another_node: false,
             deferred: None,
+            is_external: false,
         }
+    }
+
+    /// `NewExternalDiagnostic`
+    pub(super) fn external(file: FileId, d: &ExternalDiagnostic) -> Reported {
+        let end = match d.end > d.start {
+            true => d.end,
+            false => hir::Diagnostic::NO_LENGTH,
+        };
+        let args = [&d.text[..], &d.source].map(Box::from);
+        Reported {
+            is_external: true,
+            ..Reported::new((file, d.start, end), d.code as u32, args.into())
+        }
+    }
+
+    /// Converts `problem`, which is about the file as a whole, to a diagnostic at the start of `file`.
+    pub(super) fn at_start_of_file(file: FileId, problem: &Problem) -> Reported {
+        let held = |args: &[Vec<u8>]| args.iter().map(|arg| arg.as_slice().into()).collect();
+        let at = (file, 0, hir::Diagnostic::NO_LENGTH);
+        let mut reported = Reported::new(at, problem.code, held(&problem.args));
+        for (level, code, args) in &problem.chain {
+            let mut under = &mut reported.message_chain;
+            for _ in 1..*level {
+                match under.is_empty() {
+                    true => break,
+                    false => under = &mut under.last_mut().unwrap().message_chain,
+                }
+            }
+            under.push(Reported::new(NOWHERE, *code, held(args)));
+        }
+        reported
     }
 
     /// Converts a diagnostic stored in `file`'s HIR.

@@ -17,11 +17,11 @@ use super::explain::NOWHERE;
 use super::sink::{NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, Parent, PatParent, SymbolId};
+use crate::content_mapper::{extension_rewrite, rewrite_extension, should_rewrite_extension};
 use crate::program::{TypeOnlyDeclaration, source_file_may_be_emitted};
 use crate::resolve::{
     ModuleKind, Options, ScriptTarget, file_extension_is, get_relative_path_from_directory,
-    has_ts_implementation_extension, is_declaration_file_name, path_is_relative,
-    try_extract_ts_extension,
+    is_declaration_file_name, path_is_relative, try_extract_ts_extension,
 };
 use crate::util::SharedSort;
 use crate::verify::relative_from_file;
@@ -1029,6 +1029,12 @@ impl Checker<'_, '_> {
                 Some(path) => self.atoms().bytes(path),
                 None => target.file_name(),
             };
+            let rewrites = &options.content_mapper_extension_rewrites[..];
+            // `checkDeclarationRewrite`: the declaration file gets the rewritten specifier, even of a type-only import.
+            let checks_declaration_rewrite = options.emits_declarations
+                && rewrite_extension(text, rewrites, files.is_case_sensitive).is_some()
+                && path_is_relative(text)
+                && importing.hir.kind != FileKind::Declaration;
             // `ResolvedUsingTsExtension`
             let using_ts_extension = importing.ts_extension_imports.contains(&key);
             let is_declaration_name = (using_ts_extension
@@ -1066,14 +1072,21 @@ impl Checker<'_, '_> {
                     self.error_at(at, 5097, &[Arg::Bytes(extension.unwrap_or(b""))]);
                 }
             } else if options.rewrite_relative_import_extensions
-                && !site.is_ambient
+                && (!site.is_ambient || checks_declaration_rewrite)
                 && !is_declaration_name
-                && kind != SpecifierKind::ImportType
-                && !site.is_type_only
+                && (kind != SpecifierKind::ImportType && !site.is_type_only
+                    || checks_declaration_rewrite)
             {
-                // `ShouldRewriteModuleSpecifier`
                 let should_rewrite =
-                    path_is_relative(text) && has_ts_implementation_extension(text);
+                    should_rewrite_extension(text, rewrites, files.is_case_sensitive);
+                let mapped_source = (target.content_mapped)
+                    .and_then(|_| {
+                        extension_rewrite(target.file_name(), rewrites, files.is_case_sensitive)
+                    })
+                    .filter(|it| it.source != it.target);
+                // `resolvedUsingRewritableExtension`
+                let using_ts_extension = using_ts_extension
+                    || mapped_source.is_some() && importing.extra_extension_imports.contains(&key);
                 if !using_ts_extension && should_rewrite {
                     let path = relative_from_file(
                         importing.file_name(),
@@ -1083,13 +1096,15 @@ impl Checker<'_, '_> {
                     self.error_at(at, 2876, &[Arg::Bytes(&path)]);
                 } else if using_ts_extension
                     && !should_rewrite
-                    && source_file_may_be_emitted(options, target, files.is_case_sensitive)
+                    && (mapped_source.is_some()
+                        || source_file_may_be_emitted(options, target, files.is_case_sensitive))
                 {
                     // `GetAnyExtensionFromPath`
                     let base =
                         &text[strings::last_index_of_char(text, b'/').map_or(0, |i| i + 1)..];
                     let extension =
                         strings::last_index_of_char(base, b'.').map_or(&b""[..], |i| &base[i..]);
+                    let extension = mapped_source.map_or(extension, |it| &it.source);
                     self.error_at(at, 2877, &[Arg::Bytes(extension)]);
                 } else if using_ts_extension
                     && should_rewrite

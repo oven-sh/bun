@@ -1188,7 +1188,13 @@ impl<'p> Printer<'_, 'p, '_> {
                             Some(rest) if rest.iter().find(is_quote) == Some(&b'\'') => b'\'',
                             _ => b'"',
                         };
-                        quoted(self.c.atoms().bytes(spec), quote, false)
+                        let written = self.c.atoms().bytes(spec);
+                        match self.rewrite_content_mapped_module_specifier(written) {
+                            // The node builder creates a new literal. The transformer copies the flags of the old one.
+                            Some(name) if !self.is_transformer => self.string_literal(&name, b'"'),
+                            Some(name) => quoted(&name, quote, false),
+                            None => quoted(written, quote, false),
+                        }
                     }
                 };
                 let mut text = cat!(query, b"import(", specifier, attributes, b")");

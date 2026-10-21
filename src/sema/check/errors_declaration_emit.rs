@@ -28,6 +28,7 @@ use crate::resolve::{
     node_module_path_parts, object_kind, path_is_relative, remove_file_extension,
 };
 use crate::util::SharedSort;
+use crate::verify::relative_from_file;
 use bstr::ByteSlice;
 use bun_core::strings;
 use bun_paths::platform::Posix;
@@ -875,8 +876,10 @@ impl<'p, 's> Checker<'p, 's> {
         // `getSourceMappingURL`, without `mapRoot`. Nothing follows it, not even a line break.
         if files.options.writes_declaration_maps
             && let Some(text) = &mut text
-            && let Some(output) =
-                crate::resolve::output_declaration_file_name(module.file_name(), None)
+            && let Some(output) = match module.content_mapped {
+                Some(_) => Some(files.declaration_file_path(file)),
+                None => crate::resolve::output_declaration_file_name(module.file_name(), None),
+            }
         {
             let name =
                 &output[strings::last_index_of_char(&output, b'/').map_or(0, |slash| slash + 1)..];
@@ -3034,6 +3037,34 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 );
                 text.extend_from_slice(b"preserve=\"true\" />\n");
             }
+            if expected == ReferenceKind::Path {
+                text.extend_from_slice(&self.supplemental_references());
+            }
+        }
+        text
+    }
+
+    /// `SupplementalReferencesTransformer`: the declaration file of a file that a content mapper produced refers to
+    /// those of its supplemental files.
+    fn supplemental_references(&self) -> Vec<u8> {
+        let files = self.c.files();
+        let mapped = files.module(self.file()).content_mapped;
+        let names = mapped.map_or(&[][..], |it| &it.supplemental_file_names);
+        let output_file_path = files.declaration_file_path(self.file());
+        let mut text = Vec::new();
+        for supplemental in names.iter().filter_map(|name| files.by_path.get(name)) {
+            let module = files.module(supplemental);
+            if !source_file_may_be_emitted(files.options, module, files.is_case_sensitive)
+                || module.hir.kind == FileKind::Json
+            {
+                continue;
+            }
+            let name = relative_from_file(
+                &output_file_path,
+                &files.declaration_file_path(supplemental),
+                files.is_case_sensitive,
+            );
+            text.extend_from_slice(&[b"/// <reference path=\"", &name[..], b"\" />\n"].concat());
         }
         text
     }
@@ -3232,6 +3263,12 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let mut uses = hir.specifier_uses.iter();
         let specifier_use = uses.find(|it| it.spec == spec && (from..to).contains(&it.pos));
         let text = &hir.text[..];
+        let options = &self.c.files().options;
+        if let Some(rewritten) = options.rewritten_module_specifier(self.name(spec)) {
+            let quote = specifier_use.and_then(|it| text.get(it.pos as usize));
+            let quote = quote.copied().filter(|&it| it == b'\'').unwrap_or(b'"');
+            return super::print::quoted(&rewritten, quote, false);
+        }
         if let Some(start) = specifier_use.map(|it| it.pos as usize)
             && let Some(&quote) = text.get(start)
             && matches!(quote, b'"' | b'\'')

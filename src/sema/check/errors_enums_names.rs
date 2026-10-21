@@ -288,7 +288,7 @@ impl Checker<'_, '_> {
             return;
         }
         // `getJsxNamespaceContainerForImplicitImport`
-        let path = files.module(file).file_name();
+        let path = files.module(file).language_file_name();
         let implicit_import = crate::program::jsx_runtime_of(options, hir, &files.atoms)
             .filter(|_| crate::resolve::imports_jsx_runtime(path))
             .and_then(|spec| files.module_of_specifier(file, self.atoms().intern(&spec)));

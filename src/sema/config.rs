@@ -4,6 +4,7 @@
 //! A port of `internal/tsoptions/tsconfigparsing.go` and `internal/vfs/vfsmatch/vfsmatch.go`.
 
 use crate::config_options::{Declaration, In, converted, is_enum, is_file_path, is_list};
+use crate::content_mapper::{self, ExtensionRewrite, Mapper};
 use crate::json::{Json, TsConfigSourceFile};
 use crate::resolve::{
     Host, Options, ancestors, combine_paths, contains_path, displayed_path,
@@ -350,6 +351,7 @@ struct Raw {
     include: List,
     exclude: List,
     references: List,
+    content_mappers: List,
     /// `rawConfig.GetOrZero("extends") != nil`
     has_extends: bool,
 }
@@ -753,6 +755,7 @@ fn open_config(
     own.include = List::of(json.get(b"include"));
     own.exclude = List::of(json.get(b"exclude"));
     own.references = List::of(json.get(b"references"));
+    own.content_mappers = List::of(json.get(b"contentMappers"));
     let extends = json.get(b"extends");
     own.has_extends = extends.is_some_and(|extends| *extends != Json::Null);
     // `getExtendsConfigPathOrArray`. With several `extends`, the last one wins.
@@ -837,6 +840,10 @@ impl PendingConfig {
         inherit(&own.include, &mut inherited.include, extended.include);
         inherit(&own.exclude, &mut inherited.exclude, extended.exclude);
         inherit(&own.files, &mut inherited.files, extended.files);
+        // The last extended file that has the property wins, even if its value isn't a list.
+        if extended.content_mappers.is_specified {
+            inherited.content_mappers = extended.content_mappers;
+        }
     }
 
     /// Returns the file merged with everything it has inherited.
@@ -850,6 +857,9 @@ impl PendingConfig {
         }
         if inherited.files.is_specified {
             own.files = inherited.files;
+        }
+        if inherited.content_mappers.items.is_some() && !own.content_mappers.is_specified {
+            own.content_mappers = inherited.content_mappers;
         }
         merge_parsed_compiler_options(&mut inherited.compiler, &mut own);
         own.compiler = inherited.compiler;
@@ -1142,6 +1152,29 @@ fn project_from_raw(
         is_about_options: false,
         ..error
     }));
+    let mut problems = Vec::new();
+    options.content_mappers = content_mappers(
+        host,
+        session,
+        &raw.content_mappers,
+        &options,
+        &match config_path {
+            b"" => join(base, b"tsconfig.json"),
+            _ => config_path.to_vec(),
+        },
+        &mut problems,
+    );
+    let about_mappers = ConfigError::from_problems(host, session, config_path, &problems);
+    errors.extend(about_mappers.into_iter().map(|error| ConfigError {
+        is_about_options: false,
+        ..error
+    }));
+    if !options.content_mappers.is_empty() {
+        options.content_mapper_extension_rewrites =
+            content_mapper::extension_rewrites(&options.content_mappers, host.is_case_sensitive());
+        options.compiler_options_for_content_mappers =
+            Some(marshal_compiler_options(&compiler, config_path));
+    }
     let literal = substitute_all(validated_files.clone());
     options.file_specs = validated_files
         .into_iter()
@@ -1181,6 +1214,313 @@ fn project_from_raw(
             None => Vec::new(),
         },
     }
+}
+
+/// `parseContentMapper`. Returns `None` if `value` isn't an object or has an error.
+fn parse_content_mapper(value: &Json, index: usize, problems: &mut Vec<Problem>) -> Option<Mapper> {
+    value.as_object()?;
+    let reported = problems.len();
+    let mut requires = |property: &[u8], value_type: &[u8]| {
+        let at = ConfigLocation::ContentMapper(index, b"");
+        problems.push(Problem::new(5024, &[property, value_type], at));
+    };
+    let mut mapper = Mapper::default();
+    match value.get(b"package").and_then(Json::as_str) {
+        Some(package) if !package.is_empty() => mapper.package = package.to_vec(),
+        _ => requires(b"contentMapper.package", b"string"),
+    }
+    // `parseStringArrayStrict`
+    let extensions = value.get(b"extensions").and_then(Json::as_array);
+    let extensions = extensions.and_then(|list| {
+        let strings = list.iter().map(|it| it.as_str().map(<[u8]>::to_vec));
+        strings.collect::<Option<Vec<_>>>()
+    });
+    match extensions {
+        Some(extensions) => mapper.extensions = extensions,
+        None => requires(b"contentMapper.extensions", b"string[]"),
+    }
+    if let Some(outputs) = (value.get(b"outputExtensions")).filter(|it| **it != Json::Null) {
+        match string_map(outputs) {
+            Some(outputs) => mapper.output_extensions = outputs,
+            None => requires(b"contentMapper.outputExtensions", b"object or null"),
+        }
+    }
+    match value.get(b"options") {
+        Some(options @ Json::Object(_)) => mapper.options = Some(options.clone()),
+        Some(_) => requires(b"contentMapper.options", b"object"),
+        None => {}
+    }
+    (problems.len() == reported).then_some(mapper)
+}
+
+/// `parseStringStringMapStrict`. The result is sorted by source extension.
+fn string_map(value: &Json) -> Option<Vec<ExtensionRewrite>> {
+    let entries = value.as_object()?.iter().map(|(source, target)| {
+        Some(ExtensionRewrite {
+            source: source.clone(),
+            target: target.as_str()?.to_vec(),
+        })
+    });
+    let mut entries: Vec<ExtensionRewrite> = entries.collect::<Option<_>>()?;
+    // If a name is repeated, the last value counts.
+    entries.reverse();
+    entries.shared_sort_by(|a, b| a.source.cmp(&b.source));
+    entries.dedup_by(|next, first| next.source == first.source);
+    Some(entries)
+}
+
+/// The part of `parseJsonConfigFileContentWorker` about `contentMappers`. Returns the mappers that are in use. Their
+/// packages are looked up from `containing_file`, and only their `package.json` is read.
+fn content_mappers(
+    host: &dyn Host,
+    session: &Session,
+    list: &List,
+    options: &Options,
+    containing_file: &[u8],
+    problems: &mut Vec<Problem>,
+) -> Vec<Mapper> {
+    let is_case_sensitive = host.is_case_sensitive();
+    // Each mapper with its index in the list.
+    let mut mappers: Vec<(usize, Mapper)> = Vec::new();
+    for (index, element) in list.items.iter().flatten().enumerate() {
+        mappers.extend(parse_content_mapper(element, index, problems).map(|it| (index, it)));
+    }
+    let canonical = |extension: &[u8]| to_path(extension, is_case_sensitive).into_owned();
+    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+    for (index, mapper) in &mut mappers {
+        let index = *index;
+        mapper.extensions.retain(|extension| {
+            let code = if !extension.starts_with(b".") {
+                18065
+            } else if content_mapper::contains_path_separator(extension) {
+                18123
+            } else if content_mapper::has_reserved_source_extension(extension) {
+                18066
+            } else if !seen.insert(canonical(extension)) {
+                18067
+            } else {
+                return true;
+            };
+            let at = ConfigLocation::ContentMapperExtension(index, extension.clone());
+            problems.push(Problem::new(code, &[extension], at));
+            false
+        });
+        let mut report = |code: u32, extension: &[u8]| {
+            let at = ConfigLocation::ContentMapper(index, b"outputExtensions");
+            problems.push(Problem::new(code, &[extension], at));
+        };
+        for ExtensionRewrite { source, target } in &mapper.output_extensions {
+            for extension in [source, target] {
+                if content_mapper::contains_path_separator(extension) {
+                    report(18123, extension);
+                } else if !content_mapper::is_valid_extension(extension) {
+                    report(18118, extension);
+                }
+            }
+            let mut registered = mapper.extensions.iter();
+            if !registered.any(|it| canonical(it) == canonical(source)) {
+                report(18119, source);
+            }
+        }
+    }
+    if mappers.is_empty() {
+        return Vec::new();
+    }
+    // Without permission to run them, their extensions aren't registered and their files are unknown files.
+    if host.content_mapper_processes().is_none() {
+        problems.push(Problem::new(18068, &[], ConfigLocation::ContentMappersKey));
+        return Vec::new();
+    }
+    let mut resolved = Vec::new();
+    for (index, mut mapper) in mappers {
+        let has_own_outputs = (list.items.iter().flatten().nth(index))
+            .is_some_and(|element| element.get(b"outputExtensions").is_some());
+        if let Err(mut problem) = resolve_content_mapper_manifest(
+            host,
+            session,
+            containing_file,
+            &mut mapper,
+            has_own_outputs,
+        ) {
+            problem.at = ConfigLocation::ContentMapper(index, b"package");
+            problems.push(problem);
+            continue;
+        }
+        for source in &mapper.extensions {
+            let target = content_mapper::output_extension(&mapper, source, is_case_sensitive);
+            let is_identity = |target: &[u8]| {
+                target == &source[..] || !is_case_sensitive && target.eq_ignore_ascii_case(source)
+            };
+            if let Some(target) = target.filter(|target| !is_identity(target))
+                && !options.rewrite_relative_import_extensions
+            {
+                let at = ConfigLocation::ContentMapper(index, b"");
+                problems.push(Problem::new(18120, &[source, target], at));
+            }
+        }
+        resolved.push(mapper);
+    }
+    resolved
+}
+
+/// `resolveContentMapperManifest`: fills in what the `package.json` of `mapper.package` says about the mapper.
+/// `has_own_outputs`: the configuration file sets `outputExtensions`, so the package's defaults don't apply.
+fn resolve_content_mapper_manifest(
+    host: &dyn Host,
+    session: &Session,
+    containing_file: &[u8],
+    mapper: &mut Mapper,
+    has_own_outputs: bool,
+) -> Result<(), Problem> {
+    let package = mapper.package.clone();
+    let error = |code: u32| Problem::new(code, &[&package], ConfigLocation::Nowhere);
+    let directory =
+        crate::resolve::resolve_package_directory(host, session, &package, containing_file);
+    let directory = directory.ok_or_else(|| error(18075))?;
+    let contents = host.read(&join(&directory, b"package.json"));
+    let contents = contents.ok_or_else(|| error(18075))?;
+    let fields = host.parse_json(session.arena(), &contents);
+    let fields = fields.filter(|it| it.as_object().is_some());
+    let fields = fields.ok_or_else(|| error(18076))?;
+    let text = |name: &[u8]| fields.get(name).and_then(Json::as_str).unwrap_or_default();
+    if text(b"name").is_empty() {
+        return Err(error(18077));
+    }
+    let manifest = fields
+        .get(b"typescript")
+        .and_then(|it| it.get(b"contentMapper"));
+    let manifest = manifest.filter(|it| it.as_object().is_some());
+    let manifest = manifest.ok_or_else(|| error(18078))?;
+    let exec = manifest.get(b"exec").and_then(Json::as_array);
+    let exec = exec.and_then(|list| {
+        let strings = list.iter().map(|it| it.as_str().map(<[u8]>::to_vec));
+        strings.collect::<Option<Vec<_>>>()
+    });
+    let exec = exec.filter(|it| !it.is_empty());
+    let exec = exec.ok_or_else(|| error(18079))?;
+    let outputs = match manifest.get(b"outputExtensions") {
+        Some(outputs) => string_map(outputs).ok_or_else(|| error(18122))?,
+        None => Vec::new(),
+    };
+    for ExtensionRewrite { source, target } in &outputs {
+        let mut both = [source, target].into_iter();
+        if let Some(extension) = both.find(|it| content_mapper::contains_path_separator(it)) {
+            return Err(Problem::new(18123, &[extension], ConfigLocation::Nowhere));
+        }
+        if !content_mapper::is_valid_extension(source)
+            || !content_mapper::is_valid_extension(target)
+        {
+            let args: [&[u8]; 3] = [&package, source, target];
+            return Err(Problem::new(18121, &args, ConfigLocation::Nowhere));
+        }
+    }
+    mapper.name = text(b"name").to_vec();
+    mapper.version = text(b"version").to_vec();
+    mapper.exec = exec;
+    mapper.dynamic_config = manifest.get(b"dynamicConfig").and_then(Json::as_bool) == Some(true);
+    mapper.package_directory = directory;
+    if !has_own_outputs {
+        mapper.output_extensions = outputs;
+    }
+    Ok(())
+}
+
+/// `json.Marshal(CompilerOptions)`: `compiler` with each enum as its number, each library as its file name, and paths as
+/// they're displayed.
+fn marshal_compiler_options(compiler: &Json, config_path: &[u8]) -> Json {
+    let number_of = |name: &[u8], value: &[u8]| -> Option<f64> {
+        let values: &[(&[u8], u8)] = match name {
+            b"target" => &[
+                (b"es5", 1),
+                (b"es6", 2),
+                (b"es2015", 2),
+                (b"es2016", 3),
+                (b"es2017", 4),
+                (b"es2018", 5),
+                (b"es2019", 6),
+                (b"es2020", 7),
+                (b"es2021", 8),
+                (b"es2022", 9),
+                (b"es2023", 10),
+                (b"es2024", 11),
+                (b"es2025", 12),
+                (b"es2026", 13),
+                (b"esnext", 99),
+            ],
+            b"module" => &[
+                (b"commonjs", 1),
+                (b"amd", 2),
+                (b"umd", 3),
+                (b"system", 4),
+                (b"es6", 5),
+                (b"es2015", 5),
+                (b"es2020", 6),
+                (b"es2022", 7),
+                (b"esnext", 99),
+                (b"node16", 100),
+                (b"node18", 101),
+                (b"node20", 102),
+                (b"nodenext", 199),
+                (b"preserve", 200),
+            ],
+            b"moduleResolution" => &[
+                (b"classic", 1),
+                (b"node", 2),
+                (b"node10", 2),
+                (b"node16", 3),
+                (b"nodenext", 99),
+                (b"bundler", 100),
+            ],
+            b"jsx" => &[
+                (b"preserve", 1),
+                (b"react", 2),
+                (b"react-native", 3),
+                (b"react-jsx", 4),
+                (b"react-jsxdev", 5),
+            ],
+            b"moduleDetection" => &[(b"auto", 1), (b"legacy", 2), (b"force", 3)],
+            b"newLine" => &[(b"crlf", 1), (b"lf", 2)],
+            _ => return None,
+        };
+        let found = values.iter().find(|it| it.0 == value)?;
+        Some(f64::from(found.1))
+    };
+    let displayed = |path: &Json| match path.as_str() {
+        Some(path) => Json::String(displayed_path(path).into_owned()),
+        None => path.clone(),
+    };
+    let options = compiler.as_object().unwrap_or_default().iter();
+    let mut marshaled: Vec<(Vec<u8>, Json)> = options
+        .map(|(name, value)| {
+            let value = match value {
+                Json::String(text) if is_enum(name) => match number_of(name, text) {
+                    Some(number) => Json::Number(number),
+                    None => value.clone(),
+                },
+                Json::Array(libs) if name == b"lib" => {
+                    let file_name = |lib: &Json| match lib.as_str() {
+                        Some(lib) => Json::String([b"lib.", lib, b".d.ts"].concat()),
+                        None => lib.clone(),
+                    };
+                    Json::Array(libs.iter().map(file_name).collect())
+                }
+                Json::String(_) if is_file_path(name) || name == b"pathsBasePath" => {
+                    displayed(value)
+                }
+                Json::Array(paths) if is_file_path(name) => {
+                    Json::Array(paths.iter().map(displayed).collect())
+                }
+                _ => value.clone(),
+            };
+            (name.clone(), value)
+        })
+        .collect();
+    if !config_path.is_empty() {
+        let config_file_path = Json::String(displayed_path(config_path).into_owned());
+        marshaled.push((b"configFilePath".to_vec(), config_file_path));
+    }
+    marshaled.push((b"runExternalCode".to_vec(), Json::Bool(true)));
+    Json::Object(marshaled)
 }
 
 /// `ChangeExtension`

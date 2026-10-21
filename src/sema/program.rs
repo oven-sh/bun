@@ -12,6 +12,7 @@ use crate::bind::{self, Bound, Decl, ScopeId, ScopeKind, SymFlags, Symbol, Symbo
 use crate::check::errors::{SuggestionLookup, is_close};
 use crate::check::spans::{Spans, skip_trivia, skip_trivia_back};
 use crate::components::Components;
+use crate::content_mapper::{self, DiagnosticDirective, ExternalDiagnostic, Mapper, SpanMap};
 use crate::hir::{self, *};
 use crate::json::Json;
 use crate::resolve::{
@@ -185,6 +186,9 @@ pub struct Module<'s> {
     /// `ResolvedUsingTsExtension`: the specifiers that resolve through a TypeScript extension
     /// written in the specifier itself, with the mode they are resolved in.
     pub ts_extension_imports: ArenaFew<'s, (Atom, ResolutionMode)>,
+    /// `ResolvedUsingExtraExtensions`: the specifiers that end with a content mapper's extension and resolve to that
+    /// file, with the mode they are resolved in.
+    pub extra_extension_imports: ArenaFew<'s, (Atom, ResolutionMode)>,
     /// `GetResolutionDiagnostic`: the specifiers that resolve to a `.d.css.ts` file or the like
     /// without `allowArbitraryExtensions`, with the mode they are resolved in. They resolve to no
     /// file (6263).
@@ -229,6 +233,165 @@ pub struct Module<'s> {
     has_conditional_or_mapped_type: bool,
     /// Result of `count_identifiers`, copied into `Files::sizes`.
     identifiers: u32,
+    /// `contentMapperInfo`: set if a content mapper produced `hir.text`.
+    pub content_mapped: Option<&'s ContentMapped>,
+}
+
+/// `ast.ContentMapperSourceFileInfo`
+pub struct ContentMapped {
+    /// The mapper's index in `Options::content_mappers`.
+    pub mapper: usize,
+    /// `VirtualFileName`: its extension says what language the generated text is in.
+    pub virtual_file_name: Vec<u8>,
+    /// `OriginalText`: the text of the file on disk. Empty for a supplemental file, whose canonical file has it.
+    pub original_text: Cow<'static, [u8]>,
+    /// `None` if the transform failed (`IsContentMapperFailureStub`). The generated text is empty then.
+    pub span_map: Option<SpanMap>,
+    pub directives: Vec<DiagnosticDirective>,
+    /// The mapper's syntax errors in the original text.
+    pub diagnostics: Vec<ExternalDiagnostic>,
+    /// Why the transform failed, unless that's reported elsewhere.
+    pub error: Option<Problem>,
+    /// `CanonicalSourceFile`: for a supplemental file, the name of the file on disk that it was generated from.
+    pub canonical_file_name: Option<Vec<u8>>,
+    /// `SupplementalSourceFiles`: their names.
+    pub supplemental_file_names: Vec<Vec<u8>>,
+}
+
+/// A file that a content mapper produced and that isn't loaded yet.
+struct MappedSource {
+    text: Vec<u8>,
+    info: ContentMapped,
+}
+
+/// The content mappers of a program that's being loaded.
+struct Mapping<'a> {
+    project: content_mapper::Project<'a>,
+    mappers: &'a [Mapper],
+    /// By file name.
+    sources: Guarded<FxHashMap<Vec<u8>, MappedSource>>,
+}
+
+impl<'a> Mapping<'a> {
+    /// Returns `None` unless the program has content mappers.
+    fn new(host: &'a dyn Host, options: &'a Options) -> Option<Mapping<'a>> {
+        let mappers = &options.content_mappers[..];
+        let compiler_options = options.compiler_options_for_content_mappers.as_ref()?;
+        let processes = host.content_mapper_processes()?;
+        let config_file_name = &options.config_path;
+        Some(Mapping {
+            project: content_mapper::Project::new(
+                processes,
+                mappers,
+                config_file_name,
+                compiler_options,
+            ),
+            mappers,
+            sources: Guarded::new(FxHashMap::default()),
+        })
+    }
+
+    /// True if a mapper produces the text of the file at `path`. In that case the text is ready when this returns, and
+    /// the file on disk doesn't need to be read again.
+    fn prepare(&self, host: &dyn Host, path: &[u8]) -> bool {
+        if self.sources.lock().contains_key(path) {
+            return true;
+        }
+        if !content_mapper::is_mapped(self.mappers, path) {
+            return false;
+        }
+        let source = self.transform(host, path, host.read_source(path));
+        self.sources.lock().insert(path.to_vec(), source);
+        true
+    }
+
+    /// Returns the generated text of the file at `path`, if a mapper produces it.
+    fn take(&self, host: &dyn Host, path: &[u8]) -> Option<MappedSource> {
+        self.prepare(host, path)
+            .then(|| self.sources.lock().remove(path))?
+    }
+
+    /// `parseContentMappedFile`. Also stores the supplemental files in `sources`.
+    fn transform(
+        &self,
+        host: &dyn Host,
+        path: &[u8],
+        original_text: Cow<'static, [u8]>,
+    ) -> MappedSource {
+        let is_case_sensitive = host.is_case_sensitive();
+        let mapper = content_mapper::mapper_for_file_name(self.mappers, path, is_case_sensitive);
+        let mapper = mapper.unwrap_or_default();
+        let file_exists = |name: &[u8]| host.is_file(name);
+        let outcome = (self.project).transform(mapper, path, &original_text, &file_exists);
+        let transformed = match outcome {
+            content_mapper::Outcome::Transformed(transformed) => *transformed,
+            // `emptyContentMappedFile`
+            content_mapper::Outcome::Failed { error } => {
+                return MappedSource {
+                    text: Vec::new(),
+                    info: ContentMapped {
+                        mapper,
+                        virtual_file_name: [path, b".ts"].concat(),
+                        original_text,
+                        span_map: None,
+                        directives: Vec::new(),
+                        diagnostics: Vec::new(),
+                        error,
+                        canonical_file_name: None,
+                        supplemental_file_names: Vec::new(),
+                    },
+                };
+            }
+        };
+        let mut supplemental_file_names = Vec::new();
+        for (index, output) in transformed.supplemental.into_iter().enumerate() {
+            let name =
+                content_mapper::supplemental_file_name(path, index, output.virtual_extension);
+            let source = MappedSource {
+                text: output.text,
+                info: ContentMapped {
+                    mapper,
+                    virtual_file_name: name.clone(),
+                    original_text: Cow::default(),
+                    span_map: Some(output.span_map),
+                    directives: output.directives,
+                    diagnostics: Vec::new(),
+                    error: None,
+                    canonical_file_name: Some(path.to_vec()),
+                    supplemental_file_names: Vec::new(),
+                },
+            };
+            self.sources.lock().insert(name.clone(), source);
+            supplemental_file_names.push(name);
+        }
+        let canonical = transformed.canonical;
+        MappedSource {
+            text: canonical.text,
+            info: ContentMapped {
+                mapper,
+                virtual_file_name: [path, canonical.virtual_extension].concat(),
+                original_text,
+                span_map: Some(canonical.span_map),
+                directives: canonical.directives,
+                diagnostics: transformed.diagnostics,
+                error: None,
+                canonical_file_name: None,
+                supplemental_file_names,
+            },
+        }
+    }
+}
+
+/// Reads the file at `path` for `Files::load_one`. Returns `None` if a content mapper produces its text.
+fn read_to_load(
+    host: &dyn Host,
+    mapping: Option<&Mapping>,
+    path: &[u8],
+) -> Option<Cow<'static, [u8]>> {
+    match mapping.is_some_and(|mapping| mapping.prepare(host, path)) {
+        true => None,
+        false => Some(host.read_source(path)),
+    }
 }
 
 /// Entry in the list of all modules. A `Module` is thousands of bytes, so it's boxed in the arena of the thread that
@@ -285,6 +448,15 @@ impl<'s> Module<'s> {
 }
 
 impl Module<'_> {
+    /// Returns the name whose extension says what language the file is in: `VirtualFileName` for a file that a content
+    /// mapper produced, and `FileName` for any other.
+    pub fn language_file_name(&self) -> &[u8] {
+        match self.content_mapped {
+            Some(mapped) => &mapped.virtual_file_name,
+            None => self.path.pretty,
+        }
+    }
+
     /// True if its top-level declarations are local to it.
     pub fn is_module(&self) -> bool {
         self.hir.has_module_syntax || self.is_commonjs()
@@ -533,6 +705,8 @@ pub struct Files<'s> {
     pub arrays_have_numeric_members: bool,
     /// Errors in what the options refer to, not attributable to any file.
     program_errors: &'s [Problem],
+    /// What the content mappers' failures and responses add to `GetProgramDiagnostics`.
+    pub content_mapper_errors: &'s content_mapper::Closed,
     /// `GetIncludeProcessorDiagnostics`: errors about the inclusion of a file in the program,
     /// reported at the reference in another file. Each has that file and the span.
     include_errors: &'s [(FileId, u32, u32, Problem)],
@@ -930,6 +1104,8 @@ struct Loaded<'s, 'r> {
     references: Vec<(&'r [u8], bool, bool, Option<PackageId<'r>>)>,
     /// `Resolution::number` for each of `references`. Empty if they aren't numbered.
     reference_numbers: Vec<u32>,
+    /// `SupplementalSourceFiles`: the files that a content mapper produced along with this one.
+    supplemental: Vec<&'r [u8]>,
     /// The `/// <reference lib>` to a library that's replaced by a file with an extension that the program doesn't
     /// support: its span, the file, and the error of `parseTask.load`. The file isn't read.
     unsupported_libs: Vec<(u32, u32, &'r [u8], u32)>,
@@ -2905,7 +3081,8 @@ fn unsupported_extension_error(
     let canonical_file_name = &canonical_file_name[..];
     let is_supported = has_ts_implementation_extension(canonical_file_name)
         || options.allow_js && is_javascript(canonical_file_name)
-        || options.resolve_json_module && canonical_file_name.ends_with(b".json");
+        || options.resolve_json_module && canonical_file_name.ends_with(b".json")
+        || content_mapper::is_mapped(&options.content_mappers, canonical_file_name);
     if is_supported {
         return None;
     }
@@ -2921,7 +3098,8 @@ fn reference_problem(options: &Options, code: u32, path: &[u8]) -> Problem {
     if matches!(code, 6504 | 6053 | 5116) {
         return Problem::new(code, &[&file_name], ConfigLocation::Nowhere);
     }
-    let extensions = supported_extensions(options).concat();
+    let mut extensions = supported_extensions(options).concat();
+    extensions.extend(content_mapper::extensions_of(&options.content_mappers));
     let quoted = [b"'", &extensions.join(&b"', '"[..])[..], b"'"].concat();
     Problem::new(code, &[&file_name, &quoted], ConfigLocation::Nowhere)
 }
@@ -3117,6 +3295,8 @@ enum IncludeReason {
     AutomaticTypeDirectiveFile(Vec<u8>, Option<Vec<u8>>),
     /// The kinds for which `isReferencedFile` is true.
     Reference(Reference),
+    /// `fileIncludeKindContentMapperSupplemental`: `canonicalSourceFile`.
+    ContentMapperSupplemental(FileId),
 }
 
 /// `referenceFileLocation`
@@ -3576,7 +3756,7 @@ impl Included<'_, '_> {
         if imports_helpers(options, hir) {
             specifiers.push((known::tslib, module.default_mode, 1395, 0, 0));
         }
-        if crate::resolve::imports_jsx_runtime(module.file_name())
+        if crate::resolve::imports_jsx_runtime(module.language_file_name())
             && let Some(runtime) = jsx_runtime_of(options, hir, atoms)
         {
             specifiers.push((atoms.intern(&runtime), module.default_mode, 1397, 0, 0));
@@ -3724,6 +3904,13 @@ impl Included<'_, '_> {
                     continue;
                 };
                 top.1 += 1;
+                let target = &modules[edge.idx()];
+                if is_requested[edge.idx()]
+                    && (target.content_mapped).is_some_and(|it| it.canonical_file_name.is_some())
+                {
+                    let reason = IncludeReason::ContentMapperSupplemental(top.0);
+                    visit(edge, reason, target.file_name().to_vec());
+                }
                 if !std::mem::replace(&mut seen[edge.idx()], true) {
                     stack.push(frame(edge));
                 }
@@ -3779,6 +3966,10 @@ impl Included<'_, '_> {
                     vec![location_text, to_file_name(from.file_name())],
                     it.package_id.as_ref(),
                 )
+            }
+            &IncludeReason::ContentMapperSupplemental(canonical) => {
+                let canonical = self.modules[canonical.idx()].file_name();
+                (18097, vec![to_file_name(canonical)])
             }
         }
     }
@@ -3860,6 +4051,7 @@ impl Included<'_, '_> {
                 ConfigLocation::Element(b"target", self.emit_script_target()),
                 1426,
             ),
+            IncludeReason::ContentMapperSupplemental(_) => None,
         }
     }
 
@@ -4004,6 +4196,15 @@ impl Included<'_, '_> {
         for root in self.roots {
             if let Some(id) = self.by_path.get(root) {
                 is_root[id.idx()] = true;
+            }
+        }
+        // A supplemental file is listed if its canonical file is.
+        for (at, module) in modules.iter().enumerate() {
+            let canonical = module
+                .content_mapped
+                .and_then(|it| it.canonical_file_name.as_ref());
+            if let Some(canonical) = canonical.and_then(|name| self.by_path.get(name)) {
+                is_root[at] = is_root[canonical.idx()];
             }
         }
         let mut is_reported: Vec<bool> = (modules.iter().zip(&is_root))
@@ -4190,7 +4391,7 @@ fn implied_format_reason(
         .find_map(|dir| Some((resolver.package_json(dir)?, dir)))
         .map(|(json, dir)| (join(dir, b"package.json"), json));
     let is_type_recorded = options.resolves_like_node
-        && format_by_extension(module.file_name()) == ResolutionMode::None
+        && format_by_extension(module.language_file_name()) == ResolutionMode::None
         || strings::contains(module.file_name(), b"/node_modules/");
     let package_type = scope
         .as_ref()
@@ -4219,6 +4420,10 @@ pub(crate) fn source_file_may_be_emitted(
     is_case_sensitive: bool,
 ) -> bool {
     if module.hir.kind == FileKind::Declaration || module.is_from_external_library {
+        return false;
+    }
+    // Whatever builds the original file writes its JavaScript. Only a declaration file is emitted for it here.
+    if module.content_mapped.is_some() && !options.emits_declarations {
         return false;
     }
     // The referenced project emits its own sources.
@@ -4269,7 +4474,35 @@ pub fn declaration_emit_output_file_path(
         _ if !options.emits_declarations => options.out_dir.as_slice(),
         declaration_dir => declaration_dir,
     };
-    let is_one_of = |extensions: [&[u8]; 2]| file_extension_is_one_of(path, &extensions);
+    let moved = source_file_path_in_new_dir(dir, path, common, is_case_sensitive);
+    change_to_declaration_extension(options, moved, is_case_sensitive)
+}
+
+/// `ChangeToDeclarationExtension`
+pub fn change_to_declaration_extension(
+    options: &Options,
+    mut moved: Vec<u8>,
+    is_case_sensitive: bool,
+) -> Vec<u8> {
+    let rewrites = &options.content_mapper_extension_rewrites;
+    match content_mapper::rewrite_extension(&moved, rewrites, is_case_sensitive) {
+        // `x.html` has the declaration file `x.d.html.ts`.
+        Some(rewritten) if ScriptKind::from_file_name(&rewritten).is_none() => {
+            let dot = strings::last_index_of_char(&rewritten, b'.');
+            let (stem, extension) = rewritten.split_at(dot.unwrap_or(rewritten.len()));
+            return [stem, b".d", extension, b".ts"].concat();
+        }
+        Some(rewritten) => moved = rewritten,
+        None => {
+            let extensions = content_mapper::extensions_of(&options.content_mappers);
+            let extensions = extensions.filter(|it| moved.ends_with(it));
+            if let Some(extension) = extensions.max_by_key(|it| it.len()) {
+                let stem = &moved[..moved.len() - extension.len()];
+                return [stem, b".d", extension, b".ts"].concat();
+            }
+        }
+    }
+    let is_one_of = |extensions: [&[u8]; 2]| file_extension_is_one_of(&moved, &extensions);
     // `GetDeclarationEmitExtensionForPath`
     let extension: &[u8] = if is_one_of([b".mjs", b".mts"]) {
         b".d.mts"
@@ -4278,8 +4511,20 @@ pub fn declaration_emit_output_file_path(
     } else {
         b".d.ts"
     };
-    let moved = source_file_path_in_new_dir(dir, path, common, is_case_sensitive);
     [remove_file_extension(&moved), extension].concat()
+}
+
+/// `GetExternalOutputFileName`: returns the file that whatever builds the original file at `path` writes, if a content
+/// mapper says what extension that file has.
+fn external_output_file_name(
+    options: &Options,
+    path: &[u8],
+    common: Option<&[u8]>,
+    is_case_sensitive: bool,
+) -> Option<Vec<u8>> {
+    let moved = source_file_path_in_new_dir(&options.out_dir, path, common, is_case_sensitive);
+    let rewrites = &options.content_mapper_extension_rewrites;
+    content_mapper::rewrite_extension(&moved, rewrites, is_case_sensitive)
 }
 
 /// `GetOutputExtension`
@@ -4456,10 +4701,15 @@ fn output_path_errors(
             ));
         }
     };
+    let external_output = |module: &Module| {
+        let (path, common) = (module.file_name(), common.as_deref());
+        (module.content_mapped)
+            .and_then(|_| external_output_file_name(options, path, common, is_case_sensitive))
+    };
     for module in sources {
         let path = module.file_name();
         let is_json = module.hir.kind == FileKind::Json;
-        if !options.emit_declaration_only {
+        if !options.emit_declaration_only && module.content_mapped.is_none() {
             let output =
                 own_emit_output_file_path(options, path, common.as_deref(), is_case_sensitive);
             // A JSON file whose output path equals its input path isn't emitted.
@@ -4484,6 +4734,18 @@ fn output_path_errors(
                 verify(map);
             }
         }
+        external_output(module).map(&mut verify);
+    }
+    // `externalOutputSourceFiles`, minus the files above.
+    if !options.emits_declarations {
+        let is_external_output_source = |module: &&ModuleCell| {
+            !module.is_from_external_library
+                && !options.is_source_of_referenced_project(module.file_name())
+        };
+        let others = modules.iter().filter(is_external_output_source);
+        others
+            .filter_map(|module| external_output(module))
+            .for_each(&mut verify);
     }
     if !options.build_info_file_name.is_empty() {
         verify(options.build_info_file_name.clone());
@@ -4822,6 +5084,8 @@ impl<'s> Files<'s> {
             .map(|found| (found.path.pretty, found.is_lib))
             .collect();
         let prefetch = Prefetch::new(seeds);
+        let content_mapping = Mapping::new(host, options);
+        let mapping = content_mapping.as_ref();
         // True once `files_are_found` has been called.
         let mut are_found = false;
         // Indexed by `FileId`. `Some` for a file that still needs `hir` and `bound`: its `Loaded::parse`, or `None` if
@@ -4947,7 +5211,7 @@ impl<'s> Files<'s> {
                             let paths: Vec<&[u8]> =
                                 missing.iter().map(|it| it.path.pretty).collect();
                             host.parallel(paths.len(), &|at| {
-                                let text = host.read_source(paths[at]);
+                                let text = read_to_load(host, mapping, paths[at]);
                                 *results[at].lock() = Some(Box::new(Self::load_one(
                                     session,
                                     session.arena(),
@@ -4956,9 +5220,10 @@ impl<'s> Files<'s> {
                                     &resolver,
                                     options,
                                     &atoms,
+                                    mapping,
                                     paths[at],
                                     missing[at].is_lib,
-                                    Some(text),
+                                    text,
                                     &|_| (),
                                 )));
                             });
@@ -5062,6 +5327,21 @@ impl<'s> Files<'s> {
                                     && is_javascript_file(host, path)
                                     && strings::contains(path, b"/node_modules/"),
                                 package: all_found.package_of_task(file, resolution.package_id),
+                            });
+                        }
+                        for &path in &loaded.supplemental {
+                            sub_tasks.push(SubTask {
+                                file: add_numbered(
+                                    NOT_NUMBERED,
+                                    path,
+                                    false,
+                                    &mut modules,
+                                    &mut depths,
+                                    &mut all_found,
+                                ),
+                                increases_depth: false,
+                                is_elided_on_depth: false,
+                                package: None,
                             });
                         }
                         edges.clear();
@@ -5229,9 +5509,13 @@ impl<'s> Files<'s> {
             &resolver,
             options,
             &atoms,
+            mapping,
             &prefetch,
             &mut put_in_order,
         );
+        // Every file is loaded, so the mappers get no more requests from this program.
+        let closed_mapping = content_mapping.map(|mapping| mapping.project.close());
+        let closed_mapping = closed_mapping.unwrap_or_default();
         drop(by_name);
         // The task for the automatic type directives isn't a file.
         if let Some(task) = automatic_task {
@@ -5700,6 +5984,7 @@ impl<'s> Files<'s> {
             global_types: &[],
             arrays_have_numeric_members: false,
             program_errors: session.keep(program_errors),
+            content_mapper_errors: session.keep(closed_mapping),
             include_errors: session.keep(include_errors),
             package_jsons: map_in(arena),
             linked_directories: &[],
@@ -5807,6 +6092,7 @@ impl<'s> Files<'s> {
         resolver: &Resolver<'r>,
         options: &'s Options,
         atoms: &Interner<'s>,
+        mapping: Option<&Mapping>,
         prefetch: &Prefetch<'s, 'r>,
         meanwhile: &mut dyn FnMut(&mut dyn FnMut()),
     ) {
@@ -5862,7 +6148,10 @@ impl<'s> Files<'s> {
                     for file in some {
                         let is_in_run =
                             file.package.is_none() && run.is_some_and(|run| run.has(file.path));
-                        let text = (!is_in_run).then(|| host.read_source(file.path));
+                        let text = match is_in_run {
+                            true => None,
+                            false => read_to_load(host, mapping, file.path),
+                        };
                         shared.lock().ready.push((file, text));
                         has_work.notify_one();
                     }
@@ -5916,6 +6205,7 @@ impl<'s> Files<'s> {
                             resolver,
                             options,
                             atoms,
+                            path,
                             path,
                             is_lib,
                             specifies_esm,
@@ -5990,6 +6280,7 @@ impl<'s> Files<'s> {
                             resolver,
                             options,
                             atoms,
+                            mapping,
                             path,
                             is_lib,
                             text,
@@ -6026,7 +6317,10 @@ impl<'s> Files<'s> {
                         let number = *state.seen.entry(path).or_insert(next);
                         numbers.push(number);
                         if number == next {
-                            let package = package_id.filter(|_| shares_parses).map(|id| {
+                            let is_mapped =
+                                content_mapper::is_mapped(&options.content_mappers, path);
+                            let shares_parse = shares_parses && !is_mapped;
+                            let package = package_id.filter(|_| shares_parse).map(|id| {
                                 let new = state.slots.len() as u32;
                                 let slot = *state.by_package_id.entry(id.to_bytes()).or_insert(new);
                                 if slot == new {
@@ -6038,6 +6332,16 @@ impl<'s> Files<'s> {
                                 path,
                                 is_lib,
                                 package,
+                            });
+                        }
+                    }
+                    for &path in &loaded.supplemental {
+                        let next = state.seen.len() as u32;
+                        if *state.seen.entry(path).or_insert(next) == next {
+                            state.to_read.push_back(ToLoad {
+                                path,
+                                is_lib: false,
+                                package: None,
                             });
                         }
                     }
@@ -6285,11 +6589,51 @@ impl<'s> Files<'s> {
         resolver: &Resolver<'r>,
         options: &'s Options,
         atoms: &Interner<'s>,
+        mapping: Option<&Mapping>,
         path: &[u8],
         is_lib: bool,
         text: Option<Cow<'static, [u8]>>,
         resolve_ahead: &dyn Fn(&[(Atom, ResolutionMode, bool)]),
     ) -> Loaded<'s, 'r> {
+        if let Some(source) = mapping.and_then(|mapping| mapping.take(host, path)) {
+            // `ParseResult`. The file's own name decided `ExternalModuleIndicatorOptions`, and no package makes a file with
+            // such a name a module. The virtual extension can.
+            let info = session.keep(source.info);
+            let language_name = &info.virtual_file_name[..];
+            let (mut hir, bound) = Self::parse_and_bind(
+                arena,
+                host,
+                options.for_parsing(),
+                atoms,
+                language_name,
+                false,
+                false,
+                Cow::Owned(source.text),
+            );
+            rename_private_names(&mut hir, &bound, atoms, path);
+            hir.has_parse_diagnostics |= info.error.is_some() || !info.diagnostics.is_empty();
+            let mut loaded = Self::load_parsed(
+                arena,
+                host,
+                resolver,
+                options,
+                atoms,
+                path,
+                language_name,
+                false,
+                Self::specifies_esm(resolver, options, language_name, false),
+                Ok(Parse {
+                    hir,
+                    bound,
+                    is_shared: false,
+                }),
+                resolve_ahead,
+            );
+            loaded.module.content_mapped = Some(info);
+            let supplemental = info.supplemental_file_names.iter();
+            loaded.supplemental = supplemental.map(|name| resolver.keep(name)).collect();
+            return loaded;
+        }
         let specifies_esm = Self::specifies_esm(resolver, options, path, is_lib);
         let parse = match run.filter(|run| run.has_file(host, path)) {
             Some(run) => {
@@ -6333,6 +6677,7 @@ impl<'s> Files<'s> {
             options,
             atoms,
             path,
+            path,
             is_lib,
             specifies_esm,
             Ok(parse),
@@ -6353,7 +6698,7 @@ impl<'s> Files<'s> {
 
     /// Does everything that depends on where the file is. With `Err`, the returned module has no
     /// `hir` and `bound`. `resolve_ahead`: called with the module names before they're resolved one
-    /// by one. It may resolve them.
+    /// by one. It may resolve them. `language_name`: `Module::language_file_name`.
     fn load_parsed<'r>(
         arena: &'s Arena,
         host: &dyn Host,
@@ -6361,6 +6706,7 @@ impl<'s> Files<'s> {
         options: &'s Options,
         atoms: &Interner<'s>,
         path: &[u8],
+        language_name: &[u8],
         is_lib: bool,
         specifies_esm: bool,
         parsed: Result<Parse<'s>, &Parse<'s>>,
@@ -6383,7 +6729,7 @@ impl<'s> Files<'s> {
         let mut referenced = program_options.referenced_options.iter();
         let redirect_for_resolution = referenced.find(|&it| std::ptr::eq(it, options));
         let implied_format =
-            implied_node_format_for_emit(program_resolver, path, is_lib, options.module);
+            implied_node_format_for_emit(program_resolver, language_name, is_lib, options.module);
         let default_mode = options.default_mode(implied_format);
         let visited = match hir.specifier_uses.is_empty() {
             true => Vec::new(),
@@ -6401,7 +6747,7 @@ impl<'s> Files<'s> {
         // which only accepts published atoms.
         let runtime = jsx_runtime_of(options, hir, atoms);
         let runtime = runtime.map(|runtime| (atoms.intern(&runtime), runtime));
-        let runtime = runtime.filter(|_| crate::resolve::imports_jsx_runtime(path));
+        let runtime = runtime.filter(|_| crate::resolve::imports_jsx_runtime(language_name));
         // Each entry of `moduleNames` is resolved, even one that repeats another.
         let (types_tracer, tracer) = (Tracer::default(), Tracer::default());
         // A name that the file itself declares as an ambient module isn't looked up on disk.
@@ -6540,6 +6886,7 @@ impl<'s> Files<'s> {
             (Vec::new(), Vec::new());
         let (mut ts_extension_imports, mut project_reference_imports) = (Vec::new(), Vec::new());
         let mut unbuilt_imports = Vec::new();
+        let mut extra_extension_imports = Vec::new();
         for (spec, mode, is_import) in module_names {
             let text = atoms.bytes(spec);
             if text.is_empty() {
@@ -6557,6 +6904,9 @@ impl<'s> Files<'s> {
             }
             if resolved.using_ts_extension {
                 ts_extension_imports.push(key);
+            }
+            if resolved.using_extra_extension {
+                extra_extension_imports.push(key);
             }
             if resolved.is_project_reference_redirect {
                 project_reference_imports.push(key);
@@ -6738,6 +7088,7 @@ impl<'s> Files<'s> {
             jsx_imports: few_in(jsx_imports, arena),
             json_imports: few_in(json_imports, arena),
             ts_extension_imports: few_in(ts_extension_imports, arena),
+            extra_extension_imports: few_in(extra_extension_imports, arena),
             arbitrary_extension_imports: few_in(arbitrary_extension_imports, arena),
             arbitrary_extension_files: few_in(arbitrary_extension_files, arena),
             extensionless_imports: few_in(extensionless_imports, arena),
@@ -6763,6 +7114,7 @@ impl<'s> Files<'s> {
             has_conditional_or_mapped_type,
             identifiers,
             transient_symbols: ArenaVec::new_in(arena),
+            content_mapped: None,
         };
         Loaded {
             module: ArenaBox::new_in(module, arena),
@@ -6770,6 +7122,7 @@ impl<'s> Files<'s> {
             imports,
             references,
             reference_numbers: Vec::new(),
+            supplemental: Vec::new(),
             unsupported_libs,
             type_resolutions_trace,
             resolutions_trace,
@@ -6796,7 +7149,7 @@ impl<'s> Files<'s> {
     /// The module that `file` imports implicitly for its JSX.
     pub fn jsx_runtime(&self, file: FileId) -> Option<Atom> {
         let module = &self.modules[file.idx()];
-        if !crate::resolve::imports_jsx_runtime(module.file_name()) {
+        if !crate::resolve::imports_jsx_runtime(module.language_file_name()) {
             return None;
         }
         let runtime = jsx_runtime_of(self.options, &module.hir, &self.atoms)?;

@@ -180,6 +180,13 @@ pub enum ConfigLocation {
     /// `GetOptionsSyntaxByArrayElementValue`: at the string in the array that is the option's value.
     /// No location if the array doesn't contain it.
     Element(&'static [u8], Vec<u8>),
+    /// `getContentMappersKeySyntax`: at the property name `contentMappers`.
+    ContentMappersKey,
+    /// `getContentMapperSyntax`: at the value of a property of an element of `contentMappers`, or at the element if
+    /// the name is `""` or the element has no such property.
+    ContentMapper(usize, &'static [u8]),
+    /// `getContentMapperExtensionSyntax`: at the string in the `extensions` of an element of `contentMappers`.
+    ContentMapperExtension(usize, Vec<u8>),
 }
 
 /// A diagnostic about the options.
@@ -214,6 +221,48 @@ pub fn spans_of_top_elements(
         }
     }
     spans
+}
+
+/// `getContentMapperSyntax`: returns the value of the property `sub_key` of the element of `contentMappers` at `index`.
+/// Falls back to the element, and then to the value of `contentMappers`.
+fn content_mapper_syntax(
+    file: &TsConfigSourceFile,
+    index: usize,
+    sub_key: &[u8],
+) -> Option<crate::hir::ExprId> {
+    let root = file.object_literal_expression()?;
+    let mappers = file.initializer(file.property(root, b"contentMappers", None)?);
+    let Some(element) = file.elements(mappers).nth(index) else {
+        return Some(mappers);
+    };
+    let property = (!sub_key.is_empty())
+        .then(|| file.property(element, sub_key, None))
+        .flatten();
+    Some(property.map_or(element, |property| file.initializer(property)))
+}
+
+/// `GetContentMapperOptionDiagnosticLocation`: returns the span of the value that `path` leads to, from the `options` of
+/// the element of `contentMappers` at `index`. Stops at the last value that exists.
+pub fn content_mapper_option_span(
+    file: &TsConfigSourceFile,
+    index: usize,
+    path: &[crate::content_mapper::OptionPathSegment],
+) -> Option<(u32, u32)> {
+    use crate::content_mapper::OptionPathSegment;
+    let mut node = content_mapper_syntax(file, index, b"options")?;
+    for segment in path {
+        let next = match segment {
+            OptionPathSegment::Index(index) => file.elements(node).nth(*index),
+            OptionPathSegment::Property(name) => file
+                .property(node, name, None)
+                .map(|property| file.initializer(property)),
+        };
+        match next {
+            Some(next) => node = next,
+            None => break,
+        }
+    }
+    Some(file.span(node))
 }
 
 impl Problem {
@@ -252,6 +301,20 @@ impl Problem {
             let reference = Some(reference).filter(|&it| file.is_object_literal(it))?;
             return Some(file.span(value_of(reference, name).unwrap_or(reference)));
         }
+        if let ConfigLocation::ContentMappersKey = self.at {
+            let mappers = file.property(root, b"contentMappers", None)?;
+            return Some(file.name_span(mappers));
+        }
+        if let ConfigLocation::ContentMapper(index, sub_key) = self.at {
+            return Some(file.span(content_mapper_syntax(file, index, sub_key)?));
+        }
+        if let ConfigLocation::ContentMapperExtension(index, extension) = &self.at {
+            let list = content_mapper_syntax(file, *index, b"extensions")?;
+            let is_match =
+                |&e: &_| file.convert_property_value_to_json(e).as_str() == Some(extension);
+            let element = file.elements(list).find(is_match);
+            return Some(file.span(element.unwrap_or(list)));
+        }
         if let ConfigLocation::Top(name) | ConfigLocation::TopElement(name, _) = &self.at {
             let list = value_of(root, name)?;
             let ConfigLocation::TopElement(_, specified) = &self.at else {
@@ -282,7 +345,10 @@ impl Problem {
             | ConfigLocation::TopElement(..)
             | ConfigLocation::Reference(_)
             | ConfigLocation::ReferenceProperty(..)
-            | ConfigLocation::Element(..) => None,
+            | ConfigLocation::Element(..)
+            | ConfigLocation::ContentMappersKey
+            | ConfigLocation::ContentMapper(..)
+            | ConfigLocation::ContentMapperExtension(..) => None,
             ConfigLocation::Key(name, other) => file
                 .property(options_object, name, Some(*other))
                 .map(name_span),

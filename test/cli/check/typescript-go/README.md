@@ -20,6 +20,7 @@ The files in `../conformance` run them all and compare byte for byte. CI limits 
 | `<test>.symbols`    | the symbol of every name, with its declarations                                            |
 | `<test>.js`         | the files that are emitted. The declaration files in it are compared, the JavaScript isn't |
 | `<test>.trace.json` | what `traceResolution` logs                                                                |
+| `<test>.contentmapper` | the files that content mappers produce, and the errors in them                          |
 
 TypeScript also has `.js.map` and `.sourcemap.txt` baselines. They aren't in the bundle.
 

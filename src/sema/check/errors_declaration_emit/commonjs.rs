@@ -330,10 +330,17 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         d: VarDeclId,
     ) -> Option<Statement> {
         let hir = self.c.hir(self.file());
-        let (argument, _) = crate::bind::require_call_argument(hir, hir[d].init)?;
+        let (argument, module_name) = crate::bind::require_call_argument(hir, hir[d].init)?;
         // `rewriteModuleSpecifier`
         self.result_has_external_module_indicator = true;
         let specifier = self.c.get_text_of_node(self.file(), hir.node(argument));
+        let options = &self.c.files().options;
+        let rewritten = options.rewritten_module_specifier(self.name(module_name));
+        let rewritten = rewritten.map(|it| {
+            let quote = specifier.first().copied().filter(|&it| it == b'\'');
+            super::super::print::quoted(&it, quote.unwrap_or(b'"'), false)
+        });
+        let specifier = rewritten.as_deref().unwrap_or(specifier);
         match hir[hir[d].pat].kind {
             // `const x = require("something")` -> `import x = require("something")`
             PatKind::Ident(name) => {

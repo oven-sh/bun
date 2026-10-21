@@ -12,6 +12,7 @@ use super::explain::{Explained, NOWHERE};
 use super::sink::{MAX_SERIALIZATION_LEVEL, NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
+use crate::content_mapper::Fidelity;
 use crate::program::SymbolTable;
 use crate::util::{PositionSet, SharedSort};
 use bun_core::strings;
@@ -55,6 +56,14 @@ impl Checked {
     }
 }
 
+/// `ReportsUnnecessary`
+fn reports_unnecessary(code: u32) -> bool {
+    matches!(
+        code,
+        2695 | 6133 | 6138 | 6192 | 6196 | 6198 | 6199 | 7027 | 7028
+    )
+}
+
 impl Program<'_> {
     /// Returns the errors of `file`. Call it after the last task has ended. It doesn't run queries or read the HIR.
     pub fn finish_file(&self, file: FileId, checked: Checked) -> Vec<Explained> {
@@ -85,6 +94,36 @@ impl Program<'_> {
             out.retain(|d| d.directive == NO_DIRECTIVE && !(no_emit && d.skipped_on_no_emit));
             let expected = checked.expected_errors.into_iter();
             out.extend(expected.filter(|unused| used.binary_search(&unused.start).is_err()));
+            if let Some(mapped) = self.files.module(file).content_mapped {
+                // `applyContentMapperDiagnosticDirectives`
+                let mut is_used = vec![false; mapped.directives.len()];
+                out.retain(|d| {
+                    let mut directives = mapped.directives.iter();
+                    let suppressing = directives
+                        .position(|it| (it.virtual_start..it.virtual_end).contains(&d.start));
+                    if let Some(at) = suppressing {
+                        is_used[at] = true;
+                    }
+                    suppressing.is_none()
+                });
+                let unused = mapped.directives.iter().zip(is_used);
+                let unused = unused
+                    .filter(|it| !it.1)
+                    .filter_map(|it| it.0.if_unused.as_ref());
+                out.extend(unused.map(|d| Reported {
+                    end: d.end,
+                    ..Reported::external(file, d)
+                }));
+                // `filterAndSortDiagnostics`: generated code that nobody wrote isn't reported as unused.
+                if let Some(span_map) = &mapped.span_map {
+                    out.retain(|d| {
+                        d.is_external
+                            || !reports_unnecessary(d.code)
+                            || span_map.virtual_to_original_span(d.start, d.end).fidelity
+                                != Fidelity::None
+                    });
+                }
+            }
             out.extend(checked.include);
         }
         // No comment directive suppresses `GetSyntacticDiagnostics` or `GetDeclarationDiagnostics`.
@@ -242,6 +281,14 @@ impl Checker<'_, '_> {
         // `GetSyntacticDiagnostics` and `getBindAndCheckDiagnosticsWithChecker` are separate. Only the second depends
         // on whether the file is checked.
         self.report_hir_diagnostics(file, &[DiagnosticKind::Parse, DiagnosticKind::Js]);
+        // `ParseResult` and `parseContentMappedFile` add these to the file's parse errors.
+        if let Some(mapped) = self.files().module(file).content_mapped {
+            let external = mapped.diagnostics.iter();
+            let external = external.map(|d| Reported::external(file, d));
+            let failure = mapped.error.iter();
+            let failure = failure.map(|problem| Reported::at_start_of_file(file, problem));
+            self.reported.extend(external.chain(failure));
+        }
         self.get_additional_js_syntactic_diagnostics(file);
         // `getBindAndCheckDiagnostics` doesn't report anything for a JSON file.
         let is_json = hir.kind == FileKind::Json;

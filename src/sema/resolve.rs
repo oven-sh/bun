@@ -128,6 +128,17 @@ pub trait Host: Sync {
     /// object, the field is repeated last with its `Value`.
     /// Whatever the parser leaves in `arena`, which belongs to the calling thread, is garbage.
     fn parse_package_json(&self, arena: &crate::session::Arena, text: &[u8]) -> Option<Json>;
+    /// `json.Unmarshal` into an `any`. Returns `None` unless `text` is a valid JSON object or array. If an object repeats
+    /// a name, the last value counts. Whatever the parser allocates in `arena`, which belongs to the calling thread, is
+    /// garbage.
+    fn parse_json(&self, _arena: &crate::session::Arena, _text: &[u8]) -> Option<Json> {
+        None
+    }
+    /// `--runExternalCode`: the processes of the content mappers. `None`: no program may run one, whatever its
+    /// configuration file says. Only the command line of the person who runs the check can turn this on.
+    fn content_mapper_processes(&self) -> Option<&crate::content_mapper::Processes> {
+        None
+    }
     /// `ExtendedConfigCache`, for a host that reads many configuration files. Returns what
     /// `cache_extended_config` stored for the file at `path`.
     fn extended_config(&self, _path: &[u8]) -> Option<CachedConfig> {
@@ -817,6 +828,13 @@ pub struct Options {
     pub jsx_factory: Vec<u8>,
     pub jsx_fragment_factory: Vec<u8>,
     pub react_namespace: Vec<u8>,
+    /// `ParsedOptions.ContentMappers`: the entries of `contentMappers` that are in use. Empty unless the host allows
+    /// content mappers to run.
+    pub content_mappers: Vec<crate::content_mapper::Mapper>,
+    /// `ContentMapperExtensionRewrites`
+    pub content_mapper_extension_rewrites: Vec<crate::content_mapper::ExtensionRewrite>,
+    /// The compiler options as content mappers get them. `None` without content mappers.
+    pub compiler_options_for_content_mappers: Option<Json>,
 }
 
 impl Options {
@@ -1755,6 +1773,8 @@ struct Outcome<'a> {
     /// `GetResolutionDiagnostic` requires `allowArbitraryExtensions`.
     /// Set like `using_ts_extension`.
     arbitrary_extension: Cell<bool>,
+    /// `resolved.resolvedUsingExtraExtensions`. Set like `using_ts_extension`.
+    using_extra_extension: Cell<bool>,
     /// `resolvedPackageDirectory`: the `package.json` of a package with the requested name has been
     /// found.
     found_package: Cell<bool>,
@@ -1953,6 +1973,8 @@ pub struct ResolvedModule<'h> {
     /// `ResolvedFileName`. For a declaration file of a referenced project, the source it is emitted from.
     pub file_name: &'h [u8],
     pub using_ts_extension: bool,
+    /// `ResolvedUsingExtraExtensions`: the specifier ends with a content mapper's extension, and resolves to that file.
+    pub using_extra_extension: bool,
     /// `Extension` is one that requires `allowArbitraryExtensions` (`GetResolutionDiagnostic`).
     pub has_arbitrary_extension: bool,
     /// It was found in a `node_modules`, judged by the path before symlinks are resolved.
@@ -2211,7 +2233,7 @@ pub(crate) fn supported_extensions(options: &Options) -> &'static [&'static [&'s
 /// the role here that `ScriptKindDeferred` plays there: a language only the host can determine.
 pub(crate) fn extra_supported_extensions<'h>(
     host: &'h dyn Host,
-    options: &Options,
+    options: &'h Options,
 ) -> impl Iterator<Item = &'h [u8]> {
     let builtins = supported_extensions(options);
     let allow_js = options.allow_js;
@@ -2219,6 +2241,9 @@ pub(crate) fn extra_supported_extensions<'h>(
         .filter(move |it| allow_js || !it.1.is_javascript())
         .map(|it| &it.0[..])
         .filter(move |it| !builtins.iter().any(|group| group.contains(it)))
+        .chain(crate::content_mapper::extensions_of(
+            &options.content_mappers,
+        ))
 }
 
 /// `FileExtensionIs`: a path that's nothing but the extension doesn't count.
@@ -2715,6 +2740,7 @@ impl<'h> Resolver<'h> {
                 is_project_reference_redirect,
                 file_name: self.keep(&source.unwrap_or(path)),
                 using_ts_extension: outcome.using_ts_extension.get(),
+                using_extra_extension: outcome.using_extra_extension.get(),
                 has_arbitrary_extension: outcome.arbitrary_extension.get(),
                 is_external_library_import: outcome.is_external.get(),
                 alternate_result: alternate_result.map(|types| self.keep(&types)),
@@ -3659,10 +3685,16 @@ impl<'h> Resolver<'h> {
         let path = strings::without_trailing_slash(candidate);
         let base = strings::last_index_of_char(path, b'/').map_or(0, |i| i + 1);
         let dot = base + strings::last_index_of_char(&path[base..], b'.')?;
-        // `RemoveFileExtension`: `.d.ts` is removed as a whole.
+        // `SplitExtension`. `RemoveFileExtension` removes `.d.ts` as a whole.
+        let extra_extension = || {
+            let extra = crate::content_mapper::extensions_of(&self.options.content_mappers);
+            let extra = extra.filter(|e| known_extension(path).is_empty() && path.ends_with(e));
+            extra.max_by_key(|e| e.len())
+        };
         let extension = SUPPORTED_DECLARATION_EXTENSIONS
             .into_iter()
             .find(|e| path.ends_with(e))
+            .or_else(extra_extension)
             .unwrap_or_else(|| &path[dot..]);
         look.trace(6132, &[Arg::Path(candidate), Arg::Bytes(extension)]);
         self.with_extensions(&path[..path.len() - extension.len()], extension, look)
@@ -3692,6 +3724,16 @@ impl<'h> Resolver<'h> {
                 b".json" => (&[], b".d.json.ts", &[]),
                 // `./a.css` is declared by `a.d.css.ts`.
                 _ => {
+                    // A specifier with a content mapper's extension resolves to exactly that file.
+                    let mut extra =
+                        crate::content_mapper::extensions_of(&self.options.content_mappers);
+                    if extra.any(|e| e == original_extension)
+                        && let Some(found) =
+                            self.try_file(&[stem, original_extension].concat(), look)
+                    {
+                        look.outcome.using_extra_extension.set(true);
+                        return Some(found);
+                    }
                     return if look.declarations {
                         let found = self
                             .try_file(&[stem, b".d", original_extension, b".ts"].concat(), look)?;
@@ -4496,6 +4538,20 @@ pub fn resolve_config(
         ..resolver.look(ResolutionMode::Require, true, &outcome)
     };
     resolver.resolve_with(module_name, containing_file, look)
+}
+
+/// `ResolvePackageDirectory` under `moduleResolution: bundler`: returns the real directory of the package `name`, found
+/// in a `node_modules` above `containing_file`. Whatever the lookup caches stays in `session`.
+pub(crate) fn resolve_package_directory(
+    host: &dyn Host,
+    session: &Session,
+    name: &[u8],
+    containing_file: &[u8],
+) -> Option<Vec<u8>> {
+    let options = Options::default();
+    let resolver = Resolver::with_tables(session, host, &options, true);
+    let found = resolver.resolve_package_directory(name, dirname::<Posix>(containing_file))?;
+    Some(found.1)
 }
 
 /// True if `c` is unassigned in Unicode 15, whose tables Go's `unicode` package and `ToUpperJS`

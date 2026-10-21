@@ -30,7 +30,7 @@ impl Checker<'_, '_> {
         let options = &self.p.files.options;
         let (jsx, no_implicit_any) = (options.jsx, options.no_implicit_any);
         let atoms = &self.atoms();
-        let path = self.files().module(file).file_name();
+        let path = self.files().module(file).language_file_name();
         // The only atom it reads is one that the parser interned.
         let runtime = crate::program::jsx_runtime_of(options, hir, &self.p.files.atoms)
             .filter(|_| crate::resolve::imports_jsx_runtime(path))

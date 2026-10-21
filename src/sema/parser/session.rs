@@ -327,7 +327,9 @@ mod tests {
         // The parser of a later part leaves the comments of the earlier ones attached as they are.
         let attached = |range: &Range<u32>| {
             let comments = &file.comments[range.start as usize..range.end as usize];
-            comments.iter().all(|it| !matches!(it.enclosing_node, NodeOrName::None))
+            comments
+                .iter()
+                .all(|it| !matches!(it.enclosing_node, NodeOrName::None))
         };
         assert!(attached(&declaration.comments) && attached(&sum.comments));
         assert!(file.diagnostics.is_empty());

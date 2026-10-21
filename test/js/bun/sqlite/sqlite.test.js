@@ -5251,6 +5251,47 @@ describe("a bind that fails keeps the values of a run of the same Statement", ()
     });
   });
 
+  describe("a call without values after a value that threw has the values that were bound before it", () => {
+    it("in a list", () => {
+      using db = open();
+      const q = db.query("SELECT ?1 AS a, ?2 AS b, ?3 AS c");
+
+      expect(q.get(1, 2, 3)).toEqual({ a: 1n, b: 2n, c: 3n });
+      expect(() => q.get(7, 2n ** 70n, 9)).toThrow(outOfRange);
+      expect(q.get()).toEqual({ a: 7n, b: null, c: null });
+      // An unsupported value leaves the same.
+      expect(q.get(1, 2, 3)).toEqual({ a: 1n, b: 2n, c: 3n });
+      expect(() => q.get(8, Symbol(), 9)).toThrow(
+        new TypeError("Binding expected string, TypedArray, boolean, number, bigint or null"),
+      );
+      expect(q.get()).toEqual({ a: 8n, b: null, c: null });
+    });
+
+    it("in an object, where before is the order of the parameters and not of the keys", () => {
+      using db = open();
+      const q = db.query("SELECT $a AS a, $b AS b, $c AS c");
+      const row = { a: 7n, b: null, c: null };
+
+      expect(q.get({ $a: 1, $b: 2, $c: 3 })).toEqual({ a: 1n, b: 2n, c: 3n });
+      expect(() => q.get({ $c: 9, $b: 2n ** 70n, $a: 7 })).toThrow(outOfRange);
+      expect([q.get(), q.all(), q.values()]).toEqual([row, [row], [[7n, null, null]]]);
+    });
+
+    it("and run() writes them", () => {
+      using db = open();
+      db.exec("CREATE TABLE w (a, b, c)");
+      const insert = db.query("INSERT INTO w VALUES (?1, ?2, ?3)");
+
+      insert.run("first", "b of first", "c of first");
+      expect(() => insert.run("second", 2n ** 70n, "c of second")).toThrow(outOfRange);
+      insert.run();
+      expect(db.query("SELECT * FROM w").all()).toEqual([
+        { a: "first", b: "b of first", c: "c of first" },
+        { a: "second", b: null, c: null },
+      ]);
+    });
+  });
+
   // In a child: SQLite itself reads the bytes of the freed copy, and a build with ASAN stops there. 5000 bytes is past
   // SQLite's lookaside of 1200 bytes, so the copy is an allocation of its own.
   it("an iterator reads the whole text of its own run", async () => {

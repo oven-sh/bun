@@ -1111,10 +1111,7 @@ private:
         if (result == SQLITE_OK) [[likely]]
             return true;
 
-        // Not under a run that script left on a row: that run still reads the values.
-        if (result == kExceptionPending && !sqlite3_stmt_busy(stmt))
-            sqlite3_clear_bindings(stmt);
-        else if (result == kUnsupportedValue)
+        if (result == kUnsupportedValue)
             throwException(globalObject, scope, createTypeError(globalObject, "Binding expected string, TypedArray, boolean, number, bigint or null"_s));
         else if (result != kExceptionPending)
             throwException(globalObject, scope, createSQLiteError(globalObject, db));

@@ -233,6 +233,72 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
+    /// `parseFunctionOrConstructorType`, after "new" and the type parameters.
+    /// esbuild also takes a parenthesized type here, which makes
+    /// "a << T > (b.c) > (c)" the call "a(c)".
+    fn skip_type_script_fn_or_constructor_type_tail<const GET_METADATA: bool>(
+        &mut self,
+        result: Option<&mut Metadata>,
+    ) -> Result<(), Error> {
+        self.skip_typescript_fn_args()?;
+        self.lexer.expect(T::TEqualsGreaterThan)?;
+        self.skip_typescript_return_type()?;
+        if GET_METADATA {
+            *result.expect("infallible: GET_METADATA implies Some") = Metadata::MFunction;
+        }
+        Ok(())
+    }
+
+    /// `parseEntityName`, after the first name, and the type arguments of the
+    /// name: ".b.c<d>". esbuild takes a "." after every type, which makes
+    /// "a < this.b > (c)" the call "a(c)".
+    fn skip_type_script_entity_name_rest<const GET_METADATA: bool>(
+        &mut self,
+        mut result: Option<&mut Metadata>,
+    ) -> Result<(), Error> {
+        debug_assert!(self.lexer.token == T::TDot);
+        while self.lexer.token == T::TDot {
+            self.lexer.next()?;
+            if !self.lexer.is_identifier_or_keyword() {
+                self.lexer.expect(T::TIdentifier)?;
+            }
+
+            if GET_METADATA {
+                // `find_symbol` borrows `&mut self`; `result` is a disjoint fn
+                // parameter so the borrows do not conflict.
+                let ident = self.lexer.identifier;
+                let r = result
+                    .as_deref_mut()
+                    .expect("infallible: GET_METADATA implies Some");
+                match r {
+                    Metadata::MIdentifier(id_ref) => {
+                        let id_ref = *id_ref;
+                        let mut dot: Vec<Ref> = Vec::with_capacity(2);
+                        dot.push(id_ref);
+                        let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
+                        dot.push(find_result.r#ref);
+                        *r = Metadata::MDot(dot);
+                    }
+                    Metadata::MDot(dot) => {
+                        if self.lexer.is_identifier_or_keyword() {
+                            let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
+                            dot.push(find_result.r#ref);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            self.lexer.next()?;
+        }
+
+        // "{ <A extends B>(): c.d \n <E extends F>(): g.h }" must not become a single type
+        if !self.lexer.has_newline_before {
+            let _ = self.skip_type_script_type_arguments::<false, false>()?;
+        }
+        Ok(())
+    }
+
     // Rust cannot express a const-generic-dependent param type on stable; we use
     // `Option<&mut Metadata>` and require callers to pass `Some` iff `GET_METADATA == true`.
     // The const generic is kept so `if GET_METADATA { ... }` branches monomorphize away.
@@ -312,6 +378,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         self.log()
                             .add_range_error(Some(self.source), r, b"Unexpected \"const\"");
                     }
+                    if self.lexer.token == T::TDot {
+                        self.skip_type_script_entity_name_rest::<GET_METADATA>(
+                            result.as_deref_mut(),
+                        )?;
+                    }
                 }
 
                 T::TThis => {
@@ -387,6 +458,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     self.lexer.expect(T::TCloseParen)?;
+                    if self.lexer.token == T::TDot {
+                        self.skip_type_script_entity_name_rest::<GET_METADATA>(
+                            result.as_deref_mut(),
+                        )?;
+                    }
                 }
                 T::TNew => {
                     // "new () => Foo"
@@ -404,14 +480,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let _ = self.skip_type_script_type_parameters(
                         TypeParameterFlag::ALLOW_CONST_MODIFIER,
                     )?;
-                    self.skip_type_script_paren_or_fn_type::<GET_METADATA>(result.as_deref_mut())?;
+                    self.skip_type_script_fn_or_constructor_type_tail::<GET_METADATA>(
+                        result.as_deref_mut(),
+                    )?;
                 }
                 T::TLessThan => {
                     // "<T>() => Foo<T>"
                     let _ = self.skip_type_script_type_parameters(
                         TypeParameterFlag::ALLOW_CONST_MODIFIER,
                     )?;
-                    self.skip_type_script_paren_or_fn_type::<GET_METADATA>(result.as_deref_mut())?;
+                    self.skip_type_script_fn_or_constructor_type_tail::<GET_METADATA>(
+                        result.as_deref_mut(),
+                    )?;
                 }
                 T::TOpenParen => {
                     // "(number | string)"
@@ -652,8 +732,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return Ok(());
                     }
 
-                    // "let foo: any \n <number>foo" must not become a single type
-                    if check_type_parameters && !self.lexer.has_newline_before {
+                    if self.lexer.token == T::TDot {
+                        self.skip_type_script_entity_name_rest::<GET_METADATA>(
+                            result.as_deref_mut(),
+                        )?;
+                    } else if check_type_parameters && !self.lexer.has_newline_before {
+                        // "let foo: any \n <number>foo" must not become a single type
                         let _ = self.skip_type_script_type_arguments::<false, false>()?;
                     }
                 }
@@ -715,14 +799,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     while self.lexer.token != T::TCloseBracket {
+                        // `isTupleElementName`: after "..." a keyword is a label. Without
+                        // this, the type skipper reports it, as esbuild does.
+                        let mut is_keyword_label = false;
                         if self.lexer.token == T::TDotDotDot {
                             self.lexer.next()?;
+                            is_keyword_label = self.lexer.is_identifier_or_keyword()
+                                && !matches!(
+                                    self.lexer.token,
+                                    T::TIdentifier
+                                        | T::TFalse
+                                        | T::TFunction
+                                        | T::TImport
+                                        | T::TNew
+                                        | T::TNull
+                                        | T::TThis
+                                        | T::TTrue
+                                        | T::TTypeof
+                                        | T::TVoid
+                                );
                         }
-                        self.skip_type_script_type_with_opts::<false>(
-                            Level::Lowest,
-                            SkipTypeOptionsBitset::only(SkipTypeOptions::AllowTupleLabels),
-                            None,
-                        )?;
+                        if is_keyword_label {
+                            // "[...default: number[]]"
+                            self.lexer.next()?;
+                            if self.lexer.token != T::TColon && self.lexer.token != T::TQuestion {
+                                self.lexer.expect(T::TColon)?;
+                            }
+                        } else {
+                            self.skip_type_script_type_with_opts::<false>(
+                                Level::Lowest,
+                                SkipTypeOptionsBitset::only(SkipTypeOptions::AllowTupleLabels),
+                                None,
+                            )?;
+                        }
                         if self.lexer.token == T::TQuestion {
                             self.lexer.next()?;
                         }
@@ -890,46 +999,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     self.lexer.next()?;
-                }
-                T::TDot => {
-                    self.lexer.next()?;
-                    if !self.lexer.is_identifier_or_keyword() {
-                        self.lexer.expect(T::TIdentifier)?;
-                    }
-
-                    if GET_METADATA {
-                        // `find_symbol` borrows `&mut self`; `result` is a disjoint fn
-                        // parameter so the borrows do not conflict.
-                        let ident = self.lexer.identifier;
-                        let r = result
-                            .as_deref_mut()
-                            .expect("infallible: GET_METADATA implies Some");
-                        match r {
-                            Metadata::MIdentifier(id_ref) => {
-                                let id_ref = *id_ref;
-                                let mut dot: Vec<Ref> = Vec::with_capacity(2);
-                                dot.push(id_ref);
-                                let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
-                                dot.push(find_result.r#ref);
-                                *r = Metadata::MDot(dot);
-                            }
-                            Metadata::MDot(dot) => {
-                                if self.lexer.is_identifier_or_keyword() {
-                                    let find_result =
-                                        self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
-                                    dot.push(find_result.r#ref);
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    self.lexer.next()?;
-
-                    // "{ <A extends B>(): c.d \n <E extends F>(): g.h }" must not become a single type
-                    if !self.lexer.has_newline_before {
-                        let _ = self.skip_type_script_type_arguments::<false, false>()?;
-                    }
                 }
                 T::TOpenBracket => {
                     // "{ ['x']: string \n ['y']: string }" must not become a single type

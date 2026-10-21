@@ -299,6 +299,8 @@ impl<'a> Installer<'a> {
             };
 
             let pkg_id = self.store.ids(entry_id).pkg_id;
+            self.manager_mut()
+                .set_preinstall_state(pkg_id, install::PreinstallState::Done);
             if data.integrity.tag.is_supported() {
                 self.record_extracted_integrity(pkg_id, &data.integrity);
             }

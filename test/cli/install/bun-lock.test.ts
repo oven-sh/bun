@@ -3810,6 +3810,211 @@ describe("the tree a fresh install saves is the tree built with its optional pee
       expect(out).toContain("(no changes)");
     },
   );
+
+  // The tree also places the packages that come inside another package's tarball, but bun doesn't install those. A
+  // package can be placed both ways, and all of its placements share one resolution of an optional peer. What the
+  // shipped placement finds used to resolve the peer whenever that placement was walked first, or whenever a later
+  // package took the place of its unresolved row. A load of bun.lock read the peer from the installed placement.
+  describe("a package that a tarball ships doesn't resolve an optional peer for the copies that bun installs", () => {
+    const linkers = ["hoisted", "isolated"] as const;
+    const project = (prefix: string, registry: { url: string }, linker: string, dependencies: object) =>
+      tempDir(prefix, {
+        "package.json": JSON.stringify({ name: "app", dependencies }),
+        "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker } }),
+      });
+
+    // plugin@2.0.0 is below host, next to the root's runtime@1.2.0, and inside kbundle, next to the
+    // runtime@1.1.0 of zinner. kbundle is walked before xhost and after host.
+    describe.each(["host", "xhost"])("placed below %s and inside a bundle", host => {
+      it.concurrent.each(linkers)("the installed copy resolves the peer (%s linker)", async linker => {
+        using registry = await serveRegistry({
+          runtime: { "1.1.0": {}, "1.2.0": {} },
+          plugin: { "2.0.0": optionalPeer("runtime", "^1.1.0"), "2.1.0": {} },
+          zinner: { "1.0.0": { dependencies: { runtime: "1.1.0" } } },
+          kbundle: {
+            "1.0.0": { dependencies: { plugin: "2.0.0", zinner: "1.0.0" }, bundleDependencies: ["plugin", "zinner"] },
+          },
+          [host]: { "1.0.0": { dependencies: { plugin: "2.0.0", runtime: "1.2.0" } } },
+        });
+        using dir = project("optional-peer-shipped-and-installed-", registry, linker, {
+          [host]: "1.0.0",
+          kbundle: "1.0.0",
+          plugin: "2.1.0",
+        });
+        const cwd = String(dir);
+
+        await installWithOwnCache(cwd);
+        // The plugin inside the bundle gets a copy of what the peer resolves to, as any placement does.
+        const lockfile = await file(join(cwd, "bun.lock")).text();
+        expect(lockfile).toContain('\n    "runtime": ["runtime@1.2.0"');
+        expect(lockfile).toContain('"kbundle/runtime": ["runtime@1.2.0"');
+        expect(lockfile).toContain('"kbundle/zinner/runtime": ["runtime@1.1.0"');
+        await expectSettled(cwd);
+      });
+    });
+
+    // The root's plugin finds the root's runtime@1.2.0. The one inside kbundle shares the
+    // runtime@1.1.0 next to it, and that is all it does.
+    it.concurrent("the bundle keeps the copy that its own packages placed", async () => {
+      using registry = await serveRegistry({
+        runtime: { "1.1.0": {}, "1.2.0": {} },
+        plugin: { "2.0.0": optionalPeer("runtime", "^1.1.0") },
+        ainner: { "1.0.0": { dependencies: { runtime: "1.1.0" } } },
+        kbundle: {
+          "1.0.0": { dependencies: { plugin: "2.0.0", ainner: "1.0.0" }, bundleDependencies: ["plugin", "ainner"] },
+        },
+        w: { "1.0.0": { dependencies: { runtime: "1.2.0" } } },
+      });
+      using dir = project("optional-peer-bundle-keeps-copy-", registry, "hoisted", {
+        plugin: "2.0.0",
+        w: "1.0.0",
+        kbundle: "1.0.0",
+      });
+      const cwd = String(dir);
+
+      await installWithOwnCache(cwd);
+      const lockfile = await file(join(cwd, "bun.lock")).text();
+      expect(lockfile).toContain('\n    "runtime": ["runtime@1.2.0"');
+      expect(lockfile).toContain('"kbundle/runtime": ["runtime@1.1.0"');
+      await expectSettled(cwd);
+    });
+
+    // Only zinner, inside cbundle, depends on runtime. Its copy took the place of the unresolved row that the addon
+    // inside cbundle left, which resolved the peer of the root's addon too and installed a runtime at the root.
+    it.concurrent.each(linkers)(
+      "a copy that only a bundle has isn't installed for the project (%s linker)",
+      async linker => {
+        using registry = await serveRegistry({
+          runtime: { "1.1.0": {} },
+          addon: { "1.0.0": optionalPeer("runtime", "^1.1.0") },
+          y: { "1.0.0": optionalPeer("runtime", "^1.1.0"), "2.0.0": {} },
+          zinner: { "1.0.0": { dependencies: { runtime: "1.1.0" } } },
+          cbundle: {
+            "1.0.0": {
+              dependencies: { addon: "1.0.0", zinner: "1.0.0", y: "1.0.0" },
+              bundleDependencies: ["addon", "zinner"],
+            },
+          },
+        });
+        using dir = project("optional-peer-only-in-bundle-", registry, linker, {
+          addon: "1.0.0",
+          y: "2.0.0",
+          cbundle: "1.0.0",
+        });
+        const cwd = String(dir);
+
+        await installWithOwnCache(cwd);
+        expect(await file(join(cwd, "bun.lock")).text()).not.toContain('\n    "runtime": [');
+        expect(registry.requests).not.toContain("/runtime-1.1.0.tgz");
+        await expectSettled(cwd);
+      },
+    );
+
+    // nested@1.0.0 is inside bundler, next to the shipped that bundler bundles, and below the host, where nothing
+    // provides shipped. bundler is walked after ahost and before zhost.
+    describe.each(["ahost", "zhost"])("a bundled copy and a package that is also below %s", host => {
+      it.concurrent.each(linkers)("the bundled copy isn't installed at the root (%s linker)", async linker => {
+        using registry = await serveRegistry({
+          shipped: { "1.0.0": {} },
+          nested: { "1.0.0": optionalPeer("shipped", "*"), "2.0.0": {} },
+          bundler: {
+            "1.0.0": { dependencies: { shipped: "*", nested: "1.0.0" }, bundledDependencies: ["shipped", "nested"] },
+          },
+          [host]: { "1.0.0": { dependencies: { nested: "1.0.0" } } },
+        });
+        using dir = project("optional-peer-bundled-and-below-host-", registry, linker, {
+          bundler: "1.0.0",
+          nested: "2.0.0",
+          [host]: "1.0.0",
+        });
+        const cwd = String(dir);
+
+        await installWithOwnCache(cwd);
+        expect(await file(join(cwd, "bun.lock")).text()).not.toContain('\n    "shipped": [');
+        expect(registry.requests).not.toContain("/shipped-1.0.0.tgz");
+        await expectSettled(cwd);
+      });
+    });
+
+    // qlugin@2.0.0 is a dependency of kbundle that isn't bundled, so bun installs it in the folder of kbundle. The
+    // plugin inside kbundle leaves an unresolved row for runtime in that folder, which bun.lock doesn't print.
+    // qlugin used to wait on that row and stay unresolved, and a load of bun.lock resolved it to the root's runtime.
+    it.concurrent.each(linkers)(
+      "a package in the folder of the bundling package looks past what the bundle placed (%s linker)",
+      async linker => {
+        using registry = await serveRegistry({
+          runtime: { "1.1.0": {}, "1.2.0": {} },
+          plugin: { "2.0.0": optionalPeer("runtime", "^1.2.0"), "2.1.0": {} },
+          qlugin: { "2.0.0": optionalPeer("runtime", "*"), "2.1.0": {} },
+          ainner: { "1.0.0": { dependencies: { runtime: "1.2.0" } } },
+          ahost: { "1.0.0": { dependencies: { runtime: "1.2.0" } } },
+          kbundle: {
+            "1.0.0": {
+              dependencies: { plugin: "2.0.0", qlugin: "2.0.0", ainner: "1.0.0" },
+              bundleDependencies: ["plugin", "ainner"],
+            },
+          },
+        });
+        using dir = project("optional-peer-next-to-bundle-", registry, linker, {
+          kbundle: "1.0.0",
+          ahost: "1.0.0",
+          plugin: "2.1.0",
+          qlugin: "2.1.0",
+        });
+
+        await installWithOwnCache(String(dir));
+        await expectSettled(String(dir));
+      },
+    );
+
+    // mid is a dependency of the bundled opd, so it's inside the tarball of bop too, and its row has no "bundled"
+    // marker. A load of bun.lock used to resolve its peer to the root's tdep, and then placed a tdep inside bop.
+    it.concurrent.each(linkers)(
+      "the dependency of a bundled package doesn't resolve its peer outside the bundle (%s linker)",
+      async linker => {
+        using registry = await serveRegistry({
+          tdep: { "1.0.0": {} },
+          mid: { "1.0.0": optionalPeer("tdep", "*") },
+          opd: { "1.0.0": { dependencies: { mid: "1.0.0" } } },
+          bop: { "1.0.0": { dependencies: { opd: "1.0.0" }, bundledDependencies: ["opd"] } },
+        });
+        using dir = project("optional-peer-below-bundled-", registry, linker, { bop: "1.0.0", tdep: "1.0.0" });
+
+        await installWithOwnCache(String(dir));
+        expect(await file(join(String(dir), "bun.lock")).text()).toContain('"bop/mid": ["mid@1.0.0"');
+        await expectSettled(String(dir));
+      },
+    );
+
+    // Nothing inside vbundle provides runtime, so the peer of the bundled plugin stays unresolved. The isolated
+    // linker links a peer to the nearest dependency of that name, which is the root's runtime, and vbundle is
+    // walked first. So the linker downloads runtime for the peer, and then read the package from the peer.
+    it.concurrent("the isolated linker downloads a package that only an unresolved peer led to", async () => {
+      using registry = await serveRegistry({
+        runtime: { "3.0.0": {} },
+        plugin: { "2.0.0": optionalPeer("runtime", "^1.1.0") },
+        y: { "1.0.0": { peerDependencies: { plugin: "2.0.0" } }, "2.0.0": {} },
+        vbundle: { "1.0.0": { dependencies: { plugin: "2.0.0", y: "1.0.0" }, bundleDependencies: ["plugin"] } },
+      });
+      using dir = tempDir("optional-peer-unresolved-download-", {
+        "package.json": JSON.stringify({
+          name: "app",
+          dependencies: { runtime: "3.0.0", y: "2.0.0" },
+          devDependencies: { vbundle: "1.0.0" },
+        }),
+        "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker: "isolated" } }),
+      });
+      const cwd = String(dir);
+
+      await installWithOwnCache(cwd);
+      const installed = installedIn(cwd);
+
+      await rm(join(cwd, "node_modules"), { recursive: true, force: true });
+      await rm(join(cwd, ".bun-cache"), { recursive: true, force: true });
+      await installWithOwnCache(cwd, "--frozen-lockfile");
+      expect(installedIn(cwd)).toEqual(installed);
+    });
+  });
 });
 
 // A package is printed at more than one path when another version of it holds the slot above

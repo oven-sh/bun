@@ -1508,6 +1508,74 @@ bun_core::oom_from_alloc!(ParseError);
 
 type PkgPathSet = PkgMap<()>;
 
+/// Splits a `packages` key into the path of the package whose `node_modules` has the row, and the
+/// name of the row. The path is empty for a row of the root.
+fn split_pkg_path(pkg_path: &[u8]) -> (&[u8], &[u8]) {
+    let Some(slash) = strings::last_index_of_char(pkg_path, b'/') else {
+        return (b"", pkg_path);
+    };
+    // The name may be `@scope/name`.
+    let scope = strings::last_index_of_char(&pkg_path[..slash], b'/').map_or(0, |at| at + 1);
+    let name = if pkg_path[scope] == b'@' {
+        scope
+    } else {
+        slash + 1
+    };
+    (&pkg_path[..name.saturating_sub(1)], &pkg_path[name..])
+}
+
+/// Tells which rows come inside the tarball of another package. Bun does not install those, and
+/// the hoister places their dependencies no higher than the folder of the bundling package.
+struct ShippedRows<'a> {
+    /// The rows with `"bundled": true`.
+    bundled: &'a PkgPathSet,
+    pkg_map: &'a PkgMap<PackageID>,
+    pkg_deps: &'a [DependencySlice],
+    dependencies: &'a [Dependency],
+    string_buf: &'a [u8],
+}
+
+impl ShippedRows<'_> {
+    /// Returns true for the row of a bundled package's dependency that the hoister placed in the
+    /// folder of the bundling package. It has no `"bundled"` marker. What tells it apart is that
+    /// the bundling package does not install a dependency of that name itself.
+    fn is_hoisted_to_bundle(&self, pkg_path: &[u8]) -> bool {
+        let (owner_path, name) = split_pkg_path(pkg_path);
+        if owner_path.is_empty() {
+            return false;
+        }
+        let Some(&owner) = self.pkg_map.get(owner_path) else {
+            return false;
+        };
+        let owner_deps = self.pkg_deps[owner as usize].get(self.dependencies);
+        owner_deps.iter().any(|dep| dep.behavior.is_bundled())
+            && !owner_deps
+                .iter()
+                .any(|dep| !dep.behavior.is_bundled() && dep.name.slice(self.string_buf) == name)
+    }
+
+    /// Returns true for a row in the folder of a bundling package that its tarball ships.
+    fn is_bundle_entry(&self, pkg_path: &[u8]) -> bool {
+        self.bundled.contains(pkg_path) || self.is_hoisted_to_bundle(pkg_path)
+    }
+
+    /// Returns true if the package at `pkg_path` must not resolve an optional peer to the row
+    /// `found`: Bun installs the package, and `found` is in a tarball but is not a bundled
+    /// dependency. The hoister has the same rule in `Tree::hoist_dependency`.
+    fn hides(&self, found: &[u8], mut pkg_path: &[u8]) -> bool {
+        if !self.is_hoisted_to_bundle(found) || self.bundled.contains(found) {
+            return false;
+        }
+        while !pkg_path.is_empty() {
+            if self.is_bundle_entry(pkg_path) {
+                return false;
+            }
+            pkg_path = split_pkg_path(pkg_path).0;
+        }
+        true
+    }
+}
+
 struct PkgMap<T> {
     pub map: StringHashMap<T>,
 }
@@ -1570,20 +1638,15 @@ impl<T> PkgMap<T> {
         self.map.contains_key(path)
     }
 
-    /// With `bundled_pkgs`, the walk stops one level above a bundled package, as the hoister's.
-    ///
-    /// Only `"bundled": true` entries bound the walk: a transitive dependency
-    /// of a bundled package also inherits the bundle's hoist root in
-    /// `Tree.rs`, but its lockfile path (`a/c`, no bundled marker) is
-    /// indistinguishable from an ordinary conflict-nested package whose hoist
-    /// root is the lockfile root.
+    /// With `shipped`, the walk stops in the folder of the package that bundles `pkg_path`, as the
+    /// hoister's, and skips the rows that `ShippedRows::hides` from `pkg_path`.
     fn find_resolution(
         &self,
         pkg_path: &[u8],
         dep: &Dependency,
         string_buf: &[u8],
         path_buf: &mut [u8],
-        bundled_pkgs: Option<&PkgPathSet>,
+        shipped: Option<&ShippedRows<'_>>,
     ) -> Result<(&T, RowEvidence), ResolveError> {
         let dep_name = dep.name.slice(string_buf);
 
@@ -1601,7 +1664,9 @@ impl<T> PkgMap<T> {
             path_buf[offset..offset + dep_name.len()].copy_from_slice(dep_name);
             let res_path = &path_buf[0..offset + dep_name.len()];
 
-            if let Some(entry) = self.map.get(res_path) {
+            if let Some(entry) = self.map.get(res_path)
+                && !shipped.is_some_and(|shipped| shipped.hides(res_path, pkg_path))
+            {
                 let evidence = if offset == pkg_path.len() + 1 {
                     RowEvidence::OwnEntry
                 } else if offset == 0 {
@@ -1616,8 +1681,8 @@ impl<T> PkgMap<T> {
                 return Err(ResolveError::Unresolvable);
             }
 
-            if let Some(bundled_pkgs) = bundled_pkgs {
-                at_bundle_root = bundled_pkgs.contains(&path_buf[0..offset - 1]);
+            if let Some(shipped) = shipped {
+                at_bundle_root = shipped.is_bundle_entry(&path_buf[0..offset - 1]);
             }
 
             let Some(slash) = strings::last_index_of_char(&path_buf[0..offset - 1], b'/') else {
@@ -2920,6 +2985,14 @@ pub(crate) fn parse_into_binary_lockfile(
             }
         }
 
+        let shipped_rows = (!bundled_pkgs.map.is_empty()).then_some(ShippedRows {
+            bundled: &bundled_pkgs,
+            pkg_map: &pkg_map,
+            pkg_deps,
+            dependencies,
+            string_buf,
+        });
+
         // then each package dependency
         let mut bound_by: Vec<RowEvidence> = vec![RowEvidence::Unbound; dependencies.len()];
         let mut root_dep_names: HashMap<u64, ()> = HashMap::default();
@@ -2971,7 +3044,7 @@ pub(crate) fn parse_into_binary_lockfile(
                             dep,
                             string_buf,
                             &mut path_buf[..],
-                            dep.behavior.is_optional_peer().then_some(&bundled_pkgs),
+                            (shipped_rows.as_ref()).filter(|_| dep.behavior.is_optional_peer()),
                         ) {
                             Ok((&id, mut evidence)) => {
                                 let own_entry = evidence == RowEvidence::OwnEntry;

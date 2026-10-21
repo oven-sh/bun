@@ -158,7 +158,10 @@ enum HoistDependencyResult {
         id: Id,
         dep_id: DependencyID,
     },
-    ResolveLater,
+    /// An unresolved peer that found the row of another unresolved peer, in tree `id`.
+    ResolveLater {
+        id: Id,
+    },
     /// `Hoisted`, plus the optional peer's slot now points at the version it deduplicated onto.
     Rebind(PackageID),
     /// Like `Hoisted`, but the required peer was deduplicated onto this package instead of the one
@@ -512,20 +515,23 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     /// overlap; reads go through [`Builder::lockfile()`] which never touches
     /// `buffers.resolutions`.
     pub lockfile: bun_ptr::ParentRef<Lockfile>,
-    // Unresolved peers that might resolve later. if they do we will want to assign
+    // Unresolved peers that might resolve later, keyed by the tree and the name of the unresolved
+    // row that they found. If that row resolves we will want to assign
     // builder.resolutions[peer.dep_id] to the resolved pkg_id. A dependency ID set is used because there
     // can be multiple instances of the same package in the tree, so the same unresolved dependency ID
     // could be visited multiple times before it's resolved.
-    pub(crate) pending_peers: ArrayHashMap<PackageNameHash, ArrayHashMap<DependencyID, ()>>,
+    pub(crate) pending_peers: ArrayHashMap<(Id, PackageNameHash), ArrayHashMap<DependencyID, ()>>,
     /// This pass changed what a peer resolves to, and a pass that starts from the new resolution
     /// could place a package somewhere else. `Lockfile::resolve` hoists again while this is set.
     pub(crate) late_bound_peer: bool,
     /// This pass placed a bundled dependency. From then on, `hoist_root_resolves_elsewhere` may
     /// read the dependencies of packages that this pass has not walked yet.
     pub(crate) bundle_placed: bool,
-    /// The packages whose dependencies this pass has walked. A package is walked again for every
-    /// tree it is placed in.
+    /// The packages whose dependencies this pass has walked in a folder that Bun installs. A
+    /// package is walked again for every tree it is placed in.
     pub(crate) walked: DynamicBitSet,
+    /// See `ShippedPeers`.
+    pub(crate) shipped_peers: ShippedPeers,
     /// Peers that `bind_peer` resolved by version, each with the different package that its
     /// dependent finds from the first tree it is placed in. See `bind_served_peers`.
     pub(crate) served: Vec<(DependencyID, PackageID)>,
@@ -541,8 +547,9 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) placed: Placed,
     /// A later dependency replaced a row, so a row no longer tells which dependency placed it.
     pub(crate) replaced_row: bool,
-    /// `Filter` tree rows for packages that ship inside a tarball. They're placed like in the saved
-    /// tree, and `clean` drops them afterwards.
+    /// The rows for packages that ship inside a tarball: a bundled dependency, and every row that
+    /// the walk of such a package placed. The `Filter` tree places them like the saved tree, and
+    /// `clean` drops them from it.
     pub(crate) shipped_rows: bun_collections::HashMap<(Id, DependencyID), ()>,
     /// True if the folder that `process_subtree` is filling is one of `shipped_rows`.
     pub(crate) in_shipped_folder: bool,
@@ -562,6 +569,21 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     /// would place every row that this install keeps exactly where it is now.
     pub(crate) places: Vec<(u64, PackageID)>,
     pub(crate) linked: reachable::Linked,
+}
+
+/// What the walks of shipped folders found for the peers of their packages. A dependency has one
+/// resolution, however many times its package is placed, and a placement that a tarball ships
+/// does not decide it for the placements that Bun installs. `Builder::settle_shipped_peers`
+/// resolves these for the packages that Bun installs nowhere.
+#[derive(Default)]
+pub(crate) struct ShippedPeers {
+    /// The packages whose dependencies this pass has walked in a shipped folder. Empty until the
+    /// first such walk.
+    walked: DynamicBitSet,
+    /// The package that an optional peer would resolve to.
+    optional: Vec<(DependencyID, PackageID)>,
+    /// As `Builder::served`.
+    served: Vec<(DependencyID, PackageID)>,
 }
 
 /// The peers of the package that's being hoisted. Each one comes with whether the package loads an
@@ -840,12 +862,86 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         self.lockfile.get()
     }
 
-    fn bind_pending_peers(&mut self, name_hash: PackageNameHash, pkg_id: PackageID) {
-        if let Some((_, peers)) = self.pending_peers.fetch_swap_remove(&name_hash) {
+    fn bind_pending_peers(&mut self, place: (Id, PackageNameHash), pkg_id: PackageID) {
+        if let Some((_, peers)) = self.pending_peers.fetch_swap_remove(&place) {
             for &dep_id in peers.keys() {
-                self.resolutions[dep_id as usize] = pkg_id;
+                self.resolve_peer(dep_id, pkg_id);
             }
         }
+    }
+
+    /// Returns true if this is the first walk of `pkg_id` in a folder of the same kind as the one
+    /// that `process_subtree` is filling: one that Bun installs, or one that a tarball ships.
+    fn first_walk(&mut self, pkg_id: PackageID) -> Result<bool, AllocError> {
+        let walked = if self.in_shipped_folder {
+            let shipped = &mut self.shipped_peers.walked;
+            if shipped.capacity() == 0 {
+                shipped.resize(self.walked.capacity(), false)?;
+            }
+            shipped
+        } else {
+            &mut self.walked
+        };
+        let first = !walked.is_set(pkg_id as usize);
+        walked.set(pkg_id as usize);
+        Ok(first)
+    }
+
+    /// Resolves a peer to the package that the current walk found for it. Returns false for an
+    /// optional peer in a shipped folder, which is only recorded: see `ShippedPeers`.
+    fn resolve_peer(&mut self, dep_id: DependencyID, pkg_id: PackageID) -> bool {
+        if self.in_shipped_folder
+            && self.dependencies[dep_id as usize]
+                .behavior
+                .is_optional_peer()
+        {
+            self.shipped_peers.optional.push((dep_id, pkg_id));
+            return false;
+        }
+        self.resolutions[dep_id as usize] = pkg_id;
+        true
+    }
+
+    /// Records a peer for `bind_served_peers`.
+    fn serve_peer(&mut self, dep_id: DependencyID, pkg_id: PackageID) {
+        if self.in_shipped_folder {
+            self.shipped_peers.served.push((dep_id, pkg_id));
+        } else {
+            self.served.push((dep_id, pkg_id));
+        }
+    }
+
+    /// Runs once everything is placed, before `bind_served_peers`. Resolves the peers in
+    /// `ShippedPeers`, except those of a package that this pass also walked in a folder that Bun
+    /// installs. The first record of a peer wins.
+    pub(crate) fn settle_shipped_peers(&mut self) {
+        let ShippedPeers {
+            optional, served, ..
+        } = &mut self.shipped_peers;
+        if optional.is_empty() && served.is_empty() {
+            return;
+        }
+        let (lists, walked) = (self.resolution_lists, &self.walked);
+        let is_installed = |dep_id: DependencyID| {
+            (lists.iter().position(|list| list.contains(dep_id)))
+                .is_some_and(|owner| walked.is_set(owner))
+        };
+        // Only the saved tree resolves an optional peer. The install tree reads what it resolved.
+        if METHOD == BuilderMethod::Resolvable {
+            for (i, &(dep_id, pkg_id)) in optional.iter().enumerate() {
+                let is_first = !optional[..i].iter().any(|&(earlier, _)| earlier == dep_id);
+                if is_first && self.resolutions[dep_id as usize] != pkg_id && !is_installed(dep_id)
+                {
+                    self.resolutions[dep_id as usize] = pkg_id;
+                    self.late_bound_peer = true;
+                }
+            }
+        }
+        (self.served).extend(
+            served
+                .drain(..)
+                .filter(|&(dep_id, _)| !is_installed(dep_id)),
+        );
     }
 
     fn buf(&self) -> &[u8] {
@@ -1279,7 +1375,8 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
                     // peers that never resolved
                     continue;
                 }
-                let shipped = !self.shipped_rows.is_empty()
+                let shipped = METHOD == BuilderMethod::Filter
+                    && !self.shipped_rows.is_empty()
                     && self.shipped_rows.contains_key(&(tree.id, dep_id));
                 let edge = match &self.kept {
                     None => Some(dep_id),
@@ -1473,8 +1570,7 @@ impl Tree {
         };
         let shipped = builder.shipped_rows.contains_key(&(self.id, dependency_id));
         builder.in_shipped_folder = shipped;
-        let first_walk = !builder.walked.is_set(parent_pkg_id as usize);
-        builder.walked.set(parent_pkg_id as usize);
+        let first_walk = builder.first_walk(parent_pkg_id)?;
 
         // Copied out, so that neither keeps `builder` borrowed.
         let lockfile_ref = builder.lockfile;
@@ -1607,7 +1703,7 @@ impl Tree {
                     // A dependency has one resolution, however many times its package is placed.
                     // The first placement decides it, as in `Rebind`.
                     if first_walk && bound_by_version {
-                        builder.served.push((dep_id, res_id));
+                        builder.serve_peer(dep_id, res_id);
                     }
                 }
                 HoistDependencyResult::Contested { id } => {
@@ -1629,12 +1725,12 @@ impl Tree {
                     debug_assert!(res_id != invalid_package_id);
                     // As in `Rebind`, only the first walk resolves an optional peer. Resolved on a
                     // later walk, it would get its own copy at the package's first placement.
-                    if first_walk || !dependency.behavior.is_optional_peer() {
-                        builder.resolutions[dep_id as usize] = res_id;
+                    if (first_walk || !dependency.behavior.is_optional_peer())
+                        && builder.resolve_peer(dep_id, res_id)
                         // Once resolved, it may get a copy of its own next to a peer of `res_id`.
-                        if !stays_on(res_id, &mut *builder) {
-                            builder.late_bound_peer = true;
-                        }
+                        && !stays_on(res_id, &mut *builder)
+                    {
+                        builder.late_bound_peer = true;
                     }
                 }
                 HoistDependencyResult::ResolveReplace {
@@ -1646,9 +1742,10 @@ impl Tree {
                     // A replaced workspace package keeps its resolution and only loses its symlink.
                     // Its tree is already queued, and holds the dependencies that cannot hoist.
                     if !dependencies[replaced as usize].behavior.is_workspace() {
-                        builder.late_bound_peer = true;
-                        builder.resolutions[replaced as usize] = pkg_id;
-                        builder.bind_pending_peers(dependency.name_hash, pkg_id);
+                        if builder.resolve_peer(replaced, pkg_id) {
+                            builder.late_bound_peer = true;
+                        }
+                        builder.bind_pending_peers((id, dependency.name_hash), pkg_id);
                     }
                     for placed_dep_id in &mut builder.list.items_dependencies_mut()[id as usize] {
                         if *placed_dep_id == replaced {
@@ -1676,17 +1773,17 @@ impl Tree {
                     debug_assert!(dependency.behavior.is_optional_peer());
                     // A dependency has one resolution, however many times its package is placed.
                     // The first placement decides it, and that is the same one in every pass.
-                    if first_walk {
-                        builder.resolutions[dep_id as usize] = res_id;
-                        if !stays_on(res_id, &mut *builder) {
-                            builder.late_bound_peer = true;
-                        }
+                    if first_walk
+                        && builder.resolve_peer(dep_id, res_id)
+                        && !stays_on(res_id, &mut *builder)
+                    {
+                        builder.late_bound_peer = true;
                     }
                 }
-                HoistDependencyResult::ResolveLater => {
+                HoistDependencyResult::ResolveLater { id } => {
                     // an unresolved peer that deduplicated with another one. save it to resolve it
                     // later if it's possible to resolve it.
-                    let entry = builder.pending_peers.get_or_put(dependency.name_hash)?;
+                    let entry = (builder.pending_peers).get_or_put((id, dependency.name_hash))?;
                     if !entry.found_existing {
                         *entry.value_ptr = ArrayHashMap::default();
                     }
@@ -1720,7 +1817,7 @@ impl Tree {
                                 buf,
                             )
                         {
-                            builder.served.push((dep_id, own_pkg_id));
+                            builder.serve_peer(dep_id, own_pkg_id);
                         }
                         continue 'dep;
                     }
@@ -1749,7 +1846,7 @@ impl Tree {
                         *placed.value_ptr = dep_id;
                     }
                     builder.list.items_tree_mut()[id as usize].dependencies.len += 1;
-                    if METHOD == BuilderMethod::Filter && (shipped || bundled) {
+                    if shipped || bundled {
                         builder.shipped_rows.insert((id, dep_id), ());
                     }
                     if pkg_id != invalid_package_id
@@ -1812,7 +1909,23 @@ impl Tree {
                 .iter()
                 .find(|&&dep_id| deps[dep_id as usize].name_hash == dependency.name_hash),
         );
-        if let Some(&dep_id) = builder.placed.get(&(this.id, dependency.name_hash)) {
+        // An optional peer of a package that Bun installs does not see a row that a tarball ships,
+        // and looks in the folders above. The row is only there if a shipped folder was walked
+        // before this package, and the install tree never resolves to it. The exception is the
+        // bundled copy, as below.
+        let row = (builder
+            .placed
+            .get(&(this.id, dependency.name_hash))
+            .copied())
+        .filter(|dep_id| {
+            !(dependency.behavior.is_optional_peer()
+                && !builder.in_shipped_folder
+                && this.parent != INVALID_ID
+                && this.id != hoist_root_id
+                && !deps[*dep_id as usize].behavior.is_bundled()
+                && builder.shipped_rows.contains_key(&(this.id, *dep_id)))
+        });
+        if let Some(dep_id) = row {
             let dep = &deps[dep_id as usize];
             let res_id = builder.resolutions[dep_id as usize];
 
@@ -1844,7 +1957,7 @@ impl Tree {
                 debug_assert!(dependency.behavior.is_peer());
                 // both peers will need to be resolved if they can resolve later.
                 // remember input package_id and dependency for later
-                return HoistDependencyResult::ResolveLater;
+                return HoistDependencyResult::ResolveLater { id: this.id };
             }
 
             if res_id == invalid_package_id {

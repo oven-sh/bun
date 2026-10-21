@@ -1679,6 +1679,7 @@ impl Lockfile {
             late_bound_peer: false,
             bundle_placed: false,
             walked: DynamicBitSet::init_empty(slice.len())?,
+            shipped_peers: Default::default(),
             served: Default::default(),
             list: Default::default(),
             sort_buf: Default::default(),
@@ -1705,6 +1706,7 @@ impl Lockfile {
             tree.process_subtree(item.dependency_id, item.hoist_root_id, &mut builder)?;
         }
 
+        builder.settle_shipped_peers();
         tree::bind_served_peers(
             &mut builder.served,
             &builder.list,

@@ -1365,6 +1365,11 @@ fn run_tasks_erased(
                         );
                     } else if cb.is_store_installer {
                         (cb.on_extract_store_installer)(extract_ctx, task.id, task.data_extract());
+                        // The store resolves a peer itself, so the slot of `dependency_id` can
+                        // hold another package, or none. `on_package_extracted` has recorded the
+                        // packages that waited for this task.
+                        name_progress(manager, alias, EXTRACT);
+                        continue;
                     } else {
                         unreachable!("unexpected context type");
                     }

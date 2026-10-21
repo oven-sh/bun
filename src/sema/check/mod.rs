@@ -113,7 +113,7 @@ use errors_type_nodes::start_of_type;
 pub use regexp_scanner::get_spelling_suggestion;
 use regexp_scanner::spelling_suggestion;
 use shape::members_among;
-use sink::{Arg, Reported};
+use sink::{Arg, Deferred, NonexistentProperty, Reported, TypeNotIterable};
 use spans::end_of_brackets;
 use spans::is_identifier_part;
 use spans::skip_trivia;
@@ -790,7 +790,6 @@ impl<'s> Program<'s> {
             late_binding_by_symbol: Vec::new(),
             permanently_early_bound: Default::default(),
             declared_members_in_progress: Vec::new(),
-            reporting_nonexistent: Vec::new(),
             declared_index_infos_in_progress: Vec::new(),
             anonymous_members_in_place: Vec::new(),
             index_infos_in_instantiation: Vec::new(),
@@ -811,7 +810,6 @@ impl<'s> Program<'s> {
             expressions_cached_with_errors_discarded: Vec::new(),
             starts_of_discarded_errors: Vec::new(),
             printing_closes_cycles: false,
-            reprinting: false,
             printing_floors: Vec::new(),
             serialized_types: Default::default(),
             context_free_level: usize::MAX,
@@ -1415,9 +1413,6 @@ pub struct Checker<'p, 's> {
     /// The `resolveDeclaredMembers` calls that are inside `getMembersOfSymbol`. Each assigns
     /// `declaredMembers` once the names are bound. See `gets_early_symbols_permanently`.
     declared_members_in_progress: Vec<shape::Declaring>,
-    /// `nonExistentProperties`: property accesses whose 2339 message is being printed, with
-    /// `stack.len()` when printing started.
-    reporting_nonexistent: Vec<(FileId, ExprId, usize)>,
     /// The `resolveDeclaredMembers` calls that are inside `getIndexInfosOfSymbol`, with `declaredMembersResolved` set.
     /// Each entry is the depth of `stack` at that point (with the `Query::Shape` on top if `resolveObjectTypeMembers`
     /// is the caller) and the first member of the declaration whose computed name is some string, number or symbol. The
@@ -1465,8 +1460,9 @@ pub struct Checker<'p, 's> {
     flow_invocation_count: u64,
     /// Where `add_diagnostic` stores a diagnostic it discards.
     discarded: Option<sink::Reported>,
-    /// `NodeCheckFlagsTypeChecked` on the name of a property access, meaning its 2339 has been
-    /// created. `true` if it was also discarded.
+    /// `NodeCheckFlagsTypeChecked` on the name of a property access, until the end of the file being
+    /// checked: `true` if its 2339 has been created, `false` if only the callback that exists may
+    /// create it.
     non_existent_properties: FxHashMap<(FileId, ExprId), bool>,
     /// The calls in the file being checked whose `links.resolvedSignature` was assigned at
     /// `maxSerializationLevel`. The errors that `resolveCall` reported in the callee, the type
@@ -1480,9 +1476,6 @@ pub struct Checker<'p, 's> {
     /// True if the next `with_printer` isn't a barrier for cycle detection, because it prints when
     /// and what tsgo prints.
     printing_closes_cycles: bool,
-    /// True while recreating a message that was dropped along with an uncached result. Its types
-    /// are printed behind the barrier and don't count as a level. tsgo creates the message once.
-    reprinting: bool,
     /// The height of `stack` when each `typeToStringEx` in progress began.
     printing_floors: Vec<usize>,
     serialized_types: print::SerializedTypes,
@@ -1931,7 +1924,8 @@ pub struct Checker<'p, 's> {
     /// `checkReflectCollision` is deferred. The other callbacks are in `reported`
     /// (`Reported::deferred`).
     deferred_diagnostics: Vec<Node>,
-    /// `saveDeferredDiagnostics`
+    /// True from the start of a file's check until `produceDeferredDiagnostics`. A callback that's
+    /// added later is never called.
     save_deferred_diagnostics: bool,
     /// `nodeLinks.flags` for the file being checked.
     node_check_flags: FxHashMap<Node, u8>,
@@ -2670,7 +2664,7 @@ impl<'p, 's> Checker<'p, 's> {
             q,
             Query::Expr(..) | Query::LiteralProp(..) | Query::TypeNode(..) | Query::Pat(..)
         ) && !self.is_resolution(q)
-            && (is_through_printing && !self.reprinting
+            && (is_through_printing
                 || self.ends_at_non_circular_return(i)
                 || self.ends_at_array_or_tuple_constraint(i)
                 || self.ends_at_members_in_place(i)

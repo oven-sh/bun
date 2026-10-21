@@ -298,16 +298,6 @@ impl<'p, 's> Checker<'p, 's> {
                 return known;
             }
         }
-        // `checkCallExpression` checks the descriptor of
-        // `Object.defineProperty(f, "name", descriptor)` before anything requests the type of
-        // `name`: the text `reportNonexistentProperty` prints for an access in the descriptor
-        // starts the resolution.
-        let in_report = !self.reporting_nonexistent.is_empty()
-            && matches!(value_declaration, Some((file, Decl::Expando(e)))
-                if matches!(self.hir(file)[e].kind, ExprKind::Call(_)));
-        if in_report && self.stack[self.resolution_start..].contains(&Query::Symbol(sym)) {
-            return self.type_of_circular_symbol(sym, flags, value_declaration, None);
-        }
         if let Some(raw) = self.provisional(Query::Symbol(sym)) {
             return TypeId(raw as u32);
         }
@@ -334,11 +324,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
             return ty;
         }
-        // `checkExpressionCached` has no guard against re-entry, so the descriptor is checked again from the start.
-        let resolution_start = self.resolution_start;
-        if in_report {
-            self.resolution_start = self.stack.len() - 1;
-        }
         // `getTypeOfSymbol` tests for an accessor, then for a property, then for a method.
         let is_property =
             flags.contains(SymFlags::PROPERTY) && !flags.intersects(SymFlags::ACCESSOR);
@@ -353,7 +338,6 @@ impl<'p, 's> Checker<'p, 's> {
             _ if members.is_empty() => self.type_of_symbol_uncached(sym),
             _ => self.type_of_members_uncached(&members),
         };
-        self.resolution_start = resolution_start;
         // For `module` and `exports`, `getTypeOfVariableOrParameterOrPropertyWorker` returns
         // without `popTypeResolution`: only a `pushTypeResolution` that fails reports.
         let is_module_exports = self.files().flags(sym).contains(SymFlags::MODULE_EXPORTS);
@@ -5773,21 +5757,21 @@ impl<'p, 's> Checker<'p, 's> {
     ) {
         if let Some(error_node) = error_node {
             let mut callback = Reported::bare(error_node, type_not_iterable_code(allows_async));
-            callback.deferred = Some(super::sink::TypeNotIterable {
+            callback.deferred = Some(Deferred::TypeNotIterable(TypeNotIterable {
                 ty,
                 allows_async,
                 is_for_of_expression: for_of,
-            });
+            }));
             callback.related_information = diags;
             self.add_deferred_diagnostic(callback);
         }
     }
 
-    /// `produceDeferredDiagnostics`, for the callbacks of `report_type_not_iterable`. No query is
-    /// in progress, so the task's callbacks are in `reported` and those of queries are in
+    /// `produceDeferredDiagnostics`, for the callbacks whose message prints a type. No query is in
+    /// progress, so the task's callbacks are in `reported` and those of queries are in
     /// `task.diagnostics`. `logged` is the length of `task.diagnostics` when
     /// `save_deferred_diagnostics` was set.
-    pub(super) fn produce_type_not_iterable_errors(&mut self, logged: usize) {
+    pub(super) fn call_deferred_diagnostics(&mut self, logged: usize) {
         self.save_deferred_diagnostics = false;
         for i in 0..self.reported.len() {
             if self.reported[i].deferred.is_some() {
@@ -5795,18 +5779,26 @@ impl<'p, 's> Checker<'p, 's> {
                 self.reported[i] = diagnostic;
             }
         }
+        self.reported.retain(|it| !it.is_placeholder());
         for i in logged..self.task.diagnostics.len() {
             if self.task.diagnostics[i].1.deferred.is_some() {
                 let diagnostic = self.call_deferred_diagnostic(self.task.diagnostics[i].1.clone());
                 self.task.diagnostics[i].1 = diagnostic;
             }
         }
+        self.non_existent_properties.clear();
     }
 
-    /// Calls `callback` and returns it as the diagnostic.
+    /// Calls `callback` and returns it as the diagnostic, or a placeholder if it reports nothing.
     fn call_deferred_diagnostic(&mut self, mut callback: Reported) -> Reported {
-        let Some(deferred) = callback.deferred.take() else {
-            return callback;
+        let deferred = match callback.deferred.take() {
+            Some(Deferred::TypeNotIterable(deferred)) => deferred,
+            Some(Deferred::NonexistentProperty(deferred)) => {
+                let at = (callback.file, callback.start);
+                let diagnostic = self.nonexistent_property_error(at, deferred);
+                return diagnostic.unwrap_or_else(Reported::placeholder);
+            }
+            None => return callback,
         };
         let diagnostic = self.type_not_iterable_error(
             (callback.file, callback.start, callback.end),

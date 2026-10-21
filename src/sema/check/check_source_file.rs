@@ -99,7 +99,7 @@ impl<'s> Checker<'_, 's> {
         self.is_type_checked = false;
         self.save_deferred_diagnostics = true;
         self.check_source_file(file);
-        self.produce_type_not_iterable_errors(logged);
+        self.call_deferred_diagnostics(logged);
         self.is_type_checked = true;
         self.reported.truncate(reported);
         let since = self.task.diagnostics.split_off(logged).into_iter();

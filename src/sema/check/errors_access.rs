@@ -883,51 +883,51 @@ impl<'p> Checker<'p, '_> {
         );
     }
 
-    /// `reportNonexistentProperty`. `e` is the `a.b` whose name is at `start`, or the `#b` at `start`.
-    pub(super) fn report_nonexistent_property(
+    /// The `addDeferredDiagnostic` call in `checkPropertyAccessExpressionOrQualifiedName`: printing the containing type
+    /// resolves all of it, which could report a circularity that isn't one. `at` is the start of the name.
+    pub(super) fn report_nonexistent_property_later(
         &mut self,
-        file: FileId,
-        e: ExprId,
-        name: Atom,
-        start: u32,
-        containing: TypeId,
-        is_unchecked_js: bool,
+        at: (FileId, u32),
+        missing: NonexistentProperty,
     ) {
-        // `NodeCheckFlagsTypeChecked`: the error is already being built.
-        if self
-            .reporting_nonexistent
-            .iter()
-            .any(|r| r.0 == file && r.1 == e)
-        {
+        let node = (at.0, missing.access);
+        if self.non_existent_properties.contains_key(&node) {
             return;
         }
-        // `typeToStringEx` returns "?" and `addDiagnostic` discards the diagnostic. TypeScript 7.0 never reports it
-        // after that, so what it prints depends on which file or statement gets here first. 7.1 always reports it. So
-        // nothing that was evaluated for the type being printed is cached: not the access, and not the call, array or
-        // object around it. The walk of its file evaluates them again and reports.
-        if self.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL {
-            self.note_error_in(file);
-            let innermost = self.frames.len().saturating_sub(1);
-            let floor = self.printing_floors.last().copied().unwrap_or(innermost);
-            self.mark_tainted_from(floor.min(innermost));
-            return;
+        self.note_error_in(at.0);
+        if self.is_reported_too_late(None, at.0) {
+            return self.mark_tainted_from(0);
         }
-        let created = self.non_existent_properties.insert((file, e), false);
-        if created == Some(true) {
-            self.non_existent_properties.insert((file, e), true);
-            return;
+        let reported = self.reported.len();
+        let mut callback = Reported::bare(self.span_of_token(at.0, at.1), 2339);
+        callback.deferred = Some(Deferred::NonexistentProperty(missing));
+        self.add_deferred_diagnostic(callback);
+        // The first callback for a node reports. If it was added while analyzing a loop, it has the types collected so
+        // far, and the walk's callback with the final type reports nothing.
+        if self.is_in_flow_loop() {
+            self.log_reported_in_flow_loop(reported, at.0, missing.access);
+            self.non_existent_properties.insert(node, false);
         }
-        self.reporting_nonexistent.push((file, e, self.stack.len()));
-        let dropped: Vec<bool> = self
-            .frames
-            .iter()
-            .map(|frame| frame.drops_reported)
-            .collect();
-        // In tsgo printing a type can close a cycle, so the first time this message is built `with_printer` isn't a
-        // barrier for cycle detection. If the message was dropped along with a result that wasn't cached, it's built
-        // again here, which tsgo never has to do. That second time (`reprinting`) its types are printed behind the
-        // barrier and don't count as a serialization level.
-        let reprinting = std::mem::replace(&mut self.reprinting, created.is_some());
+    }
+
+    /// `reportNonexistentProperty` for the `#b` at `at`, or for the name at `at`. Returns `None` if the node's error
+    /// exists already, or if it's a suggestion that nobody reads.
+    pub(super) fn nonexistent_property_error(
+        &mut self,
+        at: (FileId, u32),
+        missing: NonexistentProperty,
+    ) -> Option<Reported> {
+        let (file, start) = at;
+        let NonexistentProperty {
+            access: e,
+            name,
+            containing,
+            is_unchecked_js,
+        } = missing;
+        // `NodeCheckFlagsTypeChecked`
+        if self.non_existent_properties.insert((file, e), true) == Some(true) {
+            return None;
+        }
         let at = self.span_of_token(file, start);
         let missing = self.declaration_name_at(file, start);
         // The static side and the promised type are queried for a `#x` by its source text, which isn't any property's
@@ -959,7 +959,7 @@ impl<'p> Checker<'p, '_> {
         let container = self.type_to_string(container);
         let args = [Arg::Bytes(&missing), Arg::Bytes(&container)];
         let apparent = self.apparent_type(containing);
-        let diagnostic = if !is_private && self.static_side_has(containing, name) {
+        let mut diagnostic = if !is_private && self.static_side_has(containing, name) {
             let member = cat!(container, b".", missing);
             let args = [args[0], args[1], Arg::Bytes(&member)];
             self.new_diagnostic_chain(chain, at, 2576, &args)
@@ -991,20 +991,9 @@ impl<'p> Checker<'p, '_> {
             };
             self.new_diagnostic_chain(chain, at, code, &args)
         };
-        self.reporting_nonexistent.pop();
-        self.reprinting = reprinting;
-        // A query re-entered while building the message is no reason to roll back the message.
-        for (frame, dropped) in self.frames.iter_mut().zip(dropped) {
-            frame.drops_reported = dropped;
-        }
-        let reported = self.reported.len();
-        self.add_error_or_suggestion(!is_unchecked_js || diagnostic.code != 2568, diagnostic);
-        // `NodeCheckFlagsTypeChecked`: tsgo reports once per node. If it reports while analyzing a loop, with the types
-        // collected so far, that report stands, and the walk doesn't report again with the final type.
-        if self.is_in_flow_loop() {
-            self.log_reported_in_flow_loop(reported, file, e);
-            self.non_existent_properties.insert((file, e), true);
-        }
+        // `addErrorOrSuggestion`
+        diagnostic.is_suggestion = is_unchecked_js && diagnostic.code == 2568;
+        (!diagnostic.is_suggestion || self.captures_suggestions()).then_some(diagnostic)
     }
 
     /// `getSuggestedSymbolForNonexistentProperty` for the name in `e` and the apparent type that lacks it. Returns the

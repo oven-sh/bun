@@ -599,8 +599,7 @@ pub(super) fn type_to_string_with(
     enclosing_declaration: Option<(Enclosing, ExprId)>,
     flags: u32,
 ) -> Vec<u8> {
-    let counts = !checker.reprinting;
-    if counts && checker.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL {
+    if checker.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL {
         return b"?".to_vec();
     }
     let no_truncation = checker.files().options.no_error_truncation || flags & NO_TRUNCATION != 0;
@@ -609,8 +608,8 @@ pub(super) fn type_to_string_with(
     } else {
         flags
     } | IGNORE_ERRORS;
-    checker.serialization_level += u32::from(counts);
-    checker.printing_closes_cycles = counts;
+    checker.serialization_level += 1;
+    checker.printing_closes_cycles = true;
     checker.printing_floors.push(checker.stack.len());
     let (enclosing_declaration, enclosing_expression) = enclosing_declaration.unzip();
     let text = with_printer(checker, enclosing_declaration, None, flags, |printer| {
@@ -618,7 +617,7 @@ pub(super) fn type_to_string_with(
         printer.type_to_node(ty).text
     });
     checker.printing_floors.pop();
-    checker.serialization_level -= u32::from(counts);
+    checker.serialization_level -= 1;
     let maximum = 2 * if no_truncation {
         NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH
     } else {

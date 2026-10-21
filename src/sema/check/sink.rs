@@ -24,7 +24,7 @@
 //!
 //! An `addDeferredDiagnostic` callback whose message prints a type is a `Reported` too, with
 //! `Reported::deferred` in place of the arguments. So it belongs to the task or to a query, and is
-//! dropped with a frame, like a diagnostic. `produce_type_not_iterable_errors` creates the message.
+//! dropped with a frame, like a diagnostic. `call_deferred_diagnostics` creates the message.
 //!
 //! A diagnostic that leaves its task is settled (`Checker::settled`): every field that only its
 //! file's HIR can provide has been filled in. The HIR of a file that nothing imports is freed at
@@ -109,7 +109,25 @@ pub(super) struct Reported {
     pub(super) by_another_node: bool,
     /// Set for an `addDeferredDiagnostic` callback that hasn't been called yet. `args` is then
     /// empty.
-    pub(super) deferred: Option<TypeNotIterable>,
+    pub(super) deferred: Option<Deferred>,
+}
+
+/// What an `addDeferredDiagnostic` callback captures besides the error node.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) enum Deferred {
+    TypeNotIterable(TypeNotIterable),
+    NonexistentProperty(NonexistentProperty),
+}
+
+/// The arguments the callback of `checkPropertyAccessExpressionOrQualifiedName` passes to
+/// `reportNonexistentProperty`. The error node is the name.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) struct NonexistentProperty {
+    /// The `a.b`.
+    pub(super) access: ExprId,
+    pub(super) name: Atom,
+    pub(super) containing: TypeId,
+    pub(super) is_unchecked_js: bool,
 }
 
 /// The arguments a `getIterationTypesOfIterableWorker` callback passes to
@@ -164,11 +182,11 @@ impl Reported {
 
     /// Placeholder left in `Task::diagnostics` for a diagnostic that a commit took out while a file was being checked.
     /// The list can't shrink, because `check_file` remembers indexes into it.
-    fn placeholder() -> Reported {
+    pub(super) fn placeholder() -> Reported {
         Reported::bare(NOWHERE, 0)
     }
 
-    fn is_placeholder(&self) -> bool {
+    pub(super) fn is_placeholder(&self) -> bool {
         self.code == 0
     }
 
@@ -933,7 +951,7 @@ impl Checker<'_, '_> {
     /// `Emit` or a baseline writer causes a diagnostic in `file`, another checked file, because no
     /// check requests `owner` or a query in progress in time. The caller then stores no result, so
     /// the check of a later file that does request it evaluates it and reports.
-    fn is_reported_too_late(&self, owner: Option<Query>, file: FileId) -> bool {
+    pub(super) fn is_reported_too_late(&self, owner: Option<Query>, file: FileId) -> bool {
         self.is_type_checked
             && file != NOWHERE.0
             && self.task.file != Some(file)

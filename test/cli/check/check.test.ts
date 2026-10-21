@@ -794,8 +794,8 @@ export interface Loop extends Pick<Big & Pick<Loop, "own">, "b"> { own: 1 }
   });
 
   // An error message prints a type, which infers a return type, which reports an error whose message prints a type, and so
-  // on. TypeScript discards an error that is created two messages deep. 7.0 never reports a missing property after that, so
-  // its output depends on which file or statement gets there first. 7.1 reports it when the walk reaches it, and so do we.
+  // on. TypeScript discards an error that is created two messages deep. A missing property is reported at the end of the
+  // file's check, when nothing is being printed.
   describe("reports a missing property that's first reached while an error message prints a type", () => {
     const filler = (prefix: string, lines: number) =>
       Array.from(
@@ -11367,6 +11367,28 @@ export function k8() { let s: S | null = mk(); while (s) { const cur = s.kids.at
         a.ts(19,66): error TS7022: 'cur' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
         a.ts(20,66): error TS7022: 'cur' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
         a.ts(21,66): error TS7022: 'cur' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    // The message prints the type of `this`, with the return types of the methods that are being checked.
+    test("a property that's missing on `this` in a method of an object literal isn't a circularity", async () => {
+      using dir = project({
+        "a.ts": `export const a = { m() { return this.z; }, f() { return this.z; }, g: () => 1 + {} };
+declare function make<D, M>(o: { data: D; methods: M & ThisType<D & M> }): D & M;
+export const b = make({ data: { x: 1 }, methods: { get i() { return this.x; }, f() { return this.i; } } });
+declare function id<T>(x: T): T;
+export const c = { m() { return this.z; }, g: id(() => missing) };
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(1,38): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: () => any; }'.
+        a.ts(1,62): error TS2339: Property 'z' does not exist on type '{ m(): any; f(): any; g: () => any; }'.
+        a.ts(1,77): error TS2365: Operator '+' cannot be applied to types 'number' and '{}'.
+        a.ts(3,74): error TS2339: Property 'x' does not exist on type '{ readonly i: any; f(): any; }'.
+        a.ts(5,38): error TS2339: Property 'z' does not exist on type '{ m(): any; g: () => any; }'.
+        a.ts(5,56): error TS2304: Cannot find name 'missing'."
       `);
       expect(exitCode).toBe(1);
     });

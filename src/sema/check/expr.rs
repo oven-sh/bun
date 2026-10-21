@@ -410,12 +410,6 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return known;
         }
-        if !self.reporting_nonexistent.is_empty() {
-            cold_path();
-            if let Some(ty) = self.type_of_access_being_reported(file, e) {
-                return ty;
-            }
-        }
         if self.is_flow_loop_or_exhaustive_state_in_progress() {
             cold_path();
             if let Some(ty) = self.recheck_in_flow_loop(file, e, is_rechecked) {
@@ -546,51 +540,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.last_enter = EnterOutcome::Entered;
         self.left_a_cycle = false;
         Some(ty)
-    }
-
-    /// `reportNonexistentProperty` returns immediately for a property access whose error is already
-    /// being reported, and the access gets the error type. Returns `None` if `e` isn't such an
-    /// access, or if `enter` has to mark the circularity that the second visit closes.
-    fn type_of_access_being_reported(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
-        let &(_, _, depth) = self
-            .reporting_nonexistent
-            .iter()
-            .rev()
-            .find(|r| r.0 == file && r.1 == e)?;
-        // `GetConstantValue` does check the access before whatever encloses it. Every resolution
-        // since then was started by printing the message, and the second visit closes none of them.
-        if self.is_emitting {
-            return Some(TypeId::ERROR);
-        }
-        // `getResolvedSignature`: a call hides the resolutions below it (`resolutionStart`).
-        let after_call = self.stack[depth..]
-            .iter()
-            .rposition(|q| matches!(q, Query::Call(..)))
-            .map_or(depth, |i| depth + i + 1);
-        let visible = after_call.max(self.resolution_start).min(self.stack.len());
-        // tsgo resolves the type of a variable, a parameter or a member before it checks the
-        // initializer. That resolution is always in progress when the access is first checked, and
-        // printing re-enters it. `enter` marks that circularity.
-        if !self.stack[visible..].iter().all(|&q| {
-            matches!(q, Query::Return(..) | Query::ReturnOfSignature(_)) || !self.is_resolution(q)
-        }) {
-            return None;
-        }
-        // `checkFunctionExpressionOrObjectLiteralMethodDeferred` resolves a function's return type
-        // before it checks the body. In a full check these return types are in progress when the
-        // access is first checked, and printing re-enters them, which reports 7023. When the access
-        // is queried first, as here, it closes no circularity and the functions keep their inferred
-        // return types.
-        for i in visible..self.stack.len() {
-            if let Query::Return(f, func) = self.stack[i]
-                && self.hir(f)[func].ret.is_none()
-                && !self.stack[..depth].contains(&self.stack[i])
-            {
-                (self.p.circular_returns).insert(&self.task, (f, func), (), Stored::new());
-                self.report_circular_return_type(Some(Query::Return(f, func)), f, func);
-            }
-        }
-        Some(TypeId::ERROR)
     }
 
     /// `getTypeOfExpression` has no re-entrancy guard. If a loop's back edge evaluates an
@@ -1239,13 +1188,14 @@ impl<'p, 's> Checker<'p, 's> {
                 } else {
                     left
                 };
-                self.report_nonexistent_property(
-                    file,
-                    e,
-                    name,
-                    name_pos,
-                    containing,
-                    is_unchecked_js,
+                self.report_nonexistent_property_later(
+                    (file, name_pos),
+                    NonexistentProperty {
+                        access: e,
+                        name,
+                        containing,
+                        is_unchecked_js,
+                    },
                 );
             }
             // The error type isn't narrowed.

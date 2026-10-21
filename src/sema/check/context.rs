@@ -1614,7 +1614,6 @@ impl<'p, 's> Checker<'p, 's> {
             && self.constraint_stack.is_empty()
             && self.reverse_mapped_source_stack.is_empty()
             && self.flow_loops.is_empty()
-            && self.reporting_nonexistent.is_empty()
             && self.stack.iter().all(|q| {
                 matches!(
                     q,

@@ -167,7 +167,6 @@ impl Checker<'_, '_> {
         let is_kept = |file: FileId| !leaves.contains(file.idx());
         self.discriminated.retain(|key, _| is_kept(key.0));
         self.conditional_roots.retain(|key, _| is_kept(key.0));
-        self.non_existent_properties.retain(|key, _| is_kept(key.0));
         self.rechecked_exprs.retain(|key, _| is_kept(key.0));
         self.rechecked_members.retain(|key, _| is_kept(key.0));
         self.late_bound_members.retain(|key, _| is_kept(key.0.file));
@@ -189,7 +188,6 @@ impl Checker<'_, '_> {
     fn entries_by_node(&self) -> usize {
         self.discriminated.len()
             + self.conditional_roots.len()
-            + self.non_existent_properties.len()
             + self.rechecked_exprs.len()
             + self.rechecked_members.len()
             + self.late_bound_members.len()
@@ -281,6 +279,8 @@ impl Checker<'_, '_> {
             self.add_diagnostic(Reported::from_hir(file, diagnostic));
         }
         self.emit_resolver_links = Default::default();
+        self.save_deferred_diagnostics = true;
+        let logged = self.task.diagnostics.len();
         if self.emits_first() {
             let from = self.reported.len();
             self.is_emitting = true;
@@ -293,8 +293,6 @@ impl Checker<'_, '_> {
             }
         }
         self.check_required_global_types(Some(file));
-        self.save_deferred_diagnostics = true;
-        let logged = self.task.diagnostics.len();
         self.check_source_file(file);
         // The file will be rechecked, so skip the remaining passes.
         if self.task.was_discarded() {
@@ -339,7 +337,7 @@ impl Checker<'_, '_> {
         if self.p.files.options.emits_first && self.elides_imports(file) {
             self.mark_identifier_aliases_referenced(file, true);
         }
-        self.produce_type_not_iterable_errors(logged);
+        self.call_deferred_diagnostics(logged);
         self.report_unresolved_identifiers();
         // `GetDeclarationDiagnostics`: no comment directive suppresses these, and plain JavaScript gets them too. A
         // diagnostic located in another file goes to that file's buffer at the next commit.
@@ -2574,14 +2572,19 @@ impl Checker<'_, '_> {
                 {
                     let start = hir[left].pos;
                     let is_unchecked_js = self.is_unchecked_js_suggestion(file, left, right_type);
-                    self.report_nonexistent_property(
-                        file,
-                        left,
+                    let missing = NonexistentProperty {
+                        access: left,
                         name,
-                        start,
-                        right_type,
+                        containing: right_type,
                         is_unchecked_js,
-                    );
+                    };
+                    if let Some(diagnostic) =
+                        self.nonexistent_property_error((file, start), missing)
+                    {
+                        self.add_diagnostic(diagnostic);
+                    }
+                    // A frame may drop the diagnostic.
+                    self.non_existent_properties.remove(&(file, left));
                 }
             }
             _ => {

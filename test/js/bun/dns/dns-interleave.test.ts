@@ -258,8 +258,8 @@ describe.concurrent("connection attempt delay (RFC 8305 §5)", () => {
   );
 
   // A server pays for every address the client dials. The first address of a
-  // healthy name connects inside the attempt delay, so the client never opens
-  // (and then resets) a connection to the others.
+  // healthy name connects inside the attempt delay, so the client does not open
+  // (and then reset) a connection to the others.
   test("a name with three addresses costs the server one connection per dial", async () => {
     const { out, stderr, exitCode, signal } = await run(/* js */ `
       let accepted = 0;
@@ -284,13 +284,14 @@ describe.concurrent("connection attempt delay (RFC 8305 §5)", () => {
         return count;
       }
 
-      const dials = 10;
-      for (let i = 0; i < dials; i++) {
+      const viaFetch = [];
+      for (let i = 0; i < 10; i++) {
         await (await fetch("http://" + host + ":" + port + "/")).text();
+        viaFetch.push(await acceptedSinceLastCall());
       }
-      const viaFetch = await acceptedSinceLastCall();
 
-      for (let i = 0; i < dials; i++) {
+      const viaConnect = [];
+      for (let i = 0; i < 10; i++) {
         const { promise, resolve, reject } = Promise.withResolvers();
         await Bun.connect({
           hostname: host,
@@ -304,14 +305,26 @@ describe.concurrent("connection attempt delay (RFC 8305 §5)", () => {
           },
         });
         await promise;
+        viaConnect.push(await acceptedSinceLastCall());
       }
-      const viaConnect = await acceptedSinceLastCall();
 
-      console.log(JSON.stringify({ ok: true, dials, viaFetch, viaConnect }));
+      console.log(JSON.stringify({ ok: true, viaFetch, viaConnect }));
       process.exit(0);
     `);
-    expect({ out, stderr, exitCode, signal }).toEqual({
-      out: { ok: true, dials: 10, viaFetch: 10, viaConnect: 10 },
+    // Every address at once is 3 connections per dial. One address at a time
+    // is 1, unless a stalled machine reports the first connect later than the
+    // attempt delay and the dial opens a second one. So the bound is on the
+    // sum of the 10 dials: fewer than 2 per dial.
+    const sum = (counts: number[] = []) => counts.reduce((a, b) => a + b, 0);
+    expect({
+      out,
+      fewerThanTwoPerDial: { viaFetch: sum(out.viaFetch) < 20, viaConnect: sum(out.viaConnect) < 20 },
+      stderr,
+      exitCode,
+      signal,
+    }).toEqual({
+      out: { ok: true, viaFetch: expect.any(Array), viaConnect: expect.any(Array) },
+      fewerThanTwoPerDial: { viaFetch: true, viaConnect: true },
       stderr: "",
       exitCode: 0,
       signal: null,

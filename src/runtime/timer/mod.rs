@@ -38,14 +38,6 @@ pub(crate) mod timer;
 // type-specific surface (`init`, `do_refresh`, the `_idleStart` accessors,
 // `run_immediate_task`).
 //
-// Emits, at the call-site module path, `pub struct $T { … }` and:
-//   - `bun_event_loop::impl_timer_owner!($T; from_timer_ptr => event_loop_timer)`
-//   - `impl RefCounted for $T` (intrusive `ref_count` field, `deinit` destructor)
-//   - `impl Default for $T` (`EventLoopTimer::init_paused(EventLoopTimerTag::$tag)`)
-//   - `impl $T`: `ref_`/`deref`/`deinit`/`init_with`/`constructor`/`finalize`
-//     and the forwarder host-fns `to_primitive`/`do_ref`/`do_unref`/`has_ref`/
-//     `get_destroyed`/`dispose`.
-//
 // Type-specific items (`init`, `do_refresh`, `close`, `_idleStart` get/set,
 // `run_immediate_task`) go in a *second* `impl $T` block in the caller's file.
 //
@@ -53,7 +45,7 @@ pub(crate) mod timer;
 // macro is invoked *from the child module* (`super::impl_timer_object!(…)`),
 // so `super` at the expansion site resolves back here to `timer/mod.rs`.
 macro_rules! impl_timer_object {
-    ($T:ident, $tag:ident) => {
+    ($T:ident) => {
         #[derive(::bun_ptr::RefCounted)]
         pub(crate) struct $T {
             pub ref_count: ::bun_ptr::RefCount<Self>,
@@ -76,7 +68,7 @@ macro_rules! impl_timer_object {
                     ref_count: ::bun_ptr::RefCount::init(),
                     // `init_paused`: next=EPOCH, state=PENDING, heap zeroed.
                     event_loop_timer: super::EventLoopTimer::init_paused(
-                        super::EventLoopTimerTag::$tag,
+                        super::EventLoopTimerTag::$T,
                     ),
                     // Default-constructed here, then overwritten in `init()`.
                     internals: super::TimerObjectInternals::default(),

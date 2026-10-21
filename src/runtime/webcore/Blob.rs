@@ -2147,37 +2147,38 @@ impl BlobExt for Blob {
         let global_this = cx.global();
         let parts = parts.to_js();
         let options = options.to_js();
-        let blob = if parts.is_undefined() {
+        let blob = if parts.is_undefined() && options.is_undefined() {
             Blob::init_empty(global_this)
         } else {
-            Blob::get::<false, true>(global_this, parts)?
-        };
+            let blob = Blob::get::<false, true>(global_this, parts)?;
 
-        if options.is_object() {
-            if let Some(content_type) = options.get(global_this, "type")? {
-                'inner: {
-                    if content_type.is_string() {
-                        let content_type_str = content_type.to_utf8(global_this)?;
-                        let slice = content_type_str.slice();
-                        if !is_valid_blob_type(slice) {
-                            break 'inner;
+            if options.is_object() {
+                if let Some(content_type) = options.get(global_this, "type")? {
+                    'inner: {
+                        if content_type.is_string() {
+                            let content_type_str = content_type.to_utf8(global_this)?;
+                            let slice = content_type_str.slice();
+                            if !is_valid_blob_type(slice) {
+                                break 'inner;
+                            }
+                            blob.content_type_was_set.set(true);
+                            blob.content_type.set(
+                                match global_this.bun_vm().as_mut().mime_type(slice) {
+                                    Some(mime) => BlobContentType::from(mime),
+                                    None => BlobContentType::from_lowercased(slice),
+                                },
+                            );
                         }
-                        blob.content_type_was_set.set(true);
-                        blob.content_type.set(
-                            match global_this.bun_vm().as_mut().mime_type(slice) {
-                                Some(mime) => BlobContentType::from(mime),
-                                None => BlobContentType::from_lowercased(slice),
-                            },
-                        );
                     }
                 }
             }
-        }
 
-        if blob.content_type_slice().is_empty() {
-            blob.content_type.set(BlobContentType::default());
-            blob.content_type_was_set.set(false);
-        }
+            if blob.content_type_slice().is_empty() {
+                blob.content_type.set(BlobContentType::default());
+                blob.content_type_was_set.set(false);
+            }
+            blob
+        };
 
         blob.calculate_estimated_byte_size();
         Ok(Blob::new(blob))

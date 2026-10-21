@@ -1724,6 +1724,7 @@ impl UDPSocket {
 
 impl Drop for UDPSocket {
     fn drop(&mut self) {
+        // `close` runs `on_close`, which reaches this struct again through the uws user pointer.
         let this = &*self;
         bun_output::scoped_log!(UdpSocket, "Finalize {:p}", &raw const *this);
         this.this_value.with_mut(|r| r.finalize());

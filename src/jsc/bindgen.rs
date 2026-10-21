@@ -687,11 +687,11 @@ pub unsafe trait JsConstruct: Sized {
     /// The struct, or a ref on the struct of a `refCounted` class.
     type Contents;
     /// # Safety
-    /// `structure` is a Structure of this class's cell. For a `refCounted` class it is the object, not yet filled.
+    /// A Structure of this class's cell, or the object `new` made for a `refCounted` class, not yet filled.
     #[doc(hidden)]
     unsafe fn create_with_structure<'a>(
         heap: &JsHeap<'a>,
-        structure: *mut c_void,
+        structure_or_object: *mut c_void,
         contents: Self::Contents,
     ) -> JsWrapper<'a, Self>;
 }
@@ -700,11 +700,11 @@ pub unsafe trait JsConstruct: Sized {
 pub struct JsStructure<'a, T>(*mut c_void, InvariantLifetime<'a>, PhantomData<*const T>);
 impl<'a, T: JsConstruct> JsStructure<'a, T> {
     /// # Safety
-    /// As [`JsConstruct::create_with_structure`], and the call `heap` belongs to holds `structure`.
+    /// As [`JsConstruct::create_with_structure`], and the call `heap` belongs to holds it.
     #[doc(hidden)]
     #[inline(always)]
-    pub unsafe fn from_extern(structure: *mut c_void, _: &JsHeap<'a>) -> Self {
-        Self(structure, PhantomData, PhantomData)
+    pub unsafe fn from_extern(structure_or_object: *mut c_void, _: &JsHeap<'a>) -> Self {
+        Self(structure_or_object, PhantomData, PhantomData)
     }
 
     /// The new object, which owns `contents`.

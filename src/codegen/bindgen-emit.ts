@@ -742,7 +742,7 @@ ${
   refCounted
     ? `    // Takes the caller's ref on \`wrapped\`.
     static JS${name}* create(JSC::VM&, JSC::Structure*, void* wrapped);
-${constructorSetsWrapped(type) ? `    // \`m_wrapped\` is null until the constructor sets it. Nothing else can reach the object before that.\n    static JS${name}* createUninitialized(JSC::VM&, JSC::Structure*);\n` : ""}    static constexpr size_t allocationSize() { return sizeof(JS${name}); }
+${constructorSetsWrapped(type) ? `    // \`m_wrapped\` is null until the constructor sets it. No JavaScript has the object before that.\n    static JS${name}* createUninitialized(JSC::VM&, JSC::Structure*);\n` : ""}    static constexpr size_t allocationSize() { return sizeof(JS${name}); }
     void* wrapped() const { return m_wrapped; }${
       type.estimatedSize
         ? `
@@ -793,8 +793,7 @@ ${refCounted ? `    static_assert(OBJECT_OFFSETOF(${cpp}, m_wrapped) == ${offset
     object->finishCreation(vm);
 ${
   refCounted && type.estimatedSize
-    ? `    auto* thisObject = object;
-    vm.heap.reportExtraMemoryAllocated(object, ${cppSizeOutsideCell(type, "collector")});
+    ? `    vm.heap.reportExtraMemoryAllocated(object, extraMemorySize(wrapped));
 `
     : ""
 }    return object;
@@ -1607,12 +1606,17 @@ function rustForClass(type: ClassType, scope: RustScope): string {
     const returnsPointer = refCounted && !type.passStructure;
     const call = `<${rustPath}>::constructor(${[
       ...capabilityArgument[signature.capability],
-      ...(type.passStructure ? ["bindgen::JsStructure::from_extern(structure, &cx.heap)"] : []),
+      ...(type.passStructure
+        ? [`bindgen::JsStructure::from_extern(${refCounted ? "object" : "structure"}, &cx.heap)`]
+        : []),
       ...rustArguments(signature),
     ].join(", ")})`;
     thunks += rustThunk(
       classSymbolName(type, "construct"),
-      [...(returnsPointer ? [] : ["structure: *mut core::ffi::c_void"]), ...rustExternParameters(signature, scope)],
+      [
+        ...(returnsPointer ? [] : [`${refCounted ? "object" : "structure"}: *mut core::ffi::c_void`]),
+        ...rustExternParameters(signature, scope),
+      ],
       returnsPointer ? "*mut core::ffi::c_void" : "JSValue",
       `${rustTakeArguments(signature.args, scope)}let result = ${infallible(call, signature.throws)};
 ${
@@ -1680,12 +1684,12 @@ pub extern "C" fn ${symbolName(type, key)}(this: &${rustPath}) -> usize {
 unsafe impl bindgen::JsConstruct for ${rustPath} {
     type Contents = ${refCounted ? "bun_ptr::RefPtr<Self>" : "Self"};
     #[inline]
-    unsafe fn create_with_structure<'a>(heap: &bindgen::JsHeap<'a>, structure: *mut core::ffi::c_void, contents: Self::Contents) -> bindgen::JsWrapper<'a, Self> {
-        // SAFETY: ${refCounted ? "`structure` is the object `new` made, which takes over the ref." : "forwarded."}
+    unsafe fn create_with_structure<'a>(heap: &bindgen::JsHeap<'a>, ${refCounted ? "object" : "structure"}: *mut core::ffi::c_void, contents: Self::Contents) -> bindgen::JsWrapper<'a, Self> {
+        // SAFETY: ${refCounted ? "the object takes over the ref." : "forwarded."}
         unsafe { ${
           refCounted
-            ? `structure.byte_add(${offsetOfPayload(type)}).cast::<*mut Self>().write(contents.into_raw());
-            bindgen::JsWrapper::from_extern(core::ptr::NonNull::new_unchecked(structure), heap)`
+            ? `object.byte_add(${offsetOfPayload(type)}).cast::<*mut Self>().write(contents.into_raw());
+            bindgen::JsWrapper::from_extern(core::ptr::NonNull::new_unchecked(object), heap)`
             : "bindgen::JsWrapper::create_with_structure(heap, structure, contents)"
         } }
     }

@@ -1395,6 +1395,7 @@ impl Listener {
 
 impl Drop for Listener {
     fn drop(&mut self) {
+        // Closing the sockets reaches this struct again through their handlers, so no `&mut` spans it.
         let this = &*self;
         log!("finalize");
         this.abort_handle.leave();

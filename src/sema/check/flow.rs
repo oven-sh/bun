@@ -2319,6 +2319,15 @@ impl<'p, 's> Checker<'p, 's> {
             return declared;
         }
         let root = root_pattern(bound, parent);
+        // "Avoid declaration circularity without blocking binding defaults or nested callbacks."
+        let root_initializer = bound.pat_parent[root.idx()].initializer(hir);
+        if root_initializer.is_some()
+            && self.is_node_descendant_of(file, e, root_initializer)
+            && self.declaration_container(file, symbol)
+                == Some(self.get_control_flow_container(file, bound.parent_of_expr(e)))
+        {
+            return declared;
+        }
         let is_parameter = match bound.pat_parent[root.idx()] {
             PatParent::Param(_) => true,
             // `NodeFlagsConstant`
@@ -2337,25 +2346,21 @@ impl<'p, 's> Checker<'p, 's> {
             return declared;
         }
         self.in_check_identifier.push((file, parent));
-        let flow = bound.flow_of_expr(e);
-        let ty = 'checked: {
-            let parent_ty = self.type_for_binding_element_parent(file, pat, parent);
-            let parent_ty = self.map_type(parent_ty, Self::base_constraint_or_type);
-            if !self.is_union(parent_ty) || is_parameter && self.any_binding_assigned(file, root) {
-                break 'checked declared;
-            }
-            let node = hir.node(parent);
-            let reference =
-                Reference::synthetic(file, Root::Pattern(parent), SmallVec::new(), node);
-            let mut walk = Walk::new(reference, parent_ty, parent_ty, Crossing::Yes);
-            let narrowed = self.get_flow_type_of_reference(&mut walk, flow);
-            if narrowed.is_never() {
-                break 'checked TypeId::NEVER;
-            }
-            self.type_of_binding_element(file, pat, narrowed, true)
-        };
+        let parent_ty = self.type_for_binding_element_parent(file, pat, parent);
+        let parent_ty = self.map_type(parent_ty, Self::base_constraint_or_type);
+        // "Guard parent-type resolution only; flow analysis should allow re-entrant narrowing"
         self.in_check_identifier.pop();
-        ty
+        if !self.is_union(parent_ty) || is_parameter && self.any_binding_assigned(file, root) {
+            return declared;
+        }
+        let node = hir.node(parent);
+        let reference = Reference::synthetic(file, Root::Pattern(parent), SmallVec::new(), node);
+        let mut walk = Walk::new(reference, parent_ty, parent_ty, Crossing::Yes);
+        let narrowed = self.get_flow_type_of_reference(&mut walk, bound.flow_of_expr(e));
+        if narrowed.is_never() {
+            return TypeId::NEVER;
+        }
+        self.type_of_binding_element(file, pat, narrowed, true)
     }
 
     /// `getNarrowedTypeOfSymbol` for the parameter `p` at `e`. If it has no type annotation and the

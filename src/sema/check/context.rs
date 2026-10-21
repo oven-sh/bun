@@ -2401,7 +2401,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `IsNodeDescendantOf`
-    fn is_node_descendant_of(&self, file: FileId, e: ExprId, ancestor: ExprId) -> bool {
+    pub(super) fn is_node_descendant_of(&self, file: FileId, e: ExprId, ancestor: ExprId) -> bool {
         let hir = self.hir(file);
         let ancestor = hir.node(ancestor);
         hir.find_ancestor(hir.node(e), |n| n == ancestor).is_some()

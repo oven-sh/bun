@@ -1516,31 +1516,24 @@ describe("output timing", () => {
 // The runner relays a script's output. It must not decode it: output in Latin-1, Shift-JIS or GBK
 // is not valid UTF-8, and each byte of it would become U+FFFD.
 describe("a script's output that is not UTF-8 is relayed without a changed byte", () => {
+  // One read of the runner returns at most 256 KiB, so a line of this length always takes several
+  // reads, and a later read completes it.
+  const longLine = 600_000;
   const files = {
     "package.json": JSON.stringify({ name: "filter-bytes", workspaces: ["packages/*"] }),
     "packages/app/package.json": JSON.stringify({
       name: "app",
-      scripts: Object.fromEntries(["out", "err", "split", "tail"].map(kind => [kind, `${bunExe()} write.js ${kind}`])),
+      scripts: Object.fromEntries(["out", "err", "long", "tail"].map(kind => [kind, `"${bunExe()}" write.js ${kind}`])),
     }),
     "packages/app/write.js": /* js */ `
       const bytes = text => Buffer.from(text, "latin1");
-      switch (process.argv[2]) {
-        case "out":
-          process.stdout.write(bytes("a\\xffb\\n"));
-          break;
-        case "err":
-          process.stderr.write(bytes("c\\xfed\\n"));
-          break;
-        case "split":
-          process.stdout.write(bytes("e\\xff"));
-          // The pause makes the runner read the two halves of the line as two chunks.
-          await Bun.sleep(250);
-          process.stdout.write(bytes("f\\n"));
-          break;
-        case "tail":
-          process.stdout.write(bytes("g\\xfdh"));
-          break;
-      }
+      const [stream, text] = {
+        out: [Bun.stdout, "a\\xffb\\n"],
+        err: [Bun.stderr, "c\\xfed\\n"],
+        long: [Bun.stdout, "e\\xff" + "x".repeat(${longLine}) + "f\\n"],
+        tail: [Bun.stdout, "g\\xfdh"],
+      }[process.argv[2]];
+      await Bun.write(stream, bytes(text));
     `,
   };
 
@@ -1572,7 +1565,6 @@ describe("a script's output that is not UTF-8 is relayed without a changed byte"
 
   test.each([
     ["stderr", "err", "c\xfed\n"],
-    ["a stdout line that arrives in two chunks while stderr is silent", "split", "e\xfff\n"],
     ["a last line without a line break", "tail", "g\xfdh\n"],
   ])("%s", async (_, script, line) => {
     using dir = tempDir("filter-bytes", files);
@@ -1582,6 +1574,20 @@ describe("a script's output that is not UTF-8 is relayed without a changed byte"
     expect(stdout).not.toContain("\xef\xbf\xbd");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+
+  test("a line that takes several reads", async () => {
+    using dir = tempDir("filter-bytes", files);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--filter", "*", "long"]);
+    const expected = `app long: e\xff${"x".repeat(longLine)}f\napp long: Exited with code 0\n`;
+    // A failure prints the two ends of the output, not 600,000 characters.
+    const ends = (text: string) => ({
+      length: text.length,
+      head: text.slice(0, 16),
+      tail: text.slice(-40),
+      same: text === expected,
+    });
+    expect({ ...ends(stdout), stderr, exitCode }).toEqual({ ...ends(expected), stderr: "", exitCode: 0 });
   });
 
   // FORCE_COLOR=1 selects the renderer. Whichever one writes into a pipe, it has to keep the bytes.

@@ -820,7 +820,7 @@ test.concurrent("bun build --compile truncates the PE output when Authenticode s
 // A Windows target gets ".exe" added to --outfile. On Linux the name is bytes, not text, and the
 // suffix has to be added to those bytes. `sh` puts the byte into the argument: a JavaScript string
 // cannot hold a lone 0xFF byte.
-test.skipIf(!isLinux)("bun build --compile adds .exe to an --outfile that is not UTF-8", async () => {
+test.skipIf(!isLinux).concurrent("bun build --compile adds .exe to an --outfile that is not UTF-8", async () => {
   using dir = tempDir("pe-outfile-bytes", { "entry.js": `console.log("hi");`, "ff.bin": Buffer.from([0xff]) });
   await Bun.write(join(String(dir), "template.exe"), minimalPE64Template());
   await using proc = Bun.spawn({

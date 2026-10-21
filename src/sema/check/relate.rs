@@ -568,6 +568,7 @@ fn is_normalized_kind(data: &TypeData) -> bool {
         | TypeData::Intersection(_)
         | TypeData::IndexedAccess { .. }
         | TypeData::Cond { .. }
+        | TypeData::Keyof(_)
         | TypeData::Substitution { .. } => false,
         // `t.AsTypeReference().node != nil`
         TypeData::Ref { args, .. } => args.as_deferred().is_none(),
@@ -1472,7 +1473,7 @@ impl<'p, 's> Checker<'p, 's> {
                 TypeData::Union(_) | TypeData::Intersection(_) => {
                     self.normalized_union_or_intersection(t, writing)
                 }
-                TypeData::IndexedAccess { .. } | TypeData::Cond { .. } => {
+                TypeData::IndexedAccess { .. } | TypeData::Cond { .. } | TypeData::Keyof(_) => {
                     self.simplified(t, writing)
                 }
                 TypeData::Tuple {
@@ -1544,8 +1545,21 @@ impl<'p, 's> Checker<'p, 's> {
         match self.data(t) {
             TypeData::IndexedAccess { .. } => self.simplified_indexed_access(t, writing),
             TypeData::Cond { .. } => self.simplified_conditional(t, writing),
+            TypeData::Keyof(target) => self.simplified_index_type(t, *target),
             _ => t,
         }
+    }
+
+    /// `getSimplifiedIndexType` of `t`, which is `keyof target`.
+    fn simplified_index_type(&mut self, t: TypeId, target: TypeId) -> TypeId {
+        if self.is_generic_mapped_type(target)
+            && self.mapped_name_type(target).is_some()
+            && let Some((file, node, _)) = self.mapped_origin(target)
+            && !matches!(self.mapped_modifiers_source(file, node), Some((_, true)))
+        {
+            return self.get_index_type_for_mapped_type(target, IndexFlags::empty());
+        }
+        t
     }
 
     /// `getSimplifiedIndexedAccessType`

@@ -2944,18 +2944,23 @@ describe.concurrent("the links on the way to the package folder", () => {
   // `bun link <name>` puts a link to a checkout at node_modules/<name>. package.json and the lockfile keep the version
   // from the registry, so `bun patch` takes the package. It used to replace the checkout with the copy.
   describe("a link from bun link", () => {
-    /** `app` with `dependencies` installed, where `bun link` then put a link to `checkout` over `name`. */
+    /** `app` with `dependencies` installed, where `bun link` then put a link to the checkout at `at` over `name`. */
     async function linkedProject(
       linker: Linker,
       dependencies: Record<string, string>,
-      { name, version, files = {} }: { name: string; version: string; files?: DirectoryTree },
+      {
+        name,
+        version,
+        files = {},
+        at = "checkout",
+      }: { name: string; version: string; files?: DirectoryTree; at?: string },
     ) {
       const tmp = tempDir("bun-patch-bun-link", {
         app: {
           "package.json": JSON.stringify({ name: "app", dependencies }),
           "bunfig.toml": `[install]\nlinker = "${linker}"\nglobalStore = false\n`,
         },
-        checkout: {
+        [at]: {
           ".git": { HEAD: "ref: refs/heads/main\n" },
           "package.json": JSON.stringify({ name, version }),
           "index.js": "module.exports = 'checkout';\n",
@@ -2964,7 +2969,7 @@ describe.concurrent("the links on the way to the package folder", () => {
         },
       });
       const dir = join(String(tmp), "app");
-      const checkout = join(String(tmp), "checkout");
+      const checkout = join(String(tmp), at);
       const env = { ...projectEnv(dir), BUN_INSTALL_GLOBAL_DIR: join(String(tmp), "global") };
       await bunOk(dir, env, "install");
       await bunOk(checkout, env, "link");
@@ -2987,14 +2992,16 @@ describe.concurrent("the links on the way to the package folder", () => {
       };
     }
     const noDeps = { name: "no-deps", version: "1.1.0" };
+    const insideNodeModules = { ...noDeps, at: "app/node_modules/.vendor/no-deps" };
     const refusal = (folder: string, real: string, note: string) =>
-      `error: refusing to patch ${folder}: resolves to ${real}, outside the project's node_modules\nnote: ${note}\n`;
+      `error: refusing to patch ${folder}: resolves to ${real}, which bun install does not manage\nnote: ${note}\n`;
 
     test.each([
       ["no-deps", noDeps],
       ["node_modules/no-deps", noDeps],
       ["@types/is-number", { name: "@types/is-number", version: "1.0.0" }],
-    ])("bun patch %s replaces the link and keeps the checkout", async (arg, pkg) => {
+      ["no-deps", insideNodeModules],
+    ])("bun patch %s replaces the link and keeps the checkout %j", async (arg, pkg) => {
       await using project = await linkedProject("hoisted", { [pkg.name]: pkg.version }, pkg);
       const { dir, env, link, outside } = project;
       const before = outside();
@@ -3030,11 +3037,12 @@ describe.concurrent("the links on the way to the package folder", () => {
 
     // The diff moves files in and out of the folder, and puts its scratch folders next to it.
     test.each([
-      ["hoisted", "no-deps"],
-      ["hoisted", "node_modules/no-deps"],
-      ["isolated", "node_modules/no-deps"],
-    ] as const)("%s linker: --commit %s without bun patch is refused", async (linker, arg) => {
-      await using project = await linkedProject(linker, { "no-deps": "1.1.0" }, noDeps);
+      ["hoisted", "no-deps", noDeps],
+      ["hoisted", "node_modules/no-deps", noDeps],
+      ["isolated", "node_modules/no-deps", noDeps],
+      ["hoisted", "no-deps", insideNodeModules],
+    ] as const)("%s linker: --commit %s without bun patch is refused %j", async (linker, arg, pkg) => {
+      await using project = await linkedProject(linker, { "no-deps": "1.1.0" }, pkg);
       const { dir, env, checkout, link, outside } = project;
       const before = outside();
 
@@ -3083,9 +3091,13 @@ describe.concurrent("the links on the way to the package folder", () => {
   });
 
   // No link on the way leaves the node_modules that the path starts in.
-  test.each(["hoisted", "isolated"] as const)(
-    "a path into the node_modules of a nested project that isn't a workspace (%s linker)",
-    async linker => {
+  test.each([
+    ["hoisted", "nested/node_modules/no-deps"],
+    ["isolated", "nested/node_modules/no-deps"],
+    ["hoisted", "node_modules/../nested/node_modules/no-deps"],
+  ] as const)(
+    "a path into the node_modules of a nested project that isn't a workspace (%s linker, %s)",
+    async (linker, folder) => {
       await using project = await installedProject(
         { dependencies: { "no-deps": "1.1.0" } },
         {
@@ -3097,7 +3109,6 @@ describe.concurrent("the links on the way to the package folder", () => {
       );
       const { dir, env } = project;
       await bunOk(join(dir, "nested"), env, "install");
-      const folder = "nested/node_modules/no-deps";
       expect(kind(dir, folder)).toBe(linker === "hoisted" ? "directory" : "link");
 
       await expectPrepared(dir, env, folder, "no-deps", folder);

@@ -1254,38 +1254,39 @@ fn is_in_global_store(cache_path: &[u8], real: &[u8]) -> bool {
     resolve_path::is_parent_or_equal(cache_path, real) != resolve_path::ParentEqual::Unrelated
 }
 
-/// Returns the part of `folder` before its first `node_modules`.
-fn outermost_package(folder: &[u8]) -> &[u8] {
+/// Returns the part of `folder` before its first `node_modules`. A `..` can lead out of one again,
+/// so it is applied first.
+fn outermost_package(folder: &[u8]) -> Vec<u8> {
+    let mut spill = Vec::new();
+    let folder = resolve_path::join_spill::<platform::Posix>(&mut spill, &[folder]);
     let mut start = 0;
     for name in strings::split(folder, b"/") {
         if name == b"node_modules" {
-            return &folder[..start];
+            return folder[..start].to_vec();
         }
         start += name.len() + 1;
     }
-    folder
+    folder.to_vec()
 }
 
-/// Returns true if `real`, which has its symlinks resolved, is inside the `node_modules` that
-/// `folder` starts in, the root's or a workspace's.
-fn is_in_node_modules(lockfile: &Lockfile, folder: &[u8], real: &[u8]) -> bool {
+/// Returns true if `real`, which has its symlinks resolved, is inside `subfolder` of the package
+/// that `folder` starts in, of the root or of a workspace.
+fn is_in_project(lockfile: &Lockfile, folder: &[u8], subfolder: &[u8], real: &[u8]) -> bool {
     let workspaces = lockfile.workspace_paths.values().iter();
-    [outermost_package(folder), b""]
+    [outermost_package(folder).as_slice(), b""]
         .into_iter()
         .chain(workspaces.map(|path| lockfile.str(path)))
         .any(|package| {
-            let node_modules =
-                resolve_path::join::<platform::Auto>(&[package, b"node_modules"]).to_vec();
-            resolve_links(&node_modules).is_ok_and(|node_modules| {
-                resolve_path::is_parent_or_equal(&node_modules, real)
-                    == resolve_path::ParentEqual::Parent
+            let parent = resolve_path::join::<platform::Auto>(&[package, subfolder]).to_vec();
+            resolve_links(&parent).is_ok_and(|parent| {
+                resolve_path::is_parent_or_equal(&parent, real) == resolve_path::ParentEqual::Parent
             })
         })
 }
 
-/// Returns `folder` with symlinks resolved. If that's outside the project's `node_modules` (the
-/// target of a `bun link`) or inside the shared global store, and `replaces_folder` is set, returns
-/// the last symlink on the way instead, which `bun patch` replaces with a copy.
+/// Returns `folder` with symlinks resolved. If an install doesn't manage that folder (the target of
+/// a `bun link`) or it's inside the shared global store, and `replaces_folder` is set, returns the
+/// last symlink on the way instead, which `bun patch` replaces with a copy.
 fn real_folder(
     lockfile: &Lockfile,
     cache_path: &[u8],
@@ -1299,28 +1300,34 @@ fn real_folder(
             Global::crash();
         }
     };
-    let is_own = |real: &[u8]| {
-        !is_in_global_store(cache_path, real) && is_in_node_modules(lockfile, folder, real)
+    let is_own = |subfolder: &[u8], real: &[u8]| {
+        !is_in_global_store(cache_path, real) && is_in_project(lockfile, folder, subfolder, real)
     };
 
     let real = resolve(folder);
-    if is_own(&real) {
-        return real;
-    }
     let link = strings::without_trailing_slash(folder);
     let link = resolve_path::join::<platform::Auto>(&[
         &resolve(resolve_path::dirname::<platform::Auto>(link)),
         bun_paths::basename(link),
     ])
     .to_vec();
-    let is_own_link = is_own(&link);
+    // The only link that an install puts in a package's place leads into the isolated store.
+    let installed_in: &[u8] = if is_link(&link) {
+        b"node_modules/.bun"
+    } else {
+        b"node_modules"
+    };
+    if is_own(installed_in, &real) {
+        return real;
+    }
+    let is_own_link = is_own(b"node_modules", &link);
     if replaces_folder && is_own_link {
         return link;
     }
 
     if !is_in_global_store(cache_path, &real) {
         bun_core::pretty_errorln!(
-            "<r><red>error<r>: refusing to patch <b>{}<r>: resolves to <b>{}<r>, outside the project's node_modules",
+            "<r><red>error<r>: refusing to patch <b>{}<r>: resolves to <b>{}<r>, which <cyan>bun install<r> does not manage",
             bstr::BStr::new(folder),
             bstr::BStr::new(&real),
         );
@@ -1441,7 +1448,7 @@ fn replace_with_cache_copy(
     }
 
     if has_old {
-        // If the old folder was a symlink, it points out of the project's node_modules, so only the
+        // If the old folder was a symlink, its target is not the project's to change, so only the
         // symlink itself is removed.
         if is_link(&old.0) {
             if let Err(e) = link_store_siblings(cache_path, &old.0, folder) {
@@ -1470,7 +1477,7 @@ fn move_aside(folder: &ZStr, aside: &ZStr) -> sys::Result<()> {
     let Err(refused) = sys::renameat(cwd.fd, folder, cwd.fd, aside) else {
         return Ok(());
     };
-    // If `folder` is a symlink, it points out of the project's node_modules, so nothing is moved out
+    // If `folder` is a symlink, its target is not the project's to change, so nothing is moved out
     // of it.
     if refused.get_errno() == sys::E::ENOENT || is_link(folder.as_bytes()) {
         return Err(refused);

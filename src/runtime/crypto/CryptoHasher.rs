@@ -417,23 +417,21 @@ impl CryptoHasher {
         heap: &JsHeap<'a>,
         output: Option<DigestOutput<'a>>,
     ) -> bindgen::Result<'a, JsLocal<'a>> {
-        finish(
-            heap,
-            output,
-            EVP_MAX_MD_SIZE_USIZE,
-            JsHeap::create_buffer,
-            |out| {
-                Ok(match self {
-                    CryptoHasher::Hmac(hmac) => hmac
-                        .take()
-                        .ok_or_else(|| Self::hmac_consumed(heap))?
-                        .r#final(out)
-                        .len(),
-                    CryptoHasher::Evp(evp) => evp.r#final(engine_of(heap), out).len(),
-                    CryptoHasher::Zig(zig) => zig.final_(out).len(),
-                })
-            },
-        )
+        let at_least = match output {
+            Some(DigestOutput::Into(_)) => self.byte_length(heap)? as usize,
+            _ => 0,
+        };
+        finish(heap, output, at_least, JsHeap::create_buffer, |out| {
+            Ok(match self {
+                CryptoHasher::Hmac(hmac) => hmac
+                    .take()
+                    .ok_or_else(|| Self::hmac_consumed(heap))?
+                    .r#final(out)
+                    .len(),
+                CryptoHasher::Evp(evp) => evp.r#final(engine_of(heap), out).len(),
+                CryptoHasher::Zig(zig) => zig.final_(out).len(),
+            })
+        })
     }
 
     pub(crate) fn hash<'a>(

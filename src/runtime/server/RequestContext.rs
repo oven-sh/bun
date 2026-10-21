@@ -3870,11 +3870,8 @@ where
             blob.size()
         };
 
-        let (content_type, needs_content_type, content_type_needs_free) = get_content_type(
-            response.get_init_headers_mut(),
-            response.pending_content_type(),
-            blob,
-        );
+        let (content_type, needs_content_type, content_type_needs_free) =
+            get_content_type(response.get_init_headers_mut(), blob);
         // NOTE: `MimeType` owns a `Cow<'static, [u8]>`; Drop handles the owned case.
         // Hold the value past all reads below, then let it drop at scope end.
         let _ct_guard = scopeguard::guard(content_type_needs_free, |_needs| {
@@ -4853,12 +4850,7 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
     }
 }
 
-/// Precedence: the header, `Response::pending_content_type`, then `blob` (which may be re-derived from a stream).
-fn get_content_type(
-    headers: Option<&mut FetchHeaders>,
-    pending_content_type: Option<&[u8]>,
-    blob: &AnyBlob,
-) -> (MimeType, bool, bool) {
+fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (MimeType, bool, bool) {
     let mut needs_content_type = true;
     let mut content_type_needs_free = false;
 
@@ -4880,9 +4872,7 @@ fn get_content_type(
             }
         }
 
-        if let Some(pending_content_type) = pending_content_type {
-            bun_http_types::MimeType::by_name(pending_content_type)
-        } else if !blob.content_type().is_empty() {
+        if !blob.content_type().is_empty() {
             bun_http_types::MimeType::by_name(blob.content_type())
         } else if let Some(content) = bun_http_types::MimeType::sniff(blob.slice()) {
             content

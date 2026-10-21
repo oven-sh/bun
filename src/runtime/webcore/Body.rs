@@ -1606,7 +1606,7 @@ pub(crate) fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<
 // ────────────────────────────────────────────────────────────────────────────
 
 /// Mixin trait with provided methods.
-/// Implementers supply `get_body_value`, `headers_content_type`, `get_form_data_encoding`,
+/// Implementers supply `get_body_value`, `get_fetch_headers`, `build_fetch_headers`, `get_form_data_encoding`,
 /// and optionally override `get_body_readable_stream`.
 ///
 /// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. The
@@ -1619,8 +1619,13 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// short and do not hold it across a call that re-enters JS.
     #[allow(clippy::mut_from_ref)]
     fn get_body_value(&self) -> &mut Value;
-    /// The `Content-Type` the owner's headers carry, without allocating the header list.
-    fn headers_content_type(&self) -> Option<bun_core::Utf8Bytes<'_>>;
+    /// `FetchHeaders` is an
+    /// opaque, intrusively-refcounted C++ handle whose accessors take `&mut self`
+    /// (FFI signature is `*mut`). Returning `NonNull` instead of `&FetchHeaders`
+    /// avoids deriving `&mut T` from `&T` at the call sites (UB).
+    fn get_fetch_headers(&self) -> Option<NonNull<FetchHeaders>>;
+    /// Builds the header list if there is none yet.
+    fn build_fetch_headers(&self, global_object: &JSGlobalObject) -> JsResult<()>;
     fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>>;
 
     // ────────────────────────────────────────────────────────────────────
@@ -1629,6 +1634,16 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     // [`BodyOwnerJs`] forwarders erase the per-class codegen module so the
     // bodies can live here once.
     // ────────────────────────────────────────────────────────────────────
+
+    /// The header list is built on first use and takes its `Content-Type` from the `Blob` body, so build it before that body goes.
+    fn keep_body_content_type(&self, global_object: &JSGlobalObject) -> JsResult<()> {
+        if let Value::Blob(blob) = self.get_body_value()
+            && !blob.content_type().is_empty()
+        {
+            self.build_fetch_headers(global_object)?;
+        }
+        Ok(())
+    }
 
     /// JS-side `js.gc.stream` cache is the
     /// source of truth; fall back to the native `Locked.readable` slot.
@@ -1736,6 +1751,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     }
 
     fn get_text(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        self.keep_body_content_type(global_object)?;
         let context = global_object.bun_vm().context_of_caller(callframe);
         let value = self.get_body_value();
         if matches!(value, Value::Used) {
@@ -1776,6 +1792,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     }
 
     fn get_body(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        self.keep_body_content_type(global_this)?;
         // The stream the getter makes is the reading script's.
         let context = global_this.bun_vm().context_of_caller_no_frame();
         let body = self.get_body_value();
@@ -1803,6 +1820,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        self.keep_body_content_type(global_this)?;
         let cx = global_this.js_thread_of_caller(callframe);
         // Step 1: If this is unusable, throw a TypeError.
         self.throw_if_body_unusable(global_this)?;
@@ -1878,6 +1896,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     }
 
     fn get_json(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        self.keep_body_content_type(global_object)?;
         let context = global_object.bun_vm().context_of_caller(callframe);
         let value = self.get_body_value();
         if matches!(value, Value::Used) {
@@ -1928,6 +1947,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        self.keep_body_content_type(global_object)?;
         let context = global_object.bun_vm().context_of_caller(callframe);
         bun_core::scoped_log!(BodyMixin, "getArrayBuffer");
         let value = self.get_body_value();
@@ -1984,6 +2004,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        self.keep_body_content_type(global_object)?;
         let context = global_object.bun_vm().context_of_caller(callframe);
         let value = self.get_body_value();
 
@@ -2035,6 +2056,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        self.keep_body_content_type(global_object)?;
         let value = self.get_body_value();
 
         if matches!(value, Value::Used) {
@@ -2134,6 +2156,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         global_object: &JSGlobalObject,
         this_value: JSValue,
     ) -> JsResult<JSValue> {
+        self.keep_body_content_type(global_object)?;
         let value = self.get_body_value();
 
         if matches!(value, Value::Used) {
@@ -2182,9 +2205,15 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         // SAFETY: `Blob::new` returns a freshly heap-allocated, ref-counted Blob.
         let blob = unsafe { &mut *blob_ptr };
         if blob.content_type().is_empty() {
-            if let Some(content_slice) = BodyMixin::headers_content_type(self) {
-                let mime_type = MimeType::init(content_slice.slice(), true, None);
-                set_blob_content_type(blob, mime_type);
+            if let Some(fetch_headers) = BodyMixin::get_fetch_headers(self) {
+                // `fetch_headers` is a live C++ FetchHeaders handle;
+                // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
+                let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
+                if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
+                    let content_slice = content_type.to_utf8();
+                    let mime_type = MimeType::init(content_slice.slice(), true, None);
+                    set_blob_content_type(blob, mime_type);
+                }
             }
             if !blob.content_type_was_set.get() && blob.store.get().is_some() {
                 set_blob_content_type(blob, bun_http_types::MimeType::TEXT);

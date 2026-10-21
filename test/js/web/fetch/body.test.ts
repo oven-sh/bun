@@ -1,6 +1,6 @@
 import { file, spawn, version, type Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, exampleSite, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
 import net from "net";
 import { join } from "node:path";
 // @ts-expect-error missing in @types/node
@@ -1323,10 +1323,8 @@ describe.concurrent("string body consumption does not leak", () => {
         ctor === "Request"
           ? `b => new Request("http://example.com/", { method: "POST", body: b })`
           : `b => new Response(b)`;
-      // A debug build takes over 5 s for 130 of these reads, so it does fewer.
-      const [warm, block] = isDebug ? [16, 16] : [50, 40];
       const src = `
-        const SZ = 2_000_000, WARM = ${warm}, BLOCK = ${block};
+        const SZ = 2_000_000, WARM = 50, BLOCK = 40;
         const rss = process.memoryUsage.rss;
         const mb = () => (rss() / 1048576) | 0;
         const body = ${makeBody};
@@ -1348,10 +1346,9 @@ describe.concurrent("string body consumption does not leak", () => {
       const m = stdout.match(/BLOCK1:(-?\d+) BLOCK2:(-?\d+)/);
       expect(m).not.toBeNull();
       const block2 = Number(m![2]);
-      // Bounded: BLOCK2 ≈ 0 (plateaued). Leaking: BLOCK2 ≈ BLOCK × ~3 MB (100+ MB
-      // for 40) and keeps growing every block. BLOCK × 1.25 MB (50 MB for 40)
-      // cleanly separates the two.
-      expect(block2).toBeLessThan(block * 1.25);
+      // Bounded: BLOCK2 ≈ 0 (plateaued). Leaking: BLOCK2 ≈ 40 × ~3 MB ≈ 100+ MB
+      // and keeps growing every block. 50 MB cleanly separates the two.
+      expect(block2).toBeLessThan(50);
       expect(exitCode).toBe(0);
     });
   }
@@ -1557,22 +1554,6 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     ['""', () => "", ""],
     ["Uint8Array(0)", () => new Uint8Array(0), ""],
     ["Blob([])", () => new Blob([]), ""],
-  ];
-  // [name, init, the Content-Type it gives a body, its payload read as text]
-  const typedSources: [string, () => Bun.BodyInit, string, unknown][] = [
-    ["Blob", () => new Blob(["a=1"], { type: "text/x-custom" }), "text/x-custom", "a=1"],
-    ["File", () => new File(["a=1"], "a.txt", { type: "text/x-custom" }), "text/x-custom", "a=1"],
-    ["URLSearchParams", () => new URLSearchParams("a=1"), "application/x-www-form-urlencoded;charset=UTF-8", "a=1"],
-    [
-      "FormData",
-      () => {
-        const form = new FormData();
-        form.append("a", "1");
-        return form;
-      },
-      "multipart/form-data; boundary=",
-      expect.stringContaining('name="a"'),
-    ],
   ];
   const owners: [string, (body: Bun.BodyInit, headers?: Bun.HeadersInit) => Request | Response][] = [
     // `duplex` is what undici wants for a stream body; Bun accepts and ignores it.
@@ -1864,139 +1845,8 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
           });
         }
       });
-
-      // https://fetch.spec.whatwg.org/#concept-bodyinit-extract gives a
-      // ReadableStream init no MIME type, whatever the stream was made from.
-      describe("a stream body contributes no Content-Type, whatever is behind the stream", () => {
-        const cases = typedSources.flatMap(([name, init, , content]) =>
-          owners.map(([fromName, makeFrom]) => [fromName, name, makeFrom, init, content] as const),
-        );
-        test.each(cases)("a stream taken from a %s made from %s", async (fromName, name, makeFrom, init, content) => {
-          expect({
-            bare: make(makeFrom(init()).body!).headers.get("content-type"),
-            otherHeaders: make(makeFrom(init()).body!, { "x-a": "1" }).headers.get("content-type"),
-            explicit: make(makeFrom(init()).body!, { "content-type": "text/x-other" }).headers.get("content-type"),
-            text: await make(makeFrom(init()).body!).text(),
-          }).toEqual({ bare: null, otherHeaders: null, explicit: "text/x-other", text: content });
-        });
-      });
     });
   }
-
-  // The same spec step gives a Blob, FormData or URLSearchParams init a MIME
-  // type, and the Request constructor appends it to the header list right
-  // there. So the header does not depend on what is read first, and
-  // `new Request(input, init)` copies input's header list instead of looking
-  // at the body again.
-  describe("new Request() takes the Content-Type from the body init at construction", () => {
-    const make = (body: Bun.BodyInit) =>
-      new Request("http://a/", { method: "POST", body, duplex: "half" } as RequestInit);
-    test.each(typedSources)("%s", async (name, init, type) => {
-      const contentType = (request: Request) => request.headers.get("content-type")?.slice(0, type.length) ?? null;
-      const after = async (use: (request: Request) => unknown) => {
-        const request = make(init());
-        await use(request);
-        return contentType(request);
-      };
-      const touched = make(init());
-      touched.body;
-      const clone = touched.clone();
-      await clone.text();
-      const adopted = () => make(new Response(init()).body!);
-      const adoptedThenCloned = adopted();
-      adoptedThenCloned.clone();
-      expect({
-        headersFirst: await after(() => {}),
-        bodyFirst: await after(request => request.body),
-        textFirst: await after(request => request.text()),
-        arrayBufferFirst: await after(request => request.arrayBuffer()),
-        blobFirst: await after(request => request.blob()),
-        cloneFirst: await after(request => request.clone().text()),
-        bodyThenClone: contentType(touched),
-        readCloneOfTouched: contentType(clone),
-        sameBoundary: clone.headers.get("content-type") === touched.headers.get("content-type"),
-        copied: contentType(new Request(make(init()))),
-        copiedWithInit: contentType(new Request(make(init()), { method: "PUT" })),
-        copiedWithNewHeaders: contentType(new Request(make(init()), { headers: { "x-a": "1" } })),
-        explicitWins: new Request("http://a/", {
-          method: "POST",
-          body: init(),
-          headers: { "content-type": "text/x-other" },
-        }).headers.get("content-type"),
-        cloneOfAdoptedStream: contentType(adopted().clone()),
-        adoptedStreamAfterClone: contentType(adoptedThenCloned),
-        copyOfAdoptedStream: contentType(new Request(adopted())),
-        copyOfAdoptedStreamWithInit: contentType(new Request(adopted(), { method: "PUT" })),
-      }).toEqual({
-        headersFirst: type,
-        bodyFirst: type,
-        textFirst: type,
-        arrayBufferFirst: type,
-        blobFirst: type,
-        cloneFirst: type,
-        bodyThenClone: type,
-        readCloneOfTouched: type,
-        sameBoundary: true,
-        copied: type,
-        copiedWithInit: type,
-        copiedWithNewHeaders: null,
-        explicitWins: "text/x-other",
-        cloneOfAdoptedStream: null,
-        adoptedStreamAfterClone: null,
-        copyOfAdoptedStream: null,
-        copyOfAdoptedStreamWithInit: null,
-      });
-    });
-
-    test("also when Bun.serve's server.fetch() builds the Request", async () => {
-      const seen: (string | null)[] = [];
-      using server = Bun.serve({
-        port: 0,
-        fetch(request) {
-          request.body;
-          seen.push(request.headers.get("content-type"));
-          return new Response("ok");
-        },
-      });
-      const url = new URL("/", server.url).href;
-      const body = () => new Blob(["a=1"], { type: "text/x-custom" });
-      const callerHeaders = new Headers({ "x-a": "1" });
-      await server.fetch(url, { method: "POST", body: body() });
-      await server.fetch(url, { method: "POST", body: body(), headers: { "x-a": "1" } });
-      await server.fetch(url, { method: "POST", body: body(), headers: callerHeaders });
-      await server.fetch(url, { method: "POST", body: body(), headers: { "content-type": "text/x-other" } });
-      expect({ seen, callerHeaders: [...callerHeaders] }).toEqual({
-        seen: ["text/x-custom", "text/x-custom", "text/x-custom", "text/x-other"],
-        callerHeaders: [["x-a", "1"]],
-      });
-    });
-
-    // Bun extension: a Response in place of `init` gives its headers and its body.
-    test("also when a Response stands in for init", async () => {
-      const typed = (init?: ResponseInit) => new Response(new Blob(["a=1"], { type: "text/x-custom" }), init);
-      const contentType = (response: Response) =>
-        new Request("http://a/", response as RequestInit).headers.get("content-type");
-      const headersRead = typed();
-      headersRead.headers;
-      const bodyRead = typed();
-      bodyRead.body;
-      expect({
-        fromBody: contentType(typed()),
-        explicitWins: contentType(typed({ headers: { "content-type": "text/x-other" } })),
-        otherHeaderOnly: contentType(typed({ headers: { "x-a": "1" } })),
-        headersRead: contentType(headersRead),
-        bodyRead: contentType(bodyRead),
-        text: await new Request("http://a/", typed() as RequestInit).text(),
-      }).toEqual({
-        fromBody: "text/x-custom",
-        explicitWins: "text/x-other",
-        otherHeaderOnly: "text/x-custom",
-        headersRead: "text/x-custom",
-        bodyRead: "text/x-custom",
-        text: "a=1",
-      });
-    });
-  });
 
   // A null body is not a zero-length body: nothing can use it up.
   test("Response.redirect() and Response.error() have a null body", async () => {
@@ -2188,127 +2038,86 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
   });
 });
 
-// The Content-Type that a Blob-like body gives a Response or Request is set at
-// construction (fetch spec "extract a body"), so reading the body first must
-// not lose it. https://github.com/oven-sh/bun/issues/45245
-describe("the body's Content-Type is still in the headers after the body is consumed", () => {
-  const owners = {
-    Response: (body: BodyInit, init?: ResponseInit) => new Response(body, init),
-    Request: (body: BodyInit, init?: RequestInit) =>
-      new Request("http://example.com/", { method: "POST", body, ...init }),
+// https://github.com/oven-sh/bun/issues/45245
+describe("the Content-Type a body gives does not depend on what is read first", () => {
+  // A type that formData() takes, so that it reads every body below.
+  const urlencoded = "application/x-www-form-urlencoded;custom=1";
+  const formData = () => {
+    const form = new FormData();
+    form.append("a", "1");
+    return form;
   };
-  const bodies: Record<string, [() => BodyInit, string | RegExp]> = {
-    FormData: [
-      () => {
-        const fd = new FormData();
-        fd.append("field", "value");
-        return fd;
-      },
-      /^multipart\/form-data; boundary=.+/,
-    ],
-    URLSearchParams: [() => new URLSearchParams({ field: "value" }), "application/x-www-form-urlencoded;charset=UTF-8"],
-    Blob: [() => new Blob(["value"], { type: "text/x-custom" }), "text/x-custom"],
+  const bodies: [string, () => Bun.BodyInit, unknown][] = [
+    ["Blob", () => new Blob(["a=1"], { type: urlencoded }), urlencoded],
+    ["Bun.file", () => file(import.meta.path, { type: urlencoded }), urlencoded],
+    ["URLSearchParams", () => new URLSearchParams("a=1"), "application/x-www-form-urlencoded;charset=UTF-8"],
+    ["FormData", formData, expect.stringMatching(/^multipart\/form-data; boundary=./)],
+  ];
+  const response = (body: Bun.BodyInit) => new Response(body);
+  const request = (body: Bun.BodyInit) => new Request("http://example.com/", { method: "POST", body });
+  const all = (names: object, type: unknown) => Object.fromEntries(Object.keys(names).map(name => [name, type]));
+
+  const reads: Record<string, (owner: Response | Request) => unknown> = {
+    body: owner => owner.body,
+    textStream: owner => owner.textStream(),
+    text: owner => owner.text(),
+    arrayBuffer: owner => owner.arrayBuffer(),
+    bytes: owner => owner.bytes(),
+    blob: owner => owner.blob(),
+    formData: owner => owner.formData(),
+    // None of the bodies is JSON.
+    json: owner => owner.json().catch(() => {}),
   };
-
-  for (const [ownerName, make] of Object.entries(owners)) {
-    for (const [bodyName, [body, expected]] of Object.entries(bodies)) {
-      describe(`${ownerName}(${bodyName})`, () => {
-        const check = (contentType: string | null) =>
-          typeof expected === "string" ? expect(contentType).toBe(expected) : expect(contentType).toMatch(expected);
-
-        test.each(["text", "arrayBuffer", "bytes", "blob"] as const)(".%s() then .headers", async method => {
-          const owner = make(body());
-          await owner[method]();
-          check(owner.headers.get("content-type"));
-        });
-
-        test("draining .body with a reader, then .headers", async () => {
-          const owner = make(body());
-          const reader = owner.body!.getReader();
-          while (!(await reader.read()).done);
-          check(owner.headers.get("content-type"));
-        });
-
-        test("clone(), consume the clone, then clone.headers", async () => {
-          const owner = make(body());
-          const clone = owner.clone();
-          await clone.text();
-          check(clone.headers.get("content-type"));
-          check(owner.headers.get("content-type"));
-        });
-
-        test("an empty headers init, consume, then .headers", async () => {
-          const owner = make(body(), { headers: new Headers() });
-          await owner.text();
-          check(owner.headers.get("content-type"));
-        });
-
-        test("an explicit Content-Type wins, before and after consumption", async () => {
-          const owner = make(body(), { headers: { "content-type": "text/x-explicit" } });
-          await owner.text();
-          expect(owner.headers.get("content-type")).toBe("text/x-explicit");
-        });
-      });
-    }
-
-    test(`${ownerName}(string) has no Content-Type before or after consumption`, async () => {
-      const owner = make("value");
-      const before = owner.headers.get("content-type");
-      await owner.text();
-      expect({ before, after: owner.headers.get("content-type") }).toEqual({ before: null, after: null });
+  describe.each([
+    ["Response", response],
+    ["Request", request],
+  ] as const)("%s", (_, make) => {
+    test.each(bodies)("%s", async (_, body, type) => {
+      const seen: Record<string, string | null> = {};
+      for (const [name, read] of Object.entries(reads)) {
+        const owner = make(body());
+        await read(owner);
+        seen[name] = owner.headers.get("content-type");
+      }
+      expect(seen).toEqual(all(reads, type));
     });
 
-    test(`${ownerName}(FormData): the boundary in the header is the one in the body read first`, async () => {
-      const owner = make(bodies.FormData[0]());
-      const text = new TextDecoder().decode(await owner.arrayBuffer());
-      const contentType = owner.headers.get("content-type")!;
-      expect(contentType).toStartWith("multipart/form-data; boundary=");
-      expect(text).toStartWith("--" + contentType.slice("multipart/form-data; boundary=".length));
+    test("the FormData boundary is the one in the body", async () => {
+      const owner = make(formData());
+      const text = await owner.text();
+      expect(owner.headers.get("content-type")).toBe(
+        "multipart/form-data; boundary=" + text.slice(2, text.indexOf("\r\n")),
+      );
     });
-  }
+  });
 
-  test("fetch() sends the Content-Type that a rewrapped Request reports, headers unread", async () => {
-    await using server = Bun.serve({
+  const copies: Record<string, (body: Bun.BodyInit) => Response> = {
+    "new Response(p.body, p)": body => {
+      const p = response(body);
+      return new Response(p.body, p);
+    },
+    "new Response(p.body, { headers: p.headers })": body => {
+      const p = response(body);
+      return new Response(p.body, { headers: p.headers });
+    },
+    "new Response(request.body, request)": body => {
+      const p = request(body);
+      return new Response(p.body, p);
+    },
+  };
+  test.each(bodies)("a Response made from the body keeps it (%s)", async (_, body, type) => {
+    using server = Bun.serve({
       port: 0,
-      fetch: req => new Response(req.headers.get("content-type") ?? "(none)"),
+      fetch: req => copies[decodeURIComponent(new URL(req.url).pathname.slice(1))](body()),
     });
-    const input = () => new Request(server.url, { method: "POST", body: bodies.Blob[0]() });
-    // The input's header list comes along, so its Content-Type wins over the new body's.
-    for (const body of ["plain", new Blob(["y"], { type: "text/x-other" })]) {
-      const res = await fetch(new Request(input(), { body }));
-      expect(await res.text()).toBe("text/x-custom");
+    const headers: Record<string, string | null> = {};
+    const wire: Record<string, string | null> = {};
+    for (const [name, copy] of Object.entries(copies)) {
+      headers[name] = copy(body()).headers.get("content-type");
+      wire[name] = (await fetch(new URL(encodeURIComponent(name), server.url))).headers.get("content-type");
     }
-  });
-
-  test.each(["blob() first", "headers first"])("blob().type comes from the inherited Content-Type, %s", async order => {
-    const source = new Response(bodies.Blob[0]());
-    const rewrapped = [new Response("x", source), new Request(owners.Request(bodies.Blob[0]()), { body: "x" })];
-    for (const owner of rewrapped) {
-      if (order === "headers first") owner.headers;
-      expect((await owner.blob()).type).toBe("text/x-custom");
-    }
-  });
-
-  for (const [ownerName, make] of Object.entries(owners)) {
-    test(`${ownerName}: formData() reads the boundary from the headers`, async () => {
-      // Other headers in the init leave the body's Content-Type in place.
-      const parsed = make(bodies.FormData[0](), { headers: { "x-a": "1" } });
-      expect((await parsed.formData()).get("field")).toBe("value");
-      // Without the header there is no boundary, as in node.
-      const deleted = make(bodies.FormData[0]());
-      deleted.headers.delete("content-type");
-      await expect(deleted.formData()).rejects.toThrow(TypeError);
-    });
-  }
-
-  test("Request(ReadableStream) has no Content-Type, like node", () => {
-    const stream = new Blob(["value"], { type: "text/x-custom" }).stream();
-    const req = new Request("http://example.com/", { method: "POST", body: stream });
-    expect(req.headers.get("content-type")).toBeNull();
-  });
-
-  test("new Request(input, { headers }) does not take the Content-Type from the input's body", () => {
-    const input = owners.Request(bodies.Blob[0]());
-    expect(new Request(input, { headers: { "x-a": "1" } }).headers.get("content-type")).toBeNull();
+    expect({ headers, wire }).toEqual({ headers: all(copies, type), wire: all(copies, type) });
+    // A stream gives no type: https://fetch.spec.whatwg.org/#concept-bodyinit-extract
+    expect(new Response(response(body()).body).headers.get("content-type")).toBeNull();
   });
 });

@@ -408,29 +408,6 @@ describe.concurrent("Server", () => {
     }
   });
 
-  test("server.fetch copies the init headers and adds the body's Content-Type", async () => {
-    using server = Bun.serve({
-      port: 0,
-      async fetch(req) {
-        req.headers.set("x-mutated", "1");
-        return Response.json({
-          xA: req.headers.get("x-a"),
-          contentType: req.headers.get("content-type"),
-          body: await req.text(),
-        });
-      },
-    });
-    const headers = new Headers({ "x-a": "1" });
-    const response = await server.fetch(`http://${server.hostname}:${server.port}/`, {
-      method: "POST",
-      headers,
-      body: new Blob(["q"], { type: "text/x-q" }),
-    });
-    expect(await response.json()).toEqual({ xA: "1", contentType: "text/x-q", body: "q" });
-    // The handler's Request owns a copy, so the caller's Headers do not change.
-    expect(headers.get("x-mutated")).toBeNull();
-  });
-
   test("server.fetch(url, { headers }) copies a Headers object", async () => {
     using server = Bun.serve({
       port: 0,

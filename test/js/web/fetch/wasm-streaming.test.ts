@@ -135,22 +135,6 @@ describe("WebAssembly.compileStreaming", () => {
         "WebAssembly response has unsupported MIME type 'null'",
       );
     });
-
-    // A typed body puts its type in the headers. The headers decide, not the body.
-    test("rejects a Content-Type deleted from a typed body's Response", async () => {
-      const response = new Response(new Blob([wasmBody()], { type: "application/wasm" }));
-      response.headers.delete("Content-Type");
-      await expect(WebAssembly.compileStreaming(response)).rejects.toThrow(
-        "WebAssembly response has unsupported MIME type 'null'",
-      );
-    });
-
-    test("compiles a typed body after .body was read", async () => {
-      const response = new Response(new Blob([wasmBody()], { type: "application/wasm" }));
-      expect(response.body).toBeInstanceOf(ReadableStream);
-      const module = await WebAssembly.compileStreaming(response);
-      expect(WebAssembly.Module.exports(module)).toEqual([{ name: "div", kind: "function" }]);
-    });
   });
 
   test("doesn't compile a Response that isn't OK", async () => {

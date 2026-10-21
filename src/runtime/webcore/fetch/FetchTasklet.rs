@@ -1929,7 +1929,7 @@ impl FetchTasklet {
         Response::init(
             crate::webcore::response::Init {
                 // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
-                headers: Some(unsafe { HeadersRef::adopt(headers) }).into(),
+                headers: Some(unsafe { HeadersRef::adopt(headers) }),
                 status_code,
                 status_text,
                 ..Default::default()

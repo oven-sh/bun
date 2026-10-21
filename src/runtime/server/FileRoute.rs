@@ -178,13 +178,7 @@ impl FileRoute {
                     "expected blob not to be heap-allocated"
                 );
                 *body_value = BodyValue::Blob(blob.dupe());
-                let headers = bun_http_jsc::headers_jsc::from_fetch_headers(
-                    global,
-                    response.get_init_headers(),
-                    response
-                        .pending_content_type()
-                        .or_else(|| blob_content_type(&blob)),
-                )?;
+                let headers = headers_from(global, response.get_init_headers(), &blob)?;
                 let status_code = response.status_code();
 
                 return Ok(Some(RefPtr::new(FileRoute::new(

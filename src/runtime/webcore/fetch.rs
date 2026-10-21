@@ -1187,10 +1187,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 if let Some(head) = req.get_fetch_headers_unless_empty() {
                     break 'brk Some(head.as_ptr());
                 }
-                // No list yet: send the `Content-Type` that `.headers` would report.
-                if let Some(content_type) = req.pending_content_type() {
-                    headers = Some(from_fetch_headers(global_this, None, Some(content_type))?);
-                }
                 break 'brk None;
             }
 

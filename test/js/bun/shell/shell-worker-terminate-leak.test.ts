@@ -2,6 +2,14 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";
 
+// LeakSanitizer checks when the process exits, after the VM is destructed.
+const leakCheckEnv = {
+  ...bunEnv,
+  BUN_DESTRUCT_VM_ON_EXIT: "1",
+  ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+  LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+};
+
 // Terminating a worker while a Bun.$ command's external subprocess is still
 // running used to leak the whole in-flight exec: the shell interpreter's VM
 // shutdown finalizer dropped its node arena without deiniting live Cmd nodes,
@@ -28,13 +36,7 @@ async function runTerminateScenario(workerSource: string, extraEnv: Record<strin
   await using proc = Bun.spawn({
     cmd: [bunExe(), "main.ts"],
     cwd: String(dir),
-    env: {
-      ...bunEnv,
-      BUN_DESTRUCT_VM_ON_EXIT: "1",
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-      LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
-      ...extraEnv,
-    },
+    env: { ...leakCheckEnv, ...extraEnv },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -198,6 +200,37 @@ test.skipIf(!isASAN || isWindows)(
         () => postMessage("ok"),
       );
     `);
+  },
+  LEAK_TEST_TIMEOUT,
+);
+
+test.skipIf(!isASAN || isWindows)(
+  "a failed Bun.$ pipeline does not leak the output its stopped ls had queued",
+  async () => {
+    // No worker in this one. The last member throws late: after its command
+    // substitution is back. By then `ls` has an output for each of its 1000
+    // operands, the pipe has taken the first ones, and the rest is queued
+    // behind a write that never completes. The stop frees that queue.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const operands = Array(1000).fill(${JSON.stringify(import.meta.dirname)});
+        const failed = Bun.$\`ls \${operands} | echo $(\${process.execPath} --version) > \${new Blob(["x"])}\`.quiet();
+        console.log(await failed.then(() => "resolved", error => error.message));
+        `,
+      ],
+      env: leakCheckEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "Cannot redirect stdout/stderr to an immutable blob. Expected a file\n",
+      stderr: "",
+      exitCode: 0,
+    });
   },
   LEAK_TEST_TIMEOUT,
 );

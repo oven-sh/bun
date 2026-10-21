@@ -729,7 +729,7 @@ fn run_task_cold(task: Task) {
         }
         task_tag::ShellStopTask => {
             // SAFETY: §Dispatch — tag identifies pointee; boxed by
-            // `Interpreter::stop_in_flight`, which holds `finish` (and with it
+            // `Interpreter::queue_stop_task`, which holds `finish` (and with it
             // the interpreter) until this has run.
             unsafe { ShellStopTask::run_from_main_thread(cast_ptr!(ShellStopTask)) };
         }

@@ -909,6 +909,10 @@ impl Cmd {
                     return false;
                 }
                 if interrupted {
+                    // A Ctrl+C is for the foreground job: an `&` command goes on, as its subprocess does.
+                    if interp.in_background(this) {
+                        return false;
+                    }
                     interp.as_cmd_mut(this).base.interrupted = true;
                 }
                 Builtin::stop(interp, this);

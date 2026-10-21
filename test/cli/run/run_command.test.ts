@@ -391,23 +391,35 @@ test.concurrent.each(afterKilledChild)(
 // The second member is still expanding its words when the Ctrl+C comes: the
 // command substitution is cut short, by the signal or by the stop of the
 // builtin in it. The member does not go on to run with what the substitution
-// had printed, so its file is never made.
+// had printed, so its file is never made. A process in the substitution has to
+// be there to take the Ctrl+C, so the child waits for it: one that `bun run`
+// spawns after the Ctrl+C never gets it.
 const cutSubstitution = [
-  { name: "a process", substitution: "bun prints.js" },
-  { name: "a builtin", substitution: "cat" },
+  { name: "a process", substitution: "bun prints.js", waitsFor: "prints.ready" },
+  { name: "a builtin", substitution: "cat", waitsFor: "" },
 ];
 test.concurrent.each(cutSubstitution)(
   "a command whose substitution Ctrl+C cuts short does not start ($name)",
-  async ({ substitution }) => {
+  async ({ substitution, waitsFor }) => {
     using dir = tempDir("run-ctrl-c-substitution", {
       "package.json": JSON.stringify({
         name: "t",
         scripts: { go: `bun child.js | echo started $(${substitution}) > out.txt` },
       }),
-      "prints.js": `console.log("partial"); setInterval(() => {}, 1000);`,
-      "child.js": `${raiseCtrlC}
+      "prints.js": `
+        console.log("partial");
+        require("fs").writeFileSync("prints.ready", "");
         setInterval(() => {}, 1000);
-        raiseCtrlC();
+      `,
+      "child.js": `${raiseCtrlC}
+        const { existsSync } = require("fs");
+        const waitsFor = ${JSON.stringify(waitsFor)};
+        setInterval(() => {}, 1000);
+        const timer = setInterval(() => {
+          if (waitsFor && !existsSync(waitsFor)) return;
+          clearInterval(timer);
+          raiseCtrlC();
+        }, 5);
       `,
     });
 

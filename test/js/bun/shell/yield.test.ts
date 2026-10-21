@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { closeSync, constants, existsSync, openSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createTestBuilder } from "./test_builder";
@@ -423,26 +423,8 @@ describe("yield", async () => {
         // Windows: a read the shell has started on stdin cannot be taken back
         // there, and the process waits for it.
         describe.skipIf(isWindows)("cat on a stdin that stays open", () => {
-          test.concurrent("wherever it runs in the pipeline", async () => {
-            const shapes = {
-              "a member": `$\`cat | ${failing}\`.quiet().nothrow()`,
-              "two members": `$\`cat | cat | ${failing}\`.quiet().nothrow()`,
-              "next to an external command that throws": `$\`cat | ${bad}\`.quiet().nothrow()`,
-              "in a subshell": `$\`(cat; echo no) | ${failing}\`.quiet().nothrow()`,
-              "in an if": `$\`if true; then cat; fi | ${failing}\`.quiet().nothrow()`,
-              "in a command substitution": `$\`echo $(cat) | ${failing}\`.quiet().nothrow()`,
-              // The member that throws runs a command substitution first, and
-              // the `cat` in it can complete inside its own start. The failure
-              // is then handled under the trampoline that is still starting the
-              // pipeline, and that one names the pipeline again afterwards: a
-              // stop that reported the first `cat` at once would free the
-              // pipeline under it.
-              "the failure is handled under the start of the pipeline": `$\`cat | echo $(cat ${js(import.meta.path)}) > \${new Blob(["x"])}\`.quiet().nothrow()`,
-              // The same, with no other member left: reporting the failed one
-              // there would end the pipeline under the trampoline that starts it.
-              "the first member fails under the start of the pipeline": `$\`echo $(cat ${js(import.meta.path)}) > \${new Blob(["x"])} | cat\`.quiet().nothrow()`,
-              "the last member fails under the start of the pipeline": `$\`true | echo $(cat ${js(import.meta.path)}) > \${new Blob(["x"])}\`.quiet().nothrow()`,
-            };
+          /** Runs the scripts of `shapes` in turn, in one child whose stdin stays open. */
+          async function settledWithStdinOpen(shapes: Record<string, string>) {
             await using proc = Bun.spawn({
               cmd: settleEach(shapes),
               env,
@@ -453,11 +435,44 @@ describe("yield", async () => {
 
             const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-            expect({ result: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-              result: {
-                ...Object.fromEntries(Object.keys(shapes).map(name => [name, builtin])),
-                "next to an external command that throws": external,
-              },
+            return { result: JSON.parse(stdout || "null"), stderr, exitCode };
+          }
+
+          // A child for each place, so that a script that never settles names its place.
+          test.concurrent.each([
+            ["as a member", `cat | ${failing}`, builtin],
+            ["as two members", `cat | cat | ${failing}`, builtin],
+            ["next to an external command that throws", `cat | ${bad}`, external],
+            ["in a subshell", `(cat; echo no) | ${failing}`, builtin],
+            ["in an if", `if true; then cat; fi | ${failing}`, builtin],
+            ["in a command substitution", `echo $(cat) | ${failing}`, builtin],
+          ])("%s", async (place, script, rejection) => {
+            expect(await settledWithStdinOpen({ [place]: `$\`${script}\`.quiet().nothrow()` })).toEqual({
+              result: { [place]: rejection },
+              stderr: "",
+              exitCode: 0,
+            });
+          });
+
+          // The member that throws runs a command substitution first, and the
+          // `cat` in it is over before its start returns: epoll does not take
+          // a regular file, and the reader reports that at once. (kqueue takes
+          // the file, so this is for Linux.) The failure is then handled under
+          // the trampoline that is still starting the pipeline, and that one
+          // names the pipeline again afterwards: a stop that reported the first
+          // `cat` at once would free the pipeline under it.
+          test.concurrent.if(isLinux)("when the failure is handled under the start of the pipeline", async () => {
+            const throws = `echo $(cat ${js(import.meta.path)}) > \${new Blob(["x"])}`;
+            const shapes = {
+              "after a cat": `$\`cat | ${throws}\`.quiet().nothrow()`,
+              // No other member is left in these: reporting the failed one
+              // there would end the pipeline under the trampoline that starts it.
+              "as the first member": `$\`${throws} | cat\`.quiet().nothrow()`,
+              "as the last member": `$\`true | ${throws}\`.quiet().nothrow()`,
+            };
+
+            expect(await settledWithStdinOpen(shapes)).toEqual({
+              result: Object.fromEntries(Object.keys(shapes).map(name => [name, builtin])),
               stderr: "",
               exitCode: 0,
             });
@@ -698,39 +713,6 @@ describe("yield", async () => {
             exitCode: 0,
           });
         });
-
-        // The last member throws late: after its command substitution is
-        // back. By then `ls` has an output for each of its 1000 operands, the
-        // pipe has taken the first ones, and the rest is queued behind a
-        // write that never completes. The stop gives the queue up: the
-        // process exits, and under ASAN LeakSanitizer reports what is not
-        // freed (symbolizing that report takes the long timeout).
-        //
-        // Not concurrent, and not on Windows: see the tests above.
-        test.skipIf(isWindows)(
-          "ls with output queued behind a full pipe",
-          async () => {
-            const leakCheck = {
-              BUN_DESTRUCT_VM_ON_EXIT: "1",
-              ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-              LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "../../../leaksan.supp")}`,
-            };
-            await using proc = Bun.spawn({
-              cmd: child(`
-                const operands = Array(1000).fill(${JSON.stringify(import.meta.dir)});
-                console.log(await settle($\`ls \${operands} | echo $(\${bun} --version) > \${new Blob(["x"])}\`.quiet().nothrow()));
-              `),
-              env: isASAN ? { ...bunEnv, ...leakCheck } : bunEnv,
-              stdout: "pipe",
-              stderr: "pipe",
-            });
-
-            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-            expect({ result: stdout.trim(), stderr, exitCode }).toEqual({ result: builtin, stderr: "", exitCode: 0 });
-          },
-          isASAN ? 90_000 : undefined,
-        );
 
         // `mv` is still asking the thread pool what its target is when the
         // script fails. When the answer is back, nothing moves, and the

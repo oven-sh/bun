@@ -1471,6 +1471,7 @@ describe("constructing a mock", () => {
     const result = { ok: true };
     const fn = jest.fn(() => result);
     expect(new fn()).toBe(result);
+    expect(typeof fn.mock.contexts[0]).toBe("object");
   });
 
   test("calls the implementation with the created instance as this", () => {
@@ -1479,6 +1480,7 @@ describe("constructing a mock", () => {
     });
     const instance = new fn(42);
     expect(instance.value).toBe(42);
+    expect(fn.mock.contexts[0]).toBe(instance);
   });
 
   test("spy on a function returning a symbol returns the instance", () => {
@@ -1489,24 +1491,22 @@ describe("constructing a mock", () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  test("through a bound function returns an object", () => {
-    const Bound = jest.fn(() => 42).bind(null);
-    expect(typeof new Bound()).toBe("object");
+  test("uses the prototype property of the mock when it is an object", () => {
+    const fn = jest.fn();
+    fn.prototype = {
+      greet() {
+        return "hi";
+      },
+    };
+    const instance = new fn();
+    expect(instance.greet()).toBe("hi");
+    expect(instance instanceof fn).toBe(true);
   });
 
-  test("through a Proxy returns an object", () => {
-    const Proxied = new Proxy(jest.fn(), {});
-    expect(typeof new Proxied()).toBe("object");
-  });
-
-  test("Array.of with a mock as the constructor fills the created instance", () => {
-    expect(Array.of.call(jest.fn(), 1, 2, 3)).toEqual({ 0: 1, 1: 2, 2: 3, length: 3 });
-  });
-
-  test("Symbol.species that is a mock receives the elements", () => {
-    const array = [1, 2, 3];
-    array.constructor = { [Symbol.species]: jest.fn(() => Symbol()) };
-    expect(array.slice(0)).toEqual({ 0: 1, 1: 2, 2: 3, length: 3 });
+  test("uses the prototype of another newTarget", () => {
+    class Target {}
+    const instance = Reflect.construct(jest.fn(), [], Target);
+    expect(Object.getPrototypeOf(instance)).toBe(Target.prototype);
   });
 
   test("a newTarget.prototype that is not an object falls back to Object.prototype of that realm", () => {
@@ -1515,4 +1515,68 @@ describe("constructing a mock", () => {
     const instance = Reflect.construct(jest.fn(), [], NewTarget);
     expect(Object.getPrototypeOf(instance)).toBe(vm.runInContext("Object.prototype", context));
   });
+
+  test("a throwing implementation propagates and is recorded", () => {
+    const fn = jest.fn(function () {
+      throw new Error("boom");
+    });
+    expect(() => new fn()).toThrow("boom");
+    expect(fn.mock.results).toEqual([{ type: "throw", value: expect.any(Error) }]);
+    expect(typeof fn.mock.contexts[0]).toBe("object");
+  });
+
+  if (isBun) {
+    // Without a construct handler, most of these lines abort a debug build and
+    // Array.of segfaults a release build, so they run in a child process.
+    test("constructs through a bound function, a Proxy, Array.of, Array.from and Symbol.species", async () => {
+      const { bunEnv, bunExe } = require("harness");
+      const src = `
+        const { mock, spyOn } = require("bun:test");
+        const print = value => console.log(JSON.stringify(value));
+        const species = fn => Object.assign([1, 2, 3], { constructor: { [Symbol.species]: fn } });
+        print(typeof Reflect.construct(spyOn({ 9: Symbol }, 9), []));
+        print(new (mock(Symbol).bind())());
+        print(new (mock().bind())());
+        print(new (new Proxy(mock(Symbol), {}))());
+        print(new (new Proxy(mock(), {}))());
+        print(Array.of.call(mock(), 1, 2, 3));
+        print(Array.from.call(mock(Symbol), [1, 2]));
+        print(species(mock(Symbol)).slice(0));
+        print(species(mock(Symbol)).concat([4]));
+        print(species(mock()).splice(0, 1));
+        print(species(mock(Symbol)).map(x => x));
+        const typed = Object.assign(new Uint8Array(4), { constructor: { [Symbol.species]: mock(Symbol) } });
+        try { typed.slice(0); } catch (e) { print(e.name); }
+        const promise = Object.assign(Promise.resolve(1), { constructor: { [Symbol.species]: mock(Symbol) } });
+        try { promise.then(() => {}); } catch (e) { print(e.name); }
+      `;
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+        stdout:
+          [
+            '"object"',
+            "{}",
+            "{}",
+            "{}",
+            "{}",
+            '{"0":1,"1":2,"2":3,"length":3}',
+            '{"0":1,"1":2,"length":2}',
+            '{"0":1,"1":2,"2":3,"length":3}',
+            '{"0":1,"1":2,"2":3,"3":4,"length":4}',
+            '{"0":1,"length":1}',
+            '{"0":1,"1":2,"2":3}',
+            '"TypeError"',
+            '"TypeError"',
+          ].join("\n") + "\n",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  }
 });

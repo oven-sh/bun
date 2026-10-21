@@ -29,8 +29,8 @@ pub(crate) struct Exec {
     pub(crate) started: bool,
     pub(crate) tasks_count: usize,
     pub(crate) tasks_done: usize,
-    pub(crate) output_waiting: u16,
-    pub(crate) output_done: u16,
+    pub(crate) output_waiting: usize,
+    pub(crate) output_done: usize,
     /// Index into `Builtin::args` where filepath args start (storing the
     /// index keeps the lifetime tied to the Cmd's argv without a
     /// self-reference).

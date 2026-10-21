@@ -46,7 +46,7 @@ impl Rule for NoNonNullAssertion {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        // All but the last `!` of `x!!!`. What is around each is an assertion: nothing to suggest.
+        // All but the last `!` of `x!!!`. Each one's parent is another assertion, so there's nothing to suggest.
         for inner in e.inner_non_null_spans() {
             cx.report(inner, NO_NON_NULL);
         }

@@ -8,10 +8,10 @@ pub struct NoCatchShadow;
 const MUTABLE: Message =
     Message::new("mutable", "Value of '{{name}}' may be overwritten in IE 8 and earlier.");
 
-/// ESLint's `getVariableByName(scope, name) !== null`, where `scope` is the one `stmt` is in. That
-/// also finds what is not a `Symbol` of a scope here: the name of a function or class expression
-/// inside it, the `arguments` of a function, the global variables of the configuration.
-fn is_declared_around<'a>(stmt: Stmt<'a>, name: Name<'a>, cx: &mut Cx<'a, NoCatchShadow>) -> bool {
+/// ESLint's `getVariableByName(scope, name) !== null`, where `scope` is the scope that contains `stmt`. That also finds
+/// things that aren't a scope's `Symbol` here: the name of an enclosing function or class expression, a function's
+/// `arguments`, and the config's global variables.
+fn is_declared_in_enclosing_scope<'a>(stmt: Stmt<'a>, name: Name<'a>, cx: &mut Cx<'a, NoCatchShadow>) -> bool {
     let scope = Node::Stmt(stmt).scope();
     if scope.resolve_name(name).is_some() {
         return true;
@@ -22,7 +22,7 @@ fn is_declared_around<'a>(stmt: Stmt<'a>, name: Name<'a>, cx: &mut Cx<'a, NoCatc
         functions.chain(file.classes().filter_map(Class::name)).map(Ident::name).collect()
     });
     let is_arguments = name.is("arguments");
-    // Each function and each class around a statement has a scope.
+    // Every function and class around a statement has a scope.
     (is_arguments || names.contains(&name))
         && scope.chain().any(|it| match it.node() {
             Node::Func(func) => {
@@ -38,7 +38,7 @@ fn is_declared_around<'a>(stmt: Stmt<'a>, name: Name<'a>, cx: &mut Cx<'a, NoCatc
 impl Rule for NoCatchShadow {
     const META: Meta = Meta::eslint("no-catch-shadow", Kind::Suggestion).deprecated();
     const ON: On = On::new().stmts(&[StmtTag::Try]);
-    /// The names of the functions and of the classes of the file, once they are asked for.
+    /// The names of the file's functions and classes, built when first needed.
     type State<'a> = Option<FxHashSet<Name<'a>>>;
 
     fn new(_: &Options) -> Self {
@@ -57,7 +57,7 @@ impl Rule for NoCatchShadow {
             return;
         };
         if let Some(name) = param.pat().as_ident()
-            && is_declared_around(stmt, name, cx)
+            && is_declared_in_enclosing_scope(stmt, name, cx)
             && let Some(clause) = stmt.catch_clause_span()
         {
             cx.report(clause, MUTABLE).data("name", name);

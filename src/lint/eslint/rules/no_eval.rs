@@ -9,25 +9,24 @@ pub struct NoEval {
 
 const UNEXPECTED: Message = Message::new("unexpected", "`eval` can be harmful.");
 
-/// What is known about the `this` of a file.
+/// Cached facts about `this` in a file.
 #[derive(Default)]
 pub struct Known<'a> {
-    /// Whether a `this` at a node, in a function or in a field of a class, is the global object.
+    /// For a node in a function or class field, whether a `this` there is the global object.
     at: AncestorMemo<'a, bool>,
-    /// The same directly in a function.
+    /// Same for a `this` directly in a function.
     in_function: IdMap<Func<'a>, bool>,
     bindings: ast_utils::ThisBindingMemo<'a>,
-    /// Whether oxc takes the file for a module.
+    /// True if oxc treats the file as a module.
     is_module: Option<bool>,
 }
 
-/// `e` is a member access of the property `name`.
+/// True if `e` accesses the property `name`.
 fn is_member(e: Expr<'_>, name: &str) -> bool {
     ast_utils::is_specific_member_access(e, None, Some(name))
 }
 
-/// The identifier refers to the variable of its name in the global scope, which the configuration
-/// defines or a script declares.
+/// True if the identifier refers to the global variable of that name, which the config defines or a script declares.
 fn refers_to_global_variable(e: Expr<'_>) -> bool {
     let Some(reference) = e.reference() else {
         return false;
@@ -52,7 +51,7 @@ impl NoEval {
     }
 
     fn check_call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        // `eval?.("code")` is not a direct call.
+        // `eval?.("code")` isn't a direct call.
         if let Some(call) = e.as_call()
             && call.callee().is_ident("eval")
             && !(self.allows_indirect && call.is_optional())
@@ -61,7 +60,7 @@ impl NoEval {
         }
     }
 
-    /// `eval` that is not called, and `eval` as a property of the global object.
+    /// Checks an `eval` that isn't called, and `eval` as a property of the global object.
     fn check_identifier<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(name) = e.as_ident() else {
             return;
@@ -93,7 +92,7 @@ impl NoEval {
         }
     }
 
-    /// `this.eval` where `this` is the global object.
+    /// Checks `this.eval` where `this` is the global object.
     fn check_this<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Node::Expr(member) = e.parent() else {
             return;
@@ -104,7 +103,7 @@ impl NoEval {
         let (file, is_oxlint) = (cx.file(), cx.language().is_oxlint);
         if is_oxlint {
             let is_module = || utils::oxlint::source_type(file) == SourceType::Module;
-            // For oxc parentheses are nodes: `(this).eval` is no property of `this`.
+            // For oxc parentheses are nodes, so `(this).eval` isn't a property of `this`.
             if *cx.state.is_module.get_or_insert_with(is_module) || e.is_parenthesized() {
                 return;
             }
@@ -116,13 +115,14 @@ impl NoEval {
         let Known { at, in_function, bindings, .. } = &mut cx.state;
         let is_global_object = at.find(Node::Expr(e), |child, ancestor| match ancestor {
             Node::Func(func) if !func.is_arrow() => Some(*in_function.get_or_insert_with(func, || {
-                // oxlint takes a function for a constructor by its own name alone, and knows the capitals of ASCII.
+                // oxlint decides whether a function is a constructor from its own name only, and only recognizes ASCII
+                // capitals.
                 let is_ascii = |it: Ident<'a>| it.bytes().first().is_some_and(u8::is_ascii);
                 let cap_is_constructor = !is_oxlint || func.name().is_some_and(is_ascii);
                 !func.scope().is_none_or(is_strict)
                     && ast_utils::is_default_this_binding_with(func, cap_is_constructor, bindings)
             })),
-            // In the initializer of a field it is the instance or the class.
+            // In a field initializer, `this` is the instance or the class.
             Node::Member(field)
                 if field.kind() == MemberKind::Property
                     && (is_oxlint || !field.flags().contains(Flags::ACCESSOR))
@@ -139,7 +139,7 @@ impl NoEval {
             }
             return;
         }
-        // For oxlint it is the global object at the top of a script and of CommonJS, also below `"use strict"`.
+        // For oxlint `this` is the global object at the top of a script or CommonJS file, even below `"use strict"`.
         if is_oxlint {
             Self::report_member(member, cx);
             return;

@@ -8,8 +8,8 @@ pub struct PreferOptionalCatchBinding;
 const PREFER_OPTIONAL_CATCH_BINDING: Message =
     Message::new("", "Prefer omitting the catch binding parameter if it is unused");
 
-/// Whether something that `pat` binds is referred to. A default value counts as that. The `...rest` of an array does
-/// not count at all, as in oxlint.
+/// True if anything `pat` binds is referenced. A default value counts as a reference. Like oxlint, this ignores an
+/// array's `...rest`.
 fn is_param_referenced(pat: Pat) -> bool {
     let mut pending: SmallVec<[Pat; 4]> = smallvec![pat];
     while let Some(pat) = pending.pop() {
@@ -56,7 +56,7 @@ impl Rule for PreferOptionalCatchBinding {
             return;
         }
         cx.report(pat, PREFER_OPTIONAL_CATCH_BINDING).fix(|fixer| {
-            // From the `(`, which is the first that is not white space after the `catch`, to the block.
+            // From the `(`, which is the first non-whitespace character after the `catch`, to the block.
             let after_catch = stmt.catch_clause_span()?.start + 5;
             let before_param = fixer.file().slice(Span::before(after_catch, pat.span()));
             let white_space = before_param.iter().position(|it| !it.is_ascii_whitespace()).unwrap_or(0);

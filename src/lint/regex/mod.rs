@@ -1,17 +1,17 @@
-//! JavaScript's regular expressions.
+//! JavaScript regular expressions.
 //!
-//! - [`Regex`] matches: it is the `RegExp` of JavaScriptCore, without a VM (`bun_yarr`). It is for the
-//!   patterns that users write in the options of rules, and for the regular expressions that the
-//!   rules of ESLint and typescript-eslint use themselves:
+//! - [`Regex`] does the matching. It's JavaScriptCore's `RegExp` without a VM (`bun_yarr`). Use it
+//!   for the patterns that users write in rule options, and for the regular expressions that
+//!   ESLint's and typescript-eslint's rules use themselves:
 //!   `static PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::literal("/^_/u"));`
 //! - [`parse_pattern`], [`parse_literal`], [`validate_pattern`], .. are `@eslint-community/regexpp`, for
 //!   the rules about regular expressions. See [`ast`].
 //!
 //! # Matching
 //!
-//! All of ECMAScript 2025: the flags `dgimsuvy`, lookbehind, named groups and duplicates of them,
+//! All of ECMAScript 2025: the flags `dgimsuvy`, lookbehind, named groups including duplicates,
 //! backreferences, modifiers, `\p{..}`, classes with the `v` flag, Annex B. A pattern is validated
-//! here first, so what is wrong with it is said in the words of regexpp and V8.
+//! here first, so error messages have regexpp's and V8's wording.
 //!
 //! | JavaScript | Here |
 //! | --- | --- |
@@ -32,33 +32,35 @@
 //! | `String(re)`, `` `${re}` `` | `re.to_string()`, `format!("{re}")` |
 //! | `escapeRegExp(s)` of `escape-string-regexp` | [`bun_core::strings::escape_reg_exp`] |
 //!
-//! A [`Regex`] has no `lastIndex`: it does not change, and all threads can share it. [`Regex::test`]
-//! and [`Regex::find`] start at 0 whatever the flags.
+//! A [`Regex`] has no `lastIndex`. It's immutable, so all threads can share it. [`Regex::test`] and
+//! [`Regex::find`] start at 0 regardless of the flags.
 //!
 //! # Text and positions
 //!
 //! Text is bytes: UTF-8, or WTF-8 if the JavaScript string has lone surrogates. Positions are byte
-//! offsets. [`utf16_index`] and [`byte_offset`] convert. ASCII is searched as it is, of other text a
-//! copy in UTF-16: one for each call, so [`Regex::exec_iter`] and not [`Regex::exec_at`] in a loop.
+//! offsets. [`utf16_index`] and [`byte_offset`] convert. ASCII text is searched in place. Other
+//! text is copied to UTF-16 once per call, so use [`Regex::exec_iter`] rather than
+//! [`Regex::exec_at`] in a loop.
 //!
-//! With the `u` or `v` flag a character is a code point. Without them JavaScript matches UTF-16 code
-//! units, and so does this: a character outside the BMP, four bytes here, counts as two
-//! characters, its lead and its trail surrogate. The position between the two is the offset of
-//! the character plus 2. So `/^.$/` does not match `"💩"`, `/^..$/` does, and `/./` finds `0..2`, which is not
-//! valid UTF-8 on its own, just as `"\ud83d"` is not a valid string in JavaScript. Use the `u` flag, as
-//! upstream mostly does, and none of this matters.
+//! With the `u` or `v` flag a character is a code point. Without them JavaScript matches UTF-16
+//! code units, and so does this: a character outside the BMP, four bytes here, counts as two
+//! characters, its lead and trail surrogates. The position between the two is the character's
+//! offset plus 2. So `/^.$/` doesn't match `"💩"`, `/^..$/` does, and `/./` finds `0..2`, which
+//! isn't valid UTF-8 by itself, just as `"\ud83d"` isn't a valid string in JavaScript. Use the `u`
+//! flag, as upstream mostly does, and none of this matters.
 //!
 //! # Limits
 //!
-//! The engine backtracks, so there are patterns that take exponential time, and nothing stops a
-//! search after some time: `/.*.*.*.*x/` on 3,000 characters takes hours at least, here as in ESLint.
-//! A pattern is a part of the configuration, which is trusted.
+//! The engine backtracks, so some patterns take exponential time, and there's no timeout:
+//! `/.*.*.*.*x/` on 3,000 characters takes hours at least, here as in ESLint. A pattern is part of
+//! the configuration, which is trusted.
 //!
-//! JavaScriptCore gives a search up after 10^8 attempts at quantified groups, which take seconds,
-//! or when it has 192 MB to go back to. That counts as no match, and cannot be told from it.
+//! JavaScriptCore gives up on a search after 10^8 attempts at quantified groups, which takes
+//! seconds, or when its backtracking state reaches 192 MB. That counts as no match, and can't be
+//! distinguished from one.
 //!
-//! It refuses a pattern of more than 2^20 characters or 2^15 groups, and `\p{Script=Hrkt}`. Its
-//! strings have less than 2^31 characters: in a longer text nothing is found.
+//! It rejects a pattern with more than 2^20 characters or 2^15 groups, and `\p{Script=Hrkt}`. Its
+//! strings have fewer than 2^31 characters, so nothing is found in a longer text.
 
 pub mod ast;
 mod parser;
@@ -82,10 +84,10 @@ use smallvec::SmallVec;
 use std::borrow::Cow;
 use subject::Subject;
 
-/// The start and the end of the match and of each group.
+/// Start and end of the match and of each group.
 type Slots = SmallVec<[u32; 16]>;
 
-/// `EscapeRegExpPattern`, as V8 does it: what `regex.source` is for the pattern `text`.
+/// V8's `EscapeRegExpPattern`: the `regex.source` for the pattern `text`.
 pub(crate) fn escape_source(text: Cow<'_, [u8]>) -> Cow<'_, [u8]> {
     if text.is_empty() {
         return Cow::Borrowed(b"(?:)");
@@ -128,7 +130,7 @@ pub(crate) fn escape_source(text: Cow<'_, [u8]>) -> Cow<'_, [u8]> {
     Cow::Owned(source)
 }
 
-/// The names of the groups with the groups of each, in the order in which the names first appear.
+/// Each group name with the indexes of its groups, ordered by the names' first appearance.
 fn group_names(ast: &Ast<'_>) -> Vec<(Box<[u8]>, Vec<u32>)> {
     let mut names: Vec<(Box<[u8]>, Vec<u32>)> = Vec::new();
     for (index, group) in ast.capturing_groups().enumerate() {
@@ -147,7 +149,7 @@ fn group_names(ast: &Ast<'_>) -> Vec<(Box<[u8]>, Vec<u32>)> {
     names
 }
 
-/// `pattern` is valid.
+/// `pattern` must be valid.
 fn compile(pattern: &[u8], flags: Flags) -> Result<Compiled, SyntaxError> {
     use bun_yarr::flags as bit;
     let bits = [
@@ -191,9 +193,9 @@ pub struct Regex {
     compiled: Compiled,
     flags: Flags,
     source: Box<[u8]>,
-    /// Groups, with the whole match as the first.
+    /// Number of groups, counting the whole match as the first.
     group_count: u32,
-    /// The names of groups, and the groups that have each.
+    /// Each group name and the groups that have it.
     names: Vec<(Box<[u8]>, Vec<u32>)>,
 }
 
@@ -220,10 +222,10 @@ impl Regex {
         })
     }
 
-    /// `/pattern/flags`, for a regular expression in the source of a rule.
+    /// `/pattern/flags`, for a regular expression in a rule's source.
     ///
     /// # Panics
-    /// If it is invalid.
+    /// If it's invalid.
     pub fn literal(literal: &str) -> Regex {
         let bytes = literal.as_bytes();
         let end = strings::last_index_of_char(bytes, b'/').unwrap_or(0);
@@ -235,20 +237,20 @@ impl Regex {
         }
     }
 
-    /// `regex.source`: the pattern with `/` and line terminators escaped, as V8 does it. `(?:)` if it
-    /// is empty.
+    /// `regex.source`: the pattern with `/` and line terminators escaped, as V8 does it. `(?:)` if it's empty.
     #[inline]
     pub fn source(&self) -> &[u8] {
         &self.source
     }
 
-    /// Whether a character is a code point: the `u` or the `v` flag.
+    /// True if a character is a code point, i.e. with the `u` or `v` flag.
     #[inline]
     fn is_unicode(&self) -> bool {
         self.flags.unicode || self.flags.unicode_sets
     }
 
-    /// Whether `compiled` matches from the byte offset `start` on. If so `slots` has indices in `subject.text()`.
+    /// True if `compiled` matches at or after the byte offset `start`. On a match, `slots` has
+    /// indices into `subject.text()`.
     fn matches(
         &self,
         compiled: &Compiled,
@@ -274,7 +276,7 @@ impl Regex {
         false
     }
 
-    /// The byte offsets of the first match of `compiled` from `start` on.
+    /// Byte offsets of `compiled`'s first match at or after `start`.
     fn run(&self, compiled: &Compiled, subject: &Subject<'_>, start: usize) -> Option<Slots> {
         let mut slots = Slots::new();
         if !self.matches(compiled, subject, start, &mut slots) {
@@ -314,13 +316,13 @@ impl Regex {
         self.matches(&self.compiled, &subject, 0, &mut Slots::new())
     }
 
-    /// `regex.exec(text)`, from the start of the text, when the groups are not needed.
+    /// `regex.exec(text)`, from the start of the text, when the groups aren't needed.
     #[inline]
     pub fn find<'t>(&self, text: &'t [u8]) -> Option<Match<'t>> {
         self.find_at(text, 0)
     }
 
-    /// The first match that starts at `start` or after it. With the `y` flag, only at `start`.
+    /// The first match that starts at or after `start`. With the `y` flag, only at `start`.
     pub fn find_at<'t>(&self, text: &'t [u8], start: usize) -> Option<Match<'t>> {
         self.find_in(&Subject::new(text, true), start)
     }
@@ -344,7 +346,7 @@ impl Regex {
             }
     }
 
-    /// `text.match(regex)` with the `g` flag: all matches, whether it has the flag or not.
+    /// `text.match(regex)` with the `g` flag: all matches, whether or not the regex has the flag.
     pub fn find_iter<'r, 't>(&'r self, text: &'t [u8]) -> impl Iterator<Item = Match<'t>> {
         let subject = Subject::new(text, true);
         let mut next = Some(0);
@@ -361,7 +363,7 @@ impl Regex {
         })
     }
 
-    /// `text.matchAll(regex)`: all matches, whether it has the `g` flag or not.
+    /// `text.matchAll(regex)`: all matches, whether or not the regex has the `g` flag.
     pub fn exec_iter<'r, 't>(&'r self, text: &'t [u8]) -> impl Iterator<Item = Captures<'r, 't>> {
         let subject = Subject::new(text, true);
         let mut next = Some(0);
@@ -378,8 +380,8 @@ impl Regex {
         })
     }
 
-    /// `text.replace(regex, replacement)`. `$1`, `$&`, `$<name>`, .. in `replacement` are what they are
-    /// in JavaScript.
+    /// `text.replace(regex, replacement)`. `$1`, `$&`, `$<name>`, .. in `replacement` mean what
+    /// they mean in JavaScript.
     pub fn replace<'t>(&self, text: &'t [u8], replacement: &[u8]) -> Cow<'t, [u8]> {
         if !strings::contains_char(replacement, b'$') {
             return self.replace_with(text, |_, out| out.extend_from_slice(replacement));
@@ -387,7 +389,7 @@ impl Regex {
         self.replace_with(text, |captures, out| captures.expand(replacement, out))
     }
 
-    /// `text.replace(regex, (...) => ..)`. `replacer` appends what replaces the match.
+    /// `text.replace(regex, (...) => ..)`. `replacer` appends the replacement for the match.
     pub fn replace_with<'t>(
         &self,
         text: &'t [u8],
@@ -411,7 +413,7 @@ impl Regex {
     }
 }
 
-/// Where a regular expression, or a group of it, matched.
+/// The range that a regular expression, or one of its groups, matched.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Match<'t> {
     text: &'t [u8],
@@ -457,7 +459,7 @@ pub struct Captures<'r, 't> {
 }
 
 impl<'t> Captures<'_, 't> {
-    /// `match[index]`. `None` is `undefined`: there is no such group, or it did not take part.
+    /// `match[index]`. `None` is `undefined`: there's no such group, or it didn't participate in the match.
     pub fn get(&self, index: usize) -> Option<Match<'t>> {
         if index >= self.len() {
             return None;
@@ -480,7 +482,7 @@ impl<'t> Captures<'_, 't> {
         groups.iter().find_map(|group| self.get(*group as usize))
     }
 
-    /// `match.length`: one more than there are groups.
+    /// `match.length`: the number of groups plus one.
     #[inline]
     pub fn len(&self) -> usize {
         self.regex.group_count as usize
@@ -492,7 +494,7 @@ impl<'t> Captures<'_, 't> {
         self.slots.first().copied().unwrap_or(0) as usize
     }
 
-    /// Where the match ends: `regex.lastIndex` afterwards, with the `g` or `y` flag.
+    /// End of the match. With the `g` or `y` flag, that's `regex.lastIndex` afterwards.
     #[inline]
     pub fn end(&self) -> usize {
         self.slots.get(1).copied().unwrap_or(0) as usize

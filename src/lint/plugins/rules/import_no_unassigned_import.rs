@@ -8,7 +8,7 @@ use bun_lint_oxlint::text::glob_match;
 
 /// Forbid unassigned imports.
 pub struct NoUnassignedImport {
-    /// `allow`, as it is written: so oxlint matches it.
+    /// `allow` as written, which is what oxlint matches.
     globs: Vec<Box<[u8]>>,
     allow: GlobsFromCwd,
 }
@@ -42,7 +42,7 @@ impl Rule for NoUnassignedImport {
             && import.default().is_none()
             && import.namespace().is_none()
             && import.named().is_empty()
-            // oxlint takes what `import {} from "a"` imports for assigned.
+            // oxlint treats `import {} from "a"` as assigned.
             && !(import.has_named_imports() && cx.language().is_oxlint)
             && !self.is_allow(import.spec().bytes(), cx.file())
         {
@@ -58,7 +58,7 @@ impl Rule for NoUnassignedImport {
             return;
         }
         let is_oxlint = cx.language().is_oxlint;
-        // oxlint sees parentheses, and has a text of its own.
+        // oxlint's AST keeps parentheses as nodes, and it has its own message.
         let (argument, message) = match is_oxlint {
             true => (call.args().first().filter(|_| is_require_call(call) && !e.is_parenthesized()), REQUIRE),
             false => (static_require(call), IMPORT),
@@ -77,7 +77,7 @@ impl NoUnassignedImport {
         if self.globs.is_empty() {
             return false;
         }
-        // oxlint matches what is written.
+        // oxlint matches the specifier as written.
         if file.language().is_oxlint {
             return self.globs.iter().any(|glob| glob_match(glob, source));
         }

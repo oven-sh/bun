@@ -1,4 +1,4 @@
-//! The vocabulary that documents are written in.
+//! The builders that documents are written with.
 //!
 //! | Prettier | here |
 //! | --- | --- |
@@ -40,14 +40,14 @@ pub(crate) const fn soft_line_break() -> Line {
     Line(LineMode::Soft)
 }
 
-/// Nothing if the enclosing group fits on a line, otherwise a line break and an empty line: what
-/// Prettier prints for a `softline` right behind a line break of another group.
+/// Nothing if the enclosing group fits on a line, otherwise a line break and an empty line. That's what Prettier prints
+/// for a `softline` right after another group's line break.
 #[inline]
 pub(crate) const fn soft_empty_line() -> Line {
     Line(LineMode::SoftEmpty)
 }
 
-/// A line break, which also makes the enclosing groups break.
+/// A line break, which also forces the enclosing groups to break.
 #[inline]
 pub(crate) const fn hard_line_break() -> Line {
     Line(LineMode::Hard)
@@ -87,7 +87,7 @@ impl<'a> Format<'a> for Line {
     }
 }
 
-/// Content that is written by a closure, which can be called more than once.
+/// Content written by a closure that can be called more than once.
 #[inline]
 pub(crate) const fn format_with<'a, T>(formatter: T) -> FormatWith<T>
 where
@@ -106,8 +106,7 @@ impl<'a, T: Fn(&mut Formatter<'a>)> Format<'a> for FormatWith<T> {
     }
 }
 
-/// Content that is written by a closure that can only be called once. Writing it a second time
-/// writes nothing.
+/// Content written by a closure that can only be called once. Writing it a second time is a no-op.
 #[inline]
 pub(crate) const fn format_once<'a, T>(formatter: T) -> FormatOnce<T>
 where
@@ -122,14 +121,14 @@ impl<'a, T: FnOnce(&mut Formatter<'a>)> Format<'a> for FormatOnce<T> {
     #[inline(always)]
     fn fmt(&self, f: &mut Formatter<'a>) {
         let formatter = self.0.take();
-        debug_assert!(formatter.is_some(), "a `format_once` is written twice");
+        debug_assert!(formatter.is_some(), "`format_once` content written twice");
         if let Some(formatter) = formatter {
             formatter(f);
         }
     }
 }
 
-/// A keyword or a punctuator: ASCII, without line breaks or tabs. A string literal does the same.
+/// A keyword or punctuator: ASCII, no line breaks or tabs. A plain string literal works the same way.
 #[inline(always)]
 pub(crate) fn token(text: &'static str) -> &'static str {
     debug_assert!(
@@ -139,7 +138,7 @@ pub(crate) fn token(text: &'static str) -> &'static str {
     text
 }
 
-/// Any text without `\r`. It is copied unless it is part of the source text.
+/// Any text without `\r`. It's copied unless it's a slice of the source text.
 #[inline]
 pub(crate) fn text(text: &[u8]) -> Text<'_> {
     Text {
@@ -148,7 +147,7 @@ pub(crate) fn text(text: &[u8]) -> Text<'_> {
     }
 }
 
-/// Text that has no whitespace in it.
+/// Text without any whitespace.
 #[inline]
 pub(crate) fn text_without_whitespace(text: &[u8]) -> Text<'_> {
     Text {
@@ -171,8 +170,8 @@ impl<'a> Format<'a> for Text<'_> {
     }
 }
 
-/// The source text of `span`, which is a single token without a line break or a tab: an
-/// identifier, a number, a regular expression. This is the cheapest way to write text.
+/// The source text of `span`, which must be a single token without a line break or tab, such as an identifier, a number
+/// or a regular expression. This is the cheapest way to write text.
 #[inline]
 pub(crate) const fn source_text(span: Span) -> SourceToken {
     SourceToken(span)
@@ -248,11 +247,11 @@ macro_rules! tagged {
 }
 
 tagged! {
-    /// Content that is printed at the end of the line, before the next line break: a comment.
+    /// Content that's printed at the end of the line, right before the next line break. Used for comments.
     line_suffix, LineSuffix, Tag::StartLineSuffix, Tag::EndLineSuffix
 }
 tagged! {
-    /// Line breaks in the content are followed by one more level of indentation.
+    /// Adds one level of indentation after each line break in the content.
     indent, Indent, Tag::StartIndent, Tag::EndIndent
 }
 tagged! {
@@ -260,7 +259,7 @@ tagged! {
     dedent, Dedent, Tag::StartDedent(DedentMode::Level), Tag::EndDedent(DedentMode::Level)
 }
 tagged! {
-    /// Line breaks in the content are followed by no indentation at all.
+    /// Removes all indentation after each line break in the content.
     dedent_to_root, DedentToRoot, Tag::StartDedent(DedentMode::Root), Tag::EndDedent(DedentMode::Root)
 }
 
@@ -280,7 +279,7 @@ impl<'a> Format<'a> for LineSuffixBoundary {
     }
 }
 
-/// Marks the content, for whoever writes the parent: `elements.has_label(..)`.
+/// Labels the content so the code that writes the parent can check `elements.has_label(..)`.
 #[inline]
 pub(crate) fn labelled<Content: ?Sized>(
     label_id: LabelId,
@@ -302,8 +301,7 @@ impl<'a, Content: Format<'a> + ?Sized> Format<'a> for FormatLabelled<'_, Content
     }
 }
 
-/// Line breaks in the content are followed by `count` more spaces. Nothing special happens if
-/// `count` is 0.
+/// Adds `count` spaces of indentation after each line break in the content. A `count` of 0 is a no-op.
 #[inline]
 pub(crate) fn align<Content: ?Sized>(count: u32, content: &Content) -> Align<'_, Content> {
     Align { count, content }
@@ -327,7 +325,7 @@ impl<'a, Content: Format<'a> + ?Sized> Format<'a> for Align<'_, Content> {
     }
 }
 
-/// The content on lines of its own, indented.
+/// Puts the content on its own lines, indented.
 #[inline]
 pub(crate) fn block_indent<Content: ?Sized>(content: &Content) -> BlockIndent<'_, Content> {
     BlockIndent {
@@ -336,7 +334,7 @@ pub(crate) fn block_indent<Content: ?Sized>(content: &Content) -> BlockIndent<'_
     }
 }
 
-/// If the enclosing group breaks, the content on lines of its own, indented.
+/// Puts the content on its own lines, indented, if the enclosing group breaks.
 #[inline]
 pub(crate) fn soft_block_indent<Content: ?Sized>(content: &Content) -> BlockIndent<'_, Content> {
     BlockIndent {
@@ -357,8 +355,8 @@ pub(crate) fn soft_block_indent_with_maybe_space<Content: ?Sized>(
     }
 }
 
-/// If the enclosing group breaks, the content on the next line, indented. Otherwise a space and
-/// the content.
+/// If the enclosing group breaks, puts the content on the next line, indented. Otherwise writes a space and the
+/// content.
 #[inline]
 pub(crate) fn soft_line_indent_or_space<Content: ?Sized>(
     content: &Content,
@@ -369,8 +367,8 @@ pub(crate) fn soft_line_indent_or_space<Content: ?Sized>(
     }
 }
 
-/// If the enclosing group breaks, the content on lines of its own, indented. Otherwise the
-/// content between spaces.
+/// If the enclosing group breaks, puts the content on its own lines, indented. Otherwise writes the content between
+/// spaces.
 #[inline]
 pub(crate) fn soft_space_or_block_indent<Content: ?Sized>(
     content: &Content,
@@ -418,8 +416,7 @@ impl<'a, Content: Format<'a> + ?Sized> Format<'a> for BlockIndent<'_, Content> {
     }
 }
 
-/// Content that is written on one line if it fits, and otherwise with all the line breaks that
-/// are directly in it.
+/// Content that's printed on one line if it fits, and otherwise with all of its direct line breaks broken.
 #[inline]
 pub(crate) fn group<Content: ?Sized>(content: &Content) -> Group<'_, Content> {
     Group {
@@ -451,14 +448,15 @@ impl<Content: ?Sized> Group<'_, Content> {
         self
     }
 
-    /// Whether it breaks even if it fits.
+    /// If true, the group breaks even if it fits.
     #[must_use]
     pub(crate) fn should_expand(mut self, should_expand: bool) -> Self {
         self.should_expand = should_expand;
         self
     }
 
-    /// Whether [`Group::should_expand`] is told how the source is laid out. See [`GroupMode::StaysExpanded`].
+    /// Set this if the [`Group::should_expand`] argument depends on how the source is laid out. See
+    /// [`GroupMode::StaysExpanded`].
     #[must_use]
     pub(crate) fn stays_expanded(mut self, stays_expanded: bool) -> Self {
         self.stays_expanded = stays_expanded;
@@ -488,7 +486,7 @@ impl<'a, Content: Format<'a> + ?Sized> Format<'a> for Group<'_, Content> {
     }
 }
 
-/// Makes the enclosing groups break.
+/// Forces the enclosing groups to break.
 #[inline]
 pub(crate) const fn expand_parent() -> ExpandParent {
     ExpandParent
@@ -504,8 +502,7 @@ impl<'a> Format<'a> for ExpandParent {
     }
 }
 
-/// Content that is only written if the enclosing group breaks, or the one that
-/// [`IfGroupBreaks::with_group_id`] names.
+/// Content that's only printed if the enclosing group breaks, or the group set with [`IfGroupBreaks::with_group_id`].
 #[inline]
 pub(crate) fn if_group_breaks<Content: ?Sized>(content: &Content) -> IfGroupBreaks<'_, Content> {
     IfGroupBreaks {
@@ -515,7 +512,7 @@ pub(crate) fn if_group_breaks<Content: ?Sized>(content: &Content) -> IfGroupBrea
     }
 }
 
-/// Content that is only written if the group fits on a line.
+/// Content that's only printed if the group fits on a line.
 #[inline]
 pub(crate) fn if_group_fits_on_line<Content: ?Sized>(
     content: &Content,
@@ -543,7 +540,8 @@ impl<Content: ?Sized> IfGroupBreaks<'_, Content> {
 }
 
 impl<'a, Content: Format<'a> + ?Sized> Format<'a> for IfGroupBreaks<'_, Content> {
-    /// A trailing comma is written for every call, array and object. Inlined, this is one write of a constant element.
+    /// Every call, array and object writes a trailing comma this way. Once inlined, that's a single write of a constant
+    /// element.
     #[inline(always)]
     fn fmt(&self, f: &mut Formatter<'a>) {
         if let (Some(text), None, PrintMode::Expanded) =
@@ -569,8 +567,7 @@ impl<Content: ?Sized> IfGroupBreaks<'_, Content> {
     }
 }
 
-/// Indents the content if the group `group_id` breaks, which has to come before this in the
-/// document.
+/// Indents the content if the group `group_id` breaks. That group has to come before this in the document.
 #[inline]
 pub(crate) fn indent_if_group_breaks<Content: ?Sized>(
     content: &Content,
@@ -596,14 +593,14 @@ impl<'a, Content: Format<'a> + ?Sized> Format<'a> for IndentIfGroupBreaks<'_, Co
     }
 }
 
-/// What `best_fitting!` makes.
+/// The value `best_fitting!` expands to.
 pub(crate) struct BestFitting<'fmt, 'a> {
     variants: &'fmt [&'fmt dyn Format<'a>],
     fallback: Fallback,
 }
 
 impl<'fmt, 'a> BestFitting<'fmt, 'a> {
-    /// From the flattest to the most expanded. At least two.
+    /// `variants` go from the flattest to the most expanded. There must be at least two.
     pub(crate) fn new(variants: &'fmt [&'fmt dyn Format<'a>]) -> Self {
         debug_assert!(variants.len() >= 2);
         BestFitting {
@@ -673,7 +670,7 @@ pub(crate) struct FillBuilder<'fmt, 'a> {
 }
 
 impl<'a> FillBuilder<'_, 'a> {
-    /// `separator` is written before `entry`, unless it is the first.
+    /// `separator` is written before `entry`, unless `entry` is the first one.
     pub(crate) fn entry(
         &mut self,
         separator: &(impl Format<'a> + ?Sized),

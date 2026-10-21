@@ -122,6 +122,15 @@ template<> struct ExternTraits<JSStringUTF8View> {
     }
 };
 
+template<> struct ExternTraits<JSBlobOrBufferView> {
+    using ExternType = ExternBytes;
+
+    static ExternType convertToExtern(JSBlobOrBufferView&& cppValue)
+    {
+        return ExternTraits<std::span<const uint8_t>>::convertToExtern(cppValue.bytes());
+    }
+};
+
 template<> struct ExternTraits<JSBytesView> {
     using ExternType = ExternBytes;
 

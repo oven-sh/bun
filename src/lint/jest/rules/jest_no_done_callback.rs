@@ -36,14 +36,14 @@ fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
     if !matches!(jest_fn_call.kind, JestFnKind::General(JestGeneralFnKind::Test | JestGeneralFnKind::Hook)) {
         return;
     }
-    // With Bun other modifiers can follow: `test.each(a).if(b)(..)`.
+    // In Bun, other modifiers can follow `.each`: `test.each(a).if(b)(..)`.
     let is_jest_each = match ctx.runner {
         Runner::Bun => jest_fn_call.members.iter().any(|it| it.is_name_equal("each")),
         Runner::Jest | Runner::Vitest => jest::get_node_name_vec(call_expr.callee()).last().is_some_and(|it| it.ends_with(b"each")),
     };
     let arguments = call_expr.args();
     let callback = match jest_fn_call.kind {
-        // Of `.each` only the one with a template is looked at: its callback gets one object before `done`.
+        // Only the tagged-template form of `.each` is checked. Its callback gets one object before `done`.
         JestFnKind::General(JestGeneralFnKind::Test | JestGeneralFnKind::Hook) if is_jest_each => {
             if call_expr.callee().tag() != ExprTag::TaggedTemplate {
                 return;

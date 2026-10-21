@@ -607,6 +607,7 @@ impl<Owner: ChannelOwner> PosixHandlers<Owner> {
         unsafe { &**(*s).ext::<PosixExt<Owner>>() }
     }
 
+    #[optimize(size)]
     unsafe extern "C" fn raw_on_data(
         s: *mut uws::us_socket_t,
         data: *mut u8,

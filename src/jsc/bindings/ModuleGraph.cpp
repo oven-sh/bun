@@ -669,7 +669,7 @@ void JSModuleGraph::keepModuleExecutable(VM& vm, ModuleProgramExecutable* execut
 
 // Like dynamic import(), every failure past the receiver check is a rejection of the
 // returned promise (the caller turns a throw into one), never a synchronous throw.
-JSPromise* JSModuleGraph::import(Zig::GlobalObject* globalObject, JSValue specifierValue, bool mayBecomeMain)
+__attribute__((minsize)) JSPromise* JSModuleGraph::import(Zig::GlobalObject* globalObject, JSValue specifierValue, bool mayBecomeMain)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

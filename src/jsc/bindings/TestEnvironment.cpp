@@ -84,7 +84,7 @@ static void forEachPropertySlot(JSC::JSObject* object, JSC::Structure* structure
 }
 
 // For each object its structure and then its property slots, or null if those do not tell whether it has changed.
-JSC_DEFINE_HOST_FUNCTION(jsFunctionShapesOfObjects, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionShapesOfObjects, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto* objects = uncheckedDowncast<JSC::JSArray>(callFrame->uncheckedArgument(0));
@@ -102,7 +102,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionShapesOfObjects, (JSC::JSGlobalObject * globa
     return JSC::JSValue::encode(JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), shapes));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionIndexesOfChangedObjects, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionIndexesOfChangedObjects, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* objects = uncheckedDowncast<JSC::JSArray>(callFrame->uncheckedArgument(0));
     auto* shapes = uncheckedDowncast<JSC::JSArray>(callFrame->uncheckedArgument(1));
@@ -127,7 +127,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIndexesOfChangedObjects, (JSC::JSGlobalObject
     return JSC::JSValue::encode(JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), changed));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionDeleteOwnProperty, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionDeleteOwnProperty, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

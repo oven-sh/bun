@@ -647,6 +647,7 @@ impl Execution {
 
     /// `sequence` / `group` are carried as `NonNull` (raw-pointer semantics) because they point into
     /// `buntest.execution.{sequences,groups}` and would otherwise alias any live `&mut Execution`.
+    #[optimize(size)]
     fn advance_sequence(
         buntest: NonNull<BunTest>,
         sequence_ptr: NonNull<ExecutionSequence>,
@@ -1026,6 +1027,7 @@ impl Execution {
     }
 }
 
+#[optimize(size)]
 fn step_group(
     buntest_strong: &BunTestPtr,
     global_this: &JSGlobalObject,
@@ -1109,6 +1111,7 @@ enum AdvanceStatus {
     Execute { timeout: Timespec },
 }
 
+#[optimize(size)]
 fn step_group_one(
     buntest_strong: &BunTestPtr,
     global_this: &JSGlobalObject,
@@ -1177,6 +1180,7 @@ enum AdvanceSequenceStatus {
     Execute { timeout: Timespec },
 }
 
+#[optimize(size)]
 fn step_sequence(
     buntest_strong: &BunTestPtr,
     global_this: &JSGlobalObject,
@@ -1194,6 +1198,7 @@ fn step_sequence(
 }
 
 /// returns None if the while loop should continue
+#[optimize(size)]
 fn step_sequence_one(
     buntest_strong: &BunTestPtr,
     global_this: &JSGlobalObject,

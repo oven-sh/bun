@@ -710,6 +710,7 @@ impl<'a> WorkerLoop<'a> {
 // `vm` must stay a raw pointer: it is stored in `WorkerLoop`/`WorkerCommands`
 // while a `&mut` derived from it (`vm_ref`) is also live, so a reference param
 // would alias. The `# Safety` contract above documents the caller's obligation.
+#[optimize(size)]
 pub(crate) fn run_as_worker(
     reporter: &mut CommandLineReporter,
     vm: *mut VirtualMachine,

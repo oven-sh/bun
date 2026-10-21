@@ -1729,6 +1729,7 @@ impl Expect {
     /// Execute the custom matcher for the given args (the left value + the args passed to the matcher call).
     /// This function is called both for symmetric and asymmetric matching.
     /// If silent=false, throws an exception in JS if the matcher result didn't result in a pass (or if the matcher result is invalid).
+    #[optimize(size)]
     pub(crate) fn execute_custom_matcher(
         global_this: &JSGlobalObject,
         custom_label: &bun_core::String,

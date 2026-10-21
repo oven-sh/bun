@@ -1319,6 +1319,7 @@ impl BunTest {
     }
 
     /// if sync, the result is returned. if async, None is returned.
+    #[optimize(size)]
     pub(crate) fn run_test_callback(
         this_strong: &BunTestPtr,
         global_this: &JSGlobalObject,

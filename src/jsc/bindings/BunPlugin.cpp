@@ -1209,7 +1209,7 @@ static void addHoistingNote(JSC::VM& vm, JSValue error)
     uncheckedDowncast<JSC::ErrorInstance>(error)->putDirect(vm, vm.propertyNames->message, jsString(vm, makeString(message, "\nnote: vi.mock() and jest.mock() are hoisted above the file's imports and top-level variables, so a factory can't use them. Declare what it needs with vi.hoisted()."_s)), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
 }
 
-JSValue JSModuleMock::callFactory(Zig::GlobalObject* globalObject, bool synchronous, JSObject* dependency)
+__attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* globalObject, bool synchronous, JSObject* dependency)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1571,7 +1571,7 @@ __attribute__((minsize)) static void rankAgainAfter(Zig::GlobalObject* globalObj
 
 // Finds the load each waiting mock belongs to. Once a load has fetched all it can without a factory, ranks its mocks in the order
 // their modules would be evaluated, which is the order Vitest calls the factories in. isWaitingForModule() then sees the whole graph.
-__attribute__((noinline)) static void rankWaitingModuleMocks(Zig::GlobalObject* globalObject)
+__attribute__((noinline, minsize)) static void rankWaitingModuleMocks(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto& plugins = globalObject->onLoadPlugins;
@@ -3748,7 +3748,7 @@ __attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globa
 
 // Returns `key`, or if that module waits for `mocked`, the key of a private copy for the factory (of a mock: unwaitedModuleMockKey()), since awaiting it would deadlock.
 // Every key has to pass through here before addToImportChain(): isWaitingForModule() assumes that nothing in the chain waits.
-static String keyOfModuleThatDoesNotWait(Zig::GlobalObject* globalObject, BunPlugin::OnLoad::RunningModuleMock& running, const String& key, const String& mocked)
+__attribute__((minsize)) static String keyOfModuleThatDoesNotWait(Zig::GlobalObject* globalObject, BunPlugin::OnLoad::RunningModuleMock& running, const String& key, const String& mocked)
 {
     String instead = key;
     Vector<String> unfinished;
@@ -4235,7 +4235,7 @@ JSC::JSObject* resultOfModuleMock(JSC::JSObject* moduleMock)
     return mock && mock->state == Zig::JSModuleMock::State::Settled ? mock->result.get() : nullptr;
 }
 
-static JSC::JSObject* generateSettledModuleMock(JSValue source, JSC::JSGlobalObject* globalObject, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues)
+__attribute__((minsize)) static JSC::JSObject* generateSettledModuleMock(JSValue source, JSC::JSGlobalObject* globalObject, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

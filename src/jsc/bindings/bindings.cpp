@@ -5996,11 +5996,7 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
     }
 
     auto vector = properties.data()->propertyNameVector();
-    std::sort(vector.begin(), vector.end(), [&](Identifier a, Identifier b) -> bool {
-        const WTF::StringImpl* aImpl = a.isSymbol() && !a.isPrivateName() ? a.impl() : a.string().impl();
-        const WTF::StringImpl* bImpl = b.isSymbol() && !b.isPrivateName() ? b.impl() : b.string().impl();
-        return codePointCompare(aImpl, bImpl) < 0;
-    });
+    std::sort(vector.begin(), vector.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.impl(), b.impl()) < 0; });
     auto clientData = WebCore::clientData(vm);
 
     for (auto property : vector) {

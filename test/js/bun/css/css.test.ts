@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -8345,5 +8345,106 @@ for (const source of ${JSON.stringify(cases.map(([source]) => source))}) console
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim().split("\n")).toEqual(cases.map(([, expected]) => expected));
     expect(exitCode).toBe(0);
+  });
+
+  // An invalid item in the block of a keyframe does not invalidate the keyframe:
+  // a browser drops the item and keeps the other declarations.
+  describe("a keyframe with an invalid item in its block", () => {
+    minify_test(
+      "@keyframes k { from { opacity: 0; 123: x } to { opacity: 1 } }",
+      "@keyframes k{0%{opacity:0}to{opacity:1}}",
+    );
+    minify_test(
+      "@keyframes k { from { 123: x; opacity: 0 } to { opacity: 1 } }",
+      "@keyframes k{0%{opacity:0}to{opacity:1}}",
+    );
+    minify_test(
+      "@keyframes k { from { opacity: 0; color red; top: 0 } to { opacity: 1 } }",
+      "@keyframes k{0%{opacity:0;top:0}to{opacity:1}}",
+    );
+    minify_test(
+      "@keyframes k { from { opacity: 0; color: ) } to { opacity: 1 } }",
+      "@keyframes k{0%{opacity:0}to{opacity:1}}",
+    );
+    minify_test(
+      "@keyframes k { from, 50% { *zoom: 1; opacity: 0 } to { opacity: 1 } }",
+      "@keyframes k{0%,50%{opacity:0}to{opacity:1}}",
+    );
+    // Tailwind 4.1.14 writes a nested `@supports` for each `color-mix()`.
+    minify_test(
+      `@keyframes gradient-in {
+        0% {
+          --tw-gradient-from: #00c950;
+          @supports (color: color-mix(in lab, red, red)) {
+            & {
+              --tw-gradient-from: color-mix(in oklab, green 0%, transparent);
+            }
+          }
+        }
+        100% { --tw-gradient-from: #00c950; }
+      }`,
+      "@keyframes gradient-in{0%{--tw-gradient-from:#00c950}to{--tw-gradient-from:#00c950}}",
+    );
+    minify_test(
+      "@keyframes k { from { color: red; @supports (color: red) { color: blue; } top: 1px } to { opacity: 1 } }",
+      "@keyframes k{0%{color:red;top:1px}to{opacity:1}}",
+    );
+    minify_test(
+      '@keyframes k { from { opacity: 0; @import "x.css"; top: 0 } to { opacity: 1 } }',
+      "@keyframes k{0%{opacity:0;top:0}to{opacity:1}}",
+    );
+    // A style rule is not an item of this block: the invalid declaration runs
+    // to the next semicolon.
+    minify_test(
+      "@keyframes k { from { color: red; .a { color: blue } left: 0 } to { opacity: 1 } }",
+      "@keyframes k{0%{color:red}to{opacity:1}}",
+    );
+    minify_test("@keyframes k { from { 123: x } to { opacity: 1 } }", "@keyframes k{0%{}to{opacity:1}}");
+    minify_test(
+      "@keyframes k { to { opacity: 1 } from { opacity: 0; 123: x",
+      "@keyframes k{to{opacity:1}0%{opacity:0}}",
+    );
+    minify_test(
+      "@-webkit-keyframes k { from { opacity: 0; 123: x } to { opacity: 1 } }",
+      "@-webkit-keyframes k{0%{opacity:0}to{opacity:1}}",
+    );
+    minify_test(
+      "@media screen { @keyframes k { from { opacity: 0; 123: x } to { opacity: 1 } } }",
+      "@media screen{@keyframes k{0%{opacity:0}to{opacity:1}}}",
+    );
+    // A keyframe with an invalid selector is still dropped, as in a browser.
+    minify_test("@keyframes k { form { opacity: 0 } to { opacity: 1 } }", "@keyframes k{to{opacity:1}}");
+
+    // The declarations after the invalid item are part of the sheet now, so
+    // the bundler resolves a `url()` in them.
+    async function bundle(css: string, files: Record<string, string> = {}) {
+      using dir = tempDir("css-keyframe-invalid-item", { "in.css": css, ...files });
+      const result = await Bun.build({ entrypoints: [join(String(dir), "in.css")], minify: true, throw: false });
+      return {
+        success: result.success,
+        logs: result.logs.map(log => `${log.level}: ${log.message}`),
+        css: result.success ? (await result.outputs[0].text()).trim() : "",
+      };
+    }
+
+    test("a url() after the invalid item is bundled", async () => {
+      expect(
+        await bundle("@keyframes k { from { 123: x; background: url(./a.txt) } to { opacity: 1 } }", { "a.txt": "a" }),
+      ).toEqual({
+        success: true,
+        logs: [],
+        css: "@keyframes k{0%{background:url(data:text/plain;base64,YQ==)}to{opacity:1}}",
+      });
+    });
+
+    test("a url() after the invalid item that does not resolve fails the build", async () => {
+      expect(
+        await bundle("@keyframes k { from { 123: x; background: url(./missing.png) } to { opacity: 1 } }"),
+      ).toEqual({
+        success: false,
+        logs: ['error: Could not resolve: "./missing.png"'],
+        css: "",
+      });
+    });
   });
 });

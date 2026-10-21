@@ -121,10 +121,11 @@ const jsFixtures = [
   "varargs-inlined-simple-exit.js",
   "loop-unrolling.js",
   "licm-no-pre-header.js",
-  // RegExp creation. All three without their run directives: this runner applies all of them to one run.
+  // RegExp creation. All of them without their run directives: this runner applies all of them to one run.
   "regexp-lazy-pattern-construction.js",
   "regexp-lazy-pattern-construction-generated.js",
   "regexp-v-flag-negated-class-strings.js",
+  "regexp-v-flag-class-set-grammar.js",
 ];
 
 const wasmFixtures = [

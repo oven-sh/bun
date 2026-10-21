@@ -108,17 +108,15 @@ for (const [set, matching, nonMatching] of [
     shouldMatch(set, matching, nonMatching);
 }
 
-// Operands that follow one another and then an operator are outside the grammar. This parser reads some of them as
-// a union on the left of the operator. Until it refuses them all, a character after && does not clear the flag
-// there, so that a negated one that holds strings stays a SyntaxError.
+// Operands that follow one another and then an operator are not a class of the grammar, with or without strings
+// (regexp-v-flag-class-set-grammar.js).
 shouldBeRefused("[^a\\q{ab}&&b]");
 shouldBeRefused("[^\\x61\\q{ab}&&\\x62]");
 shouldBeRefused("[^\\d\\q{ab}&&b]");
 shouldBeRefused("[^\\q{ab}[b]&&a]");
 shouldBeRefused("[^a\\q{ab}[x]&&b]");
+shouldBeRefused("[^a\\q{ab}&&\\d]");
 
-// Two gaps that stay, written down so that a change to them is seen.
-// The grammar has no operator after juxtaposed operands either when the next operand is not a character.
-shouldMatch("[^a\\q{ab}&&\\d]", ["a", "1"], ["ab"]);
-// A nested class starts in the parser state of the operand before it, and this valid set is refused.
-shouldBeRefused("[\\q{ab}[a&&b]]");
+// A nested class is a class of its own, whatever is before it in the class around it.
+shouldMatch("[\\q{ab}[a&&b]]", ["ab"], ["a", "b"]);
+shouldMatch("[^\\d[a&&\\q{ab|a}]]", ["b"], ["1", "a", "ab"]);

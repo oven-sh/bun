@@ -201,6 +201,19 @@ describe("URLPattern", () => {
       expect(pattern.test({ pathname: "/" + long + "/b" })).toBe(true);
       expect(pattern.test({ pathname: "/" + long + "/a" })).toBe(false);
     });
+
+    // A regexp group is a `v` pattern, so its classes follow the class set grammar: a nested class is a class of its
+    // own, and there is no operator after operands with nothing between them.
+    test("a regexp group with a nested class after a range", () => {
+      const pattern = new URLPattern({ pathname: "/:id([a-f[\\d--5]]+)" });
+      expect(["/a4", "/a5", "/g"].map(pathname => pattern.test({ pathname }))).toEqual([true, false, false]);
+    });
+
+    test("a regexp group with an operator after a union", () => {
+      expect(() => new URLPattern({ pathname: "/:id([a\\d--5]+)" })).toThrow(
+        "Unable to create RegExp object regular expression from provided URLPattern string.",
+      );
+    });
   });
 
   describe("hasRegExpGroups", () => {

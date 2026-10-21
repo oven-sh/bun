@@ -1,5 +1,6 @@
 import { parse } from "acorn";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 // JavaScriptCore's RegExp parser decides which `v` class sets are a SyntaxError. acorn implements the same grammar
 // and early errors on its own, so it says what each set should be. Every set is tried alone and in a pattern of more
@@ -83,19 +84,53 @@ describe("v class sets are a SyntaxError when the grammar says so, at any patter
     expect(differences(sets)).toEqual([]);
   });
 
-  test("the sets where JavaScriptCore still differs from the grammar", () => {
+  // A class is a union, an intersection or a subtraction, and never a mix. The grammar has no operator after
+  // operands with nothing between them, and no second operand after the operand of an operator.
+  test("a union with an operator", () => {
     const sets = [
-      // Operands with no operator between them, then an operator: not in the grammar, read as a union on the left.
+      "[\\p{L}\\p{N}--\\p{Lu}]",
+      "[a\\q{ab}&&b]",
+      "[\\d\\w&&a]",
+      "[a[b]&&c]",
       "[^a\\q{ab}&&\\d]",
-      // A nested class starts in the parser state of the operand before it.
-      "[\\q{ab}[a&&b]]",
+      "[a&&\\da]",
+      "[a&&b[c]]",
     ];
 
-    expect(differences(sets)).toEqual([
-      "[^a\\q{ab}&&\\d] alone: accepted, the grammar says refused",
-      "[^a\\q{ab}&&\\d] in a long pattern: accepted, the grammar says refused",
-      "[\\q{ab}[a&&b]] alone: refused, the grammar says accepted",
-      "[\\q{ab}[a&&b]] in a long pattern: refused, the grammar says accepted",
+    expect(sets.filter(acornAccepts)).toEqual([]);
+    expect(differences(sets)).toEqual([]);
+  });
+
+  // A nested class is a class of its own, whatever is before it in the class around it.
+  test("a nested class after another operand", () => {
+    const valid = [
+      "[\\d[a&&b]]",
+      "[\\q{ab}[a&&b]]",
+      "[a-z[\\p{Lu}--[A-Z]]]",
+      // What oniguruma-to-es writes for the Oniguruma class [a-z[:graph:]].
+      "[a-z[\\P{space}&&\\P{Cc}&&\\P{Cn}&&\\P{Cs}]]",
+    ];
+    const invalid = ["[\\d[--b]]", "[\\d[&&b]]", "[[a&&]]", "[a[b--]]"];
+
+    expect([...valid, ...invalid].filter(acornAccepts)).toEqual(valid);
+    expect(differences([...valid, ...invalid])).toEqual([]);
+  });
+
+  test("a literal gets the same verdict when its module loads", async () => {
+    const run = async (source: string) => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, error: stderr.match(/SyntaxError: .*/)?.[0], exitCode };
+    };
+
+    expect(
+      await Promise.all([
+        run(String.raw`console.log(/^[a-z[\p{Lu}--[A-Z]]]$/v.test("\u00c9"))`),
+        run(String.raw`console.log(/^[\p{L}\p{N}--\p{Lu}]$/v.test("a"))`),
+      ]),
+    ).toEqual([
+      { stdout: "true\n", error: undefined, exitCode: 0 },
+      { stdout: "", error: "SyntaxError: Invalid regular expression: invalid operation in class set", exitCode: 1 },
     ]);
   });
 });

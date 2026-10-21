@@ -370,8 +370,6 @@ pub(crate) struct QuicSession {
     pub(super) conn: Cell<*mut lsquic::lsquic_conn>,
     /// This server session's handshake conn, until lsquic promotes it or it dies.
     mini_conn: Cell<Option<lsquic::MiniConn>>,
-    /// TLS parsed this server session's ClientHello, so the listen callback gets the session.
-    announced: Cell<bool>,
     /// The owning endpoint (raw pointer; the JS-side Strong keeps it alive).
     endpoint: Cell<*mut QuicEndpoint>,
     endpoint_js: JsCell<Option<Strong>>,
@@ -411,6 +409,8 @@ pub(crate) struct QuicSession {
     handshake_reported: Cell<bool>,
     new_token_reported: Cell<bool>,
     close_when_bound: Cell<bool>,
+    /// TLS parsed this server session's ClientHello, so the listen callback gets the session.
+    announced: Cell<bool>,
     deferred_close: JsCell<Option<(bool, u64, Vec<u8>)>>,
     handshake_pending_ok: Cell<bool>,
     reject_unverified_peer: Cell<bool>,
@@ -429,7 +429,6 @@ impl QuicSession {
             vtable,
             conn: Cell::new(null_mut()),
             mini_conn: Cell::new(None),
-            announced: Cell::new(false),
             endpoint: Cell::new(null_mut()),
             endpoint_js: JsCell::new(None),
             is_server: Cell::new(false),
@@ -462,6 +461,7 @@ impl QuicSession {
             handshake_reported: Cell::new(false),
             new_token_reported: Cell::new(false),
             close_when_bound: Cell::new(false),
+            announced: Cell::new(false),
             deferred_close: JsCell::new(None),
             handshake_pending_ok: Cell::new(false),
             reject_unverified_peer: Cell::new(true),

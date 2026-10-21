@@ -386,27 +386,27 @@ unsafe fn sockaddrs(conn: *mut lsquic_conn) -> Option<(*const sockaddr, *const s
 
 /// Borrowed mini conn (a server handshake). A `Conn` method on it calls through NULL.
 #[derive(Copy, Clone)]
-pub struct MiniConn(*mut lsquic_conn);
+pub struct MiniConn(core::ptr::NonNull<lsquic_conn>);
 
 impl MiniConn {
     /// `raw` must be a live mini conn for the lifetime of the returned value.
     pub unsafe fn from_raw(raw: *mut lsquic_conn) -> Option<Self> {
-        (!raw.is_null()).then_some(Self(raw))
+        core::ptr::NonNull::new(raw).map(Self)
     }
     /// Takes the application context off the conn.
     pub fn clear_ctx(&self) {
         // SAFETY: `self.0` is live (caller contract).
-        unsafe { lsquic_conn_set_ctx(self.0, core::ptr::null_mut()) }
+        unsafe { lsquic_conn_set_ctx(self.0.as_ptr(), core::ptr::null_mut()) }
     }
     /// Makes the conn skip its TLS handshake and answer a transport CONNECTION_CLOSE of `code`.
     pub fn refuse(&self, code: c_uint) {
         // SAFETY: as above.
-        unsafe { lsquic_conn_abort_error(self.0, 0, code, core::ptr::null()) }
+        unsafe { lsquic_conn_abort_error(self.0.as_ptr(), 0, code, core::ptr::null()) }
     }
     /// The `(local, peer)` sockaddrs of the conn's first packet.
     pub fn sockaddrs(&self) -> Option<(*const sockaddr, *const sockaddr)> {
         // SAFETY: as above.
-        unsafe { sockaddrs(self.0) }
+        unsafe { sockaddrs(self.0.as_ptr()) }
     }
 }
 

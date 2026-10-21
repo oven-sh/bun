@@ -140,3 +140,34 @@ test("S3 writer() lets the process exit once end() resolves, even if the writer 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "beforeExit\n", stderr: "", exitCode: 0 });
 });
+
+// The writer keeps a write in a buffer until it can cut a part. A buffer that fits a large
+// write exactly has to double for the next byte, and it copies the write to do it.
+test("S3 writer() does not grow its buffer for one byte behind a large write", async () => {
+  const script = `${mockS3("succeeds")}
+    const { estimateShallowMemoryUsageOf } = require("bun:jsc");
+    const LARGE = 32 * 1024 * 1024;
+    // With two parts in flight at most, most of the write waits in the buffer.
+    const w = s3.file("k").writer({ retry: 0, queueSize: 2 });
+    w.write(new Uint8Array(LARGE));
+    // The writer plus the capacity of its buffer.
+    const before = estimateShallowMemoryUsageOf(w);
+    w.write("x");
+    const grewBy = estimateShallowMemoryUsageOf(w) - before;
+    console.log(JSON.stringify({ heldOnce: before >= LARGE && before < LARGE * 1.5, grewBy }));
+    // The buffer is measured. The child does not wait for the upload.
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ heldOnce: true, grewBy: 0 }) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

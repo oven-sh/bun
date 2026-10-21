@@ -2297,3 +2297,46 @@ describe("Valkey: Offline Queue", () => {
     }
   });
 });
+
+describe("Valkey: Write Buffer", () => {
+  // A command is its argument and a few bytes behind it. With auto-pipelining
+  // the next command goes behind those too. A write buffer that fits the
+  // argument exactly has to double for them, and it copies the argument to do it.
+  test.each([false, true])(
+    "a large argument is buffered once (enableAutoPipelining: %p)",
+    async enableAutoPipelining => {
+      // The socket takes a few MiB at most, so most of the value stays in the buffer.
+      const VALUE = 32 * 1024 * 1024;
+      const sockets: net.Socket[] = [];
+      // Answers HELLO and reads nothing after it, so the commands stay in the
+      // write buffer of the client.
+      const server = net.createServer(socket => {
+        sockets.push(socket);
+        socket.on("error", () => {});
+        socket.once("data", () => {
+          socket.pause();
+          socket.write("+OK\r\n");
+        });
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as net.AddressInfo;
+      const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false, enableAutoPipelining });
+      // With auto-pipelining, a command reaches the write buffer in a later turn.
+      const turn = () => new Promise(resolve => setImmediate(resolve));
+      try {
+        await client.connect();
+        const idle = estimateShallowMemoryUsageOf(client);
+        client.set("key", new Uint8Array(VALUE)).catch(() => {});
+        await turn();
+        client.get("key").catch(() => {});
+        await turn();
+        expect(estimateShallowMemoryUsageOf(client) - idle).toBeWithin(VALUE, VALUE * 1.5);
+      } finally {
+        client.close();
+        for (const socket of sockets) socket.destroy();
+        await new Promise(resolve => server.close(resolve));
+      }
+    },
+  );
+});

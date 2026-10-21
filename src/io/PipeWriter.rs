@@ -1951,7 +1951,7 @@ impl StreamBuffer {
 
     pub fn write(&mut self, buffer: &[u8]) -> Result<(), OOM> {
         self.compact();
-        self.list.extend_from_slice(buffer);
+        bun_core::vec::append_bytes(&mut self.list, buffer);
         Ok(())
     }
 
@@ -1974,7 +1974,7 @@ impl StreamBuffer {
 
     pub fn ensure_unused_capacity(&mut self, capacity: usize) -> Result<(), OOM> {
         self.compact();
-        self.list.reserve(capacity);
+        bun_core::vec::reserve_for_append(&mut self.list, capacity);
         Ok(())
     }
 

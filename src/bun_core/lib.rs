@@ -442,6 +442,55 @@ pub mod vec {
         v.truncate(len - n);
     }
 
+    // ── Growth of a byte list that takes more than one append ──────────────
+
+    /// `Vec::reserve` for a list that more appends follow, such as a send
+    /// queue. When the list has to hold more than twice its capacity,
+    /// `Vec::reserve` fits it exactly, so the next append doubles the block
+    /// and copies all of it. When that fit is 1 MiB or more, this asks for
+    /// 4096 bytes more, so that a short append behind a large one fits: a
+    /// protocol trailer, a newline.
+    #[inline]
+    pub fn reserve_for_append(list: &mut Vec<u8>, additional: usize) {
+        if additional > list.capacity() - list.len() {
+            grow_for_append(list, additional);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow_for_append(list: &mut Vec<u8>, additional: usize) {
+        const LARGE: usize = 1024 * 1024;
+        const ROOM: usize = 4096;
+        let needed = list.len().saturating_add(additional);
+        let exact_fit = needed > list.capacity().saturating_mul(2);
+        let room = if exact_fit && needed >= LARGE {
+            ROOM
+        } else {
+            0
+        };
+        list.reserve(additional.saturating_add(room));
+    }
+
+    /// `Vec::extend_from_slice` with the growth of [`reserve_for_append`].
+    /// The growth and its copy are one cold call, so this is as small as
+    /// `extend_from_slice` and a caller inlines it the same way.
+    #[inline]
+    pub fn append_bytes(list: &mut Vec<u8>, bytes: &[u8]) {
+        if bytes.len() > list.capacity() - list.len() {
+            grow_and_append(list, bytes);
+        } else {
+            list.extend_from_slice(bytes);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow_and_append(list: &mut Vec<u8>, bytes: &[u8]) {
+        grow_for_append(list, bytes.len());
+        list.extend_from_slice(bytes);
+    }
+
     // ── Spare-capacity fill helpers ────────────────────────────────────────
     // Consolidates 11 hand-rolled `spare_capacity_mut().as_mut_ptr().cast::<u8>()`
     // + `set_len(len+n)` copies: `spare_capacity_mut` returns
@@ -1608,7 +1657,7 @@ pub(crate) mod strings_impl {
         latin1: &[u8],
     ) -> Vec<u8> {
         list.truncate(offset_into_list);
-        list.reserve(latin1.len());
+        crate::vec::reserve_for_append(&mut list, latin1.len());
         let mut rest = latin1;
         while !rest.is_empty() {
             match first_non_ascii_usize(rest) {

@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, gcTick, isLinux, isWindows, tempDir } from "harness";
 import path from "path";
 
 // The receiver rejects a JSON line that's longer than the UTF-8 encoding of a max-length string can be.
@@ -191,6 +191,40 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
           ? { name: "TypeError", message: "JSON.stringify cannot serialize cyclic structures." }
           : { name: "DataCloneError", message: "The object can not be cloned." },
     });
+  });
+
+  // A message that waits behind one the socket did not take whole shares its
+  // buffer with the next message. If that buffer fits the waiting message
+  // exactly, the next one doubles it and copies the waiting message.
+  // VmHWM is Linux only, and the test reads the peak of a child of its own.
+  it.skipIf(!isLinux)("a short message behind a large queued message does not copy it", async () => {
+    const fixture = /* js */ `
+      const fs = require("node:fs");
+      const peakMiB = () => Number(/VmHWM:\\s+(\\d+)/.exec(fs.readFileSync("/proc/self/status", "utf8"))[1]) / 1024;
+      // Nothing reads the channel.
+      const child = Bun.spawn({
+        cmd: ["sleep", "60"],
+        stdio: ["ignore", "ignore", "ignore"],
+        serialization: ${JSON.stringify(mode)},
+        ipc() {},
+      });
+      try {
+        const message = Buffer.alloc(16 * 1024 * 1024, "a").toString("latin1");
+        child.send(message);
+        child.send(message);
+        Bun.gc(true);
+        // The two sends left a higher peak behind. Writing 5 to clear_refs
+        // sets VmHWM back to what is resident now.
+        fs.writeFileSync("/proc/self/clear_refs", "5");
+        const before = peakMiB();
+        child.send("x");
+        console.log(JSON.stringify({ deltaMiB: peakMiB() - before }));
+      } finally {
+        child.kill();
+      }
+    `;
+    // The copy is 16 MiB.
+    await expectRssDeltaBelow(["-e", fixture], { release: 8, debug: 8 });
   });
 });
 

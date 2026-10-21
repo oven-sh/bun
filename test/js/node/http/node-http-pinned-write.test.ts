@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isLinux, isWindows } from "harness";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import http from "node:http";
@@ -506,4 +506,47 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     expect(body.byteLength).toBe(total);
     expect(detachedAfterSecondWrite).toBe(true);
   });
+});
+
+// An upgraded socket keeps what the peer did not take in a queue of its own,
+// and the HTTP parser writes its replies behind that. A queue that fits a
+// large write exactly has to double for the reply, and it copies the write to
+// do it. VmHWM is Linux only, and the test reads the peak of a child of its own.
+test.skipIf(!isLinux)("a reply behind a large queued write on an upgraded socket does not copy the write", async () => {
+  const fixture = /* js */ `
+    const fs = require("node:fs");
+    const http = require("node:http");
+    const net = require("node:net");
+    const PAYLOAD = 32 * 1024 * 1024;
+    const peakMiB = () => Number(/VmHWM:\\s+(\\d+)/.exec(fs.readFileSync("/proc/self/status", "utf8"))[1]) / 1024;
+    const server = http.createServer();
+    let client;
+    server.on("upgrade", (req, socket) => {
+      req.resume();
+      socket.on("error", () => {});
+      // Zero pages are not resident, so the peak counts the copies only.
+      const payload = Buffer.alloc(PAYLOAD);
+      const before = peakMiB();
+      // The client does not read, so the socket queues what the kernel does not take.
+      socket.write(payload);
+      socket.on("close", () => {
+        console.log(JSON.stringify({ deltaMiB: peakMiB() - before }));
+        client.destroy();
+        server.close();
+      });
+      // Not a chunk size: the server answers 400 on this socket, behind the payload.
+      client.write("zz\\r\\n");
+    });
+    server.listen(0, "127.0.0.1", () => {
+      client = net.connect(server.address().port, "127.0.0.1", () => {
+        client.write(
+          "GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: Upgrade\\r\\nUpgrade: x\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n",
+        );
+      });
+      client.pause();
+      client.on("error", () => {});
+    });
+  `;
+  // One copy of what the kernel did not take of the 32 MiB. The second copy makes it about 60.
+  await expectRssDeltaBelow(["-e", fixture], { release: 45, debug: 51 });
 });

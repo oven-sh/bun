@@ -2348,6 +2348,7 @@ impl FetchTasklet {
         // if we have backpressure the onWritable will drain the buffer
         let needs_schedule = stream_buffer.is_empty();
         if self.skip_chunked_framing() {
+            bun_core::vec::reserve_for_append(&mut stream_buffer.list, utf8_len);
             data.append_utf8_into(&mut stream_buffer.list);
         } else {
             //16 is the max size of a hex number size that represents 64 bits + 2 for the \r\n

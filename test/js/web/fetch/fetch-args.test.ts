@@ -1,6 +1,8 @@
 import { TCPSocketListener } from "bun";
 import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
-import { bunEnv, bunExe, expectRssDeltaBelow, tempDir } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isLinux, tempDir } from "harness";
+import { once } from "node:events";
+import net from "node:net";
 import { join } from "node:path";
 
 let server;
@@ -346,6 +348,64 @@ describe("fetch() releases a string body when it ends before it queues a request
     // the string measures the same.
     await expectRssDeltaBelow(["--smol", "-e", code], { release: 48, debug: 96 });
   });
+});
+
+// fetch() keeps the chunks of a streamed request body in one queue until the
+// socket takes them. A few bytes follow a chunk: its chunked framing, or the
+// next write. A queue that fits the chunk exactly has to double for those
+// bytes, and it copies the chunk to do it. VmHWM is Linux only, and the test
+// reads the peak of a child of its own.
+test.skipIf(!isLinux).each([
+  ["chunked", "{}", ""],
+  ["Content-Length", `{ "Content-Length": String(PAYLOAD + 1) }`, `controller.write("x");`],
+])("fetch() upload of a direct stream holds a large chunk once (%s)", async (_, headers, secondWrite) => {
+  const sockets: net.Socket[] = [];
+  // Answers the first connection without reading it. Nothing reads the
+  // connections after it, so the upload stays in the queue.
+  const upload = net.createServer({ pauseOnConnect: true }, socket => {
+    sockets.push(socket);
+    socket.on("error", () => {});
+    if (sockets.length === 1) socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+  });
+  upload.listen(0, "127.0.0.1");
+  await once(upload, "listening");
+  const url = `http://127.0.0.1:${(upload.address() as net.AddressInfo).port}/`;
+  const code = /* js */ `
+    const fs = require("node:fs");
+    const PAYLOAD = 32 * 1024 * 1024;
+    const peakMiB = () => Number(/VmHWM:\\s+(\\d+)/.exec(fs.readFileSync("/proc/self/status", "utf8"))[1]) / 1024;
+    // The first fetch() of a process starts the HTTP thread.
+    await fetch(${JSON.stringify(url)});
+    // Zero pages are not resident, so the peak counts the copies only.
+    const payload = new Uint8Array(PAYLOAD);
+    const before = peakMiB();
+    const queued = Promise.withResolvers();
+    fetch(${JSON.stringify(url)}, {
+      method: "POST",
+      headers: ${headers},
+      body: new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          controller.write(payload);
+          ${secondWrite}
+          controller.end();
+          queued.resolve();
+        },
+      }),
+    }).catch(() => {});
+    await queued.promise;
+    // fetch() queues the end of the body when pull() returns.
+    await new Promise(resolve => setImmediate(resolve));
+    console.log(JSON.stringify({ deltaMiB: peakMiB() - before }));
+    process.exit(0);
+  `;
+  try {
+    // One copy of 32 MiB. The second copy makes it 64.
+    await expectRssDeltaBelow(["-e", code], { release: 45, debug: 51 });
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    upload.close();
+  }
 });
 
 test("fetch(RequestSubclass, undefined)", async () => {

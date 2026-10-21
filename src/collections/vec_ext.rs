@@ -507,7 +507,7 @@ impl ByteVecExt for Vec<u8> {
         } else {
             str.len()
         };
-        self.reserve(estimate);
+        bun_core::vec::reserve_for_append(self, estimate);
         strings::convert_utf16_to_utf8_append(self, str);
         Ok((self.len() - initial) as u32)
     }
@@ -541,8 +541,12 @@ pub struct OffsetByteList {
 
 impl OffsetByteList {
     pub fn write(&mut self, bytes: &[u8]) -> Result<(), AllocError> {
-        self.byte_list.extend_from_slice(bytes);
+        bun_core::vec::append_bytes(&mut self.byte_list, bytes);
         Ok(())
+    }
+
+    pub fn ensure_unused_capacity(&mut self, additional: usize) {
+        bun_core::vec::reserve_for_append(&mut self.byte_list, additional);
     }
 
     pub fn remaining(&self) -> &[u8] {

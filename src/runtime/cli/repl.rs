@@ -176,13 +176,17 @@ struct History {
     position: usize,
     temp_line: Option<Box<[u8]>>,
     file_path: Option<Box<[u8]>>,
-    /// The file does not end in a newline, so the next append starts with one.
+    /// The newest entries that are not in the file yet: their write failed.
+    unwritten: usize,
+    /// The entries in the file, as far as this session knows.
+    file_entries: usize,
+    /// The file may not end in a newline, so the next append starts with one.
     unterminated: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum HistoryWrite {
-    /// The newest entry goes after what the file holds.
+    /// The unwritten entries go after what the file holds.
     Append,
     /// The entries replace what the file holds.
     Rewrite,
@@ -195,6 +199,8 @@ impl History {
             position: 0,
             temp_line: None,
             file_path: None,
+            unwritten: 0,
+            file_entries: 0,
             unterminated: false,
         }
     }
@@ -228,6 +234,7 @@ impl History {
             }
         }
         self.unterminated = !content.is_empty() && !content.ends_with(b"\n");
+        self.file_entries = self.entries.len();
 
         // Trim to max size
         let excess = self.entries.len().saturating_sub(MAX_HISTORY_SIZE);
@@ -247,6 +254,13 @@ impl History {
             return;
         };
         let rewrite = how == HistoryWrite::Rewrite;
+        let count = match how {
+            HistoryWrite::Append => self.unwritten.min(self.entries.len()),
+            HistoryWrite::Rewrite => self.entries.len(),
+        };
+        if count == 0 {
+            return;
+        }
 
         let flags = sys::O::WRONLY | sys::O::CREAT | if rewrite { 0 } else { sys::O::APPEND };
         let fd = match sys::open_a(path, flags, 0o600) {
@@ -256,7 +270,7 @@ impl History {
         #[cfg(unix)]
         let _ = sys::fchmod(fd, 0o600);
 
-        let entries = &self.entries[if rewrite { 0 } else { self.entries.len() - 1 }..];
+        let entries = &self.entries[self.entries.len() - count..];
         let len: usize = entries.iter().map(|entry| entry.len() + 1).sum();
         let mut content: Vec<u8> = Vec::with_capacity(len + 1);
         if self.unterminated && !rewrite {
@@ -271,8 +285,16 @@ impl History {
         let written = sys::File::borrow(&fd).write_all(&content).is_ok()
             && (!rewrite || sys::ftruncate(fd, content.len() as i64).is_ok());
         if written {
-            self.unterminated = false;
+            match how {
+                HistoryWrite::Append => {
+                    self.unwritten = 0;
+                    self.file_entries += count;
+                }
+                HistoryWrite::Rewrite => self.file_entries = count,
+            }
         }
+        // A failed append can leave a part of a line in the file.
+        self.unterminated = !written && (self.unterminated || !rewrite);
         // `File` never closes fd 0 to 2, and this is one of them after the REPL's code closed it.
         let _ = sys::FdExt::close_allowing_standard_io(fd, None);
     }
@@ -292,6 +314,7 @@ impl History {
 
         self.entries.push(Box::<[u8]>::from(line));
         self.position = self.entries.len();
+        self.unwritten += 1;
 
         // Trim if too large
         while self.entries.len() > MAX_HISTORY_SIZE {
@@ -301,6 +324,13 @@ impl History {
 
         // Written now: `process.exit()` and a signal end the process without any code of the REPL.
         self.write(HistoryWrite::Append);
+        // At twice the cap the file is read again, which cuts it back. The session keeps its entries.
+        if self.file_entries >= 2 * MAX_HISTORY_SIZE {
+            let entries = core::mem::take(&mut self.entries);
+            let _ = self.load();
+            self.entries = entries;
+            self.position = self.entries.len();
+        }
         Ok(())
     }
 
@@ -2525,6 +2555,8 @@ impl<'a> Repl<'a> {
         }
 
         self.restore_terminal();
+        // Only the entries whose write failed are left to write.
+        self.history.write(HistoryWrite::Append);
         Ok(())
     }
 

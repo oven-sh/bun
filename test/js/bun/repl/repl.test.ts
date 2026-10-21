@@ -2036,6 +2036,33 @@ describe.concurrent("REPL history is written when an entry is accepted", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test.each([
+    { when: "with the next entry", rest: ["222 + 1", "process.exit(0)"], file: "111 + 1\n222 + 1\nprocess.exit(0)\n" },
+    { when: "at a clean exit", rest: [".exit"], file: "111 + 1\n" },
+  ])("an entry whose write failed is written $when", async ({ rest, file }) => {
+    // The write fails while a directory has the name of the file.
+    using dir = tempDir("repl-history-retry", {
+      ".bun_repl_history": {},
+      "remove.js": onHistoryFile("rmdirSync(FILE)"),
+    });
+    const home = String(dir);
+
+    const result = await runRepl(["111 + 1", ".load remove.js", ...rest], { home, cwd: home });
+    expect(result.stderr).toBe("");
+    expect(await historyText(home)).toBe(file);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("a session cuts the file back when its own entry makes 2000", async () => {
+    const old = oldEntries(1999);
+    using dir = tempDir("repl-history-cut-in-session", { ".bun_repl_history": old.join("\n") + "\n" });
+    const home = String(dir);
+
+    const result = await runRepl(["process.exit(0)"], { home });
+    expect((await historyText(home))?.split("\n")).toEqual([...old.slice(1000), "process.exit(0)", ""]);
+    expect(result.exitCode).toBe(0);
+  });
+
   test("a session cuts a file of 2000 entries back to the newest 1000", async () => {
     const old = oldEntries(2000);
     using dir = tempDir("repl-history-cut", {

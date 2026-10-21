@@ -2148,6 +2148,8 @@ impl<'a> Repl<'a> {
         opts.repl_mode = true;
         opts.features.dead_code_elimination = false; // REPL needs all code
         opts.features.top_level_await = true; // Enable top-level await in REPL
+        // Without the import, automatic-runtime JSX calls a name that nothing declares.
+        opts.features.auto_import_jsx = vm.transpiler.options.auto_import_jsx;
         // Keep `lower_using` at its default (true) here even though JavaScriptCore
         // supports `using` / `await using` natively. The REPL transform in
         // `js_parser/repl_transforms.rs` rewrites every top-level `s_local` into a

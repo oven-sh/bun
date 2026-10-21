@@ -2279,20 +2279,16 @@ impl<'a> Parser<'a> {
             && p.options.features.auto_import_jsx
             && p.options.jsx.runtime == options::JSX::Runtime::Automatic
         {
-            // `generate_import_stmt` takes `&mut self` plus `import_path: &'a [u8]`
-            // and `symbols: &Sym`, so the Pragma-owned `Box<[u8]>` paths are copied into the
-            // bump arena (giving them the required `'a` lifetime) and `jsx_imports` is moved
-            // out via `take` (it is `Default`) to avoid an overlapping `&self.jsx_imports`
-            // borrow. The callee never reads `self.jsx_imports`, so the take/restore is
-            // semantically a no-op.
-            let import_source: &'a [u8] = p.arena.alloc_slice_copy(p.options.jsx.import_source());
-            let package_name: &'a [u8] = p.arena.alloc_slice_copy(&p.options.jsx.package_name);
+            // Taken out, and put back below, so that `generate_import_stmt` can borrow `p` mutably.
             let jsx_imports = core::mem::take(&mut p.jsx_imports);
 
             let mut buf: [&'static [u8]; 3] = [b"", b"", b""];
             let runtime_import_names = jsx_imports.runtime_import_names(&mut buf);
 
             if !runtime_import_names.is_empty() {
+                // Copied here, not above: a parse with no JSX element allocates nothing.
+                let import_source: &'a [u8] =
+                    p.arena.alloc_slice_copy(p.options.jsx.import_source());
                 p.generate_import_stmt(
                     import_source,
                     runtime_import_names,
@@ -2308,6 +2304,7 @@ impl<'a> Parser<'a> {
 
             let source_import_names = jsx_imports.source_import_names();
             if !source_import_names.is_empty() {
+                let package_name: &'a [u8] = p.arena.alloc_slice_copy(&p.options.jsx.package_name);
                 p.generate_import_stmt(
                     package_name,
                     source_import_names,

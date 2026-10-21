@@ -1586,6 +1586,68 @@ describe("CONNECT pipelined behind a pending response", () => {
       firstFinished: false,
     });
   });
+
+  // The 'connect' listener gives the socket to a second server with emit("connection"), like a proxy
+  // that serves some tunnels in its own process. The response to /first never ends, so it still has
+  // the socket then. The listeners that the second server puts on the socket called methods that
+  // only its own responses have: an uncaught TypeError ended the process. Node v26.3.0 prints the
+  // same two lines and exits with code 0.
+  test.concurrent("should leave the response ahead alone when a second server gets the socket", async () => {
+    const fixture = /* js */ `
+      const http = require("node:http");
+      const net = require("node:net");
+      // Resolves when the tunnel socket has closed. \`event\` is what happens to it first.
+      function run(event) {
+        const { promise, resolve } = Promise.withResolvers();
+        const second = http.createServer();
+        const server = http.createServer((req, res) => void res.write("first"));
+        server.on("connect", (req, socket) => {
+          socket.once(event, () => {
+            console.log(event);
+            socket.destroy();
+            server.close();
+          });
+          socket.once("close", resolve);
+          socket.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
+          second.emit("connection", socket);
+          if (event === "drain") {
+            // A write that returns false is followed by 'drain' when the client has read it.
+            const chunk = Buffer.alloc(1 << 20, "x");
+            while (socket.write(chunk)) {}
+          }
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const client = net.connect(server.address().port, "127.0.0.1");
+          let head = "";
+          client.on("data", chunk => {
+            if (event !== "close" || head.includes("Established")) return;
+            head += chunk.toString("latin1");
+            if (head.includes("Established")) client.destroy();
+          });
+          client.on("error", () => {});
+          client.write(
+            "GET /first HTTP/1.1\\r\\nHost: example.com\\r\\n\\r\\n" +
+              "CONNECT example.com:443 HTTP/1.1\\r\\nHost: example.com:443\\r\\n\\r\\n",
+          );
+        });
+        return promise;
+      }
+      run("drain").then(() => run("close"));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "drain\nclose\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });
 
 /**

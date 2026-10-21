@@ -93,7 +93,13 @@ pub(crate) fn do_send(
     from: FromEnum,
     peer_pid: u32,
 ) -> JsResult<JSValue> {
-    let [mut message, mut handle, options_, mut callback] = call_frame.arguments_as_array::<4>();
+    let [
+        mut message,
+        mut handle,
+        options_,
+        mut callback,
+        error_listener,
+    ] = call_frame.arguments_as_array::<5>();
     #[cfg(not(windows))]
     let _ = peer_pid;
 
@@ -112,6 +118,13 @@ pub(crate) fn do_send(
             is_internal = IsInternal::Internal;
         }
     }
+    // node:child_process gives `error_listener` when its caller gave no callback: a send that
+    // fails is reported to it, and a send that succeeds calls nothing. process.send() has none.
+    let on_error = if callback.is_callable() || from == FromEnum::Process {
+        callback
+    } else {
+        error_listener
+    };
 
     let connected = ipc.as_ref().is_some_and(|i| i.is_connected());
     if !connected {
@@ -128,7 +141,7 @@ pub(crate) fn do_send(
                 format_args!("{}", msg),
             )
             .to_js();
-        return do_send_err(global_object, callback, ex, from);
+        return do_send_err(global_object, on_error, ex, from);
     }
 
     let ipc_data = ipc.unwrap();
@@ -257,7 +270,7 @@ pub(crate) fn do_send(
     if let Some(e) = dup_err {
         use bun_jsc::SysErrorJsc as _;
         close_detached(global_object, pause_target)?;
-        return do_send_err(global_object, callback, e.to_js(global_object), from);
+        return do_send_err(global_object, on_error, e.to_js(global_object), from);
     }
 
     #[cfg(windows)]
@@ -295,7 +308,7 @@ pub(crate) fn do_send(
             b"syscall",
             global_object.common_strings().write(),
         );
-        return do_send_err(global_object, callback, ex, from);
+        return do_send_err(global_object, on_error, ex, from);
     }
 
     // in the success or backoff case, serializeAndSend will handle calling the callback

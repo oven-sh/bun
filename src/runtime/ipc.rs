@@ -724,26 +724,59 @@ impl Drop for Handle {
     }
 }
 
+/// The async context the callback of a queued send() runs in.
+#[derive(Copy, Clone)]
+pub(crate) enum CallbackContext {
+    /// That of its send() call.
+    OfSend,
+    /// The message was sent while a handle waited for its ACK. Node holds such a message
+    /// (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L819-L853)
+    /// and sends it from its ACK handler (#L676-L690), so its callback does not run in the
+    /// stores of its send() call.
+    BehindHandle,
+}
+
+impl CallbackContext {
+    /// `callback` as a `CallbackList` keeps it: wrapped with the context it runs in, or the bare
+    /// function when that is none.
+    fn capture(self, callback: JSValue, global: &JSGlobalObject) -> JSValue {
+        match self {
+            CallbackContext::OfSend => callback.with_async_context_if_needed(global),
+            CallbackContext::BehindHandle => callback.with_graph_context_if_needed(global),
+        }
+    }
+}
+
 pub(crate) enum CallbackList {
     AckNack,
     None,
-    /// js callable
+    /// what `CallbackContext::capture` returned for a js callable
     Callback(Protected),
-    /// js array
+    /// js array of the same
     CallbackArray(Protected),
 }
 
 impl CallbackList {
     /// protects the callback
-    pub(crate) fn init(callback: JSValue) -> Self {
+    pub(crate) fn init(
+        callback: JSValue,
+        global: &JSGlobalObject,
+        context: CallbackContext,
+    ) -> Self {
         if callback.is_callable() {
-            return CallbackList::Callback(callback.protected());
+            return CallbackList::Callback(context.capture(callback, global).protected());
         }
         CallbackList::None
     }
 
     /// protects the callback
-    pub(crate) fn push(&mut self, callback: JSValue, global: &JSGlobalObject) -> JsResult<()> {
+    pub(crate) fn push(
+        &mut self,
+        callback: JSValue,
+        global: &JSGlobalObject,
+        context: CallbackContext,
+    ) -> JsResult<()> {
+        let callback = context.capture(callback, global);
         match self {
             CallbackList::AckNack => unreachable!(),
             CallbackList::None => {
@@ -771,14 +804,14 @@ impl CallbackList {
             CallbackList::AckNack => {}
             CallbackList::None => {}
             CallbackList::Callback(cb) => {
-                JSValue::call_next_tick_1(cb.value(), global, JSValue::NULL)?;
+                JSValue::call_next_tick_1_in_stored_context(cb.value(), global, JSValue::NULL)?;
                 // Assignment drops the old `Callback(cb)` guard → unprotect.
                 *self = CallbackList::None;
             }
             CallbackList::CallbackArray(arr) => {
                 let mut iter = arr.value().array_iterator(global)?;
                 while let Some(item) = iter.next()? {
-                    JSValue::call_next_tick_1(item, global, JSValue::NULL)?;
+                    JSValue::call_next_tick_1_in_stored_context(item, global, JSValue::NULL)?;
                 }
                 // Assignment drops the old `CallbackArray(arr)` guard → unprotect.
                 *self = CallbackList::None;
@@ -1301,6 +1334,15 @@ impl SendQueue {
         debug_assert!(self.has_written_version.get() == 1);
 
         let write_in_progress = self.write_in_progress.get();
+        // Node's `_handleQueue != null`: a handle was sent and its ACK has not arrived.
+        let behind_handle = callback.is_callable()
+            && (self.waiting_for_ack.get().is_some()
+                || self.queue.get().iter().any(|item| item.handle.is_some()));
+        let context = if behind_handle {
+            CallbackContext::BehindHandle
+        } else {
+            CallbackContext::OfSend
+        };
         self.queue.with_mut(|queue| {
             // optimal case: appending a message without a handle to the end of the queue when the last message also doesn't have a handle and isn't ack/nack
             // this is rare. it will only happen if messages stack up after sending a handle.
@@ -1318,14 +1360,14 @@ impl SendQueue {
                 let len = queue.len();
                 let last = &mut queue[len - 1];
                 if callback.is_callable() {
-                    last.callbacks.push(callback, global)?;
+                    last.callbacks.push(callback, global, context)?;
                 }
                 handle_oom(last.data.write(&payload.list));
             } else {
                 queue.push(SendHandle {
                     data: payload,
                     handle,
-                    callbacks: CallbackList::init(callback),
+                    callbacks: CallbackList::init(callback, global, context),
                 });
             }
             Ok(())
@@ -1660,14 +1702,36 @@ impl SendQueue {
             Err(_) => return SerializeAndSendResult::Failure,
         };
         debug_assert!(payload.list.len() == payload_length);
+        // serialize() ran script (toJSON, getters) that can have sent: read the queue after it.
+        // With nothing ahead of it, a message is written in this call, and only that write tells
+        // whether its callback has to be kept, and with it the async context of this call.
+        // A message with a handle is always kept: its callback waits for the ACK of the handle.
+        let idle =
+            handle.is_none() && self.queue.get().is_empty() && self.waiting_for_ack.get().is_none();
+        let queued_callback = if idle { JSValue::NULL } else { callback };
         if self
-            .start_message(global, callback, handle, payload)
+            .start_message(global, queued_callback, handle, payload)
             .is_err()
         {
             return SerializeAndSendResult::Failure;
         }
         log!("IPC call continueSend() from serializeAndSend");
         self.continue_send(global, ContinueSendReason::NewMessageAppended);
+        if idle && callback.is_callable() {
+            debug_assert!(self.queue.get().len() <= 1);
+            // Not written whole: the message is the only item.
+            let kept = self.queue.with_mut(|queue| match queue.first_mut() {
+                Some(item) => {
+                    item.callbacks = CallbackList::init(callback, global, CallbackContext::OfSend);
+                    true
+                }
+                None => false,
+            });
+            // Written whole: the tick is queued from this call, so it runs in its context.
+            if !kept && JSValue::call_next_tick_1(callback, global, JSValue::NULL).is_err() {
+                return SerializeAndSendResult::Failure;
+            }
+        }
 
         if indicate_backoff {
             return SerializeAndSendResult::Backoff;

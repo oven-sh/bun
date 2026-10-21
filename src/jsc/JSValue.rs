@@ -2610,6 +2610,20 @@ impl JSValue {
         })
     }
 
+    /// [`call_next_tick_1`](Self::call_next_tick_1) for a callback kept as
+    /// [`with_async_context_if_needed`](Self::with_async_context_if_needed) returned it and
+    /// completed later: the tick runs in the async context that call captured (none for a bare
+    /// function), not in the one that is current here.
+    pub fn call_next_tick_1_in_stored_context(
+        stored: JSValue,
+        global: &JSGlobalObject,
+        arg: JSValue,
+    ) -> JsResult<()> {
+        host_fn::from_js_host_call_generic(global, || {
+            Bun__Process__queueNextTick1InStoredContext(global, stored, arg)
+        })
+    }
+
     // ── Structured clone. ────────────────────────
     /// `JSValue.deserialize(bytes, global)`.
     pub fn deserialize(bytes: &[u8], global: &JSGlobalObject) -> JsResult<JSValue> {
@@ -2693,6 +2707,11 @@ unsafe extern "C" {
     safe fn Bun__JSValue__getArrayBufferViewByteOffset(this: JSValue) -> usize;
     safe fn Bun__JSValue__materializeArrayBufferViewBuffer(this: JSValue) -> bool;
     safe fn Bun__Process__queueNextTick1(global: &JSGlobalObject, func: JSValue, arg: JSValue);
+    safe fn Bun__Process__queueNextTick1InStoredContext(
+        global: &JSGlobalObject,
+        stored: JSValue,
+        arg: JSValue,
+    );
     fn Bun__JSValue__deserialize(
         global: *const JSGlobalObject,
         data: *const u8,

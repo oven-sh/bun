@@ -1,6 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gcTick, isWindows, tempDir } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import path from "path";
 
 // The receiver rejects a JSON line that's longer than the UTF-8 encoding of a max-length string can be.
@@ -73,6 +74,34 @@ async function runReceiver(serialization: "json" | "advanced", senderSource: str
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout: stdout.split("\n").filter(Boolean), stderr, exitCode };
+}
+
+// Sends a message the channel takes at once, one that waits for the channel and three that wait behind it.
+// Resolves with the store each callback ran in. The child of the test below runs the source of this function.
+function sendRows(
+  AsyncLocalStorageOfSender: typeof AsyncLocalStorage,
+  send: (message: unknown, callback: () => void) => void,
+): Promise<Record<string, string>> {
+  const asyncLocalStorage = new AsyncLocalStorageOfSender<string>();
+  // More than the channel's buffer holds: send() returns before the write is complete, unless the
+  // peer reads the rest in the meantime.
+  const big = Buffer.alloc(1 << 20, "x").toString();
+  const stores: Record<string, string> = {};
+  const callbacks: Promise<void>[] = [];
+  const row = (name: string, message: unknown) => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    callbacks.push(promise);
+    send(message, () => {
+      stores[name] = asyncLocalStorage.getStore() ?? "(no store)";
+      resolve();
+    });
+  };
+  asyncLocalStorage.run("small", row, "small", { small: true });
+  asyncLocalStorage.run("big", row, "big", { big });
+  asyncLocalStorage.run("queued", row, "queued", { queued: true });
+  asyncLocalStorage.run("queued again", row, "queued again", { queued: true });
+  row("queued, no store", { queued: true });
+  return Promise.all(callbacks).then(() => stores);
 }
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
@@ -156,6 +185,75 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
         .map(message => message.nested)
         .sort((a, b) => a - b),
     ).toEqual(Array.from({ length: 32 }, (_, i) => i));
+  });
+
+  it("the callback of send() runs in the async context of its send() call", async () => {
+    const childStores = Promise.withResolvers<Record<string, string>>();
+    const childSource = [
+      `(${sendRows})(require("node:async_hooks").AsyncLocalStorage, (message, callback) => process.send(message, callback))`,
+      `  .then(stores => process.send({ stores }));`,
+      `process.on("message", () => {});`,
+    ].join("\n");
+    await using child = spawn([bunExe(), "-e", childSource], {
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: mode,
+      ipc: message => message.stores && childStores.resolve(message.stores),
+      onExit(_subprocess, exitCode, signalCode) {
+        childStores.reject(new Error(`child exited (${exitCode}, ${signalCode}) before its callbacks ran`));
+      },
+    });
+    // @ts-expect-error node:child_process passes the callback. The types do not have it.
+    const parentStores = sendRows(AsyncLocalStorage, (message, callback) => child.send(message, callback));
+    const stores = {
+      small: "small",
+      big: "big",
+      queued: "queued",
+      "queued again": "queued again",
+      "queued, no store": "(no store)",
+    };
+    expect(await Promise.all([parentStores, childStores.promise])).toEqual([stores, stores]);
+  });
+
+  it("a send() made by a getter while the outer send() serializes keeps its own callback", async () => {
+    // The inner message waits for the channel, so its callback is kept while the outer send() is
+    // still running. Each callback must run once, for its own message, in its own store.
+    const childSource = [
+      `const { AsyncLocalStorage } = require("node:async_hooks");`,
+      `const asyncLocalStorage = new AsyncLocalStorage();`,
+      `const big = Buffer.alloc(1 << 20, "x").toString();`,
+      `const ran = [];`,
+      `const callback = name => () => ran.push(name + " in " + (asyncLocalStorage.getStore() ?? "(no store)"));`,
+      `const outer = {`,
+      `  get inner() {`,
+      `    asyncLocalStorage.run("inner", () => process.send({ big }, callback("inner")));`,
+      `    return "outer";`,
+      `  },`,
+      `};`,
+      `asyncLocalStorage.run("outer", () => process.send(outer, callback("outer")));`,
+      `asyncLocalStorage.run("after", () => process.send({ after: true }, callback("after")));`,
+      // Reported from a later turn: the callbacks of the sends before it have run by then.
+      `process.send({ last: true }, () => setImmediate(() => process.send({ ran })));`,
+      `process.on("message", () => {});`,
+    ].join("\n");
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+    const wire: unknown[] = [];
+    await using child = spawn([bunExe(), "-e", childSource], {
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: mode,
+      ipc(message) {
+        if (message.ran) resolve(message.ran);
+        else wire.push(message.big ? "big" : message);
+      },
+      onExit(_subprocess, exitCode, signalCode) {
+        reject(new Error(`child exited (${exitCode}, ${signalCode}) before its callbacks ran`));
+      },
+    });
+    expect({ ran: await promise, wire }).toEqual({
+      ran: ["inner in inner", "outer in outer", "after in after"],
+      wire: ["big", { inner: "outer" }, { after: true }, { last: true }],
+    });
   });
 
   it("a message the serializer rejects throws from send() and leaves the channel usable", async () => {

@@ -2,9 +2,10 @@
 // finds that graph's context current — also while other graphs and the host are doing the same
 // things at the same time. One entry per kind of callback; add one when adding an API that calls back.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { rmSync } from "fs";
-import { bunExe, tempDir, tls as tlsCerts } from "harness";
+import { rmSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCerts } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { createServer } from "node:net";
 import { join } from "path";
 
 const ModuleGraph = Bun.ModuleGraph;
@@ -264,6 +265,12 @@ const dir = String(
           await new Promise(resolve => childProcess.execFile(env.bun, ["-e", "console.log('hi')"], () => { seen("execFile callback"); resolve(); }));
           await new Promise(resolve => { const child = childProcess.spawn(env.bun, ["-e", "console.log('hi')"]); child.stdout.on("data", () => seen("stdout data")); child.on("exit", () => seen("exit")); child.on("close", () => { seen("close"); resolve(); }); });
         },
+        // A send() that waits for the channel: its callback is called from the event loop.
+        ipcSend: async (seen, env) => {
+          const child = Bun.spawn({ cmd: [env.bun, "-e", "process.on('message', () => process.disconnect())"], stdin: "ignore", stdout: "ignore", stderr: "ignore", ipc() {} });
+          await new Promise(resolve => child.send(Buffer.alloc(1 << 20, "x").toString(), () => { seen("send callback"); resolve(); }));
+          await child.exited;
+        },
         shell: async seen => { await Bun.$\`echo hi\`.quiet(); seen("after builtin"); await Bun.$\`\${process.execPath} -e "1"\`.quiet(); seen("after command"); },
 
         zlib: async seen => {
@@ -291,6 +298,25 @@ const dir = String(
           await new Promise(resolve => new ReadableStream({ start(controller) { controller.enqueue("x"); controller.close(); } }).pipeTo(new WritableStream({ write() { seen("sink write"); }, close() { seen("sink close"); resolve(); } })));
         },
       };
+    `,
+    // Sends to a child of the host. \`called\` holds the name of each callback that ran, in the
+    // context of whoever imported this module: one of the graphs, or the host.
+    "sender.mjs": `
+      const importer = Bun.ModuleGraph.current;
+      export const called = [];
+      export const send = (child, name, ...message) =>
+        child.send(...message, () => called.push(Bun.ModuleGraph.current === importer ? name : name + ", in another context"));
+      export const sendThrowing = (child, message) => child.send(message, () => { throw new Error("thrown by a send() callback"); });
+    `,
+    // Reads nothing of its channel before the file argv[2] exists. Answers the message marked \`last\`.
+    "held-child.mjs": `
+      import { existsSync } from "node:fs";
+      const pause = new Int32Array(new SharedArrayBuffer(4));
+      while (!existsSync(process.argv[2])) Atomics.wait(pause, 0, 0, 1);
+      process.on("message", (message, handle) => {
+        handle?.close();
+        if (message.last) process.send("read the last message");
+      });
     `,
   }),
 );
@@ -413,3 +439,106 @@ test("every callback of several graphs and the host, all running at once, finds 
   ).toEqual([]);
   // (One test on purpose, and slow on a debug build: it is everything running at once.)
 }, 30_000);
+
+// More than the channel's buffer holds. The child of these tests is not reading, so the write is
+// not complete when send() returns.
+const big = Buffer.alloc(1 << 20, "x").toString();
+
+/** A child of the host with an IPC channel: dispose() does not kill it. `read` resolves when it has read the message marked `last`, which it does not before open(). */
+function heldChild(name: string) {
+  const gate = join(dir, name + ".gate");
+  const read = Promise.withResolvers<void>();
+  const child = Bun.spawn({
+    cmd: [bunExe(), join(dir, "held-child.mjs"), gate],
+    env: bunEnv,
+    stdio: ["ignore", "inherit", "inherit"],
+    ipc: () => read.resolve(),
+    onExit: () => read.reject(new Error("the child exited before it read the last message")),
+  });
+  // A test that does not wait for `read` ends with the child killed.
+  read.promise.catch(() => {});
+  return { child, read: read.promise, open: () => writeFileSync(gate, "") };
+}
+
+test("after dispose() the callback of a send() that still waits for the channel is not called; one the channel took at once is", async () => {
+  const { child, read, open } = heldChild("dispose");
+  await using _ = child;
+  using graph = new ModuleGraph();
+  const app = await graph.import(join(dir, "sender.mjs"));
+  graph.run(() => {
+    app.send(child, "the channel took it at once", { small: true });
+    app.send(child, "it waited for the channel", { big, last: true });
+  });
+  graph.dispose();
+  open();
+  // The write of the message that waited was complete before the child answered, so a callback
+  // for it would have run by now.
+  await read;
+  // On Windows no write is complete when send() returns: both sends waited.
+  expect(app.called).toEqual(isWindows ? [] : ["the channel took it at once"]);
+});
+
+test("sends of two graphs and the host that wait on one channel call back as their own sender; dispose() drops its graph's only", async () => {
+  const { child, read, open } = heldChild("shared");
+  await using _ = child;
+  using a = new ModuleGraph();
+  using b = new ModuleGraph();
+  const sender = join(dir, "sender.mjs");
+  const [host, appA, appB] = await Promise.all([import(sender), a.import(sender), b.import(sender)]);
+  host.called.length = 0;
+  host.send(child, "host, waits for the channel", { big });
+  a.run(() => appA.send(child, "a", { queued: true }));
+  b.run(() => appB.send(child, "b", { queued: true }));
+  host.send(child, "host, queued", { last: true });
+  a.dispose();
+  open();
+  await read;
+  expect({ a: appA.called, b: appB.called, host: host.called }).toEqual({
+    a: [],
+    b: ["b"],
+    host: ["host, waits for the channel", "host, queued"],
+  });
+});
+
+// On Windows Bun can lose the ACK of a handle (#37815).
+test.skipIf(isWindows)(
+  "a send held behind a handle calls back in the context of the graph that made it, and not after dispose()",
+  async () => {
+    const { child, read, open } = heldChild("handle");
+    await using _ = child;
+    using a = new ModuleGraph();
+    using b = new ModuleGraph();
+    const sender = join(dir, "sender.mjs");
+    const [host, appA, appB] = await Promise.all([import(sender), a.import(sender), b.import(sender)]);
+    host.called.length = 0;
+    const server = createServer().listen(0);
+    try {
+      host.send(child, "host, with the handle", {}, server);
+      a.run(() => appA.send(child, "a, held", { held: true }));
+      b.run(() => appB.send(child, "b, held", { last: true }));
+      a.dispose();
+      open();
+      await read;
+      expect({ a: appA.called, b: appB.called, host: host.called }).toEqual({
+        a: [],
+        b: ["b, held"],
+        host: ["host, with the handle"],
+      });
+    } finally {
+      server.close();
+    }
+  },
+);
+
+test("a send() callback that throws after it waited for the channel is reported to its graph's onError", async () => {
+  const { child, open } = heldChild("throws");
+  await using _ = child;
+  const reported = Promise.withResolvers<string>();
+  using graph = new ModuleGraph({
+    onError: (error, kind) => reported.resolve(`${kind}: ${(error as Error).message}`),
+  });
+  const app = await graph.import(join(dir, "sender.mjs"));
+  graph.run(() => app.sendThrowing(child, { big }));
+  open();
+  expect(await reported.promise).toBe("uncaughtException: thrown by a send() callback");
+});

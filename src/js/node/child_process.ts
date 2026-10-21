@@ -1600,16 +1600,15 @@ class ChildProcess extends EventEmitter {
       return false;
     }
 
-    // We still need this send function because
-    return this.#handle.send(message, handle, options, err => {
-      // node does process.nextTick() to emit or call the callback
-      // we don't need to because the native IPC layer calls the send callback on nextTick
-      if (callback) {
-        callback(err);
-      } else if (err) {
-        this.emit("error", err);
-      }
-    });
+    // node calls the callback, or emits 'error', from process.nextTick(). The native IPC layer does that:
+    // it calls `callback` on a later tick, and without one it reports a send that fails to the last argument.
+    return this.#handle.send(
+      message,
+      handle,
+      options,
+      callback,
+      typeof callback === "function" ? undefined : err => this.emit("error", err),
+    );
   }
 
   #onDisconnect(firstTime: boolean) {

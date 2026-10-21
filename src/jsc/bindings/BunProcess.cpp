@@ -4587,6 +4587,27 @@ extern "C" void Bun__Process__queueNextTick1(GlobalObject* globalObject, Encoded
 
     process->queueNextTick(globalObject, function, JSValue::decode(arg1));
 }
+// For the callback of an IPC send(), which is kept as AsyncContextFrame::withAsyncContextIfNeeded()
+// returned it and completes later. process.nextTick() captures the async context that is current when
+// it is called, so the stored one is current for the call: none for a bare function, whatever the
+// completion runs in.
+extern "C" void Bun__Process__queueNextTick1InStoredContext(GlobalObject* globalObject, EncodedJSValue stored, EncodedJSValue arg1)
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSValue function = JSValue::decode(stored);
+    JSValue context = jsUndefined();
+    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(function)) {
+        if (Bun::shouldDropCallbackOfStoppedModuleGraph(globalObject, wrapper->context.get())) [[unlikely]]
+            return;
+        function = wrapper->callback.get();
+        context = wrapper->context.get();
+    }
+    auto* asyncContextData = globalObject->m_asyncContextData.get();
+    JSValue previous = asyncContextData->getInternalField(0);
+    asyncContextData->putInternalField(vm, 0, context);
+    globalObject->processObject()->queueNextTick(globalObject, function, JSValue::decode(arg1));
+    asyncContextData->putInternalField(vm, 0, previous);
+}
 extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, EncodedJSValue func, EncodedJSValue arg1, EncodedJSValue arg2)
 {
     auto process = globalObject->processObject();

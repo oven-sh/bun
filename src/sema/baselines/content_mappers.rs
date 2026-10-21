@@ -26,7 +26,7 @@ fn numbers(tuple: &[i64]) -> Json {
     Json::Array(tuple.iter().map(|&it| Json::Number(it as f64)).collect())
 }
 
-fn failed(detail: String) -> CallError {
+fn failed(detail: &str) -> CallError {
     CallError::Failed {
         detail: format!("ipc: remote error [-32603]: {detail}").into_bytes(),
     }
@@ -191,7 +191,7 @@ impl TestMappers {
                         b"/// <reference path=\"./extra.d.ts\" />\ninterface Shared extends Extra { value: string }"
                     }
                     name if name.ends_with(b"/b.vue") => b"declare const shared: Shared;",
-                    _ => return Err(failed("unexpected supplemental global input".to_owned())),
+                    _ => return Err(failed("unexpected supplemental global input")),
                 };
                 let supplemental = object(vec![
                     ("text", string(supplemental)),
@@ -212,9 +212,7 @@ impl TestMappers {
                 ]);
                 Ok(with_supplemental(b"export default 1;", supplemental))
             }
-            _ => Err(failed(
-                "content mapper failed to transform the file".to_owned(),
-            )),
+            _ => Err(failed("content mapper failed to transform the file")),
         }
     }
 }

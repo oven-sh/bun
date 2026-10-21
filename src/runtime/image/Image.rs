@@ -133,6 +133,17 @@ pub(crate) struct PathWindow {
     size: u64,
 }
 
+impl PathWindow {
+    /// The window's part of `bytes`, which are the whole file.
+    fn cut(&self, mut bytes: Vec<u8>) -> Vec<u8> {
+        let start =
+            usize::try_from(self.offset).map_or(bytes.len(), |offset| offset.min(bytes.len()));
+        bytes.drain(..start);
+        bytes.truncate(usize::try_from(self.size).unwrap_or(usize::MAX));
+        bytes
+    }
+}
+
 // These C++ helpers are
 // Image-specific (they pin/adopt typed-array storage for the off-thread
 // pipeline) and have no `bun_jsc` wrapper.
@@ -1203,7 +1214,7 @@ impl Image {
                         let p = ZBox::from_bytes(path.slice());
                         // Only an offset proves a slice: an un-sliced `Bun.file()` caches a size as well (#4930).
                         let offset = blob.offset.get();
-                        // `slice(-n)` on a size that is not read yet counts back from `MAX_SIZE`: no file has that offset.
+                        // An offset above `MAX_SIZE / 2` is not a place in a file: `slice(-n)` on a size that is not read yet counts back from `MAX_SIZE`.
                         let source = if offset > 0 && offset <= crate::webcore::blob::MAX_SIZE / 2 {
                             Source::PathWindow(Box::new(PathWindow {
                                 path: p,
@@ -1674,6 +1685,8 @@ impl PipelineTask {
                 return;
             }
             let read = match window {
+                // A regular file can report no size (procfs): its window is cut from a read of the whole file.
+                Some(w) if file_size == 0 => file.read_to_end().map(|bytes| w.cut(bytes)),
                 Some(w) => read_window(&file, w.offset, len),
                 None => file.read_to_end(),
             };

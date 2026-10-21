@@ -31,6 +31,7 @@
 namespace uWS {
 
 inline constexpr std::string_view ERR_WEBSOCKET_TIMEOUT("WebSocket timed out from inactivity");
+inline constexpr std::string_view ERR_WEBSOCKET_NESTED_READ("WebSocket handler ran the event loop with received frames left to parse");
 
 /* Passed (negated) to a wsPackage context's close handler. Keep in sync with serverFailures in src/js/thirdparty/ws.ts. */
 enum class WebSocketFailureKind : int {
@@ -342,28 +343,30 @@ protected:
         }
 
         if (payLength + MESSAGE_HEADER <= length) {
-            /* The frame is whole: put the parser between frames before handleFragment runs the
-             * user's callback. The callback can tick the event loop (bun:test's `.rejects` inside a
-             * message handler) and that tick reads the next frame on this socket through this same
-             * parser. A frame left open here would then fail as interleaved. */
+            /* Finish this frame's state before handleFragment: a handler that ticks the event loop (bun:test's
+             * `.rejects`, a macro) reads this socket's next frame through this parser before it returns (#45805). */
             OpCode opCode = wState->state.opCode[wState->state.opStack];
             bool fin = isFin(src);
             if (fin) {
                 wState->state.opStack--;
             }
             wState->state.spillLength = 0;
+            Impl::setHasUnparsedBytes(wState, user, payLength + MESSAGE_HEADER < length);
 
-            char *payload = src + MESSAGE_HEADER;
             if (isServer) {
-                unmaskImpreciseCopyMask(payload, (unsigned int) payLength);
-                payload -= 4;
-            }
-            if (Impl::handleFragment(payload, payLength, 0, opCode, fin, wState, user)) {
-                return true;
+                unmaskImpreciseCopyMask(src + MESSAGE_HEADER, (unsigned int) payLength);
+                if (Impl::handleFragment(src + MESSAGE_HEADER - 4, payLength, 0, opCode, fin, wState, user)) {
+                    return true;
+                }
+            } else {
+                if (Impl::handleFragment(src + MESSAGE_HEADER, payLength, 0, opCode, fin, wState, user)) {
+                    return true;
+                }
             }
 
             src += payLength + MESSAGE_HEADER;
             length -= (unsigned int) (payLength + MESSAGE_HEADER);
+            Impl::setHasUnparsedBytes(wState, user, false);
             return false;
         } else {
             wState->state.spillLength = 0;
@@ -391,22 +394,23 @@ protected:
 
     static inline bool consumeContinuation(char *&src, unsigned int &length, WebSocketState<isServer> *wState, void *user) {
         if (wState->remainingBytes <= length) {
-            unsigned int remainingBytes = wState->remainingBytes;
             if (isServer) {
-                unsigned int n = remainingBytes >> 2;
+                unsigned int n = wState->remainingBytes >> 2;
                 unmaskInplace(src, src + n * 4, wState->mask);
-                for (unsigned int i = 0, s = remainingBytes % 4; i < s; i++) {
+                for (unsigned int i = 0, s = wState->remainingBytes % 4; i < s; i++) {
                     src[n * 4 + i] ^= wState->mask[i];
                 }
             }
 
-            /* Between frames before the callback, as in consumeMessage. */
+            /* Finish this frame's state before handleFragment, as in consumeMessage */
+            unsigned int remainingBytes = wState->remainingBytes;
             OpCode opCode = wState->state.opCode[wState->state.opStack];
             bool fin = wState->state.lastFin;
             if (fin) {
                 wState->state.opStack--;
             }
             wState->state.wantsHead = true;
+            Impl::setHasUnparsedBytes(wState, user, remainingBytes < length);
 
             if (Impl::handleFragment(src, remainingBytes, 0, opCode, fin, wState, user)) {
                 return false;
@@ -414,6 +418,7 @@ protected:
 
             src += remainingBytes;
             length -= remainingBytes;
+            Impl::setHasUnparsedBytes(wState, user, false);
             return true;
         } else {
             if (isServer) {

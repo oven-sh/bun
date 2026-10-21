@@ -73,6 +73,10 @@ private:
         return true;
     }
 
+    static void setHasUnparsedBytes(WebSocketState<isServer> */*wState*/, void *s, bool hasUnparsedBytes) {
+        ((WebSocketData *) us_socket_ext((us_socket_t *) s))->hasUnparsedBytes = hasUnparsedBytes;
+    }
+
     /* noinline: called from a dozen cold branches in the parser */
     __attribute__((noinline)) static void failConnection(WebSocketState<isServer> */*wState*/, void *s, const WebSocketFailure &failure, unsigned int detail = 0) {
         ((WebSocket<SSL, isServer, USERDATA> *) s)->failConnection(failure, detail);
@@ -221,7 +225,8 @@ private:
                         return true;
                     }
 
-                    /* The handler can read this socket's next frame (see consumeMessage), which must not be appended to this message */
+                    /* The handler can read this socket's next frame (see consumeMessage). Move the message out so that
+                     * frame isn't appended to it. */
                     ReceiveBuffer message;
                     message.swap(webSocketData->fragmentBuffer);
 
@@ -350,6 +355,12 @@ private:
         /* When in websocket shutdown mode, we do not care for ANY message, whether responding close frame or not.
          * We only care for the TCP FIN really, not emitting any message after closing is key */
         if (webSocketData->isShuttingDown) {
+            return s;
+        }
+
+        /* This read overwrote the bytes the outer consume() has left to parse: the loop has one receive buffer */
+        if (webSocketData->hasUnparsedBytes) {
+            us_socket_close(s, (int) ERR_WEBSOCKET_NESTED_READ.length(), (void *) ERR_WEBSOCKET_NESTED_READ.data());
             return s;
         }
 

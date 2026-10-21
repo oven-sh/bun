@@ -637,14 +637,7 @@ impl JSValkeyClient {
             }
         };
 
-        let options = if arguments.len() >= 2
-            && !arguments[1].is_undefined_or_null()
-            && arguments[1].is_object()
-        {
-            Options::from_js(cx.global(), arguments[1])?
-        } else {
-            valkey::Options::default()
-        };
+        let options = Options::from_js(cx.global(), arguments.get(1).copied())?;
 
         // Copy strings into a persistent buffer since the URL object will be deinitialized
         let mut connection_strings: Box<[u8]> = Box::default();
@@ -735,6 +728,7 @@ impl JSValkeyClient {
                     enable_auto_reconnect: options.enable_auto_reconnect,
                     enable_offline_queue: options.enable_offline_queue,
                     enable_auto_pipelining: options.enable_auto_pipelining,
+                    one_command_at_a_time: options.one_command_at_a_time,
                     ..Default::default()
                 },
                 max_retries: options.max_retries,
@@ -847,6 +841,7 @@ impl JSValkeyClient {
                     } else {
                         client.flags.enable_auto_pipelining
                     },
+                    one_command_at_a_time: client.flags.one_command_at_a_time,
                     ..Default::default()
                 },
                 max_retries: client.max_retries,
@@ -1987,13 +1982,27 @@ impl<const SSL: bool> SocketHandler<SSL> {
 struct Options;
 
 impl Options {
-    fn from_js(global_object: &JSGlobalObject, options_obj: JSValue) -> JsResult<valkey::Options> {
+    fn from_js(
+        global_object: &JSGlobalObject,
+        options: Option<JSValue>,
+    ) -> JsResult<valkey::Options> {
+        let one_command_at_a_time =
+            bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING
+                .get()
+                .unwrap_or(false);
         let mut this = valkey::Options {
-            enable_auto_pipelining:
-                !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING
-                    .get()
-                    .unwrap_or(false),
-            ..Default::default()
+            idle_timeout_ms: 0,
+            connection_timeout_ms: 10000,
+            enable_auto_reconnect: true,
+            max_retries: 20,
+            enable_offline_queue: true,
+            enable_auto_pipelining: !one_command_at_a_time,
+            one_command_at_a_time,
+            tls: valkey::TLS::None,
+        };
+
+        let Some(options_obj) = options.filter(|options| options.is_object()) else {
+            return Ok(this);
         };
 
         if let Some(idle_timeout) =
@@ -2030,6 +2039,8 @@ impl Options {
             options_obj.get_if_property_exists(global_object, "enableAutoPipelining")?
         {
             this.enable_auto_pipelining = enable_auto_pipelining.to_boolean();
+            // The flag is a default: a client that sets the option, to either value, keeps the option's own behavior.
+            this.one_command_at_a_time = false;
         }
 
         if let Some(tls) = options_obj.get_if_property_exists(global_object, "tls")? {

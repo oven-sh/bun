@@ -42,6 +42,8 @@ pub(crate) struct ConnectionFlags {
     /// `Disconnected`.
     pub(crate) failed: bool,
     pub(crate) enable_auto_pipelining: bool,
+    /// Set by `BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING` only. Unlike `enable_auto_pipelining: false`, the queue is never written as a batch.
+    pub(crate) one_command_at_a_time: bool,
     pub(crate) finalized: bool,
     // This flag is a slight hack to allow returning the client instance in the
     // promise which resolves when the connection is established. There are two
@@ -65,6 +67,7 @@ impl Default for ConnectionFlags {
             is_reconnecting: false,
             failed: false,
             enable_auto_pipelining: true,
+            one_command_at_a_time: false,
             finalized: false,
             connection_promise_returns_client: false,
         }
@@ -162,22 +165,9 @@ pub(crate) struct Options {
     pub(crate) max_retries: u32,
     pub(crate) enable_offline_queue: bool,
     pub(crate) enable_auto_pipelining: bool,
+    pub(crate) one_command_at_a_time: bool,
 
     pub(crate) tls: TLS,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            idle_timeout_ms: 0,
-            connection_timeout_ms: 10000,
-            enable_auto_reconnect: true,
-            max_retries: 20,
-            enable_offline_queue: true,
-            enable_auto_pipelining: true,
-            tls: TLS::None,
-        }
-    }
 }
 
 pub(crate) enum Address {
@@ -1431,7 +1421,9 @@ impl ValkeyClient {
     ) -> Result<*mut JSPromise, crate::Error> {
         // FIX: Check meta before using it for routing decisions
         let mut checked_command = *command;
-        checked_command.meta = command.meta.check(command);
+        checked_command.meta = command
+            .meta
+            .check(command, self.flags.one_command_at_a_time);
 
         let mut promise = command::Promise::create(global_this, checked_command.meta);
 

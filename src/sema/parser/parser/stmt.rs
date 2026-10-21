@@ -298,7 +298,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                         && !self.newline_before();
                 }
                 T::Interface | T::Type => return self.next_is_identifier_on_same_line(),
-                T::Defer if self.recovers() => return self.next_is_identifier_on_same_line(),
+                T::Defer | T::Source if self.recovers() => {
+                    return self.next_is_identifier_on_same_line();
+                }
                 T::Module | T::Namespace => {
                     self.next();
                     // oxc clears the await context for the declaration.

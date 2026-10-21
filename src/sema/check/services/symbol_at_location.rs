@@ -350,7 +350,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
             }
             VisitedKind::Parenthesized(..)
             | VisitedKind::ModuleSpecifier(_)
-            | VisitedKind::ImportDeferName(_)
+            | VisitedKind::ImportPhaseName(_)
             | VisitedKind::JsxNamespacedNamePart
             | VisitedKind::ImportAttributeName(_)
             | VisitedKind::LiteralType(_)
@@ -573,10 +573,13 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                 self.get_property_of_type(ty, name)
             }
             // `resolveExternalModuleName`
-            ExprKind::ImportCall { args, .. } if hir.id_at(args, 0) == e => {
+            ExprKind::ImportCall { args, phase } if hir.id_at(args, 0) == e => {
                 let ExprKind::String(text) = hir[e].kind else {
                     return None;
                 };
+                if phase == ImportPhase::Source {
+                    return None;
+                }
                 let attributes = match hir.ids(args).nth(1) {
                     Some(options) => self.c.attributes_of_import_call(file, options),
                     None => Default::default(),

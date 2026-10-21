@@ -342,6 +342,7 @@ known_atoms! {
     IArguments = "IArguments",
     TemplateStringsArray = "TemplateStringsArray",
     ImportMeta = "ImportMeta",
+    AbstractModuleSource = "AbstractModuleSource",
     Error = "Error",
     Map = "Map",
     Set = "Set",

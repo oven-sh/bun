@@ -816,6 +816,8 @@ pub enum ExprKind {
     /// none. Type arguments are an error (1326). See [`File::type_args_of_import_call`].
     ImportCall {
         args: IdList<ExprId>,
+        /// `import.defer(..)`, `import.source(..)`
+        phase: ImportPhase,
     },
     ImportMeta,
     /// `new.target`, with the name as written in the source, because any word forms a meta property.
@@ -1798,6 +1800,15 @@ pub enum ResolutionMode {
     Require,
 }
 
+/// `importClause.PhaseModifier` other than `type`, or the name after the dot in `import.defer(..)`.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
+pub enum ImportPhase {
+    #[default]
+    Evaluation,
+    Defer,
+    Source,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum SpecifierKind {
     /// `import x from "m"`, `export x from "m"`
@@ -1812,13 +1823,25 @@ pub enum SpecifierKind {
     ImportCall,
     /// `require("m")`, in JavaScript
     RequireCall,
+    /// `import source x from "m"`
+    SourceImport,
+    /// `import.source("m")`
+    SourceImportCall,
 }
 
 impl SpecifierKind {
     /// True if it's the argument of a call expression.
     #[inline]
     pub fn is_call(self) -> bool {
-        matches!(self, SpecifierKind::ImportCall | SpecifierKind::RequireCall)
+        use SpecifierKind::*;
+        matches!(self, ImportCall | RequireCall | SourceImportCall)
+    }
+
+    /// `IsSourcePhaseImport`: the specifier is never resolved.
+    #[inline]
+    pub fn is_source_phase(self) -> bool {
+        use SpecifierKind::*;
+        matches!(self, SourceImport | SourceImportCall)
     }
 
     /// `ForEachDynamicImportOrRequireCall`: in `file.Imports()` these come after the statements' specifiers.
@@ -1855,8 +1878,8 @@ pub struct Import {
     /// `importClause.NamedBindings` is a `NamedImports`. `named` can still be empty.
     pub has_named_imports: bool,
     pub type_only: bool,
-    /// `importClause.PhaseModifier` is `defer`.
-    pub is_deferred: bool,
+    /// With a phase, the clause can be the modifier only: `import defer "m"`.
+    pub phase: ImportPhase,
     /// As in [`SpecifierUse`].
     pub mode: ResolutionMode,
     /// The statement node of this declaration.
@@ -2402,8 +2425,6 @@ pub struct FileIn<S: Storage> {
     /// The occurrences of module specifiers, except those of `import()`, which are expressions.
     pub specifier_uses: S::Nodes<SpecifierUse>,
 
-    /// The specifier of each `import.defer(..)`, and the position of the `)` of the call.
-    pub deferred_import_calls: S::Few<(ExprId, u32)>,
     /// The specifier of each `import<T>(..)`, and the type arguments.
     pub import_call_type_args: S::Few<(ExprId, IdList<TypeNodeId>)>,
     /// `with { .. }` of imports, exports and import types, in source order: the start of `with` or of the token that
@@ -3007,7 +3028,6 @@ macro_rules! file_in_arena {
             unclosed_literals: $few!($this.unclosed_literals),
             stray_decorators: $few!($this.stray_decorators),
             specifier_uses: $long!($this.specifier_uses),
-            deferred_import_calls: $few!($this.deferred_import_calls),
             import_call_type_args: $few!($this.import_call_type_args),
             import_attributes: $few!($this.import_attributes),
             specifier_expressions: $few!($this.specifier_expressions),

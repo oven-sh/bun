@@ -498,7 +498,7 @@ impl Checker<'_, '_> {
         let index = self.exprs_by_kind(file);
         // `checkImportCallExpression`
         for &e in index.of(ExprTag::ImportCall) {
-            let ExprKind::ImportCall { args, .. } = hir[e].kind else {
+            let ExprKind::ImportCall { args, phase } = hir[e].kind else {
                 continue;
             };
             if self.bound(file).is_unchecked(e.idx()) || self.is_never_checked(hir[e].pos) {
@@ -509,7 +509,7 @@ impl Checker<'_, '_> {
             }
             let argument = hir.id_at(args, 0);
             // `resolveExternalModuleNameWorker`
-            if is_string_literal_like(hir, argument) {
+            if phase != ImportPhase::Source && is_string_literal_like(hir, argument) {
                 let specifier_use = SpecifierUse {
                     spec: crate::bind::string_literal_text(hir, argument),
                     pos: hir[argument].pos,

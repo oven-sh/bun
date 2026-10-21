@@ -5249,8 +5249,15 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 cat!(b"<const>", emit(operand, P::Update)?)
             }
             ExprKind::AsConst(operand) => cat!(emit(operand, P::Relational)?, b" as const"),
-            ExprKind::ImportCall { args } if hir.type_args_of_import_call(args).is_empty() => {
-                cat!(b"import", emit_arguments(args)?)
+            ExprKind::ImportCall { args, phase }
+                if hir.type_args_of_import_call(args).is_empty() =>
+            {
+                let callee: &[u8] = match phase {
+                    ImportPhase::Evaluation => b"import",
+                    ImportPhase::Defer => b"import.defer",
+                    ImportPhase::Source => b"import.source",
+                };
+                cat!(callee, emit_arguments(args)?)
             }
             ExprKind::ImportMeta => b"import.meta".to_vec(),
             ExprKind::NewTarget(name) => cat!(b"new.", self.text(name)),

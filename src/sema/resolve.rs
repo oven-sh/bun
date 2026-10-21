@@ -216,6 +216,17 @@ impl ModuleKind {
         (ModuleKind::Node16..=ModuleKind::NodeNext).contains(&self)
     }
 
+    /// `SupportsDeferredImports`
+    pub fn supports_deferred_imports(self) -> bool {
+        matches!(self, ModuleKind::EsNext | ModuleKind::Preserve)
+    }
+
+    /// `SupportsSourcePhaseImports`
+    pub fn supports_source_phase_imports(self) -> bool {
+        use ModuleKind::*;
+        matches!(self, EsNext | NodeNext | Preserve)
+    }
+
     /// `ModuleKind.String`
     pub fn name(self) -> &'static [u8] {
         match self {

@@ -20056,6 +20056,31 @@ export const s: string = x;
       expect(exitCode).toBe(1);
     });
 
+    test("`defer` and `source` with an escape aren't import phase modifiers", async () => {
+      using dir = project({
+        "a.ts": `export default 1;
+`,
+        "b.ts": String.raw`import d\u0065fer from "./a";
+import s\u006furce from "./a";
+export const sum: number = defer + source;
+`,
+        "c.ts": String.raw`import.d\u0065fer("./a");
+import.s\u006furce("./a");
+`,
+        "d.ts": String.raw`import d\u0065fer * as a from "./a";
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "c.ts(1,8): error TS1260: Keywords cannot contain escape characters.
+        c.ts(2,8): error TS1260: Keywords cannot contain escape characters.
+        d.ts(1,19): error TS1005: '=' expected.
+        d.ts(1,24): error TS1005: ';' expected.
+        d.ts(1,26): error TS1434: Unexpected keyword or identifier."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reads package.json as strict JSON, and uses the last of two duplicate keys", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "module": "nodenext", "target": "esnext", "types": [], "skipLibCheck": true}, "files": ["a.ts"]}`,

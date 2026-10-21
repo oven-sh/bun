@@ -98,7 +98,7 @@ impl Checker<'_, '_> {
             | VisitedKind::HeritageClauseQualifiedName(..)
             | VisitedKind::ImportTypeQualifierName(..)
             | VisitedKind::ModuleSpecifier(_)
-            | VisitedKind::ImportDeferName(_)
+            | VisitedKind::ImportPhaseName(_)
             | VisitedKind::ImportAttributeName(_)
             | VisitedKind::JsxNamespacedNamePart
             | VisitedKind::ConstOfAsConst(_)

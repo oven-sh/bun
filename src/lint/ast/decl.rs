@@ -1612,9 +1612,7 @@ impl<'a> Import<'a> {
 
     /// `"defer"` for `import defer ..`, `"source"` for `import source ..`.
     pub fn phase(self) -> Option<&'static str> {
-        let raw = self.raw();
-        raw.is_deferred
-            .then(|| self.file.phase_at(raw.clause_start))
+        super::expr::phase_name(self.raw().phase)
     }
 
     /// `import "spec"`

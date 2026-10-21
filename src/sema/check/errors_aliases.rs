@@ -954,6 +954,10 @@ impl Checker<'_, '_> {
         specifier_use: SpecifierUse,
         site: SpecifierSite,
     ) -> bool {
+        // `resolveExternalModuleNameWorker`
+        if specifier_use.kind.is_source_phase() {
+            return false;
+        }
         let at = self.span_of_token(file, specifier_use.pos);
         self.resolve_external_module_at(file, specifier_use, site, at, None)
     }
@@ -1386,14 +1390,15 @@ fn eat(text: &[u8], at: usize, c: u8) -> Option<usize> {
     (text.get(at) == Some(&c)).then_some(at + 1)
 }
 
-/// The end offset of the invalid meta-property `import.<name>` at `pos`, where `<name>` is neither `meta` nor `defer`.
-/// The parser lowers it to `ExprKind::Missing`, whose `end` doesn't cover the name.
+/// The end offset of the invalid meta-property `import.<name>` at `pos`, where `<name>` is none of `meta`, `defer` and
+/// `source`. The parser lowers it to `ExprKind::Missing`, whose `end` doesn't cover the name.
 fn other_import_meta_property_end(text: &[u8], pos: u32) -> Option<u32> {
     let dot_end = eat_word(text, pos as usize, b"import").and_then(|end| eat(text, end, b'.'))?;
     let name = skip_trivia(text, dot_end);
-    eat_word(text, name, b"defer")
-        .is_none()
-        .then(|| word_end(text, name) as u32)
+    let is_phase = [&b"defer"[..], b"source"]
+        .iter()
+        .any(|word| is_word_at(text, name, word));
+    (!is_phase).then(|| word_end(text, name) as u32)
 }
 
 /// The string literal at `at`: the raw text between the quotes, and its end.

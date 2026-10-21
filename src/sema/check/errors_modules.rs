@@ -17,7 +17,7 @@
 //!   `checkGrammarImportCallExpression`: 1286 1295
 //! * `checkGrammarModuleElementContext`: 1231 1232 1233 1234 1235 1258 1473 1474
 //! * `getTypeFromImportTypeNode`: 1339 1340; `checkGrammarImportClause`: 1363 2206 18058 18059
-//!   18060
+//!   18060 18111 18112 18113 18115 18117
 //! * `reportFlowControlError`: 2563
 //!
 //! All in TypeScript 7.1's checker.go, flow.go, grammarchecks.go, binder.go and parser/references.go. Only
@@ -665,7 +665,8 @@ impl Checker<'_, '_> {
         let statement = statement_of_alias_declaration(hir, decl);
         // FOR SPEED: nothing stops the check of such a declaration, which reports the same errors.
         let has_phase_modifier = statement.is_some_and(|s| {
-            matches!(hir[s].kind, StmtKind::Import(x) if hir[x].type_only || hir[x].is_deferred)
+            matches!(hir[s].kind, StmtKind::Import(x)
+                if hir[x].type_only || hir[x].phase != ImportPhase::Evaluation)
         });
         let is_checked = match statement {
             Some(s) => {
@@ -987,7 +988,11 @@ impl Checker<'_, '_> {
             && !self.check_grammar_import_clause(cx, i)
         {
             let is_ambient = self.modules_is_ambient(cx, s, container);
-            let is_missing = self.modules_module_is_missing(cx, s, import.spec, container);
+            // Nothing asks for the module of `import defer "m"`.
+            let has_bindings =
+                import.default.is_some() || import.namespace.is_some() || import.has_named_imports;
+            let is_missing = import.phase != ImportPhase::Evaluation && !has_bindings
+                || self.modules_module_is_missing(cx, s, import.spec, container);
             self.check_import_binding(cx, Decl::ImportDefault(i), import.default, is_ambient);
             self.check_import_binding(cx, Decl::ImportNamespace(i), import.namespace, is_ambient);
             // The names in braces are checked once the module is resolved.
@@ -1002,7 +1007,7 @@ impl Checker<'_, '_> {
             if !import.type_only
                 && (ModuleKind::Node18..=ModuleKind::NodeNext).contains(&files.options.module)
                 && let Some(specifier_use) = cx.specifier(pos, import.spec)
-                && specifier_use.kind != SpecifierKind::SideEffect
+                && specifier_use.kind == SpecifierKind::Import
                 && let Some(module) =
                     self.resolve_external_module_name_ignoring_errors(cx.file, &import)
                 && files.is_only_importable_as_default(cx.file, module)
@@ -1069,19 +1074,27 @@ impl Checker<'_, '_> {
                 return Some(((file, hir[specifier].start, 0), 2206));
             }
             1363
-        } else if !import.is_deferred {
-            return None;
-        } else if import.default.is_some() {
-            18058
-        } else if import.has_named_imports {
-            18059
-        } else if !matches!(
-            self.p.files.options.module,
-            ModuleKind::EsNext | ModuleKind::Preserve
-        ) {
-            18060
         } else {
-            return None;
+            let kind = self.p.files.options.module;
+            let has_named_bindings = import.namespace.is_some() || import.has_named_imports;
+            match import.phase {
+                ImportPhase::Evaluation => return None,
+                ImportPhase::Defer if import.default.is_some() => 18058,
+                ImportPhase::Defer if !has_named_bindings => 18117,
+                ImportPhase::Defer if import.has_named_imports => 18059,
+                ImportPhase::Defer if !kind.supports_deferred_imports() => 18060,
+                ImportPhase::Defer => return None,
+                ImportPhase::Source if has_named_bindings => 18112,
+                ImportPhase::Source if import.default.is_none() => 18111,
+                ImportPhase::Source if !kind.supports_source_phase_imports() => 18113,
+                // `getEmitSyntaxForModuleSpecifierExpression`
+                ImportPhase::Source
+                    if self.files().emit_syntax_of_import(file) == ResolutionMode::Require =>
+                {
+                    18115
+                }
+                ImportPhase::Source => return None,
+            }
         };
         Some((clause, code))
     }

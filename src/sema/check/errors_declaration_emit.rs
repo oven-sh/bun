@@ -3938,7 +3938,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         }
         if bindings.is_empty() {
             // "Augmentation of export depends on import", for `NamedImports`.
-            if import.namespace.is_some()
+            if !import.has_named_imports
                 || import.named.is_empty() && import.default.is_some()
                 || !self.c.is_import_required_by_augmentation(file, i)
             {
@@ -3950,11 +3950,16 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             let text = [b"import ", &tail(self)[..]].concat();
             return Some(self.update_import(StatementKind::Import, s, text));
         }
-        let type_only: &[u8] = if import.type_only { b"type " } else { b"" };
+        // `defer` is dropped.
+        let phase_modifier: &[u8] = match import.phase {
+            _ if import.type_only => b"type ",
+            ImportPhase::Source => b"source ",
+            _ => b"",
+        };
         let bindings = bindings.join(&b", "[..]);
         let text = [
             b"import ",
-            type_only,
+            phase_modifier,
             &bindings[..],
             b" from ",
             &tail(self)[..],

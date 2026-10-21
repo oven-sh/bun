@@ -128,7 +128,6 @@ slices! {
         with_bodies: (u32, u32),
         detached_semicolons: (u32, u32),
         import_attributes: (u32, hir::ExprId),
-        deferred_import_calls: (hir::ExprId, u32),
         jsdoc_comments: (u32, u32),
         comments: hir::Comment,
         keyword_identifier_positions: u32,

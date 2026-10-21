@@ -18,8 +18,8 @@ pub(in crate::check) enum VisitedKind {
     /// An identifier in place of the required string of `import a = require("m")` or
     /// `export * from "m"`, which is not in an expression context.
     ModuleSpecifier(ExprId),
-    /// The `defer` of `import.defer("m")`.
-    ImportDeferName(ExprId),
+    /// The `defer` of `import.defer("m")`, the `source` of `import.source("m")`.
+    ImportPhaseName(ExprId),
     /// The `const` of `x as const` and of `<const>x`.
     ConstOfAsConst(ExprId),
     /// An intrinsic element's name in a tag of this JSX element, and the string the HIR stores for
@@ -182,7 +182,7 @@ impl Checker<'_, '_> {
                 (Part::Qualified, NodeData::Name(name)) => return in_entity_name(name, true),
                 (Part::Name, NodeData::Expr(e)) => match hir[e].kind {
                     ExprKind::AsConst(_) => VisitedKind::ConstOfAsConst(e),
-                    ExprKind::ImportCall { .. } => VisitedKind::ImportDeferName(e),
+                    ExprKind::ImportCall { .. } => VisitedKind::ImportPhaseName(e),
                     ExprKind::Fn(f) => return name_of(Decl::Fn(f)),
                     ExprKind::Class(c) => return name_of(Decl::Class(c)),
                     _ => VisitedKind::AccessName(e),

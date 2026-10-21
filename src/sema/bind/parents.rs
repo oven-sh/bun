@@ -337,7 +337,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             }
             ExprKind::Template { exprs, .. } => list!(exprs),
             ExprKind::Array(items) => list!(items),
-            ExprKind::ImportCall { args } => {
+            ExprKind::ImportCall { args, .. } => {
                 list!(args);
                 if !f.import_call_type_args.is_empty() {
                     tys!(f.type_args_of_import_call(args));

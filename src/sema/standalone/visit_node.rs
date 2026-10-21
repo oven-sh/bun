@@ -111,7 +111,7 @@ impl Checker<'_, '_> {
             | VisitedKind::Parenthesized(e, _)
             | VisitedKind::AccessName(e)
             | VisitedKind::ModuleSpecifier(e)
-            | VisitedKind::ImportDeferName(e)
+            | VisitedKind::ImportPhaseName(e)
             | VisitedKind::ConstOfAsConst(e)
             | VisitedKind::JsxIntrinsicTagName(e, _) => self.enclosing_scope_of_expr(file, e),
             VisitedKind::DeclarationName(decl, _) | VisitedKind::SpecifierPropertyName(decl, _) => {

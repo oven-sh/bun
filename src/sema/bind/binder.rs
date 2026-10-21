@@ -2135,7 +2135,8 @@ impl<'f, 's> Binder<'f, 's> {
         ) = measure_flow(&self.b.flow, &self.b.flow_edges, &self.b.flow_shared);
         // `collectExternalModuleReferences`
         let uses = self.f.specifier_uses.iter();
-        let dynamic = uses.filter(|u| u.kind.is_dynamic() && u.spec.is_some());
+        let dynamic =
+            uses.filter(|u| u.kind.is_dynamic() && !u.kind.is_source_phase() && u.spec.is_some());
         let mut dynamic: Vec<(u32, Atom)> = dynamic.map(|u| (u.pos, u.spec)).collect();
         dynamic.sort_by_key(|dynamic| dynamic.0);
         let dynamic = dynamic.iter().map(|dynamic| dynamic.1);
@@ -2498,7 +2499,16 @@ impl<'f, 's> Binder<'f, 's> {
             StmtKind::Import(import) => {
                 let i = &self.f[import];
                 self.b.import_scope[import.idx()] = self.scope;
-                self.statement_specifier(i.spec);
+                // `resolveImportsAndModuleAugmentations` skips the specifier of a source phase import.
+                if i.phase != ImportPhase::Source {
+                    self.statement_specifier(i.spec);
+                } else if i.default.is_some() {
+                    let flags = SymFlags::FUNCTION_SCOPED_VARIABLE | SymFlags::TRANSIENT;
+                    let target = self.new_symbol(flags, i.default);
+                    let declarations = &mut self.b.symbols[target.idx()].decls;
+                    declarations.push(Decl::ImportDefault(import));
+                    self.b.source_phase_targets.push((import, target));
+                }
                 let (alias, excludes) = (SymFlags::ALIAS, SymFlags::ALIAS_EXCLUDES);
                 let default = i.default.is_some().then_some(Decl::ImportDefault(import));
                 let namespace = i
@@ -4865,7 +4875,7 @@ impl<'f, 's> Binder<'f, 's> {
                 }
                 self.expr(e, me);
             }
-            ExprKind::ImportCall { args } => {
+            ExprKind::ImportCall { args, .. } => {
                 // `checkImportCallExpression` never checks them.
                 let was_unchecked = std::mem::replace(&mut self.is_unchecked, true);
                 self.tys(self.f.type_args_of_import_call(args));

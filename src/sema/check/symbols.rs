@@ -800,6 +800,10 @@ impl<'p, 's> Checker<'p, 's> {
                 if let Decl::Var(pat) | Decl::Param(pat) = decl {
                     return self.type_of_pat(file, pat);
                 }
+                // `getTargetOfImportClause` for `import source x from "m"`
+                if matches!(decl, Decl::ImportDefault(_)) && !flags.contains(SymFlags::ALIAS) {
+                    return self.global_ref_checked(known::AbstractModuleSource, &[]);
+                }
             }
         }
         if let Some(ty) = self.type_of_assignment_declarations(sym) {

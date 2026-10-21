@@ -2161,6 +2161,11 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
             return target;
         }
         let target = match decl {
+            Decl::ImportDefault(import) if hir[import].phase == ImportPhase::Source => {
+                let mut targets = bound.source_phase_targets.iter();
+                let id = targets.find(|it| it.0 == import)?.1;
+                return Some(Sym { file, id });
+            }
             // `getTargetOfImportClause`: without the module nothing is marked.
             Decl::ImportDefault(import) => {
                 let module = self.module_of_import(file, &hir[import])?;
@@ -2716,8 +2721,12 @@ fn module_references(hir: &hir::File) -> Vec<(u32, u32, bool)> {
     references
 }
 
-/// True if `u` is one of `file.Imports()`. `visited`: the `module_references` of the file.
+/// True if `u` is one of `file.Imports()` that gets resolved, which a source phase import isn't. `visited`: the
+/// `module_references` of the file.
 fn is_among_imports(visited: &[(u32, u32, bool)], atoms: &Interner, u: &SpecifierUse) -> bool {
+    if u.kind.is_source_phase() {
+        return false;
+    }
     // `ForEachDynamicImportOrRequireCall` looks at the whole text.
     if u.kind.is_dynamic() {
         return u.spec.is_some();
@@ -3169,7 +3178,7 @@ fn times_among_imports(hir: &File, calls: &ExprsByKind, text: &[u8], u: &Specifi
         _ => calls.of(ExprTag::Call),
     };
     let found = calls_of_kind.iter().find_map(|&e| match hir[e].kind {
-        ExprKind::ImportCall { args } if is_match(args) => Some((e, args)),
+        ExprKind::ImportCall { args, .. } if is_match(args) => Some((e, args)),
         ExprKind::Call(call) if is_match(hir[call].args) => Some((e, hir[call].args)),
         _ => None,
     });
@@ -6601,7 +6610,8 @@ impl<'s> Files<'s> {
             let unsupported_extension = unsupported_extension.map(|code| {
                 let mode_of = |u: &SpecifierUse| mode_for_usage_location(options, default_mode, u);
                 let uses = hir.specifier_uses.iter();
-                let uses = uses.filter(|u| u.spec == spec && mode_of(u) == mode);
+                let uses = uses
+                    .filter(|u| u.spec == spec && mode_of(u) == mode && !u.kind.is_source_phase());
                 let first = uses.min_by_key(|u| u.pos);
                 let span = first.map(|u| (u.pos, end_of_string_literal(&hir.text, u.pos)));
                 UnsupportedExtension { code, span }
@@ -8498,6 +8508,10 @@ impl<'s> Files<'s> {
 
     /// `resolveExternalModuleName(node, node.ModuleSpecifier(), ..)` for an import declaration of `file`.
     pub fn module_of_import(&self, file: FileId, import: &Import) -> Option<Sym> {
+        // `resolveExternalModuleNameWorker`
+        if import.phase == ImportPhase::Source {
+            return None;
+        }
         let mode = self.mode_of_import(file, import.mode);
         let attributes = self.hir(file).attributes_of_statement(import.stmt);
         let attributes = self.import_attributes(file, attributes);

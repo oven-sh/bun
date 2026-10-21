@@ -11,7 +11,7 @@ bun_core::comptime_string_set! {
         b"export", b"extends", b"false", b"finally", b"for", b"from", b"function", b"get", b"if", b"immediate", b"implements",
         b"import", b"in", b"infer", b"instanceof", b"interface", b"intrinsic", b"is", b"keyof", b"let", b"module", b"namespace",
         b"never", b"new", b"null", b"number", b"object", b"package", b"private", b"protected", b"public", b"override", b"out",
-        b"readonly", b"require", b"global", b"return", b"satisfies", b"set", b"static", b"string", b"super", b"switch", b"symbol",
+        b"readonly", b"require", b"global", b"return", b"satisfies", b"set", b"source", b"static", b"string", b"super", b"switch", b"symbol",
         b"this", b"throw", b"true", b"try", b"type", b"typeof", b"undefined", b"unique", b"unknown", b"using", b"var", b"void",
         b"while", b"with", b"yield", b"async", b"await", b"of",
     };

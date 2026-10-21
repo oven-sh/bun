@@ -98,7 +98,7 @@ impl Checker<'_, '_> {
     /// `checkGrammarImportCallExpression`
     pub(super) fn check_grammar_import_call_expression(&mut self, file: FileId, e: ExprId) -> bool {
         let (hir, kind) = (self.hir(file), self.p.files.options.module);
-        let ExprKind::ImportCall { args, .. } = hir[e].kind else {
+        let ExprKind::ImportCall { args, phase } = hir[e].kind else {
             return false;
         };
         if self.p.files.options.verbatim_module_syntax && kind == ModuleKind::CommonJs {
@@ -106,13 +106,21 @@ impl Checker<'_, '_> {
             return self.grammar_error_on_node(file, e, message, &[]);
         }
         let (specifier, options) = (hir.id_at(args, 0), hir.ids(args).nth(1));
-        let mut deferred = hir.deferred_import_calls.iter();
-        if deferred.any(|call| call.0 == specifier) {
-            if !matches!(kind, ModuleKind::EsNext | ModuleKind::Preserve) {
-                return self.grammar_error_on_node(file, e, 18060, &[]);
+        let unsupported = match phase {
+            ImportPhase::Source => (!kind.supports_source_phase_imports()).then_some(18113),
+            ImportPhase::Defer => (!kind.supports_deferred_imports()).then_some(18060),
+            ImportPhase::Evaluation => (kind == ModuleKind::Es2015).then_some(1323),
+        };
+        if let Some(code) = unsupported {
+            return self.grammar_error_on_node(file, e, code, &[]);
+        }
+        if phase == ImportPhase::Source {
+            let name = hir.start(hir.node(e).with(Part::Name));
+            let after_name = skip_trivia(&hir.text, self.end_of_token_at(file, name) as usize);
+            if hir.text[after_name..].starts_with(b"?.") {
+                let question_dot = (file, after_name as u32, after_name as u32 + 2);
+                return self.grammar_error_at(question_dot, 18114, &[]);
             }
-        } else if kind == ModuleKind::Es2015 {
-            return self.grammar_error_on_node(file, e, 1323, &[]);
         }
         let mut with_type_arguments = hir.import_call_type_args.iter();
         if with_type_arguments.any(|call| call.0 == specifier) {

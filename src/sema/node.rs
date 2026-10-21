@@ -64,7 +64,7 @@ kinds! {
     InferKeyword IntrinsicKeyword IsKeyword KeyOfKeyword ModuleKeyword NamespaceKeyword NeverKeyword OutKeyword ReadonlyKeyword
     RequireKeyword NumberKeyword ObjectKeyword SatisfiesKeyword SetKeyword StringKeyword SymbolKeyword TypeKeyword UndefinedKeyword
     UniqueKeyword UnknownKeyword UsingKeyword FromKeyword GlobalKeyword BigIntKeyword OverrideKeyword OfKeyword DeferKeyword
-    QualifiedName ComputedPropertyName TypeParameter Parameter Decorator PropertySignature PropertyDeclaration MethodSignature
+    SourceKeyword QualifiedName ComputedPropertyName TypeParameter Parameter Decorator PropertySignature PropertyDeclaration MethodSignature
     MethodDeclaration ClassStaticBlockDeclaration Constructor GetAccessor SetAccessor CallSignature ConstructSignature
     IndexSignature TypePredicate TypeReference FunctionType ConstructorType TypeQuery TypeLiteral ArrayType TupleType OptionalType
     RestType UnionType IntersectionType ConditionalType InferType ParenthesizedType ThisType TypeOperator IndexedAccessType
@@ -903,7 +903,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
                         .any(|child| self.jsx_child(child))
                     || self.one(node.with(Part::Closing))
             }
-            ExprKind::ImportCall { args } => {
+            ExprKind::ImportCall { args, .. } => {
                 self.one(node.with(Part::Keyword))
                     || self.list(file.type_args_of_import_call(args))
                     // `import()`: the placeholder for the specifier isn't a node.
@@ -1084,7 +1084,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
             | Part::Specifier
             | Part::Namespace
             | Part::LocalName => false,
-            Part::Keyword => self.part(row, Part::Name, file.is_deferred_import_call(row)),
+            Part::Keyword => self.part(row, Part::Name, file.is_import_call_with_phase(row)),
             Part::Literal => {
                 file.kind_of_part(part, row) == Kind::PrefixUnaryExpression
                     && self.one(row.with(Part::Operand))
@@ -1543,11 +1543,10 @@ impl<'s> File<'s> {
                 .is_some_and(|rest| rest.starts_with(b"import"))
     }
 
-    /// `import.defer("m")`
-    fn is_deferred_import_call(&self, row: Node) -> bool {
-        !self.deferred_import_calls.is_empty()
-            && matches!(self.data(row), NodeData::Expr(e) if matches!(self[e].kind, ExprKind::ImportCall { args, .. }
-                if self.deferred_import_calls.iter().any(|call| call.0 == self.id_at(args, 0))))
+    /// `import.defer("m")`, `import.source("m")`
+    fn is_import_call_with_phase(&self, row: Node) -> bool {
+        matches!(self.data(row), NodeData::Expr(e) if matches!(self[e].kind, ExprKind::ImportCall { phase, .. }
+            if phase != ImportPhase::Evaluation))
     }
 
     fn is_self_closing(&self, j: JsxId) -> bool {
@@ -1995,7 +1994,7 @@ impl<'s> File<'s> {
             Part::JsxExpression => Kind::JsxExpression,
             Part::Specifier => Kind::StringLiteral,
             Part::Keyword => match self.data(row) {
-                NodeData::Expr(_) if self.is_deferred_import_call(row) => Kind::MetaProperty,
+                NodeData::Expr(_) if self.is_import_call_with_phase(row) => Kind::MetaProperty,
                 NodeData::Expr(_) => Kind::ImportKeyword,
                 NodeData::Type(_) => Kind::AssertsKeyword,
                 _ => Kind::AwaitKeyword,

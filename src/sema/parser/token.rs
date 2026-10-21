@@ -174,6 +174,7 @@ pub(crate) enum T {
     Override,
     Of,
     Defer,
+    Source,
 }
 
 impl T {
@@ -288,7 +289,7 @@ impl T {
     }
 }
 
-const COUNT: usize = T::Defer as usize + 1;
+const COUNT: usize = T::Source as usize + 1;
 
 const PRECEDENCE: [u8; COUNT] = {
     let mut table = [0u8; COUNT];
@@ -421,4 +422,5 @@ keywords! {
     b"override" => Override,
     b"of" => Of,
     b"defer" => Defer,
+    b"source" => Source,
 }

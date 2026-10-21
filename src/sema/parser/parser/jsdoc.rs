@@ -703,7 +703,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             named: take_span!(self, import_specs, specs),
             has_named_imports,
             type_only: true,
-            is_deferred: false,
+            phase: ImportPhase::Evaluation,
             mode,
             stmt: StmtId::NONE,
         };

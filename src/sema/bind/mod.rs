@@ -1572,6 +1572,9 @@ pub struct BoundIn<S: Storage> {
     /// The symbol of each `this[k] = v` with a dynamic name, and the table that declares it, in
     /// binding order. See `computed_symbol_in_table`.
     pub computed_symbols: S::Few<(TableId, SymbolId)>,
+    /// `getTargetOfImportClause`: the variable that the name of each `import source x from "m"` is an alias of. It's in
+    /// no table.
+    pub source_phase_targets: S::Few<(ImportId, SymbolId)>,
     pub case_stmt: S::List<StmtId>,
     /// The flow node at the start of each statement.
     pub stmt_flow: S::Ids<FlowId>,
@@ -2542,6 +2545,7 @@ impl BoundBuilder {
             infer_positions,
             expando_declarations,
             computed_symbols,
+            source_phase_targets,
             case_stmt,
             stmt_flow,
             case_fallthrough,
@@ -2634,6 +2638,7 @@ impl BoundBuilder {
         infer_positions.clear();
         expando_declarations.clear();
         computed_symbols.clear();
+        source_phase_targets.clear();
         case_stmt.clear();
         stmt_flow.clear();
         case_fallthrough.clear();
@@ -2753,6 +2758,10 @@ impl BoundBuilder {
                 arena,
             ),
             computed_symbols: few_to_arena(std::mem::take(&mut self.computed_symbols), arena),
+            source_phase_targets: few_to_arena(
+                std::mem::take(&mut self.source_phase_targets),
+                arena,
+            ),
             case_stmt: copy_to_arena(&mut self.case_stmt, arena),
             stmt_flow: Narrow::moved_in(arena, &mut self.stmt_flow),
             case_fallthrough: copy_to_arena(&mut self.case_fallthrough, arena),
@@ -2892,6 +2901,10 @@ impl Bound<'_> {
                 arena,
             ),
             computed_symbols: ArenaFew::from_iter_in(self.computed_symbols.iter().cloned(), arena),
+            source_phase_targets: ArenaFew::from_iter_in(
+                self.source_phase_targets.iter().cloned(),
+                arena,
+            ),
             case_stmt: Fixed::shared(&self.case_stmt),
             stmt_flow: self.stmt_flow.shared(),
             case_fallthrough: Fixed::shared(&self.case_fallthrough),

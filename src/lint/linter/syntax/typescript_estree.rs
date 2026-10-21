@@ -1177,26 +1177,10 @@ impl<'a> Checks<'a> {
                     );
                 }
             }
-            Some(hir::ExprKind::ImportCall { args }) => {
+            Some(hir::ExprKind::ImportCall { args, phase }) => {
                 // `import.source()` parses because `bun fmt` parses every file in the Babel dialect, which allows it.
-                if self.for_prettier && it.import_call_phase().is_some() {
-                    let dot = skip_trivia(file.text(), it.span().start + "import".len() as u32);
-                    // The parser only accepts `defer` or `source` here. The first letter can be `\u0073` or `\u{73}`.
-                    let is_source = match file
-                        .text()
-                        .get(skip_trivia(file.text(), dot + 1) as usize..)
-                    {
-                        Some([b's', ..]) => true,
-                        Some([b'\\', b'u', digits @ ..]) => {
-                            let digits = digits.strip_prefix(b"{").unwrap_or(digits);
-                            let zeros = digits.iter().take_while(|it| **it == b'0').count();
-                            digits[zeros..].starts_with(b"73")
-                        }
-                        _ => false,
-                    };
-                    if is_source {
-                        self.fail(it.span(), it.span().start, NO_SOURCE);
-                    }
+                if self.for_prettier && phase == hir::ImportPhase::Source {
+                    self.fail(it.span(), it.span().start, NO_SOURCE);
                 }
                 let args = file.hir.ids.get(args.range()).unwrap_or_default();
                 let is_missing = |id: u32| {
@@ -1206,12 +1190,7 @@ impl<'a> Checks<'a> {
                     )
                 };
                 let has_none = matches!(*args, [only] if is_missing(only));
-                let is_deferred = file
-                    .hir
-                    .deferred_import_calls
-                    .iter()
-                    .any(|call| Some(&call.0.0) == args.first());
-                if (has_none || args.len() > 2) && !is_deferred {
+                if (has_none || args.len() > 2) && phase == hir::ImportPhase::Evaluation {
                     let at = args.get(2).map_or_else(
                         || it.span().start,
                         |&third| self.start_of(hir::ExprId(third)),
@@ -1273,9 +1252,9 @@ impl<'a> Checks<'a> {
             let has_bindings = raw.namespace.is_some() || raw.has_named_imports;
             let message = if raw.type_only && raw.default.is_some() && has_bindings {
                 "A type-only import can specify a default import or named bindings, but not both."
-            } else if raw.is_deferred && raw.has_named_imports {
+            } else if raw.phase != hir::ImportPhase::Evaluation && raw.has_named_imports {
                 "Named imports are not allowed in a deferred import."
-            } else if raw.is_deferred && raw.default.is_some() {
+            } else if raw.phase != hir::ImportPhase::Evaluation && raw.default.is_some() {
                 "Default imports are not allowed in a deferred import."
             } else {
                 continue;

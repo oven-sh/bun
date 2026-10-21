@@ -221,7 +221,7 @@ impl<'a> Expr<'a> {
                 type_args: List::ids(file, file.hir.list_at(type_args)),
             },
             hir::ExprKind::Jsx(jsx) => ExprKind::Jsx(Jsx::new(file, jsx, self)),
-            hir::ExprKind::ImportCall { args } => ExprKind::ImportCall {
+            hir::ExprKind::ImportCall { args, .. } => ExprKind::ImportCall {
                 args: List::ids(file, args),
             },
             hir::ExprKind::ImportMeta => ExprKind::ImportMeta,
@@ -701,7 +701,7 @@ impl<'a> Expr<'a> {
     #[inline]
     pub fn as_import_call(self) -> Option<List<'a, Expr<'a>>> {
         match self.try_raw()?.kind {
-            hir::ExprKind::ImportCall { args } => Some(List::ids(self.file, args)),
+            hir::ExprKind::ImportCall { args, .. } => Some(List::ids(self.file, args)),
             _ => None,
         }
     }
@@ -1142,18 +1142,10 @@ impl<'a> Expr<'a> {
 
     /// `"defer"` for `import.defer(..)`, `"source"` for `import.source(..)`.
     pub fn import_call_phase(self) -> Option<&'static str> {
-        let deferred = self.file.hir.deferred_import_calls;
-        if deferred.is_empty() {
-            return None;
+        match self.try_raw()?.kind {
+            hir::ExprKind::ImportCall { phase, .. } => phase_name(phase),
+            _ => None,
         }
-        let ExprKind::ImportCall { args } = self.kind() else {
-            return None;
-        };
-        let first = args.first()?;
-        let text = self.file.text();
-        let dot = skip_trivia(text, self.span().start + "import".len() as u32);
-        (deferred.iter().any(|it| it.0 == first.id))
-            .then(|| self.file.phase_at(skip_trivia(text, dot + 1)))
     }
 
     /// The comma operator's operands: `a`, `b` and `c` for `a, b, c`, which are the `expressions` of a single
@@ -1189,16 +1181,16 @@ impl<'a> File<'a> {
     }
 }
 
-impl File<'_> {
-    /// The HIR has a single flag for both import phases. The word at `pos` tells which one it is.
-    pub(super) fn phase_at(&self, pos: u32) -> &'static str {
-        let rest = self.hir.text.get(pos as usize..).unwrap_or_default();
-        match rest.get(..crate::tokens::token_len(rest)) {
-            Some(b"source") => "source",
-            _ => "defer",
-        }
+/// ESTree's `phase`.
+pub(super) fn phase_name(phase: hir::ImportPhase) -> Option<&'static str> {
+    match phase {
+        hir::ImportPhase::Evaluation => None,
+        hir::ImportPhase::Defer => Some("defer"),
+        hir::ImportPhase::Source => Some("source"),
     }
+}
 
+impl File<'_> {
     /// The HIR's number at index `at`.
     #[inline]
     fn number(&self, at: u32) -> f64 {

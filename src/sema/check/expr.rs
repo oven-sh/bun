@@ -790,7 +790,7 @@ impl<'p, 's> Checker<'p, 's> {
             )
             && matches!(hir[e].kind, ExprKind::Object(_))
             && matches!(bound.parent_of_expr(options), Parent::Expr(call)
-                if matches!(hir[call].kind, ExprKind::ImportCall { args }
+                if matches!(hir[call].kind, ExprKind::ImportCall { args, .. }
                     if args.len() > 1 && hir.id_at(args, 1) == options))
     }
 
@@ -1929,9 +1929,17 @@ impl<'p, 's> Checker<'p, 's> {
                     ty => ty,
                 }
             }
-            ExprKind::ImportCall { args, .. } => {
+            ExprKind::ImportCall { args, phase } => {
                 self.precheck_with(|c| c.aliases_import_call_or_meta_property(file, e));
-                self.type_of_import_call(file, e, self.hir(file).id_at(args, 0))
+                let hir = self.hir(file);
+                let specifier = hir.id_at(args, 0);
+                if phase == ImportPhase::Source && !matches!(hir[specifier].kind, ExprKind::Missing)
+                {
+                    let source = self.global_ref_checked(known::AbstractModuleSource, &[]);
+                    let node = self.span_of_expr(file, e);
+                    return self.create_promise_return_type(node, true, source);
+                }
+                self.type_of_import_call(file, e, specifier)
             }
             // `checkImportMetaProperty`: `getGlobalImportMetaType`
             ExprKind::ImportMeta => self.global_ref_checked(known::ImportMeta, &[]),
@@ -1999,7 +2007,7 @@ impl<'p, 's> Checker<'p, 's> {
             // `resolveExternalModuleName`: `IsStringLiteralLike(moduleReferenceExpression)`
             ExprKind::String(text) if !is_parenthesized(hir, specifier) => {
                 let attributes = match hir[e].kind {
-                    ExprKind::ImportCall { args } if args.len() > 1 => {
+                    ExprKind::ImportCall { args, .. } if args.len() > 1 => {
                         self.attributes_of_import_call(file, hir.id_at(args, 1))
                     }
                     _ => ImportAttributes::new(),

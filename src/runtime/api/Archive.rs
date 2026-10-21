@@ -385,11 +385,7 @@ fn get_entry_data<'a>(
 }
 
 impl Archive {
-    /// Static method: Archive.write(path, data, options?)
-    /// Creates and writes an archive to disk in one operation.
-    /// For Archive instances, uses the archive's compression settings unless overridden by options.
-    /// Options:
-    ///   - gzip: { level?: number } - Override compression settings
+    /// `Archive.write(path, data, options?)`. `options.gzip` overrides the compression of an `Archive` given as `data`.
     pub(crate) fn write(
         cx: &mut JsScope<'_>,
         path: JsLocal<'_>,

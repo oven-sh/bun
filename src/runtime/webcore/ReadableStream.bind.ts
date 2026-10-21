@@ -36,11 +36,7 @@ const bufferedSource = {
 
 const source = { refCounted: true, finalize: true, memoryCost: true, configurable: false } as const;
 
-/**
- * `owner` roots the GC cell of the peer producing into this source (`producer` backref) and `sinkOwner` the peer it
- * pipes into (`sink` backref): a chained transform needs both.
- * `closeAdapter` is the C++ JSNativeStreamSourceAdapter to notify from `on_close` (BunStreamSource.cpp sets it).
- */
+/** `owner` roots the peer that produces into this source, `sinkOwner` the peer it pipes into. */
 const internalFields = ["pendingPromise", "closeAdapter", "owner", "sinkOwner"] as const;
 /** The stream `ReadableStream__lockNative` locked, which `NewSource::end_locked_stream` closes or errors. */
 const lockable = [...internalFields, "lockedStream"] as const;

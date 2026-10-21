@@ -82,10 +82,6 @@ impl Expect {
             return Ok(JSValue::UNDEFINED);
         }
 
-        // handle failure
-        // `to_fmt` returns a `ZigFormatter<'a, 'b>` that mutably borrows the
-        // backing formatter. Use a second formatter for the received value — `make_formatter` is
-        // cheap (no alloc) and this matches sibling matchers (toContainEqual, toBeCloseTo).
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         // `defer formatter.deinit()` deleted — Drop handles it.

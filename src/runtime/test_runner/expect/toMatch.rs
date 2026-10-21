@@ -50,9 +50,6 @@ impl Expect {
             return Ok(JSValue::UNDEFINED);
         }
 
-        // handle failure
-        // Each `to_fmt` borrows `&mut Formatter` for the lifetime of the returned wrapper, so
-        // we need a second Formatter for the second value (matches toContain.rs / toBe.rs).
         let mut formatter2 = super::make_formatter(global);
         let expected_fmt = expected_value.to_fmt(&mut formatter);
         let value_fmt = value.to_fmt(&mut formatter2);

@@ -13,9 +13,6 @@ impl Expect {
         second: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        // `defer this.postMatch(globalThis)` — wrap `this` in a scopeguard that owns the
-        // &mut Expect and runs post_match on drop, so the body can borrow through DerefMut without
-        // overlapping with the deferred call (matches toThrowErrorMatchingInlineSnapshot.rs).
         let this = scopeguard::guard(self, |this| this.post_match(global));
 
         let this_value = this_value.to_js();

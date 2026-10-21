@@ -20,9 +20,6 @@ impl Expect {
         value: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        // The scopeguard owns the &mut Expect and runs
-        // post_match on drop; the body re-borrows `this` through Deref/DerefMut so post_match
-        // runs on every exit path (Ok and Err alike).
         let this = scopeguard::guard(self, |t| t.post_match(global));
 
         let this_value = this_value.to_js();
@@ -117,7 +114,6 @@ impl Expect {
                 })
                 .unwrap_or(JSValue::UNDEFINED);
 
-                // TODO: remove this allocation
                 // partial match
                 {
                     let expected_slice = expected_value.to_utf8(global)?;
@@ -237,7 +233,6 @@ impl Expect {
 
             if expected_value.is_string() {
                 if let Some(received_message) = received_message_opt {
-                    // TODO: remove this allocation
                     // partial match
                     let expected_slice = expected_value.to_utf8(global)?;
                     let received_slice = received_message.to_utf8(global)?;
@@ -405,8 +400,6 @@ impl Expect {
         let result = return_value_from_function;
         let mut formatter = Formatter::new(global).with_quote_strings(true);
         let mut formatter2 = super::make_formatter(global);
-        // `format_args!` only accepts literal fmt strings, so `received_line` is inlined at each site.
-        // received_line = "Received function did not throw\nReceived value: <red>{f}<r>\n"
 
         if expected_value.is_empty() || expected_value.is_undefined() {
             let signature: &'static str = get_signature("toThrow", "", false);

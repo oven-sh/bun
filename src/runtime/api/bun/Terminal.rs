@@ -122,9 +122,6 @@ pub(crate) struct Terminal {
     event_loop_handle: EventLoopHandle,
 
     /// Global object reference. Read-only after construction.
-    // Terminal is heap-allocated and cannot carry a lifetime param, so the
-    // global is stored as a `BackRef` rather than `&JSGlobalObject`; deref via
-    // `self.global()`.
     global_this: bun_ptr::BackRef<JSGlobalObject>,
 
     /// Writer for sending data to the terminal
@@ -399,8 +396,7 @@ impl Terminal {
         unsafe { bun_ptr::RefCount::<Terminal>::deref(self.as_ctx_ptr()) };
     }
 
-    /// Opens the PTY and starts reading. The ref is the one the JS wrapper takes,
-    /// which [`attach`](Self::attach) is then given.
+    /// Opens the PTY and starts reading. The JS wrapper takes the returned ref, then goes to [`attach`](Self::attach).
     fn open(
         global_object: &JSGlobalObject,
         options: &Options,

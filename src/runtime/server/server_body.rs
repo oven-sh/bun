@@ -1815,8 +1815,7 @@ where
         // config omits them. The async-context re-wrap is unconditional:
         // `with_async_context_if_needed` is a no-op when no ALS frame is
         // active, so re-wrapping on every reload keeps the captured frame in
-        // sync with the call-time context. `on_reload` is called by JS — the
-        // wrapper is its `this` on the JS stack, alive even if
+        // sync with the call-time context. The wrapper is `this` of the JS call to `on_reload`, alive even if
         // `js_value` was downgraded after stop(). The slot writes must reach
         // it so the new handlers are GC-rooted.
         let server_js = self.js_value_assert_alive();

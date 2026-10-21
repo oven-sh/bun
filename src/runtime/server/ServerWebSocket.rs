@@ -22,10 +22,7 @@ bun_output::declare_scope!(WebSocketServer, visible);
 /// The JS type that `ws.binaryType` selects for binary messages, pings and pongs.
 use crate::generated_bindgen::server::WebSocketBinaryType as BinaryType;
 
-// Stored in its JS wrapper, which `this_value` holds strongly while uWS has the
-// address as the socket's user data. The handler lives in
-// `ServerConfig.websocket` for the server's lifetime, so a raw back-pointer +
-// SAFETY notes is the runtime shape.
+// Stored in its JS wrapper, which `this_value` holds strongly while uWS has the address as the socket's user data.
 //
 // R-2: every uws/JS callback into this socket can re-enter
 // — `on_open` → `ws.cork(JS)` → `ws.close()` → `on_close` mutates `flags` /
@@ -34,6 +31,7 @@ use crate::generated_bindgen::server::WebSocketBinaryType as BinaryType;
 // mutability (`Cell` for `Copy` flags/signal, `JsCell` for the non-`Copy`
 // `JsRef`) carries the writes.
 pub(crate) struct ServerWebSocket {
+    // Lives in `ServerConfig.websocket` for the server's lifetime.
     handler: bun_ptr::BackRef<WebSocketServerHandler>,
     this_value: JsCell<JsRef>,
     flags: Cell<Flags>,

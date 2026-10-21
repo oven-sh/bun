@@ -91,8 +91,7 @@ pub fn host_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
 fn expand_host_fn(args: &HostFnArgs, func: &ItemFn) -> TokenStream2 {
     let fn_name = &func.sig.ident;
 
-    // Without `export`, Rust mangling keeps each module's shim unique: the bare
-    // ident would collide at link time for common names (`parse`, `crc32`, …).
+    // No default export name: the bare ident of a common name (`parse`, `crc32`) collides at link time.
     let export: Option<String> = args.export.as_ref().map(|l| l.value());
     let shim_ident = format_ident!("__jsc_host_{}", fn_name);
 
@@ -136,10 +135,7 @@ pub fn host_call(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let inputs = &sig.inputs;
     let output = &sig.output;
     let (impl_generics, _ty_generics, where_clause) = sig.generics.split_for_impl();
-    // No implicit `#[no_mangle]` — multiple types share method names
-    // (`estimated_size`, `ptr_without_type_checks`, …) and collide at
-    // codegen otherwise. Callers needing a C symbol attach
-    // `#[unsafe(export_name = "…")]` themselves (re-emitted via `#(#attrs)*`).
+    // No implicit `#[no_mangle]`: types share method names. A C symbol comes from the caller's `export_name` attribute.
     quote! {
         #[cfg(all(windows, target_arch = "x86_64"))]
         #(#attrs)*

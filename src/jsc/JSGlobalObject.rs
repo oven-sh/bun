@@ -351,8 +351,7 @@ impl JSGlobalObject {
     }
 
     /// Throw `TypeError: Illegal constructor` with
-    /// `.code = "ERR_ILLEGAL_CONSTRUCTOR"`, as the C++ default
-    /// (`JSDOMConstructorNotConstructable`) and Node.js do.
+    /// `.code = "ERR_ILLEGAL_CONSTRUCTOR"`.
     #[cold]
     pub fn throw_illegal_constructor(&self) -> JsError {
         self.throw_value(self.create_illegal_constructor_error())

@@ -125,8 +125,7 @@ pub struct Blob {
     pub charset: Cell<AsciiStatus>,
     /// Was it created via the `File` constructor?
     pub is_jsdom_file: Cell<bool>,
-    /// Zero for a by-value `Blob`. A heap one ([`Blob::new`]) starts at 1; the JS
-    /// wrapper, each C++ `BlobRefPtr` and each `ExternalShared<Blob>` hold a ref.
+    /// Zero for a by-value `Blob`. On a heap one, the JS wrapper, `BlobRefPtr`s and `ExternalShared`s each hold a ref.
     ///
     /// Public so `bun_runtime` can construct `Blob { ref_count: …, .. }`
     /// literals.
@@ -502,8 +501,8 @@ unsafe extern "C" fn Blob__ref(this: *mut Blob) {
 }
 
 /// Release half of the refcount protocol behind `BlobImplRefDerefTraits`
-/// (`src/jsc/bindings/blob.h`), [`bun_ptr::ExternalShared`] and
-/// [`bun_ptr::AnyRefCounted`] (the JS wrapper's ref).
+/// (`src/jsc/bindings/blob.h`), [`bun_ptr::ExternalShared`] and the JS
+/// wrapper's ref ([`bun_ptr::AnyRefCounted`]).
 ///
 /// # Safety
 /// `this` must point to a live `Blob` produced by [`Blob::new`], the caller

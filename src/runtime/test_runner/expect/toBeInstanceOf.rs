@@ -14,9 +14,6 @@ impl Expect {
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let this = self;
-        // Reshaped for borrowck (was `defer this.postMatch(globalThis)`).
-        // Run the matcher body in an inner closure so `this` is released when it returns,
-        // then call `post_match` exactly once on every exit path (success or throw).
         let res = (|| -> JsResult<JSValue> {
         let this_value = this_value.to_js();
 
@@ -45,15 +42,10 @@ impl Expect {
             return Ok(JSValue::UNDEFINED);
         }
 
-        // handle failure
-        // Two live `to_fmt(&mut Formatter)` wrappers alias the same formatter under
-        // borrowck — use a second Formatter for the second value (matches toBe.rs / toInclude.rs).
         let mut formatter2 = super::make_formatter(global);
         let expected_fmt = expected_value.to_fmt(&mut formatter);
         let value_fmt = value.to_fmt(&mut formatter2);
         if not {
-            // `expected_line`/`received_line` are inlined here because Rust `concat!`
-            // only accepts literals (and `format_args!` needs a literal anyway).
             let signature = get_signature("toBeInstanceOf", "<green>expected<r>", true);
             return throw!(
                 this,

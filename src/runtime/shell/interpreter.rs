@@ -1568,13 +1568,7 @@ impl Drop for Interpreter {
         );
         match self.cleanup_state.get() {
             CleanupState::NeedsFullCleanup => {
-                // The script never reached `finish` (e.g. `worker.terminate()`
-                // mid-command) and `Node` has no `Drop` for its raw-pointer
-                // resources: deinit every live `Cmd` (kills the child, frees
-                // the `ShellSubprocess`, readers, redirection fd). Slots stay
-                // occupied so the env walk below still sees pipeline-duped
-                // Cmd envs. Windows: leak-over-UAF, see
-                // `ShellSubprocess::abort_after_failed_start`.
+                // `Node` has no `Drop`. Slots stay for the env walk below. Windows leaks: `abort_after_failed_start`.
                 #[cfg(not(windows))]
                 {
                     let node_count = self.nodes.get().len();
@@ -1585,8 +1579,7 @@ impl Drop for Interpreter {
                         }
                     }
                 }
-                // A node owns `base.shell` iff it was created via `dupe_for_subshell`,
-                // i.e. its `base.shell` differs from its parent's.
+                // A node owns its `base.shell` iff it differs from its parent's: `dupe_for_subshell` made it.
                 {
                     let root_shell_ptr: *mut ShellExecEnv = self.root_shell.as_ptr();
                     let nodes = self.nodes.get();
@@ -1607,8 +1600,6 @@ impl Drop for Interpreter {
                         })
                         .collect();
                     for env in owned_envs {
-                        // each `env` was returned by `dupe_for_subshell`
-                        // and is owned by exactly one node (filtered above).
                         ShellExecEnv::deinit_impl(env);
                     }
                 }
@@ -1616,8 +1607,7 @@ impl Drop for Interpreter {
                 self.root_shell.with_mut(|rs| rs.deinit_embedded(true));
             }
             CleanupState::RuntimeCleaned => {
-                // `finish()` already cleaned up via
-                // `deref_root_shell_and_io_if_needed`; nothing more for those.
+                // `finish()` cleaned up via `deref_root_shell_and_io_if_needed`.
             }
         }
 

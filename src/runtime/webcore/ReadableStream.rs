@@ -865,8 +865,7 @@ pub trait SourceContext: Sized {
 pub struct NewSource<C: SourceContext> {
     pub context: C,
     pub cancelled: Cell<bool>,
-    /// The JS wrapper holds one ref. The rest are native: a `FileReader`'s across-read ref
-    /// (`waiting_for_on_reader_done`), a `ByteStream`'s producer, and scoped `RefPtr` pins.
+    /// One ref is the JS wrapper's. The rest: a `FileReader` mid-read, a `ByteStream`'s producer, scoped `RefPtr`s.
     pub ref_count: Cell<u32>,
     pub pending_err: Option<syscall::Error>,
     /// Upstream producer to notify on cancel/drain/consumer-attach. Replaces

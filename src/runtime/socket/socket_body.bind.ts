@@ -22,10 +22,7 @@ function socket<SSL extends boolean>(ssl: SSL) {
     finalize: true,
     configurable: false,
     memoryCost: true,
-    /**
-     * `handlers` is the `JSSocketHandlers` cell shared with the listener and its other sockets. The `duplex*` fields
-     * are the stream and the four native listeners of a `TLSSocket` over a `Duplex`.
-     */
+    /** `handlers` is shared with the listener and its other sockets. `duplex*` serve a `TLSSocket` over a `Duplex`. */
     internalFields: [
       "handlers",
       "data",

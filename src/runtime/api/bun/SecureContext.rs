@@ -223,12 +223,7 @@ impl SecureContext {
         Ok(sc.into_js(&cx.heap))
     }
 
-    /// `tls.createSecureContext(opts)` entry point. WeakGCMap-memoised by config
-    /// digest so identical configs return the same `JSSecureContext` cell while
-    /// it's alive; falls through to `create()` (which itself hits the native
-    /// `SSLContextCache`) on miss. Returning the same cell is what makes
-    /// `secureContext === createSecureContext(opts)` hold and lets `Listener`
-    /// pointer-compare without a JS-side WeakRef map.
+    /// `tls.createSecureContext(opts)`. Equal configs get the same live cell, which `Listener` compares by pointer.
     pub(crate) fn intern(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
         let global = cx.global();
         let config = Self::config_from_js(global, options.to_js())?;

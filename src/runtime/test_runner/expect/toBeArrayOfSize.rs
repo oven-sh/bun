@@ -12,8 +12,6 @@ impl Expect {
         size: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        // scopeguard::defer! would hold &mut *this for the whole fn, so use the
-        // post-match guard instead.
         let this = self.post_match_guard(global);
 
         let this_value = this_value.to_js();

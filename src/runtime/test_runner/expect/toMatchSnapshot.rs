@@ -14,9 +14,6 @@ impl Expect {
         second: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        // reshaped for borrowck — post-match cleanup is expressed by
-        // wrapping `this` in a scopeguard so `post_match` runs on every exit path while we still
-        // deref through the guard for the body.
         let this = scopeguard::guard(self, |this| this.post_match(global));
 
         let this_value = this_value.to_js();

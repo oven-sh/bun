@@ -1739,14 +1739,7 @@ impl Drop for UDPSocket {
         bun_output::scoped_log!(UdpSocket, "Finalize {:p}", &raw const *self);
         self.this_value.with_mut(|r| r.finalize());
         debug_assert!(self.closed.get() || VirtualMachine::get().is_shutting_down());
-        // VM-shutdown path: `lastChanceToFinalize` can finalize the wrapper
-        // while the underlying poll is still open (the Strong in `this_value`
-        // kept it GC-rooted until now). Close it so the `us_udp_socket_t`
-        // lands on `closed_udp_head` for the post-destruct
-        // `drain_closed_sockets()` sweep instead of leaking. `on_close`
-        // re-derives `&UDPSocket` from the uws user pointer (= `self`, still
-        // live) and only touches `Cell`/`JsCell` fields; `this_value` is
-        // already `Finalized` so its `downgrade()` is a no-op.
+        // At VM shutdown the wrapper can die with the socket open: close it so that `drain_closed_sockets()` frees it.
         if let Some(socket) = self.socket.take() {
             self.closed.set(true);
             #[cfg(not(windows))]

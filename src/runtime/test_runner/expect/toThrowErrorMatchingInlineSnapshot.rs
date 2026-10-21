@@ -47,8 +47,6 @@ impl Expect {
 
         let expected_slice = expected.as_ref().map(|s| s.slice());
 
-        // reshaped for borrowck — hoist get_value out so the two &mut self
-        // receivers don't overlap.
         let received = this.get_value(
             global,
             this_value,

@@ -97,8 +97,6 @@ impl Expect {
         }
 
         // If there are multiple calls, list them all to help debugging.
-        // The AllCallsWithArgsFormatter holds an exclusive borrow of the formatter, so
-        // we allocate a second ConsoleObject formatter for the list.
         let mut list_fmt = super::make_formatter(global);
         let list_formatter = mock::AllCallsWithArgsFormatter {
             global_this: global,

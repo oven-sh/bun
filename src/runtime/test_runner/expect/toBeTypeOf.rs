@@ -74,8 +74,6 @@ impl Expect {
         }
 
         let mut formatter = super::make_formatter(global);
-        // ZigFormatter borrows &mut Formatter for its lifetime; need a second formatter
-        // so `received` and `expected_str` can coexist in one format_args!.
         let mut formatter2 = super::make_formatter(global);
         // `defer formatter.deinit()` — handled by Drop.
         let received = value.to_fmt(&mut formatter);

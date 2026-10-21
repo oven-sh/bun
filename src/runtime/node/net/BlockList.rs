@@ -427,9 +427,7 @@ pub(crate) unsafe extern "C" fn BlockList__onStructuredCloneDeserialize(
     unsafe { BlockList::to_js_ptr(this, global) }
 }
 
-/// Called from `~SerializedScriptValue` for each BlockList pointer that was
-/// written into the wire buffer. Releases the `+1` taken by
-/// [`BlockList__onStructuredCloneSerialize`].
+/// `~SerializedScriptValue` releases the ref that [`BlockList__onStructuredCloneSerialize`] took.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn BlockList__onStructuredCloneDestroy(ptr: *mut c_void) {
     let addr = ptr as usize;

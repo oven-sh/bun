@@ -303,19 +303,19 @@ If your class shows up as an opaque blob in heap snapshots, implement `analyzeHe
 
 ## How to keep things alive (decision table)
 
-| Scenario                                                                           | Mechanism                                                                                                                                            |
-| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| JSCell field pointing to another JSCell                                            | `WriteBarrier<T>` member + `visitor.append(m_field)` in `visitChildren`                                                                              |
-| Native state inside the wrapped C++ object holds JS values                         | `visitAdditionalChildren` + register subspace as output-constraint                                                                                   |
-| C++/Rust local across allocation/call                                              | Conservative scan (free) — add `EnsureStillAliveScope` / `value.ensure_still_alive()` if extracting interior pointers or seeing release-only crashes |
-| Native object holds its own JS wrapper (class has `finalize: true`)                | **`JSRef`** — `upgrade()` when work starts, `downgrade()` when idle. **This is the default.**                                                        |
-| Native object owns an arbitrary JS value (callback, options object)                | `bun_jsc::Strong` — drop in `finalize()`. Watch for cycles                                                                                           |
-| C++ non-GC object owns a JS value as a root                                        | `JSC::Strong<T>`. **Danger:** cycle if the JS value can reach back → leak                                                                            |
-| Weak ref with resurrection predicate / finalize callback (C++)                     | `JSC::Weak<T>` + `WeakHandleOwner`                                                                                                                   |
-| Group of wrappers share lifetime via a native graph                                | `visitor.addOpaqueRoot(ptr)` + `containsOpaqueRoot(ptr)`                                                                                             |
-| Temporarily forbid GC in a critical section                                        | `DeferGC deferGC(vm)` — defers until scope exit. Never hold across user JS                                                                           |
-| Tell GC about off-heap memory you own                                              | `reportExtraMemoryAllocated` on alloc **and** `reportExtraMemoryVisited` in `visitChildren`                                                          |
-| ~~Mark a value as root from C API~~                                                | ~~`gcProtect` / `JSValueProtect`~~ — **avoid**; use `bun_jsc::Strong` / `JSRef` instead                                                              |
+| Scenario                                                            | Mechanism                                                                                                                                            |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| JSCell field pointing to another JSCell                             | `WriteBarrier<T>` member + `visitor.append(m_field)` in `visitChildren`                                                                              |
+| Native state inside the wrapped C++ object holds JS values          | `visitAdditionalChildren` + register subspace as output-constraint                                                                                   |
+| C++/Rust local across allocation/call                               | Conservative scan (free) — add `EnsureStillAliveScope` / `value.ensure_still_alive()` if extracting interior pointers or seeing release-only crashes |
+| Native object holds its own JS wrapper (class has `finalize: true`) | **`JSRef`** — `upgrade()` when work starts, `downgrade()` when idle. **This is the default.**                                                        |
+| Native object owns an arbitrary JS value (callback, options object) | `bun_jsc::Strong` — drop in `finalize()`. Watch for cycles                                                                                           |
+| C++ non-GC object owns a JS value as a root                         | `JSC::Strong<T>`. **Danger:** cycle if the JS value can reach back → leak                                                                            |
+| Weak ref with resurrection predicate / finalize callback (C++)      | `JSC::Weak<T>` + `WeakHandleOwner`                                                                                                                   |
+| Group of wrappers share lifetime via a native graph                 | `visitor.addOpaqueRoot(ptr)` + `containsOpaqueRoot(ptr)`                                                                                             |
+| Temporarily forbid GC in a critical section                         | `DeferGC deferGC(vm)` — defers until scope exit. Never hold across user JS                                                                           |
+| Tell GC about off-heap memory you own                               | `reportExtraMemoryAllocated` on alloc **and** `reportExtraMemoryVisited` in `visitChildren`                                                          |
+| ~~Mark a value as root from C API~~                                 | ~~`gcProtect` / `JSValueProtect`~~ — **avoid**; use `bun_jsc::Strong` / `JSRef` instead                                                              |
 
 ## Destruction & finalizers
 

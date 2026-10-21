@@ -1412,9 +1412,7 @@ impl Drop for Listener {
         self.this_value.with_mut(|r| r.finalize());
         self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
 
-        // Clear the back-pointer before force-closing: this listener is already
-        // releasing its own `poll_ref`/`this_value`, so an accepted socket's
-        // `on_close` must not reach back in and release them a second time.
+        // Before force-closing: an accepted socket's `on_close` must not release this listener's refs a second time.
         self.handlers.set_listener(None);
         if self.handlers.active_connections.get() > 0 {
             self.group.with_mut(|g| g.close_all());

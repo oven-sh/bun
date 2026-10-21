@@ -13,8 +13,6 @@ impl Expect {
         hint: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        // The guard runs post_match on Drop for every exit path
-        // (early `return Err`, `?`, fall-through).
         let this = self.post_match_guard(global);
 
         let this_value = this_value.to_js();

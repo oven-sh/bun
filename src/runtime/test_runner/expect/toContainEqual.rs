@@ -63,8 +63,7 @@ impl Expect {
                 let value_string = value.to_utf8(global)?;
                 let expected_string = expected.to_utf8(global)?;
 
-                // jest does not have a `typeof === "string"` check for `toContainEqual`.
-                // it immediately spreads the value into an array.
+                // jest does not have a `typeof === "string"` check here: it spreads the value into an array.
 
                 let mut expected_codepoint_cursor = strings::Cursor::default();
                 let expected_iter = strings::CodepointIterator::init(expected_string.slice());
@@ -100,9 +99,6 @@ impl Expect {
             return Ok(this_value);
         }
 
-        // handle failure
-        // Two live `&mut formatter` borrows cannot coexist, so allocate a second
-        // Formatter for the expected value.
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         let value_fmt = value.to_fmt(&mut formatter);

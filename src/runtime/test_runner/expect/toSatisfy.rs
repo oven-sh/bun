@@ -13,8 +13,7 @@ impl Expect {
         predicate: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        // toSatisfy bypasses get_value (no .resolves/.rejects handling), so it cannot use
-        // the full `matcher_prelude`; only the post_match guard mechanism unifies.
+        // Not `matcher_prelude`: toSatisfy bypasses `get_value` (no .resolves/.rejects handling).
         let this = self.post_match_guard(global);
 
         let this_value = this_value.to_js();
@@ -59,8 +58,6 @@ impl Expect {
 
         let signature = get_signature("toSatisfy", "<green>expected<r>", false);
 
-        // `to_fmt(&mut Formatter)` borrows exclusively, so use a second formatter for the
-        // received value (matches the toBeGreaterThan.rs pattern).
         let mut formatter2 = super::make_formatter(global);
         throw!(
             this,

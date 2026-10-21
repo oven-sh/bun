@@ -4693,11 +4693,7 @@ impl H2FrameParser {
                 );
             }
             let id = last_stream_arg.to_int32();
-            // node: a lastStreamID of 0 or less (the JS wrapper's default) means "use the
-            // last processed stream id"; only an explicit positive id overrides it
-            // (validateNumber imposes no range, so negative values reach this path too).
-            // Without this, graceful close puts Last-Stream-ID=0 on the wire, telling the
-            // peer that every in-flight stream is safe to retry.
+            // As in node, 0 or less keeps the last processed id: Last-Stream-ID=0 tells the peer to retry every stream.
             if id > 0 {
                 last_stream_id = u32::try_from(id).expect("int cast");
             }

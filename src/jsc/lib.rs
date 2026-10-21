@@ -688,9 +688,7 @@ pub use self::host_fn::{
 pub use self::host_object::{HostFnEntry, create_host_function_object};
 
 // ──────────────────────────────────────────────────────────────────────────
-// `__macro_support` — runtime helpers invoked by `#[bun_jsc::host_fn]`
-// expansions. Not part of the public API; the names are
-// load-bearing for the proc-macro crate only.
+// `__macro_support`: what the expansion of `#[bun_jsc::host_fn]` calls.
 // ──────────────────────────────────────────────────────────────────────────
 #[doc(hidden)]
 pub mod __macro_support {

@@ -811,8 +811,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<i32> {
         let global = cx.global();
         let arg = tos.to_js();
-        // validate_integer_range maps NaN to the default; node:net rejects
-        // it with ERR_INVALID_ARG_TYPE, so do that explicitly here.
+        // node:net rejects NaN with ERR_INVALID_ARG_TYPE, but `validate_integer_range` maps it to the default.
         if arg.is_number() && arg.as_number().is_nan() {
             return Err(global.throw_invalid_property_type_value(b"tos", b"integer", arg));
         }

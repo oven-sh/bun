@@ -2091,9 +2091,7 @@ impl BuildArtifact {
         self.blob.get_slice(cx, start, end, content_type)
     }
 
-    /// `this_value` is a `JSBuildArtifact`, not a `JSBlob`, so the
-    /// cached-stream slot must be BuildArtifact's own;
-    /// `Blob::get_stream` would poke `JSBlob::m_stream`.
+    /// Not `Blob::get_stream`, which writes `JSBlob::m_stream`: `this_value` is a `JSBuildArtifact` with its own slot.
     pub(crate) fn get_stream(
         &self,
         this_value: JsWrapper<'_, Self>,

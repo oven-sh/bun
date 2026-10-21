@@ -235,10 +235,7 @@ interface PostgresDotZig {
   createQuery: NativeCreateQuery<$Bindgen.PostgresSQLQuery>;
 }
 
-class PostgresAdapter extends BaseSQLAdapter<
-  $Bindgen.PostgresSQLConnection,
-  $Bindgen.PostgresSQLQuery
-> {
+class PostgresAdapter extends BaseSQLAdapter<$Bindgen.PostgresSQLConnection, $Bindgen.PostgresSQLQuery> {
   readonly createNativeConnection = createPostgresConnection;
   protected readonly createNativeQuery = createPostgresQuery;
   readonly ErrorClass = PostgresError;

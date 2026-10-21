@@ -78,10 +78,6 @@ impl Expect {
             return Ok(JSValue::UNDEFINED);
         }
 
-        // handle failure
-        // The `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters
-        // cannot alias the same backing formatter. Use a second formatter for the
-        // second value (matches toBe.rs).
         let mut formatter = super::make_formatter(global_this);
         let mut formatter2 = super::make_formatter(global_this);
         if not {

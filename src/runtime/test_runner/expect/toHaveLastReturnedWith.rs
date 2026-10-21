@@ -103,9 +103,6 @@ impl Expect {
             return throw!(this, global_this, signature, "\n\n{}\n", diff_format);
         }
 
-        // The `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias
-        // the same backing formatter. Use a second formatter for the received value —
-        // `make_formatter` is a trivial struct init with no shared state between values.
         let mut formatter2 = super::make_formatter(global_this);
         throw!(
             this,

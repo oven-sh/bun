@@ -2762,7 +2762,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(Bun::createModuleGraphFrameStructure(init.vm, init.owner));
         });
 
-
     m_napiTypeTags.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSWeakMap>::Initializer& init) {
         init.set(JSC::JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
     });

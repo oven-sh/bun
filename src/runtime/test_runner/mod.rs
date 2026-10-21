@@ -37,7 +37,12 @@ macro_rules! unary_predicate_matcher {
                 this_value: ::bun_jsc::bindgen::JsWrapper<'_, Self>,
                 cx: &mut ::bun_jsc::bindgen::JsScope<'_>,
             ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                self.run_unary_predicate(cx.global(), this_value.to_js(), $name, |$v: ::bun_jsc::JSValue| $pred)
+                self.run_unary_predicate(
+                    cx.global(),
+                    this_value.to_js(),
+                    $name,
+                    |$v: ::bun_jsc::JSValue| $pred,
+                )
             }
         }
     };

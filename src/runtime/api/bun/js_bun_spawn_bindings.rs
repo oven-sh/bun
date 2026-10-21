@@ -798,8 +798,8 @@ fn spawn_maybe_sync(
                 if let Some(terminal_val) = args.get_truthy(cx.global(), "terminal")? {
                     // Check if it's an existing Terminal object
                     if let Some(terminal) = terminal_body::js::from_js(terminal_val) {
-                        // `from_js` returns the `Terminal` the JS wrapper holds
-                        // a ref on; it stays valid for as long as
+                        // `from_js` returns the live `Terminal` pointer borrowed
+                        // from the JS wrapper; it stays valid for as long as
                         // `terminal_val` is reachable (kept alive below via
                         // `terminal_js_value`), so the `BackRef` invariant
                         // (pointee outlives holder) holds for this scope.

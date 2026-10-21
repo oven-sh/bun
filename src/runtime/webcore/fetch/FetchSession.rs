@@ -244,8 +244,7 @@ impl Drop for SessionHold {
 }
 
 impl FetchSession {
-    /// Called by a `SessionHold`: the other ref is the wrapper's. (Or, once the VM's
-    /// teardown finalized the wrapper, another hold's: `this_value` is inert then.)
+    /// Called by a `SessionHold`. The other ref is the wrapper's, or another hold's once VM teardown finalized it.
     fn is_only_hold(&self) -> bool {
         self.ref_count.get() == 2
     }

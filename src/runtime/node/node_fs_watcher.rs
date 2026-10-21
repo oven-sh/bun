@@ -62,8 +62,7 @@ pub(crate) struct FSWatcher {
     path_watcher: Cell<Option<*mut path_watcher::PathWatcher>>,
     poll_ref: JsCell<KeepAlive>,
     global_this: GlobalRef,
-    /// JS wrapper object, held strong while the watcher is open so that the
-    /// listener stays callable. Cleared by `detach()`.
+    /// The JS wrapper, held strong while the watcher is open so that the listener stays callable.
     js_this: JsCell<JsRef>,
     // pub(super): read directly by `win_watcher::PathWatcher::emit`.
     pub(super) encoding: Encoding,
@@ -143,8 +142,8 @@ pub(crate) type FSWatchTask = FSWatchTaskPosix;
 pub(crate) struct FSWatchTaskPosix {
     /// `None` only during `FSWatcher::init` two-phase construction (the task is
     /// embedded as `current_task` before the boxed `FSWatcher` address is
-    /// known); patched to `Some` immediately after. A heap clone made by
-    /// `enqueue()` holds a ref on it, which `deinit` drops.
+    /// known); patched to `Some` immediately after.
+    /// A heap clone made by `enqueue()` holds a ref on it, which `deinit` drops.
     ctx: Option<ParentRef<FSWatcher, bun_ptr::Mut>>,
     count: u8,
 
@@ -992,8 +991,7 @@ impl FSWatcher {
         true
     }
 
-    /// On the watcher thread the watcher is still attached, so the ref is not
-    /// the last one: `finalize` detaches before the wrapper's is dropped.
+    /// Never the last ref on the watcher thread: `finalize` detaches the watcher before the wrapper's ref is dropped.
     ///
     /// # Safety
     /// `this` is live and the caller owns a ref that `ref_task` took.

@@ -1980,7 +1980,10 @@ impl NodeHTTPResponse {
                             ab.unpin();
                             None
                         }
-                        Some(_) => Some(buffer_value),
+                        Some(ab) => {
+                            debug_assert!(ptr::eq(ab.ptr, bytes.as_ptr()), "the pin moved `bytes`");
+                            Some(buffer_value)
+                        }
                         None => None,
                     },
                     None => Some(JSValue::ZERO),

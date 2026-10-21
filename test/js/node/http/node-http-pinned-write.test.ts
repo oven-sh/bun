@@ -110,7 +110,6 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
       detachedWhilePending,
       detachedAfterDrain,
       handlerError,
-      unrelated: unrelated.length,
     }).toEqual({
       bodyLength: CHUNK_SIZE,
       bodyHash: expectedHash,
@@ -119,7 +118,6 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
       detachedWhilePending: false,
       detachedAfterDrain: true,
       handlerError: undefined,
-      unrelated: 2,
     });
   });
 

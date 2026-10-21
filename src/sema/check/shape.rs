@@ -8687,10 +8687,11 @@ impl<'p, 's> Checker<'p, 's> {
             } else {
                 self.signatures(part, construct).into_vec()
             };
-            if sigs.is_empty() {
-                return Vec::new();
-            }
             lists.push(sigs);
+        }
+        // `resolveUnionTypeMembers` asks every member for its signatures, which resolves its members.
+        if lists.iter().any(|sigs| sigs.is_empty()) {
+            return Vec::new();
         }
         let sigs = self.union_signatures(&lists);
         if sigs.is_empty() && !construct {

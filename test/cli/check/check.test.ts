@@ -22975,9 +22975,9 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
         `,
       });
       const { stdout, exitCode } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(2,127): error TS2589: Type instantiation is excessively deep and possibly infinite."
-      `);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(2,127): error TS2589: Type instantiation is excessively deep and possibly infinite."`,
+      );
       expect(exitCode).toBe(1);
     });
 

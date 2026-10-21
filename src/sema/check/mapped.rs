@@ -1387,12 +1387,15 @@ impl<'p, 's> Checker<'p, 's> {
     /// members have too. A tuple has the index signature of an array of all its elements.
     pub(super) fn union_index_infos(&mut self, parts: &[TypeId]) -> SmallVec<[IndexInfo; 2]> {
         let mut all = Vec::with_capacity(parts.len());
-        // `resolveUnionTypeMembers` asks every member for its signatures first, which resolves its members.
         for &part in parts {
             let apparent = self.apparent_type(part);
             let Some(members) = self.structured_members(apparent) else {
                 return SmallVec::new();
             };
+            // The other members are only asked for the index signatures that the first one has.
+            if all.is_empty() && members.index_infos().is_empty() {
+                return SmallVec::new();
+            }
             all.push(members);
         }
         let mut infos = SmallVec::new();

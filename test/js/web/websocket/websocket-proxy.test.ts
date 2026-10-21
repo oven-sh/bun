@@ -908,6 +908,48 @@ describe.concurrent("wss://: a corrupt TLS record right behind the messages", ()
   });
 });
 
+// The upgrade client arms a handshake timeout above 240 seconds on the minute wheel of uSockets,
+// and disarms it with set_timeout(0), which has to clear that wheel too. 600 seconds are padded
+// to 660: 11 steps of the minute wheel, which are 165 sweeps.
+test("wss:// through a proxy: the handshake timeout does not run after the upgrade", async () => {
+  using origin = await startRawWssServer();
+  using recorded = await startRecordingProxy();
+  await using client = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { sweepSocketTimers } = require("bun:internal-for-testing");
+        const ws = new WebSocket(process.env.WS_URL, { proxy: process.env.WS_PROXY, tls: { rejectUnauthorized: false } });
+        const events = [];
+        ws.onerror = () => events.push("error");
+        ws.onclose = event => events.push("close " + event.code);
+        ws.onopen = async () => {
+          events.push("open");
+          await new Promise(resolve => setImmediate(resolve));
+          sweepSocketTimers(180);
+          for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+          console.log(JSON.stringify({ events, readyState: ws.readyState }));
+          process.exit(0);
+        };
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      NO_PROXY: "",
+      no_proxy: "",
+      BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: "600",
+      WS_URL: `wss://127.0.0.1:${origin.port}`,
+      WS_PROXY: `http://127.0.0.1:${recorded.port}`,
+    },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([client.stdout.text(), client.exited]);
+  expect(stdout).toBe('{"events":["open"],"readyState":1}\n');
+  expect(exitCode).toBe(0);
+});
+
 // Not concurrent: it counts every live SSL_CTX in the process.
 test("wss:// through a proxy: terminate() frees the SSL_CTX of the tunnel", async () => {
   using recorded = await startRecordingProxy();

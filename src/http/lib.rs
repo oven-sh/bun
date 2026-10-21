@@ -1188,7 +1188,7 @@ use bun_http_types::ETag::HeaderEntryColumns;
 
 impl<const SSL: bool> SocketTimeout for HttpSocket<SSL> {
     fn set_timeout(&self, seconds: c_uint) {
-        uws::NewSocketHandler::<SSL>::set_timeout(self, seconds)
+        uws::NewSocketHandler::<SSL>::set_timeout_or_long_timeout(self, seconds)
     }
 }
 

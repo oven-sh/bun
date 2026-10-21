@@ -1288,7 +1288,10 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     fn arm_close_timeout(&self) {
         match self.io() {
-            Io::Socket => self.tcp.get().set_timeout(close_timeout_seconds()),
+            Io::Socket => self
+                .tcp
+                .get()
+                .set_timeout_or_long_timeout(close_timeout_seconds()),
             Io::Tunnel(tunnel) => tunnel.set_timeout(close_timeout_seconds()),
             Io::Stream => {}
         }

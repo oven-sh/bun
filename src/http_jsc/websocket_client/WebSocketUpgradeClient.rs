@@ -58,9 +58,7 @@ use bun_http::ssl_config::SSLConfig;
 bun_core::define_scoped_log!(log, WebSocketUpgradeClient, visible);
 bun_core::declare_scope!(alloc, hidden);
 
-/// Opening-handshake timeout in seconds, normalised for uSockets' timer
-/// wheel (short-timeout counter wraps at 240 ticks; `set_timeout` routes
-/// larger values onto the minute-granularity long timer). 0 disables.
+/// Opening-handshake timeout in seconds, normalised for uSockets' timer wheels. 0 disables.
 #[inline]
 fn handshake_timeout_seconds() -> core::ffi::c_uint {
     bun_http::normalize_idle_timeout_seconds(
@@ -533,7 +531,7 @@ where
             }
         }
 
-        sock.set_timeout(this.handshake_timeout());
+        sock.set_timeout_or_long_timeout(this.handshake_timeout());
         this.state.set(State::Reading);
         Some(Self::connected(client, websocket))
     }
@@ -806,7 +804,7 @@ where
         // `us_internal_socket_after_open` zeroes the socket timeout when the
         // SEMI_SOCKET opens, so the value `connect()` armed only covered the
         // TCP connect. Re-arm so an accept-but-never-answer peer times out.
-        socket.set_timeout(this.handshake_timeout());
+        socket.set_timeout_or_long_timeout(this.handshake_timeout());
 
         debug_assert!(!this.input_body_buf.get().is_empty());
         debug_assert!(this.to_send_len.get() == 0);
@@ -1036,7 +1034,9 @@ where
         this.response_body.set(Some(body));
         // `ws` has no timeout for the body, so use ours as an idle timeout between chunks.
         if !ws.is_paused() {
-            this.tcp.get().set_timeout(handshake_timeout_seconds());
+            this.tcp
+                .get()
+                .set_timeout_or_long_timeout(handshake_timeout_seconds());
         }
         if !chunk.is_empty() {
             ws.did_receive_response_body(&chunk);
@@ -1064,7 +1064,7 @@ where
                 .with_mut(|p| p.unref(VirtualMachineRef::get().loop_ctx()));
             tcp.pause_stream();
         } else {
-            tcp.set_timeout(handshake_timeout_seconds());
+            tcp.set_timeout_or_long_timeout(handshake_timeout_seconds());
             this.poll_ref
                 .with_mut(|p| p.r#ref(VirtualMachineRef::get().loop_ctx()));
             tcp.resume_stream();

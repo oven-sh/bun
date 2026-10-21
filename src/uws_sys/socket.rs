@@ -466,8 +466,25 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── timeouts ────────────────────────────────────────────────────────────
 
-    /// Splits >240s onto the minute-granularity long-timeout wheel.
+    /// Any length. 0 disarms, the minute wheel too.
     pub fn set_timeout(&self, seconds: c_uint) {
+        on_socket!(self.socket;
+            connected s => {
+                s.set_timeout(seconds);
+                s.set_long_timeout(0);
+            },
+            connecting c => {
+                c.timeout(seconds);
+                c.long_timeout(0);
+            },
+            detached => {},
+            duplex d => d.set_timeout(seconds),
+            pipe p => p.set_timeout(seconds),
+        )
+    }
+
+    /// Above 240s arms the minute wheel instead, for owners that pad for it and handle `on_long_timeout`.
+    pub fn set_timeout_or_long_timeout(&self, seconds: c_uint) {
         on_socket!(self.socket;
             connected s => if seconds > 240 {
                 s.set_timeout(0);

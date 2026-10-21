@@ -740,7 +740,7 @@ impl ClientSession {
                 self.ping_cap_armed = true;
             }
         }
-        self.socket.set_timeout(want);
+        self.socket.set_timeout_or_long_timeout(want);
     }
 
     /// O(1) lookup in the `by_http_id` secondary index. Returns the raw

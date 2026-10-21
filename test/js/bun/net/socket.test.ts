@@ -5,12 +5,15 @@ import { afterAll, afterEach, describe, expect, it, jest } from "bun:test";
 import { generateKeyPairSync } from "crypto";
 import { closeSync, fstatSync, readFileSync } from "fs";
 import {
+  blackholePortSource,
   bunEnv,
   bunExe,
   bunRun,
   expectMaxObjectTypeCount,
   getMaxFD,
   isLinux,
+  isMacOS,
+  isMusl,
   isWindows,
   libcPathForDlopen,
   normalizeBunSnapshot,
@@ -312,6 +315,137 @@ describe.concurrent("socket", () => {
         },
       },
     });
+  });
+
+  // The loop runs the socket timeout sweep once every 4 seconds. The fixture
+  // runs the sweeps by hand and prints the sweep at which each `timeout`
+  // handler ran: `socket.timeout(seconds)` is due at sweep ceil(seconds / 4).
+  // Each test starts a bun process, which alone can take the 5 seconds of the default timeout on
+  // a debug build when the whole file runs.
+  describe("socket.timeout above 240 seconds", () => {
+    async function sweepsToTimeout(mode: "tcp" | "tls" | "upgradeTLS" | "parked" | "serve") {
+      // The parked mode counts what one loop iteration reads: see tls-fixture-transport.ts.
+      using unixDir = mode === "parked" && isMacOS ? tempDir("socket-timeout", {}) : undefined;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), fileURLToPath(new URL("./socket-timeout-fixture.ts", import.meta.url)), mode],
+        env: { ...bunEnv, TLS_CERT: tls.cert, TLS_KEY: tls.key, TLS_FIXTURE_UNIX_DIR: unixDir && String(unixDir) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // A fixture that failed says why: report what it printed.
+      return { result: exitCode === 0 ? JSON.parse(stdout) : { stdout, stderr }, exitCode };
+    }
+
+    it.each(["tcp", "tls"] as const)(
+      "runs the handler once, ceil(seconds / 4) sweeps after the call (%s)",
+      async mode => {
+        const due = {
+          240: [60],
+          241: [61],
+          300: [75],
+          956: [239],
+          960: [240],
+          964: [241],
+          14400: [3600],
+          86400: [21600],
+          262160: [65540],
+          // Not due in the 65550 sweeps of the fixture.
+          2147483647: [],
+        };
+        expect(await sweepsToTimeout(mode)).toEqual({
+          result: {
+            "no timeout() call on an accepted socket": [30],
+            values: { accepted: due, client: due, "the sockets stay open": true },
+            orders: {
+              "timeout(8) replaces timeout(3600)": [2],
+              "timeout(3600) replaces timeout(8)": [900],
+              "timeout(0) cancels timeout(3600)": [],
+              "timeout(3600) again from the handler, twice": [900, 1800, 2700],
+              "timeout(960) on an older and a newer socket, from a handler": [[250], [250]],
+            },
+            // Reads and writes do not restart the timer. A `timeout()` call in `data` does.
+            io: {
+              "timeout(300), 40 sweeps, data, 80 sweeps": { accepted: [75], client: [75] },
+              "the same, with timeout(300) again in `data`": { accepted: [115], client: [115] },
+              "timeout(3600), 500 sweeps, data, 410 sweeps": { accepted: [900], client: [900] },
+            },
+          },
+          exitCode: 0,
+        });
+      },
+      60_000,
+    );
+
+    it("runs the handler of a socket that is parked in the TLS handshake queue", async () => {
+      // timeout(3600) on each, then timeout(960) on each from the handler of another socket.
+      expect(await sweepsToTimeout("parked")).toEqual({
+        result: { fired: Array(12).fill([900, 250]), clientHandshakes: 6 },
+        exitCode: 0,
+      });
+    }, 60_000);
+
+    it("reaches the TLS handlers from either socket of an upgradeTLS pair, and upgradeTLS() cancels it", async () => {
+      expect(await sweepsToTimeout("upgradeTLS")).toEqual({
+        result: {
+          "raw.timeout(1000)": [250],
+          "tls.timeout(1004)": [251],
+          "timeout(40), then upgradeTLS()": { tcp: [], tls: [] },
+        },
+        exitCode: 0,
+      });
+    }, 60_000);
+
+    // uWS arms the same timer for a WebSocket of Bun.serve. These are the sweeps at which the
+    // server closes a client that sends nothing: `idleTimeout` seconds after the upgrade. 0 is no timer.
+    it("keeps the idle timeout of a Bun.serve WebSocket", async () => {
+      expect(await sweepsToTimeout("serve")).toEqual({
+        result: {
+          "idleTimeout: 120": [30],
+          "idleTimeout: 960": [240],
+          "idleTimeout: 0": [],
+        },
+        exitCode: 0,
+      });
+    }, 60_000);
+
+    // A timeout armed on a socket that still waits for its name lookup goes to the socket of
+    // each address. The WebSocket client arms 124 seconds there, which are 31 sweeps.
+    it.skipIf(isWindows || isMusl)(
+      "fires a timeout that came due while the name lookup was pending",
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+            ${blackholePortSource}
+            const { dnsCacheSeed, sweepSocketTimers } = require("bun:internal-for-testing");
+            dnsCacheSeed("lookup-outlasts-timeout.test", ["127.0.0.1", "127.0.0.1"]);
+            const events = [];
+            const ws = new WebSocket("ws://lookup-outlasts-timeout.test:" + port);
+            ws.onerror = () => events.push("error");
+            ws.onclose = event => events.push("close " + event.code);
+            // The lookup has not answered yet, so no socket is there for these sweeps.
+            sweepSocketTimers(40);
+            for (let i = 0; i < 100 && ws.readyState !== WebSocket.CLOSED; i++) {
+              await new Promise(resolve => setImmediate(resolve));
+              sweepSocketTimers(1);
+            }
+            console.log(JSON.stringify(events));
+            filler.destroy();
+            process.exit(0);
+            `,
+          ],
+          env: { ...bunEnv, BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: "120" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: '["error","close 1006"]\n', stderr: "", exitCode: 0 });
+      },
+      60_000,
+    );
   });
 
   it("socket.timeout works", async () => {

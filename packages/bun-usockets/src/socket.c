@@ -99,17 +99,17 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) {
 
 __attribute__((always_inline)) void us_socket_timeout(struct us_socket_t *s, unsigned int seconds) {
     if (seconds) {
-        s->timeout = ((unsigned int)s->group->timestamp + ((seconds + 3) >> 2)) % 240;
+        s->timeout_tick = s->group->global_tick + (unsigned int)(((uint64_t)seconds + 3) >> 2);
     } else {
-        s->timeout = 255;
+        s->timeout_tick = LIBUS_TIMEOUT_NONE;
     }
 }
 
 void us_connecting_socket_timeout(struct us_connecting_socket_t *c, unsigned int seconds) {
     if (seconds) {
-        c->timeout = ((unsigned int)c->group->timestamp + ((seconds + 3) >> 2)) % 240;
+        c->timeout_tick = c->group->global_tick + (unsigned int)(((uint64_t)seconds + 3) >> 2);
     } else {
-        c->timeout = 255;
+        c->timeout_tick = LIBUS_TIMEOUT_NONE;
     }
 }
 
@@ -441,7 +441,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->group = group;
     s->kind = kind;
     s->ssl = NULL;
-    s->timeout = 255;
+    s->timeout_tick = LIBUS_TIMEOUT_NONE;
     s->long_timeout = 255;
     s->flags.low_prio_state = 0;
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN) != 0;

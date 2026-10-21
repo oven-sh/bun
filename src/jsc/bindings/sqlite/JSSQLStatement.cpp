@@ -958,12 +958,21 @@ struct SQLiteBinder {
         auto* values = dynamicDowncast<JSC::JSArray>(arguments);
         JSC::JSObject* named = nullptr;
         JSC::JSValue first = arguments;
+        // A read can run script that leaves this statement on a row, and a clear then frees what that run reads. So the
+        // clear comes before the first read that can run script, which is the read of `first` when that is not quick.
+        bool cleared = false;
         if (values) {
             // Nothing was passed: the values of the last call stay bound.
             if (!values->length())
                 return true;
-            first = element(values, 0);
-            RETURN_IF_EXCEPTION(scope, false);
+            if (values->canGetIndexQuickly(0u)) [[likely]] {
+                first = values->getIndexQuickly(0u);
+            } else {
+                sqlite3_clear_bindings(stmt);
+                cleared = true;
+                first = element(values, 0);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
         }
 
         if (auto* list = values ? dynamicDowncast<JSC::JSArray>(first) : nullptr) {
@@ -975,7 +984,8 @@ struct SQLiteBinder {
             return false;
         }
 
-        sqlite3_clear_bindings(stmt);
+        if (!cleared)
+            sqlite3_clear_bindings(stmt);
         if (named)
             return bindNamed(named);
 
@@ -1101,11 +1111,12 @@ private:
         if (result == SQLITE_OK) [[likely]]
             return true;
 
-        if (result == kExceptionPending)
+        // Not under a run that script left on a row: that run still reads the values.
+        if (result == kExceptionPending && !sqlite3_stmt_busy(stmt))
             sqlite3_clear_bindings(stmt);
         else if (result == kUnsupportedValue)
             throwException(globalObject, scope, createTypeError(globalObject, "Binding expected string, TypedArray, boolean, number, bigint or null"_s));
-        else
+        else if (result != kExceptionPending)
             throwException(globalObject, scope, createSQLiteError(globalObject, db));
         return false;
     }

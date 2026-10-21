@@ -555,6 +555,11 @@ describe("Bun.Transpiler", () => {
       expect(
         withMetadata.transformSync("x = a ? (b, c) : d => { class K { @dec p: Foo } return new Foo() }"),
       ).toContain("return new Foo");
+      expect(
+        withMetadata.transformSync(
+          "namespace N { export class A {} } namespace N { x = a ? (b) : c => { class K { @dec p: A } return K } }",
+        ),
+      ).toContain('("design:type", typeof A === "undefined" ? Object : A)');
     });
 
     it("nested arrow functions with return types between ? and : take memory in proportion to their depth", async () => {

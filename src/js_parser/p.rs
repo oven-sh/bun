@@ -8296,12 +8296,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
         // The type names of decorator metadata are bound as they are parsed
-        // (`find_symbol`): a name that nothing declares becomes a member of the
-        // module scope, and a use of a declared one is recorded.
+        // (`find_symbol`). A name that nothing declares becomes a member of the
+        // module scope. A name that a sibling namespace block exports becomes a
+        // property access of that namespace, which is around the attempt.
         if self.module_scope.members.len() > snapshot.module_scope_members_len {
             self.module_scope_mut()
                 .members
                 .retain(|member| (member.ref_.inner_index() as usize) < snapshot.symbols_len);
+        }
+        let mut enclosing = Some(snapshot.current_scope);
+        while let Some(scope) = enclosing {
+            if let Some(mut ts_namespace) = scope.ts_namespace {
+                let accesses = &mut ts_namespace.property_accesses;
+                while accesses
+                    .values()
+                    .last()
+                    .is_some_and(|ref_| ref_.inner_index() as usize >= snapshot.symbols_len)
+                {
+                    accesses.pop();
+                }
+            }
+            enclosing = scope.parent;
         }
         self.span_uses.truncate(snapshot.span_uses_len);
         self.allocated_names.truncate(snapshot.allocated_names_len);

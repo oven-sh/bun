@@ -102,6 +102,10 @@ pub(crate) struct Flags {
     pub(crate) nonblock: bool,
     pub(crate) is_socket: bool,
     pub(crate) broken_pipe: bool,
+    /// The write end of the `pipe(2)` that `Pipeline` made for one `Cmd`. It
+    /// is blocking, for a subprocess; see [`IOWriter::claim_for_builtin`].
+    #[cfg(not(windows))]
+    pub(crate) cmd_pipe: bool,
 }
 
 /// One queued chunk: which child enqueued it, how many bytes (in `buf`), how
@@ -245,12 +249,30 @@ impl IOWriter {
             .expect("IOWriter::keepalive after last Arc dropped")
     }
 
-    /// Read-only accessor for the `is_socket` flag (used by
-    /// `ShellSubprocess::spawn` to decide `no_sigpipe`).
+    /// Whether this is the write end of a pipeline's pipe or socketpair (used
+    /// by `ShellSubprocess::spawn` to decide `no_sigpipe`).
     #[inline]
     #[cfg(not(windows))]
-    pub(crate) fn is_socket(&self) -> bool {
-        self.state().flags.is_socket
+    pub(crate) fn is_pipeline_pipe(&self) -> bool {
+        let flags = self.state().flags;
+        flags.is_socket || flags.cmd_pipe
+    }
+
+    /// A builtin is about to write here. When this is the `pipe(2)` that
+    /// `Pipeline` made for the builtin's `Cmd`, only that builtin holds the
+    /// write end and no subprocess inherits it, so it can be `O_NONBLOCK`: a
+    /// full pipe gives EAGAIN and never blocks the event loop. The read end is
+    /// another open file description and stays blocking.
+    #[cfg(not(windows))]
+    pub(crate) fn claim_for_builtin(&self) {
+        let s = self.state();
+        if !s.flags.cmd_pipe || s.flags.nonblock {
+            return;
+        }
+        debug_assert!(!s.started);
+        if sys::set_nonblocking(s.fd).is_ok() {
+            s.flags.nonblock = true;
+        }
     }
 
     pub(crate) fn init(fd: Fd, flags: Flags, evtloop: EventLoopHandle) -> std::sync::Arc<IOWriter> {

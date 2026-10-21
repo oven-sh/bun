@@ -1,7 +1,8 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, runCommandMaxRSS, tempDir, withoutAsanQuarantine } from "harness";
 import { existsSync } from "node:fs";
+import { totalmem } from "node:os";
 import path from "node:path";
 import defaultMacro, {
   addStrings,
@@ -419,6 +420,237 @@ test("a Response or Blob returned from a macro is classified by its MIME essence
     stderr: "",
   });
   expect(exitCode).toBe(0);
+});
+
+// A macro result is inlined as AST strings, and the length of an AST string is a `u32`. A Response, a Blob or
+// a property name that needs more than 4 GiB was inlined as its first (length mod 2^32) bytes, with a
+// successful exit. The limit also follows the process string limit, which
+// BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT lowers, so these children reach it with 64 KiB.
+describe.concurrent("a macro result that does not fit in one string", () => {
+  const LIMIT = 64 * 1024;
+  const env = { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(LIMIT) };
+
+  // A data: URL is `data:` + type + `;base64,` + 4 characters for each 3 bytes.
+  const dataUrlLength = (type: string, bytes: number) => `data:${type};base64,`.length + Math.ceil(bytes / 3) * 4;
+  // With this many bytes the type "image/x" gives LIMIT characters, and "image/xy" gives one more.
+  const BASE64_BYTES = ((LIMIT - "data:image/x;base64,".length) / 4) * 3;
+  const base64AtLimit = "data:image/x;base64," + Buffer.alloc(BASE64_BYTES).toString("base64");
+  // "あ" is 3 bytes of UTF-8. So is U+FFFD, which a JSON string with an escape decodes each malformed byte to.
+  const THIRD = Math.floor(LIMIT / 3);
+
+  const macros = [
+    `export function base64(type: string, bytes: number) {`,
+    `  return new Blob([new Uint8Array(bytes)], { type });`,
+    `}`,
+    `export function text(bytes: number) {`,
+    `  return new Blob([new Uint8Array(bytes).fill(97)], { type: "text/plain" });`,
+    `}`,
+    `export function propertyName(wide: number, narrow: number) {`,
+    `  return { [Buffer.alloc(wide * 3, "あ").toString() + Buffer.alloc(narrow, "a").toString()]: 1 };`,
+    `}`,
+    `export function nested(type: string, bytes: number) {`,
+    `  return [{ response: new Response(new Uint8Array(bytes), { headers: { "content-type": type } }) }];`,
+    `}`,
+    `export function json(malformed: number, plain: number) {`,
+    `  const string = [Buffer.from('"\\\\n'), Buffer.alloc(malformed, 0xc0), Buffer.alloc(plain, "a"), Buffer.from('"')];`,
+    `  return new Response(Buffer.concat(string), { headers: { "content-type": "application/json" } });`,
+    `}`,
+    ``,
+  ].join("\n");
+  // The macro call is at line 2, column 16.
+  const entry = (macro: string, args: (string | number)[] = [], value = "result") =>
+    [
+      `import { ${macro} } from "./macro.ts" with { type: "macro" };`,
+      `const result = ${macro}(${args.map(arg => JSON.stringify(arg)).join(", ")});`,
+      `export default ${value};`,
+      ``,
+    ].join("\n");
+  const summarize = `const summarize = (value: string) => ({ bytes: Buffer.byteLength(value), crc32: Bun.hash.crc32(value) });`;
+  const inlined = (value: string) => ({ bytes: Buffer.byteLength(value), crc32: Bun.hash.crc32(value) });
+  const tooLarge = (what: string, bytes = LIMIT + 1) => `${what} is too large (${bytes} bytes, 4 GiB maximum)`;
+
+  async function run(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  // Debug builds print "[macro] call <name>" to stdout before the script's own output.
+  const lastLine = (stdout: string) => JSON.parse(stdout.trim().split("\n").pop() || "null");
+
+  test("is inlined whole at the limit and is one error past it", async () => {
+    const atMacroCall = { line: 2, column: 16 };
+    type Expected = ReturnType<typeof inlined> | [error: string, position: typeof atMacroCall];
+    const cases: Record<string, [source: string, expected: Expected]> = {
+      "base64-at-limit": [entry("base64", ["image/x", BASE64_BYTES]), inlined(base64AtLimit)],
+      "base64-past-limit": [
+        entry("base64", ["image/xy", BASE64_BYTES]),
+        [tooLarge("Base64 of the macro result"), atMacroCall],
+      ],
+      "text-at-limit": [entry("text", [LIMIT]), inlined(Buffer.alloc(LIMIT, "a").toString())],
+      "text-past-limit": [entry("text", [LIMIT + 1]), [tooLarge("Text of the macro result"), atMacroCall]],
+      "property-name-at-limit": [
+        entry("propertyName", [THIRD, LIMIT - THIRD * 3], "Object.keys(result)[0]"),
+        inlined(Buffer.alloc(THIRD * 3, "あ").toString() + Buffer.alloc(LIMIT - THIRD * 3, "a").toString()),
+      ],
+      "property-name-past-limit": [
+        entry("propertyName", [THIRD, LIMIT + 1 - THIRD * 3], "Object.keys(result)[0]"),
+        [tooLarge("Property name in the macro result"), atMacroCall],
+      ],
+      "nested-response-past-limit": [
+        entry("nested", ["image/xy", BASE64_BYTES], "result[0].response"),
+        [tooLarge("Base64 of the macro result"), atMacroCall],
+      ],
+      // The string is "\n" and then the malformed bytes. The error is in the body, which Bun names fetch.json.
+      "json-at-limit": [
+        entry("json", [THIRD, LIMIT - 1 - THIRD * 3]),
+        inlined("\n" + Buffer.alloc(THIRD * 3, "\uFFFD").toString()),
+      ],
+      "json-past-limit": [entry("json", [THIRD, LIMIT - THIRD * 3]), [tooLarge("JSON string"), { line: 1, column: 1 }]],
+    };
+    using dir = tempDir("macro-result-limit", {
+      "macro.ts": macros,
+      ...Object.fromEntries(Object.entries(cases).map(([name, [source]]) => [`${name}.ts`, source])),
+      "import.ts": `
+        ${summarize}
+        const results: Record<string, unknown> = {};
+        for (const name of process.argv.slice(2)) {
+          try {
+            results[name] = summarize((await import("./" + name + ".ts")).default);
+          } catch (e: any) {
+            results[name] = { error: e.message, name: e.name, line: e.position?.line, column: e.position?.column };
+          }
+        }
+        console.log(JSON.stringify(results));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "import.ts", ...Object.keys(cases));
+    expect({ results: lastLine(stdout), stderr }).toEqual({
+      results: Object.fromEntries(
+        Object.entries(cases).map(([name, [, expected]]) => [
+          name,
+          Array.isArray(expected) ? { error: expected[0], name: "BuildMessage", ...expected[1] } : expected,
+        ]),
+      ),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("is one positioned log of Bun.build() and one error thrown by Bun.Transpiler", async () => {
+    using dir = tempDir("macro-result-limit-api", {
+      "macro.ts": macros,
+      "at-limit.ts": entry("base64", ["image/x", BASE64_BYTES]),
+      "past-limit.ts": entry("base64", ["image/xy", BASE64_BYTES]),
+      "build.ts": `
+        import path from "node:path";
+        ${summarize}
+        const results: Record<string, unknown> = {};
+        for (const name of ["at-limit", "past-limit"]) {
+          const build = await Bun.build({ entrypoints: ["./" + name + ".ts"], outdir: "./built/" + name, throw: false });
+          const bundled = build.success
+            ? summarize((await import(build.outputs[0].path)).default)
+            : build.logs.map(log => ({
+                error: log.message,
+                file: path.basename(log.position?.file ?? ""),
+                line: log.position?.line,
+                column: log.position?.column,
+              }));
+          let transpiled;
+          try {
+            const source = await Bun.file("./" + name + ".ts").text();
+            await Bun.write("./transpiled/" + name + ".js", new Bun.Transpiler({ loader: "ts" }).transformSync(source));
+            transpiled = summarize((await import("./transpiled/" + name + ".js")).default);
+          } catch (e: any) {
+            transpiled = { error: e.message, name: e.name };
+          }
+          results[name] = { bundled, transpiled };
+        }
+        console.log(JSON.stringify(results));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "build.ts");
+    const error = tooLarge("Base64 of the macro result");
+    expect({ results: lastLine(stdout), stderr }).toEqual({
+      results: {
+        "at-limit": { bundled: inlined(base64AtLimit), transpiled: inlined(base64AtLimit) },
+        "past-limit": {
+          bundled: [{ error, file: "past-limit.ts", line: 2, column: 16 }],
+          transpiled: { error, name: "BuildMessage" },
+        },
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // A 96 MiB body is a 128 MiB data: URL. The same macro that returns only the size of the body is the baseline.
+  test("is refused before its base64 string is allocated", async () => {
+    const BYTES = 96 * 1024 * 1024;
+    using dir = tempDir("macro-result-limit-rss", {
+      "macro.ts": [
+        `const blob = () => new Blob([new Uint8Array(${BYTES})], { type: "application/octet-stream" });`,
+        `export function size() {`,
+        `  return blob().size;`,
+        `}`,
+        `export function whole() {`,
+        `  return blob();`,
+        `}`,
+        ``,
+      ].join("\n"),
+      "size.ts": entry("size"),
+      "whole.ts": entry("whole"),
+      "import.ts": `
+        try {
+          const { default: value } = await import("./" + process.argv[2] + ".ts");
+          console.log(JSON.stringify(typeof value === "string" ? { inlined: value.length } : value));
+        } catch (e: any) {
+          console.log(JSON.stringify(e.message));
+        }
+      `,
+    });
+    const measure = (name: string) =>
+      runCommandMaxRSS({ cmd: [bunExe(), "import.ts", name], cwd: String(dir), env: withoutAsanQuarantine(env) });
+    const [size, whole] = await Promise.all([measure("size"), measure("whole")]);
+    expect({ size: lastLine(size.stdout), whole: lastLine(whole.stdout) }).toEqual({
+      size: BYTES,
+      whole: tooLarge("Base64 of the macro result", dataUrlLength("application/octet-stream", BYTES)),
+    });
+    expect(whole.maxRSS - size.maxRSS).toBeLessThan(64 * 1024 * 1024);
+  });
+
+  // At the lowered limit a result that nothing checks is still inlined whole. Only the real size shows the cut:
+  // 3 GiB + 3 bytes are a data: URL of 2^32 + 41 characters, of which `bun build` wrote the first 41. The child
+  // holds the 3 GiB, and 7 GiB without the check.
+  test.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 10 * 1024 ** 3)(
+    "a 3 GiB Blob fails `bun build` with one error and no output file",
+    async () => {
+      const BYTES = 3 * 2 ** 30 + 3;
+      using dir = tempDir("macro-result-limit-real", {
+        "macro.ts": `export function blob() {\n  return new Blob([new Uint8Array(${BYTES})], { type: "application/octet-stream" });\n}\n`,
+        "entry.ts": entry("blob"),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./entry.ts", "--outdir", "out"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({
+        errors: stderr.split(/\r?\n/).filter(line => line.startsWith("error: ")),
+        position: stderr.includes("entry.ts:2:16"),
+        built: existsSync(path.join(String(dir), "out")),
+        exitCode,
+      }).toEqual({
+        errors: [`error: ${tooLarge("Base64 of the macro result", dataUrlLength("application/octet-stream", BYTES))}`],
+        position: true,
+        built: false,
+        exitCode: 1,
+      });
+    },
+    120_000,
+  );
 });
 
 // A macro's `await` is serviced by the VM's macro event loop, so completions have to be routed by which

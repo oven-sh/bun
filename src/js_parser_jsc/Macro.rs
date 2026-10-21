@@ -576,6 +576,13 @@ impl From<JsError> for MacroError {
 
 bun_core::oom_from_alloc!(MacroError);
 
+/// Already logged at the macro call.
+impl From<bun_ast::StringTooLarge> for MacroError {
+    fn from(_: bun_ast::StringTooLarge) -> Self {
+        MacroError::MacroFailed
+    }
+}
+
 impl From<MacroError> for Error {
     fn from(e: MacroError) -> Self {
         match e {
@@ -744,8 +751,15 @@ impl<'a> Run<'a> {
                     // shared-view/content-type slices borrow its store.
                     let (bytes, ct) =
                         unsafe { ((*blob).shared_view(), (*blob).content_type_slice()) };
-                    return expr_from_blob(bytes, self.bump, ct, self.log, self.caller.loc)
-                        .map_err(|_| MacroError::MacroFailed);
+                    return expr_from_blob(
+                        bytes,
+                        self.bump,
+                        ct,
+                        self.log,
+                        self.source,
+                        self.caller.loc,
+                    )
+                    .map_err(|_| MacroError::MacroFailed);
                 }
 
                 return Ok(Expr::init(E::EString::EMPTY, self.caller.loc));
@@ -838,11 +852,19 @@ impl<'a> Run<'a> {
                 while let Some((prop, prop_value)) = object_iter.next()? {
                     let object_value = self.run(prop_value)?;
 
+                    let owned_key = prop.to_owned_slice();
+                    bun_ast::StoreStr::check_len(
+                        owned_key.len(),
+                        "Property name in the macro result",
+                        self.log,
+                        Some(self.source),
+                        self.caller.loc,
+                    )?;
                     // `EString::init` lifetime-erases its borrow
                     // (arena-owned per the parser's `Str` convention). Copy the
                     // key into the `MacroContext` bump arena so it outlives the
                     // temporary `to_owned_slice()` Vec and the returned `Expr`.
-                    let key_bytes: &[u8] = self.bump.alloc_slice_copy(&prop.to_owned_slice());
+                    let key_bytes: &[u8] = self.bump.alloc_slice_copy(&owned_key);
                     let key = Expr::init(E::EString::init(key_bytes), self.caller.loc);
                     VecExt::append(
                         &mut properties,
@@ -1130,6 +1152,7 @@ fn expr_from_blob(
     bump: &bun_alloc::Arena,
     content_type: &[u8],
     log: &mut Log,
+    source: &Source,
     loc: bun_ast::Loc,
 ) -> crate::Result<Expr> {
     use bun_ast::{E, ExprData, StoreStr as Str};
@@ -1145,8 +1168,8 @@ fn expr_from_blob(
     let is_json = essence.ends_with(b"/json") || essence.ends_with(b"+json");
 
     if is_json {
-        let source = &Source::init_path_string(b"fetch.json", bytes);
-        let mut out_expr: Expr = match bun_parsers::json::parse_for_macro(source, log, bump) {
+        let json = &Source::init_path_string(b"fetch.json", bytes);
+        let mut out_expr: Expr = match bun_parsers::json::parse_for_macro(json, log, bump) {
             Ok(e) => e,
             Err(_) => return Err(crate::Error::MacroFailed),
         };
@@ -1179,6 +1202,13 @@ fn expr_from_blob(
         } else {
             &owned[..]
         };
+        Str::check_len(
+            unquoted.len(),
+            "Text of the macro result",
+            log,
+            Some(source),
+            loc,
+        )?;
         let data = Str::new(bump.alloc_slice_copy(unquoted));
         return Ok(Expr::init(
             E::String {
@@ -1194,6 +1224,7 @@ fn expr_from_blob(
     let mid = b";base64,";
     let encoded_len = bun_base64::encode_len(bytes);
     let total = prefix.len() + content_type.len() + mid.len() + encoded_len;
+    Str::check_len(total, "Base64 of the macro result", log, Some(source), loc)?;
     let buf: &mut [u8] = bump.alloc_slice_fill_copy(total, 0u8);
     let mut i = 0usize;
     buf[i..i + prefix.len()].copy_from_slice(prefix);

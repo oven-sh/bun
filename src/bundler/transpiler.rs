@@ -2072,15 +2072,8 @@ fn parse_md_loader<'a>(
     arena: &'a Arena,
     log: &mut bun_ast::Log,
 ) -> Option<ParseResult<'a>> {
-    let html: &'static [u8] = match bun_md::root::render_to_html(&source.contents) {
-        // The rendered HTML is allocated via
-        // `arena` (the per-parse arena), so it is freed with the
-        // arena. Arena-copy the heap `Box<[u8]>` and let it drop;
-        // PORTING.md §Forbidden patterns bars `Box::leak` here.
-        // SAFETY: ARENA — `arena` outlives the returned
-        // `ParseResult.ast` (the AST crate's `Str` convention erases
-        // `'bump` to `'static` for `E::String.data`).
-        Ok(h) => unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(&h)) },
+    let html = match bun_md::root::render_to_html(&source.contents) {
+        Ok(h) => h,
         Err(_) => {
             let _ = log.add_error_fmt(
                 None,
@@ -2090,6 +2083,25 @@ fn parse_md_loader<'a>(
             return None;
         }
     };
+    if bun_ast::StoreStr::check_len(
+        html.len(),
+        "Rendered Markdown",
+        log,
+        Some(source),
+        bun_ast::Loc::EMPTY,
+    )
+    .is_err()
+    {
+        return None;
+    }
+    // The rendered HTML is allocated via
+    // `arena` (the per-parse arena), so it is freed with the
+    // arena. Arena-copy the heap `Box<[u8]>` and let it drop;
+    // PORTING.md §Forbidden patterns bars `Box::leak` here.
+    // SAFETY: ARENA — `arena` outlives the returned
+    // `ParseResult.ast` (the AST crate's `Str` convention erases
+    // `'bump` to `'static` for `E::String.data`).
+    let html: &'static [u8] = unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(&html)) };
     let expr = bun_ast::Expr::init(bun_ast::E::EString::init(html), bun_ast::Loc::EMPTY);
     let stmt = bun_ast::Stmt::alloc(
         bun_ast::S::ExportDefault {

@@ -1056,6 +1056,14 @@ pub mod parse_worker {
                         return Err(crate::Error::ParserError);
                     }
                 };
+                ast::StoreStr::check_len(
+                    html.len(),
+                    "Rendered Markdown",
+                    log,
+                    Some(source),
+                    Loc::EMPTY,
+                )
+                .map_err(|_| crate::Error::ParserError)?;
                 let html: &[u8] = bump.alloc_slice_copy(&html);
                 let root = Expr::init(
                     E::String {

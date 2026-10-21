@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, nodeExe, tls } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
@@ -192,6 +192,8 @@ async function withRawH2Server(
 // describe.concurrent can still overlap them without exhausting memory. Non-ASAN
 // keeps the cap at max_concurrency so the semaphore is a no-op.
 const slotLimit = isASAN ? 4 : 20;
+// A test waits for its slot while its timeout runs.
+if (isASAN) setDefaultTimeout(15_000);
 let live = 0;
 const waiters: Array<() => void> = [];
 async function spawnCapped(options: Bun.SpawnOptions.SpawnOptions<"ignore", "pipe", "pipe"> & { cmd: string[] }) {

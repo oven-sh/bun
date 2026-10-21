@@ -168,8 +168,9 @@ fn closed() -> CallError {
 }
 
 fn run_io_thread(inbox: &Guarded<Inbox>) {
-    // `Output`'s writers are per-thread state, and this thread isn't from Bun's pool.
-    Output::Source::configure_thread_no_js();
+    // `Output`'s writers are per-thread state, and this thread isn't from Bun's pool. So are the bounds of the stack,
+    // which the JSON parser asks for.
+    Output::Source::configure_thread();
     let mini: *mut MiniEventLoop = mini_event_loop::init_global(None, None);
     let event_loop = EventLoopHandle::init_mini(mini);
     inbox.lock().event_loop = Some(LoopToWake(event_loop.loop_()));
@@ -203,13 +204,20 @@ fn run_io_thread(inbox: &Guarded<Inbox>) {
             break;
         }
         // Returns after an event, or after `wakeup`, even if that was called before this.
-        // SAFETY: `mini` is this thread's loop, which is never freed.
+        // SAFETY: `mini` is this thread's loop, which is freed below.
         unsafe { (*mini).tick_once(core::ptr::null_mut()) };
     }
     inbox.lock().event_loop = None;
+    for &child in &children {
+        // The loop no longer watches the process.
+        // SAFETY: as above.
+        unsafe { (*child).process = None };
+    }
+    // The children outlive the loop, because on Windows a pipe's close callback runs when the loop is closed.
+    // SAFETY: every process has exited, `on_process_exit` has closed its pipes, and no other thread has the loop.
+    unsafe { mini_event_loop::free_global() };
     for child in children {
-        // SAFETY: allocated in `Child::start`. Its process has exited, `on_process_exit` has closed its pipes, and
-        // nothing else refers to it.
+        // SAFETY: allocated in `Child::adopt`, and nothing refers to it anymore.
         unsafe { bun_core::heap::destroy(child) };
     }
 }

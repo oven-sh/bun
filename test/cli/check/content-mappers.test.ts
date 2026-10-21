@@ -308,7 +308,9 @@ main.ts(2,7): error TS2345: Argument of type 'number' is not assignable to param
   });
 
   test("it runs in its package's directory, and its standard error is shown", async () => {
-    using dir = project({ mapper: `console.error("cwd=" + require("path").basename(process.cwd())); serve();` });
+    using dir = project({
+      mapper: `fs.writeSync(2, "cwd=" + require("path").basename(process.cwd()) + "\\n"); serve();`,
+    });
     const { stdout, stderr } = await check(dir, ["--runExternalCode"]);
     expect(stderr).toContain("cwd=m\n");
     expect(stdout).toBe(errorsOfApp);
@@ -421,7 +423,7 @@ describe.concurrent("a mapper that doesn't follow the protocol", () => {
 
   test("a message that's nested too deeply", async () => {
     const mapper = `serve({ transform: (params, id) => {
-      const deep = "[".repeat(2000000) + "]".repeat(2000000);
+      const deep = Buffer.alloc(2000000, "[").toString() + Buffer.alloc(2000000, "]").toString();
       raw(frame('{"jsonrpc":"2.0","id":"' + id + '","result":{"text":"","extension":".ts","x":' + deep + '}}'));
       return SKIP;
     } });`;
@@ -528,7 +530,8 @@ describe.concurrent("a mapper's process", () => {
   });
 
   test("writes a lot to standard error", async () => {
-    using dir = project({ mapper: `process.stderr.write(Buffer.alloc(1 << 20, "e")); serve();` });
+    // The mapper is killed when the check ends, so it only answers once all of it is written.
+    using dir = project({ mapper: `process.stderr.write(Buffer.alloc(1 << 20, "e"), () => serve());` });
     const { stdout, stderr } = await check(dir, ["--runExternalCode"]);
     expect(stderr.length).toBeGreaterThan(1 << 20);
     expect(stdout).toBe(errorsOfApp);

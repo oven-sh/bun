@@ -401,11 +401,12 @@ describe("bundler", async () => {
     },
   });
 
-  // Each local name of a CSS module and each top-level key of a JSON file that
-  // is imported by name (or through a namespace) becomes a top-level `var` in
-  // the bundle. `await`, `eval` and `arguments` are not keywords, but none of
-  // them can be declared in strict-mode code, so the bundle has to rename them
-  // the same way it already renames `class`.
+  // A CSS module or a data file that is imported as an ES module gets one
+  // symbol for each local class name or top-level key. The symbol prints as a
+  // top-level `var` when an importer names the key, reads the namespace, or
+  // uses `import()` under code splitting. `await`, `eval` and `arguments` are
+  // not keywords, but none of them can be declared in strict-mode code, so the
+  // bundle has to rename them the same way it already renames `class`.
   itBundled("bun/loader-css-module-strict-mode-binding-names", {
     target: "bun",
     outdir: "/out",
@@ -461,6 +462,113 @@ describe("bundler", async () => {
       run: { stdout: "[1,2,3]" },
     });
   }
+
+  // Sloppy cjs and iife output can declare `var arguments` and `var await`.
+  // But a function body reads its own `arguments`, and an async function
+  // parses `await` as an operator, so the binding is numbered there too.
+  // The `.cjs` name makes the runtime load the output as sloppy code.
+  for (const format of ["esm", "cjs", "iife"] as const) {
+    itBundled(`bun/loader-json-restricted-binding-names-read-in-function-${format}`, {
+      format,
+      outfile: format === "esm" ? "/out.js" : "/out.cjs",
+      files: {
+        "/entry.ts": /* js */ `
+      import { await as a, eval as e, arguments as g } from './data.json';
+      function read() { return [e, g]; }
+      async function readAsync() { return a; }
+      readAsync().then(value => console.write(JSON.stringify([...read(), value])));
+    `,
+        "/data.json": `{"await": 1, "eval": 2, "arguments": 3}`,
+      },
+      run: { stdout: "[2,3,1]" },
+    });
+  }
+
+  // Every data loader makes its per-key bindings the same way.
+  for (const [loader, source] of [
+    ["toml", "await = 1\neval = 2\narguments = 3"],
+    ["yaml", "await: 1\neval: 2\narguments: 3"],
+    ["json5", "{ await: 1, eval: 2, arguments: 3 }"],
+  ] as const) {
+    itBundled(`bun/loader-${loader}-restricted-binding-names`, {
+      files: {
+        "/entry.ts": /* js */ `
+      import * as ns from './data.${loader}';
+      import { await as a, eval as e, arguments as g } from './data.${loader}';
+      function read() { return [a, e, g]; }
+      console.write(JSON.stringify([Object.keys(ns).sort(), read()]));
+    `,
+        [`/data.${loader}`]: source,
+      },
+      run: { stdout: '[["arguments","await","default","eval"],[1,2,3]]' },
+    });
+  }
+
+  // A sloppy file in the same chunk can declare the name itself. Each binding
+  // keeps its own value.
+  itBundled("bun/loader-json-restricted-binding-name-beside-sloppy-declaration", {
+    format: "cjs",
+    outfile: "/out.cjs",
+    files: {
+      "/entry.ts": /* js */ `
+    import { arguments as g } from './data.json';
+    import './sloppy.js';
+    function read() { return g; }
+    console.write(JSON.stringify([read(), globalThis.fromSloppy]));
+  `,
+      "/data.json": `{"arguments": 3}`,
+      "/sloppy.js": /* js */ `
+    var arguments = "user";
+    globalThis.fromSloppy = arguments;
+  `,
+    },
+    run: { stdout: '[3,"user"]' },
+  });
+
+  // With code splitting, the keys of a shared data file are bindings that
+  // cross chunks. Their bundle-wide names have the same limits.
+  itBundled("bun/loader-json-restricted-binding-names-shared-chunk", {
+    files: {
+      "/a.ts": /* js */ `
+    import { await as a, eval as e, arguments as g } from './data.json';
+    function read() { return [a, e, g]; }
+    console.write("a" + JSON.stringify(read()));
+  `,
+      "/b.ts": /* js */ `
+    import { await as a, eval as e, arguments as g } from './data.json';
+    function read() { return [g, e, a]; }
+    console.write("b" + JSON.stringify(read()));
+  `,
+      "/data.json": `{"await": 1, "eval": 2, "arguments": 3}`,
+    },
+    entryPoints: ["/a.ts", "/b.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "a[1,2,3]" },
+      { file: "/out/b.js", stdout: "b[3,2,1]" },
+    ],
+  });
+
+  // `import()` of a data file prints every key as a binding of the file's
+  // chunk, whether or not the importer names one.
+  itBundled("bun/loader-json-restricted-binding-names-dynamic-import", {
+    files: {
+      "/entry.ts": /* js */ `
+    const task = await import('./task.json');
+    console.write(JSON.stringify([task.default, Object.keys(task).sort()]));
+  `,
+      "/task.json": `{"command": "build", "arguments": ["--watch"], "eval": 1, "await": 2}`,
+    },
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: {
+      stdout:
+        '[{"command":"build","arguments":["--watch"],"eval":1,"await":2},["arguments","await","command","default","eval"]]',
+    },
+  });
 
   // The CSS-modules lazy export builds its object through `E::Object::put`.
   itBundled("bun/loader-css-module-proto-class-is-own-property", {

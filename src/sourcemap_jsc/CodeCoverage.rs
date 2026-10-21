@@ -608,7 +608,7 @@ pub struct BasicBlockRange {
 pub struct ByteRangeMapping {
     /// A bit for each code unit of the text JSC compiled, which is what JSC's offsets and the
     /// source map's generated columns count. Set if the unit can make its line executable:
-    /// not white space, and a brace only if the printer maps it. The text is borrowed to make this.
+    /// not white space or a brace, or the printer maps it. The text is borrowed to make this.
     executable_units: Bitset,
     /// Code unit offset of the first unit of each line of the text.
     line_starts: Vec<u32>,

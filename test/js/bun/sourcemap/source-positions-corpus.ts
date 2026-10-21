@@ -171,7 +171,7 @@ export const cases: Record<string, Case> = {
   },
   // Both braces of an object are code. The braces of a block, of a body and of a class are not.
   "braces.ts": {
-    functions: "6/7",
+    functions: "6/8",
     lines: `
  2|const twice = (
  2|  n: number,
@@ -287,6 +287,16 @@ export const cases: Record<string, Case> = {
  1|export class Empty
  -|{
  -|}
+ 1|let first: any;
+ 1|[
+ 1|  {
+ 1|    a: first,
+ 1|  },
+ 1|] = [{ a: 1 }];
+ 1|export const spaced = {
+ 0|  async am
+ 0|  () {},
+ 1|};
 `,
   },
   // Where a constant is inlined, its value has the position of its declaration.

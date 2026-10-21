@@ -2105,9 +2105,12 @@ function markWritableDone(stream: Http2Stream) {
     stream[bunHTTP2StreamFinal] = null;
     _final();
     stream[bunHTTP2StreamStatus] |= StreamState.WritableClosed | StreamState.FinalCalled;
-    return;
+  } else {
+    stream[bunHTTP2StreamStatus] |= StreamState.WritableClosed;
   }
-  stream[bunHTTP2StreamStatus] |= StreamState.WritableClosed;
+  if ((stream[bunHTTP2StreamStatus] & StreamState.Closed) === 0 && stream instanceof ServerHttp2Stream) {
+    maybeCloseUnreadServerStream(stream);
+  }
 }
 const kCloseChannelPublished = Symbol("closeChannelPublished");
 function publishStreamCloseChannel(stream: Http2Stream) {
@@ -2302,6 +2305,7 @@ function destroyStreamForSessionDestroy(error: Error | undefined, rstCode: numbe
 }
 interface Http2StreamReadableState {
   destroyed: boolean;
+  ended: boolean;
 }
 interface Http2StreamWritableState {
   ending: boolean;
@@ -3207,41 +3211,28 @@ function afterOpen(options, headers, err, fd) {
   fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
 }
 
-// Node's Http2Stream[kMaybeDestroy] server branch (lib/internal/http2/core.js): once the
-// response has finished, a server stream with no pending trailers whose request body was
-// never consumed (no read()/'data'/pipe - readableDidRead + readableFlowing) is closed
-// with RST_STREAM NO_ERROR. Without it a rejected upload deadlocks: the request body
-// stalls once the receive window fills (nothing reads, so backpressure never reopens it)
-// and the stream never reaches the fully-closed state, so the peer is never released.
-// setImmediate matches node (it lets push streams reach the peer before the close).
-//
-// Unlike node, the native layer can dispatch the request's END_STREAM and body to JS
-// after the response's 'finish' (node learns endOfStream with the headers), so at
-// 'finish' an untouched readable does not prove the peer is stuck and an empty one does
-// not prove it is not. Two timing-independent triggers cover both orderings:
-//  - 'finish' with unread request bytes already buffered (the peer was mid-upload), and
-//  - unread request bytes reaching JS after the response already finished
-//    (ServerHttp2Session's streamData). A request with no body can produce neither.
+// Node <= 26 [kMaybeDestroy], server branch (node 27 drains instead): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2519-L2546
 function maybeCloseUnreadServerStream(stream: ServerHttp2Stream) {
+  // An ended request closes through streamEnd(7). This also skips a pushed stream: pushStream() ends its readable.
+  if (stream._readableState.ended) return;
   if (stream.destroyed || stream.closed) return;
   if (!stream.writableFinished || !stream.headersSent) return;
-  // A file response (respondWithFile/FD) ends the user-facing writable while the file is
-  // still being written natively, so writableFinished does not mean the response is done;
-  // node never installs its auto-close hook for that path (it nulls _final), match it.
-  if (stream[kFileResponseFinal] !== undefined) return;
-  // Node holds the auto-close while trailers are pending: its HAS_TRAILERS flag is set by
-  // respond({waitForTrailers}) and only cleared once sendTrailers() has submitted them.
-  if (stream[kSendingTrailers]) return;
-  if ((stream[bunHTTP2StreamStatus] & StreamState.WantTrailer) !== 0 && stream.sentTrailers === undefined) return;
+  const status = stream[bunHTTP2StreamStatus];
+  // A reset drops queued frames, so the response's END_STREAM (or its trailers) must leave first.
+  if ((status & StreamState.WritableClosed) === 0) return;
+  // Like node, a file response (respondWithFile/FD) is closed only behind its trailers.
+  if (stream[kFileResponseFinal] !== undefined && (status & StreamState.WantTrailer) === 0) return;
   if (!stream.readableDidRead && stream.readableFlowing === null) {
-    setImmediate(callStreamClose, stream);
+    setImmediate(closeUnreadServerStream, stream);
   }
 }
 function serverStreamOnFinish(this: ServerHttp2Stream) {
-  if (this.readableLength > 0) maybeCloseUnreadServerStream(this);
+  maybeCloseUnreadServerStream(this);
 }
-function callStreamClose(stream: ServerHttp2Stream) {
-  if (!stream.destroyed && !stream.closed) stream.close();
+function closeUnreadServerStream(stream: ServerHttp2Stream) {
+  if (stream.destroyed || stream.closed) return;
+  // Tested again: 'finish' can come before the handler attaches its reader behind an await.
+  if (!stream.readableDidRead && stream.readableFlowing === null) stream.close();
 }
 class ServerHttp2Stream extends Http2Stream {
   headersSent = false;
@@ -3253,7 +3244,7 @@ class ServerHttp2Stream extends Http2Stream {
   // user-facing writable while the file is still being written natively, so it must
   // never install the hook - the early 'finish' would RST and truncate the transfer.
   _final(callback) {
-    this.once("finish", serverStreamOnFinish);
+    if (!this._readableState.ended) this.once("finish", serverStreamOnFinish);
     super._final(callback);
   }
   // Node sends the implicit response headers (:status 200) when the stream is written to before
@@ -4169,9 +4160,6 @@ class ServerHttp2Session extends Http2Session {
     streamData(self: ServerHttp2Session, stream: ServerHttp2Stream, data: Buffer) {
       if (!self || typeof stream !== "object" || !data) return;
       pushToStream(stream, data);
-      // Request data arriving unread after the response finished: the peer is uploading
-      // into a receive window nothing will reopen (see maybeCloseUnreadServerStream).
-      maybeCloseUnreadServerStream(stream);
     },
     streamHeaders(
       self: ServerHttp2Session,

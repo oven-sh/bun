@@ -8,11 +8,13 @@
 // WINDOW_UPDATE, frame-size and stream-id rules. HPACK/HEADERS cases live in a sibling file.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, gcTick, normalizeBunSnapshot, tempDir, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import { Writable } from "node:stream";
+import { join } from "node:path";
+import { Writable, duplexPair } from "node:stream";
+import nodeTls from "node:tls";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
 
@@ -62,8 +64,8 @@ class RawH2 {
   closed = false;
   private waiters: Array<{ pred: (f: Frame) => boolean; resolve: (f: Frame) => void }> = [];
 
-  constructor(port: number) {
-    this.socket = net.connect(port, "127.0.0.1");
+  constructor(target: number | NodeJS.ReadWriteStream) {
+    this.socket = typeof target === "number" ? net.connect(target, "127.0.0.1") : (target as net.Socket);
     this.socket.on("data", (d: Buffer) => this.onData(d));
     this.socket.on("close", () => (this.closed = true));
     this.socket.on("error", () => {});
@@ -1949,6 +1951,9 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
       state.handlers++;
       stream.on("error", () => {});
       if (rejectUploads && headers[":method"] === "POST") return stream.close();
+      // An upload these tests hold open has to have a reader: the server closes an answered
+      // stream whose request nobody read.
+      stream.resume();
       stream.respond({ ":status": 200 });
       stream.end("x");
     });
@@ -2163,6 +2168,720 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
       const goaway = await c.waitFor(calm, 10_000);
       expect(goaway.payload.subarray(8).toString()).toBe("too many stream resets");
       expect(state.sessionErrorCode).toBe("ERR_HTTP2_ERROR");
+    });
+  });
+});
+
+// Node through v26 closes a server stream with RST_STREAM(NO_ERROR) once its response has finished
+// and nobody tried to read its request (Http2Stream[kMaybeDestroy]). Nothing else releases the
+// stream while the client does not end the request. Node 27 drains the request instead
+// (nodejs/node#63249).
+describe("an answered server stream whose request nobody read", () => {
+  // A loaded debug build can take longer than the 2 s default of waitFor() to answer a frame.
+  const WAIT = 10_000;
+  const RST = `RST_STREAM ${ErrorCode.NO_ERROR}`;
+  // END_HEADERS without END_STREAM: the request stays open until one side ends or resets it.
+  const open = (sid: number) => encodeFrame(FrameType.HEADERS, 0x4, sid, requestHeaderBlock("POST"));
+  const get = (sid: number) => encodeFrame(FrameType.HEADERS, 0x5, sid, requestHeaderBlock("GET"));
+  const headBlock = Buffer.concat([
+    Buffer.from([0x42]),
+    hpackLiteral("HEAD"),
+    Buffer.from([0x86, 0x84, 0x01]),
+    hpackLiteral("localhost"),
+  ]);
+  const head = (sid: number) => encodeFrame(FrameType.HEADERS, 0x4, sid, headBlock);
+  const data = (sid: number, payload: Buffer, endStream = false) =>
+    encodeFrame(FrameType.DATA, endStream ? 0x1 : 0, sid, payload);
+  const windowUpdate = (sid: number, increment: number) => {
+    const payload = Buffer.alloc(4);
+    payload.writeUInt32BE(increment);
+    return encodeFrame(FrameType.WINDOW_UPDATE, 0, sid, payload);
+  };
+
+  async function handshake(c: RawH2) {
+    c.sendPreface();
+    c.sendEmptySettings();
+    await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0, WAIT);
+    c.sendSettingsAck();
+  }
+
+  // `held` says why a case keeps a stream. Every other case ends with a graceful close of the
+  // server, which calls back only when no stream is left, while this client stays connected.
+  async function withClient<T>(server: http2.Http2Server, body: (c: RawH2) => Promise<T>, held?: string): Promise<T> {
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      await handshake(c);
+      const result = await body(c);
+      if (held === undefined) {
+        const closed = Promise.withResolvers<void>();
+        server.close(() => closed.resolve());
+        await closed.promise;
+      }
+      return result;
+    } finally {
+      c.destroy();
+      if (server.listening) server.close();
+    }
+  }
+
+  /** Resolves once the whole answer on `sid` (a frame that carries END_STREAM) has arrived. */
+  const answered = (c: RawH2, sid: number) =>
+    c.waitFor(f => f.streamId === sid && f.type <= FrameType.HEADERS && (f.flags & 0x1) !== 0, WAIT);
+
+  let pings = 0;
+  // The server answers a PING in arrival order, so every frame it wrote before the ACK has arrived
+  // as well. The close takes two immediates of the server, and a duplexPair carries a PING round
+  // trip inside one loop turn, so every round trip starts behind an immediate.
+  async function settle(c: RawH2) {
+    for (let i = 0; i < 3; i++) {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      const opaque = Buffer.alloc(8);
+      opaque.writeUInt32BE(++pings, 4);
+      c.sendFrame(FrameType.PING, 0, 0, opaque);
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload.equals(opaque), WAIT);
+    }
+  }
+
+  /** What the server sent on `sid`, e.g. ["HEADERS", "DATA+END_STREAM", "RST_STREAM 0"]. */
+  function framesOf(c: RawH2, sid: number): string[] {
+    return c.frames
+      .filter(f => f.streamId === sid && f.type !== FrameType.WINDOW_UPDATE)
+      .map(f => {
+        if (f.type === FrameType.RST_STREAM) return `RST_STREAM ${f.payload.readUInt32BE(0)}`;
+        if (f.type === FrameType.PUSH_PROMISE) return "PUSH_PROMISE";
+        const name = f.type === FrameType.HEADERS ? "HEADERS" : f.type === FrameType.DATA ? "DATA" : `type ${f.type}`;
+        return (f.flags & 0x1) !== 0 ? `${name}+END_STREAM` : name;
+      });
+  }
+
+  /** The code of the RST_STREAM the server sent on `sid`, or null. */
+  function resetOf(c: RawH2, sid: number): number | null {
+    const rst = c.frames.find(f => f.streamId === sid && f.type === FrameType.RST_STREAM);
+    return rst ? rst.payload.readUInt32BE(0) : null;
+  }
+
+  const notFound = (req: http2.Http2ServerRequest, res: http2.Http2ServerResponse) => {
+    res.writeHead(404);
+    res.end("not found");
+  };
+
+  test("is closed, whether the client sent a body byte, nothing more, or END_STREAM", async () => {
+    const closedWith: Record<number, number | undefined> = {};
+    const finished: number[] = [];
+    const server = http2.createServer((req, res) => {
+      const stream = req.stream;
+      stream.on("close", () => (closedWith[stream.id!] = stream.rstCode));
+      res.on("finish", () => finished.push(stream.id!));
+      notFound(req, res);
+    });
+    await withClient(server, async c => {
+      // 1 ends its request, 3 sends one body byte and never ends, 5 sends nothing more.
+      c.send(Buffer.concat([open(1), data(1, Buffer.alloc(0), true), open(3), data(3, Buffer.from("x")), open(5)]));
+      await Promise.all([answered(c, 1), answered(c, 3), answered(c, 5)]);
+      await settle(c);
+      expect({
+        reset: { 1: resetOf(c, 1), 3: resetOf(c, 3), 5: resetOf(c, 5) },
+        closedWith,
+        finished: finished.sort(),
+      }).toEqual({
+        reset: { 1: null, 3: ErrorCode.NO_ERROR, 5: ErrorCode.NO_ERROR },
+        closedWith: { 1: ErrorCode.NO_ERROR, 3: ErrorCode.NO_ERROR, 5: ErrorCode.NO_ERROR },
+        finished: [1, 3, 5],
+      });
+    });
+  });
+
+  // The events node v26.3.0 emits for the same request. A destroy() in place of the close() ends
+  // without 'end'.
+  test("ends its readable before 'close'", async () => {
+    const events: string[] = [];
+    let atClose: object | undefined;
+    const server = http2.createServer();
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
+      for (const name of ["finish", "end", "aborted", "error"]) stream.on(name, () => events.push(name));
+      stream.on("close", () => {
+        events.push("close");
+        atClose = { rstCode: stream.rstCode, aborted: stream.aborted, readableEnded: stream.readableEnded };
+      });
+      stream.respond({ ":status": 404 });
+      stream.end("not found");
+    });
+    await withClient(server, async c => {
+      c.send(open(1));
+      await answered(c, 1);
+      await settle(c);
+      expect({ events, atClose }).toEqual({
+        events: ["finish", "end", "close"],
+        atClose: { rstCode: ErrorCode.NO_ERROR, aborted: false, readableEnded: true },
+      });
+    });
+  });
+
+  test("gives its slot of maxConcurrentStreams back", async () => {
+    const server = http2.createServer({ settings: { maxConcurrentStreams: 4 } }, notFound);
+    await withClient(server, async c => {
+      const held = [1, 3, 5, 7];
+      const fresh = [9, 11, 13, 15];
+      c.send(Buffer.concat(held.map(open)));
+      await Promise.all(held.map(sid => answered(c, sid)));
+      await settle(c);
+      c.send(Buffer.concat(fresh.map(get)));
+      const outcome = async (sid: number) => {
+        const first = (f: Frame) =>
+          f.streamId === sid && (f.type === FrameType.HEADERS || f.type === FrameType.RST_STREAM);
+        return (await c.waitFor(first, WAIT)).type === FrameType.HEADERS ? "answered" : "refused";
+      };
+      expect(await Promise.all(fresh.map(outcome))).toEqual(["answered", "answered", "answered", "answered"]);
+    });
+  });
+
+  // A request that has ended closes its stream by itself. The rule also skips a pushed stream,
+  // which has no request half.
+  test("gets no RST_STREAM when its request has ended, and neither does a pushed stream with late trailers", async () => {
+    const server = http2.createServer();
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
+      stream.on("error", () => {});
+      stream.pushStream({ ":path": "/pushed" }, (err, pushed) => {
+        if (err) return;
+        pushed.on("error", () => {});
+        pushed.respond({ ":status": 200 }, { waitForTrailers: true });
+        pushed.on("wantTrailers", () => setImmediate(() => pushed.destroyed || pushed.sendTrailers({ t: "1" })));
+        pushed.end("pushed");
+      });
+      stream.respond({ ":status": 200 });
+      stream.end("x");
+    });
+    await withClient(
+      server,
+      async c => {
+        c.send(get(1));
+        await Promise.all([answered(c, 1), answered(c, 2)]);
+        await settle(c);
+        expect({ 1: framesOf(c, 1), 2: framesOf(c, 2) }).toEqual({
+          1: ["PUSH_PROMISE", "HEADERS", "DATA+END_STREAM"],
+          2: ["HEADERS", "DATA", "HEADERS+END_STREAM"],
+        });
+      },
+      "a pushed stream is not released",
+    );
+  });
+
+  test("is destroyed, every one of many on a connection", async () => {
+    const total = 16;
+    const ids = Array.from({ length: total }, (_, i) => 1 + 2 * i);
+    const streams: http2.ServerHttp2Stream[] = [];
+    let closeEvents = 0;
+    const server = http2.createServer();
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
+      streams.push(stream);
+      stream.on("close", () => closeEvents++);
+      stream.respond({ ":status": 404 });
+      stream.end("not found");
+    });
+    await withClient(server, async c => {
+      c.send(Buffer.concat(ids.map(open)));
+      await Promise.all(ids.map(sid => answered(c, sid)));
+      await settle(c);
+      expect({
+        reset: ids.filter(sid => resetOf(c, sid) === ErrorCode.NO_ERROR).length,
+        closeEvents,
+        destroyed: streams.filter(stream => stream.destroyed).length,
+      }).toEqual({ reset: total, closeEvents: total, destroyed: total });
+    });
+  });
+
+  // One row per way a response can finish while the client has sent HEADERS and nothing more.
+  // `node` is what node v26.3.0 sends on the stream. `bun` is given where bun differs on purpose:
+  // node holds those streams for trailers that never come.
+  describe("for every way a response finishes", () => {
+    type Core = (stream: http2.ServerHttp2Stream, file: () => string) => void;
+    type Row = {
+      name: string;
+      node: string[];
+      bun?: string[];
+      core?: Core;
+      compat?: (req: http2.Http2ServerRequest, res: http2.Http2ServerResponse) => void;
+      head?: boolean;
+      held?: string;
+    };
+    const ok = { ":status": 200 };
+    const trailers = { waitForTrailers: true };
+    const rows: Row[] = [
+      {
+        name: "respond() + end('x')",
+        node: ["HEADERS", "DATA+END_STREAM", RST],
+        core: s => (s.respond(ok), s.end("x")),
+      },
+      { name: "end('x') without respond()", node: ["HEADERS", "DATA+END_STREAM", RST], core: s => void s.end("x") },
+      {
+        name: "write('a'), then end('b') one immediate later",
+        node: ["HEADERS", "DATA", "DATA+END_STREAM", RST],
+        core: s => (s.respond(ok), s.write("a"), void setImmediate(() => s.end("b"))),
+      },
+      {
+        name: "cork(), write('a'), write('b'), end('c')",
+        node: ["HEADERS", "DATA+END_STREAM", RST],
+        core: s => (s.respond(ok), s.cork(), s.write("a"), s.write("b"), s.end("c")),
+      },
+      { name: "respond() + end()", node: ["HEADERS", "DATA+END_STREAM", RST], core: s => (s.respond(ok), s.end()) },
+      {
+        name: "respond({ endStream: true })",
+        node: ["HEADERS+END_STREAM", RST],
+        core: s => s.respond(ok, { endStream: true }),
+      },
+      {
+        name: "respond() with status 204",
+        node: ["HEADERS+END_STREAM", RST],
+        core: s => s.respond({ ":status": 204 }),
+      },
+      {
+        name: "respond() with status 304 + end()",
+        node: ["HEADERS+END_STREAM", RST],
+        core: s => (s.respond({ ":status": 304 }), s.end()),
+      },
+      {
+        name: "waitForTrailers without a 'wantTrailers' listener",
+        node: ["HEADERS", "DATA", "DATA+END_STREAM", RST],
+        core: s => (s.respond(ok, trailers), s.end("x")),
+      },
+      {
+        name: "waitForTrailers, sendTrailers({})",
+        node: ["HEADERS", "DATA", "DATA+END_STREAM", RST],
+        core: s => (s.respond(ok, trailers), s.on("wantTrailers", () => s.sendTrailers({})), s.end("x")),
+      },
+      {
+        name: "compat writeHead(200) + end('x')",
+        node: ["HEADERS", "DATA", "DATA+END_STREAM", RST],
+        compat: (req, res) => (res.writeHead(200), void res.end("x")),
+      },
+      {
+        name: "compat addTrailers() + end()",
+        node: ["HEADERS", "HEADERS+END_STREAM", RST],
+        compat: (req, res) => (res.writeHead(200), res.addTrailers({ t: "1" }), void res.end()),
+      },
+      {
+        name: "respondWithFile() with trailers",
+        node: ["HEADERS", "DATA", "HEADERS+END_STREAM", RST],
+        core: (s, file) => (
+          s.on("wantTrailers", () => s.sendTrailers({ t: "1" })),
+          s.respondWithFile(file(), ok, trailers)
+        ),
+      },
+      {
+        name: "respondWithFile() of a missing file, answered in onError",
+        node: ["HEADERS", "DATA+END_STREAM", RST],
+        core: (s, file) =>
+          s.respondWithFile(file() + ".missing", ok, {
+            onError: () => (s.respond({ ":status": 404 }), s.end("not found")),
+          }),
+      },
+      {
+        name: "respondWithFile(), answered in statCheck",
+        node: ["HEADERS+END_STREAM", RST],
+        core: (s, file) => s.respondWithFile(file(), ok, { statCheck: () => (s.respond({ ":status": 304 }), false) }),
+      },
+      {
+        name: "respondWithFile() without trailers",
+        node: ["HEADERS", "DATA", "DATA+END_STREAM"],
+        core: (s, file) => s.respondWithFile(file(), ok),
+        held: "node keeps a file response without trailers open too",
+      },
+      {
+        name: "pushStream(), then respond() + end('x')",
+        node: ["PUSH_PROMISE", "HEADERS", "DATA+END_STREAM", RST],
+        core: s => {
+          s.pushStream({ ":path": "/pushed" }, (err, pushed) => {
+            if (err) return;
+            pushed.on("error", () => {});
+            pushed.respond(ok);
+            pushed.end("pushed");
+          });
+          s.respond(ok);
+          s.end("x");
+        },
+        held: "a pushed stream is not released",
+      },
+      // Bun differs on purpose from here on.
+      {
+        name: "respond({ endStream: true, waitForTrailers: true })",
+        node: ["HEADERS+END_STREAM"],
+        bun: ["HEADERS+END_STREAM", RST],
+        core: s => s.respond(ok, { endStream: true, waitForTrailers: true }),
+      },
+      {
+        name: "a HEAD request, respond() + end()",
+        head: true,
+        node: ["HEADERS+END_STREAM"],
+        bun: ["HEADERS+END_STREAM", RST],
+        core: s => (s.respond(ok), s.end()),
+      },
+      {
+        name: "a read() that returned null, then respond() + end('x')",
+        node: ["HEADERS", "DATA+END_STREAM"],
+        bun: ["HEADERS", "DATA+END_STREAM", RST],
+        core: s => (s.read(), s.respond(ok), s.end("x")),
+      },
+      {
+        name: "compat end() without a body",
+        node: ["HEADERS+END_STREAM"],
+        bun: ["HEADERS+END_STREAM", RST],
+        compat: (req, res) => void res.end(),
+      },
+      {
+        name: "compat statusCode = 204 + end()",
+        node: ["HEADERS+END_STREAM"],
+        bun: ["HEADERS+END_STREAM", RST],
+        compat: (req, res) => ((res.statusCode = 204), void res.end()),
+      },
+      {
+        name: "compat writeHead(205) + end()",
+        node: ["HEADERS+END_STREAM"],
+        bun: ["HEADERS+END_STREAM", RST],
+        compat: (req, res) => (res.writeHead(205), void res.end()),
+      },
+      {
+        name: "compat writeHead(304) + end()",
+        node: ["HEADERS+END_STREAM"],
+        bun: ["HEADERS+END_STREAM", RST],
+        compat: (req, res) => (res.writeHead(304), void res.end()),
+      },
+      {
+        name: "compat end() for a HEAD request",
+        head: true,
+        node: ["HEADERS+END_STREAM"],
+        bun: ["HEADERS+END_STREAM", RST],
+        compat: (req, res) => void res.end(),
+      },
+    ];
+
+    let dir: ReturnType<typeof tempDir> | undefined;
+    afterAll(() => dir?.[Symbol.dispose]());
+    const file = () => join(String((dir ??= tempDir("h2-unread-response", { "body.txt": "file body" }))), "body.txt");
+
+    test.each(rows.map(row => [row.name, row] as const))("%s", async (_, row) => {
+      const server = row.compat ? http2.createServer(row.compat) : http2.createServer();
+      server.on("stream", (stream: http2.ServerHttp2Stream) => {
+        stream.on("error", () => {});
+        row.core?.(stream, file);
+      });
+      const expected = row.bun ?? row.node;
+      const response = expected.filter(frame => frame !== RST).length;
+      await withClient(
+        server,
+        async c => {
+          c.send(row.head ? head(1) : open(1));
+          await c.waitFor(() => framesOf(c, 1).filter(frame => frame !== RST).length >= response, WAIT);
+          await settle(c);
+          expect(framesOf(c, 1)).toEqual(expected);
+        },
+        row.held,
+      );
+    });
+  });
+
+  describe.each([
+    ["inside 'wantTrailers'", (send: () => void) => send()],
+    ["one immediate behind 'wantTrailers'", (send: () => void) => void setImmediate(send)],
+    ["two immediates behind 'wantTrailers'", (send: () => void) => void setImmediate(() => setImmediate(send))],
+  ])("is closed when its trailers are sent %s", (_, schedule) => {
+    test.each([
+      ["no body byte", Buffer.alloc(0)],
+      ["unread body bytes", Buffer.alloc(1000, "b")],
+    ])("after %s", async (_, upload) => {
+      const server = http2.createServer();
+      server.on("stream", (stream: http2.ServerHttp2Stream) => {
+        stream.on("error", () => {});
+        stream.respond({ ":status": 200 }, { waitForTrailers: true });
+        stream.on("wantTrailers", () => schedule(() => stream.destroyed || stream.sendTrailers({ t: "1" })));
+        stream.end("x");
+      });
+      await withClient(server, async c => {
+        c.send(upload.length > 0 ? Buffer.concat([open(1), data(1, upload)]) : open(1));
+        await answered(c, 1);
+        await settle(c);
+        expect(framesOf(c, 1)).toEqual(["HEADERS", "DATA", "HEADERS+END_STREAM", RST]);
+      });
+    });
+  });
+
+  // Through the compat API the END_STREAM of a response is a frame of its own. While the socket
+  // is full that frame waits in the stream's queue after the writable has finished, and a reset
+  // drops what is queued.
+  test.each<[string, (sid: number) => Buffer, string[]]>([
+    ["no body byte, request open", open, ["DATA+END_STREAM", RST]],
+    [
+      "unread body bytes, request open",
+      sid => Buffer.concat([open(sid), data(sid, Buffer.alloc(1000, "b"))]),
+      ["DATA+END_STREAM", RST],
+    ],
+    ["a complete GET", get, ["DATA", "DATA+END_STREAM"]],
+    [
+      "a complete POST with unread body bytes",
+      sid => Buffer.concat([open(sid), data(sid, Buffer.alloc(1000, "b"), true)]),
+      ["DATA", "DATA+END_STREAM"],
+    ],
+  ])("gets its whole response when the socket held the response back (%s)", async (_, request, end) => {
+    const body = Buffer.alloc(8 * 1024 * 1024, "a");
+    let queuedAfterEnd = Promise.withResolvers<number>();
+    const server = http2.createServer((req, res) => {
+      const session = req.stream.session!;
+      res.writeHead(200);
+      res.end(body);
+      // The compat API corks the response until the next tick.
+      setImmediate(() => queuedAfterEnd.resolve(session.state.outboundQueueSize!));
+    });
+    await withClient(server, async c => {
+      // Flow control allows every response, so only the socket can hold one back.
+      const initialWindowSize = Buffer.from([0x00, 0x04, 0x7f, 0xff, 0xff, 0xff]);
+      c.sendFrame(FrameType.SETTINGS, 0, 0, initialWindowSize);
+      c.send(windowUpdate(0, 0x7fff0000));
+      c.socket.pause();
+      // The buffers of the host decide how much the socket takes: ask until it holds a response back.
+      let sid = -1;
+      do {
+        sid += 2;
+        queuedAfterEnd = Promise.withResolvers<number>();
+        c.send(request(sid));
+      } while ((await queuedAfterEnd.promise) === 0);
+      c.socket.resume();
+      // The response ends with END_STREAM, or with the reset that cut it.
+      const last = (f: Frame) =>
+        f.streamId === sid && (f.type === FrameType.RST_STREAM || (f.type === FrameType.DATA && (f.flags & 0x1) !== 0));
+      await c.waitFor(last, WAIT);
+      await settle(c);
+      const sent = c.frames.filter(f => f.streamId === sid && f.type === FrameType.DATA);
+      expect({ bytes: sent.reduce((sum, f) => sum + f.length, 0), end: framesOf(c, sid).slice(-2) }).toEqual({
+        bytes: body.length,
+        end,
+      });
+    });
+  });
+
+  // Node v26 resets such a stream before the END_STREAM frame of its answer (nodejs/node#66525).
+  test("is closed behind its whole answer when another stream has used up the connection window", async () => {
+    const server = http2.createServer((req, res) => {
+      if (req.stream.id === 1) return void res.end(Buffer.alloc(100_000, "a"));
+      notFound(req, res);
+    });
+    await withClient(server, async c => {
+      const received = (sid: number) =>
+        c.frames.filter(f => f.streamId === sid && f.type === FrameType.DATA).reduce((sum, f) => sum + f.length, 0);
+      c.send(get(1));
+      await c.waitFor(() => received(1) >= 65535, WAIT);
+      c.send(open(3));
+      await c.waitFor(f => f.streamId === 3 && f.type === FrameType.HEADERS, WAIT);
+      // Room for the body of the answer and nothing more. Stream 1 cannot use it: its own window is 0.
+      c.send(windowUpdate(0, "not found".length));
+      await answered(c, 3);
+      await settle(c);
+      expect(framesOf(c, 3)).toEqual(["HEADERS", "DATA", "DATA+END_STREAM", RST]);
+      c.send(Buffer.concat([windowUpdate(0, 1 << 20), windowUpdate(1, 1 << 20)]));
+      await answered(c, 1);
+    });
+  });
+
+  test.each(["net", "tls", "duplexPair"] as const)(
+    "is closed over %s, and a request that ended is not reset",
+    async transport => {
+      const server = transport === "tls" ? http2.createSecureServer(tlsCert, notFound) : http2.createServer(notFound);
+      let c: RawH2;
+      if (transport === "duplexPair") {
+        const [clientSide, serverSide] = duplexPair();
+        server.emit("connection", serverSide);
+        c = new RawH2(clientSide);
+      } else {
+        server.listen(0);
+        await once(server, "listening");
+        const port = (server.address() as net.AddressInfo).port;
+        if (transport === "tls") {
+          const socket = nodeTls.connect({ port, host: "127.0.0.1", ALPNProtocols: ["h2"], rejectUnauthorized: false });
+          await once(socket, "secureConnect");
+          c = new RawH2(socket);
+        } else {
+          c = await RawH2.connect(port);
+        }
+      }
+      try {
+        await handshake(c);
+        c.send(Buffer.concat([open(1), get(3)]));
+        await Promise.all([answered(c, 1), answered(c, 3)]);
+        await settle(c);
+        expect({ 1: framesOf(c, 1), 3: framesOf(c, 3) }).toEqual({
+          1: ["HEADERS", "DATA", "DATA+END_STREAM", RST],
+          3: ["HEADERS", "DATA", "DATA+END_STREAM"],
+        });
+      } finally {
+        c.destroy();
+        if (server.listening) server.close();
+      }
+    },
+  );
+
+  // A client can send the body of a complete request behind the answer. Node resets the stream
+  // and ignores the late frames. Bun answers a late DATA frame with RST_STREAM(STREAM_CLOSED).
+  test("keeps the session when the request body arrives behind the answer", async () => {
+    const server = http2.createServer(notFound);
+    await withClient(server, async c => {
+      c.send(open(1));
+      await answered(c, 1);
+      await settle(c);
+      c.send(Buffer.concat([data(1, Buffer.alloc(100, "a"), true), get(3)]));
+      await answered(c, 3);
+      await settle(c);
+      expect({
+        answer: framesOf(c, 1).slice(0, 4),
+        resets: framesOf(c, 1).filter(frame => frame === RST).length,
+        goaway: c.frames.some(f => f.type === FrameType.GOAWAY),
+        next: framesOf(c, 3),
+      }).toEqual({
+        answer: ["HEADERS", "DATA", "DATA+END_STREAM", RST],
+        resets: 1,
+        goaway: false,
+        next: ["HEADERS", "DATA", "DATA+END_STREAM"],
+      });
+    });
+  });
+
+  test("releases an http2 client that has not ended its request yet", async () => {
+    const server = http2.createServer((req, res) => {
+      res.writeHead(401);
+      res.end("no");
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+    try {
+      const req = client.request({ ":method": "POST", ":path": "/" });
+      const seen = { status: 0, body: "", aborted: false, errors: [] as string[] };
+      req.on("response", headers => (seen.status = headers[":status"]!));
+      req.setEncoding("utf8");
+      req.on("data", (chunk: string) => (seen.body += chunk));
+      req.on("aborted", () => (seen.aborted = true));
+      req.on("error", (err: NodeJS.ErrnoException) => seen.errors.push(err.code!));
+      await once(req, "end");
+      for (let i = 0; i < 3; i++) {
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        client.ping(err => (err ? reject(err) : resolve()));
+        await promise;
+      }
+      expect({ ...seen, closed: req.closed, rstCode: req.rstCode }).toEqual({
+        status: 401,
+        body: "no",
+        aborted: true,
+        errors: [],
+        closed: true,
+        rstCode: ErrorCode.NO_ERROR,
+      });
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+
+  // Node's rule needs a response (headersSent). A handler that only ends the writable gets no reset.
+  test("stays open when the handler ended it without a response", async () => {
+    const finished = Promise.withResolvers<http2.ServerHttp2Stream>();
+    const server = http2.createServer();
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
+      stream.on("error", () => {});
+      stream.on("finish", () => finished.resolve(stream));
+      stream.end();
+    });
+    await withClient(
+      server,
+      async c => {
+        c.send(open(1));
+        const stream = await finished.promise;
+        await settle(c);
+        expect({ reset: resetOf(c, 1), closed: stream.closed }).toEqual({ reset: null, closed: false });
+      },
+      "node keeps a stream without a response open too",
+    );
+  });
+
+  // The response's 'finish' can come before the handler has attached its reader, and before the
+  // rest of the socket read has been dispatched. Neither may cost a reader its request body.
+  type Reader = (onData: (chunk: Buffer) => void, onEnd: () => void) => http2.Http2Server;
+  const core = (handle: (stream: http2.ServerHttp2Stream, onData: (chunk: Buffer) => void) => void): Reader => {
+    return (onData, onEnd) => {
+      const server = http2.createServer();
+      server.on("stream", (stream: http2.ServerHttp2Stream) => {
+        stream.on("error", () => {});
+        stream.on("end", onEnd);
+        handle(stream, onData);
+      });
+      return server;
+    };
+  };
+  test.each<[string, Reader, string[]]>([
+    [
+      "a 'data' listener",
+      core((stream, onData) => {
+        stream.on("data", onData);
+        stream.respond({ ":status": 200 });
+        stream.end("x");
+      }),
+      ["HEADERS", "DATA+END_STREAM"],
+    ],
+    [
+      "a 'readable' listener",
+      core((stream, onData) => {
+        stream.on("readable", () => {
+          for (let chunk; (chunk = stream.read()) !== null;) onData(chunk);
+        });
+        stream.respond({ ":status": 200 });
+        stream.end("x");
+      }),
+      ["HEADERS", "DATA+END_STREAM"],
+    ],
+    [
+      "a 'data' listener attached behind three awaits",
+      core(async (stream, onData) => {
+        stream.respond({ ":status": 200 });
+        stream.end("x");
+        for (let i = 0; i < 3; i++) await null;
+        stream.on("data", onData);
+      }),
+      ["HEADERS", "DATA+END_STREAM"],
+    ],
+    [
+      "a 'data' listener attached in 'finish'",
+      core((stream, onData) => {
+        stream.respond({ ":status": 200 });
+        stream.end("x");
+        stream.on("finish", () => stream.on("data", onData));
+      }),
+      ["HEADERS", "DATA+END_STREAM"],
+    ],
+    [
+      "a compat 'data' listener attached behind an await",
+      (onData, onEnd) =>
+        http2.createServer(async (req, res) => {
+          req.on("end", onEnd);
+          res.end("x");
+          await null;
+          req.on("data", onData);
+        }),
+      ["HEADERS", "DATA", "DATA+END_STREAM"],
+    ],
+  ])("stays open for %s", async (_, reader, frames) => {
+    let received = 0;
+    const ended = Promise.withResolvers<void>();
+    const server = reader(
+      chunk => (received += chunk.length),
+      () => ended.resolve(),
+    );
+    await withClient(server, async c => {
+      c.send(open(1));
+      await answered(c, 1);
+      await settle(c);
+      // The request body arrives long behind the response.
+      c.send(Buffer.concat([data(1, Buffer.alloc(1000, "a")), data(1, Buffer.alloc(500, "a"), true)]));
+      await ended.promise;
+      await settle(c);
+      expect({ frames: framesOf(c, 1), received }).toEqual({ frames, received: 1500 });
     });
   });
 });

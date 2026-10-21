@@ -898,6 +898,54 @@ describe.concurrent("sortImports sources", () => {
     }
   });
 
+  test("an import with a phase is never merged with another import of the module", async () => {
+    const source = `import source a from "./m.wasm";`;
+    const deferred = `import defer * as a from "./m";`;
+    const pairs = [
+      [source, `import { b } from "./m.wasm";`],
+      [source, `import * as b from "./m.wasm";`],
+      [source, `import b from "./m.wasm";`],
+      [source, `import source b from "./m.wasm";`],
+      [source, `import type { b } from "./m.wasm";`],
+      [deferred, `import { b } from "./m";`],
+      [deferred, `import * as b from "./m";`],
+      [deferred, `import b from "./m";`],
+      [deferred, `import defer * as b from "./m";`],
+      [deferred, `import source b from "./m";`],
+    ];
+    // Which import the others are merged into depends on the order.
+    const cases = pairs.flatMap(pair => [pair, pair.toReversed()]);
+    const uses = "console.log(a as typeof b);\n";
+    const files = Object.fromEntries(cases.map((lines, index) => [`${index}.ts`, `${lines.join("\n")}\n${uses}`]));
+    // The imports around it still merge, where the sorter merges.
+    const around = [`import { c } from "./m.wasm";`, source, `import { b } from "./m.wasm";`];
+    files["around.ts"] = `${around.join("\n")}\nconsole.log(a, b, c);\n`;
+    const merged = [`import { b, c } from "./m.wasm";`, source];
+    const plugin = (name: string, options?: object) => ({
+      ".prettierrc": JSON.stringify({ plugins: [name], ...options }),
+    });
+    const sorters: [config: Record<string, string>, around: string[]][] = [
+      [bunfig, merged],
+      [{ ".oxfmtrc.json": `{ "sortImports": true }` }, around],
+      [plugin("@trivago/prettier-plugin-sort-imports", { importOrder: ["^[./]"] }), around],
+      [plugin("@ianvs/prettier-plugin-sort-imports", { importOrder: ["^[./]"] }), merged],
+      [plugin("prettier-plugin-organize-imports"), merged],
+    ];
+    const results = await Promise.all(sorters.map(([config]) => format({ ...config, ...files })));
+    const importsOf = (text: string) =>
+      text
+        .split("\n")
+        .filter(line => line.startsWith("import "))
+        .sort();
+    for (const [at, result] of results.entries()) {
+      expect(result).toMatchObject({ stderr: "", exitCode: 0 });
+      const found = cases.map((_, index) => importsOf(result.files[`${index}.ts`]));
+      expect(found).toEqual(cases.map(lines => lines.toSorted()));
+      expect(importsOf(result.files["around.ts"])).toEqual(sorters[at][1].toSorted());
+      expect(result.second.files).toEqual(result.files);
+    }
+  });
+
   test("a Flow file is still a Flow file after its imports are sorted", async () => {
     const code = (imports: string) =>
       `// @flow\n${imports}export function f(x: ?number): %checks {\n  return !!x;\n}\n`;

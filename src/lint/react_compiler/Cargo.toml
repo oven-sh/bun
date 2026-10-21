@@ -1,0 +1,18 @@
+[package]
+name = "bun_lint_react_compiler"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bun_lint.workspace = true
+bun_react_compiler = { path = "../../react_compiler" }
+bun_alloc.workspace = true
+bun_ast.workspace = true
+bun_core.workspace = true
+rustc-hash = "2"
+
+[lints]
+workspace = true

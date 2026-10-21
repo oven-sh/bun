@@ -167,7 +167,7 @@ const noUnifyDirs: readonly string[] = [
  * How many .cpp files per bundle. WebKit defaults to 8.
  *
  * Release (incl. release-asan): 32. Measured 701s vs 866s @ 16 vs 1532s @ 8
- * release cpp-only — frontend parsing dominates, so more dedup wins. ~70 TUs
+ * release, C/C++ objects only — frontend parsing dominates, so more dedup wins. ~70 TUs
  * still keeps CI's 16–32 cores saturated.
  *
  * Debug: 8. Local iteration cares about incremental blast radius — editing

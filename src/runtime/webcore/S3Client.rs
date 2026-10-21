@@ -35,7 +35,6 @@ macro_rules! pfmt {
 pub(crate) trait S3CredentialsExt {
     fn guess_region(endpoint: &[u8]) -> &[u8];
     fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]>;
-    #[allow(clippy::too_many_arguments)]
     fn get_credentials_with_options(
         // Takes `&S3Credentials` (not by-value) — `bun_s3_signing::S3Credentials`
         // has a private `ref_count` field and no `Clone`, so callers holding a borrow
@@ -247,7 +246,7 @@ where
 }
 
 #[bun_jsc::JsClass]
-pub struct S3Client {
+pub(crate) struct S3Client {
     pub(crate) credentials: bun_ptr::RefPtr<S3Credentials>,
     pub(crate) options: MultiPartUploadOptions,
     pub(crate) acl: Option<ACL>,
@@ -428,13 +427,13 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (mut blob, options) = ptr.blob_and_options(
+        let (blob, options) = ptr.blob_and_options(
             global,
             callframe,
             "presign",
             MissingPathError::MissingOrInvalid,
         )?;
-        S3File::get_presign_url_from(&mut blob, global, options)
+        S3File::get_presign_url_from(&blob, global, options)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -449,7 +448,7 @@ impl S3Client {
             "check if it exists",
             MissingPathError::MissingOrInvalid,
         )?;
-        S3File::S3BlobStatTask::exists(global, &blob)
+        S3File::S3BlobStatTask::exists(&global.js_thread_of_caller(callframe), &blob)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -464,7 +463,7 @@ impl S3Client {
             "check the size of",
             MissingPathError::MissingOrInvalid,
         )?;
-        S3File::S3BlobStatTask::size(global, &mut blob)
+        S3File::S3BlobStatTask::size(&global.js_thread_of_caller(callframe), &mut blob)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -479,7 +478,7 @@ impl S3Client {
             "check the stat of",
             MissingPathError::MissingOrInvalid,
         )?;
-        S3File::S3BlobStatTask::stat(global, &blob)
+        S3File::S3BlobStatTask::stat(&global.js_thread_of_caller(callframe), &blob)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -488,6 +487,7 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let cx = global.js_thread_of_caller(callframe);
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
@@ -517,7 +517,7 @@ impl S3Client {
         // handled by `Drop`.
         let mut blob_internal = crate::webcore::node_types::PathOrBlob::Blob(Box::new(blob));
         crate::webcore::blob::write_file_internal(
-            global,
+            &cx,
             &mut blob_internal,
             data,
             crate::webcore::blob::WriteFileOptions {
@@ -550,11 +550,13 @@ impl S3Client {
             ptr.request_payer,
         )?;
 
-        let store = blob.store.get().as_ref().unwrap();
-        store
-            .data
-            .as_s3()
-            .list_objects(store, global, object_keys, options)
+        let store = blob.store.get().as_ref().unwrap().clone();
+        store.data.as_s3().list_objects(
+            store.clone(),
+            &global.js_thread_of_caller(callframe),
+            object_keys,
+            options,
+        )
     }
 
     #[bun_jsc::host_fn(method)]
@@ -569,8 +571,12 @@ impl S3Client {
             "unlink",
             MissingPathError::AlwaysMissingArgs,
         )?;
-        let store = blob.store.get().as_ref().unwrap();
-        store.data.as_s3().unlink(store, global, options)
+        let store = blob.store.get().as_ref().unwrap().clone();
+        store.data.as_s3().unlink(
+            store.clone(),
+            &global.js_thread_of_caller(callframe),
+            options,
+        )
     }
 
     // ── Static methods ────────────────────────────────────────────────────
@@ -653,11 +659,13 @@ impl S3Client {
             &existing_credentials,
         )?;
 
-        let store = blob.store.get().as_ref().unwrap();
-        store
-            .data
-            .as_s3()
-            .list_objects(store, global, object_keys, options)
+        let store = blob.store.get().as_ref().unwrap().clone();
+        store.data.as_s3().list_objects(
+            store.clone(),
+            &global.js_thread_of_caller(callframe),
+            object_keys,
+            options,
+        )
     }
 }
 

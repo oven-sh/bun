@@ -3,14 +3,12 @@
 //! `bun_shell_parser` crate (no `bun_jsc` dependency). `Interpreter::parse`
 //! in `bun_runtime` consumes these via `bun_shell_parser::*`.
 
-#![allow(non_camel_case_types, non_snake_case, clippy::too_many_arguments)]
-
 use core::fmt;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
-use bun_core::{String as BunString, strings};
+use bun_core::{StackCheck, String as BunString, strings};
 
 // `strings::Cursor` aliased as `CodepointCursor` for readability.
 type CodepointCursor = strings::Cursor;
@@ -39,6 +37,8 @@ pub enum ParseError {
     Unknown,
     #[error("Lex")]
     Lex,
+    #[error("NestingTooDeep")]
+    NestingTooDeep,
 }
 
 impl From<ParseError> for crate::Error {
@@ -49,6 +49,7 @@ impl From<ParseError> for crate::Error {
             ParseError::Unexpected => crate::Error::Unexpected,
             ParseError::Unknown => crate::Error::Unknown,
             ParseError::Lex => crate::Error::Lex,
+            ParseError::NestingTooDeep => crate::Error::NestingTooDeep,
         }
     }
 }
@@ -719,6 +720,8 @@ pub struct Parser<'bump> {
     pub(crate) current: u32,
     pub errors: bun_alloc::ArenaVec<'bump, ParserError<'bump>>,
     pub(crate) inside_subshell: Option<SubshellKind>,
+    /// `if`, subshell and command substitution all recurse through `parse_stmt`, which checks this.
+    stack_check: StackCheck,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -758,6 +761,7 @@ impl<'bump> Parser<'bump> {
             current: 0,
             errors: bun_alloc::ArenaVec::new_in(bump),
             inside_subshell: None,
+            stack_check: StackCheck::init(),
         })
     }
 
@@ -778,6 +782,7 @@ impl<'bump> Parser<'bump> {
             current: self.current,
             errors: core::mem::replace(&mut self.errors, bun_alloc::ArenaVec::new_in(self.alloc)),
             inside_subshell: Some(kind),
+            stack_check: self.stack_check,
         }
     }
 
@@ -837,6 +842,11 @@ impl<'bump> Parser<'bump> {
     }
 
     pub(crate) fn parse_stmt(&mut self) -> ParseResult<ast::Stmt<'bump>> {
+        if !self.stack_check.is_safe_to_recurse() {
+            self.add_error(format_args!("Nesting depth exceeded"))?;
+            return Err(ParseError::NestingTooDeep.into());
+        }
+
         let mut exprs = bun_alloc::ArenaVec::new_in(self.alloc);
 
         while if self.inside_subshell.is_none() {

@@ -8,14 +8,14 @@ import { bunEnv, bunExe, tempDir } from "harness";
 
 describe.concurrent("WebKit 3722912ff800 upgrade", () => {
   test("Iterator.prototype.includes is enabled by default (319f94b3db4a)", () => {
-    expect(typeof Iterator.prototype.includes).toBe("function");
+    expect(typeof (Iterator.prototype as any).includes).toBe("function");
     function* g() {
       yield 1;
       yield 2;
       yield 3;
     }
-    expect(g().includes(2)).toBe(true);
-    expect(g().includes(5)).toBe(false);
+    expect((g() as any).includes(2)).toBe(true);
+    expect((g() as any).includes(5)).toBe(false);
   });
 
   test("cyclic Array.prototype.join returns the empty string for the cycle (oven-sh/WebKit#559)", () => {
@@ -31,8 +31,8 @@ describe.concurrent("WebKit 3722912ff800 upgrade", () => {
   });
 
   test("WebAssembly.Exception gains options.traceStack and stack getter (bf6512f84f7d)", () => {
-    expect(WebAssembly.Exception.length).toBe(2);
-    const desc = Object.getOwnPropertyDescriptor(WebAssembly.Exception.prototype, "stack");
+    expect((WebAssembly as any).Exception.length).toBe(2);
+    const desc = Object.getOwnPropertyDescriptor((WebAssembly as any).Exception.prototype, "stack");
     expect(typeof desc?.get).toBe("function");
   });
 

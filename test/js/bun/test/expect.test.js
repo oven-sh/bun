@@ -141,6 +141,27 @@ describe("expect()", () => {
     ).resolves.toBe(1);
   });
 
+  test("resolves and rejects call then() of a pending Promise subclass", async () => {
+    class Lazy extends Promise {
+      thenCalls = 0;
+      then(onFulfilled, onRejected) {
+        this.thenCalls++;
+        return super.then(onFulfilled, onRejected);
+      }
+    }
+    for (const outcome of ["resolves", "rejects"]) {
+      const { promise, resolve, reject } = Promise.withResolvers.call(Lazy);
+      setTimeout(outcome === "resolves" ? resolve : reject, 0, 1);
+      await expect(promise)[outcome].toBe(1);
+      expect(promise.thenCalls).toBe(1);
+    }
+
+    const { promise, resolve } = Promise.withResolvers.call(Lazy);
+    setTimeout(resolve, 0);
+    expect(() => promise).not.toThrow();
+    expect(promise.thenCalls).toBe(1);
+  });
+
   test("can call without an argument", () => {
     expect().toBe(undefined);
   });
@@ -880,6 +901,82 @@ describe("expect()", () => {
       expect({ a: 123n }).toEqual({ a: expect.any(BigInt) });
       expect({ a: 123n }).not.toEqual({ a: expect.any(g) });
     });
+
+    it("gives a matcher undefined for an element that the other array does not have", () => {
+      const seen = [];
+      expect.extend({
+        toBeRecorded(value) {
+          seen.push(value);
+          return { pass: false, message: () => "" };
+        },
+      });
+      const matchers = [
+        expect.stringContaining("a"),
+        expect.stringMatching(/a/),
+        expect.any(String),
+        expect.any(Symbol),
+        expect.any(BigInt),
+        expect.any(Boolean),
+        expect.any(Number),
+        expect.any(Array),
+        expect.any(Object),
+        expect.any(Promise),
+        expect.any(Date),
+        expect.anything(),
+        expect.arrayContaining([1]),
+        expect.objectContaining({ a: 1 }),
+        expect.closeTo(1),
+        // @ts-expect-error
+        expect.toBeRecorded(),
+      ];
+      for (const matcher of matchers) {
+        expect([,]).not.toEqual([matcher]);
+        expect([[,]]).not.toEqual(expect.arrayContaining([[matcher]]));
+        expect({ a: [["x"]] }).not.toMatchObject({ a: expect.arrayContaining([["x", matcher]]) });
+      }
+      expect([,]).toEqual([expect.not.stringContaining("a")]);
+      expect(seen.length).toBeGreaterThan(0);
+      expect(seen.filter(value => value !== undefined)).toEqual([]);
+    });
+
+    it("gives a matcher the value of a getter at an index", () => {
+      const array = [1];
+      Object.defineProperty(array, 1, { get: () => "x", enumerable: true });
+      expect(array).toEqual([1, expect.anything()]);
+      expect(array).toEqual([1, expect.any(String)]);
+      expect(array).toEqual([1, expect.stringContaining("x")]);
+      expect(array).not.toEqual([1, expect.stringContaining("y")]);
+      expect([array]).toEqual(expect.arrayContaining([[1, expect.stringContaining("x")]]));
+    });
+
+    if (isBun) {
+      it("does not crash on an element that the other array does not have", async () => {
+        const { bunEnv, bunExe } = require("harness");
+        const src = `
+          import { expect } from "bun:test";
+          const getter = Object.defineProperty([], 0, { get: () => "x", enumerable: true });
+          for (const matcher of [expect.stringContaining("a"), expect.any(String), expect.arrayContaining([1])]) {
+            try { expect([,]).toEqual([matcher]); } catch {}
+            try { expect([]).toEqual(expect.arrayContaining([[matcher]])); } catch {}
+            try { expect(getter).toEqual([matcher]); } catch {}
+            try { expect({ a: [["x"]] }).toMatchObject({ a: expect.arrayContaining([["x", matcher]]) }); } catch {}
+          }
+          console.log("ok");
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", src],
+          env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+          stdout: "ok\n",
+          exitCode: 0,
+          signalCode: null,
+        });
+      });
+    }
   });
 
   test("toThrow asymmetric matchers", () => {
@@ -996,6 +1093,58 @@ describe("expect()", () => {
       }).toThrow(err);
     }
   });
+
+  if (isBun) {
+    test(".not.toThrow(Class) reports a thrown string, symbol or BigInt that Symbol.hasInstance accepts", async () => {
+      const { bunEnv, bunExe } = require("harness");
+      const src = `
+        import { expect } from "bun:test";
+        class Anything {
+          static [Symbol.hasInstance]() {
+            return true;
+          }
+        }
+        const report = async run => {
+          try {
+            await run();
+            console.log("passed");
+          } catch (e) {
+            console.log(e.message.split("\\n").filter(Boolean).slice(1).join(" | "));
+          }
+        };
+        const thrower = thrown => () => {
+          throw thrown;
+        };
+        for (const thrown of ["boom", Symbol("boom"), 10n ** 30n, {}, { message: "an object" }, new TypeError("an error")]) {
+          await report(() => expect(thrower(thrown)).not.toThrow(Anything));
+        }
+        await report(() => expect(Promise.reject("boom")).rejects.not.toThrow(Anything));
+        await report(() => expect(thrower("boom")).not.toThrow(RangeError));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.split("\n"), stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+        stdout: [
+          'Expected constructor: not Anything | Received value: "boom"',
+          "Expected constructor: not Anything | Received value: Symbol(boom)",
+          "Expected constructor: not Anything | Received value: 1000000000000000000000000000000n",
+          "Expected constructor: not Anything | Received value: {}",
+          'Expected constructor: not Anything | Received message: "an object"',
+          'Expected constructor: not Anything | Received message: "an error"',
+          'Expected constructor: not Anything | Received value: "boom"',
+          "passed",
+          "",
+        ],
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  }
 
   test("deepEquals derived strings and strings", () => {
     let a = new String("hello");
@@ -4214,6 +4363,47 @@ describe("expect()", () => {
       );
     });
 
+    // Jest and Vitest have no expect.not.any()
+    if (isBun) {
+      test("expect.not.any is the complement of expect.any for primitives", () => {
+        // primitives that match any(Ctor) must NOT match not.any(Ctor)
+        expect(5).toEqual(expect.any(Number));
+        expect(5).not.toEqual(expect.not.any(Number));
+        expect("s").toEqual(expect.any(String));
+        expect("s").not.toEqual(expect.not.any(String));
+        expect(true).toEqual(expect.any(Boolean));
+        expect(true).not.toEqual(expect.not.any(Boolean));
+        expect(1n).toEqual(expect.any(BigInt));
+        expect(1n).not.toEqual(expect.not.any(BigInt));
+        expect(Symbol()).toEqual(expect.any(Symbol));
+        expect(Symbol()).not.toEqual(expect.not.any(Symbol));
+
+        // primitives that do NOT match any(Ctor) must match not.any(Ctor)
+        expect(5).not.toEqual(expect.any(String));
+        expect(5).toEqual(expect.not.any(String));
+        expect("s").not.toEqual(expect.any(Number));
+        expect("s").toEqual(expect.not.any(Number));
+
+        // boxed primitives were already correct, keep them covered
+        expect(new Number(5)).not.toEqual(expect.not.any(Number));
+        expect(new String("s")).not.toEqual(expect.not.any(String));
+
+        // any(Object) is `typeof other === "object"`: null matches, a function does not
+        expect(null).not.toEqual(expect.not.any(Object));
+        expect(() => {}).toEqual(expect.not.any(Object));
+
+        // nested inside object matching
+        expect({ a: 1 }).toEqual({ a: expect.not.any(String) });
+        expect({ a: 1 }).not.toEqual({ a: expect.not.any(Number) });
+      });
+
+      test("expect.not.any with user class", () => {
+        class Thing {}
+        expect(new Thing()).not.toEqual(expect.not.any(Thing));
+        expect({}).toEqual(expect.not.any(Thing));
+      });
+    }
+
     test("Anything matches any type", () => {
       expect(expect.anything()).toEqual("jest");
       expect(expect.anything()).toEqual(1);
@@ -4669,6 +4859,32 @@ describe("expect()", () => {
             setTimeout(() => resolve("a"), 0);
           }),
         ).toEqual(expect.resolvesTo.stringContaining("a"));
+      });
+
+      test("expect.resolvesTo.any and expect.rejectsTo.any match primitives by constructor type", async () => {
+        await expect(Promise.resolve("s")).toEqual(expect.resolvesTo.any(String));
+        await expect(Promise.resolve(5)).toEqual(expect.resolvesTo.any(Number));
+        await expect(Promise.resolve(true)).toEqual(expect.resolvesTo.any(Boolean));
+        await expect(Promise.resolve(1n)).toEqual(expect.resolvesTo.any(BigInt));
+        await expect(Promise.resolve(Symbol())).toEqual(expect.resolvesTo.any(Symbol));
+        await expect(Promise.resolve({})).toEqual(expect.resolvesTo.any(Object));
+        await expect(Promise.resolve(5)).not.toEqual(expect.resolvesTo.any(String));
+
+        await expect(Promise.reject("s")).toEqual(expect.rejectsTo.any(String));
+        await expect(Promise.reject(5)).toEqual(expect.rejectsTo.any(Number));
+        await expect(Promise.reject(5)).not.toEqual(expect.rejectsTo.any(String));
+
+        // .not is the complement
+        await expect(Promise.resolve(5)).not.toEqual(expect.not.resolvesTo.any(Number));
+        await expect(Promise.resolve(5)).toEqual(expect.not.resolvesTo.any(String));
+        await expect(Promise.reject(5)).not.toEqual(expect.not.rejectsTo.any(Number));
+        await expect(Promise.reject(5)).toEqual(expect.not.rejectsTo.any(String));
+
+        // nested in an object, and as a mock call argument
+        await expect({ a: Promise.resolve("s") }).toEqual({ a: expect.resolvesTo.any(String) });
+        const fn = jest.fn();
+        fn(Promise.resolve("s"));
+        expect(fn).toHaveBeenCalledWith(expect.resolvesTo.any(String));
       });
     }
   });

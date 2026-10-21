@@ -1,6 +1,6 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -71,7 +71,7 @@ describe("FileSink", () => {
       if (got !== original) throw new Error(`Expected ${original} bytes, got ${got} (${label})`);
       return Buffer.concat(chunks).toString();
       // test it on a small chunk size
-    })(Bun.file(path).stream(64), byteLength);
+    })((Bun.file(path) as any).stream(64), byteLength);
     return path;
   }
 
@@ -167,8 +167,10 @@ describe("FileSink", () => {
   }
 });
 
+import { spawn, type SpawnOptions } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import type { Readable } from "node:stream";
 import util from "node:util";
 
 it("end doesn't close when backed by a file descriptor", async () => {
@@ -432,7 +434,7 @@ it.skipIf(!isPosix)(
 
       // The Err arm also moves the sink to its terminal state: further writes
       // short-circuit to Writable::Done (=> true).
-      expect(sink.write("x")).toBe(true);
+      expect(sink.write("x")).toBe<unknown>(true);
 
       // end() after the error reports the bytes that actually reached the fd;
       // the point is it doesn't claim the full chunk was delivered.
@@ -523,7 +525,7 @@ it("close() does not leak the native FileSink", async () => {
   for (let i = 0; i < iterations; i++) {
     const writer = Bun.file(join(dir, `close-leak-${i}.txt`)).writer();
     writer.write("hi");
-    writer.close();
+    (writer as any).close();
   }
   for (let i = 0; i < 50; i++) {
     Bun.gc(true);
@@ -549,7 +551,7 @@ it.skipIf(isWindows)("close() while a write() promise is pending still settles i
   // returns a promise.
   const p = writer.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
   expect(p).toBeInstanceOf(Promise);
-  writer.close();
+  (writer as any).close();
   await expect(p).resolves.toBeGreaterThanOrEqual(0);
   const [stderr, exitCode] = await Promise.all([child.stderr.text(), child.exited]);
   if (exitCode !== 0) expect(stderr).toBe("");
@@ -598,7 +600,7 @@ it("start() with a path/fd getter that closes the writer throws instead of crash
   expect(exitCode).toBe(0);
 });
 
-it.skipIf(!isPosix)("writing after end() fails during flush does not crash", async () => {
+it("writing after end() fails during flush does not crash", async () => {
   const dir = tmpdirSync();
   const target = join(dir, "ro.txt");
   fs.writeFileSync(target, "");
@@ -606,7 +608,7 @@ it.skipIf(!isPosix)("writing after end() fails during flush does not crash", asy
   // Re-point the writer at a read-only fd so the buffered flush in end() fails.
   const fd = fs.openSync(target, "r");
   try {
-    writer.start({ fd });
+    writer.start({ fd } as any);
   } finally {
     fs.closeSync(fd);
   }
@@ -1067,6 +1069,306 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
   });
 });
 
+// `Bun.write(dest, new Response(stream))` pumps a JS stream into the sink, and each step of
+// the pump arrives as a microtask: the next chunk, the stream's close, its error. A short
+// write parks the pump. When the reader drains the pipe, the sink's writable callback
+// resumes it or closes the sink, and that callback comes from the event loop, not from
+// script: the microtasks it queues are its own to run. It did not run them, and with
+// nothing else alive the process exited with them queued. The rest of the stream was
+// never written and the promise never settled.
+//
+// The fixtures have no timer, and only one has a 'beforeExit' listener. Either gives the
+// loop one more turn, which runs the queued step and hides the bug.
+describe("a stream piped into a FileSink on a pipe is pumped to its end", () => {
+  // Larger than a pipe, so the first write is short and the pump parks on it.
+  const first = 2 * 1024 * 1024;
+  const chunk = 64 * 1024;
+  const chunks = 16;
+  // The whole stream as it must arrive. A stream that ends after the first chunk is a prefix.
+  const expected = Buffer.concat([Buffer.alloc(first, 97), Buffer.alloc(chunks * chunk, 98)]);
+
+  // "parked" goes out on the second pull(), which runs once the pump has taken the first
+  // chunk. The test reads only after that, so the first drain finds the pump parked.
+  const sources = {
+    chunks: `{
+      pull(c) {
+        if (++pulls === 1) return c.enqueue(first);
+        if (pulls === 2) console.error("parked");
+        if (pulls <= 1 + ${chunks}) return c.enqueue(chunk);
+        c.close();
+      },
+    }`,
+    close: `{
+      pull(c) {
+        if (++pulls === 1) return c.enqueue(first);
+        console.error("parked");
+        c.close();
+      },
+    }`,
+    error: `{
+      pull(c) {
+        if (++pulls === 1) return c.enqueue(first);
+        console.error("parked");
+        c.error(new Error("boom"));
+      },
+    }`,
+    // Nothing parks here: the sink is ended with the tail of the chunk still buffered, so
+    // its close comes later, from the callback that drains the tail.
+    directClose: `{
+      type: "direct",
+      pull(c) {
+        c.write(first);
+        console.error("parked");
+        c.close();
+      },
+    }`,
+  };
+
+  function fixture(source: string, dest: string, countBeforeExit = false) {
+    return `
+      const first = new Uint8Array(${first}).fill(97);
+      const chunk = new Uint8Array(${chunk}).fill(98);
+      let pulls = 0;
+      let settled = "pending";
+      let beforeExit = ${countBeforeExit ? 0 : undefined};
+      if (beforeExit === 0) process.on("beforeExit", () => { beforeExit++; });
+      process.on("exit", code => console.error(JSON.stringify({ settled, code, beforeExit })));
+      Bun.write(${dest}, new Response(new ReadableStream(${source}))).then(
+        n => { settled = "resolved " + n; },
+        e => { settled = "rejected " + e.message; },
+      );
+    `;
+  }
+
+  // Returns once the child has printed "parked"; `rest()` collects stderr to its end.
+  async function parked(stderr: ReadableStream<Uint8Array>) {
+    const decoder = new TextDecoder();
+    const reader = stderr.getReader();
+    let text = "";
+    while (!text.startsWith("parked\n")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+    }
+    return async function rest() {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) return text;
+        text += decoder.decode(value, { stream: true });
+      }
+    };
+  }
+
+  // read(2) in a poll on the non-blocking read end the test holds: it returns 0 once the
+  // writer is gone, on every POSIX, and needs no readiness notification.
+  async function drain(fd: number) {
+    const buffer = Buffer.alloc(64 * 1024);
+    const parts: Buffer[] = [];
+    let total = 0;
+    let progressAt = performance.now();
+    while (true) {
+      let n: number;
+      try {
+        n = fs.readSync(fd, buffer);
+      } catch (e: any) {
+        if (e.code !== "EAGAIN") throw e;
+        if (performance.now() - progressAt > 10_000) {
+          throw new Error(`the writer holds the FIFO open and wrote nothing for 10 s, after ${total} bytes`);
+        }
+        await Bun.sleep(1);
+        continue;
+      }
+      if (n === 0) return Buffer.concat(parts);
+      parts.push(Buffer.from(buffer.subarray(0, n)));
+      total += n;
+      progressAt = performance.now();
+    }
+  }
+
+  async function run(
+    source: keyof typeof sources,
+    { fifo, countBeforeExit }: { fifo?: { path: string; fd: number }; countBeforeExit?: boolean } = {},
+  ) {
+    const dest = fifo ? `Bun.file(${JSON.stringify(fifo.path)})` : "Bun.stdout";
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture(sources[source], dest, countBeforeExit)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const rest = await parked(proc.stderr);
+    const [received, stderr, exitCode] = await Promise.all([
+      fifo ? drain(fifo.fd) : proc.stdout.bytes(),
+      rest(),
+      proc.exited,
+    ]);
+    // `intact` is about the bytes that arrived: each one is the byte the stream has there.
+    const intact = expected.subarray(0, received.length).equals(received);
+    return { received: received.length, intact, stderr, exitCode };
+  }
+
+  const total = first + chunks * chunk;
+
+  it.concurrent("chunks that arrive after the pump parked are written", async () => {
+    expect(await run("chunks")).toEqual({
+      received: total,
+      intact: true,
+      stderr: "parked\n" + JSON.stringify({ settled: `resolved ${total}`, code: 0 }) + "\n",
+      exitCode: 0,
+    });
+  });
+
+  // The test holds the read end from before the child opens the FIFO to write.
+  it.concurrent.skipIf(!isPosix)("the same into a FIFO the sink opened itself", async () => {
+    using dir = tempDir("filesink-piped-fifo", {});
+    const path = join(String(dir), "piped.fifo");
+    mkfifo(path, 0o666);
+    const fd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    try {
+      expect(await run("chunks", { fifo: { path, fd } })).toEqual({
+        received: total,
+        intact: true,
+        stderr: "parked\n" + JSON.stringify({ settled: `resolved ${total}`, code: 0 }) + "\n",
+        exitCode: 0,
+      });
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+
+  // With a listener the stream arrives on unfixed code too: the loop goes back to work each
+  // time the listener has run. It comes to the edge of its exit after each drain, though,
+  // and the listener hears of each one.
+  it.concurrent("'beforeExit' is emitted once while the stream is pumped", async () => {
+    expect(await run("chunks", { countBeforeExit: true })).toEqual({
+      received: total,
+      intact: true,
+      stderr: "parked\n" + JSON.stringify({ settled: `resolved ${total}`, code: 0, beforeExit: 1 }) + "\n",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("a stream that closes while the pump is parked settles the promise", async () => {
+    expect(await run("close")).toEqual({
+      received: first,
+      intact: true,
+      stderr: "parked\n" + JSON.stringify({ settled: `resolved ${first}`, code: 0 }) + "\n",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("a stream that fails while the pump is parked rejects the promise", async () => {
+    expect(await run("error")).toEqual({
+      received: first,
+      intact: true,
+      stderr: "parked\n" + JSON.stringify({ settled: "rejected boom", code: 0 }) + "\n",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("a sink that is closed once its buffer drains settles the promise", async () => {
+    expect(await run("directClose")).toEqual({
+      received: first,
+      intact: true,
+      stderr: "parked\n" + JSON.stringify({ settled: `resolved ${first}`, code: 0 }) + "\n",
+      exitCode: 0,
+    });
+  });
+
+  // No write is short here and nothing parks: the chunk is small and the sink buffers it.
+  // The child's stdout is a socket whose send buffer is already full, so the end() that
+  // follows the stream's close cannot flush. The sink closes from the callback that
+  // drains it, which resumes no source and has only the close to run.
+  it.concurrent.skipIf(!isPosix)("a sink that is closed with no source parked settles the promise", async () => {
+    const tail = "the only chunk\n";
+    const [readFd, writeFd] = createSocketPair();
+    let writeFdOpen = true;
+    try {
+      const filler = Buffer.alloc(64 * 1024, 0x61);
+      let filled = 0;
+      try {
+        while (true) filled += fs.writeSync(writeFd, filler);
+      } catch (e: any) {
+        if (e.code !== "EAGAIN") throw e;
+      }
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          fixture(
+            `{
+              start(c) {
+                c.enqueue(new TextEncoder().encode(${JSON.stringify(tail)}));
+                c.close();
+              },
+            }`,
+            "Bun.stdout",
+          ) + `console.error("parked");`,
+        ],
+        env: bunEnv,
+        stdout: writeFd,
+        stderr: "pipe",
+      });
+      // The child holds the only write end now: its exit is the end of the data.
+      fs.closeSync(writeFd);
+      writeFdOpen = false;
+
+      const rest = await parked(proc.stderr);
+      const [received, stderr, exitCode] = await Promise.all([Bun.file(readFd).bytes(), rest(), proc.exited]);
+      expect({
+        filler: received.length - tail.length,
+        tail: new TextDecoder().decode(received.subarray(filled)),
+        stderr,
+        exitCode,
+      }).toEqual({
+        filler: filled,
+        tail,
+        stderr: "parked\n" + JSON.stringify({ settled: `resolved ${tail.length}`, code: 0 }) + "\n",
+        exitCode: 0,
+      });
+    } finally {
+      if (writeFdOpen) fs.closeSync(writeFd);
+      fs.closeSync(readFd);
+    }
+  });
+});
+
+// FileSink::on_close tells the owner of the sink that it closed, and a Subprocess then drops its ref
+// on its stdin sink. That is the only ref when script never read `proc.stdin`, and on_close used the
+// sink after it (ASAN: heap-use-after-free in settle_stream_done). Outside tests only the stop phase
+// of a Windows worker closes the writer in this state (see worker-terminate-lifetime.test.ts), so the
+// hook does that close here, on every platform.
+it("a Bun.spawn stdin pipe that closes before script reads proc.stdin does not use the freed sink", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { subprocessInternals } = require("bun:internal-for-testing");
+        // The child lives until its stdin reaches EOF.
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", "process.stdin.on('data', () => {}).on('end', () => process.exit(0))"],
+          stdin: "pipe",
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        const closed = subprocessInternals.closeStdinWriter(child);
+        console.log(JSON.stringify({ closed, stdin: typeof child.stdin, exitCode: await child.exited }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ closed: true, stdin: "undefined", exitCode: 0 }) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("fs.promises.writeFile with iterables under GC pressure does not crash", async () => {
   const dir = tmpdirSync();
   await using proc = Bun.spawn({
@@ -1145,4 +1447,229 @@ it("start() with invalid options throws instead of silently ignoring them", asyn
   writer.write("ok");
   await writer.end();
   expect(await Bun.file(join(dir, "start-invalid.txt")).text()).toBe("ok");
+});
+
+// A write() to a backed-up sink returns the sink's one outstanding promise. A later write() that fails on the
+// spot, because the reader has hung up, used to return a second, already rejected promise: a script awaiting the
+// first one caught the error and still died of an unhandled rejection.
+//
+// The hang-up and the second write() share one tick, so no event-loop turn can tell the sink about the hang-up
+// first: the second write() is the one that finds out, with the first still pending.
+it.skipIf(!isPosix)("a write() that fails while another is pending rejects the pending promise once", async () => {
+  const [readFd, writeFd] = createSocketPair();
+  let readFdOpen = true;
+  const sink = Bun.file(writeFd).writer();
+  try {
+    // Nothing drains `readFd`, so the socket buffers fill up.
+    const first = sink.write(Buffer.alloc(8 * 1024 * 1024, "x").toString());
+    expect(Bun.peek.status(first)).toBe("pending");
+    fs.closeSync(readFd);
+    readFdOpen = false;
+    const second = sink.write("tail");
+    expect(second).toBe(first);
+    await expect(first).rejects.toMatchObject({ code: "EPIPE" });
+  } finally {
+    await Promise.resolve(sink.end()).catch(() => {});
+    fs.closeSync(writeFd);
+    if (readFdOpen) fs.closeSync(readFd);
+  }
+});
+
+describe.concurrent("start() on an open writer", () => {
+  // `closed()` checks that every handle to a file in `dir` has been closed. Windows won't rename
+  // a directory while a file inside it is open, and on Linux it scans /proc/self/fd.
+  const prelude = `
+    const fs = require("node:fs");
+    const { join } = require("node:path");
+    const dir = join(process.argv[1], "files");
+    fs.mkdirSync(dir);
+    function openFiles() {
+      if (process.platform !== "linux") return 0;
+      return fs.readdirSync("/proc/self/fd").filter(fd => {
+        try {
+          const path = fs.readlinkSync("/proc/self/fd/" + fd);
+          return path.includes(dir) || path.endsWith("/ptmx");
+        } catch {
+          return false;
+        }
+      }).length;
+    }
+    async function closed() {
+      const deadline = Date.now() + 10_000;
+      for (;;) {
+        try {
+          fs.renameSync(dir, dir + ".closed");
+          break;
+        } catch (e) {
+          if (e.code !== "EPERM" || Date.now() > deadline) return "rename: " + e.code;
+          await Bun.sleep(1);
+        }
+      }
+      while (openFiles() > 0 && Date.now() < deadline) await Bun.sleep(1);
+      return openFiles() === 0 ? "all" : "open: " + openFiles();
+    }
+    function read(path) {
+      return fs.readFileSync(path, "utf8");
+    }
+  `;
+
+  async function run(script: string) {
+    using dir = tempDir("filesink-restart", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + script, String(dir)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ stderr: "", exitCode: 0 });
+    return JSON.parse(stdout);
+  }
+
+  it("start({ path }) writes to the new path and closes the old file", async () => {
+    const result = await run(`
+      const initial = join(dir, "initial.txt");
+      const target = join(dir, "target.txt");
+      const writer = Bun.file(initial).writer();
+      writer.start({ path: target });
+      writer.write("short");
+      await writer.end();
+      const out = { target: read(target), initial: read(initial) };
+      console.log(JSON.stringify({ ...out, closed: await closed() }));
+    `);
+    expect(result).toEqual({ target: "short", initial: "", closed: "all" });
+  });
+
+  // /dev/ptmx is a TTY that opens by path with no terminal attached, and `closed()` sees it on Linux.
+  it.skipIf(!isLinux)("start({ path }) moves a writer from a TTY to a regular file", async () => {
+    const result = await run(`
+      const target = join(dir, "target.txt");
+      const writer = Bun.file("/dev/ptmx").writer();
+      writer.start({ path: target });
+      writer.write("short");
+      const buffered = read(target);
+      await writer.end();
+      const out = { buffered, target: read(target) };
+      console.log(JSON.stringify({ ...out, closed: await closed() }));
+    `);
+    expect(result).toEqual({ buffered: "", target: "short", closed: "all" });
+  });
+
+  it.skipIf(!isLinux).each([
+    ["open", `const path = join(dir, "missing", "target.txt");`],
+    [
+      "epoll_ctl",
+      // A FIFO with a reader opens for writing, but cannot take over the TTY's poll.
+      `const path = join(dir, "fifo");
+      Bun.spawnSync(["mkfifo", path]);
+      const reader = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);`,
+    ],
+  ])("a TTY writer still writes synchronously after start({ path }) fails in %s", async (syscall, setup) => {
+    const result = await run(`
+      ${setup}
+      const writer = Bun.file("/dev/ptmx").writer();
+      let failed;
+      try {
+        writer.start({ path });
+      } catch (e) {
+        failed = e.syscall;
+      }
+      writer.write("short");
+      const buffered = writer.flush();
+      await writer.end();
+      if (typeof reader === "number") fs.closeSync(reader);
+      console.log(JSON.stringify({ failed, buffered, closed: await closed() }));
+    `);
+    expect(result).toEqual({ failed: syscall, buffered: 0, closed: "all" });
+  });
+
+  it("start({ path }) settles a queued write and flushes it to the new path", async () => {
+    // On Windows the first chunk is in flight and the second waits in the writer's queue.
+    const result = await run(`
+      const a = join(dir, "a.txt");
+      const b = join(dir, "b.txt");
+      const writer = Bun.file(a).writer();
+      writer.write("first");
+      const queued = writer.write("second");
+      writer.start({ path: b });
+      const settled = typeof (await queued) === "number";
+      writer.write("third");
+      await writer.end();
+      const deadline = Date.now() + 10_000;
+      while (read(a) + read(b) !== "firstsecondthird" && Date.now() < deadline) await Bun.sleep(1);
+      const out = { settled, combined: read(a) + read(b), bEndsWithQueued: read(b).endsWith("secondthird") };
+      console.log(JSON.stringify({ ...out, closed: await closed() }));
+    `);
+    expect(result).toEqual({ settled: true, combined: "firstsecondthird", bEndsWithQueued: true, closed: "all" });
+  });
+
+  it.skipIf(!isWindows)("start({ path }) while a pipe write is in flight throws EBUSY and keeps the pipe", async () => {
+    using dir = tempDir("filesink-restart-pipe", {});
+    const script = `
+      const writer = Bun.file(3).writer();
+      writer.write("x");
+      let code = null;
+      try {
+        writer.start({ path: ${JSON.stringify(join(String(dir), "target.txt"))} });
+      } catch (e) {
+        code = e.code;
+      }
+      writer.write("y");
+      await writer.end();
+      console.log(JSON.stringify({ code }));
+    `;
+    const options: SpawnOptions = { stdio: ["ignore", "pipe", "pipe", "pipe"], env: bunEnv as NodeJS.ProcessEnv };
+    const child = spawn(bunExe(), ["-e", script], options);
+    let stdout = "";
+    let stderr = "";
+    let pipe = "";
+    child.stdout!.on("data", d => (stdout += d));
+    child.stderr!.on("data", d => (stderr += d));
+    (child.stdio[3] as Readable).on("data", d => (pipe += d));
+    const { promise: closed, resolve, reject } = Promise.withResolvers<number | null>();
+    child.on("close", resolve);
+    child.on("error", reject);
+    const exitCode = await closed;
+    expect({ stdout: stdout.trim(), stderr, pipe, exitCode }).toEqual({
+      stdout: '{"code":"EBUSY"}',
+      stderr: "",
+      pipe: "xy",
+      exitCode: 0,
+    });
+  });
+});
+
+it("a writer's FileSink class can't be constructed from JS", async () => {
+  using dir = tempDir("filesink-constructor", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+const writer = Bun.file("out.txt").writer();
+const FileSink = writer.constructor;
+for (const make of [() => new FileSink(), () => FileSink(), () => Reflect.construct(FileSink, [], class {})]) {
+  try {
+    make().write("x");
+    console.log("returned");
+  } catch (e) {
+    console.log(e.code);
+  }
+}
+writer.write("written");
+await writer.end();
+console.log(await Bun.file("out.txt").text());
+`,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+    stdout: ["ERR_ILLEGAL_CONSTRUCTOR", "ERR_ILLEGAL_CONSTRUCTOR", "ERR_ILLEGAL_CONSTRUCTOR", "written"],
+    stderr: "",
+    exitCode: 0,
+  });
 });

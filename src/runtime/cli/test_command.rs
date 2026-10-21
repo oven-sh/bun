@@ -38,17 +38,17 @@ mod coverage {
     }
 
     pub(super) fn is_ignored(
-        opts: &bun_options_types::code_coverage_options::CodeCoverageOptions,
+        ignore_patterns: &[bun_glob::Prepared<&[u8]>],
         relative_dir: &[u8],
         source_url: &[u8],
     ) -> bool {
-        if opts.ignore_patterns.is_empty() {
+        if ignore_patterns.is_empty() {
             return false;
         }
         let relative_path = bun_paths::resolve_path::relative(relative_dir, source_url);
-        opts.ignore_patterns
+        ignore_patterns
             .iter()
-            .any(|pattern| bun_glob::r#match(pattern, relative_path).matches())
+            .any(|pattern| pattern.r#match(relative_path).matches())
     }
 }
 use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
@@ -63,7 +63,6 @@ use crate::test_runner::jest::{self, FileColumns as _, Summary, TestRunner};
 use crate::test_runner::snapshot::Snapshots;
 use bun_collections::index_sort;
 
-#[allow(non_snake_case)]
 mod bun_test {
     //! Façade over `crate::test_runner` that preserves the legacy paths
     //! the body uses (`bun_test::Execution::Result`, `bun_test::BasicResult`,
@@ -155,7 +154,7 @@ fn fmt_status_text_line(
 /// currently failing, captured as they are printed so structured reporters
 /// get them without re-running the exception formatter.
 #[derive(Default)]
-pub struct TestFailure {
+pub(crate) struct TestFailure {
     pub name: Vec<u8>,
     pub(crate) message: Vec<u8>,
     pub(crate) body: Vec<u8>,
@@ -164,7 +163,7 @@ pub struct TestFailure {
 /// How a test file is named in the JUnit document: relative to the project
 /// root when inside it, else as given.
 pub(crate) fn junit_file_name(path: &[u8]) -> &[u8] {
-    let top = FileSystem::instance().top_level_dir;
+    let top = FileSystem::instance().top_level_dir();
     if strings::has_prefix(path, top) {
         without_leading_path_separator(&path[top.len()..])
     } else {
@@ -210,7 +209,7 @@ fn push_stripping_ansi(out: &mut Vec<u8>, input: &[u8]) {
 // - Add stdout/stderr to the JUnit report
 // - Add timestamp field to the JUnit report
 #[derive(Default)]
-pub struct JunitReporter {
+pub(crate) struct JunitReporter {
     pub(crate) contents: Vec<u8>,
     pub(crate) total_metrics: Metrics,
     pub(crate) offset_of_testsuites_value: usize,
@@ -225,7 +224,7 @@ pub struct JunitReporter {
 }
 
 #[derive(Default)]
-pub struct SuiteInfo {
+pub(crate) struct SuiteInfo {
     pub name: Box<[u8]>,
     pub(crate) offset_of_attributes: usize,
     pub(crate) metrics: Metrics,
@@ -237,7 +236,7 @@ pub struct SuiteInfo {
 // unconditional drop is correct.
 
 #[derive(Default, Clone, Copy)]
-pub struct Metrics {
+pub(crate) struct Metrics {
     pub(crate) test_cases: u32,
     pub(crate) assertions: u32,
     pub(crate) failures: u32,
@@ -339,7 +338,7 @@ impl TestFailure {
             }
         }
         body.push(b'\n');
-        let dir = FileSystem::instance().top_level_dir;
+        let dir = FileSystem::instance().top_level_dir();
         for frame in exception.stack.frames() {
             let source_url = frame.source_url.to_utf8();
             let file = jsc::ZigStackFrame::relative_source_url(dir, source_url.slice());
@@ -895,16 +894,9 @@ impl JunitReporter {
             self.contents.extend_from_slice(b"</testsuites>\n");
         }
 
-        let mut junit_path_buf = bun_paths::path_buffer_pool::get();
-
-        junit_path_buf[..path.len()].copy_from_slice(path);
-        junit_path_buf[path.len()] = 0;
-
-        // SAFETY: junit_path_buf[path.len()] == 0 written above
-        let zpath = bun_core::ZStr::from_buf(&junit_path_buf[..], path.len());
         match File::openat(
             Fd::cwd(),
-            zpath,
+            path,
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o664,
         ) {
@@ -948,7 +940,7 @@ pub(crate) fn exit_is_requested() -> bool {
     !should_drain_event_loop()
 }
 
-pub struct CommandLineReporter {
+pub(crate) struct CommandLineReporter {
     // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
     // returns before process exit, so `'static` is sound here. Revisit if the
@@ -979,7 +971,7 @@ pub struct CommandLineReporter {
 }
 
 #[derive(Default)]
-pub struct ReportersConfig {
+pub(crate) struct ReportersConfig {
     pub(crate) dots: bool,
     pub(crate) only_failures: bool,
     pub(crate) junit: Option<Box<JunitReporter>>,
@@ -1405,16 +1397,7 @@ impl CommandLineReporter {
                 this.summary().fail += 1;
 
                 if this.summary().fail == this.jest.bail {
-                    this.print_summary();
-                    pretty_error!(
-                        "\nBailed out after {} failure{}<r>\n",
-                        this.jest.bail,
-                        if this.jest.bail == 1 { "" } else { "s" }
-                    );
-                    Output::flush();
-                    this.write_junit_report_if_needed();
-                    this.write_timings_if_needed();
-                    Global::exit(1);
+                    this.bail_out(VirtualMachine::get().as_mut());
                 }
             }
         }
@@ -1438,6 +1421,38 @@ impl CommandLineReporter {
         );
 
         Output::print_start_end(bun::start_time(), bun::time::nano_timestamp());
+    }
+
+    /// Prints that `--bail` hit its failure count, then exits with code 1. Tears down the VM the same way `exec` does.
+    pub(crate) fn bail_out(&mut self, vm: &mut VirtualMachine) -> ! {
+        self.print_summary();
+        pretty_error!(
+            "\nBailed out after {} failure{}<r>\n",
+            self.jest.bail,
+            if self.jest.bail == 1 { "" } else { "s" }
+        );
+        Output::flush();
+        self.write_junit_report_if_needed();
+        self.write_timings_if_needed();
+
+        vm.exit_handler.exit_code = 1;
+        vm.exit_handler.skip_exit_listeners = skip_exit_listeners(self);
+        vm.exit_handler.requested = true;
+        let vm_ptr: *mut VirtualMachine = vm;
+        // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+        // `run_with_api_lock` takes `&self` only, so the closure holds the
+        // unique mutable access on this single-threaded path.
+        vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
+        // Exit listeners need the runner, so release the `bun:test` GC roots and clear `RUNNER`
+        // after they run. Finalizers in the teardown GC must not see a half-torn-down `TestRunner`.
+        self.jest.bun_test_root.deinit_for_exit();
+        // SAFETY: `RUNNER` is a `RacyCell` touched only from the single JS thread;
+        // no concurrent reader exists on this shutdown path.
+        unsafe {
+            jest::Jest::RUNNER.write(None);
+        }
+        // SAFETY: as above; `global_exit()` diverges, so the closure is the sole mutator.
+        vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() })
     }
 
     /// Like the JUnit report, called before every exit path (including bail) so measured durations aren't lost.
@@ -1474,10 +1489,15 @@ impl CommandLineReporter {
         // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
         // collection loop below (single-threaded CLI report path).
         let map = unsafe { &mut *map.as_ptr() };
-        let relative_dir = FileSystem::get().top_level_dir;
+        let relative_dir = FileSystem::get().top_level_dir();
+        let ignore_patterns: Vec<bun_glob::Prepared<&[u8]>> = (opts
+            .ignore_patterns
+            .iter()
+            .map(|it| bun_glob::Prepared::new(&**it)))
+        .collect();
         let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
         for entry in map.values_mut() {
-            if !coverage::is_ignored(opts, relative_dir, entry.source_url.slice()) {
+            if !coverage::is_ignored(&ignore_patterns, relative_dir, entry.source_url.slice()) {
                 byte_ranges.push(entry);
             }
         }
@@ -1492,24 +1512,26 @@ impl CommandLineReporter {
         }
     }
 
+    /// Returns false if `lcov.info` could not be written.
     pub(crate) fn generate_code_coverage(
         &mut self,
         vm: &mut VirtualMachine,
         opts: &mut CodeCoverageOptions,
-    ) {
+    ) -> bool {
         let _trace = bun::perf::trace("TestCommand.printCodeCoverage");
         if ByteRangeMapping::map().is_none_or(|m| {
             // SAFETY: see `for_each_coverage_report`.
             unsafe { m.as_ref() }.is_empty()
         }) {
-            return;
+            return true;
         }
         let mut reports: Vec<CodeCoverageReport<'static>> = Vec::new();
         Self::for_each_coverage_report(vm, opts, |report| reports.push(report.into_owned()));
         if let Err(err) = print_coverage_reports(opts, &reports) {
             Output::err(err, "Failed to write lcov.info", ());
-            Global::exit(1);
+            return false;
         }
+        true
     }
 }
 
@@ -1532,7 +1554,7 @@ fn print_coverage_reports_<const COLORS: bool>(
     opts: &mut CodeCoverageOptions,
     reports: &[CodeCoverageReport<'_>],
 ) -> bun_sys::Result<()> {
-    let relative_dir = FileSystem::get().top_level_dir;
+    let relative_dir = FileSystem::get().top_level_dir();
     let thresholds = opts.fractions;
 
     let fractions: Vec<Fraction> = reports.iter().map(|r| r.fraction(&thresholds)).collect();
@@ -1642,14 +1664,6 @@ fn write_lcov_report(
         let _ = coverage::lcov::write_format(report, relative_dir, &mut contents);
     }
 
-    let mut fs = crate::node::fs::NodeFS::default();
-    let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
-        path: crate::node::PathLike::borrowed(&opts.reports_directory),
-        always_return_none: true,
-        recursive: true,
-        ..Default::default()
-    });
-
     let mut rand = [0u8; 8];
     bun_boringssl_sys::rand_bytes(&mut rand);
     let mut tmpname: Vec<u8> = Vec::new();
@@ -1658,12 +1672,34 @@ fn write_lcov_report(
         ".lcov.info.{}.tmp",
         bun_core::fmt::hex_lower(&rand)
     );
+    let too_long = || {
+        bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
+            .with_path(&opts.reports_directory)
+    };
+    let mut tmp_buf = bun_paths::path_buffer_pool::get();
+    let tmp_path = resolve_path::join_abs_string_buf_z_checked::<bun_path::platform::Auto>(
+        relative_dir,
+        &mut tmp_buf,
+        &[&opts.reports_directory, &tmpname],
+    )
+    .ok_or_else(too_long)?;
     let mut buf = bun_paths::path_buffer_pool::get();
-    let tmp_path = resolve_path::join_abs_string_buf_z::<bun_path::platform::Auto>(
+    let path = resolve_path::join_abs_string_buf_z_checked::<bun_path::platform::Auto>(
         relative_dir,
         &mut buf,
-        &[&opts.reports_directory, &tmpname],
-    );
+        &[&opts.reports_directory, b"lcov.info"],
+    )
+    .ok_or_else(too_long)?;
+    if let Some(dir) = bun_path::dirname(path.as_bytes()) {
+        let mut fs = crate::node::fs::NodeFS::default();
+        let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
+            path: crate::node::PathLike::borrowed(dir),
+            always_return_none: true,
+            recursive: true,
+            ..Default::default()
+        });
+    }
+
     let file = File::openat(
         Fd::cwd(),
         tmp_path,
@@ -1673,15 +1709,7 @@ fn write_lcov_report(
     let written = file.write_all(&contents);
     drop(file);
     let moved = match written {
-        Ok(()) => bun_sys::move_file_z(
-            Fd::cwd(),
-            tmp_path,
-            Fd::cwd(),
-            resolve_path::join_abs_string_z::<bun_path::platform::Auto>(
-                relative_dir,
-                &[&opts.reports_directory, b"lcov.info"],
-            ),
-        ),
+        Ok(()) => bun_sys::move_file_z(Fd::cwd(), tmp_path, Fd::cwd(), path),
         err => err,
     };
     if moved.is_err() {
@@ -1813,23 +1841,23 @@ impl TestCommand {
         // backing `Vec`s live in `ctx` for the process lifetime, so each element
         // is detached to `&'static [u8]` up front (lets the outer view detach to
         // `&'static [&'static [u8]]` below without a nested-lifetime bitcast).
-        let concurrent_test_glob_view: Option<Vec<&'static [u8]>> =
+        let concurrent_test_glob_view: Option<Vec<bun_glob::Prepared<&'static [u8]>>> =
             ctx.test_options.concurrent_test_glob.as_ref().map(|v| {
                 v.iter()
                     .map(|b| {
                         // SAFETY: backing bytes are owned by `ctx.test_options`
                         // (process-lifetime) and `exec()` never returns.
-                        unsafe { bun_ptr::detach_lifetime::<u8>(b) }
+                        bun_glob::Prepared::new(unsafe { bun_ptr::detach_lifetime::<u8>(b) })
                     })
                     .collect()
             });
         // SAFETY: backing bytes are owned by `ctx.test_options` (process-lifetime)
         // and `exec()` never returns, so detaching to `'static` is sound.
-        let path_ignore_patterns_view: Vec<&'static [u8]> = ctx
+        let path_ignore_patterns_view: Vec<bun_glob::Prepared<&'static [u8]>> = ctx
             .test_options
             .path_ignore_patterns
             .iter()
-            .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
+            .map(|b| bun_glob::Prepared::new(unsafe { bun_ptr::detach_lifetime::<u8>(b) }))
             .collect();
 
         // Keep an owned `Box` local — `exec()` never returns before process
@@ -1930,7 +1958,6 @@ impl TestCommand {
                 debugger: core::mem::take(&mut ctx.runtime_options.debugger),
                 log: core::ptr::NonNull::new(ctx.log),
                 env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
-                store_fd: ctx.debug.hot_reload != jsc::virtual_machine::HotReload::None,
                 smol: ctx.runtime_options.smol,
                 is_main_thread: true,
                 ..Default::default()
@@ -2051,7 +2078,7 @@ impl TestCommand {
                                 pretty_errorln!(
                                     "Test filter <b>{}<r> had no matches in --cwd={}",
                                     bun_fmt::quote(arg),
-                                    bun_fmt::quote(FileSystem::instance().top_level_dir)
+                                    bun_fmt::quote(FileSystem::instance().top_level_dir())
                                 );
                             } else {
                                 pretty_errorln!(
@@ -2127,20 +2154,32 @@ impl TestCommand {
 
             // Own the joined path in a hoisted buffer and borrow from it.
             let dir_to_scan_owned: Vec<u8>;
-            let dir_to_scan: &[u8] = 'brk: {
+            let (dir_to_scan, fits): (&[u8], bool) = 'brk: {
                 if !ctx.debug.test_directory.is_empty() {
-                    dir_to_scan_owned = resolve_path::join_abs::<bun_path::platform::Auto>(
-                        scanner.fs().top_level_dir,
-                        &ctx.debug.test_directory,
-                    )
-                    .into();
-                    break 'brk &dir_to_scan_owned;
+                    let mut buf = bun_path::path_buffer_pool::get();
+                    let Some(joined) =
+                        resolve_path::join_abs_string_buf_z_checked::<bun_path::platform::Auto>(
+                            scanner.fs().top_level_dir(),
+                            &mut buf,
+                            &[&ctx.debug.test_directory],
+                        )
+                    else {
+                        break 'brk (&ctx.debug.test_directory[..], false);
+                    };
+                    dir_to_scan_owned = joined.as_bytes().into();
+                    break 'brk (&dir_to_scan_owned[..], true);
                 }
 
-                break 'brk scanner.fs().top_level_dir;
+                break 'brk (scanner.fs().top_level_dir(), true);
             };
 
-            match scanner.scan(dir_to_scan) {
+            // A root that's too long for a path buffer can't be opened either.
+            let scanned = if fits {
+                scanner.scan(dir_to_scan)
+            } else {
+                Err(scanner::ScanError::DoesNotExist)
+            };
+            match scanned {
                 Ok(()) => {}
                 Err(scanner::ScanError::OutOfMemory) => bun::out_of_memory(),
                 Err(scanner::ScanError::DoesNotExist) => {
@@ -2148,7 +2187,7 @@ impl TestCommand {
                         pretty_errorln!(
                             "<red>Failed to scan non-existent root directory for tests:<r> {} in --cwd={}",
                             bun_fmt::quote(dir_to_scan),
-                            bun_fmt::quote(FileSystem::instance().top_level_dir)
+                            bun_fmt::quote(FileSystem::instance().top_level_dir())
                         );
                     } else {
                         pretty_errorln!(
@@ -2323,6 +2362,24 @@ impl TestCommand {
             }
         }
 
+        // After the file watcher is enabled: see `watching`.
+        let has_type_errors = ctx.runtime_options.check && {
+            use crate::cli::check_command::{EntryPoint, check_before, watching};
+            let paths = test_files.iter().map(|path| EntryPoint::file(path));
+            !check_before(&paths.collect::<Vec<_>>(), watching(vm))
+        };
+        if has_type_errors {
+            // No test is run.
+            if !vm.is_watcher_enabled() {
+                Global::exit(1);
+            }
+            let vm_ptr: *mut VirtualMachine = vm;
+            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+            // `run_with_api_lock` takes `&self` only, so the closure holds the
+            // unique mutable access on this single-threaded path.
+            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
+        }
+
         let mut coverage_options: CodeCoverageOptions = ctx.test_options.coverage.clone();
         let mut ran_parallel = false;
 
@@ -2390,6 +2447,7 @@ impl TestCommand {
             .unwrap()
             .snapshots
             .write_snapshot_file()?;
+        let mut write_coverage_success = true;
         if reporter.summary().pass > 20
             && !Output::is_ai_agent()
             && !reporter.reporters.dots
@@ -2442,7 +2500,7 @@ impl TestCommand {
                     // Be very clear to ai.
                     Output::err_generic(
                         "0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={}",
-                        (bun_fmt::quote(FileSystem::instance().top_level_dir),),
+                        (bun_fmt::quote(FileSystem::instance().top_level_dir()),),
                     );
                 } else {
                     // Be friendlier to humans.
@@ -2454,7 +2512,7 @@ impl TestCommand {
                 if Output::is_ai_agent() {
                     pretty_errorln!(
                         "<yellow>The following filters did not match any test files in --cwd={}:<r>",
-                        bun_fmt::quote(FileSystem::instance().top_level_dir)
+                        bun_fmt::quote(FileSystem::instance().top_level_dir())
                     );
                 } else {
                     pretty_errorln!(
@@ -2505,7 +2563,7 @@ impl TestCommand {
             pretty_error!("\n");
 
             if coverage_options.enabled && !ran_parallel {
-                reporter.generate_code_coverage(vm, &mut coverage_options);
+                write_coverage_success = reporter.generate_code_coverage(vm, &mut coverage_options);
             }
 
             // `Summary` is `Copy`; take a value snapshot so the `&mut` from
@@ -2672,6 +2730,7 @@ impl TestCommand {
                 && coverage_options.fractions.failing
                 && coverage_options.fail_on_low_coverage)
             || !write_snapshots_success
+            || !write_coverage_success
             || reporter.jest.unhandled_errors_between_tests > 0
         {
             vm.exit_handler.exit_code = 1;
@@ -2849,7 +2908,6 @@ impl TestCommand {
             .filename_store
             .append_slice(resolution.path_pair.primary.text)
             .expect("oom");
-        let file_title = resolve_path::relative(FileSystem::instance().top_level_dir, file_path);
         let file_id = jest::Jest::runner()
             .unwrap()
             .get_or_put_file(file_path)
@@ -2895,6 +2953,9 @@ impl TestCommand {
                 bun_jsc::cpp::JSMock__forgetPendingModulePatches(global);
             }
 
+            // Recompute on every repeat because the reporters overwrite `relative`'s buffer while the file runs.
+            let file_title =
+                resolve_path::relative(FileSystem::instance().top_level_dir(), file_path);
             // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
             // and writes only `current_file` — disjoint fields. Fresh raw-ptr
             // split (not the defer-captured `reporter_ptr`) keeps the borrows
@@ -2940,33 +3001,8 @@ impl TestCommand {
                     reporter.summary().fail += 1;
 
                     if reporter.jest.bail == reporter.summary().fail {
-                        reporter.print_summary();
-                        pretty_error!(
-                            "\nBailed out after {} failure{}<r>\n",
-                            reporter.jest.bail,
-                            if reporter.jest.bail == 1 { "" } else { "s" }
-                        );
-                        reporter.write_junit_report_if_needed();
-                        reporter.write_timings_if_needed();
-
-                        vm.exit_handler.exit_code = 1;
-                        vm.is_shutting_down = true;
-                        // `global_exit()` diverges, so the `exit_file()` defer
-                        // above never fires. Release the active file's
-                        // `Strong`s and the preload-hook scope here so
-                        // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim them,
-                        // then clear `RUNNER` so finalizers can't observe a
-                        // partially-torn-down `TestRunner`.
-                        // SAFETY: single-threaded; raw-ptr reborrow mirrors the
-                        // defer's escape.
-                        unsafe {
-                            (*bun_test_root_ptr).deinit_for_exit();
-                            jest::Jest::RUNNER.write(None);
-                        }
-                        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
-                        // SAFETY: global_exit diverges; `vm_ptr` is a fresh
-                        // raw-ptr reborrow of the exclusive `vm` borrow.
-                        unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
+                        // This never returns, so the `exit_file()` defer above doesn't run.
+                        reporter.bail_out(vm);
                     }
 
                     return Ok(());

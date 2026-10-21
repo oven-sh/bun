@@ -242,7 +242,7 @@ const testCases: TestCase[] = [
 ];
 
 export async function runTestsStandalone(host: string, port: number) {
-  const results = await Promise.all(testCases.map(testCase => runTestCase(testCase, host, parseInt(port, 10))));
+  const results = await Promise.all(testCases.map(testCase => runTestCase(testCase, host, parseInt(port as any, 10))));
 
   const passedCount = results.filter(result => result).length;
   console.log(`\n${passedCount} out of ${testCases.length} tests passed.`);
@@ -268,7 +268,7 @@ export async function runTests() {
 // Run a single test case with a 3-second timeout on reading
 async function runTestCase(testCase: TestCase, host: string, port: number): Promise<boolean> {
   try {
-    const conn = new Promise((resolve, reject) => {
+    const conn = new Promise<net.Socket>((resolve, reject) => {
       const client = net.createConnection({ host, port }, () => {
         resolve(client);
       });

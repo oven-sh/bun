@@ -1107,6 +1107,7 @@ describe("bundler", () => {
     },
   });
   test.skip("tsconfig/JsonExtendsAbsolute", () => {
+    // @ts-expect-error not imported
     expectBundled("tsconfig/JsonExtendsAbsoluteUnix", {
       // GENERATED
       host: "unix",
@@ -1130,6 +1131,7 @@ describe("bundler", () => {
         `,
       },
     });
+    // @ts-expect-error not imported
     expectBundled("tsconfig/JsonExtendsAbsoluteWindows", {
       // GENERATED
       host: "windows",

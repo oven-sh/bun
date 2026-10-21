@@ -1,6 +1,6 @@
 // TODO: prefer generating this file via bindgen
 
-#![allow(non_camel_case_types, non_snake_case)]
+#![allow(non_camel_case_types)]
 
 use core::ffi::{c_char, c_int, c_uint, c_void};
 

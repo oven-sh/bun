@@ -157,6 +157,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--no-clear-screen                 Disable clearing the terminal screen on reload when --hot or --watch is enabled"
     ),
     parse_param!(
+        "--check                           Type check before running. Nothing runs if there are type errors. Alone: <b>bun check<r>"
+    ),
+    parse_param!(
         "--smol                            Use less memory, but run garbage collection more often"
     ),
     parse_param!(
@@ -284,6 +287,8 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--no-ffi-cc                       Throw an error if bun:ffi cc() is called (disables the C compiler)"
     ),
+    // No help text, which hides it: the name is wider than the column `bun --help` prints names in.
+    parse_param!("--disallow-code-generation-from-strings <STR>?"),
     parse_param!(
         "--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\""
     ),
@@ -402,6 +407,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv"
         ),
         parse_param!(
+            "--bytecode-order <STR>...        With --compile --bytecode: lay the bytecode out by order file(s) a run of the executable wrote (BUN_BYTECODE_ORDER_OUT); comma-separated or repeated, most important first"
+        ),
+        parse_param!(
             "--compile-jit-policy <NUMBER>    JIT tier-up threshold scale the executable starts with (default 1 = normal; see Bun.unsafe.setJITPolicy)"
         ),
         parse_param!(
@@ -515,6 +523,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
         parse_param!(
+            "--check                          Type check the entry points and what they import. Nothing is bundled if there are type errors"
+        ),
+        parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
         ),
         parse_param!(
@@ -530,12 +541,10 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--css-chunking                   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS"
         ),
-        parse_param!("--dump-environment-variables"),
         parse_param!("--conditions <STR>...            Pass custom conditions to resolve"),
         parse_param!(
             "--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake."
         ),
-        parse_param!("--server-components              (EXPERIMENTAL) Enable server components"),
         parse_param!(
             "--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'."
         ),
@@ -593,7 +602,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!("--seed <INT>                     Set the random seed for test randomization"),
     parse_param!("--coverage                       Generate a coverage profile"),
     parse_param!(
-        "--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'."
+        "--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'. Implies --coverage."
     ),
     parse_param!(
         "--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'."
@@ -755,30 +764,52 @@ fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum BunCAStore {
-    Bundled,
-    Openssl,
-    System,
+use bun_core::Global::Bun__Node__UseSystemCA;
+
+pub(crate) fn get_use_system_ca() -> bool {
+    Bun__Node__UseSystemCA.load(core::sync::atomic::Ordering::Relaxed)
 }
-#[unsafe(no_mangle)]
-static Bun__Node__CAStore: core::sync::atomic::AtomicU8 =
-    core::sync::atomic::AtomicU8::new(BunCAStore::Bundled as u8);
-#[unsafe(no_mangle)]
-pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
 // call them without a tier-6 dependency. Re-export here so existing
 // `crate::cli::arguments::load_config*` callers are unaffected.
-pub use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_args};
+pub(crate) use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_args};
 
 /// node aliases `-pe` to `--print --eval` as a whole token (node_options.cc):
 /// it can't be a short in either runtime, being ambiguous with `-p` carrying
 /// the attached value `e`. Bun's `-p` takes the code, so `-pe X` is `-p X`.
-pub const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
+pub(crate) const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
+
+/// `--disallow-code-generation-from-strings[=<value>]`. Raises the process's level; never lowers it.
+fn disallow_code_generation_from_strings(value: &[u8]) {
+    match bun_core::CodeGenerationFromStrings::from_flag_value(value) {
+        Some(level) => bun_core::disallow_code_generation_from_strings(level),
+        None => {
+            Output::err_generic(
+                "Invalid value for --disallow-code-generation-from-strings: \"{}\". Must be \"strict\", or no value\n",
+                format_args!("{}", BStr::new(value)),
+            );
+            Global::exit(1);
+        }
+    }
+}
+
+/// The level a compiled executable was built with (`--compile-exec-argv`) is a floor. The parser
+/// keeps an option's last value and reads `BUN_OPTIONS` after the embedded flags, so on its own it
+/// would let the environment lower it. `embedded` is the embedded flags as the parser is given them.
+pub(crate) fn disallow_code_generation_from_strings_as_compiled(embedded: &[&bun_core::ZStr]) {
+    for token in embedded {
+        match token
+            .as_bytes()
+            .strip_prefix(b"--disallow-code-generation-from-strings".as_slice())
+        {
+            Some(b"") => disallow_code_generation_from_strings(b""),
+            Some([b'=', value @ ..]) => disallow_code_generation_from_strings(value),
+            _ => {}
+        }
+    }
+}
 
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
@@ -803,6 +834,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
                 _ => &[],
             },
+            ..Default::default()
         },
     ) {
         Ok(a) => a,
@@ -896,6 +928,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.parallel = args.flag(b"--parallel");
         ctx.sequential = args.flag(b"--sequential");
         ctx.no_exit_on_error = args.flag(b"--no-exit-on-error");
+        // Set before bunfig.toml is loaded so that `--silent` hides the warning about an unreadable
+        // bunfig.toml. It is set again below so that the flag overrides `run.silent`.
+        ctx.debug.silent = args.flag(b"--silent");
 
         if let Some(elide_lines) = args.option(b"--elide-lines") {
             if !elide_lines.is_empty() {
@@ -1051,9 +1086,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
         if args.flag(b"--hot") {
             ctx.debug.hot_reload = HotReload::Hot;
-            if args.flag(b"--no-clear-screen") {
-                let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
-            }
         } else if args.flag(b"--watch") {
             ctx.debug.hot_reload = HotReload::Watch;
 
@@ -1063,32 +1095,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             {
                 bun_core::set_auto_reload_on_crash(true);
             }
-
-            if args.flag(b"--no-clear-screen") {
-                let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
-            }
         }
-
-        if let Some(kill_signal) = args.option(b"--watch-kill-signal") {
-            // Node reads --watch-kill-signal only in watch mode; elsewhere it is
-            // accepted and ignored. Matching is case-insensitive (node uppercases).
-            if ctx.debug.hot_reload == HotReload::Watch {
-                let upper = kill_signal.to_ascii_uppercase();
-                match bun_core::SignalCode::from_name(&upper)
-                    .filter(|s| s.platform_number().is_some())
-                {
-                    Some(sig) => ctx.debug.watch_kill_signal = sig,
-                    None => {
-                        Output::print_errorln(format_args!(
-                            "TypeError [ERR_UNKNOWN_SIGNAL]: Unknown signal: {}",
-                            bstr::BStr::new(kill_signal)
-                        ));
-                        Output::flush();
-                        Global::exit(1);
-                    }
-                }
-            }
-        }
+        ctx.debug.no_clear_screen = args.flag(b"--no-clear-screen");
+        ctx.debug.watch_flag = args.flag(b"--watch");
+        ctx.debug.watch_kill_signal_arg = args.option(b"--watch-kill-signal").map(Into::into);
 
         if let Some(origin) = args.option(b"--origin") {
             opts.origin = Some(origin.into());
@@ -1110,6 +1120,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
         if args.flag(b"--no-ffi-cc") {
             opts.allow_ffi_cc = Some(false);
+        }
+
+        if let Some(value) = args.option(b"--disallow-code-generation-from-strings") {
+            disallow_code_generation_from_strings(value);
         }
 
         if let Some(unhandled_rejections) = args.option(b"--unhandled-rejections") {
@@ -1171,18 +1185,26 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
 
         if let Some(user_agent) = args.option(b"--user-agent") {
+            if bun_http::async_http::breaks_header_line(user_agent) {
+                Output::err_generic(
+                    "Invalid value for --user-agent: must not contain a newline or NUL byte",
+                    (),
+                );
+                Global::exit(1);
+            }
             // argv slices returned by `clap::Args::option` borrow
             // process-lifetime `argv` storage.
             let _ = bun_http::OVERRIDDEN_DEFAULT_USER_AGENT.set(user_agent);
         }
 
-        ctx.debug.offline_mode_setting = Some(if args.flag(b"--prefer-offline") {
-            bun_options_types::offline_mode::OfflineMode::Offline
+        // Without a flag, `install.prefer` from bunfig.toml is kept.
+        if args.flag(b"--prefer-offline") {
+            ctx.debug.offline_mode_setting =
+                Some(bun_options_types::offline_mode::OfflineMode::Offline);
         } else if args.flag(b"--prefer-latest") {
-            bun_options_types::offline_mode::OfflineMode::Latest
-        } else {
-            bun_options_types::offline_mode::OfflineMode::Online
-        });
+            ctx.debug.offline_mode_setting =
+                Some(bun_options_types::offline_mode::OfflineMode::Latest);
+        }
 
         if args.flag(b"--no-install") {
             ctx.debug.global_cache = options::GlobalCache::disable;
@@ -1214,6 +1236,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
+        // To `node`, `--check` means something else.
+        ctx.runtime_options.check = args.flag(b"--check") && cmd != CommandTag::RunAsNodeCommand;
+        // Decided here: on Windows the process that starts it again is set up right after this.
+        if ctx.runtime_options.check {
+            super::watch_instead_of_hot_for_check(ctx);
+        }
+        let restarts = ctx.debug.hot_reload == HotReload::Watch;
+        super::apply_watch_mode_flags(ctx, restarts);
         // node's `-i` is an alias for --interactive; elsewhere `-i` is --install=fallback.
         ctx.runtime_options.interactive = args.flag(b"--interactive")
             || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"));
@@ -1462,43 +1492,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if args.flag(b"--zero-fill-buffers") {
             Bun__Node__ZeroFillBuffers.store(true, core::sync::atomic::Ordering::Relaxed);
         }
-        let use_system_ca = args.flag(b"--use-system-ca");
-        let use_openssl_ca = args.flag(b"--use-openssl-ca");
-        let use_bundled_ca = args.flag(b"--use-bundled-ca");
-
-        // Disallow any combination > 1
-        if (use_system_ca as u8) + (use_openssl_ca as u8) + (use_bundled_ca as u8) > 1 {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r>: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca"
-            );
-            Global::exit(1);
-        }
-
-        // CLI overrides env var (NODE_USE_SYSTEM_CA)
-        let store: Option<BunCAStore> = if use_bundled_ca {
-            Some(BunCAStore::Bundled)
-        } else if use_openssl_ca {
-            Some(BunCAStore::Openssl)
-        } else if use_system_ca || env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false) {
-            Some(BunCAStore::System)
-        } else {
-            // No CA flag — leave the FFI default (Bundled) in place. Avoids a
-            // `transmute<u8, BunCAStore>` round-trip through the atomic, which
-            // would be UB on an out-of-range discriminant.
-            None
-        };
-        if let Some(store) = store {
-            Bun__Node__CAStore.store(store as u8, core::sync::atomic::Ordering::Relaxed);
-            // Back-compat boolean used by native code until fully migrated
-            Bun__Node__UseSystemCA.store(
-                store == BunCAStore::System,
-                core::sync::atomic::Ordering::Relaxed,
-            );
-        } else {
-            // `Bun__Node__UseSystemCA` is written unconditionally,
-            // even when no CA flag/env was supplied (default bundled ⇒ false).
-            Bun__Node__UseSystemCA.store(false, core::sync::atomic::Ordering::Relaxed);
-        }
+        Global::set_ca_store_from_flags(|flag| args.flag(flag));
 
         if args.flag(b"--tls-min-v1.3") && args.flag(b"--tls-max-v1.2") {
             bun_core::pretty_errorln!(
@@ -1760,6 +1754,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
 
     if !args.options(b"--coverage-reporter").is_empty() {
+        ctx.test_options.coverage.enabled = true;
         ctx.test_options.coverage.reporters = CoverageReporters {
             text: false,
             lcov: false,
@@ -2039,6 +2034,7 @@ fn parse_build_command_options(
     diag: &mut clap::Diagnostic,
 ) {
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
+    ctx.bundler_options.check = args.flag(b"--check");
     ctx.bundler_options.bytecode = args.flag(b"--bytecode");
     if let Some(depth) = args.option(b"--bytecode-depth") {
         ctx.bundler_options.bytecode_depth = match strings::parse_int::<u32>(depth, 10) {
@@ -2247,6 +2243,18 @@ fn parse_build_command_options(
             Global::crash();
         }
         ctx.bundler_options.compile_exec_argv = Some(compile_exec_argv.into());
+    }
+
+    for order_files in args.options(b"--bytecode-order") {
+        if !ctx.bundler_options.compile || !ctx.bundler_options.bytecode {
+            Output::err_generic("--bytecode-order requires --compile --bytecode", ());
+            Global::crash();
+        }
+        ctx.bundler_options.bytecode_order.extend(
+            strings::split(order_files, b",")
+                .filter(|path| !path.is_empty())
+                .map(Box::<[u8]>::from),
+        );
     }
 
     if let Some(jit_policy) = args.option(b"--compile-jit-policy") {
@@ -2626,26 +2634,6 @@ fn parse_build_command_options(
                 Global::exit(1);
             }
             *slot = strings::concat(&[b"./", strings::remove_leading_dot_slash(value)]);
-        }
-    }
-
-    if args.flag(b"--server-components") {
-        ctx.bundler_options.server_components = true;
-        if let Some(target) = opts.target {
-            if !<bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target))
-                .is_server_side()
-            {
-                Output::err_generic(
-                    "Cannot use client-side --target={} with --server-components",
-                    format_args!(
-                        "{:?}",
-                        <bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target))
-                    ),
-                );
-                Global::crash();
-            } else {
-                opts.target = Some(api::Target::Bun);
-            }
         }
     }
 

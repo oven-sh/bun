@@ -14,7 +14,6 @@ use bun_core::strings;
 use bun_http::Headers;
 use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
-use bun_jsc::bun_string_jsc;
 use bun_ptr::{RefCount, RefPtr, ThisPtr};
 use bun_uws::{AnyRequest, AnyResponse};
 
@@ -22,7 +21,7 @@ use crate::api::js_bundle_completion_task::JSBundleCompletionTask;
 use crate::api::js_bundler::js_bundler::{self as JSBundler, Config as JSBundlerConfig};
 use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::bake::dev_server::route_bundle;
-use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
+use crate::server::jsc::{JSGlobalObject, JSValue};
 use crate::server::server_config::MethodOptional;
 use crate::server::{AnyRoute, AnyServer, GetOrStartLoadResult, ServePluginsCallback, StaticRoute};
 use crate::webcore::AnyBlob;
@@ -35,73 +34,23 @@ mod debug_scope {
 }
 use debug_scope::HTMLBundle as debug;
 
-// .classes.ts codegen wires toJS/fromJS/fromJSDirect via #[bun_jsc::JsClass].
 // HTMLBundle can be owned by JavaScript as well as any number of Server instances,
 // hence the ref count alongside the JS wrapper.
+/// `HTMLBundle`, declared in `HTMLBundle.bind.ts`.
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(debug_name = "HTMLBundle")]
-pub struct HTMLBundle {
+pub(crate) struct HTMLBundle {
     ref_count: RefCount<HTMLBundle>,
     pub global: bun_ptr::BackRef<JSGlobalObject>,
     pub path: Box<[u8]>,
 }
 
-// `jsc.Codegen.JSHTMLBundle` — hand-expansion of what the `#[bun_jsc::JsClass]`
-// derive would emit. Symbol names match generate-classes.ts
-// (`${typeName}__fromJS` / `__fromJSDirect` / `__create` / `__getConstructor`).
-// Hand-written (rather than `#[bun_jsc::JsClass]`) because HTMLBundle has a
-// custom `finalize` that derefs an intrusive refcount instead of Box-dropping.
-const _: () = {
-    // `*mut HTMLBundle` is opaque to C++ (linked by symbol name only); the
-    // pointee's Rust layout is irrelevant to the FFI boundary, but HTMLBundle
-    // lacks `#[repr(C)]` so rustc lints anyway.
-    // `safe fn` to match `generated_classes.rs` / the `#[bun_jsc::JsClass]`
-    // macro (avoids `clashing_extern_declarations`).
-    bun_jsc::jsc_abi_extern! {
-        #[allow(improper_ctypes)]
-        {
-            #[link_name = "HTMLBundle__fromJS"]
-            safe fn __from_js(value: JSValue) -> *mut HTMLBundle;
-            #[link_name = "HTMLBundle__fromJSDirect"]
-            safe fn __from_js_direct(value: JSValue) -> *mut HTMLBundle;
-            #[link_name = "HTMLBundle__create"]
-            safe fn __create(global: *mut JSGlobalObject, ptr: *mut HTMLBundle) -> JSValue;
-        }
-    }
-
-    impl bun_jsc::JsClass for HTMLBundle {
-        fn from_js(value: JSValue) -> Option<*mut Self> {
-            let p = __from_js(value);
-            if p.is_null() { None } else { Some(p) }
-        }
-        fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-            let p = __from_js_direct(value);
-            if p.is_null() { None } else { Some(p) }
-        }
-        fn to_js(self, _global: &JSGlobalObject) -> JSValue {
-            // HTMLBundle is *only* constructed via `init()` → `RefPtr::new`
-            // (heap-boxed, intrusive-refcounted) and wrapped via the inherent
-            // `HTMLBundle::to_js(RefPtr<Self>, …)` below, which
-            // wraps the *existing* `*HTMLBundle` allocation; re-boxing a
-            // by-value `self` here would split the allocation from its refcount
-            // and make `finalize`'s `deref` target the wrong heap block. No
-            // code path holds an owned by-value `HTMLBundle`, so this trait
-            // method is genuinely unreachable.
-            unreachable!("HTMLBundle::to_js: use the inherent RefPtr<Self> overload")
-        }
-        // `noConstructor: true` — no `HTMLBundle__getConstructor` export; trait default applies.
-    }
-
-    impl HTMLBundle {
-        /// `jsc.Codegen.JSHTMLBundle.toJS` — the JS wrapper takes over `this`'
-        /// ref (released in `finalize`).
-        pub fn to_js(this: RefPtr<HTMLBundle>, global: &JSGlobalObject) -> JSValue {
-            __create(global.as_mut_ptr(), this.into_raw())
-        }
-    }
-};
-
 impl HTMLBundle {
+    /// The JS wrapper takes over `this`' ref.
+    pub(crate) fn to_js(this: RefPtr<HTMLBundle>, global: &JSGlobalObject) -> JSValue {
+        Self::to_js_nonnull(this.into_non_null(), global)
+    }
+
     /// Initialize an HTMLBundle given a path.
     pub(crate) fn init(global: &JSGlobalObject, path: &[u8]) -> RefPtr<HTMLBundle> {
         RefPtr::new(HTMLBundle {
@@ -111,8 +60,8 @@ impl HTMLBundle {
         })
     }
 
-    pub(crate) fn get_index(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::create_utf8_for_js(global, &this.path)
+    pub(crate) fn get_index(this: &Self) -> &[u8] {
+        &this.path
     }
 
     /// For `Route::on_complete` and the dev server's `finalize_bundle`, when a build has no page for the file.
@@ -144,7 +93,7 @@ pub(crate) type HTMLBundleRoute = Route;
 // stack — `&mut self` would alias (UB); `&self` + `UnsafeCell` is sound.
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(debug_name = "HTMLBundleRoute")]
-pub struct Route {
+pub(crate) struct Route {
     pub(crate) bundle: RefPtr<HTMLBundle>,
     /// One HTMLBundle.Route can be specified multiple times
     ref_count: RefCount<Route>,
@@ -160,7 +109,7 @@ pub struct Route {
     pending_responses: JsCell<Vec<PendingResponse>>,
 }
 
-pub enum State {
+pub(crate) enum State {
     Pending,
     /// The server's plugins are loading, or the `JSBundleCompletionTask` (which
     /// holds a ref on this route until it delivers the result) is running. In
@@ -296,7 +245,7 @@ impl Route {
                             bstr::BStr::new(req.url())
                         );
                     }
-                    // TODO: use the code from DevServer.rs to render the error
+                    // TODO: use the code from bake/dev_server/failures.rs to render the error
                     resp.end_without_body(true);
                 }
                 State::Html(html) => {
@@ -350,6 +299,13 @@ impl Route {
     /// took on the server. The release comes last because it runs the server's
     /// idle pass (`deinit_if_we_can`), which schedules the server's deinit when
     /// this build was the only thing still keeping a stopped server alive.
+    /// The build task will not deliver (the context that started it stopped, or the VM is going):
+    /// what waits for the page is answered as for a failed build, and the server is released.
+    pub(crate) fn on_build_abandoned(&self) {
+        self.state.set(State::Err(Log::init()));
+        self.finish_building();
+    }
+
     fn finish_building(&self) {
         debug_assert!(matches!(self.state.get(), State::Err(_) | State::Html(_)));
         self.resume_pending_responses();
@@ -474,7 +430,9 @@ impl Route {
             bundler_options::SourceMapOption::None
         };
 
-        let mut completion_task = JSBundleCompletionTask::new(config, plugins, global);
+        // The build is the server's: it continues the script that made the server.
+        let mut completion_task =
+            JSBundleCompletionTask::new(config, plugins, global, server.context_id());
         completion_task.started_at_ns = bun_core::util::Timespec::now_allow_mocked_time().ns();
         // While we're building, ensure this doesn't get freed.
         completion_task.html_build_task = Some(RefPtr::from_this(this));
@@ -682,7 +640,7 @@ impl Route {
                         .config()
                         .is_development()
                     {
-                        // TODO: use the code from DevServer.rs to render the error
+                        // TODO: use the code from bake/dev_server/failures.rs to render the error
                     } else {
                         // To protect privacy, do not show errors to end users in production.
                         // TODO: Show a generic error page.
@@ -711,7 +669,7 @@ impl Drop for Route {
 }
 
 /// Represents an in-flight response before the bundle has finished building.
-pub struct PendingResponse {
+pub(crate) struct PendingResponse {
     method: Method,
     resp: AnyResponse,
     is_response_pending: Cell<bool>,

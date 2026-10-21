@@ -22,11 +22,12 @@ use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsClass as _;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_uws as uws;
+use core::cell::Cell;
 
 /// Re-export the codegen-emitted module so
 /// `$rust(SecureContext.rs, js.getConstructor)` in
 /// `generated_js2native.rs` resolves as `secure_context::js::get_constructor`.
-pub use crate::generated_classes::js_SecureContext as js;
+pub(crate) use crate::generated_classes::js_SecureContext as js;
 
 // Codegen (`.classes.ts`) wires `to_js`/`from_js`/`from_js_direct` via this derive.
 // `#[repr(C)]` only to satisfy the `improper_ctypes` lint on the generated
@@ -34,12 +35,13 @@ pub use crate::generated_classes::js_SecureContext as js;
 // (it round-trips `m_ctx` as `void*`).
 #[bun_jsc::JsClass]
 #[repr(C)]
-pub struct SecureContext {
+pub(crate) struct SecureContext {
     pub ctx: boringssl::OwnedSslCtx,
     /// `BunSocketContextOptions.digest()` — exactly the fields that reach
     /// `us_ssl_ctx_from_options`. Stored so an `intern()` WeakGCMap hit (keyed by
     /// the low 64 bits) can do a full content-equality check before reusing.
-    pub(crate) digest: [u8; 32],
+    /// Also `ctx`'s session id context, so `addCACert` folds each added certificate into it.
+    pub(crate) digest: Cell<[u8; 32]>,
     /// Approximate cert/key/CA byte length plus the BoringSSL `SSL_CTX` floor
     /// (~50 KB), so the GC can account for the off-heap allocation.
     pub(crate) extra_memory: usize,
@@ -73,7 +75,8 @@ impl SecureContext {
 
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
-        let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
+        // Only a server reads `rejectUnauthorized` back from a context (`server_ctx_rejects_unauthorized`).
+        let config = SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
         // `defer config.deinit()` — handled by Drop.
 
         SecureContext::create(global, &config)
@@ -231,14 +234,15 @@ impl SecureContext {
 
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
-        let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
+        // Only a server reads `rejectUnauthorized` back from a context (`server_ctx_rejects_unauthorized`).
+        let config = SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
         // `defer config.deinit()` — handled by Drop.
 
         let ctx_opts = config.as_usockets();
         let d = ctx_opts.digest();
 
         let mut err = uws::create_bun_socket_error_t::none;
-        let Some(ctx) = ctx_opts.create_ssl_context(&mut err) else {
+        let Some(ctx) = ctx_opts.create_ssl_context_with_digest(&d, &mut err) else {
             if err == uws::create_bun_socket_error_t::none
                 || err == uws::create_bun_socket_error_t::invalid_ciphers
             {
@@ -254,7 +258,7 @@ impl SecureContext {
         };
         let sc = Box::new(SecureContext {
             ctx,
-            digest: d,
+            digest: Cell::new(d),
             extra_memory: ctx_opts.approx_cert_bytes() + SSL_CTX_BASE_COST,
             shared: false,
         });
@@ -271,7 +275,8 @@ impl SecureContext {
 
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
-        let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
+        // Only a server reads `rejectUnauthorized` back from a context (`server_ctx_rejects_unauthorized`).
+        let config = SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
         // `defer config.deinit()` — handled by Drop.
 
         let ctx_opts = config.as_usockets();
@@ -284,7 +289,7 @@ impl SecureContext {
                 // 64-bit key collision is ~2⁻⁶⁴ but a false hit hands the wrong
                 // cert to a connection. Full-digest compare is 32 bytes; cheap.
                 // SAFETY: `from_js` returns a live `m_ctx` pointer owned by the JS wrapper.
-                if unsafe { (*existing).digest } == d {
+                if unsafe { (*existing).digest.get() } == d {
                     return Ok(cached);
                 }
             }
@@ -356,7 +361,7 @@ impl SecureContext {
         };
         Ok(Box::new(SecureContext {
             ctx,
-            digest: d,
+            digest: Cell::new(d),
             extra_memory: ctx_opts.approx_cert_bytes() + SSL_CTX_BASE_COST,
             shared: true,
         }))
@@ -411,6 +416,21 @@ impl SecureContext {
         };
         if ok == 0 {
             return Err(global.throw(format_args!("Invalid CA certificate")));
+        }
+        // Its trust set changed, so it stops sharing sessions with same-option contexts.
+        let mut folded = [0u8; 32];
+        let mut hasher = bun_sha_hmac::SHA256::init();
+        hasher.update(&this.digest.get());
+        hasher.update(bytes);
+        hasher.r#final(&mut folded);
+        this.digest.set(folded);
+        // SAFETY: `this.ctx` is live; the call copies the 32 bytes.
+        unsafe {
+            boringssl::SSL_CTX_set_session_id_context(
+                this.ctx.as_ptr(),
+                folded.as_ptr(),
+                folded.len(),
+            );
         }
         Ok(JSValue::UNDEFINED)
     }

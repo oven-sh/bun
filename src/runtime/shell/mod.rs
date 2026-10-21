@@ -16,123 +16,123 @@
 //! threaded through the trampoline.
 
 #[path = "shell_body.rs"]
-pub mod shell_body;
+pub(crate) mod shell_body;
 // Codegen (`generated_js2native.rs`) addresses this as `crate::shell::shell::*`.
-pub use shell_body as shell;
+pub(crate) use shell_body as shell;
 
 // ─── submodules ──────────────────────────────────────────────────────────────
 #[path = "EnvMap.rs"]
-pub mod env_map;
+pub(crate) mod env_map;
 #[path = "EnvStr.rs"]
-pub mod env_str;
+pub(crate) mod env_str;
 #[path = "RefCountedStr.rs"]
-pub mod ref_counted_str;
+pub(crate) mod ref_counted_str;
 #[path = "util.rs"]
-pub mod util;
+pub(crate) mod util;
 
 #[path = "Builtin.rs"]
-pub mod builtin;
+pub(crate) mod builtin;
 #[path = "interpreter.rs"]
-pub mod interpreter;
+pub(crate) mod interpreter;
 #[path = "IO.rs"]
-pub mod io;
+pub(crate) mod io;
 #[path = "IOReader.rs"]
-pub mod io_reader;
+pub(crate) mod io_reader;
 #[path = "IOWriter.rs"]
-pub mod io_writer;
+pub(crate) mod io_writer;
 #[path = "ParsedShellScript.rs"]
-pub mod parsed_shell_script;
+pub(crate) mod parsed_shell_script;
 #[path = "Yield.rs"]
-pub mod yield_;
+pub(crate) mod yield_;
 
 #[path = "states"]
-pub mod states {
+pub(crate) mod states {
     #[path = "Assigns.rs"]
-    pub mod assigns;
+    pub(crate) mod assigns;
     #[path = "Async.rs"]
-    pub mod r#async;
+    pub(crate) mod r#async;
     #[path = "Base.rs"]
-    pub mod base;
+    pub(crate) mod base;
     #[path = "Binary.rs"]
-    pub mod binary;
+    pub(crate) mod binary;
     #[path = "Cmd.rs"]
-    pub mod cmd;
+    pub(crate) mod cmd;
     #[path = "CondExpr.rs"]
-    pub mod cond_expr;
+    pub(crate) mod cond_expr;
     #[path = "Expansion.rs"]
-    pub mod expansion;
+    pub(crate) mod expansion;
     #[path = "If.rs"]
-    pub mod r#if;
+    pub(crate) mod r#if;
     #[path = "Pipeline.rs"]
-    pub mod pipeline;
+    pub(crate) mod pipeline;
     #[path = "Script.rs"]
-    pub mod script;
+    pub(crate) mod script;
     #[path = "Stmt.rs"]
-    pub mod stmt;
+    pub(crate) mod stmt;
     #[path = "Subshell.rs"]
-    pub mod subshell;
+    pub(crate) mod subshell;
 }
 
 #[path = "builtin"]
-pub mod builtins {
+pub(crate) mod builtins {
     #[path = "basename.rs"]
-    pub mod basename;
+    pub(crate) mod basename;
     #[path = "cat.rs"]
-    pub mod cat;
+    pub(crate) mod cat;
     #[path = "cd.rs"]
-    pub mod cd;
+    pub(crate) mod cd;
     #[path = "cp.rs"]
-    pub mod cp;
+    pub(crate) mod cp;
     #[path = "dirname.rs"]
-    pub mod dirname;
+    pub(crate) mod dirname;
     #[path = "echo.rs"]
-    pub mod echo;
+    pub(crate) mod echo;
     #[path = "exit.rs"]
-    pub mod exit;
+    pub(crate) mod exit;
     #[path = "export.rs"]
-    pub mod export;
+    pub(crate) mod export;
     #[path = "false_.rs"]
     pub(crate) mod false_;
     #[path = "ls.rs"]
-    pub mod ls;
+    pub(crate) mod ls;
     #[path = "mkdir.rs"]
-    pub mod mkdir;
+    pub(crate) mod mkdir;
     #[path = "mv.rs"]
-    pub mod mv;
+    pub(crate) mod mv;
     #[path = "pwd.rs"]
-    pub mod pwd;
+    pub(crate) mod pwd;
     #[path = "rm.rs"]
-    pub mod rm;
+    pub(crate) mod rm;
     #[path = "seq.rs"]
-    pub mod seq;
+    pub(crate) mod seq;
     #[path = "touch.rs"]
-    pub mod touch;
+    pub(crate) mod touch;
     #[path = "true_.rs"]
     pub(crate) mod true_;
     #[path = "which.rs"]
-    pub mod which;
+    pub(crate) mod which;
     #[path = "yes.rs"]
-    pub mod yes;
+    pub(crate) mod yes;
 }
 
 // ─── re-exports ──────────────────────────────────────────────────────────────
-pub use env_str::EnvStr;
-pub use interpreter::{ExitCode, Interpreter};
-pub use yield_::Yield;
+pub(crate) use env_str::EnvStr;
+pub(crate) use interpreter::{ExitCode, Interpreter};
+pub(crate) use yield_::Yield;
 
 /// Forward-decl task payloads for `runtime::dispatch::run_task` arms whose
 /// owning modules are still gated. See `dispatch_tasks.rs` header.
-pub mod dispatch_tasks;
+pub(crate) mod dispatch_tasks;
 
 /// `bun.shell.subproc` — `ShellSubprocess` + its `StaticPipeWriter`. Exposed so
 /// `runtime::dispatch::run_file_poll` can name `StaticPipeWriter<ShellSubprocess>`
 /// for the `SHELL_STATIC_PIPE_WRITER` poll arm.
 #[path = "subproc.rs"]
-pub mod subproc;
+pub(crate) mod subproc;
 
 // ─── shell escaping (canonical impl lives in bun_shell_parser) ───────────────
 // Re-export so `crate::shell::*` callers resolve without duplicating the table.
-pub use bun_shell_parser::{escape_8bit, needs_escape_utf8_ascii_latin1};
+pub(crate) use bun_shell_parser::{escape_8bit, needs_escape_utf8_ascii_latin1};
 
 // ─── AST surface (lifetime-erased aliases over `bun_shell_parser::ast`) ──────
 // State nodes hold `*const ast::*` raw pointers into the bumpalo-allocated AST
@@ -143,34 +143,34 @@ pub use bun_shell_parser::{escape_8bit, needs_escape_utf8_ascii_latin1};
 // raw pointers; `ShellArgs::set_script_ast` performs the single
 // lifetime-widening slice cast (`Script<'a>` → `Script<'static>`, identical
 // layout) at the arena/state-machine boundary.
-pub mod ast {
-    pub use bun_shell_parser::parse::SmolList;
+pub(crate) mod ast {
+    pub(crate) use bun_shell_parser::parse::SmolList;
     use bun_shell_parser::parse::ast as p;
-    pub use p::{BinaryOp, CondExprOp, IoKind, RedirectFlags};
+    pub(crate) use p::{BinaryOp, CondExprOp, IoKind, RedirectFlags};
 
-    pub type Script = p::Script<'static>;
-    pub type Stmt = p::Stmt<'static>;
-    pub type Expr = p::Expr<'static>;
+    pub(crate) type Script = p::Script<'static>;
+    pub(crate) type Stmt = p::Stmt<'static>;
+    pub(crate) type Expr = p::Expr<'static>;
     pub(crate) type Binary = p::Binary<'static>;
-    pub type Pipeline = p::Pipeline<'static>;
+    pub(crate) type Pipeline = p::Pipeline<'static>;
     pub(crate) type PipelineItem = p::PipelineItem<'static>;
-    pub type Cmd = p::Cmd<'static>;
+    pub(crate) type Cmd = p::Cmd<'static>;
     pub(crate) type Redirect = p::Redirect<'static>;
     pub(crate) type If = p::If<'static>;
-    pub type Subshell = p::Subshell<'static>;
-    pub type CondExpr = p::CondExpr<'static>;
-    pub type Assign = p::Assign<'static>;
-    pub type Atom = p::Atom<'static>;
+    pub(crate) type Subshell = p::Subshell<'static>;
+    pub(crate) type CondExpr = p::CondExpr<'static>;
+    pub(crate) type Assign = p::Assign<'static>;
+    pub(crate) type Atom = p::Atom<'static>;
     pub(crate) type SimpleAtom = p::SimpleAtom<'static>;
 }
 
 // Canonical 4-variant shell error enum. Defined in
 // `shell_body.rs` and re-exported so subproc/state nodes use the same type.
-pub use shell_body::ShellErr;
+pub(crate) use shell_body::ShellErr;
 
 pub(crate) type Result<T, E = ShellErr> = core::result::Result<T, E>;
 
-pub use parsed_shell_script::ParsedShellScript;
+pub(crate) use parsed_shell_script::ParsedShellScript;
 
 /// Re-export of the JS-exposed `Bun.spawn` Subprocess class. The
 /// `generate-classes.ts` resolver walks `lib.rs` in declaration order and
@@ -180,4 +180,4 @@ pub use parsed_shell_script::ParsedShellScript;
 /// `*mut Subprocess` thunk signatures — the JS wrapper outlives any borrow).
 /// Distinct from [`ShellSubprocess`](subproc::ShellSubprocess), the shell
 /// interpreter's internal process node.
-pub type Subprocess = crate::api::bun::subprocess::Subprocess<'static>;
+pub(crate) type Subprocess = crate::api::bun::subprocess::Subprocess<'static>;

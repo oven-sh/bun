@@ -24,6 +24,7 @@ pub(crate) mod js_bindings {
             ("panic", __jsc_host_js_panic),
             ("rootError", __jsc_host_js_root_error),
             ("outOfMemory", __jsc_host_js_out_of_memory),
+            ("operatorNew", __jsc_host_js_operator_new),
             ("abort", __jsc_host_js_abort),
             ("fastfail", __jsc_host_js_fastfail),
             ("trap", __jsc_host_js_trap),
@@ -206,6 +207,24 @@ pub(crate) mod js_bindings {
         bun_core::out_of_memory();
     }
 
+    /// Calls `mi_new` or `mi_new_nothrow`, which back C++ `operator new` where mimalloc overrides it.
+    /// Only `mi_new_nothrow` may return null.
+    #[bun_jsc::host_fn]
+    fn js_operator_new(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        unsafe extern "C" {
+            // safe: both accept any size, and the result is never dereferenced.
+            safe fn mi_new(size: usize) -> *mut core::ffi::c_void;
+            safe fn mi_new_nothrow(size: usize) -> *mut core::ffi::c_void;
+        }
+        if frame.argument(0).to_boolean() {
+            let refused = mi_new_nothrow(usize::MAX / 2).is_null();
+            return Ok(JSValue::js_boolean(refused));
+        }
+        crash_handler::suppress_core_dumps_if_necessary();
+        let _ = mi_new(usize::MAX / 2);
+        Ok(JSValue::UNDEFINED)
+    }
+
     #[bun_jsc::host_fn]
     fn js_raise_ignoring_panic_handler(
         _global: &JSGlobalObject,
@@ -219,8 +238,9 @@ pub(crate) mod js_bindings {
     fn js_get_feature_data(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         let obj = JSValue::create_empty_object(global, 5);
         let list = analytics::PACKED_FEATURES_LIST;
+        // Not `static_`: a feature can be named like a common string ("s3").
         let array = JSValue::create_array_from_iter(global, list.iter(), |feature| {
-            BunString::static_(feature).to_js(global)
+            BunString::clone_latin1(feature.as_ref()).into_js(global)
         })?;
         obj.put(global, "features", array);
         obj.put(

@@ -1885,6 +1885,36 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
     expect(await p.installed("node_modules", "leaf")).toBe("1.1.0");
   });
 
+  // The request is for the root's entry, and the manifest in the cache serves that one. The row of `parent` asks
+  // for a range that this manifest lacks: it keeps its package, and the request does not fail because of it.
+  it("`bun update <name> --offline` keeps a row of a package whose range the manifest in the cache lacks", async () => {
+    const releases: Releases = {
+      leaf: { "1.0.0": {}, "1.1.0": {}, "2.0.0": {} },
+      parent: { "1.0.0": { optionalDependencies: { leaf: "^2.0.0" } } },
+    };
+    using p = await project({ dependencies: { leaf: "^1.1.0" } }, releases);
+    const { "2.0.0": newer, ...older } = releases.leaf;
+    releases.leaf = older;
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const manifest = p.manifest("leaf");
+    const stale = readFileSync(manifest);
+    releases.leaf = { ...older, "2.0.0": newer };
+    const root = { dependencies: { leaf: "^1.1.0", parent: "1.0.0" } };
+    await writeFile(p.path("package.json"), JSON.stringify({ name: "foo", ...root }, null, 2));
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    expect(await p.locked("leaf")).toEqual(["1.1.0", "2.0.0"]);
+    await writeFile(manifest, stale);
+    const before = await p.written();
+
+    p.asked();
+    expect(await p.run("update", "leaf", "--offline")).toMatchObject({
+      ...unchanged,
+      warnings: notChecked("", "2.0.0"),
+    });
+    expect(p.asked()).toEqual([]);
+    expect(await p.written()).toEqual(before);
+  });
+
   it.each(["", "--latest"])("`bun update %s` still moves the other entries", async flag => {
     const releases: Releases = { ...LEAF, other: { "1.0.0": {}, "1.1.0": {} } };
     using p = await project({ dependencies: { other: "^1.0.0" }, ...OPTIONAL_LEAF }, releases);

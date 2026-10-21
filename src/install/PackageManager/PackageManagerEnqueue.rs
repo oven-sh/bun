@@ -2543,7 +2543,28 @@ fn lacks_version_in_cache(
     let task_id = Task::Id::for_manifest(&name);
     let is_answer = (this.network_dedupe_map.get(&task_id))
         .is_some_and(|entry| entry.manifest == ManifestOrigin::Registry);
-    (!is_answer).then(|| fails_update_request(this, task_id, id, &name))
+    // The manifest may still serve the entry of a request, so another row of that name does not fail it.
+    (!is_answer).then(|| {
+        is_entry_of_update_request(this, id, dependency)
+            && fails_update_request(this, task_id, id, &name)
+    })
+}
+
+/// Whether `dependency` is the package.json entry that a request of the command names.
+fn is_entry_of_update_request(
+    this: &PackageManager,
+    id: DependencyID,
+    dependency: &Dependency,
+) -> bool {
+    let lockfile = &*this.lockfile;
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let owner = lockfile.get_workspace_pkg_if_workspace_dep(id);
+    let pending = this.pending_filtered_write.as_deref();
+    this.update_requests.iter().any(|request| {
+        request.matches(dependency, buf)
+            && (lockfile.workspaces_of_update_request(pending, this.workspace_name_hash, request))
+                .contains(&owner)
+    })
 }
 
 /// A patched package is held while the range allows it; `--latest` and audit fix move it.

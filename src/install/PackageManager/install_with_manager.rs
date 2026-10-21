@@ -686,6 +686,8 @@ pub fn install_with_manager(
     super::package_json_write_back::fold_resolved_positionals(manager);
 
     let lockfile_before_clean = clean_lockfile(manager, log_level)?;
+    // Its ids are those of the lockfile before the clean.
+    manager.direct_before = DirectDependencies::default();
     if !manager.options.dry_run {
         Output::flush();
         crate::update_transitive::warn_orphaned_patches(manager);

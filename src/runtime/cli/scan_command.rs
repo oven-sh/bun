@@ -25,6 +25,7 @@ impl ScanCommand {
             Global::exit(1);
         }
 
+        Output::stdout_is_the_result();
         bun_core::pretty_error!(
             "<r><b>bun pm scan <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,

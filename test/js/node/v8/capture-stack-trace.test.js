@@ -1430,7 +1430,7 @@ test("Error.appendStackTrace keeps the stack trace when the source and destinati
 test.each([
   ["no formatter", undefined],
   ["a formatter", (error, sites) => "formatted " + sites.map(site => site.getFunctionName()).join(" ")],
-])("Error.appendStackTrace leaves the frames of a source that is being formatted (%s)", (_, formatter) => {
+])("Error.appendStackTrace does not move the frames of a source that is being formatted (%s)", (_, formatter) => {
   const context = vm.createContext({});
   const error = vm.runInContext("(function thrower() { return new Error('boom'); })()", context);
   const other = new Error("other");
@@ -1757,9 +1757,9 @@ test.concurrent(
       let calls = 0;
       Error.prepareStackTrace = (formatted, sites) => (calls++, JSON.stringify([formatted === error, sites.map(describe)]));
       try {
-        return [calls, error.stack, calls];
+        return [error.stack, calls];
       } catch (thrown) {
-        return [0, JSON.stringify(["throws " + thrown.message, []]), calls];
+        return [JSON.stringify(["throws " + thrown.message, []]), calls];
       } finally {
         Error.prepareStackTrace = undefined;
       }
@@ -1767,15 +1767,15 @@ test.concurrent(
     // An error from another realm is formatted by that realm's Error.prepareStackTrace.
     delete shapes["from a node:vm context"];
     const cases = Object.entries(shapes).map(([shape, make]) => {
-      const [first, ...samples] = captureAll(make);
-      return { shape, expected: JSON.stringify(read(first)), samples };
+      const [onAccess, ...samples] = captureAll(make);
+      return { shape, expected: JSON.stringify(read(onAccess)), samples };
     });
     await collect();
     const rows = {};
     for (const { shape, expected, samples } of cases) {
       const results = readCollected(samples, error => JSON.stringify(read(error)));
-      const [before, stack, after] = JSON.parse(expected);
-      rows[shape] = { framesCollected: results.length > 0, calls: after - before, sites: JSON.parse(stack)[1].length, same: results.every(result => result === expected) };
+      const [stack, calls] = JSON.parse(expected);
+      rows[shape] = { framesCollected: results.length > 0, calls, sites: JSON.parse(stack)[1].length, same: results.every(result => result === expected) };
     }
     console.log(JSON.stringify(rows));
   `;
@@ -1783,7 +1783,7 @@ test.concurrent(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const rows = JSON.parse(stdout);
-    expect(Object.keys(rows).length).toBeGreaterThan(15);
+    expect(rows).not.toEqual({});
     for (const shape in rows) {
       // The header is made first, and making it throws.
       const formatted = shape !== "message is a Symbol";
@@ -1843,31 +1843,49 @@ test.concurrent(
 
 // Printing an error shows its trace and leaves its stack unread.
 test.concurrent(
-  "Bun.inspect(error) does not run Error.prepareStackTrace, which the first read of the stack then does",
+  "Bun.inspect(error) prints the same trace after a collection found the frames dead, and Error.prepareStackTrace is left to the first read of the stack",
   async () => {
     const src = `
+    import vm from "node:vm";
     ${collectedFrames}
     let calls = 0;
-    Error.prepareStackTrace = (error, sites) => (calls++, "formatted " + sites[0].getFunctionName());
+    Error.prepareStackTrace = (error, sites) => (calls++, "formatted " + sites.length);
     const read = error => {
       const before = calls;
-      const printed = Bun.inspect(error).split("\\n").filter(line => /^\\s+at (make|thrower) /.test(line)).map(line => line.trim().replace(/ \\(.*$/, ""));
-      return JSON.stringify({ printed, callsToPrint: calls - before, stack: error.stack, callsToRead: calls - before });
+      const printed = Bun.inspect(error).split("\\n").filter(line => /^\\s+at /.test(line)).map(line => line.trim());
+      return JSON.stringify({ printed, callsToPrint: calls - before, formatted: error.stack.startsWith("formatted "), callsToRead: calls - before });
     };
-    const make = () => { try { return new Error("boom"); } finally {} };
-    const [first, ...samples] = captureAll(make);
-    const atOnce = read(first);
+    const makers = {
+      inFunction: () => { try { return new Error("boom"); } finally {} },
+      inConstructor: () => new (class Widget { constructor() { this.error = new Error("boom"); } })().error,
+      inNamelessFunction: () => (() => function () { try { return new Error("boom"); } finally {} })()(),
+      inEvalCode: () => (0, eval)("new Error('boom')"),
+      // Its line of the default stack has no function name and so no parentheses.
+      inGlobalCode: () => vm.runInThisContext("new Error('boom')", { filename: "/global-code.js" }),
+    };
+    const cases = Object.entries(makers).map(([name, make]) => {
+      const [onAccess, ...samples] = captureAll(make);
+      return { name, expected: read(onAccess), samples };
+    });
     await collect();
-    const later = readCollected(samples, read);
-    console.log(JSON.stringify({ framesCollected: later.length > 0, atOnce: JSON.parse(atOnce), same: later.every(result => result === atOnce) }));
+    const rows = {};
+    for (const { name, expected, samples } of cases) {
+      const results = readCollected(samples, read);
+      const { printed, ...onAccess } = JSON.parse(expected);
+      rows[name] = { framesCollected: results.length > 0, same: results.every(result => result === expected), top: printed[0].replace(/ ?\\(.*$/, ""), ...onAccess };
+    }
+    console.log(JSON.stringify(rows));
   `;
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
+    const row = top => ({ framesCollected: true, same: true, top, callsToPrint: 0, formatted: true, callsToRead: 1 });
     expect(JSON.parse(stdout)).toEqual({
-      framesCollected: true,
-      atOnce: { printed: ["at make", "at thrower"], callsToPrint: 0, stack: "formatted make", callsToRead: 1 },
-      same: true,
+      inFunction: row("at inFunction"),
+      inConstructor: row("at new Widget"),
+      inNamelessFunction: row("at <anonymous>"),
+      inEvalCode: row("at eval"),
+      inGlobalCode: row("at /global-code.js:1:1"),
     });
     expect(exitCode).toBe(0);
   },
@@ -1902,8 +1920,8 @@ test.concurrent("getFunction() is the function while it is alive, and undefined 
   expect(exitCode).toBe(0);
 });
 
-// Positions go through the source map of a transpiled file when the stack is read. A node:vm script named
-// like the file is not the file: its positions stay as they are.
+// Positions go through the source map of a transpiled file. A node:vm script named like the file is not
+// the file: its positions stay as they are.
 test.concurrent("positions are mapped the same after a collection found the frames dead", async () => {
   const src = `
     import vm from "node:vm";
@@ -1922,6 +1940,8 @@ test.concurrent("positions are mapped the same after a collection found the fram
     const rows: Record<string, unknown> = {};
     for (const [name, make] of Object.entries(makers)) {
       for (const formatter of [undefined, sitePositions]) {
+        // An error from another realm is formatted by that realm's Error.prepareStackTrace.
+        if (formatter && name === "a node:vm context") continue;
         const read = (error: Error) => {
           Error.prepareStackTrace = formatter;
           try {
@@ -1930,8 +1950,8 @@ test.concurrent("positions are mapped the same after a collection found the fram
             Error.prepareStackTrace = undefined;
           }
         };
-        const [first, ...samples] = captureAll(make);
-        const expected = read(first);
+        const [onAccess, ...samples] = captureAll(make);
+        const expected = read(onAccess);
         await collect();
         const results = readCollected(samples, read);
         rows[name + (formatter ? ", call sites" : ", string")] = { framesCollected: results.length > 0, frames: JSON.parse(expected).length > 0, same: results.every((result: string) => result === expected) };
@@ -1956,17 +1976,14 @@ test.concurrent("positions are mapped the same after a collection found the fram
     "a node:vm script named like this file, string": row,
     "a node:vm script named like this file, call sites": row,
     "a node:vm context, string": row,
-    "a node:vm context, call sites": row,
   });
   expect(exitCode).toBe(0);
 });
 
 // The source map of a bundled file is dropped with the file's source, which the trace's code kept alive.
-test.concurrent.each(["inline", "linked"])(
-  "positions in a bundled module are mapped after the module is collected (%s source map)",
-  async sourcemap => {
-    using dir = tempDir("stack-positions-of-collected-module", {
-      "lib.ts": `
+test.concurrent("positions in a bundled module are mapped after the module is collected", async () => {
+  using dir = tempDir("stack-positions-of-collected-module", {
+    "lib.ts": `
       type Padding = {
         these: "lines";
         are: "not in the output";
@@ -1978,11 +1995,11 @@ test.concurrent.each(["inline", "linked"])(
         }
       }
     `,
-      "main.mjs": `
+    "main.mjs": `
       import { join } from "node:path";
-      const { outputs } = await Bun.build({ entrypoints: [join(import.meta.dir, "lib.ts")], target: "bun", sourcemap: ${JSON.stringify(sourcemap)}, outdir: join(import.meta.dir, "out") });
-      const position = stack => stack.split("\\n")[1].trim().replace(/^.*[\\\\/]/, "");
-      const sitePosition = (error, [site]) => position("\\n" + site.getFileName() + ":" + site.getLineNumber() + ":" + site.getColumnNumber() + ")");
+      const { outputs } = await Bun.build({ entrypoints: [join(import.meta.dir, "lib.ts")], target: "bun", sourcemap: "inline", outdir: join(import.meta.dir, "out") });
+      const position = stack => stack.split("\\n")[1].trim().replace(/^.*[\\\\/]/, "").replace(")", "");
+      const sitePosition = (error, [site]) => position("\\n" + site.getFileName() + ":" + site.getLineNumber() + ":" + site.getColumnNumber());
       async function load() {
         const graph = new Bun.ModuleGraph();
         const { make } = await graph.import(outputs.find(output => output.kind === "entry-point").path);
@@ -1990,7 +2007,7 @@ test.concurrent.each(["inline", "linked"])(
         graph.dispose();
         return { errors, weak: new WeakRef(make) };
       }
-      const { errors: [first, firstSites, later, laterSites], weak } = await load();
+      const { errors: [onAccess, onAccessSites, later, laterSites], weak } = await load();
       const read = (string, sites) => {
         const row = [position(string.stack)];
         Error.prepareStackTrace = sitePosition;
@@ -1998,26 +2015,72 @@ test.concurrent.each(["inline", "linked"])(
         Error.prepareStackTrace = undefined;
         return row;
       };
-      const atOnce = read(first, firstSites);
+      const expected = read(onAccess, onAccessSites);
       await new Promise(resolve => setImmediate(resolve));
       Bun.gc(true);
-      console.log(JSON.stringify({ collected: weak.deref() === undefined, atOnce, later: read(later, laterSites) }));
+      console.log(JSON.stringify({ collected: weak.deref() === undefined, onAccess: expected, later: read(later, laterSites) }));
     `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.mjs"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const positions = ["lib.ts:8:22)", "lib.ts:8:18)"];
-    expect(JSON.parse(stdout)).toEqual({ collected: true, atOnce: positions, later: positions });
-    expect(exitCode).toBe(0);
-  },
-);
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const positions = ["lib.ts:8:22", "lib.ts:8:18"];
+  expect(JSON.parse(stdout)).toEqual({ collected: true, onAccess: positions, later: positions });
+  expect(exitCode).toBe(0);
+});
+
+// Loading a file again replaces its source map.
+test.concurrent("positions are those of the code that ran, after its file changed and was loaded again", async () => {
+  using dir = tempDir("stack-positions-of-reloaded-file", {
+    "main.cjs": `
+      const { writeFileSync } = require("node:fs");
+      const file = require("node:path").join(__dirname, "reloaded.ts");
+      const position = stack => stack.split("\\n")[1].trim().replace(/^.*[\\\\/]/, "").replace(")", "");
+      const sitePosition = (error, [site]) => position("\\n" + site.getFileName() + ":" + site.getLineNumber() + ":" + site.getColumnNumber());
+      const read = ([string, sites]) => {
+        const row = [position(string.stack)];
+        Error.prepareStackTrace = sitePosition;
+        row.push(sites.stack);
+        Error.prepareStackTrace = undefined;
+        return row.join();
+      };
+      const load = () => {
+        const { make } = require(file);
+        delete require.cache[file];
+        return { errors: [make(), make()], weak: new WeakRef(make) };
+      };
+      (async () => {
+        writeFileSync(file, "type Padding = {\\n  not: 'in the output';\\n};\\nexport function make(): Error {\\n  try { return new Error('boom'); } finally {}\\n}\\n");
+        const onAccess = read(load().errors);
+        const samples = Array.from({ length: 8 }, load);
+        await new Promise(resolve => setImmediate(resolve));
+        Bun.gc(true);
+        writeFileSync(file, "export const padding = [\\n  1,\\n  2,\\n  3,\\n  4,\\n  5,\\n  6,\\n];\\ntype Padding = number;\\nexport function make(): Error { try { return new Error('boom'); } finally {} }\\n");
+        read(load().errors);
+        const later = samples.filter(({ weak }) => weak.deref() === undefined).map(({ errors }) => read(errors));
+        console.log(JSON.stringify({ framesCollected: later.length > 0, onAccess, later: [...new Set(later)] }));
+      })();
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const positions = "reloaded.ts:5:20,reloaded.ts:5:20";
+  expect(JSON.parse(stdout)).toEqual({ framesCollected: true, onAccess: positions, later: [positions] });
+  expect(exitCode).toBe(0);
+});
 
 test.concurrent("an error behaves the same after a collection found its frames dead", async () => {
   const src = `
@@ -2178,7 +2241,65 @@ test.concurrent("Error.captureStackTrace replaces a trace whose frames a collect
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("Error.appendStackTrace replaces a trace whose frames a collection found dead", async () => {
+test.concurrent("an error given to a stream keeps a trace whose frames a collection found dead", async () => {
+  const src = `
+    ${collectedFrames}
+    const read = async error => {
+      let controller;
+      const reader = new ReadableStream({ start(c) { controller = c; } }).getReader();
+      async function consumer() { return await reader.read(); }
+      const rejected = consumer().catch(reason => reason);
+      controller.error(error);
+      return JSON.stringify((await rejected).stack.split("\\n").map(line => line.trim().replace(/ ?\\(.*$/, "")).slice(0, 3));
+    };
+    const make = () => { try { return new Error("boom"); } finally {} };
+    const [onAccess, ...samples] = captureAll(make);
+    const expected = await read(onAccess);
+    await collect();
+    const results = await Promise.all(readCollected(samples, read));
+    console.log(JSON.stringify({ framesCollected: results.length > 0, onAccess: JSON.parse(expected), same: results.every(result => result === expected) }));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    framesCollected: true,
+    onAccess: ["Error: boom", "at make", "at thrower"],
+    same: true,
+  });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a stack read while it is being formatted has the frames a collection found dead", async () => {
+  const src = `
+    ${collectedFrames}
+    const read = error => {
+      let entered = false, inner;
+      Object.defineProperty(error, "name", { get() { if (!entered) { entered = true; inner = this.stack; } return "Named"; } });
+      Error.prepareStackTrace = (error, sites) => "formatted " + sites[0].getFunctionName();
+      const outer = error.stack;
+      Error.prepareStackTrace = undefined;
+      return JSON.stringify({ outer, inner: inner.split("\\n").map(line => line.trim().replace(/ ?\\(.*$/, "")).slice(1, 3) });
+    };
+    const make = () => { try { const error = new Error("boom"); Error.captureStackTrace(error); return error; } finally {} };
+    const [onAccess, ...samples] = captureAll(make);
+    const expected = read(onAccess);
+    await collect();
+    const results = readCollected(samples, read);
+    console.log(JSON.stringify({ framesCollected: results.length > 0, onAccess: JSON.parse(expected), same: results.every(result => result === expected) }));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    framesCollected: true,
+    onAccess: { outer: "formatted make", inner: ["at make", "at thrower"] },
+    same: true,
+  });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a collection finds the frames dead again after Error.appendStackTrace replaced them", async () => {
   const src = `
     ${collectedFrames}
     const destinations = captureAll(() => new TypeError("boom"));

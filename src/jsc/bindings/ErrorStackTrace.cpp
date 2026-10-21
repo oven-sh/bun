@@ -111,19 +111,15 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
     return JSCStackTrace(newFrames);
 }
 
-void JSCStackTrace::removeImplementationVisibilityPrivateFrames()
-{
-    m_frames.removeAllMatching([](const JSCStackFrame& frame) {
-        return frame.isImplementationVisibilityPrivate();
-    });
-}
-
 void JSCStackTrace::detachFromCells()
 {
-    if (!m_frames.isEmpty())
+    if (!m_frames.isEmpty()) {
         firstFrameExecutableSourceURL();
-    for (auto& frame : m_frames)
+    }
+    for (auto& frame : m_frames) {
         frame.detachFromCells();
+    }
+    m_isDetached = true;
 }
 
 const WTF::String& JSCStackTrace::firstFrameExecutableSourceURL()
@@ -137,13 +133,18 @@ const WTF::String& JSCStackTrace::firstFrameExecutableSourceURL()
 
 size_t JSCStackTrace::sizeInBytes() const
 {
-    return sizeof(JSCStackTrace) + m_frames.sizeInBytes();
+    size_t size = sizeof(JSCStackTrace) + m_frames.sizeInBytes();
+    for (auto& frame : m_frames) {
+        size += frame.sizeOfStrings();
+    }
+    return size;
 }
 
 void JSCStackTrace::reconcileWeakReferencesAtGCEnd(JSC::VM&)
 {
-    for (auto& frame : m_frames)
+    for (auto& frame : m_frames) {
         frame.clearCalleeIfDead();
+    }
 }
 
 void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit)
@@ -217,11 +218,6 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
         stackTrace.shrink(stackTraceLimit);
 }
 
-static WTF::String emptyIfNull(WTF::String&& string)
-{
-    return string.isNull() ? emptyString() : WTF::move(string);
-}
-
 static bool isVisibleBuiltinFunction(JSC::CodeBlock* codeBlock)
 {
     if (!codeBlock->ownerExecutable()) {
@@ -247,10 +243,9 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
 {
     m_callee = frame.callee();
     if (m_callee) {
-        if (auto* object = m_callee->getObject())
-            m_calleeGlobalObject = object->globalObject();
-        if (auto* function = dynamicDowncast<JSC::JSFunction>(m_callee))
-            m_calleeIsScriptFunction = !function->isHostFunction();
+        if (auto* function = dynamicDowncast<JSC::JSFunction>(m_callee)) {
+            m_calleeIsNonHostFunction = !function->isHostFunction();
+        }
     }
 
     // Based on JSC's GetStackTraceFunctor (Interpreter.cpp)
@@ -267,6 +262,8 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
         if (codeType == JSC::FunctionCode || codeType == JSC::EvalCode) {
             m_isFunctionOrEval = true;
         }
+        m_codeType = codeType;
+        m_codeBlockIsConstructor = codeBlock->isConstructor();
     }
 
     if (!m_codeBlock && frame.hasLineAndColumnInfo()) {
@@ -291,18 +288,17 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
 
 void JSCStackFrame::detachFromCells()
 {
-    if (!m_sourceURL)
+    if (!m_sourceURL) {
         m_sourceURL = retrieveSourceURL();
-    // An empty name is not null, so that it is not looked for again.
-    if (!m_functionName)
-        m_functionName = emptyIfNull(retrieveFunctionName());
+    }
+    if (!m_functionName) {
+        // Not null, so that functionName() does not look for it again.
+        auto functionName = retrieveFunctionName();
+        m_functionName = functionName.isNull() ? emptyString() : functionName;
+    }
     getSourcePositions();
-    lineColumn();
-    frameSourceURL();
-    stackLineFunctionName();
+    m_stackFrameFunctionName = stackFrameFunctionName(m_stackFrameFunctionNameFlags);
 
-    if (auto* codeBlock = m_stackFrame->codeBlock())
-        m_sourceProvider = codeBlock->source().provider();
     m_stackFrame = nullptr;
     m_codeBlock = nullptr;
     clearCalleeIfDead();
@@ -310,8 +306,20 @@ void JSCStackFrame::detachFromCells()
 
 void JSCStackFrame::clearCalleeIfDead()
 {
-    if (m_callee && !m_vm.heap.isMarked(m_callee))
+    if (m_callee && !m_vm.heap.isMarked(m_callee)) {
         m_callee = nullptr;
+    }
+}
+
+size_t JSCStackFrame::sizeOfStrings() const
+{
+    size_t size = 0;
+    for (auto* string : { &m_sourceURL, &m_functionName, &m_stackFrameFunctionName, &m_stackLinePosition.sourceURL }) {
+        if (auto* impl = string->impl()) {
+            size += impl->costDuringGC();
+        }
+    }
+    return size;
 }
 
 JSC::JSString* JSCStackFrame::sourceURL()
@@ -326,39 +334,30 @@ JSC::JSString* JSCStackFrame::sourceURL()
 JSC::JSString* JSCStackFrame::functionName()
 {
     if (!m_functionName) {
-        m_functionName = emptyIfNull(retrieveFunctionName());
+        m_functionName = retrieveFunctionName();
     }
 
     return jsString(this->m_vm, m_functionName);
 }
 
-JSC::LineColumn JSCStackFrame::lineColumn()
+WTF::String JSCStackFrame::stackFrameFunctionName(unsigned& flags) const
 {
-    if (!m_lineColumn)
-        m_lineColumn = m_stackFrame->computeLineAndColumn();
-    return *m_lineColumn;
-}
-
-const WTF::String& JSCStackFrame::frameSourceURL()
-{
-    if (!m_frameSourceURL)
-        m_frameSourceURL = Zig::sourceURL(m_vm, *m_stackFrame);
-    return *m_frameSourceURL;
-}
-
-const WTF::String& JSCStackFrame::stackLineFunctionName()
-{
-    if (!m_stackLineFunctionName) {
-        m_stackLineFunctionNameFlags = FunctionNameFlags::AddNewKeyword;
-        m_stackLineFunctionName = emptyIfNull(Zig::functionName(m_vm, *m_stackFrame, &m_stackLineFunctionNameFlags));
+    if (m_stackFrame) {
+        return Zig::functionName(m_vm, *m_stackFrame, &flags);
     }
-    return m_stackLineFunctionName;
+
+    bool addNewKeyword = flags & FunctionNameFlags::AddNewKeyword;
+    flags |= m_stackFrameFunctionNameFlags;
+    if (addNewKeyword && m_codeBlockIsConstructor && !m_stackFrameFunctionName.isEmpty()) {
+        return makeString("new "_s, m_stackFrameFunctionName);
+    }
+    return m_stackFrameFunctionName;
 }
 
-unsigned JSCStackFrame::stackLineFunctionNameFlags()
+void JSCStackFrame::setSourcePositions(SourcePositions sourcePositions)
 {
-    stackLineFunctionName();
-    return m_stackLineFunctionNameFlags;
+    m_sourcePositions = sourcePositions;
+    m_sourcePositionsState = SourcePositionsState::Calculated;
 }
 
 JSCStackFrame::SourcePositions* JSCStackFrame::getSourcePositions()

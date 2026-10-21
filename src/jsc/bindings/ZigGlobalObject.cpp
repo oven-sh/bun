@@ -634,7 +634,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
     vm.setOnComputeErrorInfoJSValue(computeErrorInfoWrapperToJSValue);
     vm.setOnSnapshotStackTrace(snapshotStackTrace);
-    vm.setOnComputeErrorInfoFromSnapshot(computeErrorInfoFromSnapshot);
     vm.setComputeLineColumnWithSourcemap(computeLineColumnWithSourcemap);
     vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {
         // if you process.nextTick on a microtask we need this

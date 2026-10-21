@@ -57,7 +57,7 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
         m_function.set(vm, this, callee);
     }
     // isToplevel() needs the real callee: m_function is undefined when the callee is hidden.
-    if (!isStrictFrame && stackFrame.calleeIsScriptFunction()) {
+    if (!isStrictFrame && stackFrame.calleeIsNonHostFunction()) {
         m_flags |= static_cast<unsigned int>(Flags::IsSloppyFunctionCall);
     }
 

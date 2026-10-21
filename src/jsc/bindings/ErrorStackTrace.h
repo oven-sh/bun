@@ -34,14 +34,21 @@ namespace Zig {
  * - String properties are exposed (and cached) as JSStrings, instead of WTF::String.
  * - Helper functions like isEval and isConstructor.
  *
- * Note that this is not a heap allocated, garbage collected, JSCell. It must be stack allocated, as it doesn't
- * use any write barriers and rely on the GC to see the stored JSC object pointers on the stack, until detachFromCells().
+ * Note that this is not a JSCell and uses no write barriers: whoever makes one keeps its cells alive, until detachFromCells().
  */
 class JSCStackFrame {
 public:
     struct SourcePositions {
         WTF::OrdinalNumber line;
         WTF::OrdinalNumber column;
+    };
+
+    // Where a line of the default error.stack points.
+    struct StackLinePosition {
+        WTF::String sourceURL;
+        JSC::LineColumn lineColumn;
+        JSC::LineColumn originalLineColumn;
+        bool remapped { false };
     };
 
 private:
@@ -51,24 +58,25 @@ private:
     // Points into the vector this frame was built from (JSCStackTrace::fromExisting). Null once detached.
     const JSC::StackFrame* m_stackFrame;
     JSC::JSCell* m_callee { nullptr };
-    // Only compared, and only with a global object that is older than this frame and alive.
-    JSC::JSGlobalObject* m_calleeGlobalObject { nullptr };
 
     // May be null
     JSC::CodeBlock* m_codeBlock { nullptr };
     JSC::BytecodeIndex m_bytecodeIndex;
     intptr_t m_sourceID { JSC::noSourceID };
 
-    // Once detached. ~SourceProvider drops the source map the positions are yet to go through.
-    RefPtr<JSC::SourceProvider> m_sourceProvider;
-
     // Lazy-initialized
-    std::optional<WTF::String> m_frameSourceURL;
     WTF::String m_sourceURL;
     WTF::String m_functionName;
-    WTF::String m_stackLineFunctionName;
-    unsigned m_stackLineFunctionNameFlags { 0 };
-    std::optional<JSC::LineColumn> m_lineColumn;
+
+    // Once detached
+    WTF::String m_stackFrameFunctionName;
+    unsigned m_stackFrameFunctionNameFlags { 0 };
+
+    StackLinePosition m_stackLinePosition;
+
+    // Of JSC::StackFrame::codeBlock(), which m_codeBlock is not for a builtin without a source URL.
+    std::optional<JSC::CodeType> m_codeType;
+    bool m_codeBlockIsConstructor = false;
 
     bool m_isWasmFrame = false;
 
@@ -78,7 +86,7 @@ private:
     bool m_isConstructor = false;
     bool m_isStrict = false;
     bool m_isNative = false;
-    bool m_calleeIsScriptFunction = false;
+    bool m_calleeIsNonHostFunction = false;
     bool m_hasLineAndColumnInfo = false;
     bool m_isImplementationVisibilityPrivate = false;
 
@@ -97,16 +105,18 @@ public:
     // For the end of a collection, before the sweep: reads what is still lazy, then keeps no cell but the callee, weakly.
     void detachFromCells();
     void clearCalleeIfDead();
+    size_t sizeOfStrings() const;
 
+    // Not once detached.
+    const JSC::StackFrame& stackFrame() const { return *m_stackFrame; }
     // Null if it was collected after detachFromCells().
     JSC::JSCell* callee() const { return m_callee; }
-    // Null if the callee is not an object.
-    JSC::JSGlobalObject* calleeGlobalObject() const { return m_calleeGlobalObject; }
-    // A JSFunction that is not a host function, collected or not.
-    bool calleeIsScriptFunction() const { return m_calleeIsScriptFunction; }
+    // Whether or not it was collected.
+    bool calleeIsNonHostFunction() const { return m_calleeIsNonHostFunction; }
 
     intptr_t sourceID() const { return m_sourceID; }
     JSC::JSString* sourceURL();
+    void setSourceURL(const WTF::String& sourceURL) { m_sourceURL = sourceURL; }
     JSC::JSString* functionName();
 
     bool isFunctionOrEval() const { return m_isFunctionOrEval; }
@@ -116,6 +126,7 @@ public:
 
     // Returns null if can't retrieve the source positions
     SourcePositions* getSourcePositions();
+    void setSourcePositions(SourcePositions);
 
     bool isWasmFrame() const { return m_isWasmFrame; }
     bool isEval() const { return m_isEval; }
@@ -124,14 +135,13 @@ public:
     // No code block, or the one of a builtin without a source URL.
     bool isNative() const { return m_isNative; }
     bool isImplementationVisibilityPrivate() const { return m_isImplementationVisibilityPrivate; }
-
-    // The JSC::StackFrame's own answers, and Zig::sourceURL() and Zig::functionName() of it.
     bool hasLineAndColumnInfo() const { return m_hasLineAndColumnInfo; }
-    JSC::LineColumn lineColumn();
-    const WTF::String& frameSourceURL();
-    // With FunctionNameFlags::AddNewKeyword.
-    const WTF::String& stackLineFunctionName();
-    unsigned stackLineFunctionNameFlags();
+    std::optional<JSC::CodeType> codeType() const { return m_codeType; }
+    bool codeBlockIsConstructor() const { return m_codeBlockIsConstructor; }
+
+    // Zig::functionName() of the JSC::StackFrame.
+    WTF::String stackFrameFunctionName(unsigned& flags) const;
+    StackLinePosition& stackLinePosition() { return m_stackLinePosition; }
 
 private:
     ALWAYS_INLINE String retrieveSourceURL();
@@ -160,6 +170,7 @@ private:
     WTF::Vector<JSCStackFrame> m_frames;
     // Lazy-initialized
     WTF::String m_firstFrameExecutableSourceURL;
+    bool m_isDetached = false;
 
 public:
     JSCStackTrace()
@@ -182,10 +193,11 @@ public:
     // Reads existingFrames lazily, so they must outlive the result or its detachFromCells().
     static JSCStackTrace fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames);
 
-    // Present when Options::showPrivateScriptsInStackTraces() is on. Call sites leave them out.
-    void removeImplementationVisibilityPrivateFrames();
-
+    // The positions have gone through source maps by then: the maps are those of the code that ran.
     void detachFromCells();
+    bool isDetached() const { return m_isDetached; }
+
+    JSC::JSValue computeErrorInfo(JSC::VM&, unsigned& line, unsigned& column, WTF::String& sourceURL, JSC::JSObject* errorInstance) final;
     size_t sizeInBytes() const final;
     void reconcileWeakReferencesAtGCEnd(JSC::VM&) final;
 

@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
-// computeErrorInfoWrapperToString (src/jsc/bindings/FormatStackTraceForJS.cpp,
-// installed via vm.setOnComputeErrorInfo) runs from
+// snapshotStackTrace (src/jsc/bindings/FormatStackTraceForJS.cpp,
+// installed via vm.setOnSnapshotStackTrace) runs from
 // ErrorInstance::reconcileWeakReferencesAtGCEnd during Heap::runEndPhase, for
 // any live Error whose stack frames now reference dead code. It used to clear
 // whatever exception was pending after computing the stack string. With

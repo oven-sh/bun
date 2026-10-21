@@ -82,10 +82,6 @@ public:
     bool isAsync() const { return m_flags & static_cast<unsigned int>(Flags::IsAsync); }
     bool isSloppyFunctionCall() const { return m_flags & static_cast<unsigned int>(Flags::IsSloppyFunctionCall); }
 
-    void setLineNumber(OrdinalNumber lineNumber) { m_lineNumber = lineNumber; }
-    void setColumnNumber(OrdinalNumber columnNumber) { m_columnNumber = columnNumber; }
-    void setSourceURL(JSC::VM& vm, JSC::JSString* sourceURL) { m_sourceURL.set(vm, this, sourceURL); }
-
     void formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb);
 
 private:

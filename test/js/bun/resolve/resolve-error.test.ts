@@ -489,7 +489,7 @@ describe.concurrent("Bun.resolve() rejections are tracked", () => {
 // Bun.resolve() allocates its rejected promise while the exception the resolve
 // threw is still pending on the VM. That allocation is a GC safepoint, and the
 // concurrent collector's end phase materializes the stack of every live Error
-// whose frames died, through the onComputeErrorInfo hook. The hook used to
+// whose frames died, through the onSnapshotStackTrace hook. The hook used to
 // clear whatever exception was pending, so the rejection then found nothing:
 // `panic: A JavaScript exception was thrown, but it was cleared before it could be read.`
 //

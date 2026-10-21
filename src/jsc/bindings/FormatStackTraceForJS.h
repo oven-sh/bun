@@ -81,11 +81,8 @@ JSC_DECLARE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter);
 JSC_DECLARE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter);
 
 // Internal wrapper functions for JSC error info callbacks
-JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, JSC::JSObject* errorInstance);
-std::unique_ptr<JSC::StackTraceSnapshot> snapshotStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& stackTrace);
-JSC::JSValue computeErrorInfoFromSnapshot(JSC::VM& vm, JSC::StackTraceSnapshot& snapshot, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, JSC::JSObject* errorInstance);
-// The lines of the default error.stack below its first. Changes nothing about the error and runs no script.
-WTF::String formatStackTraceSnapshot(JSC::VM& vm, JSC::StackTraceSnapshot& snapshot, JSC::ErrorInstance* errorInstance);
+JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackFrames, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, JSC::JSObject* errorInstance);
+std::unique_ptr<JSC::StackTraceSnapshot> snapshotStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& stackFrames, JSC::JSGlobalObject* lexicalGlobalObject);
 void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull sourceProvider, JSC::LineColumn& lineColumn, WTF::String& remappedSourceURL);
 } // namespace Bun
 

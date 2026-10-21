@@ -164,6 +164,8 @@ extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObje
         return;
     if (auto* existing = instance->stackTrace(); existing && !existing->isEmpty())
         return;
+    if (instance->stackTraceSnapshot())
+        return;
 
     size_t limit = globalObject->stackTraceLimit().value_or(10);
     if (!limit)

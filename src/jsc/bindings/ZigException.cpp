@@ -32,7 +32,6 @@
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/VM.h"
 #include "ZigGlobalObject.h"
-#include "FormatStackTraceForJS.h"
 #include "helpers.h"
 #include "JavaScriptCore/JSObjectInlines.h"
 
@@ -64,18 +63,19 @@ enum PopulateStackTraceFlags {
 
 #define SYNTAX_ERROR_CODE 4
 
-static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stackFrame, ZigStackFrame& frame)
+static void populateStackFrameMetadata(const Zig::JSCStackFrame& stackFrame, const WTF::String& sourceURL, ZigStackFrame& frame)
 {
+    unsigned functionNameFlags = Zig::FunctionNameFlags::None;
+
     if (stackFrame.isWasmFrame()) {
         frame.code_type = ZigStackFrameCodeWasm;
 
-        auto name = Zig::functionName(vm, stackFrame, nullptr);
+        auto name = stackFrame.stackFrameFunctionName(functionNameFlags);
         if (!name.isEmpty()) {
             frame.function_name = Bun::toStringRef(name);
         }
 
-        auto sourceURL = Zig::sourceURL(vm, stackFrame);
-        if (sourceURL != "[wasm code]"_s) {
+        if (!sourceURL.isEmpty() && sourceURL != "[wasm code]"_s) {
             // [wasm code] is a useless source URL, so we don't bother to set it.
             // It is the default value JSC returns.
             frame.source_url = Bun::toStringRef(sourceURL);
@@ -83,11 +83,9 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
         return;
     }
 
-    auto sourceURL = Zig::sourceURL(vm, stackFrame);
     frame.source_url = Bun::toStringRef(sourceURL);
-    auto m_codeBlock = stackFrame.codeBlock();
-    if (m_codeBlock) {
-        switch (m_codeBlock->codeType()) {
+    if (auto codeType = stackFrame.codeType()) {
+        switch (*codeType) {
         case JSC::EvalCode: {
             frame.code_type = ZigStackFrameCodeEval;
             return;
@@ -101,7 +99,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
             return;
         }
         case JSC::FunctionCode: {
-            frame.code_type = !m_codeBlock->isConstructor() ? ZigStackFrameCodeFunction : ZigStackFrameCodeConstructor;
+            frame.code_type = !stackFrame.codeBlockIsConstructor() ? ZigStackFrameCodeFunction : ZigStackFrameCodeConstructor;
             break;
         }
         default:
@@ -109,11 +107,11 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
         }
     }
 
-    WTF::String functionName = Zig::functionName(vm, stackFrame, nullptr);
+    WTF::String functionName = stackFrame.stackFrameFunctionName(functionNameFlags);
     if (!functionName.isEmpty())
         frame.function_name = Bun::toStringRef(functionName);
 
-    frame.is_async = stackFrame.isAsyncFrame();
+    frame.is_async = stackFrame.isAsync();
 }
 
 static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunString* source_lines,
@@ -218,7 +216,7 @@ static void populateStackFrame(JSC::VM& vm, ZigStackTrace& trace, const JSC::Sta
     ZigStackFrame& frame, bool is_top, JSC::SourceProvider** referenced_source_provider, PopulateStackTraceFlags flags)
 {
     if (flags == PopulateStackTraceFlags::OnlyPosition) {
-        populateStackFrameMetadata(vm, stackFrame, frame);
+        populateStackFrameMetadata(Zig::JSCStackFrame(vm, stackFrame), Zig::sourceURL(vm, stackFrame), frame);
         populateStackFramePosition(stackFrame, nullptr,
             nullptr,
             0, frame.position, referenced_source_provider, flags);
@@ -447,6 +445,27 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
     }
 }
 
+// The positions of a snapshot have gone through source maps, and it has no source to take lines from.
+static void populateStackTrace(Zig::JSCStackTrace& snapshot, ZigStackTrace& trace)
+{
+    trace.frames_len = 0;
+    for (size_t i = 0; i < snapshot.size() && trace.frames_len < trace.frames_cap; i++) {
+        Zig::JSCStackFrame& stackFrame = snapshot.at(i);
+        // Skip native frames
+        if (!stackFrame.hasLineAndColumnInfo() && !stackFrame.isWasmFrame())
+            continue;
+
+        ZigStackFrame& frame = trace.frames_ptr[trace.frames_len++];
+        frame = {};
+        populateStackFrameMetadata(stackFrame, stackFrame.stackLinePosition().sourceURL, frame);
+        if (auto* sourcePositions = stackFrame.getSourcePositions()) {
+            frame.position.line_zero_based = sourcePositions->line.zeroBasedInt();
+            frame.position.column_zero_based = sourcePositions->column.zeroBasedInt();
+        }
+        frame.remapped = true;
+    }
+}
+
 static JSC::JSValue getNonObservable(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::JSObject* obj, const JSC::PropertyName& propertyName)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -484,6 +503,10 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
     } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
         populateStackTrace(vm, *err->stackTrace(), except.stack, flags);
         RETURN_IF_EXCEPTION(scope, );
+
+    } else if (auto* snapshot = err->stackTraceSnapshot()) {
+        populateStackTrace(static_cast<Zig::JSCStackTrace&>(*snapshot), except.stack);
+        except.remapped = except.stack.frames_len > 0;
 
     } else {
         getFromSourceURL = true;
@@ -585,14 +608,8 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
         // we don't want to serialize JSC::StackFrame longer than we need to
         // so in this case, we parse the stack trace as a string
 
-        JSC::JSValue stackValue;
-        if (auto* snapshot = err->stackTraceSnapshot()) {
-            // As with the frames above, the stack stays unread: Error.prepareStackTrace is for whoever reads it.
-            stackValue = jsString(vm, Bun::formatStackTraceSnapshot(vm, *snapshot, err));
-        } else {
-            // This one intentionally calls getters.
-            stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack);
-        }
+        // This one intentionally calls getters.
+        JSC::JSValue stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack);
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
         if (stackValue) {

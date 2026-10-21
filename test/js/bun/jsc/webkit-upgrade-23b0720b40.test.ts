@@ -104,6 +104,32 @@ describe.concurrent("WebKit 23b0720b40 upgrade", () => {
     expect(result).toBe(-2);
   });
 
+  // Not from the sync: a later fix of the fork. 2147483646 * 4194303 is exact, and adding 4294967295 gives
+  // 9007201393836033, which is above 2^53 and odd, so the double is 9007201393836032. The multiply wrapped
+  // under the addition, which kept the low bits of the exact sum.
+  test("optimized code rounds a truncated product plus an addend as a double does (oven-sh/WebKit#859)", () => {
+    const cases: [body: string, args: (number | string)[], expected: number][] = [
+      ["return (x * 4194303 + 4294967295) | 0;", [2147483646], 2139095040],
+      ["return (4294967295 + 4194303 * x) | 0;", [2147483646], 2139095040],
+      ["return (x * 4194302 + 4294967295 + 4294967294) | 0;", [2147483647], -4194304],
+      ["return (x * 4194303 + (y | 0) + (z | 0)) | 0;", [-2147483648, -2147483648, -1], 0],
+      ["return (x * (y & 0x3fffff) + 4294967295) | 0;", [2147483646, -1], 2139095040],
+      ["return ((x & 0x3fffff) * y + 4294967295) | 0;", [-1, "2147483646"], 2139095040],
+      ["return ~(x * 4194303 + 4294967295);", [2147483646], -2139095041],
+      // No addition: the product is exact, so the multiply can wrap.
+      ["return (x * 4194303) | 0;", [2147483646], 2139095042],
+    ];
+    const results = cases.map(([body, args, expected]) => {
+      const f = new Function("x", "y", "z", body);
+      let result = f(...args);
+      // Until the DFG's code is what runs. The bound is for a run with the JIT off.
+      for (let i = 0; i < 200_000 && result === expected && numberOfDFGCompiles(f) === 0; i++) result = f(...args);
+      for (let i = 0; i < 100 && result === expected; i++) result = f(...args);
+      return [body, result];
+    });
+    expect(results).toEqual(cases.map(([body, , expected]) => [body, expected]));
+  });
+
   // JavaScriptCore no longer captures a stack in its Exception for a throw that a `catch` clause is certain to handle
   // (70896f26ff). node:vm takes the position for its header from that stack, between the throw and the `catch`.
   test("node:vm gives an error its header under a `catch` clause too", async () => {

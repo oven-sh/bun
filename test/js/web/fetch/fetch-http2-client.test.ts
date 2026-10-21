@@ -1,4 +1,4 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, nodeExe, tls } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
@@ -188,32 +188,29 @@ async function withRawH2Server(
 // env var is read at startup. With describe.concurrent + max_concurrency=20 that
 // peaks at ~8GB of debug subprocesses, which under ASAN (~2-3x) OOM-kills the
 // 16GB/0-swap runner; fully serialising under ASAN instead pushes the 50+ spawns
-// past the 3-minute file timeout. Cap live subprocesses to a few under ASAN so
+// past the 3-minute file timeout. Cap live tests to a few under ASAN so
 // describe.concurrent can still overlap them without exhausting memory. Non-ASAN
 // keeps the cap at max_concurrency so the semaphore is a no-op.
 const slotLimit = isASAN ? 4 : 20;
-// A test waits for its slot while its timeout runs.
-if (isASAN) setDefaultTimeout(15_000);
 let live = 0;
 const waiters: Array<() => void> = [];
-async function spawnCapped(options: Bun.SpawnOptions.SpawnOptions<"ignore", "pipe", "pipe"> & { cmd: string[] }) {
+// A test takes its slot in a hook: the wait does not count against the timeout of the test.
+beforeEach(async () => {
   if (live >= slotLimit) {
     await new Promise<void>(r => waiters.push(r)); // slot handed off to us, `live` already counts it
   } else {
     live++;
   }
-  const proc = Bun.spawn(options);
-  proc.exited.finally(() => {
-    const next = waiters.shift();
-    if (next)
-      next(); // hand the slot off directly; `live` stays as-is
-    else live--;
-  });
-  return proc;
-}
+}, 120_000);
+afterEach(() => {
+  const next = waiters.shift();
+  if (next)
+    next(); // hand the slot off directly; `live` stays as-is
+  else live--;
+});
 
 function spawnFetch(script: string, options: { env?: Record<string, string>; ipc?: () => void } = {}) {
-  return spawnCapped({
+  return Bun.spawn({
     cmd: [bunExe(), "--no-warnings", "-e", script],
     env: {
       ...bunEnv,
@@ -2154,7 +2151,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     await once(server, "listening");
     const { port } = server.address() as import("node:net").AddressInfo;
     try {
-      await using proc = await spawnCapped({
+      await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "--no-warnings",
@@ -2186,7 +2183,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       async url => {
         // No BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT in env; the CLI flag
         // alone should make ALPN offer h2.
-        await using proc = await spawnCapped({
+        await using proc = Bun.spawn({
           cmd: [
             bunExe(),
             "--no-warnings",
@@ -2215,7 +2212,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       },
       async url => {
         // No BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT in env.
-        await using proc = await spawnCapped({
+        await using proc = Bun.spawn({
           cmd: [
             bunExe(),
             "--no-warnings",
@@ -2242,7 +2239,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
         res.end(req.httpVersion);
       },
       async url => {
-        await using proc = await spawnCapped({
+        await using proc = Bun.spawn({
           cmd: [
             bunExe(),
             "--no-warnings",
@@ -2274,7 +2271,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     await once(server, "listening");
     const { port } = server.address() as import("node:net").AddressInfo;
     try {
-      await using proc = await spawnCapped({
+      await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "--no-warnings",
@@ -2316,7 +2313,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     await once(server, "listening");
     const { port } = server.address() as import("node:net").AddressInfo;
     try {
-      await using proc = await spawnCapped({
+      await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "--no-warnings",
@@ -2366,7 +2363,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
         });
       },
       async url => {
-        await using proc = await spawnCapped({
+        await using proc = Bun.spawn({
           cmd: [
             bunExe(),
             "--no-warnings",
@@ -2409,7 +2406,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     await once(server, "listening");
     const { port } = server.address() as import("node:net").AddressInfo;
     try {
-      await using proc = await spawnCapped({
+      await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "--no-warnings",
@@ -2492,7 +2489,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
   test('protocol: "http2" on a plain http:// URL fails with HTTP2Unsupported', async () => {
     // h2c is out of scope; without an explicit check the request would
     // silently complete over HTTP/1.1.
-    await using proc = await spawnCapped({
+    await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "--no-warnings",
@@ -2515,7 +2512,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     // Leader's TLS handshake never completes (server is plain TCP), so its
     // PendingConnect stays open. The waiter has no abort-tracker entry and
     // would otherwise wait for the leader before observing the abort.
-    await using proc = await spawnCapped({
+    await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "--no-warnings",
@@ -2647,7 +2644,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     // body fall through to the keep-alive pool even though the chunked
     // upload's terminating 0\r\n\r\n was never written. The follow-up GET
     // must open a fresh connection.
-    await using proc = await spawnCapped({
+    await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "--no-warnings",
@@ -2701,7 +2698,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     // sits in handshake; the waiter coalesces onto its PendingConnect. When
     // the leader is aborted, the waiter must retry as the new leader (a
     // second TCP connect) rather than be told the server lacks h2.
-    await using proc = await spawnCapped({
+    await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "--no-warnings",
@@ -2773,12 +2770,8 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
   });
 });
 
-// RFC 9113 section 7: "The endpoint requires that HTTP/1.1 be used instead
-// of HTTP/2." These servers offer both protocols, so a request that did
-// not name one has HTTP/1.1 to go to.
-// Serial: a test in the describe.concurrent block above waits for a
-// subprocess slot while its timeout runs. Under ASAN that block is full.
-describe("HTTP_1_1_REQUIRED", () => {
+// RFC 9113 section 7: "The endpoint requires that HTTP/1.1 be used instead of HTTP/2."
+describe.concurrent("HTTP_1_1_REQUIRED", () => {
   const HTTP_1_1_REQUIRED = http2.constants.NGHTTP2_HTTP_1_1_REQUIRED;
   const overH1 = "HTTP/1.1 200 OK\r\ncontent-length: 7\r\n\r\nover h1";
   const rstFrame = (id: number, code: number) => frame(3, 0, id, u32be(code));
@@ -2853,6 +2846,8 @@ describe("HTTP_1_1_REQUIRED", () => {
         conn.socket.write(Buffer.concat([frame(1, 4, id, hpackStatus(100)), rstFrame(id, HTTP_1_1_REQUIRED)])),
     ],
     ["GOAWAY below the stream", (conn: RawConn) => conn.goaway(0, HTTP_1_1_REQUIRED)],
+    // The peer may have processed this stream (RFC 9113 section 6.8). A GET can go again.
+    ["GOAWAY that names the stream", (conn: RawConn, id: number) => conn.goaway(id, HTTP_1_1_REQUIRED)],
     // Alone, the graceful GOAWAY means "not processed, send it again over h2".
     [
       "RST_STREAM and a graceful GOAWAY in one read",
@@ -2889,8 +2884,7 @@ describe("HTTP_1_1_REQUIRED", () => {
     });
   });
 
-  // A request that names HTTP/2 has no HTTP/1.1 to go to, and a stream
-  // body may be consumed already: both keep rejecting, after one attempt.
+  // Neither request can go to HTTP/1.1: one names HTTP/2, the other may have consumed its body.
   test.each([
     ["protocol: 'http2'", `protocol: "http2"`],
     [
@@ -2913,9 +2907,9 @@ describe("HTTP_1_1_REQUIRED", () => {
     expect(result).toEqual({ out: "200 over h2", streams: [1, 1], http1: [], h2Connections: 2, exitCode: 0 });
   });
 
-  // RFC 9113 section 6.8: the peer may have processed a stream at or below the GOAWAY's id.
-  test("GOAWAY that names the stream: the request rejects", async () => {
-    expect(await run((conn, id) => conn.goaway(id, HTTP_1_1_REQUIRED), one())).toEqual(rejected("HTTP2GoAway"));
+  test("GOAWAY that names the stream: a POST rejects", async () => {
+    const post = one(`method: "POST", body: "payload"`);
+    expect(await run((conn, id) => conn.goaway(id, HTTP_1_1_REQUIRED), post)).toEqual(rejected("HTTP2GoAway"));
   });
 
   test("after the response headers, the request is not sent again", async () => {
@@ -2955,8 +2949,7 @@ describe("HTTP_1_1_REQUIRED", () => {
     });
   });
 
-  // What the next request of the origin does. The idle connections are in the
-  // keep-alive pool, and a request takes the first one that can carry it.
+  // The next request of the origin takes the first idle connection in the pool that can carry it.
   test("after RST_STREAM, the next request tries h2 first", async () => {
     expect(await run(reset, inTurn("/a", "/b"))).toEqual({
       out: ["200 over h1", "200 over h1"],
@@ -3009,48 +3002,44 @@ describe("HTTP_1_1_REQUIRED", () => {
   });
 
   // Four cold requests: the first opens the h2 connection, the other three wait for its SETTINGS.
-  // The HTTP thread starts requests in the order of the fetch() calls. So when the server has
-  // "/gate", which takes its own HTTP/1.1 connection, the four are started.
+  // The HTTP thread starts requests in call order, so once the server has "/gate" the four are started.
   test.each([
-    ["below every stream", 0, "200 over h1", ["GET /a HTTP/1.1"]],
+    ["below every stream", 0],
     // `session.goaway(code)` of node:http2 sends this id: the stream that the server got.
-    ["that names the first stream", 1, "HTTP2GoAway", []],
-  ])(
-    "GOAWAY %s: the requests that wait for SETTINGS go to HTTP/1.1",
-    async (_name, lastStreamId, first, firstOverH1) => {
-      const leader = Promise.withResolvers<RawConn>();
-      const gate = Promise.withResolvers<void>();
-      const refuse = (conn: RawConn) =>
-        conn.socket.write(Buffer.concat([frame(4, 0, 0), goawayFrame(lastStreamId, HTTP_1_1_REQUIRED)]));
-      void Promise.all([leader.promise, gate.promise]).then(([conn]) => refuse(conn));
-      let h2Requests = 0;
-      const result = await run(
-        // A second h2 request is a failure. Refuse it at once, so that the result shows it.
-        conn => (h2Requests++ === 0 ? leader.resolve(conn) : refuse(conn)),
-        url => `
+    ["that names the first stream", 1],
+  ])("GOAWAY %s while three requests wait for SETTINGS: all four go to HTTP/1.1", async (_name, lastStreamId) => {
+    const leader = Promise.withResolvers<RawConn>();
+    const gate = Promise.withResolvers<void>();
+    const refuse = (conn: RawConn) =>
+      conn.socket.write(Buffer.concat([frame(4, 0, 0), goawayFrame(lastStreamId, HTTP_1_1_REQUIRED)]));
+    void Promise.all([leader.promise, gate.promise]).then(([conn]) => refuse(conn));
+    let h2Requests = 0;
+    const result = await run(
+      // A second h2 request is a failure. Refuse it at once, so that the result shows it.
+      conn => (h2Requests++ === 0 ? leader.resolve(conn) : refuse(conn)),
+      url => `
           const all = ["/a", "/b", "/c", "/d"].map(path => settle(fetch("${url}" + path, init)));
           all.push(settle(fetch("${url}/gate", { ...init, protocol: "http1.1" })));
           console.log(JSON.stringify(await Promise.all(all)));
         `,
-        {
-          settings: false,
-          respond: path => {
-            if (path !== "/gate") return overH1;
-            gate.resolve();
-            // Not kept alive: a waiting request that still offers h2 must not find this connection idle.
-            return "HTTP/1.1 200 OK\r\nconnection: close\r\ncontent-length: 7\r\n\r\nover h1";
-          },
+      {
+        settings: false,
+        respond: path => {
+          if (path !== "/gate") return overH1;
+          gate.resolve();
+          // Not kept alive: a waiting request that still offers h2 must not find this connection idle.
+          return "HTTP/1.1 200 OK\r\nconnection: close\r\ncontent-length: 7\r\n\r\nover h1";
         },
-      );
-      expect({ ...result, http1: result.http1.toSorted() }).toEqual({
-        out: [first, "200 over h1", "200 over h1", "200 over h1", "200 over h1"],
-        streams: [1],
-        http1: [...firstOverH1, "GET /b HTTP/1.1", "GET /c HTTP/1.1", "GET /d HTTP/1.1", "GET /gate HTTP/1.1"],
-        h2Connections: 1,
-        exitCode: 0,
-      });
-    },
-  );
+      },
+    );
+    expect({ ...result, http1: result.http1.toSorted() }).toEqual({
+      out: ["200 over h1", "200 over h1", "200 over h1", "200 over h1", "200 over h1"],
+      streams: [1],
+      http1: ["GET /a HTTP/1.1", "GET /b HTTP/1.1", "GET /c HTTP/1.1", "GET /d HTTP/1.1", "GET /gate HTTP/1.1"],
+      h2Connections: 1,
+      exitCode: 0,
+    });
+  });
 });
 
 // Serial: this test reads the subprocess's stderr stream mid-flight to gate

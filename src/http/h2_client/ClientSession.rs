@@ -101,8 +101,7 @@ pub struct ClientSession {
     pub(crate) preface_sent: bool,
     pub(crate) settings_received: bool,
     pub(crate) goaway_received: bool,
-    /// The peer sent GOAWAY(HTTP_1_1_REQUIRED): a request this connection
-    /// never wrote leaves for HTTP/1.1, not for another h2 connection.
+    /// After GOAWAY(HTTP_1_1_REQUIRED), a request that waits for this connection goes to HTTP/1.1.
     pub(crate) http1_required: bool,
     /// Set when the HPACK encoder's dynamic table has diverged from the
     /// server's view (writeRequest failed mid-encode). Existing siblings whose

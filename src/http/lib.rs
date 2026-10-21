@@ -2187,15 +2187,13 @@ impl<'a> HTTPClient<'a> {
         self.start_::<true>();
     }
 
-    /// Whether `retry_over_http1` applies. A request that names its protocol
-    /// has no HTTP/1.1 to go to, and only a `Bytes` body can be sent again.
+    /// A request that names its protocol keeps it, and only a `Bytes` body can be sent again.
     pub(crate) fn can_retry_over_http1(&self) -> bool {
         self.flags.forced_protocol.is_none()
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
     }
 
-    /// The peer ended the stream of the request with HTTP_1_1_REQUIRED before
-    /// it sent a response.
+    /// The peer refused the request with HTTP_1_1_REQUIRED before it sent a response.
     pub(crate) fn retry_over_http1(&mut self) {
         debug_assert!(self.h2.is_none());
         debug_assert!(self.can_retry_over_http1());
@@ -2203,9 +2201,7 @@ impl<'a> HTTPClient<'a> {
         self.restart_from_top();
     }
 
-    /// Keep the rest of this request on HTTP/1.1: `can_offer_h2` and
-    /// `can_try_h3_alt_svc` refuse it from here on, redirect hops included.
-    /// A request that names its protocol stays as it is.
+    /// `can_offer_h2` and `can_try_h3_alt_svc` refuse the request from here on, redirects included.
     pub(crate) fn pin_to_http1(&mut self) {
         if self.flags.forced_protocol.is_none() {
             self.flags.forced_protocol = Some(Protocol::Http1_1);

@@ -56,9 +56,7 @@ pub struct Stream {
     /// or final status arrives.
     pub(crate) awaiting_continue: bool,
     pub(crate) fatal_error: Option<Error>,
-    /// The peer ended this stream (RST_STREAM), or left it unprocessed
-    /// (GOAWAY), with HTTP_1_1_REQUIRED. Kept apart from `fatal_error`, which
-    /// a GOAWAY in the same read overwrites.
+    /// Refused with HTTP_1_1_REQUIRED. A GOAWAY in the same read overwrites only `fatal_error`.
     pub(crate) http1_required: bool,
     /// DATA bytes consumed since the last WINDOW_UPDATE for this stream.
     pub(crate) unacked_bytes: u32,

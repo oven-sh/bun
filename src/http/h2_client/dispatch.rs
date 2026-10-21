@@ -551,6 +551,10 @@ fn dispatch_frame(
                     // still complete successfully" — don't discard a
                     // response that already finished in this same read.
                     s.fatal_error = Some(crate::Error::HTTP2GoAway);
+                    // The peer may have processed the request: only an idempotent one goes again.
+                    if http1_required && s.client_ref().is_some_and(|c| c.method.is_idempotent()) {
+                        s.http1_required = true;
+                    }
                 }
             }
         }

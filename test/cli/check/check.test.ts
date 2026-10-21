@@ -503,7 +503,7 @@ describe.concurrent("bun check", () => {
       },
     });
     const exitCode = await proc.exited;
-    expect(output).toContain("Loading");
+    expect(output).toMatch(/Loading|Checking/);
     expect(output).toContain("TS2322");
     expect(proc.signalCode).toBeNull();
     expect(exitCode).toBe(1);
@@ -25073,7 +25073,7 @@ describe.concurrent("--check", () => {
     test.each(commands)("bun %j runs after the check passes", async (cmd, expected) => {
       using dir = project(files("1"));
       const { output, exitCode, signalCode } = await inTerminal(String(dir), cmd);
-      expect(output).toContain("Loading");
+      expect(output).toMatch(/Loading|Checking/);
       expect(output).toContain(expected);
       expect(signalCode).toBeNull();
       expect(exitCode).toBe(0);

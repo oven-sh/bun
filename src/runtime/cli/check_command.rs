@@ -223,13 +223,19 @@ fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
     );
     let began = std::time::Instant::now();
     let mut tick = 0;
-    while !is_done.load(Ordering::Acquire) {
-        if began.elapsed() >= initial_delay {
+    loop {
+        let done = is_done.load(Ordering::Acquire);
+        // Without a delay the line is drawn once even if the check ended before this thread ran.
+        let draws = !done || (tick == 0 && initial_delay.is_zero());
+        if draws && began.elapsed() >= initial_delay {
             let mut line = Vec::new();
             format::write_progress(&mut line, progress, style, tick);
             let _ = Output::error_writer().write_all(&line);
             Output::flush();
             tick += 1;
+        }
+        if done {
+            break;
         }
         std::thread::park_timeout(BETWEEN);
     }

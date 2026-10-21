@@ -1115,6 +1115,7 @@ describe("SubtleCrypto.supports for deriveBits and deriveKey", () => {
     deriveKey: await outcome(crypto.subtle.deriveKey(algorithm, key, derivedKeyType, false, usages)),
   });
   const yes = { supports: true, deriveBits: "fulfils" };
+  const hkdfOverMaximum = "OperationError: length exceeds the maximum derived bit length";
 
   it.each([
     ["HKDF", hkdf],
@@ -1181,6 +1182,45 @@ describe("SubtleCrypto.supports for deriveBits and deriveKey", () => {
     });
   });
 
+  // RFC 5869 limits the output of HKDF to 255 blocks of the hash.
+  it.each([
+    ["SHA-1", 160],
+    ["SHA-224", 224],
+    ["SHA-256", 256],
+    ["SHA-384", 384],
+    ["SHA-512", 512],
+    ["SHA3-256", 256],
+    ["SHA3-384", 384],
+    ["SHA3-512", 512],
+  ] as const)("HKDF with %s: answers as deriveBits does at the longest output", async (hash, hashLength) => {
+    const key = await importKdfKey("HKDF");
+    const algorithm = { ...hkdf, hash };
+    const maximum = 255 * hashLength;
+    expect({
+      maximum: await deriveBitsRow(algorithm, key, maximum),
+      "maximum + 8": await deriveBitsRow(algorithm, key, maximum + 8),
+    }).toEqual({
+      maximum: yes,
+      "maximum + 8": { supports: false, deriveBits: hkdfOverMaximum },
+    });
+  });
+
+  it("deriveBits reports the length before an HKDF info that is too long", async () => {
+    const key = await importKdfKey("HKDF");
+    const info1025 = { ...hkdf, info: new Uint8Array(1025) };
+    expect({
+      "null length": await outcome(crypto.subtle.deriveBits(info1025, key, null)),
+      "length 7": await outcome(crypto.subtle.deriveBits(info1025, key, 7)),
+      "length over the maximum": await outcome(crypto.subtle.deriveBits(info1025, key, 255 * 256 + 8)),
+      "length 8": await outcome(crypto.subtle.deriveBits(info1025, key, 8)),
+    }).toEqual({
+      "null length": "OperationError: length cannot be null",
+      "length 7": "OperationError: length must be a multiple of 8",
+      "length over the maximum": hkdfOverMaximum,
+      "length 8": "OperationError: algorithm.info must be at most 1024 bytes",
+    });
+  });
+
   it("answers deriveKey as deriveKey does, from the length of the derived key", async () => {
     const [hkdfKey, pbkdf2Key] = await Promise.all([importKdfKey("HKDF"), importKdfKey("PBKDF2")]);
     const aes256 = { name: "AES-GCM", length: 256 };
@@ -1191,6 +1231,8 @@ describe("SubtleCrypto.supports for deriveBits and deriveKey", () => {
       "HKDF to AES-GCM of 256 bits": await deriveKeyRow(hkdf, hkdfKey, aes256, ["encrypt"]),
       "HKDF to HMAC of 8 bits": await deriveKeyRow(hkdf, hkdfKey, hmac(8), ["sign"]),
       "HKDF to HMAC of 12 bits": await deriveKeyRow(hkdf, hkdfKey, hmac(12), ["sign"]),
+      "HKDF to HMAC of 255 blocks": await deriveKeyRow(hkdf, hkdfKey, hmac(255 * 256), ["sign"]),
+      "HKDF to HMAC of 255 blocks and 8 bits": await deriveKeyRow(hkdf, hkdfKey, hmac(255 * 256 + 8), ["sign"]),
       "HKDF to HKDF, which has no length": await deriveKeyRow(hkdf, hkdfKey, "HKDF", ["deriveBits"]),
       "PBKDF2 with 0 iterations to AES-GCM": await deriveKeyRow(zeroIterations, pbkdf2Key, aes256, ["encrypt"]),
       "HKDF with 1025 bytes of info to AES-GCM": await deriveKeyRow(info1025, hkdfKey, aes256, ["encrypt"]),
@@ -1198,6 +1240,8 @@ describe("SubtleCrypto.supports for deriveBits and deriveKey", () => {
       "HKDF to AES-GCM of 256 bits": { supports: true, deriveKey: "fulfils" },
       "HKDF to HMAC of 8 bits": { supports: true, deriveKey: "fulfils" },
       "HKDF to HMAC of 12 bits": { supports: false, deriveKey: "OperationError: length must be a multiple of 8" },
+      "HKDF to HMAC of 255 blocks": { supports: true, deriveKey: "fulfils" },
+      "HKDF to HMAC of 255 blocks and 8 bits": { supports: false, deriveKey: hkdfOverMaximum },
       "HKDF to HKDF, which has no length": { supports: false, deriveKey: "OperationError: length cannot be null" },
       "PBKDF2 with 0 iterations to AES-GCM": {
         supports: false,

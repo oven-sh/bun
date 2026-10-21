@@ -30,6 +30,7 @@
 
 #include "CryptoAlgorithmHkdfParams.h"
 #include "CryptoKeyRaw.h"
+#include "OpenSSLUtilities.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/CrossThreadCopier.h>
 
@@ -51,6 +52,9 @@ ExceptionOr<void> CryptoAlgorithmHKDF::validateDeriveBits(const CryptoAlgorithmH
         return Exception { OperationError, "length cannot be null"_s };
     if (*length % 8)
         return Exception { OperationError, "length must be a multiple of 8"_s };
+    // RFC 5869 section 2.3: the output is at most 255 blocks of the hash.
+    if (auto* digest = digestAlgorithm(parameters.hashIdentifier); digest && *length / 8 > 255 * EVP_MD_size(digest))
+        return Exception { OperationError, "length exceeds the maximum derived bit length"_s };
 
     // Node caps info at 1024 bytes (OpenSSL 3.x EVP_PKEY_CTX_add1_hkdf_info);
     // BoringSSL imposes no such limit, so match Node explicitly.

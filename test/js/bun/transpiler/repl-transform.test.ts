@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import path from "node:path";
 import vm from "node:vm";
 
 describe("Bun.Transpiler replMode", () => {
@@ -474,103 +475,21 @@ describe("Bun.Transpiler replMode", () => {
     });
 
     // Seeded sessions of sloppy script code. Each input runs as written and as replMode
-    // text, both as a script in this global. Both sessions must log and leave the same.
-    // Replay a failure with BUN_REPL_FUZZ_SEED=<seed>.
-    test("a session leaves the state that its inputs leave as written", () => {
-      const seed = Number(process.env.BUN_REPL_FUZZ_SEED ?? 0x7265706c) >>> 0;
+    // text, both as a script in the global of the fixture's process. Both sessions must
+    // log and leave the same. Replay a failure with BUN_REPL_FUZZ_SEED=<seed>.
+    test("a session leaves the state that its inputs leave as written", async () => {
       const sessions = Number(process.env.BUN_REPL_FUZZ_ITERS ?? (isDebug || isASAN ? 30 : 150));
-      const different: unknown[] = [];
-      for (let i = 0; i < sessions; i++) {
-        const inputs = generateSession(seed + i);
-        const asWritten = runSession(inputs, `_w${i}`, input => input);
-        const asRepl = runSession(inputs, `_r${i}`, input => transpiler.transformSync(input));
-        if (asWritten !== asRepl) different.push({ seed: seed + i, inputs, asWritten, asRepl });
-      }
-      expect(different.slice(0, 3)).toEqual([]);
-    });
-
-    // F and G are the names a session declares, LOG is what it records, K is a new number.
-    // A function in a block is not generated: see "a function in a block" above.
-    function generateSession(seed: number): string[] {
-      let state = seed >>> 0;
-      const random = () => {
-        state = (state + 0x6d2b79f5) | 0;
-        let t = Math.imul(state ^ (state >>> 15), 1 | state);
-        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-      };
-      const pick = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)];
-      let k = 0;
-      const name = () => pick(["F", "G"]);
-      const simple = (): string =>
-        pick([
-          () => `var ${name()} = ${++k}`,
-          () => `var ${name()}`,
-          () => `${name()} = ${++k}`,
-          () => `LOG.push(typeof ${name()})`,
-          () => `LOG.push(typeof globalThis.${name()})`,
-          () => `LOG.push(typeof ${name()} === "function" ? ${name()}() : ${++k})`,
-          () => `eval("var ${name()} = ${++k}")`,
-          () => `eval("function ${name()}() { return ${++k} }")`,
-          () => `eval("${name()} = ${++k}")`,
-          () => `eval("LOG.push(typeof ${name()})")`,
-          () => `(eval)("var ${name()} = ${++k}")`,
-          () => `(0, eval)("var ${name()} = ${++k}")`,
-          () => `((p = eval("var ${name()} = ${++k}")) => LOG.push(typeof ${name()}))()`,
-          () => `(function () { eval("var ${name()} = ${++k}"); LOG.push(typeof ${name()}) })()`,
-          () => `{ let B = ${++k}; eval("var ${name()} = B") }`,
-        ])();
-      const nested = (depth: number): string => {
-        const list = () => statements(depth - 1, 2).join("; ");
-        return pick([
-          () => `{ ${list()} }`,
-          () => `if (${pick([0, 1])}) { ${list()} } else { ${list()} }`,
-          () => `try { ${list()}; ${pick(["", "throw 1"])} } catch (e) { ${list()} } finally { ${list()} }`,
-          () =>
-            `switch (${pick([0, 1, 2])}) { case 0: ${list()}; ${pick(["break", ""])}; case 1: ${list()}; default: ${list()} }`,
-          () => `L: { ${list()}; ${pick(["break L", ""])}; ${list()} }`,
-          () => `for (var I = 0; I < 2; I++) { ${list()} }`,
-        ])();
-      };
-      const statements = (depth: number, max: number): string[] =>
-        Array.from({ length: 1 + Math.floor(random() * max) }, () =>
-          depth > 0 && random() < 0.3 ? nested(depth) : simple(),
-        );
-      const topLevel = (): string =>
-        random() < 0.3
-          ? pick([
-              () => `function ${name()}() { return ${++k} }`,
-              () => `function ${name()}() { return typeof ${name()} === "function" ? ${++k} : ${++k} }`,
-              () => `throw ${++k}`,
-            ])()
-          : statements(2, 1)[0];
-      return Array.from({ length: 1 + Math.floor(random() * 3) }, () =>
-        ["void 0", ...Array.from({ length: 1 + Math.floor(random() * 4) }, topLevel)].join("; "),
-      );
-    }
-
-    // Runs the inputs in this global under names that no other session uses. Gives the
-    // errors, the log and the final F and G as one string.
-    function runSession(inputs: string[], suffix: string, text: (input: string) => string): string {
-      const evaluate = (source: string) => vm.runInThisContext(source.replace(/\b(F|G|LOG|I)\b/g, `$1${suffix}`));
-      (globalThis as any)[`LOG${suffix}`] = [];
-      const errors = inputs.map(input => {
-        try {
-          evaluate(text(input));
-          return "";
-        } catch (e) {
-          return (e as Error)?.name ?? String(e);
-        }
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), path.join(import.meta.dir, "repl-transform-differential-fixture.ts"), String(sessions)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
       });
-      const final = ["F", "G"].map(name =>
-        evaluate(
-          `["${name}" in globalThis, typeof ${name} === "function" ? "fn" + ${name}() : typeof ${name} === "undefined" ? "undefined" : String(${name})].join()`,
-        ),
-      );
-      const log = (globalThis as any)[`LOG${suffix}`].join();
-      delete (globalThis as any)[`LOG${suffix}`];
-      return JSON.stringify({ errors, log, final });
-    }
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ sessions, different: [] });
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("replMode option", () => {

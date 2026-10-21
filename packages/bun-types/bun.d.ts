@@ -3060,7 +3060,8 @@ declare module "bun" {
      * - Top-level declarations stay in the context for later inputs. `let`, `const` and `class`
      *   become `var`, so that a later input can declare the name again
      * - The result is `{ __proto__: null, value }` with the value of the last expression, or
-     *   `undefined` if the input does not end with an expression
+     *   `undefined` if the input does not end with an expression. An input that runs a
+     *   top-level `return` gives the returned value as it is
      * - An input with a top-level `await`, an `import`, or syntax that Bun lowers with a runtime
      *   helper (`using`, decorators) runs inside an async function: the result is a promise.
      *   An input with `"use strict"` or a top-level `return` runs inside a function too.

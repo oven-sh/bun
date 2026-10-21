@@ -2,7 +2,7 @@
 // On the server, communication is established with `server_exports`.
 import type { Bake } from "bun";
 import "./debug";
-import { loadExports, replaceModules, serverManifest, ssrManifest } from "./hmr-module";
+import { loadExports, replaceModules, serverManifest, ssrManifest, staticExportNames } from "./hmr-module";
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
@@ -76,10 +76,11 @@ server_exports = {
     if (componentManifestAdd) {
       for (const uid of componentManifestAdd) {
         try {
-          const exports = await loadExports<{}>(uid);
+          // A file that the component imports can have a build error, so avoid evaluating the component.
+          const exportNames = staticExportNames(uid) ?? Object.keys(await loadExports<{}>(uid));
 
           const client = {};
-          for (const exportName of Object.keys(exports)) {
+          for (const exportName of exportNames) {
             serverManifest[uid + "#" + exportName] = {
               id: uid,
               name: exportName,

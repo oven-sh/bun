@@ -31,7 +31,7 @@ impl<const RUNNER: u8> Rule for PreferDescribeFunctionTitle<RUNNER> {
     }
 }
 
-/// What is imported, and whether as more than a type.
+/// Maps each imported name to whether it's imported as a value, not only as a type.
 fn imported_names<'a>(file: &'a File<'a>) -> FxHashMap<Name<'a>, bool> {
     let mut imported_names: FxHashMap<Name, bool> = FxHashMap::default();
     for entry in import_entries(file) {
@@ -52,7 +52,7 @@ fn run<'a>(
     let Some(title_arg) = Arguments::of(arguments, ctx.runner).title.filter(|it| !it.is_parenthesized() && !it.is_chain_root()) else {
         return;
     };
-    // The name of what is tested, and how it is written.
+    // The tested function's name, and its source text.
     let (name, variable) = match title_arg.kind() {
         ExprKind::Dot { obj, name, .. } if name.bytes() == b"name" && !obj.is_parenthesized() => match obj.as_ident() {
             Some(identifier) => (identifier, identifier.bytes()),
@@ -82,7 +82,7 @@ fn run<'a>(
     }
     let report = ctx.report(title_arg, PREFER_DESCRIBE_FUNCTION_TITLE);
     if is_value {
-        // What is imported need not be a function or a class, and `describe` takes nothing else but a text or a number.
+        // The import might not be a function or a class, and `describe` otherwise only accepts a string or a number.
         ctx.risky_fix_with(report, PREFER_DESCRIBE_FUNCTION_TITLE, |fixer| fixer.replace(title_arg, variable));
     }
 }

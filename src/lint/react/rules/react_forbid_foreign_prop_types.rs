@@ -17,9 +17,9 @@ const FORBIDDEN_PROP_TYPE: Message = Message::new(
 
 pub struct State<'a> {
     prop_types: Name<'a>,
-    /// Whether the nearest `AssignmentExpression` around a node assigns to a `propTypes`.
+    /// Caches whether the nearest enclosing `AssignmentExpression` assigns to a `propTypes`.
     assignments: AncestorMemo<'a, bool>,
-    /// Whether the nearest `PropertyDefinition` around a node is called `propTypes`.
+    /// Caches whether the nearest enclosing `PropertyDefinition` is called `propTypes`.
     class_properties: AncestorMemo<'a, bool>,
 }
 
@@ -71,7 +71,7 @@ impl Rule for ForbidForeignPropTypes {
         }
     }
 
-    /// `A.b` after `implements`, or after the `extends` of an interface, is a `MemberExpression`.
+    /// `A.b` after `implements`, or after an interface's `extends`, is a `MemberExpression`.
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         let prop_types = cx.state.prop_types;
         let TypeKind::Ref { name, .. } = ty.kind() else {
@@ -103,7 +103,7 @@ impl ForbidForeignPropTypes {
         if !self.allow_in_prop_types {
             return false;
         }
-        // `findParentAssignmentExpression`. A default in a pattern is none.
+        // `findParentAssignmentExpression`. A default value in a pattern doesn't count.
         let assignment = cx.state.assignments.find(node, |_, parent| match parent {
             Node::Expr(parent) if parent.tag() == ExprTag::Assign && !parent.is_assignment_target() => {
                 parent.left().map(|left| is_member_called(left, "propTypes"))

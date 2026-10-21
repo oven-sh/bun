@@ -280,11 +280,11 @@ impl<'p> Checker<'p, '_> {
         let visits_all = self.p.files.options.no_implicit_override;
         for m in class.members.iter() {
             let member = &hir[m];
-            // `ModifierFlags()`: the modifiers written before `static { }` are only in its list.
-            let flags = match member.kind {
-                MemberKind::StaticBlock => member.flags | hir.modifiers_to_flags(member.modifiers),
-                _ => member.flags,
-            };
+            // `getSymbolOfDeclaration(member) == nil`
+            if member.kind == MemberKind::StaticBlock {
+                continue;
+            }
+            let flags = member.flags;
             if !visits_all
                 && !flags.contains(Flags::OVERRIDE)
                 && (member.kind != MemberKind::Constructor
@@ -347,6 +347,17 @@ impl<'p> Checker<'p, '_> {
         let code = |code: u32| if is_js { js_override_code(code) } else { code };
         let has_override = member.flags.contains(Flags::OVERRIDE);
         let no_implicit_override = self.p.files.options.no_implicit_override;
+        if matches!(base, ClassBase::Unknown) {
+            return;
+        }
+        if has_override
+            && let PropKey::Computed(name) = member.key
+            && self.is_non_bindable_dynamic_name(file, name)
+        {
+            let at = self.span_of_overrider(file, member);
+            self.error_at(at, code(4127), &[]);
+            return;
+        }
         let (constructor, base) = match base {
             ClassBase::Unknown => return,
             ClassBase::Nothing => {
@@ -359,14 +370,6 @@ impl<'p> Checker<'p, '_> {
             }
             ClassBase::Is { constructor, base } => (constructor, base),
         };
-        if has_override
-            && let PropKey::Computed(name) = member.key
-            && self.is_non_bindable_dynamic_name(file, name)
-        {
-            let at = self.span_of_overrider(file, member);
-            self.error_at(at, code(4127), &[]);
-            return;
-        }
         if !has_override && !no_implicit_override {
             return;
         }

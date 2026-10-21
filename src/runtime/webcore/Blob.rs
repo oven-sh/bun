@@ -2147,10 +2147,11 @@ impl BlobExt for Blob {
         let global_this = cx.global();
         let parts = parts.to_js();
         let options = options.to_js();
-        let blob = if parts.is_undefined() && options.is_undefined() {
-            Blob::init_empty(global_this)
+        let blob: Blob;
+        if parts.is_undefined() && options.is_undefined() {
+            blob = Blob::init_empty(global_this);
         } else {
-            let blob = Blob::get::<false, true>(global_this, parts)?;
+            blob = Blob::get::<false, true>(global_this, parts)?;
 
             if options.is_object() {
                 if let Some(content_type) = options.get(global_this, "type")? {
@@ -2177,8 +2178,7 @@ impl BlobExt for Blob {
                 blob.content_type.set(BlobContentType::default());
                 blob.content_type_was_set.set(false);
             }
-            blob
-        };
+        }
 
         blob.calculate_estimated_byte_size();
         Ok(Blob::new(blob))

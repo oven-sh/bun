@@ -6,7 +6,9 @@
 #include "ErrorCode.h"
 #include "JSDOMWrapper.h"
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/InternalFunction.h>
+#include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/Lookup.h>
 
@@ -28,6 +30,14 @@ struct InheritsTraits {
         return classInfo == To::info();
     }
 };
+
+// The `this` that `value`, a bound function, is bound to.
+template<typename T>
+inline T* boundThisAs(JSC::JSValue value)
+{
+    auto* function = dynamicDowncast<JSC::JSBoundFunction>(value);
+    return function ? dynamicDowncast<T>(function->boundThis()) : nullptr;
+}
 
 JSC::GCClient::IsoSubspace* createSubspaceForClass(JSC::VM&, unsigned classIndex, size_t cellSize);
 

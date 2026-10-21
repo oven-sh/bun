@@ -2010,6 +2010,11 @@ export type StaticField =
   | Omit<FunctionField, "mutates" | "passThis" | "invalidThis" | "privateSymbol" | "name">
   | Omit<GetterField, "cache" | "writable" | "passThis">;
 
+export interface ConstructOptions extends Omit<SignatureOptions, "rustPath" | "returns"> {
+  /** The constructor makes the object itself, with `structure.create(..)`, and returns it: it can then fill internal fields. */
+  passStructure?: boolean;
+}
+
 export interface ClassOptions {
   /** Path of the Rust struct. The members are its own methods. */
   rustPath: string;
@@ -2018,7 +2023,7 @@ export interface ClassOptions {
   /** With `refCounted`: call `fn finalize(&self)` when the object is collected, before its ref is dropped. */
   finalize?: boolean;
   /** Absent: JavaScript cannot construct one, and there is no constructor object. `"illegal"`: there is one, and `new` on it throws `Illegal constructor`. */
-  construct?: Omit<SignatureOptions, "rustPath" | "returns"> | "illegal";
+  construct?: ConstructOptions | "illegal";
   /** `Name(..)` without `new`, which otherwise throws. The Rust function is `call`. */
   call?: Omit<SignatureOptions, "rustPath">;
   /** Properties of the prototype. */
@@ -2027,6 +2032,18 @@ export interface ClassOptions {
   static?: Record<string, StaticField>;
   /** JS values the object holds, empty at first. The GC visits them; `js_Name` gets `x_get_cached` / `x_set_cached` / `x_take_cached` for each. */
   internalFields?: readonly string[];
+  /** The struct writes its own `impl bun_jsc::JsClass`, over `js_Name::to_js` and `js_Name::from_js`. With `refCounted`. */
+  customToJS?: boolean;
+  /** `false`: hand-written C++ derives from the cell, and an instance of that is an instance of this. With `refCounted`. */
+  final?: boolean;
+  /** Traits that have the members, for a struct of another crate. */
+  rustTraits?: readonly string[];
+  /** An instance is the `this` a function is bound to, and that function is what JavaScript has: it is the receiver of every member, and inherits from the prototype. */
+  forBind?: boolean;
+  /** `fn memory_cost(&self) -> usize`: what the struct owns outside itself, for a heap snapshot. */
+  memoryCost?: boolean;
+  /** `fn estimated_size(&self) -> usize`: the same for the collector, whose marking threads call it. For a heap snapshot too, without `memoryCost`. */
+  estimatedSize?: boolean;
   /** `false`: native properties are non-configurable. */
   configurable?: boolean;
   /** `false`: native properties are non-enumerable. */
@@ -2206,7 +2223,14 @@ export class ClassType extends NamedType {
   readonly sharedThis: boolean;
   readonly finalize: boolean;
   readonly construct: Signature | null;
+  readonly passStructure: boolean;
   readonly call: FunctionDefinition | null;
+  readonly memoryCost: boolean;
+  readonly estimatedSize: boolean;
+  readonly customToJS: boolean;
+  readonly final: boolean;
+  readonly rustTraits: readonly string[];
+  readonly forBind: boolean;
   readonly illegalConstructor: boolean;
   /** The native functions of the prototype. The signatures of each are `Method`s. */
   readonly functions: readonly FunctionDefinition[];
@@ -2249,6 +2273,20 @@ export class ClassType extends NamedType {
     this.construct = options.construct
       ? new Signature(options.construct === "illegal" ? {} : resolve(options.construct))
       : null;
+    this.passStructure = typeof options.construct === "object" && !!options.construct.passStructure;
+    assert(
+      !this.passStructure || this.construct!.capability !== "none",
+      'passStructure: making the object takes capability: "heap" or "js"',
+    );
+    this.memoryCost = options.memoryCost ?? false;
+    this.estimatedSize = options.estimatedSize ?? false;
+    this.customToJS = options.customToJS ?? false;
+    assert(this.refCounted || !this.customToJS, "customToJS is only for a refCounted class");
+    this.final = options.final ?? true;
+    assert(this.refCounted || this.final, "final: false is only for a refCounted class: the struct follows the cell");
+    this.rustTraits = options.rustTraits ?? [];
+    this.forBind = options.forBind ?? false;
+    assert(!(this.forBind && options.prototypeBase), "forBind: the prototype inherits from Function.prototype");
     const members = (fields: Record<string, Field>, isStatic: boolean) =>
       Object.entries(fields).map(([name, field]): ClassMember => {
         assert(
@@ -2322,6 +2360,11 @@ export class ClassType extends NamedType {
       "members' Rust functions",
     );
     assertDistinct(this.internalFields.map(snakeCase), "internal fields");
+    assert(
+      !this.forBind ||
+        (this.internalFieldAccessors.length === 0 && getters.every(getter => !getter.hasSetter && !getter.writable)),
+      "forBind: functions and getters without a setter",
+    );
     this.configurable = options.configurable ?? true;
     this.enumerable = options.enumerable ?? true;
     this.prototypeBase = options.prototypeBase;

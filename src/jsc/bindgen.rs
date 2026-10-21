@@ -640,6 +640,12 @@ pub unsafe trait JsPayload: Sized + 'static {
     /// The caller writes the payload before anything else runs. A null `structure` is the class's own.
     #[doc(hidden)]
     unsafe fn create_cell(global: *mut JSGlobalObject, structure: *mut c_void) -> NonNull<c_void>;
+    /// What to tell the collector a new object owns outside its cell.
+    #[doc(hidden)]
+    #[inline(always)]
+    fn extra_memory_size(&self) -> usize {
+        0
+    }
 
     /// A new JS object that owns `self`.
     #[inline]
@@ -654,6 +660,42 @@ pub unsafe trait JsPayload: Sized + 'static {
         // SAFETY: a `JsHeap` is the global object, and the wrapper leaves as a `JSValue`.
         let heap = unsafe { &*core::ptr::from_ref(global).cast::<JsHeap<'_>>() };
         self.into_js(heap).to_js()
+    }
+}
+
+/// A class whose constructor makes the object itself: `passStructure`.
+///
+/// # Safety
+/// Implemented by generated code only.
+pub unsafe trait JsConstruct: Sized {
+    /// The struct, or a ref on the struct of a `refCounted` class.
+    type Contents;
+    /// # Safety
+    /// `structure` is a Structure of this class's cell.
+    #[doc(hidden)]
+    unsafe fn create_with_structure<'a>(
+        heap: &JsHeap<'a>,
+        structure: *mut c_void,
+        contents: Self::Contents,
+    ) -> JsWrapper<'a, Self>;
+}
+
+/// What `new` makes its object with: the structure of the class, or of a subclass.
+pub struct JsStructure<'a, T>(*mut c_void, InvariantLifetime<'a>, PhantomData<*const T>);
+impl<'a, T: JsConstruct> JsStructure<'a, T> {
+    /// # Safety
+    /// `structure` is a Structure of `T`'s cell that the call `heap` belongs to holds.
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn from_extern(structure: *mut c_void, _: &JsHeap<'a>) -> Self {
+        Self(structure, PhantomData, PhantomData)
+    }
+
+    /// The new object, which owns `contents`.
+    #[inline]
+    pub fn create(self, heap: &JsHeap<'a>, contents: T::Contents) -> JsWrapper<'a, T> {
+        // SAFETY: `from_extern`'s contract.
+        unsafe { T::create_with_structure(heap, self.0, contents) }
     }
 }
 
@@ -753,6 +795,15 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
         unsafe {
             let this = Self::from_extern(T::create_cell(heap.global_ptr(), structure), heap);
             this.payload().write(payload);
+            // This can collect, which visits the payload.
+            let size = (*this.payload()).extra_memory_size();
+            if size > 0 {
+                extern_types::Bun__Bindgen__reportExtraMemoryAllocated(
+                    heap.global_ptr(),
+                    this.0.as_ptr(),
+                    size,
+                );
+            }
             this
         }
     }

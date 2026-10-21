@@ -242,6 +242,19 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ rustPath: "T", proto: { x: { getter: b.u32, cache: true, setter: true } } })).toThrow(
     "x: the setter of a cached getter takes passThis, to replace the cached value",
   );
+  expect(() => b.class({ rustPath: "T", construct: { passStructure: true } })).toThrow(
+    'passStructure: making the object takes capability: "heap" or "js"',
+  );
+  expect(() => b.class({ rustPath: "T", customToJS: true })).toThrow("customToJS is only for a refCounted class");
+  expect(() => b.class({ rustPath: "T", final: false })).toThrow(
+    "final: false is only for a refCounted class: the struct follows the cell",
+  );
+  expect(() => b.class({ rustPath: "T", forBind: true, prototypeBase: "Error" })).toThrow(
+    "forBind: the prototype inherits from Function.prototype",
+  );
+  expect(() => b.class({ rustPath: "T", forBind: true, proto: { x: { getter: b.i32, setter: true } } })).toThrow(
+    "forBind: functions and getters without a setter",
+  );
   expect(() => b.class({ rustPath: "T", call: {} })).toThrow("call is what the constructor object does without new");
   expect(() => b.class({ rustPath: "T", proto: { "@@dispose": { enumerable: true } } })).toThrow(
     "@@dispose: enumerable and configurable are for a string key",
@@ -2183,6 +2196,117 @@ describe("classes", () => {
         TestProblem.level = 0;
       }
     });
+  });
+
+  describe.each(["TestNote", "TestRefCountedNote"])("%s", name => {
+    const Note = (bindgen as any)[name];
+    // Cell header, one internal field, then the struct or the pointer to it, in 16-byte steps.
+    const ownSize = name === "TestNote" ? 48 : 48 + 16;
+
+    it("passStructure: the constructor makes the object and fills an internal field", () => {
+      const text = {};
+      const note = new Note(text);
+      expect(note).toBeInstanceOf(Note);
+      expect(note.text).toBe(text);
+      expect(() => new Note()).toThrow(new TypeError("a note has a text"));
+    });
+
+    it("passStructure: the structure is that of new.target", () => {
+      class Subclass extends Note {
+        extra = 1;
+      }
+      const note = new Subclass("text");
+      expect(Object.getPrototypeOf(note)).toBe(Subclass.prototype);
+      expect(note.text).toBe("text");
+      expect(note.extra).toBe(1);
+      expect(Object.getPrototypeOf(Reflect.construct(Note, ["text"], Array))).toBe(Array.prototype);
+    });
+
+    it("new.target.prototype is read before the arguments are converted", () => {
+      const order: string[] = [];
+      const newTarget = new Proxy(function () {}, {
+        get(target, key, receiver) {
+          if (key === "prototype") order.push("prototype");
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      expect(() => Reflect.construct(Note, ["text", "not a number"], newTarget)).toThrow(TypeError);
+      expect(order).toEqual(["prototype"]);
+    });
+
+    it("a heap snapshot adds memory_cost, or estimated_size without it", () => {
+      expect(estimateShallowMemoryUsageOf(new Note("text", 1000))).toBe(ownSize + 1000 + (name === "TestNote" ? 1 : 0));
+    });
+
+    it("a collection counts estimated_size", () => {
+      Bun.gc(true);
+      const before = heapStats().extraMemorySize;
+      const size = 1024 * 1024;
+      const note = new Note("text", size);
+      Bun.gc(true);
+      expect(heapStats().extraMemorySize - before).toBeGreaterThanOrEqual(size);
+      expect(note.text).toBe("text");
+    });
+
+    it("making objects with a large estimated_size starts collections", () => {
+      Bun.gc(true);
+      const count = 100;
+      for (let i = 0; i < count; i++) new Note("text", 8 * 1024 * 1024);
+      expect(heapStats().objectTypeCounts[name]).toBeLessThan(count);
+    });
+  });
+
+  describe("forBind", () => {
+    const { TestBoundThis } = bindgen as any;
+    const bound = (value: number) =>
+      Object.setPrototypeOf(function () {}.bind(new TestBoundThis(value)), TestBoundThis.prototype);
+
+    it("the receiver is a function bound to an instance", () => {
+      const five = bound(5);
+      expect(five.value).toBe(5);
+      expect(five.plus(2)).toBe(7);
+      expect(five.label).toBe("bound to 5");
+    });
+
+    it("a cached getter caches in the instance", () => {
+      const instance = new TestBoundThis(1);
+      const [first, second] = [0, 1].map(() =>
+        Object.setPrototypeOf(function () {}.bind(instance), TestBoundThis.prototype),
+      );
+      const { get } = Object.getOwnPropertyDescriptor(TestBoundThis.prototype, "label")!;
+      expect(get!.call(first)).toBe("bound to 1");
+      expect(get!.call(second)).toBe("bound to 1");
+    });
+
+    it("the prototype inherits from Function.prototype", () => {
+      expect(Object.getPrototypeOf(TestBoundThis.prototype)).toBe(Function.prototype);
+      expect(bound(1).call).toBe(Function.prototype.call);
+    });
+
+    it.each([
+      ["an instance", () => new TestBoundThis(1)],
+      ["a function bound to something else", () => function () {}.bind({})],
+      ["a function", () => function () {}],
+      ["undefined", () => undefined],
+    ])("%s is not a receiver", (_, receiver) => {
+      const { value, plus } = Object.getOwnPropertyDescriptors(TestBoundThis.prototype);
+      expect(() => value.get!.call(receiver())).toThrow(
+        new TypeError("The TestBoundThis.value getter can only be used on instances of TestBoundThis"),
+      );
+      expect(() => plus.value.call(receiver(), 1)).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_THIS" }),
+      );
+    });
+  });
+
+  it("rustTraits, customToJS and final: false", () => {
+    const { TestExtensible } = bindgen as any;
+    expect(new TestExtensible(4).value).toBe(4);
+    const doubled = TestExtensible.doubled(4);
+    expect(doubled).toBeInstanceOf(TestExtensible);
+    expect(doubled.value).toBe(8);
+    const { get } = Object.getOwnPropertyDescriptor(TestExtensible.prototype, "value")!;
+    expect(() => get!.call({})).toThrow(TypeError);
   });
 
   describe("refCounted", () => {

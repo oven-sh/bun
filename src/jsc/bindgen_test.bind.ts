@@ -322,6 +322,49 @@ export const TestProblem = b.class({
   },
 });
 
+const note = {
+  construct: {
+    passStructure: true,
+    args: { text: b.any, size: b.usize.default(0) },
+    capability: "heap",
+    throws: true,
+  },
+  internalFields: ["text"],
+  estimatedSize: true,
+  proto: { text: { internalField: "text" } },
+} as const;
+/** Its constructor makes the object and fills an internal field. It says it owns `size` bytes. */
+export const TestNote = b.class({ ...note, rustPath: "crate::bindgen_test::TestNote", memoryCost: true });
+export const TestRefCountedNote = b.class({
+  ...note,
+  rustPath: "crate::bindgen_test::TestRefCountedNote",
+  refCounted: true,
+});
+
+/** What a function is bound to. */
+export const TestBoundThis = b.class({
+  rustPath: "crate::bindgen_test::TestBoundThis",
+  forBind: true,
+  construct: { args: { value: b.i32 } },
+  proto: {
+    value: { getter: b.i32 },
+    label: { getter: b.string, cache: true, capability: "heap" },
+    plus: { args: { other: b.i32 }, returns: b.i32 },
+  },
+});
+
+/** Its members are in a trait, and it writes its own `JsClass`. */
+export const TestExtensible = b.class({
+  rustPath: "crate::bindgen_test::TestExtensible",
+  rustTraits: ["crate::bindgen_test::TestExtensibleExt"],
+  refCounted: true,
+  customToJS: true,
+  final: false,
+  construct: { args: { value: b.i32 } },
+  proto: { value: { getter: b.i32 } },
+  static: { doubled: { args: { value: b.i32 }, returns: b.any, capability: "heap" } },
+});
+
 /** `token.id` read through `from_js`, or `null` if `token` is not an instance. */
 export const tokenIdFromJS = b.fn({ args: { token: b.any }, returns: b.u32.nullable });
 export const problemConstructor = b.fn({ returns: b.any, capability: "js" });

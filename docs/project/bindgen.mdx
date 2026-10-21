@@ -534,8 +534,7 @@ Arguments, results, `capability` and `throws` are those of a function. The gener
 The struct, the _payload_, is stored **inside** the JS object, the _wrapper_, so the
 two have one lifetime and one allocation. It is dropped when the object is
 collected. `Drop` gets no capability, so it cannot touch the JS heap, and no Rust
-runs on the collector's threads. The collector is not told of memory the payload owns
-outside the object.
+runs on the collector's threads, except [`estimated_size`](#memory).
 
 If a timer, another thread or a C library can still point at the struct after its JS object
 is collected, make the class [`refCounted`](#refcounted).
@@ -553,12 +552,34 @@ is collected, make the class [`refCounted`](#refcounted).
 | `configurable`   | `false` makes the native properties non-configurable                                           |
 | `enumerable`     | `false` makes the native properties non-enumerable                                             |
 | `prototypeBase`  | `"Error"`: the prototype inherits from `Error.prototype`                                       |
+| `memoryCost`     | [`fn memory_cost(&self) -> usize`](#memory), for a heap snapshot                               |
+| `estimatedSize`  | [`fn estimated_size(&self) -> usize`](#memory), for the collector                              |
+| `rustTraits`     | traits that have the members, for a struct of another crate                                    |
+| `customToJS`     | with `refCounted`: the struct writes its own `impl JsClass`, over `js_Name::to_js`             |
+| `final`          | with `refCounted`: `false` lets hand-written C++ derive from the cell                          |
+| `forBind`        | the receiver of every member is [a function bound to an instance](#forbind)                    |
 
 Code that has the global object and no capability makes one with
 `payload.into_js_value(global)`, which returns a `JSValue`.
 
 A class that JavaScript names but cannot make, like `Crypto`, declares `construct: "illegal"`:
 `new Crypto()` throws `Illegal constructor`, and there is no `constructor` in Rust.
+
+A constructor that fills an internal field needs the object. With `passStructure: true` it makes
+the object itself, from the structure of `new.target`, and returns it. `create` takes the struct,
+or a `RefPtr` to the struct of a `refCounted` class.
+
+```rust
+pub(crate) fn constructor<'a>(
+    heap: &JsHeap<'a>,
+    structure: JsStructure<'a, Self>,
+    text: JsLocal<'a>,
+) -> JsWrapper<'a, Self> {
+    let this_value = structure.create(heap, Self { .. });
+    js_Note::text_set_cached(this_value.to_js(), unsafe { heap.global() }, text.to_js());
+    this_value
+}
+```
 
 A property of `proto` is one of these.
 
@@ -708,6 +729,26 @@ Native callbacks have no capability. What they need to reach the JS object takes
 `CronJob::to_js_ptr(ptr, global)` is `to_js` as an `unsafe fn`, and `CronJob::to_js_nonnull(ptr, global)` takes a
 `NonNull`. The struct also implements `bun_jsc::JsClass`, so `value.as_class_ref::<CronJob>()` works. To get
 back to its JS object the struct stores a `JsRef`, and calls `finalize()` on it from the class's `finalize`.
+
+### Memory
+
+The collector counts the object, and the struct of a `refCounted` class. Two keys tell it what the
+struct owns outside itself.
+
+| Key             | Rust                                | Who calls it                                                          |
+| --------------- | ----------------------------------- | --------------------------------------------------------------------- |
+| `estimatedSize` | `fn estimated_size(&self) -> usize` | the collector: when the object is made, and each time it is marked    |
+| `memoryCost`    | `fn memory_cost(&self) -> usize`    | a heap snapshot, which calls `estimated_size` if there is no such key |
+
+A marking thread calls `estimated_size` while JavaScript runs. It reads only fields that do not
+change once the object is made, or atomics: a struct whose size changes stores the number, like
+`Blob::m_memoryCost` in WebKit. `memory_cost` runs on the JS thread and can read anything.
+
+### `forBind`
+
+`test` and `describe` are functions with properties. Each is a function bound to an instance, with
+the class's prototype as its prototype. `forBind: true` makes that function the receiver of every
+member: `&self` is what it is bound to. The prototype inherits from `Function.prototype`.
 
 ### Staying alive
 

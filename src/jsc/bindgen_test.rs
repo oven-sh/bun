@@ -1,18 +1,19 @@
 //! This namespace is used to test binding generator
 
 use core::cell::{Cell, RefCell};
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 use crate::bindgen::{
     self, BufferSource, Callable, IntoError as _, JsBytes, JsHeap, JsLocal, JsPayload as _,
-    JsScope, JsWrapper, JsWrapperStrong, PinnedBytes, StringOrJsBytes,
+    JsScope, JsStructure, JsWrapper, JsWrapperStrong, PinnedBytes, StringOrJsBytes,
 };
 use crate::generated_bindgen::bindgen_test::{
     TestAnything, TestBare, TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag,
     TestNames, TestOptions, TestOptionsEcho, TestOuter, TestTextOrBytes, TestValue, js_TestCounter,
-    js_TestProblem, js_TestRefCounted,
+    js_TestExtensible, js_TestNote, js_TestProblem, js_TestRefCounted, js_TestRefCountedNote,
 };
-use crate::{JSString, JSValue, JsResult};
+use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult};
 use bun_ptr::{AsCtxPtr as _, RefPtr};
 
 // This example should be kept in sync with bindgen's documentation
@@ -639,6 +640,134 @@ impl TestToken {
 
 pub(crate) fn make_token<'a>(heap: &JsHeap<'a>, id: u32) -> JsWrapper<'a, TestToken> {
     TestToken { id }.into_js(heap)
+}
+
+pub(crate) struct TestNote {
+    size: usize,
+}
+
+impl TestNote {
+    pub(crate) fn constructor<'a>(
+        heap: &JsHeap<'a>,
+        structure: JsStructure<'a, Self>,
+        text: JsLocal<'a>,
+        size: usize,
+    ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
+        if text.is_undefined() {
+            return Err(heap.type_error(format_args!("a note has a text")));
+        }
+        let this_value = structure.create(heap, Self { size });
+        // SAFETY: storing a value runs no JavaScript.
+        js_TestNote::text_set_cached(this_value.to_js(), unsafe { heap.global() }, text.to_js());
+        Ok(this_value)
+    }
+
+    pub(crate) fn estimated_size(&self) -> usize {
+        self.size
+    }
+
+    /// One more than `estimated_size`, to tell which of the two a heap snapshot reads.
+    pub(crate) fn memory_cost(&self) -> usize {
+        self.size + 1
+    }
+}
+
+#[derive(bun_ptr::CellRefCounted)]
+pub(crate) struct TestRefCountedNote {
+    ref_count: Cell<u32>,
+    size: usize,
+}
+
+impl TestRefCountedNote {
+    pub(crate) fn constructor<'a>(
+        heap: &JsHeap<'a>,
+        structure: JsStructure<'a, Self>,
+        text: JsLocal<'a>,
+        size: usize,
+    ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
+        if text.is_undefined() {
+            return Err(heap.type_error(format_args!("a note has a text")));
+        }
+        let ref_count = Cell::new(1);
+        let this_value = structure.create(heap, RefPtr::new(Self { ref_count, size }));
+        // SAFETY: storing a value runs no JavaScript.
+        let global = unsafe { heap.global() };
+        js_TestRefCountedNote::text_set_cached(this_value.to_js(), global, text.to_js());
+        Ok(this_value)
+    }
+
+    pub(crate) fn estimated_size(&self) -> usize {
+        self.size
+    }
+}
+
+pub(crate) struct TestBoundThis {
+    value: i32,
+}
+
+impl TestBoundThis {
+    pub(crate) fn constructor(value: i32) -> Self {
+        Self { value }
+    }
+
+    pub(crate) fn get_value(&self) -> i32 {
+        self.value
+    }
+
+    pub(crate) fn get_label(&self, _: &JsHeap<'_>) -> bun_core::String {
+        bun_core::String::clone_utf8(format!("bound to {}", self.value).as_bytes())
+    }
+
+    pub(crate) fn plus(&self, other: i32) -> i32 {
+        self.value.wrapping_add(other)
+    }
+}
+
+#[derive(bun_ptr::CellRefCounted)]
+pub(crate) struct TestExtensible {
+    ref_count: Cell<u32>,
+    value: i32,
+}
+
+pub(crate) trait TestExtensibleExt {
+    fn constructor(value: i32) -> *mut Self;
+    fn get_value(&self) -> i32;
+    fn doubled<'a>(heap: &JsHeap<'a>, value: i32) -> JsLocal<'a>;
+}
+
+impl TestExtensibleExt for TestExtensible {
+    fn constructor(value: i32) -> *mut Self {
+        let ref_count = Cell::new(1);
+        RefPtr::new(Self { ref_count, value }).into_raw()
+    }
+
+    fn get_value(&self) -> i32 {
+        self.value
+    }
+
+    fn doubled<'a>(heap: &JsHeap<'a>, value: i32) -> JsLocal<'a> {
+        let ref_count = Cell::new(1);
+        // SAFETY: making the object runs no JavaScript.
+        JsLocal::new(
+            heap,
+            Self { ref_count, value }.to_js(unsafe { heap.global() }),
+        )
+    }
+}
+
+impl JsClass for TestExtensible {
+    fn to_js(mut self, global: &JSGlobalObject) -> JSValue {
+        self.value = self.value.wrapping_mul(2);
+        js_TestExtensible::to_js(RefPtr::new(self).into_raw(), global)
+    }
+
+    fn from_js(value: JSValue) -> Option<*mut Self> {
+        js_TestExtensible::from_js(value).map(NonNull::as_ptr)
+    }
+
+    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
+        Self::from_js(value)
+    }
 }
 
 pub(crate) fn token_id_from_js(token: JsLocal<'_>) -> Option<u32> {

@@ -384,6 +384,7 @@ impl PackageManager {
         script_env.put(b"PATH", path.slice())?;
 
         put_npm_package_env(&mut script_env, cwd, &list.package_name)?;
+        self.options.put_registry_for_scripts(&mut script_env)?;
 
         // Ownership transfers to `LifecycleScriptSubprocess`, which
         // re-uses it across every `spawn_next_script` in the chain. Move the

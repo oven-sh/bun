@@ -241,6 +241,8 @@ pub mod registry {
         pub(crate) auth: Box<[u8]>,
         pub url: OwnedURL,
         pub url_hash: u64,
+        /// `url` is a WHATWG serialization. If not, it is the text of the configuration as written.
+        url_is_serialized: bool,
         pub(crate) token: Box<[u8]>,
 
         // username and password combo, `user:pass`
@@ -248,6 +250,10 @@ pub mod registry {
 
         /// See `NpmRegistry::declared_in_npmrc`. Cleared when an explicit token is set later.
         pub(crate) declared_in_npmrc: bool,
+
+        /// A config file or a URL gave this registry a credential, even one that resolved to nothing
+        /// (an unset `$NPM_TOKEN`). `has_credentials` is false for that one.
+        pub(crate) credential_written: bool,
 
         /// The `.npmrc` key this registry's URL resolves to, once every source was applied.
         pub(crate) url_auth_key: Option<Box<[u8]>>,
@@ -377,9 +383,24 @@ pub mod registry {
 
         /// Stores the WHATWG serialization (the base `bun_url::join` resolves against) so same-origin checks, concatenated tarball URLs and `url_hash` agree with the requests; credentials must already be split off.
         pub fn set_url(&mut self, href: Box<[u8]>) {
-            self.url = URL::from_string(&bun_core::String::borrow_utf8(&href))
-                .unwrap_or_else(|_| OwnedURL::from_href(href));
+            let serialized = URL::from_string(&bun_core::String::borrow_utf8(&href));
+            self.url_is_serialized = serialized.is_ok();
+            self.url = serialized.unwrap_or_else(|_| OwnedURL::from_href(href));
             self.url_hash = Self::hash(strings::without_trailing_slash(self.url.href()));
+        }
+
+        /// The URL for a program that gets no credential with it: without the query and the
+        /// fragment, which can hold a key. `None` if the URL does not parse, is not http(s), or has
+        /// an `@` (a userinfo that `from_url` did not split off, or a path that looks like one).
+        pub(crate) fn href_without_secrets(&self) -> Option<&[u8]> {
+            let href = self.url.href();
+            if !self.url_is_serialized
+                || !(href.starts_with(b"http://") || href.starts_with(b"https://"))
+                || strings::contains_char(href, b'@')
+            {
+                return None;
+            }
+            Some(&href[..strings::index_of_any(href, b"?#").unwrap_or(href.len())])
         }
 
         pub(crate) fn has_credentials(&self) -> bool {
@@ -391,6 +412,7 @@ pub mod registry {
             self.auth.clone_from(&other.auth);
             self.user.clone_from(&other.user);
             self.declared_in_npmrc = other.declared_in_npmrc;
+            self.credential_written |= other.credential_written;
         }
 
         pub(crate) fn set_token_from_env(&mut self, key: &[u8], token: &[u8]) -> crate::Result<()> {
@@ -466,6 +488,8 @@ pub mod registry {
                 registry.username = from_url.username;
                 registry.password = from_url.password;
             }
+            // Read before an unset `$NPM_TOKEN` empties the field below.
+            let credential_written = registry.has_credentials();
 
             // Sent as text, an unset `$NPM_TOKEN` would also hide the registry's `.npmrc` line.
             for (what, field) in [
@@ -578,6 +602,8 @@ pub mod registry {
                 auth,
                 user,
                 declared_in_npmrc: registry.declared_in_npmrc,
+                // `needs_normalize`: the URL had a credential marker, which may hold no value.
+                credential_written: credential_written || needs_normalize,
                 ..Default::default()
             };
             scope.set_url(final_href);

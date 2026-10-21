@@ -28,13 +28,17 @@ import {
   readdirSorted,
   runBunInstall,
   tempDir,
+  tls,
 } from "harness";
 import { constants as osConstants, type as osType, tmpdir } from "os";
 import { join, sep } from "path";
-import { TestRegistry } from "registry";
+import { TestRegistry, toml } from "registry";
 import { pathToFileURL } from "url";
 
 var verdaccio = new TestRegistry();
+// For the `npm_config_registry` tests: a second registry with every package, and one that wants a token for each.
+const secondRegistry = new TestRegistry({ recordRequests: true });
+const tokenRegistry = new TestRegistry({ access: { "*": { read: "authenticated" } }, recordRequests: true });
 
 // `owner/repo#commit` dependencies are downloaded from `${GITHUB_API_URL}/repos/...`, so
 // the repository below is served by this local server instead of api.github.com.
@@ -75,11 +79,13 @@ beforeAll(async () => {
         : new Response("Not Found", { status: 404 });
     },
   });
-  await verdaccio.start();
+  await Promise.all([verdaccio.start(), secondRegistry.start(), tokenRegistry.start()]);
 });
 
 afterAll(async () => {
   verdaccio.stop();
+  secondRegistry.stop();
+  tokenRegistry.stop();
   await github.stop();
 });
 
@@ -3457,6 +3463,512 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("failed script of an 
         ? { errors: ['error: postinstall script from "baz" exited with 1'], exitCode: 1 }
         : { errors: [], exitCode: 0 },
     );
+  });
+});
+
+// npm gives a lifecycle script its registry in `npm_config_registry` when its configuration names one. Another
+// package manager that the script starts outside the project reads the registry from there: the `npm install` that
+// the install scripts of workerd and @bufbuild/buf run in a directory of their own, or dprint's install script, which
+// reads the variable itself. None of them sees the project's bunfig.toml or .npmrc.
+describe("npm_config_registry of a lifecycle script", () => {
+  const linkers = ["hoisted", "isolated"] as const;
+  // Nothing is sent to these: a project that names one of them has no registry dependency.
+  const mirror = "http://localhost:4873/";
+  const other = "http://localhost:4874";
+  const npmjs = "https://registry.npmjs.org/";
+
+  // Writes the registry variables of its environment to registry.json in its cwd. Windows has one variable per name,
+  // whatever the case, so the names are in lower case there.
+  const capture = `
+    const names = ["bun_config_registry", "npm_config_registry"];
+    const found = Object.entries(process.env)
+      .filter(([name]) => names.includes(name.toLowerCase()))
+      .map(([name, value]) => [process.platform === "win32" ? name.toLowerCase() : name, value]);
+    require("fs").writeFileSync("registry.json", JSON.stringify(Object.fromEntries(found)));
+  `;
+  const named = (variables: Record<string, string>) =>
+    isWindows
+      ? Object.fromEntries(Object.entries(variables).map(([name, value]) => [name.toLowerCase(), value]))
+      : variables;
+  const captured = async (dir: string) => {
+    const json = file(join(dir, "registry.json"));
+    return (await json.exists()) ? await json.json() : "the script did not run";
+  };
+
+  type Setup = {
+    /** The `[install]` table of the project's bunfig.toml. */
+    install?: Record<string, unknown>;
+    /** More files, by their path in the project. `home` is the home directory. */
+    files?: Record<string, string>;
+    env?: Record<string, string>;
+    args?: string[];
+    linker?: (typeof linkers)[number];
+    /** A `file:` dependency that has the same `postinstall`. */
+    dependency?: "trusted" | "untrusted";
+  };
+
+  async function writeProject(ctx: TestCtx, { install = {}, files = {}, linker = "hoisted", dependency }: Setup) {
+    const scripts = { postinstall: `${bunExe()} capture.js` };
+    const root = {
+      name: "root",
+      version: "1.0.0",
+      scripts,
+      ...(dependency && { dependencies: { dep: "file:./dep" } }),
+      ...(dependency === "trusted" && { trustedDependencies: ["dep"] }),
+    };
+    const project: Record<string, string> = {
+      "bunfig.toml": toml({ install: { cache: join(ctx.packageDir, ".bun-cache"), linker, ...install } }),
+      "package.json": JSON.stringify(root),
+      "capture.js": capture,
+      ...(dependency && {
+        "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", scripts }),
+        "dep/capture.js": capture,
+      }),
+      ...files,
+    };
+    await Promise.all(Object.entries(project).map(([path, contents]) => write(join(ctx.packageDir, path), contents)));
+  }
+
+  async function run(ctx: TestCtx, args: string[], env: Record<string, string> = {}) {
+    // The registry of the machine that runs the tests is not a part of them.
+    const home = join(ctx.packageDir, "home");
+    const { BUN_CONFIG_REGISTRY: _, BUN_CONFIG_TOKEN: __, ...inherited } = ctx.env;
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: ctx.packageDir,
+      env: { ...inherited, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home, ...env },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { err, exitCode };
+  }
+
+  /** Installs one project per row. Returns what the `postinstall` of each project got. */
+  async function rootVariables(rows: Record<string, Setup>) {
+    const results = await Promise.all(
+      Object.entries(rows).map(async ([name, setup]) => {
+        using ctx = await setupTest();
+        await writeProject(ctx, setup);
+        const { err, exitCode } = await run(ctx, ["install", ...(setup.args ?? [])], setup.env);
+        return [name, exitCode === 0 ? await captured(ctx.packageDir) : { exitCode, err }];
+      }),
+    );
+    return Object.fromEntries(results);
+  }
+
+  const inBunfig: Setup = { install: { registry: mirror } };
+  const inNpmrc = (...lines: string[]): Setup => ({
+    files: { ".npmrc": [`registry=${mirror}`, ...lines, ""].join("\n") },
+  });
+  const set = { npm_config_registry: mirror };
+
+  test.concurrent.each(linkers)(
+    "a registry from bunfig.toml is set for the project's script and a dependency's (%s)",
+    async linker => {
+      using ctx = await setupTest();
+      await writeProject(ctx, { ...inBunfig, linker, dependency: "trusted" });
+      const { err, exitCode } = await run(ctx, ["install"]);
+      expect(err).not.toContain("error:");
+      expect({
+        root: await captured(ctx.packageDir),
+        dependency: await captured(realpathSync(join(ctx.packageDir, "node_modules", "dep"))),
+      }).toEqual({ root: set, dependency: set });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent("it is set for the script that bun pm trust runs", async () => {
+    using ctx = await setupTest();
+    await writeProject(ctx, { ...inBunfig, dependency: "untrusted" });
+    expect((await run(ctx, ["install"])).exitCode).toBe(0);
+    const dependency = realpathSync(join(ctx.packageDir, "node_modules", "dep"));
+    expect(await captured(dependency)).toBe("the script did not run");
+
+    const { err, exitCode } = await run(ctx, ["pm", "trust", "dep"]);
+    expect(err).not.toContain("error:");
+    expect(await captured(dependency)).toEqual(set);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.each<[string, Setup, Record<string, string>]>([
+    [".npmrc", inNpmrc(), set],
+    ["the user's .npmrc", { files: { "home/.npmrc": `registry=${mirror}\n` } }, set],
+    ["--registry", { args: [`--registry=${mirror}`] }, set],
+    // As bun requests it.
+    [
+      "a registry on a path",
+      { install: { registry: "HTTP://LOCALHOST:4873/npm/Feed" } },
+      { npm_config_registry: `${mirror}npm/Feed` },
+    ],
+    // A query can hold a key.
+    [
+      "a registry with a query, without the query",
+      { install: { registry: `${mirror}feed/?key=secret` } },
+      { npm_config_registry: `${mirror}feed/` },
+    ],
+    [
+      "--registry with a fragment, without the fragment",
+      { args: [`--registry=${mirror}feed/#fragment`] },
+      { npm_config_registry: `${mirror}feed/` },
+    ],
+    // As in npm, an empty credential is none.
+    ["a registry whose .npmrc token is an unset ${VAR?}", inNpmrc("//localhost:4873/:_authToken=${UNSET_TOKEN?}"), set],
+    ["a registry next to the token of another one", inNpmrc("//localhost:4874/:_authToken=secret"), set],
+    ["bunfig.toml over an empty variable", { ...inBunfig, env: { npm_config_registry: "" } }, set],
+    // No other program reads this variable, so it does not stand in for npm's.
+    [
+      "BUN_CONFIG_REGISTRY",
+      { install: { registry: npmjs }, env: { BUN_CONFIG_REGISTRY: other } },
+      { BUN_CONFIG_REGISTRY: other, npm_config_registry: `${other}/` },
+    ],
+    [
+      "--registry over BUN_CONFIG_REGISTRY",
+      { env: { BUN_CONFIG_REGISTRY: other }, args: [`--registry=${mirror}`] },
+      { BUN_CONFIG_REGISTRY: other, ...set },
+    ],
+    ["--registry over bunfig.toml", { install: { registry: other }, args: [`--registry=${mirror}`] }, set],
+    // As in npm, npm's own registry is written over a config file's, which a child process could find by itself.
+    [
+      "--registry with npm's registry over .npmrc",
+      { ...inNpmrc(), args: [`--registry=${npmjs}`] },
+      { npm_config_registry: npmjs },
+    ],
+    [
+      "BUN_CONFIG_REGISTRY with npm's registry over bunfig.toml",
+      { ...inBunfig, env: { BUN_CONFIG_REGISTRY: npmjs } },
+      { BUN_CONFIG_REGISTRY: npmjs, npm_config_registry: npmjs },
+    ],
+  ])("it is set from %s", async (_, setup, expected) => {
+    expect(await rootVariables({ project: setup })).toEqual({ project: named(expected) });
+  });
+
+  // The script has that variable already. Bun adds none and replaces none, so that every program the script starts
+  // reads what it read before.
+  test.concurrent("it is not written when the environment has one of npm's variables", async () => {
+    const flag = [`--registry=${mirror}`];
+    expect(
+      await rootVariables({
+        "bunfig.toml": inBunfig,
+        "npm_config_registry": { env: { npm_config_registry: other } },
+        "NPM_CONFIG_REGISTRY": { env: { NPM_CONFIG_REGISTRY: other } },
+        "NPM_CONFIG_REGISTRY over bunfig.toml": { ...inBunfig, env: { NPM_CONFIG_REGISTRY: other } },
+        ".env over bunfig.toml": { ...inBunfig, files: { ".env": `npm_config_registry=${other}\n` } },
+        "npm_config_registry under --registry": { env: { npm_config_registry: other }, args: flag },
+        "NPM_CONFIG_REGISTRY under --registry": { env: { NPM_CONFIG_REGISTRY: other }, args: flag },
+        "NPM_CONFIG_REGISTRY under BUN_CONFIG_REGISTRY": {
+          env: { BUN_CONFIG_REGISTRY: mirror, NPM_CONFIG_REGISTRY: other },
+        },
+      }),
+    ).toEqual({
+      "bunfig.toml": set,
+      "npm_config_registry": { npm_config_registry: other },
+      "NPM_CONFIG_REGISTRY": named({ NPM_CONFIG_REGISTRY: other }),
+      "NPM_CONFIG_REGISTRY over bunfig.toml": named({ NPM_CONFIG_REGISTRY: other }),
+      ".env over bunfig.toml": { npm_config_registry: other },
+      "npm_config_registry under --registry": { npm_config_registry: other },
+      "NPM_CONFIG_REGISTRY under --registry": named({ NPM_CONFIG_REGISTRY: other }),
+      "NPM_CONFIG_REGISTRY under BUN_CONFIG_REGISTRY": named({
+        BUN_CONFIG_REGISTRY: mirror,
+        NPM_CONFIG_REGISTRY: other,
+      }),
+    });
+  });
+
+  test.concurrent("it is not set for npm's own registry, or for the registry of a scope", async () => {
+    expect(
+      await rootVariables({
+        "no registry": {},
+        "npm's registry in bunfig.toml": { install: { registry: npmjs } },
+        "npm's registry from --registry": { args: [`--registry=${npmjs}`] },
+        "npm's registry from --registry over BUN_CONFIG_REGISTRY": {
+          env: { BUN_CONFIG_REGISTRY: other },
+          args: [`--registry=${npmjs}`],
+        },
+        "a scope in bunfig.toml": { install: { scopes: { "@scope": mirror } } },
+        "a scope in .npmrc": { files: { ".npmrc": `@scope:registry=${mirror}\n` } },
+      }),
+    ).toEqual({
+      "no registry": {},
+      "npm's registry in bunfig.toml": {},
+      "npm's registry from --registry": {},
+      "npm's registry from --registry over BUN_CONFIG_REGISTRY": named({ BUN_CONFIG_REGISTRY: other }),
+      "a scope in bunfig.toml": {},
+      "a scope in .npmrc": {},
+    });
+  });
+
+  // The script's child would get the URL and not the credential. Its requests would then fail, where today they go
+  // to its own registry.
+  test.concurrent("it is not set for a registry with a credential", async () => {
+    expect(
+      await rootVariables({
+        "no credential": inBunfig,
+        "token in bunfig.toml": { install: { registry: { url: mirror, token: "secret" } } },
+        "username and password in bunfig.toml": {
+          install: { registry: { url: mirror, username: "user", password: "secret" } },
+        },
+        "user and password in the URL": { install: { registry: "http://user:secret@localhost:4873/" } },
+        "token in the URL": { install: { registry: `${mirror}:_authToken=secret` } },
+        "_authToken in .npmrc": inNpmrc("//localhost:4873/:_authToken=secret"),
+        "_auth in .npmrc": inNpmrc("//localhost:4873/:_auth=dXNlcjpzZWNyZXQ="),
+        "username and _password in .npmrc": inNpmrc(
+          "//localhost:4873/:username=user",
+          "//localhost:4873/:_password=c2VjcmV0",
+        ),
+        "NPM_CONFIG_TOKEN": { ...inBunfig, env: { NPM_CONFIG_TOKEN: "secret" } },
+        "--registry with a user and password": { args: ["--registry=http://user:secret@localhost:4873/"] },
+      }),
+    ).toEqual({
+      "no credential": set,
+      "token in bunfig.toml": {},
+      "username and password in bunfig.toml": {},
+      "user and password in the URL": {},
+      "token in the URL": {},
+      "_authToken in .npmrc": {},
+      "_auth in .npmrc": {},
+      "username and _password in .npmrc": {},
+      "NPM_CONFIG_TOKEN": {},
+      "--registry with a user and password": {},
+    });
+  });
+
+  // Such a registry wants a credential, although bun has none to send on this machine.
+  test.concurrent("it is not set for a registry whose credential in bunfig.toml resolves to nothing", async () => {
+    const unsetToken = { install: { registry: { url: mirror, token: "$UNSET_REGISTRY_TOKEN" } } };
+    expect(
+      await rootVariables({
+        "token that is an unset variable": unsetToken,
+        "password that is an unset variable": {
+          install: { registry: { url: mirror, username: "user", password: "$UNSET_REGISTRY_PASSWORD" } },
+        },
+        "password in the URL that is an unset variable": {
+          install: { registry: "http://user:$UNSET_REGISTRY_PASSWORD@localhost:4873/" },
+        },
+        "empty token in the URL": { install: { registry: `${mirror}:_authToken=` } },
+        "--registry with the URL of that registry": { ...unsetToken, args: [`--registry=${mirror}`] },
+        "--registry with the URL of a scope's registry": {
+          install: { scopes: { "@scope": { url: mirror, token: "$UNSET_REGISTRY_TOKEN" } } },
+          args: [`--registry=${mirror}`],
+        },
+      }),
+    ).toEqual({
+      "token that is an unset variable": {},
+      "password that is an unset variable": {},
+      "password in the URL that is an unset variable": {},
+      "empty token in the URL": {},
+      "--registry with the URL of that registry": {},
+      "--registry with the URL of a scope's registry": {},
+    });
+  });
+
+  // A password with one of these characters is not split off, so no part of such a URL leaves bun. A URL that
+  // does not parse fails in the script's child too.
+  test.concurrent("it is not set for a URL with an @, or for one that is not an http(s) URL", async () => {
+    expect(
+      await rootVariables({
+        "# in the password": { install: { registry: "http://user:se#cret@localhost:4873/" } },
+        "? in the password": { install: { registry: "http://user:se?cret@localhost:4873/" } },
+        "/ in the password": { install: { registry: "http://user:se/cret@localhost:4873/" } },
+        "# in the password, from --registry": { args: ["--registry=http://user:se#cret@localhost:4873/"] },
+        "user and password after one slash": { install: { registry: "http:/user:secret@localhost:4873/" } },
+        "user and password after three slashes": { install: { registry: "http:///user:secret@localhost:4873/" } },
+        "@ in the path": { install: { registry: `${mirror}@feed/npm/` } },
+        "no scheme": { install: { registry: "localhost:4873" } },
+        "another scheme": { install: { registry: "ftp://localhost:4873/" } },
+        "an unset variable as the port": { files: { ".npmrc": "registry=http://localhost:${UNSET_REGISTRY_PORT}/\n" } },
+        "an unset variable as the URL": { install: { registry: "$UNSET_REGISTRY_URL" } },
+      }),
+    ).toEqual({
+      "# in the password": {},
+      "? in the password": {},
+      "/ in the password": {},
+      "# in the password, from --registry": {},
+      "user and password after one slash": {},
+      "user and password after three slashes": {},
+      "@ in the path": {},
+      "no scheme": {},
+      "another scheme": {},
+      "an unset variable as the port": {},
+      "an unset variable as the URL": {},
+    });
+  });
+
+  // The script's child would get the URL and not the CA.
+  test.concurrent("it is not set when bun's configuration has a CA", async () => {
+    const cafile = { "ca.pem": tls.cert };
+    expect(
+      await rootVariables({
+        "cafile in bunfig.toml": { install: { registry: mirror, cafile: "ca.pem" }, files: cafile },
+        "cafile in .npmrc": { files: { ...inNpmrc("cafile=ca.pem").files, ...cafile } },
+        "--cafile": { ...inBunfig, files: cafile, args: ["--cafile=ca.pem"] },
+        "ca in bunfig.toml": { install: { registry: mirror, ca: tls.cert } },
+        "ca in .npmrc": inNpmrc(`ca=${JSON.stringify(tls.cert)}`),
+        "--ca": { ...inBunfig, args: [`--ca=${tls.cert}`] },
+        "cafile for an https registry": {
+          install: { registry: "https://localhost:4873/", cafile: "ca.pem" },
+          files: cafile,
+        },
+      }),
+    ).toEqual({
+      "cafile in bunfig.toml": {},
+      "cafile in .npmrc": {},
+      "--cafile": {},
+      "ca in bunfig.toml": {},
+      "ca in .npmrc": {},
+      "--ca": {},
+      "cafile for an https registry": {},
+    });
+  });
+
+  describe("a package manager that a script starts", () => {
+    const requestsFor = (registry: TestRegistry, name: string) =>
+      registry.requests
+        .filter(request => request.path === `/${name}`)
+        .map(request => request.headers.authorization ?? "no credential");
+
+    // The shape of workerd's install script: `npm install` of its platform package in a directory of its own, where
+    // npm finds no configuration of the project.
+    test.concurrent.skipIf(!Bun.which("npm"))("npm in another directory reads it", async () => {
+      using ctx = await setupTest();
+      await writeProject(ctx, {
+        ...inBunfig,
+        files: {
+          "capture.js": `
+            const { execSync } = require("child_process");
+            const { mkdtempSync, writeFileSync } = require("fs");
+            const { join } = require("path");
+            const scratch = mkdtempSync(join(process.cwd(), "platform-package-"));
+            writeFileSync(join(scratch, "package.json"), "{}");
+            const options = { cwd: scratch, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] };
+            writeFileSync("npm-registry.txt", execSync("npm config get registry", options).trim());
+          `,
+        },
+      });
+      const { err, exitCode } = await run(ctx, ["install", "--omit=optional"], { npm_config_update_notifier: "false" });
+      expect(err).not.toContain("error:");
+      expect(await file(join(ctx.packageDir, "npm-registry.txt")).text()).toBe(mirror);
+      expect(exitCode).toBe(0);
+    });
+
+    // The variable is for the other package managers. A bun that the script starts keeps the registry of its own
+    // configuration, and so do the trees in the cache of `bun x`, which every project of the user shares.
+    describe("a bun does not read it", () => {
+      test.concurrent("bun x asks the user's registry", async () => {
+        // The bunfig.toml of `setupTest` names `verdaccio`. A `bun x` in a script reads the user's own bunfig.toml.
+        using ctx = await setupTest();
+        await Promise.all([
+          write(
+            join(ctx.packageDir, "home", ".bunfig.toml"),
+            toml({ install: { registry: secondRegistry.registryUrl() } }),
+          ),
+          write(join(ctx.packageDir, "capture.js"), capture),
+          write(
+            ctx.packageJson,
+            JSON.stringify({
+              name: "root",
+              version: "1.0.0",
+              scripts: { postinstall: `${bunExe()} capture.js && ${bunExe()} x what-bin` },
+            }),
+          ),
+        ]);
+        const { err, exitCode } = await run(ctx, ["install"]);
+        expect(err).not.toContain("error:");
+        expect({
+          script: await captured(ctx.packageDir),
+          asked: requestsFor(secondRegistry, "what-bin"),
+          ran: await file(join(ctx.packageDir, "what-bin.txt")).text(),
+        }).toEqual({
+          script: { npm_config_registry: verdaccio.registryUrl() },
+          asked: ["no credential"],
+          ran: "what-bin@1.5.0",
+        });
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent.each(["bunfig.toml", ".env", "--env-file"] as const)(
+        "bun install in a project that names its registry in %s asks that one",
+        async where => {
+          using ctx = await setupTest();
+          const cache = join(ctx.packageDir, ".bun-cache");
+          const token = await tokenRegistry.generateUser(`nested-${where.replace(/\W/g, "")}`, "password");
+          const inEnv = `NPM_CONFIG_TOKEN=${token}\nnpm_config_registry=${tokenRegistry.registryUrl()}\n`;
+          const install = where === "--env-file" ? "install --cwd nested --env-file env" : "install --cwd nested";
+          const scripts = { postinstall: `${bunExe()} capture.js` };
+          const files: Record<string, string> = {
+            "bunfig.toml": toml({ install: { cache, registry: secondRegistry.registryUrl() } }),
+            "package.json": JSON.stringify({
+              name: "root",
+              version: "1.0.0",
+              scripts: { postinstall: `${bunExe()} capture.js && ${bunExe()} ${install}` },
+            }),
+            "capture.js": capture,
+            "nested/package.json": JSON.stringify({
+              name: "nested",
+              version: "1.0.0",
+              scripts,
+              dependencies: { "no-deps": "1.0.0" },
+            }),
+            "nested/capture.js": capture,
+            // Below an env file's variable. A bun that does not read the file asks `secondRegistry`.
+            "nested/bunfig.toml": toml({
+              install: {
+                cache,
+                registry: where === "bunfig.toml" ? tokenRegistry.registryUrl() : secondRegistry.registryUrl(),
+              },
+            }),
+            "nested/.env": where === ".env" ? inEnv : `NPM_CONFIG_TOKEN=${token}\n`,
+            "nested/env": inEnv,
+          };
+          await Promise.all(
+            Object.entries(files).map(([path, contents]) => write(join(ctx.packageDir, path), contents)),
+          );
+          const { err, exitCode } = await run(ctx, ["install"]);
+          expect(err).not.toContain("error:");
+          expect({
+            script: await captured(ctx.packageDir),
+            asked: requestsFor(tokenRegistry, "no-deps").filter(credential => credential === `Bearer ${token}`),
+            notAsked: requestsFor(secondRegistry, "no-deps"),
+            // The registry of the project above is not in the environment of this project's script.
+            nestedScript: await captured(join(ctx.packageDir, "nested")),
+          }).toEqual({
+            script: { npm_config_registry: secondRegistry.registryUrl() },
+            asked: [`Bearer ${token}`],
+            notAsked: [],
+            nestedScript: where === "bunfig.toml" ? {} : { npm_config_registry: tokenRegistry.registryUrl() },
+          });
+          expect(exitCode).toBe(0);
+        },
+      );
+
+      test.concurrent("auto-install asks the registry of the bunfig.toml beside the file", async () => {
+        using ctx = await setupTest();
+        using outside = tempDir("npm-config-registry-outside", {
+          "bunfig.toml": toml({ install: { registry: secondRegistry.registryUrl() } }),
+          "main.mjs": `import "basic-1/package.json";`,
+        });
+        const main = join(String(outside), "main.mjs").replaceAll("\\", "/");
+        await Promise.all([
+          write(join(ctx.packageDir, "capture.js"), capture),
+          write(
+            ctx.packageJson,
+            JSON.stringify({
+              name: "root",
+              version: "1.0.0",
+              scripts: { postinstall: `${bunExe()} capture.js && ${bunExe()} --install=force ${main}` },
+            }),
+          ),
+        ]);
+        const { err, exitCode } = await run(ctx, ["install"]);
+        expect(err).not.toContain("error:");
+        expect({ script: await captured(ctx.packageDir), asked: requestsFor(secondRegistry, "basic-1") }).toEqual({
+          script: { npm_config_registry: verdaccio.registryUrl() },
+          asked: ["no credential"],
+        });
+        expect(exitCode).toBe(0);
+      });
+    });
   });
 });
 

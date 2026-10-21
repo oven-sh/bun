@@ -111,3 +111,25 @@ Like npm, Bun sets these variables for each lifecycle script:
 | `npm_package_json`, `npm_package_name`, `npm_package_version` | From the `package.json` of the package the script is in |
 | `npm_package_config_<key>`                                    | The strings in `config` of that `package.json`          |
 | `npm_config_local_prefix`, `INIT_CWD`                         | The project directory, and where `bun install` ran      |
+| `npm_config_registry`                                         | The default registry, when it is not npm's own          |
+
+### `npm_config_registry`
+
+A lifecycle script can start another package manager in a directory of its own. The install scripts of `workerd` and `@bufbuild/buf` run `npm install` there when their platform package is missing. The install script of `dprint` reads the variable itself. Such a program cannot read your `bunfig.toml` or the `.npmrc` of your project. So, like npm, Bun gives the default registry to the lifecycle scripts of an install (`bun install`, `bun add`, `bun update`, `bun pm trust`) in `npm_config_registry`.
+
+Bun sets the variable when `bunfig.toml`, `.npmrc`, `BUN_CONFIG_REGISTRY` or `--registry` names a default registry other than `https://registry.npmjs.org/`. Bun also sets it to npm's own registry when `BUN_CONFIG_REGISTRY` or `--registry` names that one and a config file names another.
+
+Bun does not set the variable in these cases:
+
+- The environment has a value in `NPM_CONFIG_REGISTRY` or `npm_config_registry`, also from a `.env` file. The script gets that variable as it is.
+- The registry has a token or a password in Bun's configuration, or its URL has an `@`. A `.npmrc` credential that is empty does not count.
+- Bun's configuration has a `ca` or a `cafile`.
+- The registry URL does not start with `http://` or `https://`.
+
+The value has no query and no fragment. The registry of a scope is not in the environment of a script.
+
+To give the registry to scripts in one of these cases, set `npm_config_registry` yourself, in lower case. Bun reads it, and every script gets it. A program that needs a token for the registry must find the token too. For that, put the `registry=` line and the `//<registry>/:_authToken=` line in your [user-level `.npmrc`](/pm/npmrc#which-files-are-read), which npm and Bun read from every directory.
+
+A `bun` that a script starts does not read the variable that Bun set. `bunx`, `bun install` and `bun add` keep the registry of their own configuration there.
+
+The scripts of `bun run`, `bun pm pack`, `bun publish` and `bun pm version` do not get the variable.

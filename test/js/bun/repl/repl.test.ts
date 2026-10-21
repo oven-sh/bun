@@ -1873,21 +1873,10 @@ describe.skipIf(isWindows).concurrent("REPL history file permissions", () => {
   });
 });
 
+// $HOME/.bun_repl_history holds one entry per line. The newlines inside a
+// multi-line entry are written as '\r', so the entry survives a restart.
 describe.concurrent("REPL history file", () => {
-  // $HOME/.bun_repl_history holds one entry per line; the newlines inside a
-  // multi-line entry are written as '\r' so the entry survives a restart.
   const ARROW_UP = "\x1b[A";
-
-  async function runReplWithHome(home: string, input: string[]) {
-    const { stdout, stderr, exitCode } = await runRepl(input, { env: { HOME: home, USERPROFILE: home } });
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    const out = stripAnsi(stdout);
-    // Everything after the banner. With piped stdin the input is not echoed;
-    // the output is a "> " prompt each time the REPL is back at top level
-    // plus whatever each input printed.
-    return out.slice(out.indexOf("> "));
-  }
 
   // The physical lines of the history file (the last one is the "" after the
   // final newline).
@@ -1900,55 +1889,42 @@ describe.concurrent("REPL history file", () => {
     using dir = tempDir("repl-history-multiline", {});
     const home = String(dir);
 
-    await runReplWithHome(home, ["function f() {", "  return 1", "}", ".exit"]);
-
+    const first = await runRepl(["function f() {", "  return 1", "}", ".exit"], { home });
+    expect(first.outputs).toEqual(["undefined"]);
+    expect(first.stderr).toBe("");
+    expect(first.exitCode).toBe(0);
     expect(await savedLines(home)).toEqual(["function f() {\r  return 1\r}", ""]);
 
-    // Next session: recall the entry with the up arrow and run it, then list
-    // the history. The recalled entry defines f, and re-running it does not
-    // add a duplicate entry.
-    const session = await runReplWithHome(home, [ARROW_UP, "f()", ".history", ".exit"]);
-    expect(session).toMatchInlineSnapshot(`
-      "> 
-      undefined
-      > 
-      1
-      > 
-
-      Command History:
-           1  function f() {
-        return 1
-      }
-           2  f()
-
-      > 
-      "
-    `);
+    // Next session: the up arrow recalls the entry and Enter runs it, which
+    // defines f. Running it again adds no second entry.
+    const second = await runRepl([ARROW_UP, "f()", ".history", ".exit"], { home });
+    expect(second.outputs).toEqual([
+      "undefined",
+      "1",
+      "Command History:\n     1  function f() {\n  return 1\n}\n     2  f()",
+    ]);
+    expect(second.stderr).toBe("");
+    expect(second.exitCode).toBe(0);
   });
 
   test("entries with blank lines round-trip in order", async () => {
     using dir = tempDir("repl-history-mixed", {});
     const home = String(dir);
 
-    await runReplWithHome(home, ["const a = 1", "function g() {", "", "  return 2", "}", "const b = 3", ".exit"]);
-
+    const first = await runRepl(["const a = 1", "function g() {", "", "  return 2", "}", "const b = 3", ".exit"], {
+      home,
+    });
+    expect(first.outputs).toEqual(["1", "undefined", "3"]);
+    expect(first.stderr).toBe("");
+    expect(first.exitCode).toBe(0);
     expect(await savedLines(home)).toEqual(["const a = 1", "function g() {\r\r  return 2\r}", "const b = 3", ""]);
 
-    const session = await runReplWithHome(home, [".history", ".exit"]);
-    expect(session).toMatchInlineSnapshot(`
-      "> 
-
-      Command History:
-           1  const a = 1
-           2  function g() {
-
-        return 2
-      }
-           3  const b = 3
-
-      > 
-      "
-    `);
+    const second = await runRepl([".history", ".exit"], { home });
+    expect(second.outputs).toEqual([
+      "Command History:\n     1  const a = 1\n     2  function g() {\n\n  return 2\n}\n     3  const b = 3",
+    ]);
+    expect(second.stderr).toBe("");
+    expect(second.exitCode).toBe(0);
   });
 
   test("loads a CRLF history file without keeping the line endings", async () => {
@@ -1960,23 +1936,12 @@ describe.concurrent("REPL history file", () => {
     });
     const home = String(dir);
 
-    const session = await runReplWithHome(home, [".history", "2 + 2", ".exit"]);
-    // Snapshot matching tolerates CRLF, so check for a leaked '\r' explicitly.
-    expect(session).not.toContain("\r");
-    expect(session).toMatchInlineSnapshot(`
-      "> 
-
-      Command History:
-           1  1 + 1
-           2  function h() {
-        return 3
-      }
-
-      > 
-      4
-      > 
-      "
-    `);
+    const { stdout, outputs, stderr, exitCode } = await runRepl([".history", "2 + 2", ".exit"], { home });
+    // A leaked '\r' does not show in the diff of a failed toEqual, so name it first.
+    expect(stdout).not.toContain("\r");
+    expect(outputs).toEqual(["Command History:\n     1  1 + 1\n     2  function h() {\n  return 3\n}", "4"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
 
     // Re-saved with plain '\n' line endings; the stored newlines inside the
     // multi-line entry are kept.
@@ -1992,20 +1957,11 @@ describe.concurrent("REPL history file", () => {
     });
     const home = String(dir);
 
-    const session = await runReplWithHome(home, [".history", "2 + 2", ".exit"]);
-    expect(session).not.toContain("\r");
-    expect(session).toMatchInlineSnapshot(`
-      "> 
-
-      Command History:
-           1  old_one
-           2  old_two
-
-      > 
-      4
-      > 
-      "
-    `);
+    const { stdout, outputs, stderr, exitCode } = await runRepl([".history", "2 + 2", ".exit"], { home });
+    expect(stdout).not.toContain("\r");
+    expect(outputs).toEqual(["Command History:\n     1  old_one\n     2  old_two", "4"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
 
     expect(await savedLines(home)).toEqual(["old_one", "old_two", "2 + 2", ""]);
   });

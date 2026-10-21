@@ -1574,6 +1574,7 @@ describe("constructing a mock", () => {
             '"TypeError"',
             '"TypeError"',
           ].join("\n") + "\n",
+        stderr: "",
         exitCode: 0,
         signalCode: null,
       });

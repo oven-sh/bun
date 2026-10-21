@@ -30,7 +30,7 @@ impl NoUnsafeNegation {
         let report = cx.report(left, UNEXPECTED).data("operator", operator).hint_with(|| {
             Some(format!("!a {operator} b means (!a) {operator} b. Did you mean !(a {operator} b)?"))
         });
-        // oxlint has a fix, and writes the comparison anew.
+        // oxlint has a fix, which reprints the whole comparison.
         if cx.language().is_oxlint {
             report.fix(|fixer| {
                 let file = fixer.file();

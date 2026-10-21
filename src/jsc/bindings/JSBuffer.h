@@ -25,6 +25,7 @@
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ThrowScope.h>
+#include <wtf/MallocSpan.h>
 #include <wtf/NeverDestroyed.h>
 
 #include "BufferEncodingType.h"
@@ -45,6 +46,10 @@ std::optional<size_t> byteLength(JSC::JSString* str, JSC::JSGlobalObject* lexica
 // it, this releases the adopted bytes through the deallocator, throws the
 // RangeError `new ArrayBuffer(length)` would throw, and returns true.
 bool rejectBytesNoCopyAboveArrayBufferLimit(JSC::JSGlobalObject*, JSC::ThrowScope&, const void* bytes, size_t length, JSTypedArrayBytesDeallocator, void* deallocatorContext);
+
+// Copies bytes out of a SharedArrayBuffer. Another thread can write to it between the UTF-8 decoders'
+// two passes, so they decode the copy. Throws OutOfMemoryError if the copy fails.
+WTF::MallocSpan<uint8_t> copySharedBytes(JSC::JSGlobalObject*, JSC::ThrowScope&, std::span<const uint8_t> bytes);
 
 namespace Buffer {
 

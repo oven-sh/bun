@@ -467,8 +467,8 @@ describe.each(Object.keys(builds))("the source map of %s", name => {
         const repeated = previous === (previous = `${source}:${originalLine}:${originalColumn}`);
         const word = wordAt(generated[generatedLine], generatedColumn);
         // A word that Bun made up, or renamed, is not in the source. The output of each member of an enum or of a
-        // namespace starts with the name of the enum or of the namespace. `else` has the position of what follows it.
-        if (repeated || !word || word === "else" || !map.sourcesContent[source].includes(word)) continue;
+        // namespace starts with the name of the enum or of the namespace.
+        if (repeated || !word || !map.sourcesContent[source].includes(word)) continue;
         if (map.sources[source].endsWith("lowered.ts")) continue;
         checked++;
         const original = originals[source][originalLine]?.slice(originalColumn, originalColumn + word.length);
@@ -489,17 +489,16 @@ describe.each(Object.keys(builds))("the source map of %s", name => {
     for (const { path, code, map, mappings } of outputs[name]) {
       const originals = (map.sourcesContent as string[]).map(content => content.split(/\r?\n/));
       const originalOf = new Map(mappings.map(([line, column, ...original]) => [`${line}:${column}`, original]));
+      const sourceFrom = (generatedLine: number, generatedColumn: number) => {
+        const [source, line, column] = originalOf.get(`${generatedLine}:${generatedColumn}`) ?? [];
+        return originals[source!]?.slice(line).join("\n").slice(column);
+      };
       code.split("\n").forEach((line, generatedLine) => {
         for (const { 0: keyword, index } of line.matchAll(/\bfinally ?(?=\{)/g)) {
           checked++;
-          for (const [column, text] of [
-            [index, "finally"],
-            [index + keyword.length, "{"],
-          ] as const) {
-            const [source, originalLine, originalColumn] = originalOf.get(`${generatedLine}:${column}`) ?? [];
-            if (!originals[source!]?.[originalLine!]?.startsWith(text, originalColumn))
-              wrong.push(`${path}:${generatedLine + 1}:${column + 1}`);
-          }
+          const fromBrace = sourceFrom(generatedLine, index)?.match(/^finally\s*(\{[^]*)/)?.[1];
+          if (!fromBrace || fromBrace !== sourceFrom(generatedLine, index + keyword.length))
+            wrong.push(`${path}:${generatedLine + 1}:${index + 1}`);
         }
       });
     }

@@ -41,7 +41,7 @@ SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
     return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
 }
 
-extern "C" void ByteRangeMapping__generate(const BunString* sourceURL, const BunString* code, int sourceID);
+extern "C" void ByteRangeMapping__generate(const BunString* sourceURL, const BunString* code, int sourceID, bool alreadyBundled);
 extern "C" void ByteRangeMapping__addSourceID(const BunString* sourceURL, const BunString* code, int sourceID);
 
 void addCodeCoverageSourceID(JSC::VM& vm, JSC::SourceProvider& provider)
@@ -134,7 +134,7 @@ Ref<SourceProvider> SourceProvider::create(
         BunString providerURL = Bun::toString(provider->sourceURL());
         WTF::String providerSourceString = provider->source().toStringWithoutCopying();
         BunString providerSource = Bun::toString(providerSourceString);
-        ByteRangeMapping__generate(&providerURL, &providerSource, provider->asID());
+        ByteRangeMapping__generate(&providerURL, &providerSource, provider->asID(), provider->m_alreadyBundled);
     }
 
     if (provider->m_alreadyBundled) {

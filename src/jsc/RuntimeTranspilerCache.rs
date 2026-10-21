@@ -70,6 +70,9 @@ bun_core::declare_scope!(cache, visible);
 /// Version 37: A JSX spread no longer empties an object `--define`. Older entries can print it as `{}`.
 /// Version 38: `finally` is mapped, and the `{` after it is mapped elsewhere.
 /// Version 39: `emitDecoratorMetadata` names the right type in the body of `a ? (b): T => {...} : c`.
+/// Version 40: `else` and the name of an `async` method are mapped elsewhere, the `}` of a pattern
+/// that became an assignment is mapped, what is in the value of a define is not, and `--coverage`
+/// participates in the features hash.
 /// Version 41: `case` and `default` are mapped.
 const EXPECTED_VERSION: u32 = 41;
 

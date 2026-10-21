@@ -1351,10 +1351,11 @@ impl JSValkeyClient {
         Ok(())
     }
 
-    pub(crate) fn on_valkey_message(&self, value: &mut [protocol::RESPValue]) {
+    /// The reply loop, `ValkeyClient::on_data`, reports an `Err`.
+    pub(crate) fn on_valkey_message(&self, value: &mut [protocol::RESPValue]) -> JsResult<()> {
         if !self.is_subscriber() {
             debug!("onMessage called but client is not in subscriber mode");
-            return;
+            return Ok(());
         }
 
         let global_object = self.global_object;
@@ -1363,35 +1364,22 @@ impl JSValkeyClient {
         // The message push should be an array with [channel, message]
         if value.len() < 2 {
             debug!("Message array has insufficient elements: {}", value.len());
-            return;
+            return Ok(());
         }
 
-        // Extract channel and message
-        let Ok(channel_value) = protocol_jsc::resp_value_to_js(&mut value[0], &global_object)
-        else {
-            debug!("Failed to convert channel to JS");
-            return;
-        };
-        let Ok(message_value) = protocol_jsc::resp_value_to_js(&mut value[1], &global_object)
-        else {
-            debug!("Failed to convert message to JS");
-            return;
-        };
+        let channel_value = protocol_jsc::resp_value_to_js(&mut value[0], &global_object)?;
+        let message_value = protocol_jsc::resp_value_to_js(&mut value[1], &global_object)?;
 
         // Invoke callbacks for this channel with message and channel as arguments
-        if self
-            .invoke_callbacks(
-                &global_object,
-                channel_value,
-                &[message_value, channel_value],
-            )
-            .is_err()
-        {
-            return;
-        }
+        self.invoke_callbacks(
+            &global_object,
+            channel_value,
+            &[message_value, channel_value],
+        )?;
 
         self.client_mut().on_writable();
         self.update_poll_ref();
+        Ok(())
     }
 
     // Callback for when Valkey client needs to reconnect

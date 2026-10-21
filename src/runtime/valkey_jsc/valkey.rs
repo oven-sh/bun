@@ -814,7 +814,12 @@ impl ValkeyClient {
                 self.reply_scanner.reset();
 
                 let mut value_to_handle = value; // Use temp var for defer
-                self.handle_response(&mut value_to_handle)?;
+                // A reply's error is reported here and the read goes on. The VM's stop ends it.
+                if let Err(err) = self.handle_response(&mut value_to_handle)
+                    && bun_jsc::task::report_error_or_terminate(&self.global_object(), err).is_err()
+                {
+                    return Ok(());
+                }
 
                 if *self.socket.socket() != socket {
                     return Ok(());
@@ -873,7 +878,11 @@ impl ValkeyClient {
 
             // Handle the successfully parsed response
             let mut value_to_handle = value; // Use temp var for defer
-            self.handle_response(&mut value_to_handle)?;
+            if let Err(err) = self.handle_response(&mut value_to_handle)
+                && bun_jsc::task::report_error_or_terminate(&self.global_object(), err).is_err()
+            {
+                return Ok(());
+            }
 
             if *self.socket.socket() != socket {
                 return Ok(());
@@ -920,7 +929,7 @@ impl ValkeyClient {
                 if let Some(msg_type) = protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
                     match msg_type {
                         protocol::SubscriptionPushMessage::Message => {
-                            self.on_valkey_message(&mut push.data);
+                            self.on_valkey_message(&mut push.data)?;
                             Ok(SubscribeHandled::Handled)
                         }
                         protocol::SubscriptionPushMessage::PatternMessage => {
@@ -933,15 +942,16 @@ impl ValkeyClient {
                             // For SUBSCRIBE responses, only resolve the promise for the first channel confirmation
                             // Additional channel confirmations from multi-channel SUBSCRIBE commands don't need promise pairs
                             if let Some(req_pair) = pair {
-                                let resolve_value = if is_pattern_or_sharded {
-                                    resp_value_to_js(value, &global_this)?
+                                // A confirmation that does not convert rejects this request.
+                                let confirmation = if is_pattern_or_sharded {
+                                    resp_value_to_js(value, &global_this)
                                 } else {
-                                    JSValue::js_number(f64::from(sub_count))
+                                    Ok(JSValue::js_number(f64::from(sub_count)))
                                 };
                                 req_pair
                                     .promise
                                     .promise
-                                    .resolve(&global_this, resolve_value)?;
+                                    .settle(&global_this, confirmation)?;
                             }
                             Ok(SubscribeHandled::Handled)
                         }
@@ -952,15 +962,15 @@ impl ValkeyClient {
                             // For UNSUBSCRIBE responses, only resolve the promise if we have one
                             // Additional channel confirmations from multi-channel UNSUBSCRIBE commands don't need promise pairs
                             if let Some(req_pair) = pair {
-                                let resolve_value = if is_pattern_or_sharded {
-                                    resp_value_to_js(value, &global_this)?
+                                let confirmation = if is_pattern_or_sharded {
+                                    resp_value_to_js(value, &global_this)
                                 } else {
-                                    JSValue::UNDEFINED
+                                    Ok(JSValue::UNDEFINED)
                                 };
                                 req_pair
                                     .promise
                                     .promise
-                                    .resolve(&global_this, resolve_value)?;
+                                    .settle(&global_this, confirmation)?;
                             }
                             Ok(SubscribeHandled::Handled)
                         }
@@ -1525,8 +1535,8 @@ impl ValkeyClient {
         self.parent().on_valkey_unsubscribe()
     }
 
-    pub(crate) fn on_valkey_message(&mut self, value: &mut [RESPValue]) {
-        self.parent().on_valkey_message(value);
+    pub(crate) fn on_valkey_message(&mut self, value: &mut [RESPValue]) -> JsResult<()> {
+        self.parent().on_valkey_message(value)
     }
 
     pub(crate) fn on_valkey_reconnect(&mut self) {

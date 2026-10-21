@@ -73,7 +73,7 @@ impl EasingFunction {
         // `'static` placeholders for the not-yet-threaded `'bump`) and dispatch
         // on Ident vs Function in one go; on any other token, error.
         let location = input.current_source_location();
-        let tok = input.next()?.clone();
+        let tok = *input.next()?;
         if let Token::Ident(ident) = tok {
             let keyword = if let Some(e) = EASING_KEYWORDS.get_ascii_case_insensitive(ident) {
                 match e {
@@ -260,7 +260,7 @@ impl StepPosition {
 
     pub fn parse(input: &mut css::Parser) -> Result<StepPosition> {
         let location = input.current_source_location();
-        let tok = input.next()?.clone();
+        let tok = *input.next()?;
         let Token::Ident(ident) = tok else {
             return Err(location.new_unexpected_token_error(tok));
         };

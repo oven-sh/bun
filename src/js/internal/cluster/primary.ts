@@ -1,10 +1,15 @@
+import type { ClusterWorker } from "internal/cluster/Worker";
+import type { ClusterSettings } from "node:cluster";
+
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
 const { kHandle } = require("internal/shared");
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
-const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
-const { UV_EINVAL, UV_ENOBUFS } = process.binding("uv");
+const onInternalMessage = $bindgen("node_cluster_binding.bind.ts", "onInternalMessagePrimary");
+const validateFd = $bindgen("node_cluster_binding.bind.ts", "clusterValidateFd");
+const isDgramSocketFd = $bindgen("udp_socket.bind.ts", "dgramIsFdAdopted");
+const { UV_EEXIST, UV_EINVAL, UV_ENOBUFS } = process.binding("uv");
 
 let child_process;
 let RoundRobinHandle;
@@ -14,7 +19,28 @@ const ArrayPrototypeSlice = Array.prototype.slice;
 const ObjectValues = Object.values;
 const ObjectKeys = Object.keys;
 
-const cluster = new EventEmitter();
+interface PrimaryCluster extends InstanceType<typeof EventEmitter> {
+  isWorker: boolean;
+  isMaster: boolean;
+  isPrimary: boolean;
+  Worker: typeof Worker;
+  workers: Record<number, ClusterWorker>;
+  settings: ClusterSettings;
+  SCHED_NONE: number;
+  SCHED_RR: number;
+  schedulingPolicy: number;
+  setupPrimary(options?: ClusterSettings): void;
+  setupMaster(options?: ClusterSettings): void;
+  fork(env?: Record<string, string | undefined>): ClusterWorker;
+  disconnect(cb?: () => void): void;
+}
+
+interface DgramShareError extends Error {
+  code?: string;
+  syscall?: string;
+}
+
+const cluster = new EventEmitter() as PrimaryCluster;
 const intercom = new EventEmitter();
 const SCHED_NONE = 1;
 const SCHED_RR = 2;
@@ -73,7 +99,7 @@ function setupSettingsNT(settings) {
 
 function createWorkerProcess(id, env) {
   const workerEnv = { ...process.env, ...env, NODE_UNIQUE_ID: `${id}` };
-  const execArgv = [...cluster.settings.execArgv];
+  const execArgv = [...cluster.settings.execArgv!];
 
   child_process ??= require("node:child_process");
   return child_process.fork(cluster.settings.exec, cluster.settings.args, {
@@ -216,6 +242,19 @@ function exitedAfterDisconnect(worker, message) {
   send(worker, { ack: message.seq });
 }
 
+// A handle closes its fd when its last worker is removed, so a second handle for the same fd
+// would close it while the first handle still uses it.
+function isFdInUse(fd: number, isUdp: boolean) {
+  // SharedHandle rejects a number that isn't a valid fd.
+  if ((fd | 0) !== fd) return false;
+  if (isUdp && isDgramSocketFd(fd)) return true;
+  let inUse = false;
+  handles.forEach(handle => {
+    if (handle.fd === fd) inUse = true;
+  });
+  return inUse;
+}
+
 function queryServer(worker, message) {
   // Stop processing if worker already disconnecting
   if (worker.exitedAfterDisconnect) return;
@@ -264,11 +303,21 @@ function queryServer(worker, message) {
     // be obvious reasons: it's connectionless. There is nothing to send to
     // the workers except raw datagrams and that's pointless.
     if (process.platform === "win32" && (message.addressType === "udp4" || message.addressType === "udp6")) {
-      const error = new Error(`write ENOTSUP - cannot share a dgram socket with a worker on Windows`);
+      const error: DgramShareError = new Error(`write ENOTSUP - cannot share a dgram socket with a worker on Windows`);
       error.code = "ENOTSUP";
       error.syscall = "write";
       worker.emit("error", error);
       return;
+    }
+    const fd = message.fd;
+    if (typeof fd === "number" && fd >= 0) {
+      const isUdp = message.addressType === "udp4" || message.addressType === "udp6";
+      if (isFdInUse(fd, isUdp)) {
+        // Like node, report a wrong fd type before reporting that the fd is in use.
+        const errno = validateFd(fd, isUdp) || UV_EEXIST;
+        send(worker, { errno, key, ack: message.seq, data: cachedHandle ? cachedHandle.data : message.data }, null);
+        return;
+      }
     }
     if (
       schedulingPolicy !== SCHED_RR ||

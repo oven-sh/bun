@@ -1,0 +1,17 @@
+------------------
+{ printWidth: 80 }
+------------------
+type A = { [/* c */ K in B]: C };
+type D = { /* c */ [K in B]: C };
+type E = { [/**/ K in B]: C };
+type F = { /* c */ readonly [K in B]: C };
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type A = { [/* c */ K in B]: C };
+type D = { /* c */ [K in B]: C };
+type E = { [/**/ K in B]: C };
+type F = { /* c */ readonly [K in B]: C };
+
+===================== End =====================

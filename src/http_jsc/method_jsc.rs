@@ -1,6 +1,6 @@
 //! JSC bridge for `bun_http_types::Method`. Keeps `bun_http_types` free of JSC types.
 
-use bun_core::{OwnedString, String as BunString};
+use bun_core::String as BunString;
 use bun_http_types::Method::Method;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 
@@ -17,9 +17,7 @@ unsafe extern "C" {
 ///
 /// Lives here (not in `bun_http_types`) so the base crate stays JSC-free.
 pub fn from_js(global_this: &JSGlobalObject, input: JSValue) -> JsResult<Option<Method>> {
-    // `defer str.deref()` — `bun_core::String` is `Copy` (no `Drop`), so wrap the
-    // +1 ref from `BunString::from_js` in `OwnedString` to release it on scope exit.
-    let str = OwnedString::new(BunString::from_js(input, global_this)?);
+    let str = BunString::from_js(input, global_this)?;
     debug_assert!(str.tag() != bun_core::Tag::Dead);
     // `Method::which` is keyed on `&[u8]`, so materialize UTF-8 and call it
     // directly.

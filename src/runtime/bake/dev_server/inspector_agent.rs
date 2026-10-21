@@ -8,6 +8,7 @@
 //! `Bun__InspectorBunFrontendDevServerAgent__setEnabled`, `slot.sequence` is
 //! `next_inspector_connection_id`.
 
+use super::*;
 use bun_core::String as BunString;
 use bun_jsc::debugger::{DebuggerId, ErasedAgentSlot};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -51,7 +52,6 @@ impl BunFrontendDevServerAgent {
     /// C++ inspector backend (`frontend_dev_server_agent_set_enabled`) and
     /// stays live while the agent is enabled. Returns `None` when disabled.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     fn handle_mut(&self) -> Option<&mut InspectorBunFrontendDevServerAgentHandle> {
         let handle = self.0.agent_ptr();
         if handle.is_null() {
@@ -116,7 +116,7 @@ impl BunFrontendDevServerAgent {
     pub(crate) fn notify_bundle_failed(
         &self,
         dev_server_id: DebuggerId,
-        build_errors_payload_base64: &mut BunString,
+        build_errors_payload_base64: BunString,
     ) {
         if let Some(handle) = self.handle_mut() {
             ffi::InspectorBunFrontendDevServerAgent__notifyBundleFailed(
@@ -134,7 +134,7 @@ impl BunFrontendDevServerAgent {
         &self,
         dev_server_id: DebuggerId,
         connection_id: i32,
-        url: &mut BunString,
+        url: &BunString,
         route_bundle_id: i32,
     ) {
         if let Some(handle) = self.handle_mut() {
@@ -150,12 +150,7 @@ impl BunFrontendDevServerAgent {
 
     /// `notifyConsoleLog`. `kind` is `DevServer.ConsoleLogKind as u8` (`b'l'`
     /// / `b'e'`) — caller does `kind as u8`.
-    pub(crate) fn notify_console_log(
-        &self,
-        dev_server_id: DebuggerId,
-        kind: u8,
-        data: &mut BunString,
-    ) {
+    pub(crate) fn notify_console_log(&self, dev_server_id: DebuggerId, kind: u8, data: &BunString) {
         if let Some(handle) = self.handle_mut() {
             ffi::InspectorBunFrontendDevServerAgent__notifyConsoleLog(
                 handle,
@@ -168,7 +163,9 @@ impl BunFrontendDevServerAgent {
 }
 
 // HOST_EXPORT(Bun__InspectorBunFrontendDevServerAgent__setEnabled, c)
-pub fn frontend_dev_server_agent_set_enabled(agent: *mut InspectorBunFrontendDevServerAgentHandle) {
+pub(crate) fn frontend_dev_server_agent_set_enabled(
+    agent: *mut InspectorBunFrontendDevServerAgentHandle,
+) {
     // `VirtualMachine::get()` is valid here: the C++ inspector agent invokes
     // this on the JS thread, after the VM is initialized.
     if let Some(dbg) = VirtualMachine::get().debugger.as_deref() {
@@ -180,8 +177,8 @@ mod ffi {
     use super::{BunString, InspectorBunFrontendDevServerAgentHandle};
     // SAFETY (safe fn): `InspectorBunFrontendDevServerAgentHandle` is an
     // `opaque_ffi!` ZST handle (`!Freeze` via `UnsafeCell`); `BunString` is a
-    // `#[repr(C)]` in-param the C++ side reads/consumes in-place. `&mut T` is
-    // ABI-identical to a non-null `*mut T`. `notifyBundleStart` keeps a raw
+    // `#[repr(C)]` in-param the C++ side reads in-place (`&`) or consumes
+    // (by value). `notifyBundleStart` keeps a raw
     // `(ptr, len)` pair (slice not FFI-safe) and stays `unsafe`.
     unsafe extern "C" {
         pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyClientConnected(
@@ -208,20 +205,37 @@ mod ffi {
         pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyBundleFailed(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
-            build_errors_payload_base64: &mut BunString,
+            build_errors_payload_base64: BunString,
         );
         pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyClientNavigated(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             connection_id: i32,
-            url: &mut BunString,
+            url: &BunString,
             route_bundle_id: i32,
         );
         pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyConsoleLog(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             kind: u8,
-            data: &mut BunString,
+            data: &BunString,
         );
+    }
+}
+
+impl DevServer {
+    /// The dev server's inspector agent, or `None` while the
+    /// `BunFrontendDevServer` domain is disabled. The agent's state is
+    /// `Cell`-based, so a shared borrow suffices. JS-thread only.
+    pub(crate) fn inspector(&self) -> Option<&BunFrontendDevServerAgent> {
+        if let Some(debugger) = self.vm().debugger.as_ref() {
+            bun_core::hint::cold();
+            let agent = BunFrontendDevServerAgent::from_slot(&debugger.extension_agent);
+            if agent.is_enabled() {
+                bun_core::hint::cold();
+                return Some(agent);
+            }
+        }
+        None
     }
 }

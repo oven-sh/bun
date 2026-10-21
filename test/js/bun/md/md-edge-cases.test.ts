@@ -1,8 +1,27 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { renderToString } from "react-dom/server";
 
 const Markdown = Bun.markdown;
+
+// Runs `script` in a child that is killed after 30s, so a super-linear
+// regression fails fast instead of hanging the test runner.
+async function expectRendersQuickly(script: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 30_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("DONE");
+  expect(exitCode).toBe(0);
+}
 
 // ============================================================================
 // Fuzzer-like tests: edge cases, pathological inputs, invariant checks
@@ -566,21 +585,6 @@ code
 // ============================================================================
 
 describe("pathological bracket inputs", () => {
-  async function expectRendersQuickly(script: string) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 30_000,
-      killSignal: "SIGKILL",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("DONE");
-    expect(exitCode).toBe(0);
-  }
-
   test("bracket floods render in linear time (html)", async () => {
     await expectRendersQuickly(`
         const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
@@ -651,11 +655,98 @@ describe("pathological bracket inputs", () => {
     const overflowIntoTitle = Markdown.html("[a](" + "(".repeat(33) + "))\n");
     expect(overflowIntoTitle).not.toContain("<a href=");
     expect(overflowIntoTitle).toContain("[a](");
+    // Reference definitions use the same scanner, so the same cap (cmark too).
+    const refNest = (n: number) =>
+      "[a]: " + Buffer.alloc(n, "(").toString() + "b" + Buffer.alloc(n, ")").toString() + "\n\n[a]\n";
+    expect(Markdown.html(refNest(32))).toContain("<a href=");
+    expect(Markdown.html(refNest(33))).not.toContain("<a href=");
   });
 
   test("angle-bracket destination may not contain an unescaped '<'", () => {
     expect(Markdown.html("[a](<b<c>)\n")).not.toContain("<a href=");
     expect(Markdown.html("[a](<b\\<c>)\n")).toContain('<a href="b%3Cc"');
+  });
+
+  // CommonMark §6.3 link destinations. Each table is keyed by its input. The
+  // expected strings are the output of commonmark.js 0.31.2, except in the
+  // control-character test, which says why.
+  const renderAll = (cases: Record<string, string>) =>
+    Object.fromEntries(Object.keys(cases).map(md => [md, Markdown.html(md)]));
+
+  test("a backslash in a link destination escapes ASCII punctuation only", () => {
+    const cases = {
+      // cmark-gfm test/regression.txt, issues #192 and #530: a space, tab or
+      // line ending after a backslash still ends a bare destination.
+      "[a](te\\ st)\n": "<p>[a](te\\ st)</p>\n",
+      "[a](\\ b)\n": "<p>[a](\\ b)</p>\n",
+      "[a](b\\\nc)\n": "<p>[a](b<br />\nc)</p>\n",
+      "![a](te\\ st)\n": "<p>![a](te\\ st)</p>\n",
+      "[a]: te\\ st\n\n[a]\n": "<p>[a]: te\\ st</p>\n<p>[a]</p>\n",
+      // The backslash ends the destination, so the title still parses.
+      '[a](b\\ "t")\n': '<p><a href="b%5C" title="t">a</a></p>\n',
+      // A line ending after a backslash still invalidates a <...> destination.
+      "[a](<te\\\nst>)\n": "<p>[a](&lt;te<br />\nst&gt;)</p>\n",
+      "[a]: <te\\\nst>\n\n[a]\n": "<p>[a]: &lt;te<br />\nst&gt;</p>\n<p>[a]</p>\n",
+      // The emphasis lookahead rejects the same destination as the link parser.
+      "*foo [a](te\\ st*) bar*\n": "<p><em>foo [a](te\\ st</em>) bar*</p>\n",
+      // Controls: punctuation is escaped, other bytes keep a literal backslash.
+      "[a](foo\\)bar)\n": '<p><a href="foo)bar">a</a></p>\n',
+      "[a](foo\\bar)\n": '<p><a href="foo%5Cbar">a</a></p>\n',
+      "[a](<te\\ st>)\n": '<p><a href="te%5C%20st">a</a></p>\n',
+    };
+    expect(renderAll(cases)).toEqual(cases);
+  });
+
+  test("reference definition <...> destination may not contain an unescaped '<'", () => {
+    const cases = {
+      // cmark-gfm test/regression.txt, issue #193.
+      "[a]\n\n[a]: <te<st>\n": "<p>[a]</p>\n<p>[a]: &lt;te<st></p>\n",
+      "[a]: <te\\<st>\n\n[a]\n": '<p><a href="te%3Cst">a</a></p>\n',
+    };
+    expect(renderAll(cases)).toEqual(cases);
+  });
+
+  test("bare link destination needs balanced parentheses", () => {
+    const cases = {
+      "[a](foo(bar )\n": "<p>[a](foo(bar )</p>\n",
+      '[a](foo(bar "t")\n': "<p>[a](foo(bar &quot;t&quot;)</p>\n",
+      "[a]: foo(bar\n\n[a]\n": "<p>[a]: foo(bar</p>\n<p>[a]</p>\n",
+      // Controls: balanced or escaped parentheses.
+      "[a](foo(bar))\n": '<p><a href="foo(bar)">a</a></p>\n',
+      "[a](foo\\(bar )\n": '<p><a href="foo(bar">a</a></p>\n',
+      "[a]: foo(bar)\n\n[a]\n": '<p><a href="foo(bar)">a</a></p>\n',
+    };
+    expect(renderAll(cases)).toEqual(cases);
+  });
+
+  // The spec says a bare destination "does not include ASCII control
+  // characters", and md4c stops at one. cmark, cmark-gfm and commonmark.js do
+  // not check this, so the expected strings here come from the spec text.
+  test("bare link destination may not contain an ASCII control character", () => {
+    const cases = {
+      "[a](b\x01c)\n": "<p>[a](b\x01c)</p>\n",
+      "[a](b\x7fc)\n": "<p>[a](b\x7fc)</p>\n",
+      "[a]: b\x1bc\n\n[a]\n": "<p>[a]: b\x1bc</p>\n<p>[a]</p>\n",
+      "[a]: /url\n\n[a](b\x01c)\n": '<p><a href="/url">a</a>(b\x01c)</p>\n',
+      // Control: the <...> form has no such rule.
+      "[a](<b\x01c>)\n": '<p><a href="b%01c">a</a></p>\n',
+    };
+    expect(renderAll(cases)).toEqual(cases);
+  });
+
+  test("a rejected inline destination falls back to the shortcut reference", () => {
+    const cases = {
+      "[a]: /url\n\n[a](<b<c>)\n": '<p><a href="/url">a</a>(&lt;b<c>)</p>\n',
+      "[a]: /url\n\n[a](te\\ st)\n": '<p><a href="/url">a</a>(te\\ st)</p>\n',
+      // The emphasis lookahead and label_contains_link take the same fallback.
+      "[a]: /url\n\n*[a](<b*<c>)\n": '<p><em><a href="/url">a</a>(&lt;b</em><c>)</p>\n',
+      "[a]: /url\n\n[x [a](<b<c>) y](/u)\n": '<p>[x <a href="/url">a</a>(&lt;b<c>) y](/u)</p>\n',
+      // An unclosed <...> at the end of the text. The lookahead used to give up
+      // where the parser fell back, so the '*' in the label opened an <em>
+      // that nothing closed.
+      "[a*]: /url\n\n*[a*](<b\n": '<p>*<a href="/url">a*</a>(&lt;b</p>\n',
+    };
+    expect(renderAll(cases)).toEqual(cases);
   });
 
   test("()-delimited title may not contain an unescaped '('", () => {
@@ -669,6 +760,26 @@ describe("pathological bracket inputs", () => {
     const label1000 = Buffer.alloc(1000, "y").toString();
     expect(Markdown.html(`[${label999}]: /url\n\n[${label999}]\n`)).toContain('<a href="/url">');
     expect(Markdown.html(`[${label1000}]: /url\n\n[${label1000}]\n`)).not.toContain("<a href=");
+  });
+
+  // Emphasis delimiters inside a wiki link target used to pair with
+  // delimiters outside the construct; the emit walk renders the wiki link as
+  // a unit, so one half of each pair was never emitted, producing unbalanced
+  // HTML (issue #39492). Bracket constructs resolve before emphasis, so the
+  // delimiters stay literal.
+  test("delimiters inside a wiki link target do not pair with delimiters outside", () => {
+    const o = { wikiLinks: true };
+    expect(Markdown.html("*a [[b*|c]] d\n", o)).toBe('<p>*a <x-wikilink data-target="b*">c</x-wikilink> d</p>\n');
+    expect(Markdown.html("[[a *b|c]] d* e\n", o)).toBe('<p><x-wikilink data-target="a *b">c</x-wikilink> d* e</p>\n');
+    expect(Markdown.html("**a [[b**|c]]\n", o)).toBe('<p>**a <x-wikilink data-target="b**">c</x-wikilink></p>\n');
+    expect(Markdown.html("_a [[b_|c]] d\n", o)).toBe('<p>_a <x-wikilink data-target="b_">c</x-wikilink> d</p>\n');
+    expect(Markdown.html("~a [[b~|c]] d\n", { wikiLinks: true, strikethrough: true })).toBe(
+      '<p>~a <x-wikilink data-target="b~">c</x-wikilink> d</p>\n',
+    );
+    // Emphasis fully inside the label, or fully outside the construct,
+    // still resolves.
+    expect(Markdown.html("[[a|*b* c]]\n", o)).toBe('<p><x-wikilink data-target="a"><em>b</em> c</x-wikilink></p>\n');
+    expect(Markdown.html("*x [[a]] y*\n", o)).toBe('<p><em>x <x-wikilink data-target="a">a</x-wikilink> y</em></p>\n');
   });
 
   test("wiki link bracket nesting is capped", () => {
@@ -693,7 +804,8 @@ describe("pathological bracket inputs", () => {
         const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
         const cases = [
           ["nested inline images", fill(43000, "![") + fill(43000, "](u)"), out => out === '<p><img src="u" alt="" /></p>\\n'],
-          ["link/image alternation", fill(36000, "[![") + fill(36000, "](u)"), out => out.endsWith('<a href="u"><img src="u" alt="" /></a></p>\\n')],
+          // Only the innermost "[" starts a link: the others have a link in them, be it in the description of an image.
+          ["link/image alternation", fill(36000, "[![") + fill(36000, "](u)"), out => out === "<p>" + fill(18000, "[![") + '[<img src="u" alt="' + fill(17998, "[") + fill(17998, "](u)") + '" />](u)</p>\\n'],
           ["nested reference images", "[r]: /u\\n\\n" + fill(40000, "![") + fill(40000, "][r]"), out => out === '<p><img src="/u" alt="" /></p>\\n'],
           ["nested images, unclosed tail", fill(60000, "![") + "x", out => out.includes("![![")],
         ];
@@ -758,21 +870,6 @@ describe("pathological bracket inputs", () => {
 // ============================================================================
 
 describe("pathological inline HTML inputs", () => {
-  async function expectRendersQuickly(script: string) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 30_000,
-      killSignal: "SIGKILL",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("DONE");
-    expect(exitCode).toBe(0);
-  }
-
   test("unterminated inline HTML openers render in linear time", async () => {
     await expectRendersQuickly(`
         const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
@@ -854,6 +951,329 @@ describe("pathological inline HTML inputs", () => {
       '<p>[&lt;!-- [&lt;!-- <a href="u">&lt;!-- x</a>](u)](u)</p>\n',
     );
   });
+});
+
+// ============================================================================
+// Pathological inputs: deep nesting through `Bun.markdown.render()`. Two
+// separate O(depth²) costs, both found by fuzzing, while html() and react()
+// on the same inputs take milliseconds:
+// - The `depth` field of the list / listItem meta was computed by walking the
+//   whole open-block stack on every list and list-item leave (300 KB of `>- `
+//   markers took ~100s). It is now a counter.
+// - Every element collected its children in its own buffer and copied them
+//   into the parent's buffer on leave, even with no callback registered, so
+//   text nested D levels deep was copied D times (1.2 MB of nested `*a … b*`
+//   took 5s with an empty callback set). Elements without a callback now
+//   render straight into the nearest enclosing element that has one.
+// The child process is killed after 30s so a regression fails fast.
+// ============================================================================
+
+describe("pathological nesting through render()", () => {
+  test("deeply nested lists render in linear time with correct depth meta", async () => {
+    await expectRendersQuickly(`
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        {
+          // listItem meta at every one of 100k levels.
+          const depth = 100000;
+          let items = 0, maxDepth = -1, ordered = 0;
+          const out = Bun.markdown.render(fill(depth, "1. ") + "hi", {
+            listItem: (children, meta) => { items++; if (meta.depth > maxDepth) maxDepth = meta.depth; if (meta.ordered) ordered++; return children; },
+          });
+          const got = JSON.stringify({ out, items, maxDepth, ordered });
+          const want = JSON.stringify({ out: "hi", items: depth, maxDepth: depth - 1, ordered: depth });
+          if (got !== want) throw new Error("unexpected listItem result: " + got.slice(0, 300));
+          console.log("OK listItem depth");
+        }
+        // No callbacks registered: every block passes its children through.
+        for (const [unit, depth] of [[">- ", 100000], ["+ ", 50000], ["1) ", 50000]]) {
+          const out = Bun.markdown.render(fill(depth, unit) + "hi", {});
+          if (out !== "hi") throw new Error("unexpected output for " + JSON.stringify(unit) + ": " + JSON.stringify(out.slice(0, 200)));
+          console.log("OK " + JSON.stringify(unit));
+        }
+        // The counter reports the same list / listItem depths the stack walk did.
+        for (const unit of ["1. ", ">- ", "- > "]) {
+          const depth = 4000;
+          let items = 0, lists = 0, maxItemDepth = -1, maxListDepth = -1;
+          const out = Bun.markdown.render(fill(depth, unit) + "hi", {
+            listItem: (children, meta) => { items++; if (meta.depth > maxItemDepth) maxItemDepth = meta.depth; return children; },
+            list: (children, meta) => { lists++; if (meta.depth > maxListDepth) maxListDepth = meta.depth; return children; },
+          });
+          const got = JSON.stringify({ out, items, lists, maxItemDepth, maxListDepth });
+          const want = JSON.stringify({ out: "hi", items: depth, lists: depth, maxItemDepth: depth - 1, maxListDepth: depth - 1 });
+          if (got !== want) throw new Error("unexpected depth meta for " + JSON.stringify(unit) + ": " + got.slice(0, 300));
+          console.log("OK depth meta " + JSON.stringify(unit));
+        }
+        console.log("DONE");
+      `);
+  }, 90_000);
+
+  test("deeply nested inline spans render in linear time", async () => {
+    await expectRendersQuickly(`
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        const n = 600000;
+        const input = fill(n, "*a ") + fill(n, " b*");
+        const text = fill(n, "a ") + fill(n, " b");
+        {
+          const out = Bun.markdown.render(input, {});
+          if (out !== text) throw new Error("unexpected output (no callbacks): " + out.length + " " + JSON.stringify(out.slice(0, 100)));
+          console.log("OK no callbacks");
+        }
+        {
+          // Only the outermost element captures; the nested spans inside it do not.
+          const out = Bun.markdown.render(input, { paragraph: children => "<p>" + children + "</p>\\n" });
+          if (out !== "<p>" + text + "</p>\\n") throw new Error("unexpected output (paragraph callback): " + out.length + " " + JSON.stringify(out.slice(0, 100)));
+          console.log("OK paragraph callback");
+        }
+        console.log("DONE");
+      `);
+  }, 90_000);
+
+  test("capturing and pass-through elements interleave correctly", () => {
+    // An element with a callback collects exactly its own children, whether or
+    // not the elements between it and the text have callbacks of their own.
+    const nested = (n: number) => Buffer.alloc(n * 3, "*a ").toString() + Buffer.alloc(n * 3, " b*").toString() + "\n";
+    const callbacks = {
+      emphasis: (c: string) => "<em>" + c + "</em>",
+      paragraph: (c: string) => "<p>" + c + "</p>\n",
+    };
+    for (const n of [1, 2, 3, 50, 2000]) {
+      expect(Markdown.render(nested(n), callbacks)).toBe(Markdown.html(nested(n)));
+    }
+    const mixed = "**x *y **z *w* z** y* x**\n";
+    expect(Markdown.render(mixed, {})).toBe("x y z w z y x");
+    expect(Markdown.render(mixed, { strong: c => `[${c}]` })).toBe("[x y [z w z] y x]");
+    expect(Markdown.render(mixed, { emphasis: c => `(${c})` })).toBe("x (y z (w) z y) x");
+    expect(Markdown.render(mixed, { strong: c => `[${c}]`, emphasis: c => `(${c})` })).toBe("[x (y [z (w) z] y) x]");
+    // A callback that returns null drops the element together with everything
+    // that rendered into it, including pass-through descendants.
+    expect(Markdown.render(mixed, { emphasis: () => null })).toBe("x  x");
+    expect(Markdown.render(mixed, { strong: c => `[${c}]`, emphasis: () => null })).toBe("[x  x]");
+    expect(
+      Markdown.render("> - one\n>   - two [l](u)\n\npara `code`\n", {
+        blockquote: c => `<bq>${c}</bq>`,
+        link: (c, m) => `<${m.href}|${c}>`,
+        paragraph: c => `<p>${c}</p>`,
+      }),
+    ).toBe("<bq>onetwo <u|l></bq><p>para code</p>");
+    // Text that does not come from a plain text event (entity, soft break, hard
+    // break, NUL) lands in the same place as the text around it.
+    const pieces = "**a *b &amp; c\nd  \ne\0f* g**\n";
+    expect(Markdown.render(pieces, {})).toBe("a b & c\nd\ne\uFFFDf g");
+    expect(Markdown.render(pieces, { strong: c => `[${c}]` })).toBe("[a b & c\nd\ne\uFFFDf g]");
+    expect(Markdown.render(pieces, { emphasis: c => `(${c})` })).toBe("a (b & c\nd\ne\uFFFDf) g");
+    expect(Markdown.render(pieces, { emphasis: c => `(${c})`, text: t => t.toUpperCase() })).toBe(
+      "A (B & C\nD\nE\uFFFDF) G",
+    );
+  });
+
+  test("list and listItem meta do not depend on which of the two has a callback", () => {
+    const input = "3. a\n4. b\n   - [x] c\n   - [ ] d\n\n- e\n- f\n\n> 1) g\n> 2) h\n";
+    const itemMeta = [
+      { children: "a", index: 0, depth: 0, ordered: true, start: 3, checked: undefined },
+      { children: "c", index: 0, depth: 1, ordered: false, start: undefined, checked: true },
+      { children: "d", index: 1, depth: 1, ordered: false, start: undefined, checked: false },
+      { children: "bcd", index: 1, depth: 0, ordered: true, start: 3, checked: undefined },
+      { children: "e", index: 0, depth: 0, ordered: false, start: undefined, checked: undefined },
+      { children: "f", index: 1, depth: 0, ordered: false, start: undefined, checked: undefined },
+      { children: "g", index: 0, depth: 0, ordered: true, start: 1, checked: undefined },
+      { children: "h", index: 1, depth: 0, ordered: true, start: 1, checked: undefined },
+    ];
+    const listMeta = [
+      { children: "cd", ordered: false, start: undefined, depth: 1 },
+      { children: "abcd", ordered: true, start: 3, depth: 0 },
+      { children: "ef", ordered: false, start: undefined, depth: 0 },
+      { children: "gh", ordered: true, start: 1, depth: 0 },
+    ];
+    const record = (log: object[]) => (children: string, meta: object) => (log.push({ children, ...meta }), children);
+
+    // listItem only: every ul/ol passes through, but each li still finds its parent list.
+    let items: object[] = [];
+    expect(Markdown.render(input, { listItem: record(items) })).toBe("abcdefgh");
+    expect(items).toEqual(itemMeta);
+
+    // list only: every li passes through.
+    let lists: object[] = [];
+    expect(Markdown.render(input, { list: record(lists) })).toBe("abcdefgh");
+    expect(lists).toEqual(listMeta);
+
+    // Both.
+    items = [];
+    lists = [];
+    expect(Markdown.render(input, { listItem: record(items), list: record(lists) })).toBe("abcdefgh");
+    expect(items).toEqual(itemMeta);
+    expect(lists).toEqual(listMeta);
+  });
+});
+
+// ============================================================================
+// render() oracle. `Bun.markdown.react()` builds its element tree with a
+// separate renderer, so folding that tree with the same callbacks states
+// independently what render() must return: every callback gets exactly the
+// output of its children, an element without a callback splices its children
+// into the nearest ancestor that has one, and the list / listItem meta
+// (`depth`, `index`, `ordered`, `start`) follows from the tree shape alone.
+// Checked over the spec corpus with every callback, with none, and with two
+// complementary halves, so each element type is seen both collecting its
+// children and passing them through.
+// ============================================================================
+
+describe("render() agrees with a fold over the react() tree", () => {
+  const names = [
+    "heading",
+    "paragraph",
+    "blockquote",
+    "code",
+    "list",
+    "listItem",
+    "hr",
+    "table",
+    "thead",
+    "tbody",
+    "tr",
+    "th",
+    "td",
+    "html",
+    "strong",
+    "emphasis",
+    "link",
+    "image",
+    "codespan",
+    "strikethrough",
+    "text",
+  ];
+  const callbackForTag: Record<string, string> = {
+    p: "paragraph",
+    blockquote: "blockquote",
+    pre: "code",
+    ul: "list",
+    ol: "list",
+    li: "listItem",
+    hr: "hr",
+    table: "table",
+    thead: "thead",
+    tbody: "tbody",
+    tr: "tr",
+    th: "th",
+    td: "td",
+    html: "html",
+    strong: "strong",
+    em: "emphasis",
+    a: "link",
+    img: "image",
+    code: "codespan",
+    del: "strikethrough",
+  };
+  type Callbacks = Record<string, (children: string, meta?: unknown) => string>;
+  type ParentList = { ordered: boolean; start?: number; index: number };
+
+  // Every callback wraps its children in unambiguous markers together with its
+  // meta. `text` must commute with concatenation and keep "\n" (soft and hard
+  // breaks bypass it), which upper-casing does.
+  const callbacks = (subset: string[]): Callbacks =>
+    Object.fromEntries(
+      subset.map(name => [
+        name,
+        name === "text"
+          ? (children: string) => children.toUpperCase()
+          : (children: string, meta?: unknown) =>
+              "\x01" + name + (meta === undefined ? "" : JSON.stringify(meta)) + "\x02" + children + "\x03",
+      ]),
+    );
+
+  function fold(node: any, cbs: Callbacks, enclosingLists: number, parent?: ParentList): string {
+    if (node == null || typeof node === "boolean") return "";
+    if (typeof node === "string") return cbs.text ? cbs.text(node) : node;
+    if (Array.isArray(node)) {
+      let out = "";
+      let items = 0;
+      for (const child of node) {
+        out += fold(child, cbs, enclosingLists, parent && { ...parent, index: child?.type === "li" ? items++ : 0 });
+      }
+      return out;
+    }
+    const tag: string = typeof node.type === "symbol" ? "fragment" : node.type;
+    const props = node.props ?? {};
+    if (tag === "br") return "\n";
+    const isList = tag === "ul" || tag === "ol";
+    const children =
+      tag === "img"
+        ? fold(props.alt, cbs, enclosingLists)
+        : fold(
+            props.children,
+            cbs,
+            enclosingLists + (isList ? 1 : 0),
+            isList ? { ordered: tag === "ol", start: props.start, index: 0 } : undefined,
+          );
+    const level = /^h([1-6])$/.exec(tag);
+    const cb = cbs[level ? "heading" : callbackForTag[tag]];
+    if (!cb) return children;
+    let meta: unknown;
+    if (level) meta = { level: +level[1], id: props.id };
+    else if (isList) meta = { ordered: tag === "ol", start: props.start, depth: enclosingLists };
+    else if (tag === "li")
+      meta = {
+        index: parent?.index ?? 0,
+        depth: Math.max(enclosingLists - 1, 0),
+        ordered: parent?.ordered ?? false,
+        start: parent?.ordered ? parent.start : undefined,
+        checked: props.checked,
+      };
+    else if (tag === "pre") meta = props.language === undefined ? undefined : { language: props.language };
+    else if (tag === "th" || tag === "td") meta = { align: props.align };
+    else if (tag === "a") meta = { href: props.href, title: props.title };
+    else if (tag === "img") meta = { src: props.src, title: props.title };
+    return meta === undefined ? cb(children) : cb(children, meta);
+  }
+
+  function specExamples(file: string): string[] {
+    const content = readFileSync(join(import.meta.dir, file), "utf8").replace(/\r\n?/g, "\n");
+    const examples: string[] = [];
+    for (const match of content.matchAll(/^`{32} example\n([\s\S]*?)^\.$/gm)) {
+      examples.push(match[1].replaceAll("\u2192", "\t") + "\n");
+    }
+    return examples;
+  }
+
+  const callbackSets = [
+    names,
+    [],
+    names.filter((_, i) => i % 2 === 0), // list without listItem, heading, link, text, ...
+    names.filter((_, i) => i % 2 === 1), // listItem without list, paragraph, emphasis, image, ...
+  ].map(callbacks);
+
+  // One test per 100 examples keeps each test near a second on a debug build.
+  const chunkSize = 100;
+  for (const [file, options] of [
+    ["spec.txt", { headings: { ids: true } }],
+    ["spec-gfm.txt", {}],
+    ["spec-tables.txt", {}],
+    ["spec-strikethrough.txt", {}],
+    ["spec-tasklists.txt", {}],
+    ["spec-permissive-autolinks.txt", { autolinks: true }],
+    ["regressions.txt", {}],
+  ] as const) {
+    const examples = specExamples(file);
+    test(`${file} has examples`, () => {
+      expect(examples.length).toBeGreaterThan(0);
+    });
+    for (let start = 0; start < examples.length; start += chunkSize) {
+      const chunk = examples.slice(start, start + chunkSize);
+      test(`${file} examples ${start + 1}-${start + chunk.length}`, () => {
+        const mismatches: unknown[] = [];
+        for (const markdown of chunk) {
+          const tree = Markdown.react(markdown, undefined, { ...options, reactVersion: 18 });
+          for (const cbs of callbackSets) {
+            const rendered = Markdown.render(markdown, cbs, options);
+            const folded = fold(tree, cbs, 0);
+            if (rendered !== folded && mismatches.length < 5) {
+              mismatches.push({ markdown, callbacks: Object.keys(cbs), rendered, folded });
+            }
+          }
+        }
+        expect(mismatches).toEqual([]);
+      });
+    }
+  }
 });
 
 // ============================================================================
@@ -1006,6 +1426,48 @@ describe("ansi renderer link and metadata control bytes", () => {
     expect(Markdown.ansi("[site](https://example.com/a)\n", { hyperlinks: true })).toContain(
       "\x1b]8;;https://example.com/a",
     );
+  });
+});
+
+describe("ansi renderer line wrapping", () => {
+  const sources = [
+    "The declaration and the assignment can be one `const`. Then (see `let`), use **bold text**: it is *fine*; [a link](https://example.com/x), and `more code`.\n",
+    "> A quote with `code`, **bold**, and (`parens`). Then `a longer code span`, which goes on.\n",
+    "- An item with `code`. And **bold words that go on**, with `x`; and (`y`), [text](https://e.com).\n  - nested `item`, with more `code`: yes.\n",
+  ];
+
+  test("a line never breaks where the source has no space", () => {
+    expect(Markdown.ansi("It can be one `const`.\n", { colors: false, columns: 19 })).toBe("It can be one\nconst.\n");
+    expect(Markdown.ansi("a word (`code`) ends\n", { colors: false, columns: 9 })).toBe("a word\n(code)\nends\n");
+    expect(Markdown.ansi("one **two**, three\n", { colors: false, columns: 7 })).toBe("one\ntwo,\nthree\n");
+  });
+
+  test.each([
+    { colors: false, hyperlinks: false },
+    { colors: true, hyperlinks: false },
+    { colors: true, hyperlinks: true },
+  ])("no line starts with punctuation, ends with a space or is too wide: %j", theme => {
+    for (const source of sources) {
+      const words = (text: string) => Bun.stripANSI(text).replace(/[\s│|]+/g, "");
+      const unwrapped = words(Markdown.ansi(source, { ...theme, columns: 0 }));
+      for (let columns = 34; columns <= 100; columns++) {
+        const out = Markdown.ansi(source, { ...theme, columns });
+        const lines = Bun.stripANSI(out).split("\n");
+        const wrong = lines.filter(
+          line => /^[\s│|]*[.,:;)]/.test(line) || /\S\s+$/.test(line) || Bun.stringWidth(line) > columns,
+        );
+        expect({ columns, wrong }).toEqual({ columns, wrong: [] });
+        expect(words(out)).toBe(unwrapped);
+      }
+    }
+  });
+
+  test("open styles are closed before a line break and reopened after it", () => {
+    const out = Markdown.ansi("> **some bold `code`**.\n", { columns: 16 });
+    expect(Bun.stripANSI(out)).toBe("│ some bold\n│ code.\n");
+    const [first, second] = out.split("\n");
+    expect(first).toEndWith("some bold\x1b[39m\x1b[49m");
+    expect(second).toContain("\x1b[1m");
   });
 });
 
@@ -1382,3 +1844,332 @@ describe.concurrent("importing .md modules", () => {
     expect(exitCode).not.toBe(0);
   });
 });
+
+describe("empty list items and paragraphs", () => {
+  test.each(["1. ", "* \t"])("%j does not interrupt a paragraph", marker => {
+    expect(Markdown.html(`a\n${marker}\nb\n`)).not.toContain("<li>");
+  });
+});
+
+describe("closing code fences and containers", () => {
+  test("a fence outside of the list item does not close the code in it", () => {
+    expect(Markdown.html("- ```\n  a\n```\n\n  - b\n")).toBe(
+      "<ul>\n<li>\n<pre><code>a\n</code></pre>\n</li>\n</ul>\n<pre><code>\n  - b\n</code></pre>\n",
+    );
+  });
+
+  test("a fence outside of the block quote does not close the code in it", () => {
+    expect(Markdown.html("> ```\n> a\n```\nb\n")).toBe(
+      "<blockquote>\n<pre><code>a\n</code></pre>\n</blockquote>\n<pre><code>b\n</code></pre>\n",
+    );
+  });
+});
+
+describe("HTML declarations", () => {
+  test("the letter behind <! can be a small one", () => {
+    expect(Markdown.html("<!a>\nb\n\nc <!d> e\n")).toBe("<!a>\n<p>b</p>\n<p>c <!d> e</p>\n");
+  });
+});
+
+describe("list items with code in them", () => {
+  test("what follows fenced code with deeply indented lines stays in the item", () => {
+    expect(Markdown.html("- a\n  ```\n      b\n      c\n  ```\n\n  d\n")).toBe(
+      "<ul>\n<li>\n<p>a</p>\n<pre><code>    b\n    c\n</code></pre>\n<p>d</p>\n</li>\n</ul>\n",
+    );
+  });
+});
+
+describe("indented HTML in a paragraph", () => {
+  test("a tag that is indented by four columns does not end the paragraph", () => {
+    expect(Markdown.html("a\n    <!-- b -->\n\nc\n    <div>\n")).toBe("<p>a\n<!-- b --></p>\n<p>c\n<div></p>\n");
+  });
+});
+
+describe("blank lines of code in list items", () => {
+  test("blanks that are less than the indentation of the item are not code", () => {
+    expect(Markdown.html("- ```\n  a\n \n  ```\n")).toBe("<ul>\n<li>\n<pre><code>a\n\n</code></pre>\n</li>\n</ul>\n");
+  });
+});
+
+describe("white space behind the marker of a block quote", () => {
+  test("only the first space belongs to the marker", () => {
+    expect(Markdown.html(">   - a\n>   - b\n")).toBe(
+      "<blockquote>\n<ul>\n<li>a</li>\n<li>b</li>\n</ul>\n</blockquote>\n",
+    );
+    expect(Markdown.html(">   ```\n>   a\n>   ```\n")).toBe(
+      "<blockquote>\n<pre><code>a\n</code></pre>\n</blockquote>\n",
+    );
+    expect(Markdown.html(">   <div>\n")).toBe("<blockquote>\n  <div>\n</blockquote>\n");
+  });
+});
+
+describe("the end of a script", () => {
+  test("an end tag without its > does not end the HTML", () => {
+    expect(Markdown.html("<script>\na\n</script\n>\nb\n")).toBe("<script>\na\n</script\n>\nb\n");
+  });
+});
+
+describe("email autolinks", () => {
+  test.each(["5892063+a@b.c", "a@b", "a.b!#$%&'*+/=?^_`{|}~-@c-d.e"])("<%s>", address => {
+    expect(Markdown.html(`<${address}>\n`)).toStartWith('<p><a href="mailto:');
+  });
+
+  test.each(["a@-b.c", "a@b-.c"])("<%s> is not one", address => {
+    expect(Markdown.html(`<${address}>\n`)).toBe(`<p>&lt;${address}&gt;</p>\n`);
+  });
+});
+
+describe("punctuation that is newer than Unicode 15", () => {
+  test("a * between a letter and punctuation does not open emphasis", () => {
+    // U+1B4E BALINESE INVERTED CARIK SIKI (Po, Unicode 16), beside U+00A1 and a letter.
+    expect(Markdown.html("a*\u1B4Eb*\n")).toBe("<p>a*\u1B4Eb*</p>\n");
+    expect(Markdown.html("a*\u00A1b*\n")).toBe("<p>a*\u00A1b*</p>\n");
+    expect(Markdown.html("a*xb*\n")).toBe("<p>a<em>xb</em></p>\n");
+  });
+});
+
+describe("links in links", () => {
+  test("a link in brackets in the text of a link", () => {
+    expect(Markdown.html("[link [foo [bar]]](/uri)\n\n[bar]: /url\n")).toBe(
+      '<p>[link [foo <a href="/url">bar</a>]](/uri)</p>\n',
+    );
+  });
+
+  test("a link in the description of an image in the text of a link", () => {
+    expect(Markdown.html("[a ![b [c](d)](e)](f)\n")).toBe('<p>[a <img src="e" alt="b c" />](f)</p>\n');
+  });
+});
+
+describe("brackets behind the text of a link", () => {
+  test("one in a title does not open anything", () => {
+    expect(Markdown.html('[a ![b](c "[") d](e)\n')).toBe(
+      '<p><a href="e">a <img src="c" alt="b" title="[" /> d</a></p>\n',
+    );
+  });
+
+  test("one in a destination does not close anything", () => {
+    expect(Markdown.html("![a [b](c]) d](e)\n")).toBe('<p><img src="e" alt="a b d" /></p>\n');
+  });
+});
+
+describe("a wiki link behind a !", () => {
+  const html = (text: string) => Markdown.html(text, { wikiLinks: true });
+
+  test("what is in it hides nothing behind it", () => {
+    expect(html("![[a`b]] then `code` and <br> and [x](u) and *em*\n")).toBe(
+      '<p>!<x-wikilink data-target="a`b">a`b</x-wikilink> then <code>code</code> and <br> and <a href="u">x</a> and <em>em</em></p>\n',
+    );
+    expect(html("![[a`b]] then <ab:c> `\n")).toBe(
+      '<p>!<x-wikilink data-target="a`b">a`b</x-wikilink> then <a href="ab:c">ab:c</a> `</p>\n',
+    );
+    expect(html('![[a<b c="]] x `code` [l](u) "> z\n')).toBe(
+      '<p>!<x-wikilink data-target="a&lt;b c=&quot;">a&lt;b c=&quot;</x-wikilink> x <code>code</code> <a href="u">l</a> &quot;&gt; z</p>\n',
+    );
+    expect(html("![[a`b]](u) `c`\n")).toBe(
+      '<p>!<x-wikilink data-target="a`b">a`b</x-wikilink>(u) <code>c</code></p>\n',
+    );
+  });
+
+  test("brackets in the description of an image are no wiki link", () => {
+    expect(html("![[a]](u) `c`\n")).toBe('<p><img src="u" alt="[a]" /> <code>c</code></p>\n');
+    expect(html("![[a|b]](u)\n")).toBe('<p><img src="u" alt="[a|b]" /></p>\n');
+    expect(html("![[a `b`]](u)\n")).toBe('<p><img src="u" alt="[a b]" /></p>\n');
+    expect(html("![[a]][r]\n\n[r]: /u\n")).toBe('<p><img src="/u" alt="[a]" /></p>\n');
+  });
+});
+
+describe("a line of dashes under reference definitions", () => {
+  test("is a thematic break: there is nothing to make a heading of", () => {
+    expect(Markdown.html("[ref]: /uri\n---\n")).toBe("<hr />\n");
+  });
+});
+
+test("list markers on one line are not looked at again from each of them", () => {
+  const depth = 100_000;
+  const html = Markdown.html("- ".repeat(depth) + "a\n");
+  expect(html.length).toBe("<ul>\n<li>\n</li>\n</ul>\n".length * depth);
+});
+
+test("a delimiter at the edge of the text of a link has the bracket next to it", () => {
+  // Both runs can open and close then, so the rule of three keeps them apart.
+  expect(Markdown.html("[**<x:y>*](u)\n")).toBe('<p><a href="u">**&lt;x:y&gt;*</a></p>\n');
+  expect(Markdown.html("[*a*](u) [**b**](u)\n")).toBe(
+    '<p><a href="u"><em>a</em></a> <a href="u"><strong>b</strong></a></p>\n',
+  );
+});
+
+test("white space is between the destination of a link and its title", () => {
+  expect(Markdown.html('[a](<b>"c")\n')).toBe("<p>[a](<b>&quot;c&quot;)</p>\n");
+  expect(Markdown.html('[a](<b> "c")\n')).toBe('<p><a href="b" title="c">a</a></p>\n');
+});
+
+describe("HTML start conditions", () => {
+  test.each([
+    // The tag name can be the last thing in the input.
+    ["<h1", "<h1\n"],
+    ["a\n\n<hr", "<p>a</p>\n<hr\n"],
+    ["<style", "<style\n"],
+    // After the tag name, a `/` only counts as part of `/>`.
+    ["<hr/x\n*a*", "<p>&lt;hr/x\n<em>a</em></p>\n"],
+    ["<pre/x\n*a*", "<p>&lt;pre/x\n<em>a</em></p>\n"],
+    ["<div/>\n*a*", "<div/>\n*a*\n"],
+    // An unquoted attribute value needs at least one character.
+    ["<a a=>", "<p>&lt;a a=&gt;</p>\n"],
+    ["b <a a=>", "<p>b &lt;a a=&gt;</p>\n"],
+    // Inside a tag, only spaces, tabs and line endings count as whitespace.
+    ["<a\vb>", "<p>&lt;a\vb&gt;</p>\n"],
+    ["b <a\fb>", "<p>b &lt;a\fb&gt;</p>\n"],
+  ])("%j", (text, html) => {
+    expect(Markdown.html(text)).toBe(html);
+  });
+});
+
+test("an autolink can't contain ASCII control characters", () => {
+  expect(Markdown.html("<http://a\x01b>")).toBe("<p>&lt;http://a\x01b&gt;</p>\n");
+  expect(Markdown.html("<http://a\x7Fb>")).toBe("<p>&lt;http://a\x7Fb&gt;</p>\n");
+});
+
+// A run of one or two `~` only matches a run of the same length, and the match uses up both runs.
+describe("strikethrough", () => {
+  test.each([
+    ["~a~", "<del>a</del>", "~a~"],
+    ["~~a~~", "<del>a</del>", "~~a~~"],
+    ["~~a~", "~~a~", "~~a~"],
+    ["~a~~", "~a~~", "~a~~"],
+    ["b ~~~a~~~", "b ~~~a~~~", "b ~~~a~~~"],
+    ["~a~ ~~b~~ ~c~", "<del>a</del> <del>b</del> <del>c</del>", "~a~ ~~b~~ ~c~"],
+    ["~~a ~b~ c~~", "<del>a <del>b</del> c</del>", "~~a ~b~ c~~"],
+    ["~a ~~b~~ c~", "<del>a <del>b</del> c</del>", "~a ~~b~~ c~"],
+    ["*~a~*", "<em><del>a</del></em>", "<em>~a~</em>"],
+    ["~*a*~", "<del><em>a</em></del>", "~<em>a</em>~"],
+    ["**~~a~~**", "<strong><del>a</del></strong>", "<strong>~~a~~</strong>"],
+    ["~~__a__~~", "<del><strong>a</strong></del>", "~~<strong>a</strong>~~"],
+    ["*~a*~", "<em>~a</em>~", "<em>~a</em>~"],
+    ["~*a~*", "<del>*a</del>*", "~<em>a~</em>"],
+    ["~~a~~b~~c~~", "<del>a</del>b<del>c</del>", "~~a~~b~~c~~"],
+    ["~a~b~c~", "<del>a</del>b<del>c</del>", "~a~b~c~"],
+    ["a~~b~~c", "a<del>b</del>c", "a~~b~~c"],
+    ["~~ a~~", "~~ a~~", "~~ a~~"],
+    ["~~a ~~", "~~a ~~", "~~a ~~"],
+    ["~~a\nb~~", "<del>a\nb</del>", "~~a\nb~~"],
+    ["~~a~~~", "~~a~~~", "~~a~~~"],
+    ["~~**a~~**", "<del>**a</del>**", "~~<strong>a~~</strong>"],
+    ["_~~a~~_ ~b~", "<em><del>a</del></em> <del>b</del>", "<em>~~a~~</em> ~b~"],
+  ])("%j", (text, on, off) => {
+    expect(Markdown.html(text)).toBe(`<p>${on}</p>\n`);
+    expect(Markdown.html(text, { strikethrough: false })).toBe(`<p>${off}</p>\n`);
+  });
+});
+
+test("a long delimiter run uses all of its characters to open and close emphasis", () => {
+  const repeated = (fill: string, count: number) => Buffer.alloc(count * fill.length, fill).toString();
+  const nested = (depth: number, text: string) =>
+    `${repeated("<strong>", depth)}${text}${repeated("</strong>", depth)}`;
+  expect(Markdown.html(`${repeated("_", 13)}!${repeated("_", 13)}`)).toBe(`<p><em>${nested(6, "!")}</em></p>\n`);
+  expect(Markdown.html(`${repeated("*", 14)}a${repeated("*", 14)}`)).toBe(`<p>${nested(7, "a")}</p>\n`);
+  expect(Markdown.html(`${repeated("*", 2000)}a${repeated("*", 2000)}`)).toBe(`<p>${nested(1000, "a")}</p>\n`);
+  // One run can close many openers.
+  expect(Markdown.html(`${repeated("**a ", 20)}b${repeated("*", 40)}`)).toBe(
+    `<p>${repeated("<strong>a ", 20)}b${repeated("</strong>", 20)}</p>\n`,
+  );
+});
+
+test("after an empty list item and a blank line in a block quote, indentation is relative to the quote", () => {
+  const quote = (html: string) => `<blockquote>\n${html}</blockquote>\n`;
+  const list = "<ul>\n<li></li>\n</ul>\n";
+  expect(Markdown.html(">-\n>\n>    a")).toBe(quote(`${list}<p>a</p>\n`));
+  expect(Markdown.html("> -\n>\n>     a")).toBe(quote(`${list}<pre><code>a\n</code></pre>\n`));
+  expect(Markdown.html("> > -\n> >\n> >     a")).toBe(quote(quote(`${list}<pre><code>a\n</code></pre>\n`)));
+});
+
+// What some scan once started again for each repetition, and what is like it, weighed against as many bytes of prose by
+// the time of the processor: that holds on a busy machine and in a debug build.
+test.each([
+  ["CommonMark", {}],
+  [
+    "every extension",
+    {
+      tables: true,
+      strikethrough: true,
+      tasklists: true,
+      autolinks: true,
+      wikiLinks: true,
+      latexMath: true,
+      underline: true,
+    },
+  ],
+])(
+  "rendering takes time in proportion to the size of the text: %s",
+  async (_, options) => {
+    const units = [
+      ..."a b c\n|a b\n\n|- a\n|- a\n\n|1. a\n|- a\n* a\n|1. a\n1) a\n|- |> |> a\n\n|> a\n|- [ ] a\n".split("|"),
+      ..."[a](b) ,[a][b] ,[a] ,![a](b) ,[,],![,[[a]] ,[[,[^a] ,[a]: b\n,[^a]: b\n\n".split(","),
+      ..."*a* ,**a** ,*,* a,_a,a_,~~a~~ ,~,`,`a` ,$a$ ,$,&,&amp; ,\\,\\* ".split(","),
+      ..."<,<a> ,<a ,<!-- a --> ,<!--,<!-- a -->\n\n,<div>\na\n</div>\n\n,<?,<![CDATA[".split(","),
+      ..."# a\n,a\n=\n,---\n\n,```\na\n```\n\n,```\n,    a\n\n,:-\n,a\n    - b\n".split(","),
+      ..."| a |\n| - |\n| b |\n\n,| - |\n,|\n,http://a.b ,www.a.b ,a@b.c ,a@,a  \n,a\\\n".split(","),
+      ..."中文 a\n,a,\ta\n,\n, , ,😀 ".split(","),
+    ];
+    const script = `
+      const count = ${isDebug || isASAN ? 2_000 : 40_000};
+      const texts = ${JSON.stringify(units)}.map(unit => unit.repeat(count) + "a\\n");
+      const prose = "The quick brown fox jumps over the lazy dog, and *then* it \`rests\` for a [while](u).\\n\\n";
+      const length = texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length;
+      const plain = prose.repeat(Math.ceil(length / prose.length));
+      const time = texts => {
+        const before = process.cpuUsage();
+        for (const text of texts) Bun.markdown.html(text, ${JSON.stringify(options)});
+        const { user, system } = process.cpuUsage(before);
+        return user + system;
+      };
+      time([plain]);
+      console.log(time(texts) / time(texts.map(() => plain)));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(Number(stdout)).toBeLessThan(6);
+    expect(exitCode).toBe(0);
+  },
+  90_000,
+);
+
+// The same weighing for what is opened many times on one line, with many lines behind it that do not close it.
+test("a line does not look through the block quotes and list items that are open", async () => {
+  const script = `
+    const count = ${isDebug || isASAN ? 10_000 : 40_000};
+    const lines = ${JSON.stringify(["a\n", "a b\n", "*a*\n", "[a]\n", "<a>\n", "<!-- a\n", "&amp;\n", "\\\n", ":::\n", "a |\n"])};
+    const texts = [">", "> ", "+ ", "- ", "1. "].flatMap(mark => lines.map(line => mark.repeat(count) + "a\\n" + line.repeat(count)));
+    const prose = "The quick brown fox jumps over the lazy dog, and *then* it \`rests\` for a [while](u).\\n\\n";
+    const length = texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length;
+    const plain = prose.repeat(Math.ceil(length / prose.length));
+    const time = texts => {
+      const before = process.cpuUsage();
+      for (const text of texts) Bun.markdown.html(text);
+      const { user, system } = process.cpuUsage(before);
+      return user + system;
+    };
+    time([plain]);
+    console.log(time(texts) / time(texts.map(() => plain)));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 60_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // 3 to 5 when all is well: opening and closing them is most of it. 50 and 300 when each line walks them.
+  expect(Number(stdout)).toBeLessThan(15);
+  expect(exitCode).toBe(0);
+}, 90_000);

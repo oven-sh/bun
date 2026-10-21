@@ -1,7 +1,82 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, githubTarball, isDebug, nodeModulesPackages, tempDir } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
+import npmMetadata from "./yarn/npm-metadata.json";
+
+// After migrating, bun asks the registry for the manifest of every migrated npm package, to fill in the `bin`, `os`
+// and `cpu` that yarn.lock does not record. This registry answers with those fields for the packages of the
+// fixtures that have any, as npm does. Every other name is a 404, and the migration leaves that package as it is.
+let npm: ReturnType<typeof Bun.serve>;
+
+beforeAll(() => {
+  npm = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const name = decodeURIComponent(new URL(req.url).pathname.slice(1));
+      const versions: Record<string, object> | undefined = npmMetadata[name as keyof typeof npmMetadata];
+      if (!versions) return new Response("not found", { status: 404 });
+      return Response.json({
+        name,
+        versions: Object.fromEntries(
+          Object.entries(versions).map(([version, metadata]) => [
+            version,
+            {
+              name,
+              version,
+              ...metadata,
+              dist: { tarball: `${npm.url}${name}/-/${name.split("/").pop()}-${version}.tgz` },
+            },
+          ]),
+        ),
+      });
+    },
+  });
+});
+
+afterAll(() => {
+  npm.stop(true);
+});
+
+function migrateEnv(dir: string | { toString(): string }) {
+  return { ...bunEnv, BUN_CONFIG_REGISTRY: npm.url.href, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
+}
+
+// After migrating, bun fetches the manifest of every migrated package by the name it recorded,
+// so the registry sees which package each alias was resolved to.
+async function migrateYarnLock(dir: string) {
+  const requestedManifests = new Set<string>();
+  await using registry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      requestedManifests.add(decodeURIComponent(new URL(req.url).pathname.slice(1)));
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "migrate", "-f"],
+    cwd: dir,
+    env: {
+      ...bunEnv,
+      BUN_CONFIG_REGISTRY: registry.url.href,
+      BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("");
+  expect(stderr).toContain("migrated lockfile from yarn.lock");
+  expect(exitCode).toBe(0);
+
+  const lock = Bun.JSONC.parse(await Bun.file(join(dir, "bun.lock")).text()) as { packages: unknown };
+  return { packages: lock.packages, requestedManifests: [...requestedManifests].sort() };
+}
 
 describe("yarn.lock migration basic", () => {
   test("simple yarn.lock migration produces correct bun.lock", async () => {
@@ -32,7 +107,7 @@ is-number@^7.0.0:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tmpDir,
-      env: bunEnv,
+      env: migrateEnv(tmpDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -129,7 +204,7 @@ to-fast-properties@^2.0.0:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tmpDir,
-      env: bunEnv,
+      env: migrateEnv(tmpDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -156,18 +231,20 @@ to-fast-properties@^2.0.0:
     expect(bunLockContent).not.toContain("@types/react");
     expect(bunLockContent).not.toContain("�");
 
-    // Install should work after migration
-    const installResult = await Bun.spawn({
-      cmd: [bunExe(), "install"],
+    // The migrated lockfile loads again and still matches package.json
+    await using installResult = Bun.spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile", "--lockfile-only"],
       cwd: tmpDir,
-      env: bunEnv,
-      stdout: "pipe",
+      env: migrateEnv(tmpDir),
+      stdout: "ignore",
       stderr: "pipe",
       stdin: "ignore",
     });
 
-    const installExitCode = await installResult.exited;
+    const [installStderr, installExitCode] = await Promise.all([installResult.stderr.text(), installResult.exited]);
+    expect(installStderr).not.toContain("error:");
     expect(installExitCode).toBe(0);
+    expect(fs.readFileSync(join(tmpDir, "bun.lock"), "utf8")).toBe(bunLockContent);
   });
 
   test("yarn.lock with extremely long build tags (regression test)", async () => {
@@ -199,7 +276,7 @@ test-package@1.0.0-alpha.beta.gamma.delta.epsilon.zeta.eta.theta.iota.kappa.lamb
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tmpDir,
-      env: bunEnv,
+      env: migrateEnv(tmpDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -715,7 +792,7 @@ vary@~1.1.2:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tmpDir,
-      env: bunEnv,
+      env: migrateEnv(tmpDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -787,7 +864,7 @@ undici-types@~5.26.4:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tmpDir,
-      env: bunEnv,
+      env: migrateEnv(tmpDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -808,6 +885,317 @@ undici-types@~5.26.4:
     // Verify that npm aliases are handled correctly
     expect(bunLockContent).toContain('"@types/bun": ["bun-types@1.2.19"');
     expect(bunLockContent).toContain('"my-lodash": ["lodash@4.17.21"');
+  });
+
+  test("yarn.lock with npm aliases of a scoped package keep the scope", async () => {
+    const typesNode20Integrity =
+      "sha512-g557vgQjUUfN76MZAN/dt1z3dzcUsimuysco0KeluHgrPdJXkP/XdAURgyO2W9fZWHRtRBiVKzKn8vyOAwlG+w==";
+    const typesNode18Integrity = "sha512-" + Buffer.alloc(64, 1).toString("base64");
+    const needsNodeTypesIntegrity = "sha512-" + Buffer.alloc(64, 2).toString("base64");
+
+    await using tmpDir = tempDir("yarn-migration-scoped-aliases", {
+      "package.json": JSON.stringify(
+        {
+          name: "scoped-alias-test",
+          version: "1.0.0",
+          dependencies: {
+            "@aliased/node-types": "npm:@types/node@20.11.5",
+            "@types/node": "^18.0.0",
+            "my-node-types": "npm:@types/node@20.11.5",
+            "needs-node-types": "1.0.0",
+          },
+        },
+        null,
+        2,
+      ),
+      // yarn v1 lists every pattern that resolved to the same tarball on one key line,
+      // so the three aliases of @types/node@20.11.5 share a single entry.
+      "yarn.lock": `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+"@aliased/node-types@npm:@types/node@20.11.5", "my-node-types@npm:@types/node@20.11.5", "types-alias@npm:@types/node@20.11.5":
+  version "20.11.5"
+  resolved "https://registry.yarnpkg.com/@types/node/-/node-20.11.5.tgz#be10c622ca7fcaa3cf226cf80166abc31389d86e"
+  integrity ${typesNode20Integrity}
+
+"@types/node@^18.0.0":
+  version "18.19.0"
+  resolved "https://registry.yarnpkg.com/@types/node/-/node-18.19.0.tgz#1111111111111111111111111111111111111111"
+  integrity ${typesNode18Integrity}
+
+needs-node-types@1.0.0:
+  version "1.0.0"
+  resolved "https://registry.yarnpkg.com/needs-node-types/-/needs-node-types-1.0.0.tgz#2222222222222222222222222222222222222222"
+  integrity ${needsNodeTypesIntegrity}
+  dependencies:
+    types-alias "npm:@types/node@20.11.5"
+`,
+    });
+
+    const { packages, requestedManifests } = await migrateYarnLock(tmpDir);
+    expect(packages).toStrictEqual({
+      "@aliased/node-types": ["@types/node@20.11.5", "", {}, typesNode20Integrity],
+      "@types/node": ["@types/node@18.19.0", "", {}, typesNode18Integrity],
+      "my-node-types": ["@types/node@20.11.5", "", {}, typesNode20Integrity],
+      "needs-node-types": [
+        "needs-node-types@1.0.0",
+        "",
+        { dependencies: { "types-alias": "npm:@types/node@20.11.5" } },
+        needsNodeTypesIntegrity,
+      ],
+      "types-alias": ["@types/node@20.11.5", "", {}, typesNode20Integrity],
+    });
+
+    expect(requestedManifests).toStrictEqual(["@types/node", "needs-node-types"]);
+  });
+
+  test.concurrent("yarn.lock npm aliases are named after the alias spec, not the tarball URL", async () => {
+    const corpBareIntegrity = "sha512-" + Buffer.alloc(64, 2).toString("base64");
+    const corpFooIntegrity = "sha512-" + Buffer.alloc(64, 3).toString("base64");
+    const barIntegrity = "sha512-" + Buffer.alloc(64, 4).toString("base64");
+    const stringWidthIntegrity = "sha512-" + Buffer.alloc(64, 5).toString("base64");
+    // GitHub Packages does not use the registry's `<name>/-/<file>.tgz` tarball layout.
+    const corpFooTarball =
+      "https://npm.pkg.github.com/download/@corp/foo/1.0.0/0123456789abcdef0123456789abcdef01234567";
+
+    // Four alias shapes: an alias without a range, a tarball URL with no package name in it, a
+    // tarball URL whose "/-/" directly follows the host, and yarn's usual key line on which the
+    // alias spec sorts before the plain specs of the package it points at.
+    await using tmpDir = tempDir("yarn-migration-alias-spec-names", {
+      "package.json": JSON.stringify(
+        {
+          name: "alias-spec-names",
+          version: "1.0.0",
+          dependencies: {
+            "bare-alias": "npm:@corp/bare",
+            "gh-alias": "npm:@corp/foo@1.0.0",
+            "host-alias": "npm:bar@1.0.0",
+            "string-width": "^4.1.0",
+            "string-width-cjs": "npm:string-width@^4.2.0",
+          },
+        },
+        null,
+        2,
+      ),
+      "yarn.lock": `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+"bare-alias@npm:@corp/bare":
+  version "2.0.0"
+  resolved "https://registry.yarnpkg.com/@corp/bare/-/bare-2.0.0.tgz#2222222222222222222222222222222222222222"
+  integrity ${corpBareIntegrity}
+
+"gh-alias@npm:@corp/foo@1.0.0":
+  version "1.0.0"
+  resolved "${corpFooTarball}"
+  integrity ${corpFooIntegrity}
+
+"host-alias@npm:bar@1.0.0":
+  version "1.0.0"
+  resolved "https://registry.npmjs.org/-/bar-1.0.0.tgz#4444444444444444444444444444444444444444"
+  integrity ${barIntegrity}
+
+"string-width-cjs@npm:string-width@^4.2.0", string-width@^4.1.0:
+  version "4.2.3"
+  resolved "https://registry.yarnpkg.com/string-width/-/string-width-4.2.3.tgz#5555555555555555555555555555555555555555"
+  integrity ${stringWidthIntegrity}
+`,
+    });
+
+    const { packages, requestedManifests } = await migrateYarnLock(tmpDir);
+    expect(packages).toStrictEqual({
+      "bare-alias": ["@corp/bare@2.0.0", "", {}, corpBareIntegrity],
+      "gh-alias": ["@corp/foo@1.0.0", corpFooTarball, {}, corpFooIntegrity],
+      "host-alias": ["bar@1.0.0", "", {}, barIntegrity],
+      "string-width": ["string-width@4.2.3", "", {}, stringWidthIntegrity],
+      "string-width-cjs": ["string-width@4.2.3", "", {}, stringWidthIntegrity],
+    });
+
+    expect(requestedManifests).toStrictEqual(["@corp/bare", "@corp/foo", "bar", "string-width"]);
+  });
+
+  test.concurrent("yarn.lock aliases of one name and version to different packages stay separate", async () => {
+    const xIntegrity = "sha512-" + Buffer.alloc(64, 6).toString("base64");
+    const yIntegrity = "sha512-" + Buffer.alloc(64, 7).toString("base64");
+    const fooIntegrity = "sha512-" + Buffer.alloc(64, 8).toString("base64");
+    const bazIntegrity = "sha512-" + Buffer.alloc(64, 9).toString("base64");
+
+    await using tmpDir = tempDir("yarn-migration-alias-same-name", {
+      "package.json": JSON.stringify(
+        {
+          name: "alias-same-name",
+          version: "1.0.0",
+          dependencies: {
+            x: "1.0.0",
+            y: "1.0.0",
+          },
+        },
+        null,
+        2,
+      ),
+      "yarn.lock": `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+"same@npm:baz@1.0.0":
+  version "1.0.0"
+  resolved "https://registry.yarnpkg.com/baz/-/baz-1.0.0.tgz#9999999999999999999999999999999999999999"
+  integrity ${bazIntegrity}
+
+"same@npm:foo@1.0.0":
+  version "1.0.0"
+  resolved "https://registry.yarnpkg.com/foo/-/foo-1.0.0.tgz#8888888888888888888888888888888888888888"
+  integrity ${fooIntegrity}
+
+x@1.0.0:
+  version "1.0.0"
+  resolved "https://registry.yarnpkg.com/x/-/x-1.0.0.tgz#6666666666666666666666666666666666666666"
+  integrity ${xIntegrity}
+  dependencies:
+    same "npm:foo@1.0.0"
+
+y@1.0.0:
+  version "1.0.0"
+  resolved "https://registry.yarnpkg.com/y/-/y-1.0.0.tgz#7777777777777777777777777777777777777777"
+  integrity ${yIntegrity}
+  dependencies:
+    same "npm:baz@1.0.0"
+`,
+    });
+
+    const { packages, requestedManifests } = await migrateYarnLock(tmpDir);
+    expect(packages).toStrictEqual({
+      "same": ["foo@1.0.0", "", {}, fooIntegrity],
+      "x": ["x@1.0.0", "", { dependencies: { same: "npm:foo@1.0.0" } }, xIntegrity],
+      "y": ["y@1.0.0", "", { dependencies: { same: "npm:baz@1.0.0" } }, yIntegrity],
+      "y/same": ["baz@1.0.0", "", {}, bazIntegrity],
+    });
+
+    expect(requestedManifests).toStrictEqual(["baz", "foo", "x", "y"]);
+  });
+
+  test.concurrent("yarn.lock git dependency keyed by a package name stays separate from an alias of it", async () => {
+    const lodashIntegrity = "sha512-" + Buffer.alloc(64, 10).toString("base64");
+    const forkCommit = "0123456789abcdef0123456789abcdef01234567";
+
+    // The fork keeps upstream's name and version, so the two entries share a name and a version.
+    await using tmpDir = tempDir("yarn-migration-git-vs-alias", {
+      "package.json": JSON.stringify(
+        {
+          name: "git-vs-alias",
+          version: "1.0.0",
+          dependencies: {
+            "lodash": "git+https://github.com/me/lodash-fork.git",
+            "my-lodash": "npm:lodash@4.17.21",
+          },
+        },
+        null,
+        2,
+      ),
+      "yarn.lock": `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+"lodash@git+https://github.com/me/lodash-fork.git":
+  version "4.17.21"
+  resolved "git+https://github.com/me/lodash-fork.git#${forkCommit}"
+
+"my-lodash@npm:lodash@4.17.21":
+  version "4.17.21"
+  resolved "https://registry.yarnpkg.com/lodash/-/lodash-4.17.21.tgz#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  integrity ${lodashIntegrity}
+`,
+    });
+
+    const { packages, requestedManifests } = await migrateYarnLock(tmpDir);
+    expect(packages).toStrictEqual({
+      "lodash": [
+        `lodash-fork@github:me/lodash-fork#${forkCommit.slice(0, 7)}`,
+        {},
+        `me-lodash-fork-${forkCommit.slice(0, 7)}`,
+      ],
+      "my-lodash": ["lodash@4.17.21", "", {}, lodashIntegrity],
+    });
+
+    expect(requestedManifests).toStrictEqual(["lodash"]);
+  });
+
+  test("package names are only read from the path of default registry tarball URLs", async () => {
+    // Dependencies declared as tarball URLs: dependency name -> [url, package name in bun.lock].
+    // The migrator reads the package name from "<default registry>/<name>/-/<file>" when <name>
+    // is a valid package name. Every other URL keeps the name of the dependency.
+    const rows: Record<string, [url: string, packageName: string]> = {
+      "host-after-separator": ["https://evil.example/-/registry.npmjs.org/x.tgz", "host-after-separator"],
+      "mirror-with-registry-in-path": [
+        "https://registry.mirror.example/registry.npmjs.org/other/-/other-1.0.0.tgz",
+        "mirror-with-registry-in-path",
+      ],
+      "no-separator": ["https://registry.npmjs.org/w.tgz", "no-separator"],
+      "nothing-before-separator": ["https://registry.npmjs.org/-/y.tgz", "nothing-before-separator"],
+      "scope-before-separator": ["https://registry.npmjs.org/@scope/-/y.tgz", "scope-before-separator"],
+      "empty-segment-before-separator": ["https://registry.npmjs.org//-/z.tgz", "empty-segment-before-separator"],
+      "empty-segment-after-scope": ["https://registry.npmjs.org/@scope//-/z.tgz", "empty-segment-after-scope"],
+      "empty-scope": ["https://registry.npmjs.org/@/name/-/name-1.0.0.tgz", "empty-scope"],
+      "empty-scope-dash-package": ["https://registry.npmjs.org/@/-/-/--0.0.1.tgz", "empty-scope-dash-package"],
+      "extra-path-segment": ["https://registry.npmjs.org/a/b/-/b-1.0.0.tgz", "extra-path-segment"],
+      "dot-dot-before-separator": ["https://registry.npmjs.org/../-/x-1.0.0.tgz", "dot-dot-before-separator"],
+      "dash-package": ["https://registry.npmjs.org/-/-/--0.0.1.tgz", "-"],
+      "scoped-dash-package": ["https://registry.npmjs.org/@scope/-/-/--0.0.1.tgz", "@scope/-"],
+      "legacy-name-characters": ["https://registry.npmjs.org/bar~baz/-/bar~baz-1.0.0.tgz", "bar~baz"],
+      "scoped-npmjs-https": ["https://registry.npmjs.org/@scope/real/-/real-1.0.0.tgz", "@scope/real"],
+      "npmjs-http": ["http://registry.npmjs.org/real-a/-/real-a-1.0.0.tgz", "real-a"],
+      "yarnpkg-https": ["https://registry.yarnpkg.com/real-b/-/real-b-1.0.0.tgz", "real-b"],
+      "yarnpkg-http": ["http://registry.yarnpkg.com/real-c/-/real-c-1.0.0.tgz", "real-c"],
+    };
+    const dependencies = Object.fromEntries(Object.entries(rows).map(([dependency, [url]]) => [dependency, url]));
+
+    await using tmpDir = tempDir("yarn-migration-tarball-names", {
+      "package.json": JSON.stringify({ name: "tarball-names-test", version: "1.0.0", dependencies }, null, 2),
+      "yarn.lock":
+        "# yarn lockfile v1\n\n\n" +
+        Object.entries(dependencies)
+          .map(([dependency, url]) => `"${dependency}@${url}":\n  version "1.0.0"\n  resolved "${url}"\n`)
+          .join("\n"),
+    });
+
+    // Every entry is a tarball package, so the migration has no registry manifests to fetch.
+    const registryRequests: string[] = [];
+    await using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        registryRequests.push(new URL(req.url).pathname);
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "migrate", "-f"],
+      cwd: tmpDir,
+      env: {
+        ...bunEnv,
+        BUN_CONFIG_REGISTRY: registry.url.href,
+        BUN_INSTALL_CACHE_DIR: join(tmpDir, ".bun-cache"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(exitCode).toBe(0);
+
+    const lock = Bun.JSONC.parse(await Bun.file(join(tmpDir, "bun.lock")).text()) as { packages: unknown };
+    expect(lock.packages).toStrictEqual(
+      Object.fromEntries(
+        Object.entries(rows).map(([dependency, [url, packageName]]) => [dependency, [`${packageName}@${url}`, {}]]),
+      ),
+    );
+    expect(registryRequests).toStrictEqual([]);
   });
 
   test("yarn.lock with resolutions", async () => {
@@ -877,7 +1265,7 @@ webpack@^5.89.0:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tmpDir,
-      env: bunEnv,
+      env: migrateEnv(tmpDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -897,6 +1285,73 @@ webpack@^5.89.0:
 
     // Verify resolutions are handled
     expect(bunLockContent).toContain("resolutions");
+  });
+
+  test.concurrent("workspace yarn.lock with $ref resolutions", async () => {
+    await using tmpDir = tempDir("yarn-migration-ref-resolutions", {
+      "package.json": JSON.stringify(
+        {
+          name: "ref-resolutions-root",
+          private: true,
+          workspaces: ["packages/*"],
+          dependencies: {
+            "is-number": "^7.0.0",
+          },
+          resolutions: {
+            "acorn": "$acorn",
+            "is-number": "$is-number",
+            "is-odd": "$missing",
+            "is-even": "1.0.0",
+          },
+        },
+        null,
+        2,
+      ),
+      "packages/a/package.json": JSON.stringify({
+        name: "@ref/a",
+        version: "1.0.0",
+        dependencies: { acorn: "^8.11.3" },
+      }),
+      "yarn.lock": `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+acorn@^8.11.3:
+  version "8.11.3"
+  resolved "https://registry.yarnpkg.com/acorn/-/acorn-8.11.3.tgz#71e0b14e13a4ec160724b38fb7b0f233b1b81d7a"
+  integrity sha512-Y9rRfJG5jcKOE0CLisYbojUjIrIEE7AGMzA/Sm4BslANhbS+cDMpgBdcPT91oJ7OuJ9hYJBx59RjbhxVnrF8Xg==
+
+is-number@^7.0.0:
+  version "7.0.0"
+  resolved "https://registry.yarnpkg.com/is-number/-/is-number-7.0.0.tgz#7535345b896734d5f80c4d06c50955527a14f12b"
+  integrity sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "migrate", "-f"],
+      cwd: tmpDir,
+      env: migrateEnv(tmpDir),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain('warn: Could not resolve "$missing": "missing" is not in dependencies');
+    expect(stderr).not.toContain('"$acorn"');
+    expect(stderr).not.toContain('"$is-number"');
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(exitCode).toBe(0);
+
+    const lock = Bun.JSONC.parse(await Bun.file(join(tmpDir, "bun.lock")).text()) as { overrides: unknown };
+    expect(lock.overrides).toStrictEqual({
+      "acorn": "^8.11.3",
+      "is-even": "1.0.0",
+      "is-number": "^7.0.0",
+    });
   });
 
   test("yarn.lock with workspace dependencies", async () => {
@@ -975,7 +1430,7 @@ lodash@^4.17.21:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tmpDir,
-      env: bunEnv,
+      env: migrateEnv(tmpDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -993,8 +1448,19 @@ lodash@^4.17.21:
     const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("workspace-yarn-migration");
 
-    // TODO: Workspace dependencies are not yet supported in yarn migration
-    // expect(bunLockContent).toContain("workspace:");
+    const lock = Bun.JSONC.parse(bunLockContent) as {
+      workspaces: Record<string, unknown>;
+      packages: Record<string, unknown[]>;
+    };
+    expect(Object.keys(lock.workspaces)).toEqual(["", "packages/a", "packages/b"]);
+    expect(Object.fromEntries(Object.entries(lock.packages).map(([key, info]) => [key, info[0]]))).toEqual({
+      "@workspace/a": "@workspace/a@workspace:packages/a",
+      "@workspace/b": "@workspace/b@workspace:packages/b",
+      "is-number": "is-number@7.0.0",
+      "is-odd": "is-odd@3.0.1",
+      "is-odd/is-number": "is-number@6.0.0",
+      "lodash": "lodash@4.17.21",
+    });
   });
 
   test("yarn.lock with scoped packages and parent/child relationships", async () => {
@@ -1090,7 +1556,7 @@ babel-loader/chalk@^2.4.2:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tmpDir,
-      env: bunEnv,
+      env: migrateEnv(tmpDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -1315,7 +1781,7 @@ webpack@^5.75.0:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tmpDir,
-      env: bunEnv,
+      env: migrateEnv(tmpDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -1348,30 +1814,41 @@ describe("bun pm migrate for existing yarn.lock", () => {
     "yarn-stuff",
     "yarn-stuff/abbrev-link-target",
   ];
-  test.each(folders)("%s", async folder => {
-    const packageJsonContent = await Bun.file(join(import.meta.dir, "yarn", folder, "package.json")).text();
-    const yarnLockContent = await Bun.file(join(import.meta.dir, "yarn", folder, "yarn.lock")).text();
+  test.each(folders)(
+    "%s",
+    async folder => {
+      const packageJsonContent = await Bun.file(join(import.meta.dir, "yarn", folder, "package.json")).text();
+      const yarnLockContent = await Bun.file(join(import.meta.dir, "yarn", folder, "yarn.lock")).text();
 
-    await using tmpDir = tempDir("yarn-lock-migration-", {
-      "package.json": packageJsonContent,
-      "yarn.lock": yarnLockContent,
-    });
+      await using tmpDir = tempDir("yarn-lock-migration-", {
+        "package.json": packageJsonContent,
+        "yarn.lock": yarnLockContent,
+      });
 
-    const migrateResult = Bun.spawn({
-      cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tmpDir,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
-    });
+      await using migrateResult = Bun.spawn({
+        cmd: [bunExe(), "pm", "migrate", "-f"],
+        cwd: tmpDir,
+        env: migrateEnv(tmpDir),
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
 
-    expect(migrateResult.exited).resolves.toBe(0);
-    expect(Bun.file(join(tmpDir, "bun.lock")).exists()).resolves.toBe(true);
+      const [stdout, stderr, exitCode] = await Promise.all([
+        migrateResult.stdout.text(),
+        migrateResult.stderr.text(),
+        migrateResult.exited,
+      ]);
+      expect(stdout).toBe("");
+      expect(stderr).toContain("migrated lockfile from yarn.lock");
+      expect(exitCode).toBe(0);
 
-    const bunLockContent = await Bun.file(join(tmpDir, "bun.lock")).text();
-    expect(bunLockContent).toMatchSnapshot(folder);
-  });
+      const bunLockContent = await Bun.file(join(tmpDir, "bun.lock")).text();
+      expect(bunLockContent).toMatchSnapshot(folder);
+    },
+    // yarn-cli-repo is yarn's own 8k-line lockfile; a debug build takes several seconds to migrate it.
+    isDebug ? 60_000 : undefined,
+  );
 
   test("yarn.lock with packages that have os/cpu requirements", async () => {
     await using tmpDir = tempDir("yarn-migration-os-cpu", {
@@ -1455,7 +1932,7 @@ fsevents@^2.3.2:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tmpDir,
-      env: bunEnv,
+      env: migrateEnv(tmpDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -1473,10 +1950,1838 @@ fsevents@^2.3.2:
     const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("os-cpu-yarn-migration");
 
-    // Verify that the lockfile contains the expected os/cpu metadata by checking the snapshot
-    // fsevents should have darwin os constraint, esbuild packages should have arch constraints
-    expect(bunLockContent).toContain("fsevents");
-    expect(bunLockContent).toContain("@esbuild/linux-arm64");
-    expect(bunLockContent).toContain("@esbuild/darwin-arm64");
+    // yarn.lock has none of these fields: they come from the manifests
+    expect(bunLockContent).toContain('["fsevents@2.3.2", "", { "os": "darwin" }');
+    expect(bunLockContent).toContain('["@esbuild/darwin-arm64@0.17.19", "", { "os": "darwin", "cpu": "arm64" }');
+    expect(bunLockContent).toContain('["@esbuild/linux-x64@0.17.19", "", { "os": "linux", "cpu": "x64" }');
+    expect(bunLockContent).toContain('"bin": { "esbuild": "bin/esbuild" }');
   });
+
+  test("a peer binds to the highest satisfying version, not the copy yarn.lock resolved its range to", async () => {
+    // yarn.lock resolved bar's `foo@^1.0.0` peer spec to the foo@1.0.0 it lists first, while
+    // foo@1.5.0 is in the graph too. Hoisting binds the peer the way every other tree build
+    // does, and bar hoists before uses-foo1, so the copy written at the root is 1.5.0, the
+    // same tree a reload of the migrated file builds.
+    const sha = Buffer.alloc(40, "0").toString();
+    await using tmpDir = tempDir("yarn-migration-peer-binding", {
+      "package.json": JSON.stringify({
+        name: "peer-binding",
+        dependencies: { "bar": "1.0.0", "uses-foo1": "1.0.0", "uses-foo15": "1.0.0" },
+      }),
+      // port 1 refuses connections, so the manifest fetch after the migration fails fast
+      "bunfig.toml": `[install]\nregistry = "http://localhost:1/"\n`,
+      "yarn.lock": `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+foo@1.0.0, foo@^1.0.0:
+  version "1.0.0"
+  resolved "http://localhost:1/foo/-/foo-1.0.0.tgz#${sha}"
+
+foo@1.5.0:
+  version "1.5.0"
+  resolved "http://localhost:1/foo/-/foo-1.5.0.tgz#${sha}"
+
+bar@1.0.0:
+  version "1.0.0"
+  resolved "http://localhost:1/bar/-/bar-1.0.0.tgz#${sha}"
+  peerDependencies:
+    foo "^1.0.0"
+
+uses-foo1@1.0.0:
+  version "1.0.0"
+  resolved "http://localhost:1/uses-foo1/-/uses-foo1-1.0.0.tgz#${sha}"
+  dependencies:
+    foo "1.0.0"
+
+uses-foo15@1.0.0:
+  version "1.0.0"
+  resolved "http://localhost:1/uses-foo15/-/uses-foo15-1.0.0.tgz#${sha}"
+  dependencies:
+    foo "1.5.0"
+`,
+    });
+
+    await using migrateResult = Bun.spawn({
+      cmd: [bunExe(), "pm", "migrate", "-f"],
+      cwd: tmpDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      migrateResult.stdout.text(),
+      migrateResult.stderr.text(),
+      migrateResult.exited,
+    ]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(exitCode).toBe(0);
+
+    const lock = Bun.JSONC.parse(fs.readFileSync(join(tmpDir, "bun.lock"), "utf8")) as any;
+    expect(Object.fromEntries(Object.entries(lock.packages).map(([key, value]: any) => [key, value[0]]))).toEqual({
+      "bar": "bar@1.0.0",
+      "foo": "foo@1.5.0",
+      "uses-foo1": "uses-foo1@1.0.0",
+      "uses-foo1/foo": "foo@1.0.0",
+      "uses-foo15": "uses-foo15@1.0.0",
+    });
+  });
+});
+
+describe("installing from a migrated yarn.lock", () => {
+  const verdaccio = new TestRegistry();
+  const REGISTRY_PACKAGES = join(import.meta.dir, "..", "registry", "packages");
+
+  beforeAll(async () => {
+    await verdaccio.start();
+  });
+
+  afterAll(() => {
+    verdaccio.stop();
+  });
+
+  // Keyed by the exact spec that requested it, as yarn writes pinned dependencies.
+  function yarnEntry(name: string, version: string, body = "") {
+    const { shasum, integrity } = JSON.parse(fs.readFileSync(join(REGISTRY_PACKAGES, name, "package.json"), "utf8"))
+      .versions[version].dist;
+    return `${name}@${version}:
+  version "${version}"
+  resolved "${verdaccio.registryUrl()}${name}/-/${name}-${version}.tgz#${shasum}"
+  integrity ${integrity}
+${body}`;
+  }
+
+  async function install(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const storeEntries = (dir: string) =>
+    fs
+      .readdirSync(join(dir, "node_modules", ".bun"))
+      .filter(name => name !== "node_modules")
+      .sort();
+
+  test("a peer yarn.lock has no entry for is bound by the install that migrates", async () => {
+    // yarn.lock keys entries by the specs that requested them; nothing requested `no-deps@*`, so the
+    // migration cannot bind peer-deps-too's peer from the file. Loading the migrated bun.lock binds it to
+    // the no-deps at the root and the isolated store keys peer-deps-too by that binding, so the migrating
+    // install has to bind it the same way or the next install re-keys the entry.
+    const packageJson = JSON.stringify({
+      name: "unmet-peer",
+      dependencies: { "one-dep": "1.0.0", "peer-deps-too": "1.0.0" },
+    });
+    const { packageDir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": packageJson,
+        "yarn.lock": `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+${yarnEntry("no-deps", "1.0.1")}
+${yarnEntry("one-dep", "1.0.0", `  dependencies:\n    no-deps "1.0.1"\n`)}
+${yarnEntry("peer-deps-too", "1.0.0", `  peerDependencies:\n    no-deps "*"\n`)}`,
+      },
+    });
+
+    const migrating = await install(packageDir);
+
+    expect(migrating.stderr).toContain("migrated lockfile from yarn.lock");
+    expect(migrating.exitCode).toBe(0);
+    const migrated = fs.readFileSync(join(packageDir, "bun.lock"), "utf8");
+    expect(migrated).toContain(`"peerDependencies": { "no-deps": "*" }`);
+    const store = storeEntries(packageDir);
+    expect(store).toEqual([
+      "no-deps@1.0.1",
+      "one-dep@1.0.0",
+      expect.stringMatching(/^peer-deps-too@1\.0\.0\+[0-9a-f]{16}$/),
+    ]);
+
+    const reinstall = await install(packageDir);
+
+    expect(reinstall.stdout).toContain("(no changes)");
+    expect(reinstall.exitCode).toBe(0);
+    expect(fs.readFileSync(join(packageDir, "bun.lock"), "utf8")).toBe(migrated);
+    expect(storeEntries(packageDir)).toEqual(store);
+
+    const { packageDir: fresh } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: { "package.json": packageJson },
+    });
+
+    const freshInstall = await install(fresh);
+
+    expect(freshInstall.stderr).toContain("Saved lockfile");
+    expect(freshInstall.exitCode).toBe(0);
+    expect(storeEntries(fresh)).toEqual(store);
+  });
+
+  test("the yarn.lock that bun install --yarn writes migrates back to the same packages", async () => {
+    const integrityOf = (name: string, version: string) =>
+      JSON.parse(fs.readFileSync(join(REGISTRY_PACKAGES, name, "package.json"), "utf8")).versions[version].dist
+        .integrity;
+    // Every pin is older than what its range resolves to today.
+    const dependencies = {
+      "aliased": "npm:a-dep@^1.0.1",
+      "also-no-deps": "npm:no-deps@^1.0.0",
+      "no-deps": "^1.0.0",
+    };
+    const { packageDir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({ name: "yarn-round-trip", dependencies }),
+        "bun.lock": JSON.stringify({
+          lockfileVersion: 1,
+          workspaces: { "": { name: "yarn-round-trip", dependencies } },
+          packages: {
+            "aliased": ["a-dep@1.0.1", "", {}, integrityOf("a-dep", "1.0.1")],
+            "also-no-deps": ["no-deps@1.0.0", "", {}, integrityOf("no-deps", "1.0.0")],
+            "no-deps": ["no-deps@1.0.0", "", {}, integrityOf("no-deps", "1.0.0")],
+          },
+        }),
+      },
+    });
+    const installed = [
+      "node_modules/aliased/a-dep@1.0.1",
+      "node_modules/also-no-deps/no-deps@1.0.0",
+      "node_modules/no-deps/no-deps@1.0.0",
+    ].join("\n");
+
+    const exporting = await install(packageDir, "--yarn");
+
+    expect(exporting.stderr).not.toContain("error:");
+    expect(nodeModulesPackages(packageDir)).toBe(installed);
+    // Like Yarn, an entry is keyed by the name that package.json gives the dependency.
+    const yarnLock = fs.readFileSync(join(packageDir, "yarn.lock"), "utf8");
+    expect(yarnLock.split("\n").filter(line => /^[^#\s].*:$/.test(line))).toEqual([
+      `"aliased@npm:a-dep@^1.0.1":`,
+      `"also-no-deps@npm:no-deps@^1.0.0", no-deps@^1.0.0:`,
+    ]);
+    expect(exporting.exitCode).toBe(0);
+
+    fs.rmSync(join(packageDir, "bun.lock"));
+    fs.rmSync(join(packageDir, "node_modules"), { recursive: true });
+    const migrating = await install(packageDir);
+
+    expect(migrating.stderr).not.toContain("warn:");
+    expect(migrating.stderr).not.toContain("error:");
+    expect(migrating.stderr).toContain("migrated lockfile from yarn.lock");
+    expect(nodeModulesPackages(packageDir)).toBe(installed);
+    expect(migrating.exitCode).toBe(0);
+  });
+
+  test.concurrent.each(["hoisted", "isolated"])(
+    "a git dependency is checked out at the commit yarn.lock pins (%s)",
+    async linker => {
+      using dir = tempDir("yarn-migration-git-pin", {
+        repo: { "package.json": JSON.stringify({ name: "git-dep", version: "1.0.0" }), "index.js": "pinned" },
+      });
+      const repo = join(String(dir), "repo");
+      const git = async (...args: string[]) => {
+        await using proc = Bun.spawn({
+          cmd: [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            ...args,
+          ],
+          cwd: repo,
+          env: { ...bunEnv, GIT_CONFIG_NOSYSTEM: "1" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        if (exitCode !== 0) throw new Error(`git ${args.join(" ")} exited with ${exitCode}: ${stderr}`);
+        return stdout.trim();
+      };
+      await git("-c", "init.defaultBranch=main", "init", "--quiet");
+      await git("add", "-A");
+      await git("commit", "--quiet", "-m", "pinned");
+      const pinned = await git("rev-parse", "HEAD");
+      fs.writeFileSync(join(repo, "index.js"), "newer");
+      await git("commit", "--quiet", "-a", "-m", "newer");
+
+      const url = `git+${Bun.pathToFileURL(repo).href}`;
+      const project = join(String(dir), "project");
+      fs.mkdirSync(project);
+      fs.writeFileSync(
+        join(project, "package.json"),
+        JSON.stringify({ name: "git-pin", dependencies: { "git-dep": url } }),
+      );
+      fs.writeFileSync(
+        join(project, "yarn.lock"),
+        `# yarn lockfile v1\n\n\n"git-dep@${url}":\n  version "1.0.0"\n  resolved "${url}#${pinned}"\n`,
+      );
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", `--linker=${linker}`],
+        cwd: project,
+        env: migrateEnv(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr.split("\n").filter(line => line.startsWith("error"))).toEqual([]);
+      expect(stderr).toContain("migrated lockfile from yarn.lock");
+      expect(fs.readFileSync(join(project, "node_modules", "git-dep", "index.js"), "utf8")).toBe("pinned");
+      const lock = Bun.JSONC.parse(fs.readFileSync(join(project, "bun.lock"), "utf8")) as { packages: unknown };
+      expect(lock.packages).toEqual({ "git-dep": [`git-dep@${url}#${pinned}`, {}, pinned] });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent("a GitHub dependency is downloaded at the commit yarn.lock pins", async () => {
+    const commit = "0123456789abcdef0123456789abcdef01234567";
+    const tag = `me-gh-dep-${commit.slice(0, 7)}`;
+    const tarball = await githubTarball(tag, { "package.json": JSON.stringify({ name: "gh-dep", version: "1.0.0" }) });
+    const requests: string[] = [];
+    await using github = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requests.push(new URL(req.url).pathname);
+        return new Response(tarball);
+      },
+    });
+    const url = "git+https://github.com/me/gh-dep.git";
+    using dir = tempDir("yarn-migration-github-pin", {
+      "package.json": JSON.stringify({ name: "github-pin", dependencies: { "gh-dep": url } }),
+      "yarn.lock": `# yarn lockfile v1\n\n\n"gh-dep@${url}":\n  version "1.0.0"\n  resolved "${url}#${commit}"\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...migrateEnv(dir), GITHUB_API_URL: github.url.origin },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr.split("\n").filter(line => line.startsWith("error"))).toEqual([]);
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(requests).toEqual([`/repos/me/gh-dep/tarball/${commit.slice(0, 7)}`]);
+    expect(fs.existsSync(join(String(dir), "node_modules", "gh-dep", "package.json"))).toBe(true);
+    const lock = Bun.JSONC.parse(fs.readFileSync(join(String(dir), "bun.lock"), "utf8")) as {
+      packages: Record<string, unknown[]>;
+    };
+    expect(lock.packages["gh-dep"].slice(0, 3)).toEqual([`gh-dep@github:me/gh-dep#${commit.slice(0, 7)}`, {}, tag]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.each(["registry", "url", "file"] as const)(
+    "the sha1 at the end of `resolved` is kept for a %s tarball without an integrity line",
+    async kind => {
+      const tarballOf = async (marker: string) =>
+        Buffer.from(
+          await githubTarball("package", {
+            "package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+            "index.js": marker,
+          }),
+        );
+      const [locked, other] = await Promise.all([tarballOf("locked"), tarballOf("other")]);
+      const sha1 = new Bun.CryptoHasher("sha1").update(locked).digest();
+
+      const install = async (tarball: Buffer, ...flags: string[]) => {
+        await using server = Bun.serve({
+          port: 0,
+          fetch: req => (req.url.endsWith(".tgz") ? new Response(tarball) : new Response("", { status: 404 })),
+        });
+        const [range, resolved] = {
+          registry: ["^1.0.0", `${server.url}dep/-/dep-1.0.0.tgz`],
+          url: [`${server.url}dep-1.0.0.tgz`, `${server.url}dep-1.0.0.tgz`],
+          file: ["file:./vendor/dep.tgz", "file:./vendor/dep.tgz"],
+        }[kind];
+        using dir = tempDir("yarn-migration-resolved-sha1", {
+          "package.json": JSON.stringify({ name: "resolved-sha1", dependencies: { dep: range } }),
+          "yarn.lock": `# yarn lockfile v1\n\n\n"dep@${range}":\n  version "1.0.0"\n  resolved "${resolved}#${sha1.toString("hex")}"\n`,
+          "vendor/dep.tgz": tarball,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install", ...flags],
+          cwd: String(dir),
+          env: { ...migrateEnv(dir), BUN_CONFIG_REGISTRY: server.url.href },
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        const read = (path: string) =>
+          fs.existsSync(join(String(dir), path)) ? fs.readFileSync(join(String(dir), path), "utf8") : null;
+        return { stderr, exitCode, installed: read("node_modules/dep/index.js"), lock: read("bun.lock") };
+      };
+
+      for (const flags of [[], ["--frozen-lockfile"]]) {
+        const changed = await install(other, ...flags);
+        expect(changed.stderr).toContain("Integrity check failed for tarball: dep");
+        expect(changed.installed).toBeNull();
+        expect(changed.exitCode).toBe(1);
+      }
+
+      const same = await install(locked);
+      expect(same.stderr.split("\n").filter(line => line.startsWith("error"))).toEqual([]);
+      expect(same.installed).toBe("locked");
+      expect(same.lock).toContain(`{}, "sha1-${sha1.toString("base64")}"]`);
+      expect(same.exitCode).toBe(0);
+    },
+  );
+});
+
+describe.concurrent("yarn.lock migration of registry tarball URLs", () => {
+  const integrity = {
+    parent: "sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q==",
+    leaf: "sha512-LEyx4aLEC3x6T0UguF6YILf+ntvmOaWsVfENmIW0E9H09vKlLDGelMjjSm0jkDHALj8A8quZ/HapKNigzwge+Q==",
+  };
+
+  async function migrate(dependencies: Record<string, string>, yarnLockEntries: string) {
+    // After migrating, bun fetches manifests from the configured registry to
+    // fill in bin/os/cpu. Point it at a local server that has nothing so the
+    // test stays off the network; the migrated resolutions don't depend on it.
+    using registry = Bun.serve({
+      port: 0,
+      fetch: () => new Response("not found", { status: 404 }),
+    });
+    await using dir = tempDir("yarn-migration-registry-urls", {
+      "package.json": JSON.stringify({ name: "registry-urls", version: "1.0.0", dependencies }),
+      "yarn.lock": `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+${yarnLockEntries}`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "migrate", "-f"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_CONFIG_REGISTRY: registry.url.href },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).toContain("migrated lockfile from yarn.lock");
+    expect(exitCode).toBe(0);
+    return fs.readFileSync(join(String(dir), "bun.lock"), "utf8");
+  }
+
+  test("private registry: yarn's #sha1 suffix is dropped and suffix-less URLs stay npm packages", async () => {
+    const registry = "https://npm.example.com";
+    const bunLock = await migrate(
+      { parent: "^1.0.0" },
+      `parent@^1.0.0:
+  version "1.2.3"
+  resolved "${registry}/parent/-/parent-1.2.3.tgz#f8f2c887ad10bf67f634f005b6987fed3179aac8"
+  integrity ${integrity.parent}
+  dependencies:
+    "@scope/leaf" "~2.0.0"
+
+"@scope/leaf@~2.0.0":
+  version "2.0.1"
+  resolved "${registry}/@scope/leaf/-/leaf-2.0.1.tgz"
+  integrity ${integrity.leaf}
+`,
+    );
+
+    // Both entries are npm packages whose tarball URL is exactly what the
+    // registry would hand a fresh install: no `#sha1`, and no remote tarball
+    // entry (`parent@https://...`) just because yarn omitted the suffix.
+    expect(bunLock).toContain(
+      `"parent": ["parent@1.2.3", "${registry}/parent/-/parent-1.2.3.tgz", { "dependencies": { "@scope/leaf": "~2.0.0" } }, "${integrity.parent}"]`,
+    );
+    expect(bunLock).toContain(
+      `"@scope/leaf": ["@scope/leaf@2.0.1", "${registry}/@scope/leaf/-/leaf-2.0.1.tgz", {}, "${integrity.leaf}"]`,
+    );
+  });
+
+  test("default registry: a URL without yarn's #sha1 suffix is still the default registry", async () => {
+    // This is the shape `bun install --yarn` itself writes.
+    const bunLock = await migrate(
+      { "@scope/leaf": "~2.0.0", "leaf-alias": "npm:leaf@^1.0.0" },
+      `"@scope/leaf@~2.0.0":
+  version "2.0.1"
+  resolved "https://registry.yarnpkg.com/@scope/leaf/-/leaf-2.0.1.tgz"
+  integrity ${integrity.leaf}
+
+"leaf-alias@npm:leaf@^1.0.0":
+  version "1.0.0"
+  resolved "https://registry.npmjs.org/leaf/-/leaf-1.0.0.tgz"
+  integrity ${integrity.parent}
+`,
+    );
+
+    expect(bunLock).toContain(`"@scope/leaf": ["@scope/leaf@2.0.1", "", {}, "${integrity.leaf}"]`);
+    expect(bunLock).toContain(`"leaf-alias": ["leaf@1.0.0", "", {}, "${integrity.parent}"]`);
+  });
+
+  test("a dependency declared as a tarball URL stays a remote tarball, without yarn's #sha1 suffix", async () => {
+    const registryUrl = "https://npm.example.com/leaf/-/leaf-2.0.1.tgz";
+    // yarn puts the same `#sha1` after a GitHub archive download, where it must
+    // not be mistaken for the commit of a git dependency.
+    const githubUrl = "https://github.com/isaacs/abbrev-js/archive/refs/tags/v1.1.1.tar.gz";
+    const bunLock = await migrate(
+      { "leaf": registryUrl, "gh-tar": githubUrl },
+      `"leaf@${registryUrl}":
+  version "2.0.1"
+  resolved "${registryUrl}#f8f2c887ad10bf67f634f005b6987fed3179aac8"
+
+"gh-tar@${githubUrl}":
+  version "1.1.1"
+  resolved "${githubUrl}#f8f2c887ad10bf67f634f005b6987fed3179aac8"
+`,
+    );
+
+    expect(bunLock).toContain(`"leaf": ["leaf@${registryUrl}", {}, "sha1-+PLIh60Qv2f2NPAFtph/7TF5qsg="]`);
+    expect(bunLock).toContain(`"gh-tar": ["gh-tar@${githubUrl}", {}, "sha1-+PLIh60Qv2f2NPAFtph/7TF5qsg="]`);
+  });
+
+  test("a git dependency hosted on github.com is still migrated as git", async () => {
+    const bunLock = await migrate(
+      { abbrev: "https://github.com/isaacs/abbrev-js.git" },
+      `"abbrev@https://github.com/isaacs/abbrev-js.git":
+  version "1.1.1"
+  resolved "https://github.com/isaacs/abbrev-js.git#3f9802e56ff878761a338e43ecacbfed39d2181d"
+`,
+    );
+
+    expect(bunLock).toContain(
+      `"abbrev": ["abbrev-js@github:isaacs/abbrev-js#3f9802e", {}, "isaacs-abbrev-js-3f9802e"]`,
+    );
+  });
+});
+
+// yarn.lock has no entries for the root or the workspaces themselves: each dependency they declare is
+// looked up by the exact `name@range` key, the same way yarn resolves it.
+const yarnLockEntries = {
+  "is-number-6": (specs: string) => `${specs}:
+  version "6.0.0"
+  resolved "https://registry.yarnpkg.com/is-number/-/is-number-6.0.0.tgz#e6d15ad31fc262887d1846d1c6c84c9b3b0b5982"
+  integrity sha512-Wu1VHeILBK8KAWJUAiSZQX94GmOE45Rg6/538fKwiloUu21KncEkYGPqob2oSZ5mUT73vLGrHQjKw3KMPwfDzg==
+`,
+  "is-number-7": (specs: string) => `${specs}:
+  version "7.0.0"
+  resolved "https://registry.yarnpkg.com/is-number/-/is-number-7.0.0.tgz#7535345b896734d5f80c4d06c50955527a14f12b"
+  integrity sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==
+`,
+  "lodash": (specs: string) => `${specs}:
+  version "4.17.21"
+  resolved "https://registry.yarnpkg.com/lodash/-/lodash-4.17.21.tgz#679591c564c3bffaae8454cf0b3df370c3d6911c"
+  integrity sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg==
+`,
+};
+
+function yarnLock(...entries: string[]) {
+  return `# yarn lockfile v1\n\n\n${entries.join("\n")}`;
+}
+
+type MigratedLock = {
+  workspaces: Record<string, Record<string, unknown>>;
+  packages: Record<string, unknown[]>;
+};
+
+async function migrate(dir: string): Promise<MigratedLock & { stderr: string }> {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "migrate", "-f"],
+    cwd: dir,
+    env: migrateEnv(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(stderr).toContain("migrated lockfile from yarn.lock");
+  expect(exitCode).toBe(0);
+  const lock = Bun.JSONC.parse(await Bun.file(join(dir, "bun.lock")).text()) as MigratedLock;
+  return { ...lock, stderr };
+}
+
+function resolvedPackages(lock: MigratedLock) {
+  return Object.fromEntries(Object.entries(lock.packages).map(([key, info]) => [key, info[0]]));
+}
+
+describe.concurrent("yarn.lock migration of workspace dependencies", () => {
+  test("workspace dependencies are taken from yarn.lock when the root has no dependencies of its own", async () => {
+    using dir = tempDir("yarn-migration-workspaces-root-without-deps", {
+      "package.json": JSON.stringify({ name: "mono", private: true, workspaces: ["packages/*"] }),
+      "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0", dependencies: { "is-number": ">=6" } }),
+      "packages/b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+      // One entry keyed by several ranges, as yarn writes it when the ranges resolve to the same version.
+      "yarn.lock": yarnLock(yarnLockEntries["is-number-7"]("is-number@>=6, is-number@^7.0.0")),
+    });
+
+    const lock = await migrate(String(dir));
+
+    expect(lock.workspaces).toEqual({
+      "": { name: "mono" },
+      "packages/a": { name: "a", version: "1.0.0", dependencies: { "is-number": ">=6" } },
+      "packages/b": { name: "b", version: "1.0.0" },
+    });
+    expect(resolvedPackages(lock)).toEqual({
+      "a": "a@workspace:packages/a",
+      "b": "b@workspace:packages/b",
+      "is-number": "is-number@7.0.0",
+    });
+  });
+
+  test("a range binds to its own yarn.lock entry, not to another entry of the same name that satisfies it", async () => {
+    using dir = tempDir("yarn-migration-workspaces-same-name", {
+      "package.json": JSON.stringify({
+        name: "mono",
+        private: true,
+        workspaces: ["packages/*"],
+        devDependencies: { lodash: "^4.17.21" },
+      }),
+      "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0", dependencies: { "is-number": ">=6" } }),
+      "packages/b/package.json": JSON.stringify({
+        name: "b",
+        version: "1.0.0",
+        dependencies: { "is-number": "6.0.0" },
+      }),
+      "yarn.lock": yarnLock(
+        yarnLockEntries["is-number-6"]("is-number@6.0.0"),
+        yarnLockEntries["is-number-7"]("is-number@>=6"),
+        yarnLockEntries["lodash"]("lodash@^4.17.21"),
+      ),
+    });
+
+    const lock = await migrate(String(dir));
+
+    expect(lock.workspaces).toEqual({
+      "": { name: "mono", devDependencies: { lodash: "^4.17.21" } },
+      "packages/a": { name: "a", version: "1.0.0", dependencies: { "is-number": ">=6" } },
+      "packages/b": { name: "b", version: "1.0.0", dependencies: { "is-number": "6.0.0" } },
+    });
+    expect(resolvedPackages(lock)).toEqual({
+      "a": "a@workspace:packages/a",
+      "b": "b@workspace:packages/b",
+      "b/is-number": "is-number@6.0.0",
+      "is-number": "is-number@7.0.0",
+      "lodash": "lodash@4.17.21",
+    });
+  });
+
+  test("workspace links, peers, and dependencies missing from yarn.lock", async () => {
+    using dir = tempDir("yarn-migration-workspaces-links", {
+      "package.json": JSON.stringify({
+        name: "mono",
+        private: true,
+        workspaces: ["packages/*"],
+        // It isn't in yarn.lock, because it was added to package.json after the last `yarn install`.
+        dependencies: { "is-odd": "^3.0.1" },
+        devDependencies: { lodash: "^4.17.21" },
+        // Yarn applied this when it wrote yarn.lock. The workspaces' lodash peers are still bound.
+        resolutions: { lodash: "^4.17.21" },
+      }),
+      "packages/a/package.json": JSON.stringify({
+        name: "@mono/a",
+        version: "1.0.0",
+        dependencies: {
+          // Satisfied by the workspace's version, so yarn links it and yarn.lock has no entry for it.
+          "@mono/b": "^1.0.0",
+          "@mono/c": "workspace:*",
+          "is-number": "^7.0.0",
+          "left-pad": "^1.3.0",
+        },
+        peerDependencies: {
+          "is-number": ">=6",
+          "lodash": "*",
+          "react": ">=16",
+          "typescript": ">=4",
+        },
+        peerDependenciesMeta: { typescript: { optional: true } },
+      }),
+      "packages/b/package.json": JSON.stringify({
+        name: "@mono/b",
+        version: "1.2.0",
+        dependencies: { "is-number": "6.0.0" },
+      }),
+      "packages/c/package.json": JSON.stringify({
+        name: "@mono/c",
+        version: "0.0.1",
+        // The first `is-number` and `lodash` in yarn.lock don't satisfy either peer.
+        peerDependencies: { "is-number": "6.0.0", lodash: "^3.0.0" },
+      }),
+      "yarn.lock": yarnLock(
+        yarnLockEntries["is-number-6"]("is-number@6.0.0"),
+        yarnLockEntries["is-number-7"]("is-number@^7.0.0"),
+        yarnLockEntries["lodash"]("lodash@^4.17.21"),
+      ),
+    });
+
+    const lock = await migrate(String(dir));
+
+    expect(lock.workspaces).toEqual({
+      // `is-odd` has no yarn.lock entry, so it is left for `bun install` to resolve.
+      "": { name: "mono", devDependencies: { lodash: "^4.17.21" } },
+      "packages/a": {
+        name: "@mono/a",
+        version: "1.0.0",
+        // `left-pad` has no yarn.lock entry either.
+        dependencies: { "@mono/b": "^1.0.0", "@mono/c": "workspace:*", "is-number": "^7.0.0" },
+        // Peers bind to the packages yarn.lock has for their names; `react` has none.
+        peerDependencies: { "is-number": ">=6", lodash: "*", typescript: ">=4" },
+        optionalPeers: ["typescript"],
+      },
+      "packages/b": { name: "@mono/b", version: "1.2.0", dependencies: { "is-number": "6.0.0" } },
+      "packages/c": {
+        name: "@mono/c",
+        version: "0.0.1",
+        // `is-number` binds to the 6.0.0 entry; `lodash` falls back to the only lodash there is, as a
+        // fresh install would ("incorrect peer dependency").
+        peerDependencies: { "is-number": "6.0.0", lodash: "^3.0.0" },
+      },
+    });
+    expect(resolvedPackages(lock)).toEqual({
+      "@mono/a": "@mono/a@workspace:packages/a",
+      "@mono/b": "@mono/b@workspace:packages/b",
+      "@mono/b/is-number": "is-number@6.0.0",
+      "@mono/c": "@mono/c@workspace:packages/c",
+      "@mono/c/is-number": "is-number@6.0.0",
+      "is-number": "is-number@7.0.0",
+      "lodash": "lodash@4.17.21",
+    });
+  });
+});
+
+describe("bun install migrating a yarn.lock with workspaces", () => {
+  const verdaccio = new TestRegistry();
+
+  beforeAll(async () => {
+    await verdaccio.start();
+  });
+
+  afterAll(() => {
+    verdaccio.stop();
+  });
+
+  function registryEntry(name: string, specs: string, version: string) {
+    const manifest = JSON.parse(fs.readFileSync(join(verdaccio.packagesPath, name, "package.json"), "utf8"));
+    const { integrity, shasum } = manifest.versions[version].dist;
+    return `${specs}:
+  version "${version}"
+  resolved "${verdaccio.registryUrl()}${name}/-/${name}-${version}.tgz#${shasum}"
+  integrity ${integrity}
+`;
+  }
+
+  async function install(cwd: string, ...flags: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", ...flags],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return { stdout, stderr };
+  }
+
+  test("installs the versions yarn.lock resolved each workspace's dependencies to", async () => {
+    const { packageDir } = await verdaccio.createTestDir({
+      files: {
+        "package.json": JSON.stringify({
+          name: "mono",
+          private: true,
+          workspaces: ["packages/*"],
+          // It isn't in yarn.lock, so it's resolved from the registry, without changing the locked versions.
+          dependencies: { "a-dep": "1.0.1" },
+        }),
+        "packages/a/package.json": JSON.stringify({
+          name: "a",
+          version: "1.0.0",
+          dependencies: { "no-deps": "^1.0.0" },
+        }),
+        "packages/b/package.json": JSON.stringify({
+          name: "b",
+          version: "1.0.0",
+          dependencies: { "no-deps": "1.0.1" },
+        }),
+        // The registry has no-deps 1.0.0, 1.0.1, 1.1.0 and 2.0.0; yarn resolved `^1.0.0` to 1.0.0.
+        // The `1.0.1` entry comes first, like yarn sorts it, and also satisfies `^1.0.0`.
+        "yarn.lock": yarnLock(
+          registryEntry("no-deps", "no-deps@1.0.1", "1.0.1"),
+          registryEntry("no-deps", "no-deps@^1.0.0", "1.0.0"),
+        ),
+      },
+    });
+
+    const first = await install(packageDir);
+    expect(first.stderr).toContain("migrated lockfile from yarn.lock");
+    expect(first.stderr).toContain("Saved lockfile");
+
+    const installed = nodeModulesPackages(packageDir);
+    expect(installed).toMatchInlineSnapshot(`
+      "node_modules/a-dep/a-dep@1.0.1
+      node_modules/no-deps/no-deps@1.0.0
+      packages/a/a@1.0.0
+      packages/b/b@1.0.0
+      packages/b/node_modules/no-deps/no-deps@1.0.1"
+    `);
+
+    const lockText = await Bun.file(join(packageDir, "bun.lock")).text();
+    expect(resolvedPackages(Bun.JSONC.parse(lockText) as MigratedLock)).toEqual({
+      "a": "a@workspace:packages/a",
+      "a-dep": "a-dep@1.0.1",
+      "b": "b@workspace:packages/b",
+      "b/no-deps": "no-deps@1.0.1",
+      "no-deps": "no-deps@1.0.0",
+    });
+
+    // The migrated lockfile describes the package.json files exactly, so the next install has nothing to change.
+    const second = await install(packageDir);
+    expect(second.stderr).not.toContain("Saved lockfile");
+    expect(await Bun.file(join(packageDir, "bun.lock")).text()).toBe(lockText);
+    expect(nodeModulesPackages(packageDir)).toBe(installed);
+  });
+
+  test("a frozen install skips the project's own peers, which yarn.lock never lists", async () => {
+    const { packageDir } = await verdaccio.createTestDir({
+      files: {
+        "package.json": JSON.stringify({
+          name: "mono",
+          private: true,
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "^1.0.0" },
+          peerDependencies: { "a-dep": "1.0.1" },
+        }),
+        "packages/a/package.json": JSON.stringify({
+          name: "a",
+          version: "1.0.0",
+          peerDependencies: { "what-bin": "1.0.0" },
+        }),
+        "yarn.lock": yarnLock(registryEntry("no-deps", "no-deps@^1.0.0", "1.0.0")),
+      },
+    });
+
+    const frozen = await install(packageDir, "--frozen-lockfile");
+    expect(frozen.stderr).toContain("migrated lockfile from yarn.lock");
+    expect(fs.existsSync(join(packageDir, "bun.lock"))).toBe(false);
+    expect(nodeModulesPackages(packageDir)).toBe("node_modules/no-deps/no-deps@1.0.0\npackages/a/a@1.0.0");
+
+    // Any other install resolves them, and writes a bun.lock that a frozen install takes.
+    await install(packageDir);
+    const lockText = await Bun.file(join(packageDir, "bun.lock")).text();
+    expect(resolvedPackages(Bun.JSONC.parse(lockText) as MigratedLock)).toEqual({
+      "a": "a@workspace:packages/a",
+      "a-dep": "a-dep@1.0.1",
+      "no-deps": "no-deps@1.0.0",
+      "what-bin": "what-bin@1.0.0",
+    });
+    await install(packageDir, "--frozen-lockfile");
+    expect(await Bun.file(join(packageDir, "bun.lock")).text()).toBe(lockText);
+  });
+});
+
+// A registry entry can carry `version` (and `integrity`) but no `resolved` line. That is
+// everything bun keeps of a registry entry anyway (a default-registry URL is discarded), so it
+// migrates like any other registry entry instead of being dropped; package-lock.json migration
+// treats a missing `resolved` the same way. Whether an entry is a registry entry is decided by
+// its specs: yarn also writes `link:` and path entries with a `version` line and no `resolved`.
+describe.concurrent("yarn.lock entries without a resolved field", () => {
+  const REGISTRY_PACKAGES = join(import.meta.dir, "..", "registry", "packages");
+
+  // Serves the fixture packages from disk (404 for anything else) and records every path requested.
+  function localRegistry() {
+    const requests: string[] = [];
+    let url = "";
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const { pathname } = new URL(req.url);
+        requests.push(pathname);
+        const tarball = pathname.match(/^\/([^/]+)\/-\/([^/]+\.tgz)$/);
+        const file = tarball
+          ? Bun.file(join(REGISTRY_PACKAGES, tarball[1], tarball[2]))
+          : Bun.file(join(REGISTRY_PACKAGES, pathname.slice(1), "package.json"));
+        if (!(await file.exists())) return new Response("not found", { status: 404 });
+        if (tarball) return new Response(file);
+        return Response.json(
+          JSON.parse((await file.text()).replaceAll(/http:\/\/(?:http:\/\/)?localhost:4873\//g, url)),
+        );
+      },
+    });
+    url = `http://localhost:${server.port}/`;
+    return {
+      url,
+      requests,
+      integrity: (name: string, version: string): string =>
+        JSON.parse(fs.readFileSync(join(REGISTRY_PACKAGES, name, "package.json"), "utf8")).versions[version].dist
+          .integrity,
+      [Symbol.dispose]() {
+        server.stop(true);
+      },
+    };
+  }
+
+  async function runBun(dir: string, registryUrl: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: dir,
+      env: { ...bunEnv, BUN_CONFIG_REGISTRY: registryUrl, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const lockPackages = async (dir: string) =>
+    (Bun.JSONC.parse(await Bun.file(join(dir, "bun.lock")).text()) as { packages: unknown }).packages;
+
+  test("bun pm migrate keeps them as registry packages", async () => {
+    using registry = localRegistry();
+    const parentIntegrity = "sha512-" + Buffer.alloc(64, 1).toString("base64");
+    const leafIntegrity = "sha512-" + Buffer.alloc(64, 2).toString("base64");
+    const scopedIntegrity = "sha512-" + Buffer.alloc(64, 3).toString("base64");
+    const taggedIntegrity = "sha512-" + Buffer.alloc(64, 4).toString("base64");
+
+    await using dir = tempDir("yarn-migration-no-resolved", {
+      "package.json": JSON.stringify({
+        name: "no-resolved",
+        version: "1.0.0",
+        dependencies: {
+          "@scope/pinned": "2.0.0",
+          "no-integrity": "^3.0.0",
+          "parent": "^1.0.0",
+          "tagged": "next",
+        },
+      }),
+      "yarn.lock": `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+"@scope/pinned@2.0.0":
+  version "2.0.0"
+  integrity ${scopedIntegrity}
+
+leaf@^1.0.0:
+  version "1.2.3"
+  integrity ${leafIntegrity}
+
+no-integrity@^3.0.0:
+  version "3.0.1"
+
+parent@^1.0.0:
+  version "1.0.0"
+  resolved "https://registry.yarnpkg.com/parent/-/parent-1.0.0.tgz#0000000000000000000000000000000000000000"
+  integrity ${parentIntegrity}
+  dependencies:
+    leaf "^1.0.0"
+
+tagged@next:
+  version "5.0.0-beta.1"
+  integrity ${taggedIntegrity}
+`,
+    });
+
+    const { stderr, exitCode } = await runBun(String(dir), registry.url, "pm", "migrate", "-f");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(exitCode).toBe(0);
+
+    expect(await lockPackages(String(dir))).toStrictEqual({
+      "@scope/pinned": ["@scope/pinned@2.0.0", "", {}, scopedIntegrity],
+      "leaf": ["leaf@1.2.3", "", {}, leafIntegrity],
+      "no-integrity": ["no-integrity@3.0.1", "", {}, ""],
+      "parent": ["parent@1.0.0", "", { dependencies: { leaf: "^1.0.0" } }, parentIntegrity],
+      "tagged": ["tagged@5.0.0-beta.1", "", {}, taggedIntegrity],
+    });
+  });
+
+  test("bun pm migrate does not turn link:, path or tarball URL entries into registry packages", async () => {
+    using registry = localRegistry();
+    const keptIntegrity = "sha512-" + Buffer.alloc(64, 5).toString("base64");
+    const aliasIntegrity = "sha512-" + Buffer.alloc(64, 6).toString("base64");
+
+    // The `bare` and `linked` entries are what yarn 1.22 writes for a path and a `link:`
+    // dependency: a `version` line (the target's, or 0.0.0) and no `resolved`. Nothing in these
+    // entries is a registry package, so none of them may be migrated as `<name>@<version>` from the
+    // registry. (`from-url` is not migrated at all; `kept` shows the registry entries next to them
+    // are, and so is `lodash-alias`, whose real name is in its `npm:` spec.)
+    await using dir = tempDir("yarn-migration-no-resolved-non-registry", {
+      "package.json": JSON.stringify({
+        name: "no-resolved-non-registry",
+        version: "1.0.0",
+        dependencies: {
+          "bare": "../linked",
+          "from-url": "https://example.com/from-url-1.0.0.tgz",
+          "kept": "^1.0.0",
+          "linked": "link:../linked",
+          "lodash-alias": "npm:lodash@4.17.21",
+        },
+      }),
+      "yarn.lock": `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+bare@../linked:
+  version "3.2.1"
+
+"from-url@https://example.com/from-url-1.0.0.tgz":
+  version "1.0.0"
+
+kept@^1.0.0:
+  version "1.0.0"
+  integrity ${keptIntegrity}
+
+"linked@link:../linked":
+  version "0.0.0"
+  uid ""
+
+lodash-alias@npm:lodash@4.17.21:
+  version "4.17.21"
+  integrity ${aliasIntegrity}
+`,
+    });
+
+    const { stderr, exitCode } = await runBun(String(dir), registry.url, "pm", "migrate", "-f");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(exitCode).toBe(0);
+
+    expect(await lockPackages(String(dir))).toStrictEqual({
+      bare: ["bare@file:../linked", {}],
+      kept: ["kept@1.0.0", "", {}, keptIntegrity],
+      linked: ["linked@link:../linked", {}],
+      "lodash-alias": ["lodash@4.17.21", "", {}, aliasIntegrity],
+    });
+  });
+
+  // yarn.lock as yarn 1.22 writes it. To yarn, `link:linked-dir` is a directory too.
+  const localPathsProject = (noDepsIntegrity: string) =>
+    tempDir("yarn-migration-local-paths", {
+      "package.json": JSON.stringify({
+        name: "local-paths",
+        version: "1.0.0",
+        dependencies: { "bare": "./bare", "linked": "link:./linked", "linked-dir": "link:linked-dir" },
+      }),
+      "bare/package.json": JSON.stringify({ name: "bare", version: "3.2.1", dependencies: { "no-deps": "^1.0.0" } }),
+      "linked/package.json": JSON.stringify({ name: "linked", version: "1.2.3" }),
+      "linked-dir/package.json": JSON.stringify({ name: "linked-dir", version: "4.5.6" }),
+      "yarn.lock": `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+bare@./bare:
+  version "3.2.1"
+  dependencies:
+    no-deps "^1.0.0"
+
+"linked-dir@link:linked-dir":
+  version "0.0.0"
+  uid ""
+
+"linked@link:./linked":
+  version "0.0.0"
+  uid ""
+
+no-deps@^1.0.0:
+  version "1.0.0"
+  integrity ${noDepsIntegrity}
+`,
+    });
+
+  function expectLocalPathsInstalled(dir: string) {
+    const installed = (name: string) => fs.realpathSync(join(dir, "node_modules", name));
+    expect(installed("linked")).toBe(fs.realpathSync(join(dir, "linked")));
+    expect(installed("linked-dir")).toBe(fs.realpathSync(join(dir, "linked-dir")));
+    const version = (name: string) =>
+      JSON.parse(fs.readFileSync(join(installed(name), "package.json"), "utf8")).version;
+    // The registry also has no-deps 1.0.1 and 1.1.0.
+    expect({ bare: version("bare"), "no-deps": version("no-deps") }).toEqual({ bare: "3.2.1", "no-deps": "1.0.0" });
+  }
+
+  test("bun install installs link: and path dependencies from their entries", async () => {
+    using registry = localRegistry();
+    const integrity = registry.integrity("no-deps", "1.0.0");
+    await using dir = localPathsProject(integrity);
+
+    const install = await runBun(String(dir), registry.url, "install");
+    expect(install.stderr).not.toContain("warn:");
+    expect(install.stderr).toContain("migrated lockfile from yarn.lock");
+    expect(install.exitCode).toBe(0);
+
+    expectLocalPathsInstalled(String(dir));
+    expect(await lockPackages(String(dir))).toStrictEqual({
+      "bare": ["bare@file:bare", { dependencies: { "no-deps": "^1.0.0" } }],
+      "linked": ["linked@link:./linked", {}],
+      "linked-dir": ["linked-dir@link:./linked-dir", {}],
+      "no-deps": ["no-deps@1.0.0", "", {}, integrity],
+    });
+
+    const frozen = await runBun(String(dir), registry.url, "install", "--frozen-lockfile");
+    expect(frozen.stderr).not.toContain("error:");
+    expect(frozen.exitCode).toBe(0);
+  });
+
+  test("bun install --frozen-lockfile takes link: and path entries as locked", async () => {
+    using registry = localRegistry();
+    await using dir = localPathsProject(registry.integrity("no-deps", "1.0.0"));
+
+    const install = await runBun(String(dir), registry.url, "install", "--frozen-lockfile");
+    expect(install.stderr).not.toContain("error:");
+    expect(install.exitCode).toBe(0);
+    expectLocalPathsInstalled(String(dir));
+  });
+
+  test("bun install finds the entries of a workspace's link: and file: dependencies", async () => {
+    using registry = localRegistry();
+    const integrity = registry.integrity("no-deps", "1.0.0");
+
+    // yarn keys them by the path from yarn.lock, not by the range in the workspace's package.json.
+    await using dir = tempDir("yarn-migration-workspace-local-paths", {
+      "package.json": JSON.stringify({ name: "root", version: "1.0.0", private: true, workspaces: ["packages/*"] }),
+      "packages/a/package.json": JSON.stringify({
+        name: "a",
+        version: "1.0.0",
+        dependencies: { filed: "file:../../filed", linked: "link:../../linked", near: "link:./near" },
+      }),
+      "packages/a/near/package.json": JSON.stringify({ name: "near", version: "7.0.0" }),
+      "filed/package.json": JSON.stringify({ name: "filed", version: "4.0.0", dependencies: { "no-deps": "^1.0.0" } }),
+      "linked/package.json": JSON.stringify({ name: "linked", version: "1.2.3" }),
+      "yarn.lock": `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+"filed@file:filed":
+  version "4.0.0"
+  dependencies:
+    no-deps "^1.0.0"
+
+"linked@link:linked":
+  version "0.0.0"
+  uid ""
+
+"near@link:./packages/a/near":
+  version "0.0.0"
+  uid ""
+
+no-deps@^1.0.0:
+  version "1.0.0"
+  integrity ${integrity}
+`,
+    });
+
+    const install = await runBun(String(dir), registry.url, "install");
+    expect(install.stderr).not.toContain("warn:");
+    expect(install.stderr).toContain("migrated lockfile from yarn.lock");
+    expect(install.exitCode).toBe(0);
+
+    expect(await lockPackages(String(dir))).toStrictEqual({
+      "a": ["a@workspace:packages/a"],
+      "a/filed": ["filed@file:filed", { dependencies: { "no-deps": "^1.0.0" } }],
+      "linked": ["linked@link:./linked", {}],
+      "near": ["near@link:./packages/a/near", {}],
+      "no-deps": ["no-deps@1.0.0", "", {}, integrity],
+    });
+  });
+
+  test("bun install installs the pinned version from the configured registry", async () => {
+    using registry = localRegistry();
+    const integrity = registry.integrity("no-deps", "1.0.0");
+
+    // The registry also has no-deps 1.0.1 and 1.1.0, so resolving ^1.0.0 afresh would not pick 1.0.0.
+    await using dir = tempDir("yarn-migration-no-resolved-install", {
+      "package.json": JSON.stringify({
+        name: "no-resolved-install",
+        version: "1.0.0",
+        dependencies: { "no-deps": "^1.0.0" },
+      }),
+      "yarn.lock": `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+no-deps@^1.0.0:
+  version "1.0.0"
+  integrity ${integrity}
+`,
+    });
+
+    const install = await runBun(String(dir), registry.url, "install");
+    expect(install.stderr).toContain("migrated lockfile from yarn.lock");
+    expect(install.stdout).toContain("+ no-deps@1.0.0");
+    expect(install.exitCode).toBe(0);
+
+    expect(await Bun.file(join(String(dir), "node_modules", "no-deps", "package.json")).json()).toStrictEqual({
+      name: "no-deps",
+      version: "1.0.0",
+    });
+    expect(await lockPackages(String(dir))).toStrictEqual({ "no-deps": ["no-deps@1.0.0", "", {}, integrity] });
+    // Migration reads the manifest for bin/os/cpu metadata; the install itself goes straight to the pinned tarball.
+    expect(registry.requests).toStrictEqual(["/no-deps", "/no-deps/-/no-deps-1.0.0.tgz"]);
+
+    // The written bun.lock is complete: a frozen install accepts it as is, without going back to the registry.
+    const lockText = await Bun.file(join(String(dir), "bun.lock")).text();
+    const frozen = await runBun(String(dir), registry.url, "install", "--frozen-lockfile");
+    expect(frozen.stdout).toContain("(no changes)");
+    expect(frozen.exitCode).toBe(0);
+    expect(await Bun.file(join(String(dir), "bun.lock")).text()).toBe(lockText);
+    expect(registry.requests).toStrictEqual(["/no-deps", "/no-deps/-/no-deps-1.0.0.tgz"]);
+  });
+});
+
+describe.concurrent("yarn.lock entries the migration cannot build a resolution for", () => {
+  // After migrating, bun fetches the manifest of every migrated registry package (for bin
+  // metadata), so the registry has to answer for "pinned". Nothing below downloads a tarball.
+  function manifestOnlyRegistry() {
+    const published: Record<string, string> = { broken: "1.0.0", pinned: "2.0.0" };
+    return Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        const name = new URL(req.url).pathname.slice(1);
+        const version = published[name];
+        if (!version) return new Response("not found", { status: 404 });
+        return Response.json({
+          name,
+          "dist-tags": { latest: version },
+          versions: { [version]: { name, version, dist: { tarball: `${server.url}${name}-${version}.tgz` } } },
+        });
+      },
+    });
+  }
+
+  const registryTarball = (name: string, version: string) =>
+    `https://registry.yarnpkg.com/${name}/-/${name}-${version}.tgz#0000000000000000000000000000000000000000`;
+
+  const header = "# yarn lockfile v1\n\n\n";
+  const pinnedEntry = (dependencies = "") =>
+    `pinned@^2.0.0:\n  version "2.0.0"\n  resolved "${registryTarball("pinned", "2.0.0")}"\n${dependencies}`;
+  const brokenEntry = `broken@^1.0.0:\n  version "not-a-version"\n  resolved "${registryTarball("broken", "1.0.0")}"\n`;
+  const brokenWarning = 'warn: skipping "broken@^1.0.0" from yarn.lock: invalid version "not-a-version"';
+
+  /** With --verbose, which names the entries that are skipped. */
+  async function run(cwd: string, registry: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args, "--verbose"],
+      cwd,
+      env: { ...bunEnv, BUN_CONFIG_REGISTRY: registry, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // The specs of a skipped entry count as having no yarn.lock entry at all. `bun install` resolves
+  // one that the root or a workspace declares, like a dependency added after yarn.lock was written.
+  test("bun install resolves a root dependency on a skipped entry", async () => {
+    using registry = manifestOnlyRegistry();
+    using dir = tempDir("yarn-migration-skipped-root-dep", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { broken: "^1.0.0", pinned: "^2.0.0" } }),
+      "yarn.lock": header + brokenEntry + "\n" + pinnedEntry(),
+    });
+
+    const { stderr, exitCode } = await run(String(dir), registry.url.href, "install", "--lockfile-only");
+
+    expect(stderr).toContain(brokenWarning);
+    expect(stderr).toContain('warn: yarn.lock missing "broken@^1.0.0", resolving it');
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const bunLock = await Bun.file(join(String(dir), "bun.lock")).text();
+    expect(bunLock).toContain('"broken": ["broken@1.0.0"');
+    expect(bunLock).toContain('"pinned": ["pinned@2.0.0"');
+  });
+
+  // One that a package declares stays an unresolved edge, which `bun install` reports. Before the
+  // entry was skipped, install crashed on the package's missing resolution (debug builds) or wrote
+  // a bun.lock that listed the dependency without a package for it.
+  test("bun install: a transitive dependency on a skipped entry is reported as unresolved", async () => {
+    using registry = manifestOnlyRegistry();
+    using dir = tempDir("yarn-migration-skipped-transitive-dep", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { pinned: "^2.0.0" } }),
+      "yarn.lock": header + brokenEntry + "\n" + pinnedEntry('  dependencies:\n    broken "^1.0.0"\n'),
+    });
+
+    const { stderr, exitCode } = await run(String(dir), registry.url.href, "install", "--lockfile-only");
+
+    expect(stderr).toContain(brokenWarning);
+    expect(stderr).toContain("error: broken@^1.0.0 failed to resolve");
+    expect(exitCode).toBe(1);
+  });
+
+  const skippedEntries: [label: string, brokenRange: string, entry: string, warning: string][] = [
+    [
+      "version is not semver",
+      "^1.0.0",
+      brokenEntry,
+      'skipping "broken@^1.0.0" from yarn.lock: invalid version "not-a-version"',
+    ],
+    [
+      "version is not semver and there is no resolved field",
+      "^1.0.0",
+      'broken@^1.0.0:\n  version "not-a-version"\n',
+      'skipping "broken@^1.0.0" from yarn.lock: invalid version "not-a-version"',
+    ],
+    [
+      "there is no version field",
+      "^1.0.0",
+      `broken@^1.0.0:\n  resolved "${registryTarball("broken", "1.0.0")}"\n`,
+      'skipping "broken@^1.0.0" from yarn.lock: missing "version" field',
+    ],
+    [
+      "tarball URL spec without a resolved field",
+      "https://example.com/broken-1.0.0.tgz",
+      '"broken@https://example.com/broken-1.0.0.tgz":\n  version "1.0.0"\n',
+      'skipping "broken@https://example.com/broken-1.0.0.tgz" from yarn.lock: missing "resolved" field',
+    ],
+    [
+      "entry shared by several specs",
+      "^1.0.0",
+      `broken@^1.0.0, broken@^1.2.0:\n  version "not-a-version"\n  resolved "${registryTarball("broken", "1.0.0")}"\n`,
+      'skipping "broken@^1.0.0, broken@^1.2.0" from yarn.lock: invalid version "not-a-version"',
+    ],
+  ];
+
+  test.each(skippedEntries)(
+    "bun pm migrate warns and keeps the other entries when %s",
+    async (_, range, entry, warning) => {
+      using registry = manifestOnlyRegistry();
+      using dir = tempDir("yarn-migration-skipped-entry", {
+        "package.json": JSON.stringify({ name: "app", dependencies: { broken: range, pinned: "^2.0.0" } }),
+        "yarn.lock": header + entry + "\n" + pinnedEntry(),
+      });
+
+      const { stderr, exitCode } = await run(String(dir), registry.url.href, "pm", "migrate", "-f");
+
+      expect(stderr).toContain(`warn: ${warning}`);
+      expect(stderr).toContain("migrated lockfile from yarn.lock");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await Bun.file(join(String(dir), "bun.lock")).text();
+      expect(bunLock).toContain('"pinned": ["pinned@2.0.0", "", {}, "sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAA="]');
+      expect(bunLock).not.toContain('"broken": [');
+    },
+  );
+
+  test("bun pm migrate keeps a version of a package whose other version is skipped", async () => {
+    using registry = manifestOnlyRegistry();
+    using dir = tempDir("yarn-migration-skipped-sibling-version", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { pinned: "^2.0.0" } }),
+      "yarn.lock":
+        header +
+        `pinned@^1.0.0:\n  version "not-a-version"\n  resolved "${registryTarball("pinned", "1.0.0")}"\n\n` +
+        pinnedEntry(),
+    });
+
+    const { stderr, exitCode } = await run(String(dir), registry.url.href, "pm", "migrate", "-f");
+
+    expect(stderr).toContain('warn: skipping "pinned@^1.0.0" from yarn.lock: invalid version "not-a-version"');
+    expect(exitCode).toBe(0);
+
+    const bunLock = await Bun.file(join(String(dir), "bun.lock")).text();
+    expect(bunLock).toContain('"pinned": ["pinned@2.0.0", "", {}, "sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAA="]');
+  });
+});
+
+// The migration fetches the manifest of every package and stops at the first request it cannot start (the registry of @z is not http), after it started the request for `good`. The install that follows completes that request.
+test("bun install completes a manifest request that the yarn.lock migration left running", async () => {
+  const names = ["good", "@z/bad"];
+  const tarballPath = (name: string) => `/${name}/-/${name.split("/").at(-1)}-1.0.0.tgz`;
+  const tarballs = new Map<string, Uint8Array>();
+  const sha1: Record<string, string> = {};
+  for (const name of names) {
+    const archive = new Bun.Archive(
+      { "package/package.json": JSON.stringify({ name, version: "1.0.0" }) },
+      { compress: "gzip" },
+    );
+    const bytes = await archive.bytes();
+    tarballs.set(tarballPath(name), bytes);
+    sha1[name] = new Bun.CryptoHasher("sha1").update(bytes).digest("hex");
+  }
+  using server = Bun.serve({
+    port: 0,
+    fetch(request) {
+      const { origin, pathname } = new URL(request.url);
+      const path = decodeURIComponent(pathname);
+      const tarball = tarballs.get(path);
+      if (tarball) return new Response(tarball);
+      const name = path.slice(1);
+      if (!names.includes(name)) return new Response("not found", { status: 404 });
+      const dist = { tarball: origin + tarballPath(name) };
+      return Response.json({
+        name,
+        "dist-tags": { latest: "1.0.0" },
+        versions: { "1.0.0": { name, version: "1.0.0", dist } },
+      });
+    },
+  });
+  const origin = server.url.origin;
+
+  using dir = tempDir("yarn-migration-unusable-scope-registry", {
+    "package.json": JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: { good: "^1.0.0", "@z/bad": "^1.0.0" },
+    }),
+    "yarn.lock": `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+"@z/bad@^1.0.0":
+  version "1.0.0"
+  resolved "${origin}${tarballPath("@z/bad")}#${sha1["@z/bad"]}"
+
+good@^1.0.0:
+  version "1.0.0"
+  resolved "${origin}${tarballPath("good")}#${sha1.good}"
+`,
+    "bunfig.toml": `[install]
+registry = "${origin}/"
+saveTextLockfile = true
+
+[install.scopes]
+"@z" = "ftp://registry.invalid/"
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("migrated lockfile from yarn.lock");
+  expect(stdout).toContain("2 packages installed");
+  const installed = (name: string) =>
+    JSON.parse(fs.readFileSync(join(String(dir), "node_modules", name, "package.json"), "utf8"));
+  expect([installed("good"), installed("@z/bad")]).toEqual([
+    { name: "good", version: "1.0.0" },
+    { name: "@z/bad", version: "1.0.0" },
+  ]);
+  const lock = fs.readFileSync(join(String(dir), "bun.lock"), "utf8");
+  expect(lock).toContain(`"good": ["good@1.0.0"`);
+  expect(lock).toContain(`"@z/bad": ["@z/bad@1.0.0"`);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("the migration takes the bins of a version from a cached manifest of any age", async () => {
+  let requests = 0;
+  using server = Bun.serve({
+    port: 0,
+    fetch(_, server) {
+      requests++;
+      const dist = { tarball: `${server.url}tool/-/tool-1.0.0.tgz` };
+      return Response.json(
+        {
+          name: "tool",
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": { name: "tool", version: "1.0.0", bin: { tool: "cli.js" }, dist } },
+        },
+        { headers: { "cache-control": "max-age=0" } },
+      );
+    },
+  });
+  using dir = tempDir("yarn-migration-cached-manifest", {
+    "package.json": JSON.stringify({ name: "foo", dependencies: { tool: "^1.0.0" } }),
+    "yarn.lock": `# yarn lockfile v1\n\n\ntool@^1.0.0:\n  version "1.0.0"\n  resolved "${server.url}tool/-/tool-1.0.0.tgz#0000000000000000000000000000000000000000"\n`,
+  });
+  for (const asked of [1, 1]) {
+    fs.rmSync(join(String(dir), "bun.lock"), { force: true });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "migrate"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_CONFIG_REGISTRY: server.url.href, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(fs.readFileSync(join(String(dir), "bun.lock"), "utf8")).toContain(`{ "bin": { "tool": "cli.js" } }`);
+    expect(requests).toBe(asked);
+    expect(exitCode).toBe(0);
+  }
+});
+
+describe.concurrent("yarn.lock blocks that lock one package", () => {
+  // yarn writes one "a@^1.0.0, a@~1.0.0:" block, a merge by hand can leave two
+  test("blocks with the same name and version are one package, and every spec of theirs resolves", async () => {
+    const block = (spec: string) => `${spec}:
+  version "1.0.3"
+  resolved "https://registry.yarnpkg.com/dup-pkg/-/dup-pkg-1.0.3.tgz#aaa"
+`;
+    using dir = tempDir("yarn-migration-consolidate", {
+      "package.json": JSON.stringify({
+        name: "consolidate-test",
+        version: "1.0.0",
+        dependencies: { "dup-pkg": "^1.0.0", "consumer-pkg": "^2.0.0", other: "npm:dup-pkg@1.0.4" },
+      }),
+      "yarn.lock": `# yarn lockfile v1
+
+
+${block("dup-pkg@^1.0.0")}
+consumer-pkg@^2.0.0:
+  version "2.0.0"
+  resolved "https://registry.yarnpkg.com/consumer-pkg/-/consumer-pkg-2.0.0.tgz#bbb"
+  dependencies:
+    "dup-pkg" "~1.0.2"
+
+${block("dup-pkg@~1.0.2")}
+"other@npm:dup-pkg@1.0.4":
+  version "1.0.4"
+  resolved "https://registry.yarnpkg.com/dup-pkg/-/dup-pkg-1.0.4.tgz#ccc"
+`,
+    });
+
+    const { packages } = await migrateYarnLock(String(dir));
+
+    expect(packages).toEqual({
+      "consumer-pkg": ["consumer-pkg@2.0.0", "", { dependencies: { "dup-pkg": "~1.0.2" } }, ""],
+      "dup-pkg": ["dup-pkg@1.0.3", "", {}, ""],
+      other: ["dup-pkg@1.0.4", "", {}, ""],
+    });
+  });
+});
+
+// The root's and the members' lists are read while their package.json is parsed and once more when the migration ends.
+test.concurrent("yarn.lock migration records the trustedDependencies of the root and of workspaces once", async () => {
+  const entry = (name: string) => `${name}@1.0.0:
+  version "1.0.0"
+  resolved "https://registry.yarnpkg.com/${name}/-/${name}-1.0.0.tgz#aaa"
+`;
+  using dir = tempDir("yarn-migration-trusted", {
+    "package.json": JSON.stringify({
+      name: "trusted-test",
+      workspaces: ["packages/*"],
+      dependencies: { "from-root": "1.0.0", "from-both": "1.0.0", "from-nobody": "1.0.0" },
+      trustedDependencies: ["from-root", "from-both"],
+    }),
+    "packages/a/package.json": JSON.stringify({
+      name: "a",
+      version: "1.0.0",
+      dependencies: { "from-member": "1.0.0" },
+      trustedDependencies: ["from-member", "from-both"],
+    }),
+    "yarn.lock": `# yarn lockfile v1\n\n\n${["from-both", "from-member", "from-nobody", "from-root"].map(entry).join("\n")}`,
+  });
+
+  await migrateYarnLock(String(dir));
+
+  const lock = Bun.JSONC.parse(await Bun.file(join(String(dir), "bun.lock")).text()) as any;
+  expect(lock.trustedDependencies.toSorted()).toEqual(["from-both", "from-member", "from-root"]);
+});
+
+test("dependencies with no entry in yarn.lock are reported with --verbose", async () => {
+  const lock = (names: string[]) =>
+    `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.\n# yarn lockfile v1\n\n\n` +
+    names
+      .map(
+        name =>
+          `${name}@^1.0.0:\n  version "1.0.0"\n  resolved "http://localhost:1/${name}/-/${name}-1.0.0.tgz#0000000000000000000000000000000000000000"\n`,
+      )
+      .join("\n");
+  const project = (dependencies: Record<string, string>, locked: string[]) =>
+    tempDir("yarn-v1-no-entry", {
+      "package.json": JSON.stringify({ name: "no-entry", dependencies, peerDependencies: { peer: "^1.0.0" } }),
+      "yarn.lock": lock(locked),
+      "bunfig.toml": `[install]\nregistry = "http://localhost:1/"\n`,
+    });
+  const migrate = async (dir: string, ...flags: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "migrate", "-f", ...flags],
+      cwd: dir,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  };
+
+  // yarn.lock is older than package.json: `b` and `c` were added after it was written
+  using stale = project({ a: "^1.0.0", b: "^1.0.0", c: "^1.0.0" }, ["a"]);
+  const several = await migrate(String(stale));
+  expect(several.stderr).not.toContain("yarn.lock missing");
+  expect(several.stderr).toContain("migrated lockfile from yarn.lock");
+  expect(several.exitCode).toBe(0);
+
+  const verbose = await migrate(String(stale), "--verbose");
+  expect(verbose.stderr).toContain('warn: yarn.lock missing "b@^1.0.0", resolving it');
+  expect(verbose.stderr).toContain('warn: yarn.lock missing "c@^1.0.0", resolving it');
+
+  // a range can be a tarball URL with credentials
+  const token = "npm_" + Buffer.alloc(36, "A").toString();
+  using url = project({ a: "^1.0.0", direct: `http://carol:s3cret@localhost:1/direct-1.0.0.tgz?token=${token}` }, [
+    "a",
+  ]);
+  const masked = await migrate(String(url), "--verbose");
+  expect(masked.stderr).toContain('warn: yarn.lock missing "direct@http://***@localhost:1/direct-1.0.0.tgz?token=***"');
+  expect(masked.stderr).not.toContain("s3cret");
+  expect(masked.stderr).not.toContain(token);
+
+  // a workspace is not a yarn.lock entry
+  using workspaces = tempDir("yarn-v1-no-entry-workspaces", {
+    "package.json": JSON.stringify({ name: "no-entry", private: true, workspaces: ["packages/*"] }),
+    "packages/b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+    "packages/c/package.json": JSON.stringify({
+      name: "c",
+      version: "1.0.0",
+      dependencies: { a: "^1.0.0", b: "^1.0.0" },
+    }),
+    "yarn.lock": lock(["a"]),
+    "bunfig.toml": `[install]\nregistry = "http://localhost:1/"\n`,
+  });
+  const linked = await migrate(String(workspaces), "--verbose");
+  expect(linked.stderr).not.toContain("yarn.lock missing");
+  expect(linked.stderr).toContain("migrated lockfile from yarn.lock");
+  expect(linked.exitCode).toBe(0);
+
+  // a peer is not a yarn.lock entry
+  using complete = project({ a: "^1.0.0" }, ["a"]);
+  const none = await migrate(String(complete), "--verbose");
+  expect(none.stderr).not.toContain("yarn.lock missing");
+  expect(none.stderr).toContain("migrated lockfile from yarn.lock");
+  expect(none.exitCode).toBe(0);
+});
+
+describe.concurrent("yarn.lock entries of packages that are not the registry's", () => {
+  type Manifest = { name: string; version: string; [key: string]: unknown };
+  const commit = "0123456789abcdef0123456789abcdef01234567";
+  const header = "# yarn lockfile v1\n\n\n";
+  const sri = (bytes: Uint8Array) => "sha512-" + new Bun.CryptoHasher("sha512").update(bytes).digest("base64");
+  // One manifest, one tarball: two servers that publish it serve the same bytes.
+  const tarballs = new Map<string, Promise<Uint8Array>>();
+  const tarball = (manifest: Manifest, root = "package") => {
+    const json = JSON.stringify(manifest);
+    if (!tarballs.has(root + json)) {
+      tarballs.set(root + json, githubTarball(root, { "package.json": json, "cli.js": "#!/usr/bin/env node\n" }));
+    }
+    return tarballs.get(root + json)!;
+  };
+
+  // Publishes `manifests` as a registry does, serves `downloads` by path, and records every path asked for.
+  async function serve(manifests: Manifest[], downloads: Record<string, Uint8Array> = {}) {
+    const requests: string[] = [];
+    const path = ({ name, version }: Manifest) => `/${name}/-/${name}-${version}.tgz`;
+    const published = new Map(await Promise.all(manifests.map(async m => [path(m), await tarball(m)] as const)));
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        requests.push(pathname);
+        const bytes = published.get(pathname) ?? downloads[pathname];
+        if (bytes) return new Response(bytes);
+        const versions = manifests.filter(m => `/${m.name}` === pathname);
+        if (versions.length === 0) return new Response("not found", { status: 404 });
+        return Response.json({
+          name: versions[0].name,
+          "dist-tags": { latest: versions.at(-1)!.version },
+          versions: Object.fromEntries(
+            versions.map(m => [
+              m.version,
+              { ...m, dist: { tarball: server.url.origin + path(m), integrity: sri(published.get(path(m))!) } },
+            ]),
+          ),
+        });
+      },
+    });
+    const entry = (m: Manifest, range: string, body = "") =>
+      `${m.name}@${range}:\n  version "${m.version}"\n  resolved "${server.url.origin}${path(m)}"\n  integrity ${sri(published.get(path(m))!)}\n${body}\n`;
+    return { url: server.url.href, requests, entry, [Symbol.dispose]: () => void server.stop(true) };
+  }
+
+  async function bun(cwd: string, registry: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...bunEnv, BUN_CONFIG_REGISTRY: registry, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const errors = (stderr: string) => stderr.split("\n").filter(line => line.startsWith("error"));
+  const readJson = (...path: string[]) => JSON.parse(fs.readFileSync(join(...path), "utf8"));
+  const lockPackages = (dir: string) =>
+    (Bun.JSONC.parse(fs.readFileSync(join(dir, "bun.lock"), "utf8")) as { packages: Record<string, unknown[]> })
+      .packages;
+
+  test.each(["url", "file", "owner/repo"] as const)(
+    "%s: a dependency with the name and version of a registry package is kept separate from it",
+    async kind => {
+      const upstream = { name: "b", version: "1.0.0", from: "registry" };
+      const user = { name: "p", version: "1.0.0", dependencies: { b: "^1.0.0" } };
+      const mine = await tarball({ name: "b", version: "1.0.0", from: "mine" });
+      using server = await serve([upstream, user], { "/dl/b.tgz": mine, [`/me/b/tar.gz/${commit}`]: mine });
+      const [range, resolved] = {
+        url: [`${server.url}dl/b.tgz`, `${server.url}dl/b.tgz`],
+        file: ["file:./b.tgz", "file:./b.tgz"],
+        "owner/repo": ["me/b", `${server.url}me/b/tar.gz/${commit}`],
+      }[kind];
+      using dir = tempDir("yarn-migration-same-name-and-version", {
+        "package.json": JSON.stringify({ name: "app", dependencies: { b: range, p: "^1.0.0" } }),
+        "b.tgz": mine,
+        "yarn.lock":
+          header +
+          server.entry(upstream, "^1.0.0") +
+          `"b@${range}":\n  version "1.0.0"\n  resolved "${resolved}"\n\n` +
+          server.entry(user, "^1.0.0", '  dependencies:\n    b "^1.0.0"\n'),
+      });
+
+      const { stderr, exitCode } = await bun(String(dir), server.url, "install", "--linker", "hoisted");
+      expect(errors(stderr)).toEqual([]);
+      const from = (...folder: string[]) =>
+        fs.existsSync(join(String(dir), ...folder)) ? readJson(String(dir), ...folder, "package.json").from : null;
+      expect({
+        app: from("node_modules", "b"),
+        p: from("node_modules", "p", "node_modules", "b"),
+      }).toEqual({ app: "mine", p: "registry" });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("an owner/repo dependency is the archive that yarn.lock names", async () => {
+    // A different package with that name, published by someone else.
+    const other = { name: "g", version: "1.0.0", os: ["sunos"], bin: { tsc: "cli.js" } };
+    const mine = await tarball({ name: "g", version: "1.0.0", bin: { g: "cli.js" } }, `r-${commit}`);
+    using server = await serve([other], { [`/o/r/tar.gz/${commit}`]: mine });
+    using dir = tempDir("yarn-migration-hosted-archive", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { g: "o/r" } }),
+      "yarn.lock": header + `g@o/r:\n  version "1.0.0"\n  resolved "${server.url}o/r/tar.gz/${commit}"\n`,
+    });
+
+    const { stderr, exitCode } = await bun(String(dir), server.url, "install");
+    expect(errors(stderr)).toEqual([]);
+    expect(server.requests).toEqual([`/o/r/tar.gz/${commit}`]);
+    expect(lockPackages(String(dir)).g[0]).toBe(`g@${server.url}o/r/tar.gz/${commit}`);
+    expect(readJson(String(dir), "node_modules", "g", "package.json").bin).toEqual({ g: "cli.js" });
+    expect(fs.existsSync(join(String(dir), "node_modules", ".bin", "tsc"))).toBe(false);
+    expect(exitCode).toBe(0);
+  });
+
+  test("the registry's manifest completes the packages of a mirror, and no other tarball", async () => {
+    const published = (name: string) => ({ name, version: "1.0.0", os: ["sunos"], bin: { [name]: "cli.js" } });
+    const names = ["archive", "other-bytes", "sha1", "sha512", "unhashed"];
+    using registry = await serve(names.map(published));
+    using mirror = await serve([published("sha512"), { name: "other-bytes", version: "1.0.0" }]);
+    const sha1 = new Bun.CryptoHasher("sha1").update(await tarball(published("sha1"))).digest("hex");
+    const entry = (name: string, resolved: string) =>
+      `${name}@^1.0.0:\n  version "1.0.0"\n  resolved "${resolved}"\n\n`;
+    const urls = {
+      // This isn't the path that a registry uses for this name and version.
+      archive: `${mirror.url}o/archive/tar.gz/${commit}`,
+      "other-bytes": `${mirror.url}other-bytes/-/other-bytes-1.0.0.tgz`,
+      sha1: `${mirror.url}sha1/-/sha1-1.0.0.tgz`,
+      sha512: `${mirror.url}sha512/-/sha512-1.0.0.tgz`,
+      unhashed: `${mirror.url}unhashed/-/unhashed-1.0.0.tgz`,
+    };
+    using dir = tempDir("yarn-migration-another-host", {
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: Object.fromEntries(names.map(name => [name, "^1.0.0"])),
+      }),
+      "yarn.lock":
+        header +
+        entry("archive", urls.archive) +
+        mirror.entry({ name: "other-bytes", version: "1.0.0" }, "^1.0.0") +
+        entry("sha1", `${urls.sha1}#${sha1}`) +
+        mirror.entry(published("sha512"), "^1.0.0") +
+        entry("unhashed", urls.unhashed),
+    });
+
+    const { stderr, exitCode } = await bun(String(dir), registry.url, "pm", "migrate", "-f");
+    expect(errors(stderr)).toEqual([]);
+    const completed = (name: string) => ({ os: "sunos", bin: { [name]: "cli.js" } });
+    expect(
+      Object.fromEntries(Object.entries(lockPackages(String(dir))).map(([name, row]) => [name, row.slice(0, 3)])),
+    ).toEqual({
+      archive: ["archive@1.0.0", urls.archive, {}],
+      "other-bytes": ["other-bytes@1.0.0", urls["other-bytes"], {}],
+      sha1: ["sha1@1.0.0", urls.sha1, completed("sha1")],
+      sha512: ["sha512@1.0.0", urls.sha512, completed("sha512")],
+      unhashed: ["unhashed@1.0.0", urls.unhashed, completed("unhashed")],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  const bins = (dir: string) =>
+    fs.existsSync(join(dir, "node_modules", ".bin"))
+      ? [...new Set(fs.readdirSync(join(dir, "node_modules", ".bin")).map(name => name.replace(/\.(exe|bunx)$/, "")))]
+      : [];
+
+  test.each([
+    ["link:./vendor/t", '"t@link:./vendor/t":\n  version "0.0.0"\n  uid ""\n'],
+    ["file:./vendor/t", '"t@file:./vendor/t":\n  version "1.0.0"\n'],
+    ["./vendor/t", 't@./vendor/t:\n  version "1.0.0"\n'],
+  ])("the bins of %s are linked and recorded", async (range, entry) => {
+    using server = await serve([]);
+    const project = () =>
+      tempDir("yarn-migration-folder-bins", {
+        "package.json": JSON.stringify({ name: "app", dependencies: { t: range } }),
+        "vendor/t/package.json": JSON.stringify({ name: "t", version: "1.0.0", bin: { t: "cli.js" } }),
+        "vendor/t/cli.js": "#!/usr/bin/env node\n",
+        "yarn.lock": header + entry,
+      });
+
+    using saved = project();
+    const install = await bun(String(saved), server.url, "install");
+    expect(errors(install.stderr)).toEqual([]);
+    expect(lockPackages(String(saved)).t[1]).toEqual({ bin: { t: "cli.js" } });
+    expect(bins(String(saved))).toEqual(["t"]);
+    expect(install.exitCode).toBe(0);
+
+    using frozen = project();
+    const ci = await bun(String(frozen), server.url, "install", "--frozen-lockfile");
+    expect(errors(ci.stderr)).toEqual([]);
+    expect(bins(String(frozen))).toEqual(["t"]);
+    expect(ci.exitCode).toBe(0);
+  });
+
+  test.each(["the root", "a workspace"])(
+    "a registry package that %s uses can depend on a workspace, for which yarn.lock has no entry",
+    async user => {
+      const plugin = { name: "plugin", version: "1.0.0", dependencies: { core: "^1.0.0" } };
+      using server = await serve([plugin, { ...plugin, version: "1.1.0" }]);
+      const dependencies = { plugin: "^1.0.0" };
+      using dir = tempDir("yarn-migration-registry-to-workspace", {
+        "package.json": JSON.stringify({
+          name: "mono",
+          private: true,
+          workspaces: ["packages/*"],
+          dependencies: user === "the root" ? dependencies : {},
+        }),
+        "packages/app/package.json": JSON.stringify({
+          name: "app",
+          version: "1.0.0",
+          dependencies: user === "the root" ? {} : dependencies,
+        }),
+        "packages/core/package.json": JSON.stringify({ name: "core", version: "1.2.0" }),
+        "yarn.lock": header + server.entry(plugin, "^1.0.0", '  dependencies:\n    core "^1.0.0"\n'),
+      });
+
+      const { stderr, exitCode } = await bun(String(dir), server.url, "install", "--linker", "hoisted");
+      expect(errors(stderr)).toEqual([]);
+      expect(server.requests).not.toContain("/core");
+      expect(readJson(String(dir), "node_modules", "plugin", "package.json").version).toBe("1.0.0");
+      expect(fs.realpathSync(join(String(dir), "node_modules", "core"))).toBe(
+        fs.realpathSync(join(String(dir), "packages", "core")),
+      );
+      expect(lockPackages(String(dir)).core).toEqual(["core@workspace:packages/core"]);
+      expect(exitCode).toBe(0);
+    },
+  );
 });

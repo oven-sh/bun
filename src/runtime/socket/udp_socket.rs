@@ -3,10 +3,11 @@ use core::cell::Cell;
 use core::ffi::c_char;
 use core::ffi::{c_int, c_void};
 
-use bun_core::{String as BunString, ZigStringSlice};
+use bun_core::{String as BunString, Utf8Bytes};
 use bun_io::KeepAlive;
 use bun_jsc::JsCell;
 use bun_jsc::array_buffer::BinaryType;
+use bun_jsc::bindgen::{self, IntoError as _, JsHeap, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
@@ -82,7 +83,7 @@ unsafe extern "C" {
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
     let this: &UDPSocket = UDPSocket::from_uws(socket);
     this.closed.set(true);
-    crate::jsc_hooks::ActiveHandle::UdpSocket(core::ptr::NonNull::from(this)).unregister();
+    this.abort_handle.leave();
     this.poll_ref.with_mut(|p| p.disable());
     this.this_value.with_mut(|r| r.downgrade());
     this.socket.set(None);
@@ -101,6 +102,7 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int, is_errq
     // ICMP error (so_error) arrives. node:dgram must drop only the former on
     // unconnected sockets, and the errno namespaces overlap.
     let this: &UDPSocket = UDPSocket::from_uws(socket);
+    let _context = this.enter_owners_context();
     let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     let global_this = this.global_this.get();
     // A callback earlier in the same poll dispatch may have left a
@@ -121,6 +123,7 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int, is_errq
 
 extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     let this: &UDPSocket = UDPSocket::from_uws(socket);
+    let _context = this.enter_owners_context();
     let Some(this_value) = this.this_value.get().try_get() else {
         return;
     };
@@ -153,6 +156,7 @@ extern "C" fn on_data(
     packets: c_int,
 ) {
     let udp_socket: &UDPSocket = UDPSocket::from_uws(socket);
+    let _context = udp_socket.enter_owners_context();
     let Some(this_value) = udp_socket.this_value.get().try_get() else {
         return;
     };
@@ -231,7 +235,7 @@ extern "C" fn on_data(
 
         let span = hostname.unwrap();
         #[allow(unused_labels)]
-        let mut hostname_string = if let Some(id) = scope_id {
+        let hostname_string = if let Some(id) = scope_id {
             'blk: {
                 #[cfg(not(windows))]
                 {
@@ -254,7 +258,7 @@ extern "C" fn on_data(
                 BunString::create_format(format_args!("{}%{}", bstr::BStr::new(span), id))
             }
         } else {
-            BunString::init(span)
+            BunString::from_bytes(span)
         };
 
         let loop_ = VirtualMachine::get().event_loop_mut();
@@ -279,7 +283,7 @@ extern "C" fn on_data(
                 return;
             }
         };
-        let hostname_js = match hostname_string.transfer_to_js(global_this) {
+        let hostname_js = match hostname_string.into_js(global_this) {
             Ok(v) => v,
             Err(_) => {
                 loop_.exit();
@@ -312,12 +316,12 @@ extern "C" fn on_data(
     this_value.ensure_still_alive();
 }
 
-pub struct ConnectConfig {
+pub(crate) struct ConnectConfig {
     port: u16,
     address: BunString,
 }
 
-pub struct UDPSocketConfig {
+pub(crate) struct UDPSocketConfig {
     pub(crate) hostname: BunString,
     connect: Option<ConnectConfig>,
     pub(crate) port: u16,
@@ -333,7 +337,7 @@ pub struct UDPSocketConfig {
 impl Default for UDPSocketConfig {
     fn default() -> Self {
         Self {
-            hostname: BunString::empty(),
+            hostname: BunString::EMPTY,
             connect: None,
             port: 0,
             flags: 0,
@@ -415,8 +419,6 @@ impl UDPSocketConfig {
             shared_fd,
             ..Default::default()
         };
-
-        // `config` cleanup: Drop handles this on `?` paths.
 
         if let Some(socket) = options.get_truthy(global_this, "socket")? {
             if !socket.is_object() {
@@ -502,9 +504,6 @@ impl UDPSocketConfig {
     }
 }
 
-// `UDPSocketConfig::deinit` becomes Drop: `hostname.deref()` and `connect.address.deref()` are
-// handled by `bun_core::String`'s own Drop. No explicit body needed.
-
 #[derive(Clone, Copy)]
 struct ConnectInfo {
     port: u16,
@@ -517,7 +516,7 @@ struct ConnectInfo {
 /// `address` / `remoteAddress` (cleared on connect to invalidate the JS-side
 /// memo). All resolve to the C++ `UDPSocketPrototype__${prop}{Get,Set}CachedValue`
 /// shims via [`bun_jsc::codegen_cached_accessors!`].
-pub mod js {
+pub(crate) mod js {
     bun_jsc::codegen_cached_accessors!(
         "UDPSocket";
         on_data, on_drain, on_error,
@@ -531,7 +530,7 @@ pub mod js {
 // `sharedThis: true` regen lands — `&mut T` auto-derefs to `&T` so the impls
 // below compile against either.
 #[bun_jsc::JsClass(no_construct, no_constructor)]
-pub struct UDPSocket {
+pub(crate) struct UDPSocket {
     pub(crate) config: JsCell<UDPSocketConfig>,
 
     pub(crate) socket: Cell<Option<*mut uws::udp::Socket>>,
@@ -551,9 +550,25 @@ pub struct UDPSocket {
     /// replaces the config. POSIX-only, like the registry itself.
     #[cfg(not(windows))]
     registered_fd: Cell<Option<c_int>>,
+    /// Armed while open: the socket closes with the context that opened it.
+    abort_handle: bun_jsc::AbortHandle,
 }
 
+bun_jsc::impl_abort_handle_owner!(UDPSocket, abort_handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is live (armed ⇒ `on_close` has not run).
+    UDPSocket::close_socket(unsafe { &*this })
+});
+
 impl UDPSocket {
+    /// A socket event is dispatched inside the context of the script that opened the socket (the
+    /// one it is armed in): what a handler throws, and what the socket reports with no `error`
+    /// handler, is that context's. `None`: closed (it left its context in `on_close`), and no
+    /// event follows that one.
+    fn enter_owners_context(&self) -> Option<bun_jsc::virtual_machine::ContextScope<'_>> {
+        let context = self.abort_handle.context_id()?;
+        Some(self.global_this.get().bun_vm().enter_context(context))
+    }
+
     pub(crate) fn new(init: Self) -> *mut Self {
         bun_core::heap::into_raw(Box::new(init))
     }
@@ -574,13 +589,19 @@ impl UDPSocket {
         unsafe { &*user.cast::<UDPSocket>() }
     }
 
-    pub(crate) fn udp_socket(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn udp_socket(cx: &bun_jsc::JsThread<'_>, options: JSValue) -> JsResult<JSValue> {
         bun_output::scoped_log!(UdpSocket, "udpSocket");
+
+        // What script of a disposed `Bun.ModuleGraph` opens is closed at once and reports nothing.
+        // A socket that is closed from the queue can send before that: it is not bound at all.
+        if cx.context().is_stopped() {
+            return Ok(bun_jsc::JSPromise::create(cx.global()).to_js());
+        }
 
         let this_ptr = Self::new(Self {
             socket: Cell::new(None),
             config: JsCell::new(UDPSocketConfig::default()),
-            global_this: BackRef::new(global_this),
+            global_this: BackRef::new(cx.global()),
             loop_: uws::Loop::get(),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
@@ -588,6 +609,7 @@ impl UDPSocket {
             connect_info: Cell::new(None),
             #[cfg(not(windows))]
             registered_fd: Cell::new(None),
+            abort_handle: bun_jsc::AbortHandle::for_owner::<UDPSocket>(),
         });
         // SAFETY: just allocated above; we are the sole owner. R-2: shared
         // borrow — every mutated field is `Cell`/`JsCell`.
@@ -631,18 +653,34 @@ impl UDPSocket {
         //
         // SAFETY: `this_ptr` is a fresh `heap::into_raw` allocation (line 478);
         // ownership transfers to the C++ wrapper's `m_ctx`.
-        let this_value = unsafe { Self::to_js_ptr(this_ptr, global_this) };
+        let this_value = unsafe { Self::to_js_ptr(this_ptr, cx.global()) };
         this_value.ensure_still_alive();
         this.this_value
-            .with_mut(|r| r.set_strong(this_value, global_this));
+            .with_mut(|r| r.set_strong(this_value, cx.global()));
 
         this.config
-            .set(UDPSocketConfig::from_js(global_this, options, this_value)?);
+            .set(UDPSocketConfig::from_js(cx.global(), options, this_value)?);
 
         let mut err: c_int = 0;
 
         let config = this.config.get();
         let hostname_z = config.hostname.to_owned_slice_z();
+        if config.fd.is_none() && !bun_dns::is_valid_hostname(hostname_z.as_bytes()) {
+            return Err(cx
+                .global()
+                .throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                    cx.global(),
+                    hostname_z.as_bytes(),
+                )));
+        }
+        if let Some(connect) = &config.connect {
+            let address = connect.address.to_utf8();
+            if !bun_dns::is_valid_hostname(&address) {
+                return Err(cx.global().throw_value(
+                    crate::dns_jsc::cares_jsc::not_a_hostname_error(cx.global(), &address),
+                ));
+            }
+        }
 
         // Reserve an adopted descriptor before creating the socket so a
         // concurrent adoption of the same number fails with EEXIST (like
@@ -652,12 +690,12 @@ impl UDPSocket {
             Some(fd) => match dgram_begin_adoption(fd) {
                 Some(previous) => Some((fd, previous)),
                 None => {
-                    return Err(global_this.throw_value(
+                    return Err(cx.global().throw_value(
                         bun_sys::Error::from_code_int(
                             SystemErrno::EEXIST as c_int,
                             bun_sys::Tag::open,
                         )
-                        .to_js(global_this),
+                        .to_js(cx.global()),
                     ));
                 }
             },
@@ -697,8 +735,9 @@ impl UDPSocket {
         this.socket.set(if created.is_null() {
             None
         } else {
-            // Open: the VM's stop phase closes it if script never does.
-            crate::jsc_hooks::ActiveHandle::UdpSocket(core::ptr::NonNull::from(this)).register();
+            // Open: its context closes it when it stops if script never does.
+            // SAFETY: heap-allocated above; leaves its context in `on_close`.
+            unsafe { bun_jsc::AbortHandle::arm_owner(this_ptr, cx.context()) };
             Some(created)
         });
 
@@ -728,20 +767,20 @@ impl UDPSocket {
                 };
                 let sys_err = SystemError {
                     errno: err,
-                    code: BunString::static_(code).into(),
-                    message: message.into(),
-                    syscall: BunString::static_(syscall).into(),
+                    code: BunString::static_(code),
+                    message,
+                    syscall: BunString::static_(syscall),
                     ..Default::default()
                 };
-                let error_value = sys_err.to_error_instance(global_this);
+                let error_value = sys_err.to_error_instance(cx.global());
                 if !is_fd {
-                    error_value.put(global_this, b"address", config.hostname.to_js(global_this)?);
+                    error_value.put(cx.global(), b"address", config.hostname.to_js(cx.global())?);
                 }
 
-                return Err(global_this.throw_value(error_value));
+                return Err(cx.global().throw_value(error_value));
             }
 
-            return Err(global_this.throw(format_args!("Failed to bind socket")));
+            return Err(cx.global().throw(format_args!("Failed to bind socket")));
         }
 
         // Register this socket's live descriptor (adopted or freshly created)
@@ -764,14 +803,14 @@ impl UDPSocket {
                 .connect(address_z.as_ptr(), connect.port as u32);
             if ret != 0 {
                 if let Some(sys_err) = errno_sys(ret, bun_sys::Tag::connect) {
-                    return Err(global_this.throw_value(sys_err.to_js(global_this)));
+                    return Err(cx.global().throw_value(sys_err.to_js(cx.global())));
                 }
 
                 if let Some(eai_err) = c_ares::Error::init_eai(ret) {
-                    return Err(global_this.throw_value(
+                    return Err(cx.global().throw_value(
                         crate::dns_jsc::cares_jsc::error_to_js_with_syscall_and_hostname(
                             eai_err,
-                            global_this,
+                            cx.global(),
                             b"connect",
                             address_z.as_bytes(),
                         )?,
@@ -787,7 +826,7 @@ impl UDPSocket {
 
         this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         Ok(bun_jsc::JSPromise::resolved_promise_value(
-            global_this,
+            cx.global(),
             this_value,
         ))
     }
@@ -823,13 +862,15 @@ impl UDPSocket {
             return;
         }
 
-        let event_loop = vm.event_loop_mut();
-        event_loop.enter();
-        let result = callback.call(global_this, this_value, &[err.to_error().unwrap_or(err)]);
-        if let Err(e) = result {
-            global_this.report_active_exception_as_unhandled(e);
-        }
-        event_loop.exit();
+        // A top-level call from the UDP socket callbacks: what `error` itself
+        // throws is reported.
+        vm.event_loop_mut().run_callback(
+            bun_event_loop::ContextId::NONE,
+            callback,
+            global_this,
+            this_value,
+            &[err.to_error().unwrap_or(err)],
+        );
     }
 
     #[bun_jsc::host_fn(method)]
@@ -960,12 +1001,7 @@ impl UDPSocket {
         }
 
         let mut interface: sockaddr_storage = bun_core::ffi::zeroed();
-
-        let Some(socket) = this.socket.get() else {
-            return Err(global_this.throw(format_args!("Socket is closed")));
-        };
-
-        let res = if arguments.len() > 1
+        let iface = if arguments.len() > 1
             && this.parse_addr(global_this, 0, arguments[1], &mut interface)?
         {
             if addr.ss_family != interface.ss_family {
@@ -973,11 +1009,17 @@ impl UDPSocket {
                     "Family mismatch between address and interface"
                 )));
             }
-            // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-            uws::udp::Socket::opaque_mut(socket).set_membership(&addr, Some(&interface), drop)
+            Some(&interface)
         } else {
-            uws::udp::Socket::opaque_mut(socket).set_membership(&addr, None, drop)
+            None
         };
+
+        // After the last `parse_addr`: its user `toString` may have closed this socket.
+        let Some(socket) = this.socket.get() else {
+            return Err(global_this.throw(format_args!("Socket is closed")));
+        };
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        let res = uws::udp::Socket::opaque_mut(socket).set_membership(&addr, iface, drop);
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
@@ -1060,12 +1102,7 @@ impl UDPSocket {
         }
 
         let mut interface: sockaddr_storage = bun_core::ffi::zeroed();
-
-        let Some(socket) = this.socket.get() else {
-            return Err(global_this.throw(format_args!("Socket is closed")));
-        };
-
-        let res = if arguments.len() > 2
+        let iface = if arguments.len() > 2
             && this.parse_addr(global_this, 0, arguments[2], &mut interface)?
         {
             if source_addr.ss_family != interface.ss_family {
@@ -1073,21 +1110,22 @@ impl UDPSocket {
                     "Family mismatch among source, group and interface addresses"
                 )));
             }
-            // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-            uws::udp::Socket::opaque_mut(socket).set_source_specific_membership(
-                &source_addr,
-                &group_addr,
-                Some(&interface),
-                drop,
-            )
+            Some(&interface)
         } else {
-            uws::udp::Socket::opaque_mut(socket).set_source_specific_membership(
-                &source_addr,
-                &group_addr,
-                None,
-                drop,
-            )
+            None
         };
+
+        // After the last `parse_addr`: its user `toString` may have closed this socket.
+        let Some(socket) = this.socket.get() else {
+            return Err(global_this.throw(format_args!("Socket is closed")));
+        };
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        let res = uws::udp::Socket::opaque_mut(socket).set_source_specific_membership(
+            &source_addr,
+            &group_addr,
+            iface,
+            drop,
+        );
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
@@ -1408,9 +1446,9 @@ impl UDPSocket {
         // pointers stay valid. An ArrayBuffer detached during phase 1 now
         // reports a zero-length slice rather than a dangling pointer.
         let empty: &'static [u8] = b"";
-        // Collect the slices into a Vec so the borrowed bytes live until
-        // `socket.send()`.
-        let mut string_slices: Vec<ZigStringSlice> = Vec::with_capacity(len);
+        // Collect the strings' UTF-8 bytes into a Vec so they live until
+        // `socket.send()` (a ref for 8-bit ASCII strings, a transcode otherwise).
+        let mut string_slices: Vec<Utf8Bytes<'static>> = Vec::with_capacity(len);
         for (slice_idx, val) in payload_vals.iter().enumerate() {
             // Hoisted so the returned `slice()` borrow lives past the `'brk` block
             // (the underlying buffer is GC-rooted via `payload_vals`; the
@@ -1427,11 +1465,8 @@ impl UDPSocket {
                     }
                     break 'brk array_buffer.slice();
                 }
-                // Phase 1 stored the primitive JSString; `asString()` is a
-                // plain cast (no `toPrimitive`, no user JS). `JSString` is an
-                // `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
-                string_slices
-                    .push(bun_jsc::JSString::opaque_ref(val.as_string()).to_slice(global_this));
+                // Phase 1 stored the primitive JSString, so this runs no user JS.
+                string_slices.push(val.to_utf8(global_this)?);
                 break 'brk string_slices.last().unwrap().slice();
             };
             payloads[slice_idx] = slice.as_ptr();
@@ -1511,7 +1546,8 @@ impl UDPSocket {
         };
 
         let payload_arg = arguments[0];
-        let mut payload_str = ZigStringSlice::empty();
+        let payload_view;
+        let mut payload_str = Utf8Bytes::EMPTY;
         // Hoisted so the `slice()` borrow outlives the `'brk` block; the
         // backing store is kept alive by `payload_arg` on the JS stack.
         let array_buffer = payload_arg.as_array_buffer(global_this);
@@ -1527,8 +1563,8 @@ impl UDPSocket {
                 // `toPrimitive` cannot invalidate an earlier captured pointer,
                 // and `this.socket orelse throw` below handles a
                 // close-during-`toPrimitive`.
-                // SAFETY: to_js_string returned non-null on success path.
-                payload_str = payload_arg.to_js_string(global_this)?.to_slice(global_this);
+                payload_view = payload_arg.to_js_string_view(global_this)?;
+                payload_str = payload_view.to_utf8();
                 break 'brk payload_str.slice();
             } else {
                 return Err(global_this.throw_invalid_arguments(format_args!(
@@ -1574,7 +1610,7 @@ impl UDPSocket {
         storage: &mut sockaddr_storage,
     ) -> JsResult<bool> {
         let _ = self;
-        let str = bun_core::OwnedString::new(address_val.to_bun_string(global_this)?);
+        let str = address_val.to_bun_string(global_this)?;
         let address_slice: Vec<u8> = str.to_owned_slice_z().into_vec_with_nul();
         let bytes_len = address_slice.len() - 1; // exclude trailing NUL
 
@@ -1592,7 +1628,7 @@ impl UDPSocket {
                         {
                             // Windows: zone identifier is a numeric scope id, not an
                             // interface name (`fe80::1%5`).
-                            // toInt32 → BunString__toInt32 → WTF::parseIntegerAllowingTrailingJunk<int32_t>:
+                            // Same rules as WTF::parseIntegerAllowingTrailingJunk<int32_t>:
                             // skip leading ASCII whitespace, optional '-' (no '+'), parse leading
                             // decimal digits, ignore trailing junk; nullopt on no-digits/overflow.
                             let zone = &address_slice[percent + 1..bytes_len];
@@ -1650,7 +1686,11 @@ impl UDPSocket {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn ref_(this: &Self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn ref_(
+        this: &Self,
+        global_this: &JSGlobalObject,
+        _: &CallFrame,
+    ) -> JsResult<JSValue> {
         let _ = global_this;
         if !this.closed.get() {
             this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
@@ -1681,14 +1721,8 @@ impl UDPSocket {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// The VM's stop phase (script forbidden): close the uSockets socket, as
-    /// `close()` from script would; `on_close` unregisters and drops the keep-alive.
-    pub(crate) fn stop_for_vm_teardown(this: &Self) {
-        Self::close_socket(this);
-    }
-
     #[bun_jsc::host_fn(method)]
-    pub fn close(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn close(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Self::close_socket(this);
         Ok(JSValue::UNDEFINED)
     }
@@ -1743,13 +1777,7 @@ impl UDPSocket {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_fd(this: &Self, _: &JSGlobalObject) -> JSValue {
-        if this.closed.get() {
-            return JSValue::js_number(-1.0);
-        }
-        let Some(socket) = this.socket.get() else {
-            return JSValue::js_number(-1.0);
-        };
-        JSValue::js_number(uws::udp::Socket::opaque_mut(socket).fd() as f64)
+        JSValue::js_number(f64::from(get_fd(this)))
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1769,21 +1797,24 @@ impl UDPSocket {
         JSValue::js_number(uws::udp::Socket::opaque_mut(socket).bound_port() as f64)
     }
 
-    fn create_sock_addr(global_this: &JSGlobalObject, address_bytes: &[u8], port: u16) -> JSValue {
-        let sockaddr: SocketAddress = match SocketAddress::init(address_bytes, port) {
-            Ok(sa) => sa,
-            Err(_) => return JSValue::UNDEFINED,
+    fn create_sock_addr(
+        global_this: &JSGlobalObject,
+        address_bytes: &[u8],
+        port: u16,
+    ) -> JsResult<JSValue> {
+        let Ok(sockaddr) = SocketAddress::init(address_bytes, port) else {
+            return Ok(JSValue::UNDEFINED);
         };
-        sockaddr.into_dto(global_this).unwrap_or(JSValue::UNDEFINED)
+        sockaddr.into_dto(global_this)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_address(this: &Self, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_address(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if this.closed.get() {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         }
         let Some(socket) = this.socket.get() else {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         };
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
@@ -1801,15 +1832,18 @@ impl UDPSocket {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_remote_address(this: &Self, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_remote_address(
+        this: &Self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
         if this.closed.get() {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         }
         let Some(connect_info) = this.connect_info.get() else {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         };
         let Some(socket) = this.socket.get() else {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         };
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
@@ -1826,11 +1860,11 @@ impl UDPSocket {
             BinaryType::Buffer => global_this.common_strings().buffer(),
             BinaryType::Uint8Array => global_this.common_strings().uint8array(),
             BinaryType::ArrayBuffer => global_this.common_strings().arraybuffer(),
-            _ => panic!("Invalid binary type"),
+            other => BunString::static_(<&'static str>::from(other)).to_js(global_this)?,
         })
     }
 
-    pub fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(UdpSocket, "Finalize {:p}", &raw const *self);
         self.this_value.with_mut(|r| r.finalize());
         // `deinit` frees the allocation itself (`heap::take`); hand ownership
@@ -1865,148 +1899,9 @@ impl UDPSocket {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    // No `#[bun_jsc::host_fn]` — the macro's free-fn shim emits a
-    // bare `js_connect(..)` call which doesn't resolve inside an `impl` block.
-    // The codegen `JsClass` derive owns the link name, so the shim isn't needed.
-    pub(crate) fn js_connect(
-        global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let args = call_frame.arguments_as_array::<2>();
-
-        // `as_class_ref` is the safe `&T` downcast (encapsulates `&*from_js`);
-        // mutation goes through `Cell`, so a shared borrow suffices (R-2).
-        let Some(this) = call_frame.this().as_class_ref::<UDPSocket>() else {
-            return Err(
-                global_this.throw_invalid_arguments(format_args!("Expected UDPSocket as 'this'"))
-            );
-        };
-
-        if this.connect_info.get().is_some() {
-            return Err(global_this.throw(format_args!("Socket is already connected")));
-        }
-
-        if this.closed.get() {
-            return Err(global_this.throw(format_args!("Socket is closed")));
-        }
-
-        if call_frame.arguments_count() < 2 {
-            return Err(global_this.throw_invalid_arguments(format_args!("Expected 2 arguments")));
-        }
-
-        let str = bun_core::OwnedString::new(args[0].to_bun_string(global_this)?);
-        let connect_host = str.to_owned_slice_z();
-
-        let connect_port_js = args[1];
-
-        if !connect_port_js.is_number() {
-            return Err(global_this
-                .throw_invalid_arguments(format_args!("Expected \"port\" to be an integer")));
-        }
-
-        let connect_port = connect_port_js.as_int32();
-        let port: u16 = if connect_port < 1 || connect_port > 0xffff {
-            0
-        } else {
-            u16::try_from(connect_port).expect("int cast")
-        };
-
-        let Some(socket) = this.socket.get() else {
-            return Err(global_this.throw(format_args!("Socket is closed")));
-        };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        if uws::udp::Socket::opaque_mut(socket).connect(connect_host.as_ptr(), port as u32) == -1 {
-            return Err(global_this.throw(format_args!("Failed to connect socket")));
-        }
-        this.connect_info.set(Some(ConnectInfo { port }));
-
-        js::address_set_cached(call_frame.this(), global_this, JSValue::ZERO);
-        js::remote_address_set_cached(call_frame.this(), global_this, JSValue::ZERO);
-
-        Ok(JSValue::UNDEFINED)
-    }
-
-    // See `js_connect` — codegen `JsClass` derive owns the link name.
-    pub(crate) fn js_disconnect(
-        global_object: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        // `as_class_ref` is the safe `&T` downcast (encapsulates `&*from_js`);
-        // mutation goes through `Cell`, so a shared borrow suffices (R-2).
-        let Some(this) = call_frame.this().as_class_ref::<UDPSocket>() else {
-            return Err(
-                global_object.throw_invalid_arguments(format_args!("Expected UDPSocket as 'this'"))
-            );
-        };
-
-        if this.connect_info.get().is_none() {
-            return Err(global_object.throw(format_args!("Socket is not connected")));
-        }
-
-        if this.closed.get() {
-            return Err(global_object.throw(format_args!("Socket is closed")));
-        }
-
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        if uws::udp::Socket::opaque_mut(this.socket.get().unwrap()).disconnect() == -1 {
-            return Err(global_object.throw(format_args!("Failed to disconnect socket")));
-        }
-        this.connect_info.set(None);
-
-        Ok(JSValue::UNDEFINED)
-    }
-
-    /// `(size, isRecv)` → resulting SO_RCVBUF/SO_SNDBUF value. `size == 0`
-    /// reads the current value, non-zero sets it. Backs node:dgram's
-    /// get/setRecvBufferSize and get/setSendBufferSize.
-    // See `js_connect` — codegen `JsClass` derive owns the link name.
-    pub(crate) fn js_buffer_size(
-        global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        // `as_class_ref` is the safe `&T` downcast (encapsulates `&*from_js`);
-        // mutation goes through `Cell`, so a shared borrow suffices (R-2).
-        let Some(this) = call_frame.this().as_class_ref::<UDPSocket>() else {
-            return Err(
-                global_this.throw_invalid_arguments(format_args!("Expected UDPSocket as 'this'"))
-            );
-        };
-
-        let args = call_frame.arguments_as_array::<2>();
-        if call_frame.arguments_count() < 2 {
-            return Err(global_this.throw_invalid_arguments(format_args!("Expected 2 arguments")));
-        }
-
-        let size = args[0].coerce_to_i32(global_this)?;
-        let is_recv = args[1].to_boolean();
-
-        let bad_fd =
-            || bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt);
-        if this.closed.get() {
-            return Err(global_this.throw_value(bad_fd().to_js(global_this)));
-        }
-        let Some(socket) = this.socket.get() else {
-            return Err(global_this.throw_value(bad_fd().to_js(global_this)));
-        };
-
-        let mut value: c_int = 0;
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = uws::udp::Socket::opaque_mut(socket).buffer_size(is_recv, size, &mut value);
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
-            return Err(global_this.throw_value(err.to_js(global_this)));
-        }
-
-        Ok(JSValue::js_number(f64::from(value)))
-    }
-
     /// Underlying socket descriptor, or `None` once closed. IPC send dups/exports this for a `dgram.Socket` handle.
     pub(crate) fn native_fd(&self) -> Option<bun_sys::Fd> {
-        if self.closed.get() {
-            return None;
-        }
-        let socket = self.socket.get()?;
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let raw = uws::udp::Socket::opaque_mut(socket).fd();
+        let raw = get_fd(self);
         if raw < 0 {
             return None;
         }
@@ -2021,32 +1916,104 @@ impl UDPSocket {
             Some(bun_sys::Fd::from_native(raw))
         }
     }
+}
 
-    /// Underlying socket descriptor as a number, or -1 once closed. Backs
-    /// node:dgram's handle.fd.
-    // See `js_connect` — codegen `JsClass` derive owns the link name.
-    pub(crate) fn js_get_fd(
-        global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        // `as_class_ref` is the safe `&T` downcast (encapsulates `&*from_js`);
-        // mutation goes through `Cell`, so a shared borrow suffices (R-2).
-        let Some(this) = call_frame.this().as_class_ref::<UDPSocket>() else {
-            return Err(
-                global_this.throw_invalid_arguments(format_args!("Expected UDPSocket as 'this'"))
-            );
-        };
-
-        if this.closed.get() {
-            return Ok(JSValue::js_number_from_int32(-1));
-        }
-        let Some(socket) = this.socket.get() else {
-            return Ok(JSValue::js_number_from_int32(-1));
-        };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let fd = uws::udp::Socket::opaque_mut(socket).fd();
-        Ok(JSValue::js_number_from_int32(fd))
+pub(crate) fn connect(
+    cx: &mut JsScope<'_>,
+    this: &UDPSocket,
+    host: &BunString,
+    port: i32,
+) -> JsResult<()> {
+    let global_this = cx.global();
+    if this.connect_info.get().is_some() {
+        return Err(global_this.throw(format_args!("Socket is already connected")));
     }
+
+    if this.closed.get() {
+        return Err(global_this.throw(format_args!("Socket is closed")));
+    }
+
+    let connect_host = host.to_owned_slice_z();
+    if !bun_dns::is_valid_hostname(connect_host.as_bytes()) {
+        return Err(
+            global_this.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                global_this,
+                connect_host.as_bytes(),
+            )),
+        );
+    }
+
+    let port = u16::try_from(port).unwrap_or(0);
+
+    let Some(socket) = this.socket.get() else {
+        return Err(global_this.throw(format_args!("Socket is closed")));
+    };
+    // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+    if uws::udp::Socket::opaque_mut(socket).connect(connect_host.as_ptr(), port as u32) == -1 {
+        return Err(global_this.throw(format_args!("Failed to connect socket")));
+    }
+    this.connect_info.set(Some(ConnectInfo { port }));
+
+    if let Some(this_value) = this.this_value.get().try_get() {
+        js::address_set_cached(this_value, global_this, JSValue::ZERO);
+        js::remote_address_set_cached(this_value, global_this, JSValue::ZERO);
+    }
+
+    Ok(())
+}
+
+pub(crate) fn disconnect<'a>(heap: &JsHeap<'a>, this: &UDPSocket) -> bindgen::Result<'a, ()> {
+    if this.connect_info.get().is_none() {
+        return Err(heap.error(format_args!("Socket is not connected")));
+    }
+
+    if this.closed.get() {
+        return Err(heap.error(format_args!("Socket is closed")));
+    }
+
+    // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+    if uws::udp::Socket::opaque_mut(this.socket.get().unwrap()).disconnect() == -1 {
+        return Err(heap.error(format_args!("Failed to disconnect socket")));
+    }
+    this.connect_info.set(None);
+
+    Ok(())
+}
+
+/// The resulting SO_RCVBUF/SO_SNDBUF value. `size == 0`
+/// reads the current value, non-zero sets it. Backs node:dgram's
+/// get/setRecvBufferSize and get/setSendBufferSize.
+pub(crate) fn buffer_size(this: &UDPSocket, size: i32, is_recv: bool) -> bun_sys::Result<i32> {
+    let bad_fd =
+        || bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt);
+    if this.closed.get() {
+        return Err(bad_fd());
+    }
+    let Some(socket) = this.socket.get() else {
+        return Err(bad_fd());
+    };
+
+    let mut value: c_int = 0;
+    // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+    let res = uws::udp::Socket::opaque_mut(socket).buffer_size(is_recv, size, &mut value);
+    if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
+        return Err(err);
+    }
+
+    Ok(value)
+}
+
+/// Underlying socket descriptor as a number, or -1 once closed. Backs
+/// node:dgram's handle.fd.
+pub(crate) fn get_fd(this: &UDPSocket) -> i32 {
+    if this.closed.get() {
+        return -1;
+    }
+    let Some(socket) = this.socket.get() else {
+        return -1;
+    };
+    // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+    uws::udp::Socket::opaque_mut(socket).fd()
 }
 
 // ─── Raw-descriptor helpers for node:dgram's internal UDP handle shim ────────
@@ -2170,77 +2137,62 @@ fn dgram_remove_fd(fd: c_int, state: DgramFdState) -> bool {
 }
 
 #[cfg(not(windows))]
-fn dgram_owned_fd_arg(global: &JSGlobalObject, value: JSValue) -> JsResult<c_int> {
-    let fd = value.coerce_to_i32(global)?;
+fn dgram_owned_fd(fd: c_int) -> bun_sys::Result<c_int> {
     if fd < 0 || dgram_fd_state(fd) != Some(DgramFdState::Owned) {
-        return Err(global.throw_value(
-            bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::open)
-                .to_js(global),
+        return Err(bun_sys::Error::from_code_int(
+            SystemErrno::EBADF as c_int,
+            bun_sys::Tag::open,
         ));
     }
     Ok(fd)
 }
 
-/// Like `dgram_owned_fd_arg`, but also accepts descriptors a `UDPSocket` has
+/// Like `dgram_owned_fd`, but also accepts descriptors a `UDPSocket` has
 /// adopted — a wrap that shared its fd may still ask for its address.
 #[cfg(not(windows))]
-fn dgram_known_fd_arg(global: &JSGlobalObject, value: JSValue) -> JsResult<c_int> {
-    let fd = value.coerce_to_i32(global)?;
+fn dgram_known_fd(fd: c_int) -> bun_sys::Result<c_int> {
     if fd < 0 || dgram_fd_state(fd).is_none() {
-        return Err(global.throw_value(
-            bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::open)
-                .to_js(global),
+        return Err(bun_sys::Error::from_code_int(
+            SystemErrno::EBADF as c_int,
+            bun_sys::Tag::open,
         ));
     }
     Ok(fd)
 }
 
 #[cfg(windows)]
-fn dgram_not_supported(global: &JSGlobalObject) -> bun_jsc::JsError {
-    global.throw_value(
-        bun_sys::Error::from_code_int(SystemErrno::ENOTSUP as c_int, bun_sys::Tag::open)
-            .to_js(global),
-    )
+fn dgram_not_supported() -> bun_sys::Error {
+    bun_sys::Error::from_code_int(SystemErrno::ENOTSUP as c_int, bun_sys::Tag::open)
 }
 
 /// `(fd)` → whether a live `UDPSocket` already owns this descriptor. Backs
 /// node:dgram's synchronous EEXIST check on `bind({ fd })` so it does not have
 /// to keep a second, per-VM copy of DGRAM_FDS.
-#[bun_jsc::host_fn]
-pub(crate) fn js_dgram_is_fd_adopted(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(crate) fn dgram_is_fd_adopted(fd: i32) -> bool {
     #[cfg(not(windows))]
     {
-        let fd = frame.argument(0).coerce_to_i32(global)?;
-        Ok(JSValue::from(
-            fd >= 0 && dgram_fd_state(fd) == Some(DgramFdState::Adopted),
-        ))
+        fd >= 0 && dgram_fd_state(fd) == Some(DgramFdState::Adopted)
     }
     #[cfg(windows)]
     {
-        let _ = frame;
         // The registry is POSIX-only; on Windows the async adoption path
         // reports EEXIST itself and Node skips the sync-throw test.
-        let _ = global;
-        Ok(JSValue::FALSE)
+        let _ = fd;
+        false
     }
 }
 
 /// `(isIPv6, isStream)` → a fresh unbound SOCK_DGRAM (or SOCK_STREAM)
 /// descriptor (CLOEXEC + non-blocking + SO_NOSIGPIPE), created through
 /// bsd_create_socket so this doesn't fork its platform gate/EINTR loop.
-#[bun_jsc::host_fn]
-pub(crate) fn js_dgram_new_socket_fd(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(crate) fn dgram_new_socket_fd(is_ipv6: bool, is_stream: bool) -> bun_sys::Result<i32> {
     #[cfg(not(windows))]
     {
-        let is_v6 = frame.argument(0).to_boolean();
-        let is_stream = frame.argument(1).to_boolean();
-        let domain = if is_v6 { libc::AF_INET6 } else { libc::AF_INET };
+        let domain = if is_ipv6 {
+            libc::AF_INET6
+        } else {
+            libc::AF_INET
+        };
         let sock_type = if is_stream {
             libc::SOCK_STREAM
         } else {
@@ -2250,17 +2202,16 @@ pub(crate) fn js_dgram_new_socket_fd(
         let mut err: c_int = 0;
         let fd = uws::udp::raw::bsd_create_socket(domain, sock_type, 0, &mut err);
         if fd < 0 {
-            let err = bun_sys::Error::from_code_int(err, bun_sys::Tag::open);
-            return Err(global.throw_value(err.to_js(global)));
+            return Err(bun_sys::Error::from_code_int(err, bun_sys::Tag::open));
         }
 
         dgram_register_created_fd(fd);
-        Ok(JSValue::js_number_from_int32(fd))
+        Ok(fd)
     }
     #[cfg(windows)]
     {
-        let _ = frame;
-        Err(dgram_not_supported(global))
+        let _ = (is_ipv6, is_stream);
+        Err(dgram_not_supported())
     }
 }
 
@@ -2268,15 +2219,13 @@ pub(crate) fn js_dgram_new_socket_fd(
 /// IPC or passed by the user) with the raw-descriptor registry so the guarded
 /// helpers (getsockname/close) accept it. Ownership moves out again when a
 /// `UDPSocket` adopts the descriptor.
-#[bun_jsc::host_fn]
-pub(crate) fn js_dgram_adopt_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn dgram_adopt_fd(fd: i32) -> bun_sys::Result<()> {
     #[cfg(not(windows))]
     {
-        let fd = frame.argument(0).coerce_to_i32(global)?;
         if fd < 0 {
-            return Err(global.throw_value(
-                bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::open)
-                    .to_js(global),
+            return Err(bun_sys::Error::from_code_int(
+                SystemErrno::EBADF as c_int,
+                bun_sys::Tag::open,
             ));
         }
         // No-op for tracked descriptors: an adopted fd stays read-only rather
@@ -2285,38 +2234,32 @@ pub(crate) fn js_dgram_adopt_fd(global: &JSGlobalObject, frame: &CallFrame) -> J
         // libuv's uv_udp_open unconditionally sets SO_REUSEADDR (kept for
         // backwards compat, libuv#4551); best-effort like it is there.
         let _ = uws::udp::raw::bsd_set_reuseaddr(fd);
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
     #[cfg(windows)]
     {
-        let _ = frame;
-        Err(dgram_not_supported(global))
+        let _ = fd;
+        Err(dgram_not_supported())
     }
 }
 
 /// `(fd, address, port, flags)` → binds a raw datagram descriptor created by
-/// `js_dgram_new_socket_fd`. `address` must be a numeric IPv4/IPv6 literal.
+/// `dgram_new_socket_fd`. `address` must be a numeric IPv4/IPv6 literal.
 /// flags bit 4 is UV_UDP_REUSEADDR.
-#[bun_jsc::host_fn]
-pub(crate) fn js_dgram_bind_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn dgram_bind_fd(fd: i32, address: &[u8], port: i32, flags: i32) -> bun_sys::Result<()> {
     #[cfg(not(windows))]
     {
-        let fd = dgram_owned_fd_arg(global, frame.argument(0))?;
-        let address = bun_core::OwnedString::new(frame.argument(1).to_bun_string(global)?);
-        let address_z = address.to_owned_slice_z();
-        let port_num = frame.argument(2).coerce_to_i32(global)?;
-        let port: u16 = if (0..=0xffff).contains(&port_num) {
-            port_num as u16
+        let fd = dgram_owned_fd(fd)?;
+        let port: u16 = if (0..=0xffff).contains(&port) {
+            port as u16
         } else {
             0
         };
-        let flags = frame.argument(3).coerce_to_i32(global)?;
-
         // Numeric literals only — the JS layer resolves names before calling.
-        let Some(ip) = ip_address::to_ip_address(address_z.as_bytes()) else {
-            return Err(global.throw_value(
-                bun_sys::Error::from_code_int(SystemErrno::EINVAL as c_int, bun_sys::Tag::bind2)
-                    .to_js(global),
+        let Some(ip) = ip_address::to_ip_address(address) else {
+            return Err(bun_sys::Error::from_code_int(
+                SystemErrno::EINVAL as c_int,
+                bun_sys::Tag::bind2,
             ));
         };
         let addr = Address::from_ip(ip, port);
@@ -2335,28 +2278,29 @@ pub(crate) fn js_dgram_bind_fd(global: &JSGlobalObject, frame: &CallFrame) -> Js
             )
         };
         if rc != 0 {
-            let err = bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::bind2);
-            return Err(global.throw_value(err.to_js(global)));
+            return Err(bun_sys::Error::from_code_int(
+                bun_sys::last_errno(),
+                bun_sys::Tag::bind2,
+            ));
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
     #[cfg(windows)]
     {
-        let _ = frame;
-        Err(dgram_not_supported(global))
+        let _ = (fd, address, port, flags);
+        Err(dgram_not_supported())
     }
 }
 
 /// `(fd)` → `{ address, port, family }` of an owned raw descriptor's local
 /// address.
-#[bun_jsc::host_fn]
-pub(crate) fn js_dgram_get_sock_name_fd(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(crate) fn dgram_get_sock_name_fd<'a>(
+    cx: &mut JsScope<'a>,
+    fd: i32,
+) -> bindgen::Result<'a, JSValue> {
     #[cfg(not(windows))]
     {
-        let fd = dgram_known_fd_arg(global, frame.argument(0))?;
+        let fd = dgram_known_fd(fd).map_err(|err| err.into_error(&cx.heap))?;
         let mut storage: sockaddr_storage = bun_core::ffi::zeroed();
         let mut len = size_of::<sockaddr_storage>() as libc::socklen_t;
         // SAFETY: getsockname(2) writes at most `len` bytes into storage.
@@ -2368,8 +2312,10 @@ pub(crate) fn js_dgram_get_sock_name_fd(
             )
         };
         if rc != 0 {
-            let err = bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::open);
-            return Err(global.throw_value(err.to_js(global)));
+            return Err(
+                bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::open)
+                    .into_error(&cx.heap),
+            );
         }
         let (bytes, port): (&[u8], u16) = if storage.ss_family == inet::AF_INET as libc::sa_family_t
         {
@@ -2389,35 +2335,31 @@ pub(crate) fn js_dgram_get_sock_name_fd(
                 u16::from_be(addr6.port),
             )
         } else {
-            return Err(global.throw_value(
-                bun_sys::Error::from_code_int(SystemErrno::EINVAL as c_int, bun_sys::Tag::open)
-                    .to_js(global),
-            ));
+            return Err(bun_sys::Error::from_code_int(
+                SystemErrno::EINVAL as c_int,
+                bun_sys::Tag::open,
+            )
+            .into_error(&cx.heap));
         };
-        Ok(UDPSocket::create_sock_addr(global, bytes, port))
+        Ok(UDPSocket::create_sock_addr(cx.global(), bytes, port)?)
     }
     #[cfg(windows)]
     {
-        let _ = frame;
-        Err(dgram_not_supported(global))
+        let _ = fd;
+        Err(dgram_not_supported().into_error(&cx.heap))
     }
 }
 
 /// `(fd)` → "UDP" | "TCP" | "PIPE" | "TTY" | "FILE" | "UNKNOWN", like Node's
 /// `guessHandleType`. Never throws.
-#[bun_jsc::host_fn]
-pub(crate) fn js_dgram_guess_handle_type(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(crate) fn dgram_guess_handle_type(fd: i32) -> BunString {
     #[cfg(windows)]
     let kind: &'static str = {
-        let _ = frame;
+        let _ = fd;
         "UNKNOWN"
     };
     #[cfg(not(windows))]
     let kind: &'static str = 'kind: {
-        let fd = frame.argument(0).coerce_to_i32(global)?;
         if fd < 0 {
             break 'kind "UNKNOWN";
         }
@@ -2478,48 +2420,47 @@ pub(crate) fn js_dgram_guess_handle_type(
         }
         "UNKNOWN"
     };
-    BunString::static_(kind.as_bytes()).to_js(global)
+    BunString::static_(kind.as_bytes())
 }
 
-/// `(fd)` → puts a stream descriptor created by `js_dgram_new_socket_fd` into
+/// `(fd)` → puts a stream descriptor created by `dgram_new_socket_fd` into
 /// the listening state (auto-binding to an ephemeral port if unbound).
-#[bun_jsc::host_fn]
-pub(crate) fn js_dgram_listen_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn dgram_listen_fd(fd: i32) -> bun_sys::Result<()> {
     #[cfg(not(windows))]
     {
-        let fd = dgram_owned_fd_arg(global, frame.argument(0))?;
+        let fd = dgram_owned_fd(fd)?;
         // SAFETY: listen(2) on a descriptor this module created.
         let rc = unsafe { libc::listen(fd, 511) };
         if rc != 0 {
-            let err = bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::listen);
-            return Err(global.throw_value(err.to_js(global)));
+            return Err(bun_sys::Error::from_code_int(
+                bun_sys::last_errno(),
+                bun_sys::Tag::listen,
+            ));
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
     #[cfg(windows)]
     {
-        let _ = frame;
-        Err(dgram_not_supported(global))
+        let _ = fd;
+        Err(dgram_not_supported())
     }
 }
 
-/// `(fd)` → closes a raw descriptor created by `js_dgram_new_socket_fd`.
-#[bun_jsc::host_fn]
-pub(crate) fn js_dgram_close_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+/// `(fd)` → closes a raw descriptor created by `dgram_new_socket_fd`.
+pub(crate) fn dgram_close_fd(fd: i32) -> bun_sys::Result<()> {
     #[cfg(not(windows))]
     {
-        let fd = frame.argument(0).coerce_to_i32(global)?;
         // Adopted descriptors belong to a live UDPSocket (its close prunes
         // them); only owned ones are closed here.
         if dgram_remove_fd(fd, DgramFdState::Owned) {
             uws::udp::raw::bsd_close_socket(fd);
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
     #[cfg(windows)]
     {
-        let _ = frame;
-        Err(dgram_not_supported(global))
+        let _ = fd;
+        Err(dgram_not_supported())
     }
 }
 
@@ -2528,7 +2469,10 @@ struct Destination {
     address: JSValue,
 }
 
-fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
+pub(crate) fn get_us_error<const USE_WSA: bool>(
+    res: c_int,
+    tag: bun_sys::Tag,
+) -> Option<bun_sys::Error> {
     #[cfg(windows)]
     {
         // setsockopt returns 0 on success, but errnoSys considers 0 to be failure on Windows.
@@ -2538,16 +2482,10 @@ fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bu
         }
 
         if USE_WSA {
-            // The wrapper (src/sys/windows/mod.rs) already maps `SystemErrno`
-            // → `E` for us, so `e` is `bun_sys::E` here.
-            if let Some(e) = bun_sys::windows::WSAGetLastError() {
-                if e != bun_sys::E::SUCCESS {
-                    // `WSASetLastError` is declared `safe fn` in
-                    // `bun_windows_sys::ws2_32` (thread-local Winsock error
-                    // slot write — no preconditions).
-                    bun_sys::windows::ws2_32::WSASetLastError(0);
-                    return Some(bun_sys::Error::from_code(e, tag));
-                }
+            let err = bun_sys::windows::Win32Error::get();
+            if err != bun_sys::windows::Win32Error::SUCCESS {
+                bun_sys::windows::kernel32::SetLastError(0);
+                return Some(bun_sys::Error::from_win32(err, tag));
             }
         }
 
@@ -2556,7 +2494,6 @@ fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bu
     }
     #[cfg(not(windows))]
     {
-        let _ = USE_WSA;
         errno_sys(res, tag)
     }
 }

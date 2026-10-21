@@ -36,7 +36,6 @@ impl Checker<'_, '_> {
         for (e, start) in keys {
             if bound.is_unchecked(e.idx())
                 || unchecked.contain(start)
-                || self.cached_by_emit.contains(&e)
                 || self.is_never_checked(start)
                 || self.is_computed_name_never_checked(file, e)
             {

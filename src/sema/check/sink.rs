@@ -100,9 +100,6 @@ pub(super) struct Reported {
     pub(super) directive: u32,
     /// Once settled, the value of `is_bare` before `end` was filled in.
     pub(super) was_bare: bool,
-    /// `Emit` reported it, before the check (`Options::emits_first`). It's kept even in a range
-    /// that `checkSourceFile` never visits.
-    pub(super) by_emit: bool,
     /// It was reported by the check of a node other than the one it points at:
     /// `checkUnusedIdentifiers` for the container of a declaration, `resolveAlias` for a reference.
     /// It's kept even in a range that `checkSourceFile` never visits.
@@ -162,7 +159,6 @@ impl Reported {
             skipped_on_no_emit: false,
             directive: NO_DIRECTIVE,
             was_bare: false,
-            by_emit: false,
             by_another_node: false,
             deferred: None,
         }
@@ -821,7 +817,6 @@ impl Checker<'_, '_> {
                 && last.code == new.code
                 && (last.file, last.start, last.end) == (new.file, new.start, new.end)
                 && last.args == new.args
-                && last.by_emit == self.is_emitting
         })
     }
 
@@ -842,7 +837,7 @@ impl Checker<'_, '_> {
 
     /// `owner` is the query whose entry the diagnostic belongs to, or `None` if it belongs to the
     /// task.
-    fn log_diagnostic(&mut self, owner: Option<Query>, mut diagnostic: Reported) {
+    fn log_diagnostic(&mut self, owner: Option<Query>, diagnostic: Reported) {
         // A query that runs after a file's `checkSourceFile` reports nothing in that file, because its diagnostics have
         // already been collected. A baseline writer can still be the first to evaluate another file's entry, and then
         // this task owns what that evaluation reports.
@@ -857,9 +852,8 @@ impl Checker<'_, '_> {
         {
             return self.mark_tainted_from(0);
         }
-        diagnostic.by_emit |= self.is_emitting;
         if diagnostic.file != NOWHERE.0
-            && !diagnostic.by_emit
+            && !self.is_emitting
             && self.defers_to_earlier_file(owner, diagnostic.file)
         {
             // Not every error goes through `add_diagnostic`.

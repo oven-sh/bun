@@ -2399,7 +2399,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Returns the class that `func` is a member of.
-    fn class_of_member_fn(&self, file: FileId, func: FnId) -> Option<ClassId> {
+    pub(super) fn class_of_member_fn(&self, file: FileId, func: FnId) -> Option<ClassId> {
         let FnOwner::Member(m) = self.bound(file).fns[func.idx()].owner else {
             return None;
         };

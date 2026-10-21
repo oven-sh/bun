@@ -945,7 +945,6 @@ impl Checker<'_, '_> {
         if !never_checked.is_empty() {
             self.reported.retain(|d| {
                 !(never_checked.iter()).any(|&(from, to)| (from..to).contains(&d.start))
-                    || d.by_emit
                     || d.by_another_node
                     // Reported on the node that isn't checked, and only by the check of its parent.
                     || matches!(d.code, 1039 | 1136 | 1141 | 1254)

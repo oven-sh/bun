@@ -464,9 +464,8 @@ impl<'p, 's> Checker<'p, 's> {
         // `checkDecorators` never visits decorators on a missing declaration or on a `this` parameter.
         for &(start, end) in &hir.stray_decorators {
             self.never_checked.borrow_mut().push((start, end));
-            self.reported.retain(|d| {
-                d.start < start || d.start >= end || d.by_emit || is_binder_diagnostic(d.code)
-            });
+            self.reported
+                .retain(|d| d.start < start || d.start >= end || is_binder_diagnostic(d.code));
         }
         for i in 0..hir.decorators.len() {
             let (owner, e) = hir.decorators[i];
@@ -485,10 +484,7 @@ impl<'p, 's> Checker<'p, 's> {
                 };
                 self.never_checked.borrow_mut().push((at_sign + 1, end));
                 self.reported.retain(|d| {
-                    d.start <= at_sign
-                        || d.start >= end
-                        || d.by_emit
-                        || is_binder_diagnostic(d.code)
+                    d.start <= at_sign || d.start >= end || is_binder_diagnostic(d.code)
                 });
                 continue;
             }

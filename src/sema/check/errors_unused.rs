@@ -173,9 +173,6 @@ impl Checker<'_, '_> {
         if !hir.jsx.is_empty() {
             self.note_jsx_factories(file, &index, &mut u);
         }
-        if self.emits_first() {
-            self.note_names_resolved_by_emit(file, &index, &mut u);
-        }
         // `bindTypeParameter`: a class's type parameter and a member with the same name are one symbol.
         let is_member = |symbol: &SymbolId| {
             let symbol = bound.symbols.get(symbol.idx());
@@ -399,56 +396,6 @@ impl Checker<'_, '_> {
                 continue;
             }
             u.note_name(signature.scope, name, SymFlags::TYPE, TYPE);
-        }
-    }
-
-    /// `RuntimeSyntaxTransformer` writes `x || (x = {})` for an enum or a namespace `x`. In a file that's emitted as
-    /// CommonJS, `visitAssignmentExpression` requests the target's exports (`getExports`,
-    /// `GetReferencedImportDeclaration`). Its original is the declaration's name, which has no resolved symbol, so
-    /// `getReferencedValueOrAliasSymbol` resolves it with `isUse`. From that name `Resolve` passes over the
-    /// declaration, which then isn't a `lastSelfReferenceLocation`.
-    fn note_names_resolved_by_emit(&self, file: FileId, index: &ExprsByKind, u: &mut Unused) {
-        use crate::resolve::{JsxEmit, ModuleKind};
-        let (hir, bound, options) = (self.hir(file), self.bound(file), &self.p.files.options);
-        // `getScriptTransformers`: otherwise `referenceResolver` is the binder's own.
-        let transforms_jsx = hir.kind == FileKind::Tsx
-            && matches!(
-                options.jsx,
-                JsxEmit::React | JsxEmit::ReactJsx | JsxEmit::ReactJsxDev
-            );
-        let asks_the_checker =
-            !options.verbatim_module_syntax || transforms_jsx || options.emit_decorator_metadata;
-        // `getModuleTransformer`, `ImpliedModuleTransformer`, `CommonJSModuleTransformer.visitSourceFile`
-        let is_commonjs = options.module != ModuleKind::Preserve
-            && self.emit_module_format_of_file(file) < ModuleKind::Es2015
-            && (self.is_effective_external_module(file)
-                || !index.of(ExprTag::ImportCall).is_empty());
-        if !self.emits_js_file(file) || !asks_the_checker || !is_commonjs {
-            return;
-        }
-        // `ShouldPreserveConstEnums`
-        let preserves_const_enums = options.preserve_const_enums || options.isolated_modules;
-        // `shouldEmitEnumDeclaration`, `shouldEmitModuleDeclaration`
-        let enums = hir.enums.iter().enumerate().filter_map(|(i, it)| {
-            let is_emitted = !it.flags.contains(Flags::CONST) || preserves_const_enums;
-            is_emitted.then_some((it.stmt, it.name, it.flags, bound.enum_scope[i]))
-        });
-        let namespaces = (hir.modules.iter().enumerate()).filter_map(|(i, it)| match it.name {
-            ModuleName::Ident(name)
-                if bound.is_instantiated_module(ModuleId(i as u32), preserves_const_enums) =>
-            {
-                Some((it.stmt, name, it.flags, bound.module_scope[i]))
-            }
-            _ => None,
-        });
-        let meaning = SymFlags::VALUE | SymFlags::EXPORT_VALUE | SymFlags::ALIAS;
-        for (stmt, name, flags, created) in enums.chain(namespaces) {
-            // `isExportOfNamespace`: `N.x || (N.x = {})`
-            let is_export_of_namespace = flags.contains(Flags::EXPORT)
-                && matches!(bound.parent_of_stmt(stmt), Parent::Module(_));
-            if !is_export_of_namespace && created.is_some() && !hir.is_ambient(hir.node(stmt)) {
-                u.note_name(bound.scopes[created.idx()].parent, name, meaning, VALUE);
-            }
         }
     }
 

@@ -10,6 +10,7 @@ use super::errors_operators::{
     check_tagged_template, check_template_spans, check_yield_result,
 };
 use super::errors_statements::is_with_statement;
+use super::shape::ThisAssignmentDeclaration;
 use super::sink::MAX_SERIALIZATION_LEVEL;
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent};
@@ -289,7 +290,8 @@ impl<'s> Checker<'_, 's> {
                     if !hir[class].modifiers.is_empty() {
                         self.check_grammar_class_like_declaration(file, class);
                     }
-                    self.check_members(file, hir[class].members)
+                    self.check_members(file, hir[class].members);
+                    self.check_constructor_declared_properties(file, class);
                 }
             }
             ExprKind::Jsx(jsx) => self.check_jsx_element_deferred(file, jsx),
@@ -336,6 +338,29 @@ impl<'s> Checker<'_, 's> {
                 self.check_returned_body(file, func, e);
             }
             FnBody::None => {}
+        }
+    }
+
+    /// `checkConstructorDeclaredProperties`
+    fn check_constructor_declared_properties(&mut self, file: FileId, class: ClassId) {
+        if !self.hir(file).is_js {
+            return;
+        }
+        let class_type = self.declared_type(self.class_sym(file, class));
+        for property in self.properties_of_type(class_type) {
+            let PropSource::Symbol(symbol) = property.source else {
+                continue;
+            };
+            if symbol.file != file || !self.is_declared_by_assignment(symbol) {
+                continue;
+            }
+            let declarations = self.declarations_of_property(symbol);
+            if let ThisAssignmentDeclaration::Constructor(constructor) =
+                self.is_constructor_declared_this_property(file, &declarations)
+                && self.class_of_member_fn(file, constructor) == Some(class)
+            {
+                self.type_of_prop(property, MapperId::IDENTITY);
+            }
         }
     }
 
@@ -1488,6 +1513,7 @@ impl<'s> Checker<'_, 's> {
             StmtKind::Class(class) => {
                 self.check_class_like_declaration(file, class);
                 self.check_members(file, hir[class].members);
+                self.check_constructor_declared_properties(file, class);
             }
             StmtKind::Interface(interface) => {
                 self.check_grammar_type_declaration(file, s, hir[interface].name_pos, "interface");

@@ -245,49 +245,8 @@ impl Checker<'_, '_> {
             .collect();
         lefts.shared_sort_unstable_by_key(|&left| hir[left].pos);
         for left in lefts {
-            let parameter = self.unassigned_parameter_read_by(file, left);
             self.type_of_expr(file, left);
-            // `getTypeOfVariableOrParameterOrProperty` has pushed the parameter's resolution, and
-            // `getContextuallyTypedParameterType` resolves the call around the function, where `assignParameterType`
-            // sets the parameter's type. Then it reads the signature that the call resolved to, outside the inference.
-            // `widenTypeForVariableLikeDeclaration` reports a parameter that gets no type from there, and the result
-            // isn't stored.
-            if let Some((func, pat)) = parameter
-                && self.contextual_signature(file, func).is_none()
-                && !self.is_private_within_ambient(file, func)
-            {
-                self.report_implicit_any_of_name(file, pat, TypeId::ANY);
-            }
         }
-    }
-
-    /// The function and the name of the parameter that the identifier `e` reads, if the parameter's
-    /// `links.resolvedType` is nil and only `assignParameterType` assigns it
-    /// (`isParameterOfContextSensitiveSignature`).
-    fn unassigned_parameter_read_by(&mut self, file: FileId, e: ExprId) -> Option<(FnId, PatId)> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let symbol = bound.symbol_of_expr(e);
-        if symbol.is_none() {
-            return None;
-        }
-        let Some(&Decl::Param(pat)) = bound.symbol(symbol).decls.first() else {
-            return None;
-        };
-        let PatParent::Param(p) = bound.pat_parent[pat.idx()] else {
-            return None;
-        };
-        let func = bound.param_fn[p.idx()];
-        if func.is_none() {
-            return None;
-        }
-        let owner = self.takes_context(file, func)?;
-        let is_untyped =
-            hir[p].ty.is_none() && hir[p].default.is_none() && !hir[p].flags.contains(Flags::REST);
-        (is_untyped
-            && self.is_context_sensitive_function_or_method(file, func, owner)
-            && !self.is_immediately_invoked(file, func)
-            && (self.p.pat_types.get(&self.task, &(file, pat))).is_none())
-        .then_some((func, pat))
     }
 
     /// `ConstEnumInliningTransformer`, the last transformer of `emitJSFile`: `GetConstantValue` calls
@@ -297,7 +256,6 @@ impl Checker<'_, '_> {
     /// function, so a cycle is entered at a different point. JavaScript files are skipped, because whether one is
     /// emitted depends on `outDir`. tsgo emits all the files and then checks them. Here it's done file by file.
     pub(super) fn inline_const_enums(&mut self, file: FileId) {
-        self.cached_by_emit.clear();
         let (files, hir, bound) = (self.files(), self.hir(file), self.bound(file));
         let (options, module) = (&files.options, files.module(file));
         // `emitJSFile`, `sourceFileMayBeEmitted`, `GetIsolatedModules`
@@ -333,20 +291,6 @@ impl Checker<'_, '_> {
         // If two start at the same position, the outer one was created last.
         accesses.shared_sort_by_key(|&e| (self.start_of(file, e), std::cmp::Reverse(e)));
         for e in accesses {
-            let is_computed_name = matches!(
-                bound.parent_of_expr(e),
-                Parent::PropKey(..)
-                    | Parent::PatKey(_)
-                    | Parent::MemberKey(_)
-                    | Parent::MethodKey(_)
-            );
-            if is_computed_name
-                && !is_parenthesized(hir, e)
-                && !is_erased(hir, hir.node(e))
-                && self.cached_type_of_expr(file, e).is_none()
-            {
-                self.cached_by_emit.push(e);
-            }
             self.type_of_expr(file, e);
         }
     }
@@ -1471,22 +1415,6 @@ impl Checker<'_, '_> {
         }
         expected
     }
-}
-
-/// True if `TypeEraserTransformer` drops something around `node`: an ambient node, a type, an overload, an abstract
-/// member. A non-abstract accessor without a body gets a body.
-fn is_erased(hir: &hir::File, node: Node) -> bool {
-    let is_dropped = |ancestor: Node| {
-        let is_abstract = hir.flags(ancestor).contains(Flags::ABSTRACT);
-        match hir.fns.get(hir.function_of(ancestor).idx()) {
-            Some(function) => {
-                matches!(function.body, FnBody::None)
-                    && (is_abstract || !matches!(function.kind, FnKind::Getter | FnKind::Setter))
-            }
-            None => is_abstract && matches!(hir.data(ancestor), NodeData::Member(_)),
-        }
-    };
-    hir.is_in_ambient_or_type_node(node) || hir.find_ancestor(node, is_dropped).is_some()
 }
 
 /// `GetCommonSourceDirectory` without the trailing `/`, for a project that has a configuration file, which every

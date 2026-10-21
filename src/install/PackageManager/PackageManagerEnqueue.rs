@@ -342,6 +342,7 @@ fn enqueue_download(
         dependency_id,
         &package,
         authorization,
+        false,
     )? {
         // reshaped for borrowck — `task: &mut NetworkTask` borrows
         // `*this` (pool slot); reborrow as raw so `this.network_tarball_batch`
@@ -2416,6 +2417,7 @@ fn bind_row_without_manifest(
                         ..Package::default()
                     },
                     Authorization::NoAuthorization,
+                    false,
                 ) {
                     // An `--offline` miss. It was already reported if required, or skipped if
                     // optional.
@@ -3186,6 +3188,7 @@ fn tarball_task(
         dependency_id,
         package,
         Authorization::AllowAuthorization,
+        true,
     )?;
     Ok(Some(ResolvedPackageTask::NetworkTask(
         task.expect("unreachable"),

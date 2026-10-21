@@ -414,6 +414,7 @@ impl PatchTask {
                                 }
                                 _ => Authorization::NoAuthorization,
                             },
+                            false,
                         ) {
                             // --offline and not cached: already reported / skipped; nothing to patch
                             Err(crate::network_task::ForTarballError::Offline) => return Ok(()),

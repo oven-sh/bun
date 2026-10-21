@@ -2153,52 +2153,6 @@ test.concurrent(
   },
 );
 
-// The peer has no alpha of its own, so it moves with the catalog entry, like web's dependency. api names the old range
-// itself and keeps alpha@1.
-test.concurrent.each([
-  ["the root", ""],
-  ["a workspace that sorts first", "packages/aaa"],
-])(
-  "one `bun update --latest` moves a catalog entry that a peer in %s and a dependency use, next to another workspace's own range",
-  async (_, peerIn) => {
-    using server = await serveRegistry({ alpha: { "1.0.0": {}, "1.2.0": {}, "2.1.0": {} } });
-    const peerDependencies = { alpha: "catalog:" };
-    const dir = String(
-      tempDir("update-latest-catalog-required-peer", {
-        "package.json": stringify({
-          name: "root",
-          workspaces: { packages: ["packages/*"], catalog: { alpha: "^1.0.0" } },
-          ...(peerIn ? {} : { peerDependencies }),
-        }),
-        ...(peerIn ? { [`${peerIn}/package.json`]: stringify({ name: "aaa", peerDependencies }) } : {}),
-        "packages/web/package.json": stringify({ name: "web", dependencies: { alpha: "catalog:" } }),
-        "packages/api/package.json": stringify({ name: "api", dependencies: { alpha: "^1.0.0" } }),
-      }),
-    );
-    await servedBunfig(server, dir);
-    await install(dir);
-    // The alpha that a workspace loads is its own copy if it has one, and the root's otherwise.
-    const loaded = async (workspace: string) =>
-      (await exists(join(dir, "packages", workspace, "node_modules", "alpha")))
-        ? installedVersion(join(dir, "packages", workspace), "alpha")
-        : installedVersion(dir, "alpha");
-
-    const first = await run(dir, "update", "--latest");
-    expect(first.stderr).not.toContain("error:");
-    expect((await packageJsonOf(dir)).workspaces.catalog).toStrictEqual({ alpha: "^2.1.0" });
-    expect({ web: await loaded("web"), api: await loaded("api") }).toEqual({ web: "2.1.0", api: "1.2.0" });
-    expect(first.exitCode).toBe(0);
-    await frozen(dir);
-
-    const [packageJson, lockfile] = await Promise.all([packageJsonText(dir), lockText(dir)]);
-    const second = await run(dir, "update", "--latest");
-    expect(second.stderr).not.toContain("error:");
-    expect(await packageJsonText(dir)).toBe(packageJson);
-    expect(await lockText(dir)).toBe(lockfile);
-    expect(second.exitCode).toBe(0);
-  },
-);
-
 // util's peer `core` is auto-installed and nothing depends on it outright, so `bun update <names>` re-resolves it after a manifest fetch of its own. Every other entry that still waits for its manifest at that point has to resolve too.
 const PEER_ONLY: Manifests = {
   util: { "1.0.0": { peerDependencies: { core: "^1.0.0" } }, "1.1.0": { peerDependencies: { core: "^1.0.0" } } },

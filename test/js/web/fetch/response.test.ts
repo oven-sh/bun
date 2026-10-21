@@ -49,7 +49,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (11.41 KB) {
+    "Response (12.73 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -210,6 +210,45 @@ describe("Response.json", () => {
     const fn = Object.defineProperty(function () {}, "toJSON", { get });
     expect(() => Response.json(fn)).toThrow(notSerializable);
     expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  describe("a BigInt", () => {
+    function withToJSON<T>(toJSON: (this: bigint) => unknown, run: () => T): T {
+      Object.defineProperty(BigInt.prototype, "toJSON", { configurable: true, value: toJSON });
+      try {
+        return run();
+      } finally {
+        Reflect.deleteProperty(BigInt.prototype, "toJSON");
+      }
+    }
+
+    test("is serialized by BigInt.prototype.toJSON", async () => {
+      const response = withToJSON(
+        function () {
+          return this.toString();
+        },
+        () => Response.json(123n),
+      );
+      expect({ status: response.status, body: await response.text() }).toEqual({ status: 200, body: '"123"' });
+    });
+
+    test("throws TypeError when BigInt.prototype.toJSON returns undefined", () => {
+      expect(() =>
+        withToJSON(
+          () => undefined,
+          () => Response.json(123n),
+        ),
+      ).toThrow(notSerializable);
+    });
+
+    test("throws the JSON.stringify TypeError when it has no toJSON method", () => {
+      const cannotSerializeBigInt = expect.objectContaining({
+        name: "TypeError",
+        message: "JSON.stringify cannot serialize BigInt.",
+      });
+      expect(() => Response.json(123n)).toThrow(cannotSerializeBigInt);
+      expect(() => Response.json({ n: 123n })).toThrow(cannotSerializeBigInt);
+    });
   });
 
   test("rethrows what toJSON throws", () => {

@@ -871,14 +871,6 @@ impl Response {
         let json_value = args.next_eat().unwrap_or_default();
 
         if !json_value.is_empty() {
-            // BigInt has a different error message to match Node.js exactly
-            if json_value.is_big_int() {
-                let err = global_this.create_type_error_instance(format_args!(
-                    "Do not know how to serialize a BigInt"
-                ));
-                return Err(global_this.throw_value(err));
-            }
-
             // Use jsonStringifyFast which passes undefined for the space parameter,
             // triggering JSC's FastStringifier optimization. This is significantly faster
             // than jsonStringify which passes 0 for space and uses the slower Stringifier.

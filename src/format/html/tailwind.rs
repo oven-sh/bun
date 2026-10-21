@@ -1,7 +1,7 @@
-//! oxfmt's `sortTailwindcss` in HTML, Vue and Angular.
+//! oxfmt's `sortTailwindcss` for HTML, Vue and Angular.
 //!
-//! oxfmt leaves it to `prettier-plugin-tailwindcss`, which rewrites the values of attributes in the tree that Prettier has
-//! parsed: `transformHtml`. A value is a piece of the text, so here the text is rewritten before it is parsed.
+//! oxfmt delegates this to `prettier-plugin-tailwindcss`, which rewrites attribute values in the tree that Prettier
+//! parsed (`transformHtml`). A value is a slice of the text, so here the text is rewritten before it's parsed.
 
 use super::ast::{Attribute, Id, Kind, Tree};
 use super::{Parser, js, parse, without_front_matter};
@@ -19,16 +19,17 @@ fn name_of_binding(name: &[u8], parser: Parser) -> Option<&[u8]> {
     }
 }
 
-/// What the value of an attribute is to the plugin.
+/// How the plugin treats an attribute's value.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Value {
     Classes,
-    /// An expression that has classes in its strings.
+    /// An expression with classes in its strings.
     Expression,
     Other,
 }
 
-/// The attribute without a binding that `option`, one of `attributes`, is about. `None`: it is a directive.
+/// Returns the name of the plain attribute that `option`, an entry of `attributes`, refers to. Returns `None` if it's a
+/// directive.
 fn plain_name(option: &[u8], parser: Parser) -> Option<&[u8]> {
     match name_of_binding(option, parser) {
         Some(bound) => (bound != option).then_some(bound),
@@ -36,7 +37,7 @@ fn plain_name(option: &[u8], parser: Parser) -> Option<&[u8]> {
     }
 }
 
-/// The plugin's `createMatcher`, asked about the attribute called `name`.
+/// The plugin's `createMatcher`, applied to the attribute `name`.
 fn value_of(name: &[u8], parser: Parser, tailwind: &Tailwind) -> Value {
     let options = tailwind.attributes.names();
     let is_plain = |name: &[u8]| {
@@ -54,7 +55,8 @@ fn value_of(name: &[u8], parser: Parser, tailwind: &Tailwind) -> Value {
     }
 }
 
-/// What the plugin makes of the value of `attr`, and where that is in `text`. `None`: the same.
+/// Returns the plugin's replacement for the value of `attr` and the value's range in `text`, or `None` if nothing
+/// changes.
 fn sorted_value(
     attr: &Attribute<'_>,
     text: &[u8],
@@ -68,7 +70,7 @@ fn sorted_value(
         (start, end) = (start + 1, end - 1);
     }
     let value = text.get(start..end)?;
-    // In HTML Prettier writes the name of an attribute that it knows in small letters.
+    // In HTML, Prettier lowercases the names of known attributes.
     let name = match attr.name_span.of(text) {
         name if parser == Parser::Html && name.eq_ignore_ascii_case(b"class") => b"class",
         name => name,
@@ -83,7 +85,8 @@ fn sorted_value(
     (sorted != value).then_some((start, end, sorted))
 }
 
-/// `text`, in which every line break is `\n`, with the classes in it sorted. `None`: it is the same, or cannot be parsed.
+/// Returns `text`, where every line break is `\n`, with its classes sorted. Returns `None` if nothing changes or it
+/// doesn't parse.
 pub(super) fn with_sorted_classes(
     text: &[u8],
     parser: Parser,
@@ -100,7 +103,7 @@ pub(super) fn with_sorted_classes(
             let sorted = |attr| sorted_value(attr, text, parser, tailwind, parse);
             changes.extend(tree.attrs(id).iter().filter_map(sorted));
         }
-        // What is behind `<!-- prettier-ignore -->` is printed as it is in the text.
+        // The node after `<!-- prettier-ignore -->` is printed verbatim.
         let mut is_ignored = false;
         for child in tree.children(id) {
             let node = &tree[child];

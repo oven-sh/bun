@@ -1,8 +1,8 @@
-// Compares what `bun lint` and oxlint make of the files of fixes.ts with each of the flags.
+// Compares how `bun lint` and oxlint fix the files in fixes.ts, with each set of fix flags.
 //
 //   BUN_LINT="bun lint" OXLINT_BIN=<oxlint 1.87> OXLINT_TSGOLINT_PATH=<tsgolint 7.0.2003> bun compare-fixes.ts [--record]
 //
-// Without OXLINT_BIN, what oxlint makes of them is read from fixes.expected.json, which `--record` writes.
+// Without OXLINT_BIN, oxlint's output is read from fixes.expected.json, which `--record` writes.
 
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -17,7 +17,7 @@ const expectedPath = join(import.meta.dir, "fixes.expected.json");
 
 type Texts = Record<string, Record<string, string>>;
 
-/** The texts of the files after a run with each of the sets of flags. */
+/** Returns each file's text after a run with each set of flags. */
 function run(command: string, before: string[]): Texts {
   const texts: Texts = {};
   for (const [name, flags] of Object.entries(flagSets)) {
@@ -25,7 +25,9 @@ function run(command: string, before: string[]): Texts {
       const cwd = mkdtempSync(join(tmpdir(), "oxlint-fixes-"));
       try {
         writeFileSync(join(cwd, ".oxlintrc.json"), JSON.stringify({ categories: { correctness: "off" } }));
-        const some = cases.map((it, index) => ({ it, directory: directoryOf(index) })).filter(({ it }) => !!it.typed === typed);
+        const some = cases
+          .map((it, index) => ({ it, directory: directoryOf(index) }))
+          .filter(({ it }) => !!it.typed === typed);
         for (const { it, directory } of some) {
           for (const [path, text] of Object.entries(filesOf(it))) {
             mkdirSync(dirname(join(cwd, directory, path)), { recursive: true });
@@ -33,7 +35,8 @@ function run(command: string, before: string[]): Texts {
           }
         }
         spawnSync(command, [...before, ...flags, ...(typed ? ["--type-aware"] : []), "."], { cwd, encoding: "utf8" });
-        for (const { it, directory } of some) (texts[directory] ??= {})[name] = readFileSync(join(cwd, directory, it.file), "utf8");
+        for (const { it, directory } of some)
+          (texts[directory] ??= {})[name] = readFileSync(join(cwd, directory, it.file), "utf8");
       } finally {
         rmSync(cwd, { recursive: true, force: true });
       }

@@ -639,10 +639,17 @@ async function readAll(stream: any) {
   return Buffer.concat(chunks);
 }
 
+type TransportParams = Record<string, number>;
+
 // One connection. After the handshake the server opens one bidirectional
 // stream with `down` as its body, and the client sends `up` on that stream.
 // Resolves with what each end read.
-async function serverOpenedExchange(options: { down: Uint8Array; up: Uint8Array }) {
+async function serverOpenedExchange(options: {
+  down: Uint8Array;
+  up: Uint8Array;
+  server?: TransportParams;
+  client?: TransportParams;
+}) {
   const errors: string[] = [];
   const serverRead = Promise.withResolvers<Uint8Array>();
   const clientRead = Promise.withResolvers<Uint8Array>();
@@ -658,7 +665,7 @@ async function serverOpenedExchange(options: { down: Uint8Array; up: Uint8Array 
         })
         .then(serverRead.resolve, serverRead.reject);
     },
-    { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"] },
+    { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"], transportParams: options.server ?? {} },
   );
   // A client endpoint keeps the transport parameters of its first connect().
   await using endpoint = new QuicEndpoint();
@@ -667,6 +674,7 @@ async function serverOpenedExchange(options: { down: Uint8Array; up: Uint8Array 
     alpn: "quic-test",
     servername: "localhost",
     verifyPeer: "manual",
+    transportParams: options.client ?? {},
     onerror(err: any) {
       errors.push(`client: ${err?.message}`);
     },
@@ -682,9 +690,9 @@ async function serverOpenedExchange(options: { down: Uint8Array; up: Uint8Array 
   return { down: summary(down), up: summary(up), errors };
 }
 
-// A client resumes a session and opens a unidirectional stream with `body`
-// before the handshake completes. Resolves with what the server read.
-async function resumedEarlyStream(body: Uint8Array) {
+// A client resumes a session and opens a stream with `body` before the
+// handshake completes. Resolves with what the server read.
+async function resumedEarlyStream(body: Uint8Array, setup: { bidirectional?: boolean; server?: TransportParams } = {}) {
   const errors: string[] = [];
   const received = Promise.withResolvers<Uint8Array>();
   let sessions = 0;
@@ -695,11 +703,12 @@ async function resumedEarlyStream(body: Uint8Array) {
       session.closed.catch(() => {});
       session.onstream = (stream: any) => {
         stream.closed.catch(() => {});
+        stream.writer.endSync();
         const read = readAll(stream);
         if (resumed) read.then(received.resolve, received.reject);
       };
     },
-    { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"] },
+    { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"], transportParams: setup.server ?? {} },
   );
   await using endpoint = new QuicEndpoint();
   const options = { endpoint, alpn: "quic-test", servername: "localhost", verifyPeer: "manual" };
@@ -724,7 +733,9 @@ async function resumedEarlyStream(body: Uint8Array) {
     },
   } as SessionOptions);
   second.closed.catch(() => {});
-  const stream = await second.createUnidirectionalStream({ body });
+  const stream = setup.bidirectional
+    ? await second.createBidirectionalStream({ body })
+    : await second.createUnidirectionalStream({ body });
   stream.closed.catch(() => {});
   const opened = await second.opened.then(
     (info: any) => ({ earlyDataAccepted: info.earlyDataAccepted }),
@@ -793,6 +804,358 @@ describe("default stream windows", () => {
   test("let a unidirectional stream that a client opens in 0-RTT carry 400000 bytes", async () => {
     const body = pattern(400000, 3);
     expect(await resumedEarlyStream(body)).toEqual({
+      opened: { earlyDataAccepted: true },
+      received: summary(body),
+      errors: [],
+    });
+  });
+});
+
+// RFC 9000 section 18.2: the first send limit of a bidirectional stream is the
+// peer's initial_max_stream_data_bidi_remote on the side that opened the
+// stream, and the peer's initial_max_stream_data_bidi_local on the other side.
+// lsquic picked it by the role of the connection, which is the same only for a
+// stream that the client opens.
+describe("a bidirectional stream that the server opens", () => {
+  // Each end has a window of 1000 bytes for one kind of stream and 100000
+  // bytes for the other kind. A sender that takes the other kind's window
+  // either sends 50000 bytes into the window of 1000, or stops after 1000
+  // bytes and waits for credit that the receiver has no reason to send.
+  test.each([
+    [
+      "the client's window for it is the small one",
+      { client: { initialMaxStreamDataBidiRemote: 1000, initialMaxStreamDataBidiLocal: 100000 } },
+    ],
+    [
+      "the client's window for it is the large one",
+      { client: { initialMaxStreamDataBidiRemote: 100000, initialMaxStreamDataBidiLocal: 1000 } },
+    ],
+    [
+      "the server's window for it is the small one",
+      { server: { initialMaxStreamDataBidiLocal: 1000, initialMaxStreamDataBidiRemote: 100000 } },
+    ],
+    [
+      "the server's window for it is the large one",
+      { server: { initialMaxStreamDataBidiLocal: 100000, initialMaxStreamDataBidiRemote: 1000 } },
+    ],
+  ] as [string, { client?: TransportParams; server?: TransportParams }][])(
+    "carries 50000 bytes each way when %s",
+    async (_, windows) => {
+      const down = pattern(50000, 4);
+      const up = pattern(50000, 5);
+      expect(await serverOpenedExchange({ down, up, ...windows })).toEqual({
+        down: summary(down),
+        up: summary(up),
+        errors: [],
+      });
+    },
+  );
+
+  // 4096 bytes fit the window whichever window the sender takes. That row
+  // shows that the other row needs the byte past the window to fail.
+  test.each([4096, 4097])("carries %d bytes into a window of 4096 bytes", async size => {
+    const down = pattern(size, 6);
+    const up = pattern(size, 7);
+    const windows = {
+      client: { initialMaxStreamDataBidiRemote: 4096 },
+      server: { initialMaxStreamDataBidiLocal: 4096 },
+    };
+    expect(await serverOpenedExchange({ down, up, ...windows })).toEqual({
+      down: summary(down),
+      up: summary(up),
+      errors: [],
+    });
+  });
+});
+
+// lsquic gives a write event only to a stream that has flow-control credit,
+// from the stream and from the connection. A FIN takes none.
+//
+// These sessions have no idle timeout. With one, a session whose FIN never
+// leaves ends after the timeout, and both readers then see the same clean end
+// as after a FIN.
+describe("a stream that ends without data", () => {
+  const noIdleTimeout = { maxIdleTimeout: 0 };
+
+  // An lsquic that picks the limit by the role of the connection takes the
+  // other window here, which is not 0, so only the FIN path is under test.
+  test("ends in both directions on a stream the server opens when both windows for it are 0", async () => {
+    const empty = new Uint8Array(0);
+    expect(
+      await serverOpenedExchange({
+        down: empty,
+        up: empty,
+        client: { ...noIdleTimeout, initialMaxStreamDataBidiRemote: 0 },
+        server: { ...noIdleTimeout, initialMaxStreamDataBidiLocal: 0 },
+      }),
+    ).toEqual({ down: summary(empty), up: summary(empty), errors: [] });
+  });
+
+  // One connection. The client opens a stream with `open` and the server ends
+  // its side with `answer`. Resolves with the bytes that each end read.
+  async function clientOpenedEnd(options: {
+    open: (session: any) => Promise<any>;
+    answer: (stream: any) => void;
+    server?: TransportParams;
+    client?: TransportParams;
+    beforeHandshake?: boolean;
+  }) {
+    const errors: string[] = [];
+    const serverRead = Promise.withResolvers<Uint8Array>();
+    await using server = await listen(
+      (session: any) => {
+        session.onerror = (err: any) => errors.push(`server: ${err?.message}`);
+        session.closed.catch(() => {});
+        session.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+          options.answer(stream);
+          readAll(stream).then(serverRead.resolve, serverRead.reject);
+        };
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        alpn: ["quic-test"],
+        transportParams: { ...noIdleTimeout, ...options.server },
+      },
+    );
+    await using endpoint = new QuicEndpoint();
+    const client: any = await connect(server.address!, {
+      endpoint,
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { ...noIdleTimeout, ...options.client },
+      onerror(err: any) {
+        errors.push(`client: ${err?.message}`);
+      },
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    if (!options.beforeHandshake) await client.opened;
+    const stream = await options.open(client);
+    stream.closed.catch(() => {});
+    const [up, down] = await Promise.all([serverRead.promise, readAll(stream)]);
+    client.close();
+    return { up: up.byteLength, down: down.byteLength, errors };
+  }
+
+  const emptyBody = (session: any) => session.createBidirectionalStream({ body: new Uint8Array(0) });
+  const endWriter = async (session: any) => {
+    const stream = await session.createBidirectionalStream();
+    stream.writer.endSync();
+    return stream;
+  };
+  const ways = [
+    ["an empty body", emptyBody, (stream: any) => stream.setBody(new Uint8Array(0))],
+    ["writer.endSync()", endWriter, (stream: any) => stream.writer.endSync()],
+  ] as [string, (session: any) => Promise<any>, (stream: any) => void][];
+
+  test.each(ways)(
+    "ends in both directions on a stream the client opens when both windows for it are 0 (%s)",
+    async (_, open, answer) => {
+      expect(
+        await clientOpenedEnd({
+          open,
+          answer,
+          server: { initialMaxStreamDataBidiRemote: 0 },
+          client: { initialMaxStreamDataBidiLocal: 0 },
+        }),
+      ).toEqual({ up: 0, down: 0, errors: [] });
+    },
+  );
+
+  test("reaches a server whose window for it is 0 when lsquic opens the stream after the handshake", async () => {
+    expect(
+      await clientOpenedEnd({
+        open: emptyBody,
+        answer: stream => stream.writer.endSync(),
+        server: { initialMaxStreamDataBidiRemote: 0 },
+        beforeHandshake: true,
+      }),
+    ).toEqual({ up: 0, down: 0, errors: [] });
+  });
+
+  // The window of the stream is the default here.
+  test.each(ways)("reaches a server whose connection window is 0 (%s)", async (_, open, answer) => {
+    expect(await clientOpenedEnd({ open, answer, server: { initialMaxData: 0 } })).toEqual({
+      up: 0,
+      down: 0,
+      errors: [],
+    });
+  });
+
+  // The end that opens a unidirectional stream has no read side, so the FIN
+  // also closes the stream there.
+  test.each(["client", "server"] as const)(
+    "reaches the peer on a unidirectional stream that the %s opens when the window for it is 0",
+    async opener => {
+      const errors: string[] = [];
+      const received = Promise.withResolvers<Uint8Array>();
+      const sent = Promise.withResolvers<void>();
+      const open = async (session: any) => {
+        const stream = await session.createUnidirectionalStream({ body: new Uint8Array(0) });
+        await stream.closed;
+      };
+      const onstream = (stream: any) => {
+        stream.closed.catch(() => {});
+        readAll(stream).then(received.resolve, received.reject);
+      };
+      const transportParams = { ...noIdleTimeout, initialMaxStreamDataUni: 0 };
+      await using server = await listen(
+        (session: any) => {
+          session.onerror = (err: any) => errors.push(`server: ${err?.message}`);
+          session.closed.catch(() => {});
+          session.onstream = onstream;
+          if (opener === "server") session.opened.then(() => open(session)).then(sent.resolve, sent.reject);
+        },
+        { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"], transportParams },
+      );
+      await using endpoint = new QuicEndpoint();
+      const client: any = await connect(server.address!, {
+        endpoint,
+        alpn: "quic-test",
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams,
+        onerror(err: any) {
+          errors.push(`client: ${err?.message}`);
+        },
+        onstream,
+      } as SessionOptions);
+      client.closed.catch(() => {});
+      await client.opened;
+      if (opener === "client") open(client).then(sent.resolve, sent.reject);
+      const [bytes] = await Promise.all([received.promise, sent.promise]);
+      client.close();
+      expect({ length: bytes.byteLength, errors }).toEqual({ length: 0, errors: [] });
+    },
+  );
+});
+
+// On HTTP/3 the FIN follows the header block, and JS can end the body of a
+// stream before it hands over the headers. An HTTP/3 stream therefore keeps
+// the write event for its FIN.
+describe("an HTTP/3 stream whose body ends before its headers are sent", () => {
+  const requestHeaders = { ":method": "POST", ":path": "/", ":scheme": "https", ":authority": "localhost" };
+
+  async function roundTrip(
+    request: (client: any, onheaders: (headers: Record<string, string>) => void) => Promise<any>,
+    respond: (stream: any) => void,
+  ) {
+    const requests: string[] = [];
+    await using server = await listen(
+      async (session: any) => {
+        session.onstream = (stream: any) => stream.closed.catch(() => {});
+        await session.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        onheaders(this: any, headers: Record<string, string>) {
+          requests.push(headers[":path"]);
+          respond(this);
+        },
+      },
+    );
+    await using endpoint = new QuicEndpoint();
+    const client: any = await connect(server.address!, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    await client.opened;
+    let status: string | undefined;
+    const stream = await request(client, headers => (status = headers[":status"]));
+    stream.closed.catch(() => {});
+    const end = await readAll(stream).then(
+      body => `end after ${body.byteLength} bytes`,
+      err => `error: ${err?.message}`,
+    );
+    client.close();
+    return { requests, status, end };
+  }
+
+  const respondWithEmptyBody = (stream: any) => {
+    stream.sendHeaders({ ":status": "200" });
+    stream.writer.endSync();
+  };
+
+  test.each([
+    [
+      "createBidirectionalStream({ headers, body })",
+      (client: any, onheaders: any) =>
+        client.createBidirectionalStream({ headers: requestHeaders, body: new Uint8Array(0), onheaders }),
+    ],
+    [
+      "createBidirectionalStream({ body }), then sendHeaders()",
+      async (client: any, onheaders: any) => {
+        const stream = await client.createBidirectionalStream({ body: new Uint8Array(0), onheaders });
+        stream.sendHeaders(requestHeaders);
+        return stream;
+      },
+    ],
+  ])("the server gets the request of %s", async (_, request) => {
+    expect(await roundTrip(request, respondWithEmptyBody)).toEqual({
+      requests: ["/"],
+      status: "200",
+      end: "end after 0 bytes",
+    });
+  });
+
+  test.each([
+    [
+      "setBody(), then sendHeaders()",
+      (stream: any) => {
+        stream.setBody(new Uint8Array(0));
+        stream.sendHeaders({ ":status": "200" });
+      },
+    ],
+    [
+      "writer.endSync(), then sendHeaders()",
+      (stream: any) => {
+        stream.writer.endSync();
+        stream.sendHeaders({ ":status": "200" });
+      },
+    ],
+  ])("the client gets the response of %s", async (_, respond) => {
+    const request = (client: any, onheaders: any) =>
+      client.createBidirectionalStream({ headers: requestHeaders, body: new Uint8Array([65]), onheaders });
+    expect(await roundTrip(request, respond)).toEqual({
+      requests: ["/"],
+      status: "200",
+      end: "end after 0 bytes",
+    });
+  });
+});
+
+// A client that resumes a session opens streams before the handshake ends,
+// with the limits of the earlier session. When the handshake ends, lsquic sets
+// the limit of each of those streams again. It took the limit of a
+// bidirectional stream for a unidirectional one.
+describe("a stream that a client opens in 0-RTT", () => {
+  test("carries 400000 bytes when it is unidirectional and that window of the server is the smaller one", async () => {
+    const body = pattern(400000, 8);
+    expect(await resumedEarlyStream(body, { server: { initialMaxStreamDataUni: 12288 } })).toEqual({
+      opened: { earlyDataAccepted: true },
+      received: summary(body),
+      errors: [],
+    });
+  });
+
+  test("keeps its limit when it is unidirectional and the server's bidirectional window is smaller than the bytes sent", async () => {
+    const body = pattern(5000, 9);
+    expect(await resumedEarlyStream(body, { server: { initialMaxStreamDataBidiRemote: 256 } })).toEqual({
+      opened: { earlyDataAccepted: true },
+      received: summary(body),
+      errors: [],
+    });
+  });
+
+  // The server's window for a stream that it opens is smaller than the bytes
+  // sent. The limit of this stream is the other window.
+  test("keeps its limit when it is bidirectional", async () => {
+    const body = pattern(3000, 10);
+    const server = { initialMaxStreamDataBidiLocal: 1000, initialMaxStreamDataBidiRemote: 100000 };
+    expect(await resumedEarlyStream(body, { bidirectional: true, server })).toEqual({
       opened: { earlyDataAccepted: true },
       received: summary(body),
       errors: [],

@@ -137,6 +137,15 @@ export const lsquic: Dependency = {
     // lsquic_prq_destroy() only frees the free list. A stateless reset whose
     // send failed is on the returned list, so destroying the engine leaks it.
     "patches/lsquic/prq-free-returned-conns.patch",
+    // The initial send limit of a bidirectional stream was picked by the role
+    // of the connection, not by who opened the stream (RFC 9000 section 18.2).
+    // That is the same only for a stream the client opens, the one kind
+    // HTTP/3 has. On a stream a node:quic server opens, each side sent up to
+    // the other window and the receiver closed the connection with
+    // FLOW_CONTROL_ERROR. Also gives a unidirectional stream opened in 0-RTT
+    // the unidirectional limit once the handshake completes. Upstream's draft
+    // https://github.com/litespeedtech/lsquic/pull/629 has both changes.
+    "patches/lsquic/stream-send-limit-by-initiator.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

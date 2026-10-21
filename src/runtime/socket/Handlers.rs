@@ -14,19 +14,41 @@ use bun_uws as uws;
 
 use super::Listener as SocketListener;
 use super::SocketMode;
-use super::js_socket_handlers::{CALLBACK_COUNT, JSSocketHandlers};
+use super::js_socket_handlers::{CALLBACK_COUNT, JSSocketHandlers, OPEN_INDEX, WRITABLE_INDEX};
 use super::listener::ListenerType;
 use super::{SSLConfig, SSLConfigFromJs};
 
-// ─── local shims (upstream-crate gaps) ──────────────────────────────────────
-unsafe extern "C" {
-    safe fn AsyncContextFrame__withAsyncContextIfNeeded(
-        global: &JSGlobalObject,
-        callback: JSValue,
-    ) -> JSValue;
+bun_output::declare_scope!(Listener, visible);
+
+/// Which callbacks of a handler table run in the async context of the call that
+/// gave the table (its `AsyncLocalStorage` stores). The others keep only the
+/// `Bun.ModuleGraph` of that call.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WrapPolicy {
+    /// All of them: `Bun.listen`, `Bun.connect`, a TLS upgrade.
+    Given,
+    /// node:net's server over plain sockets. Node runs a handle's events in the
+    /// context the handle was made in: the listening one in `listen()`, an
+    /// accepted one in none, because it exists before any script runs. So `open`
+    /// (the server's 'connection') is `listen()`'s and the accepted socket's
+    /// events are nobody's. `drain` is `listen()`'s too: it completes a write
+    /// that node:net parked without the context of its `write()`, and a write
+    /// from the 'connection' listener is in `listen()`'s.
+    /// https://github.com/nodejs/node/blob/v26.3.0/src/async_wrap.cc#L529-L532
+    /// https://github.com/nodejs/node/blob/v26.3.0/src/connection_wrap.cc#L50-L73
+    NodeServer,
 }
 
-bun_output::declare_scope!(Listener, visible);
+impl WrapPolicy {
+    /// Whether the callback at `index` of the table is the caller's.
+    #[inline]
+    fn keeps_caller_context(self, index: usize) -> bool {
+        match self {
+            WrapPolicy::Given => true,
+            WrapPolicy::NodeServer => index == OPEN_INDEX || index == WRITABLE_INDEX,
+        }
+    }
+}
 
 /// The callbacks and lifecycle bookkeeping shared by a listener and every
 /// socket it accepts, or by one `Bun.connect` socket and its reconnects.
@@ -54,6 +76,8 @@ pub(crate) struct Handlers {
     /// idle release; ownership itself is the `Rc`.
     pub(crate) active_connections: Cell<u32>,
     pub(crate) mode: SocketMode,
+    /// How the callbacks were wrapped; `reload` wraps the new ones the same way.
+    policy: WrapPolicy,
     /// The listener that accepted these sockets, for `mode == Server`.
     ///
     /// Deliberately a nullable raw pointer and not a `BackRef`: a `BackRef`
@@ -67,6 +91,9 @@ pub(crate) struct Handlers {
     /// [`listener`]: Self::listener
     listener: Cell<Option<NonNull<SocketListener>>>,
 }
+
+// One per listener and per `Bun.connect` socket. `policy` sits in the padding after `mode`.
+const _: () = assert!(core::mem::size_of::<Handlers>() == 48);
 
 /// Output of [`Handlers::prepare_reload`]: everything `reload` needs, parsed
 /// and validated before any `Handlers` is touched.
@@ -168,17 +195,23 @@ impl Handlers {
     }
 
     /// Wraps each provided callback with the current async context so it
-    /// dispatches in the right `AsyncLocalStorage` state. Runs before the cell
-    /// exists (create) or before any write to a live cell (reload).
+    /// dispatches in the right `AsyncLocalStorage` state, or with the current
+    /// `Bun.ModuleGraph` alone where `policy` says the callback is not the
+    /// caller's. Runs before the cell exists (create) or before any write to a
+    /// live cell (reload).
     fn wrap_with_context(
         global_object: &JSGlobalObject,
         callbacks: &[JSValue; CALLBACK_COUNT],
+        policy: WrapPolicy,
     ) -> [JSValue; CALLBACK_COUNT] {
-        callbacks.map(|value| {
+        core::array::from_fn(|index| {
+            let value = callbacks[index];
             if value.is_empty() {
                 JSValue::ZERO
+            } else if policy.keeps_caller_context(index) {
+                value.with_async_context_if_needed(global_object)
             } else {
-                AsyncContextFrame__withAsyncContextIfNeeded(global_object, value)
+                value.with_graph_context_if_needed(global_object)
             }
         })
     }
@@ -311,7 +344,7 @@ impl Handlers {
         mode: SocketMode,
     ) -> JsResult<Rc<Handlers>> {
         SocketHandler::from_js(global_object, opts, |generated| {
-            Self::from_generated(global_object, &generated, mode)
+            Self::from_generated(global_object, &generated, mode, WrapPolicy::Given)
         })
     }
 
@@ -319,9 +352,10 @@ impl Handlers {
         global_object: &JSGlobalObject,
         generated: &SocketHandler<'_>,
         mode: SocketMode,
+        policy: WrapPolicy,
     ) -> JsResult<Rc<Handlers>> {
         let callbacks = Self::validate_callbacks(global_object, generated)?;
-        let wrapped = Self::wrap_with_context(global_object, &callbacks);
+        let wrapped = Self::wrap_with_context(global_object, &callbacks, policy);
 
         // Everything fallible is done; the cell is infallible, so a constructed
         // `Handlers` is always fully initialized.
@@ -335,6 +369,7 @@ impl Handlers {
             context: global_object.bun_vm().context_of_caller_no_frame().id(),
             active_connections: Cell::new(0),
             mode,
+            policy,
             listener: Cell::new(None),
         }))
     }
@@ -419,7 +454,7 @@ impl Handlers {
     /// Writes the validated callbacks into the existing cell, so the listener
     /// and every live socket sharing it pick them up in place. Runs no user JS.
     pub(crate) fn apply_reload(&self, global_object: &JSGlobalObject, reloaded: &ReloadedHandlers) {
-        let wrapped = Self::wrap_with_context(global_object, &reloaded.callbacks);
+        let wrapped = Self::wrap_with_context(global_object, &reloaded.callbacks, self.policy);
         self.cell.set_callbacks(global_object, &wrapped);
         self.binary_type.set(reloaded.binary_type);
     }
@@ -497,7 +532,15 @@ impl SocketConfig {
         global: &JSGlobalObject,
         generated: SocketOptions<'_>,
         mode: SocketMode,
+        policy: WrapPolicy,
     ) -> JsResult<SocketConfig> {
+        // With a `tls` option the sockets are node:tls's. It makes each TLS socket
+        // in the server's 'connection' event, so in Node that socket's events
+        // continue `listen()`, which is what `Given` does.
+        let policy = match generated.tls {
+            SocketOptionsTLS::None | SocketOptionsTLS::Boolean(false) => policy,
+            _ => WrapPolicy::Given,
+        };
         let mut result: SocketConfig = 'blk: {
             let ssl: Option<SSLConfig> = match &generated.tls {
                 SocketOptionsTLS::None => None,
@@ -526,7 +569,7 @@ impl SocketConfig {
                     }
                 }),
                 ssl,
-                handlers: Handlers::from_generated(global, &generated.handlers, mode)?,
+                handlers: Handlers::from_generated(global, &generated.handlers, mode, policy)?,
                 default_data: if generated.data.is_undefined() {
                     JSValue::ZERO
                 } else {
@@ -600,9 +643,10 @@ impl SocketConfig {
         opts: JSValue,
         global_object: &JSGlobalObject,
         mode: SocketMode,
+        policy: WrapPolicy,
     ) -> JsResult<SocketConfig> {
         SocketOptions::from_js(global_object, opts, |generated| {
-            Self::from_generated(vm, global_object, generated, mode)
+            Self::from_generated(vm, global_object, generated, mode, policy)
         })
     }
 }

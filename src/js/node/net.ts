@@ -270,6 +270,9 @@ function lazyBlockList() {
 }
 const newDetachedSocket = $bindgen("node_net_binding.bind.ts", "newDetachedSocket");
 const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
+// Bun.listen() for a net.Server. As in Node, 'connection' continues the async context of listen() and the events of
+// an accepted plain socket continue none: https://github.com/nodejs/node/blob/v26.3.0/src/connection_wrap.cc#L50-L73
+const doListen = $newRustFunction("node_net_binding.rs", "doListen", 1) as typeof Bun.listen;
 
 const addServerName = $bindgen("Listener.bind.ts", "addServerName");
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
@@ -4124,7 +4127,7 @@ Server.prototype[kRealListen] = function (
     exclusive = false;
   }
   if (path) {
-    this._handle = Bun.listen({
+    this._handle = doListen({
       unix: path,
       tls,
       // Accepted sockets are always half-open natively; the stream layer
@@ -4158,7 +4161,7 @@ Server.prototype[kRealListen] = function (
       }
     }
   } else if (fd != null) {
-    this._handle = Bun.listen({
+    this._handle = doListen({
       fd,
       hostname,
       tls,
@@ -4171,7 +4174,7 @@ Server.prototype[kRealListen] = function (
       pauseOnConnect: this.pauseOnConnect,
     });
   } else {
-    this._handle = Bun.listen({
+    this._handle = doListen({
       port,
       hostname,
       tls,

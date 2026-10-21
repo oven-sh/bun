@@ -62,6 +62,10 @@ enum Field {
 /// `Bun::JSSocketHandlers::numberOfCallbacks`.
 pub(crate) const CALLBACK_COUNT: usize = Field::Promise as usize;
 
+/// Where `open` and `drain` are in the array [`JSSocketHandlers::create`] takes.
+pub(crate) const OPEN_INDEX: usize = Field::Open as usize;
+pub(crate) const WRITABLE_INDEX: usize = Field::Writable as usize;
+
 /// A `Bun::JSSocketHandlers` cell.
 ///
 /// Unrooted: a `JSSocketHandlers` is only valid while some JS wrapper holds it

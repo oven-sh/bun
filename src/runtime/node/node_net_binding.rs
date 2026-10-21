@@ -9,7 +9,9 @@ use bun_jsc::bindgen::JsScope;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsResult};
 use bun_uws as uws;
 
-use crate::socket::{Listener, NativeCallbacks, NewSocket, SocketFlags, TCPSocket, TLSSocket};
+use crate::socket::{
+    Listener, NativeCallbacks, NewSocket, SocketFlags, TCPSocket, TLSSocket, WrapPolicy,
+};
 
 static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true);
 
@@ -102,6 +104,17 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
     } else {
         make::<true>(cx.global())
     }
+}
+
+/// `Bun.listen` for a `net.Server`: see [`WrapPolicy::NodeServer`].
+#[bun_jsc::host_fn]
+pub(crate) fn do_listen(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [opts] = frame.arguments_as_array::<1>();
+    Listener::listen_inner(
+        &global.js_thread_of_caller(frame),
+        opts,
+        WrapPolicy::NodeServer,
+    )
 }
 
 #[bun_jsc::host_fn]

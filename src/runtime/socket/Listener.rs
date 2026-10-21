@@ -24,7 +24,7 @@ use bun_uws_sys as uws_sys;
 use crate::api::bun_secure_context::SecureContext;
 use crate::generated_bindgen::listener::{ListenerContext, ServerHandle};
 use crate::socket::{
-    Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
+    Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket, WrapPolicy,
 };
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 
@@ -256,6 +256,15 @@ impl Listener {
     // Note: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
     // C-ABI shim (it extracts `opts` from the CallFrame and calls this directly).
     pub(crate) fn listen(cx: &bun_jsc::JsThread<'_>, opts: JSValue) -> JsResult<JSValue> {
+        Self::listen_inner(cx, opts, WrapPolicy::Given)
+    }
+
+    /// `Bun.listen`, and node:net's `listen()` (which passes [`WrapPolicy::NodeServer`]).
+    pub(crate) fn listen_inner(
+        cx: &bun_jsc::JsThread<'_>,
+        opts: JSValue,
+        policy: WrapPolicy,
+    ) -> JsResult<JSValue> {
         log!("listen");
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(cx
@@ -266,7 +275,8 @@ impl Listener {
         // SAFETY: VirtualMachine::get() returns the per-thread VM; valid for program lifetime.
         let vm = VirtualMachine::get().as_mut();
 
-        let mut socket_config = SocketConfig::from_js(vm, opts, cx.global(), SocketMode::Server)?;
+        let mut socket_config =
+            SocketConfig::from_js(vm, opts, cx.global(), SocketMode::Server, policy)?;
         // Teardown handled by Drop on SocketConfig; `handlers` is an `Rc` the
         // `Listener` clones out of it.
         //
@@ -1117,7 +1127,8 @@ impl Listener {
 
         // Client mode: these handlers have no owning listener, so
         // `mark_inactive` skips the listener-release branch.
-        let mut socket_config = SocketConfig::from_js(vm, opts, cx.global(), SocketMode::Client)?;
+        let mut socket_config =
+            SocketConfig::from_js(vm, opts, cx.global(), SocketMode::Client, WrapPolicy::Given)?;
         // No JS wrapper holds the handlers cell until `connect_finish` creates
         // the socket's; the option getters below run user JS that can GC.
         let handlers = Rc::clone(&socket_config.handlers);

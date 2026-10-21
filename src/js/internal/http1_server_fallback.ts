@@ -618,7 +618,7 @@ function connectionListenerHTTP1(server, socket, options) {
       // reaches here listener-less; Upgrade already fell through above).
       const upgradeReq = pendingUpgrade;
       pendingUpgrade = null;
-      socket.removeListener("data", onHttp1SocketData);
+      socket.removeListener("data", onData);
       socket.removeListener("error", onHttp1SocketErrorListener);
       socket.removeListener("end", onHttp1SocketEnd);
       socket.removeListener("drain", onHttp1SocketDrain);
@@ -667,7 +667,23 @@ function connectionListenerHTTP1(server, socket, options) {
     // Node's socketOnDrain then emits 'drain' on the response that waits for it.
     socket._httpMessage?.[kHttp1ResponseHandle]?.socketDrained();
   }
-  socket.on("data", onHttp1SocketData);
+  // Node's parser takes the async context of this call and runs its callbacks there, whatever the socket's 'data'
+  // runs in: 'request' and the request's events, 'upgrade', 'connect', the 'clientError' of a parse error.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L784-L790
+  // https://github.com/nodejs/node/blob/v26.3.0/src/node_http_parser.cc#L722
+  const frame = AsyncContextFrame.current();
+  const onData =
+    frame === undefined
+      ? onHttp1SocketData
+      : function onHttp1SocketDataInFrame(data) {
+          const previous = AsyncContextFrame.exchange(frame);
+          try {
+            onHttp1SocketData(data);
+          } finally {
+            AsyncContextFrame.exchange(previous);
+          }
+        };
+  socket.on("data", onData);
   socket.on("error", onHttp1SocketErrorListener);
   socket.once("end", onHttp1SocketEnd);
   socket.on("drain", onHttp1SocketDrain);

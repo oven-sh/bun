@@ -9,7 +9,7 @@
 //! * `collectModuleReferences`, via `resolveExternalModule`: 2307 2580 2591 2732 2882, reported or
 //!   removed
 //! * `checkImportAttributes`, `getTypeFromImportAttributes`, `checkImportType`,
-//!   `getResolutionModeOverride`: 1453 1454 1463 1464 2322 2823 2856 2857
+//!   `getResolutionModeOverride`: 1453 1454 2322 2823 2856
 //! * `checkImportEqualsDeclaration`: 1202 1392 2437 2438; `checkExportDeclaration`: 1194 2498;
 //!   `checkClassDeclaration`: 1211
 //! * `checkExportAssignment`: 1063 1319 1282 1283 1284 1285 1289 1290 1291 1292
@@ -531,30 +531,36 @@ impl Checker<'_, '_> {
                 return false;
             }
         }
-        // Its attribute values must be strings.
         let hir = self.hir(cx.file);
-        let mut are_strings = true;
-        if specifier_use.is_some()
-            && let Some((.., attributes)) = self.modules_get_import_attributes(cx.file, hir[s].loc)
-        {
-            for value in attributes.iter().map(|attribute| hir[attribute].value) {
-                // The parser has reported a missing value.
-                if !matches!(hir[value].kind, ExprKind::Missing)
-                    && !self
-                        .modules_string_literal_like(cx.file, value)
-                        .is_some_and(|(_, is_string_literal)| is_string_literal)
-                {
-                    are_strings = false;
-                    let start = self.start_of(cx.file, value);
-                    self.error_at(
-                        (cx.file, start, self.end_of_expr(cx.file, value)),
-                        2858,
-                        &[],
-                    );
-                }
+        match self.modules_get_import_attributes(cx.file, hir[s].loc) {
+            Some((.., attributes)) if specifier_use.is_some() => {
+                !self.check_grammar_import_attribute_values(cx.file, attributes)
+            }
+            _ => true,
+        }
+    }
+
+    /// `checkGrammarImportAttributeValues`
+    fn check_grammar_import_attribute_values(
+        &mut self,
+        file: FileId,
+        attributes: Span<PropId>,
+    ) -> bool {
+        let hir = self.hir(file);
+        let mut has_error = false;
+        for value in attributes.iter().map(|attribute| hir[attribute].value) {
+            // The parser has reported a missing value.
+            if !matches!(hir[value].kind, ExprKind::Missing)
+                && !self
+                    .modules_string_literal_like(file, value)
+                    .is_some_and(|(_, is_string_literal)| is_string_literal)
+            {
+                has_error = true;
+                let start = self.start_of(file, value);
+                self.error_at((file, start, self.end_of_expr(file, value)), 2858, &[]);
             }
         }
-        are_strings
+        has_error
     }
 
     /// `resolveExternalModuleName(node, node.ModuleSpecifier())` for the statement `s`, whose module specifier is
@@ -1633,23 +1639,13 @@ impl Checker<'_, '_> {
             start,
             self.modules_end_of_import_attributes(cx.file, object),
         );
-        // `getGlobalImportAttributesTypeChecked` returns `emptyObjectType` if there's no such interface, and the check
-        // is skipped.
-        let name = self.atoms().intern(b"ImportAttributes");
-        if let Some(sym) = self.get_global_type(name, 0)
-            && let Some(source) = self.get_type_from_import_attributes(cx.file, object)
-        {
-            // `getNullableType(importAttributesType, TypeFlagsUndefined)`
-            let target = self.declared_type(sym);
-            let target = self.optional(target);
-            self.check_type_assignable_to(source, target, Some(node), None);
-        }
+        self.check_type_of_import_attributes(node, object);
         // The remaining checks report with `grammarErrorOnNode`.
         if !cx.grammar {
             return;
         }
-        let overrides = self.get_resolution_mode_override(node, attributes, is_type_only);
-        if is_type_only && overrides {
+        let overrides = self.get_resolution_mode_override(cx.file, attributes, is_type_only);
+        if is_type_only {
             return;
         }
         // `SupportsImportAttributes`
@@ -1663,14 +1659,28 @@ impl Checker<'_, '_> {
         {
             // `getEmitSyntaxForModuleSpecifierExpression`
             2856
-        } else if is_type_only {
-            2857
         } else if overrides {
             1454
         } else {
             return;
         };
         self.error_at(node, code, &[]);
+    }
+
+    /// The start of `checkImportAttributes`: the attributes `object`, located at `node`, have to be assignable to the
+    /// global `ImportAttributes`.
+    fn check_type_of_import_attributes(&mut self, node: super::related::FileSpan, object: ExprId) {
+        // `getGlobalImportAttributesTypeChecked` returns `emptyObjectType` if there's no such interface, and the check
+        // is skipped.
+        let name = self.atoms().intern(b"ImportAttributes");
+        if let Some(sym) = self.get_global_type(name, 0)
+            && let Some(source) = self.get_type_from_import_attributes(node.0, object)
+        {
+            // `getNullableType(importAttributesType, TypeFlagsUndefined)`
+            let target = self.declared_type(sym);
+            let target = self.optional(target);
+            self.check_type_assignable_to(source, target, Some(node), None);
+        }
     }
 
     /// `node.End()` of the `ImportAttributes` whose attributes are `object`. Without a `{` it returns 0, which means
@@ -1684,35 +1694,29 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `getResolutionModeOverride`: true if `attributes`, located at `node`, specify the resolution mode.
+    /// `getResolutionModeOverride`: true if `attributes` specify the resolution mode.
     fn get_resolution_mode_override(
         &mut self,
-        node: super::related::FileSpan,
+        file: FileId,
         attributes: Span<PropId>,
         report_errors: bool,
     ) -> bool {
-        let (file, hir) = (node.0, self.hir(node.0));
-        let report = |c: &mut Self, at: super::related::FileSpan, code: u32| {
-            if report_errors {
-                c.error_at(at, code, &[]);
-            }
-            false
+        let hir = self.hir(file);
+        let is_mode = |it: &PropId| {
+            (hir[*it].key.name()).is_some_and(|name| self.atoms().bytes(name) == b"resolution-mode")
         };
-        if attributes.len() != 1 {
-            return report(self, node, 1464);
-        }
-        let only = hir[attributes.at(0)];
-        if !matches!(hir.text.get(only.pos as usize), Some(b'"' | b'\'')) {
-            return false;
-        }
-        if only.key.name().map(|name| self.atoms().bytes(name)) != Some(b"resolution-mode") {
-            return report(self, (file, only.pos, 0), 1463);
-        }
-        let Some((value, _)) = self.modules_string_literal_like(file, only.value) else {
+        let Some(attribute) = attributes.iter().find(is_mode) else {
             return false;
         };
-        matches!(self.atoms().bytes(value), b"import" | b"require")
-            || report(self, (file, self.start_of(file, only.value), 0), 1453)
+        let value = hir[attribute].value;
+        let Some((text, _)) = self.modules_string_literal_like(file, value) else {
+            return false;
+        };
+        let is_valid = matches!(self.atoms().bytes(text), b"import" | b"require");
+        if !is_valid && report_errors {
+            self.error_at((file, self.start_of(file, value), 0), 1453, &[]);
+        }
+        is_valid
     }
 
     /// `HasResolutionModeOverride` for the declaration or the import type whose module specifier is `specifier_use`.
@@ -1732,7 +1736,7 @@ impl Checker<'_, '_> {
         };
         self.modules_get_import_attributes(file, within)
             .is_some_and(|(.., attributes)| {
-                self.get_resolution_mode_override((file, 0, 0), attributes, false)
+                self.get_resolution_mode_override(file, attributes, false)
             })
     }
 
@@ -1763,31 +1767,10 @@ impl Checker<'_, '_> {
         }))
     }
 
-    /// Runs after `checkSourceFile`. `checkImportType` only reads `resolution-mode` from the options and doesn't check
-    /// any of the values.
-    pub(super) fn never_check_options_of_import_types(&self, file: FileId) {
-        let hir = self.hir(file);
-        if hir.import_attributes.is_empty() {
-            return;
-        }
-        for node in (0..hir.types.len() as u32).map(TypeNodeId) {
-            let options = hir.attributes_of_import_type(node);
-            let Some(ExprKind::Object(options)) = options.map(|it| hir[it].kind) else {
-                continue;
-            };
-            for value in options.iter().map(|it| hir[it].value) {
-                // 1453 is reported at a string.
-                if value.is_some() && self.modules_string_literal_like(file, value).is_none() {
-                    self.never_check(self.start_of(file, value), self.end_of_expr(file, value));
-                }
-            }
-        }
-    }
-
-    /// `checkImportType`: `getResolutionModeOverride`
+    /// `checkImportType`: the checks of the attributes.
     fn modules_import_calls_and_types(&mut self, cx: &Cx<'_>) {
         let (hir, bound) = (self.hir(cx.file), self.bound(cx.file));
-        if !cx.grammar || hir.import_attributes.is_empty() {
+        if hir.import_attributes.is_empty() {
             return;
         }
         for (i, node) in hir.types.iter().enumerate() {
@@ -1797,11 +1780,14 @@ impl Checker<'_, '_> {
             if let Some(object) = hir.attributes_of_import_type(TypeNodeId(i as u32))
                 && let ExprKind::Object(attributes) = hir[object].kind
             {
+                self.check_grammar_import_attribute_values(cx.file, attributes);
                 // The `ImportAttributes` node starts at the inner `{`, because `with` is a property of the enclosing
                 // object literal.
                 let end = self.modules_end_of_import_attributes(cx.file, object);
-                let node = (cx.file, hir[object].pos, end);
-                self.get_resolution_mode_override(node, attributes, true);
+                self.check_type_of_import_attributes((cx.file, hir[object].pos, end), object);
+                if cx.grammar {
+                    self.get_resolution_mode_override(cx.file, attributes, true);
+                }
             }
         }
     }

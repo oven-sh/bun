@@ -426,6 +426,7 @@ known_atoms! {
     async_ = "async",
     AsyncDisposable = "AsyncDisposable",
     tslib = "tslib",
+    with = "with",
     // Names that lint rules look for.
     callee = "callee",
     caller = "caller",

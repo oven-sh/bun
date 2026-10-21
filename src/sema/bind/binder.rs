@@ -4268,14 +4268,13 @@ impl<'f, 's> Binder<'f, 's> {
                 self.tys(args)
             }
             TypeNodeKind::Import { args, .. } => {
-                // `checkImportType` only reads `resolution-mode`.
                 // In JavaScript, two copies of a JSDoc type share one.
                 if let Some(attributes) = self.f.attributes_of_import_type(id)
                     && matches!(self.b.parent_of_expr(attributes), Parent::None)
                 {
                     let saved = (self.true_target, self.false_target);
                     (self.true_target, self.false_target) = (FlowId::NONE, FlowId::NONE);
-                    self.unchecked_expr(attributes, Parent::File);
+                    self.expr(attributes, Parent::File);
                     (self.true_target, self.false_target) = saved;
                 }
                 self.tys(args)

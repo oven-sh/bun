@@ -358,8 +358,6 @@
 1459	M	File is CommonJS module because '{0}' has field "type" whose value is not "module"
 1460	M	File is CommonJS module because '{0}' does not have field "type"
 1461	M	File is CommonJS module because 'package.json' was not found
-1463	E	'resolution-mode' is the only valid key for type import attributes.
-1464	E	Type import attributes should have exactly one key - 'resolution-mode' - with value 'import' or 'require'.
 1470	E	The 'import.meta' meta-property is not allowed in files which will build into CommonJS output.
 1471	E	Module '{0}' cannot be imported using this construct. The specifier only resolves to an ES module, which cannot be imported with 'require'. Use an ECMAScript import instead.
 1472	E	'catch' or 'finally' expected.
@@ -914,7 +912,6 @@
 2854	E	Top-level 'await using' statements are only allowed when the 'module' option is set to 'es2022', 'esnext', 'system', 'node16', 'node18', 'node20', 'nodenext', or 'preserve', and the 'target' option is set to 'es2017' or higher.
 2855	E	Class field '{0}' defined by the parent class is not accessible in the child class via super.
 2856	E	Import attributes are not allowed on statements that compile to CommonJS 'require' calls.
-2857	E	Import attributes cannot be used with type-only imports or exports.
 2858	E	Import attribute values must be string literal expressions.
 2859	E	Excessive complexity comparing types '{0}' and '{1}'.
 2860	E	The left-hand side of an 'instanceof' expression must be assignable to the first argument of the right-hand side's '[Symbol.hasInstance]' method.

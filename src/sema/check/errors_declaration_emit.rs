@@ -3656,7 +3656,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let hir = self.c.hir(self.file());
         let mut text = b"export ".to_vec();
         let from_expression = hir.exports_from_expressions.iter().find(|it| it.0 == s);
-        let (spec, mode) = match hir[s].kind {
+        let spec = match hir[s].kind {
             StmtKind::ExportNamed(export) => {
                 let export = &hir[export];
                 if export.type_only {
@@ -3690,13 +3690,12 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     let items = self.list_text(items, format);
                     text.extend_from_slice(&[b"{ ", &items[..], b" }"].concat());
                 }
-                (export.spec, export.mode)
+                export.spec
             }
             StmtKind::ExportStar {
                 spec,
                 alias,
                 type_only,
-                mode,
                 alias_pos,
                 ..
             } => {
@@ -3714,9 +3713,9 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     };
                     text.extend_from_slice(&[b" as ", &name[..]].concat());
                 }
-                (spec, mode)
+                spec
             }
-            _ => (Atom::NONE, ResolutionMode::None),
+            _ => Atom::NONE,
         };
         if spec.is_some() || from_expression.is_some() {
             // `rewriteModuleSpecifier`
@@ -3741,30 +3740,44 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 Some(_) => {}
                 None => text.extend_from_slice(&self.module_specifier_text(s, spec)),
             }
-            text.extend_from_slice(&self.resolution_mode_override_text(s, mode));
+            text.extend_from_slice(&self.import_attributes_text(s));
         }
         text.push(b';');
         Statement::new(StatementKind::ExportDeclaration, text)
     }
 
-    /// `tryGetResolutionModeOverride`: the import attributes of the statement `s`, if they specify a resolution mode.
-    fn resolution_mode_override_text(&self, s: StmtId, mode: ResolutionMode) -> Vec<u8> {
+    /// `emitImportAttributes` for the attributes of the statement `s`, after a space. Empty if it has none.
+    fn import_attributes_text(&self, s: StmtId) -> Vec<u8> {
         let hir = self.c.hir(self.file());
-        let statement = &hir.text[hir[s].start as usize..hir[s].loc.end as usize];
-        // `GetResolutionModeOverride`
-        let reported = strings::index_of(statement, b"resolution-mode").map(|at| &statement[at..]);
-        let word: &[u8] = match mode {
-            ResolutionMode::Import => b"import",
-            ResolutionMode::Require => b"require",
-            ResolutionMode::None => {
-                match reported.and_then(|it| bun_core::strings::split_any(it, b"\"'").nth(2)) {
-                    Some(b"import") => b"import",
-                    Some(b"require") => b"require",
-                    _ => return Vec::new(),
-                }
-            }
+        let within = hir[s].start..hir[s].loc.end;
+        let mut all = hir.import_attributes.iter();
+        let Some(&(keyword, object)) = all.find(|it| within.contains(&it.0)) else {
+            return Vec::new();
         };
-        [b" with { \"resolution-mode\": \"", word, b"\" }"].concat()
+        let ExprKind::Object(attributes) = hir[object].kind else {
+            return Vec::new();
+        };
+        let source = |start: u32, end: u32| hir.text.get(start as usize..end as usize);
+        let keyword: &[u8] = match source(keyword, keyword + 6) {
+            Some(b"assert") => b" assert {",
+            _ => b" with {",
+        };
+        let mut text = keyword.to_vec();
+        for (at, attribute) in attributes.iter().map(|it| hir[it]).enumerate() {
+            text.extend_from_slice(if at == 0 { b" " } else { b", " });
+            let name = self.name(attribute.key.name().unwrap_or(Atom::NONE));
+            match hir.text.get(attribute.pos as usize) {
+                Some(&quote @ (b'"' | b'\'')) => {
+                    text.extend_from_slice(&super::print::quoted(name, quote, false));
+                }
+                _ => text.extend_from_slice(name),
+            }
+            text.extend_from_slice(b": ");
+            let value = (self.c).start_of(self.file(), attribute.value);
+            text.extend_from_slice(source(value, attribute.end).unwrap_or_default());
+        }
+        text.extend_from_slice(if attributes.is_empty() { b"}" } else { b" }" });
+        text
     }
 
     /// `UpdateImportDeclaration`, `UpdateImportEqualsDeclaration`: `text` after `decl.Modifiers()` of the statement
@@ -3792,12 +3805,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             // `rewriteModuleSpecifier`
             emit.result_has_external_module_indicator = true;
             let specifier = emit.module_specifier_text(s, import.spec);
-            [
-                &specifier[..],
-                &emit.resolution_mode_override_text(s, import.mode)[..],
-                b";",
-            ]
-            .concat()
+            [&specifier[..], &emit.import_attributes_text(s)[..], b";"].concat()
         };
         // `import "mod"`: "possibly needed for side effects? (global interface patches, module augmentations, etc)"
         if import.clause_start == import.clause_end {

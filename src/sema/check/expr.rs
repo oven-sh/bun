@@ -818,10 +818,30 @@ impl<'p, 's> Checker<'p, 's> {
             && !matches!(hir[property].key, PropKey::Computed(k) if k == e)
             && matches!(hir[owner].kind, ExprKind::Object(_))
         {
+            if self.is_inline_import_attributes(file, e, property) {
+                return ControlFlow::Break(true);
+            }
             ControlFlow::Continue(owner)
         } else {
             ControlFlow::Break(false)
         }
+    }
+
+    /// `isInlineImportAttributes`: true if `e`, the value of `property`, is the `{ .. }` of
+    /// `import("m", { with: { .. } })`.
+    fn is_inline_import_attributes(&self, file: FileId, e: ExprId, property: PropId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let options = bound.prop_owner[property.idx()];
+        hir[property].kind == PropKind::Init
+            && hir[property].key == PropKey::Name(known::with)
+            && matches!(
+                hir[property].name_kind,
+                NameKind::Identifier | NameKind::StringLiteral
+            )
+            && matches!(hir[e].kind, ExprKind::Object(_))
+            && matches!(bound.parent_of_expr(options), Parent::Expr(call)
+                if matches!(hir[call].kind, ExprKind::ImportCall { args }
+                    if args.len() > 1 && hir.id_at(args, 1) == options))
     }
 
     /// True if literals passed for `ty` keep their exact types: `ty` is a `<const T>` or is built

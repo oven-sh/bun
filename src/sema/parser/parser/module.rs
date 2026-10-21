@@ -248,7 +248,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         let declarations = (self.f.imports.len(), self.f.exports.len());
         let base = self.s.props.len();
-        let (mut mode, mut has_only_strings) = (ResolutionMode::None, true);
+        let (mut mode, mut has_mode, mut has_only_strings) = (ResolutionMode::None, false, true);
         let lists = self.enter_list(ListKind::ImportAttributes);
         while self.is_in_list(T::CloseBrace) && self.is_at_element(ListKind::ImportAttributes) {
             // `parseImportAttribute`
@@ -273,7 +273,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 _ => None,
             };
             has_only_strings &= is_at_string && text.is_some();
-            if token == T::String && self.lx.text_of(key) == b"resolution-mode" {
+            // `GetResolutionModeOverride`: the first attribute with that name counts.
+            if !has_mode && token == T::String && self.lx.text_of(key) == b"resolution-mode" {
+                has_mode = true;
                 // `IsStringLiteralLike`
                 let text = text.filter(|_| !self.is_parenthesized(value));
                 mode = match text.map(|it| self.lx.text_of(it)) {
@@ -311,10 +313,6 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 false if is_in_type => {}
                 false => self.check_expressions_of_declaration(open, declarations),
             }
-        }
-        // `resolution-mode` only counts when it's the only attribute.
-        if self.s.props.len() != base + 1 {
-            mode = ResolutionMode::None;
         }
         let props = take_span!(self, props, base);
         let object = self.finish_expr(ExprKind::Object(props), open);

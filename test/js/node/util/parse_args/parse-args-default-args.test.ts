@@ -168,6 +168,12 @@ describe("parseArgs default args when process.argv is short", () => {
     });
   });
 
+  test("bun -e <code that empties process.argv>", async () => {
+    using dir = tempDir("parse-args-empty-argv", {});
+    const code = `process.argv.length = 0; process.stdout.write(${calls({ ifStrictReturns: true })})`;
+    expect(await run(["-e", code], { cwd: String(dir) })).toEqual(printed(JSON.stringify(noArgs.results)));
+  });
+
   test("a script that shortens process.argv", async () => {
     using dir = tempDir("parse-args-short-argv", {
       "short-argv.cjs": `

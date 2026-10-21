@@ -36,6 +36,7 @@
 #include "wtf/text/ASCIILiteral.h"
 #include "BunObject+exports.h"
 #include "ErrorCode.h"
+#include "GeneratedArchive.h"
 #include "GeneratedBunObject.h"
 #include "GeneratedBunObjectInternals.h"
 #include "GeneratedCrypto.h"
@@ -43,6 +44,7 @@
 #include "GeneratedCsrfJsc.h"
 #include "GeneratedDns.h"
 #include "GeneratedDnsInternals.h"
+#include "GeneratedFetchSession.h"
 #include "GeneratedFilesystemRouter.h"
 #include "GeneratedGlob.h"
 #include "GeneratedHashObject.h"
@@ -51,6 +53,7 @@
 #include "GeneratedJSON5Object.h"
 #include "GeneratedJSONCObject.h"
 #include "GeneratedPasswordObject.h"
+#include "GeneratedS3Client.h"
 #include "GeneratedSemverObject.h"
 #include "GeneratedTOMLObject.h"
 #include "GeneratedTranspiler.h"
@@ -946,13 +949,13 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 /* Source for BunObject.lut.h
 @begin bunObjectTable
     $                                              bunObjectShell                                                      DontDelete|CustomValue
-    Archive                                        BunObject_lazyPropCb_wrap_Archive                                   DontDelete|PropertyCallback
+    Archive                                        Bun::Bindgen::Generated::Archive::getArchiveConstructor             DontDelete|PropertyCallback
     ArrayBufferSink                                BunObject_lazyPropCb_wrap_ArrayBufferSink                           DontDelete|PropertyCallback
     Cookie                                         constructCookieObject                                               DontDelete|ReadOnly|PropertyCallback
     CookieMap                                      constructCookieMapObject                                            DontDelete|ReadOnly|PropertyCallback
     CryptoHasher                                   Bun::Bindgen::Generated::CryptoHasher::getCryptoHasherConstructor   DontDelete|PropertyCallback
     FFI                                            BunObject_lazyPropCb_wrap_FFI                                       DontDelete|PropertyCallback
-    FetchSession                                   BunObject_lazyPropCb_wrap_FetchSession                              DontDelete|PropertyCallback
+    FetchSession                                   Bun::Bindgen::Generated::FetchSession::getFetchSessionConstructor   DontDelete|PropertyCallback
     FileSystemRouter                               Bun::Bindgen::Generated::FilesystemRouter::getFileSystemRouterConstructor DontDelete|PropertyCallback
     Glob                                           Bun::Bindgen::Generated::Glob::getGlobConstructor                   DontDelete|PropertyCallback
     Image                                          Bun::Bindgen::Generated::Image::getImageConstructor                 DontDelete|PropertyCallback
@@ -974,7 +977,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     YAML                                           Bun::Bindgen::Generated::YAMLObject::createYAML                     DontDelete|PropertyCallback
     Transpiler                                     Bun::Bindgen::Generated::Transpiler::getTranspilerConstructor       DontDelete|PropertyCallback
     embeddedFiles                                  BunObject_lazyPropCb_wrap_embeddedFiles                             DontDelete|PropertyCallback
-    S3Client                                       BunObject_lazyPropCb_wrap_S3Client                                  DontDelete|PropertyCallback
+    S3Client                                       Bun::Bindgen::Generated::S3Client::getS3ClientConstructor           DontDelete|PropertyCallback
     s3                                             BunObject_lazyPropCb_wrap_s3                                        DontDelete|PropertyCallback
     CSRF                                           Bun::Bindgen::Generated::CsrfJsc::createCSRF                        DontDelete|PropertyCallback
     allocUnsafe                                    Bun::Bindgen::Generated::BunObject::jsAllocUnsafe                   DontDelete|Function 1

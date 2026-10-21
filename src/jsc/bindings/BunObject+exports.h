@@ -3,11 +3,8 @@
 
 // --- Getters ---
 #define FOR_EACH_GETTER(macro) \
-    macro(Archive) \
     macro(FFI) \
-    macro(FetchSession) \
     macro(markdown) \
-    macro(S3Client) \
     macro(Terminal) \
     macro(argv) \
     macro(cron) \

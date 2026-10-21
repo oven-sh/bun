@@ -7,10 +7,11 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use bun_core::Tag as BunStringTag;
 use bun_http::{self as http, Headers};
 use bun_http_jsc::headers_jsc::from_fetch_headers;
+use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsClass as _,
-    JsError, JsRef, JsResult, URLJsc as _,
+    self as jsc, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsClass as _, JsError, JsRef,
+    JsResult, URLJsc as _,
 };
 use bun_ptr::RefPtr;
 
@@ -18,7 +19,7 @@ use crate::socket::ssl_config::{SSLConfig, SSLConfigFromJs as _};
 use crate::webcore::FetchHeaders;
 use crate::webcore::response::HeadersRef;
 
-pub(crate) use crate::generated_classes::js_FetchSession as js;
+pub(crate) use crate::generated_bindgen::fetch_session::js_FetchSession as js;
 
 /// `proxy` as given to `fetch()` or to a session. Absent means "inherit".
 #[derive(Clone)]
@@ -159,7 +160,6 @@ pub(crate) fn parse_proxy(global: &JSGlobalObject, proxy_arg: JSValue) -> JsResu
 
 static NEXT_POOL_ID: AtomicU64 = AtomicU64::new(1);
 
-#[bun_jsc::JsClass]
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct FetchSession {
     pool: http::PoolOptions,
@@ -182,7 +182,7 @@ pub(crate) struct FetchSession {
 
 bun_jsc::impl_abort_handle_owner!(FetchSession, abort_handle, |this, _cause| {
     // SAFETY: trait contract: `this` is live (dropping it drops the handle).
-    unsafe { &*this }.close_idle_sockets()
+    unsafe { &*this }.close()
 });
 
 /// One request's hold on its session, from the moment `fetch()` reads the
@@ -250,13 +250,12 @@ impl FetchSession {
         self.ref_count.get() == 2
     }
 
-    pub(crate) fn constructor(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-        this_value: JSValue,
-    ) -> JsResult<*mut FetchSession> {
-        let vm = global.bun_vm();
-        let options = frame.argument(0);
+    pub(crate) fn constructor<'a>(
+        cx: &mut JsScope<'a>,
+        structure: JsStructure<'a, Self>,
+        options: JsLocal<'a>,
+    ) -> JsResult<JsWrapper<'a, Self>> {
+        let thread = cx.js_thread();
         let mut this = Box::new(FetchSession {
             pool: http::PoolOptions {
                 id: NEXT_POOL_ID.fetch_add(1, Ordering::Relaxed),
@@ -269,17 +268,40 @@ impl FetchSession {
             proxy: None,
             unix: Box::default(),
             used: Cell::new(false),
-            this_value: JsCell::new(JsRef::init_weak(this_value)),
+            this_value: JsCell::new(JsRef::empty()),
             ref_count: Cell::new(1),
             abort_handle: bun_jsc::AbortHandle::for_owner::<FetchSession>(),
         });
         // SAFETY: a heap allocation at its final address; its `Drop` (with the last ref, or when
         // this constructor fails) disarms the handle.
         unsafe {
-            bun_jsc::AbortHandle::arm_owner(&raw mut *this, vm.context_of_caller(frame));
+            bun_jsc::AbortHandle::arm_owner(&raw mut *this, thread.context());
         }
+        let check_server_identity =
+            Self::read_options(&mut this, thread.global(), options.to_js())?;
+
+        let this = bun_core::heap::into_raw(this);
+        // SAFETY: the allocation's one ref becomes the object's.
+        let this_value = structure.create(&cx.heap, unsafe { RefPtr::from_raw(this) });
+        // SAFETY: `this_value` holds the ref.
+        let this = unsafe { &*this };
+        this.this_value.set(JsRef::init_weak(this_value.to_js()));
+        if let Some(callback) = check_server_identity {
+            js::check_server_identity_set_cached(this_value.to_js(), cx.global(), callback);
+        }
+        Ok(this_value)
+    }
+
+    /// Returns `tls.checkServerIdentity`, which the JS object holds.
+    fn read_options(
+        this: &mut Self,
+        global: &JSGlobalObject,
+        options: JSValue,
+    ) -> JsResult<Option<JSValue>> {
+        let vm = global.bun_vm();
+        let mut check_server_identity = None;
         if options.is_undefined_or_null() {
-            return Ok(bun_core::heap::into_raw(this));
+            return Ok(None);
         }
         if !options.is_object() {
             return Err(global
@@ -291,9 +313,7 @@ impl FetchSession {
                 let parsed = parse_tls(vm, global, tls)?;
                 this.ssl_config = parsed.ssl_config;
                 this.reject_unauthorized = parsed.reject_unauthorized;
-                if let Some(callback) = parsed.check_server_identity {
-                    js::check_server_identity_set_cached(this_value, global, callback);
-                }
+                check_server_identity = parsed.check_server_identity;
             } else if !tls.is_undefined_or_null() {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "FetchSession: 'tls' must be an object"
@@ -364,16 +384,17 @@ impl FetchSession {
             }
         }
 
-        Ok(bun_core::heap::into_raw(this))
+        Ok(check_server_identity)
     }
 
     /// `fetch` bound to this session, so it can be handed to anything that
     /// takes a `fetch` function.
     pub(crate) fn get_fetch(
         &self,
-        this_value: JSValue,
-        global: &JSGlobalObject,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
     ) -> JsResult<JSValue> {
+        let global = cx.global();
         let target = jsc::JSFunction::create(
             global,
             "fetch",
@@ -383,7 +404,7 @@ impl FetchSession {
         );
         target.bind(
             global,
-            this_value,
+            this_value.to_js(),
             &bun_core::String::static_("fetch"),
             1.0,
             &[],
@@ -392,13 +413,7 @@ impl FetchSession {
 
     /// Close this session's idle keep-alive connections. Requests in flight
     /// finish, and the session stays usable.
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn close(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        self.close_idle_sockets();
-        Ok(JSValue::UNDEFINED)
-    }
-
-    fn close_idle_sockets(&self) {
+    pub(crate) fn close(&self) {
         if self.used.get() && http::http_thread::is_initialized() {
             http::http_thread().schedule_pool_close(self.pool.id);
         }
@@ -406,7 +421,7 @@ impl FetchSession {
 
     pub(crate) fn finalize(&self) {
         self.this_value.with_mut(JsRef::finalize);
-        self.close_idle_sockets();
+        self.close();
     }
 }
 

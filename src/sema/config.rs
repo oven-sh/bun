@@ -344,6 +344,8 @@ struct Raw {
     compiler: Vec<(Vec<u8>, Json)>,
     /// `explicitNullFields`: the options that are `null` in `raw`, which only covers the file itself.
     explicit_null_fields: Vec<Vec<u8>>,
+    /// All the options in `raw`, whatever their values.
+    raw_fields: Vec<Vec<u8>>,
     files: List,
     include: List,
     exclude: List,
@@ -436,9 +438,25 @@ pub(crate) fn normalize_non_list_option_value(value: &[u8], base: &[u8]) -> Vec<
     }
 }
 
-/// `ParseCompilerOptions`. A field with its zero value (`""`, or `None` for a nil list) is simply absent from
-/// `all_options`.
+/// `compilerOptionContainsConfigDirTemplate`
+fn contains_config_dir_template(key: &[u8], value: &Json) -> bool {
+    let mut paths = match value {
+        Json::Array(paths) => paths.iter(),
+        path => std::slice::from_ref(path).iter(),
+    };
+    is_file_path(key) && paths.any(|it| it.as_str().is_some_and(starts_with_config_dir_template))
+}
+
+/// `compilerOptionsParser.ParseOption`. A field with its zero value (`""`, or `None` for a nil list) is simply absent
+/// from `all_options`. A path that starts with `${configDir}` is in `unresolvedPaths`, which is applied last, so it wins
+/// over a later value of the same file that doesn't.
 fn parse_compiler_options(key: &[u8], value: Option<Json>, all_options: &mut Vec<(Vec<u8>, Json)>) {
+    let is_unresolved = |value: &Json| contains_config_dir_template(key, value);
+    if (all_options.iter()).any(|(name, value)| name == key && is_unresolved(value))
+        && !value.as_ref().is_some_and(is_unresolved)
+    {
+        return;
+    }
     all_options.retain(|(name, _)| name != key);
     let value = value.filter(|value| value.as_str() != Some(b""));
     all_options.extend(value.map(|value| (key.to_vec(), value)));
@@ -538,6 +556,16 @@ fn parse_config(
             read = Some(waiting.pop().map(PendingConfig::merged));
         }
     }
+}
+
+/// `mergeParsedCompilerOptions`. An option that `source` specifies, even with an invalid value, removes the path in
+/// `target` that starts with `${configDir}`.
+fn merge_parsed_compiler_options(target: &mut Vec<(Vec<u8>, Json)>, source: &mut Raw) {
+    target.retain(|(key, value)| {
+        !(source.raw_fields.contains(key) && contains_config_dir_template(key, value))
+    });
+    let specified = std::mem::take(&mut source.compiler);
+    merge_compiler_options(target, specified, &source.explicit_null_fields);
 }
 
 /// A configuration file, and what it has inherited so far.
@@ -705,7 +733,9 @@ fn open_config(
     }
     // For a repeated name, `raw` has the last value.
     let compiler = json.get(b"compilerOptions").and_then(Json::as_object);
-    own.explicit_null_fields = (compiler.into_iter().flatten())
+    let raw_fields = || compiler.into_iter().flatten();
+    own.raw_fields = raw_fields().map(|option| option.0.clone()).collect();
+    own.explicit_null_fields = raw_fields()
         .filter(|option| option.1 == Json::Null)
         .map(|option| option.0.clone())
         .collect();
@@ -764,8 +794,9 @@ fn open_config(
 
 impl PendingConfig {
     /// `extended`: the file at `extended_path`, which is the next of the files this one extends.
-    fn inherit(&mut self, extended_path: &[u8], extended: Raw, is_case_sensitive: bool) {
+    fn inherit(&mut self, extended_path: &[u8], mut extended: Raw, is_case_sensitive: bool) {
         let (own, inherited) = (&self.own, &mut self.inherited);
+        merge_parsed_compiler_options(&mut inherited.compiler, &mut extended);
         // A property that the extending file doesn't specify itself takes its value from the last extended file,
         // relative to that file's directory.
         // `relativeDifference`: from the extending file's directory. 18003 prints the result.
@@ -806,12 +837,6 @@ impl PendingConfig {
         inherit(&own.include, &mut inherited.include, extended.include);
         inherit(&own.exclude, &mut inherited.exclude, extended.exclude);
         inherit(&own.files, &mut inherited.files, extended.files);
-        let explicit_null_fields = &extended.explicit_null_fields;
-        merge_compiler_options(
-            &mut inherited.compiler,
-            extended.compiler,
-            explicit_null_fields,
-        );
     }
 
     /// Returns the file merged with everything it has inherited.
@@ -826,12 +851,7 @@ impl PendingConfig {
         if inherited.files.is_specified {
             own.files = inherited.files;
         }
-        let specified = std::mem::take(&mut own.compiler);
-        merge_compiler_options(
-            &mut inherited.compiler,
-            specified,
-            &own.explicit_null_fields,
-        );
+        merge_parsed_compiler_options(&mut inherited.compiler, &mut own);
         own.compiler = inherited.compiler;
         own
     }
@@ -1016,18 +1036,14 @@ fn project_from_raw(
 ) -> Project {
     // `handleOptionConfigDirTemplateSubstitution`
     for (key, value) in &mut raw.compiler {
+        let is_unresolved = contains_config_dir_template(key, value);
         match value {
-            Json::String(s) if is_file_path(key) => {
-                if let Some(substituted) = substitute_if_template(s, base) {
-                    *s = substituted;
-                }
-            }
-            Json::Array(list) if is_file_path(key) => {
+            Json::String(s) if is_unresolved => *s = substitute_config_dir(s, base),
+            // In every path of the list, wherever it has the template.
+            Json::Array(list) if is_unresolved => {
                 for item in list {
-                    if let Json::String(s) = item
-                        && let Some(substituted) = substitute_if_template(s, base)
-                    {
-                        *s = substituted;
+                    if let Json::String(s) = item {
+                        *s = substitute_config_dir(s, base);
                     }
                 }
             }

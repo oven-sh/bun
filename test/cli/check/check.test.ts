@@ -22962,6 +22962,26 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(exitCode).toBe(1);
     });
 
+    test("an option with an invalid value removes the inherited path that starts with `${configDir}`", async () => {
+      const options = `"lib": ["esnext"], "types": [], "noEmit": true`;
+      using dir = project({
+        "base.json": `{ "compilerOptions": { ${options}, "rootDir": "\${configDir}/src" }, "files": ["a.ts"] }`,
+        "tsconfig.json": `{ "extends": "./base.json" }`,
+        "invalid.json": `{ "extends": "./base.json", "compilerOptions": { "rootDir": 1 } }`,
+        "twice.json": `{ "compilerOptions": { ${options}, "rootDir": "\${configDir}/src", "rootDir": "." }, "files": ["a.ts"] }`,
+        "a.ts": "",
+      });
+      const [inherited, invalid, twice] = await Promise.all(
+        ["tsconfig.json", "invalid.json", "twice.json"].map(config => check(dir, ["-p", config])),
+      );
+      const outside = `error TS6059: File '<dir>/a.ts' is not under 'rootDir' '<dir>/src'.`;
+      expect(inherited.stdout).toStartWith(outside);
+      expect(invalid.stdout).toBe(
+        "invalid.json(1,61): error TS5024: Compiler option 'rootDir' requires a value of type string.",
+      );
+      expect(twice.stdout).toStartWith(outside);
+    });
+
     test("reports an error when there's nothing to check", async () => {
       using dir = tempDir("bun-check", { "README.md": "", "empty/README.md": "" });
       for (const args of [[], ["empty"]]) {

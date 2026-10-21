@@ -1205,7 +1205,10 @@ impl<'p, 's> Checker<'p, 's> {
         texts: &[Atom],
         types: &[TypeId],
     ) {
-        let matches = self.infer_types_from_template_literal_type(source, texts, types);
+        let matches =
+            self.infer_types_from_template_literal_type(source, texts, types, &mut |c, s, t| {
+                c.is_assignable(s, t)
+            });
         // With only placeholders and no match, infer `never` for each so that the result matches
         // nothing. Their constraint, `string`, would match.
         if matches.is_none() && !texts.iter().all(|&t| self.atoms().bytes(t).is_empty()) {

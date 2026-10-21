@@ -7942,7 +7942,8 @@ impl<'p, 's> Checker<'p, 's> {
         types: &[TypeId],
         compare: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> bool,
     ) -> bool {
-        let Some(inferences) = self.infer_types_from_template_literal_type(source, texts, types)
+        let Some(inferences) =
+            self.infer_types_from_template_literal_type(source, texts, types, compare)
         else {
             return false;
         };
@@ -7951,12 +7952,13 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// `inferTypesFromTemplateLiteralType`
+    /// `inferTypesFromTemplateLiteralType`. See `is_type_matched_by_template_literal_type` for `compare`.
     pub(super) fn infer_types_from_template_literal_type(
         &mut self,
         source: TypeId,
         texts: &[Atom],
         types: &[TypeId],
+        compare: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> bool,
     ) -> Option<Vec<TypeId>> {
         match self.data(source) {
             // `TypeFlagsStringLiteral`, which a string enum member has too.
@@ -7980,7 +7982,7 @@ impl<'p, 's> Checker<'p, 's> {
                         tb
                     };
                     pieces.push(
-                        if self.is_assignable(sb, tb)
+                        if compare(self, sb, tb)
                             || self.is_any(s)
                             || self.is_every_type_of_kind(s, tf::STRING_LIKE)
                         {

@@ -7,7 +7,7 @@ use bun_collections::VecExt;
 use bun_collections::bit_set::DynamicBitSet;
 use bun_core::{self, Utf8Bytes};
 use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
-use bun_sourcemap::{Ordinal, ParsedSourceMap};
+use bun_sourcemap::{InternalSourceMap, Ordinal, ParsedSourceMap};
 
 type LinesHits = Vec<u32>;
 type Bitset = DynamicBitSet;
@@ -608,7 +608,7 @@ pub struct BasicBlockRange {
 pub struct ByteRangeMapping {
     /// A bit for each code unit of the text JSC compiled, which is what JSC's offsets and the
     /// source map's generated columns count. Set if the unit can make its line executable:
-    /// not white space or a brace, or `print_for_coverage` maps it. The text is only borrowed.
+    /// not white space or a brace, or a brace of an object literal. The text is only borrowed.
     executable_units: Bitset,
     /// Code unit offset of the first unit of each line of the text.
     line_starts: Vec<u32>,
@@ -826,22 +826,34 @@ impl ByteRangeMapping {
         }
     }
 
-    /// `scan` sets no brace. Those of an object are code, and the printer tells them from a block's.
-    fn set_mapped_units_executable(&mut self, text: &[u8]) {
-        let Some(source_map) = print_for_coverage(self.source_url.slice(), text) else {
-            return;
-        };
-        for &original in source_map.mappings.original() {
-            if let Some(offset) = self.offset_of(original) {
-                self.executable_units.set(offset as usize);
+    /// `scan` sets no brace. Those of an object literal are code, and the printer marks them.
+    fn set_object_braces_executable(&mut self, text: &[u8], already_bundled: bool) {
+        if already_bundled {
+            // JSC compiles a `// @bun` file as written, so the original positions are in `text`.
+            if let Some(blob) = print_for_coverage(self.source_url.slice(), text) {
+                InternalSourceMap {
+                    data: blob.list.as_ptr(),
+                }
+                .for_each_object_brace(|mapping| self.set_executable(mapping.original));
             }
+        } else if let Some(source_map) = bun_jsc::VirtualMachine::VirtualMachine::get()
+            .as_mut()
+            .source_mappings()
+            .get(self.source_url.slice())
+        {
+            source_map.for_each_object_brace(|mapping| self.set_executable(mapping.generated));
+        }
+    }
+
+    fn set_executable(&mut self, position: bun_sourcemap::LineColumnOffset) {
+        if let Some(offset) = self.offset_of(position) {
+            self.executable_units.set(offset as usize);
         }
     }
 }
 
-/// The source map from parsing and printing `text`, the text JSC compiled, if both succeed.
-/// The one that errors use keeps the braces of blocks: a `using` is disposed of at the `}`.
-fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<ParsedSourceMap> {
+/// The `InternalSourceMap` from parsing and printing `text`, if both succeed.
+fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<bun_core::MutableString> {
     let arena = bun_alloc::Arena::new();
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
     let _ast_scope = ast_memory_allocator.enter();
@@ -865,8 +877,8 @@ fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<ParsedSourceMap> {
             .collect(),
     );
     let mut chunk = None;
-    // ASCII_ONLY = false: the chunk is VLQ text, not an `InternalSourceMap`.
-    bun_js_printer::print_ast::<_, false, true>(
+    // ASCII_ONLY = true: the chunk is an `InternalSourceMap`, not VLQ text.
+    bun_js_printer::print_ast::<_, true, true>(
         &mut bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
         &arena,
         &ast,
@@ -879,7 +891,8 @@ fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<ParsedSourceMap> {
         },
     )
     .ok()?;
-    bun_sourcemap::mapping::parse(chunk?.buffer.list.as_slice(), None, 1, Default::default()).ok()
+    let blob = chunk?.buffer;
+    InternalSourceMap::is_valid_blob(blob.list.as_slice()).then_some(blob)
 }
 
 /// `ByteRangeMapping::line_starts` and `executable_units`. Lines end where
@@ -1013,6 +1026,7 @@ extern "C" fn ByteRangeMapping__generate(
     str_: &bun_core::String,
     source_contents_str: &bun_core::String,
     source_id: i32,
+    already_bundled: bool,
 ) {
     // SAFETY: thread_map() returns a pointer into this thread's owned Box<HashMap>;
     // valid for the lifetime of the thread, and we are the only mutable accessor on
@@ -1034,7 +1048,7 @@ extern "C" fn ByteRangeMapping__generate(
 
     let mut new_value =
         ByteRangeMapping::compute(source_contents_str, source_hash, source_id, source_url);
-    new_value.set_mapped_units_executable(source_contents.slice());
+    new_value.set_object_braces_executable(source_contents.slice(), already_bundled);
     map.insert(hash, new_value);
 }
 

@@ -63,11 +63,13 @@
 //! ```text
 //!     [ 0.. 8]  total_len:         u64   -- written by Chunk.Builder.generateChunk
 //!     [ 8..16]  mapping_count:     u64   -- written by Chunk.Builder.generateChunk
-//!     [16..24]  unused                   -- `--compile` embeds a blob for the Bun of another version to read
+//!     [16..20]  unused                   -- `--compile` embeds a blob for the Bun of another version to read,
+//!     [20..24]  object_brace_count: u32  -- and an older one has a line count in [16..24], so 0 here
 //!     [24..28]  sync_count:        u32
 //!     [28..32]  stream_offset:     u32   -- byte offset from blob start to stream
 //!     [32..  ]  SyncEntry[sync_count]    -- 24 bytes each
-//!     [stream_offset..total_len-stream_tail_pad]  Window[sync_count]
+//!     [stream_offset..]  Window[sync_count]
+//!     [..total_len-stream_tail_pad]  u32[object_brace_count] -- see `Builder::mark_object_brace`
 //!     [total_len-stream_tail_pad..total_len]      zero bytes (see `STREAM_TAIL_PAD`)
 //! ```
 //!
@@ -181,6 +183,18 @@ impl InternalSourceMap {
         // starting at HEADER_SIZE; blob layout is byte-addressed (no alignment
         // assumed) so we read unaligned.
         unsafe { ptr::read_unaligned(self.data.add(off).cast::<SyncEntry>()) }
+    }
+
+    /// Which mappings are marked, counted from the first one, ascending: a `u32` each.
+    fn object_braces(&self) -> &[u8] {
+        // SAFETY: blob is at least HEADER_SIZE bytes.
+        let count = unsafe { u32::from_ne_bytes(*self.data.add(20).cast::<[u8; 4]>()) };
+        let stream = self.stream();
+        let len = count as usize * size_of::<u32>();
+        match stream.len().checked_sub(len + STREAM_TAIL_PAD) {
+            Some(start) => &stream[start..][..len],
+            None => &[],
+        }
     }
 
     #[inline]
@@ -653,6 +667,25 @@ impl InternalSourceMap {
         }
     }
 
+    /// The mappings that `Builder::mark_object_brace` marked, in generated order.
+    pub fn for_each_object_brace(self, mut each: impl FnMut(Mapping)) {
+        let mut marked = self
+            .object_braces()
+            .chunks_exact(size_of::<u32>())
+            .map(|index| u32::from_ne_bytes(index.try_into().unwrap()));
+        let Some(mut next) = marked.next() else {
+            return;
+        };
+        let mut index = 0;
+        self.for_each(|mapping| {
+            if index == next {
+                each(mapping);
+                next = marked.next().unwrap_or(u32::MAX);
+            }
+            index += 1;
+        });
+    }
+
     /// Re-encode the full mapping stream as a standard VLQ "mappings" string. Only
     /// the inspector's inline-sourcemap path needs this.
     pub fn append_vlq_to(self, out: &mut MutableString) {
@@ -741,6 +774,7 @@ pub struct Builder {
     pending_original_line: [i32; SYNC_INTERVAL],
     pending_original_column: [i32; SYNC_INTERVAL],
     finalized: Option<MutableString>,
+    object_braces: Vec<u32>,
 }
 
 impl Default for Builder {
@@ -758,6 +792,7 @@ impl Default for Builder {
             pending_original_line: [0; SYNC_INTERVAL],
             pending_original_column: [0; SYNC_INTERVAL],
             finalized: None,
+            object_braces: Vec::new(),
         }
     }
 }
@@ -798,6 +833,17 @@ impl Builder {
 
         if self.pending_n as usize == SYNC_INTERVAL {
             self.flush_window();
+        }
+    }
+
+    /// The last mapping is of a brace of an object literal, which is code. A block's is not, and
+    /// coverage sees the same character.
+    pub(crate) fn mark_object_brace(&mut self) {
+        let Some(index) = self.count.checked_sub(1) else {
+            return;
+        };
+        if self.object_braces.last() != Some(&index) {
+            self.object_braces.push(index);
         }
     }
 
@@ -1022,19 +1068,27 @@ impl Builder {
 
             let sync_bytes = self.sync_entries.len() * size_of::<SyncEntry>();
             let stream_offset: u32 = u32::try_from(HEADER_SIZE + sync_bytes).expect("int cast");
-            let total: usize = stream_offset as usize + self.win_stream.len() + STREAM_TAIL_PAD;
+            let object_braces_offset = stream_offset as usize + self.win_stream.len();
+            let object_braces_bytes = self.object_braces.len() * size_of::<u32>();
+            let total: usize = object_braces_offset + object_braces_bytes + STREAM_TAIL_PAD;
 
             let mut out = MutableString::init_empty();
-            // Every byte in [0..total) is written below: [0..24] zero-filled,
-            // [24..32] header u32s, [32..32+sync_bytes] sync table memcpy,
+            // Every byte in [0..total) is written below: [0..20] zero-filled,
+            // [20..32] header u32s, [32..32+sync_bytes] sync table memcpy,
             // [stream_offset..stream_offset+win_stream.len()] stream memcpy,
+            // [object_braces_offset..total-STREAM_TAIL_PAD] one u32 at a time,
             // [total-STREAM_TAIL_PAD..total] zero-filled. These ranges are
             // contiguous (HEADER_SIZE==32, stream_offset==32+sync_bytes), so
             // no uninit bytes are exposed by set_len.
             // SAFETY: every byte in [0..total) is written below (see comment above).
             let blob = unsafe { out.list.writable_slice_exact(total) };
 
-            blob[0..24].fill(0);
+            blob[0..20].fill(0);
+            blob[20..24].copy_from_slice(
+                &u32::try_from(self.object_braces.len())
+                    .expect("int cast")
+                    .to_ne_bytes(),
+            );
             blob[24..28].copy_from_slice(
                 &u32::try_from(self.sync_entries.len())
                     .expect("int cast")
@@ -1051,6 +1105,12 @@ impl Builder {
             }
             blob[stream_offset as usize..stream_offset as usize + self.win_stream.len()]
                 .copy_from_slice(&self.win_stream);
+            for (bytes, index) in blob[object_braces_offset..][..object_braces_bytes]
+                .chunks_exact_mut(size_of::<u32>())
+                .zip(&self.object_braces)
+            {
+                bytes.copy_from_slice(&index.to_ne_bytes());
+            }
             blob[total - STREAM_TAIL_PAD..total].fill(0);
 
             self.win_stream = Vec::new();

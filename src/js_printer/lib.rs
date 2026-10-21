@@ -1357,7 +1357,7 @@ pub struct Options<'a> {
     pub minify_identifiers: bool,
     pub minify_syntax: bool,
     pub print_dce_annotations: bool,
-    /// What the source map has is code to coverage, so the braces of blocks and classes stay out.
+    /// Marks the braces of object literals in the source map, see `mark_object_brace`.
     pub code_coverage: bool,
 
     pub inline_require_and_import_errors: bool,
@@ -2179,9 +2179,7 @@ pub(crate) mod __gated_printer {
             stmts: &[Stmt],
             close_brace_loc: Option<bun_ast::Loc>,
         ) {
-            if !self.options.code_coverage {
-                self.add_source_mapping(loc);
-            }
+            self.add_source_mapping(loc);
             self.print(b"{");
             if !stmts.is_empty() {
                 self.print_newline();
@@ -2191,7 +2189,7 @@ pub(crate) mod __gated_printer {
                 self.print_indent();
             }
             if let Some(cbl) = close_brace_loc {
-                if cbl.start > loc.start && !self.options.code_coverage {
+                if cbl.start > loc.start {
                     self.add_source_mapping(cbl);
                 }
             }
@@ -2450,6 +2448,15 @@ pub(crate) mod __gated_printer {
         }
 
         #[inline]
+        pub(crate) fn mark_object_brace(&mut self) {
+            if !GENERATE_SOURCE_MAP || !self.options.code_coverage {
+                return;
+            }
+            self.source_map_builder
+                .mark_object_brace(self.writer.slice());
+        }
+
+        #[inline]
         pub(crate) fn add_source_mapping_for_name(
             &mut self,
             location: bun_ast::Loc,
@@ -2538,9 +2545,7 @@ pub(crate) mod __gated_printer {
 
             self.print_space();
 
-            if !self.options.code_coverage {
-                self.add_source_mapping(class.body_loc);
-            }
+            self.add_source_mapping(class.body_loc);
             self.print(b"{");
             self.print_newline();
             self.indent();
@@ -2570,7 +2575,7 @@ pub(crate) mod __gated_printer {
             self.needs_semicolon = false;
             self.unindent();
             self.print_indent();
-            if class.close_brace_loc.start > class.body_loc.start && !self.options.code_coverage {
+            if class.close_brace_loc.start > class.body_loc.start {
                 self.add_source_mapping(class.close_brace_loc);
             }
             self.print(b"}");
@@ -3960,6 +3965,7 @@ pub(crate) mod __gated_printer {
                         self.print(b"(");
                     }
                     self.add_source_mapping(expr.loc);
+                    self.mark_object_brace();
                     self.print(b"{");
                     let props = e.properties.slice();
                     if !props.is_empty() {
@@ -3998,6 +4004,7 @@ pub(crate) mod __gated_printer {
                     }
                     if e.close_brace_loc.start > expr.loc.start {
                         self.add_source_mapping(e.close_brace_loc);
+                        self.mark_object_brace();
                     }
                     self.print(b"}");
                     if wrap {

@@ -1520,6 +1520,8 @@ impl<'a> Transpiler<'a> {
                 // @bun annotation
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
 
+                opts.features.code_coverage = self.options.code_coverage;
+
                 opts.features.commonjs_at_runtime = this_parse.allow_commonjs;
 
                 opts.features.inlining = self.options.inlining;
@@ -2423,6 +2425,7 @@ impl<'a> Transpiler<'a> {
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,
             minify_identifiers: self.options.minify_identifiers,
+            code_coverage: self.options.code_coverage,
             module_type: if IS_BUN && self.options.transform_only {
                 // this is for when using `bun build --no-bundle`
                 // it should copy what was passed for the cli

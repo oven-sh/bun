@@ -264,6 +264,13 @@ impl ParsedSourceMap {
         }
     }
 
+    /// The mappings of the braces of object literals, if `js_printer::Options::code_coverage` was on.
+    pub fn for_each_object_brace(&self, each: impl FnMut(Mapping)) {
+        if let Some(ism) = &self.internal {
+            ism.for_each_object_brace(each);
+        }
+    }
+
     pub(crate) fn standalone_module_graph_data(&self) -> *mut crate::SerializedSourceMap::Loaded {
         debug_assert!(self.is_standalone_module_graph);
         self.underlying_provider.data() as usize as *mut crate::SerializedSourceMap::Loaded

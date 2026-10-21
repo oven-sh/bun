@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, MAX_PATH_BYTES, normalizeBunSnapshot, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "path";
 
 test("coverage crash", () => {
@@ -1218,6 +1218,44 @@ test.concurrent.each(["// @bun", "// @bun with a source map", "coverageIgnoreSou
     expect(exitCode).toBe(0);
   },
 );
+
+test("the braces of an object are listed when the file comes from the transpiler cache", async () => {
+  using dir = tempDir("cov-transpiler-cache", {
+    // The cache leaves out a file of less than 4 KB.
+    "lib.ts": `export const list = [
+  {
+    one: 1,
+  },
+];
+${"// a comment\n".repeat(400)}`,
+    "lib.test.ts": `
+import { test } from "bun:test";
+import { list } from "./lib.ts";
+test("list", () => { Object(list); });
+`,
+  });
+  const cache = path.join(String(dir), "cache");
+  const run = async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+      env: { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: cache },
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    const exitCode = await proc.exited;
+    const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+    return { record: lcov.split("end_of_record").find(r => r.includes("lib.ts\n")), exitCode };
+  };
+  const printed = await run();
+  const entries = readdirSync(cache);
+  expect(entries).not.toBeEmpty();
+  expect(printed.record).toContain("DA:2,1\n");
+  expect(printed.record).toContain("DA:4,1\n");
+  expect(await run()).toEqual(printed);
+  expect(readdirSync(cache)).toEqual(entries);
+  expect(printed.exitCode).toBe(0);
+});
 
 test("an error has the same position with --coverage", async () => {
   using dir = tempDir("cov-error-position", {

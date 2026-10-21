@@ -529,7 +529,7 @@ unsafe fn init_runtime_state(
     // workers.
     if opts.worker_ptr.is_null() {
         // SAFETY: `vm` is the freshly-boxed unique VM on this thread.
-        unsafe { configure_debugger(vm, &opts.debugger) };
+        unsafe { configure_debugger(vm, &opts.debugger, opts.ignore_debugger_env) };
     }
 
     Ok(state.cast())
@@ -537,7 +537,8 @@ unsafe fn init_runtime_state(
 
 /// Translate the CLI flag /
 /// `BUN_INSPECT*` env vars into `vm.debugger = Some(Debugger { .. })` so
-/// `ensure_debugger` (below) actually starts the inspector.
+/// `ensure_debugger` (below) actually starts the inspector. With `ignore_env`
+/// (`InitOptions::ignore_debugger_env`) the variables alone configure nothing.
 ///
 /// # Safety
 /// `vm` is the freshly-boxed unique VM on this thread; `vm.transpiler` has
@@ -546,6 +547,7 @@ unsafe fn init_runtime_state(
 unsafe fn configure_debugger(
     vm: *mut VirtualMachine,
     cli_flag: &bun_options_types::context::Debugger,
+    ignore_env: bool,
 ) {
     use bun_core::env_var;
     use bun_jsc::debugger::{Debugger, Mode, Wait};
@@ -573,6 +575,9 @@ unsafe fn configure_debugger(
     let debugger = match cli_flag {
         CliDebugger::Unspecified => {
             if !unix.is_empty() {
+                if ignore_env {
+                    return;
+                }
                 Some(Debugger {
                     path_or_port: None,
                     from_environment_variable: unix,
@@ -581,6 +586,9 @@ unsafe fn configure_debugger(
                     ..Default::default()
                 })
             } else if !connect_to.is_empty() {
+                if ignore_env {
+                    return;
+                }
                 Some(Debugger {
                     path_or_port: None,
                     from_environment_variable: connect_to,

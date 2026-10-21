@@ -25,7 +25,8 @@ bun_core::declare_scope!(ModuleLoader, hidden);
 pub struct ModuleLoader {
     pub transpile_source_code_arena: Option<Box<ArenaAllocator>>,
     pub eval_source: Option<Box<bun_ast::Source>>,
-    /// User's `-e` bytes under `--interactive` (see `Eval::interactive_script`).
+    /// User's `-e` bytes under `--interactive` (see `Eval::interactive_script`) and under
+    /// `bun repl`, which have no `eval_source` to read them from.
     pub interactive_eval_script: Option<Box<[u8]>>,
 }
 

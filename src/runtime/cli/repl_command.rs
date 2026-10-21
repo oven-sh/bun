@@ -11,13 +11,17 @@
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
+use core::sync::atomic::AtomicBool;
 
+use crate::cli::command::{ContextData, HotReload};
+use crate::cli::run_command::{Run, RunCommand};
 use crate::dns_jsc::Order as DnsOrder;
 use bun_alloc::Arena;
 use bun_core::EncodedSlice;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject};
+use bun_options_types::context::{Debugger as DebuggerFlag, RuntimeOptions};
 
 // `repl.rs` is a sibling file with no other consumers; declare it as a child
 // module here so `Repl` resolves without touching `cli/mod.rs`.
@@ -28,17 +32,177 @@ use repl::Repl;
 use crate::Command;
 use crate::cli::Arguments;
 
+/// This process is `bun repl`. Set before argv is parsed, because the REPL parses with the flag
+/// table of `bun run`: `--help` and `process.execArgv` ask which of the two it is.
+pub(crate) static IS_REPL: AtomicBool = AtomicBool::new(false);
+
 pub(crate) struct ReplCommand;
 
 impl ReplCommand {
     #[cold]
     pub(crate) fn exec(ctx: Command::Context<'_>) -> Result<(), crate::Error> {
+        Self::check_flags(ctx);
+
         // Initialize the REPL
         let mut repl = Repl::init();
         // `defer repl.deinit()` → handled by Drop
 
         // Boot the JavaScript VM for the REPL
         Self::boot_repl_vm(ctx, &mut repl)
+    }
+
+    /// Places every flag that `bun run` keeps until after argument parsing. The REPL applies it,
+    /// or it has no effect without an entry file, or the REPL cannot do what it asks and says so.
+    /// The pattern names every field of `RuntimeOptions`: a new one does not compile until it has
+    /// a place here.
+    fn check_flags(ctx: &ContextData) {
+        let RuntimeOptions {
+            // `boot_repl_vm` applies these.
+            smol: _,
+            debugger: _,
+            dns_result_order: _,
+            preconnect: _,
+            experimental_http2_fetch: _,
+            experimental_http3_fetch: _,
+            eval: _,
+            // `ReplRunner::start` applies these.
+            cpu_prof: _,
+            heap_prof: _,
+            expose_gc: _,
+            redis_preconnect: _,
+            sql_preconnect: _,
+            // `console.log` reads it from the context.
+            console_depth: _,
+            // No effect without an entry file. `--check` is not for what is typed here, as under
+            // `bun --interactive`.
+            check: _,
+            if_present: _,
+            interactive: _,
+            preserve_symlinks_main: _,
+            cron_title,
+            // `Arguments::parse` takes it with `cron_title` only.
+            cron_period: _,
+        } = &ctx.runtime_options;
+
+        if ctx.debug.watch_flag {
+            Self::refuse("has no entry file to watch", "--watch", &[b"--watch"]);
+        }
+        if ctx.debug.hot_reload != HotReload::None {
+            Self::refuse("has no entry file to reload", "--hot", &[b"--hot"]);
+        }
+        const NO_SCRIPTS: &str = "does not run package.json scripts";
+        if !ctx.filters.is_empty() {
+            Self::refuse(NO_SCRIPTS, "--filter", &[b"--filter", b"-F"]);
+        }
+        if ctx.workspaces {
+            Self::refuse(NO_SCRIPTS, "--workspaces", &[b"--workspaces"]);
+        }
+        if ctx.parallel {
+            Self::refuse(NO_SCRIPTS, "--parallel", &[b"--parallel"]);
+        }
+        if ctx.sequential {
+            Self::refuse(NO_SCRIPTS, "--sequential", &[b"--sequential"]);
+        }
+        if !cron_title.is_empty() {
+            Self::refuse(
+                "has no entry file to run as a cron job",
+                "--cron-title and --cron-period",
+                &[b"--cron-title"],
+            );
+        }
+    }
+
+    /// `flag` asks for what a REPL cannot do. That is an error, so that no session runs without
+    /// something its command line asked for. `spellings`: how `flag` looks in argv.
+    #[cold]
+    fn refuse(why: &str, flag: &str, spellings: &[&[u8]]) -> ! {
+        // The words of `BUN_OPTIONS` are in argv, between argv[0] and what was typed.
+        let argv = bun_core::argv().as_slice();
+        let args = argv.get(1..).unwrap_or_default();
+        let (from_env, typed) = args.split_at(bun_core::bun_options_argc().min(args.len()));
+        let has_flag = |args: &[&bun_core::ZStr]| {
+            args.iter().any(|arg| {
+                spellings.iter().any(|spelling| {
+                    let rest = arg.as_bytes().strip_prefix(*spelling);
+                    rest.is_some_and(|rest| matches!(rest, [] | [b'=', ..]))
+                })
+            })
+        };
+        let place = if !has_flag(typed) && has_flag(from_env) {
+            " from BUN_OPTIONS"
+        } else {
+            ""
+        };
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: \"bun repl\" {}. Remove {}{}.",
+            why,
+            flag,
+            place
+        );
+        Output::flush();
+        Global::exit(1);
+    }
+
+    /// The flags of `bun run` that `--help` leaves out: `check_flags` refuses them, or they have no
+    /// effect without an entry file or a package.json script.
+    const NOT_IN_HELP: &'static [&'static [u8]] = &[
+        b"watch",
+        b"watch-kill-signal",
+        b"hot",
+        b"no-clear-screen",
+        b"filter",
+        b"workspaces",
+        b"parallel",
+        b"sequential",
+        b"no-exit-on-error",
+        b"elide-lines",
+        b"cron-title",
+        b"cron-period",
+        b"check",
+        b"interactive",
+        b"if-present",
+        b"silent",
+        b"shell",
+        b"bun",
+        b"preserve-symlinks-main",
+    ];
+
+    #[cold]
+    pub(crate) fn print_help() {
+        bun_core::pretty!(
+            "\
+<b>Usage<r>: <b><green>bun repl<r> <cyan>[flags]<r>
+  Start an interactive JavaScript and TypeScript session
+
+<b>Flags:<r>"
+        );
+        let flags: Vec<_> = Arguments::RUN_PARAMS
+            .iter()
+            .filter(|param| {
+                !param
+                    .names
+                    .long
+                    .is_some_and(|name| Self::NOT_IN_HELP.contains(&name))
+            })
+            .copied()
+            .collect();
+        bun_clap::simple_help(&flags);
+        bun_core::pretty!(
+            "\n\n\
+<b>Examples:<r>
+  <d>Start a session<r>
+  <b><green>bun repl<r>
+
+  <d>Evaluate a script as the REPL does, then exit<r>
+  <b><green>bun repl<r> <cyan>-e<r> <blue>\"const x: number = 42; console.log(x)\"<r>
+
+  <d>Print the result of a script<r>
+  <b><green>bun repl<r> <cyan>-p<r> <blue>\"{{ a: 1, b: 2 }}\"<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/runtime/repl<r>
+"
+        );
+        Output::flush();
     }
 
     fn boot_repl_vm<'r>(
@@ -73,15 +237,21 @@ impl ReplCommand {
                 Global::exit(1);
             });
 
+        // Only a flag starts a debugger here. The variables that editors export to every process
+        // of their terminals do not (`ignore_debugger_env`).
+        let has_inspect_flag = !matches!(ctx.runtime_options.debugger, DebuggerFlag::Unspecified);
+
         // Initialize the VM. `InitOptions` has no allocator field (the VM does
         // not take a caller-provided allocator in the Rust port; `vm.arena` is
         // set below).
         let vm: *mut VirtualMachine = VirtualMachine::init(jsc::VirtualMachineInitOptions {
             transform_options: core::mem::take(&mut ctx.args),
             debugger: core::mem::take(&mut ctx.runtime_options.debugger),
+            ignore_debugger_env: !has_inspect_flag,
             log: core::ptr::NonNull::new(ctx.log),
             global_cache: ctx.debug.global_cache,
             smol: ctx.runtime_options.smol,
+            mini_mode: ctx.runtime_options.smol,
             eval_mode: true,
             is_main_thread: true,
             ..Default::default()
@@ -101,18 +271,7 @@ impl ReplCommand {
         // ReplRunner construction to avoid a move-after-borrow.
 
         // Configure bundler options
-        // `BundleOptions.install` is `Option<NonNull<_>>` so no
-        // lifetime-extension cast is needed.
-        let install_ptr = ctx.install.as_deref().map(core::ptr::NonNull::from);
-        b.options.install = install_ptr;
-        b.resolver.opts.install = install_ptr;
-        let offline = ctx
-            .debug
-            .offline_mode_setting
-            .unwrap_or(OfflineMode::Online);
-        b.resolver.opts.install_preference = offline;
-        b.options.install_preference = offline;
-        b.resolver.env_loader = NonNull::new(b.env);
+        RunCommand::wire_transpiler_from_ctx(b, ctx);
         b.options.env.behavior = EnvBehavior::LoadAllWithoutInlining;
         b.options.dead_code_elimination = false; // REPL needs all code
 
@@ -128,6 +287,17 @@ impl ReplCommand {
 
         VirtualMachine::get().as_mut().is_main_thread = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
+
+        RunCommand::store_experimental_fetch_flags(ctx);
+        RunCommand::do_preconnect(&ctx.runtime_options.preconnect);
+
+        // `process._eval`: `child_process.fork()` takes it out of the `execArgv` it hands on.
+        if !ctx.runtime_options.eval.script.is_empty() {
+            VirtualMachine::get()
+                .as_mut()
+                .module_loader
+                .interactive_eval_script = Some(ctx.runtime_options.eval.script.clone());
+        }
 
         // Store VM reference in REPL (safe - no JS allocation)
         repl.vm = Some(VirtualMachine::get());
@@ -151,6 +321,7 @@ impl ReplCommand {
                 unsafe { &*ptr }
             },
             eval_and_print: ctx.runtime_options.eval.eval_and_print,
+            ctx,
         };
         // vm.arena stores a *mut Arena pointing at runner.arena;
         // lifetime is the holdAPILock scope (globalExit() never returns so the frame never
@@ -203,12 +374,22 @@ struct ReplRunner<'a, 'r> {
     arena: Arena,
     eval_script: &'a [u8],
     eval_and_print: bool,
+    ctx: &'a ContextData,
 }
 
 impl<'a, 'r> ReplRunner<'a, 'r> {
     fn start(this: &mut ReplRunner<'a, 'r>) {
         let _ = this.vm;
         let vm = VirtualMachine::get().as_mut();
+
+        // As in `Run::start`: the profiles cover everything from here on.
+        let flags = &this.ctx.runtime_options;
+        if flags.cpu_prof.enabled {
+            Run::start_cpu_profiler(vm, this.ctx);
+        }
+        if flags.heap_prof.enabled {
+            Run::configure_heap_profiler(vm, this.ctx);
+        }
 
         // Set up the REPL environment (now inside API lock)
         if this.setup_repl_environment().is_err() {
@@ -275,7 +456,27 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             }
         }
 
+        self.apply_run_flags(vm);
         Ok(())
+    }
+
+    /// What `bun run` does between taking the API lock and loading its first module, in the
+    /// order of `Run::start` and `VirtualMachine::reload_entry_point`.
+    fn apply_run_flags(&self, vm: &mut VirtualMachine) {
+        let flags = &self.ctx.runtime_options;
+        if flags.expose_gc {
+            Run::expose_gc(vm);
+        }
+        if flags.redis_preconnect {
+            Run::redis_preconnect(vm);
+        }
+        if flags.sql_preconnect {
+            Run::sql_preconnect(vm);
+        }
+        // `--inspect-wait` and `--inspect-brk` block here. A client that connects meanwhile
+        // finds the globals of the REPL in place.
+        let _ = vm.ensure_debugger(true);
+        vm.pre_execution_bootstrap();
     }
 }
 
@@ -285,4 +486,3 @@ unsafe extern "C" {
 }
 
 use bun_bundler::options::EnvBehavior;
-use bun_options_types::offline_mode::OfflineMode;

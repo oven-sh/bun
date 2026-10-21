@@ -1384,7 +1384,11 @@ pub(crate) mod command {
     #[inline(never)]
     fn exec_repl(log: &mut bun_ast::Log) -> CmdResult {
         // Inits with RunCommand (repl reuses run params).
-        let ctx = init(Tag::RunCommand, log)?;
+        // Not through `init`: that also makes `--watch` restart the process, and the REPL refuses it.
+        super::repl_command::IS_REPL.store(true, core::sync::atomic::Ordering::Relaxed);
+        bun_crash_handler::cli_state::set_cmd_char(Tag::ReplCommand.char());
+        let ctx = write_context_no_parse(log);
+        ctx.args = arguments::parse(Tag::RunCommand, ctx)?;
         super::repl_command::ReplCommand::exec(ctx)
     }
 
@@ -1910,6 +1914,10 @@ To create a project with the official Next.js scaffolding tool, run
                 HelpCommand::print_with_reason(HelpCommand::Reason::Explicit, show_all_flags);
             }
             Tag::RunCommand | Tag::RunAsNodeCommand => {
+                // `bun repl` parses its arguments as `bun run` does.
+                if super::repl_command::IS_REPL.load(core::sync::atomic::Ordering::Relaxed) {
+                    return super::repl_command::ReplCommand::print_help();
+                }
                 run_command::RunCommand::print_help(None);
             }
             Tag::BunxCommand => {
@@ -2066,15 +2074,7 @@ Full documentation is available at <magenta>https://bun.com/docs/installation#up
                 );
                 Output::flush();
             }
-            Tag::ReplCommand => {
-                pretty!(
-                    "\
-<b>Usage<r>: <b><green>bun repl<r> <cyan>[flags]<r>
-  Open a Bun REPL
-"
-                );
-                Output::flush();
-            }
+            Tag::ReplCommand => super::repl_command::ReplCommand::print_help(),
             Tag::ExecCommand => {
                 pretty!(
                     "\

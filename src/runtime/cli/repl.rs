@@ -2149,6 +2149,21 @@ impl<'a> Repl<'a> {
         opts.repl_mode = true;
         opts.features.dead_code_elimination = false; // REPL needs all code
         opts.features.top_level_await = true; // Enable top-level await in REPL
+        // `--no-macros` and `--feature`, as the VM's transpiler passes them on for a module.
+        opts.features.no_macros = vm.transpiler.options.no_macros;
+        opts.features.bundler_feature_flags = vm
+            .transpiler
+            .options
+            .bundler_feature_flags
+            .as_deref()
+            .and_then(|flags| flags.clone().ok().map(Box::new));
+        // `--inspect-brk` stops on the first line of the main module. The REPL has none, so it
+        // stops where the first input starts.
+        let break_on_first_line = vm
+            .debugger
+            .as_deref()
+            .is_some_and(|debugger| debugger.set_breakpoint_on_first_line);
+        opts.features.set_breakpoint_on_first_line = break_on_first_line;
         // Keep `lower_using` at its default (true) here even though JavaScriptCore
         // supports `using` / `await using` natively. The REPL transform in
         // `js_parser/repl_transforms.rs` rewrites every top-level `s_local` into a
@@ -2228,6 +2243,12 @@ impl<'a> Repl<'a> {
         .is_err()
         {
             return None;
+        }
+
+        if break_on_first_line {
+            if let Some(debugger) = vm.as_mut().debugger.as_deref_mut() {
+                debugger.set_breakpoint_on_first_line = false;
+            }
         }
 
         // Get the written buffer

@@ -112,6 +112,9 @@ pub struct InitOptions {
     /// Forwarded as `mini_mode` to `Zig__GlobalObject__create`. For the
     /// main-thread path this is `smol`; for workers it is `WebWorker::mini`.
     pub mini_mode: bool,
+    /// `BUN_INSPECT` and `BUN_INSPECT_CONNECT_TO` configure no debugger. `bun repl` sets it when
+    /// it got no `--inspect*` flag: editors export those variables to every process of a terminal.
+    pub ignore_debugger_env: bool,
 }
 
 impl Default for InitOptions {
@@ -130,6 +133,7 @@ impl Default for InitOptions {
             worker_ptr: core::ptr::null_mut(),
             context_id: None,
             mini_mode: false,
+            ignore_debugger_env: false,
         }
     }
 }
@@ -3516,34 +3520,21 @@ impl VirtualMachine {
         }
     }
 
-    /// `reloadEntryPoint(entry_path)` — set `main`, generate the synthetic
-    /// `bun:main` entry, run preloads, and kick off module evaluation.
-    /// `entry_path` is `None` for a built-in entry point with no entry module (`bun bake`).
-    pub(crate) fn reload_entry_point(
-        &mut self,
-        entry_path: Option<&[u8]>,
-    ) -> crate::CrateResult<*mut JSInternalPromise> {
-        self.has_loaded = false;
-        self.set_main(entry_path);
-        self.main_resolved_path = bun_core::String::EMPTY;
-        self.overridden_main.deinit();
-
-        let hooks = runtime_hooks();
-        let _ = self.ensure_debugger(true);
-
-        // Node.js `--trace-*` and `--stack-trace-limit` flags need
-        // `internal/process/pre_execution` to run before any user code.
-        // `reload_entry_point` is the single funnel for the main entry,
-        // workers, and `-e` evals, so this covers them all. Gated on a cheap
-        // argv scan so the zero-flag path costs nothing; the module registry
-        // caches the evaluation, so hot reloads and worker re-entries are
-        // no-ops after the first call.
-        //
-        // Process argv is identical on every thread, so a worker spawned with
-        // an explicit `execArgv: ['--trace-*']` from an untraced parent would
-        // be missed by the global scan — also scan this VM's own worker
-        // execArgv. (The JS side re-reads `process.execArgv`, so an explicit
-        // empty execArgv under a traced parent stays a no-op there.)
+    /// Node.js `--trace-*` and `--stack-trace-limit` flags need
+    /// `internal/process/pre_execution` to run before any user code.
+    /// `reload_entry_point` is the funnel for the main entry, workers, and
+    /// `-e` evals, and `bun repl`, which loads no entry, calls this itself.
+    /// Gated on a cheap argv scan so the zero-flag path costs nothing; the
+    /// module registry caches the evaluation, so hot reloads and worker
+    /// re-entries are no-ops after the first call.
+    ///
+    /// Process argv is identical on every thread, so a worker spawned with
+    /// an explicit `execArgv: ['--trace-*']` from an untraced parent would
+    /// be missed by the global scan — also scan this VM's own worker
+    /// execArgv. (The JS side re-reads `process.execArgv`, so an explicit
+    /// empty execArgv under a traced parent stays a no-op there.)
+    #[inline(always)]
+    pub fn pre_execution_bootstrap(&self) {
         fn is_bootstrap_flag(arg: &[u8]) -> bool {
             arg.starts_with(b"--trace-") || arg.starts_with(b"--stack-trace-limit")
         }
@@ -3566,6 +3557,23 @@ impl VirtualMachine {
             // evaluating `internal/process/pre_execution`.
             crate::cpp::Bun__preExecutionBootstrap(self.global());
         }
+    }
+
+    /// `reloadEntryPoint(entry_path)` — set `main`, generate the synthetic
+    /// `bun:main` entry, run preloads, and kick off module evaluation.
+    /// `entry_path` is `None` for a built-in entry point with no entry module (`bun bake`).
+    pub(crate) fn reload_entry_point(
+        &mut self,
+        entry_path: Option<&[u8]>,
+    ) -> crate::CrateResult<*mut JSInternalPromise> {
+        self.has_loaded = false;
+        self.set_main(entry_path);
+        self.main_resolved_path = bun_core::String::EMPTY;
+        self.overridden_main.deinit();
+
+        let hooks = runtime_hooks();
+        let _ = self.ensure_debugger(true);
+        self.pre_execution_bootstrap();
 
         if let (MainEntryPoint::File, Some(entry_path)) = (self.main_entry_point, entry_path) {
             if let Some(hooks) = hooks {

@@ -287,7 +287,7 @@ mod _impl {
         let argv = bun_core::argv();
         let mut args = Vec::<BunString>::with_capacity(argv.len().saturating_sub(1));
 
-        let mut seen_run = false;
+        let mut seen_command = false;
         let mut prev: Option<&[u8]> = None;
 
         // we re-parse the process argv to extract execArgv, since this is a very uncommon operation
@@ -304,8 +304,14 @@ mod _impl {
                 continue;
             }
 
-            if !seen_run && arg == b"run" {
-                seen_run = true;
+            // The flags of `bun` also go behind `run`, and behind `repl` when that is the command.
+            if !seen_command
+                && (arg == b"run"
+                    || (arg == b"repl"
+                        && crate::cli::repl_command::IS_REPL
+                            .load(core::sync::atomic::Ordering::Relaxed)))
+            {
+                seen_command = true;
                 prev = Some(arg);
                 continue;
             }

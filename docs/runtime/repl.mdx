@@ -174,3 +174,29 @@ bun repl -p "{ a: 1, b: 2 }"
 ```
 
 Both flags use the same transforms as the interactive REPL, so Bun treats a bare object literal like `{ a: 1 }` as an object expression instead of a block statement. The process exits after the event loop drains (pending timers and I/O complete first). On error, the process exits with code `1`.
+
+---
+
+## Runtime flags
+
+`bun repl` takes the runtime flags of `bun run`. They apply before the first evaluation, in the interactive REPL and with `-e` / `-p`. Run `bun repl --help` for the list.
+
+```sh terminal icon="terminal"
+bun repl --expose-gc
+bun repl --smol -p "process.memoryUsage().rss"
+bun repl --cpu-prof -e "for (let i = 0; i < 1e8; i++);"
+```
+
+Some flags of `bun run` need an entry file or a `package.json` script. `bun repl` exits with an error for `--watch`, `--hot`, `--filter`, `--workspaces`, `--parallel`, `--sequential`, `--cron-title`, and `--cron-period`.
+
+### Debugging
+
+`--inspect`, `--inspect-wait`, and `--inspect-brk` start the [debugger](/runtime/debugger). `--inspect-brk` pauses where your first input starts.
+
+```sh terminal icon="terminal"
+bun repl --inspect-wait
+```
+
+The debugger answers while code runs. At an idle prompt, it answers after your next input.
+
+`bun repl` starts the debugger for these flags only. It ignores the `BUN_INSPECT` and `BUN_INSPECT_CONNECT_TO` environment variables, which editors set for every process of their terminals.

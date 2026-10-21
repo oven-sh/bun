@@ -828,9 +828,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         named.unwrap_or(Loader::Tsx)
     }
 
-    /// Shared ctx→transpiler/resolver option projection used by [`boot`] and
-    /// [`boot_standalone`].
-    fn wire_transpiler_from_ctx(b: &mut Transpiler<'_>, ctx: &mut ContextData) {
+    /// Shared ctx→transpiler/resolver option projection used by [`boot`],
+    /// [`boot_standalone`] and `bun repl`.
+    pub(crate) fn wire_transpiler_from_ctx(b: &mut Transpiler<'_>, ctx: &mut ContextData) {
         use bun_options_types::context::MacroOptions;
         use bun_options_types::offline_mode::OfflineMode;
 
@@ -879,9 +879,22 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
     }
 
+    /// `--experimental-http2-fetch` and `--experimental-http3-fetch`, for every `fetch()` of the process.
+    #[inline(always)]
+    pub(crate) fn store_experimental_fetch_flags(ctx: &ContextData) {
+        bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
+            ctx.runtime_options.experimental_http2_fetch,
+            ::core::sync::atomic::Ordering::Relaxed,
+        );
+        bun_http::EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI.store(
+            ctx.runtime_options.experimental_http3_fetch,
+            ::core::sync::atomic::Ordering::Relaxed,
+        );
+    }
+
     /// Kick off TCP preconnects for
     /// `--preconnect <url>` before the entry module loads.
-    fn do_preconnect(preconnect: &[Box<[u8]>]) {
+    pub(crate) fn do_preconnect(preconnect: &[Box<[u8]>]) {
         if preconnect.is_empty() {
             return;
         }
@@ -1168,14 +1181,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.is_main_thread = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
-        bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
-            ctx.runtime_options.experimental_http2_fetch,
-            ::core::sync::atomic::Ordering::Relaxed,
-        );
-        bun_http::EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI.store(
-            ctx.runtime_options.experimental_http3_fetch,
-            ::core::sync::atomic::Ordering::Relaxed,
-        );
+        Self::store_experimental_fetch_flags(ctx);
         Self::do_preconnect(&ctx.runtime_options.preconnect);
 
         // Only `bun bake` boots with no entry module.
@@ -1309,14 +1315,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.is_main_thread = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
-        bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
-            ctx.runtime_options.experimental_http2_fetch,
-            ::core::sync::atomic::Ordering::Relaxed,
-        );
-        bun_http::EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI.store(
-            ctx.runtime_options.experimental_http3_fetch,
-            ::core::sync::atomic::Ordering::Relaxed,
-        );
+        Self::store_experimental_fetch_flags(ctx);
         Self::do_preconnect(&ctx.runtime_options.preconnect);
 
         Run {
@@ -1384,7 +1383,6 @@ impl Run<'_> {
     fn add_conditional_globals(vm: &VirtualMachine, ctx: &ContextData) {
         unsafe extern "C" {
             fn Bun__ExposeNodeModuleGlobals(global: *const JSGlobalObject);
-            fn JSC__JSGlobalObject__addGc(global: *const JSGlobalObject);
         }
         let ro = &ctx.runtime_options;
         if !ro.eval.script.is_empty() {
@@ -1392,9 +1390,109 @@ impl Run<'_> {
             unsafe { Bun__ExposeNodeModuleGlobals(vm.global) };
         }
         if ro.expose_gc {
-            // SAFETY: FFI; `vm.global` is live for the VM lifetime.
-            unsafe { JSC__JSGlobalObject__addGc(vm.global) };
+            Self::expose_gc(vm);
         }
+    }
+
+    /// `--expose-gc`: defines `globalThis.gc`. Call it under the API lock.
+    #[inline(always)]
+    pub(crate) fn expose_gc(vm: &VirtualMachine) {
+        unsafe extern "C" {
+            fn JSC__JSGlobalObject__addGc(global: *const JSGlobalObject);
+        }
+        // SAFETY: FFI; `vm.global` is live for the VM lifetime.
+        unsafe { JSC__JSGlobalObject__addGc(vm.global) };
+    }
+
+    /// `--cpu-prof`, `--cpu-prof-md`: starts the sampling profiler. `vm.on_exit()` writes the profile.
+    /// Call it under the API lock, before the code to profile.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn start_cpu_profiler(vm: &mut VirtualMachine, ctx: &ContextData) {
+        let opts = &ctx.runtime_options.cpu_prof;
+        // SAFETY: `ctx` is process-lifetime; erase `Box<[u8]>` borrows to
+        // `'static` for `CPUProfilerConfig`.
+        let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
+        // SAFETY: same process-lifetime erasure as `name` above.
+        let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
+        vm.cpu_profiler_config = Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
+            name,
+            dir,
+            md_format: opts.md_format,
+            json_format: opts.json_format,
+            interval: opts.interval,
+        });
+        bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
+        // SAFETY: `vm.jsc_vm` set in `init`.
+        bun_jsc::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });
+        bun_analytics::features::cpu_profile.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// `--heap-prof`, `--heap-prof-md`: `vm.on_exit()` writes the profile.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn configure_heap_profiler(vm: &mut VirtualMachine, ctx: &ContextData) {
+        let opts = &ctx.runtime_options.heap_prof;
+        // SAFETY: `ctx` is process-lifetime; see `start_cpu_profiler`.
+        let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
+        // SAFETY: same process-lifetime erasure as `name` above.
+        let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
+        vm.heap_profiler_config = Some(bun_jsc::bun_heap_profiler::HeapProfilerConfig {
+            name,
+            dir,
+            text_format: opts.text_format,
+        });
+        bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// `--redis-preconnect`: connects `Bun.redis`. Call it under the API lock.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn redis_preconnect(vm: &VirtualMachine) {
+        // Go through the global object's getter because `Bun.redis` is a
+        // PropertyCallback (no direct WriteBarrier handle to read).
+        let global = vm.global();
+        let preconnect = || -> bun_jsc::JsResult<()> {
+            let Some(bun_object) = global.to_js_value().get(global, "Bun")? else {
+                return Ok(());
+            };
+            let Some(redis) = bun_object.get(global, "redis")? else {
+                return Ok(());
+            };
+            let Some(client) = redis.as_::<crate::valkey_jsc::js_valkey::JSValkeyClient>() else {
+                return Ok(());
+            };
+            // SAFETY: `as_` returns a live `m_ctx` pointer owned by the JS
+            // wrapper; accessed here under the API lock.
+            unsafe { &*client }.do_connect(global, redis)?;
+            Ok(())
+        };
+        // The caller is the outermost frame: a preconnect that threw
+        // is reported here, before any user code runs.
+        crate::dispatch::fold(preconnect());
+    }
+
+    /// `--sql-preconnect`: connects `Bun.sql`. Call it under the API lock.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn sql_preconnect(vm: &VirtualMachine) {
+        let global = vm.global();
+        let preconnect = || -> bun_jsc::JsResult<()> {
+            let Some(bun_object) = global.to_js_value().get(global, "Bun")? else {
+                return Ok(());
+            };
+            let Some(sql_object) = bun_object.get(global, "sql")? else {
+                return Ok(());
+            };
+            let Some(connect_fn) = sql_object.get(global, "connect")? else {
+                return Ok(());
+            };
+            if let Some(promise) = connect_fn.call(global, sql_object, &[])?.as_any_promise() {
+                promise.set_handled(global.vm());
+            }
+            Ok(())
+        };
+        crate::dispatch::fold(preconnect());
     }
 
     /// `Run.start`: take the JSC API lock, load the entry point, run the event
@@ -1412,95 +1510,20 @@ impl Run<'_> {
         vm.hot_reload = ctx.debug.hot_reload;
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
 
-        // ── CPU profiler ────────────────────────────────────────────────────
         if ctx.runtime_options.cpu_prof.enabled {
-            let opts = &ctx.runtime_options.cpu_prof;
-            // SAFETY: `ctx` is process-lifetime; erase `Box<[u8]>` borrows to
-            // `'static` for `CPUProfilerConfig`.
-            let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
-            // SAFETY: same process-lifetime erasure as `name` above.
-            let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
-            vm.cpu_profiler_config = Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
-                name,
-                dir,
-                md_format: opts.md_format,
-                json_format: opts.json_format,
-                interval: opts.interval,
-            });
-            bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
-            // SAFETY: `vm.jsc_vm` set in `init`.
-            bun_jsc::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });
-            bun_analytics::features::cpu_profile.fetch_add(1, Ordering::Relaxed);
+            Self::start_cpu_profiler(vm, ctx);
         }
-
-        // ── Heap profiler ───────────────────────────────────────────────────
         if ctx.runtime_options.heap_prof.enabled {
-            let opts = &ctx.runtime_options.heap_prof;
-            // SAFETY: `ctx` is process-lifetime; see CPU-profiler note above.
-            let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
-            // SAFETY: same process-lifetime erasure as `name` above.
-            let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
-            vm.heap_profiler_config = Some(bun_jsc::bun_heap_profiler::HeapProfilerConfig {
-                name,
-                dir,
-                text_format: opts.text_format,
-            });
-            bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
+            Self::configure_heap_profiler(vm, ctx);
         }
 
         Self::add_conditional_globals(vm, ctx);
 
-        // ── redis preconnect (must run under the API lock) ─────────────────
-        'do_redis_preconnect: {
-            if !ctx.runtime_options.redis_preconnect {
-                break 'do_redis_preconnect;
-            }
-            // Go through the global object's getter because `Bun.redis` is a
-            // PropertyCallback (no direct WriteBarrier handle to read).
-            let global = vm.global();
-            let preconnect = || -> bun_jsc::JsResult<()> {
-                let Some(bun_object) = global.to_js_value().get(global, "Bun")? else {
-                    return Ok(());
-                };
-                let Some(redis) = bun_object.get(global, "redis")? else {
-                    return Ok(());
-                };
-                let Some(client) = redis.as_::<crate::valkey_jsc::js_valkey::JSValkeyClient>()
-                else {
-                    return Ok(());
-                };
-                // SAFETY: `as_` returns a live `m_ctx` pointer owned by the JS
-                // wrapper; accessed here under the API lock.
-                unsafe { &*client }.do_connect(global, redis)?;
-                Ok(())
-            };
-            // The process entry is the outermost frame: a preconnect that threw
-            // is reported here, before the entry point loads.
-            crate::dispatch::fold(preconnect());
+        if ctx.runtime_options.redis_preconnect {
+            Self::redis_preconnect(vm);
         }
-
-        // ── postgres/sql preconnect ───────────────────────────────────────
-        'do_postgres_preconnect: {
-            if !ctx.runtime_options.sql_preconnect {
-                break 'do_postgres_preconnect;
-            }
-            let global = vm.global();
-            let preconnect = || -> bun_jsc::JsResult<()> {
-                let Some(bun_object) = global.to_js_value().get(global, "Bun")? else {
-                    return Ok(());
-                };
-                let Some(sql_object) = bun_object.get(global, "sql")? else {
-                    return Ok(());
-                };
-                let Some(connect_fn) = sql_object.get(global, "connect")? else {
-                    return Ok(());
-                };
-                if let Some(promise) = connect_fn.call(global, sql_object, &[])?.as_any_promise() {
-                    promise.set_handled(global.vm());
-                }
-                Ok(())
-            };
-            crate::dispatch::fold(preconnect());
+        if ctx.runtime_options.sql_preconnect {
+            Self::sql_preconnect(vm);
         }
 
         // ── hot-reloader enable ─────────────────────────────────────────────

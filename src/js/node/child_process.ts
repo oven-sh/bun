@@ -833,6 +833,10 @@ function fork(modulePath, args: string[] | Record<string, unknown> | null = [], 
       // Remove the -e switch to avoid fork bombing ourselves.
       execArgv = ArrayPrototypeSlice.$call(execArgv);
       ArrayPrototypeSplice.$call(execArgv, index - 1, 2);
+    } else {
+      // The switch and its script can also be one argument.
+      const oneArgument = [`--eval=${processEval}`, `--print=${processEval}`, `-e=${processEval}`, `-p=${processEval}`];
+      execArgv = ArrayPrototypeFilter.$call(execArgv, arg => !ArrayPrototypeIncludes.$call(oneArgument, arg));
     }
   }
 

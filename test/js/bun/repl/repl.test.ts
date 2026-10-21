@@ -220,7 +220,13 @@ async function withTerminalRepl(
     resize: (cols: number) => void;
     allOutput: () => string;
   }) => Promise<void>,
-  options: { env?: Record<string, string | undefined>; cols?: number } = {},
+  options: {
+    env?: Record<string, string | undefined>;
+    cols?: number;
+    cwd?: string;
+    /** Flags that follow `bun repl`. */
+    args?: string[];
+  } = {},
 ) {
   const received: string[] = [];
   const cols = options.cols ?? 120;
@@ -246,7 +252,8 @@ async function withTerminalRepl(
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "repl"],
+    cmd: [bunExe(), "repl", ...(options.args ?? [])],
+    cwd: options.cwd,
     terminal,
     env: {
       ...bunEnv,
@@ -863,165 +870,49 @@ describe.concurrent("Bun REPL", () => {
       return { stdout: stripAnsi(stdout), stderr: stripAnsi(stderr), exitCode };
     }
 
-    /** Runs `bun repl <args>` and `bun <args>`, which do the same with these flags. Returns what the REPL did. */
-    async function replAndRun(args: string[], options?: Options) {
-      const [repl, run] = await Promise.all([bun(["repl", ...args], options), bun(args, options)]);
-      expect(repl).toEqual(run);
-      return repl;
+    /** The extensions of the profiles in `<dir>/profiles`. */
+    function profiles(dir: string) {
+      const directory = path.join(dir, "profiles");
+      return existsSync(directory) ? readdirSync(directory).map(name => path.extname(name)) : [];
     }
 
-    const printExecArgv = "console.log(JSON.stringify(process.execArgv))";
-    const printTlsVersions = `const tls = require("node:tls"); console.log(tls.DEFAULT_MIN_VERSION, tls.DEFAULT_MAX_VERSION)`;
+    /** A TCP server on a free port, and its first connection. */
+    function listen() {
+      const { promise: opened, resolve } = Promise.withResolvers<void>();
+      const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open: () => resolve(), data() {} } });
+      return { server, opened };
+    }
 
-    test.each([
-      ["--expose-gc defines gc()", ["--expose-gc"], "console.log(typeof gc)", "function\n"],
-      ["--stack-trace-limit=3", ["--stack-trace-limit=3"], "console.log(Error.stackTraceLimit)", "3\n"],
-      ["--stack-trace-limit 4", ["--stack-trace-limit", "4"], "console.log(Error.stackTraceLimit)", "4\n"],
-      // node:tls reads these two from process.execArgv.
-      ["--tls-min-v1.3", ["--tls-min-v1.3"], printTlsVersions, "TLSv1.3 TLSv1.3\n"],
-      ["--tls-max-v1.2", ["--tls-max-v1.2"], printTlsVersions, "TLSv1.2 TLSv1.2\n"],
-      [
-        "process.execArgv holds the flags",
-        ["--no-addons", "--title", "repl-title"],
-        printExecArgv,
-        JSON.stringify(["--no-addons", "--title", "repl-title", "-e", printExecArgv]) + "\n",
-      ],
-    ])("%s", async (_name, flags, script, stdout) => {
-      expect(await replAndRun([...flags, "-e", script])).toEqual({ stdout, stderr: "", exitCode: 0 });
-    });
-
-    test("process.execArgv holds the flags in front of `repl` too", async () => {
-      expect(await bun(["--no-addons", "repl", "--expose-gc", "-e", printExecArgv])).toEqual({
-        stdout: JSON.stringify(["--no-addons", "--expose-gc", "-e", printExecArgv]) + "\n",
-        stderr: "",
-        exitCode: 0,
+    test("apply to `-e`, on both sides of `repl`", async () => {
+      const script = `
+        import { feature } from "bun:bundle";
+        console.log(JSON.stringify({
+          gc: typeof gc,
+          stackTraceLimit: Error.stackTraceLimit,
+          smallHeap: require("bun:jsc").heapStats().heapCapacity < 4 * 1024 * 1024,
+          feature: [feature("IN_REPL") ? "on" : "off", feature("OTHER") ? "on" : "off"],
+          // node:tls reads its flags from process.execArgv.
+          minTlsVersion: require("node:tls").DEFAULT_MIN_VERSION,
+          execArgv: process.execArgv.slice(0, -1),
+          evalIsLastOfExecArgv: process._eval === process.execArgv.at(-1),
+        }));
+      `;
+      const flags = ["--stack-trace-limit=3", "--smol", "--feature=IN_REPL", "--tls-min-v1.3", "--title", "repl"];
+      const { stdout, stderr, exitCode } = await bun(["--expose-gc", "repl", ...flags, "-e", script]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        gc: "function",
+        stackTraceLimit: 3,
+        smallHeap: true,
+        feature: ["on", "off"],
+        minTlsVersion: "TLSv1.3",
+        execArgv: ["--expose-gc", ...flags, "-e"],
+        evalIsLastOfExecArgv: true,
       });
-    });
-
-    test.each([
-      ["--cpu-prof", ".cpuprofile"],
-      ["--cpu-prof-md", ".md"],
-      ["--heap-prof", ".heapprofile"],
-      ["--heap-prof-md", ".md"],
-    ])("%s writes a profile when the REPL exits", async (flag, extension) => {
-      using dir = tempDir("repl-profile", {});
-      const dirFlag = flag.startsWith("--cpu") ? "--cpu-prof-dir" : "--heap-prof-dir";
-      const { stdout, exitCode } = await bun(["repl", flag, dirFlag, "profiles", "-e", "console.log('evaluated')"], {
-        cwd: String(dir),
-      });
-      expect(stdout).toBe("evaluated\n");
-      const profiles = path.join(String(dir), "profiles");
-      const written = existsSync(profiles) ? readdirSync(profiles) : [];
-      expect(written.map(name => path.extname(name))).toEqual([extension]);
       expect(exitCode).toBe(0);
     });
 
-    test("--trace-exit prints where the process exits", async () => {
-      const { stdout, stderr, exitCode } = await bun(["repl", "--trace-exit", "-e", "process.exit(3)"]);
-      expect(stdout).toBe("");
-      expect(stderr).toMatch(
-        /WARNING: Exited the environment with code 3\n +at exit \(node:internal\/process\/pre_execution/,
-      );
-      expect(exitCode).toBe(3);
-    });
-
-    test("--trace-env prints each access to process.env", async () => {
-      const { stdout, stderr, exitCode } = await bun(["repl", "--trace-env", "-e", "process.env.REPL_TRACE_ENV_PROBE"]);
-      expect(stdout).toBe("");
-      expect(stderr).toContain('[--trace-env] get "REPL_TRACE_ENV_PROBE"\n');
-      expect(exitCode).toBe(0);
-    });
-
-    test("--no-macros disables the macros of what the REPL imports", async () => {
-      using dir = tempDir("repl-no-macros", {
-        "macro.ts": `export function value() { return "macro ran"; }`,
-        "uses-macro.ts": `import { value } from "./macro.ts" with { type: "macro" };\nconsole.log(value());`,
-      });
-      const script = `await import("./uses-macro.ts")`;
-      const [enabled, disabled] = await Promise.all([
-        bun(["repl", "-e", script], { cwd: String(dir) }),
-        bun(["repl", "--no-macros", "-e", script], { cwd: String(dir) }),
-      ]);
-      expect(enabled).toEqual({ stdout: "macro ran\n", stderr: "", exitCode: 0 });
-      expect(disabled.stdout).toBe("");
-      expect(disabled.stderr).toContain("Macros are disabled");
-      expect(disabled.exitCode).toBe(1);
-    });
-
-    test("--fetch-preconnect connects before the first evaluation", async () => {
-      const opened = Promise.withResolvers<void>();
-      using server = Bun.listen({
-        hostname: "127.0.0.1",
-        port: 0,
-        socket: { open: () => opened.resolve(), data() {} },
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "repl", `--fetch-preconnect=http://127.0.0.1:${server.port}`, "-e", "await Bun.stdin.text()"],
-        stdin: "pipe",
-        stdout: "ignore",
-        stderr: "inherit",
-        env: bunEnv,
-      });
-      await opened.promise;
-      proc.stdin.end();
-      expect(await proc.exited).toBe(0);
-    });
-
-    test("--fetch-preconnect refuses a URL that is not HTTP", async () => {
-      const args = ["--fetch-preconnect=ftp://127.0.0.1:1", "-e", "console.log('evaluated')"];
-      expect(await replAndRun(args)).toEqual({
-        stdout: "",
-        stderr: 'error: preconnect URL must be HTTP or HTTPS: "ftp://127.0.0.1:1"\n',
-        exitCode: 1,
-      });
-    });
-
-    test.each([
-      ["--redis-preconnect", "REDIS_URL", "redis://127.0.0.1:"],
-      ["--sql-preconnect", "DATABASE_URL", "postgres://127.0.0.1:"],
-    ])("%s connects before the first evaluation", async (flag, variable, url) => {
-      const opened = Promise.withResolvers<void>();
-      using server = Bun.listen({
-        hostname: "127.0.0.1",
-        port: 0,
-        socket: { open: () => opened.resolve(), data() {} },
-      });
-      // The server never answers, so the client never finishes: the process is killed with the test.
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "repl", flag, "-e", "await Bun.stdin.text()"],
-        stdin: "pipe",
-        stdout: "ignore",
-        stderr: "inherit",
-        env: { ...bunEnv, [variable]: url + server.port },
-      });
-      await opened.promise;
-    });
-
-    test("--experimental-http2-fetch lets fetch() negotiate HTTP/2", async () => {
-      const server = http2.createSecureServer({ ...tls, allowHTTP1: true }, (req, res) => {
-        res.writeHead(200);
-        res.end(req.httpVersion);
-      });
-      // A client exits with its connection open.
-      server.on("clientError", () => {});
-      server.on("secureConnection", socket => socket.on("error", () => {}));
-      server.listen(0);
-      await once(server, "listening");
-      try {
-        const { port } = server.address() as AddressInfo;
-        const script = `const response = await fetch("https://localhost:${port}", { tls: { rejectUnauthorized: false } }); console.log(await response.text());`;
-        const [without, withFlag] = await Promise.all([
-          bun(["repl", "-e", script]),
-          replAndRun(["--experimental-http2-fetch", "-e", script]),
-        ]);
-        expect(without).toEqual({ stdout: "1.1\n", stderr: "", exitCode: 0 });
-        expect(withFlag).toEqual({ stdout: "2.0\n", stderr: "", exitCode: 0 });
-      } finally {
-        server.close();
-      }
-    });
-
-    test("the flags apply when the REPL reads its input from stdin", async () => {
+    test("apply when the REPL reads its input from stdin", async () => {
       using dir = tempDir("repl-flags-stdin", {});
       const { outputs, stderr, exitCode } = await runRepl(["typeof gc", "Error.stackTraceLimit", ".exit"], {
         cwd: String(dir),
@@ -1029,44 +920,322 @@ describe.concurrent("Bun REPL", () => {
       });
       expect(outputs).toEqual(['"function"', "3"]);
       expect(stderr).toBe("");
-      const profiles = path.join(String(dir), "profiles");
-      const written = existsSync(profiles) ? readdirSync(profiles) : [];
-      expect(written.map(name => path.extname(name))).toEqual([".cpuprofile"]);
+      expect(profiles(String(dir))).toEqual([".cpuprofile"]);
       expect(exitCode).toBe(0);
     });
 
-    describe("that already worked", () => {
-      test.each([
-        ["--define", ["--define", "FROM_FLAG:'flag'"], "console.log(FROM_FLAG)", "flag\n"],
-        ["--smol and --title", ["--smol", "--title", "repl-title"], "console.log(process.title)", "repl-title\n"],
-        [
-          "--no-deprecation",
-          ["--no-deprecation"],
-          `process.emitWarning("old", "DeprecationWarning"); console.log(process.noDeprecation)`,
-          "true\n",
+    test("--cpu-prof and --heap-prof write their profiles when the REPL exits", async () => {
+      using dir = tempDir("repl-profile", {});
+      const flags = ["--cpu-prof", "--cpu-prof-dir", "profiles", "--heap-prof", "--heap-prof-dir", "profiles"];
+      const result = await bun(["repl", ...flags, "-e", "console.log('evaluated')"], { cwd: String(dir) });
+      expect(result).toEqual({ stdout: "evaluated\n", stderr: "", exitCode: 0 });
+      expect(profiles(String(dir)).sort()).toEqual([".cpuprofile", ".heapprofile"]);
+    });
+
+    test("--trace-env and --trace-exit trace", async () => {
+      const script = "process.env.REPL_TRACE_ENV_PROBE; process.exit(3)";
+      const { stdout, stderr, exitCode } = await bun(["repl", "--trace-env", "--trace-exit", "-e", script]);
+      expect(stdout).toBe("");
+      expect(stderr).toContain('[--trace-env] get "REPL_TRACE_ENV_PROBE"\n');
+      expect(stderr).toMatch(
+        /WARNING: Exited the environment with code 3\n +at exit \(node:internal\/process\/pre_execution/,
+      );
+      expect(exitCode).toBe(3);
+    });
+
+    test("--no-macros disables macros in the input and in what it imports", async () => {
+      using dir = tempDir("repl-no-macros", {
+        "macro.ts": `export function value() { return "macro ran"; }`,
+        "uses-macro.ts": `import { value } from "./macro.ts" with { type: "macro" };\nconsole.log(value());`,
+      });
+      const typed = `import { value } from "./macro.ts" with { type: "macro" }; console.log(value())`;
+      const { stdout, exitCode } = await runRepl([typed, `await import("./uses-macro.ts")`, ".exit"], {
+        cwd: String(dir),
+        args: ["--no-macros"],
+      });
+      expect(stdout).not.toContain("macro ran");
+      expect(stdout).toContain("Macros are disabled");
+      expect(exitCode).toBe(0);
+    });
+
+    test("--fetch-preconnect, --redis-preconnect and --sql-preconnect connect before the first evaluation", async () => {
+      const [http, redis, sql] = [listen(), listen(), listen()];
+      using _http = http.server;
+      using _redis = redis.server;
+      using _sql = sql.server;
+      // These servers never answer, so the clients never finish: the process is killed with the test.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "repl",
+          `--fetch-preconnect=http://127.0.0.1:${http.server.port}`,
+          "--redis-preconnect",
+          "--sql-preconnect",
+          "-e",
+          "await Bun.stdin.text()",
         ],
-        ["--throw-deprecation", ["--throw-deprecation"], "console.log(process.throwDeprecation)", "true\n"],
-      ])("%s", async (_name, flags, script, stdout) => {
-        expect(await replAndRun([...flags, "-e", script])).toEqual({ stdout, stderr: "", exitCode: 0 });
+        stdin: "pipe",
+        stdout: "ignore",
+        stderr: "inherit",
+        env: {
+          ...bunEnv,
+          REDIS_URL: `redis://127.0.0.1:${redis.server.port}`,
+          DATABASE_URL: `postgres://127.0.0.1:${sql.server.port}/repl`,
+        },
+      });
+      await Promise.all([http.opened, redis.opened, sql.opened]);
+    });
+
+    test("--fetch-preconnect refuses a URL that is not HTTP", async () => {
+      const args = ["repl", "--fetch-preconnect=ftp://127.0.0.1:1", "-e", "console.log('evaluated')"];
+      expect(await bun(args)).toEqual({
+        stdout: "",
+        stderr: 'error: preconnect URL must be HTTP or HTTPS: "ftp://127.0.0.1:1"\n',
+        exitCode: 1,
+      });
+    });
+
+    test("--experimental-http2-fetch lets fetch() negotiate HTTP/2", async () => {
+      const server = http2.createSecureServer({ ...tls, allowHTTP1: true }, (req, res) => {
+        res.writeHead(200);
+        res.end(req.httpVersion);
+      });
+      // The client exits with its connection open.
+      server.on("clientError", () => {});
+      server.on("secureConnection", socket => socket.on("error", () => {}));
+      server.listen(0);
+      await once(server, "listening");
+      try {
+        const { port } = server.address() as AddressInfo;
+        const script = `const response = await fetch("https://localhost:${port}", { tls: { rejectUnauthorized: false } }); console.log(await response.text());`;
+        expect(await bun(["repl", "--experimental-http2-fetch", "-e", script])).toEqual({
+          stdout: "2.0\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      } finally {
+        server.close();
+      }
+    });
+
+    describe("child_process.fork() leaves the script of the parent out of execArgv", () => {
+      // A child that gets the script in its execArgv runs it and not child.js. It must not fork again.
+      const script = `
+        if (process.env.IS_FORKED) console.log("the child ran the script of the parent");
+        else require("node:child_process").fork("./child.js", { env: { ...process.env, IS_FORKED: "1" } });
+      `;
+
+      test.each([
+        ["bun repl -e", ["repl", "--no-addons", "-e", script]],
+        ["bun repl --eval=", ["repl", "--no-addons", `--eval=${script}`]],
+        ["bun --eval=", ["--no-addons", `--eval=${script}`]],
+      ])("%s", async (_name, args) => {
+        using dir = tempDir("repl-fork", { "child.js": `console.log("child", JSON.stringify(process.execArgv));` });
+        expect(await bun(args, { cwd: String(dir) })).toEqual({
+          stdout: 'child ["--no-addons"]\n',
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    });
+
+    describe("debugger", () => {
+      /** Connects to the inspector whose address `proc` prints to stderr. */
+      async function connect(proc: Bun.Subprocess<any, any, "pipe">) {
+        const address = Promise.withResolvers<string>();
+        let stderr = "";
+        void (async () => {
+          const decoder = new TextDecoder();
+          for await (const chunk of proc.stderr) {
+            stderr += decoder.decode(chunk, { stream: true });
+            const url = stderr.match(/^ *(ws:\/\/\S+)\n/m)?.[1];
+            if (url) address.resolve(url);
+          }
+          address.reject(new Error(`No inspector address in stderr: ${JSON.stringify(stderr)}`));
+        })();
+
+        const socket = new WebSocket(await address.promise);
+        const opened = Promise.withResolvers<void>();
+        socket.onopen = () => opened.resolve();
+        socket.onerror = () => opened.reject(new Error("Could not connect to the inspector"));
+        await opened.promise;
+
+        let lastId = 0;
+        const replies = new Map<number, (reply: any) => void>();
+        const events = new Map<string, (params: any) => void>();
+        socket.onmessage = ({ data }) => {
+          const message = JSON.parse(String(data));
+          const resolve = "id" in message ? replies.get(message.id) : events.get(message.method);
+          resolve?.("id" in message ? message : message.params);
+        };
+        return {
+          send(method: string, params: object = {}) {
+            const id = ++lastId;
+            const { promise, resolve } = Promise.withResolvers<any>();
+            replies.set(id, resolve);
+            socket.send(JSON.stringify({ id, method, params }));
+            return promise;
+          },
+          event(method: string) {
+            const { promise, resolve } = Promise.withResolvers<any>();
+            events.set(method, resolve);
+            return promise;
+          },
+          /** The process does not exit while a debugger is connected. */
+          [Symbol.dispose]: () => socket.close(),
+        };
+      }
+
+      test("--inspect-wait waits for a debugger before the first evaluation", async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "repl", "--inspect-wait=127.0.0.1:0", "-e", "console.log(globalThis.fromDebugger)"],
+          stdout: "pipe",
+          stderr: "pipe",
+          env: bunEnv,
+        });
+        {
+          using inspector = await connect(proc);
+          // The script has not run: it prints what the debugger sets now.
+          await inspector.send("Runtime.evaluate", { expression: `globalThis.fromDebugger = "set by the debugger"` });
+          await inspector.send("Inspector.initialized");
+        }
+        expect(await proc.stdout.text()).toBe("set by the debugger\n");
+        expect(await proc.exited).toBe(0);
       });
 
-      test("[define] of bunfig.toml, .env, and paths of tsconfig.json", async () => {
-        using dir = tempDir("repl-project", {
-          "bunfig.toml": `[define]\nFROM_BUNFIG = "'bunfig'"\n`,
-          ".env": "FROM_DOTENV=dotenv\n",
-          "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./lib/*"] } } }),
-          "lib/value.ts": `export const value = "paths";`,
+      test("--inspect-brk stops where the first evaluation starts", async () => {
+        const script = "globalThis.started = true; console.log('evaluated')";
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "repl", "--inspect-brk=127.0.0.1:0", "-e", script],
+          stdout: "pipe",
+          stderr: "pipe",
+          env: bunEnv,
         });
-        const script = `console.log(FROM_BUNFIG, process.env.FROM_DOTENV, (await import("@lib/value")).value)`;
-        expect(await replAndRun(["-e", script], { cwd: String(dir) })).toEqual({
-          stdout: "bunfig dotenv paths\n",
+        {
+          using inspector = await connect(proc);
+          await Promise.all([
+            inspector.send("Inspector.enable"),
+            inspector.send("Debugger.enable"),
+            inspector.send("Debugger.setBreakpointsActive", { active: true }),
+            inspector.send("Debugger.setPauseOnDebuggerStatements", { enabled: true }),
+          ]);
+          const paused = inspector.event("Debugger.paused");
+          void inspector.send("Inspector.initialized");
+          expect((await paused).reason).toBe("DebuggerStatement");
+          const started = await inspector.send("Runtime.evaluate", { expression: "typeof globalThis.started" });
+          expect(started.result.result.value).toBe("undefined");
+          await inspector.send("Debugger.resume");
+        }
+        expect(await proc.stdout.text()).toBe("evaluated\n");
+        expect(await proc.exited).toBe(0);
+      });
+
+      // Editors export these to every process of their terminals. The REPL debugs for a flag only.
+      test("BUN_INSPECT alone starts no debugger", async () => {
+        const env = { BUN_INSPECT: "ws://127.0.0.1:0/repl?wait=1" };
+        expect(await bun(["repl", "-e", "console.log('evaluated')"], { env })).toEqual({
+          stdout: "evaluated\n",
           stderr: "",
           exitCode: 0,
         });
       });
 
-      test("--conditions", async () => {
-        using dir = tempDir("repl-conditions", {
+      test("BUN_INSPECT_CONNECT_TO alone leaves node:inspector free to open", async () => {
+        const script = `const inspector = require("node:inspector"); inspector.open(0, "127.0.0.1"); console.log(typeof inspector.url()); inspector.close();`;
+        const env = { BUN_INSPECT_CONNECT_TO: "ws://127.0.0.1:1/repl" };
+        const { stdout, stderr, exitCode } = await bun(["repl", "-e", script], { env });
+        expect(stdout).toBe("string\n");
+        expect(stderr).toStartWith("Debugger listening on ws://127.0.0.1:");
+        expect(exitCode).toBe(0);
+      });
+    });
+
+    describe("that a REPL cannot honor", () => {
+      const noFile = (what: string) => `has no entry file to ${what}`;
+      const noScripts = "does not run package.json scripts";
+
+      test.each([
+        [["repl", "--watch"], {}, `${noFile("watch")}. Remove --watch.`],
+        [["--watch", "repl"], {}, `${noFile("watch")}. Remove --watch.`],
+        [["repl"], { BUN_OPTIONS: "--hot" }, `${noFile("reload")}. Remove --hot from BUN_OPTIONS.`],
+        [["repl", "--filter", "*"], {}, `${noScripts}. Remove --filter.`],
+        [["repl", "-F", "*"], {}, `${noScripts}. Remove --filter.`],
+        [["repl", "--workspaces"], {}, `${noScripts}. Remove --workspaces.`],
+        [["repl", "--parallel"], {}, `${noScripts}. Remove --parallel.`],
+        [["repl", "--sequential"], {}, `${noScripts}. Remove --sequential.`],
+        [
+          ["repl", "--cron-title=job", "--cron-period=* * * * *"],
+          {},
+          `${noFile("run as a cron job")}. Remove --cron-title and --cron-period.`,
+        ],
+      ])("bun %j %j is an error", async (args, env, message) => {
+        expect(await bun([...args, "-e", "console.log('evaluated')"], { env })).toEqual({
+          stdout: "",
+          stderr: `error: "bun repl" ${message}\n`,
+          exitCode: 1,
+        });
+      });
+
+      test("--help lists the flags of `bun run` without them", async () => {
+        const [repl, run] = await Promise.all([bun(["repl", "--help"]), bun(["run", "--help"])]);
+        const flags = (help: string) => Array.from(help.matchAll(/^ +(?:-\w, )?--([\w.-]+)/gm), match => match[1]);
+        const [ofRepl, ofRun] = [flags(repl.stdout), flags(run.stdout)];
+        expect(repl.stdout).toStartWith("Usage: bun repl [flags]\n");
+        expect(ofRepl.filter(flag => !ofRun.includes(flag))).toEqual([]);
+        expect(ofRun.filter(flag => !ofRepl.includes(flag)).sort()).toEqual(
+          [
+            // No effect without an entry file or a package.json script.
+            "bun",
+            "check",
+            "elide-lines",
+            "if-present",
+            "interactive",
+            "no-clear-screen",
+            "no-exit-on-error",
+            "preserve-symlinks-main",
+            "shell",
+            "silent",
+            "watch-kill-signal",
+            // Refused.
+            "cron-period",
+            "cron-title",
+            "filter",
+            "hot",
+            "parallel",
+            "sequential",
+            "watch",
+            "workspaces",
+          ].sort(),
+        );
+        expect(repl.exitCode).toBe(0);
+      });
+    });
+
+    describe("that already worked", () => {
+      test("--define, --title, --no-deprecation and --throw-deprecation", async () => {
+        using dir = tempDir("repl-flags", {});
+        const flags = [
+          "--define",
+          "FROM_FLAG:'flag'",
+          "--title",
+          "repl-title",
+          "--no-deprecation",
+          "--throw-deprecation",
+        ];
+        const script = `console.log(FROM_FLAG, process.title, process.noDeprecation, process.throwDeprecation)`;
+        expect(await bun(["repl", ...flags, "-e", script], { cwd: String(dir) })).toEqual({
+          stdout: "flag repl-title true true\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      test("[define] of bunfig.toml, .env, paths of tsconfig.json, and --conditions", async () => {
+        using dir = tempDir("repl-project", {
+          "bunfig.toml": `[define]\nFROM_BUNFIG = "'bunfig'"\n`,
+          ".env": "FROM_DOTENV=dotenv\n",
+          "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./lib/*"] } } }),
+          "lib/value.ts": `export const value = "paths";`,
           "node_modules/pkg/package.json": JSON.stringify({
             name: "pkg",
             exports: { custom: "./custom.js", default: "./default.js" },
@@ -1074,13 +1243,12 @@ describe.concurrent("Bun REPL", () => {
           "node_modules/pkg/custom.js": `module.exports = "custom";`,
           "node_modules/pkg/default.js": `module.exports = "default";`,
         });
-        const script = `console.log(require("pkg"))`;
-        const [without, withFlag] = await Promise.all([
-          bun(["repl", "-e", script], { cwd: String(dir) }),
-          bun(["repl", "--conditions=custom", "-e", script], { cwd: String(dir) }),
-        ]);
-        expect(without).toEqual({ stdout: "default\n", stderr: "", exitCode: 0 });
-        expect(withFlag).toEqual({ stdout: "custom\n", stderr: "", exitCode: 0 });
+        const script = `console.log(FROM_BUNFIG, process.env.FROM_DOTENV, (await import("@lib/value")).value, require("pkg"))`;
+        expect(await bun(["repl", "--conditions=custom", "-e", script], { cwd: String(dir) })).toEqual({
+          stdout: "bunfig dotenv paths custom\n",
+          stderr: "",
+          exitCode: 0,
+        });
       });
     });
   });
@@ -1331,6 +1499,23 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       send("\x04"); // Ctrl+D
       expect(await proc.exited).toBe(0);
     });
+  });
+
+  test("the flags of `bun run` apply in a terminal", async () => {
+    using dir = tempDir("repl-flags-terminal", {});
+    await withTerminalRepl(
+      async ({ send, waitFor, proc }) => {
+        send("typeof gc\n");
+        await waitFor('"function"');
+        send("Error.stackTraceLimit + 4000\n");
+        await waitFor("4003");
+        send(".exit\n");
+        expect(await proc.exited).toBe(0);
+        const profiles = readdirSync(path.join(String(dir), "profiles"));
+        expect(profiles.map(name => path.extname(name))).toEqual([".cpuprofile"]);
+      },
+      { cwd: String(dir), args: ["--expose-gc", "--stack-trace-limit=3", "--cpu-prof", "--cpu-prof-dir", "profiles"] },
+    );
   });
 
   test("require works in terminal", async () => {

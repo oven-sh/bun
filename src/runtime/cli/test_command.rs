@@ -1967,14 +1967,7 @@ impl TestCommand {
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
         vm.preload = ctx.preloads.clone();
         vm.transpiler.options.rewrite_jest_for_tests = true;
-        bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
-            ctx.runtime_options.experimental_http2_fetch,
-            core::sync::atomic::Ordering::Relaxed,
-        );
-        bun_http::EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI.store(
-            ctx.runtime_options.experimental_http3_fetch,
-            core::sync::atomic::Ordering::Relaxed,
-        );
+        crate::cli::run_command::RunCommand::store_experimental_fetch_flags(ctx);
         vm.transpiler.options.env.behavior =
             bun_bundler::options::EnvBehavior::LoadAllWithoutInlining;
 

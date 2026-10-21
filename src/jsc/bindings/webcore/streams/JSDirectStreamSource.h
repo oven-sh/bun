@@ -8,6 +8,7 @@
 
 #include "root.h"
 #include "StreamsForward.h"
+#include "WebStreamsInternals.h"
 
 #include <JavaScriptCore/JSInternalFieldObjectImpl.h>
 
@@ -47,19 +48,51 @@ public:
 
     const JSC::WriteBarrier<JSC::Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
 
-    JSC::JSValue thisValue() const { return internalField(Field::UnderlyingSource).get(); }
-    JSC::JSObject* pullFunction() const { return internalField(Field::Pull).get().getObject(); }
-    JSC::JSObject* cancelFunction() const { return internalField(Field::Cancel).get().getObject(); }
-    JSC::JSObject* closeFunction() const { return internalField(Field::Close).get().getObject(); }
-
+    // Only this class calls the source's functions: what pull() and cancel() return reaches a
+    // caller as a promise that an internal reaction can hang on (promiseForReactions).
+    bool hasPull() const { return pullFunction(); }
+    // pull(controller); a throw propagates, and a missing pull() throws a TypeError. nullptr:
+    // pull() returned no promise.
+    JSC::JSPromise* pull(JSC::JSGlobalObject*, JSC::JSValue controller);
     // cancel(reason) in the stream's async context, as a promise (a throw rejects it).
     JSC::JSPromise* cancel(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue reason);
+    // cancel(reason) for a sink that closed underneath the source: nothing waits for what it
+    // returns, and a throw propagates.
+    void cancelFromSink(JSC::JSGlobalObject*, JSC::JSValue reason);
     // close(reason); a throw propagates.
     void close(JSC::JSGlobalObject*, JSC::JSValue reason);
 
 private:
     JSDirectStreamSource(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&, JSC::JSValue underlyingSource, JSC::JSObject* pull, JSC::JSObject* cancel, JSC::JSObject* close);
+
+    JSC::JSValue thisValue() const { return internalField(Field::UnderlyingSource).get(); }
+    JSC::JSObject* pullFunction() const { return internalField(Field::Pull).get().getObject(); }
+    JSC::JSObject* cancelFunction() const { return internalField(Field::Cancel).get().getObject(); }
+    JSC::JSObject* closeFunction() const { return internalField(Field::Close).get().getObject(); }
+
+    JSC::JSPromise* reactionPromise(JSC::JSGlobalObject* globalObject, JSC::JSPromise* returned) const
+    {
+        if (!Bun::WebStreams::promiseMayNeedFollower(globalObject, returned)) [[likely]]
+            return returned;
+        return reactionPromiseSlow(globalObject, returned);
+    }
+    JSC::JSPromise* reactionPromiseSlow(JSC::JSGlobalObject*, JSC::JSPromise* returned) const;
 };
+
+// Inline: a pull() that returns no promise costs what a direct call of the function costs.
+ALWAYS_INLINE JSC::JSPromise* JSDirectStreamSource::pull(JSC::JSGlobalObject* globalObject, JSC::JSValue controller)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSC::JSObject* pullMethod = pullFunction();
+    JSC::MarkedArgumentBuffer args;
+    args.append(controller);
+    JSC::JSValue result = JSC::call(globalObject, pullMethod ? JSC::JSValue(pullMethod) : JSC::jsUndefined(), thisValue(), args, "underlyingSource.pull is not a function"_s);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto* returned = dynamicDowncast<JSC::JSPromise>(result);
+    if (!returned)
+        return nullptr;
+    RELEASE_AND_RETURN(scope, reactionPromise(globalObject, returned));
+}
 
 } // namespace WebCore

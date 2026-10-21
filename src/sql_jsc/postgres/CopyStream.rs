@@ -2,9 +2,7 @@
 //! each chunk (out) or each time the socket has drained (in).
 
 use super::{MAX_PIPELINE_SIZE, PostgresSQLConnection, Socket};
-use crate::jsc::{
-    AutoFlush as _, CallFrame, JSGlobalObject, JSValue, JsResult, js_error_to_postgres,
-};
+use crate::jsc::{AutoFlush as _, JSValue, JsResult, js_error_to_postgres};
 use crate::postgres::PostgresSQLQuery;
 use crate::postgres::error_jsc::postgres_error_to_js;
 use crate::postgres::postgres_request as PostgresRequest;
@@ -12,6 +10,7 @@ use crate::postgres::postgres_sql_query::{CopyStream, js};
 use bun_core::String as BunString;
 use bun_core::strings;
 use bun_jsc::JSUint8Array;
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_ptr::{ParentRef, RefPtr};
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::postgres_protocol as protocol;
@@ -279,28 +278,26 @@ impl PostgresSQLQuery {
 
     pub fn set_copy(
         this: &Self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let callback = callframe.argument(0);
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        callback: JsLocal<'_>,
+        writable: bool,
+    ) {
+        let callback = callback.to_js();
         let (copy, callback) = if !callback.is_callable() {
             (CopyStream::None, JSValue::ZERO)
-        } else if callframe.argument(1).to_boolean() {
+        } else if writable {
             (CopyStream::Writable, callback)
         } else {
             (CopyStream::Readable, callback)
         };
-        js::copy_set_cached(callframe.this(), global, callback);
+        js::copy_set_cached(this_value.to_js(), cx.global(), callback);
         this.update_flags(|f| f.copy = copy);
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub fn copy_write(
-        this: &Self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let chunk = callframe.argument(0);
+    pub fn copy_write(this: &Self, cx: &mut JsScope<'_>, chunk: JsLocal<'_>) -> JsResult<bool> {
+        let global = cx.global();
+        let chunk = chunk.to_js();
         let text;
         let buffer;
         let bytes = if chunk.is_string() {
@@ -316,31 +313,22 @@ impl PostgresSQLQuery {
                 chunk,
             ));
         };
-        Ok(JSValue::from(
-            this.copy_connection(CopyStream::WritableOpen)
-                .is_none_or(|connection| connection.write_copy_chunk(bytes)),
-        ))
+        Ok(this
+            .copy_connection(CopyStream::WritableOpen)
+            .is_none_or(|connection| connection.write_copy_chunk(bytes)))
     }
 
-    pub fn copy_done(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub fn copy_done(this: &Self, _: &mut JsScope<'_>) {
         this.end_copy_in(None);
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub fn copy_fail(
-        this: &Self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let message = callframe.argument(0).to_utf8(global)?;
-        this.end_copy_in(Some(copy_fail_message(message.slice())));
-        Ok(JSValue::UNDEFINED)
+    pub fn copy_fail(this: &Self, _: &mut JsScope<'_>, message: &[u8]) {
+        this.end_copy_in(Some(copy_fail_message(message)));
     }
 
-    pub fn copy_resume(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub fn copy_resume(this: &Self) {
         if let Some(connection) = this.copy_connection(CopyStream::ReadableOpen) {
             connection.set_reading(true);
         }
-        Ok(JSValue::UNDEFINED)
     }
 }

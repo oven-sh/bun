@@ -1,11 +1,11 @@
 use core::cell::Cell;
-use core::mem;
 
 use crate::jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachineSqlExt as _};
 use crate::shared::cached_structure::Undescribed;
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_core::String as BunString;
 use bun_jsc::JsCell;
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_ptr::{AsCtxPtr, RefPtr};
 
 use super::PostgresSQLConnection;
@@ -14,7 +14,6 @@ use super::Signature;
 use super::command_tag_jsc::CommandTagJsc;
 use super::error_jsc::postgres_error_to_js;
 use super::postgres_request as PostgresRequest;
-use super::postgres_sql_connection;
 use super::postgres_sql_statement::{ResultDescription, Status as StatementStatus, describe};
 use bun_sql::postgres::CommandTag;
 use bun_sql::postgres::any_postgres_error::AnyPostgresError;
@@ -24,7 +23,7 @@ use bun_sql::shared::SQLQueryResultMode as PostgresSQLQueryResultMode;
 
 bun_core::declare_scope!(Postgres, visible);
 
-pub use crate::jsc::codegen::JSPostgresSQLQuery as js;
+pub(crate) use crate::generated_bindgen::postgres_sql_query::js_PostgresSQLQuery as js;
 
 // JS can re-enter any method, so they all take `&self` and the fields are cells.
 #[derive(bun_ptr::CellRefCounted)]
@@ -362,22 +361,16 @@ impl PostgresSQLQuery {
     /// `result.statement` of the result for which `on_result` gave this number instead.
     pub fn describe_result(
         this: &Self,
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
+        cx: &mut JsScope<'_>,
+        number: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         match this
             .undescribed
-            .with_mut(|results| results.take(callframe.argument(0)))
+            .with_mut(|results| results.take(number.to_js()))
         {
-            Some((parameters, fields)) => {
-                describe(global_object, &this.query, &parameters, &fields)
-            }
+            Some((parameters, fields)) => describe(cx.global(), &this.query, &parameters, &fields),
             None => Ok(JSValue::NULL),
         }
-    }
-
-    pub fn estimated_size(&self) -> usize {
-        mem::size_of::<PostgresSQLQuery>()
     }
 
     // Registered directly as `createQuery` via
@@ -414,22 +407,17 @@ impl PostgresSQLQuery {
     }
 
     pub fn set_pending_value_from_js(
-        _this: &Self,
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let result = callframe.argument(0);
-        let this_value = callframe.this();
-        js::pending_value_set_cached(this_value, global_object, result);
-        Ok(JSValue::UNDEFINED)
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
+    ) {
+        js::pending_value_set_cached(this_value.to_js(), cx.global(), value.to_js());
     }
 
-    pub fn set_mode_from_js(
-        this: &Self,
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let js_mode = callframe.argument(0);
+    pub fn set_mode_from_js(this: &Self, cx: &mut JsScope<'_>, mode: JsLocal<'_>) -> JsResult<()> {
+        let global_object = cx.global();
+        let js_mode = mode.to_js();
         if js_mode.is_empty_or_undefined_or_null() || !js_mode.is_number() {
             return Err(global_object.throw_invalid_argument_type("setMode", "mode", "Number"));
         }
@@ -446,29 +434,24 @@ impl PostgresSQLQuery {
             }
         };
         this.update_flags(|f| f.result_mode = result_mode);
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
     pub fn do_run(
         this: &Self,
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let Some(connection) = postgres_sql_connection::js::from_js_ref(callframe.argument(0))
-        else {
-            return Err(
-                global_object.throw(format_args!("connection must be a PostgresSQLConnection"))
-            );
-        };
-        let connection: &PostgresSQLConnection = &connection;
-
-        let query = callframe.argument(1);
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        connection: &PostgresSQLConnection,
+        query: JsLocal<'_>,
+    ) -> JsResult<()> {
+        let global_object = cx.global();
+        let query = query.to_js();
 
         if !query.is_object() {
             return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
         }
 
-        let this_value = callframe.this();
+        let this_value = this_value.to_js();
         let binding_value = js::binding_get_cached(this_value).unwrap_or_default();
         let unnamed = connection
             .flags
@@ -549,16 +532,15 @@ impl PostgresSQLQuery {
         connection.flush_data_and_reset_timeout();
         // advance() can reject this request with nothing sent: no reply releases the ref then.
         connection.update_poll_ref();
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
-    pub fn do_cancel(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_cancel(this: &Self, _: &mut JsScope<'_>) {
         match this.connection() {
             Some(connection) => connection.cancel(this),
             // `do_run` has not queued it: it refuses a query that is not `Pending`.
             None if this.status.get() == Status::Pending => this.status.set(Status::Fail),
             None => {}
         }
-        Ok(JSValue::UNDEFINED)
     }
 }

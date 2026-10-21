@@ -1,5 +1,6 @@
 use bun_collections::VecExt;
 use bun_jsc::JsCell;
+use bun_jsc::bindgen::JsScope;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::sync::atomic::Ordering;
@@ -64,9 +65,7 @@ const CANCEL_REQUEST_TIMEOUT_MS: u32 = 5_000;
 const CANCELLED_ON_THE_WIRE: &[u8] =
     b"The server has received the query and may still run it. Its result is discarded.";
 
-pub mod js {
-    pub use crate::jsc::codegen::JSPostgresSQLConnection::*;
-}
+use crate::generated_bindgen::postgres_sql_connection::js_PostgresSQLConnection as js;
 
 #[path = "CopyStream.rs"]
 mod copy_stream;
@@ -313,19 +312,6 @@ impl AutoFlush for PostgresSQLConnection {
 }
 
 impl PostgresSQLConnection {
-    pub fn get_on_notification(_this: &Self, this_value: JSValue, _: &JSGlobalObject) -> JSValue {
-        js::onnotification_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
-    }
-
-    pub fn set_on_notification(
-        _this: &Self,
-        this_value: JSValue,
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) {
-        js::onnotification_set_cached(this_value, global, value);
-    }
-
     /// `on_handshake` sends the StartupMessage.
     pub(crate) fn setup_tls(&self) {
         let started = start_tls(
@@ -1240,33 +1226,29 @@ impl<const SSL: bool> SocketHandler<SSL> {
 }
 
 impl PostgresSQLConnection {
-    pub fn do_ref(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_ref(this: &Self) {
         this.update_flags(|f| f.insert(ConnectionFlags::KEEP_ALIVE_REQUESTED));
         this.poll_ref.with_mut(|p| p.ref_(this.vm_ctx()));
         this.update_has_pending_activity();
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub fn do_flush(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_flush(this: &Self) {
         this.register_auto_flusher();
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub fn do_hold(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_hold(this: &Self) {
         this.timers.set_checked_out(true);
         if this.status.get() == Status::Connected {
             this.reset_connection_timeout();
         }
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub fn do_unhold(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub fn do_unhold(this: &Self, _: &mut JsScope<'_>) {
         this.timers.set_checked_out(false);
         if this.status.get() == Status::Connected {
             this.reset_connection_timeout();
         }
         this.retire_if_idle();
-        Ok(JSValue::UNDEFINED)
     }
 
     fn is_in_transaction(&self) -> bool {
@@ -1274,21 +1256,19 @@ impl PostgresSQLConnection {
     }
 
     /// Also while a request that user code has seen rejected can still change it.
-    pub fn get_in_transaction(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_boolean(
-            self.is_in_transaction()
-                || self
-                    .current()
-                    .is_some_and(|head| head.flags.get().discard_response),
-        )
+    pub fn get_in_transaction(&self) -> bool {
+        self.is_in_transaction()
+            || self
+                .current()
+                .is_some_and(|head| head.flags.get().discard_response)
     }
 
     /// Of the login that is under way or was refused.
-    pub fn get_sasl(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_boolean(matches!(
+    pub fn get_sasl(&self) -> bool {
+        matches!(
             self.authentication_state.get(),
             AuthenticationState::Sasl(_) | AuthenticationState::SaslVerified { .. }
-        ))
+        )
     }
 
     fn close(&self) {
@@ -1305,13 +1285,8 @@ impl PostgresSQLConnection {
         self.write_buffer.with_mut(|b| b.clear_and_free());
     }
 
-    pub fn do_close(
-        this: &Self,
-        _global_object: &JSGlobalObject,
-        _: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn do_close(this: &Self, _: &mut JsScope<'_>) {
         this.close();
-        Ok(JSValue::UNDEFINED)
     }
 
     fn clean_up_requests(&self, js_reason: Option<JSValue>) {

@@ -1,7 +1,7 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 
-use crate::jsc::codegen::js_mysql_query as js;
+use crate::generated_bindgen::js_my_sql_query::js_MySQLQuery as js;
 use crate::jsc::{
     CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, VirtualMachine,
     VirtualMachineSqlExt as _, bun_string_jsc,
@@ -9,6 +9,7 @@ use crate::jsc::{
 use crate::shared::cached_structure::Undescribed;
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_jsc::JsCell;
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
@@ -39,10 +40,6 @@ impl JSMySQLQuery {
     pub(crate) fn ref_guard(&self) -> RefPtr<Self> {
         // SAFETY: `self` is the live heap allocation.
         unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
-    }
-
-    pub fn estimated_size(&self) -> usize {
-        core::mem::size_of::<Self>()
     }
 
     pub fn finalize(&self) {
@@ -88,22 +85,16 @@ impl JSMySQLQuery {
 
     pub fn do_run(
         this: &Self,
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        connection: &MySQLConnection,
+        query: JsLocal<'_>,
+    ) -> JsResult<()> {
         debug!("doRun");
         let _guard = this.ref_guard();
 
-        let arguments = callframe.arguments();
-        if arguments.len() < 2 {
-            return Err(global_object.throw_invalid_arguments(format_args!(
-                "run must be called with 2 arguments connection and target"
-            )));
-        }
-        let Some(connection) = arguments[0].as_class_ref::<MySQLConnection>() else {
-            return Err(global_object.throw(format_args!("connection must be a MySQLConnection")));
-        };
-        let target = arguments[1];
+        let global_object = cx.global();
+        let target = query.to_js();
         if !target.is_object() {
             return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
         }
@@ -118,35 +109,27 @@ impl JSMySQLQuery {
             )));
         }
         if this.is_completed() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
-        js::target_set_cached(callframe.this(), global_object, target);
+        js::target_set_cached(this_value.to_js(), global_object, target);
         // Until it ends: the wrapper holds the target, the parameters and the rows.
         this.this_value.with_mut(|v| v.upgrade(global_object));
         connection.enqueue_request(this.ref_guard());
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
-    pub fn do_cancel(
-        this: &Self,
-        _global_object: &JSGlobalObject,
-        _callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn do_cancel(this: &Self, _: &mut JsScope<'_>) {
         let _entered = VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
         // The queue drops a request that ended when it gets to it.
         this.reject_when(
             MySQLQuery::cancel,
             this.error_to_js(AnyMySQLError::Error::QueryCancelled),
         );
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub fn set_mode_from_js(
-        this: &Self,
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let js_mode = callframe.argument(0);
+    pub fn set_mode_from_js(this: &Self, cx: &mut JsScope<'_>, mode: JsLocal<'_>) -> JsResult<()> {
+        let global_object = cx.global();
+        let js_mode = mode.to_js();
         if js_mode.is_empty_or_undefined_or_null() || !js_mode.is_number() {
             return Err(global_object.throw_invalid_argument_type("setMode", "mode", "Number"));
         }
@@ -163,17 +146,11 @@ impl JSMySQLQuery {
             }
         };
         this.query.with_mut(|q| q.set_result_mode(mode));
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
-    pub fn set_pending_value_from_js(
-        this: &Self,
-        _global_object: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let result = callframe.argument(0);
-        this.set_pending_value(result);
-        Ok(JSValue::UNDEFINED)
+    pub fn set_pending_value_from_js(this: &Self, value: JsLocal<'_>) {
+        this.set_pending_value(value.to_js());
     }
 
     fn last_insert_id_to_js(&self, value: u64) -> JsResult<JSValue> {
@@ -207,14 +184,14 @@ impl JSMySQLQuery {
 
     pub fn describe_result(
         this: &Self,
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
+        cx: &mut JsScope<'_>,
+        number: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         match this
             .undescribed
-            .with_mut(|results| results.take(callframe.argument(0)))
+            .with_mut(|results| results.take(number.to_js()))
         {
-            Some(columns) => describe(global_object, this.query.get().text(), &[], &columns),
+            Some(columns) => describe(cx.global(), this.query.get().text(), &[], &columns),
             None => Ok(JSValue::NULL),
         }
     }

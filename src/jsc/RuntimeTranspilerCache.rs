@@ -81,7 +81,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 48: `else` and the name of an `async` method are mapped elsewhere, the `}` of a pattern
 /// that became an assignment is mapped, what is in the value of a define is not, and `--coverage`
 /// participates in the features hash.
-const EXPECTED_VERSION: u32 = 48;
+/// Version 49: `case` and `default` are mapped.
+const EXPECTED_VERSION: u32 = 49;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

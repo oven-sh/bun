@@ -182,13 +182,14 @@ impl ClientSession {
             let Some(client) = stream.client else {
                 continue;
             };
-            if client_mut(client).async_http_id != async_http_id {
+            let client = client_mut(client);
+            if client.async_http_id != async_http_id {
                 continue;
             }
-            if core::mem::take(&mut stream.read_paused) {
-                if let Some(qs) = stream.qstream_mut() {
-                    qs.want_read(true);
-                }
+            // The consumer can be paused again by the time this runs.
+            let paused = client.signals.is_receive_paused();
+            if let Some(qs) = stream.qstream_mut() {
+                qs.hold_window(paused);
             }
             return true;
         }
@@ -227,6 +228,9 @@ impl ClientSession {
             // the stream instead of leaking it on the pooled session.
             if abort || !request_body_done {
                 qs.reset();
+            } else {
+                // Trailers and the FIN still arrive on this stream, and nothing else releases it.
+                qs.hold_window(false);
             }
         }
         st.qstream = None;

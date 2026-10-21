@@ -137,6 +137,11 @@ export const lsquic: Dependency = {
     // lsquic_prq_destroy() only frees the free list. A stateless reset whose
     // send failed is on the returned list, so destroying the engine leaks it.
     "patches/lsquic/prq-free-returned-conns.patch",
+    // lsquic_stream_hold_window(): receive backpressure that keeps reading a
+    // stream and stops its receive limit. Data left in a stream by
+    // lsquic_stream_wantread(s, 0) also holds the connection's window and is
+    // dropped with the connection.
+    "patches/lsquic/hold-stream-window.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

@@ -3102,6 +3102,14 @@ function accountQueuedHeaderBytes(res, queued) {
   addPipelineOutgoingData(queued, bytes);
 }
 
+// What the native write and end accept: a queued chunk reaches them after the call that passed it has returned.
+function validateQueuedChunk(chunk) {
+  if (chunk == null || typeof chunk === "string") return;
+  const { isAnyArrayBuffer, isArrayBufferView, isStringObject } = require("node:util/types");
+  if (isArrayBufferView(chunk) || isAnyArrayBuffer(chunk) || isStringObject(chunk)) return;
+  throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "Uint8Array"], chunk);
+}
+
 function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
   callWriteHeadIfObservable(res, res[headerStateSymbol]);
   if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
@@ -3117,6 +3125,7 @@ function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
     if (typeof callback === "function") process.nextTick(callback);
     return true;
   }
+  validateQueuedChunk(chunk);
   queued.ops.push(["write", chunk, encoding, callback]);
   if (chunk) {
     const bytes = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
@@ -3145,6 +3154,7 @@ function bufferPipelinedEnd(res, queued, chunk, encoding, callback) {
     }
     chunk = undefined;
   }
+  validateQueuedChunk(chunk);
   queued.ops.push(["end", chunk, encoding, callback]);
   if (chunk) {
     const bytes = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;

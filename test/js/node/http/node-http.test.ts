@@ -7643,6 +7643,35 @@ it.each([
   }
 });
 
+it.each(["write", "end"] as const)("%s() of a queued pipelined response throws for a wrong chunk", async method => {
+  const { promise, resolve } = Promise.withResolvers<unknown>();
+  let first: http.ServerResponse | undefined;
+  const server = http.createServer((req, res) => {
+    if (req.url === "/first") {
+      first = res;
+      return;
+    }
+    try {
+      // @ts-expect-error
+      resolve(res[method](5));
+    } catch (error) {
+      resolve(error);
+    }
+    res.end("second");
+    first!.end("first");
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    socket.end("GET /first HTTP/1.1\r\nHost: a\r\n\r\nGET /second HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n");
+    const received = await text(socket);
+    expect(await promise).toMatchObject({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" });
+    expect(received).toEndWith("second");
+  } finally {
+    server.close();
+  }
+});
+
 it.each(["write", "end"] as const)("%s(body) sends no body when statusCode is the string 304", async method => {
   const server = http.createServer((req, res) => {
     // @ts-expect-error

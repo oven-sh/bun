@@ -303,6 +303,153 @@ function checkForEmptyInterfaces(program: ts.Program) {
   return empties;
 }
 
+/**
+ * What the published types call the exports of each schema of the bindgen (docs/project/bindgen.mdx).
+ * `null`: nothing, since JavaScript wraps them, they are not for users, or the file has only types.
+ * `Class<T>`: the constructor of a class of which only the instances, `T`, are published.
+ */
+const PUBLISHED_AS: Record<string, string | null> = {
+  "BunObject.bind.ts": "typeof Bun & { braces: typeof Bun.$.braces; shellEscape: typeof Bun.$.escape }",
+  "BunObjectInternals.bind.ts": null,
+  "Crypto.bind.ts":
+    'typeof Bun & { Crypto: Class<Omit<Crypto, "subtle">>; timingSafeEqual: typeof import("node:crypto").timingSafeEqual }',
+  "CryptoHasher.bind.ts": "typeof Bun",
+  "DevServer.bind.ts": null,
+  "Glob.bind.ts": "typeof Bun",
+  "HTMLBundle.bind.ts": null,
+  "HashObject.bind.ts": "typeof Bun.hash & { wyhash: typeof Bun.hash }",
+  "JSMySQLConnection.bind.ts": null,
+  "JSON5Object.bind.ts": "typeof Bun.JSON5",
+  "JSONCObject.bind.ts": "typeof Bun.JSONC",
+  "Listener.bind.ts": null,
+  "NodeHTTPResponse.bind.ts": null,
+  "NodeModuleModule.bind.ts": null,
+  "PasswordObject.bind.ts": "typeof Bun.password",
+  "ResourceUsage.bind.ts": null,
+  "S3Stat.bind.ts": "{ S3Stat: Class<Bun.S3Stats> }",
+  "SSLConfig.bind.ts": null,
+  "SemverObject.bind.ts": "typeof Bun.semver",
+  "SocketConfig.bind.ts": null,
+  "TOMLObject.bind.ts": "typeof Bun.TOML",
+  "TextDecoder.bind.ts": "{ TextDecoder: typeof TextDecoder }",
+  "Timer.bind.ts": null,
+  "Transpiler.bind.ts": "typeof Bun",
+  "UnsafeObject.bind.ts": "typeof Bun.unsafe",
+  "XMLObject.bind.ts": "typeof Bun.XML",
+  "YAMLObject.bind.ts": "typeof Bun.YAML",
+  "bindgen_test.bind.ts": null,
+  "class_ref_test.bind.ts": null,
+  "cron.bind.ts": null,
+  "csrf_jsc.bind.ts": "typeof Bun.CSRF",
+  "dns.bind.ts": "typeof Bun.dns",
+  "dns_internals.bind.ts": null,
+  "filesystem_router.bind.ts": "typeof Bun",
+  "fmt_jsc.bind.ts": null,
+  "html_rewriter.bind.ts": null,
+  "jest.bind.ts": null,
+  "jsc_hooks.bind.ts": null,
+  "node_assert_binding.bind.ts": null,
+  "node_cluster_binding.bind.ts": null,
+  "node_fs_stat_watcher.bind.ts": null,
+  "node_http_binding.bind.ts": null,
+  "node_net_binding.bind.ts": null,
+  "node_os.bind.ts": null,
+  "node_tls_binding.bind.ts": null,
+  "node_util_binding.bind.ts": null,
+  "node_zlib_binding.bind.ts": null,
+  "socket_body.bind.ts": null,
+  "udp_socket.bind.ts": null,
+};
+
+/**
+ * Where the published types promise what the schema does not do: a call they allow has an argument
+ * the schema refuses, a result they name is not one the schema gives, or an object has a member
+ * that the schema's does not. They may be narrower than it, which says "a buffer" of a `Uint8Array`,
+ * but not by leaving out `null` or `undefined`.
+ */
+function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, schema: ts.Type) {
+  const broken: string[] = [];
+  const compared = new Map<ts.Type, Set<ts.Type>>();
+  const show = (type: ts.Type) => checker.typeToString(type, undefined, ts.TypeFormatFlags.NoTruncation);
+  const generated = schema.symbol.declarations![0].getSourceFile();
+  const isGenerated = (type: ts.Type) =>
+    !!type.symbol?.declarations?.some(declaration => declaration.getSourceFile() === generated);
+  const parts = (type: ts.Type) => (type.isUnion() ? type.types : [type]);
+
+  /** A dictionary or a class of the schema lists all it has, so nothing reads or gives any other member. */
+  function membersTheSchemaLacks(published: ts.Type, schema: ts.Type) {
+    const [listed, others] = [true, false].map(wanted =>
+      parts(schema).filter(part => (isGenerated(part) && part.getCallSignatures().length === 0) === wanted),
+    );
+    if (listed.length === 0) return [];
+    const names = parts(published)
+      .filter(
+        part => part.flags & ts.TypeFlags.Object && !others.some(other => checker.isTypeAssignableTo(part, other)),
+      )
+      .flatMap(part => part.getProperties().map(member => member.name));
+    return [...new Set(names)].filter(name => !listed.some(part => part.getProperty(name)));
+  }
+
+  function refusal(allowed: ts.Signature, taken: ts.Signature) {
+    for (const [i, parameter] of taken.parameters.entries()) {
+      // `(...args: any[]) => any`, which is all that the schema says of a builtin.
+      if ((parameter.valueDeclaration as ts.ParameterDeclaration).dotDotDotToken) break;
+      const argument = allowed.parameters[i];
+      const given = argument ? checker.getTypeOfSymbol(argument) : checker.getUndefinedType();
+      const takes = checker.getTypeOfSymbol(parameter);
+      if (!checker.isTypeAssignableTo(given, takes))
+        return `${parameter.name} takes ${show(takes)}, not ${show(given)}`;
+      const unread = membersTheSchemaLacks(given, takes);
+      if (unread.length > 0) return `${parameter.name} has no ${unread.join(", ")}`;
+    }
+    return null;
+  }
+
+  function compareSignatures(path: string, allowed: readonly ts.Signature[], taken: readonly ts.Signature[]) {
+    if (taken.length === 0) return;
+    if (allowed.length === 0) broken.push(`${path} is not published as a function`);
+    for (const signature of allowed) {
+      const refusals = taken.map(candidate => refusal(signature, candidate));
+      const match = taken[refusals.indexOf(null)];
+      if (match) compare(`${path}()`, signature.getReturnType(), match.getReturnType());
+      else broken.push(`${path}${checker.signatureToString(signature)}: ${refusals.join(", or ")}`);
+    }
+  }
+
+  function compare(path: string, published: ts.Type, schema: ts.Type) {
+    if (compared.get(published)?.has(schema)) return;
+    compared.set(published, (compared.get(published) ?? new Set()).add(schema));
+    // The exports of a file are a few of the members of `typeof Bun`.
+    const never = path ? membersTheSchemaLacks(published, schema) : [];
+    if (never.length > 0) broken.push(`${path} has no ${never.join(", ")}`);
+    const calls = schema.getCallSignatures();
+    const constructs = schema.getConstructSignatures();
+    if (calls.length === 0 && constructs.length === 0 && !isGenerated(schema)) {
+      const promisesNothing = published.flags & ts.TypeFlags.Void;
+      const absent = parts(schema).filter(part => part.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined));
+      if (
+        !promisesNothing &&
+        (!checker.isTypeAssignableTo(published, schema) ||
+          absent.some(part => !checker.isTypeAssignableTo(part, published)))
+      ) {
+        broken.push(`${path} is ${show(schema)}, not ${show(published)}`);
+      }
+      return;
+    }
+    compareSignatures(path, published.getCallSignatures(), calls);
+    compareSignatures(`new ${path}`, published.getConstructSignatures(), constructs);
+    for (const member of schema.getProperties()) {
+      const promised = checker.getPropertyOfType(published, member.name);
+      const memberPath = path ? `${path}.${member.name}` : member.name;
+      if (promised) compare(memberPath, checker.getTypeOfSymbol(promised), checker.getTypeOfSymbol(member));
+      else broken.push(`${memberPath} is not published`);
+    }
+  }
+
+  compare("", published, schema);
+  return broken;
+}
+
 afterAll(async () => {
   if (TEMP_DIR) {
     if (Bun.env.TYPES_INTEGRATION_TEST_KEEP_TEMP_DIR === "true") {
@@ -333,6 +480,50 @@ describe("@types/bun integration test", () => {
       emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
       diagnostics: [],
     });
+  });
+
+  test.skipIf(isDebug)("promises nothing that a schema of the bindgen breaks", async () => {
+    const dir = join(TEMP_DIR, "bindgen");
+    const schemas = await Array.fromAsync(
+      new Bun.Glob("src/**/*.bind.ts").scan({ cwd: BUN_REPO_ROOT, absolute: true }),
+    );
+    await $`${bunExe()} src/codegen/bindgen.ts --sources=${schemas.map(file => `bun=${file}`).join(",")} --codegen-path=${dir} --types-path=${dir}`
+      .env(bunEnv)
+      .quiet();
+    const pairs = join(dir, "published.ts");
+    await Bun.write(
+      pairs,
+      `export type Published = {\n${Object.entries(PUBLISHED_AS)
+        .map(([file, type]) => `  ${JSON.stringify(file)}: ${type};\n`)
+        .join("")}};\nexport type Schemas = $Bindgen.Exports;\ntype Class<T> = { new (): T; prototype: T };\n`,
+    );
+    const program = ts.createProgram({
+      rootNames: [join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "index.d.ts"), join(dir, "Bindgen.d.ts"), pairs],
+      options: { ...DEFAULT_COMPILER_OPTIONS, types: [], skipLibCheck: false },
+    });
+    const source = program.getSourceFile(pairs)!;
+    // A name that does not resolve is a type that everything is assignable to.
+    for (const file of [source, program.getSourceFile(join(dir, "Bindgen.d.ts"))!]) {
+      expect(ts.getPreEmitDiagnostics(program, file).map(diagnostic => diagnostic.messageText)).toEqual([]);
+    }
+
+    const checker = program.getTypeChecker();
+    const [published, generated] = source.statements.map(statement => checker.getTypeAtLocation(statement));
+    expect(schemas.map(file => basename(file)).sort()).toEqual(Object.keys(PUBLISHED_AS).sort());
+    expect(
+      Object.keys(PUBLISHED_AS)
+        .filter(file => PUBLISHED_AS[file])
+        .flatMap(file =>
+          promisesTheSchemaBreaks(
+            checker,
+            checker.getTypeOfSymbol(published.getProperty(file)!),
+            checker.getTypeOfSymbol(generated.getProperty(file)!),
+          ).map(promise => `${file}: ${promise}`),
+        ),
+    ).toEqual([
+      // Published, and nothing has ever read it.
+      "Transpiler.bind.ts: new Transpiler(options?: TranspilerOptions | undefined): Transpiler: options has no jsxOptimizationInline",
+    ]);
   });
 
   // The fixture depends on typescript@latest, so this is the current stable release:
@@ -840,6 +1031,48 @@ describe("@types/bun integration test", () => {
       diagnostics: diagnostics => {
         const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("no-registry-test.ts"));
         expect(relevantDiagnostics).toEqual([]);
+      },
+    });
+  });
+
+  describe("SQLite options", () => {
+    typeTest("accept a value that is not set with exactOptionalPropertyTypes", {
+      options: { exactOptionalPropertyTypes: true },
+      files: {
+        "sqlite-options.ts": `
+          import { SQL } from "bun";
+          import { Database, type DatabaseOptions } from "bun:sqlite";
+
+          declare const settings: {
+            readonly?: boolean;
+            create?: boolean;
+            readwrite?: boolean;
+            safeIntegers?: boolean;
+            strict?: boolean;
+            deterministic?: boolean;
+          };
+          declare const bytes: Uint8Array;
+          const db = new Database(":memory:", {
+            readonly: settings.readonly,
+            create: settings.create,
+            readwrite: settings.readwrite,
+            safeIntegers: settings.safeIntegers,
+            strict: settings.strict,
+          });
+          Database.deserialize(bytes, { readonly: settings.readonly, safeIntegers: settings.safeIntegers });
+          db.function("f", { deterministic: settings.deterministic, safeIntegers: settings.safeIntegers }, () => 1);
+          db.aggregate("g", { step: () => 1, inverse: undefined, deterministic: settings.deterministic });
+
+          // Bun.SQL passes its options on to bun:sqlite.
+          declare const databaseOptions: DatabaseOptions;
+          const sqlOptions: SQL.SQLiteOptions = databaseOptions;
+          new Database(":memory:", sqlOptions);
+          Database.deserialize(bytes, databaseOptions);
+        `,
+      },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: diagnostics => {
+        expect(diagnostics.filter(d => d.line?.startsWith("sqlite-options.ts"))).toEqual([]);
       },
     });
   });

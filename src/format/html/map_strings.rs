@@ -1,16 +1,16 @@
-//! Prettier's `mapDoc(doc, (doc) => (typeof doc === "string" ? .. : doc))`, for content that has been captured.
+//! Prettier's `mapDoc(doc, (doc) => (typeof doc === "string" ? .. : doc))`, for captured content.
 
 use crate::ir::element::{Group, GroupMode, Interned};
 use crate::prelude::*;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
-/// What becomes of the strings of a document.
+/// A transformation of a document's strings.
 pub(crate) trait MapString {
-    /// Whether `text`, or a string that it is a part of, may become something else.
+    /// True if `text`, or a string that contains it, might change.
     fn changes(&self, text: &[u8]) -> bool;
 
-    /// Writes what `text` becomes. `is_one_string`: see `TextWidth::multiline_string`.
+    /// Writes the replacement for `text`. For `is_one_string`, see `TextWidth::multiline_string`.
     fn write(&mut self, text: &[u8], is_one_string: bool, f: &mut Formatter<'_>);
 }
 
@@ -23,11 +23,11 @@ fn text_of<'t>(element: &'t FormatElement, source: &'t [u8], owned: &'t [u8]) ->
     }
 }
 
-/// Writes `content`, which has been captured, with what `map` makes of its strings. Strings that follow each other are one
-/// string: the document that Prettier maps has been through `cleanDoc`.
+/// Writes the captured `content` with its strings transformed by `map`. Adjacent strings are treated as one string,
+/// because the document that Prettier maps has been through `cleanDoc`.
 pub(crate) fn write_mapped(content: Interned, map: &mut impl MapString, f: &mut Formatter<'_>) {
     let source = f.source_text().as_bytes();
-    // Everything that `content` stands for is in it: what is captured stays where it is written.
+    // Nested captures are stored inside `content`'s own range, so this scan covers them too.
     let changes = f.storage.interned(content).iter().any(|element| {
         text_of(element, source, &f.storage.text).is_some_and(|text| map.changes(text))
     });
@@ -46,25 +46,46 @@ pub(crate) fn write_mapped(content: Interned, map: &mut impl MapString, f: &mut 
     }
 }
 
-/// What the line breaks in strings are.
+/// True if a line-suffix comment in the captured `content` is still pending where `content` ends.
+pub(crate) fn ends_with_line_suffix(content: Interned, f: &Formatter<'_>) -> bool {
+    let (mut depth, mut is_waiting) = (0u32, false);
+    for element in f.storage.interned(content) {
+        match element {
+            FormatElement::Tag(Tag::StartLineSuffix) => (depth, is_waiting) = (depth + 1, true),
+            FormatElement::Tag(Tag::EndLineSuffix) => depth = depth.saturating_sub(1),
+            FormatElement::Line(_)
+            | FormatElement::IndentedLineGroup(_)
+            | FormatElement::LineSuffixBoundary
+            | FormatElement::Tag(Tag::StartIndentWithLine(_) | Tag::EndIndentWithLine(_))
+                if depth == 0 =>
+            {
+                is_waiting = false;
+            }
+            _ => {}
+        }
+    }
+    is_waiting
+}
+
+/// How the line breaks in strings are printed.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum LineBreaks {
-    /// There are none.
+    /// The strings have none.
     None,
-    /// Nothing but characters: see `TextWidth::multiline_string`.
+    /// As plain characters. See `TextWidth::multiline_string`.
     Characters,
-    /// A `literalline` each.
+    /// Each as a `literalline`.
     LiteralLines,
 }
 
-/// Writes elements once more, so that what is known about the groups around them is right for the new texts.
+/// Writes elements again, so that the facts recorded about the groups around them are right for the new texts.
 struct Mapper<'m, M> {
     map: &'m mut M,
-    /// What has been captured, and the same with the new texts.
+    /// Maps each capture to its copy with the new texts.
     mapped: FxHashMap<Interned, Interned>,
-    /// The strings since the last element that is not one, which have not been written yet.
+    /// The strings since the last non-string element. They haven't been written yet.
     strings: SmallVec<[FormatElement; 8]>,
-    /// The same, put together.
+    /// The same strings, concatenated.
     text: Vec<u8>,
     line_breaks: LineBreaks,
 }
@@ -84,7 +105,7 @@ impl<M: MapString> Mapper<'_, M> {
         mapped
     }
 
-    /// Writes the strings that have not been written yet.
+    /// Writes the pending strings.
     fn flush(&mut self, f: &mut Formatter<'_>) {
         if self.strings.is_empty() {
             return;
@@ -118,7 +139,7 @@ impl<M: MapString> Mapper<'_, M> {
                 _ => LineBreaks::None,
             };
             if line_breaks != LineBreaks::None {
-                // One string has one kind.
+                // A string can only have one kind of line break.
                 if self.line_breaks != LineBreaks::None && self.line_breaks != line_breaks {
                     self.flush(f);
                 }
@@ -156,7 +177,7 @@ impl<M: MapString> Mapper<'_, M> {
                     let mapped = f.best_fitting_with(&variants, best_fitting.fallback);
                     f.write_element(mapped);
                 }
-                // What is in it is measured anew.
+                // Its contents are measured again.
                 FormatElement::Tag(Tag::StartGroup(group)) => {
                     let mode = match group.mode() {
                         GroupMode::Propagated => GroupMode::Flat,

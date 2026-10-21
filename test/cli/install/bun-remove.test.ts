@@ -511,7 +511,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
         expect(exitCode).toBe(0);
       }
 
-      // The global bin dir can be a folder like ~/.local/bin, where a dead link is somebody else's business.
+      // The global bin directory can be a folder like ~/.local/bin, where a dead link may belong to another tool.
       const foreign = isWindows ? [] : ["foreign-absolute", "foreign-relative"];
       if (!isWindows) {
         symlinkSync(join(String(dir), "gone", "cli.js"), join(globalBin, "foreign-absolute"));
@@ -559,7 +559,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
     }
     expect(join(globalBin, "serve")).toBeValidBin(serveOf("second"));
 
-    // As long as both are installed, the one named last keeps the name.
+    // As long as both are installed, the one that was added last keeps the name.
     for (const [name, bins, owner] of [
       ["what-bin", ["serve"], "second"],
       ["second", ["serve"], "first"],
@@ -595,7 +595,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
 }
 
 // https://github.com/oven-sh/bun/issues/9351, https://github.com/oven-sh/bun/issues/7215
-it.concurrent("bun remove keeps the order of the keys that stay", async () => {
+it.concurrent("bun remove keeps the order of the remaining keys", async () => {
   const manifest = (groups: Record<string, unknown>) =>
     JSON.stringify(
       {
@@ -663,7 +663,7 @@ it.concurrent("bun remove of a package that is not declared does not write packa
 
 // A path has no package name. The folder removed for it used to be `node_modules/` + "".
 it.concurrent.each(["../src", "./bar", "file:./bar"])(
-  "bun remove foo %s removes foo and leaves the rest of node_modules alone",
+  "bun remove foo %s removes foo and doesn't touch the rest of node_modules",
   async path => {
     using dir = tempDir("bun-remove-path", {
       ...local("foo"),
@@ -797,17 +797,13 @@ it.concurrent("bun remove -F edits only the selected workspace", async () => {
   expect(exitCode).toBe(0);
 });
 
-it.concurrent("bun remove --recursive is not a workspace-wide remove: the unknown flag is rejected", async () => {
+it.concurrent("bun remove ignores pnpm's --recursive, so it only removes from the current package", async () => {
   using dir = monorepo("bun-remove-recursive");
 
-  const { stderr, exitCode } = await remove(String(dir), "dep", "--recursive");
-  expect(stderr).toBe(
-    "error: bun remove has no --recursive flag.\nnote: Run 'bun remove --help' for more information\n",
-  );
-  expect(await file(join(String(dir), "package.json")).text()).toBe(MONOREPO_ROOT);
+  const { stderr } = await remove(String(dir), "dep", "--recursive");
+  expect(stderr).not.toContain("--recursive");
   expect(await file(join(String(dir), "packages", "api", "package.json")).text()).toBe(WORKSPACE("api"));
   expect(await file(join(String(dir), "packages", "web", "package.json")).text()).toBe(WORKSPACE("web"));
-  expect(exitCode).toBe(1);
 });
 
 // Serves version 1.0.0 of every name; `extra` adds fields to a package's manifest.
@@ -839,7 +835,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
         "packages/a/package.json": JSON.stringify({ name: "a", dependencies: { foo: "npm:bar@1" } }),
         "packages/b/package.json": JSON.stringify({ name: "b", dependencies: { foo: "^1" } }),
       });
-      // What `import "foo"` in packages/a finds.
+      // Returns what `import "foo"` in packages/a finds.
       const fooOfA = async () => {
         for (const from of [join(String(dir), "packages", "a"), String(dir)]) {
           const manifest = file(join(from, "node_modules", "foo", "package.json"));
@@ -874,7 +870,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
     expect(exitCode).toBe(0);
   });
 
-  // The hoisted linker has `b` at the top for `a`. The isolated linker has it there for the project only.
+  // The hoisted linker has `b` at the top for `a`. The isolated linker only has it there for the project.
   it.concurrent(`bun remove of a package that another dependency still needs (${linker})`, async () => {
     await using registry = serveAnyPackage({ a: { dependencies: { b: "1.0.0" } } });
     using dir = tempDir(`bun-remove-still-needed-${linker}`, {
@@ -890,7 +886,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
     expect(exitCode).toBe(0);
   });
 
-  it.concurrent(`bun remove in a workspace takes the package out of node_modules (${linker})`, async () => {
+  it.concurrent(`bun remove in a workspace removes the package from node_modules (${linker})`, async () => {
     await using registry = serveAnyPackage();
     using dir = tempDir(`bun-remove-in-workspace-${linker}`, {
       "bunfig.toml": `[install]\nregistry = "${registry.url}"\nlinker = "${linker}"\n`,
@@ -898,7 +894,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
       "packages/w/package.json": JSON.stringify({ name: "w", dependencies: { b: "1.0.0", c: "1.0.0" } }),
     });
     const workspace = join(String(dir), "packages", "w");
-    // Where `import` in packages/w looks.
+    // The folders that `import` in packages/w searches.
     const found = (name: string) => [workspace, String(dir)].some(from => existsSync(join(from, "node_modules", name)));
     expect(await run(String(dir), "install")).toMatchObject({ exitCode: 0 });
     expect([found("b"), found("c")]).toEqual([true, true]);

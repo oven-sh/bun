@@ -5,36 +5,38 @@ use bun_ast::{Expr, expr::Data as ExprData};
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::StackCheck;
 use bun_core::String as BunString;
+use bun_jsc::bindgen::{JsBytes, JsLocal, JsScope};
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
-    JsError, JsResult, MarkedArgumentBuffer, wtf,
+    JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsError, JsResult,
+    MarkedArgumentBuffer, wtf,
 };
 use bun_parsers::yaml::{CyclicAliases, YAML, YamlParseError};
 
-pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
-    jsc::create_host_function_object(
-        global_this,
-        &[
-            ("parse", __jsc_host_parse, 1),
-            ("stringify", __jsc_host_stringify, 3),
-        ],
-    )
-}
-
-#[bun_jsc::host_fn]
-fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-    MarkedArgumentBuffer::new(|roots| stringify_impl(global, call_frame, roots))
+pub(crate) fn stringify<'a>(
+    cx: &mut JsScope<'a>,
+    value: JsLocal<'a>,
+    replacer: JsLocal<'a>,
+    space: JsLocal<'a>,
+) -> JsResult<JSValue> {
+    let global = cx.global();
+    MarkedArgumentBuffer::new(|roots| {
+        stringify_impl(
+            global,
+            value.to_js(),
+            replacer.to_js(),
+            space.to_js(),
+            roots,
+        )
+    })
 }
 
 fn stringify_impl(
     global: &JSGlobalObject,
-    call_frame: &CallFrame,
+    value: JSValue,
+    replacer: JSValue,
+    space_value: JSValue,
     roots: &mut MarkedArgumentBuffer,
 ) -> JsResult<JSValue> {
-    let [value, replacer, space_value] = call_frame.arguments_as_array::<3>();
-
-    value.ensure_still_alive();
-
     if value.is_undefined() || value.is_symbol() || value.is_function() {
         return Ok(JSValue::UNDEFINED);
     }
@@ -1062,11 +1064,14 @@ fn is_inf_suffix(str: &BunString, i: usize) -> bool {
         || (a == 0x49 /* 'I' */ && b == 0x4e /* 'N' */ && c == 0x46/* 'F' */)
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn parse<'a>(cx: &mut JsScope<'a>, input: JsBytes<'a>) -> JsResult<JSValue> {
     MarkedArgumentBuffer::new(|roots| {
         let mut pending = Vec::new();
-        let result = parse_to_values(global, call_frame, roots, &mut pending)?;
+        // SAFETY: parsing runs no JavaScript. Nor does making the values: what would is left in `pending`. What throws
+        // returns without reading `input` again.
+        let global = unsafe { cx.heap.global() };
+        let result = parse_to_values(global, input.get(&cx.heap), roots, &mut pending)?;
+        let global = cx.global();
         for PendingProperty {
             mapping,
             key,
@@ -1089,21 +1094,15 @@ struct PendingProperty {
 
 fn parse_to_values(
     global: &JSGlobalObject,
-    call_frame: &CallFrame,
+    input: &[u8],
     roots: &mut MarkedArgumentBuffer,
     pending: &mut Vec<PendingProperty>,
 ) -> JsResult<JSValue> {
-    // `NullishInput::ToString` preserves YAML's coerce-undefined-to-"undefined" behavior.
-    super::with_text_format_source(
-        global,
-        call_frame,
-        b"input.yaml",
-        super::BlobOrBufferInput::Bytes,
-        super::NullishInput::ToString,
-        |arena, log, source| {
-            // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
-            // once by pointer identity, so a cyclic graph is fine here.
-            let root = match YAML::parse(source, log, arena, CyclicAliases::Allow) {
+    super::with_text_format_source(global, input, b"input.yaml", |arena, log, source| {
+        // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
+        // once by pointer identity, so a cyclic graph is fine here.
+        let root =
+            match YAML::parse(source, log, arena, CyclicAliases::Allow) {
                 Ok(root) => root,
                 Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
                 Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
@@ -1121,20 +1120,19 @@ fn parse_to_values(
                 }
             };
 
-            let mut ctx = ParserCtx {
-                seen_objects: HashMap::default(),
-                stack_check: StackCheck::init(),
-                global,
-                pending,
-            };
+        let mut ctx = ParserCtx {
+            seen_objects: HashMap::default(),
+            stack_check: StackCheck::init(),
+            global,
+            pending,
+        };
 
-            ctx.to_js(roots, root).map_err(|err| match err {
-                ToJsError::OutOfMemory => JsError::OutOfMemory,
-                ToJsError::JsError => JsError::Thrown,
-                ToJsError::StackOverflow => global.throw_stack_overflow(),
-            })
-        },
-    )
+        ctx.to_js(roots, root).map_err(|err| match err {
+            ToJsError::OutOfMemory => JsError::OutOfMemory,
+            ToJsError::JsError => JsError::Thrown,
+            ToJsError::StackOverflow => global.throw_stack_overflow(),
+        })
+    })
 }
 
 struct ParserCtx<'a> {

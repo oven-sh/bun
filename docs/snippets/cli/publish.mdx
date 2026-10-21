@@ -144,6 +144,10 @@ A package can pin the registry it is published to with `publishConfig.registry` 
   Path to Certificate Authority certificate file
 </ParamField>
 
+<ParamField path="--use-system-ca" type="boolean">
+  Use the system's trusted certificate authorities
+</ParamField>
+
 <CodeGroup>
 ```bash Inline Certificate
 bun publish --ca "-----BEGIN CERTIFICATE-----..."

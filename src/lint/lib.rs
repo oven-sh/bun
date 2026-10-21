@@ -1,21 +1,23 @@
-//! The linter: an API for writing lint rules on the syntax and the types that `bun check` works
-//! from, and what runs them.
+//! The linter: an API for writing lint rules on top of the syntax tree and types that `bun check` uses, plus the code
+//! that runs them.
 //!
-//! - [`ast`]: the syntax of a file.
+//! - [`ast`]: a file's syntax tree.
 //! - [`semantic`]: scopes, symbols, references.
 //! - [`tokens`]: tokens and comments.
 //! - [`types`][]: types.
 //! - [`code_path`]: ESLint's code path analysis.
-//! - [`rule`]: what a rule is. Start there.
-//! - [`js_plugin`]: rules that are written in JavaScript.
+//! - [`rule`]: how a rule is defined. Start there.
+//! - [`js_plugin`]: rules written in JavaScript.
+//! - [`languages`]: languages other than JavaScript.
 //!
-//! The rules are in the crates `bun_lint_eslint`, `bun_lint_typescript`, `bun_lint_plugins`, `bun_lint_unicorn`, `bun_lint_react`
-//! and `bun_lint_jest`.
+//! The rules are in the crates `bun_lint_eslint`, `bun_lint_typescript`, `bun_lint_plugins`, `bun_lint_unicorn`,
+//! `bun_lint_react`, `bun_lint_jest`, `bun_lint_json` and `bun_lint_markdown`.
 
 #![forbid(unsafe_code)]
 #![deny(clippy::iter_over_hash_type)]
-// For what only words an error, like the message for a file that doesn't parse or for an option that is refused:
-// `#[optimize(size)]` roughly halves it, and how fast it is doesn't matter. Nothing that runs for a file without errors has it.
+// For code that only builds error text, like the message for a file that doesn't parse or for a rejected option.
+// `#[optimize(size)]` roughly halves that code, and its speed doesn't matter. Nothing that runs for a file without
+// errors uses it.
 #![feature(optimize_attribute)]
 
 pub mod ast;
@@ -30,6 +32,7 @@ pub mod ignore;
 pub mod js_plugin;
 pub mod json;
 pub mod language;
+pub mod languages;
 pub mod linter;
 pub mod literal;
 pub mod modules;
@@ -50,7 +53,7 @@ pub mod tokens;
 pub mod types;
 pub mod utils;
 
-/// What a rule imports.
+/// The imports a rule needs.
 pub mod prelude {
     pub use crate::ast::*;
     pub use crate::code_path::{CodePath, CurrentSegments, Segment, Traversal};

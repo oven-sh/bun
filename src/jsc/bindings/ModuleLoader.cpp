@@ -790,6 +790,58 @@ static bool hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice(JSC::VM& vm, 
     return entry && entry->status() >= JSC::ModuleRegistryEntry::Status::Fetched;
 }
 
+static JSValue requireVirtualModule(
+    Zig::GlobalObject* globalObject,
+    JSC::ThrowScope& scope,
+    JSC::JSModuleLoader* loader,
+    JSCommonJSModule* target,
+    JSValue virtualModuleResult,
+    ErrorableResolvedSource* res,
+    BunString* specifier,
+    const String& specifierWtfString,
+    BunString* referrer,
+    const ModuleFetch& fetch,
+    bool wasModuleMock)
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer, fetch, wasModuleMock, target);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // If we assigned module.exports to the virtual module, or gave the loader its source, we're done here.
+    if (promiseOrCommonJSModule == target || promiseOrCommonJSModule.isNumber()) {
+        RELEASE_AND_RETURN(scope, promiseOrCommonJSModule);
+    }
+    JSPromise* promise = uncheckedDowncast<JSPromise>(promiseOrCommonJSModule);
+    switch (promise->status()) {
+    case JSPromise::Status::Rejected: {
+        promise->markAsHandled();
+        JSC::throwException(globalObject, scope, promise->result());
+        RELEASE_AND_RETURN(scope, JSValue {});
+    }
+    case JSPromise::Status::Pending:
+        break;
+    case JSPromise::Status::Fulfilled: {
+        if (!res->success) {
+            throwException(scope, res->result.err, globalObject);
+            RELEASE_AND_RETURN(scope, {});
+        }
+        auto* jsSourceCode = dynamicDowncast<JSSourceCode>(promise->result());
+        if (!jsSourceCode) [[unlikely]]
+            break;
+        JSC::VM::SynchronousModuleQueue queue;
+        queue.prev = vm.m_synchronousModuleQueue;
+        vm.m_synchronousModuleQueue = &queue;
+        loader->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
+        if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+        vm.m_synchronousModuleQueue = queue.prev;
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, jsNumber(-1));
+    }
+    }
+    JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, specifierWtfString, "\" is unsupported. use \"await import()\" instead."_s));
+    RELEASE_AND_RETURN(scope, JSValue {});
+}
+
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* target,
@@ -813,52 +865,13 @@ JSValue fetchCommonJSModule(
     BunPlugin::OnLoad::Matches onLoad;
     const ModuleFetch fetch { target->moduleGraph(), specifierValue.isString() ? asString(specifierValue) : nullptr, typeAttribute, onLoad };
 
-    const auto requireVirtualModule = [&](JSValue virtualModuleResult) -> JSValue {
-        JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, &specifier, referrer, fetch, wasModuleMock, target);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        // If we assigned module.exports to the virtual module, or gave the loader its source, we're done here.
-        if (promiseOrCommonJSModule == target || promiseOrCommonJSModule.isNumber()) {
-            RELEASE_AND_RETURN(scope, promiseOrCommonJSModule);
-        }
-        JSPromise* promise = uncheckedDowncast<JSPromise>(promiseOrCommonJSModule);
-        switch (promise->status()) {
-        case JSPromise::Status::Rejected: {
-            promise->markAsHandled();
-            JSC::throwException(globalObject, scope, promise->result());
-            RELEASE_AND_RETURN(scope, JSValue {});
-        }
-        case JSPromise::Status::Pending:
-            break;
-        case JSPromise::Status::Fulfilled: {
-            if (!res->success) {
-                throwException(scope, res->result.err, globalObject);
-                RELEASE_AND_RETURN(scope, {});
-            }
-            auto* jsSourceCode = dynamicDowncast<JSSourceCode>(promise->result());
-            if (!jsSourceCode) [[unlikely]]
-                break;
-            JSC::VM::SynchronousModuleQueue queue;
-            queue.prev = vm.m_synchronousModuleQueue;
-            vm.m_synchronousModuleQueue = &queue;
-            loader->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
-            if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
-            vm.m_synchronousModuleQueue = queue.prev;
-            RETURN_IF_EXCEPTION(scope, {});
-            RELEASE_AND_RETURN(scope, jsNumber(-1));
-        }
-        }
-        JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, specifierWtfString, "\" is unsupported. use \"await import()\" instead."_s));
-        RELEASE_AND_RETURN(scope, JSValue {});
-    };
-
     // When "bun test" is enabled, allow users to override builtin modules
     // This is important for being able to trivially mock things like the filesystem.
     if (isBunTest) {
         JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &specifier, wasModuleMock, onLoad);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult)
-            return requireVirtualModule(virtualModuleResult);
+            return requireVirtualModule(globalObject, scope, loader, target, virtualModuleResult, res, &specifier, specifierWtfString, referrer, fetch, wasModuleMock);
     }
 
     auto builtin = fetchBuiltinModuleWithoutResolution(globalObject, &specifier, res);
@@ -891,7 +904,7 @@ JSValue fetchCommonJSModule(
         JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &specifier, wasModuleMock, onLoad);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult)
-            return requireVirtualModule(virtualModuleResult);
+            return requireVirtualModule(globalObject, scope, loader, target, virtualModuleResult, res, &specifier, specifierWtfString, referrer, fetch, wasModuleMock);
     }
 
     if (hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice(vm, loader, specifierWtfString)) {

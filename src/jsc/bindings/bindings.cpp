@@ -4860,6 +4860,17 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwn(JSC::EncodedJSValue JSValue0
     return JSValue::encode(slotValue);
 }
 
+// Empty where the path ends early: the property is missing, or `base` is undefined or null.
+static JSValue getPropertyOnPath(JSGlobalObject* globalObject, JSValue base, PropertyName name)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (base.isUndefinedOrNull())
+        return {};
+    auto* object = base.toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, object->getIfPropertyExists(globalObject, name));
+}
+
 JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
@@ -4868,22 +4879,13 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
     JSValue value = JSValue::decode(JSValue0);
     JSValue path = JSValue::decode(arg1);
 
-    // Empty where the path ends early: the property is missing, or `base` is undefined or null.
-    auto getProperty = [&](JSValue base, PropertyName name) -> JSValue {
-        if (base.isUndefinedOrNull())
-            return {};
-        auto* object = base.toObject(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        return object->getIfPropertyExists(globalObject, name);
-    };
-
     if (path.isString()) {
         String pathString = path.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         uint32_t length = pathString.length();
 
         if (length == 0) {
-            JSValue prop = getProperty(value, vm.propertyNames->emptyIdentifier);
+            JSValue prop = getPropertyOnPath(globalObject, value, vm.propertyNames->emptyIdentifier);
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(prop);
         }
@@ -4898,7 +4900,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
 
         // if "." is the only character, it will search for an empty string twice.
         if (pathString.codeUnitAt(0) == '.') {
-            currProp = getProperty(currProp, vm.propertyNames->emptyIdentifier);
+            currProp = getPropertyOnPath(globalObject, currProp, vm.propertyNames->emptyIdentifier);
             RETURN_IF_EXCEPTION(scope, {});
             if (currProp.isEmpty()) {
                 return JSValue::encode(currProp);
@@ -4912,7 +4914,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
                 if (i == length) {
 
                     if (ic == '.') {
-                        currProp = getProperty(currProp, vm.propertyNames->emptyIdentifier);
+                        currProp = getPropertyOnPath(globalObject, currProp, vm.propertyNames->emptyIdentifier);
                         RETURN_IF_EXCEPTION(scope, {});
                         return JSValue::encode(currProp);
                     }
@@ -4928,7 +4930,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
                 char16_t previous = ic;
                 ic = pathString.codeUnitAt(i);
                 if (previous == '.' && ic == '.') {
-                    currProp = getProperty(currProp, vm.propertyNames->emptyIdentifier);
+                    currProp = getPropertyOnPath(globalObject, currProp, vm.propertyNames->emptyIdentifier);
                     RETURN_IF_EXCEPTION(scope, {});
                     if (currProp.isEmpty()) {
                         return JSValue::encode(currProp);
@@ -4951,7 +4953,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
             String propNameStr = pathString.substring(i, j - i);
             PropertyName propName = PropertyName(Identifier::fromString(vm, propNameStr));
 
-            currProp = getProperty(currProp, propName);
+            currProp = getPropertyOnPath(globalObject, currProp, propName);
             RETURN_IF_EXCEPTION(scope, {});
             if (currProp.isEmpty()) {
                 return JSValue::encode(currProp);
@@ -4981,7 +4983,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
             PropertyName propName = PropertyName(propNameString->toIdentifier(globalObject));
             RETURN_IF_EXCEPTION(scope, {});
 
-            currProp = getProperty(currProp, propName);
+            currProp = getPropertyOnPath(globalObject, currProp, propName);
             RETURN_IF_EXCEPTION(scope, {});
             if (currProp.isEmpty()) {
                 return false;

@@ -766,12 +766,19 @@ impl JsClass for TestExtensible {
     }
 
     fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        Self::from_js(value)
+        js_TestExtensible::from_js_direct(value).map(NonNull::as_ptr)
     }
 }
 
 pub(crate) fn token_id_from_js(token: JsLocal<'_>) -> Option<u32> {
     Some(token.to_js().as_class_ref::<TestToken>()?.id)
+}
+
+pub(crate) fn is_note_direct(note: JsLocal<'_>) -> bool {
+    let note = note.to_js();
+    note.is_cell()
+        && (note.as_direct::<TestNote>().is_some()
+            || note.as_direct::<TestRefCountedNote>().is_some())
 }
 
 pub(crate) fn problem_constructor<'a>(cx: &mut JsScope<'a>) -> JsLocal<'a> {

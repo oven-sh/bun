@@ -628,7 +628,9 @@ objects of a class: `Bun::Bindgen::structureForClass<JSGlob>(globalObject)`, `pr
 
 Every member takes `&self`, a setter too, and mutable state is in `Cell` and `JsCell`. The struct implements
 `bun_jsc::JsClass`, so `value.as_class_ref::<Glob>()` works, and `js_Glob::from_js(value)` is the struct if `value`
-is an instance. `wrapper.as_ptr()` is the address of the struct, which never changes.
+is an instance. `js_Glob::from_js_direct(value)` leaves out an instance of a subclass and one that has properties of
+its own, which JavaScript may have given another meaning. `wrapper.as_ptr()` is the address of the struct, which
+never changes.
 
 A class with a `mutates: true` member is different, in all its members:
 

@@ -302,6 +302,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   TestExtensible: $bindgen("bindgen_test.bind.ts", "TestExtensible"),
   TestNote: $bindgen("bindgen_test.bind.ts", "TestNote"),
   TestRefCountedNote: $bindgen("bindgen_test.bind.ts", "TestRefCountedNote"),
+  isNoteDirect: $bindgen("bindgen_test.bind.ts", "isNoteDirect"),
   tokenIdFromJS: $bindgen("bindgen_test.bind.ts", "tokenIdFromJS"),
   problemConstructor: $bindgen("bindgen_test.bind.ts", "problemConstructor"),
   afterFirst: $bindgen("bindgen_test.bind.ts", "afterFirst"),

@@ -367,6 +367,8 @@ export const TestExtensible = b.class({
 
 /** `token.id` read through `from_js`, or `null` if `token` is not an instance. */
 export const tokenIdFromJS = b.fn({ args: { token: b.any }, returns: b.u32.nullable });
+/** Whether `from_js_direct` takes the value as a `TestNote` or a `TestRefCountedNote`. */
+export const isNoteDirect = b.fn({ args: { note: b.any }, returns: b.bool });
 export const problemConstructor = b.fn({ returns: b.any, capability: "js" });
 /** The arguments after the first, as an array. */
 export const afterFirst = b.fn({

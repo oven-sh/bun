@@ -1123,6 +1123,18 @@ extern "C" void* ${symbolName(type, "fromJS")}(JSC::EncodedJSValue value)
     : ""
 }
 ${
+  type.sharedThis
+    ? `
+extern "C" void* ${symbolName(type, "fromJSDirect")}(JSC::EncodedJSValue value)
+{
+    auto* object = dynamicDowncast<${type.cpp}>(JSC::JSValue::decode(value).asCell());
+    if (!object || object->structure() != Bun::Bindgen::structureForClass(object->globalObject(), ${type.classIndex}))
+        return nullptr;
+    return object->${type.refCounted ? "wrapped" : "payload"}();
+}`
+    : ""
+}
+${
   construct
     ? `
 extern "C" SYSV_ABI JSC::EncodedJSValue js2native_bindgen_${type.origin!.stem}_${name}(Zig::GlobalObject* globalObject)
@@ -1694,7 +1706,7 @@ ${
     }
     #[inline]
     fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        Self::from_js(value)
+        js_${type.name}::from_js_direct(value).map(core::ptr::NonNull::as_ptr)
     }
 }`
     : `// SAFETY: a member takes \`&mut self\`, so no \`&${rustPath}\` is lent across JavaScript.
@@ -1752,7 +1764,7 @@ impl bun_jsc::JsClass for ${rustPath} {
     }
     #[inline]
     fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        Self::from_js(value)
+        js_${name}::from_js_direct(value).map(core::ptr::NonNull::as_ptr)
     }
 }`
 }
@@ -1769,7 +1781,12 @@ function rustForModule(type: ClassType): string {
 ${
   type.sharedThis || type.internalFields.length > 0
     ? `unsafe extern "C" {
-    safe fn ${fromJS}(value: JSValue) -> *mut core::ffi::c_void;
+    safe fn ${fromJS}(value: JSValue) -> *mut core::ffi::c_void;${
+      type.sharedThis
+        ? `
+    safe fn ${fromJS}Direct(value: JSValue) -> *mut core::ffi::c_void;`
+        : ""
+    }
 }`
     : ""
 }
@@ -1788,6 +1805,12 @@ ${
       ? `    #[inline]
     pub fn from_js(value: JSValue) -> Option<core::ptr::NonNull<${rustPath}>> {
         core::ptr::NonNull::new(${fromJS}(value).cast())
+    }
+    /// As \`from_js\` of a cell, but \`None\` for an instance of a subclass or one that has properties of its own.
+    #[inline]
+    pub fn from_js_direct(value: JSValue) -> Option<core::ptr::NonNull<${rustPath}>> {
+        debug_assert!(value.is_cell());
+        core::ptr::NonNull::new(${fromJS}Direct(value).cast())
     }
 `
       : ""

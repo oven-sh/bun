@@ -2234,6 +2234,14 @@ describe("classes", () => {
       expect(order).toEqual(["prototype"]);
     });
 
+    it("from_js_direct takes only an instance with the structure of the class", () => {
+      expect(bindgen.isNoteDirect(new Note("text"))).toBe(true);
+      expect(bindgen.isNoteDirect(new (class extends Note {})("text"))).toBe(false);
+      expect(bindgen.isNoteDirect(Object.assign(new Note("text"), { own: 1 }))).toBe(false);
+      for (const value of [{}, "text", Symbol(), 1, null, undefined, Note.prototype])
+        expect(bindgen.isNoteDirect(value)).toBe(false);
+    });
+
     it("a heap snapshot adds memory_cost, or estimated_size without it", () => {
       expect(estimateShallowMemoryUsageOf(new Note("text", 1000))).toBe(ownSize + 1000 + (name === "TestNote" ? 1 : 0));
     });

@@ -1157,8 +1157,9 @@ impl Checker<'_, '_> {
         if is_parenthesized(hir, obj) {
             return false;
         }
+        // The `this` of `typeof this.b` is an identifier without a resolved symbol.
         if matches!(hir[obj].kind, ExprKind::This) {
-            return true;
+            return !bound.is_in_type_query(e);
         }
         // The symbol of `a` in `a.b` is compared with the symbol of its first identifier. For `a.c.b` the former is the
         // property `c`, which isn't the symbol of `a`.

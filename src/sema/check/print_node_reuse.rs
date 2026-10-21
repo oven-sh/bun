@@ -1985,9 +1985,9 @@ impl<'p> Printer<'_, 'p, '_> {
         };
         let names: Vec<Atom> = hir.texts(name).collect();
         let &first = names.first()?;
-        // The node builder replaces a reference whose name is missing. `transformTypeReference`
+        // The node builder replaces a reference whose whole name is missing. `transformTypeReference`
         // leaves it unchanged, and it is printed as nothing.
-        if !self.is_transformer && names.contains(&known::empty) {
+        if !self.is_transformer && names[..] == [known::empty] {
             return Some(Node::simple(b"any"));
         }
         let scope = self.c.bound(file).type_scope[node.idx()];

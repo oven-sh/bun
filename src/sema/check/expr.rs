@@ -1087,10 +1087,6 @@ impl<'p, 's> Checker<'p, 's> {
         let (left, receiver) = (access.left, access.widened);
         let target = self.target_kind(file, e);
         let is_private = self.atoms().is_private_name(name);
-        // `parseRightSideOfDot`: in `typeof a.#b` the name is missing.
-        if is_private && bound.is_in_type_query(e) {
-            return (access.any_like.unwrap_or(TypeId::ERROR), may_short_circuit);
-        }
         let lexical = if is_private {
             self.lookup_symbol_for_private_identifier_declaration(file, e, name)
         } else {

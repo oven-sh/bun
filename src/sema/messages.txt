@@ -1261,6 +1261,7 @@
 7059	E	This syntax is reserved in files with the .mts or .cts extension. Use an `as` expression instead.
 7060	E	This syntax is reserved in files with the .mts or .cts extension. Add a trailing comma or explicit constraint.
 7061	E	A mapped type may not declare properties or methods.
+7080	E	Declaration emit elides private members, but '{0}' refers to a private member. Write an explicit type here.
 8002	E	'import ... =' can only be used in TypeScript files.
 8003	E	'export =' can only be used in TypeScript files.
 8004	E	Type parameter declarations can only be used in TypeScript files.

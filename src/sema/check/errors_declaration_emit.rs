@@ -5467,6 +5467,18 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 {
                     self.check_entity_name_visibility(first, start, Meaning::ValueOfName);
                 }
+                // `visitDeclarationSubtree` of each `QualifiedName`
+                let mut qualified = expr;
+                while qualified.is_some()
+                    && let ExprKind::Dot { obj, name, .. } = hir[qualified].kind
+                {
+                    if self.c.atoms().is_private_name(name) {
+                        let range = (hir[qualified].pos, hir[qualified].end);
+                        let name = self.c.written_name(name).to_vec();
+                        self.tracker.add_diagnostic(range, 7080, vec![name]);
+                    }
+                    qualified = obj;
+                }
                 for argument in hir.ids(args) {
                     self.visit_type(argument, false);
                 }

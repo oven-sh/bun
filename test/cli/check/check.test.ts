@@ -13745,7 +13745,7 @@ export class C9<T> extends K { static prototype = 1; }
       expect(exitCode).toBe(1);
     });
 
-    test("reports TS1003 for a private name after `typeof this.` in a type", async () => {
+    test("resolves a private name after `typeof this.` in a type", async () => {
       using dir = project({
         "a.ts": `export class C1 { #m = 1; a!: typeof this.#m; }
 export class C2 { #m = 1; u(x: C2) { let a: typeof x.#m; } }
@@ -13759,13 +13759,9 @@ export class C7 { m = { n: 1 }; a!: typeof this.m.#n; }
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(1,45): error TS1003: Identifier expected.
-        a.ts(2,56): error TS1003: Identifier expected.
-        a.ts(3,48): error TS1003: Identifier expected.
-        a.ts(4,50): error TS1003: Identifier expected.
-        a.ts(6,37): error TS1003: Identifier expected.
-        a.ts(7,52): error TS1003: Identifier expected.
-        a.ts(8,53): error TS1003: Identifier expected."
+        "a.ts(5,34): error TS2339: Property '#m' does not exist on type 'C5'.
+        a.ts(6,35): error TS7017: Element implicitly has an 'any' type because type 'typeof globalThis' has no index signature.
+        a.ts(8,51): error TS2339: Property '#n' does not exist on type '{ n: number; }'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -15034,6 +15030,79 @@ export class Second {
         a.ts(20,11): error TS6133: 'shared' is declared but its value is never read.
         a.ts(21,11): error TS6133: 'both' is declared but its value is never read.
         a.ts(23,3): error TS6133: '#stale' is declared but its value is never read."
+      `);
+    });
+
+    test("`typeof this.m` inside the private member `m` counts as a read of it", async () => {
+      using dir = project({
+        "a.ts": `
+export class A {
+  private byType(): typeof this.byType { return null!; }
+  private byValue(): unknown { return this.byValue; }
+  #byType(): typeof this.#byType { return null!; }
+  #byValue(): unknown { return this.#byValue; }
+  static #ofClass(): typeof A.#ofClass { return null!; }
+}
+`,
+      });
+      const { stdout } = await check(dir, ["--noUnusedLocals"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,11): error TS6133: 'byValue' is declared but its value is never read.
+        a.ts(6,3): error TS6133: '#byValue' is declared but its value is never read.
+        a.ts(7,10): error TS6133: '#ofClass' is declared but its value is never read."
+      `);
+    });
+
+    test("checks the `a.#b` of `typeof a.#b` like the expression", async () => {
+      using dir = project({
+        "a.ts": `
+export class A {
+  #value: string | number = 1;
+  static #nested = { deep: 1 };
+  set #writeOnly(value: number) {}
+  check(a: A, b: B) {
+    if (typeof a.#value === "string") {
+      const narrowed: typeof a.#value = 1;
+    }
+    const deep: typeof A.#nested.deep = "";
+    const written: typeof a.#writeOnly = 1;
+    const other: typeof b.#value = 1;
+    class Inner {
+      #value = true;
+      shadowed(a: A): typeof a.#value { return 1; }
+    }
+  }
+}
+export class B { #value = 1; }
+export type Outside = typeof A.#nested;
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(8,13): error TS2322: Type 'number' is not assignable to type 'string'.
+        a.ts(10,11): error TS2322: Type 'string' is not assignable to type 'number'.
+        a.ts(11,27): error TS2806: Private accessor was defined without a getter.
+        a.ts(12,27): error TS18013: Property '#value' is not accessible outside class 'B' because it has a private identifier.
+        a.ts(15,32): error TS18014: The property '#value' cannot be accessed on type 'A' within this class because it is shadowed by another private identifier with the same spelling.
+        a.ts(20,32): error TS18013: Property '#nested' is not accessible outside class 'A' because it has a private identifier."
+      `);
+    });
+
+    test("reports TS7080 for the `A.#b` of `typeof A.#b.c` in a declaration file", async () => {
+      using dir = project({
+        "a.ts": `
+export class A {
+  static #nested = { deep: 1 };
+  deep!: typeof A.#nested.deep;
+  method(callback: (value: typeof this.deep) => typeof A.#nested): void {}
+  private hidden!: typeof A.#nested;
+}
+`,
+      });
+      const { stdout } = await check(dir, ["--declaration"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,17): error TS7080: Declaration emit elides private members, but '#nested' refers to a private member. Write an explicit type here.
+        a.ts(5,56): error TS7080: Declaration emit elides private members, but '#nested' refers to a private member. Write an explicit type here."
       `);
     });
 

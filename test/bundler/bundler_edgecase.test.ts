@@ -2994,6 +2994,81 @@ describe("bundler", () => {
     target: "bun",
     run: { stdout: "before\nEFFECT1\n2\nEFFECT2\n3" },
   });
+  // A module wrapped in `__esm` has its top-level declarations hoisted outside
+  // the closure, so a destructuring declaration is an assignment pattern inside
+  // it: `({ a = 1, b } = options)`, `for ({ id, label } of list)`. A shorthand
+  // property of such a pattern is the variable outside. JavaScriptCore did not
+  // record that the closure uses it unless it had a default value, so the
+  // variable was not captured: these bundles threw `ReferenceError: b is not
+  // defined`, and the CommonJS format printed `1 undefined`. The text of the
+  // bundle is right, so the assertion is on what the bundle does.
+  const esmWrapShorthandTargets = {
+    "/declaration.js": `
+      const options = { b: 2 };
+      export const { a = 1, b } = options;
+    `,
+    "/loops.js": `
+      export const ids = [];
+      for (var { id, label } of [{ id: 1, label: "x" }, { id: 2, label: "y" }]) ids.push(id);
+      for (var { length, missing } in { abc: 0 }) ids.push(length);
+    `,
+    "/block.js": `
+      export const list = [];
+      if (list.length === 0) {
+        var { c = 3, d } = { d: 4 };
+        list.push(c);
+      }
+    `,
+  };
+  itBundled("edgecase/EsmWrapDestructuringShorthandTargetImport", {
+    files: {
+      ...esmWrapShorthandTargets,
+      "/async.js": `
+        export const seen = [];
+        for await (var { p, q } of [{ p: 5, q: 6 }]) seen.push(p);
+      `,
+      "/entry.mjs": `
+        const declaration = await import("./declaration.js");
+        console.log(declaration.a, declaration.b);
+        const loops = await import("./loops.js");
+        console.log(JSON.stringify(loops.ids));
+        const block = await import("./block.js");
+        console.log(JSON.stringify(block.list));
+        const async = await import("./async.js");
+        console.log(JSON.stringify(async.seen));
+      `,
+    },
+    entryPoints: ["/entry.mjs"],
+    target: "bun",
+    minifyIdentifiers: false,
+    run: { stdout: "1 2\n[1,2,3]\n[3]\n[5]" },
+  });
+  const esmWrapShorthandTargetsRequire = {
+    ...esmWrapShorthandTargets,
+    "/entry.mjs": `
+      const declaration = require("./declaration.js");
+      console.log(declaration.a, declaration.b);
+      const loops = require("./loops.js");
+      console.log(JSON.stringify(loops.ids));
+      const block = require("./block.js");
+      console.log(JSON.stringify(block.list));
+    `,
+  };
+  itBundled("edgecase/EsmWrapDestructuringShorthandTargetRequire", {
+    files: esmWrapShorthandTargetsRequire,
+    entryPoints: ["/entry.mjs"],
+    target: "bun",
+    minifyIdentifiers: false,
+    run: { stdout: "1 2\n[1,2,3]\n[3]" },
+  });
+  // The bytecode is what the parser wrote when the bundle was built.
+  itBundled("edgecase/EsmWrapDestructuringShorthandTargetBytecode", {
+    files: esmWrapShorthandTargetsRequire,
+    entryPoints: ["/entry.mjs"],
+    bytecode: true,
+    minifyIdentifiers: false,
+    run: { stdout: "1 2\n[1,2,3]\n[3]" },
+  });
   // https://github.com/oven-sh/bun/issues/30269
   // Same bug for a nested `let` binding instead of a function parameter.
   itBundled("identifiers/NestedLocalDoesNotShadowLaterHoistedFunction", {

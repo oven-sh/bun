@@ -32,6 +32,7 @@
 #include <wtf/text/WTFString.h>
 #include <span>
 #include "BufferEncodingType.h"
+#include "JSBufferInlines.h"
 #include <JavaScriptCore/AggregateError.h>
 #include <JavaScriptCore/BytecodeIndex.h>
 #include <JavaScriptCore/CallFrame.h>
@@ -1572,8 +1573,7 @@ extern "C" JS_EXPORT napi_status node_api_create_buffer_from_arraybuffer(napi_en
         return napi_set_last_error(env, napi_pending_exception);
     }
 
-    auto* subclassStructure = globalObject->JSBufferSubclassStructure();
-    JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(globalObject, subclassStructure, impl, byte_offset, byte_length);
+    JSC::JSUint8Array* uint8Array = WebCore::createBuffer(globalObject, globalObject, impl, byte_offset, byte_length);
     RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
 
     *result = toNapi(uint8Array, globalObject);

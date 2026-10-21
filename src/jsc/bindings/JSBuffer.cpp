@@ -14,6 +14,7 @@
 #include "JavaScriptCore/JSCJSValue.h"
 
 #include "JSBuffer.h"
+#include "JSBufferInlines.h"
 
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/ExceptionScope.h"
@@ -518,7 +519,7 @@ static JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlobalObjec
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, Ref<JSC::ArrayBuffer>&& backingStore)
 {
     size_t length = backingStore->byteLength();
-    return JSC::JSUint8Array::create(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject)->JSBufferSubclassStructure(), WTF::move(backingStore), 0, length);
+    return createBuffer(defaultGlobalObject(lexicalGlobalObject), lexicalGlobalObject, WTF::move(backingStore), 0, length);
 }
 
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const uint8_t* ptr, size_t length)

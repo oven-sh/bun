@@ -318,7 +318,7 @@ describe("parseArgs default args in a Worker", () => {
     " worker.onerror = event => { console.error(event.message); process.exitCode = 1; };";
   const [printsAt1, printsAt2] = [JSON.stringify(slicedAt1), JSON.stringify(slicedAt2)];
   const programs: [name: string, cmd: string[], stdout: string][] = [
-    ["a file", ["parent.cjs"], printsAt2],
+    ["<file>", ["parent.cjs"], printsAt2],
     ["-e <code>", ["-e", startWorker({})], printsAt1],
     ["--eval=<code>", [`--eval=${startWorker({})}`], printsAt1],
     ["--eval=<code> and execArgv []", [`--eval=${startWorker({ execArgv: [] })}`], printsAt2],

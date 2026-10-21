@@ -446,6 +446,7 @@ impl TlsContext {
             if us_ssl_ctx_set_verify_signature_algorithms(ctx) != 1 {
                 return Err("failed to set the signature algorithms");
             }
+            us_ssl_ctx_reject_blocked_keys(ctx);
             if let Some(groups) = &config.groups {
                 if ssl::SSL_CTX_set1_groups_list(ctx, groups.as_ptr().cast()) != 1 {
                     return Err("invalid TLS groups list");
@@ -575,6 +576,8 @@ unsafe extern "C" {
     fn Bun__X509__validationErrorCode(err: i32) -> *const core::ffi::c_char;
     /// openssl.c: the signature algorithms every other TLS context of Bun accepts from a peer.
     fn us_ssl_ctx_set_verify_signature_algorithms(ctx: *mut ssl::SSL_CTX) -> c_int;
+    /// openssl.c: the blocked public keys every other TLS context of Bun rejects in a peer's chain.
+    fn us_ssl_ctx_reject_blocked_keys(ctx: *mut ssl::SSL_CTX);
 }
 
 /// node's `X509_V_ERR_UNSPECIFIED`, reported when a peer sent no certificate

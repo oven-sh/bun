@@ -504,6 +504,36 @@ describe("fetch protocol: http3", () => {
     await expect(fetch(`${base}/hello`, { protocol: "http3" } as any)).rejects.toThrow();
   });
 
+  test("a trusted certificate with a blocked public key fails the handshake", async () => {
+    using dir = tempDir("h3-blocked-key", { "ca.pem": tls.cert });
+    const script = /* js */ `
+      import { addBlockedSPKIForTesting } from "bun:internal-for-testing";
+      import { createHash, X509Certificate } from "node:crypto";
+      import { readFileSync } from "node:fs";
+      if (process.env.H3_BLOCK_KEY) {
+        const cert = new X509Certificate(readFileSync(process.env.NODE_EXTRA_CA_CERTS));
+        addBlockedSPKIForTesting(
+          createHash("sha256").update(cert.publicKey.export({ type: "spki", format: "der" })).digest(),
+        );
+      }
+      console.log(await fetch(process.env.H3_URL, { protocol: "http3" }).then(res => res.text(), err => err.code));
+    `;
+    async function run(env: Record<string, string>) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(String(dir), "ca.pem"), H3_URL: `${base}/hello`, ...env },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      return { stdout: stdout.trim(), exitCode };
+    }
+    expect(await Promise.all([run({}), run({ H3_BLOCK_KEY: "1" })])).toEqual([
+      { stdout: "hello over h3", exitCode: 0 },
+      { stdout: "HTTP3HandshakeFailed", exitCode: 0 },
+    ]);
+  });
+
   test("session retired on GOAWAY: rapid serve/stop cycles", async () => {
     // Each stop(true) sends GOAWAY; the client must mark the pooled session
     // unusable so the next fetch (new port → new session) isn't disrupted by

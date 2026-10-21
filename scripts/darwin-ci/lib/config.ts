@@ -1,7 +1,7 @@
 export const config = {
   installDir: "/usr/local/share/darwin-ci",
   tokenFile: process.env.DARWIN_CI_TOKEN_FILE ?? "/var/root/buildkite-agent-token",
-  buildkiteAgent: { version: "3.114.0", bin: "/usr/local/bin/buildkite-agent" },
+  buildkiteAgent: { version: "4.7.0", bin: "/usr/local/bin/buildkite-agent" },
   queue: "test-darwin",
   ciUser: "ci",
   bun: { repo: "https://github.com/oven-sh/bun.git", ref: "main" },

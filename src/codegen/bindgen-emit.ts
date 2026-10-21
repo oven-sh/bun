@@ -1576,7 +1576,7 @@ function rustForClass(type: ClassType, scope: RustScope): string {
   if (type.construct && !type.illegalConstructor) {
     const signature = type.construct;
     const returnsPointer = refCounted && !type.passStructure;
-    const call = `${rustPath}::constructor(${[
+    const call = `<${rustPath}>::constructor(${[
       ...capabilityArgument[signature.capability],
       ...(type.passStructure ? ["bindgen::JsStructure::from_extern(structure, &cx.heap)"] : []),
       ...rustArguments(signature),
@@ -1598,7 +1598,7 @@ ${
 
   for (const method of type.methods) {
     const isStatic = method.receiver === "static";
-    const call = `${rustPath}::${method.rustName}(${[
+    const call = `<${rustPath}>::${method.rustName}(${[
       ...leading(method.receiver, method.passThis, method.capability),
       ...rustArguments(method),
     ].join(", ")})`;
@@ -1612,7 +1612,7 @@ bindgen::host_fn_return(cx, result, |heap, value| ${method.returns.rustToJS("val
   }
 
   for (const getter of [...type.getters, ...type.staticGetters]) {
-    const get = `${rustPath}::${getter.rustName}(${leading(getter.receiver, getter.passThis, getter.capability).join(", ")})`;
+    const get = `<${rustPath}>::${getter.rustName}(${leading(getter.receiver, getter.passThis, getter.capability).join(", ")})`;
     thunks += rustThunk(
       getterSymbolName(type, getter),
       getter.isStatic ? [] : ["this: *mut core::ffi::c_void"],
@@ -1621,7 +1621,7 @@ bindgen::host_fn_return(cx, result, |heap, value| ${method.returns.rustToJS("val
 bindgen::host_fn_return(cx, result, |heap, value| ${getter.type.rustToJS("value", scope)})`,
     );
     if (!getter.hasSetter) continue;
-    const set = `${rustPath}::${getter.setterRustName}(${[...leading(getter.setterReceiver, getter.passThis, getter.setterCapability), "value"].join(", ")})`;
+    const set = `<${rustPath}>::${getter.setterRustName}(${[...leading(getter.setterReceiver, getter.passThis, getter.setterCapability), "value"].join(", ")})`;
     thunks += rustThunk(
       setterSymbolName(type, getter),
       [...(getter.isStatic ? [] : ["this: *mut core::ffi::c_void"]), `value: ${getter.type.rustExternType(scope)}`],
@@ -1639,7 +1639,7 @@ ${(["memoryCost", "estimatedSize"] as const)
   .map(
     key => `#[unsafe(no_mangle)]
 pub extern "C" fn ${symbolName(type, key)}(this: &${rustPath}) -> usize {
-    ${rustPath}::${snakeCase(key)}(this)
+    <${rustPath}>::${snakeCase(key)}(this)
 }
 `,
   )
@@ -1733,7 +1733,7 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(wrapped: *mut ${rustPath}) {
     // SAFETY: the sweeper calls this once, with the pointer the object holds a ref on.
-    unsafe { bun_jsc::host_fn::host_fn_finalize_ref_counted(wrapped, ${type.finalize ? `${rustPath}::finalize` : "|_| {}"}) }
+    unsafe { bun_jsc::host_fn::host_fn_finalize_ref_counted(wrapped, ${type.finalize ? `<${rustPath}>::finalize` : "|_| {}"}) }
 }
 ${
   type.customToJS

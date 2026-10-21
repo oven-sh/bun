@@ -78,16 +78,8 @@ impl PackageManager {
         );
         debug_assert!((package_id as usize) < self.lockfile.packages.len());
         // debug_assert!(self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize] == invalid_package_id);
-        let buffers = &mut self.lockfile.buffers;
-        buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
-        let string_buf = buffers.string_bytes.as_slice();
-        let dep = &mut buffers.dependencies.as_mut_slice()[dependency_id as usize];
-        if dep.name.is_empty()
-            || dep.name.slice(string_buf) == dep.version.literal.slice(string_buf)
-        {
-            dep.name = self.lockfile.packages.items_name()[package_id as usize];
-            dep.name_hash = self.lockfile.packages.items_name_hash()[package_id as usize];
-        }
+        self.lockfile.buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
+        self.name_by_resolution(dependency_id, package_id);
     }
 
     pub(crate) fn assign_root_resolution(
@@ -104,15 +96,36 @@ impl PackageManager {
             self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize]
                 == invalid_package_id
         );
-        let buffers = &mut self.lockfile.buffers;
-        buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
+        self.lockfile.buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
+        self.name_by_resolution(dependency_id, package_id);
+    }
+
+    /// A row with no name of its own (empty, or equal to its version literal) takes the name of the package it resolved to.
+    #[inline(always)]
+    fn name_by_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
+        let buffers = &self.lockfile.buffers;
         let string_buf = buffers.string_bytes.as_slice();
-        let dep = &mut buffers.dependencies.as_mut_slice()[dependency_id as usize];
+        let dep = &buffers.dependencies.as_slice()[dependency_id as usize];
         if dep.name.is_empty()
             || dep.name.slice(string_buf) == dep.version.literal.slice(string_buf)
         {
-            dep.name = self.lockfile.packages.items_name()[package_id as usize];
-            dep.name_hash = self.lockfile.packages.items_name_hash()[package_id as usize];
+            self.take_name_of_package(dependency_id, package_id);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn take_name_of_package(&mut self, dependency_id: DependencyID, package_id: PackageID) {
+        let packages = self.lockfile.packages.slice();
+        let dep = &mut self.lockfile.buffers.dependencies.as_mut_slice()[dependency_id as usize];
+        dep.name = packages.items_name()[package_id as usize];
+        dep.name_hash = packages.items_name_hash()[package_id as usize];
+        // Recorded for `refuse_trust_by_own_name`. The registry names an npm package, and a workspace runs its scripts without trust.
+        if !matches!(
+            packages.items_resolution()[package_id as usize].tag,
+            ResolutionTag::Npm | ResolutionTag::Workspace | ResolutionTag::Root
+        ) {
+            self.named_by_resolution.push(dependency_id);
         }
     }
 

@@ -685,6 +685,7 @@ pub fn install_with_manager(
         .print(std::ptr::from_mut(Output::error_writer()))?;
     manager.log_mut().reset();
     super::add_catalog::refuse_declared_positionals(manager);
+    manager.refuse_trust_by_own_name();
     super::package_json_write_back::fold_resolved_positionals(manager);
 
     let lockfile_before_clean = clean_lockfile(manager, log_level)?;

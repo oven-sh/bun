@@ -10,9 +10,11 @@ By default, Bun does not execute arbitrary lifecycle scripts for installed depen
   Bun includes a default allowlist of popular packages whose `postinstall` scripts are known to be safe. See [the full
   list](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt). The allowlist only
   applies to packages installed from npm. For packages from other sources (such as `file:`, `link:`, `git:`, or
-  `github:` dependencies), you must explicitly add them to `trustedDependencies`. Defining `trustedDependencies` in your
-  `package.json` [_replaces_ this default list](/pm/lifecycle#behavior-of-the-trusteddependencies-field) rather than
-  extending it, so also list any packages from the default list whose lifecycle scripts you still need.
+  `github:` dependencies), you must explicitly add them to `trustedDependencies`, under the name you wrote for the
+  dependency in `package.json` ([details](/pm/lifecycle#dependencies-added-without-a-name)). Defining
+  `trustedDependencies` in your `package.json` [_replaces_ this default
+  list](/pm/lifecycle#behavior-of-the-trusteddependencies-field) rather than extending it, so also list any packages
+  from the default list whose lifecycle scripts you still need.
 </Note>
 
 ---

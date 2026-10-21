@@ -616,6 +616,9 @@ pub struct PackageManager {
     pub(crate) kept_patched: Vec<PackageID>,
     pub kept_patched_text: Vec<u8>,
 
+    // Rows that took their name from the package they resolved to (`bun add <path|url>`, a package.json key equal to its value); drained by PackageManagerLifecycle::refuse_trust_by_own_name.
+    pub(crate) named_by_resolution: Vec<DependencyID>,
+
     // `Some` while `bun install` resolves. A "no such package" or "no such version" message about a
     // dependency that dedupe may still drop is kept here until `log_held` decides whether to log
     // it.
@@ -1726,6 +1729,7 @@ fn allocate_package_manager(
         wr!(named_update_reachable, None);
         wr!(kept_patched, Vec::new());
         wr!(kept_patched_text, Vec::new());
+        wr!(named_by_resolution, Vec::new());
         wr!(held_messages, None);
         wr!(manifest_failures, HashMap::default());
         wr!(look_ahead, LookAhead::default());

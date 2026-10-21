@@ -3734,10 +3734,16 @@ impl Lockfile {
     /// return true.
     pub fn can_trust_by_name(&self, alias: &[u8], resolution: &Resolution) -> bool {
         resolution.tag == ResolutionTag::Npm
-            || self.declared_by_root_or_workspace(alias, resolution)
+            || self.declared_by_root_or_workspace(alias, resolution, &[])
     }
 
-    fn declared_by_root_or_workspace(&self, alias: &[u8], resolution: &Resolution) -> bool {
+    /// Whether a root or workspace row named `alias`, other than the rows in `without` (sorted), resolves to `resolution`.
+    pub(crate) fn declared_by_root_or_workspace(
+        &self,
+        alias: &[u8],
+        resolution: &Resolution,
+        without: &[DependencyID],
+    ) -> bool {
         let buf = self.buffers.string_bytes.as_slice();
         let packages = self.packages.slice();
         let resolutions = packages.items_resolution();
@@ -3750,7 +3756,7 @@ impl Lockfile {
             }
             for dep_id in dependencies.begin()..dependencies.end() {
                 let dep = &self.buffers.dependencies[dep_id as usize];
-                if dep.name.slice(buf) != alias {
+                if dep.name.slice(buf) != alias || without.binary_search(&dep_id).is_ok() {
                     continue;
                 }
                 let package_id = self.buffers.resolutions[dep_id as usize];

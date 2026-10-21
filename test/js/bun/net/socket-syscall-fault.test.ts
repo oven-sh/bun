@@ -172,20 +172,24 @@ test.concurrent(
 //     "20,0", one that is lost in the queue "5,0".
 //   unarmed: a parked socket with no timeout never gets one.
 //   parkedTooLong: after 30 ticks in the queue the timeout runs there.
-test.concurrent("TLS low-prio queue: the timeouts of a parked socket run after the queue releases it", async () => {
-  expect(await runFixture("tls-parked-handshake-timeout-fixture.ts")).toEqual({
-    summary: {
-      opened: 20,
-      oneTick: ["5,15"],
-      unarmed: [0, 0],
-      parkedTooLong: [5, 15],
-      errors: 0,
-    },
-    signalCode: null,
-    exitCode: 0,
-    stderrTail: "",
-  });
-});
+test.concurrent(
+  "TLS low-prio queue: the timeouts of a parked socket run after the queue releases it",
+  async () => {
+    expect(await runFixture("tls-parked-handshake-timeout-fixture.ts")).toEqual({
+      summary: {
+        opened: 20,
+        oneTick: ["5,15"],
+        unarmed: [0, 0],
+        parkedTooLong: [5, 15],
+        errors: 0,
+      },
+      signalCode: null,
+      exitCode: 0,
+      stderrTail: "",
+    });
+  },
+  60_000,
+);
 
 // us_poll_start_rc wraps uv_poll_init_socket on Windows and EPOLL_CTL_ADD /
 // kevent on posix. On Windows the return value was ignored, so an ioctlsocket

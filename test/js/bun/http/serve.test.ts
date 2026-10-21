@@ -3520,6 +3520,22 @@ it.concurrent(
   40_000,
 );
 
+// Only a deferred accept (Linux) has its input when the accept path runs. Elsewhere the socket is read an iteration later.
+it.concurrent.skipIf(!isLinux)(
+  "TLS: a connection that arrives with its ClientHello over the handshake budget is parked at once",
+  async () => {
+    using dir = tempDir("serve-tls-deferred-accept", {});
+    const result = await bunRun(join(import.meta.dirname, "serve-tls-deferred-accept-park-fixture.ts"), {
+      TLS_CERT: tls.cert,
+      TLS_KEY: tls.key,
+      MARKER: join(String(dir), "every-head-sent"),
+    });
+    expect(result).toSpawn();
+    expect(JSON.parse(result.stdout)).toEqual({ clients: 12, closedWhileParked: 5, closedAfterRelease: 12 });
+  },
+  40_000,
+);
+
 it.concurrent("#6462", async () => {
   let headers: [string, string | null][] = [];
   using server = Bun.serve({

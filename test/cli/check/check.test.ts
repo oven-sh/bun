@@ -14564,6 +14564,30 @@ export default (OnlyType);
       expect(exitCode).toBe(1);
     });
 
+    test("reports TS2866 for an exported name that is a type here and a global value", async () => {
+      using dir = project({
+        "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "es2022", "module": "esnext", "moduleResolution": "bundler", "lib": ["es2022"], "types": [], "isolatedModules": true}}`,
+        "types.ts": `export interface Date { a: 1 }
+export interface Map { b: 1 }
+`,
+        "a.ts": `import { Date } from "./types";
+export default Date;
+`,
+        "b.ts": `import { Map } from "./types";
+export = Map;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(1,10): error TS2866: Import 'Date' conflicts with global value used in this file, so must be declared with a type-only import when 'isolatedModules' is enabled.
+        a.ts(2,16): error TS1292: 'Date' resolves to a type and must be marked type-only in this file before re-exporting when 'isolatedModules' is enabled. Consider using 'export type { Date as default }'.
+        b.ts(1,10): error TS2866: Import 'Map' conflicts with global value used in this file, so must be declared with a type-only import when 'isolatedModules' is enabled.
+        b.ts(2,1): error TS1203: Export assignment cannot be used when targeting ECMAScript modules. Consider using 'export default' or another module format instead.
+        b.ts(2,10): error TS1291: 'Map' resolves to a type and must be marked type-only in this file before re-exporting when 'isolatedModules' is enabled. Consider using 'import type' where 'Map' is imported."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     // The type of a parameter without an annotation comes from the defaults in its pattern, so they're checked although the
     // function has no body. With a type parameter in scope their types aren't cached.
     test("a default in the pattern of a generic function without a body is a reference", async () => {

@@ -676,19 +676,7 @@ impl Checker<'_, '_> {
             let ExprKind::Ident(name) = hir[e].kind else {
                 continue;
             };
-            // `checkExportAssignment`: a name that isn't a value isn't checked as an expression.
-            let is_checked = match bound.parent_of_expr(e) {
-                Parent::None => false,
-                Parent::Stmt(s) if s.is_some() => {
-                    is_parenthesized(hir, e)
-                        || !matches!(
-                            hir[s].kind,
-                            StmtKind::ExportAssign(_) | StmtKind::ExportDefault(_)
-                        )
-                }
-                _ => true,
-            };
-            if !is_checked || hir.is_in_with(hir[e].pos) {
+            if matches!(bound.parent_of_expr(e), Parent::None) || hir.is_in_with(hir[e].pos) {
                 continue;
             }
             if let Some(result) = files.resolve_name(file, scope, name, SymFlags::VALUE) {

@@ -55,8 +55,9 @@ fn env_string_store_put(
     // `Expr.Data.Store` — `configureDefines` resets that store on return, so
     // the env-define payloads must outlive it. Allocate from `bump` (the
     // transpiler arena) so the slab is bulk-freed with the `Define` table
-    // instead of leaking a `Box` per env var. Value bytes alias the long-lived
-    // env-map storage.
+    // instead of leaking a `Box` per env var. Copy the value because
+    // `Bun__setEnvValue` frees the env-map entry it points into.
+    let value: &[u8] = bump.alloc_slice_copy(value);
     let value: ExprData = ExprData::EString(bun_ast::StoreRef::from_bump(
         bump.alloc(bun_ast::E::EString::init(value)),
     ));

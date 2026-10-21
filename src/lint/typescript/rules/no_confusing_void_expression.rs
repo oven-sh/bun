@@ -52,7 +52,7 @@ enum InvalidAncestor<'a> {
     Other,
 }
 
-/// The call itself: `/** @type {number} */ (f())` is still a void expression in another one.
+/// Checks the call itself: `/** @type {number} */ (f())` is still a void expression inside another expression.
 fn is_void_like_at(node: Expr) -> bool {
     is_type_flag_set(get_constrained_type_at_location(node.ts_node()), TypeFlags::VOID_LIKE)
 }
@@ -61,7 +61,7 @@ fn wrap_void_fix(fixer: Fixer, node: Expr) -> Fix {
     fixer.replace(node, [&b"void "[..], node.text()].concat())
 }
 
-/// Whether the `return` statement is the last statement of the body of a function.
+/// True if the `return` statement is the last statement of a function body.
 fn is_final_return(node: Stmt) -> bool {
     match node.parent() {
         Node::Func(func) if func.kind() != FnKind::StaticBlock => {
@@ -71,7 +71,7 @@ fn is_final_return(node: Stmt) -> bool {
     }
 }
 
-/// Whether ESLint's parent of the statement is a `BlockStatement`.
+/// True if the statement's parent in ESLint is a `BlockStatement`.
 fn is_in_block_statement(node: Stmt) -> bool {
     match node.parent() {
         Node::Stmt(parent) => matches!(parent.kind(), StmtKind::Block(_)),
@@ -80,14 +80,13 @@ fn is_in_block_statement(node: Stmt) -> bool {
     }
 }
 
-/// Whether the node, on a line of its own, would prevent the insertion of a semicolon at the end of
-/// the line before.
+/// True if the node, at the start of a line, would prevent semicolon insertion at the end of the previous line.
 fn is_preventing_asi(node: Expr) -> bool {
     let start_token = node.file().first_token(node);
     start_token.is_some_and(|it| matches!(it.value(), b"(" | b"[" | b"`"))
 }
 
-/// `return_value`, as a statement, and `after`.
+/// Returns `return_value` as a statement, followed by `after`.
 fn new_return_stmt_text(return_value: Expr, after: &str) -> Vec<u8> {
     let mut text = Vec::new();
     if is_preventing_asi(return_value) {
@@ -98,20 +97,20 @@ fn new_return_stmt_text(return_value: Expr, after: &str) -> Vec<u8> {
     text
 }
 
-/// What tsgolint makes of the `return` statement: all that is after the keyword, after a `;` if it begins with a `(` or
-/// a `[`, and `after`.
+/// tsgolint's replacement for the `return` statement: everything after the keyword, preceded by a `;` if it begins with
+/// a `(` or a `[`, and followed by `after`.
 fn tsgolint_return_stmt_text(statement: Stmt, return_value: Expr, after: &str) -> Vec<u8> {
     let rest = statement.file().slice(Span::after(keyword_of(statement), statement.span().end));
-    [prefix_of_tsgolint(return_value).as_bytes(), rest, after.as_bytes()].concat()
+    [tsgolint_prefix(return_value).as_bytes(), rest, after.as_bytes()].concat()
 }
 
-/// The `return`.
+/// The span of the `return` keyword.
 fn keyword_of(statement: Stmt) -> Span {
     let start = statement.span().start;
     Span::new(start, start + "return".len() as u32)
 }
 
-fn prefix_of_tsgolint(return_value: Expr) -> &'static str {
+fn tsgolint_prefix(return_value: Expr) -> &'static str {
     let first = return_value.file().text().get(return_value.outer_span().start as usize);
     if matches!(first, Some(b'(' | b'[')) { ";" } else { "" }
 }
@@ -130,9 +129,9 @@ fn function_declaration_allows_empty_return(function_node: Func) -> bool {
         .any(|part| is_type_flag_set(part, TypeFlags::ANY | TypeFlags::VOID_LIKE))
 }
 
-/// `target_node`: the argument of the `return` statement, or the body of the arrow function.
+/// `target_node` is the `return` statement's argument or the arrow function's body.
 fn can_fix<'a>(target_node: Expr<'a>, function_node: Option<Func<'a>>) -> bool {
-    // tsgolint does not ask what the function is declared to return.
+    // tsgolint doesn't check the function's declared return type.
     is_void_like_at(target_node)
         && (target_node.file().language().is_oxlint
             || function_node.is_some_and(function_declaration_allows_empty_return))
@@ -143,7 +142,7 @@ fn includes_void(ty: Type) -> bool {
 }
 
 fn is_function_return_type_includes_void(function_type: Type, is_oxlint: bool) -> bool {
-    // tsgolint asks the checker, which has the signatures of every constituent of an intersection.
+    // tsgolint asks the checker, which returns the signatures of every constituent of an intersection.
     if is_oxlint {
         return function_type
             .get_call_signatures()
@@ -159,7 +158,7 @@ fn is_void_returning_function_node(function_node: Func) -> bool {
     if let Some(return_type) = function_node.return_type() {
         return includes_void(return_type.ty());
     }
-    // A declaration and a method have no contextual type.
+    // Declarations and methods have no contextual type.
     match (function_node.kind(), function_node.owner()) {
         (FnKind::Arrow | FnKind::Expr, Node::Expr(expression)) => {
             let is_oxlint = expression.file().language().is_oxlint;
@@ -174,9 +173,8 @@ fn is_void_returning_function_node(function_node: Func) -> bool {
 }
 
 impl NoConfusingVoidExpression {
-    /// The closest ancestor of the void expression that is invalid. Anything but an
-    /// `ExpressionStatement` is, except for the expressions that can be used for their
-    /// short-circuiting, whose parents are looked at instead.
+    /// Returns the void expression's closest invalid ancestor. Anything but an `ExpressionStatement` is invalid, except
+    /// for expressions that can be used for short-circuiting, whose parents are checked instead.
     fn find_invalid_ancestor<'a>(&self, mut node: Expr<'a>) -> Option<InvalidAncestor<'a>> {
         loop {
             if node.with_jsdoc_cast() != node {
@@ -185,7 +183,7 @@ impl NoConfusingVoidExpression {
             match node.parent() {
                 Node::Expr(parent) => match parent.kind() {
                     ExprKind::Binary { op: BinOp::Comma, right, .. } => {
-                        // For tsgolint the right operand of every comma is invalid, in the middle of a sequence too.
+                        // For tsgolint every comma's right operand is invalid, even in the middle of a sequence.
                         let is_invalid = right == node
                             && (node.file().language().is_oxlint || utils::is_sequence_root(parent));
                         return is_invalid.then_some(InvalidAncestor::Other);
@@ -234,7 +232,7 @@ impl NoConfusingVoidExpression {
             }
             let arrow_token = arrow_function.arrow_span()?;
             let (body, whole) = (body.span(), arrow_function.estree_span());
-            // For tsgolint a node begins where the token before it ends.
+            // For tsgolint a node begins where the previous token ends.
             let file = fixer.file();
             if file.language().is_oxlint {
                 let text = file.slice(Span::new(file.end_of_token_before(body.start), body.end));
@@ -268,8 +266,8 @@ impl NoConfusingVoidExpression {
             cx.report(node, INVALID_VOID_EXPR_RETURN_LAST).fix(|fixer| {
                 can_fix(return_value, get_parent_function_node(statement)).then(|| {
                     match fixer.file().language().is_oxlint {
-                        // tsgolint touches the keyword alone, so that what another rule does to the rest is kept.
-                        true => fixer.replace(keyword_of(statement), prefix_of_tsgolint(return_value)),
+                        // tsgolint only touches the keyword, so another rule's fix to the rest still applies.
+                        true => fixer.replace(keyword_of(statement), tsgolint_prefix(return_value)),
                         false => fixer.replace(statement, new_return_stmt_text(return_value, ";")),
                     }
                 })

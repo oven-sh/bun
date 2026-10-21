@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isPosix, isRoot } from "harness";
+import { bunEnv, bunExe, isLinux, isPosix, isRoot, isWindows, tempDir } from "harness";
 import {
   accessSync,
   chmodSync,
@@ -65,6 +65,50 @@ describe("mv", async () => {
     .exitCode(20 /* ENOTDIR */)
     .stderr("mv: a: Not a directory\n")
     .runAsTest("move dir -> file fails");
+
+  test("fails when a source name is longer than the path buffers", async () => {
+    const segment = Buffer.alloc(240, "d").toString();
+    const deep = join(segment, segment);
+    using dir = tempDir("mv-long-source", { "target": {}, [segment]: { [segment]: {} } });
+    // Longer than PATH_MAX on every POSIX platform.
+    const overPathMax = Buffer.alloc(5000, "a").toString();
+    // Shorter than the Linux path buffer, but `deep/` + this name overflows the 4096-byte join buffer.
+    const overJoinBuffer = Buffer.alloc(3700, "b").toString();
+
+    const fixture = /* ts */ `
+      import { $ } from "bun";
+      $.nothrow();
+      const { OVER_PATH_MAX, OVER_JOIN_BUFFER, DEEP } = process.env;
+      const run = async (...args: string[]) => {
+        const { exitCode, stderr } = await $\`mv \${args}\`.quiet();
+        return { failed: exitCode !== 0, stderr: stderr.toString() };
+      };
+      console.log(
+        JSON.stringify({
+          intoDir: await run(OVER_PATH_MAX!, "target"),
+          intoDeepDir: await run(OVER_JOIN_BUFFER!, DEEP!),
+        }),
+      );
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, OVER_PATH_MAX: overPathMax, OVER_JOIN_BUFFER: overJoinBuffer, DEEP: deep },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+
+    // Windows reports a different errno for a name that's too long.
+    const tooLong = (path: string) =>
+      isWindows ? expect.stringMatching(/^mv: /) : `mv: ${path}: File name too long\n`;
+    expect(JSON.parse(stdout)).toEqual({
+      intoDir: { failed: true, stderr: tooLong(`target/${overPathMax}`) },
+      intoDeepDir: { failed: true, stderr: tooLong(`${deep}/${overJoinBuffer}`) },
+    });
+    expect(exitCode).toBe(0);
+  });
 
   // POSIX `mv` must fall back to copy+unlink when `rename()` returns EXDEV
   // (source and destination on different filesystems). Requires a writable
@@ -231,6 +275,52 @@ describe("mv", async () => {
         rmSync(src, { recursive: true, force: true });
         rmSync(dst, { recursive: true, force: true });
       }
+    });
+
+    // The fixture creates its mounts in a private mount namespace, either as root or in a user namespace.
+    function findUnshare(): string[] | undefined {
+      const unshare = isLinux ? Bun.which("unshare") : null;
+      if (!unshare) return undefined;
+      using probe = tempDir("mv-unshare-probe", { a: {}, b: {} });
+      const mounts = 'mount -t tmpfs -o size=1m tmpfs "$1" && mount --bind "$1" "$2"';
+      for (const namespaces of ["-Urm", "-m"]) {
+        const cmd = [unshare, namespaces, "--propagation", "private"];
+        const { exitCode } = Bun.spawnSync({
+          cmd: [...cmd, "sh", "-c", mounts, "sh", join(String(probe), "a"), join(String(probe), "b")],
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        if (exitCode === 0) return cmd;
+      }
+      return undefined;
+    }
+    const unshare = findUnshare();
+
+    // rename(2) only rejects moving a directory into itself when both paths are on the same mount.
+    test.skipIf(!unshare)("doesn't copy a directory into itself across mounts", async () => {
+      using dir = tempDir("mv-with-mounts", {});
+      await using proc = Bun.spawn({
+        cmd: [...unshare!, bunExe(), join(import.meta.dir, "mv-into-itself-fixture.ts"), String(dir)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(
+        Object.fromEntries(
+          stdout
+            .split("\n")
+            .filter(Boolean)
+            .map(line => JSON.parse(line)),
+        ),
+      ).toEqual({
+        mountPointOperand: { stderr: "mv: out/out: Invalid argument\n", tree: ["out", "out/f1", "out/f2"] },
+        mountInsideNewPath: { stderr: "mv: a/sub: Invalid argument\n", tree: ["sub", "sub/mnt", "sub/top"] },
+        mountOfChild: { stderr: "mv: b/sub: Invalid argument\n" },
+        betweenTwoMounts: { stderr: "", tree: ["x", "x/sub", "x/sub/deep", "x/sub/deep/file", "x/sub/file"] },
+      });
+      expect(exitCode).toBe(0);
     });
   });
 });

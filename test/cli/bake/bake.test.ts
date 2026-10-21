@@ -2,8 +2,8 @@ import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { rmSync, symlinkSync } from "node:fs";
-import { join } from "node:path";
 import { rename } from "node:fs/promises";
+import { join } from "node:path";
 
 const env = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1", NO_COLOR: "1" };
 

@@ -11,7 +11,7 @@ pub struct NoMixedRequires {
 const NO_MIX_REQUIRE: Message = Message::new("", "Do not mix 'require' and other declarations.");
 const NO_MIX_CORE_MODULE_FILE_COMPUTED: Message = Message::new("", "Do not mix core, module, file and computed requires.");
 
-/// `require("module").builtinModules` of Node.js 13.8. Sorted.
+/// `require("module").builtinModules` in Node.js 13.8. Sorted.
 const BUILTIN_MODULES: [&str; 54] = [
     "_http_agent", "_http_client", "_http_common", "_http_incoming", "_http_outgoing", "_http_server", "_stream_duplex",
     "_stream_passthrough", "_stream_readable", "_stream_transform", "_stream_wrap", "_stream_writable", "_tls_common",
@@ -45,7 +45,8 @@ impl Rule for NoMixedRequires {
         if declarations.len() < 2 {
             return;
         }
-        // Whether there is a `require`, and anything else. Then which kinds of modules are required.
+        // `has_require`, `has_other`: there's a `require`, and something else. `found`: the kinds of modules that are
+        // required.
         let (mut has_require, mut has_other, mut found) = (false, false, [false; 4]);
         for init in declarations.iter().map(VarDecl::init) {
             match init.filter(|it| self.is_require_declaration(*it)) {
@@ -72,7 +73,8 @@ enum ModuleType {
     Computed,
 }
 
-/// `Expression::as_member_expression`: the object of a `Dot` or an `Index` that is neither in parentheses nor an optional chain.
+/// `Expression::as_member_expression`: the object of a `Dot` or `Index` that's neither parenthesized nor an optional
+/// chain.
 fn object_of_member_expression(e: Expr<'_>) -> Option<Expr<'_>> {
     e.object().filter(|_| !e.is_parenthesized() && !e.is_chain_root())
 }

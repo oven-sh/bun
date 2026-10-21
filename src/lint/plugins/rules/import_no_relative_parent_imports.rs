@@ -18,10 +18,10 @@ const FROM_PARENT: Message = Message::new(
 );
 const OXLINT: Message = Message::new("", "Relative imports from parent directories are not allowed");
 
-/// What oxlint looks at, whatever the options are.
-const OF_OXLINT: Systems = Systems { esmodule: true, commonjs: true, amd: false };
+/// The module systems oxlint checks, regardless of the options.
+const OXLINT_SYSTEMS: Systems = Systems { esmodule: true, commonjs: true, amd: false };
 
-/// `is_parent_import` of oxlint
+/// oxlint's `is_parent_import`
 fn is_parent_import(path: &[u8]) -> bool {
     let mut normalized = path;
     while let Some(rest) = normalized.strip_prefix(b"./") {
@@ -30,7 +30,7 @@ fn is_parent_import(path: &[u8]) -> bool {
     paths::is_external(normalized)
 }
 
-/// Whether it is an `import()` whose specifier is in parentheses.
+/// True if it's an `import()` with a parenthesized specifier.
 fn has_parentheses(importer: Node) -> bool {
     let Node::Expr(importer) = importer else {
         return false;
@@ -48,9 +48,9 @@ impl Rule for NoRelativeParentImports {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        // oxlint asks nothing of the disk.
+        // oxlint never touches the disk.
         if file.language().is_oxlint {
-            return Visitor::of(OF_OXLINT).may_visit(file).then_some(());
+            return Visitor::of(OXLINT_SYSTEMS).may_visit(file).then_some(());
         }
         let is_on_the_disk = file.modules().is_some() && file.path() != b"<text>";
         (is_on_the_disk && self.visitor.may_visit(file)).then_some(())
@@ -59,9 +59,9 @@ impl Rule for NoRelativeParentImports {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         if file.language().is_oxlint {
-            // oxlint goes by the specifier as it is written. It takes none in parentheses, and finds `require` under
-            // what TypeScript wraps it in.
-            let visited = Visitor::of(Systems { commonjs: false, ..OF_OXLINT }).visit(file);
+            // oxlint uses the specifier as written. It rejects a parenthesized one, and finds `require` inside
+            // TypeScript wrappers.
+            let visited = Visitor::of(Systems { commonjs: false, ..OXLINT_SYSTEMS }).visit(file);
             let declared = visited.iter().filter(|it| !has_parentheses(it.importer));
             let declared = declared.map(|it| (it.specifier, it.source));
             let calls = file.mentions("require").then(|| file.exprs_of_kind(ExprTag::Call)).into_iter().flatten();
@@ -86,7 +86,7 @@ impl Rule for NoRelativeParentImports {
                 continue;
             }
             let rel_dep_path = paths::relative(&directory, &paths::resolve(cwd, abs_dep_path));
-            // No other name is in a parent, and to ask about a name can mean to resolve it.
+            // Only a path that starts with `..` can be in a parent, and classifying a name can require resolving it.
             if rel_dep_path.starts_with(b"..") && types.of_name(&rel_dep_path, it.is_require) == ImportType::Parent {
                 let filename = paths::basename(file.path());
                 cx.report(it.source, FROM_PARENT).data("filename", filename).data("depPath", it.specifier);

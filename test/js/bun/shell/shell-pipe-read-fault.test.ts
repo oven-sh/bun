@@ -3,7 +3,7 @@
 // surfaces synchronously from inside the spawn call. The command must finish
 // with the syscall errno as its exit code, not tear state down under the spawn.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -572,6 +572,32 @@ test.concurrent.skipIf(!isLinux || !cc)(
     expect(await runStdinBlobFixture(["SHELL_FAIL_EPOLL_IN"], "pipeline")).toEqual({
       parsed: { exitCode: ENOMEM, stderr: "", leaked: [] },
       stderr: expect.any(String),
+      exitCode: 0,
+    });
+  },
+);
+
+// JS can't make uv_read_start fail, so this uses the same debug-only fault injection as spawn-pipe-start-error.test.ts.
+test.concurrent.skipIf(!isWindows || !isDebug)(
+  "the command exits with the errno when uv_read_start fails on its stdout and stderr pipes",
+  async () => {
+    const fixture = /* js */ `
+import { $ } from "bun";
+const r = await $\`\${process.execPath} -e 1\`.quiet().nothrow();
+// Wait for a second child so the first child's exit callback has run. Its stdio is ignored, so it has no pipe reader.
+await Bun.spawn({ cmd: [process.execPath, "-e", "1"], stdio: ["ignore", "ignore", "ignore"] }).exited;
+console.log(JSON.stringify({ exitCode: r.exitCode, stderr: r.stderr.toString() }));
+`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BUN_INTERNAL_FAIL_PIPE_READER_START: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ exitCode: 22, stderr: "" }) + "\n",
+      stderr: "",
       exitCode: 0,
     });
   },

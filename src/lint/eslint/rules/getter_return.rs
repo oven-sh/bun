@@ -38,7 +38,8 @@ fn is_getter(func: Func) -> bool {
     }
 }
 
-/// A call of one of the methods that take property descriptors, whatever `Object` and `Reflect` are there.
+/// True for a call to one of the methods that take property descriptors, whatever `Object` and `Reflect` refer to
+/// there.
 fn is_watched_call(e: Expr) -> bool {
     const METHODS_TO_WATCH_FOR: [(&str, &str); 4] = [
         ("Object", "defineProperty"),
@@ -59,14 +60,14 @@ fn is_watched_call(e: Expr) -> bool {
 /// A node that oxc has above an expression.
 #[derive(Copy, Clone)]
 enum Level<'a> {
-    /// A pair of parentheses, with what is in it and in those in it.
+    /// A pair of parentheses, with the expression inside it and any nested pairs.
     Parentheses(Expr<'a>),
     Expr(Expr<'a>),
-    /// A `ChainExpression`, a property.
+    /// A `ChainExpression` or a property.
     Other,
 }
 
-/// The three nodes above `e`, or fewer if not all of them are expressions and properties of object literals.
+/// Returns the three nodes above `e`, or fewer if they aren't all expressions and object literal properties.
 fn levels_above(e: Expr) -> SmallVec<[Level; 8]> {
     let mut levels = SmallVec::new();
     let mut at = e;
@@ -104,8 +105,8 @@ fn levels_above(e: Expr) -> SmallVec<[Level; 8]> {
     levels
 }
 
-/// oxlint's `is_wanted_node`. What has the name `get`, or a name that is computed, is a getter if the object literal is
-/// one or three nodes below a call of one of the methods, as which argument ever.
+/// oxlint's `is_wanted_node`. A property named `get`, or with a computed name, is a getter if its object literal is one
+/// or three nodes below a call to one of the methods, in any argument position.
 fn is_getter_for_oxlint(func: Func) -> bool {
     if !matches!(func.body(), FnBody::Block(_)) {
         return false;
@@ -138,7 +139,7 @@ fn is_getter_for_oxlint(func: Func) -> bool {
 }
 
 impl GetterReturn {
-    /// oxlint reports a function once, and points at it.
+    /// oxlint reports a function once, at the whole function.
     fn check_as_oxlint<'a>(&self, func: Func<'a>, cx: &Cx<'a, Self>) {
         let returns_nothing = |it: Stmt| matches!(it.as_return(), Some(None));
         if func.is_end_reachable() || !self.allows_implicit && func.returns().any(returns_nothing) {

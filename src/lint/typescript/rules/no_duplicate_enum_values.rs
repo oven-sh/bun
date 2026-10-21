@@ -16,7 +16,7 @@ enum Value<'a> {
 }
 
 impl Value<'_> {
-    /// The same for two values if and only if `Object.is` holds.
+    /// Two values have the same key if and only if `Object.is` says they're the same.
     fn key(self) -> (bool, u64) {
         match self {
             Value::Number(value) => (false, value.to_bits()),
@@ -51,16 +51,16 @@ fn member_value(initializer: Expr<'_>) -> Option<Value<'_>> {
     (!number.is_nan()).then_some(Value::Number(if is_negated { -number } else { number }))
 }
 
-fn report<'a>(place: Span, value: Value<'a>, cx: &mut Cx<'a, NoDuplicateEnumValues>) {
-    let report = cx.report(place, DUPLICATE_VALUE);
+fn report<'a>(report_span: Span, value: Value<'a>, cx: &mut Cx<'a, NoDuplicateEnumValues>) {
+    let report = cx.report(report_span, DUPLICATE_VALUE);
     match value {
         Value::Number(value) => report.data("value", number_to_string(value)),
         Value::String(value) => report.data("value", value),
     };
 }
 
-/// oxlint looks at the numbers and the strings that are written as such, and points at the value that is repeated: the
-/// first of the numbers, the string before this one.
+/// oxlint only looks at number and string literals. It points at the earlier value: for a number the first occurrence,
+/// for a string the previous one.
 fn check_as_oxlint<'a>(declaration: Enum<'a>, cx: &mut Cx<'a, NoDuplicateEnumValues>) {
     let mut seen: FxHashMap<(bool, u64), Span> = FxHashMap::default();
     for member in declaration.members() {
@@ -75,11 +75,11 @@ fn check_as_oxlint<'a>(declaration: Enum<'a>, cx: &mut Cx<'a, NoDuplicateEnumVal
         let here = initializer.span();
         let before = seen.entry(value.key()).or_insert(here);
         if *before != here {
-            let place = *before;
+            let report_span = *before;
             let second_name = member.key().and_then(Key::name).map_or(&b""[..], |it| it.bytes());
-            let report = cx.report(place, DUPLICATE_VALUE).data("second_name", second_name);
+            let report = cx.report(report_span, DUPLICATE_VALUE).data("second_name", second_name);
             let report = report.label(here, "and is re-used here");
-            // A number is said as it is written.
+            // A number is printed as written.
             match value {
                 Value::Number(_) => report.data("value", initializer.text()),
                 Value::String(string) => {

@@ -38,17 +38,9 @@ use crate::webcore::jsc::{self as jsc, JSGlobalObject, JSType, JSValue, JsResult
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub(crate) struct LinuxMemFdAllocator {
     ref_count: bun_ptr::ThreadSafeRefCount<LinuxMemFdAllocator>,
+    /// `free` closes it with the store's view. A `CopyOnWrite` can outlive it, and must not read it.
     fd: Fd,
     pub(crate) size: usize,
-}
-
-impl Drop for LinuxMemFdAllocator {
-    fn drop(&mut self) {
-        // `free` closes the fd with the store's view. This is `create`'s error path.
-        if self.fd.is_valid() {
-            self.fd.close();
-        }
-    }
 }
 
 /// One copy-on-write mapping of the memfd, owned by a JS buffer.
@@ -77,7 +69,7 @@ impl Drop for CopyOnWrite {
 static MEMFD_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 impl LinuxMemFdAllocator {
-    pub(crate) fn new(fd: Fd, size: usize) -> bun_ptr::RefPtr<Self> {
+    fn new(fd: Fd, size: usize) -> bun_ptr::RefPtr<Self> {
         bun_ptr::RefPtr::new(Self {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             fd,
@@ -287,10 +279,17 @@ impl LinuxMemFdAllocator {
         let memfd = Self::new(fd, bytes.len());
         // SAFETY: `memfd` is the `heap::alloc` pointer (full provenance) with
         // one live ref — required by `Self::alloc`.
-        let res = unsafe { Self::alloc(memfd.as_ptr(), bytes.len()) }?;
-        // That ref now lives in `res.allocator`.
-        let _ = memfd.into_raw();
-        Ok(res)
+        match unsafe { Self::alloc(memfd.as_ptr(), bytes.len()) } {
+            Ok(res) => {
+                // That ref now lives in `res.allocator`.
+                let _ = memfd.into_raw();
+                Ok(res)
+            }
+            Err(err) => {
+                fd.close();
+                Err(err)
+            }
+        }
     }
 }
 
@@ -327,9 +326,8 @@ mod allocator_interface {
                 bun_core::debug_warn!("Failed to munmap memfd: {}", err);
             }
         }
-        // SAFETY: we hold one ref. `copy_on_write_js` is the only reader of `fd`,
-        // and it reads through the `Bytes` that is freed here.
-        unsafe { core::mem::replace(&mut (*this).fd, Fd::INVALID).close() };
+        // SAFETY: we hold one ref until the `deref` below, so `*this` is live.
+        unsafe { (*this).fd }.close();
         // SAFETY: caller contract — `this` is the Box-allocated `*mut Self` and
         // we hold one ref. No live `&Self` exists (we never materialized one).
         unsafe { LinuxMemFdAllocator::deref(this) };

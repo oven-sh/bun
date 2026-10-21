@@ -4,7 +4,7 @@ use bun_lint::rule::Plugin;
 
 /// Enforce consistency in whether `.each` or `.for` is used to create parameterized tests.
 pub struct ConsistentEachFor {
-    /// For `describe`, `it`, `test` and `suite`: the method that is not to be used.
+    /// The disallowed method for each of `describe`, `it`, `test` and `suite`.
     not_allowed_methods: [Option<&'static str>; 4],
 }
 

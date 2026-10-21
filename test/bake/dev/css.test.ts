@@ -181,6 +181,12 @@ devTest("asset referenced in css", {
     let backgroundImage = await c.style("body").backgroundImage;
     assert(backgroundImage);
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
+    // The served stylesheet is the chunk with the asset reference resolved and
+    // nothing else: CSS never gets a source map, so no debugId trailer either.
+    const stylesheetHref = (await (await dev.fetch("/")).text()).match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)![1];
+    const stylesheet = await (await dev.fetch(stylesheetHref)).text();
+    expect(stylesheet).toContain("background-image:");
+    expect(stylesheet).not.toContain("debugId");
     await dev.write("bun.png", imageFixtures.bun2);
     backgroundImage = await c.style("body").backgroundImage;
     assert(backgroundImage);
@@ -236,12 +242,12 @@ devTest("css url resolve error on hot reload is recoverable", {
           errors: ['styles.css:2:21: error: Could not resolve: "./missing.png"'],
         },
       );
-      expect((await dev.fetch("/")).status).toBe(500);
     }
-    // Recovery is checked without a connected client: when a failed CSS root
-    // recovers, the patch currently ships the HTML route as a JS module
-    // without the route-reload flag, which trips a client-side debug assert
-    // (tracked in https://github.com/oven-sh/bun/issues/31908).
+    // The failing route is fetched and recovered without a connected client: a
+    // fetch re-bundles the route, and both that and the recovery ship the HTML
+    // route as a JS module without the route-reload flag, which trips a
+    // client-side debug assert (tracked in https://github.com/oven-sh/bun/issues/31908).
+    expect((await dev.fetch("/")).status).toBe(500);
     await dev.write(
       "styles.css",
       `
@@ -429,6 +435,65 @@ devTest("css hot update carries the edited stylesheet when another root fails in
       await using c1 = await dev.client("/first");
       await c1.style(".first").color.expect.toBe("#ff0");
     }
+  },
+});
+// The incremental graph's stale bitset grows in steps of 512 files.
+const modulesPastFirstBitsetStep = Array.from({ length: 520 }, (_, i) => `m${i}`);
+devTest("css file imported from css first, then from a second page's script", {
+  files: {
+    "first.html": emptyHtmlFile({
+      styles: ["first.css"],
+      scripts: ["first.ts"],
+    }),
+    "second.html": emptyHtmlFile({
+      scripts: ["second.ts"],
+    }),
+    "first.css": `
+      .first { color: red; }
+    `,
+    "child.css": `
+      .child { color: blue; }
+    `,
+    "first.ts": `
+      console.log("first");
+      import.meta.hot.accept();
+    `,
+    "second.ts": `
+      import "./child.css";
+      console.log("second");
+    `,
+    ...Object.fromEntries(modulesPastFirstBitsetStep.map(name => [`modules/${name}.ts`, `export default "${name}";`])),
+  },
+  async test(dev) {
+    await using c1 = await dev.client("/first");
+    await c1.expectMessage("first");
+
+    // A bundle without css pushes the client graph past 512 files, so the bitset
+    // grows at the end of the bundle and the new bits mean "cached".
+    await dev.write(
+      "first.ts",
+      [
+        ...modulesPastFirstBitsetStep.map(name => `import "./modules/${name}";`),
+        `console.log("first with modules");`,
+        `import.meta.hot.accept();`,
+      ].join("\n"),
+    );
+    await c1.expectMessage("first with modules");
+
+    // "child.css" enters the client graph as a css import, so it doesn't have its own stylesheet.
+    await dev.write(
+      "first.css",
+      `
+        @import "./child.css";
+        .first { color: red; }
+      `,
+    );
+    await c1.style(".child").color.expect.toBe("#00f");
+
+    // The script import must bundle "child.css" as a stylesheet of this page.
+    await using c2 = await dev.client("/second");
+    await c2.expectMessage("second");
+    await c2.style(".child").color.expect.toBe("#00f");
   },
 });
 devTest("multiple stylesheets importing same dependency", {

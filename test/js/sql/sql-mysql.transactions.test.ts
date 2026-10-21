@@ -2,14 +2,8 @@ import { SQL, randomUUIDv7 } from "bun";
 import { beforeEach, expect, test } from "bun:test";
 import { describeWithContainer } from "harness";
 
-describeWithContainer(
-  "mysql",
-  {
-    image: "mysql_plain",
-    env: {},
-    args: [],
-  },
-  container => {
+for (const image of ["mysql_plain", "mariadb_plain"]) {
+  describeWithContainer(image, { image }, container => {
     // Use a getter to avoid reading port/host at define time
     const getOptions = () => ({
       url: `mysql://root@${container.host}:${container.port}/bun_sql_test`,
@@ -40,7 +34,7 @@ describeWithContainer(
       try {
         await sql`BEGIN`;
         expect.unreachable();
-      } catch (error) {
+      } catch (error: any) {
         expect(error.code).toBe("ERR_MYSQL_UNSAFE_TRANSACTION");
       }
     });
@@ -61,8 +55,8 @@ describeWithContainer(
             await sql`insert into ${sql(random_name)} values(1)`;
             await sql`insert into ${sql(random_name)} values('hej')`;
           })
-          .catch(e => e.message),
-      ).toBe("Incorrect integer value: 'hej' for column 'a' at row 1");
+          .catch(e => e.errno),
+      ).toBe(1366); // Incorrect integer value: 'hej' for column 'a' at row 1
     });
 
     test("Transaction rolls back", async () => {
@@ -151,9 +145,8 @@ describeWithContainer(
 
     test("Uncaught transaction request errors bubbles to transaction", async () => {
       await using sql = new SQL(getOptions());
-      expect(await sql.begin(sql => [sql`select wat`, sql`select 1 as x, ${1} as a`]).catch(e => e.message)).toBe(
-        "Unknown column 'wat' in 'field list'",
-      );
+      // Unknown column 'wat' in 'field list'
+      expect(await sql.begin(sql => [sql`select wat`, sql`select 1 as x, ${1} as a`]).catch(e => e.errno)).toBe(1054);
     });
 
     test("Transaction rejects with rethrown error", async () => {
@@ -193,5 +186,5 @@ describeWithContainer(
         (await sql.begin(sql => [sql`select 1 as count`, sql`select 1 as count`])).map(x => x[0].count).join(""),
       ).toBe("11");
     });
-  },
-);
+  });
+}

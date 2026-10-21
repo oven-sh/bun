@@ -136,13 +136,13 @@ Press h + Enter to show shortcuts
 
 Bun's transpiler natively implements JavaScript, TypeScript, and JSX support. See [loaders](/bundler/loaders).
 
-<Note>Bun's transpiler is also used at runtime.</Note>
+<Note>Bun also uses the same transpiler at runtime.</Note>
 
 ### ES Modules & CommonJS
 
 You can use ESM and CommonJS in your JavaScript, TypeScript, and JSX files. Bun transpiles and bundles them automatically.
 
-There is no pre-build or separate optimization step. It's all done at the same time.
+There is no pre-build or separate optimization step. Bun does it all at the same time.
 
 See [module resolution](/runtime/module-resolution).
 
@@ -209,7 +209,7 @@ import "./styles.css";
 import "./more-styles.css";
 ```
 
-This generates `./app.css` and `./app.js` in the output directory. All CSS files imported from JavaScript are bundled into a single CSS file per entry point. If you import the same CSS file from multiple JavaScript files, it is only included once in the output CSS file.
+This generates `./app.css` and `./app.js` in the output directory. Bun bundles all CSS files imported from JavaScript into a single CSS file per entry point. If you import the same CSS file from multiple JavaScript files, Bun includes it only once in the output CSS file.
 
 ## Plugins
 
@@ -276,7 +276,7 @@ env = "PUBLIC_*"  # only inline env vars starting with PUBLIC_ (recommended)
 ```
 
 <Note>
-  This only works with literal `process.env.FOO` references, not `import.meta.env` or indirect access like `const env =
+  Inlining only works with literal `process.env.FOO` references, not `import.meta.env` or indirect access like `const env =
   process.env; env.FOO`.
 
 If an environment variable is not set, you may see runtime errors like `ReferenceError: process
@@ -362,9 +362,9 @@ ready in 6.62ms
 Press h + Enter to show shortcuts
 ```
 
-Each call to `console.log` or `console.error` is broadcast to the terminal that started the server, so browser errors show up in the same place you run your server. This also helps AI agents that watch terminal output.
+Bun broadcasts each `console.log` or `console.error` call to the terminal that started the server, so browser errors show up in the same place you run your server. This also helps AI agents that watch terminal output.
 
-Internally, this reuses the existing WebSocket connection from hot module replacement (HMR) to send the logs.
+Internally, Bun reuses the existing WebSocket connection from hot module replacement (HMR) to send the logs.
 
 ## Edit files in the browser
 
@@ -475,11 +475,11 @@ Bun resolves all paths relative to your HTML file, so you can organize your proj
 
 ## How this works
 
-This is a small wrapper around Bun's support for [HTML imports](/bundler/fullstack) in JavaScript.
+The dev server is a small wrapper around Bun's support for [HTML imports](/bundler/fullstack) in JavaScript.
 
 ## Standalone HTML
 
-You can bundle your entire frontend into a **single self-contained `.html` file** with no external dependencies using `--compile --target=browser`. All JavaScript, CSS, and images are inlined directly into the HTML.
+You can bundle your entire frontend into a **single self-contained `.html` file** with no external dependencies using `--compile --target=browser`. Bun inlines all JavaScript, CSS, and images directly into the HTML.
 
 ```bash terminal icon="terminal"
 bun build --compile --target=browser ./index.html --outdir=dist

@@ -40,14 +40,17 @@ extern "C" void StringBuilder__appendUsize(WTF::StringBuilder* builder, size_t n
     builder->append(num);
 }
 
-extern "C" void StringBuilder__appendString(WTF::StringBuilder* builder, BunString str)
+extern "C" void StringBuilder__appendString(WTF::StringBuilder* builder, const BunString* str)
 {
-    str.appendToBuilder(*builder);
+    // Upconverting an 8-bit builder for a 16-bit string reads capacity(), which asserts !hasOverflowed().
+    if (builder->hasOverflowed()) [[unlikely]]
+        return;
+    str->appendToBuilder(*builder);
 }
 
-extern "C" void StringBuilder__appendLChar(WTF::StringBuilder* builder, Latin1Character c)
+extern "C" void StringBuilder__appendLChar(WTF::StringBuilder* builder, uint8_t c)
 {
-    builder->append(c);
+    builder->append(Latin1Character { c });
 }
 
 extern "C" void StringBuilder__appendUChar(WTF::StringBuilder* builder, UChar c)
@@ -55,9 +58,9 @@ extern "C" void StringBuilder__appendUChar(WTF::StringBuilder* builder, UChar c)
     builder->append(c);
 }
 
-extern "C" void StringBuilder__appendQuotedJsonString(WTF::StringBuilder* builder, BunString str)
+extern "C" void StringBuilder__appendQuotedJsonString(WTF::StringBuilder* builder, const BunString* str)
 {
-    auto string = str.toWTFString(BunString::ZeroCopy);
+    auto string = str->toWTFString(BunString::ZeroCopy);
     builder->appendQuotedJSONString(string);
 }
 
@@ -77,5 +80,8 @@ extern "C" JSC::EncodedJSValue StringBuilder__toString(WTF::StringBuilder* build
 
 extern "C" void StringBuilder__ensureUnusedCapacity(WTF::StringBuilder* builder, size_t additional)
 {
+    // length() asserts !hasOverflowed().
+    if (builder->hasOverflowed()) [[unlikely]]
+        return;
     builder->reserveCapacity(builder->length() + additional);
 }

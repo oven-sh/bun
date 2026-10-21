@@ -934,4 +934,9 @@ test("which pages an argument names", () => {
     expect(htmlPagesOf(join(cwd, "{a,b}", "index.html"), cwd)).toBeUndefined();
   }
   expect(() => pagesOf(join(String(root), "missing", "*.html"))).toThrow(expect.objectContaining({ code: "ENOENT" }));
+  // A NUL byte is refused as `Bun.Glob.prototype.scanSync` refuses it. The system reads a path up to that byte, and
+  // `{a,b}/index.html` is a page.
+  const nullByte = expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" });
+  expect(() => pagesOf("{a,b}/index.html\0.html")).toThrow(nullByte);
+  expect(() => htmlPagesOf("./*.html", String(root) + "\0")).toThrow(nullByte);
 });

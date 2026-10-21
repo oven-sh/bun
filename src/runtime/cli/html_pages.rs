@@ -1,10 +1,9 @@
 //! Whether an argument of `bun ./index.html './pages/*.html'` is a page or a pattern, for html.ts and `bun --check`.
 
 use bun_core::strings;
-use bun_glob::BunGlobWalker;
 use bun_paths::{platform::Auto, resolve_path};
 
-use crate::api::glob::ScanError;
+use crate::api::glob::{Glob, ScanError};
 
 /// What an argument names.
 pub(crate) enum Pages {
@@ -20,24 +19,23 @@ pub(crate) enum Pages {
 }
 
 /// The pages that the argument `text` names. A relative path is in `cwd`.
-pub(crate) fn pages_of(cwd: &[u8], text: &[u8]) -> Result<Pages, bun_core::Error> {
-    if !strings::contains_any(text, b"*{") || names_file(cwd, text) {
+pub(crate) fn pages_of<'a>(cwd: &'a [u8], text: &[u8]) -> Result<Pages, ScanError<'a>> {
+    if !strings::contains_any(text, b"*{") {
         return Ok(Pages::Named);
     }
-    // The options of `Bun.Glob.prototype.scanSync`: files only.
-    let walker = BunGlobWalker::init_with_cwd(text, cwd, false, false, false, false, true, None)?;
-    let mut walker = match walker {
-        Ok(walker) => walker,
-        Err(error) => {
-            return Ok(Pages::Matched {
-                pages: Vec::new(),
-                error: Some(error),
-            });
-        }
-    };
-    let error = walker.walk()?.err();
-    let (pages, _) = core::mem::take(&mut *walker.matched_paths).into_entries();
-    Ok(Pages::Matched { pages, error })
+    // Made before the look for a file: it refuses what `Bun.Glob.prototype.scanSync` refuses, such as a NUL byte.
+    let mut walker = Glob::scan_sync_walker(text, cwd)?;
+    if names_file(cwd, text) {
+        return Ok(Pages::Named);
+    }
+    let walked = walker
+        .walk()
+        .map_err(|error| ScanError::Runtime(error.into()))?;
+    let pages = walker.take_matched_paths();
+    Ok(Pages::Matched {
+        pages,
+        error: walked.err(),
+    })
 }
 
 /// Whether `text` is the path of a file that it does not match as a pattern: `{a,b}/x.html` matches `a/x.html`.
@@ -60,9 +58,9 @@ fn names_file(cwd: &[u8], text: &[u8]) -> bool {
 /// `pagesOf` of html_pages.bind.ts, with the errors of `Bun.Glob.prototype.scanSync`. `None` is `undefined`.
 pub(crate) fn pages_of_from_js<'a>(
     arg: &[u8],
-    cwd: &[u8],
+    cwd: &'a [u8],
 ) -> Result<Option<Vec<Box<[u8]>>>, ScanError<'a>> {
-    match pages_of(cwd, arg).map_err(|error| ScanError::Runtime(error.into()))? {
+    match pages_of(cwd, arg)? {
         Pages::Named => Ok(None),
         Pages::Matched {
             error: Some(error), ..

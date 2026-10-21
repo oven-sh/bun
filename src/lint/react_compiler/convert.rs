@@ -1516,6 +1516,7 @@ impl<'a> Converter<'a, '_> {
                     Some(finalizer) => Some(Finally {
                         loc: self.loc(finalizer.span()),
                         stmts: self.block(finalizer)?,
+                        body_loc: self.loc(finalizer.span()),
                     }),
                     None => None,
                 };

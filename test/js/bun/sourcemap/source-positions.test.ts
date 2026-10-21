@@ -454,9 +454,9 @@ function decode(mappings: string) {
 
 describe.each(Object.keys(builds))("the source map of %s", name => {
   const wordAt = (line: string | undefined, column: number) =>
-    /[\w$]/.test(line?.[column - 1] ?? "") ? undefined : line?.slice(column).match(/^[A-Za-z_$][\w$]{3,}/)?.[0];
+    /[\w$]/.test(line?.[column - 1] ?? "") ? undefined : line?.slice(column).match(/^(?:[A-Za-z_$][\w$]{3,}|\{)/)?.[0];
 
-  test("maps a word to the same word", () => {
+  test("maps a word to the same word, and a { to a {", () => {
     const wrong: string[] = [];
     let checked = 0;
     for (const { code, map } of outputs[name]) {
@@ -473,7 +473,8 @@ describe.each(Object.keys(builds))("the source map of %s", name => {
         if (map.sources[source].endsWith("lowered.ts")) continue;
         checked++;
         const original = originals[source][originalLine]?.slice(originalColumn, originalColumn + word.length);
-        if (original !== word) {
+        // The object with the properties of a JSX element has the position of the element.
+        if (original !== word && !(word === "{" && original === "<")) {
           wrong.push(
             `${map.sources[source]}:${originalLine + 1}:${originalColumn + 1} is ${JSON.stringify(original)}, not ${word}`,
           );
@@ -481,6 +482,25 @@ describe.each(Object.keys(builds))("the source map of %s", name => {
       }
     }
     expect(wrong).toEqual([]);
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  test("maps the { after try and after finally", () => {
+    const missing: string[] = [];
+    let checked = 0;
+    for (const { code, map } of outputs[name]) {
+      const sourceAt = new Map(decode(map.mappings).map(([line, column, source]) => [`${line}:${column}`, source]));
+      code.split("\n").forEach((line, generatedLine) => {
+        for (const { 0: keyword, index } of line.matchAll(/\b(?:try|finally) ?(?=\{)/g)) {
+          const source = sourceAt.get(`${generatedLine}:${index}`);
+          // A `try` that Bun made up has one position for all of it.
+          if (source === undefined || map.sources[source].endsWith("lowered.ts")) continue;
+          checked++;
+          if (!sourceAt.has(`${generatedLine}:${index + keyword.length}`)) missing.push(line);
+        }
+      });
+    }
+    expect(missing).toEqual([]);
     expect(checked).toBeGreaterThan(0);
   });
 

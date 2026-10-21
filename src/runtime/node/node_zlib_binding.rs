@@ -838,10 +838,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             // C string (static literal or zlib/zstd-owned buffer valid for this call).
             unsafe { bun_core::ffi::cstr(err_.msg) }.to_bytes()
         };
-        let msg_value = match bun_string_jsc::create_utf8_for_js(global_this, msg_bytes) {
-            Ok(v) => v,
-            Err(_) => return,
-        };
+        // Tens of bytes: an `Err` is a refused allocation. The 'error' event is not dropped for it.
+        let msg_value =
+            bun_core::handle_oom(bun_string_jsc::create_utf8_for_js(global_this, msg_bytes));
         let err_value: JSValue = JSValue::js_number(f64::from(err_.err));
         let code_bytes: &[u8] = if err_.code.is_null() {
             b""
@@ -850,10 +849,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             // C string (static literal or zlib/zstd-owned buffer valid for this call).
             unsafe { bun_core::ffi::cstr(err_.code) }.to_bytes()
         };
-        let code_value = match bun_string_jsc::create_utf8_for_js(global_this, code_bytes) {
-            Ok(v) => v,
-            Err(_) => return,
-        };
+        let code_value =
+            bun_core::handle_oom(bun_string_jsc::create_utf8_for_js(global_this, code_bytes));
 
         // The `zlib.ts` wrapper installs `onerror` right after construction,
         // but a handle driven directly has none; there is nobody to notify.

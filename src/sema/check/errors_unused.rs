@@ -53,8 +53,6 @@ struct Unused<'a, 's> {
     /// Indexed by scope: the symbol of the function, class, interface, enum, alias or namespace declaration that owns
     /// the scope.
     owner_of_scope: Vec<SymbolId>,
-    /// True if the file has a `return` whose expression is never checked. See `is_in_unchecked_return`.
-    has_unchecked_returns: bool,
     /// `Checker::never_checked` after `check_source_file`.
     never_checked: Vec<(u32, u32)>,
     /// The sorted starts of the parser's and the scanner's errors. Empty for a file that parses.
@@ -105,7 +103,6 @@ impl Checker<'_, '_> {
             atoms: self.atoms(),
             referenced: vec![0; bound.symbols.len()],
             owner_of_scope: vec![SymbolId::NONE; bound.scopes.len()],
-            has_unchecked_returns: false,
             never_checked: self.never_checked.borrow().clone(),
             syntax_errors,
             locals,
@@ -130,9 +127,6 @@ impl Checker<'_, '_> {
                 u.owner_of_scope[scope.idx()] = bound.alias_symbol[a];
             }
         }
-        u.has_unchecked_returns = hir.stmts.iter().any(
-            |s| matches!(s.kind, StmtKind::Return(e) if e.is_some() && u.is_in_unchecked_return(e)),
-        );
         let index = self.exprs_by_kind(file);
         self.note_identifiers(file, &index, &mut u);
         u.note_references();
@@ -1814,8 +1808,7 @@ impl Unused<'_, '_> {
 
     /// True if the checker never visits `e`, so that nothing in `e` counts as a reference.
     fn is_unchecked(&self, e: ExprId) -> bool {
-        self.has_unchecked_returns && self.is_in_unchecked_return(e)
-            || self.is_never_checked(self.hir[e].pos)
+        self.is_never_checked(self.hir[e].pos)
     }
 
     fn is_never_checked(&self, pos: u32) -> bool {
@@ -1838,24 +1831,6 @@ impl Unused<'_, '_> {
         let container = hir.get_enclosing_block_scope_container(hir.node(declaration));
         // A `CaseBlock` is part of its statement.
         container.is_none() || !self.is_never_checked(hir.start(container.row()))
-    }
-
-    /// True if `e` is in the expression of a `return` that's outside a function or directly in a class static block.
-    /// `checkReturnStatement` reports such a statement and returns before it checks the expression.
-    fn is_in_unchecked_return(&self, e: ExprId) -> bool {
-        let hir = self.hir;
-        // True once a `return` has been visited and the function that contains it hasn't been reached yet.
-        let mut in_return = false;
-        let static_block = hir.find_ancestor(hir.node(e), |ancestor| {
-            if hir.kind(ancestor) == Kind::ReturnStatement {
-                in_return = true;
-            }
-            let function = hir.function_of(ancestor);
-            function.is_some()
-                && std::mem::take(&mut in_return)
-                && hir[function].kind == FnKind::StaticBlock
-        });
-        static_block.is_some() || in_return
     }
 
     fn starts_with_underscore(&self, name: Atom) -> bool {

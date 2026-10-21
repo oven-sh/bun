@@ -5389,6 +5389,11 @@ impl<'p, 's> Checker<'p, 's> {
         value: ExprId,
         star: bool,
     ) -> TypeId {
+        let yield_expression_type = if value.is_some() {
+            self.type_of_expr(file, value)
+        } else {
+            self.undefined_widening()
+        };
         let Some(func) = self.containing_generator(file, e) else {
             return TypeId::ANY;
         };
@@ -5405,11 +5410,6 @@ impl<'p, 's> Checker<'p, 's> {
         let iteration_types = match return_type {
             Some(it) => self.iteration_type_of_generator_function_return_type(it, is_async),
             None => Iter3::default(),
-        };
-        let yield_expression_type = if value.is_some() {
-            self.type_of_expr(file, value)
-        } else {
-            self.undefined_widening()
         };
         let yielded_type = self.get_yielded_type_of_yield_expression(
             file,
@@ -5495,7 +5495,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The generator function that contains the `yield` expression `e`. Without one,
-    /// `checkYieldExpression` returns `any` immediately.
+    /// `checkYieldExpression` returns `any`.
     pub(super) fn containing_generator(&self, file: FileId, e: ExprId) -> Option<FnId> {
         self.get_containing_function(file, e)
             .filter(|&func| self.hir(file)[func].flags.contains(Flags::GENERATOR))

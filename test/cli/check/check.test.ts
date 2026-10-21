@@ -14373,7 +14373,7 @@ declare function Ov(p: { req: string; children?: string }): JSX.Element; declare
     test("reports TS6133 for a name used only in a node that's never checked", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "jsx": "preserve", "noUnusedLocals": true}}`,
-        "a.ts": `// a reference in a node that is never checked is no reference
+        "a.ts": `// a reference in a node that is never checked is no reference. A misplaced \`export =\`, \`return\` or \`yield\` is checked
 export namespace N { const x = 1; export = x; }
 export function f() { const only = 1; const g = function* () {}; g(); class C { static { return only; } } return C; }
 export function h(this: any) { const w = 1; with (this) { w; } }
@@ -14383,17 +14383,56 @@ export function m(a = () => { const z = 1; yield z; }) { return a; }
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(2,28): error TS6133: 'x' is declared but its value is never read.
-        a.ts(2,35): error TS1063: An export assignment cannot be used in a namespace.
-        a.ts(3,29): error TS6133: 'only' is declared but its value is never read.
+        "a.ts(2,35): error TS1063: An export assignment cannot be used in a namespace.
         a.ts(3,90): error TS18041: A 'return' statement cannot be used inside a class static block.
         a.ts(4,38): error TS6133: 'w' is declared but its value is never read.
         a.ts(4,45): error TS1101: 'with' statements are not allowed in strict mode.
         a.ts(4,45): error TS2410: The 'with' statement is not supported. All symbols in a 'with' block will have type 'any'.
         a.ts(5,29): error TS6133: 'y' is declared but its value is never read.
         a.ts(5,44): error TS1123: Variable declaration list cannot be empty.
-        a.ts(6,37): error TS6133: 'z' is declared but its value is never read.
         a.ts(6,44): error TS1163: A 'yield' expression is only allowed in a generator body."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("checks what a misplaced statement, `yield` or type predicate contains", async () => {
+      using dir = project({
+        "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "es2022", "module": "commonjs", "lib": ["es2022"], "types": []}}`,
+        "a.ts": `namespace N1 { interface I {} export = I; }
+namespace N2 { namespace M { export interface J {} } export = M; }
+namespace N3 { export = missing1; }
+class C { static { return missing2 + missing3; } }
+function h() { yield missing4; }
+return missing5;
+class K { get a(): this is Missing6 { return true; } }
+type CT = new (x: any) => x is Missing7;
+`,
+        // The first name of an exported entity name may be a namespace without values.
+        "b.ts": `namespace Types { export interface T {} }
+export = Types.T;
+`,
+        "c.ts": `interface OnlyType {}
+export default (OnlyType);
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(1,31): error TS1063: An export assignment cannot be used in a namespace.
+        a.ts(2,54): error TS1063: An export assignment cannot be used in a namespace.
+        a.ts(3,16): error TS1063: An export assignment cannot be used in a namespace.
+        a.ts(3,25): error TS2304: Cannot find name 'missing1'.
+        a.ts(4,20): error TS18041: A 'return' statement cannot be used inside a class static block.
+        a.ts(4,27): error TS2304: Cannot find name 'missing2'.
+        a.ts(4,38): error TS2304: Cannot find name 'missing3'.
+        a.ts(5,16): error TS1163: A 'yield' expression is only allowed in a generator body.
+        a.ts(5,22): error TS2304: Cannot find name 'missing4'.
+        a.ts(6,1): error TS1108: A 'return' statement can only be used within a function body.
+        a.ts(6,8): error TS2304: Cannot find name 'missing5'.
+        a.ts(7,20): error TS1228: A type predicate is only allowed in return type position for functions and methods.
+        a.ts(7,28): error TS2304: Cannot find name 'Missing6'.
+        a.ts(8,27): error TS1228: A type predicate is only allowed in return type position for functions and methods.
+        a.ts(8,32): error TS2304: Cannot find name 'Missing7'.
+        c.ts(2,17): error TS2693: 'OnlyType' only refers to a type, but is being used as a value here."
       `);
       expect(exitCode).toBe(1);
     });
@@ -18326,7 +18365,6 @@ declare const c: boolean;
         "a.ts(2,15): error TS7023: 'x' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
         a.ts(3,15): error TS7023: 'x' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
         a.ts(4,11): error TS7022: 'x' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
-        a.ts(5,11): error TS7023: 'x' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
         a.ts(6,15): error TS7023: 'x' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
         a.ts(6,27): error TS7022: 'r' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
         a.ts(7,15): error TS7023: 'x' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
@@ -18485,13 +18523,10 @@ class F { x = ((v: ReturnType<() => F["x"]>) => true); y = 1 }
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
         "a.ts(2,5): error TS7022: 'A' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
-        a.ts(2,42): error TS2313: Type parameter 'K' has a circular constraint.
         a.ts(3,5): error TS7022: 'B' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
         a.ts(4,5): error TS7022: 'C' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
-        a.ts(4,51): error TS2577: Return type annotation circularly references itself.
         a.ts(5,5): error TS7022: 'D' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
         a.ts(6,11): error TS7022: 'x' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
-        a.ts(6,52): error TS2577: Return type annotation circularly references itself.
         a.ts(7,11): error TS7022: 'x' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer."
       `);
       expect(exitCode).toBe(1);

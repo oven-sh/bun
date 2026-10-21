@@ -332,7 +332,7 @@ impl Checker<'_, '_> {
         // Removes the diagnostics reported for misplaced decorators.
         self.report_decorators(file);
         self.check_strict_mode_statements(file);
-        // `checkWithStatement`, `checkReturnStatement`, `checkExportAssignment`: removes diagnostics in the nodes they
+        // `checkWithStatement`, `checkDecorators`, `checkForOfStatement`: removes diagnostics in the nodes they
         // never check, whichever check reported them.
         self.remove_diagnostics_in_unchecked_ranges(file);
         // `MarkLinkedReferencesRecursively` visits those nodes too.
@@ -1356,26 +1356,8 @@ impl Checker<'_, '_> {
         if hir.has_diagnostic(hir[e].pos, 1308) {
             return;
         }
-        let other = SymFlags::TYPE | SymFlags::NAMESPACE;
         let is_resolved_by_check = !bound.is_unchecked(e.idx())
-            && match bound.parent_of_expr(e) {
-                // `checkExportAssignment`: `export = A` and `export default A` resolve `A` with any meaning, while
-                // `(A)` is checked as an expression. In a namespace they're invalid, and neither is checked.
-                Parent::Stmt(s)
-                    if matches!(
-                        hir[s].kind,
-                        StmtKind::ExportAssign(_) | StmtKind::ExportDefault(_)
-                    ) && (matches!(bound.parent_of_stmt(s), Parent::Module(m) if matches!(hir[m].name, ModuleName::Ident(_)))
-                        || !is_parenthesized(hir, e)
-                            && self
-                                .files()
-                                .resolve_name(file, scope, name, other)
-                                .is_some()) =>
-                {
-                    false
-                }
-                _ => !self.is_name_with_object_assignment_initializer(file, e),
-            };
+            && !self.is_name_with_object_assignment_initializer(file, e);
         if is_resolved_by_check != is_checked {
             return;
         }
@@ -1792,7 +1774,9 @@ impl Checker<'_, '_> {
         if (code == 2708 || meaning.intersects(SymFlags::TYPE.difference(SymFlags::VALUE)))
             && resolve_name(namespace).is_some_and(|s| self.resolved_flags(s).intersects(namespace))
         {
-            self.error_at(at, code, &[reported]);
+            if code == 2709 || !is_export_assignment_expression_name(hir, location) {
+                self.error_at(at, code, &[reported]);
+            }
             return;
         }
         // `checkAndReportErrorForUsingTypeAsValue`
@@ -1818,6 +1802,9 @@ impl Checker<'_, '_> {
             if let Some(symbol) = resolve_name(SymFlags::TYPE.difference(SymFlags::VALUE)) {
                 let flags = self.resolved_flags(symbol);
                 if flags.intersects(SymFlags::TYPE) && !flags.intersects(SymFlags::VALUE) {
+                    if is_export_assignment_expression_name(hir, location) {
+                        return;
+                    }
                     // `isES2015OrLaterConstructorName`
                     if matches!(
                         text,
@@ -1985,6 +1972,17 @@ impl Checker<'_, '_> {
             flags
         }
     }
+}
+
+/// `isExportAssignmentExpressionName`: true if `node` is the first name of the entity name that `export =` or
+/// `export default` exports.
+fn is_export_assignment_expression_name(hir: &hir::File, mut node: Node) -> bool {
+    let is_bare = |node| !matches!(hir.data(node), NodeData::Expr(e) if is_parenthesized(hir, e));
+    while is_bare(node) && hir.kind(hir.parent(node)) == Kind::PropertyAccessExpression {
+        node = hir.parent(node);
+    }
+    let parent = hir.parent(node);
+    is_bare(node) && hir.kind(parent) == Kind::ExportAssignment && hir.expression(parent) == node
 }
 
 /// Codes that aren't reported in a file with parse diagnostics (`hasParseDiagnostics`). Only for diagnostics that

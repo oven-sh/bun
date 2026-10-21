@@ -379,8 +379,7 @@ impl Checker<'_, '_> {
         });
     }
 
-    /// The start of `checkReturnStatement`: 1108 18041. Returns the containing function if the returned expression
-    /// should be checked.
+    /// From `checkReturnStatement`: 1108 18041. Returns the containing function unless the statement is misplaced.
     pub(super) fn check_grammar_return_statement(
         &mut self,
         file: FileId,
@@ -394,11 +393,6 @@ impl Checker<'_, '_> {
                 None => 1108,
             };
             self.grammar_error_at((file, hir[s].start, 0), code, &[]);
-        }
-        if let StmtKind::Return(e) = hir[s].kind
-            && e.is_some()
-        {
-            self.never_check(self.start_of(file, e), hir[s].loc.end);
         }
         None
     }

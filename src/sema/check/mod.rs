@@ -1943,8 +1943,8 @@ pub struct Checker<'p, 's> {
     renamed_binding_elements_in_types: Vec<PatPropId>,
     /// The expressions in the file being checked whose parent's check returned before reaching
     /// them, each with the start of its node: initializers and computed property names
-    /// (`checkVariableLikeDeclaration`), operands of `yield` (`checkYieldExpression`). Such an
-    /// expression is checked only if the type of a declaration is computed from it.
+    /// (`checkVariableLikeDeclaration`). Such an expression is checked only if the type of a
+    /// declaration is computed from it.
     unvisited_exprs: Vec<(u32, ExprId)>,
     /// The initializers in the parameters of functions without a body that `getTypeFromBindingElement`
     /// has checked. `checkExpressionWithContextualType` doesn't store a type, and with a type parameter in scope nothing

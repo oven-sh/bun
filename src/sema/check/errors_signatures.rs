@@ -163,6 +163,7 @@ impl Checker<'_, '_> {
         let TypeNodeKind::Predicate { param, ty, asserts } = hir[node].kind else {
             return;
         };
+        self.check_type_node(file, ty);
         let text = &hir.text[..];
         // `getTypePredicateParent`. A `ParenthesizedType`, which has no node, isn't such a parent.
         let parent = hir
@@ -187,9 +188,8 @@ impl Checker<'_, '_> {
             self.error(file, node, 1228, &[]);
             return;
         };
-        // `getTypePredicateOfSignature` resolves the type before `checkSourceElement` visits its parts.
+        // `getTypePredicateOfSignature`
         self.type_from_node(file, ty);
-        self.check_type_node(file, ty);
         if param == known::this {
             return;
         }

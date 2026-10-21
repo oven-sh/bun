@@ -108,9 +108,8 @@ impl<'s> Checker<'_, 's> {
     }
 
     /// Processes `unvisited_exprs`. A query that computes a type from one of them checks all of it
-    /// (`checkDeclarationInitializer`, `checkComputedPropertyName`,
-    /// `checkAndAggregateYieldOperandTypes`). Any that no query has reached by the end of
-    /// `checkSourceFile` is never checked.
+    /// (`checkDeclarationInitializer`, `checkComputedPropertyName`). Any that no query has reached
+    /// by the end of `checkSourceFile` is never checked.
     fn check_exprs_visited_by_queries(&mut self, file: FileId) {
         let mut unvisited = Vec::new();
         loop {
@@ -1393,20 +1392,16 @@ impl<'s> Checker<'_, 's> {
                 }
                 self.check_expression(file, e);
             }
-            // `checkExportAssignment`: it isn't checked if it's misplaced or in a namespace.
+            // `checkExportAssignment`
             StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
-                let is_visited = match bound.parent_of_stmt(s) {
+                self.check_expression(file, e);
+                let is_well_placed = match bound.parent_of_stmt(s) {
                     Parent::File => true,
                     Parent::Module(m) => !matches!(hir[m].name, ModuleName::Ident(_)),
                     _ => false,
                 };
-                if is_visited {
-                    self.check_expression(file, e);
-                    if matches!(hir[s].kind, StmtKind::ExportAssign(_)) {
-                        self.check_grammar_export_equals(file, s);
-                    }
-                } else if e.is_some() {
-                    self.never_check(self.start_of(file, e), hir[s].loc.end);
+                if is_well_placed && matches!(hir[s].kind, StmtKind::ExportAssign(_)) {
+                    self.check_grammar_export_equals(file, s);
                 }
                 if matches!(hir[s].kind, StmtKind::ExportAssign(_))
                     && matches!(bound.parent_of_stmt(s), Parent::File | Parent::Module(_))
@@ -1453,12 +1448,11 @@ impl<'s> Checker<'_, 's> {
                     self.error(file, s, 1294, &[]);
                 }
             }
-            // `checkReturnStatement`: outside a function, or in a static block, the returned
-            // expression isn't checked. Elsewhere the function's return type is resolved first.
+            // `checkReturnStatement`
             StmtKind::Return(e) => {
+                self.check_expression(file, e);
                 if let Some(func) = self.check_grammar_return_statement(file, s) {
                     self.return_type_of_fn(file, func);
-                    self.check_expression(file, e);
                     self.check_return_statement(file, s, func, e);
                 }
             }
@@ -1781,17 +1775,10 @@ impl<'s> Checker<'_, 's> {
             }
             // `checkClassExpression`: `type_of_expr` has run `checkClassLikeDeclaration`.
             ExprKind::Class(_) => self.check_node_deferred(file, e),
-            // `checkYieldExpression`: outside a generator the yielded expression isn't checked.
-            // `forEachYieldExpression` attributes a `yield` in the computed name of a method or an
-            // accessor to the enclosing generator, and `checkAndAggregateYieldOperandTypes` checks
-            // it.
+            // `checkYieldExpression`
             ExprKind::Yield { value, .. } => {
                 self.check_grammar_yield_expression(file, e);
-                if self.containing_generator(file, e).is_some() {
-                    self.check_expression(file, value);
-                } else {
-                    self.leave_unvisited(file, value);
-                }
+                self.check_expression(file, value);
                 if matches!(hir[e].kind, ExprKind::Yield { star: false, .. }) {
                     check_yield_result(self, file, e);
                 }

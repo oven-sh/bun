@@ -232,6 +232,8 @@ const MAX_WINDOW_SIZE: u32 = i32::MAX as u32;
 const MAX_HEADER_TABLE_SIZE: u32 = u32::MAX;
 const MAX_STREAM_ID: u32 = i32::MAX as u32;
 const MAX_FRAME_SIZE: u32 = 0xFF_FFFF; // u24::MAX
+// node's kMaxALTSVC: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L241
+const MAX_ALTSVC_LENGTH: usize = 16384 - 2;
 const DEFAULT_WINDOW_SIZE: u64 = u16::MAX as u64;
 // Float versions for range validation before integer conversion
 const MAX_WINDOW_SIZE_F64: f64 = MAX_WINDOW_SIZE as f64;
@@ -4962,20 +4964,25 @@ impl H2FrameParser {
             }
             stream_id = stream_id_js.to_u32();
         }
+        // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L3233-L3239
+        let origin_bytes = origin_view.as_ref().map(header_value_bytes);
+        let value_bytes = value_view.as_ref().map(header_value_bytes);
+        let origin = origin_bytes.as_deref().unwrap_or_default();
+        let value = value_bytes.as_deref().unwrap_or_default();
+        if origin.len() + value.len() > MAX_ALTSVC_LENGTH {
+            let exception = global_object.to_type_error(
+                bun_jsc::ErrorCode::HTTP2_ALTSVC_LENGTH,
+                format_args!("HTTP/2 ALTSVC frames are limited to {MAX_ALTSVC_LENGTH} bytes"),
+            );
+            return Err(global_object.throw_value(exception));
+        }
         if stream_id > 0 {
             // dont error but dont send frame to invalid stream id
             if this.streams.get().get(&stream_id).is_none() {
                 return Ok(JSValue::UNDEFINED);
             }
         }
-        // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L3233-L3239
-        let origin_bytes = origin_view.as_ref().map(header_value_bytes);
-        let value_bytes = value_view.as_ref().map(header_value_bytes);
-        this.send_alt_svc(
-            stream_id,
-            origin_bytes.as_deref().unwrap_or_default(),
-            value_bytes.as_deref().unwrap_or_default(),
-        );
+        this.send_alt_svc(stream_id, origin, value);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -6033,13 +6040,13 @@ impl H2FrameParser {
     #[bun_jsc::host_fn(method)]
     pub(crate) fn set_next_stream_id(
         this: &Self,
-        _global_object: &JSGlobalObject,
+        global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments();
-        debug_assert!(args_list.len() >= 1);
-        let stream_id_arg = args_list[0];
-        debug_assert!(stream_id_arg.is_number());
+        let stream_id_arg = callframe.argument(0);
+        if !stream_id_arg.is_number() {
+            return Err(global_object.throw(format_args!("Expected stream_id to be a number")));
+        }
         // Store the id `get_next_stream_id` steps from. A fractional id passes the JS layer's
         // `id <= 0` check and truncates to 0 here; 0 (and 1 on a client) has no predecessor,
         // so the subtraction saturates to the initial state instead of wrapping.
@@ -6096,10 +6103,19 @@ impl H2FrameParser {
                 "Expected parentId, promisedId, headers and sensitiveHeaders arguments"
             )));
         }
+        if !parent_id_arg.is_number() {
+            return Err(global_object.throw(format_args!("Expected parentId to be a number")));
+        }
+        if !promised_id_arg.is_number() {
+            return Err(global_object.throw(format_args!("Expected promisedId to be a number")));
+        }
         let parent_id = parent_id_arg.to_u32();
         let promised_id = promised_id_arg.to_u32();
         if promised_id > MAX_STREAM_ID {
             return Ok(JSValue::js_number(-1.0));
+        }
+        if parent_id == 0 || parent_id > MAX_STREAM_ID || promised_id == 0 {
+            return Err(global_object.throw(format_args!("Invalid stream id")));
         }
         let Some(headers_obj) = headers_arg.get_object() else {
             return Err(global_object.throw(format_args!("Expected headers to be an object")));

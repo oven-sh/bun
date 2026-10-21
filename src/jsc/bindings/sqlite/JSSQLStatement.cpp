@@ -156,7 +156,9 @@ static constexpr int MAX_SQLITE_PREPARE_FLAG = SQLITE_PREPARE_PERSISTENT | SQLIT
     if ((connection)->inCallback) [[unlikely]] {                                                            \
         throwTypeError(lexicalGlobalObject, scope, "This database connection is busy executing a query"_s); \
         return {};                                                                                          \
-    }
+    }                                                                                                       \
+    if (!(connection)->orphans.isEmpty()) [[unlikely]]                                                      \
+        (connection)->finalizeOrphans(lexicalGlobalObject);
 
 #define CHECK_PREPARED                                                                                              \
     if (castedThis->stmt == nullptr) [[unlikely]] {                                                                 \
@@ -186,6 +188,10 @@ public:
     // The Bun.ModuleGraph context whose script opened it (0: none): closed when that graph is disposed.
     const WebCore::ScriptExecutionContextIdentifier graphContext;
     WTF::HashSet<WebCore::JSSQLStatement*> statements;
+    // Statements that no JSSQLStatement owns anymore but that aren't finalized yet. The GC moves a statement here when
+    // finalizing it would run JS (Bun::sqliteCommitsWhenFinalized). The next call on the connection finalizes it, or
+    // closeIfDrained() does if the connection is closed and its last statement is gone.
+    WTF::Vector<sqlite3_stmt*> orphans;
     // db.handle
     const uint64_t handleNumber;
     const size_t deserializedSize;
@@ -195,6 +201,8 @@ public:
     // SQLite is calling script of the user from inside a statement of this connection. To reset or finalize that
     // statement now, or to close the connection, frees what SQLite returns to. So every call on the connection throws.
     bool inCallback = false;
+    // True if the connection has ever had an update hook or a user function.
+    bool hasCallbacks = false;
 
     sqlite3* handle() const { return closed ? nullptr : db; }
 
@@ -208,9 +216,10 @@ public:
 
     // Defined after JSSQLStatement: they need its definition to inspect `stmt`.
     void closeIfDrained();
+    void finalizeOrphans(JSC::JSGlobalObject*);
     // db.close(force). With it every statement is finalized, so the file is released now. Without it db.prepare()
     // statements stay usable, and sqlite3_close waits until they drain. Returns SQLite's result code.
-    int close(bool force);
+    int close(bool force, bool mayCallScript = true);
     // process.exit() in a callback: sqlite3_step() stays on the stack, so no destructor may finalize a statement.
     void abandonStatements();
 
@@ -246,6 +255,8 @@ VersionSqlite3::~VersionSqlite3()
         live[liveIndex] = last;
         last->liveIndex = liveIndex;
     }
+    for (auto* stmt : orphans)
+        Bun::sqliteFinalize(stmt, false);
     closeHandle();
 }
 
@@ -286,8 +297,9 @@ extern "C" void Bun__closeSQLiteDatabasesOfGraphContext(WebCore::ScriptExecution
         if (record->graphContext == graphContext && record->db && !record->inCallback)
             owned.append(*record);
     }
+    // The JSSQLDatabase and its callbacks may already be dead, so don't run JS here.
     for (auto& record : owned)
-        record->close(true);
+        record->close(true, false);
 }
 
 namespace WebCore {
@@ -1760,6 +1772,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDefineFunction, (JSC::JSGlobalObject * le
     }
 
     database->m_callbacks.set(vm, database, name, argumentCount, roots);
+    versionDB->hasCallbacks = true;
     return JSValue::encode(jsUndefined());
 }
 
@@ -1865,6 +1878,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetUpdateHookFunction, (JSC::JSGlobalObje
     database->m_wrapper.setMayBeNull(vm, database, hasHook ? callFrame->argument(3).getObject() : nullptr);
     database->m_safeIntegers = callFrame->argument(4).isInt32() && (callFrame->argument(4).asInt32() & kSafeIntegersFlag);
     sqlite3_update_hook(db, hasHook ? callUpdateHook : nullptr, database);
+    database->record().hasCallbacks |= hasHook;
     return JSValue::encode(jsUndefined());
 }
 
@@ -2602,6 +2616,11 @@ JSSQLStatement::~JSSQLStatement()
 {
     if (this->version_db) {
         this->version_db->statements.remove(this);
+        if (this->version_db->hasCallbacks && Bun::sqliteCommitsWhenFinalized(stmt)) {
+            this->version_db->orphans.append(stmt);
+            this->version_db->closeIfDrained();
+            return;
+        }
     }
     finalizeStatement();
 }
@@ -2655,15 +2674,17 @@ JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject)
 
 } // namespace WebCore
 
-int VersionSqlite3::close(bool force)
+int VersionSqlite3::close(bool force, bool mayCallScript)
 {
+    // Finalizing can run JS, and a GC during that JS can remove entries from `statements`, so move the handles out first.
     for (auto* statement : statements) {
         if (!statement->stmt || !(force || statement->ownedByDatabase))
             continue;
-        sqlite3_finalize(statement->stmt);
-        statement->stmt = nullptr;
+        orphans.append(std::exchange(statement->stmt, nullptr));
         statement->finalizedByClose = true;
     }
+    while (!orphans.isEmpty())
+        Bun::sqliteFinalize(orphans.takeLast(), mayCallScript || !hasCallbacks);
     closed = true;
     if (!force) {
         closeIfDrained();
@@ -2688,6 +2709,20 @@ void VersionSqlite3::abandonStatements()
         statement->stmt = nullptr;
 }
 
+void VersionSqlite3::finalizeOrphans(JSC::JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*vm);
+    while (!orphans.isEmpty()) {
+        sqlite3_finalize(orphans.takeLast());
+        // An exception from a user function is unrelated to the current call, so report it instead of throwing it.
+        if (auto* exception = scope.exception(); exception && !vm->hasPendingTerminationException()) [[unlikely]] {
+            scope.clearException();
+            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        }
+    }
+    closeIfDrained();
+}
+
 // Drained = every bun-tracked statement finalized. Statements sqlite3 still
 // holds (vtab modules' cached ones) don't count; close_v2 finalizes those.
 void VersionSqlite3::closeIfDrained()
@@ -2698,5 +2733,8 @@ void VersionSqlite3::closeIfDrained()
         if (statement->stmt)
             return;
     }
+    // The GC can call this, so don't run JS. No statement is left for the interrupt to disturb.
+    while (!orphans.isEmpty())
+        Bun::sqliteFinalize(orphans.takeLast(), false);
     closeHandle();
 }

@@ -3429,16 +3429,18 @@ impl<'p, 's> Checker<'p, 's> {
         // unchanged (`getDeclaredTypeOfAlias`).
         let flags = self.files().flags(sym);
         if flags.contains(SymFlags::ALIAS) && !flags.intersects(SymFlags::TYPE) {
-            let Some(target) = self.files().resolve_alias(sym) else {
-                return TypeId::ERROR;
-            };
-            // `checkNoTypeArguments`
-            if !args.is_empty() || !self.files().flags(target).intersects(SymFlags::TYPE) {
+            // `getTypeReferenceType`: `tryGetDeclaredTypeOfSymbol` of the alias, then `checkNoTypeArguments`.
+            let declared = self.declared_type(sym);
+            if !args.is_empty() {
+                if reports_errors {
+                    self.check_type_argument_count(sym, args.len(), file, Ok(node));
+                }
                 return TypeId::ERROR;
             }
-            let target = self.merged_symbol_of_class_or_interface(target);
-            let ty = self.declared_type(target);
-            return self.regular(ty);
+            if declared == TypeId::UNRESOLVED {
+                return TypeId::ERROR;
+            }
+            return self.regular(declared);
         }
         // `getTypeReferenceType`
         if !flags.intersects(SymFlags::TYPE) {

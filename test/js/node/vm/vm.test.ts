@@ -1095,7 +1095,7 @@ test("a SyntaxError is still thrown at construction when cachedData is passed", 
   expect(() => new Script("(function (", { cachedData })).toThrow("Unexpected end of script");
 });
 
-test("accepted cachedData does not leave a second compile of the source alive", async () => {
+test.concurrent("accepted cachedData does not leave a second compile of the source alive", async () => {
   const fixture = `
     const { Script } = require("node:vm");
     const { heapStats } = require("bun:jsc");

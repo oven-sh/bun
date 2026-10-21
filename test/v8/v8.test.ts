@@ -477,6 +477,10 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       const output = await checkSameOutput("test_v8_throw_error_empty_message");
       expect(output).toBe('caught Error message = "" own = true');
     });
+    it("Array, Uint8Array, Uint32Array and BigInt ::New work while an exception is pending", async () => {
+      const output = await checkSameOutput("test_v8_new_values_with_pending_exception");
+      expect(output).toEndWith("caught pending");
+    });
   });
 
   describe("Aligned internal fields", () => {

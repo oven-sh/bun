@@ -18,8 +18,9 @@ namespace Bun {
 class JSEnvironmentVariableMap final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
-    // The second flag keeps indexed properties in the sparse map, so every indexed store reaches putByIndex().
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero;
+    // OverridesPut alone doesn't stop the DFG from turning a put into a direct store when it knows the structure. OverridesGetOwnPropertySlot does.
+    // The last flag keeps indexed properties in the sparse map, so every indexed store reaches putByIndex().
+    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut | JSC::OverridesGetOwnPropertySlot | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero;
 
     static JSEnvironmentVariableMap* create(JSC::VM& vm, JSC::Structure* structure)
     {

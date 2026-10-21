@@ -7643,6 +7643,26 @@ it.each([
   }
 });
 
+it("end() sends 200 after statusCode is deleted", async () => {
+  const server = http.createServer((req, res) => {
+    // @ts-expect-error
+    delete res.statusCode;
+    try {
+      res.end();
+    } catch {
+      res.statusCode = 500;
+      res.end();
+    }
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+    expect(response.status).toBe(200);
+  } finally {
+    server.close();
+  }
+});
+
 it.each(["write", "end"] as const)("%s(body) sends no body when statusCode is the string 304", async method => {
   const server = http.createServer((req, res) => {
     // @ts-expect-error
@@ -7776,5 +7796,39 @@ it("addTrailers() and end() don't crash on the response of a request that was up
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr }).toEqual({ stdout: "alive\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+it("a listener can cancel Readable.toWeb(req) and end the response in the same tick", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const http = require("node:http");
+        const { Readable } = require("node:stream");
+        const server = http.createServer((req, res) => {
+          const socket = req.socket;
+          req.on("error", () => {});
+          res.on("finish", () => console.log("keep-alive timeout", socket.timeout));
+          Readable.toWeb(req).cancel();
+          res.end("ok");
+        });
+        server.keepAliveTimeout = 4000;
+        server.keepAliveTimeoutBuffer = 0;
+        server.listen(0, "127.0.0.1", async () => {
+          const response = await fetch("http://127.0.0.1:" + server.address().port);
+          console.log(response.status, await response.text());
+          server.close();
+          server.closeAllConnections();
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "keep-alive timeout 4000\n200 ok\n", stderr: "" });
   expect(exitCode).toBe(0);
 });

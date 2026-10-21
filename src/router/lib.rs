@@ -14,7 +14,7 @@ use std::cell::RefCell;
 
 use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::strings;
-use bun_paths::{self, PathBuffer, SEP, SEP_STR};
+use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
 
 use bun_http_types::URLPath::URLPath;
 
@@ -727,6 +727,25 @@ impl Route {
         // borrow `(*entry).base_` and a `&mut Entry` parameter would alias them.
         let base = &base_[0..base_.len() - extname.len()];
 
+        // SAFETY: caller passes an EntryStore-owned pointer valid for the
+        // process lifetime; no other live `&mut` to it during this call.
+        let entry_r = unsafe { &*entry };
+        // The public path and the longer absolute path are both built in `route_file_buf`.
+        let dir = strings::without_trailing_slash(entry_r.dir());
+        if dir.len() + 1 + base_.len() >= MAX_PATH_BYTES {
+            log.add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "ENAMETOOLONG opening route: {}{}{}",
+                    bstr::BStr::new(dir),
+                    SEP_STR,
+                    bstr::BStr::new(base_)
+                ),
+            );
+            return None;
+        }
+
         let public_dir = strings::trim(public_dir_, SEP_STR.as_bytes());
 
         // this is a path like
@@ -831,9 +850,6 @@ impl Route {
                 (Route::INDEX_ROUTE_NAME, Route::INDEX_ROUTE_NAME)
             };
 
-            // SAFETY: caller passes an EntryStore-owned pointer valid for the
-            // process lifetime; no other live `&mut` to it during this call.
-            let entry_r = unsafe { &*entry };
             // The closure runs under the per-entry mutex, like every other write to a cached `Entry`.
             let Ok(entry_abs_path) = entry_r.abs_path_or_try_fill(|| {
                 let mut abs_path_str: &[u8] = b"";

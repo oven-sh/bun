@@ -145,6 +145,41 @@ it("treats a missing argument as undefined", async () => {
   expect(exitCode).toBe(0);
 });
 
+it("the ptr of a symbol is the address of the C function", async () => {
+  using dir = tempDir("bun-ffi-cc-symbol-ptr", {
+    "symbols.c": /* c */ `
+      int add(int a, int b) { return a + b; }
+      int apply(int (*f)(int, int), int a, int b) { return f(a, b); }
+    `,
+    "fixture.js": /* js */ `
+      import { cc, CFunction } from "bun:ffi";
+      import path from "path";
+
+      const { symbols } = cc({
+        source: path.join(import.meta.dir, "symbols.c"),
+        symbols: {
+          add: { args: ["i32", "i32"], returns: "i32" },
+          apply: { args: ["function", "i32", "i32"], returns: "i32" },
+        },
+      });
+      console.log(JSON.stringify({
+        cfunction: new CFunction({ ptr: symbols.add.ptr, args: ["i32", "i32"], returns: "i32" })(40, 2),
+        argument: symbols.apply(symbols.add.ptr, 20, 22),
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe('{"cfunction":42,"argument":42}\n');
+  expect(exitCode).toBe(0);
+});
+
 // Runs in a subprocess because a value misread as a double becomes the pointer -1.
 it("pointer and 64-bit integer arguments accept what dlopen() accepts and throw a TypeError otherwise", async () => {
   using dir = tempDir("bun-ffi-cc-fallible-args", {

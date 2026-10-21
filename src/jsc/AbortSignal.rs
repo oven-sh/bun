@@ -272,6 +272,8 @@ pub struct Timeout {
     pub(crate) context: crate::ContextId,
     /// `VirtualMachine::test_isolation_generation` when it did.
     generation: u32,
+    /// `VirtualMachine::hot_reload_counter` when it did.
+    pub hot_reload_counter: u32,
 }
 
 bun_event_loop::impl_timer_owner!(Timeout; from_timer_ptr => event_loop_timer);
@@ -301,6 +303,7 @@ impl Timeout {
             flags: TimerFlags::default(),
             context: context.id(),
             generation: VirtualMachine::get().test_isolation_generation,
+            hot_reload_counter: jsc_vm.hot_reload_counter,
         }));
         if let Some(context) = graph_context {
             context.track_timer(this.cast(), crate::ContextTimer::AbortSignal);

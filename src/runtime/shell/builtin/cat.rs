@@ -22,6 +22,7 @@ pub(crate) enum CatState {
         in_done: bool,
         chunks_queued: usize,
         chunks_done: usize,
+        /// What the reader finished with (0 at EOF). It becomes the exit code.
         errno: ExitCode,
     },
     ExecFilepathArgs {
@@ -33,8 +34,9 @@ pub(crate) enum CatState {
         reader: Option<Arc<IOReader>>,
         chunks_queued: usize,
         chunks_done: usize,
-        out_done: bool,
         in_done: bool,
+        /// What the current file's reader finished with. Non-zero ends the command.
+        errno: ExitCode,
     },
     WaitingWriteErr,
 }
@@ -44,6 +46,8 @@ pub(crate) enum Step {
     Suspend,
     Done(ExitCode),
     Next,
+    /// Every chunk queued so far is written and the input goes on.
+    ReadMore,
 }
 
 impl Step {
@@ -52,6 +56,49 @@ impl Step {
             Step::Suspend => Yield::suspended(),
             Step::Done(code) => Builtin::done(interp, cmd, code),
             Step::Next => Cat::next(interp, cmd),
+            Step::ReadMore => Cat::read_more(interp, cmd),
+        }
+    }
+}
+
+impl CatState {
+    /// Finishes the input once its reader is done and every chunk it queued is written.
+    fn input_step(&mut self) -> Step {
+        match self {
+            CatState::ExecStdin {
+                in_done,
+                chunks_queued,
+                chunks_done,
+                errno,
+            } => {
+                if *chunks_done < *chunks_queued {
+                    Step::Suspend
+                } else if *in_done {
+                    Step::Done(*errno)
+                } else {
+                    Step::ReadMore
+                }
+            }
+            CatState::ExecFilepathArgs {
+                in_done,
+                chunks_queued,
+                chunks_done,
+                errno,
+                reader,
+                ..
+            } => {
+                if *chunks_done < *chunks_queued {
+                    Step::Suspend
+                } else if !*in_done {
+                    Step::ReadMore
+                } else if *errno != 0 {
+                    *reader = None;
+                    Step::Done(*errno)
+                } else {
+                    Step::Next
+                }
+            }
+            CatState::WaitingWriteErr | CatState::Idle => Step::Suspend,
         }
     }
 }
@@ -89,8 +136,8 @@ impl Cat {
                 reader: None,
                 chunks_queued: 0,
                 chunks_done: 0,
-                out_done: false,
                 in_done: false,
+                errno: 0,
             }
         };
 
@@ -216,14 +263,14 @@ impl Cat {
                     chunks_done,
                     chunks_queued,
                     in_done,
-                    out_done,
+                    errno,
                     ..
                 } = &mut Self::state_mut(interp, cmd).state
                 {
                     *chunks_done = 0;
                     *chunks_queued = 0;
                     *in_done = false;
-                    *out_done = false;
+                    *errno = 0;
                     *slot = Some(Arc::clone(&reader));
                 }
                 reader.add_reader(ReaderChildPtr {
@@ -249,6 +296,10 @@ impl Cat {
                 tag: ReaderTag::Cat,
             };
             // Writing to stdout errored: cancel everything and finish.
+            if let BuiltinIO::Fd(fd) = &Builtin::of(interp, cmd).stdout {
+                fd.writer
+                    .cancel_chunks(ChildPtr::new(cmd, WriterTag::Builtin));
+            }
             // Pull the reader `Arc` out of
             // state before calling `remove_reader`, then drop it.
             match &mut Self::state_mut(interp, cmd).state {
@@ -276,41 +327,45 @@ impl Cat {
             return Builtin::done(interp, cmd, errno);
         }
 
-        let step = match &mut Self::state_mut(interp, cmd).state {
+        let state = &mut Self::state_mut(interp, cmd).state;
+        let step = match state {
+            CatState::ExecStdin { chunks_done, .. }
+            | CatState::ExecFilepathArgs { chunks_done, .. } => {
+                *chunks_done += 1;
+                state.input_step()
+            }
+            CatState::WaitingWriteErr => Step::Done(1),
+            CatState::Idle => panic!("Invalid state"),
+        };
+        step.run(interp, cmd)
+    }
+
+    /// The reader pauses while every `cat` on it still writes.
+    pub(crate) fn awaits_write(interp: &Interpreter, cmd: NodeId) -> bool {
+        match &Self::state_mut(interp, cmd).state {
             CatState::ExecStdin {
                 chunks_queued,
                 chunks_done,
-                in_done,
                 ..
-            } => {
-                *chunks_done += 1;
-                if *in_done && *chunks_done >= *chunks_queued {
-                    Step::Done(0)
-                } else {
-                    Step::Suspend
-                }
             }
-            CatState::ExecFilepathArgs {
+            | CatState::ExecFilepathArgs {
                 chunks_queued,
                 chunks_done,
-                in_done,
-                out_done,
                 ..
-            } => {
-                *chunks_done += 1;
-                if *chunks_done >= *chunks_queued {
-                    *out_done = true;
-                }
-                if *in_done && *out_done {
-                    Step::Next
-                } else {
-                    Step::Suspend
-                }
-            }
-            CatState::WaitingWriteErr => Step::Done(1),
-            _ => panic!("Invalid state"),
+            } => chunks_done < chunks_queued,
+            CatState::WaitingWriteErr | CatState::Idle => false,
+        }
+    }
+
+    fn read_more(interp: &Interpreter, cmd: NodeId) -> Yield {
+        let reader = match &Self::state_mut(interp, cmd).state {
+            CatState::ExecFilepathArgs { reader, .. } => reader.clone(),
+            _ => match &Builtin::of(interp, cmd).stdin {
+                BuiltinInput::Fd(r) => Some(Arc::clone(r)),
+                _ => None,
+            },
         };
-        step.run(interp, cmd)
+        reader.map_or(Yield::suspended(), |r| r.resume())
     }
 
     pub(crate) fn on_io_reader_chunk(
@@ -343,63 +398,15 @@ impl Cat {
         cmd: NodeId,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        let errno: ExitCode = err.map(|e| e.get_errno() as ExitCode).unwrap_or(0);
-        let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io().is_some();
-        let mut cancel = false;
-        let step = match &mut Self::state_mut(interp, cmd).state {
-            CatState::ExecStdin {
-                chunks_queued,
-                chunks_done,
-                in_done,
-                errno: st_errno,
-            } => {
-                *st_errno = errno;
-                *in_done = true;
-                if errno != 0 {
-                    if *chunks_done >= *chunks_queued || !stdout_needs_io {
-                        Step::Done(errno)
-                    } else {
-                        cancel = true;
-                        Step::Suspend
-                    }
-                } else if *chunks_done >= *chunks_queued || !stdout_needs_io {
-                    Step::Done(0)
-                } else {
-                    Step::Suspend
-                }
-            }
-            CatState::ExecFilepathArgs {
-                chunks_queued,
-                chunks_done,
-                in_done,
-                out_done,
-                reader,
-                ..
-            } => {
-                *in_done = true;
-                if errno != 0 {
-                    if *out_done || !stdout_needs_io {
-                        // Drop the reader ref.
-                        *reader = None;
-                        Step::Done(errno)
-                    } else {
-                        cancel = true;
-                        Step::Suspend
-                    }
-                } else if *out_done || *chunks_done >= *chunks_queued || !stdout_needs_io {
-                    Step::Next
-                } else {
-                    Step::Suspend
-                }
-            }
-            CatState::WaitingWriteErr | CatState::Idle => Step::Suspend,
-        };
-        if cancel {
-            let wchild = ChildPtr::new(cmd, WriterTag::Builtin);
-            if let BuiltinIO::Fd(fd) = &Builtin::of(interp, cmd).stdout {
-                fd.writer.cancel_chunks(wchild);
-            }
+        // A read error ends the input like EOF does: the chunks already queued are still written.
+        let state = &mut Self::state_mut(interp, cmd).state;
+        if let CatState::ExecStdin { in_done, errno, .. }
+        | CatState::ExecFilepathArgs { in_done, errno, .. } = state
+        {
+            *in_done = true;
+            *errno = err.map_or(0, |e| e.get_errno() as ExitCode);
         }
+        let step = state.input_step();
         step.run(interp, cmd)
     }
 }

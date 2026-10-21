@@ -213,10 +213,11 @@ pub(crate) mod random {
         InPlace { bytes: JsPtr<u8>, length: usize },
         /// `randomFill`: the caller's buffer stays untouched until completion;
         /// `scratch` (empty, `size` bytes reserved) is filled off-thread and copied in at `offset` on the JS thread.
+        /// `offset` counts from the start of `memory` if the job has one.
         Scratch {
             scratch: Vec<u8>,
             size: usize,
-            offset: u32,
+            offset: usize,
         },
     }
 
@@ -224,6 +225,8 @@ pub(crate) mod random {
     struct RandomFillJs {
         callback: Strong,
         value: Protected,
+        /// The `WebAssembly.Memory` that `value` is a view of. `grow()` detaches `value`.
+        memory: Option<Protected>,
     }
 
     const MAX_POSSIBLE_LENGTH: usize = {
@@ -270,20 +273,18 @@ pub(crate) mod random {
 
         fn then(this: Self, js: RandomFillJs, cx: &JsThread<'_>) -> JsResult<()> {
             let global = cx.global();
+            let mut args = [JSValue::NULL, js.value.value()];
             if let RandomFillJob::Scratch {
                 scratch, offset, ..
             } = this
             {
-                if let Some(mut buf) = js.value.value().as_array_buffer(global) {
-                    let off = offset as usize;
-                    let dst = buf.slice_mut();
-                    match off.checked_add(scratch.len()) {
-                        Some(end) if end <= dst.len() => {
-                            dst[off..end].copy_from_slice(&scratch);
-                        }
-                        // Buffer was detached/shrunk while the job ran.
-                        _ => {}
-                    }
+                let target = js.memory.as_ref().unwrap_or(&js.value).value();
+                if !ArrayBuffer::write_to_live(target, offset, &scratch) {
+                    let error = global.err(
+                        jsc::ErrorCode::CRYPTO_OPERATION_FAILED,
+                        format_args!("The buffer was detached or resized before it was filled"),
+                    );
+                    args = [error.to_js(), JSValue::UNDEFINED];
                 }
             }
             global.bun_vm().event_loop_mut().run_callback(
@@ -291,7 +292,7 @@ pub(crate) mod random {
                 js.callback.get(),
                 global,
                 JSValue::UNDEFINED,
-                &[JSValue::NULL, js.value.value()],
+                &args,
             );
             Ok(())
         }
@@ -303,6 +304,7 @@ pub(crate) mod random {
         callback: JSValue,
         job: RandomFillJob,
         value: JSValue,
+        memory: Option<JSValue>,
     ) {
         let cx = global.js_thread_of_caller(call_frame);
         Job::<RandomFillJob>::schedule(
@@ -311,6 +313,7 @@ pub(crate) mod random {
             RandomFillJs {
                 callback: Strong::create(callback.with_async_context_if_needed(global), global),
                 value: Protected::new(value),
+                memory: memory.map(Protected::new),
             },
         );
     }
@@ -636,6 +639,7 @@ pub(crate) mod random {
                     length: size as usize,
                 },
                 result,
+                None,
             );
 
             Ok(JSValue::UNDEFINED)
@@ -742,6 +746,7 @@ pub(crate) mod random {
                 return Err(global.throw_out_of_memory());
             }
 
+            let (memory, view_offset) = buf.find_wasm_memory().unzip();
             schedule(
                 global,
                 call_frame,
@@ -749,9 +754,10 @@ pub(crate) mod random {
                 RandomFillJob::Scratch {
                     scratch,
                     size,
-                    offset,
+                    offset: view_offset.unwrap_or(0) + offset as usize,
                 },
                 buf_value,
+                memory,
             );
 
             Ok(JSValue::UNDEFINED)

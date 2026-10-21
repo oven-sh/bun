@@ -749,6 +749,40 @@ console.log("About manifest:", aboutHtml);
     });
   });
 
+  // A `--compile` build numbers the pages the same way. The stylesheet that two
+  // pages share belongs to the page that the server code imports first. The
+  // plugin makes the bundler find the other page first: it holds the file that
+  // imports page one until the bundler asks for page two.
+  itBundled("html-import/compile-pages-in-import-order", {
+    compile: true,
+    backend: "api",
+    files: {
+      "/entry.ts": /* js */ `
+        import { one } from "./routes/one.ts";
+        import { two } from "./routes/two.ts";
+
+        const stylesheet = page => page.files.find(file => file.loader === "css").input;
+        console.log(stylesheet(one), stylesheet(two));
+      `,
+      "/routes/one.ts": `import one from "../one.html"; export { one };`,
+      "/routes/two.ts": `import two from "../two.html"; export { two };`,
+      "/one.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./shared.css"></head><body>one</body></html>`,
+      "/two.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./shared.css"></head><body>two</body></html>`,
+      "/shared.css": `body { margin: 0; }`,
+    },
+    plugins(builder) {
+      const askedForPageTwo = Promise.withResolvers<void>();
+      builder.onLoad({ filter: /\.(ts|html)$/ }, async ({ path }) => {
+        if (basename(path) === "two.html") askedForPageTwo.resolve();
+        if (basename(path) === "one.ts") await askedForPageTwo.promise;
+        return undefined;
+      });
+    },
+    run: {
+      stdout: "one.html one.html",
+    },
+  });
+
   // The import of a page is an import like any other in the metafile.
   test("html-import/kind-of-the-import-in-the-metafile", async () => {
     using dir = tempDir("html-import-metafile-kind", {

@@ -934,6 +934,44 @@ test("strips leading and trailing whitespace from a response field value", async
   }
 });
 
+test("enforces the response header size limit it advertises, counted as in RFC 9114 section 4.2.2", async () => {
+  const limit = 256 * 1024;
+  const sizeOf = (headers: Record<string, string>) =>
+    Object.entries(headers).reduce((size, [name, value]) => size + name.length + value.length + 32, 0);
+  const headersOfSize = (size: number) => {
+    const headers: Record<string, string> = { ":status": "204" };
+    for (let i = 0; i < 16; i++) headers[`x-field-${i}`] = "";
+    const spare = size - sizeOf(headers);
+    for (let i = 0; i < 16; i++) headers[`x-field-${i}`] = Buffer.alloc(Math.floor(spare / 16), "v").toString();
+    headers["x-field-0"] += Buffer.alloc(spare % 16, "v").toString();
+    return headers;
+  };
+  const origin = await listen(
+    async (session: any) => {
+      session.onstream = (stream: any) => stream.closed.catch(() => {});
+      await session.closed.catch(() => {});
+    },
+    {
+      sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+      transportParams: { maxIdleTimeout: 5 },
+      onheaders(this: any, received: NodeJS.Dict<string | string[]>) {
+        this.sendHeaders(headersOfSize(Number(String(received[":path"]).slice(1))), { terminal: true });
+      },
+    },
+  );
+  try {
+    const request = (size: number) => fetch(`https://127.0.0.1:${origin.address!.port}/${size}`, h3);
+    const { ":status": _, ...expected } = headersOfSize(limit);
+    expect(Object.fromEntries((await request(limit)).headers)).toEqual(expected);
+    expect(await request(limit + 1).catch(err => err.code)).toBe("ResponseHeadersTooLarge");
+    expect(await request(limit * 3).catch(err => err.code)).toBeString();
+    expect((await request(1024)).status).toBe(204);
+  } finally {
+    // Not close(): it waits for the session that fetch() keeps in its pool.
+    await origin.destroy();
+  }
+});
+
 // Stale-session retry: a request bound on session A when A's conn closes
 // (GOAWAY/CONNECTION_CLOSE) must transparently retry on a fresh session
 // instead of surfacing HTTP3StreamReset. reusePort lets B bind the same

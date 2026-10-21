@@ -1889,6 +1889,57 @@ describe("Bun.serve HTTP/3 request validation", () => {
     });
   });
 
+  test("enforces the header size limit it advertises, counted as in RFC 9114 section 4.2.2", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      fetch(req) {
+        return Response.json(Object.fromEntries(req.headers));
+      },
+    });
+
+    const limit = 16 * 1024;
+    const sizeOf = (headers: Record<string, string>) =>
+      Object.entries(headers).reduce((size, [name, value]) => size + name.length + value.length + 32, 0);
+    const fieldsOfSize = (size: number) => {
+      const fields: Record<string, string> = {};
+      for (let i = 0; i < 100; i++) fields[`x-field-${i}`] = "";
+      const spare = size - sizeOf(requestHeaders("/", fields));
+      for (const name in fields) fields[name] = Buffer.alloc(Math.floor(spare / 100), "v").toString();
+      fields["x-field-0"] += Buffer.alloc(spare % 100, "v").toString();
+      return fields;
+    };
+    const exchange = (size: number) => h3Exchange(server.port!, requestHeaders("/", fieldsOfSize(size)));
+
+    const atTheLimit = await exchange(limit);
+    expect(JSON.parse(atTheLimit.slice("200 ".length))).toEqual({ host: "localhost", ...fieldsOfSize(limit) });
+    expect({
+      atTheLimit: atTheLimit.slice(0, 3),
+      overTheLimit: await exchange(limit + 1),
+      farOverTheLimit: await exchange(limit * 3),
+      after: await h3Exchange(server.port!, requestHeaders("/")),
+    }).toEqual({
+      atTheLimit: "200",
+      overTheLimit: "431 ",
+      farOverTheLimit: "closed ERR_QUIC_APPLICATION_ERROR 270",
+      after: "200 " + JSON.stringify({ host: "localhost" }),
+    });
+  });
+
+  test("serves the next request of a connection after it answered 431", async () => {
+    await withServer(async port => {
+      const tooLarge = await fetchH3(port, "/hello", {
+        headers: { "x-large": Buffer.alloc(20 * 1024, "v").toString() },
+      });
+      expect(tooLarge.status).toBe(431);
+      expect(await tooLarge.text()).toBe("");
+      const next = await fetchH3(port, "/hello");
+      expect(await next.text()).toBe("hello over h3");
+      expect(next.status).toBe(200);
+    });
+  });
+
   test("request.url falls back to the :path when :authority is not a valid host", async () => {
     await using server = Bun.serve({
       port: 0,

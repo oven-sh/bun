@@ -217,6 +217,10 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
     let s = qstream_arg(s);
     let Some(stream) = stream_of(s) else { return };
     let session = stream.session_mut();
+    if s.headers_too_large() {
+        session.fail(stream, crate::Error::ResponseHeadersTooLarge);
+        return;
+    }
     let n = s.header_count();
 
     stream.decoded_headers.clear();

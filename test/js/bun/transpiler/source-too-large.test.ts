@@ -67,6 +67,36 @@ test("Bun.Transpiler reports the limit for every loader that records positions",
   });
 });
 
+// The parser keeps a name that is a slice of the source as an offset and a
+// 28-bit length. A name of 2**28 bytes or more lost the high bits of its
+// length: release builds printed the first `length % 2**28` bytes of it (5
+// bytes here), and builds with debug assertions aborted in `Ref::pack`. The
+// child holds the 256 MB source and the 256 MB output, so it needs between 1
+// and 2 GB of memory, and a debug build needs about 12 seconds.
+test.skipIf(totalmem() < 4 * 1024 ** 3)(
+  "a name of 2**28 bytes or more is printed whole",
+  async () => {
+    const { stdout, stderr, exitCode } = await run([
+      bunExe(),
+      "-e",
+      `
+      const prefix = "export const out = ";
+      const source = Buffer.alloc(prefix.length + 2 ** 28 + 5 + 1, "a");
+      source.write(prefix);
+      source[source.length - 1] = ";".charCodeAt(0);
+      const out = new Bun.Transpiler({ loader: "js" }).transformSync(source);
+      console.log(JSON.stringify({ length: out.length, start: out.slice(0, 24), end: out.slice(-6) }));
+    `,
+    ]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ length: 2 ** 28 + 26, start: "export const out = aaaaa", end: "aaaa;\n" }),
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  120_000,
+);
+
 // Each file is sparse: everything past the first line is a hole, so it takes no
 // disk space and reads back as NUL bytes. Reading it costs the child process
 // 2 GiB of memory (and, in debug builds, tens of seconds of allocator

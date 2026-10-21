@@ -205,7 +205,7 @@ impl Ref {
     const INNER_MASK: u64 = (1u64 << 31) - 1;
     /// `inner_index` width — 28 bits, leaving 3 user bits.
     /// `debug_assert!` in `pack()` catches any source large enough to overflow
-    /// (would require >268M symbols or a >268MB source-contents-slice offset).
+    /// (would require >268M symbols or allocated names; `source_slice()` bounds a name length).
     const INNER_BITS: u64 = (1u64 << 28) - 1;
     /// Bits 28..31 — opaque per-node flags (E::Identifier side-effect hints,
     /// E::ImportIdentifier `was_originally_identifier`, E::CommonJSExportIdentifier
@@ -231,18 +231,37 @@ impl Ref {
     }
 
     /// General constructor exposing all three packed fields. Prefer `init` for
-    /// the common source-contents/allocated-name case; this exists for callers
+    /// an allocated name and `source_slice` for a source slice; this exists for callers
     /// that need to set `tag` explicitly (e.g. `RefTag::Symbol`).
     #[inline]
     pub const fn new(inner_index: RefInt, source_index: RefInt, tag: RefTag) -> Ref {
+        assert!(
+            !matches!(tag, RefTag::SourceContentsSlice),
+            "Ref::source_slice builds a source slice ref"
+        );
         Self::pack(inner_index, tag, source_index)
+    }
+
+    /// The name `contents[offset..][..len]`, or `None` if out of range or `len` needs over 28 bits.
+    #[inline]
+    pub fn source_slice(offset: usize, len: usize, contents_len: usize) -> Option<Ref> {
+        // `min`, not a third comparison: the length bound adds no branch per identifier.
+        if offset <= contents_len && len <= (contents_len - offset).min(Self::INNER_BITS as usize) {
+            Some(Self::pack(
+                len as u32,
+                RefTag::SourceContentsSlice,
+                offset as u32,
+            ))
+        } else {
+            None
+        }
     }
 
     #[inline]
     const fn pack(inner: u32, tag: RefTag, src: u32) -> Ref {
         debug_assert!(
             (inner as u64) <= Self::INNER_BITS,
-            "Ref.inner_index overflows 28 bits — file has >268M symbols or >268MB source slice",
+            "Ref.inner_index overflows 28 bits: over 268M symbols or allocated names in one file",
         );
         Ref((inner as u64 & Self::INNER_BITS)
             | ((tag as u64) << 31)
@@ -292,13 +311,8 @@ impl Ref {
         i == Self::INNER_MASK as u32 // maxInt(u31)
     }
 
-    pub fn init(inner_index: u32, source_index: u32, is_source_contents_slice: bool) -> Ref {
-        let tag = if is_source_contents_slice {
-            RefTag::SourceContentsSlice
-        } else {
-            RefTag::AllocatedName
-        };
-        Self::pack(inner_index, tag, source_index)
+    pub fn init(inner_index: u32, source_index: u32) -> Ref {
+        Self::pack(inner_index, RefTag::AllocatedName, source_index)
     }
 
     /// Identity bits (user/flag lane masked off). For all refs constructed via
@@ -3380,6 +3394,48 @@ impl Drop for DisableStoreReset {
     fn drop(&mut self) {
         expr::data::Store::set_disable_reset(self.prev_expr);
         stmt::data::Store::set_disable_reset(self.prev_stmt);
+    }
+}
+
+#[cfg(test)]
+mod ref_source_slice_tests {
+    use super::*;
+
+    /// The longest name length that fits `inner_index`.
+    const MAX_LEN: usize = (1 << 28) - 1;
+
+    #[test]
+    fn holds_the_offset_and_the_length() {
+        let ref_ = Ref::source_slice(7, 5, 64).unwrap();
+        assert_eq!(ref_.tag(), RefTag::SourceContentsSlice);
+        assert_eq!((ref_.source_index(), ref_.inner_index()), (7, 5));
+        assert_eq!(ref_.to_raw_bits(), 5 | (2 << 31) | (7 << 33));
+    }
+
+    #[test]
+    fn takes_the_longest_length_that_fits() {
+        let ref_ = Ref::source_slice(19, MAX_LEN, 19 + MAX_LEN).unwrap();
+        assert_eq!(
+            (ref_.source_index() as usize, ref_.inner_index() as usize),
+            (19, MAX_LEN)
+        );
+    }
+
+    #[test]
+    fn refuses_a_length_over_28_bits() {
+        // Packed, these lengths read back as 0 and 5.
+        assert_eq!(Ref::source_slice(19, MAX_LEN + 1, i32::MAX as usize), None);
+        assert_eq!(Ref::source_slice(19, MAX_LEN + 6, i32::MAX as usize), None);
+    }
+
+    #[test]
+    fn refuses_a_range_outside_the_source() {
+        assert_eq!(Ref::source_slice(60, 5, 64), None);
+        assert_eq!(Ref::source_slice(65, 0, 64), None);
+        // A name at a lower address than the source: the offset wrapped.
+        assert_eq!(Ref::source_slice(0usize.wrapping_sub(8), 4, 64), None);
+        assert!(Ref::source_slice(60, 4, 64).is_some());
+        assert!(Ref::source_slice(64, 0, 64).is_some());
     }
 }
 

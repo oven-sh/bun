@@ -85,7 +85,7 @@
 "unused_pub:src/io/PipeWriter.rs" = 2
 
 [bun_js_parser]
-"bound_checked_only_in_debug:src/js_parser/p.rs" = 3
+"bound_checked_only_in_debug:src/js_parser/p.rs" = 1
 "bound_checked_only_in_debug:src/js_parser/parse/parse_skip_typescript.rs" = 2
 "generic_body_not_generic:src/js_parser/fold.rs" = 1
 "generic_body_not_generic:src/js_parser/lower/lower_decorators.rs" = 1

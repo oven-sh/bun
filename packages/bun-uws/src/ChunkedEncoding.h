@@ -192,7 +192,7 @@ namespace uWS {
      * section (and thus the message) completed and the fin chunk was emitted; the
      * next call resets the state without touching the remaining bytes. The
      * sub-state must not be derived from the captured section's contents: the fin
-     * delivery can synchronously run JS that consumes (and clears) the capture. */
+     * is delivered after the caller's verdict has emptied the capture. */
     constexpr uint64_t STATE_IS_TRAILERS = STATE_HAS_SIZE | STATE_IS_CHUNKED | STATE_WAITING_FOR_LF;
     constexpr uint64_t STATE_IS_TRAILERS_DONE = STATE_HAS_SIZE | STATE_WAITING_FOR_LF;
 

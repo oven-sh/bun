@@ -80,7 +80,7 @@ static bool svValueHasToken(std::string_view value, std::string_view lowerToken)
 
 // One pass over the request: append url, method and jsNumber(dispatch
 // bitfield) to `args`, and capture the raw header bytes into `flatHeaders`
-// as [u32 nameLen][u32 valueLen][name][value]... so req.rawHeaders /
+// as field records (uWS::HttpParser::fieldRecordLengths) so req.rawHeaders /
 // req.headers can be materialized lazily (Bun__NodeHTTP__buildRawHeadersArray,
 // Bun__NodeHTTP__buildHeadersObject) only when user code reads them.
 static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSValue methodString, MarkedArgumentBuffer& args, WTF::Vector<uint8_t, 1024>& flatHeaders, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
@@ -114,15 +114,8 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         // u32 length prefixes: header sizes are usually tiny, but maxHeaderSize
         // is user-configurable with no upper bound, so a u16 would silently
         // truncate a >64 KiB value and desync the buffer.
-        const uint32_t nameLen = static_cast<uint32_t>(name.length());
-        const uint32_t valueLen = static_cast<uint32_t>(value.length());
-        uint8_t lens[8] = {
-            static_cast<uint8_t>(nameLen & 0xff), static_cast<uint8_t>((nameLen >> 8) & 0xff),
-            static_cast<uint8_t>((nameLen >> 16) & 0xff), static_cast<uint8_t>(nameLen >> 24),
-            static_cast<uint8_t>(valueLen & 0xff), static_cast<uint8_t>((valueLen >> 8) & 0xff),
-            static_cast<uint8_t>((valueLen >> 16) & 0xff), static_cast<uint8_t>(valueLen >> 24)
-        };
-        flatHeaders.append(std::span<const uint8_t> { lens, 8 });
+        const std::array<uint8_t, 8> lens = uWS::HttpParser::fieldRecordLengths(name, value);
+        flatHeaders.append(std::span<const uint8_t> { lens });
         flatHeaders.append(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(name.data()), name.length() });
         flatHeaders.append(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(value.data()), value.length() });
 
@@ -176,7 +169,7 @@ static String headerValueString(NodeHTTPRequestHeaderValues& remembered, HTTPHea
     return *slot;
 }
 
-// The next [u32 nameLen][u32 valueLen][name][value] of what assignHeadersFromUWebSocketsForCall captured.
+// The next field record (uWS::HttpParser::fieldRecordLengths) of the captured header fields or the accepted trailer fields.
 static bool nextCapturedHeader(const uint8_t* data, size_t length, size_t& offset, std::span<const Latin1Character>& name, std::span<const Latin1Character>& value)
 {
     if (offset + 8 > length)
@@ -280,6 +273,7 @@ static JSString* sameHeaderValue(VM& vm, JSObject* headers, const Identifier& na
 // touches req.rawHeaders, or req.headers of a request that Bun__NodeHTTP__buildHeadersObject
 // leaves to JS (via NodeHTTPResponse.takeRawHeaders). `encodedHeaders` is req.headers when
 // that was read first: built from these bytes, it has the value strings already.
+// Also builds req.rawTrailers, from the fields that the parser accepted (NodeHTTPResponse.takeRequestTrailers).
 extern "C" EncodedJSValue Bun__NodeHTTP__buildRawHeadersArray(JSC::JSGlobalObject* globalObject, const uint8_t* data, size_t length, EncodedJSValue encodedHeaders)
 {
     auto& vm = JSC::getVM(globalObject);

@@ -89,7 +89,7 @@ pub(crate) struct NodeHTTPResponse {
     pub(crate) promise: JsCell<StrongOptional>, // Strong.Optional
     pub(crate) server: AnyServer,
 
-    /// node:http: the raw trailer section that followed THIS request's chunked
+    /// node:http: the accepted trailer section, in the form of raw_request_headers, that followed THIS request's chunked
     /// body. Moved off the connection's single per-parse buffer the moment the
     /// body finishes (still inside the parser), because a pipelined request's
     /// parse would otherwise overwrite it before this request's JS reads it.
@@ -188,7 +188,7 @@ unsafe extern "C" {
     safe fn Bun__NodeHTTP__notifyWhenReadParsed(ssl: core::ffi::c_int, socket: *mut c_void)
     -> bool;
 
-    // Moves the connection's captured node:http request-trailer section out. `*out` points into
+    // Moves the connection's accepted node:http request-trailer fields out. `*out` points into
     // a C++ thread-local valid until the next call on this thread; caller copies immediately.
     // Returns 0 when nothing captured or socket closed.
     safe fn Bun__NodeHTTP__takeRequestTrailerBytes(
@@ -196,14 +196,6 @@ unsafe extern "C" {
         socket: *mut c_void,
         out: *mut *const u8,
     ) -> usize;
-    // Parses a raw trailer section into a flat [name, value, ...] JSArray, or
-    // jsUndefined() when it contains no fields.
-    safe fn Bun__NodeHTTP__parseRequestTrailers(
-        global_object: &JSGlobalObject,
-        data: *const u8,
-        length: usize,
-        use_insecure_http_parser: bool,
-    ) -> JSValue;
     // Builds req.rawHeaders' flat [name, value, ...] JSArray from the header
     // bytes captured at dispatch ([u32 nameLen][u32 valueLen][name][value]...).
     // `headers` is req.headers if that was built first, for its value strings.
@@ -459,9 +451,9 @@ impl NodeHTTPResponse {
     }
 
     /// Called at this request's body fin, still inside the parser: move the
-    /// connection's captured trailer section onto this request before the next
+    /// connection's accepted trailer section onto this request before the next
     /// pipelined message's parse can overwrite it. A no-op unless a chunked
-    /// body's trailer section was captured for this exact message.
+    /// body's trailer section was accepted with fields for this exact message.
     fn capture_request_trailers(&self) {
         let flags = self.flags.get();
         if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
@@ -2315,26 +2307,19 @@ impl NodeHTTPResponse {
         Bun__NodeHTTP__buildHeadersObject(global_object, section.as_ptr(), section.len())
     }
 
-    /// `handle.takeRequestTrailers()` — this request's captured trailer section
-    /// parsed into a flat [name, value, ...] array, or undefined. Consumes it.
-    pub(crate) fn take_request_trailers(
-        &self,
-        cx: &mut JsScope<'_>,
-        use_insecure_http_parser: bool,
-    ) -> JsResult<JSValue> {
+    /// `handle.takeRequestTrailers()`: this request's accepted trailer fields as a flat [name, value, ...] array, or undefined. Consumes them.
+    pub(crate) fn take_request_trailers(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global_object = cx.global();
-        let section = self.request_trailers.replace(Vec::new());
-        if section.is_empty() {
+        let fields = self.request_trailers.replace(Vec::new());
+        if fields.is_empty() {
             return Ok(JSValue::UNDEFINED);
         }
-        // Lenient (insecureHTTPParser) servers accept CTL bytes in trailer values on
-        // the wire; parse them with the same leniency so they surface on req.trailers.
         bun_jsc::call_zero_is_throw(global_object, || {
-            Bun__NodeHTTP__parseRequestTrailers(
+            Bun__NodeHTTP__buildRawHeadersArray(
                 global_object,
-                section.as_ptr(),
-                section.len(),
-                use_insecure_http_parser,
+                fields.as_ptr(),
+                fields.len(),
+                JSValue::UNDEFINED,
             )
         })
     }

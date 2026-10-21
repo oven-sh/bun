@@ -49,7 +49,7 @@ export const NodeHTTPResponse = b.class({
     ref: { rustName: "js_ref" },
     resume: { returns: b.bool, rustName: "do_resume" },
     takeRawHeaders: { ...method, args: { headers: b.any } },
-    takeRequestTrailers: { ...method, args: { useInsecureHTTPParser: b.bool.default(false) }, length: 0 },
+    takeRequestTrailers: method,
     unref: { rustName: "js_unref" },
     upgraded: { getter: b.bool },
     write: { ...method, ...body, length: 3 },

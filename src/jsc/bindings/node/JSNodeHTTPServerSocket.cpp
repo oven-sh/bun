@@ -241,7 +241,7 @@ static std::string* requestTrailersFor(us_socket_t* socket)
     return &httpResponseData->nodeHttpRequestTrailers;
 }
 
-/* Move the connection's captured trailer section out, returning its (ptr, length)
+/* Move the connection's accepted trailer fields (field records) out, returning their (ptr, length)
  * through a thread-local buffer that stays valid until the next call on this
  * thread. Called by NodeHTTPResponse at the request's body fin, still inside the
  * parser, so a pipelined request cannot overwrite or inherit another's trailers. */
@@ -256,52 +256,10 @@ extern "C" size_t Bun__NodeHTTP__takeRequestTrailerBytes(bool is_ssl, us_socket_
         return 0;
     }
     static thread_local std::string taken;
-    taken = std::move(*trailers);
-    trailers->clear();
+    // Not `taken = std::move(*trailers)`: libstdc++ hands the old block of `taken` to the string it moves from, and the connection would keep that block.
+    taken = std::exchange(*trailers, std::string());
     *out = taken.data();
     return taken.size();
-}
-
-/* Parse a raw trailer section into a flat [name, value, ...] JSArray, or
- * jsUndefined() when it contains no fields. */
-extern "C" JSC::EncodedJSValue Bun__NodeHTTP__parseRequestTrailers(JSC::JSGlobalObject* globalObject, const char* data, size_t length, bool useInsecureHTTPParser)
-{
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    /* parseTrailerFields post-pads the section in place, so it needs an owned copy. */
-    std::string section(data, length);
-
-    /* Parse with the same field-line primitives the request-header parser uses
-     * (uWS::HttpParser::consumeFieldName / tryConsumeFieldValue / OWS-trim). */
-    std::pair<std::string_view, std::string_view> fields[uWS::HttpParser::MAX_TRAILER_FIELDS];
-    unsigned count = uWS::HttpParser::parseTrailerFields(section, fields, useInsecureHTTPParser);
-    if (count == 0) {
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-
-    JSC::JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, count * 2);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    unsigned index = 0;
-    for (unsigned i = 0; i < count; i++) {
-        // HTTP/1.1 obs-text bytes (0x80-0xFF) are valid header content (RFC 9110 §5.5); preserve
-        // them 1:1 as Latin-1 like Node's req.rawTrailers (OneByteString) and like NodeHTTP.cpp's
-        // rawHeaders construction. UTF-8 decoding would corrupt them to U+FFFD.
-        std::span<Latin1Character> nameData;
-        auto nameString = WTF::String::createUninitialized(fields[i].first.size(), nameData);
-        if (!fields[i].first.empty())
-            memcpy(nameData.data(), fields[i].first.data(), fields[i].first.size());
-        array->putDirectIndex(globalObject, index++, JSC::jsString(vm, nameString));
-        RETURN_IF_EXCEPTION(scope, {});
-        std::span<Latin1Character> valueData;
-        auto valueString = WTF::String::createUninitialized(fields[i].second.size(), valueData);
-        if (!fields[i].second.empty())
-            memcpy(valueData.data(), fields[i].second.data(), fields[i].second.size());
-        array->putDirectIndex(globalObject, index++, JSC::jsString(vm, valueString));
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-    return JSC::JSValue::encode(array);
 }
 
 template<bool SSL>

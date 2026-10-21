@@ -4941,7 +4941,7 @@ function destroySelfOnEnd(this: Http2Stream) {
 function streamCancel(stream: Http2Stream) {
   stream.close(NGHTTP2_CANCEL);
 }
-function writeToClosedTransport(socket: TLSSocket | Socket | null) {
+function writeToClosedTransport(socket: TLSSocket | Socket | null | undefined) {
   // allowHalfOpen keeps the socket open past 'end', and nothing else ends it once its handle closed.
   if (socket?.allowHalfOpen && !socket.writableEnded) socket.end();
   // Sent, like node's Http2Session::ClearOutgoing: a frame for a closed transport completes.

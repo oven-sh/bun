@@ -423,7 +423,7 @@ export const cases: Record<string, Case> = {
   },
   // `case` and `default` ran as often as what follows them, not as often as they were compared.
   "switch.ts": {
-    functions: "4/4",
+    functions: "6/7",
     lines: `
  3|function last(x: number) {
  3|  switch (x) {
@@ -470,6 +470,24 @@ export const cases: Record<string, Case> = {
  -|  }
  -|}
  1|empty(1);
+ 2|function neverCalled(x: unknown) {
+ 2|  switch (x) {
+ 2|    case 1:
+ 2|    case () => 1:
+ 2|      at();
+ -|  }
+ -|}
+ 1|neverCalled(1);
+ 1|neverCalled(1);
+ 3|function sameLine(x: number) {
+ 3|  switch (x) {
+ 2|    case 1: return; default:
+ 2|      at();
+ -|  }
+ -|}
+ 1|sameLine(1);
+ 1|sameLine(2);
+ 1|sameLine(2);
 `,
   },
   // `finally` ran as often as its block, however the `try` was left.

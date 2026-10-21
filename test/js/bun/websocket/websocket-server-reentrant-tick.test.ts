@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { tempDir } from "harness";
 import path from "node:path";
-import { OP, RawClient, showFrame } from "../../web/websocket/raw-peer";
+import { OP, RawClient } from "../../web/websocket/raw-peer";
 
 // A message, ping or pong handler runs JS. When it returns, the microtask drain can resume a test
 // body that then calls `expect(promise).rejects`, which ticks the event loop from inside the
@@ -34,17 +34,10 @@ async function writeSplit(raw: RawClient, frame: Buffer, head: number) {
   raw.write(frame.subarray(head));
 }
 
-// Rejects with the frames received up to and including the first text frame.
-function framesUntilText(raw: RawClient): Promise<never> {
-  return (async () => {
-    const frames: string[] = [];
-    for (;;) {
-      const frame = await raw.nextFrame();
-      if (!frame) throw new Error("EOF after " + frames.join(", "));
-      frames.push(showFrame(frame));
-      if (frame.opcode === OP.text) throw new Error(frames.join(", "));
-    }
-  })();
+// Rejects with the next `count` frames (`EOF` once the connection ends), so a `.rejects` matcher
+// can wait for them and check them in one step.
+async function nextFrames(raw: RawClient, count: number): Promise<never> {
+  throw new Error((await raw.nextFrames(count)).join(", "));
 }
 
 test("a nested tick inside the message handler reads the next frame (#45805)", async () => {
@@ -148,13 +141,13 @@ test("a nested tick inside the ping handler reads the rest of a fragmented messa
   // A pong other than the automatic reply to the ping means the continuation was taken for a
   // control frame.
   raw.send(OP.continuation, "lo");
-  await expect(framesUntilText(raw)).rejects.toThrow('pong "p", text "hello"');
+  await expect(nextFrames(raw, 2)).rejects.toThrow('pong "p", text "hello"');
   expect(got).toEqual(["hello"]);
 });
 
 for (const [name, opcode, handler, echo] of [
-  ["ping", OP.ping, "ping", 'pong "pqr", '],
-  ["pong", OP.pong, "pong", ""],
+  ["ping", OP.ping, "ping", ['pong "pqr"']],
+  ["pong", OP.pong, "pong", []],
 ] as const) {
   test(`a nested tick inside the handler of a ${name} read in two parts reads the rest of a fragmented message`, async () => {
     const got: string[] = [];
@@ -180,7 +173,7 @@ for (const [name, opcode, handler, echo] of [
     // still open.
     await handled.promise;
     raw.send(OP.continuation, "lo");
-    await expect(framesUntilText(raw)).rejects.toThrow(`${echo}text "hello"`);
+    await expect(nextFrames(raw, echo.length + 1)).rejects.toThrow([...echo, 'text "hello"'].join(", "));
     expect(got).toEqual(["hello"]);
     expect(control).toEqual(name === "ping" ? ["sync", "pqr"] : ["pqr"]);
   });

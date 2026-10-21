@@ -113,11 +113,11 @@ impl ExternBytes {
 /// Arguments in the caller's frame, which holds them until the host function returns.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct ExternArguments {
+pub struct ExternVariadicArguments {
     data: *const JSValue,
     length: usize,
 }
-impl ExternArguments {
+impl ExternVariadicArguments {
     /// # Safety
     /// The host function that passed this is the call `heap` belongs to.
     #[inline(always)]
@@ -163,9 +163,9 @@ unsafe extern "C" {
         global: *mut JSGlobalObject,
         index: u32,
     ) -> JSValue;
-    pub(super) fn Bun__Bindgen__exceptionMatches(
+    pub(super) fn Bun__Bindgen__exceptionPresenceMatches(
         global: *mut JSGlobalObject,
-        result_is_empty: bool,
+        should_have_exception: bool,
     ) -> bool;
     pub(super) fn Bun__Bindgen__putRecordEntry(
         global: &JSGlobalObject,

@@ -5,15 +5,15 @@ const cached = { getter: b.any, cache: true, ...js } as const;
 const text = { getter: b.string.utf8, cache: true } as const;
 
 // Error.prototype in the chain: userland checks `err instanceof Error`.
-const message = { construct: "illegal", configurable: false, prototypeBase: "Error" } as const;
-const functions = {
+const errorClass = { construct: "illegal", configurable: false, prototypeBase: "Error" } as const;
+const methods = {
   toJSON: { returns: b.any, ...js },
   toString: { returns: b.any, ...js },
   "@@toPrimitive": { args: { hint: b.any }, returns: b.any, ...js },
 } as const;
 
 export const ResolveMessage = b.class({
-  ...message,
+  ...errorClass,
   rustPath: "crate::ResolveMessage",
   proto: {
     code: cached,
@@ -27,13 +27,13 @@ export const ResolveMessage = b.class({
     requireStack: { getter: b.array(b.string.utf8).optional, cache: true },
     specifier: text,
     stack: { ...text, writable: true },
-    ...functions,
+    ...methods,
     name: { value: "ResolveMessage" },
   },
 });
 
 export const BuildMessage = b.class({
-  ...message,
+  ...errorClass,
   rustPath: "crate::BuildMessage",
   proto: {
     column: { getter: b.i32 },
@@ -42,7 +42,7 @@ export const BuildMessage = b.class({
     message: { ...text, writable: true },
     notes: cached,
     position: cached,
-    ...functions,
+    ...methods,
     name: { value: "BuildMessage" },
   },
 });

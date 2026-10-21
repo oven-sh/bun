@@ -9,12 +9,12 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        property_matchers: JsLocal<'_>,
+        expected: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let (this, received_object, not) =
             self.matcher_prelude(global, this_value.to_js(), "toMatchObject", "<green>expected<r>")?;
-        let property_matchers = property_matchers.to_js();
+        let expected = expected.to_js();
 
         if !received_object.is_object() {
             let signature: &str = get_signature("toMatchObject", "<green>expected<r>", not);
@@ -24,7 +24,7 @@ impl Expect {
             );
         }
 
-        if !property_matchers.is_object() {
+        if !expected.is_object() {
             let signature: &str = get_signature("toMatchObject", "", not);
             return throw!(
                 this, global, signature,
@@ -32,7 +32,7 @@ impl Expect {
             );
         }
 
-        let mut pass = received_object.jest_deep_match(property_matchers, global, true)?;
+        let mut pass = received_object.jest_deep_match(expected, global, true)?;
 
         if not {
             pass = !pass;
@@ -42,7 +42,7 @@ impl Expect {
         }
 
         // handle failure
-        let diff_formatter = DiffFormatter::new(global, received_object, property_matchers, not)?;
+        let diff_formatter = DiffFormatter::new(global, received_object, expected, not)?;
 
         if not {
             let signature: &str = get_signature("toMatchObject", "<green>expected<r>", true);

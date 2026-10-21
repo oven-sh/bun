@@ -10,8 +10,8 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        expected_property_path: JsLocal<'_>,
-        expected_property: &[JsLocal<'_>],
+        key_path: JsLocal<'_>,
+        value: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
         let global = cx.global();
         // `defer this.postMatch(globalThis)` — guard owns `this` and calls post_match on drop.
@@ -21,9 +21,9 @@ impl Expect {
 
         this.increment_expect_call_counter();
 
-        let expected_property_path = expected_property_path.to_js();
+        let expected_property_path = key_path.to_js();
         expected_property_path.ensure_still_alive();
-        let expected_property: Option<JSValue> = expected_property.first().map(|value| value.to_js());
+        let expected_property: Option<JSValue> = value.first().map(|value| value.to_js());
         if let Some(ev) = expected_property {
             ev.ensure_still_alive();
         }

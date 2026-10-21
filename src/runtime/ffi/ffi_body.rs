@@ -1535,8 +1535,8 @@ impl FFI {
         let this_value = FFI::default().into_js_wrapper(global);
         let js_object = this_value.to_js();
         let _js_object_guard = js_object.protected();
-        // SAFETY: `this_value` holds the object the struct is in.
-        let lib = unsafe { this_value.as_ptr().as_ref() };
+        // SAFETY: the struct is stored inline in the wrapper, which `this_value` keeps alive.
+        let lib = unsafe { this_value.payload_ptr().as_ref() };
 
         for function in symbols.values_mut() {
             let function_name = ZBox::from_bytes(function.base_name.as_bytes());
@@ -1629,8 +1629,8 @@ impl FFI {
         let this_value = FFI::default().into_js_wrapper(global);
         let js_object = this_value.to_js();
         let _js_object_guard = js_object.protected();
-        // SAFETY: `this_value` holds the object the struct is in.
-        let lib = unsafe { this_value.as_ptr().as_ref() };
+        // SAFETY: the struct is stored inline in the wrapper, which `this_value` keeps alive.
+        let lib = unsafe { this_value.payload_ptr().as_ref() };
 
         for function in symbols.values_mut() {
             let function_name = ZBox::from_bytes(function.base_name.as_bytes());

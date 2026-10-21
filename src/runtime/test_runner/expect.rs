@@ -2591,13 +2591,13 @@ impl ExpectMatcherUtils {
 pub(crate) struct ExpectTypeOf {}
 
 impl ExpectTypeOf {
-    pub(crate) fn fn_one_argument_returns_void(&self) {}
+    pub(crate) fn type_assertion(&self) {}
 
-    pub(crate) fn fn_one_argument_returns_expect_type_of<'a>(&self, heap: &JsHeap<'a>) -> JsWrapper<'a, Self> {
+    pub(crate) fn map<'a>(&self, heap: &JsHeap<'a>) -> JsWrapper<'a, Self> {
         ExpectTypeOf {}.into_js(heap)
     }
 
-    pub(crate) fn get_returns_expect_type_of<'a>(&self, heap: &JsHeap<'a>) -> JsWrapper<'a, Self> {
+    pub(crate) fn get_type_property<'a>(&self, heap: &JsHeap<'a>) -> JsWrapper<'a, Self> {
         ExpectTypeOf {}.into_js(heap)
     }
 

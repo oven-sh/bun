@@ -36,13 +36,13 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        list_value: JsLocal<'_>,
+        expected: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
+        let list_value = expected.to_js();
         let (this, expected, not) =
             self.matcher_prelude(global_this, this_value.to_js(), "toBeOneOf", "<green>expected<r>")?;
 
-        let list_value = list_value.to_js();
         let mut pass = false;
 
         if list_value.js_type().is_array_like() {

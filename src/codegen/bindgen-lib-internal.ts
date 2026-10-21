@@ -1025,7 +1025,7 @@ export class AnyType extends Type {
   }
 }
 
-/** The arguments from one on, read where the caller's frame has them. */
+/** This argument and every one after it, borrowed from the call frame. */
 export class VariadicType extends Type {
   readonly idlType = "Bun::Bindgen::IDLVariadicArguments";
   readonly tsType = "any[]";
@@ -1045,7 +1045,7 @@ export class VariadicType extends Type {
     return { size: 16, align: 8 };
   }
   rustExternType(): string {
-    return "bindgen::extern_types::ExternArguments";
+    return "bindgen::extern_types::ExternVariadicArguments";
   }
   rustType(): string {
     return "&'a [bindgen::JsLocal<'a>]";
@@ -1916,7 +1916,7 @@ export interface PropertyAttributes {
 
 /** A native function. */
 export interface FunctionField extends Omit<SignatureOptions, "rustPath">, PropertyAttributes {
-  /** `&mut self` instead of `&self`. Not with `capability: "js"`, which in a class that has such a member gets the wrapper. */
+  /** `&mut self` instead of `&self`. Not with `capability: "js"`: in a class with a `mutates` member, those get the wrapper. */
   mutates?: boolean;
   /** Also pass the wrapper, `this_value: JsWrapper<'a, Self>`. A method whose receiver is the wrapper already has it. */
   passThis?: boolean;
@@ -1959,19 +1959,19 @@ export interface BuiltinField {
 }
 
 /** A read-only string. */
-export interface ValueField {
+export interface StringValueField {
   value: string;
 }
 
 /** Several functions are the overloads of one. `rustName` tells their Rust functions apart. A key that starts with `@@` is a well-known symbol: `@@iterator` is `Symbol.iterator`. */
 export type Field =
-  FunctionField | readonly FunctionField[] | GetterField | InternalFieldField | BuiltinField | ValueField;
+  FunctionField | readonly FunctionField[] | GetterField | InternalFieldField | BuiltinField | StringValueField;
 export type StaticField =
   | Omit<FunctionField, "mutates" | "passThis" | "invalidThis" | "privateSymbol" | "name">
   | Omit<GetterField, "cache" | "writable" | "passThis">;
 
 export interface ConstructOptions extends Omit<SignatureOptions, "rustPath" | "returns"> {
-  /** The constructor makes the object itself, with `structure.create(..)`, and returns it: it can then fill internal fields. */
+  /** The constructor creates the object itself, with `structure.create(..)`, and returns it: it can then set internal fields. */
   passStructure?: boolean;
 }
 
@@ -1992,17 +1992,17 @@ export interface ClassOptions {
   static?: Record<string, StaticField>;
   /** JS values the object holds, empty at first. The GC visits them; `js_Name` gets `x_get_cached` / `x_set_cached` / `x_take_cached` for each. */
   internalFields?: readonly string[];
-  /** The struct writes its own `impl bun_jsc::JsClass`, over `js_Name::to_js` and `js_Name::from_js`. With `refCounted`. */
-  customToJS?: boolean;
-  /** `false`: hand-written C++ derives from the cell, and an instance of that is an instance of this. With `refCounted`. */
+  /** `impl bun_jsc::JsClass` is not generated: write it by hand, calling `js_Name::to_js` and `js_Name::from_js`. With `refCounted`. */
+  overridesToJS?: boolean;
+  /** `false`: hand-written C++ can subclass `JSName`, and an instance of the subclass is an instance of this class. With `refCounted`. */
   final?: boolean;
-  /** Traits that have the members, for a struct of another crate. */
+  /** Traits to bring into scope, for members that are trait methods. */
   rustTraits?: readonly string[];
-  /** An instance is the `this` a function is bound to, and that function is what JavaScript has: it is the receiver of every member, and inherits from the prototype. */
+  /** JavaScript only sees a function bound to the instance. Members are called with that function as `this` and get its `boundThis`. */
   forBind?: boolean;
-  /** `fn memory_cost(&self) -> usize`: what the struct owns outside itself, for a heap snapshot. */
+  /** `fn memory_cost(&self) -> usize`: the extra memory the struct owns, for a heap snapshot. */
   memoryCost?: boolean;
-  /** `fn estimated_size(&self) -> usize`: the same for the collector, whose marking threads call it. For a heap snapshot too, without `memoryCost`. */
+  /** `fn estimated_size(&self) -> usize`: the same for the GC, whose marking threads call it. For a heap snapshot too, without `memoryCost`. */
   estimatedSize?: boolean;
   /** `false`: native properties are non-configurable. */
   configurable?: boolean;
@@ -2057,7 +2057,7 @@ export class Method extends Signature {
     this.configurable = options.configurable;
     assert(
       !((this.privateSymbol || wellKnownSymbol(name)) && (this.enumerable ?? this.configurable) !== undefined),
-      `${name}: enumerable and configurable are for a string key`,
+      `${name}: enumerable and configurable are only for a string key`,
     );
   }
 }
@@ -2099,7 +2099,7 @@ export class Getter {
     this.throws = options.throws ?? false;
     this.hasSetter = !!options.setter;
     this.writable = !!options.writable;
-    assert(!this.writable || options.cache, `${name}: writable is for a cached getter`);
+    assert(!this.writable || options.cache, `${name}: writable is only for a cached getter`);
     assert(
       !(this.writable && this.hasSetter),
       `${name}: writable stores the value itself, so there is no setter to call`,
@@ -2189,7 +2189,7 @@ export class ClassType extends NamedType {
   readonly call: FunctionDefinition | null;
   readonly memoryCost: boolean;
   readonly estimatedSize: boolean;
-  readonly customToJS: boolean;
+  readonly overridesToJS: boolean;
   readonly final: boolean;
   readonly rustTraits: readonly string[];
   readonly forBind: boolean;
@@ -2238,17 +2238,23 @@ export class ClassType extends NamedType {
     this.passStructure = typeof options.construct === "object" && !!options.construct.passStructure;
     assert(
       !this.passStructure || this.construct!.capability !== "none",
-      'passStructure: making the object takes capability: "heap" or "js"',
+      'passStructure: creating the object takes capability: "heap" or "js"',
     );
     this.memoryCost = options.memoryCost ?? false;
     this.estimatedSize = options.estimatedSize ?? false;
-    this.customToJS = options.customToJS ?? false;
-    assert(this.refCounted || !this.customToJS, "customToJS is only for a refCounted class");
+    this.overridesToJS = options.overridesToJS ?? false;
+    assert(this.refCounted || !this.overridesToJS, "overridesToJS is only for a refCounted class");
     this.final = options.final ?? true;
-    assert(this.refCounted || this.final, "final: false is only for a refCounted class: the struct follows the cell");
+    assert(
+      this.refCounted || this.final,
+      "final: false is only for a refCounted class: otherwise the struct is stored in the object, where a subclass's fields would go",
+    );
     this.rustTraits = options.rustTraits ?? [];
     this.forBind = options.forBind ?? false;
-    assert(!(this.forBind && options.prototypeBase), "forBind: the prototype inherits from Function.prototype");
+    assert(
+      !(this.forBind && options.prototypeBase),
+      "forBind has no prototypeBase: the prototype inherits from Function.prototype",
+    );
     const members = (fields: Record<string, Field>, isStatic: boolean) =>
       Object.entries(fields).map(([name, field]): ClassMember => {
         assert(
@@ -2287,7 +2293,7 @@ export class ClassType extends NamedType {
       });
     this.protoMembers = members(options.proto ?? {}, false);
     this.staticMembers = members(options.static ?? {}, true);
-    assert(this.construct || !options.call, "call is what the constructor object does without new");
+    assert(this.construct || !options.call, "call needs a constructor object: add construct");
     this.call = options.call ? (members({ call: options.call }, true)[0] as FunctionDefinition) : null;
     this.functions = this.protoMembers.filter(member => member instanceof FunctionDefinition);
     this.getters = this.protoMembers.filter(member => member instanceof Getter);
@@ -2324,7 +2330,7 @@ export class ClassType extends NamedType {
     assert(
       !this.forBind ||
         (this.internalFieldAccessors.length === 0 && getters.every(getter => !getter.hasSetter && !getter.writable)),
-      "forBind: functions and getters without a setter",
+      "forBind: a member is a function or a getter without a setter",
     );
     this.configurable = options.configurable ?? true;
     this.enumerable = options.enumerable ?? true;

@@ -6,6 +6,7 @@
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "JSDOMFile.h"
 
+using Bun::Bindgen::Generated::JSBlob;
 using namespace JSC;
 
 extern "C" SYSV_ABI void* JSDOMFile__construct(JSC::JSGlobalObject*, JSC::CallFrame* callframe);
@@ -49,7 +50,7 @@ public:
         object->finishCreation(vm);
 
         // This is not quite right. But we'll fix it if someone files an issue about it.
-        object->putDirect(vm, vm.propertyNames->prototype, Bun::Bindgen::prototypeForClass<Bun::Bindgen::Generated::JSBlob>(zigGlobal), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+        object->putDirect(vm, vm.propertyNames->prototype, Bun::Bindgen::prototypeForClass<JSBlob>(zigGlobal), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
         return object;
     }
@@ -71,12 +72,12 @@ public:
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSObject* newTarget = asObject(callFrame->newTarget());
         auto* constructor = globalObject->JSDOMFileConstructor();
-        Structure* structure = Bun::Bindgen::structureForClass<Bun::Bindgen::Generated::JSBlob>(globalObject);
+        Structure* structure = Bun::Bindgen::structureForClass<JSBlob>(globalObject);
         if (constructor != newTarget) {
             // ShadowRealm functions belong to a different global object.
             auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(lexicalGlobalObject, newTarget));
             RETURN_IF_EXCEPTION(scope, {});
-            structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, Bun::Bindgen::structureForClass<Bun::Bindgen::Generated::JSBlob>(functionGlobalObject));
+            structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, Bun::Bindgen::structureForClass<JSBlob>(functionGlobalObject));
             RETURN_IF_EXCEPTION(scope, {});
         }
 
@@ -88,7 +89,7 @@ public:
         }
 
         return JSValue::encode(
-            Bun::Bindgen::Generated::JSBlob::create(vm, structure, ptr));
+            JSBlob::create(vm, structure, ptr));
     }
 
     static JSC_HOST_CALL_ATTRIBUTES EncodedJSValue call(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)

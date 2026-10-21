@@ -2,7 +2,7 @@ import * as b from "../../../codegen/bindgen-lib.ts";
 
 const js = { capability: "js", throws: true } as const;
 const method = { returns: b.any, ...js } as const;
-const stream = { ...method, args: { stream: b.any } } as const;
+const stream = { ...method, args: { streamId: b.any } } as const;
 
 /** The session of `node:http2`. */
 export const H2FrameParser = b.class({
@@ -34,7 +34,7 @@ export const H2FrameParser = b.class({
     "onStreamPush",
   ],
   proto: {
-    altsvc: { ...js, args: { origin: b.any, value: b.any, stream: b.any } },
+    altsvc: { ...js, args: { origin: b.any, value: b.any, streamId: b.any } },
     bufferSize: { returns: b.f64, rustName: "get_buffer_size" },
     detach: { capability: "js", rustName: "detach_from_js" },
     emitAbortToAllStreams: { capability: "js" },
@@ -47,28 +47,28 @@ export const H2FrameParser = b.class({
     getNextStream: { returns: b.i32, capability: "js" },
     getStreamContext: stream,
     getStreamState: stream,
-    goaway: { ...js, args: { code: b.any, lastStream: b.any, opaqueData: b.any } },
-    noTrailers: { ...js, args: { stream: b.any } },
+    goaway: { ...js, args: { code: b.any, lastStreamID: b.any, opaqueData: b.any } },
+    noTrailers: { ...js, args: { streamId: b.any } },
     origin: { ...js, args: { origin: b.any } },
     ping: { ...method, args: { payload: b.any }, length: 0 },
-    pushPromise: { ...method, args: { parent: b.any, promised: b.any, headers: b.any, sensitiveHeaders: b.any } },
+    pushPromise: { ...method, args: { parentId: b.any, promisedId: b.any, headers: b.any, sensitiveHeaders: b.any } },
     read: { ...js, args: { data: b.any } },
     request: {
       ...method,
-      args: { stream: b.any, context: b.any, headers: b.any, sensitiveHeaders: b.any, options: b.any },
+      args: { streamId: b.any, context: b.any, headers: b.any, sensitiveHeaders: b.any, options: b.any },
       length: 2,
     },
-    rstStream: { ...method, args: { stream: b.any, code: b.any }, length: 1 },
-    sendTrailers: { ...js, args: { stream: b.any, headers: b.any, sensitiveHeaders: b.any }, length: 2 },
+    rstStream: { ...method, args: { streamId: b.any, code: b.any }, length: 1 },
+    sendTrailers: { ...js, args: { streamId: b.any, headers: b.any, sensitiveHeaders: b.any }, length: 2 },
     setLocalWindowSize: { ...js, args: { windowSize: b.any } },
     setNativeSocket: { capability: "js", args: { socket: b.any }, rustName: "set_native_socket_from_js" },
-    setNextStreamID: { ...js, args: { stream: b.any } },
-    setStreamContext: { ...js, args: { stream: b.any, context: b.any } },
-    setStreamReading: { capability: "js", args: { stream: b.any, reading: b.any } },
+    setNextStreamID: { ...js, args: { streamId: b.any } },
+    setStreamContext: { ...js, args: { streamId: b.any, context: b.any } },
+    setStreamReading: { capability: "js", args: { streamId: b.any, reading: b.any } },
     settings: { ...method, args: { settings: b.any }, rustName: "update_settings" },
     writeStream: {
       ...method,
-      args: { stream: b.any, data: b.any, encoding: b.any, close: b.any, callback: b.any, deferCallback: b.any },
+      args: { streamId: b.any, data: b.any, encoding: b.any, close: b.any, callback: b.any, deferCallback: b.any },
       length: 3,
     },
   },

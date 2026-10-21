@@ -37,7 +37,7 @@ describe("S3Client static method argument validation", () => {
   });
 });
 
-test("an S3 file inherits what a Blob has", () => {
+test("S3File.prototype inherits from Blob.prototype", () => {
   const prototype = Object.getPrototypeOf(Bun.s3.file("key"));
   expect(Object.getPrototypeOf(prototype)).toBe(Blob.prototype);
   expect(Object.getOwnPropertyNames(prototype).sort()).toEqual(["bucket", "presign", "stat"]);

@@ -1,6 +1,6 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
 
-/** A word of termios flags. What is assigned is converted only while the terminal is open. */
+/** A termios flags word. The setter ignores its value once the terminal is closed. */
 const flags = { getter: b.any, setter: { capability: "js" }, capability: "heap", throws: true } as const;
 
 export const Terminal = b.class({
@@ -9,7 +9,6 @@ export const Terminal = b.class({
   finalize: true,
   configurable: false,
   construct: { passStructure: true, args: { options: b.any }, capability: "js", throws: true, length: 0 },
-  /** The callbacks. */
   internalFields: ["data", "drain", "exit"],
   proto: {
     close: { capability: "js" },

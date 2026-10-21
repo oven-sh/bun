@@ -1,10 +1,10 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
-/** The parsers of `node_fs.rs` read the arguments: they report what Node reports. */
+/** Arguments are parsed in `node_fs.rs`, which throws Node's errors. */
 const operation = (length: number) =>
   ({ args: { args: b.any.variadic }, returns: b.any, capability: "js", throws: true, length }) as const;
 
-/** The `length` of `x`, which returns a promise, and of `xSync`. `xCb` takes a callback and then what `x` takes. */
+/** `[length of x, length of xSync]`. `xCb` is `x` with a leading callback. */
 const operations: Record<string, readonly [number, number]> = {
   access: [3, 2],
   appendFile: [4, 3],
@@ -49,7 +49,7 @@ const operations: Record<string, readonly [number, number]> = {
   writev: [4, 3],
 };
 
-const constructorOf = { getter: b.any, capability: "js" } as const;
+const getter = { getter: b.any, capability: "js" } as const;
 
 /** What `createBinding` makes: `src/js/internal/fs/binding.ts`. */
 export const NodeJSFS = b.class({
@@ -66,8 +66,8 @@ export const NodeJSFS = b.class({
       ["cpSync", operation(2)] as const,
       ["watch", operation(3)] as const,
       ["watchFile", operation(3)] as const,
-      ["Dirent", constructorOf] as const,
-      ["Stats", constructorOf] as const,
+      ["Dirent", getter] as const,
+      ["Stats", getter] as const,
     ].sort(([a], [b]) => a.localeCompare(b)),
   ),
 });

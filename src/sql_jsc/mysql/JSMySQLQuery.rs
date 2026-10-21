@@ -89,18 +89,18 @@ impl JSMySQLQuery {
     }
 
     pub fn do_run(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         connection: &MySQLConnection,
         query: JsLocal<'_>,
     ) -> JsResult<()> {
         debug!("doRun");
-        let _guard = this.ref_guard();
+        let _guard = self.ref_guard();
 
         let global_object = cx.global();
-        let target = query.to_js();
-        if !target.is_object() {
+        let query = query.to_js();
+        if !query.is_object() {
             return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
         }
         // A connection that failed or closed answers nothing: a query queued on it would hold the
@@ -113,26 +113,26 @@ impl JSMySQLQuery {
                 AnyMySQLError::Error::ConnectionClosed,
             )));
         }
-        if this.is_completed() {
+        if self.is_completed() {
             return Ok(());
         }
-        js::target_set_cached(this_value.to_js(), global_object, target);
+        js::target_set_cached(this_value.to_js(), global_object, query);
         // Until it ends: the wrapper holds the target, the parameters and the rows.
-        this.this_value.with_mut(|v| v.upgrade(global_object));
-        connection.enqueue_request(this.ref_guard());
+        self.this_value.with_mut(|v| v.upgrade(global_object));
+        connection.enqueue_request(self.ref_guard());
         Ok(())
     }
 
-    pub fn do_cancel(this: &Self, _: &mut JsScope<'_>) {
+    pub fn do_cancel(&self, _: &mut JsScope<'_>) {
         let _entered = VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
         // The queue drops a request that ended when it gets to it.
-        this.reject_when(
+        self.reject_when(
             MySQLQuery::cancel,
-            this.error_to_js(AnyMySQLError::Error::QueryCancelled),
+            self.error_to_js(AnyMySQLError::Error::QueryCancelled),
         );
     }
 
-    pub fn set_mode_from_js(this: &Self, cx: &mut JsScope<'_>, mode: JsLocal<'_>) -> JsResult<()> {
+    pub fn set_mode_from_js(&self, cx: &mut JsScope<'_>, mode: JsLocal<'_>) -> JsResult<()> {
         let global_object = cx.global();
         let js_mode = mode.to_js();
         if js_mode.is_empty_or_undefined_or_null() || !js_mode.is_number() {
@@ -150,12 +150,12 @@ impl JSMySQLQuery {
                 );
             }
         };
-        this.query.with_mut(|q| q.set_result_mode(mode));
+        self.query.with_mut(|q| q.set_result_mode(mode));
         Ok(())
     }
 
-    pub fn set_pending_value_from_js(this: &Self, value: JsLocal<'_>) {
-        this.set_pending_value(value.to_js());
+    pub fn set_pending_value_from_js(&self, value: JsLocal<'_>) {
+        self.set_pending_value(value.to_js());
     }
 
     fn last_insert_id_to_js(&self, value: u64) -> JsResult<JSValue> {
@@ -187,16 +187,12 @@ impl JSMySQLQuery {
         }
     }
 
-    pub fn describe_result(
-        this: &Self,
-        cx: &mut JsScope<'_>,
-        number: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
-        match this
+    pub fn describe_result(&self, cx: &mut JsScope<'_>, number: JsLocal<'_>) -> JsResult<JSValue> {
+        match self
             .undescribed
             .with_mut(|results| results.take(number.to_js()))
         {
-            Some(columns) => describe(cx.global(), this.query.get().text(), &[], &columns),
+            Some(columns) => describe(cx.global(), self.query.get().text(), &[], &columns),
             None => Ok(JSValue::NULL),
         }
     }

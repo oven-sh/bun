@@ -327,8 +327,8 @@ export const Formatter = b.enumeration(["highlight-javascript", "highlight-javas
 ```
 
 generates `enum Formatter { HighlightJavascript, .. }`. An entry can be a list of
-spellings; the first is the one returned to JavaScript. A `String` object is taken like
-the string, except in a union. Returning an enumeration allocates nothing after the first time.
+spellings; the first is the one returned to JavaScript. It also takes a `String` object,
+except in a union. Returning an enumeration allocates nothing after the first time.
 
 ### Unions and kinds
 
@@ -528,7 +528,7 @@ Arguments, results, `capability` and `throws` are those of a function. The gener
 The struct, the _payload_, is stored **inside** the JS object, the _wrapper_, so the
 two have one lifetime and one allocation. It is dropped when the object is
 collected. `Drop` gets no capability, so it cannot touch the JS heap, and no Rust
-runs on the collector's threads, except [`estimated_size`](#memory).
+runs on the GC's threads, except [`estimated_size`](#memory).
 
 If a timer, another thread or a C library can still point at the struct after its JS object
 is collected, make the class [`refCounted`](#refcounted).
@@ -547,10 +547,10 @@ is collected, make the class [`refCounted`](#refcounted).
 | `enumerable`     | `false` makes the native properties non-enumerable                                             |
 | `prototypeBase`  | `"Error"`: the prototype inherits from `Error.prototype`                                       |
 | `memoryCost`     | [`fn memory_cost(&self) -> usize`](#memory), for a heap snapshot                               |
-| `estimatedSize`  | [`fn estimated_size(&self) -> usize`](#memory), for the collector                              |
-| `rustTraits`     | traits that some members are methods of                                                        |
-| `customToJS`     | with `refCounted`: the struct writes its own `impl JsClass`, over `js_Name::to_js`             |
-| `final`          | with `refCounted`: `false` lets hand-written C++ derive from the cell                          |
+| `estimatedSize`  | [`fn estimated_size(&self) -> usize`](#memory), for the GC                                     |
+| `rustTraits`     | traits to bring into scope, for members that are trait methods                                 |
+| `overridesToJS`  | with `refCounted`: `impl JsClass` is not generated; write it by hand with `js_Name::to_js`     |
+| `final`          | with `refCounted`: `false` lets hand-written C++ subclass `JSName`                             |
 | `forBind`        | the receiver of every member is [a function bound to an instance](#forbind)                    |
 
 Code that has the global object and no capability makes one with
@@ -559,9 +559,9 @@ Code that has the global object and no capability makes one with
 A class that JavaScript names but cannot make, like `Crypto`, declares `construct: "illegal"`:
 `new Crypto()` throws `Illegal constructor`, and there is no `constructor` in Rust.
 
-A constructor that fills an internal field needs the object. With `passStructure: true` it makes
-the object itself, from the structure of `new.target`, and returns it. `create` takes the struct,
-or a `RefPtr` to the struct of a `refCounted` class.
+A constructor that sets an internal field needs the object. With `passStructure: true` it creates
+the object itself, from the structure of `new.target`, and returns it. `structure.create` takes the
+struct, or a `RefPtr` to the struct of a `refCounted` class.
 
 ```rust
 pub(crate) fn constructor<'a>(
@@ -614,24 +614,25 @@ table of the object that has the class:
     Glob    Bun::Bindgen::Generated::Glob::getGlobConstructor    DontDelete|PropertyCallback
 ```
 
-Rust gets it with `js_Glob::get_constructor(global)`. C++ that includes the generated header names the three
-objects of a class: `Bun::Bindgen::structureForClass<JSGlob>(globalObject)`, `prototypeForClass<JSGlob>` and
+Rust gets it with `js_Glob::get_constructor(global)`. In C++, the generated header gives the structure,
+prototype and constructor: `Bun::Bindgen::structureForClass<JSGlob>(globalObject)`, `prototypeForClass<JSGlob>` and
 `constructorForClass<JSGlob>`.
 
 ### The receiver
 
 Every member takes `&self`, a setter too, and mutable state is in `Cell` and `JsCell`. The struct implements
 `bun_jsc::JsClass`, so `value.as_class_ref::<Glob>()` works, and `js_Glob::from_js(value)` is the struct if `value`
-is an instance. `js_Glob::from_js_direct(value)` leaves out an instance of a subclass and one that has properties of
-its own, which JavaScript may have given another meaning. `wrapper.as_ptr()` is the address of the struct, which
+is an instance. `js_Glob::from_js_direct(value)` returns `None` for an instance of a subclass or one with own
+properties, either of which may override a member. `wrapper.payload_ptr()` is the address of the struct, which
 never changes.
 
-A class with a `mutates: true` member is different, in all its members:
+If any member has `mutates: true`, every member's receiver follows this table:
 
 | The method is                    | It receives                 |
 | -------------------------------- | --------------------------- |
 | `capability: "none"` or `"heap"` | `&self`                     |
-| …with `mutates: true`, a setter  | `&mut self`                 |
+| …with `mutates: true`            | `&mut self`                 |
+| a setter                         | `&mut self`                 |
 | `capability: "js"`               | `this: JsWrapper<'a, Self>` |
 
 A method that can run JavaScript can be re-entered, by a callback that calls
@@ -673,7 +674,7 @@ returns it. While the field is empty the getter calls Rust and stores the result
 `cache: "tag"` on another getter declares nothing: it returns that field, of a getter or of
 `internalFields`, and fills it from its own Rust function.
 With `writable: true` any value assigned to the property replaces the cached one, without calling Rust.
-With `setter` and `passThis`, `set_tag` stores what the next read returns.
+With `setter` and `passThis`, `set_tag` replaces the cached value itself, with `tag_set_cached`.
 
 ### `refCounted`
 
@@ -728,23 +729,23 @@ back to its JS object the struct stores a `JsRef`, and calls `finalize()` on it 
 
 ### Memory
 
-The collector counts the object, and the struct of a `refCounted` class. Two keys tell it what the
-struct owns outside itself.
+The GC counts the object, and the struct of a `refCounted` class. Two keys report the extra memory
+the struct owns.
 
-| Key             | Rust                                | Who calls it                                                          |
-| --------------- | ----------------------------------- | --------------------------------------------------------------------- |
-| `estimatedSize` | `fn estimated_size(&self) -> usize` | the collector: when the object is made, and each time it is marked    |
-| `memoryCost`    | `fn memory_cost(&self) -> usize`    | a heap snapshot, which calls `estimated_size` if there is no such key |
+| Key             | Rust                                | Who calls it                                                   |
+| --------------- | ----------------------------------- | -------------------------------------------------------------- |
+| `estimatedSize` | `fn estimated_size(&self) -> usize` | the GC: when the object is created, and each time it is marked |
+| `memoryCost`    | `fn memory_cost(&self) -> usize`    | heap snapshots; without it they use `estimated_size`           |
 
 A marking thread calls `estimated_size` while JavaScript runs. It reads only fields that do not
-change once the object is made, or atomics: a struct whose size changes stores the number, like
+change once the object is created, or atomics: if the size changes, keep it in an atomic field, like
 `Blob::m_memoryCost` in WebKit. `memory_cost` runs on the JS thread and can read anything.
 
 ### `forBind`
 
-`test` and `describe` are functions with properties. Each is a function bound to an instance, with
-the class's prototype as its prototype. `forBind: true` makes that function the receiver of every
-member: `&self` is what it is bound to. The prototype inherits from `Function.prototype`.
+`test` and `describe` are functions with properties. JavaScript only sees a function bound to the
+instance, with the class's prototype as its prototype. With `forBind: true`, members are called with
+that function as `this`, and `&self` is its `boundThis`. The prototype inherits from `Function.prototype`.
 
 ### Staying alive
 

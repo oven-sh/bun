@@ -81,7 +81,7 @@ use bun_zlib as zlib;
 
 use crate::node;
 use crate::test_runner::jest::Jest;
-use crate::valkey_jsc::js_valkey::{Js as js_RedisClient, SubscriptionCtx};
+use crate::valkey_jsc::js_valkey::{SubscriptionCtx, js as js_RedisClient};
 use bun_collections::index_sort;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::call_frame::ArgumentsSlice;
@@ -246,7 +246,7 @@ pub(crate) mod bun_object {
         BunObject_callback_udpSocket => super::static_adapters::udp_socket,
         BunObject_callback_write => crate::webcore::blob::write_file,
     }
-    // Its body is already `JSHostFnZig`-shaped, so it takes the thunk of the callbacks above.
+    // Its body is already `JSHostFnZig`-shaped, so it goes through the same `to_js_host_call` thunk as the callbacks above.
     export_callbacks! {
         BunObject_callback_createParsedShellScript => super::static_adapters::parsed_shell_script_create,
     }

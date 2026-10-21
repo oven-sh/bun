@@ -9,7 +9,7 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        times: JsLocal<'_>,
+        expected: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let (this, calls, _value) = self.mock_prologue(
@@ -20,7 +20,7 @@ impl Expect {
             super::mock::MockKind::Calls,
         )?;
 
-        let times = times.to_js();
+        let times = expected.to_js();
         if !times.is_uint32_as_any_int() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "toHaveBeenCalledTimes() requires 1 non-negative integer argument"

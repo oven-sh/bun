@@ -151,13 +151,13 @@ template<> struct ExternTraits<JSBlobOrStringOrBuffer> {
     }
 };
 
-struct ExternArguments {
+struct ExternVariadicArguments {
     const JSC::EncodedJSValue* data;
     size_t length;
 };
 
 template<> struct ExternTraits<JSC::ArgList> {
-    using ExternType = ExternArguments;
+    using ExternType = ExternVariadicArguments;
 
     static ExternType convertToExtern(JSC::ArgList&& cppValue)
     {
@@ -166,10 +166,10 @@ template<> struct ExternTraits<JSC::ArgList> {
 };
 
 // `data()` is never null, which a Rust slice needs.
-inline JSC::ArgList variadicArguments(JSC::CallFrame* callFrame, unsigned start)
+inline JSC::ArgList variadicArguments(JSC::CallFrame* callFrame, unsigned startIndex)
 {
     JSC::ArgList arguments { callFrame };
-    unsigned skipped = std::min<unsigned>(start, arguments.size());
+    unsigned skipped = std::min<unsigned>(startIndex, arguments.size());
     return { arguments.data() + skipped, static_cast<unsigned>(arguments.size()) - skipped };
 }
 

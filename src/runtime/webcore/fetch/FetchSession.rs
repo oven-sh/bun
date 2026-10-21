@@ -201,7 +201,7 @@ impl SessionHold {
         let session = unsafe { RefPtr::init_ref(session) };
         session.used.set(true);
         if session.is_only_hold() {
-            session.this_value.with_mut(|this| this.upgrade(global));
+            session.this_value.with_mut(|r| r.upgrade(global));
         }
         Ok(SessionHold(session))
     }
@@ -243,7 +243,7 @@ impl Drop for SessionHold {
 }
 
 impl FetchSession {
-    /// Called by a `SessionHold`. The other ref is the wrapper's, or another hold's once VM teardown finalized it.
+    /// True when one `SessionHold` and the wrapper hold the refs, or two holds after VM teardown finalized the wrapper.
     fn is_only_hold(&self) -> bool {
         self.ref_count.get() == 2
     }
@@ -251,9 +251,8 @@ impl FetchSession {
     pub(crate) fn constructor<'a>(
         cx: &mut JsScope<'a>,
         structure: JsStructure<'a, Self>,
-        options: JsLocal<'a>,
+        init: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
-        let thread = cx.js_thread();
         let mut this = Box::new(FetchSession {
             pool: http::PoolOptions {
                 id: NEXT_POOL_ID.fetch_add(1, Ordering::Relaxed),
@@ -273,13 +272,12 @@ impl FetchSession {
         // SAFETY: a heap allocation at its final address; its `Drop` (with the last ref, or when
         // this constructor fails) disarms the handle.
         unsafe {
-            bun_jsc::AbortHandle::arm_owner(&raw mut *this, thread.context());
+            bun_jsc::AbortHandle::arm_owner(&raw mut *this, cx.js_thread().context());
         }
-        let check_server_identity =
-            Self::read_options(&mut this, thread.global(), options.to_js())?;
+        let check_server_identity = Self::parse_options(&mut this, cx.global(), init.to_js())?;
 
         let this = bun_core::heap::into_raw(this);
-        // SAFETY: the allocation's one ref becomes the object's.
+        // SAFETY: the wrapper adopts the allocation's one ref.
         let this_value = structure.create(&cx.heap, unsafe { RefPtr::from_raw(this) });
         // SAFETY: `this_value` holds the ref.
         let this = unsafe { &*this };
@@ -290,8 +288,8 @@ impl FetchSession {
         Ok(this_value)
     }
 
-    /// Returns `tls.checkServerIdentity`, which the JS object holds.
-    fn read_options(
+    /// Returns `tls.checkServerIdentity`, which the JS wrapper holds.
+    fn parse_options(
         this: &mut Self,
         global: &JSGlobalObject,
         options: JSValue,

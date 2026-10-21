@@ -487,12 +487,12 @@ impl Image {
         options: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let global = cx.global();
-        let opt = options.to_js();
+        let options = options.to_js();
         let mut m: Modulate = self.pipeline.get().modulate.unwrap_or_default();
-        if opt.is_object() {
+        if options.is_object() {
             // Clamp finite + bounded so Infinity doesn't reach ModulateImpl as
             // f32 +Inf (0×Inf = NaN → static_cast<u8>(NaN) is UB).
-            if let Some(v) = opt.get(global, "brightness")? {
+            if let Some(v) = options.get(global, "brightness")? {
                 if v.is_number() {
                     let x = v.as_number();
                     m.brightness = if x.is_finite() {
@@ -502,7 +502,7 @@ impl Image {
                     };
                 }
             }
-            if let Some(v) = opt.get(global, "saturation")? {
+            if let Some(v) = options.get(global, "saturation")? {
                 if v.is_number() {
                     let x = v.as_number();
                     m.saturation = if x.is_finite() {
@@ -525,7 +525,7 @@ impl Image {
         fmt: codecs::Format,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let global = cx.global();
-        let opt = options.to_js();
+        let options = options.to_js();
         let mut enc: codecs::EncodeOptions =
             self.pipeline
                 .get()
@@ -535,32 +535,32 @@ impl Image {
                     ..Default::default()
                 });
         enc.format = fmt;
-        if opt.is_object() {
-            if let Some(q) = opt.get(global, "quality")? {
+        if options.is_object() {
+            if let Some(q) = options.get(global, "quality")? {
                 if q.is_number() {
                     enc.quality = coerce_int!(u8, q.as_number(), 1.0, 100.0);
                 }
             }
-            if let Some(l) = opt.get(global, "lossless")? {
+            if let Some(l) = options.get(global, "lossless")? {
                 enc.lossless = l.to_boolean();
             }
-            if let Some(c) = opt.get(global, "compressionLevel")? {
+            if let Some(c) = options.get(global, "compressionLevel")? {
                 if c.is_number() {
                     enc.compression_level = coerce_int!(i8, c.as_number(), 0.0, 9.0);
                 }
             }
-            if let Some(p) = opt.get(global, "palette")? {
+            if let Some(p) = options.get(global, "palette")? {
                 enc.palette = p.to_boolean();
             }
-            if let Some(c) = opt.get(global, "colors")? {
+            if let Some(c) = options.get(global, "colors")? {
                 if c.is_number() {
                     enc.colors = coerce_int!(u16, c.as_number(), 2.0, 256.0);
                 }
             }
-            if let Some(d) = opt.get(global, "dither")? {
+            if let Some(d) = options.get(global, "dither")? {
                 enc.dither = d.to_boolean();
             }
-            if let Some(p) = opt.get(global, "progressive")? {
+            if let Some(p) = options.get(global, "progressive")? {
                 enc.progressive = p.to_boolean();
             }
         }
@@ -986,7 +986,7 @@ impl Image {
 
     /// `data:image/{format};base64,{…}`. Same encode as `.toBase64()` plus the
     /// MIME prefix, so it drops straight into `<img src>`.
-    pub(crate) fn dataurl<'a>(
+    pub(crate) fn data_url<'a>(
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
@@ -1399,7 +1399,7 @@ impl Drop for Pin {
 /// One pending operation's hold on its `Image`: keeps the wrapper Strong while
 /// any are pending, and lets the completion reach the `Image` (JS thread).
 pub(crate) struct PendingTask(jsc::JsPtr<Image>);
-// SAFETY: the Image is inside its wrapper; the Strong we hold keeps that alive.
+// SAFETY: the Image is stored inline in its wrapper, which the Strong we hold keeps alive.
 unsafe impl bun_jsc::job::JsAffine for PendingTask {}
 impl PendingTask {
     fn new(image: &Image, this_value: JSValue, global: &JSGlobalObject) -> Self {
@@ -2013,7 +2013,7 @@ fn resolve_resize(r: Resize, sw: u32, sh: u32) -> (u32, u32) {
     // Widen before multiplying — `r.w` is user-controlled and `sh` is
     // bounded only by `max_pixels`, so the u32 product can wrap; and the
     // quotient can exceed u32 for tall-thin sources (1×5M with .resize(1k)
-    // → 5e9), so clamp to the same per-side cap do_resize uses before the
+    // → 5e9), so clamp to the same per-side cap `resize` uses before the
     // narrowing cast. The maxPixels guard then rejects the product.
     let mut h: u32 = if r.h != 0 {
         r.h

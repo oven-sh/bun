@@ -1569,7 +1569,7 @@ fn spawn_maybe_sync(
     }
 
     let out = if !is_sync {
-        // The JS object takes over the ref `subprocess_ptr` was allocated with.
+        // The JS wrapper adopts the ref `subprocess_ptr` was allocated with.
         SubprocessT::to_js_nonnull(subprocess_nn, cx.global())
     } else {
         JSValue::ZERO
@@ -1932,8 +1932,8 @@ fn spawn_maybe_sync(
 
     subprocess.update_has_pending_activity();
 
-    let signal_code = subprocess.signal_code(cx.global());
-    let exit_code = subprocess.exit_code();
+    let signal_code = subprocess.signal_code_to_js(cx.global());
+    let exit_code = subprocess.exit_code_to_js();
     let read_error = subprocess
         .stdout
         .with_mut(|s| s.take_read_error())

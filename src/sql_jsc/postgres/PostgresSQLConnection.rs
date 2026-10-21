@@ -1226,29 +1226,29 @@ impl<const SSL: bool> SocketHandler<SSL> {
 }
 
 impl PostgresSQLConnection {
-    pub fn do_ref(this: &Self) {
-        this.update_flags(|f| f.insert(ConnectionFlags::KEEP_ALIVE_REQUESTED));
-        this.poll_ref.with_mut(|p| p.ref_(this.vm_ctx()));
-        this.update_has_pending_activity();
+    pub fn do_ref(&self) {
+        self.update_flags(|f| f.insert(ConnectionFlags::KEEP_ALIVE_REQUESTED));
+        self.poll_ref.with_mut(|p| p.ref_(self.vm_ctx()));
+        self.update_has_pending_activity();
     }
 
-    pub fn do_flush(this: &Self) {
-        this.register_auto_flusher();
+    pub fn do_flush(&self) {
+        self.register_auto_flusher();
     }
 
-    pub fn do_hold(this: &Self) {
-        this.timers.set_checked_out(true);
-        if this.status.get() == Status::Connected {
-            this.reset_connection_timeout();
+    pub fn do_hold(&self) {
+        self.timers.set_checked_out(true);
+        if self.status.get() == Status::Connected {
+            self.reset_connection_timeout();
         }
     }
 
-    pub fn do_unhold(this: &Self, _: &mut JsScope<'_>) {
-        this.timers.set_checked_out(false);
-        if this.status.get() == Status::Connected {
-            this.reset_connection_timeout();
+    pub fn do_unhold(&self, _: &mut JsScope<'_>) {
+        self.timers.set_checked_out(false);
+        if self.status.get() == Status::Connected {
+            self.reset_connection_timeout();
         }
-        this.retire_if_idle();
+        self.retire_if_idle();
     }
 
     fn is_in_transaction(&self) -> bool {
@@ -1285,8 +1285,8 @@ impl PostgresSQLConnection {
         self.write_buffer.with_mut(|b| b.clear_and_free());
     }
 
-    pub fn do_close(this: &Self, _: &mut JsScope<'_>) {
-        this.close();
+    pub fn do_close(&self, _: &mut JsScope<'_>) {
+        self.close();
     }
 
     fn clean_up_requests(&self, js_reason: Option<JSValue>) {

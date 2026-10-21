@@ -1412,7 +1412,7 @@ private:
             if (auto* blob = dynamicDowncast<Bun::Bindgen::Generated::JSBlob>(obj)) {
                 if (!startObjectInternal(blob)) // handle duplicates
                     return true;
-                // TODO: a Blob of a file descriptor should not be stored either.
+                // TODO: a Blob backed by a file descriptor should not be stored either.
                 if (m_forTransfer == SerializationForCrossProcessTransfer::Yes) {
                     write(ObjectTag);
                     write(TerminatorTag);
@@ -3406,7 +3406,7 @@ private:
         return toJS(m_lexicalGlobalObject, uncheckedDowncast<JSDOMGlobalObject>(m_globalObject), std::forward<T>(nativeObj));
     }
 
-    JSValue readRustTerminal(JSC::EncodedJSValue (*deserialize)(JSC::JSGlobalObject*, const uint8_t** ptr, const uint8_t* end))
+    JSValue readBunType(JSC::EncodedJSValue (*deserialize)(JSC::JSGlobalObject*, const uint8_t** ptr, const uint8_t* end))
     {
         JSValue deserialized = JSValue::decode(deserialize(m_lexicalGlobalObject, &m_ptr, m_end));
         // Empty: the record was malformed, or Rust threw (the caller checks its scope first).
@@ -3945,10 +3945,10 @@ private:
             return readDOMException();
 
         case Bun__BlobTag:
-            return readRustTerminal(Blob__onStructuredCloneDeserialize);
+            return readBunType(Blob__onStructuredCloneDeserialize);
 
         case Bun__nodenet_BlockList:
-            return readRustTerminal(BlockList__onStructuredCloneDeserialize);
+            return readBunType(BlockList__onStructuredCloneDeserialize);
 
         case Bun__X509CertificateTag:
             return readX509Certificate();

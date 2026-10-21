@@ -18,7 +18,7 @@
 //! `extern "sysv64"` cfg-splitting is done once instead of duplicated per
 //! macro expansion.
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals, // Thunks pass `*mut <RustStruct>` where C++ stores it as `void*` and never
-    // derefs, so its field layout is no part of the ABI.
+    // derefs, so its field layout is not part of the ABI.
     improper_ctypes, improper_ctypes_definitions, clippy::missing_safety_doc, clippy::not_unsafe_ptr_arg_deref,
     clippy::redundant_closure, clippy::unused_unit)]
 

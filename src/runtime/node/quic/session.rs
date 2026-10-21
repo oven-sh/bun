@@ -476,7 +476,7 @@ impl QuicSession {
     ) -> JsResult<(*mut QuicSession, JSValue)> {
         let this_value = Self::new(global, vtable).into_js_wrapper(global);
         let handle = this_value.to_js();
-        let raw = this_value.as_ptr().as_ptr();
+        let raw = this_value.payload_ptr().as_ptr();
 
         let state_ptr = alloc_exposed_array_buffer(
             global,
@@ -493,7 +493,7 @@ impl QuicSession {
         handle.put(global, b"stateByteOffset", JSValue::js_number(0.0));
         handle.put(global, b"statsByteOffset", JSValue::js_number(0.0));
 
-        // SAFETY: inside `handle`.
+        // SAFETY: the payload of `handle`.
         let this = unsafe { &*raw };
         #[expect(
             clippy::cast_ptr_alignment,

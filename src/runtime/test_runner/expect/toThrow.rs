@@ -17,7 +17,7 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        value: JsLocal<'_>,
+        expected: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let this = scopeguard::guard(self, |t| t.post_match(global));
@@ -27,7 +27,7 @@ impl Expect {
         this.increment_expect_call_counter();
 
         let expected_value: JSValue = 'brk: {
-            let value = value.to_js();
+            let value = expected.to_js();
             if value.is_undefined() {
                 break 'brk JSValue::ZERO;
             }

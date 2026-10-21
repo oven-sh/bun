@@ -146,13 +146,13 @@ impl Archive {
         options: JsLocal<'_>,
     ) -> JsResult<Archive> {
         let global = cx.global();
-        let data_arg = data.to_js();
+        let data = data.to_js();
 
         // Parse compression options
         let compress = parse_compression_options(global, options.to_js())?;
 
         // For Blob/Archive, ref the existing store (zero-copy)
-        if let Some(blob) = blob_from_js(data_arg) {
+        if let Some(blob) = blob_from_js(data) {
             if let Some(store) = blob.store.get().as_ref() {
                 return Ok(Archive {
                     store: store.clone(),
@@ -162,14 +162,14 @@ impl Archive {
         }
 
         // For ArrayBuffer/TypedArray, copy the data
-        if let Some(array_buffer) = data_arg.as_array_buffer(global) {
+        if let Some(array_buffer) = data.as_array_buffer(global) {
             let data: Vec<u8> = array_buffer.slice().to_vec();
             return Ok(create_archive(data, compress));
         }
 
         // For plain objects, build a tarball
-        if data_arg.is_object() {
-            let data = build_tarball_from_object(global, data_arg)?;
+        if data.is_object() {
+            let data = build_tarball_from_object(global, data)?;
             return Ok(create_archive(data, compress));
         }
 
@@ -588,13 +588,13 @@ impl Archive {
     pub(crate) fn files(&self, cx: &mut JsScope<'_>, glob: JsLocal<'_>) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
-        let glob_arg = glob.to_js();
+        let glob = glob.to_js();
 
         let mut glob_patterns: Option<Vec<GlobPattern>> = None;
         // errdefer freePatterns — handled by Drop
 
-        if !glob_arg.is_undefined_or_null() {
-            glob_patterns = parse_pattern_arg(global, glob_arg, b"Archive.files", b"glob")?;
+        if !glob.is_undefined_or_null() {
+            glob_patterns = parse_pattern_arg(global, glob, b"Archive.files", b"glob")?;
         }
 
         start_files_task(&cx, &self.store, glob_patterns)

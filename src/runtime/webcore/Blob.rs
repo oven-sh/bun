@@ -813,7 +813,7 @@ impl BlobExt for Blob {
         // `bun_jsc::DOMFormData::for_each` yields the
         // lower-tier `bun_jsc::dom_form_data::FormDataEntry`, whose `blob`
         // field is `&bun_jsc::WebCore::Blob` (the forward-decl). The native
-        // pointer the C++ hands us is the `m_ctx` `*mut Blob`; reinterpret it
+        // pointer the C++ hands us is the wrapper's `*mut Blob`; reinterpret it
         // as the runtime `&mut Blob` here. Driving the FFI directly (rather
         // than going through `for_each`'s immutable wrapper) avoids a
         // `&T → &mut T` cast. Every raw deref is wrapped locally; the safe fn
@@ -833,7 +833,7 @@ impl BlobExt for Blob {
                 FormDataEntry::String(unsafe { *value_ptr.cast::<EncodedSlice>() })
             } else {
                 FormDataEntry::File {
-                    // SAFETY: `value_ptr` is the C++ `JSBlob::m_ctx` (`*mut Blob`);
+                    // SAFETY: `value_ptr` is the `JSBlob` wrapper's `*mut Blob`;
                     // valid for the synchronous callback scope.
                     blob: unsafe { &mut *value_ptr.cast::<Blob>() },
                     filename: if filename.is_null() {
@@ -1117,7 +1117,7 @@ impl BlobExt for Blob {
         &self,
         cx: &bun_jsc::JsThread<'_>,
         this_value: JSValue,
-        recommended_chunk_size_value: JSValue,
+        chunk_size: JSValue,
         get_cached: fn(JSValue) -> Option<JSValue>,
         set_cached: fn(JSValue, &JSGlobalObject, JSValue),
     ) -> JsResult<JSValue> {
@@ -1126,8 +1126,8 @@ impl BlobExt for Blob {
             return Ok(cached);
         }
         let mut recommended_chunk_size: SizeType = 0;
-        if !recommended_chunk_size_value.is_undefined_or_null() {
-            if !recommended_chunk_size_value.is_number() {
+        if !chunk_size.is_undefined_or_null() {
+            if !chunk_size.is_number() {
                 return Err(
                     global_this.throw_invalid_arguments(format_args!("chunkSize must be a number"))
                 );
@@ -1135,7 +1135,7 @@ impl BlobExt for Blob {
             // `(x << 12) >> 12` on i64 truncates to a sign-extended i52
             // (arithmetic right-shift sign-extends bit 51), so negatives clamp to 0
             // via `.max(0)` instead of becoming the 52-bit zero-extended mask.
-            let v = (recommended_chunk_size_value.to_int64() << 12) >> 12;
+            let v = (chunk_size.to_int64() << 12) >> 12;
             recommended_chunk_size = v.max(0) as SizeType;
         }
         let stream = ReadableStream::from_blob_copy_ref(cx, self, recommended_chunk_size)?;
@@ -1512,9 +1512,9 @@ impl BlobExt for Blob {
     fn get_writer(&self, cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let (global_this, context) = (cx.global(), cx.context());
-        let arg0 = options.to_js();
+        let options = options.to_js();
 
-        if !arg0.is_undefined_or_null() && !arg0.is_object() {
+        if !options.is_undefined_or_null() && !options.is_object() {
             return Err(global_this
                 .throw_invalid_arguments(format_args!("options must be an object or undefined")));
         }
@@ -1529,8 +1529,7 @@ impl BlobExt for Blob {
             let s3 = store.data.as_s3();
             let path = s3.path();
 
-            if arg0.is_object() {
-                let options = arg0;
+            if options.is_object() {
                 if let Some(content_type) = options.get_truthy(global_this, "type")? {
                     // override the content type
                     set_content_type_from_js(global_this, self, content_type)?;
@@ -1692,10 +1691,10 @@ impl BlobExt for Blob {
 
             // `webcore::PathOrFileDescriptor` is not `Clone`; build user
             // options first, then move `input_path` in once.
-            let mut stream_start = if arg0.is_object() {
+            let mut stream_start = if options.is_object() {
                 streams::Start::from_js_with_tag::<{ streams::StartTag::FileSink }>(
                     global_this,
-                    arg0,
+                    options,
                 )?
             } else {
                 streams::Start::FileSink(streams::FileSinkOptions {
@@ -3299,7 +3298,7 @@ impl BlobExt for Blob {
         self.calculate_estimated_byte_size();
 
         // R-2: `&self` receiver, but the FFI shims take `*mut Blob` (the
-        // heap-allocated `m_ctx` pointer). `self` *is* that allocation (caller
+        // wrapper's heap pointer). `self` *is* that allocation (caller
         // contract), so the const→mut cast is the original `Blob::new` provenance.
         let this = std::ptr::from_ref::<Blob>(self).cast_mut();
         if self.is_s3() {
@@ -3692,7 +3691,7 @@ pub(crate) extern "C" fn Blob__onStructuredCloneSerialize(
     let _ = this.on_structured_clone_serialize(serializer);
 }
 
-/// Empty with nothing pending: the bytes are not a valid record (the deserializer reports its usual error).
+/// Returns an empty value without throwing when the bytes are not a valid record (the deserializer reports its usual error).
 ///
 /// # Safety
 /// `[*ptr, end)` is the unread part of the `SerializedScriptValue`'s buffer.
@@ -4759,7 +4758,7 @@ pub(crate) fn write_file_internal(
                 Locked,
             }
             // `body_value` is `&mut Body::Value` from a live JS heap
-            // Response/Request `m_ctx`, held raw so every borrow below is
+            // Response/Request, held raw so every borrow below is
             // scoped and none spans the JS-running calls in the arms.
             // A stream someone holds a reader on, or has read from, is theirs.
             let existing = get_stream().or_else(|| {

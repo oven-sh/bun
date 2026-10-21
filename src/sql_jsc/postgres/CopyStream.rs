@@ -277,7 +277,7 @@ impl PostgresSQLQuery {
     }
 
     pub fn set_copy(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         callback: JsLocal<'_>,
@@ -292,10 +292,10 @@ impl PostgresSQLQuery {
             (CopyStream::Readable, callback)
         };
         js::copy_set_cached(this_value.to_js(), cx.global(), callback);
-        this.update_flags(|f| f.copy = copy);
+        self.update_flags(|f| f.copy = copy);
     }
 
-    pub fn copy_write(this: &Self, cx: &mut JsScope<'_>, chunk: JsLocal<'_>) -> JsResult<bool> {
+    pub fn copy_write(&self, cx: &mut JsScope<'_>, chunk: JsLocal<'_>) -> JsResult<bool> {
         let global = cx.global();
         let chunk = chunk.to_js();
         let text;
@@ -313,21 +313,21 @@ impl PostgresSQLQuery {
                 chunk,
             ));
         };
-        Ok(this
+        Ok(self
             .copy_connection(CopyStream::WritableOpen)
             .is_none_or(|connection| connection.write_copy_chunk(bytes)))
     }
 
-    pub fn copy_done(this: &Self, _: &mut JsScope<'_>) {
-        this.end_copy_in(None);
+    pub fn copy_done(&self, _: &mut JsScope<'_>) {
+        self.end_copy_in(None);
     }
 
-    pub fn copy_fail(this: &Self, _: &mut JsScope<'_>, message: &[u8]) {
-        this.end_copy_in(Some(copy_fail_message(message)));
+    pub fn copy_fail(&self, _: &mut JsScope<'_>, message: &[u8]) {
+        self.end_copy_in(Some(copy_fail_message(message)));
     }
 
-    pub fn copy_resume(this: &Self) {
-        if let Some(connection) = this.copy_connection(CopyStream::ReadableOpen) {
+    pub fn copy_resume(&self) {
+        if let Some(connection) = self.copy_connection(CopyStream::ReadableOpen) {
             connection.set_reading(true);
         }
     }

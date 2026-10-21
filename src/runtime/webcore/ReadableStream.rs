@@ -1009,7 +1009,7 @@ macro_rules! source_context_codegen {
 impl<C: SourceContext> NewSourceCodegen for NewSource<C> {
     fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
         // `self` is a heap-allocated `NewSource<C>` produced by [`NewSource::new`]
-        // (`heap::alloc`); its ref becomes the JS wrapper's. C++ side
+        // (`heap::alloc`); the JS wrapper adopts its ref. C++ side
         // stores it as `void*` and the GC finalizer drives `decrement_count` → `deinit`.
         C::js_create(
             std::ptr::from_mut::<Self>(self).cast::<c_void>(),
@@ -1213,7 +1213,7 @@ impl<C: SourceContext> NewSource<C> {
     fn upgrade_wrapper(&self) {
         if let Some(global) = self.global_this.get().as_deref() {
             if self.this_jsvalue.get().is_not_empty() {
-                self.this_jsvalue.with_mut(|this| this.upgrade(global));
+                self.this_jsvalue.with_mut(|r| r.upgrade(global));
             }
         }
     }
@@ -1376,7 +1376,7 @@ impl<C: SourceContext> NewSource<C> {
         }
     }
 
-    pub fn get_is_closed(&self) -> bool {
+    pub fn get_is_closed_from_js(&self) -> bool {
         self.is_closed.get()
     }
 
@@ -1412,6 +1412,10 @@ impl<C: SourceContext> NewSource<C> {
             }
             _ => result.to_js(cx),
         }
+    }
+
+    pub fn cancel_from_js(&self) {
+        self.cancel();
     }
 
     pub fn update_ref_from_js(&self, enable: JsLocal<'_>) {

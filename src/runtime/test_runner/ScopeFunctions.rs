@@ -427,7 +427,7 @@ impl ScopeFunctions {
     fn generic_if(
         &self,
         global: &JSGlobalObject,
-        cond: bool,
+        condition: bool,
         conditional_cfg: BaseScopeCfg,
         name: &[u8],
         invert: bool,
@@ -435,7 +435,7 @@ impl ScopeFunctions {
     ) -> JsResult<JSValue> {
         let _g = group_log::begin();
 
-        if cond != invert {
+        if condition != invert {
             self.generic_extend(global, conditional_cfg, name, fn_name)
         } else {
             create_bound(global, self.mode, self.each, self.cfg, fn_name)

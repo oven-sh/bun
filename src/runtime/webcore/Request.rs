@@ -50,7 +50,7 @@ impl bun_jsc::JsClass for Request {
     }
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
         let ptr = Request::new(self);
-        // SAFETY: `ptr` is a new heap allocation, whose ref the inherent `to_js` hands to the wrapper.
+        // SAFETY: `ptr` is a new heap allocation; the wrapper made by the inherent `to_js` adopts its ref.
         unsafe { Request::to_js(&*ptr, global) }
     }
 }
@@ -120,7 +120,7 @@ impl Default for Flags {
 
 // Heap-allocates via Box::new (global mimalloc).
 impl Request {
-    /// The caller owns the one ref, which `to_js` hands to the JS wrapper.
+    /// The caller owns the one ref, which the JS wrapper adopts in `to_js`.
     #[inline]
     pub(crate) fn new(v: Request) -> *mut Request {
         bun_core::heap::into_raw(Box::new(v))
@@ -475,7 +475,7 @@ bun_jsc::jsc_abi_extern! {
     #[allow(improper_ctypes)]
     #[link_name = "Bun__JSRequest__createForBake"]
     // `&JSGlobalObject` discharges the only deref'd-param precondition;
-    // `request_ptr` is stored opaquely as `void* m_ctx` (module-private —
+    // `request_ptr` is stored opaquely as `void*` (module-private —
     // sole caller forwards `from_ref(self)`). Matches the `*__createObject`
     // precedent.
     safe fn Bun__JSRequest__createForBake(
@@ -487,7 +487,7 @@ bun_jsc::jsc_abi_extern! {
 impl Request {
     pub(crate) fn to_js_for_bake(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_object, || {
-            // C++ stores `self` as opaque `void* m_ctx`; see `to_js` note.
+            // C++ stores `self` as an opaque `void*`; see `to_js` note.
             Bun__JSRequest__createForBake(
                 global_object,
                 std::ptr::from_ref::<Request>(self).cast_mut(),
@@ -711,7 +711,7 @@ impl Request {
         // hot-path `Box::from_raw().drop()` below cannot re-run this.
         // SAFETY: `this` is live and this is the sole release point for `body`.
         unsafe { ManuallyDrop::drop(&mut (*this).body) };
-        // SAFETY: ref_count hit 0; a `WeakPtr` left only touches `weak_ptr_data`, on this thread.
+        // SAFETY: ref_count hit 0; any remaining `WeakPtr` only touches `weak_ptr_data`, on this thread.
         if unsafe { (*this).weak_ptr_data.on_finalize() } {
             // Hot path: no outstanding weak refs. Reclaim and drop the whole
             // allocation in one shot — `Box::from_raw`'s drop runs
@@ -1072,7 +1072,7 @@ impl Request {
                 && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
             if value_type == bun_jsc::JSType::DOMWrapper {
                 if let Some(request) = value.as_direct::<Request>() {
-                    // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
+                    // SAFETY: as_direct returns the wrapper's live *mut Request
                     let request = unsafe { &*request };
                     if values_to_try.len() == 1 {
                         match Request::clone_into(
@@ -1444,7 +1444,7 @@ impl Request {
         let global_this = cx.global();
         self.throw_if_body_unusable(global_this)?;
         let cloned_ptr = self.clone(&cx)?;
-        // SAFETY: `clone` just allocated it; `to_js` hands its ref to the wrapper.
+        // SAFETY: `clone` just allocated it; the wrapper adopts its ref in `to_js`.
         let js_wrapper = unsafe { (*cloned_ptr).to_js(global_this) };
         self.sync_cloned_body_stream_caches(this_value.to_js(), js_wrapper, global_this);
         Ok(js_wrapper)

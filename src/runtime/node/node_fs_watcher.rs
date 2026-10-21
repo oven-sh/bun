@@ -155,7 +155,7 @@ pub(crate) struct FSWatchTaskPosix {
 impl Taskable for FSWatchTaskPosix {
     const TAG: TaskTag = task_tag::FSWatchTask;
     /// A batch of events the watcher thread posted that nobody will emit:
-    /// as the refused-post path in `enqueue`.
+    /// same as the refused-post path in `enqueue`.
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract.
         unsafe { Self::deinit(this) };
@@ -819,8 +819,8 @@ impl FSWatcher {
         if self.closed.get() {
             return;
         }
-        // SAFETY: `self` is live. Once the listener closes it, only this ref keeps it.
-        let this = unsafe { RefPtr::init_ref(self.as_ctx_ptr()) };
+        // SAFETY: `self` is live. Once the listener closes it, only this ref keeps it alive.
+        let guard = unsafe { RefPtr::init_ref(self.as_ctx_ptr()) };
 
         err.ensure_still_alive();
         let js_this = self.js_this.try_get();
@@ -853,7 +853,7 @@ impl FSWatcher {
         }
 
         self.close();
-        drop(this);
+        drop(guard);
     }
 
     /// R-2: see `emit_abort` — `&self` + `Cell` so the trailing `close()`

@@ -20,9 +20,9 @@ use crate::webcore::{Blob, BlobExt};
 bun_output::declare_scope!(WebSocketServer, visible);
 
 /// The JS type that `ws.binaryType` selects for binary messages, pings and pongs.
-use crate::generated_bindgen::server::WebSocketBinaryType as BinaryType;
+use crate::generated_bindgen::server::BinaryType;
 
-// Stored in its JS wrapper, which `this_value` holds strongly while uWS has the address as the socket's user data.
+// Stored inline in its JS wrapper, which `this_value` keeps alive while uWS has the address as the socket's user data.
 //
 // R-2: every uws/JS callback into this socket can re-enter
 // — `on_open` → `ws.cork(JS)` → `ws.close()` → `on_close` mutates `flags` /
@@ -530,8 +530,8 @@ impl ServerWebSocket {
         }
         .into_js_wrapper(global_object);
         let js_value = this_value.to_js();
-        let this = this_value.as_ptr().as_ptr();
-        // SAFETY: `this_value` holds the object the struct is in.
+        let this = this_value.payload_ptr().as_ptr();
+        // SAFETY: the struct is stored inline in the wrapper, which `this_value` keeps alive.
         let this_ref = unsafe { &*this };
         this_ref
             .this_value
@@ -951,10 +951,10 @@ impl ServerWebSocket {
         &self,
         cx: &mut JsScope<'_>,
         topic: JsLocal<'_>,
-        message: JsLocal<'_>,
+        data: JsLocal<'_>,
         compress: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        let args = [topic.to_js(), message.to_js(), compress.to_js()];
+        let args = [topic.to_js(), data.to_js(), compress.to_js()];
         self.publish_message(cx.global(), args, "publish", Accept::Any)
     }
 
@@ -962,10 +962,10 @@ impl ServerWebSocket {
         &self,
         cx: &mut JsScope<'_>,
         topic: JsLocal<'_>,
-        message: JsLocal<'_>,
+        data: JsLocal<'_>,
         compress: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        let args = [topic.to_js(), message.to_js(), compress.to_js()];
+        let args = [topic.to_js(), data.to_js(), compress.to_js()];
         self.publish_message(cx.global(), args, "publishText", Accept::Text)
     }
 
@@ -973,10 +973,10 @@ impl ServerWebSocket {
         &self,
         cx: &mut JsScope<'_>,
         topic: JsLocal<'_>,
-        message: JsLocal<'_>,
+        data: JsLocal<'_>,
         compress: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        let args = [topic.to_js(), message.to_js(), compress.to_js()];
+        let args = [topic.to_js(), data.to_js(), compress.to_js()];
         self.publish_message(cx.global(), args, "publishBinary", Accept::Binary)
     }
 
@@ -1005,12 +1005,12 @@ impl ServerWebSocket {
     pub(crate) fn send(
         &self,
         cx: &mut JsScope<'_>,
-        message: JsLocal<'_>,
+        data: JsLocal<'_>,
         compress: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         self.send_message(
             cx.global(),
-            message.to_js(),
+            data.to_js(),
             compress.to_js(),
             "send",
             Accept::Any,
@@ -1020,12 +1020,12 @@ impl ServerWebSocket {
     pub(crate) fn send_text(
         &self,
         cx: &mut JsScope<'_>,
-        message: JsLocal<'_>,
+        data: JsLocal<'_>,
         compress: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         self.send_message(
             cx.global(),
-            message.to_js(),
+            data.to_js(),
             compress.to_js(),
             "sendText",
             Accept::Text,
@@ -1035,12 +1035,12 @@ impl ServerWebSocket {
     pub(crate) fn send_binary(
         &self,
         cx: &mut JsScope<'_>,
-        message: JsLocal<'_>,
+        data: JsLocal<'_>,
         compress: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         self.send_message(
             cx.global(),
-            message.to_js(),
+            data.to_js(),
             compress.to_js(),
             "sendBinary",
             Accept::Binary,
@@ -1074,26 +1074,26 @@ impl ServerWebSocket {
         reason: JsLocal<'_>,
     ) -> JsResult<()> {
         let global_this = cx.global();
-        let (code_value, reason_value) = (code.to_js(), reason.to_js());
+        let (code, reason) = (code.to_js(), reason.to_js());
         bun_output::scoped_log!(WebSocketServer, "close()");
 
         if self.is_closed() {
             return Ok(());
         }
 
-        let code: i32 = if code_value.is_undefined() {
+        let code: i32 = if code.is_undefined() {
             1000
-        } else if code_value.is_number() {
-            code_value.coerce_to_i32(global_this)?
+        } else if code.is_number() {
+            code.coerce_to_i32(global_this)?
         } else {
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "close requires a numeric code or undefined"
             )));
         };
-        let reason: Utf8Bytes = if reason_value.is_undefined() {
+        let reason: Utf8Bytes = if reason.is_undefined() {
             Utf8Bytes::EMPTY
         } else {
-            reason_value.to_utf8(global_this)?
+            reason.to_utf8(global_this)?
         };
         let reason = bun_core::strings::truncate_to_char_boundary(reason.slice(), MAX_CLOSE_REASON);
 

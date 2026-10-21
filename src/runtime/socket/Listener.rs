@@ -295,8 +295,8 @@ impl Listener {
                 }
                 .into_js_wrapper(cx.global());
                 let js_value = this_value.to_js();
-                let this: *mut Listener = this_value.as_ptr().as_ptr();
-                // SAFETY: inside `this_value`; every field touched below
+                let this: *mut Listener = this_value.payload_ptr().as_ptr();
+                // SAFETY: the payload of `this_value`; every field touched below
                 // is `Cell`/`JsCell` or `&self`, so a shared borrow suffices.
                 let this_ref = unsafe { &*this };
                 // TODO: server_name is not supported on named pipes, I belive its , lets wait for
@@ -371,12 +371,14 @@ impl Listener {
                 // The listener holds the handlers cell in a visited slot; every
                 // accepted socket shares the same cell.
                 js_Listener::handlers_set_cached(js_value, cx.global(), this_ref.handlers.cell());
-                this_ref.handlers.set_listener(Some(this_value.as_ptr()));
+                this_ref
+                    .handlers
+                    .set_listener(Some(this_value.payload_ptr()));
                 this_ref
                     .this_value
                     .with_mut(|r| r.set_strong(js_value, cx.global()));
                 this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
-                // SAFETY: its address does not change, and `Drop` leaves.
+                // SAFETY: its address does not change; leaves its context in `Drop`.
                 unsafe { bun_jsc::AbortHandle::arm_owner(this, cx.context()) };
                 return Ok(js_value);
             }
@@ -420,15 +422,15 @@ impl Listener {
         }
         .into_js_wrapper(cx.global());
         let js_value = this_value.to_js();
-        let this: *mut Listener = this_value.as_ptr().as_ptr();
-        // SAFETY: inside `this_value`; every field touched through this
+        let this: *mut Listener = this_value.payload_ptr().as_ptr();
+        // SAFETY: the payload of `this_value`; every field touched through this
         // borrow is `Cell`/`JsCell` or `&self`. The one plain-field write
         // (`connection`, below) goes through the root pointer instead.
         let this_ref = unsafe { &*this };
         this_ref
             .group
             .with_mut(|g| g.init(uws::Loop::get(), None, this.cast::<c_void>()));
-        // `Listener` is in a JS cell, so LSAN can't trace `loop->data.head →
+        // `Listener` is stored inside its wrapper, so LSAN can't trace `loop->data.head →
         // this.group → head_sockets → us_socket_t` once the only pointer into the
         // group lives inside the JS heap. Registering the embedded group as a
         // root region restores reachability for the accepted sockets' allocations.
@@ -577,7 +579,7 @@ impl Listener {
             return Err(cx.global().throw_value(err));
         }
 
-        // SAFETY: nothing else has the object yet; scoped write through the
+        // SAFETY: nothing else has the wrapper yet; scoped write through the
         // root pointer so no `&mut Listener` is materialized (`this_ref` never
         // reads `connection`).
         unsafe { (*this).connection = connection };
@@ -606,12 +608,14 @@ impl Listener {
         // The listener holds the handlers cell in a visited slot; every
         // accepted socket shares the same cell.
         js_Listener::handlers_set_cached(js_value, cx.global(), this_ref.handlers.cell());
-        this_ref.handlers.set_listener(Some(this_value.as_ptr()));
+        this_ref
+            .handlers
+            .set_listener(Some(this_value.payload_ptr()));
         this_ref
             .this_value
             .with_mut(|r| r.set_strong(js_value, cx.global()));
         this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
-        // SAFETY: its address does not change, and `Drop` leaves.
+        // SAFETY: its address does not change; leaves its context in `Drop`.
         unsafe { bun_jsc::AbortHandle::arm_owner(this, cx.context()) };
 
         Ok(js_value)

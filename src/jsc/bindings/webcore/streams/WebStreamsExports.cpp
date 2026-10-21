@@ -18,6 +18,9 @@
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/JSPromise.h>
 
+using Bun::Bindgen::Generated::JSBlobInternalReadableStreamSource;
+using Bun::Bindgen::Generated::JSBytesInternalReadableStreamSource;
+using Bun::Bindgen::Generated::JSFileInternalReadableStreamSource;
 // The extern "C" / Rust FFI surface. Every symbol name, signature, and ReadableStreamTag
 // discriminant (Invalid=-1, JavaScript=0, Blob=1, File=2, Direct=3 [never emitted], Bytes=4)
 // is frozen by ReadableStream.rs's assert_ffi_discr!.
@@ -56,15 +59,15 @@ static int32_t tagOfStream(JSReadableStream* stream, void** ptr)
     if (handle.isEmpty() || !handle.isCell())
         return 0;
     JSCell* handleCell = handle.asCell();
-    if (auto* blobSource = dynamicDowncast<Bun::Bindgen::Generated::JSBlobInternalReadableStreamSource>(handleCell)) {
+    if (auto* blobSource = dynamicDowncast<JSBlobInternalReadableStreamSource>(handleCell)) {
         *ptr = blobSource->wrapped();
         return 1;
     }
-    if (auto* fileSource = dynamicDowncast<Bun::Bindgen::Generated::JSFileInternalReadableStreamSource>(handleCell)) {
+    if (auto* fileSource = dynamicDowncast<JSFileInternalReadableStreamSource>(handleCell)) {
         *ptr = fileSource->wrapped();
         return 2;
     }
-    if (auto* bytesSource = dynamicDowncast<Bun::Bindgen::Generated::JSBytesInternalReadableStreamSource>(handleCell)) {
+    if (auto* bytesSource = dynamicDowncast<JSBytesInternalReadableStreamSource>(handleCell)) {
         *ptr = bytesSource->wrapped();
         return 4;
     }
@@ -217,9 +220,9 @@ extern "C" void ReadableStream__closeConsumedAsBody(JSC::EncodedJSValue possible
 // The `lockedStream` slot (ReadableStream.bind.ts): the only way from a natively locked stream's source back to the stream.
 static WriteBarrier<Unknown>* lockedStreamSlot(JSCell* handle)
 {
-    if (auto* bytesSource = dynamicDowncast<Bun::Bindgen::Generated::JSBytesInternalReadableStreamSource>(handle))
+    if (auto* bytesSource = dynamicDowncast<JSBytesInternalReadableStreamSource>(handle))
         return &bytesSource->m_lockedStream;
-    if (auto* fileSource = dynamicDowncast<Bun::Bindgen::Generated::JSFileInternalReadableStreamSource>(handle))
+    if (auto* fileSource = dynamicDowncast<JSFileInternalReadableStreamSource>(handle))
         return &fileSource->m_lockedStream;
     return nullptr;
 }

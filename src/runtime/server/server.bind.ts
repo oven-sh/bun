@@ -10,7 +10,7 @@ function server(name: string) {
     finalize: true,
     memoryCost: true,
     configurable: false,
-    /** The handlers, which the struct also has for the request path to read, and the C++ list of route handlers. */
+    /** GC roots for the handlers (the struct keeps raw copies for the request path) and for the C++ route list. */
     internalFields: [
       "routeList",
       "onRequest",
@@ -37,7 +37,7 @@ function server(name: string) {
         capability: "js",
         throws: true,
         length: 1,
-        rustName: "on_fetch",
+        rustName: "do_fetch",
       },
       hostname: { getter: b.any, cache: true, capability: "js", throws: true },
       id: { getter: b.string.utf8, cache: true },
@@ -46,7 +46,7 @@ function server(name: string) {
       port: { getter: b.u16.optional },
       protocol: { getter: ServerProtocol },
       publish: {
-        args: { topic: b.any, message: b.any, compress: b.any },
+        args: { topic: b.any, data: b.any, compress: b.any },
         returns: b.any,
         capability: "js",
         throws: true,
@@ -59,7 +59,7 @@ function server(name: string) {
         capability: "js",
         throws: true,
         length: 2,
-        rustName: "on_reload",
+        rustName: "do_reload",
       },
       requestIP: {
         args: { request: b.any },
@@ -72,7 +72,7 @@ function server(name: string) {
         args: { closeActiveConnections: b.any },
         returns: b.any,
         capability: "js",
-        rustName: "stop_from_js",
+        rustName: "do_stop",
       },
       subscriberCount: {
         args: { topic: b.any },
@@ -81,7 +81,13 @@ function server(name: string) {
         throws: true,
         rustName: "do_subscriber_count",
       },
-      timeout: { args: { request: b.any, seconds: b.any }, returns: b.any, capability: "heap", throws: true },
+      timeout: {
+        args: { request: b.any, seconds: b.any },
+        returns: b.any,
+        capability: "heap",
+        throws: true,
+        rustName: "do_timeout",
+      },
       unref: { returns: b.self, passThis: true, rustName: "do_unref" },
       upgrade: {
         args: { request: b.any, options: b.any },
@@ -89,10 +95,10 @@ function server(name: string) {
         capability: "js",
         throws: true,
         length: 1,
-        rustName: "on_upgrade",
+        rustName: "do_upgrade",
       },
       url: { getter: b.any, cache: true, capability: "js", throws: true },
-      "@@dispose": { capability: "js", rustName: "dispose_from_js" },
+      "@@dispose": { capability: "js" },
     },
   });
 }
@@ -102,24 +108,24 @@ export const DebugHTTPServer = server("DebugHTTPServer");
 export const HTTPSServer = server("HTTPSServer");
 export const DebugHTTPSServer = server("DebugHTTPSServer");
 
-/** What a binary message, ping or pong is given to its handler as. */
-export const WebSocketBinaryType = b.enumeration([
+/** The type binary messages, pings and pongs are delivered as. */
+export const BinaryType = b.enumeration([
   ["nodebuffer", "Buffer", "buffer"],
   ["arraybuffer", "ArrayBuffer"],
   ["uint8array", "Uint8Array"],
   "blob",
 ]);
 
-/** A closed socket ignores the call whatever the arguments are, so the body converts them. */
+/** `b.any`: a closed socket must ignore the call before any argument is converted. */
 const send = {
-  args: { message: b.any, compress: b.any },
+  args: { data: b.any, compress: b.any },
   returns: b.any,
   capability: "js",
   throws: true,
 } as const;
 const control = { args: { data: b.any }, returns: b.any, capability: "js", throws: true } as const;
 const publish = {
-  args: { topic: b.any, message: b.any, compress: b.any },
+  args: { topic: b.any, data: b.any, compress: b.any },
   returns: b.any,
   capability: "js",
   throws: true,
@@ -135,7 +141,7 @@ export const ServerWebSocket = b.class({
   /** `server` keeps the handlers the struct points at alive. */
   internalFields: ["data", "server"],
   proto: {
-    binaryType: { getter: WebSocketBinaryType, setter: true },
+    binaryType: { getter: BinaryType, setter: true },
     close: { args: { code: b.any, reason: b.any }, capability: "js", throws: true, length: 3 },
     cork: {
       args: { callback: b.callable },

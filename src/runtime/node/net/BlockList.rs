@@ -389,7 +389,7 @@ pub(crate) extern "C" fn BlockList__onStructuredCloneSerialize(
     _ = serializer.write_int_le(this.serialize_nonce);
 }
 
-/// Empty: the bytes are not a valid record (the deserializer reports its usual error).
+/// `JSValue::ZERO`: the bytes are not a valid record (the deserializer reports its usual error).
 ///
 /// # Safety
 /// `[*ptr, end)` is the unread part of the `SerializedScriptValue`'s buffer.

@@ -5,7 +5,7 @@ use bun_jsc::{
     self as jsc, ErrorCode, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue, JsRef, JsResult,
 };
 
-use super::js_valkey::{JSValkeyClient, Js, SubscriptionCtx};
+use super::js_valkey::{JSValkeyClient, SubscriptionCtx, js};
 use super::protocol_jsc as protocol;
 use super::valkey;
 use super::valkey_command_body::{Args as CommandArgs, Command, Meta as CommandMeta};
@@ -178,16 +178,16 @@ pub(crate) mod compile {
 macro_rules! cmd_noargs {
     ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
         pub(crate) fn $fn_name(
-            this: &Self,
+            &self,
             this_value: JsWrapper<'_, Self>,
             cx: &mut JsScope<'_>,
         ) -> JsResult<JSValue> {
             let global = cx.global();
             compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
+                self, $name,
             )?;
             send_cmd(
-                this,
+                self,
                 global,
                 this_value.to_js(),
                 $command.as_bytes(),
@@ -202,14 +202,14 @@ macro_rules! cmd_noargs {
 macro_rules! cmd_key {
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $state:ident) => {
         pub(crate) fn $fn_name(
-            this: &Self,
+            &self,
             this_value: JsWrapper<'_, Self>,
             cx: &mut JsScope<'_>,
             key: JsLocal<'_>,
         ) -> JsResult<JSValue> {
             let global = cx.global();
             compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
+                self, $name,
             )?;
 
             let Some(key) = from_js(global, key.to_js())? else {
@@ -220,7 +220,7 @@ macro_rules! cmd_key {
                 ));
             };
             send_cmd(
-                this,
+                self,
                 global,
                 this_value.to_js(),
                 $command.as_bytes(),
@@ -235,15 +235,15 @@ macro_rules! cmd_key {
 macro_rules! cmd_key_varargs {
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $state:ident) => {
         pub(crate) fn $fn_name(
-            this: &Self,
+            &self,
             this_value: JsWrapper<'_, Self>,
             cx: &mut JsScope<'_>,
-            arguments: &[JsLocal<'_>],
+            args: &[JsLocal<'_>],
         ) -> JsResult<JSValue> {
             let global = cx.global();
-            let arguments = JsLocal::to_js_slice(arguments);
+            let arguments = JsLocal::to_js_slice(args);
             compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
+                self, $name,
             )?;
 
             if arguments
@@ -270,7 +270,7 @@ macro_rules! cmd_key_varargs {
                 args.push(another);
             }
             send_cmd(
-                this,
+                self,
                 global,
                 this_value.to_js(),
                 $command.as_bytes(),
@@ -285,7 +285,7 @@ macro_rules! cmd_key_varargs {
 macro_rules! cmd_key_value {
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $arg1_name:literal, $state:ident) => {
         pub(crate) fn $fn_name(
-            this: &Self,
+            &self,
             this_value: JsWrapper<'_, Self>,
             cx: &mut JsScope<'_>,
             key: JsLocal<'_>,
@@ -293,7 +293,7 @@ macro_rules! cmd_key_value {
         ) -> JsResult<JSValue> {
             let global = cx.global();
             compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
+                self, $name,
             )?;
 
             let Some(key) = from_js(global, key.to_js())? else {
@@ -311,7 +311,7 @@ macro_rules! cmd_key_value {
                 ));
             };
             send_cmd(
-                this,
+                self,
                 global,
                 this_value.to_js(),
                 $command.as_bytes(),
@@ -326,7 +326,7 @@ macro_rules! cmd_key_value {
 macro_rules! cmd_key_value_value2 {
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $arg1_name:literal, $arg2_name:literal, $state:ident) => {
         pub(crate) fn $fn_name(
-            this: &Self,
+            &self,
             this_value: JsWrapper<'_, Self>,
             cx: &mut JsScope<'_>,
             key: JsLocal<'_>,
@@ -335,7 +335,7 @@ macro_rules! cmd_key_value_value2 {
         ) -> JsResult<JSValue> {
             let global = cx.global();
             compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
+                self, $name,
             )?;
 
             let Some(key) = from_js(global, key.to_js())? else {
@@ -360,7 +360,7 @@ macro_rules! cmd_key_value_value2 {
                 ));
             };
             send_cmd(
-                this,
+                self,
                 global,
                 this_value.to_js(),
                 $command.as_bytes(),
@@ -378,15 +378,15 @@ macro_rules! cmd_strings_varargs {
     };
     ($fn_name:ident, $name:literal, $command:literal, $state:ident, $meta:expr) => {
         pub(crate) fn $fn_name(
-            this: &Self,
+            &self,
             this_value: JsWrapper<'_, Self>,
             cx: &mut JsScope<'_>,
-            arguments: &[JsLocal<'_>],
+            args: &[JsLocal<'_>],
         ) -> JsResult<JSValue> {
             let global = cx.global();
-            let arguments = JsLocal::to_js_slice(arguments);
+            let arguments = JsLocal::to_js_slice(args);
             compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
+                self, $name,
             )?;
 
             let mut args: Vec<JSArgument> = Vec::with_capacity(arguments.len());
@@ -402,7 +402,7 @@ macro_rules! cmd_strings_varargs {
                 args.push(another);
             }
             send_cmd(
-                this,
+                self,
                 global,
                 this_value.to_js(),
                 $command.as_bytes(),
@@ -417,15 +417,15 @@ macro_rules! cmd_strings_varargs {
 macro_rules! cmd_key_value_varargs {
     ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
         pub(crate) fn $fn_name(
-            this: &Self,
+            &self,
             this_value: JsWrapper<'_, Self>,
             cx: &mut JsScope<'_>,
-            arguments: &[JsLocal<'_>],
+            args: &[JsLocal<'_>],
         ) -> JsResult<JSValue> {
             let global = cx.global();
-            let arguments = JsLocal::to_js_slice(arguments);
+            let arguments = JsLocal::to_js_slice(args);
             compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
+                self, $name,
             )?;
 
             let mut args: Vec<JSArgument> = Vec::with_capacity(arguments.len());
@@ -445,7 +445,7 @@ macro_rules! cmd_key_value_varargs {
                 args.push(another);
             }
             send_cmd(
-                this,
+                self,
                 global,
                 this_value.to_js(),
                 $command.as_bytes(),
@@ -463,16 +463,16 @@ macro_rules! cmd_key_value_varargs {
 
 impl JSValkeyClient {
     pub(crate) fn js_send(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         command: JsLocal<'_>,
-        args_array: JsLocal<'_>,
+        args: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let command = command.to_js().to_bun_string(global)?;
 
-        let args_array = args_array.to_js();
+        let args_array = args.to_js();
         if !args_array.is_object() || !args_array.is_array() {
             return Err(global.throw(format_args!("Arguments must be an array")));
         }
@@ -500,7 +500,7 @@ impl JSValkeyClient {
         let checked_meta = cmd.meta.check(&cmd);
         cmd.meta = checked_meta;
         // Send command with slices directly
-        let promise = match this.send(global, this_value.to_js(), &cmd) {
+        let promise = match self.send(global, this_value.to_js(), &cmd) {
             Ok(p) => p,
             Err(err) => {
                 return send_err_to_js(global, "Failed to send command", &err);
@@ -510,19 +510,19 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn get(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, b"get")?;
+        require_not_subscriber(self, b"get")?;
 
         let Some(key) = from_js(global, key.to_js())? else {
             return Err(global.throw_invalid_argument_type("get", "key", "string or buffer"));
         };
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"GET",
@@ -533,19 +533,19 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn get_buffer(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, b"getBuffer")?;
+        require_not_subscriber(self, b"getBuffer")?;
 
         let Some(key) = from_js(global, key.to_js())? else {
             return Err(global.throw_invalid_argument_type("getBuffer", "key", "string or buffer"));
         };
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"GET",
@@ -556,7 +556,7 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn set(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
@@ -564,7 +564,7 @@ impl JSValkeyClient {
         options: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, b"set")?;
+        require_not_subscriber(self, b"set")?;
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(2 + options.len());
 
@@ -597,7 +597,7 @@ impl JSValkeyClient {
         }
 
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"SET",
@@ -608,19 +608,19 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn incr(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, b"incr")?;
+        require_not_subscriber(self, b"incr")?;
 
         let Some(key) = from_js(global, key.to_js())? else {
             return Err(global.throw_invalid_argument_type("incr", "key", "string or buffer"));
         };
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"INCR",
@@ -631,19 +631,19 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn decr(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, b"decr")?;
+        require_not_subscriber(self, b"decr")?;
 
         let Some(key) = from_js(global, key.to_js())? else {
             return Err(global.throw_invalid_argument_type("decr", "key", "string or buffer"));
         };
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"DECR",
@@ -654,20 +654,20 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn exists(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, b"exists")?;
+        require_not_subscriber(self, b"exists")?;
 
         let Some(key) = from_js(global, key.to_js())? else {
             return Err(global.throw_invalid_argument_type("exists", "key", "string or buffer"));
         };
         // Send EXISTS command with special Exists type for boolean conversion
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"EXISTS",
@@ -678,14 +678,14 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn expire(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
         seconds: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, b"expire")?;
+        require_not_subscriber(self, b"expire")?;
 
         let Some(key) = from_js(global, key.to_js())? else {
             return Err(global.throw_invalid_argument_type("expire", "key", "string or buffer"));
@@ -722,7 +722,7 @@ impl JSValkeyClient {
         let mut int_buf = bun_core::fmt::ItoaBuf::new();
         let seconds_slice = bun_core::fmt::itoa(&mut int_buf, seconds);
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"EXPIRE",
@@ -733,19 +733,19 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn ttl(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, b"ttl")?;
+        require_not_subscriber(self, b"ttl")?;
 
         let Some(key) = from_js(global, key.to_js())? else {
             return Err(global.throw_invalid_argument_type("ttl", "key", "string or buffer"));
         };
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"TTL",
@@ -757,14 +757,14 @@ impl JSValkeyClient {
 
     // Implement srem (remove value from a set)
     pub(crate) fn srem(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
         members: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, b"srem")?;
+        require_not_subscriber(self, b"srem")?;
 
         if members.is_empty() {
             return Err(global.throw(format_args!("SREM requires at least a key and one member")));
@@ -791,7 +791,7 @@ impl JSValkeyClient {
             args.push(value);
         }
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"SREM",
@@ -803,14 +803,14 @@ impl JSValkeyClient {
 
     // Implement srandmember (get random member from set)
     pub(crate) fn srandmember(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
         count: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, b"srandmember")?;
+        require_not_subscriber(self, b"srandmember")?;
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(2);
 
@@ -835,7 +835,7 @@ impl JSValkeyClient {
             args.push(count_arg);
         }
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"SRANDMEMBER",
@@ -847,19 +847,19 @@ impl JSValkeyClient {
 
     // Implement smembers (get all members of a set)
     pub(crate) fn smembers(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, b"smembers")?;
+        require_not_subscriber(self, b"smembers")?;
 
         let Some(key) = from_js(global, key.to_js())? else {
             return Err(global.throw_invalid_argument_type("smembers", "key", "string or buffer"));
         };
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"SMEMBERS",
@@ -871,14 +871,14 @@ impl JSValkeyClient {
 
     // Implement spop (pop a random member from a set)
     pub(crate) fn spop(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
         count: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, b"spop")?;
+        require_not_subscriber(self, b"spop")?;
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(2);
 
@@ -899,7 +899,7 @@ impl JSValkeyClient {
             args.push(count_arg);
         }
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"SPOP",
@@ -911,14 +911,14 @@ impl JSValkeyClient {
 
     // Implement sadd (add member to a set)
     pub(crate) fn sadd(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
         members: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, b"sadd")?;
+        require_not_subscriber(self, b"sadd")?;
 
         if members.is_empty() {
             return Err(global.throw(format_args!("SADD requires at least a key and one member")));
@@ -945,7 +945,7 @@ impl JSValkeyClient {
             args.push(value);
         }
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"SADD",
@@ -957,19 +957,19 @@ impl JSValkeyClient {
 
     // Implement sismember (check if value is member of a set)
     pub(crate) fn sismember(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
-        value: JsLocal<'_>,
+        member: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, b"sismember")?;
+        require_not_subscriber(self, b"sismember")?;
 
         let Some(key) = from_js(global, key.to_js())? else {
             return Err(global.throw_invalid_argument_type("sismember", "key", "string or buffer"));
         };
-        let Some(value) = from_js(global, value.to_js())? else {
+        let Some(member) = from_js(global, member.to_js())? else {
             return Err(global.throw_invalid_argument_type(
                 "sismember",
                 "value",
@@ -977,11 +977,11 @@ impl JSValkeyClient {
             ));
         };
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"SISMEMBER",
-            CommandArgs::Args(&[key, value]),
+            CommandArgs::Args(&[key, member]),
             CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send SISMEMBER command",
         )
@@ -989,14 +989,14 @@ impl JSValkeyClient {
 
     // Implement hmget (get multiple values from hash)
     pub(crate) fn hmget(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
         fields: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, b"hmget")?;
+        require_not_subscriber(self, b"hmget")?;
 
         let fields = JsLocal::to_js_slice(fields);
         let Some(&second_arg) = fields.first() else {
@@ -1044,7 +1044,7 @@ impl JSValkeyClient {
         }
 
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"HMGET",
@@ -1056,30 +1056,30 @@ impl JSValkeyClient {
 
     // Implement hincrby (increment hash field by integer value)
     pub(crate) fn hincrby(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
         field: JsLocal<'_>,
-        value: JsLocal<'_>,
+        increment: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, b"hincrby")?;
+        require_not_subscriber(self, b"hincrby")?;
 
         let key = key.to_js().to_bun_string(global)?;
         let field = field.to_js().to_bun_string(global)?;
-        let value = value.to_js().to_bun_string(global)?;
+        let increment = increment.to_js().to_bun_string(global)?;
 
         let key_slice = key.to_utf8();
         let field_slice = field.to_utf8();
-        let value_slice = value.to_utf8();
+        let increment_slice = increment.to_utf8();
 
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"HINCRBY",
-            CommandArgs::Slices(&[key_slice, field_slice, value_slice]),
+            CommandArgs::Slices(&[key_slice, field_slice, increment_slice]),
             CommandMeta::default(),
             "Failed to send HINCRBY command",
         )
@@ -1087,37 +1087,37 @@ impl JSValkeyClient {
 
     // Implement hincrbyfloat (increment hash field by float value)
     pub(crate) fn hincrbyfloat(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
         field: JsLocal<'_>,
-        value: JsLocal<'_>,
+        increment: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, b"hincrbyfloat")?;
+        require_not_subscriber(self, b"hincrbyfloat")?;
 
         let key = key.to_js().to_bun_string(global)?;
         let field = field.to_js().to_bun_string(global)?;
-        let value = value.to_js().to_bun_string(global)?;
+        let increment = increment.to_js().to_bun_string(global)?;
 
         let key_slice = key.to_utf8();
         let field_slice = field.to_utf8();
-        let value_slice = value.to_utf8();
+        let increment_slice = increment.to_utf8();
 
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"HINCRBYFLOAT",
-            CommandArgs::Slices(&[key_slice, field_slice, value_slice]),
+            CommandArgs::Slices(&[key_slice, field_slice, increment_slice]),
             CommandMeta::default(),
             "Failed to send HINCRBYFLOAT command",
         )
     }
 
     fn hset_impl(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
@@ -1125,7 +1125,7 @@ impl JSValkeyClient {
         command: &'static [u8],
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, command)?;
+        require_not_subscriber(self, command)?;
 
         let key = key.to_js().to_bun_string(global)?;
 
@@ -1211,7 +1211,7 @@ impl JSValkeyClient {
             "Failed to send HMSET command"
         };
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             command,
@@ -1222,23 +1222,23 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn hset(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
         fields: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
-        Self::hset_impl(this, this_value, cx, key, fields, b"HSET")
+        self.hset_impl(this_value, cx, key, fields, b"HSET")
     }
 
     pub(crate) fn hmset(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
         fields: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
-        Self::hset_impl(this, this_value, cx, key, fields, b"HMSET")
+        self.hset_impl(this_value, cx, key, fields, b"HMSET")
     }
 
     cmd_key_varargs!(hdel, b"hdel", "HDEL", "key", NotSubscriber);
@@ -1264,7 +1264,7 @@ impl JSValkeyClient {
     cmd_strings_varargs!(httl, b"httl", "HTTL", NotSubscriber);
 
     pub(crate) fn hsetnx(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
@@ -1272,7 +1272,7 @@ impl JSValkeyClient {
         value: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, b"hsetnx")?;
+        require_not_subscriber(self, b"hsetnx")?;
 
         let Some(key) = from_js(global, key.to_js())? else {
             return Err(global.throw_invalid_argument_type("hsetnx", "key", "string or buffer"));
@@ -1284,7 +1284,7 @@ impl JSValkeyClient {
             return Err(global.throw_invalid_argument_type("hsetnx", "value", "string or buffer"));
         };
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"HSETNX",
@@ -1295,14 +1295,14 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn hexists(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
         field: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, b"hexists")?;
+        require_not_subscriber(self, b"hexists")?;
 
         let Some(key) = from_js(global, key.to_js())? else {
             return Err(global.throw_invalid_argument_type("hexists", "key", "string or buffer"));
@@ -1312,7 +1312,7 @@ impl JSValkeyClient {
             return Err(global.throw_invalid_argument_type("hexists", "field", "string or buffer"));
         };
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"HEXISTS",
@@ -1324,7 +1324,7 @@ impl JSValkeyClient {
 
     // Implement ping (send a PING command with an optional message)
     pub(crate) fn ping(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         message: JsLocal<'_>,
@@ -1348,7 +1348,7 @@ impl JSValkeyClient {
             None => &[],
         };
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"PING",
@@ -1661,7 +1661,7 @@ impl JSValkeyClient {
     );
 
     pub(crate) fn smove(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         source: JsLocal<'_>,
@@ -1669,7 +1669,7 @@ impl JSValkeyClient {
         member: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, b"smove")?;
+        require_not_subscriber(self, b"smove")?;
 
         let Some(source) = from_js(global, source.to_js())? else {
             return Err(global.throw_invalid_argument_type("smove", "source", "string or buffer"));
@@ -1685,7 +1685,7 @@ impl JSValkeyClient {
             return Err(global.throw_invalid_argument_type("smove", "member", "string or buffer"));
         };
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"SMOVE",
@@ -1843,14 +1843,14 @@ impl JSValkeyClient {
     cmd_strings_varargs!(xsetid, b"xsetid", "XSETID", NotSubscriber);
 
     pub(crate) fn publish(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         channel: JsLocal<'_>,
         message: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(this, b"publish")?;
+        require_not_subscriber(self, b"publish")?;
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(2);
 
@@ -1869,7 +1869,7 @@ impl JSValkeyClient {
         let message = from_js(global, arg1)?.expect("unreachable");
         args.push(message);
         send_cmd(
-            this,
+            self,
             global,
             this_value.to_js(),
             b"PUBLISH",
@@ -1880,20 +1880,19 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn subscribe(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        channel_or_many: JsLocal<'_>,
-        handler_callback: JsLocal<'_>,
+        channel: JsLocal<'_>,
+        listener: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         // `upsert_receive_handler`'s exit guard re-enters `on_writable` /
-        // `update_poll_ref` before `send()` is reached; hold a ref so `*this`
+        // `update_poll_ref` before `send()` is reached; hold a ref so `*self`
         // stays live across those calls.
-        let _guard = this.ref_guard();
+        let _guard = self.ref_guard();
 
-        let (channel_or_many, handler_callback) =
-            (channel_or_many.to_js(), handler_callback.to_js());
+        let (channel_or_many, handler_callback) = (channel.to_js(), listener.to_js());
         let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
 
         if !handler_callback.is_callable() {
@@ -1915,8 +1914,8 @@ impl JSValkeyClient {
         // the state check, as in `send()`, so a fresh client with the offline
         // queue off is rejected the way get() is: connecting, not never
         // connected.
-        this.ensure_dialing();
-        if let Some(message) = this.client.get().send_rejection() {
+        self.ensure_dialing();
+        if let Some(message) = self.client.get().send_rejection() {
             let error = valkey::ValkeyClient::send_rejection_error(global, message);
             return Ok(JSPromise::rejected_promise(global, error).to_js());
         }
@@ -1947,7 +1946,7 @@ impl JSValkeyClient {
                 // This is less-than-ideal, still, because this assumes a happy path. What happens if
                 // the SUBSCRIBE command fails? We have no way to roll back the addition of the
                 // handler.
-                this.upsert_receive_handler(global, channel_arg, handler_callback)?;
+                self.upsert_receive_handler(global, channel_arg, handler_callback)?;
             }
         } else {
             // It is a single string channel
@@ -1956,7 +1955,7 @@ impl JSValkeyClient {
             };
             redis_channels.push(channel);
 
-            this.upsert_receive_handler(global, channel_or_many, handler_callback)?;
+            self.upsert_receive_handler(global, channel_or_many, handler_callback)?;
         }
 
         let command = Command {
@@ -1964,11 +1963,11 @@ impl JSValkeyClient {
             args: CommandArgs::Args(&redis_channels),
             meta: CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST,
         };
-        let promise = match this.send(global, this_value.to_js(), &command) {
+        let promise = match self.send(global, this_value.to_js(), &command) {
             Ok(p) => p,
             Err(err) => {
                 // If we catch an error, we need to clean up any handlers we may have added and fall out of subscription mode
-                this.clear_all_receive_handlers(global)?;
+                self.clear_all_receive_handlers(global)?;
                 return send_err_to_js(global, "Failed to send SUBSCRIBE command", &err);
             }
         };
@@ -1997,29 +1996,29 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn unsubscribe(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        arguments: &[JsLocal<'_>],
+        args: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        // Hold a ref so `*this` stays live across the handler-map updates and
+        // Hold a ref so `*self` stays live across the handler-map updates and
         // the `send()` below.
-        let _guard = this.ref_guard();
+        let _guard = self.ref_guard();
 
         // Check if we're in subscription mode
-        require_subscriber(this, b"unsubscribe")?;
+        require_subscriber(self, b"unsubscribe")?;
 
-        let args_view = JsLocal::to_js_slice(arguments);
+        let args_view = JsLocal::to_js_slice(args);
 
         let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
 
         // The first argument can be a channel or an array of channels
         let Some(&channel_or_many) = args_view.first() else {
             // If no arguments, unsubscribe from all channels
-            this.clear_all_receive_handlers(global)?;
+            self.clear_all_receive_handlers(global)?;
             return Self::send_unsubscribe_request_and_cleanup(
-                this,
+                self,
                 this_value.to_js(),
                 global,
                 &redis_channels,
@@ -2027,7 +2026,7 @@ impl JSValkeyClient {
         };
 
         // Get the subscription context
-        if !this._subscription_ctx.get().is_subscriber {
+        if !self._subscription_ctx.get().is_subscriber {
             return Ok(JSPromise::resolved_promise_value(
                 global,
                 JSValue::UNDEFINED,
@@ -2062,7 +2061,7 @@ impl JSValkeyClient {
             redis_channels.push(ch);
 
             let remaining_listeners =
-                match this.remove_receive_handler(global, channel, listener_cb) {
+                match self.remove_receive_handler(global, channel, listener_cb) {
                     Ok(Some(n)) => n,
                     Ok(None) => {
                         // Listeners weren't present in the first place, so we can return a
@@ -2079,7 +2078,7 @@ impl JSValkeyClient {
             // channel.
             if remaining_listeners == 0 {
                 return Self::send_unsubscribe_request_and_cleanup(
-                    this,
+                    self,
                     this_value.to_js(),
                     global,
                     &redis_channels,
@@ -2115,7 +2114,7 @@ impl JSValkeyClient {
                 };
                 redis_channels.push(channel);
                 // Clear the handlers for this channel
-                this.clear_receive_handlers(global, channel_arg)?;
+                self.clear_receive_handlers(global, channel_arg)?;
             }
         } else if channel_or_many.is_string() {
             // It is a single string channel
@@ -2124,7 +2123,7 @@ impl JSValkeyClient {
             };
             redis_channels.push(channel);
             // Clear the handlers for this channel
-            this.clear_receive_handlers(global, channel_or_many)?;
+            self.clear_receive_handlers(global, channel_or_many)?;
         } else {
             return Err(global.throw_invalid_argument_type(
                 "unsubscribe",
@@ -2135,30 +2134,30 @@ impl JSValkeyClient {
 
         // Now send the unsubscribe command and clean up if necessary
         Self::send_unsubscribe_request_and_cleanup(
-            this,
+            self,
             this_value.to_js(),
             global,
             &redis_channels,
         )
     }
 
-    pub(crate) fn duplicate(this: &Self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub(crate) fn duplicate(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let thread = cx.js_thread();
         let global = thread.global();
         // The duplicate is the calling script's, whoever made the original.
-        let new_client_ptr = this.clone_without_connecting(&thread)?;
+        let new_client_ptr = self.clone_without_connecting(&thread)?;
         // SAFETY: clone_without_connecting returns a freshly allocated, leaked
         // JSValkeyClient (heap::alloc); valid for the rest of this scope.
         let new_client: &JSValkeyClient = unsafe { &*new_client_ptr };
 
-        let new_client_js = Js::to_js(new_client_ptr, global);
+        let new_client_js = js::to_js(new_client_ptr, global);
         new_client.this_value.set(JsRef::init_weak(new_client_js));
         new_client
             ._subscription_ctx
             .set(SubscriptionCtx::init(new_client)?);
         // If the original client is already connected and not manually closed, start connecting the new client.
-        if this.client.get().status == valkey::Status::Connected
-            && !this.client.get().flags.is_manually_closed
+        if self.client.get().status == valkey::Status::Connected
+            && !self.client.get().flags.is_manually_closed
         {
             // Use strong reference during connection to prevent premature GC
             new_client

@@ -7,7 +7,7 @@ export const SocketAddress = b.class({
   estimatedSize: true,
   construct: { args: { options: b.any }, capability: "js", throws: true, length: 0 },
   static: {
-    /** Not an instance of a subclass. */
+    /** `false` for an instance of a subclass. */
     isSocketAddress: { args: { value: b.any }, returns: b.bool },
     /** `undefined` if `input` is not an address with an optional `:port`. */
     parse: {

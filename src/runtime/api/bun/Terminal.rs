@@ -396,7 +396,7 @@ impl Terminal {
         unsafe { bun_ptr::RefCount::<Terminal>::deref(self.as_ctx_ptr()) };
     }
 
-    /// Opens the PTY and starts reading. The JS wrapper takes the returned ref, then goes to [`attach`](Self::attach).
+    /// Opens the PTY and starts reading. The caller gives the returned ref to the JS wrapper, then calls [`attach`](Self::attach).
     fn open(
         global_object: &JSGlobalObject,
         options: &Options,
@@ -565,15 +565,15 @@ impl Terminal {
         options: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let global_object = cx.global();
-        let js_options = options.to_js();
+        let options = options.to_js();
 
-        if !js_options.is_object() {
+        if !options.is_object() {
             return Err(global_object.throw(format_args!(
                 "Terminal constructor requires an options object"
             )));
         }
 
-        let options = Options::parse_from_js(global_object, js_options)?;
+        let options = Options::parse_from_js(global_object, options)?;
 
         let terminal = Self::open(global_object, &options).map_err(|err| match err {
             InitError::OpenPtyFailed => global_object.throw(format_args!("Failed to open PTY")),

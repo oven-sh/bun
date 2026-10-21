@@ -52,12 +52,12 @@ extern "C" EncodedJSValue Bun__Bindgen__enumerationValueToJS(JSGlobalObject* glo
     return JSValue::encode(schemaStrings(getVM(globalObject)).enumerationValue(index));
 }
 
-// Does not count as a check of the exception: the host function's own scope makes that.
-extern "C" bool Bun__Bindgen__exceptionMatches(JSGlobalObject* globalObject, bool resultIsEmpty)
+// `exceptionForInspection()` is not an exception check: the host function's own scope does that.
+extern "C" bool Bun__Bindgen__exceptionPresenceMatches(JSGlobalObject* globalObject, bool shouldHaveException)
 {
     VM& vm = getVM(globalObject);
     auto* exception = vm.exceptionForInspection();
-    return resultIsEmpty ? !!exception : !exception || vm.isTerminationException(exception);
+    return shouldHaveException ? !!exception : !exception || vm.isTerminationException(exception);
 }
 
 extern "C" EncodedJSValue Bun__Bindgen__constructArrayFromValues(JSGlobalObject* globalObject, const JSValue* values, size_t count)

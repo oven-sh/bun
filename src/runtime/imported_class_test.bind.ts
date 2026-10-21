@@ -1,4 +1,4 @@
-// Functions that exist to test arguments that are instances of a class of another schema: test/internal/bindgen.test.ts
+// Tests a class imported from another `.bind.ts` as an argument type: test/internal/bindgen.test.ts
 import * as b from "../codegen/bindgen-lib.ts";
 import { BlockList } from "./node/net/BlockList.bind.ts";
 import { SocketAddress } from "./socket/SocketAddress.bind.ts";

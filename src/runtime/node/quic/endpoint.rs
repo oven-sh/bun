@@ -1172,7 +1172,7 @@ impl QuicEndpoint {
         };
         let this_value = structure.create(&cx.heap, this);
         let js_value = this_value.to_js();
-        let raw: *mut Self = this_value.as_ptr().as_ptr();
+        let raw: *mut Self = this_value.payload_ptr().as_ptr();
         let global = cx.global();
 
         let vt = Box::new(lsquic::NqVtable {
@@ -1202,7 +1202,7 @@ impl QuicEndpoint {
             packets_out,
             on_mini_conn_failed,
         });
-        // SAFETY: `raw` was just created and nothing else has the object.
+        // SAFETY: `raw` was just created and nothing else has the wrapper.
         unsafe {
             (*raw).vtable_ptr = &raw const *vt;
             (*raw).vtable.set(Some(vt));
@@ -2288,7 +2288,7 @@ impl QuicEndpoint {
         cx: &mut JsScope<'_>,
         address: JsLocal<'_>,
         options: JsLocal<'_>,
-        session_ticket_arg: JsLocal<'_>,
+        session_ticket: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         if self.closed.get() || self.closing.get() {
@@ -2304,7 +2304,7 @@ impl QuicEndpoint {
         }
         let address = address.to_js();
         let options = options.to_js();
-        let session_ticket_arg = session_ticket_arg.to_js();
+        let session_ticket = session_ticket.to_js();
         let Some(addr) =
             crate::generated_bindgen::socket_address::js_SocketAddress::from_js(address)
         else {
@@ -2401,7 +2401,7 @@ impl QuicEndpoint {
         let sni = config.servername.as_ref();
         let local = self.local_addr.get();
         let resume_blob: Option<Vec<u8>> = if config.enable_early_data {
-            session_ticket_arg
+            session_ticket
                 .as_array_buffer(global)
                 .map(|buf| buf.byte_slice().to_vec())
         } else {

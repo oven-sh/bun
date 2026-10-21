@@ -110,7 +110,7 @@ macro_rules! for_each_mux_app {
     }};
 }
 
-// `server_body.rs` holds the large method bodies (`on_request`, `on_upgrade`,
+// `server_body.rs` holds the large method bodies (`on_request`, `do_upgrade`,
 // route setup, …) split out to keep this module declaration file readable.
 
 #[path = "server_body.rs"]
@@ -205,7 +205,7 @@ bun_jsc::impl_abort_handle_owner!(
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = Self::schedule_deinit)]
 pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
-    /// The JS object's ref and [`Self::hold_open_ref`]'s.
+    /// The JS wrapper holds one ref, [`Self::hold_open_ref`] another.
     ref_count: bun_ptr::RefCount<Self>,
     pub(crate) app: core::cell::Cell<Option<*mut uws_sys::NewApp<SSL>>>,
     pub(crate) listener: core::cell::Cell<Option<*mut uws_sys::app::ListenSocket<SSL>>>,
@@ -1624,7 +1624,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     // `on_reload_from_zig` body lives in `server_body.rs` (`impl NewServer { … }`);
-    // same crate, separate file, alongside `on_reload`/`reload_static_routes`.
+    // same crate, separate file, alongside `do_reload`/`reload_static_routes`.
 
     pub(crate) fn on_static_request_complete(&self) {
         self.on_request_complete();
@@ -1912,7 +1912,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.deinit_if_we_can();
     }
 
-    /// The server's ref on itself while it is not drained: uWS and what it dispatched point at it.
+    /// Refs the server until it is drained: uWS and in-flight requests hold raw pointers to it.
     fn hold_open_ref(&self) {
         if self.is_drained() || self.flags.get().contains(ServerFlags::OPEN_REF_HELD) {
             return;
@@ -2030,7 +2030,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.deinit_running.set(false);
     }
 
-    /// The last ref is gone: the JS object is collected and the server is drained.
+    /// The last ref is gone: the JS wrapper is collected and the server is drained.
     fn schedule_deinit(this: *mut Self) {
         httplog!("scheduleDeinit");
         // SAFETY: `this` stays allocated until `deinit`.

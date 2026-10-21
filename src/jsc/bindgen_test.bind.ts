@@ -297,27 +297,27 @@ export const TestToken = b.class({
 });
 export const makeToken = b.fn({ args: { id: b.u32 }, returns: TestToken, capability: "heap" });
 
-/** Property attributes, a prototype that is an `Error`'s, and the kinds of assignable property. */
-export const TestProblem = b.class({
-  rustPath: "crate::bindgen_test::TestProblem",
+/** `enumerable` / `configurable`, `prototypeBase`, `call`, `value`, `writable` and a cached setter. */
+export const TestError = b.class({
+  rustPath: "crate::bindgen_test::TestError",
   construct: { args: { code: b.i32 } },
   /** An instance whose code is the sum. */
   call: { args: { codes: b.any.variadic }, returns: b.self, capability: "heap" },
   prototypeBase: "Error",
   enumerable: false,
   proto: {
-    name: { value: "TestProblem" },
+    name: { value: "TestError" },
     code: { getter: b.i32, enumerable: true },
-    sealedCode: { getter: b.i32, configurable: false },
+    nonConfigurableCode: { getter: b.i32, configurable: false },
     describe: { returns: b.string.utf8, configurable: false },
-    countArguments: { args: { all: b.any.variadic }, returns: b.usize },
+    countArguments: { args: { args: b.any.variadic }, returns: b.usize },
     /** Computed once. Assigning replaces it without calling Rust. */
     message: { getter: b.string.utf8, cache: true, writable: true },
     /** Computed once. Assigning a number stores its double. */
     detail: { getter: b.any, setter: true, cache: true, capability: "heap", passThis: true },
   },
   static: {
-    /** One for the process. */
+    /** Process-wide. */
     level: { getter: b.i32, setter: true },
   },
 });
@@ -333,7 +333,7 @@ const note = {
   estimatedSize: true,
   proto: { text: { internalField: "text" } },
 } as const;
-/** Its constructor makes the object and fills an internal field. It says it owns `size` bytes. */
+/** `passStructure`, `estimatedSize` and `memoryCost`: it reports `size` bytes. */
 export const TestNote = b.class({ ...note, rustPath: "crate::bindgen_test::TestNote", memoryCost: true });
 export const TestRefCountedNote = b.class({
   ...note,
@@ -341,7 +341,7 @@ export const TestRefCountedNote = b.class({
   refCounted: true,
 });
 
-/** What a function is bound to. */
+/** `forBind`: the bound `this` of a function. */
 export const TestBoundThis = b.class({
   rustPath: "crate::bindgen_test::TestBoundThis",
   forBind: true,
@@ -353,12 +353,12 @@ export const TestBoundThis = b.class({
   },
 });
 
-/** Its members are in a trait, and it writes its own `JsClass`. */
-export const TestExtensible = b.class({
-  rustPath: "crate::bindgen_test::TestExtensible",
-  rustTraits: ["crate::bindgen_test::TestExtensibleExt"],
+/** `rustTraits`, `overridesToJS` and `final: false`. */
+export const TestNonFinal = b.class({
+  rustPath: "crate::bindgen_test::TestNonFinal",
+  rustTraits: ["crate::bindgen_test::TestNonFinalExt"],
   refCounted: true,
-  customToJS: true,
+  overridesToJS: true,
   final: false,
   construct: { args: { value: b.i32 } },
   proto: { value: { getter: b.i32 } },
@@ -368,8 +368,8 @@ export const TestExtensible = b.class({
 /** `token.id` read through `from_js`, or `null` if `token` is not an instance. */
 export const tokenIdFromJS = b.fn({ args: { token: b.any }, returns: b.u32.nullable });
 /** Whether `from_js_direct` takes the value as a `TestNote` or a `TestRefCountedNote`. */
-export const isNoteDirect = b.fn({ args: { note: b.any }, returns: b.bool });
-export const problemConstructor = b.fn({ returns: b.any, capability: "js" });
+export const isNoteFromJSDirect = b.fn({ args: { note: b.any }, returns: b.bool });
+export const errorConstructor = b.fn({ returns: b.any, capability: "js" });
 /** The arguments after the first, as an array. */
 export const afterFirst = b.fn({
   args: { first: b.any, rest: b.any.variadic },

@@ -223,7 +223,7 @@ impl SecureContext {
         Ok(sc.into_js(&cx.heap))
     }
 
-    /// `tls.createSecureContext(opts)`. Equal configs get the same live cell, which `Listener` compares by pointer.
+    /// `tls.createSecureContext(opts)`. Equal configs get the same live wrapper, which `Listener` compares by pointer.
     pub(crate) fn intern(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
         let global = cx.global();
         let config = Self::config_from_js(global, options.to_js())?;
@@ -237,7 +237,7 @@ impl SecureContext {
             if let Some(existing) = Self::from_js(cached) {
                 // 64-bit key collision is ~2⁻⁶⁴ but a false hit hands the wrong
                 // cert to a connection. Full-digest compare is 32 bytes; cheap.
-                // SAFETY: `from_js` returns the struct inside `cached`, which is live.
+                // SAFETY: the struct is stored inline in the wrapper, which `cached` keeps alive.
                 if unsafe { (*existing).digest.get() } == d {
                     return Ok(cached);
                 }

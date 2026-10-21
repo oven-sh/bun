@@ -10,8 +10,6 @@ const matcherWithExpected = { ...matcher, args: { expected: b.any } } as const;
 const matcherWithCallArguments = { ...matcher, args: { expected: b.any.variadic } } as const;
 const matcherWithNthCallArguments = { ...matcher, args: { nth: b.any, expected: b.any.variadic }, length: 0 } as const;
 const matcherWithNthExpected = { ...matcher, args: { nth: b.any, expected: b.any }, length: 1 } as const;
-/** `expect(mock).toHaveBeenCalled()`, which throws when it is given an argument. */
-const matcherWithoutArgument = { ...matcherWithExpected, length: 0 } as const;
 const snapshotMatcher = { ...matcher, args: { propertyMatchers: b.any, hint: b.any }, length: 1 } as const;
 
 export const ExpectAnything = b.class({ rustPath: "crate::test_runner::ExpectAnything" });
@@ -95,7 +93,7 @@ export const Expect = b.class({
     toBeArray: matcher,
     toBeArrayOfSize: { ...matcher, args: { size: b.any } },
     toBeBoolean: matcher,
-    toBeCalled: { ...matcherWithoutArgument, rustName: "to_have_been_called" },
+    toBeCalled: { ...matcherWithExpected, rustName: "to_have_been_called", length: 0 },
     toBeCalledTimes: { ...matcherWithExpected, rustName: "to_have_been_called_times" },
     toBeCalledWith: { ...matcherWithCallArguments, rustName: "to_have_been_called_with" },
     toBeCloseTo: { ...matcher, args: { expected: b.any, precision: b.any }, length: 1 },
@@ -144,7 +142,8 @@ export const Expect = b.class({
     toEndWith: matcherWithExpected,
     toEqual: matcherWithExpected,
     toEqualIgnoringWhitespace: matcherWithExpected,
-    toHaveBeenCalled: matcherWithoutArgument,
+    // Throws when it is given an argument.
+    toHaveBeenCalled: { ...matcherWithExpected, length: 0 },
     toHaveBeenCalledOnce: matcher,
     toHaveBeenCalledTimes: matcherWithExpected,
     toHaveBeenCalledWith: matcherWithCallArguments,
@@ -154,14 +153,14 @@ export const Expect = b.class({
     toHaveLength: matcherWithExpected,
     toHaveNthReturnedWith: matcherWithNthExpected,
     // `toHaveProperty("a", undefined)` compares the value, `toHaveProperty("a")` does not.
-    toHaveProperty: { ...matcher, args: { path: b.any, value: b.any.variadic }, length: 2 },
+    toHaveProperty: { ...matcher, args: { keyPath: b.any, value: b.any.variadic }, length: 2 },
     toHaveReturned: matcherWithExpected,
     toHaveReturnedTimes: matcherWithExpected,
     toHaveReturnedWith: matcherWithExpected,
     toInclude: matcherWithExpected,
     toIncludeRepeated: { ...matcher, args: { substring: b.any, count: b.any } },
     toMatch: matcherWithExpected,
-    toMatchInlineSnapshot: snapshotMatcher,
+    toMatchInlineSnapshot: { ...matcher, args: { propertyMatchers: b.any, value: b.any }, length: 1 },
     toMatchObject: matcherWithExpected,
     toMatchSnapshot: snapshotMatcher,
     toReturn: { ...matcherWithExpected, rustName: "to_have_returned" },
@@ -232,8 +231,8 @@ export const ExpectMatcherUtils = b.class({
   },
 });
 
-const typeAssertion = { rustName: "fn_one_argument_returns_void", length: 1 } as const;
-const typeProperty = { getter: b.self, capability: "heap", rustName: "returns_expect_type_of" } as const;
+const typeAssertion = { rustName: "type_assertion", length: 1 } as const;
+const typeProperty = { getter: b.self, capability: "heap", rustName: "type_property" } as const;
 
 /** Only the type checker looks at `expectTypeOf()`: at run time nothing is checked. */
 export const ExpectTypeOf = b.class({
@@ -250,7 +249,7 @@ export const ExpectTypeOf = b.class({
     guards: typeProperty,
     instance: typeProperty,
     items: typeProperty,
-    map: { returns: b.self, capability: "heap", rustName: "fn_one_argument_returns_expect_type_of", length: 1 },
+    map: { returns: b.self, capability: "heap", length: 1 },
     not: typeProperty,
     omit: typeAssertion,
     parameter: typeAssertion,

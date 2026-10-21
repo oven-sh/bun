@@ -11,7 +11,7 @@ use crate::bindgen::{
 use crate::generated_bindgen::bindgen_test::{
     TestAnything, TestBare, TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag,
     TestNames, TestOptions, TestOptionsEcho, TestOuter, TestTextOrBytes, TestValue, js_TestCounter,
-    js_TestExtensible, js_TestNote, js_TestProblem, js_TestRefCounted, js_TestRefCountedNote,
+    js_TestError, js_TestNonFinal, js_TestNote, js_TestRefCounted, js_TestRefCountedNote,
 };
 use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult};
 use bun_ptr::{AsCtxPtr as _, RefPtr};
@@ -654,7 +654,7 @@ impl TestNote {
         size: usize,
     ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
         if text.is_undefined() {
-            return Err(heap.type_error(format_args!("a note has a text")));
+            return Err(heap.type_error(format_args!("text is required")));
         }
         let this_value = structure.create(heap, Self { size });
         // SAFETY: storing a value runs no JavaScript.
@@ -686,7 +686,7 @@ impl TestRefCountedNote {
         size: usize,
     ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
         if text.is_undefined() {
-            return Err(heap.type_error(format_args!("a note has a text")));
+            return Err(heap.type_error(format_args!("text is required")));
         }
         let ref_count = Cell::new(1);
         let this_value = structure.create(heap, RefPtr::new(Self { ref_count, size }));
@@ -724,18 +724,18 @@ impl TestBoundThis {
 }
 
 #[derive(bun_ptr::CellRefCounted)]
-pub(crate) struct TestExtensible {
+pub(crate) struct TestNonFinal {
     ref_count: Cell<u32>,
     value: i32,
 }
 
-pub(crate) trait TestExtensibleExt {
+pub(crate) trait TestNonFinalExt {
     fn constructor(value: i32) -> *mut Self;
     fn get_value(&self) -> i32;
     fn doubled<'a>(heap: &JsHeap<'a>, value: i32) -> JsLocal<'a>;
 }
 
-impl TestExtensibleExt for TestExtensible {
+impl TestNonFinalExt for TestNonFinal {
     fn constructor(value: i32) -> *mut Self {
         let ref_count = Cell::new(1);
         RefPtr::new(Self { ref_count, value }).into_raw()
@@ -755,18 +755,18 @@ impl TestExtensibleExt for TestExtensible {
     }
 }
 
-impl JsClass for TestExtensible {
+impl JsClass for TestNonFinal {
     fn to_js(mut self, global: &JSGlobalObject) -> JSValue {
         self.value = self.value.wrapping_mul(2);
-        js_TestExtensible::to_js(RefPtr::new(self).into_raw(), global)
+        js_TestNonFinal::to_js(RefPtr::new(self).into_raw(), global)
     }
 
     fn from_js(value: JSValue) -> Option<*mut Self> {
-        js_TestExtensible::from_js(value).map(NonNull::as_ptr)
+        js_TestNonFinal::from_js(value).map(NonNull::as_ptr)
     }
 
     fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        js_TestExtensible::from_js_direct(value).map(NonNull::as_ptr)
+        js_TestNonFinal::from_js_direct(value).map(NonNull::as_ptr)
     }
 }
 
@@ -774,15 +774,15 @@ pub(crate) fn token_id_from_js(token: JsLocal<'_>) -> Option<u32> {
     Some(token.to_js().as_class_ref::<TestToken>()?.id)
 }
 
-pub(crate) fn is_note_direct(note: JsLocal<'_>) -> bool {
+pub(crate) fn is_note_from_js_direct(note: JsLocal<'_>) -> bool {
     let note = note.to_js();
     note.is_cell()
         && (note.as_direct::<TestNote>().is_some()
             || note.as_direct::<TestRefCountedNote>().is_some())
 }
 
-pub(crate) fn problem_constructor<'a>(cx: &mut JsScope<'a>) -> JsLocal<'a> {
-    let constructor = js_TestProblem::get_constructor(cx.global());
+pub(crate) fn error_constructor<'a>(cx: &mut JsScope<'a>) -> JsLocal<'a> {
+    let constructor = js_TestError::get_constructor(cx.global());
     JsLocal::new(&cx.heap, constructor)
 }
 
@@ -794,13 +794,13 @@ pub(crate) fn after_first<'a>(
     bindgen::to_js::array(heap, rest.iter().copied(), bindgen::to_js::any)
 }
 
-pub(crate) struct TestProblem {
+pub(crate) struct TestError {
     code: i32,
 }
 
-static PROBLEM_LEVEL: AtomicI32 = AtomicI32::new(0);
+static ERROR_LEVEL: AtomicI32 = AtomicI32::new(0);
 
-impl TestProblem {
+impl TestError {
     pub(crate) fn constructor(code: i32) -> Self {
         Self { code }
     }
@@ -814,16 +814,16 @@ impl TestProblem {
         self.code
     }
 
-    pub(crate) fn get_sealed_code(&self) -> i32 {
+    pub(crate) fn get_non_configurable_code(&self) -> i32 {
         self.code
     }
 
     pub(crate) fn describe(&self) -> Vec<u8> {
-        format!("problem {}", self.code).into_bytes()
+        format!("error {}", self.code).into_bytes()
     }
 
-    pub(crate) fn count_arguments(&self, all: &[JsLocal<'_>]) -> usize {
-        all.len()
+    pub(crate) fn count_arguments(&self, args: &[JsLocal<'_>]) -> usize {
+        args.len()
     }
 
     pub(crate) fn get_message(&self) -> Vec<u8> {
@@ -842,15 +842,15 @@ impl TestProblem {
     ) {
         let doubled = JSValue::js_number(value.to_js().as_number() * 2.0);
         // SAFETY: storing a value runs no JavaScript.
-        js_TestProblem::detail_set_cached(this_value.to_js(), unsafe { heap.global() }, doubled);
+        js_TestError::detail_set_cached(this_value.to_js(), unsafe { heap.global() }, doubled);
     }
 
     pub(crate) fn get_level() -> i32 {
-        PROBLEM_LEVEL.load(Ordering::SeqCst)
+        ERROR_LEVEL.load(Ordering::SeqCst)
     }
 
     pub(crate) fn set_level(value: i32) {
-        PROBLEM_LEVEL.store(value, Ordering::SeqCst);
+        ERROR_LEVEL.store(value, Ordering::SeqCst);
     }
 }
 

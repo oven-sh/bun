@@ -295,7 +295,7 @@ pub(crate) struct Interpreter {
     pub(crate) flags: Cell<InterpreterFlags>,
     pub(crate) exit_code: Cell<Option<ExitCode>>,
     /// The JS wrapper. Strong from `run_from_js` until `finish` has settled the promise.
-    pub(crate) this_jsvalue: JsCell<JsRef>,
+    pub(crate) this_value: JsCell<JsRef>,
     pub(crate) cleanup_state: Cell<CleanupState>,
     pub(crate) estimated_size_for_gc: Cell<usize>,
 
@@ -562,7 +562,7 @@ impl Interpreter {
             // Starts at `None` so `async_cmd_done` only finishes once
             // `on_root_child_done` has recorded the real exit code.
             exit_code: Cell::new(None),
-            this_jsvalue: JsCell::new(JsRef::empty()),
+            this_value: JsCell::new(JsRef::empty()),
             cleanup_state: Cell::new(CleanupState::NeedsFullCleanup),
             estimated_size_for_gc: Cell::new(0),
             vm_args_utf8: JsCell::new(Vec::new()),
@@ -1091,7 +1091,7 @@ impl Interpreter {
         global: &crate::jsc::JSGlobalObject,
         idx: u32,
     ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
-        let jsobj = match self.this_jsvalue.try_get().and_then(js::jsobjs_get_cached) {
+        let jsobj = match self.this_value.try_get().and_then(js::jsobjs_get_cached) {
             Some(jsobjs) => jsobjs.get_direct_index(global, idx)?,
             None => crate::jsc::JSValue::ZERO,
         };
@@ -1122,7 +1122,7 @@ impl Interpreter {
     /// `Bun.$` callers can read it back.
     fn setup_io_before_run(&self) -> bun_sys::Result<()> {
         let interp_ptr: *mut Interpreter = self.as_ctx_ptr();
-        // Async poll callbacks of root stdin drive `Yield::run` through it.
+        // Root stdin's async poll callbacks drive `Yield::run` through it.
         if let crate::shell::io::InKind::Fd(ref r) = self.root_io.get().stdin {
             r.set_interp(interp_ptr);
         }
@@ -1223,8 +1223,8 @@ impl Interpreter {
         if matches!(self.event_loop, EventLoopHandle::Js { .. }) {
             self.exit_code.set(Some(exit_code));
             // Roots the wrapper until the promise is settled.
-            let this_ref = self.this_jsvalue.replace(JsRef::empty());
-            if let Some(this_jsvalue) = this_ref.try_get() {
+            let this_value = self.this_value.replace(JsRef::empty());
+            if let Some(this_jsvalue) = this_value.try_get() {
                 if self.failed() {
                     // `fail` already rejected the promise.
                     self.keep_alive.with_mut(|k| k.disable());
@@ -1357,7 +1357,7 @@ impl Interpreter {
         self.update_flags(|f| f.set_failed(true));
 
         let error = error?;
-        let this_jsvalue = self.this_jsvalue.try_get()?;
+        let this_jsvalue = self.this_value.try_get()?;
         let reject = js::reject_get_cached(this_jsvalue);
         js::resolve_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
         js::reject_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
@@ -1382,7 +1382,7 @@ impl Interpreter {
                 Some(global_this),
             ));
         }
-        self.this_jsvalue.with_mut(|r| r.upgrade(global_this));
+        self.this_value.with_mut(|r| r.upgrade(global_this));
         let vm = global_this.bun_vm();
         self.context.set(
             vm.as_graph_context(vm.context_of_caller_no_frame())
@@ -1568,7 +1568,7 @@ impl Drop for Interpreter {
         );
         match self.cleanup_state.get() {
             CleanupState::NeedsFullCleanup => {
-                // `Node` has no `Drop`. Slots stay for the env walk below. Windows leaks: `abort_after_failed_start`.
+                // `Node` has no `Drop`. Slots stay for the env walk below. Windows leaks them, see `abort_after_failed_start`.
                 #[cfg(not(windows))]
                 {
                     let node_count = self.nodes.get().len();
@@ -2906,7 +2906,7 @@ pub(crate) fn unreachable_state(context: &str, state: &str) -> ! {
     );
 }
 
-/// What `Bun.$` runs a parsed script with.
+/// Creates the interpreter that runs a parsed `Bun.$` script.
 pub(crate) fn create_shell_interpreter<'a>(
     cx: &mut JsScope<'a>,
     resolve: JsLocal<'a>,
@@ -2966,10 +2966,10 @@ pub(crate) fn create_shell_interpreter<'a>(
     if let Some(jsobjs) = parsed_shell_script::js::jsobjs_get_cached(parsed_shell_script_js) {
         js::jsobjs_set_cached(js_value, global, jsobjs);
     }
-    // SAFETY: `this_value` holds the object the interpreter is in.
-    let it = unsafe { this_value.as_ptr().as_ref() };
-    it.this_jsvalue.set(JsRef::init_weak(js_value));
-    it.keep_alive.with_mut(|k| {
+    // SAFETY: the payload of `this_value`.
+    let interp = unsafe { this_value.payload_ptr().as_ref() };
+    interp.this_value.set(JsRef::init_weak(js_value));
+    interp.keep_alive.with_mut(|k| {
         // SAFETY: `bun_vm_ptr()` is the live per-thread VM singleton.
         k.ref_(unsafe { crate::jsc::VirtualMachineRef::event_loop_ctx(global.bun_vm_ptr()) })
     });

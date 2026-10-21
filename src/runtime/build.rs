@@ -7,7 +7,7 @@
 //! Set BUN_CODEGEN_DIR for `include!(concat!(env!("BUN_CODEGEN_DIR"), "/generated_js2native.rs"))`.
 //!
 //! The codegen output lives at `<repo>/build/<profile>/codegen/` and is
-//! produced by the scripts of `src/codegen/` (run as part of `bun bd`).
+//! produced by the scripts in `src/codegen/` (run as part of `bun bd`).
 //! This build script just resolves and exports the path; it does NOT run the
 //! generator (that would create a Bun→cargo→Bun bootstrap loop).
 

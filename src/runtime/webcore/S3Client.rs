@@ -387,7 +387,7 @@ impl S3Client {
     }
 
     pub(crate) fn file(
-        ptr: &Self,
+        &self,
         cx: &mut JsScope<'_>,
         path: JsLocal<'_>,
         options: JsLocal<'_>,
@@ -407,7 +407,7 @@ impl S3Client {
         let options = opt_js(options.to_js());
         // `Blob::new` heap-promotes and marks `ref_count = 1` so
         // the JSS3File wrapper's `finalize` knows to free the blob.
-        let blob = crate::webcore::blob::Blob::new(ptr.construct_blob(global, path, options)?);
+        let blob = crate::webcore::blob::Blob::new(self.construct_blob(global, path, options)?);
         // `to_js` runs `calculate_estimated_byte_size()`
         // before wrapping the heap Blob in a JSS3File so JSC sees the correct
         // GC pressure. Route through `BlobExt::to_js` (the `&self` impl, which
@@ -417,14 +417,10 @@ impl S3Client {
         Ok(unsafe { &mut *blob }.to_js(global))
     }
 
-    pub(crate) fn presign(
-        ptr: &Self,
-        cx: &mut JsScope<'_>,
-        args: &[JsLocal<'_>],
-    ) -> JsResult<JSValue> {
+    pub(crate) fn presign(&self, cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
         let global = cx.global();
         let (path, options) = presign_args(args);
-        let blob = ptr.blob_for_path(
+        let blob = self.blob_for_path(
             global,
             path,
             options,
@@ -435,13 +431,13 @@ impl S3Client {
     }
 
     pub(crate) fn exists(
-        ptr: &Self,
+        &self,
         cx: &mut JsScope<'_>,
         path: JsLocal<'_>,
         options: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
-        let blob = ptr.blob_for_path(
+        let blob = self.blob_for_path(
             cx.global(),
             path.to_js(),
             opt_js(options.to_js()),
@@ -452,13 +448,13 @@ impl S3Client {
     }
 
     pub(crate) fn size(
-        ptr: &Self,
+        &self,
         cx: &mut JsScope<'_>,
         path: JsLocal<'_>,
         options: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
-        let mut blob = ptr.blob_for_path(
+        let mut blob = self.blob_for_path(
             cx.global(),
             path.to_js(),
             opt_js(options.to_js()),
@@ -469,13 +465,13 @@ impl S3Client {
     }
 
     pub(crate) fn stat(
-        ptr: &Self,
+        &self,
         cx: &mut JsScope<'_>,
         path: JsLocal<'_>,
         options: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
-        let blob = ptr.blob_for_path(
+        let blob = self.blob_for_path(
             cx.global(),
             path.to_js(),
             opt_js(options.to_js()),
@@ -486,7 +482,7 @@ impl S3Client {
     }
 
     pub(crate) fn write(
-        ptr: &Self,
+        &self,
         cx: &mut JsScope<'_>,
         path: JsLocal<'_>,
         data: JsLocal<'_>,
@@ -516,7 +512,7 @@ impl S3Client {
         }
 
         let options = opt_js(options.to_js());
-        let blob = ptr.construct_blob(global, path, options)?;
+        let blob = self.construct_blob(global, path, options)?;
         // Move into `PathOrBlob` directly; cleanup of the moved-out value is
         // handled by `Drop`.
         let mut blob_internal = crate::webcore::node_types::PathOrBlob::Blob(Box::new(blob));
@@ -533,7 +529,7 @@ impl S3Client {
     }
 
     pub(crate) fn list_objects(
-        ptr: &Self,
+        &self,
         cx: &mut JsScope<'_>,
         input: JsLocal<'_>,
         options: JsLocal<'_>,
@@ -545,11 +541,11 @@ impl S3Client {
             cx.global(),
             PathLike::default(),
             options,
-            &ptr.credentials,
-            ptr.options,
+            &self.credentials,
+            self.options,
             None,
             None,
-            ptr.request_payer,
+            self.request_payer,
         )?;
 
         let store = blob.store.get().as_ref().unwrap().clone();
@@ -560,14 +556,14 @@ impl S3Client {
     }
 
     pub(crate) fn unlink(
-        ptr: &Self,
+        &self,
         cx: &mut JsScope<'_>,
         path: JsLocal<'_>,
         options: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let options = opt_js(options.to_js());
-        let blob = ptr.blob_for_path(
+        let blob = self.blob_for_path(
             cx.global(),
             path.to_js(),
             options,

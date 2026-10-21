@@ -11,13 +11,13 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        right: JsLocal<'_>,
+        expected: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
         let (this, left, not) =
             self.matcher_prelude(global_this, this_value.to_js(), "toBe", "<green>expected<r>")?;
 
-        let right = right.to_js();
+        let right = expected.to_js();
         right.ensure_still_alive();
         let mut pass = right.is_same_value(left, global_this)?;
 

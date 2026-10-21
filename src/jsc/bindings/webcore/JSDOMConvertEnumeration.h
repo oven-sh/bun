@@ -44,7 +44,7 @@ template<typename T> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&,
 template<typename T> struct Converter<IDLEnumeration<T>> : DefaultConverter<IDLEnumeration<T>> {
     static constexpr bool takesContext = true;
 
-    // When converting with Context, the conversion is stricter: only a string or a String object is taken.
+    // When converting with Context, the conversion is stricter: anything but a string or a String object is disallowed.
     template<Bun::IDLConversionContext Ctx>
     static T convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, Ctx& ctx)
     {

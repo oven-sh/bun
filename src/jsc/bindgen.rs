@@ -61,10 +61,15 @@ impl<'a> JsHeap<'a> {
         self.global_object().as_mut_ptr()
     }
 
-    /// For an assertion: an empty result has an exception pending, and any other has none but a termination.
-    fn exception_matches(&self, result_is_empty: bool) -> bool {
+    /// Debug check: an empty result means an exception is pending. Any other means none is, except a termination.
+    fn exception_presence_matches(&self, should_have_exception: bool) -> bool {
         // SAFETY: the global object is live.
-        unsafe { extern_types::Bun__Bindgen__exceptionMatches(self.global_ptr(), result_is_empty) }
+        unsafe {
+            extern_types::Bun__Bindgen__exceptionPresenceMatches(
+                self.global_ptr(),
+                should_have_exception,
+            )
+        }
     }
 
     #[inline]
@@ -392,9 +397,9 @@ impl<'a> JsLocal<'a> {
         Self::from_raw(value)
     }
 
-    /// `b.any.variadic` for a function of the older API.
+    /// A `b.any.variadic` argument as plain `JSValue`s, for the older API.
     #[inline(always)]
-    pub fn to_js_slice<'b>(values: &'b [Self]) -> &'b [JSValue] {
+    pub fn to_js_slice(values: &[Self]) -> &[JSValue] {
         // SAFETY: `JsLocal` is `repr(transparent)` over `JSValue`.
         unsafe { &*(core::ptr::from_ref(values) as *const [JSValue]) }
     }
@@ -660,7 +665,7 @@ pub unsafe trait JsPayload: Sized + 'static {
     /// The caller writes the payload before anything else runs. A null `structure` is the class's own.
     #[doc(hidden)]
     unsafe fn create_cell(global: *mut JSGlobalObject, structure: *mut c_void) -> NonNull<c_void>;
-    /// What to tell the collector a new object owns outside its cell.
+    /// The extra memory to report to the GC for a new object.
     #[doc(hidden)]
     #[inline(always)]
     fn extra_memory_size(&self) -> usize {
@@ -687,39 +692,39 @@ pub unsafe trait JsPayload: Sized + 'static {
     }
 }
 
-/// A class whose constructor makes the object itself: `passStructure`.
+/// A class whose constructor creates the object itself: `passStructure`.
 ///
 /// # Safety
 /// Implemented by generated code only.
-pub unsafe trait JsConstruct: Sized {
+pub unsafe trait JsCreateWithStructure: Sized {
     /// The struct, or a ref on the struct of a `refCounted` class.
-    type Contents;
+    type Wrapped;
     /// # Safety
-    /// A Structure of this class's cell, or the object `new` made for a `refCounted` class, not yet filled.
+    /// `cell` is a Structure of this class, or for a `refCounted` class the object `new` created, whose struct is not set yet.
     #[doc(hidden)]
     unsafe fn create_with_structure<'a>(
         heap: &JsHeap<'a>,
-        structure_or_object: *mut c_void,
-        contents: Self::Contents,
+        cell: *mut c_void,
+        wrapped: Self::Wrapped,
     ) -> JsWrapper<'a, Self>;
 }
 
-/// What `new` makes its object with: the structure of the class, or of a subclass.
+/// What `new` creates its object with: the structure of the class, or of a subclass.
 pub struct JsStructure<'a, T>(*mut c_void, InvariantLifetime<'a>, PhantomData<*const T>);
-impl<'a, T: JsConstruct> JsStructure<'a, T> {
+impl<'a, T: JsCreateWithStructure> JsStructure<'a, T> {
     /// # Safety
-    /// As [`JsConstruct::create_with_structure`], and the call `heap` belongs to holds it.
+    /// As [`JsCreateWithStructure::create_with_structure`], and the call `heap` belongs to holds it.
     #[doc(hidden)]
     #[inline(always)]
-    pub unsafe fn from_extern(structure_or_object: *mut c_void, _: &JsHeap<'a>) -> Self {
-        Self(structure_or_object, PhantomData, PhantomData)
+    pub unsafe fn from_extern(cell: *mut c_void, _: &JsHeap<'a>) -> Self {
+        Self(cell, PhantomData, PhantomData)
     }
 
-    /// The new object, which owns `contents`.
+    /// The new object, which owns `wrapped`.
     #[inline]
-    pub fn create(self, heap: &JsHeap<'a>, contents: T::Contents) -> JsWrapper<'a, T> {
+    pub fn create(self, heap: &JsHeap<'a>, wrapped: T::Wrapped) -> JsWrapper<'a, T> {
         // SAFETY: `from_extern`'s contract.
-        unsafe { T::create_with_structure(heap, self.0, contents) }
+        unsafe { T::create_with_structure(heap, self.0, wrapped) }
     }
 }
 
@@ -727,7 +732,7 @@ impl<'a, T: JsConstruct> JsStructure<'a, T> {
 ///
 /// # Safety
 /// Implemented by generated code only.
-pub unsafe trait JsMutablePayload: JsPayload {}
+pub unsafe trait JsPayloadMut: JsPayload {}
 
 #[doc(hidden)]
 #[inline]
@@ -858,7 +863,7 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
 
     /// The payload's address, which does not change. It is valid while the wrapper is alive.
     #[inline(always)]
-    pub fn as_ptr(self) -> NonNull<T> {
+    pub fn payload_ptr(self) -> NonNull<T> {
         // SAFETY: inside the cell, which is not null.
         unsafe { NonNull::new_unchecked(self.payload()) }
     }
@@ -870,7 +875,7 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
     }
 }
 
-impl<'a, T: JsMutablePayload> JsWrapper<'a, T> {
+impl<'a, T: JsPayloadMut> JsWrapper<'a, T> {
     /// Lends the payload. `f` cannot run JavaScript: that takes the `&mut JsScope` the `JsPayloads` is borrowed from.
     #[inline(always)]
     pub fn with<R>(self, _: &JsPayloads<'a>, f: impl FnOnce(&T) -> R) -> R {
@@ -969,7 +974,7 @@ pub mod to_js {
         #[inline(always)]
         fn into_value(self, heap: &JsHeap<'a>) -> JsLocal<'a> {
             // A function of the older API returns the empty value after it threw.
-            debug_assert!(!self.is_empty() || heap.exception_matches(true));
+            debug_assert!(!self.is_empty() || heap.exception_presence_matches(true));
             JsLocal::from_raw(self)
         }
     }
@@ -1120,7 +1125,7 @@ pub fn host_fn_return<'a, T, E: IntoError<'a>>(
         error.into_host_fn_return(cx)
     };
     debug_assert!(
-        cx.heap.exception_matches(value.is_empty()),
+        cx.heap.exception_presence_matches(value.is_empty()),
         "a body fails exactly when an exception is pending",
     );
     value

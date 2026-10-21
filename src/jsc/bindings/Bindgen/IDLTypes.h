@@ -26,7 +26,7 @@ struct IDLRawAny : WebCore::IDLType<JSC::JSValue> {
     static JSC::JSValue nullValue() { return {}; }
 };
 
-// The arguments from one on, in the caller's frame.
+// An argument and every one after it, read in place from the call frame.
 struct IDLVariadicArguments : WebCore::IDLType<JSC::ArgList> {};
 
 // For use in unions, to represent a nullable union.

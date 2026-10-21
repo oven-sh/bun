@@ -60,8 +60,8 @@ impl HTMLBundle {
         })
     }
 
-    pub(crate) fn get_index(this: &Self) -> &[u8] {
-        &this.path
+    pub(crate) fn get_index(&self) -> &[u8] {
+        &self.path
     }
 
     /// For `Route::on_complete` and the dev server's `finalize_bundle`, when a build has no page for the file.

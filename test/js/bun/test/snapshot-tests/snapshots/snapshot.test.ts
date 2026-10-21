@@ -960,7 +960,7 @@ test("write snapshot from filter", async () => {
   expect(await Bun.file(dir + "/mytests/more/testing.test.ts").text()).toBe(sver("TEST", true));
 });
 
-test("an undefined argument of a snapshot matcher is one that is left out", async () => {
+test("snapshot matchers treat undefined arguments as omitted", async () => {
   using dir = tempDir("snapshot-undefined-argument", {
     "snap.test.ts": `
       test("undefined", () => {
@@ -978,7 +978,7 @@ test("an undefined argument of a snapshot matcher is one that is left out", asyn
     cmd: [bunExe(), "test", "./snap.test.ts"],
     env: { ...bunEnv, CI: "false" },
     cwd: String(dir),
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

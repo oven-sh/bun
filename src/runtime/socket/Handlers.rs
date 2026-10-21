@@ -100,7 +100,7 @@ impl Handlers {
     }
 
     /// Records the listener that accepted these sockets (server mode only), or
-    /// clears it as that listener is dropped.
+    /// clears it when that listener is dropped.
     pub(crate) fn set_listener(&self, listener: Option<NonNull<SocketListener>>) {
         debug_assert!(self.mode == SocketMode::Server || listener.is_none());
         self.listener.set(listener);
@@ -108,7 +108,7 @@ impl Handlers {
 
     /// The accepting listener, or `None` for client-mode handlers and for a dropped listener.
     pub(crate) fn listener(&self) -> Option<&SocketListener> {
-        // SAFETY: the `Listener` is inside its JS object, and its `Drop` (run by the sweeper, not from dispatch) clears this.
+        // SAFETY: the `Listener` is the payload of its wrapper, and its `Drop` (run by the sweeper, not from dispatch) clears this.
         self.listener.get().map(|l| unsafe { &*l.as_ptr() })
     }
 

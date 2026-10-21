@@ -10,11 +10,11 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        arguments: &[JsLocal<'_>],
+        expected: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
         let global = cx.global();
         bun_jsc::mark_binding!();
-        let arguments = JsLocal::to_js_slice(arguments);
+        let expected = JsLocal::to_js_slice(expected);
         let (this, calls, value) = self.mock_prologue(
             global,
             this_value.to_js(),
@@ -39,12 +39,12 @@ impl Expect {
                 )));
             }
 
-            if last_call_value.get_length(global)? != arguments.len() as u64 {
+            if last_call_value.get_length(global)? != expected.len() as u64 {
                 pass = false;
             } else {
                 let mut itr = last_call_value.array_iterator(global)?;
                 while let Some(call_arg) = itr.next()? {
-                    if !call_arg.jest_deep_equals(arguments[itr.i as usize - 1], global)? {
+                    if !call_arg.jest_deep_equals(expected[itr.i as usize - 1], global)? {
                         pass = false;
                         break;
                     }
@@ -59,7 +59,7 @@ impl Expect {
         // handle failure
         let mut formatter = super::make_formatter(global);
 
-        let expected_args_js_array = JSValue::create_array_from_slice(global, arguments)?;
+        let expected_args_js_array = JSValue::create_array_from_slice(global, expected)?;
         expected_args_js_array.ensure_still_alive();
 
         if this.flags.get().not() {

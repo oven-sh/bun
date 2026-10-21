@@ -233,7 +233,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     "x: a value is a property of the prototype",
   );
   expect(() => b.class({ rustPath: "T", proto: { x: { getter: b.u32, writable: true } } })).toThrow(
-    "x: writable is for a cached getter",
+    "x: writable is only for a cached getter",
   );
   expect(() =>
     b.class({ rustPath: "T", proto: { x: { getter: b.u32, cache: true, writable: true, setter: true } } }),
@@ -242,21 +242,21 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     "x: the setter of a cached getter takes passThis, to replace the cached value",
   );
   expect(() => b.class({ rustPath: "T", construct: { passStructure: true } })).toThrow(
-    'passStructure: making the object takes capability: "heap" or "js"',
+    'passStructure: creating the object takes capability: "heap" or "js"',
   );
-  expect(() => b.class({ rustPath: "T", customToJS: true })).toThrow("customToJS is only for a refCounted class");
+  expect(() => b.class({ rustPath: "T", overridesToJS: true })).toThrow("overridesToJS is only for a refCounted class");
   expect(() => b.class({ rustPath: "T", final: false })).toThrow(
-    "final: false is only for a refCounted class: the struct follows the cell",
+    "final: false is only for a refCounted class: otherwise the struct is stored in the object, where a subclass's fields would go",
   );
   expect(() => b.class({ rustPath: "T", forBind: true, prototypeBase: "Error" })).toThrow(
-    "forBind: the prototype inherits from Function.prototype",
+    "forBind has no prototypeBase: the prototype inherits from Function.prototype",
   );
   expect(() => b.class({ rustPath: "T", forBind: true, proto: { x: { getter: b.i32, setter: true } } })).toThrow(
-    "forBind: functions and getters without a setter",
+    "forBind: a member is a function or a getter without a setter",
   );
-  expect(() => b.class({ rustPath: "T", call: {} })).toThrow("call is what the constructor object does without new");
+  expect(() => b.class({ rustPath: "T", call: {} })).toThrow("call needs a constructor object: add construct");
   expect(() => b.class({ rustPath: "T", proto: { "@@dispose": { enumerable: true } } })).toThrow(
-    "@@dispose: enumerable and configurable are for a string key",
+    "@@dispose: enumerable and configurable are only for a string key",
   );
   // @ts-expect-error
   expect(() => b.class({ ...constructible, static: { x: { builtin: true, length: 0 } } })).toThrow(
@@ -609,7 +609,7 @@ describe("strings", () => {
   });
 });
 
-describe("instances of a class of another schema", () => {
+describe("imported classes as arguments", () => {
   const address = new SocketAddress({ port: 8080 });
   const notInstances = [undefined, null, 1, "a", {}, SocketAddress.prototype, Object.create(address), new BlockList()];
 
@@ -647,7 +647,7 @@ describe("instances of a class of another schema", () => {
 });
 
 describe("b.any.variadic", () => {
-  it("is the arguments from its position on", () => {
+  it("collects the remaining arguments", () => {
     const object = {};
     expect(bindgen.afterFirst(1, 2, object, undefined)).toEqual([2, object, undefined]);
     expect(bindgen.afterFirst(1, object)[0]).toBe(object);
@@ -659,14 +659,14 @@ describe("b.any.variadic", () => {
 
   it("does not count in length", () => {
     expect(bindgen.afterFirst.length).toBe(1);
-    expect((bindgen as any).TestProblem.prototype.countArguments.length).toBe(0);
+    expect((bindgen as any).TestError.prototype.countArguments.length).toBe(0);
   });
 
   it("tells a missing argument from undefined", () => {
-    const problem = new (bindgen as any).TestProblem(0);
-    expect(problem.countArguments()).toBe(0);
-    expect(problem.countArguments(undefined)).toBe(1);
-    expect(problem.countArguments(undefined, undefined)).toBe(2);
+    const error = new (bindgen as any).TestError(0);
+    expect(error.countArguments()).toBe(0);
+    expect(error.countArguments(undefined)).toBe(1);
+    expect(error.countArguments(undefined, undefined)).toBe(2);
   });
 
   it("is only the last argument", () => {
@@ -2113,31 +2113,31 @@ describe("classes", () => {
   });
 
   describe("properties", () => {
-    const { TestProblem } = bindgen as any;
+    const { TestError } = bindgen as any;
     const attributes = (object: object, key: string) => {
       const { enumerable, configurable } = Object.getOwnPropertyDescriptor(object, key)!;
       return { enumerable, configurable };
     };
 
     it("enumerable and configurable are the class's, unless the member has its own", () => {
-      const { prototype } = TestProblem;
+      const { prototype } = TestError;
       expect(attributes(prototype, "message")).toEqual({ enumerable: false, configurable: true });
       expect(attributes(prototype, "code")).toEqual({ enumerable: true, configurable: true });
-      expect(attributes(prototype, "sealedCode")).toEqual({ enumerable: false, configurable: false });
+      expect(attributes(prototype, "nonConfigurableCode")).toEqual({ enumerable: false, configurable: false });
       expect(attributes(prototype, "describe")).toEqual({ enumerable: false, configurable: false });
       expect(Object.keys(prototype)).toEqual(["code", "name"]);
     });
 
     it("prototypeBase is what the prototype inherits from", () => {
-      expect(Object.getPrototypeOf(TestProblem.prototype)).toBe(Error.prototype);
-      const problem = new TestProblem(4);
-      expect(problem).toBeInstanceOf(Error);
-      expect(String(problem)).toBe("TestProblem: problem 4");
+      expect(Object.getPrototypeOf(TestError.prototype)).toBe(Error.prototype);
+      const error = new TestError(4);
+      expect(error).toBeInstanceOf(Error);
+      expect(String(error)).toBe("TestError: error 4");
     });
 
     it("a value is a read-only string", () => {
-      expect(Object.getOwnPropertyDescriptor(TestProblem.prototype, "name")).toEqual({
-        value: "TestProblem",
+      expect(Object.getOwnPropertyDescriptor(TestError.prototype, "name")).toEqual({
+        value: "TestError",
         writable: false,
         enumerable: true,
         configurable: true,
@@ -2145,50 +2145,50 @@ describe("classes", () => {
     });
 
     it("assigning to a writable cached getter replaces the value", () => {
-      const problem = new TestProblem(4);
-      expect(problem.message).toBe("problem 4");
+      const error = new TestError(4);
+      expect(error.message).toBe("error 4");
       const replacement = { toString: () => "replaced" };
-      problem.message = replacement;
-      expect(problem.message).toBe(replacement);
-      expect(new TestProblem(5).message).toBe("problem 5");
-      const untouched = new TestProblem(6);
+      error.message = replacement;
+      expect(error.message).toBe(replacement);
+      expect(new TestError(5).message).toBe("error 5");
+      const untouched = new TestError(6);
       untouched.message = undefined;
       expect(untouched.message).toBeUndefined();
-      expect(() => Reflect.set(TestProblem.prototype, "message", 1, {})).toThrow(TypeError);
+      expect(() => Reflect.set(TestError.prototype, "message", 1, {})).toThrow(TypeError);
     });
 
     it("the setter of a cached getter stores what the getter returns next", () => {
-      const problem = new TestProblem(4);
-      expect(problem.detail).toBe(4);
-      problem.detail = 10;
-      expect(problem.detail).toBe(20);
+      const error = new TestError(4);
+      expect(error.detail).toBe(4);
+      error.detail = 10;
+      expect(error.detail).toBe(20);
     });
 
-    it("call is what the class does without new", () => {
-      const problem = TestProblem(1, 2, 3);
-      expect(problem).toBeInstanceOf(TestProblem);
-      expect(problem.code).toBe(6);
-      expect(TestProblem().code).toBe(0);
-      expect(new TestProblem(4).code).toBe(4);
+    it("call: the constructor works without new", () => {
+      const error = TestError(1, 2, 3);
+      expect(error).toBeInstanceOf(TestError);
+      expect(error.code).toBe(6);
+      expect(TestError().code).toBe(0);
+      expect(new TestError(4).code).toBe(4);
       expect(() => (bindgen as any).TestCounter()).toThrow("TestCounter constructor cannot be invoked without 'new'");
     });
 
-    it("Rust reaches the constructor, and the struct of an instance", () => {
-      expect(bindgen.problemConstructor()).toBe(TestProblem);
+    it("get_constructor and from_js", () => {
+      expect(bindgen.errorConstructor()).toBe(TestError);
       expect(bindgen.tokenIdFromJS(bindgen.makeToken(7))).toBe(7);
-      for (const value of [undefined, 7, {}, new TestProblem(7), Object.create(bindgen.makeToken(7))])
+      for (const value of [undefined, 7, {}, new TestError(7), Object.create(bindgen.makeToken(7))])
         expect(bindgen.tokenIdFromJS(value)).toBeNull();
     });
 
     it("a static getter can have a setter", () => {
-      expect(TestProblem.level).toBe(0);
+      expect(TestError.level).toBe(0);
       try {
-        TestProblem.level = 3;
-        expect(TestProblem.level).toBe(3);
-        expect(() => (TestProblem.level = Symbol())).toThrow(TypeError);
-        expect(TestProblem.level).toBe(3);
+        TestError.level = 3;
+        expect(TestError.level).toBe(3);
+        expect(() => (TestError.level = Symbol())).toThrow(TypeError);
+        expect(TestError.level).toBe(3);
       } finally {
-        TestProblem.level = 0;
+        TestError.level = 0;
       }
     });
   });
@@ -2198,12 +2198,12 @@ describe("classes", () => {
     // Cell header, one internal field, then the struct or the pointer to it, in 16-byte steps.
     const ownSize = name === "TestNote" ? 48 : 48 + 16;
 
-    it("passStructure: the constructor makes the object and fills an internal field", () => {
+    it("passStructure: the constructor creates the object and sets an internal field", () => {
       const text = {};
       const note = new Note(text);
       expect(note).toBeInstanceOf(Note);
       expect(note.text).toBe(text);
-      expect(() => new Note()).toThrow(new TypeError("a note has a text"));
+      expect(() => new Note()).toThrow(new TypeError("text is required"));
     });
 
     it("passStructure: the structure is that of new.target", () => {
@@ -2230,18 +2230,18 @@ describe("classes", () => {
     });
 
     it("from_js_direct takes only an instance with the structure of the class", () => {
-      expect(bindgen.isNoteDirect(new Note("text"))).toBe(true);
-      expect(bindgen.isNoteDirect(new (class extends Note {})("text"))).toBe(false);
-      expect(bindgen.isNoteDirect(Object.assign(new Note("text"), { own: 1 }))).toBe(false);
+      expect(bindgen.isNoteFromJSDirect(new Note("text"))).toBe(true);
+      expect(bindgen.isNoteFromJSDirect(new (class extends Note {})("text"))).toBe(false);
+      expect(bindgen.isNoteFromJSDirect(Object.assign(new Note("text"), { own: 1 }))).toBe(false);
       for (const value of [{}, "text", Symbol(), 1, null, undefined, Note.prototype])
-        expect(bindgen.isNoteDirect(value)).toBe(false);
+        expect(bindgen.isNoteFromJSDirect(value)).toBe(false);
     });
 
-    it("a heap snapshot adds memory_cost, or estimated_size without it", () => {
+    it("memory_cost is reported to heap snapshots, else estimated_size", () => {
       expect(estimateShallowMemoryUsageOf(new Note("text", 1000))).toBe(ownSize + 1000 + (name === "TestNote" ? 1 : 0));
     });
 
-    it("a collection counts estimated_size", () => {
+    it("estimated_size is reported to the GC", () => {
       Bun.gc(true);
       const before = heapStats().extraMemorySize;
       const size = 1024 * 1024;
@@ -2251,7 +2251,7 @@ describe("classes", () => {
       expect(note.text).toBe("text");
     });
 
-    it("making objects with a large estimated_size starts collections", () => {
+    it("creating objects with a large estimated_size triggers GC", () => {
       Bun.gc(true);
       const count = 100;
       for (let i = 0; i < count; i++) new Note("text", 8 * 1024 * 1024);
@@ -2302,13 +2302,13 @@ describe("classes", () => {
     });
   });
 
-  it("rustTraits, customToJS and final: false", () => {
-    const { TestExtensible } = bindgen as any;
-    expect(new TestExtensible(4).value).toBe(4);
-    const doubled = TestExtensible.doubled(4);
-    expect(doubled).toBeInstanceOf(TestExtensible);
+  it("rustTraits, overridesToJS and final: false", () => {
+    const { TestNonFinal } = bindgen as any;
+    expect(new TestNonFinal(4).value).toBe(4);
+    const doubled = TestNonFinal.doubled(4);
+    expect(doubled).toBeInstanceOf(TestNonFinal);
     expect(doubled.value).toBe(8);
-    const { get } = Object.getOwnPropertyDescriptor(TestExtensible.prototype, "value")!;
+    const { get } = Object.getOwnPropertyDescriptor(TestNonFinal.prototype, "value")!;
     expect(() => get!.call({})).toThrow(TypeError);
   });
 
@@ -2459,7 +2459,7 @@ describe("classes", () => {
   });
 });
 
-itAlways("a method of a class that is keyed by a symbol is named after it", async () => {
+itAlways("the name of a symbol-keyed method is [Symbol.x]", async () => {
   using server = Bun.serve({ port: 0, fetch: () => new Response() });
   using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
   using socket = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { data() {} } });

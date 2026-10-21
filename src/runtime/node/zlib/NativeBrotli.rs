@@ -152,9 +152,9 @@ mod _impl {
             &self,
             this_value: JsWrapper<'_, Self>,
             cx: &mut JsScope<'_>,
-            params: JsLocal<'_>,
-            write_result: JsLocal<'_>,
-            write_callback: JsLocal<'_>,
+            init_params_array: JsLocal<'_>,
+            write_state: JsLocal<'_>,
+            process_callback: JsLocal<'_>,
             dictionary: JsLocal<'_>,
         ) -> JsResult<bool> {
             let global_this = cx.global();
@@ -165,7 +165,7 @@ mod _impl {
 
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
-            let write_result_value = write_result.to_js();
+            let write_result_value = write_state.to_js();
             let Some(mut write_result_buf) = write_result_value.as_array_buffer(global_this) else {
                 return Err(global_this.throw_invalid_argument_type_value(
                     "writeResult",
@@ -192,13 +192,13 @@ mod _impl {
             let write_callback = validators::validate_function(
                 global_this,
                 "writeCallback",
-                write_callback.to_js(),
+                process_callback.to_js(),
             )?;
 
             // Validate `params` before any native state is initialized so the
             // error path needs no cleanup. `as_u32` reinterprets the view's
             // bytes, so the element type must actually be Uint32Array.
-            let params_value = params.to_js();
+            let params_value = init_params_array.to_js();
             let Some(mut params_buf) = params_value.as_array_buffer(global_this) else {
                 return Err(global_this.throw_invalid_argument_type_value(
                     "params",

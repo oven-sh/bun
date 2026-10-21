@@ -2,8 +2,6 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 export default b.module({ rustPath: "crate::socket::socket_body" });
 
-/** A handler of the socket can run inside. */
-const runsJS = { capability: "js" } as const;
 const js = { capability: "js", throws: true } as const;
 const method = { returns: b.any, ...js } as const;
 const cached = { ...js, getter: b.any, cache: true } as const;
@@ -32,13 +30,14 @@ function socket<SSL extends boolean>(ssl: SSL) {
       alpnProtocol: { ...js, getter: b.any },
       authorized: { getter: b.bool },
       bytesWritten: { getter: b.f64 },
-      close: runsJS,
+      /** Can call the socket's handlers. */
+      close: { capability: "js" },
       data: { internalField: "data", setter: true },
       disableRenegotiation: {},
       end: write,
       exportKeyingMaterial: { ...method, args: { length: b.any, label: b.any, context: b.any } },
       fd: { getter: b.any, capability: "heap" },
-      flush: runsJS,
+      flush: { capability: "js" },
       getAuthorizationError: method,
       getCertificate: method,
       getCipher: method,
@@ -59,7 +58,7 @@ function socket<SSL extends boolean>(ssl: SSL) {
       localAddress: cached,
       localFamily: cached,
       localPort: { getter: b.u16.optional, cache: true },
-      pause: { ...runsJS, rustName: "pause_from_js" },
+      pause: { capability: "js", rustName: "pause_from_js" },
       readyState: { getter: b.i32 },
       ref: { rustName: "js_ref" },
       reload: { ...js, args: { options: b.any } },
@@ -67,19 +66,19 @@ function socket<SSL extends boolean>(ssl: SSL) {
       remoteFamily: cached,
       remotePort: { getter: b.u16.optional },
       renegotiate: method,
-      resume: { ...runsJS, rustName: "resume_from_js" },
-      resumeSNI: { ...runsJS, args: { context: b.any, isError: b.any } },
+      resume: { capability: "js", rustName: "resume_from_js" },
+      resumeSNI: { capability: "js", args: { context: b.any, isError: b.any } },
       setKeepAlive: { ...js, args: { enable: b.any, initialDelay: b.any }, returns: b.bool },
       setKeyCert: { ...method, args: { context: b.any } },
       setMaxSendFragment: { ...method, args: { size: b.any } },
       /** No argument enables it, `undefined` disables it. */
-      setNoDelay: { args: { args: b.any.variadic }, returns: b.bool, length: 1 },
+      setNoDelay: { args: { noDelay: b.any.variadic }, returns: b.bool, length: 1 },
       setServername: { ...method, args: { name: b.any } },
       setSession: { ...method, args: { session: b.any } },
       setTypeOfService: { ...js, args: { tos: b.any }, returns: b.i32 },
       setVerifyMode: { ...method, args: { requestCert: b.any, rejectUnauthorized: b.any } },
-      shutdown: { ...runsJS, args: { halfClose: b.any } },
-      terminate: runsJS,
+      shutdown: { capability: "js", args: { halfClose: b.any } },
+      terminate: { capability: "js" },
       timeout: { ...js, args: { seconds: b.any } },
       unref: { rustName: "js_unref" },
       upgradeTLS: { ...method, args: { options: b.any } },

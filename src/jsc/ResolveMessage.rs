@@ -73,11 +73,11 @@ fn esm_package_name(specifier: &[u8]) -> &[u8] {
 }
 
 impl ResolveMessage {
-    pub fn get_code(this: &Self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        match &this.msg.metadata {
+    pub fn get_code(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        match &self.msg.metadata {
             bun_ast::Metadata::Resolve(resolve) => {
                 let code: &'static [u8] = 'brk: {
-                    let specifier = resolve.specifier.slice(&this.msg.data.text);
+                    let specifier = resolve.specifier.slice(&self.msg.data.text);
 
                     break 'brk match resolve.import_kind {
                         // Match Node.js error codes. CommonJS is historic
@@ -250,7 +250,7 @@ impl ResolveMessage {
         Ok(JSValue::NULL)
     }
 
-    pub fn to_json(this: &Self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub fn to_json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();
         let utf8 = |bytes: &[u8]| bun_string_jsc::create_utf8_for_js(global, bytes);
         let object = JSValue::create_empty_object(global, 7);
@@ -262,13 +262,13 @@ impl ResolveMessage {
         object.put(
             global,
             b"position",
-            crate::BuildMessage::generate_position_object(&this.msg, global)?,
+            crate::BuildMessage::generate_position_object(&self.msg, global)?,
         );
-        object.put(global, b"message", utf8(&this.get_message())?);
-        object.put(global, b"level", this.msg.kind.to_js(global)?);
-        object.put(global, b"specifier", utf8(this.get_specifier())?);
-        object.put(global, b"importKind", this.import_kind(global)?);
-        object.put(global, b"referrer", utf8(&this.referrer)?);
+        object.put(global, b"message", utf8(&self.get_message())?);
+        object.put(global, b"level", self.msg.kind.to_js(global)?);
+        object.put(global, b"specifier", utf8(self.get_specifier())?);
+        object.put(global, b"importKind", self.import_kind_to_js(global)?);
+        object.put(global, b"referrer", utf8(&self.referrer)?);
         Ok(object)
     }
 
@@ -285,8 +285,8 @@ impl ResolveMessage {
         Ok(resolve_error.to_js(global))
     }
 
-    pub fn get_position(this: &Self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        crate::BuildMessage::generate_position_object(&this.msg, cx.global())
+    pub fn get_position(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        crate::BuildMessage::generate_position_object(&self.msg, cx.global())
     }
 
     /// Module-not-found for a runtime import kind whose `.message` /
@@ -382,8 +382,8 @@ impl ResolveMessage {
         out
     }
 
-    pub fn get_level(this: &Self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        this.msg.kind.to_js(cx.global())
+    pub fn get_level(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.msg.kind.to_js(cx.global())
     }
 
     pub fn get_specifier(&self) -> &[u8] {
@@ -396,10 +396,10 @@ impl ResolveMessage {
     }
 
     pub fn get_import_kind(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.import_kind(cx.global())
+        self.import_kind_to_js(cx.global())
     }
 
-    fn import_kind(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    fn import_kind_to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match &self.msg.metadata {
             bun_ast::Metadata::Resolve(resolve) => {
                 bun_core::String::static_(import_kind_label(resolve.import_kind)).to_js(global)?

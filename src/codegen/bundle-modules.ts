@@ -402,7 +402,7 @@ writeIfNotChanged(
 
 // The ids replacements.ts compiles `$inherits*()` calls to, inlined into an enum in ZigGlobalObject.cpp.
 writeIfNotChanged(
-  path.join(CODEGEN_DIR, "js_classes+enum.h"),
+  path.join(CODEGEN_DIR, "JSClasses+enum.h"),
   jsclasses.map((name, id) => `${name} = ${id},\n`).join(""),
 );
 

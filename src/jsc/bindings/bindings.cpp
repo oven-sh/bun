@@ -347,10 +347,11 @@ bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGl
 
 AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* globalObject, JSValue matcherProp, JSValue otherProp, ThrowScope& throwScope, ExpectFlags& flags)
 {
+    using namespace Bun::Bindgen::Generated;
     JSCell* matcherPropCell = matcherProp.asCell();
     AsymmetricMatcherConstructorType constructorType = AsymmetricMatcherConstructorType::none;
 
-    if (dynamicDowncast<Bun::Bindgen::Generated::JSExpectAnything>(matcherPropCell)) {
+    if (dynamicDowncast<JSExpectAnything>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
@@ -359,7 +360,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         }
 
         return AsymmetricMatcherResult::PASS;
-    } else if (auto* expectAny = dynamicDowncast<Bun::Bindgen::Generated::JSExpectAny>(matcherPropCell)) {
+    } else if (auto* expectAny = dynamicDowncast<JSExpectAny>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
@@ -462,7 +463,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         }
 
         return AsymmetricMatcherResult::FAIL;
-    } else if (auto* expectStringContaining = dynamicDowncast<Bun::Bindgen::Generated::JSExpectStringContaining>(matcherPropCell)) {
+    } else if (auto* expectStringContaining = dynamicDowncast<JSExpectStringContaining>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
@@ -481,7 +482,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         }
 
         return AsymmetricMatcherResult::FAIL;
-    } else if (auto* expectStringMatching = dynamicDowncast<Bun::Bindgen::Generated::JSExpectStringMatching>(matcherPropCell)) {
+    } else if (auto* expectStringMatching = dynamicDowncast<JSExpectStringMatching>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
@@ -510,7 +511,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         }
 
         return AsymmetricMatcherResult::FAIL;
-    } else if (auto* expectArrayContaining = dynamicDowncast<Bun::Bindgen::Generated::JSExpectArrayContaining>(matcherPropCell)) {
+    } else if (auto* expectArrayContaining = dynamicDowncast<JSExpectArrayContaining>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
@@ -556,7 +557,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         }
 
         return AsymmetricMatcherResult::FAIL;
-    } else if (auto* expectObjectContaining = dynamicDowncast<Bun::Bindgen::Generated::JSExpectObjectContaining>(matcherPropCell)) {
+    } else if (auto* expectObjectContaining = dynamicDowncast<JSExpectObjectContaining>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
@@ -575,7 +576,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         }
 
         return AsymmetricMatcherResult::FAIL;
-    } else if (auto* expectCloseTo = dynamicDowncast<Bun::Bindgen::Generated::JSExpectCloseTo>(matcherPropCell)) {
+    } else if (auto* expectCloseTo = dynamicDowncast<JSExpectCloseTo>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
@@ -605,7 +606,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
             bool isClose = std::abs(expected - received) < threshold;
             return isClose ? AsymmetricMatcherResult::PASS : AsymmetricMatcherResult::FAIL;
         }
-    } else if (auto* customMatcher = dynamicDowncast<Bun::Bindgen::Generated::JSExpectCustomAsymmetricMatcher>(matcherPropCell)) {
+    } else if (auto* customMatcher = dynamicDowncast<JSExpectCustomAsymmetricMatcher>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 

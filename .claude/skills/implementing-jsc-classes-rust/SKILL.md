@@ -52,8 +52,8 @@ A missing or mis-typed method is a compile error: the generated code calls it di
 ## Where the struct lives
 
 - Freed when its JS object is freed: it is stored inside the object. This is the default. Cleanup is `Drop`.
-- Can outlive its object (a timer, another thread or a C library still points at it): `refCounted: true`. It is a separate
-  allocation with a real count, and the object holds one ref.
+- Can outlive its object (a timer, another thread or a C library still points at it): `refCounted: true`. It is a separate,
+  refcounted heap allocation, and the object holds one ref.
 
 ## What a body may do
 

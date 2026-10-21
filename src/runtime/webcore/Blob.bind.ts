@@ -8,7 +8,7 @@ export const Blob = b.class({
   rustPath: "bun_jsc::webcore_types::Blob",
   rustTraits: ["crate::webcore::blob::BlobExt"],
   refCounted: true,
-  customToJS: true,
+  overridesToJS: true,
   final: false,
   estimatedSize: true,
   configurable: false,

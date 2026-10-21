@@ -54,20 +54,20 @@ impl JSFrameworkRouter {
 
     pub(crate) fn constructor(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<Self> {
         let global = cx.global();
-        let opts = options.to_js();
-        if !opts.is_object() {
+        let options = options.to_js();
+        if !options.is_object() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "FrameworkRouter needs an object as it's first argument",
             )));
         }
 
-        let root: bun_core::Utf8Bytes = match opts.get(global, "root")? {
+        let root: bun_core::Utf8Bytes = match options.get(global, "root")? {
             Some(v) if !v.is_undefined_or_null() => v.to_utf8(global)?,
             _ => return Err(global.throw_invalid_arguments(format_args!("Missing options.root"))),
         };
 
         let style = Style::from_js(
-            opts.get(global, "style")?.unwrap_or(JSValue::UNDEFINED),
+            options.get(global, "style")?.unwrap_or(JSValue::UNDEFINED),
             global,
         )?;
 

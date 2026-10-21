@@ -86,8 +86,8 @@ mod _impl {
             level: i32,
             mem_level: i32,
             strategy: i32,
-            write_result: JsLocal<'_>,
-            write_callback: JsLocal<'_>,
+            write_state: JsLocal<'_>,
+            process_callback: JsLocal<'_>,
             dictionary: JsLocal<'_>,
         ) -> JsResult<()> {
             let global = cx.global();
@@ -98,7 +98,7 @@ mod _impl {
 
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
-            let write_result_value = write_result.to_js();
+            let write_result_value = write_state.to_js();
             let Some(mut write_result_buf) = write_result_value.as_array_buffer(global) else {
                 return Err(global.throw_invalid_argument_type_value(
                     "writeResult",
@@ -123,7 +123,7 @@ mod _impl {
                     .throw());
             }
             let write_callback =
-                validators::validate_function(global, "writeCallback", write_callback.to_js())?;
+                validators::validate_function(global, "writeCallback", process_callback.to_js())?;
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice() outlives
             // the call to `stream.init` below (E0716 otherwise).
             let dictionary_buf;

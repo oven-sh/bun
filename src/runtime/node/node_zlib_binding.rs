@@ -188,19 +188,19 @@ pub(crate) trait CompressionStreamImpl:
     fn pending_input_get_cached(this_value: JSValue) -> Option<JSValue>;
     fn pending_output_get_cached(this_value: JSValue) -> Option<JSValue>;
 
-    // The members that the classes of `node_zlib_binding.bind.ts` share.
+    // Members shared by the classes in `node_zlib_binding.bind.ts`.
     #[inline]
     fn write(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         flush: JsLocal<'_>,
-        input: JsLocal<'_>,
-        input_offset: JsLocal<'_>,
-        input_length: JsLocal<'_>,
-        output: JsLocal<'_>,
-        output_offset: JsLocal<'_>,
-        output_length: JsLocal<'_>,
+        in_: JsLocal<'_>,
+        in_off: JsLocal<'_>,
+        in_len: JsLocal<'_>,
+        out: JsLocal<'_>,
+        out_off: JsLocal<'_>,
+        out_len: JsLocal<'_>,
     ) -> JsResult<()> {
         CompressionStream::<Self>::write(
             self,
@@ -208,12 +208,12 @@ pub(crate) trait CompressionStreamImpl:
             cx.global(),
             &[
                 flush.to_js(),
-                input.to_js(),
-                input_offset.to_js(),
-                input_length.to_js(),
-                output.to_js(),
-                output_offset.to_js(),
-                output_length.to_js(),
+                in_.to_js(),
+                in_off.to_js(),
+                in_len.to_js(),
+                out.to_js(),
+                out_off.to_js(),
+                out_len.to_js(),
             ],
         )
     }
@@ -223,12 +223,12 @@ pub(crate) trait CompressionStreamImpl:
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         flush: JsLocal<'_>,
-        input: JsLocal<'_>,
-        input_offset: JsLocal<'_>,
-        input_length: JsLocal<'_>,
-        output: JsLocal<'_>,
-        output_offset: JsLocal<'_>,
-        output_length: JsLocal<'_>,
+        in_: JsLocal<'_>,
+        in_off: JsLocal<'_>,
+        in_len: JsLocal<'_>,
+        out: JsLocal<'_>,
+        out_off: JsLocal<'_>,
+        out_len: JsLocal<'_>,
     ) -> JsResult<()> {
         CompressionStream::<Self>::write_sync(
             self,
@@ -236,12 +236,12 @@ pub(crate) trait CompressionStreamImpl:
             cx.global(),
             &[
                 flush.to_js(),
-                input.to_js(),
-                input_offset.to_js(),
-                input_length.to_js(),
-                output.to_js(),
-                output_offset.to_js(),
-                output_length.to_js(),
+                in_.to_js(),
+                in_off.to_js(),
+                in_len.to_js(),
+                out.to_js(),
+                out_off.to_js(),
+                out_len.to_js(),
             ],
         )
     }
@@ -845,7 +845,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // Clear write_in_progress *before* invoking the onerror callback.
         // The callback may re-enter write(), which sets write_in_progress=true
         // and schedules a WorkPool task. If we cleared the flag after the
-        // callback, we would clobber that state and close()/resetInternal()
+        // callback, we would clobber that state and close()/reset_internal()
         // below could free the native zlib/brotli/zstd state while a task is
         // still queued, leading to a use-after-free when the worker thread
         // runs doWork().
@@ -905,7 +905,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 /// `write_in_progress`, `pending_close`, `closed`, `task`,
 /// `ref_count`), so the macro can stamp the impls uniformly.
 ///
-/// `$js` is the class's generated module, which has the accessors of its internal fields.
+/// `$js` is the class's generated module, which has the accessors for its internal fields.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __impl_compression_stream {

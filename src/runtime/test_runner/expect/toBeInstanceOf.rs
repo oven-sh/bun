@@ -10,7 +10,7 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        expected_value: JsLocal<'_>,
+        expected: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let this = self;
@@ -21,20 +21,20 @@ impl Expect {
         let mut formatter = super::make_formatter(global);
         // `defer formatter.deinit()` → handled by Drop.
 
-        let expected_value = expected_value.to_js();
-        if !expected_value.is_constructor() {
+        let expected = expected.to_js();
+        if !expected.is_constructor() {
             return Err(global.throw(format_args!(
                 "Expected value must be a function: {}",
-                expected_value.to_fmt(&mut formatter),
+                expected.to_fmt(&mut formatter),
             )));
         }
-        expected_value.ensure_still_alive();
+        expected.ensure_still_alive();
 
         let value: JSValue =
             this.get_value(global, this_value, "toBeInstanceOf", "<green>expected<r>")?;
 
         let not = this.flags.get().not();
-        let mut pass = value.is_instance_of(global, expected_value)?;
+        let mut pass = value.is_instance_of(global, expected)?;
         if not {
             pass = !pass;
         }
@@ -43,7 +43,7 @@ impl Expect {
         }
 
         let mut formatter2 = super::make_formatter(global);
-        let expected_fmt = expected_value.to_fmt(&mut formatter);
+        let expected_fmt = expected.to_fmt(&mut formatter);
         let value_fmt = value.to_fmt(&mut formatter2);
         if not {
             let signature = get_signature("toBeInstanceOf", "<green>expected<r>", true);

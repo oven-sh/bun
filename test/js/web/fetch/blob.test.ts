@@ -198,7 +198,7 @@ test("new Blob(new Uint8Array()) is supported", async () => {
   expect(await blob.text()).toBe("1234");
 });
 
-test("the memory of a File is counted as that of a Blob is", () => {
+test("estimateShallowMemoryUsageOf(new File()) is at least that of a Blob", () => {
   expect(estimateShallowMemoryUsageOf(new File(["1234"], "file.txt"))).toBeGreaterThanOrEqual(
     estimateShallowMemoryUsageOf(new Blob(["1234"])),
   );

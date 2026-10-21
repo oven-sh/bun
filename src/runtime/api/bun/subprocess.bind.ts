@@ -20,7 +20,7 @@ export const Subprocess = b.class({
     killed: { getter: b.bool },
     pid: { getter: b.i32 },
     readable: { ...stdio, cache: "stdout", rustName: "stdout" },
-    ref: { rustName: "js_ref" },
+    ref: { rustName: "do_ref" },
     resourceUsage: { returns: b.any, capability: "js", throws: true },
     send: {
       args: { message: b.any, handle: b.any, options: b.any, callback: b.any },
@@ -36,7 +36,7 @@ export const Subprocess = b.class({
     stdio: { getter: b.any, capability: "js", throws: true },
     stdout: { ...stdio, cache: true },
     terminal: { internalField: "terminal" },
-    unref: { rustName: "js_unref" },
+    unref: { rustName: "do_unref" },
     writable: { ...stdio, cache: "stdin", rustName: "stdin" },
     "@@asyncDispose": { returns: b.any, capability: "js", throws: true, passThis: true },
   },

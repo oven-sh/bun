@@ -181,7 +181,7 @@ impl QuicStream {
         };
         let this_value = stream.into_js_wrapper(global);
         let handle = this_value.to_js();
-        let raw_ptr = this_value.as_ptr().as_ptr();
+        let raw_ptr = this_value.payload_ptr().as_ptr();
 
         let state_ptr = alloc_exposed_array_buffer(
             global,
@@ -198,7 +198,7 @@ impl QuicStream {
         handle.put(global, b"stateByteOffset", JSValue::js_number(0.0));
         handle.put(global, b"statsByteOffset", JSValue::js_number(0.0));
 
-        // SAFETY: inside `handle`.
+        // SAFETY: the payload of `handle`.
         let this = unsafe { &*raw_ptr };
         #[expect(
             clippy::cast_ptr_alignment,
@@ -875,16 +875,18 @@ impl QuicStream {
     pub(crate) fn abort_for_destroy(
         &self,
         _: &mut JsScope<'_>,
-        stop_arg: JsLocal<'_>,
-        reset_arg: JsLocal<'_>,
+        stop_sending_code: JsLocal<'_>,
+        reset_code: JsLocal<'_>,
     ) {
         if self.destroyed.get() {
             return;
         }
-        let stop_arg = stop_arg.to_js();
-        let reset_arg = reset_arg.to_js();
-        let stop = (!stop_arg.is_empty_or_undefined_or_null()).then(|| error_code_arg(stop_arg));
-        let reset = (!reset_arg.is_empty_or_undefined_or_null()).then(|| error_code_arg(reset_arg));
+        let stop_sending_code = stop_sending_code.to_js();
+        let reset_code = reset_code.to_js();
+        let stop = (!stop_sending_code.is_empty_or_undefined_or_null())
+            .then(|| error_code_arg(stop_sending_code));
+        let reset =
+            (!reset_code.is_empty_or_undefined_or_null()).then(|| error_code_arg(reset_code));
         if let Some(code) = stop {
             self.inbound.with_mut(|i| i.ended = true);
             self.with_state(|s| {
@@ -946,27 +948,26 @@ impl QuicStream {
     pub(crate) fn send_headers(
         &self,
         cx: &mut JsScope<'_>,
-        kind_arg: JsLocal<'_>,
-        header_tuple: JsLocal<'_>,
+        kind: JsLocal<'_>,
+        headers: JsLocal<'_>,
         flags: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         if self.destroyed.get() {
             return Ok(JSValue::js_boolean(false));
         }
-        let kind_arg = kind_arg.to_js();
-        let header_tuple = header_tuple.to_js();
+        let kind = kind.to_js();
+        let headers = headers.to_js();
         let flags = flags.to_js();
         // `buildNgHeaderString` returns [nul-joined string, pair count]; the
         // count is what keeps the latin1 encode below unspliceable.
-        let header_string = header_tuple.get_index(global, 0)?;
-        let header_count = header_tuple.get_index(global, 1)?.coerce_to_i32(global)?;
+        let header_string = headers.get_index(global, 0)?;
+        let header_count = headers.get_index(global, 1)?.coerce_to_i32(global)?;
         // Latin-1 on the wire, as node does (`StringBytes::Write(.., LATIN1)`).
         use crate::webcore::encoding::BunStringEncode as _;
         let bytes = bun_core::String::from_js(header_string, global)?
             .encode(crate::node::types::Encoding::Latin1);
-        let is_trailing =
-            kind_arg.coerce_to_i32(global)? as u32 == QUIC_STREAM_HEADERS_KIND_TRAILING;
+        let is_trailing = kind.coerce_to_i32(global)? as u32 == QUIC_STREAM_HEADERS_KIND_TRAILING;
         let eos = is_trailing
             || flags.coerce_to_i32(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0;
         let Some(s) = self.ls() else {

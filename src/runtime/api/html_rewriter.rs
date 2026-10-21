@@ -319,7 +319,7 @@ impl HTMLRewriter {
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
         selector: JsLocal<'a>,
-        listener: JsLocal<'a>,
+        handlers: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let global = cx.global();
         if selector.to_js().is_undefined_or_null() {
@@ -332,7 +332,7 @@ impl HTMLRewriter {
             Err(e) => return Err(global.throw_value(create_lolhtml_error(global, &e))),
         };
 
-        let handler = ElementHandler::init(global, this_value.to_js(), listener.to_js())?;
+        let handler = ElementHandler::init(global, this_value.to_js(), handlers.to_js())?;
         let handler = Box::new(handler);
         self.context
             .borrow_mut()
@@ -345,9 +345,9 @@ impl HTMLRewriter {
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        listener: JsLocal<'a>,
+        handlers: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
-        let handler = DocumentHandler::init(cx.global(), this_value.to_js(), listener.to_js())?;
+        let handler = DocumentHandler::init(cx.global(), this_value.to_js(), handlers.to_js())?;
         self.context
             .borrow_mut()
             .document_handlers
@@ -377,9 +377,8 @@ impl HTMLRewriter {
         input: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let cx = &cx.js_thread();
-        let (this_value, response_value) = (this_value.to_js(), input.to_js());
-        if let Some(response) = js_Response::from_js(response_value).map(BackRef::<Response>::from)
-        {
+        let (this_value, input) = (this_value.to_js(), input.to_js());
+        if let Some(response) = js_Response::from_js(input).map(BackRef::<Response>::from) {
             // An already-failed body surfaces its stored upstream error (abort
             // reason, connection error) instead of a generic "body already used"
             // — the error is the useful bit, and `wire_input` would otherwise
@@ -407,16 +406,16 @@ impl HTMLRewriter {
             ArrayBuffer,
             Other,
         }
-        let kind = if response_value.is_string() {
+        let kind = if input.is_string() {
             ResponseKind::String
-        } else if response_value.js_type().is_array_buffer_like() {
+        } else if input.js_type().is_array_buffer_like() {
             ResponseKind::ArrayBuffer
         } else {
             ResponseKind::Other
         };
 
         if kind != ResponseKind::Other {
-            let body_value = webcore::body::extract(cx.global(), response_value)?;
+            let body_value = webcore::body::extract(cx.global(), input)?;
             let resp = RefPtr::new(Response::init(
                 webcore::response::Init {
                     status_code: 200,

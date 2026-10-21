@@ -359,16 +359,12 @@ impl PostgresSQLQuery {
     }
 
     /// `result.statement` of the result for which `on_result` gave this number instead.
-    pub fn describe_result(
-        this: &Self,
-        cx: &mut JsScope<'_>,
-        number: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
-        match this
+    pub fn describe_result(&self, cx: &mut JsScope<'_>, number: JsLocal<'_>) -> JsResult<JSValue> {
+        match self
             .undescribed
             .with_mut(|results| results.take(number.to_js()))
         {
-            Some((parameters, fields)) => describe(cx.global(), &this.query, &parameters, &fields),
+            Some((parameters, fields)) => describe(cx.global(), &self.query, &parameters, &fields),
             None => Ok(JSValue::NULL),
         }
     }
@@ -420,7 +416,7 @@ impl PostgresSQLQuery {
         js::pending_value_set_cached(this_value.to_js(), cx.global(), value.to_js());
     }
 
-    pub fn set_mode_from_js(this: &Self, cx: &mut JsScope<'_>, mode: JsLocal<'_>) -> JsResult<()> {
+    pub fn set_mode_from_js(&self, cx: &mut JsScope<'_>, mode: JsLocal<'_>) -> JsResult<()> {
         let global_object = cx.global();
         let js_mode = mode.to_js();
         if js_mode.is_empty_or_undefined_or_null() || !js_mode.is_number() {
@@ -438,12 +434,12 @@ impl PostgresSQLQuery {
                 );
             }
         };
-        this.update_flags(|f| f.result_mode = result_mode);
+        self.update_flags(|f| f.result_mode = result_mode);
         Ok(())
     }
 
     pub fn do_run(
-        this: &Self,
+        &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         connection: &PostgresSQLConnection,
@@ -464,16 +460,16 @@ impl PostgresSQLQuery {
             .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS);
         // Reading the values can run user code, so it comes before any look at the connection's state.
         let mut declared = Vec::new();
-        if !this.flags.get().simple {
+        if !self.flags.get().simple {
             declared = Signature::declared_types(global_object, binding_value)?;
             let describe_first =
                 !unnamed || PostgresRequest::needs_parameter_types(global_object, binding_value)?;
-            this.update_flags(|f| f.describe_first = describe_first);
+            self.update_flags(|f| f.describe_first = describe_first);
             // The server takes what is written behind a COPY FROM STDIN for its data. Nothing is
             // written behind a simple query, and the server takes no parameter in a COPY.
-            if this.is_copy_statement() {
+            if self.is_copy_statement() {
                 declared.clear();
-                this.update_flags(|f| f.simple = true);
+                self.update_flags(|f| f.simple = true);
             }
         }
         if declared.len() > u16::MAX as usize {
@@ -484,7 +480,7 @@ impl PostgresSQLQuery {
             )));
         }
         // That code can have called `cancel()`.
-        if this.status.get() != Status::Pending {
+        if self.status.get() != Status::Pending {
             return Err(global_object.throw_value(connection.cancelled_error(None)));
         }
 
@@ -501,7 +497,7 @@ impl PostgresSQLQuery {
 
         let new_statement =
             |id: Option<u64>| PostgresSQLStatement::new(Signature::new(&declared, id));
-        this.statement.set(Some(if this.flags.get().simple {
+        self.statement.set(Some(if self.flags.get().simple {
             let mut s = PostgresSQLStatement::default();
             // It has no Parse of its own: the Query message is the whole request.
             s.status = StatementStatus::Parsing;
@@ -509,7 +505,7 @@ impl PostgresSQLQuery {
         } else if unnamed {
             new_statement(None)
         } else {
-            let query_str = this.query.to_utf8();
+            let query_str = self.query.to_utf8();
             connection.statements.with_mut(|cache| {
                 cache.get(query_str.slice(), &declared).unwrap_or_else(|| {
                     let statement = new_statement(Some(connection.take_prepared_statement_id()));
@@ -521,16 +517,16 @@ impl PostgresSQLQuery {
 
         connection
             .requests
-            .with_mut(|q| q.push_back(this.ref_guard()));
-        connection.count(this, RequestCounter::Pending);
-        this.connection.set(Some(connection.ref_guard()));
+            .with_mut(|q| q.push_back(self.ref_guard()));
+        connection.count(self, RequestCounter::Pending);
+        self.connection.set(Some(connection.ref_guard()));
         // Request is enqueued: keep the event loop alive until the server responds.
         connection.poll_ref.with_mut(|r| {
             r.ref_(bun_io::posix_event_loop::get_vm_ctx(
                 bun_io::AllocatorType::Js,
             ))
         });
-        this.this_value.with_mut(|r| r.upgrade(global_object));
+        self.this_value.with_mut(|r| r.upgrade(global_object));
         js::target_set_cached(this_value, global_object, query);
 
         connection.advance();
@@ -540,11 +536,11 @@ impl PostgresSQLQuery {
         Ok(())
     }
 
-    pub fn do_cancel(this: &Self, _: &mut JsScope<'_>) {
-        match this.connection() {
-            Some(connection) => connection.cancel(this),
+    pub fn do_cancel(&self, _: &mut JsScope<'_>) {
+        match self.connection() {
+            Some(connection) => connection.cancel(self),
             // `do_run` has not queued it: it refuses a query that is not `Pending`.
-            None if this.status.get() == Status::Pending => this.status.set(Status::Fail),
+            None if self.status.get() == Status::Pending => self.status.set(Status::Fail),
             None => {}
         }
     }

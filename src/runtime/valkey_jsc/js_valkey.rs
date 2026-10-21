@@ -47,7 +47,7 @@ pub(crate) struct SubscriptionCtx {
     pub(crate) original_enable_auto_pipelining: bool,
 }
 
-pub(crate) use crate::generated_bindgen::valkey::js_RedisClient as Js;
+pub(crate) use crate::generated_bindgen::valkey::js_RedisClient as js;
 
 impl SubscriptionCtx {
     pub(crate) fn init(valkey_parent: &JSValkeyClient) -> JsResult<Self> {
@@ -58,7 +58,7 @@ impl SubscriptionCtx {
             .try_get()
             .expect("unreachable");
 
-        Js::subscription_callback_map_set_cached(
+        js::subscription_callback_map_set_cached(
             parent_this,
             &valkey_parent.global_object,
             callback_map,
@@ -83,7 +83,7 @@ impl JSValkeyClient {
     /// `None` while the wrapper is dead but unswept: `finalize()` has not run, socket callbacks still do.
     fn try_subscription_callback_map(&self) -> Option<&mut JSMap> {
         let parent_this = self.this_value.get().try_get()?;
-        let value_js = Js::subscription_callback_map_get_cached(parent_this).unwrap();
+        let value_js = js::subscription_callback_map_get_cached(parent_this).unwrap();
         // `JSMap` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
         // `from_js` returns a non-null heap cell when the slot was set by
         // `init()`; single JS thread.
@@ -914,17 +914,17 @@ impl JSValkeyClient {
         if self.client.get().status == valkey::Status::Connected {
             return Ok(JSPromise::resolved_promise_value(
                 global_object,
-                Js::hello_get_cached(this_value).unwrap_or(JSValue::UNDEFINED),
+                js::hello_get_cached(this_value).unwrap_or(JSValue::UNDEFINED),
             ));
         }
 
-        if let Some(promise) = Js::connection_promise_get_cached(this_value) {
+        if let Some(promise) = js::connection_promise_get_cached(this_value) {
             return Ok(promise);
         }
 
         let promise_ptr = JSPromise::create(global_object);
         let promise = promise_ptr.to_js();
-        Js::connection_promise_set_cached(this_value, global_object, promise);
+        js::connection_promise_set_cached(this_value, global_object, promise);
 
         // If was manually closed, reset that flag
         self.client_mut().flags.is_manually_closed = false;
@@ -1004,7 +1004,7 @@ impl JSValkeyClient {
     // Both continue the `Bun.ModuleGraph` whose script set them, whoever's turn of the loop the
     // connection's events arrive in (and nothing, outside a graph).
     pub(crate) fn get_on_connect(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
-        Js::onconnect_get_cached(this_value.to_js())
+        js::onconnect_get_cached(this_value.to_js())
             .map_or(JSValue::UNDEFINED, JSValue::without_async_context)
     }
     pub(crate) fn set_on_connect(
@@ -1014,14 +1014,14 @@ impl JSValkeyClient {
         value: JsLocal<'_>,
     ) {
         let global = cx.global();
-        Js::onconnect_set_cached(
+        js::onconnect_set_cached(
             this_value.to_js(),
             global,
             value.to_js().with_graph_context_if_needed(global),
         );
     }
     pub(crate) fn get_on_close(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
-        Js::onclose_get_cached(this_value.to_js())
+        js::onclose_get_cached(this_value.to_js())
             .map_or(JSValue::UNDEFINED, JSValue::without_async_context)
     }
     pub(crate) fn set_on_close(
@@ -1031,7 +1031,7 @@ impl JSValkeyClient {
         value: JsLocal<'_>,
     ) {
         let global = cx.global();
-        Js::onclose_set_cached(
+        js::onclose_set_cached(
             this_value.to_js(),
             global,
             value.to_js().with_graph_context_if_needed(global),
@@ -1217,9 +1217,9 @@ impl JSValkeyClient {
                     let error = global_object.take_exception(err);
                     let client = self.client_mut();
                     client.flags.connection_promise_returns_client = false;
-                    let rejected = match Js::connection_promise_get_cached(this_value) {
+                    let rejected = match js::connection_promise_get_cached(this_value) {
                         Some(promise) => {
-                            Js::connection_promise_set_cached(
+                            js::connection_promise_set_cached(
                                 this_value,
                                 &global_object,
                                 JSValue::ZERO,
@@ -1241,9 +1241,9 @@ impl JSValkeyClient {
                     };
                 }
             };
-            Js::hello_set_cached(this_value, &global_object, hello_value);
+            js::hello_set_cached(this_value, &global_object, hello_value);
             // Call onConnect callback if defined by the user
-            if let Some(on_connect) = Js::onconnect_get_cached(this_value)
+            if let Some(on_connect) = js::onconnect_get_cached(this_value)
                 .filter(|handler| handler.without_async_context().is_callable())
             {
                 let js_value = this_value;
@@ -1251,8 +1251,8 @@ impl JSValkeyClient {
                 global_object.queue_microtask(on_connect, &[js_value, hello_value]);
             }
 
-            if let Some(promise) = Js::connection_promise_get_cached(this_value) {
-                Js::connection_promise_set_cached(this_value, &global_object, JSValue::ZERO);
+            if let Some(promise) = js::connection_promise_get_cached(this_value) {
+                js::connection_promise_set_cached(this_value, &global_object, JSValue::ZERO);
                 // `JSPromise` is an `opaque_ffi!` ZST — `opaque_mut` is the
                 // safe deref. Cached slot held a valid JSPromise.
                 let js_promise = JSPromise::opaque_mut(promise.as_promise().unwrap());
@@ -1381,8 +1381,8 @@ impl JSValkeyClient {
         let _exit = self.vm().enter_event_loop_scope();
 
         if !this_jsvalue.is_undefined() {
-            if let Some(promise) = Js::connection_promise_get_cached(this_jsvalue) {
-                Js::connection_promise_set_cached(this_jsvalue, &global_object, JSValue::ZERO);
+            if let Some(promise) = js::connection_promise_get_cached(this_jsvalue) {
+                js::connection_promise_set_cached(this_jsvalue, &global_object, JSValue::ZERO);
                 // `JSPromise` is an `opaque_ffi!` ZST — `opaque_mut` is the
                 // safe deref. Cached slot held a valid JSPromise.
                 JSPromise::opaque_mut(promise.as_promise().unwrap())
@@ -1391,7 +1391,7 @@ impl JSValkeyClient {
         }
 
         // Call onClose callback if it exists
-        if let Some(on_close) = Js::onclose_get_cached(this_jsvalue)
+        if let Some(on_close) = js::onclose_get_cached(this_jsvalue)
             .filter(|handler| handler.without_async_context().is_callable())
         {
             on_close.call(&global_object, this_jsvalue, &[error_value])?;

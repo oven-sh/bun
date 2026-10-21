@@ -589,8 +589,8 @@ impl UDPSocket {
         }
         .into_js_wrapper(cx.global());
         let js_value = this_value.to_js();
-        let this_ptr: *mut Self = this_value.as_ptr().as_ptr();
-        // SAFETY: inside `this_value`.
+        let this_ptr: *mut Self = this_value.payload_ptr().as_ptr();
+        // SAFETY: the payload of `this_value`.
         let this = unsafe { &*this_ptr };
 
         // Error-path guard: { closed = true; close socket; downgrade this_value }
@@ -603,7 +603,7 @@ impl UDPSocket {
         // Capture the raw pointer (Copy) and re-derive inside the closure so
         // borrowck does not see `this` as held across the guard's lifetime.
         let guard = scopeguard::guard(this_ptr, |ptr| {
-            // SAFETY: inside `this_value`, which this frame holds.
+            // SAFETY: the payload of `this_value`, which this frame holds.
             // R-2: shared borrow — mutation through `Cell`/`JsCell`.
             let this = unsafe { &*ptr };
             this.closed.set(true);
@@ -914,7 +914,7 @@ impl UDPSocket {
     fn set_membership(
         &self,
         global_this: &JSGlobalObject,
-        address: JSValue,
+        multicast_address: JSValue,
         interface_address: JSValue,
         drop: bool,
     ) -> JsResult<bool> {
@@ -929,7 +929,7 @@ impl UDPSocket {
         }
 
         let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
-        if !self.parse_addr(global_this, 0, address, &mut addr)? {
+        if !self.parse_addr(global_this, 0, multicast_address, &mut addr)? {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(
                     SystemErrno::EINVAL as c_int,
@@ -970,12 +970,12 @@ impl UDPSocket {
     pub(crate) fn add_membership(
         &self,
         cx: &mut JsScope<'_>,
-        address: JsLocal<'_>,
+        multicast_address: JsLocal<'_>,
         interface_address: JsLocal<'_>,
     ) -> JsResult<bool> {
         self.set_membership(
             cx.global(),
-            address.to_js(),
+            multicast_address.to_js(),
             interface_address.to_js(),
             false,
         )
@@ -984,12 +984,12 @@ impl UDPSocket {
     pub(crate) fn drop_membership(
         &self,
         cx: &mut JsScope<'_>,
-        address: JsLocal<'_>,
+        multicast_address: JsLocal<'_>,
         interface_address: JsLocal<'_>,
     ) -> JsResult<bool> {
         self.set_membership(
             cx.global(),
-            address.to_js(),
+            multicast_address.to_js(),
             interface_address.to_js(),
             true,
         )
@@ -998,7 +998,7 @@ impl UDPSocket {
     fn set_source_specific_membership(
         &self,
         global_this: &JSGlobalObject,
-        [source, group, interface_address]: [JSValue; 3],
+        [source_address, group_address, interface_address]: [JSValue; 3],
         drop: bool,
     ) -> JsResult<bool> {
         if self.closed.get() {
@@ -1015,7 +1015,7 @@ impl UDPSocket {
         // `parse_addr` only writes the sockaddr_in/in6 prefix, so
         // `assume_init()` on the full 128-byte storage would be UB.
         let mut source_addr: sockaddr_storage = bun_core::ffi::zeroed();
-        if !self.parse_addr(global_this, 0, source, &mut source_addr)? {
+        if !self.parse_addr(global_this, 0, source_address, &mut source_addr)? {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(
                     SystemErrno::EINVAL as c_int,
@@ -1026,7 +1026,7 @@ impl UDPSocket {
         }
 
         let mut group_addr: sockaddr_storage = bun_core::ffi::zeroed();
-        if !self.parse_addr(global_this, 0, group, &mut group_addr)? {
+        if !self.parse_addr(global_this, 0, group_address, &mut group_addr)? {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(
                     SystemErrno::EINVAL as c_int,
@@ -1078,29 +1078,37 @@ impl UDPSocket {
     pub(crate) fn add_source_specific_membership(
         &self,
         cx: &mut JsScope<'_>,
-        source: JsLocal<'_>,
-        group: JsLocal<'_>,
+        source_address: JsLocal<'_>,
+        group_address: JsLocal<'_>,
         interface_address: JsLocal<'_>,
     ) -> JsResult<bool> {
-        let addresses = [source.to_js(), group.to_js(), interface_address.to_js()];
+        let addresses = [
+            source_address.to_js(),
+            group_address.to_js(),
+            interface_address.to_js(),
+        ];
         self.set_source_specific_membership(cx.global(), addresses, false)
     }
 
     pub(crate) fn drop_source_specific_membership(
         &self,
         cx: &mut JsScope<'_>,
-        source: JsLocal<'_>,
-        group: JsLocal<'_>,
+        source_address: JsLocal<'_>,
+        group_address: JsLocal<'_>,
         interface_address: JsLocal<'_>,
     ) -> JsResult<bool> {
-        let addresses = [source.to_js(), group.to_js(), interface_address.to_js()];
+        let addresses = [
+            source_address.to_js(),
+            group_address.to_js(),
+            interface_address.to_js(),
+        ];
         self.set_source_specific_membership(cx.global(), addresses, true)
     }
 
     pub(crate) fn set_multicast_interface(
         &self,
         cx: &mut JsScope<'_>,
-        address: JsLocal<'_>,
+        interface_address: JsLocal<'_>,
     ) -> JsResult<bool> {
         let global_this = cx.global();
         if self.closed.get() {
@@ -1122,7 +1130,7 @@ impl UDPSocket {
         // address-family-specific fields `parse_addr` populated).
         let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
 
-        if !self.parse_addr(global_this, 0, address.to_js(), &mut addr)? {
+        if !self.parse_addr(global_this, 0, interface_address.to_js(), &mut addr)? {
             return Ok(false);
         }
 
@@ -1211,8 +1219,7 @@ impl UDPSocket {
             // `MarkedArgumentBuffer::run` lends exclusively to this callback;
             // the reborrows are scoped to this single call.
             unsafe {
-                (*ctx).result = UDPSocket::send_many_impl(
-                    (*ctx).this,
+                (*ctx).result = (*ctx).this.send_many_impl(
                     (*ctx).global_this,
                     (*ctx).packets,
                     &mut *payload_roots,
@@ -1230,16 +1237,16 @@ impl UDPSocket {
     }
 
     fn send_many_impl(
-        this: &Self,
+        &self,
         global_this: &JSGlobalObject,
-        arg: JSValue,
+        packets: JSValue,
         payload_roots: &mut MarkedArgumentBuffer,
     ) -> JsResult<i32> {
-        if this.closed.get() {
+        if self.closed.get() {
             return Err(global_this.throw(format_args!("Socket is closed")));
         }
 
-        if !arg.js_type().is_array() {
+        if !packets.js_type().is_array() {
             return Err(global_this.throw_invalid_argument_type(
                 "sendMany",
                 "first argument",
@@ -1250,13 +1257,13 @@ impl UDPSocket {
         // Cache the connection state before doing anything that can run user JS.
         // Array index getters, `port.valueOf()`, and `address.toString()` can all
         // call back into JS and connect/disconnect/close this socket. If we re-read
-        // `this.connect_info` on every iteration, a mid-loop flip changes how
+        // `self.connect_info` on every iteration, a mid-loop flip changes how
         // `slice_idx` is computed and which branch writes into `payloads`/`lens`/
         // `addr_ptrs`, producing out-of-bounds writes (unconnected -> connected) or
         // uninitialized slots (connected -> disconnected) in the arena buffers.
-        let connected = this.connect_info.get().is_some();
+        let connected = self.connect_info.get().is_some();
 
-        let array_len = arg.get_length(global_this)? as usize;
+        let array_len = packets.get_length(global_this)? as usize;
         if !connected && !array_len.is_multiple_of(3) {
             return Err(global_this
                 .throw_invalid_arguments(format_args!("Expected 3 arguments for each packet")));
@@ -1273,7 +1280,7 @@ impl UDPSocket {
         // can index safely (no `set_len` over uninit memory).
         let mut addrs: Vec<sockaddr_storage> = vec![bun_core::ffi::zeroed(); len];
 
-        let mut iter = arg.array_iterator(global_this)?;
+        let mut iter = packets.array_iterator(global_this)?;
 
         // Phase 1: collect and validate payload JSValues, resolve addresses.
         // All user-JS re-entrance happens here. Root each payload in the
@@ -1327,7 +1334,7 @@ impl UDPSocket {
             }
             if i % 3 == 2 {
                 let port_num = Self::parse_port(global_this, port)?;
-                if !this.parse_addr(global_this, port_num, val, &mut addrs[slice_idx])? {
+                if !self.parse_addr(global_this, port_num, val, &mut addrs[slice_idx])? {
                     return Err(
                         global_this.throw_invalid_arguments(format_args!("Invalid address"))
                     );
@@ -1378,7 +1385,7 @@ impl UDPSocket {
             lens[slice_idx] = slice.len();
         }
 
-        let Some(socket) = this.socket.get() else {
+        let Some(socket) = self.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
@@ -1392,7 +1399,7 @@ impl UDPSocket {
     pub(crate) fn send(
         &self,
         cx: &mut JsScope<'_>,
-        payload: JsLocal<'_>,
+        data: JsLocal<'_>,
         port: JsLocal<'_>,
         address: JsLocal<'_>,
     ) -> JsResult<bool> {
@@ -1434,7 +1441,7 @@ impl UDPSocket {
             }
         };
 
-        let payload_arg = payload.to_js();
+        let payload_arg = data.to_js();
         let payload_view;
         let mut payload_str = Utf8Bytes::EMPTY;
         // Hoisted so the `slice()` borrow outlives the `'brk` block; the

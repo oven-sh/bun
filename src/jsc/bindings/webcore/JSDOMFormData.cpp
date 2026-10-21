@@ -56,6 +56,7 @@
 #include "GeneratedBlob.h"
 #include "GCDefferalContext.h"
 
+using Bun::Bindgen::Generated::JSBlob;
 namespace WebCore {
 using namespace JSC;
 
@@ -66,7 +67,7 @@ struct JSBlobWrapperConverter {
         if (!globalObject)
             return nullptr;
 
-        auto* readableStream = dynamicDowncast<Bun::Bindgen::Generated::JSBlob>(value);
+        auto* readableStream = dynamicDowncast<JSBlob>(value);
         if (!readableStream)
             return nullptr;
 
@@ -298,7 +299,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append2Body(JSC
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
 
     RefPtr<Blob> blobValue = nullptr;
-    if (argument1.value().inherits<Bun::Bindgen::Generated::JSBlob>()) {
+    if (argument1.value().inherits<JSBlob>()) {
         blobValue = Blob::create(argument1.value());
     }
 
@@ -323,7 +324,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_appendOverloadD
     size_t argsCount = std::min<size_t>(3, callFrame->argumentCount());
     if (argsCount == 2) {
         JSValue distinguishingArg = callFrame->uncheckedArgument(1);
-        if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<Bun::Bindgen::Generated::JSBlob>())
+        if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSBlob>())
             RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_append2Body(lexicalGlobalObject, callFrame, castedThis)));
         RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_append1Body(lexicalGlobalObject, callFrame, castedThis)));
     }
@@ -462,7 +463,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::J
     EnsureStillAliveScope argument2 = callFrame->argument(2);
 
     RefPtr<Blob> blobValue = nullptr;
-    if (argument1.value().inherits<Bun::Bindgen::Generated::JSBlob>()) {
+    if (argument1.value().inherits<JSBlob>()) {
         blobValue = Blob::create(argument1.value());
     }
 
@@ -486,7 +487,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_setOverloadDisp
     size_t argsCount = std::min<size_t>(3, callFrame->argumentCount());
     if (argsCount == 2) {
         JSValue distinguishingArg = callFrame->uncheckedArgument(1);
-        if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<Bun::Bindgen::Generated::JSBlob>())
+        if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSBlob>())
             RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_set2Body(lexicalGlobalObject, callFrame, castedThis)));
         RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_set1Body(lexicalGlobalObject, callFrame, castedThis)));
     }
@@ -639,7 +640,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
         if (seenKeys.contains(key)) {
             JSValue jsValue = index.has_value() ? obj->getDirectIndex(lexicalGlobalObject, index.value()) : obj->getDirect(vm, ident);
             RETURN_IF_EXCEPTION(throwScope, {});
-            if (jsValue.isString() || jsValue.inherits<Bun::Bindgen::Generated::JSBlob>()) {
+            if (jsValue.isString() || jsValue.inherits<JSBlob>()) {
                 // Make sure this runs before the deferral scope is called.
                 JSValue resultValue = toJSValue(value);
                 RETURN_IF_EXCEPTION(throwScope, {});

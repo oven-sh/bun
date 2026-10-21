@@ -406,7 +406,7 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
     !!type.symbol?.declarations?.some(declaration => declaration.getSourceFile() === generated);
   const parts = (type: ts.Type) => (type.isUnion() ? type.types : [type]);
   /** `getPropertyOfType` does not find a member that a well-known symbol names. */
-  const sameMember = (type: ts.Type, member: ts.Symbol) =>
+  const findMember = (type: ts.Type, member: ts.Symbol) =>
     checker.getPropertyOfType(type, member.name) ??
     checker.getPropertiesOfType(type).find(other => other.escapedName === member.escapedName);
   /** The compiler numbers a well-known symbol: `__@dispose@123`. */
@@ -423,7 +423,7 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
         part => part.flags & ts.TypeFlags.Object && !others.some(other => checker.isTypeAssignableTo(part, other)),
       )
       .flatMap(part => part.getProperties())
-      .filter(member => !listed.some(part => sameMember(part, member)))
+      .filter(member => !listed.some(part => findMember(part, member)))
       .map(nameOf);
     return [...new Set(names)];
   }
@@ -477,7 +477,7 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
     compareSignatures(path, published.getCallSignatures(), calls);
     compareSignatures(`new ${path}`, published.getConstructSignatures(), constructs);
     for (const member of schema.getProperties()) {
-      const promised = sameMember(published, member);
+      const promised = findMember(published, member);
       const memberPath = path ? `${path}.${nameOf(member)}` : nameOf(member);
       if (promised) compare(memberPath, checker.getTypeOfSymbol(promised), checker.getTypeOfSymbol(member));
       else broken.push(`${memberPath} is not published`);
@@ -561,7 +561,7 @@ describe("@types/bun integration test", () => {
     ).toEqual([
       // Published, and nothing has ever read it.
       "Transpiler.bind.ts: new Transpiler(options?: TranspilerOptions | undefined): Transpiler: options has no jsxOptimizationInline",
-      // Published, and a Request has neither.
+      // `keepalive` and `duplex` are declared on Request but not implemented.
       "filesystem_router.bind.ts: new FileSystemRouter().match(input: string | Request | Response): MatchedRoute | null: input has no keepalive, duplex",
       // globals.d.ts does not declare these.
       "resolve_message.bind.ts: new BuildMessage().toJSON is not published",

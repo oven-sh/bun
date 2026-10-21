@@ -78,7 +78,7 @@ fn jsc_extern_fn(
     }
 }
 
-/// On `fn(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>`.
+/// Applies to a `fn(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>`.
 #[proc_macro_attribute]
 pub fn host_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as HostFnArgs);

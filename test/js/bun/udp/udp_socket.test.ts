@@ -303,7 +303,7 @@ describe("udpSocket()", () => {
     }
   });
 
-  test("send() on a connected socket takes undefined for the port and the address", async () => {
+  test("send() on a connected socket accepts undefined for port and address", async () => {
     const { promise, resolve } = Promise.withResolvers<string>();
     const server = await udpSocket({ hostname: "127.0.0.1", socket: { data: (_, data) => resolve(data.toString()) } });
     const client = await udpSocket({ hostname: "127.0.0.1", connect: { hostname: "127.0.0.1", port: server.port } });

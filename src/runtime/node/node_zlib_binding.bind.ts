@@ -12,16 +12,16 @@ export const crc32 = b.fn({
 });
 
 const method = { capability: "js", throws: true, passThis: true, length: 0 } as const;
-const work = {
+const write = {
   ...method,
   args: {
     flush: b.any,
-    input: b.any,
-    inputOffset: b.any,
-    inputLength: b.any,
-    output: b.any,
-    outputOffset: b.any,
-    outputLength: b.any,
+    in_: b.any,
+    inOff: b.any,
+    inLen: b.any,
+    out: b.any,
+    outOff: b.any,
+    outLen: b.any,
   },
 } as const;
 const int32 = b.i32.validateInteger();
@@ -47,8 +47,8 @@ const compressionStream = <Init extends object, Params extends object>(
       onerror: { getter: b.any, setter: { capability: "js" }, passThis: true, rustName: "on_error" },
       params,
       reset: method,
-      write: work,
-      writeSync: work,
+      write,
+      writeSync: write,
     },
   });
 
@@ -61,8 +61,8 @@ export const NativeZlib = compressionStream(
       level: int32,
       memLevel: int32,
       strategy: int32,
-      writeResult: b.any,
-      writeCallback: b.any,
+      writeState: b.any,
+      processCallback: b.any,
       dictionary: b.any,
     },
   },
@@ -72,7 +72,7 @@ export const NativeZlib = compressionStream(
 export const NativeBrotli = compressionStream(
   "crate::node::zlib::native_brotli::NativeBrotli",
   [8, 9],
-  { args: { params: b.any, writeResult: b.any, writeCallback: b.any, dictionary: b.any }, returns: b.bool },
+  { args: { initParamsArray: b.any, writeState: b.any, processCallback: b.any, dictionary: b.any }, returns: b.bool },
   {},
 );
 

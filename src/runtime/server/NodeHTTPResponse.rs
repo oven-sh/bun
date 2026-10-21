@@ -590,7 +590,7 @@ impl NodeHTTPResponse {
         };
 
         let ws = ServerWebSocket::init_for_ws_package(handler.get(), websocket);
-        // SAFETY: `init` just made `ws` in its JS wrapper, which `ws` holds strongly.
+        // SAFETY: `init` just stored `ws` inline in its JS wrapper, which `ws` keeps alive.
         let ws_ref = unsafe { &*ws };
 
         let armed_reader = self.armed_this_value.get();
@@ -2363,9 +2363,9 @@ impl NodeHTTPResponse {
     pub(crate) fn cork(
         &self,
         cx: &mut JsScope<'_>,
-        corked_fn: JsLocal<'_, Callable>,
+        callback: JsLocal<'_, Callable>,
     ) -> JsResult<JSValue> {
-        let (global_object, corked_fn) = (cx.global(), corked_fn.to_js());
+        let (global_object, callback) = (cx.global(), callback.to_js());
 
         let flags = self.flags.get();
         if flags.contains(Flags::REQUEST_HAS_COMPLETED)
@@ -2399,10 +2399,10 @@ impl NodeHTTPResponse {
                 // Capture `this` so a `self`-derived pointer reaches the FFI
                 // closure-data slot (see the R-2 note above).
                 let _escape = this;
-                result = corked_fn.call(global_object, JSValue::UNDEFINED, &[]);
+                result = callback.call(global_object, JSValue::UNDEFINED, &[]);
             });
         } else {
-            result = corked_fn.call(global_object, JSValue::UNDEFINED, &[]);
+            result = callback.call(global_object, JSValue::UNDEFINED, &[]);
         }
 
         result

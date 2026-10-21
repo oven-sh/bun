@@ -2502,7 +2502,7 @@ describe("expect()", () => {
     expect(() => expect(undefined).not.toHaveProperty("length")).toThrow();
   });
 
-  test("an argument that is left out is undefined", () => {
+  test("matchers treat a missing argument as undefined", () => {
     expect(undefined).toBe();
     expect(1).not.toBe();
     expect(undefined).toEqual();
@@ -2531,7 +2531,7 @@ describe("expect()", () => {
     expect(results).toEqual([true, false]);
   });
 
-  test("expect.not does not need expect as its receiver", () => {
+  test("expect.not, resolvesTo and rejectsTo work on an object that inherits from expect", () => {
     expect("b").toEqual(Object.create(expect).not.stringContaining("a"));
     expect(Promise.resolve("a")).toEqual(Object.create(expect).resolvesTo.stringContaining("a"));
     expect(Promise.reject("a")).toEqual(Object.create(expect).rejectsTo.stringContaining("a"));

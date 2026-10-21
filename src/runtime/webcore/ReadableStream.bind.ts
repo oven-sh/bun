@@ -3,9 +3,9 @@ import * as b from "../../codegen/bindgen-lib.ts";
 const method = { returns: b.any, capability: "js", throws: true } as const;
 
 const members = {
-  cancel: { length: 1 },
+  cancel: { rustName: "cancel_from_js", length: 1 },
   drain: { ...method, rustName: "drain_from_js", length: 1 },
-  isClosed: { getter: b.bool },
+  isClosed: { getter: b.bool, rustName: "is_closed_from_js" },
   pull: { ...method, args: { view: b.any, flags: b.any }, passThis: true, rustName: "pull_from_js", length: 1 },
   start: { ...method, rustName: "start_from_js", length: 1 },
   updateRef: { args: { enable: b.any }, rustName: "update_ref_from_js" },
@@ -38,10 +38,8 @@ const source = { refCounted: true, finalize: true, memoryCost: true, configurabl
 
 /** `owner` roots the peer that produces into this source, `sinkOwner` the peer it pipes into. */
 const internalFields = ["pendingPromise", "closeAdapter", "owner", "sinkOwner"] as const;
-/** The stream `ReadableStream__lockNative` locked, which `NewSource::end_locked_stream` closes or errors. */
-const lockable = [...internalFields, "lockedStream"] as const;
 
-/** Never gets a native sink. */
+/** A Blob source never gets a native sink. */
 export const BlobInternalReadableStreamSource = b.class({
   ...source,
   rustPath: "crate::webcore::byte_blob_loader::Source",
@@ -52,7 +50,8 @@ export const BlobInternalReadableStreamSource = b.class({
 export const FileInternalReadableStreamSource = b.class({
   ...source,
   rustPath: "crate::webcore::file_reader::Source",
-  internalFields: lockable,
+  /** `lockedStream` is the stream `ReadableStream__lockNative` locked, which `NewSource::end_locked_stream` closes or errors. */
+  internalFields: [...internalFields, "lockedStream"],
   proto: {
     cancel: members.cancel,
     drain: members.drain,
@@ -68,6 +67,6 @@ export const FileInternalReadableStreamSource = b.class({
 export const BytesInternalReadableStreamSource = b.class({
   ...source,
   rustPath: "crate::webcore::byte_stream::Source",
-  internalFields: lockable,
+  internalFields: [...internalFields, "lockedStream"],
   proto: bufferedSource,
 });

@@ -55,7 +55,7 @@ impl Expect {
                             skip_empty_name: false,
                             own_properties_only: false,
                             include_value: true,
-                            // jest-extended compares with `{}` by an equality that sees enumerable Symbol keys.
+                            // jest-extended compares against `{}` with an equality that sees enumerable Symbol keys.
                             include_symbols: true,
                             // FIXME: can we do this?
                             ..Default::default()

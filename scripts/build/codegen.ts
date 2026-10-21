@@ -809,7 +809,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "InternalModuleRegistry+createInternalModuleById.h"),
     resolve(cfg.codegenDir, "InternalModuleRegistry+enum.h"),
     resolve(cfg.codegenDir, "InternalModuleRegistry+numberOfModules.h"),
-    resolve(cfg.codegenDir, "js_classes+enum.h"),
+    resolve(cfg.codegenDir, "JSClasses+enum.h"),
     resolve(cfg.codegenDir, "NativeModuleImpl.h"),
     resolve(cfg.codegenDir, "SyntheticModuleType.h"),
     resolve(cfg.codegenDir, "BuiltinModuleKeys.h"),

@@ -1482,15 +1482,15 @@ where
         topic: JsLocal<'_>,
     ) -> JsResult<u32> {
         let global = cx.global();
-        let topic_value = topic.to_js();
+        let topic = topic.to_js();
 
-        if topic_value.is_empty_or_undefined_or_null() {
+        if topic.is_empty_or_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "subscriberCount requires a topic name as a string"
             )));
         }
 
-        let topic_view = topic_value.to_js_string_view(global)?;
+        let topic_view = topic.to_js_string_view(global)?;
         let topic = topic_view.to_utf8();
 
         if topic.slice().is_empty() {
@@ -1504,21 +1504,20 @@ where
         &self,
         cx: &mut JsScope<'_>,
         topic: JsLocal<'_>,
-        message: JsLocal<'_>,
+        data: JsLocal<'_>,
         compress: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         use super::server_web_socket::{Accept, payload_from_js, send_status_to_js};
 
         let global = cx.global();
-        let (topic_value, message_value, compress_value) =
-            (topic.to_js(), message.to_js(), compress.to_js());
-        if topic_value.is_undefined_or_null() {
+        let (topic, data, compress) = (topic.to_js(), data.to_js(), compress.to_js());
+        if topic.is_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!("Expected string")));
         }
-        let topic_view = topic_value.to_js_string_view(global)?;
+        let topic_view = topic.to_js_string_view(global)?;
         let topic = topic_view.to_utf8();
-        let compress = compress_value.is_undefined() || compress_value.to_boolean();
-        let payload = payload_from_js(global, "publish", message_value, Accept::AnyOrNullish)?;
+        let compress = compress.is_undefined() || compress.to_boolean();
+        let payload = payload_from_js(global, "publish", data, Accept::AnyOrNullish)?;
         let bytes = payload.bytes();
 
         if self.config.get().websocket.is_none() {
@@ -1568,7 +1567,7 @@ where
         )
     }
 
-    pub(crate) fn timeout<'a>(
+    pub(crate) fn do_timeout<'a>(
         &self,
         heap: &JsHeap<'a>,
         request: JsLocal<'a>,
@@ -1577,7 +1576,7 @@ where
         set_request_timeout(&self.config.get().address, heap, request, seconds)
     }
 
-    pub(crate) fn on_upgrade(
+    pub(crate) fn do_upgrade(
         &self,
         cx: &mut JsScope<'_>,
         request: JsLocal<'_>,
@@ -1587,7 +1586,7 @@ where
         use bun_jsc::HTTPHeaderName;
 
         let global = cx.global();
-        let object = request.to_js();
+        let request = request.to_js();
 
         if self.config.get().websocket.is_none() {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -1614,7 +1613,7 @@ where
             return Ok(false);
         }
 
-        let Some(request_ptr) = <Request as bun_jsc::JsClass>::from_js(object) else {
+        let Some(request_ptr) = <Request as bun_jsc::JsClass>::from_js(request) else {
             return Err(
                 global.throw_invalid_arguments(format_args!("upgrade requires a Request object"))
             );
@@ -1748,7 +1747,7 @@ where
 
             // Snapshot the lazy url before detaching (mirrors to_async_without_abort_handler).
             // SAFETY: re-derived after the JS-running option getters above; still
-            // the live JsClass payload for `object`.
+            // the live JsClass payload for `request`.
             let request = unsafe { &*request_ptr };
             if request.ensure_url().is_err() {
                 request.url.set(BunString::EMPTY);
@@ -1790,7 +1789,7 @@ where
                 )
                 .is_null()
             {
-                // SAFETY: `ws` is in its JS wrapper, which it holds strongly. uWS never stored it.
+                // SAFETY: `ws` is stored inline in its JS wrapper, which it keeps alive. uWS never stored it.
                 unsafe { &*ws }.discard_unopened();
                 return;
             }
@@ -1813,7 +1812,7 @@ where
     ) {
         httplog!("onReload");
 
-        // SAFETY: `on_reload` is only reachable while the server is running
+        // SAFETY: `do_reload` is only reachable while the server is running
         // (`self.app` set in `listen()`).
         self.app_mut().clear_routes();
         for_each_mux_app!(self, |mux| {
@@ -1824,7 +1823,7 @@ where
         // config omits them. The async-context re-wrap is unconditional:
         // `with_async_context_if_needed` is a no-op when no ALS frame is
         // active, so re-wrapping on every reload keeps the captured frame in
-        // sync with the call-time context. The wrapper is `this` of the JS call to `on_reload`, alive even if
+        // sync with the call-time context. The wrapper is `this` of the JS call to `do_reload`, alive even if
         // `js_value` was downgraded after stop(). The slot writes must reach
         // it so the new handlers are GC-rooted.
         let server_js = self.js_value_assert_alive();
@@ -1942,7 +1941,7 @@ where
         Ok(true)
     }
 
-    pub(crate) fn on_reload(
+    pub(crate) fn do_reload(
         &self,
         cx: &mut JsScope<'_>,
         options: JsLocal<'_>,
@@ -1974,19 +1973,19 @@ where
         Ok(self.js_value.try_get().unwrap_or(JSValue::UNDEFINED))
     }
 
-    pub(crate) fn on_fetch(
+    pub(crate) fn do_fetch(
         &self,
         cx: &mut JsScope<'_>,
         input: JsLocal<'_>,
         init: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        let ctx = cx.global();
+        let global = cx.global();
 
         if self.config.get().on_request.is_empty() {
             return Ok(JSPromise::rejected_promise(
-                ctx,
-                ctx.create_error_instance(format_args!(
+                global,
+                global.create_error_instance(format_args!(
                     "fetch() requires the server to have a fetch handler"
                 )),
             )
@@ -1996,19 +1995,19 @@ where
         let mut headers: Option<HeadersRef> = None;
         let mut method = Method::GET;
 
-        let first_arg = input.to_js();
+        let input = input.to_js();
         let mut body = BodyValue::Null;
         // TODO: set Host header
         // TODO: set User-Agent header
         // TODO: unify with fetch() implementation.
-        let request: *mut Request = if first_arg.is_string() {
-            let url_utf8 = first_arg.to_utf8(ctx)?;
+        let request: *mut Request = if input.is_string() {
+            let url_utf8 = input.to_utf8(global)?;
             let temp_url_str = url_utf8.slice();
 
             if temp_url_str.is_empty() {
                 return Ok(JSPromise::rejected_promise(
-                    ctx,
-                    ctx.create_error_instance(format_args!(
+                    global,
+                    global.create_error_instance(format_args!(
                         "fetch() URL must not be a blank string."
                     )),
                 )
@@ -2030,32 +2029,32 @@ where
             };
             url = URL::parse(&owned_url_buf);
 
-            let opts = init.to_js();
-            if opts.is_object() {
-                if let Some(method_) = opts.fast_get(ctx, jsc::BuiltinName::Method)? {
-                    let slice_ = method_.to_utf8(ctx)?;
+            let init = init.to_js();
+            if init.is_object() {
+                if let Some(method_) = init.fast_get(global, jsc::BuiltinName::Method)? {
+                    let slice_ = method_.to_utf8(global)?;
                     method = Method::which(slice_.slice()).unwrap_or(method);
                 }
 
-                if let Some(headers_) = opts.fast_get(ctx, jsc::BuiltinName::Headers)? {
-                    if let Some(headers__) = FetchHeaders::cast_(headers_, ctx.vm()) {
+                if let Some(headers_) = init.fast_get(global, jsc::BuiltinName::Headers)? {
+                    if let Some(headers__) = FetchHeaders::cast_(headers_, global.vm()) {
                         // Copy the headers like `new Request(url, { headers })` does.
                         // S008: `FetchHeaders` is an opaque ZST FFI handle — safe deref.
                         headers = bun_opaque::opaque_deref_mut(headers__.as_ptr())
-                            .clone_this(ctx)?
+                            .clone_this(global)?
                             // SAFETY: `clone_this` returns a +1 ref.
                             .map(|p| unsafe { HeadersRef::adopt(p) });
                     } else {
-                        headers = HeadersRef::create_from_js(ctx, headers_)?;
+                        headers = HeadersRef::create_from_js(global, headers_)?;
                     }
                 }
 
-                if let Some(body__) = opts.fast_get(ctx, jsc::BuiltinName::Body)? {
-                    match Blob::get::<true, false>(ctx, body__) {
+                if let Some(body__) = init.fast_get(global, jsc::BuiltinName::Body)? {
+                    match Blob::get::<true, false>(global, body__) {
                         Ok(new_blob) => body = BodyValue::Blob(new_blob),
                         Err(err) => {
                             return Ok(JSPromise::rejected_promise_with_caught_exception(
-                                ctx, err,
+                                global, err,
                             )?
                             .to_js());
                         }
@@ -2070,19 +2069,19 @@ where
                 crate::webcore::body::hive_alloc(body),
                 method,
             ))
-        } else if let Some(request_) = first_arg
+        } else if let Some(request_) = input
             .is_object()
-            .then(|| <Request as bun_jsc::JsClass>::from_js(first_arg))
+            .then(|| <Request as bun_jsc::JsClass>::from_js(input))
             .flatten()
         {
             // SAFETY: JsClass::from_js returns a live *mut Request.
             // NOTE: `Request::clone()` (Request.rs:1627) seeds a fully-initialized
             // sentinel and calls `clone_into(.., preserve_url=false)`.
-            unsafe { (*request_).clone(&ctx.js_thread_of_caller_no_frame())? }
+            unsafe { (*request_).clone(&global.js_thread_of_caller_no_frame())? }
         } else {
-            let fetch_error = Fetch::fetch_type_error_string(first_arg);
-            let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(ctx, format_args!("{}", fetch_error));
-            return Ok(JSPromise::rejected_promise(ctx, err).to_js());
+            let fetch_error = Fetch::fetch_type_error_string(input);
+            let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(global, format_args!("{}", fetch_error));
+            return Ok(JSPromise::rejected_promise(global, err).to_js());
         };
 
         debug_assert!(!self.config.get().on_request.is_empty()); // confirmed above
@@ -2095,18 +2094,20 @@ where
             match on_request.call(&global_this, self.js_value_assert_alive(), &[request_value]) {
                 Ok(v) => v,
                 Err(err) => {
-                    return Ok(JSPromise::rejected_promise_with_caught_exception(ctx, err)?.to_js());
+                    return Ok(
+                        JSPromise::rejected_promise_with_caught_exception(global, err)?.to_js(),
+                    );
                 }
             };
 
         if let Some(err) = response_value.to_error() {
-            return Ok(JSPromise::rejected_promise(ctx, err).to_js());
+            return Ok(JSPromise::rejected_promise(global, err).to_js());
         }
 
         if response_value.is_empty_or_undefined_or_null() {
             return Ok(JSPromise::rejected_promise(
-                ctx,
-                ctx.create_error_instance(format_args!("fetch() returned an empty value")),
+                global,
+                global.create_error_instance(format_args!("fetch() returned an empty value")),
             )
             .to_js());
         }
@@ -2122,7 +2123,7 @@ where
             // of this synchronous frame.
             unsafe { (*resp).set_url((*request).url.get().clone()) };
         }
-        Ok(JSPromise::resolved_promise_value(ctx, response_value))
+        Ok(JSPromise::resolved_promise_value(global, response_value))
     }
 
     pub(crate) fn close_idle_connections(&self, _: &mut JsScope<'_>) -> usize {
@@ -2130,7 +2131,7 @@ where
             return 0;
         }
         // Each close reaches `on_connection_filter(-2)` synchronously; hold
-        // the guard so that does not run the idle pass before this frame runs
+        // the guard so the nested call skips the idle pass; this call then runs
         // it. One-shot sweep (Node semantics): busy connections are spared
         // and are NOT marked to close later.
         self.deinit_running.set(true);
@@ -2140,11 +2141,15 @@ where
         closed
     }
 
-    pub(crate) fn stop_from_js(&self, _: &mut JsScope<'_>, abruptly: JsLocal<'_>) -> JSValue {
+    pub(crate) fn do_stop(
+        &self,
+        _: &mut JsScope<'_>,
+        close_active_connections: JsLocal<'_>,
+    ) -> JSValue {
         let rc = self.get_all_closed_promise(&self.global());
 
-        let abruptly = abruptly.to_js();
-        let abrupt = abruptly.is_boolean() && abruptly.to_boolean();
+        let close_active_connections = close_active_connections.to_js();
+        let abrupt = close_active_connections.is_boolean() && close_active_connections.to_boolean();
         // `!deinit_running`: a `server.stop()` reached from a close callback
         // that an outer `stop()`'s drain fired would re-enter `stop_listening`
         // under the outer frame.
@@ -2159,7 +2164,7 @@ where
         rc
     }
 
-    pub(crate) fn dispose_from_js(&self, _: &mut JsScope<'_>) {
+    pub(crate) fn dispose(&self, _: &mut JsScope<'_>) {
         if self.has_listener()
             || (!self.flags.get().contains(ServerFlags::TERMINATED) && !self.deinit_running.get())
         {
@@ -2283,7 +2288,7 @@ where
         }
     }
 
-    pub(crate) fn get_protocol(_: &Self) -> ServerProtocol {
+    pub(crate) fn get_protocol(&self) -> ServerProtocol {
         if SSL {
             ServerProtocol::Https
         } else {
@@ -2291,7 +2296,7 @@ where
         }
     }
 
-    pub(crate) fn get_development(_: &Self) -> bool {
+    pub(crate) fn get_development(&self) -> bool {
         DEBUG
     }
 

@@ -10,14 +10,14 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        first: JsLocal<'_>,
-        second: JsLocal<'_>,
+        property_matchers: JsLocal<'_>,
+        hint: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let this = scopeguard::guard(self, |this| this.post_match(global));
 
         let this_value = this_value.to_js();
-        let [first, second] = [first.to_js(), second.to_js()];
+        let [first, second] = [property_matchers.to_js(), hint.to_js()];
 
         this.increment_expect_call_counter();
 

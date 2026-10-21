@@ -31,7 +31,7 @@ struct InheritsTraits {
     }
 };
 
-// The `this` that `value`, a bound function, is bound to.
+// The bound `this` of `value` as a `T`, or null if `value` is not a function bound to one.
 template<typename T>
 inline T* boundThisAs(JSC::JSValue value)
 {
@@ -74,8 +74,8 @@ JSC_DECLARE_HOST_FUNCTION(callJSClassConstructor);
 // `new` on a class that only native code makes.
 JSC_DECLARE_HOST_FUNCTION(illegalConstructor);
 
-// A plain object with the properties of the table, that inherits from `base`.
-JSC::JSObject* createClassPrototype(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* base, const JSC::ClassInfo*, std::span<const JSC::HashTableValue>);
+// A plain object with the properties of the table, that inherits from `prototypeBase`.
+JSC::JSObject* createClassPrototype(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* prototypeBase, const JSC::ClassInfo*, std::span<const JSC::HashTableValue>);
 
 JSC::Structure* structureForClass(JSC::JSGlobalObject*, unsigned classIndex);
 JSC::JSObject* prototypeForClass(JSC::JSGlobalObject*, unsigned classIndex);

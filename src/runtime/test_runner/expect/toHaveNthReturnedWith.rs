@@ -10,12 +10,12 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        nth_arg: JsLocal<'_>,
+        nth: JsLocal<'_>,
         expected: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         bun_jsc::mark_binding!();
-        let [nth_arg, expected] = [nth_arg.to_js(), expected.to_js()];
+        let [nth, expected] = [nth.to_js(), expected.to_js()];
         let (this, returns, _value) = self.mock_prologue(
             global,
             this_value.to_js(),
@@ -25,12 +25,12 @@ impl Expect {
         )?;
 
         // Validate n is a number
-        if !nth_arg.is_any_int() {
+        if !nth.is_any_int() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "toHaveNthReturnedWith() first argument must be an integer"
             )));
         }
-        let n = nth_arg.to_int32();
+        let n = nth.to_int32();
         if n <= 0 {
             return Err(global.throw_invalid_arguments(format_args!(
                 "toHaveNthReturnedWith() n must be greater than 0"

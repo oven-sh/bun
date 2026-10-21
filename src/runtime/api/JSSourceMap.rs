@@ -99,15 +99,15 @@ impl JSSourceMap {
         options: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let global = cx.global();
-        let payload_arg = payload.to_js();
-        let options_arg = options.to_js();
+        let payload = payload.to_js();
+        let options = options.to_js();
 
-        global.validate_object("payload", payload_arg, Default::default())?;
+        global.validate_object("payload", payload, Default::default())?;
 
         let mut line_lengths = JSValue::ZERO;
-        if options_arg.is_object() {
+        if options.is_object() {
             // Node doesn't check it further than this.
-            if let Some(lengths) = options_arg.get_if_property_exists(global, b"lineLengths")? {
+            if let Some(lengths) = options.get_if_property_exists(global, b"lineLengths")? {
                 if lengths.js_type().is_array() {
                     line_lengths = lengths;
                 }
@@ -117,8 +117,7 @@ impl JSSourceMap {
         // Parse the payload to create a proper sourcemap
 
         // Extract mappings string from payload
-        let Some(mappings_value) = payload_arg.get_stringish_allow_empty(global, b"mappings")?
-        else {
+        let Some(mappings_value) = payload.get_stringish_allow_empty(global, b"mappings")? else {
             return Err(
                 global.throw_invalid_arguments(format_args!("payload 'mappings' must be a string"))
             );
@@ -129,7 +128,7 @@ impl JSSourceMap {
         let mut names: Vec<bstring::String> = Vec::new();
         let mut sources: Vec<bstring::String> = Vec::new();
 
-        if let Some(sources_value) = payload_arg.get_array(global, b"sources")? {
+        if let Some(sources_value) = payload.get_array(global, b"sources")? {
             let mut iter = sources_value.array_iterator(global)?;
             while let Some(source) = iter.next()? {
                 let source_str = source.to_bun_string(global)?;
@@ -137,7 +136,7 @@ impl JSSourceMap {
             }
         }
 
-        if let Some(names_value) = payload_arg.get_array(global, b"names")? {
+        if let Some(names_value) = payload.get_array(global, b"names")? {
             let mut iter = names_value.array_iterator(global)?;
             while let Some(name) = iter.next()? {
                 let name_str = name.to_bun_string(global)?;
@@ -180,7 +179,7 @@ impl JSSourceMap {
         );
 
         let global = cx.global();
-        js::payload_set_cached(this_value.to_js(), global, payload_arg);
+        js::payload_set_cached(this_value.to_js(), global, payload);
         if !line_lengths.is_empty() {
             js::line_lengths_set_cached(this_value.to_js(), global, line_lengths);
         }
@@ -253,18 +252,18 @@ impl JSSourceMap {
     pub(crate) fn find_entry(
         &self,
         cx: &mut JsScope<'_>,
-        line_number: JsLocal<'_>,
-        column_number: JsLocal<'_>,
+        line_offset: JsLocal<'_>,
+        column_offset: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let [line_number, column_number] = get_line_column(global, line_number, column_number)?;
-        if line_number < 0 || column_number < 0 {
+        let [line_offset, column_offset] = get_line_column(global, line_offset, column_offset)?;
+        if line_offset < 0 || column_offset < 0 {
             return Ok(JSValue::create_empty_object(global, 0));
         }
 
         let Some(mapping) = self.sourcemap.find_mapping(
-            Ordinal::from_zero_based(line_number),
-            Ordinal::from_zero_based(column_number),
+            Ordinal::from_zero_based(line_offset),
+            Ordinal::from_zero_based(column_offset),
         ) else {
             return Ok(JSValue::create_empty_object(global, 0));
         };

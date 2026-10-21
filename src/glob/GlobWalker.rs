@@ -785,12 +785,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         !self.walker.followed_links.is_empty()
     }
 
-    /// Whether a followed link is a match when its open failed with an errno other than
-    /// ENOTDIR. The error is the one that the walk returns: for a broken link with
-    /// `error_on_broken_symlinks`, and for a directory that the walk has to list.
-    ///
-    /// The errno of the open does not say what the link leads to: with no descriptor left it
-    /// is EMFILE for every link. A stat needs no descriptor.
+    /// Whether a followed link whose open failed is a match, or the error that the walk returns.
     #[cold]
     #[inline(never)]
     fn unopened_link(
@@ -805,10 +800,9 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         let open_errno = open_err.get_errno();
         // The error of the open, or of the stat when that one shows why the link is broken.
         let mut err = open_err;
-        // Not on Windows, where every link that does not open stays a broken link: a denied
-        // listing is EPERM there, most Win32 codes are EUNKNOWN, and `statat` does not take
-        // the absolute paths of an `absolute` walk.
+        // Not on Windows: many Win32 codes are EUNKNOWN there, and `statat` takes no absolute path.
         if !is_broken_link(open_errno) && cfg!(not(windows)) {
+            // The open gives EMFILE for every link when no descriptor is left. A stat needs none.
             match A::statat(cwd_fd, path) {
                 Ok(target) if S::ISDIR(target.st_mode as u32) => {
                     let mut add_dir = false;
@@ -822,8 +816,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     if !listed {
                         return Ok(add_dir && !walker.only_files);
                     }
-                    // Without the permission to list the directory, the link stays a broken
-                    // link. Any other error fails the walk, as for a listed directory.
+                    // Without the permission to list the directory, the link stays a broken link.
                     if !matches!(open_errno, E::EACCES | E::EPERM) {
                         return Err(err);
                     }
@@ -2328,8 +2321,7 @@ impl<A: Accessor, const SENTINEL: bool> Drop for GlobWalker<A, SENTINEL> {
 // Free functions
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The errnos of a link that the walk handles as broken: no target, too many levels of links,
-/// or a name that is too long.
+/// The errnos of a link that the walk handles as broken.
 fn is_broken_link(errno: E) -> bool {
     matches!(errno, E::ENOENT | E::ELOOP | E::ENAMETOOLONG)
 }

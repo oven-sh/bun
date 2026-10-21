@@ -212,6 +212,49 @@ test("opened reports CERT_REVOKED for a chain through a blocked public key", asy
   }
 });
 
+test("verifyPeer 'strict' and 'auto' refuse a certificate with a blocked public key", async () => {
+  // Unlike agent6's, this certificate names its host, which both modes check.
+  const fixtures = join(import.meta.dir, "..", "tls", "fixtures");
+  const cert = readFileSync(join(fixtures, "ed25519-cert.pem"));
+  const key = createPrivateKey(readFileSync(join(fixtures, "ed25519-key.pem")));
+  await using server = await listen(ignoreErrors, {
+    sni: { "*": { keys: [key], certs: [cert] } },
+    alpn: ["quic-test"],
+  });
+  async function open(verifyPeer: "strict" | "auto") {
+    const session = await connect(server.address!, {
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer,
+      ca: [cert],
+    } as SessionOptions);
+    session.onerror = () => {};
+    const closed = session.closed.catch(() => {});
+    const outcome = await session.opened.then(
+      () => "opened",
+      err => err.message,
+    );
+    if (outcome === "opened") await session.close();
+    await closed;
+    return outcome;
+  }
+
+  expect([await open("strict"), await open("auto")]).toEqual(["opened", "opened"]);
+  addBlockedSPKIForTesting(
+    createHash("sha256")
+      .update(new X509Certificate(cert).publicKey.export({ type: "spki", format: "der" }))
+      .digest(),
+  );
+  try {
+    expect([await open("strict"), await open("auto")]).toEqual([
+      "Invalid state: Session was destroyed before it opened",
+      "QUIC transport error 0: Peer certificate validation failed: certificate revoked [CERT_REVOKED]",
+    ]);
+  } finally {
+    clearBlockedSPKIsForTesting();
+  }
+});
+
 test("connect() with the default verifyPeer refuses an unverifiable certificate before a pending stream reaches the server", async () => {
   const script = `
     import { createPrivateKey } from "node:crypto";

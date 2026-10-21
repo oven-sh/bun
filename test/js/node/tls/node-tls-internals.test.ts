@@ -182,8 +182,11 @@ describe("blocked public keys", () => {
   const unrelatedSpkiHash = spkiSha256(unrelatedCert);
 
   const servers: Server[] = [];
+  // A TLS 1.3 client is done before the server has read its certificate, so clients stay open until the test is over.
+  const clients: TLSSocket[] = [];
   afterEach(() => {
     clearBlockedSPKIsForTesting();
+    for (const client of clients.splice(0)) client.destroy();
     for (const server of servers.splice(0)) server.close();
   });
 
@@ -205,11 +208,9 @@ describe("blocked public keys", () => {
       checkServerIdentity: () => undefined,
       ...options,
     });
+    clients.push(client);
     client.once("error", err => resolve({ error: (err as NodeJS.ErrnoException).code }));
-    client.once("secureConnect", () => {
-      resolve(authorization(client));
-      client.destroy();
-    });
+    client.once("secureConnect", () => resolve(authorization(client)));
     client.once("close", () => resolve({ closed: true }));
     return promise;
   }

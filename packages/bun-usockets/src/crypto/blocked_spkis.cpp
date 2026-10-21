@@ -1,12 +1,11 @@
 // The public keys no peer's chain may hold. us_x509_verify_chain (openssl.c) asks after every chain it verifies.
 #include "./root_certs_header.h"
-#include <openssl/sha.h>
 #include <array>
 #include <mutex>
 #include <string.h>
 #include <vector>
 
-using us_spki_hash = std::array<uint8_t, US_SPKI_HASH_LENGTH>;
+using us_spki_hash = std::array<uint8_t, SHA256_DIGEST_LENGTH>;
 
 // SHA-256 of each key's DER SubjectPublicKeyInfo. Above each entry: fingerprint and subject of a certificate carrying it.
 // https://github.com/nodejs/node/blob/d9a3f3d150f7959f2d448d9a61aa11f5a75aa2b3/src/crypto/crypto_context.cc#L1399-L1440
@@ -94,12 +93,11 @@ static int us_x509_stack_blocked_key_error(const STACK_OF(X509) *certs) {
   return X509_V_OK;
 }
 
-// A chain that did not verify may stop short of the blocked key, so there the leaf and all the peer sent are looked at too.
+// A chain that did not verify may stop short of the blocked key, so there everything the peer sent is looked at too.
 int us_x509_store_ctx_blocked_key_error(X509_STORE_CTX *ctx) {
   int error = us_x509_stack_blocked_key_error(X509_STORE_CTX_get0_chain(ctx));
   if (error != X509_V_OK || X509_STORE_CTX_get_error(ctx) == X509_V_OK) return error;
-  error = us_x509_blocked_key_error(X509_STORE_CTX_get0_cert(ctx));
-  return error != X509_V_OK ? error : us_x509_stack_blocked_key_error(X509_STORE_CTX_get0_untrusted(ctx));
+  return us_x509_stack_blocked_key_error(X509_STORE_CTX_get0_untrusted(ctx));
 }
 
 void us_add_blocked_spki_for_testing(const uint8_t *hash) {

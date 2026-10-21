@@ -366,7 +366,7 @@ JSC_DEFINE_HOST_FUNCTION(addBlockedSPKIForTesting, (JSC::JSGlobalObject * global
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* hash = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->argument(0));
     if (!hash) return ERR::INVALID_ARG_TYPE(scope, globalObject, "SPKI hash must be a buffer"_s);
-    if (hash->byteLength() != US_SPKI_HASH_LENGTH) return ERR::OUT_OF_RANGE(scope, globalObject, "SPKI hash must be 32 bytes"_s);
+    if (hash->byteLength() != SHA256_DIGEST_LENGTH) return ERR::OUT_OF_RANGE(scope, globalObject, "SPKI hash must be 32 bytes"_s);
     us_add_blocked_spki_for_testing(static_cast<const uint8_t*>(hash->vector()));
     return JSValue::encode(jsUndefined());
 }

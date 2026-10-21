@@ -249,7 +249,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
             }
             VisitedKind::TypeReferenceName(node, index)
             | VisitedKind::HeritageClauseName(node, index)
-            | VisitedKind::HeritageClausePropertyAccess(node, index) => {
+            | VisitedKind::HeritageClauseQualifiedName(node, index) => {
                 let scope = bound.type_scope[node.idx()];
                 let TypeNodeKind::Ref { name, .. } = hir[node].kind else {
                     return None;

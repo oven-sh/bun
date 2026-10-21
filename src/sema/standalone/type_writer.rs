@@ -168,11 +168,10 @@ impl Checker<'_, '_> {
             // `IsPartOfTypeNode`: `const` is a type reference, and a `TypePredicate` is a type node.
             VisitedKind::ConstOfAsConst(_) | VisitedKind::TypePredicateParameter(_) => true,
             // `isPartOfTypeNodeInParent`: in `A.B.C`, only `C` and the whole name are direct children
-            // of a type node. In a heritage clause the same applies to the property accesses
-            // (`isPartOfTypeExpressionWithTypeArguments`).
+            // of a type node.
             VisitedKind::TypeReferenceName(node, index)
             | VisitedKind::HeritageClauseName(node, index)
-            | VisitedKind::HeritageClausePropertyAccess(node, index) => {
+            | VisitedKind::HeritageClauseQualifiedName(node, index) => {
                 !matches!(hir[node].kind, TypeNodeKind::Ref { name, .. } if index as usize + 1 != name.len())
             }
             // The `b` of `typeof import("m").a.b` isn't skipped, because `isPartOfTypeNodeInParent`

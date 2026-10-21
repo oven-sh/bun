@@ -1684,15 +1684,10 @@ impl Checker<'_, '_> {
 
     /// `isTypeReferenceIdentifier`
     fn is_type_reference_identifier(hir: &hir::File, mut node: Node) -> bool {
-        while hir.parent(node).part() == Some(Part::Qualified) {
+        while hir.kind(hir.parent(node)) == Kind::QualifiedName {
             node = hir.parent(node);
         }
-        // `parseTypeHeritageClauseElement`: what a class implements or an interface extends is a type reference too.
-        // An `@implements` tag has an `ExpressionWithTypeArguments`.
-        matches!(hir.data(hir.parent(node)), NodeData::Type(reference)
-            if matches!(hir[reference].kind, TypeNodeKind::Ref { .. })
-                && (hir.kind(hir.parent(node)) == Kind::TypeReference
-                    || !hir.is_in_jsdoc(hir[reference].pos)))
+        hir.kind(hir.parent(node)) == Kind::TypeReference
     }
 
     /// `getCannotFindNameDiagnosticForName`

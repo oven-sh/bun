@@ -2226,6 +2226,16 @@ impl<'s> File<'s> {
         }
     }
 
+    /// True if there's a `?.` in the entity name `name`, which is an error.
+    pub fn is_optional_chain(&self, name: Span<NameId>) -> bool {
+        self.names[name.range()]
+            .array_windows()
+            .any(|[before, after]| {
+                let between = self.text.get(before.pos() as usize..after.pos() as usize);
+                between.is_some_and(|text| bun_core::strings::contains_char(text, b'?'))
+            })
+    }
+
     fn kind_of_type(&self, t: TypeNodeId, node: Node) -> Kind {
         match self[t].kind {
             TypeNodeKind::Error => Kind::Unknown,
@@ -2246,12 +2256,13 @@ impl<'s> File<'s> {
                 Keyword::This => Kind::ThisType,
                 Keyword::Intrinsic => Kind::IntrinsicKeyword,
             },
-            // An element of a heritage clause has the same syntax as a type reference.
-            TypeNodeKind::Ref { .. }
+            // `parseTypeHeritageClauseElement`, `isValidHeritageTypeReferenceExpression`: an element of a heritage clause
+            // is a type reference, unless its name has a `?.` or it's from an `@implements` tag.
+            TypeNodeKind::Ref { name, .. }
                 if matches!(
                     self.parent(node).part(),
                     Some(Part::Extends | Part::Implements)
-                ) =>
+                ) && (self.is_optional_chain(name) || self.is_in_jsdoc(self[t].pos)) =>
             {
                 Kind::ExpressionWithTypeArguments
             }
@@ -3317,9 +3328,9 @@ impl File<'_> {
                 // `parseEnumDeclaration` exits both contexts for the members only. `parseModuleBlock` stays in the
                 // enclosing contexts.
                 Kind::EnumDeclaration if self.kind(below) == Kind::EnumMember => return Ok(false),
-                // `parseType` exits both contexts. The types a class implements are parsed as expressions.
+                // `parseType` exits both contexts. The elements of a heritage clause are parsed as expressions.
                 _ if matches!(self.data(above), NodeData::Type(_))
-                    && kind != Kind::ExpressionWithTypeArguments =>
+                    && self.kind(self.parent(above)) != Kind::HeritageClause =>
                 {
                     return Ok(false);
                 }

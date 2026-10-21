@@ -4,7 +4,9 @@ use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
-use bun_paths::resolve_path::{dirname, join_abs_string_buf_z_checked, join_z_buf};
+use bun_paths::resolve_path::{
+    ParentEqual, dirname, is_parent_or_equal, join_abs_string_buf_z_checked, join_z_buf,
+};
 use bun_paths::{AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
 use bun_semver::String;
 use bun_sys::{Dir, Fd};
@@ -528,12 +530,103 @@ fn abs_node_modules_path(
     Some(abs)
 }
 
-/// For a workspace or a `link:` package, this only removes the link.
-pub(crate) fn remove_placed_package(
+/// Returns the folder of a placed package, as the linker writes it.
+fn placed_package_path(
     lockfile: &Lockfile,
+    tree_id: lockfile::tree::Id,
+    folder_name: &[u8],
+) -> Option<AbsPath> {
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let mut path = abs_node_modules_path(lockfile, string_buf, tree_id)?;
+    path.try_append(folder_name).ok()?;
+    Some(path)
+}
+
+/// Removes a failed optional package, unless a listed package in its folder still has scripts to run.
+pub(crate) fn leave_out_placed_package(
+    lockfile: &Lockfile,
+    unfinished: &UnfinishedScripts,
     tree_id: lockfile::tree::Id,
     alias: &[u8],
 ) {
+    let is_in =
+        |folder: &[u8], path: &[u8]| is_parent_or_equal(folder, path) != ParentEqual::Unrelated;
+    let mut folder = placed_package_path(lockfile, tree_id, alias);
+    let mut folder_buf = bun_paths::path_buffer_pool::get();
+    let mut row_buf = bun_paths::path_buffer_pool::get();
+    // Two links can lead to one folder, so the paths are also compared with their links resolved.
+    let folder_real = match &mut folder {
+        Some(folder) => bun_sys::realpath(folder.slice_z(), &mut folder_buf).ok(),
+        None => None,
+    };
+    let mut listed = unfinished.borrow_mut();
+    let is_in_folder = |(row_tree, row_name): &(lockfile::tree::Id, Box<[u8]>)| {
+        if *row_tree == tree_id && **row_name == *alias {
+            return false;
+        }
+        let row = placed_package_path(lockfile, *row_tree, row_name);
+        let (Some(folder), Some(mut row)) = (&folder, row) else {
+            return false;
+        };
+        is_in(folder.slice(), row.slice())
+            || folder_real.is_some_and(|folder| {
+                bun_sys::realpath(row.slice_z(), &mut row_buf).is_ok_and(|row| is_in(folder, row))
+            })
+    };
+    if listed.iter().any(is_in_folder) {
+        // Their working directories are in its `node_modules`, so only the rest of the folder goes.
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let path = abs_node_modules_path(lockfile, string_buf, tree_id);
+        if let Some(Ok(node_modules)) = path.map(|path| Dir::open(path.slice())) {
+            remove_all_but_node_modules(&node_modules, alias);
+        }
+        return;
+    }
+    listed.retain(|(tree, folder_name)| *tree != tree_id || **folder_name != *alias);
+    drop(listed);
+    remove_placed_package(lockfile, tree_id, alias);
+}
+
+/// Removes every listed package, so that the next install places it again and runs its scripts.
+pub(crate) fn discard_unfinished_packages(lockfile: &Lockfile, unfinished: &UnfinishedScripts) {
+    let mut listed = core::mem::take(&mut *unfinished.borrow_mut());
+    // A nested tree has the higher id, and a package behind a workspace link goes before the link.
+    while let Some(innermost) = (0..listed.len()).max_by_key(|&index| listed[index].0) {
+        let (tree_id, folder_name) = listed.swap_remove(innermost);
+        remove_placed_package(lockfile, tree_id, &folder_name);
+    }
+}
+
+/// After this, a package in a folder of its own no longer counts as installed.
+fn delete_what_verify_reads(package: &Dir) {
+    let _ = package.delete_tree(b"package.json");
+    let _ = package.delete_tree(package_install::BUN_TAG);
+}
+
+/// Empties the folder of a placed package, except for its `node_modules`. A link is not followed.
+fn remove_all_but_node_modules(node_modules: &Dir, alias: &[u8]) {
+    let Some(package) = crate::prune::descend(node_modules, alias) else {
+        return;
+    };
+    // A delete can stop midway, so what `verify` reads goes first.
+    delete_what_verify_reads(&package);
+    let mut names: Vec<Box<[u8]>> = Vec::new();
+    let mut iter = bun_sys::iterate_dir(package.fd());
+    while let Ok(Some(entry)) = iter.next() {
+        let name = entry.name.slice_u8();
+        if name != b"node_modules" {
+            names.push(name.into());
+        }
+    }
+    drop(iter);
+    for name in &names {
+        let _ = package.delete_tree(name);
+    }
+    crate::prune::prune_bins_of(node_modules, alias);
+}
+
+/// For a workspace or a `link:` package, this only removes the link.
+fn remove_placed_package(lockfile: &Lockfile, tree_id: lockfile::tree::Id, alias: &[u8]) {
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let Some(Ok(node_modules)) =
         abs_node_modules_path(lockfile, string_buf, tree_id).map(|path| Dir::open(path.slice()))
@@ -549,10 +642,8 @@ pub(crate) fn remove_placed_package(
     if let Some(old) = moved {
         let _ = node_modules.delete_tree(old.as_bytes());
     } else {
-        // If the rename fails, delete the files `verify` reads first.
         if let Some(package) = crate::prune::descend(&node_modules, alias) {
-            let _ = package.delete_tree(b"package.json");
-            let _ = package.delete_tree(package_install::BUN_TAG);
+            delete_what_verify_reads(&package);
         }
         let _ = node_modules.delete_tree(alias);
     }

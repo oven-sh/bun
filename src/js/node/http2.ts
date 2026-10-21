@@ -93,7 +93,7 @@ const StringPrototypeIncludes = String.prototype.includes;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 
-const H2FrameParser = $rust("h2_frame_parser.rs", "H2FrameParserConstructor");
+const H2FrameParser = $bindgen("h2_frame_parser.bind.ts", "H2FrameParser");
 const { upgradeRawSocketToH2 } = require("node:_http2_upgrade");
 type UpgradableSecureServer = Parameters<typeof upgradeRawSocketToH2>[1];
 

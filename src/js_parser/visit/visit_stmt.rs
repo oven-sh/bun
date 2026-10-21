@@ -2,6 +2,7 @@
 use crate::Error;
 use crate::lexer as js_lexer;
 use crate::p::{P, ReactRefreshExportKind};
+use crate::parser::Runtime::ReplaceableExport;
 use crate::parser::{
     PrependTempRefsOpts, ReactRefresh, Ref, RelocateVarsMode, SideEffects, StmtsKind,
     statement_cares_about_scope,
@@ -38,9 +39,7 @@ fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
 // a direct `impl P` block. The 30+ per-variant `s_*` helpers are private; only
 // `visit_and_append_stmt` is surfaced. Full draft body preserved under  mod _draft below.
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
-    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
-{
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // Thin alias of `current_scope_mut()` kept for local readability.
     #[inline(always)]
     fn cur_scope(&mut self) -> &mut js_ast::Scope {
@@ -267,6 +266,65 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(())
     }
 
+    /// Applies a `replace_exports` entry to `alias`, a re-exported name with no local binding in this module.
+    #[cold]
+    #[inline(never)]
+    fn replace_reexport(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        alias: &'a [u8],
+        entry: &ReplaceableExport,
+    ) {
+        let exported_name: &[u8] = match entry {
+            ReplaceableExport::Inject { name, .. } => name,
+            ReplaceableExport::Replace(_) | ReplaceableExport::Delete => alias,
+        };
+        match entry {
+            ReplaceableExport::Replace(value) | ReplaceableExport::Inject { value, .. }
+                if exported_name == js_ast::ClauseItem::DEFAULT_ALIAS =>
+            {
+                let mut export_default = p.s(
+                    S::ExportDefault {
+                        default_name: js_ast::LocRef::default(),
+                        value: js_ast::StmtOrExpr::Expr(*value),
+                    },
+                    bun_ast::Loc::EMPTY,
+                );
+                // Hide `replace_exports` from the visitor so it doesn't replace the export generated here.
+                let replace_exports = core::mem::take(&mut p.options.features.replace_exports);
+                p.visit_and_append_stmt(stmts, &mut export_default)
+                    .expect("unreachable");
+                p.options.features.replace_exports = replace_exports;
+            }
+            ReplaceableExport::Replace(_) => {
+                // In TypeScript, `declare_symbol` lets a declaration replace an import with the same name.
+                // Report a conflict here instead.
+                if TYPESCRIPT
+                    && let Some(import) = p
+                        .current_scope()
+                        .get_member_with_hash(alias, js_ast::Scope::get_member_hash(alias))
+                    && p.symbols[import.ref_.inner_index() as usize].kind
+                        == js_ast::symbol::Kind::Import
+                {
+                    p.log().add_symbol_already_declared_error(
+                        p.source,
+                        alias,
+                        bun_ast::Loc::EMPTY,
+                        import.loc,
+                    );
+                    return;
+                }
+                let declared = p
+                    .declare_symbol(js_ast::symbol::Kind::Other, bun_ast::Loc::EMPTY, alias)
+                    .expect("unreachable");
+                let _ = p.inject_replacement_export(stmts, declared, bun_ast::Loc::EMPTY, entry);
+            }
+            ReplaceableExport::Delete | ReplaceableExport::Inject { .. } => {
+                let _ = p.inject_replacement_export(stmts, Ref::NONE, bun_ast::Loc::EMPTY, entry);
+            }
+        }
+    }
+
     fn s_export_from(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
@@ -291,8 +349,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 // alias is arena-owned (`ArenaStr`), valid for 'a.
                 let alias = items[i].alias.slice();
                 if let Some(entry) = p.options.features.replace_exports.get_ptr(alias).cloned() {
-                    let _ =
-                        p.inject_replacement_export(stmts, old_ref, bun_ast::Loc::EMPTY, &entry);
+                    Self::replace_reexport(p, stmts, alias, &entry);
                     continue;
                 }
 
@@ -347,15 +404,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     .get_ptr(alias_name)
                     .cloned()
                 {
-                    let declared = p
-                        .declare_symbol(
-                            js_ast::symbol::Kind::Other,
-                            bun_ast::Loc::EMPTY,
-                            alias_name,
-                        )
-                        .expect("unreachable");
-                    let _ =
-                        p.inject_replacement_export(stmts, declared, bun_ast::Loc::EMPTY, &entry);
+                    Self::replace_reexport(p, stmts, alias_name, &entry);
                     return Ok(());
                 }
             }
@@ -386,10 +435,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let mut mark_for_replace: bool = false;
 
         let orig_dead = p.is_control_flow_dead;
+        let orig_in_deleted = p.in_deleted_export;
         if p.options.features.replace_exports.count() > 0 {
             if let Some(entry) = p.options.features.replace_exports.get_ptr(b"default") {
                 p.is_control_flow_dead =
                     p.options.features.dead_code_elimination && !entry.is_replace();
+                p.in_deleted_export = p.is_control_flow_dead;
                 mark_for_replace = true;
             }
         }
@@ -397,6 +448,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         macro_rules! restore_dead {
             () => {
                 p.is_control_flow_dead = orig_dead;
+                p.in_deleted_export = orig_in_deleted;
+            };
+        }
+
+        // The value removed by a `replace_exports` entry is dead code, but the export the entry injects isn't.
+        macro_rules! inject_for_dead_value {
+            () => {
+                if mark_for_replace && !orig_dead {
+                    if let Some(entry) = p
+                        .options
+                        .features
+                        .replace_exports
+                        .get_ptr(b"default")
+                        .cloned()
+                        && !entry.is_replace()
+                    {
+                        let _ = p.inject_replacement_export(
+                            stmts,
+                            Ref::NONE,
+                            bun_ast::Loc::EMPTY,
+                            &entry,
+                        );
+                    }
+                }
             };
         }
 
@@ -429,6 +504,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
                 if p.is_control_flow_dead {
                     restore_dead!();
+                    inject_for_dead_value!();
                     record_on_exit!();
                     return Ok(());
                 }
@@ -452,6 +528,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                     // this symbol, drop the statement.
                                     data.default_name.ref_ = Ref::NONE;
                                     restore_dead!();
+                                    inject_for_dead_value!();
                                     record_on_exit!();
                                     return Ok(());
                                 }
@@ -613,6 +690,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         if p.is_control_flow_dead {
                             p.react_refresh.hook_ctx_storage = prev;
                             restore_dead!();
+                            inject_for_dead_value!();
                             record_on_exit!();
                             return Ok(());
                         }
@@ -782,6 +860,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
                         if p.is_control_flow_dead {
                             restore_dead!();
+                            inject_for_dead_value!();
                             record_on_exit!();
                             return Ok(());
                         }
@@ -892,11 +971,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let mark_as_dead = p.options.features.dead_code_elimination
             && data.func.flags.contains(flags::Function::IsExport)
             && p.options.features.replace_exports.count() > 0
+            && p.enclosing_namespace_arg_ref.is_none()
             && p.is_export_to_eliminate(data.func.name.expect("infallible: name checked").ref_);
         let original_is_dead = p.is_control_flow_dead;
+        let original_in_deleted = p.in_deleted_export;
 
         if mark_as_dead {
             p.is_control_flow_dead = true;
+            p.in_deleted_export = true;
         }
 
         // Unconditionally point p.react_refresh.hook_ctx_storage at this stack-local
@@ -912,6 +994,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let open_parens_loc = data.func.open_parens_loc;
         let this_expr_count_before = p.this_expr_count;
         data.func = p.visit_func(core::mem::take(&mut data.func), open_parens_loc, false);
+        p.in_deleted_export = original_in_deleted;
         p.react_compiler_candidate_name = None;
 
         let name_ref = data.func.name.expect("infallible: name checked").ref_;
@@ -1050,6 +1133,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let mark_as_dead = p.options.features.dead_code_elimination
             && data.is_export
             && p.options.features.replace_exports.count() > 0
+            && p.enclosing_namespace_arg_ref.is_none()
             && p.is_export_to_eliminate(
                 data.class
                     .class_name
@@ -1057,12 +1141,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     .ref_,
             );
         let original_is_dead = p.is_control_flow_dead;
+        let original_in_deleted = p.in_deleted_export;
 
         if mark_as_dead {
             p.is_control_flow_dead = true;
+            p.in_deleted_export = true;
         }
 
         let _ = p.visit_class(stmt.loc, &mut data.class, Ref::NONE, false);
+        p.in_deleted_export = original_in_deleted;
 
         // Remove the export flag inside a namespace
         let was_export_inside_namespace = data.is_export && p.enclosing_namespace_arg_ref.is_some();

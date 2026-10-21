@@ -835,7 +835,7 @@ test("closeAllConnections() on a listening server destroys the connections and k
     const socket = connect(port, "127.0.0.1");
     socket.on("error", () => {});
     socket.write(head);
-    for (let received = ""; !received.includes(until); ) received += await nextData(socket);
+    for (let received = ""; !received.includes(until);) received += await nextData(socket);
     return socket;
   }
 

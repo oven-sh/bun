@@ -363,7 +363,7 @@ fn spawn_maybe_sync(
     // outlives this call frame.
     let jsc_vm: &mut jsc::VirtualMachineRef = cx.vm().as_mut();
 
-    let mut cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let mut cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
     let mut user_specified_cwd = false;
 
     let mut stdio: [Stdio; 3] = [Stdio::Ignore, Stdio::Pipe, Stdio::Inherit];
@@ -834,7 +834,7 @@ fn spawn_maybe_sync(
                         // Create a new terminal from options
                         let term_options =
                             TerminalOptions::parse_from_js(cx.global(), terminal_val)?;
-                        match Terminal::create_from_spawn(cx.global(), &term_options) {
+                        match Terminal::create_from_spawn(cx, &term_options) {
                             Ok(created) => terminal_info.0 = Some(created),
                             Err(err) => {
                                 return Err(match err {
@@ -1837,7 +1837,10 @@ fn spawn_maybe_sync(
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
             let bun_test_timeout: Timespec = if bun_test_fired {
                 Timespec::EPOCH
-            } else if let Some(runner) = crate::test_runner::jest::Jest::runner() {
+            } else if jsc_vm.is_main_thread
+                && let Some(runner) = crate::test_runner::jest::Jest::runner()
+            {
+                // The test runner and its deadlines belong to the main thread.
                 runner.get_active_timeout()
             } else {
                 Timespec::EPOCH

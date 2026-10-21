@@ -107,6 +107,48 @@ test("an identity with several cert/key pairs installs a matching pair", async (
   }
 });
 
+// The client destroys itself as soon as it has 1-RTT keys. The listener reads its Finished and
+// CONNECTION_CLOSE together, so lsquic frees the connection before the session reports the handshake.
+test("session.certificate returns the servername's identity after lsquic frees the connection", async () => {
+  const reported = Promise.withResolvers<unknown>();
+  await using server = await listen(
+    session => {
+      ignoreErrors(session);
+      session.closed.then(
+        () => reported.reject(new Error("the session closed before it reported its handshake")),
+        reported.reject,
+      );
+      session.onhandshake = info =>
+        reported.resolve({
+          servername: info.servername,
+          certificate: (session.certificate as X509Certificate | undefined)?.subject.match(/CN=([^\s,]+)/)?.[1],
+          peerMaxIdleTimeout: (session as any).remoteTransportParams?.maxIdleTimeout,
+        });
+    },
+    { sni: { "*": identity1, "agent2.example": identity2 }, alpn: ["quic-test"] },
+  );
+
+  const client = await connect(server.address!, {
+    alpn: "quic-test",
+    servername: "agent2.example",
+    verifyPeer: "manual",
+    transportParams: { maxIdleTimeout: 5 },
+    keylog: true,
+    onkeylog(line) {
+      if (line.startsWith("CLIENT_TRAFFIC_SECRET_0")) this.destroy(undefined, { code: 1n });
+    },
+    onerror() {},
+  } as SessionOptions);
+  client.opened.catch(() => {});
+  client.closed.catch(() => {});
+
+  expect(await reported.promise).toEqual({
+    servername: "agent2.example",
+    certificate: "agent2",
+    peerMaxIdleTimeout: 5n,
+  });
+});
+
 test("setSNIContexts() rejects a non-object and a closed endpoint", async () => {
   const endpoint = new QuicEndpoint();
   expect(() => endpoint.setSNIContexts("nope" as any)).toThrow(
@@ -220,4 +262,33 @@ test("connect() with the default verifyPeer refuses an unverifiable certificate 
     ),
     exitCode: 0,
   });
+});
+
+// https://github.com/oven-sh/bun/issues/32234
+test("a client verifies an Ed25519 server certificate", async () => {
+  const fixtures = join(import.meta.dir, "..", "tls", "fixtures");
+  const cert = readFileSync(join(fixtures, "ed25519-cert.pem"));
+  const key = createPrivateKey(readFileSync(join(fixtures, "ed25519-key.pem")));
+  await using server = await listen(ignoreErrors, {
+    sni: { "*": { keys: [key], certs: [cert] } },
+    alpn: ["quic-test"],
+  });
+  const session = await connect(server.address!, { alpn: "quic-test", servername: "localhost", ca: [cert] });
+  try {
+    expect(await session.opened).toMatchObject({ validationErrorCode: undefined, validationErrorReason: undefined });
+  } finally {
+    await session.close();
+  }
+});
+
+test("connect() refuses a servername with a NUL byte", async () => {
+  await using server = await listen(ignoreErrors, { sni: { "*": identity1 }, alpn: ["quic-test"] });
+  expect(
+    (async () =>
+      connect(server.address!, {
+        alpn: "quic-test",
+        servername: "agent2.example\0evil",
+        verifyPeer: "manual",
+      } as SessionOptions))(),
+  ).rejects.toThrow("servername must not contain null bytes");
 });

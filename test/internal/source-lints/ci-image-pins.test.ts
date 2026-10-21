@@ -57,7 +57,9 @@ test("scripts/agent.ts, which runs on the machines alone, puts the spec's Rust d
   expect(readFileSync(join(root, "scripts/agent.ts"), "utf8")).toContain(`<string>${locations.rust.darwin}/bin:`);
 });
 
-test("the Node-API tests build against the headers of the Node.js the CI images install", () => {
+test("the Node-API tests build against the headers of the Node.js the CI images install, with their clang", () => {
   const harness = readFileSync(join(root, "test/napi/node-napi-tests/harness.ts"), "utf8");
   expect(harness).toContain(`const NODE_HEADERS_VERSION = "${pins.nodejs.version}";`);
+  const major = pins.llvm.version.split(".")[0];
+  expect(harness).toContain(`? "${locations.llvm}/bin/clang" : "/usr/lib/llvm${major}/bin/clang";`);
 });

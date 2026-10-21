@@ -265,6 +265,7 @@ impl UpgradeCommand {
             headers_buf,
             b"",
             http_proxy,
+            HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
         ));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
@@ -656,6 +657,7 @@ impl UpgradeCommand {
                 b"",
                 b"",
                 http_proxy,
+                HTTP::ProxySettings::from_env(&env_loader),
                 HTTP::FetchRedirect::Follow,
             ));
             // `progress` is intentionally leaked (process-lifetime), so the
@@ -820,7 +822,7 @@ impl UpgradeCommand {
                     let Some(unzip_exe) = which(
                         &mut unzip_path_buf,
                         env_loader.map.get(b"PATH").unwrap_or(b""),
-                        filesystem.top_level_dir,
+                        filesystem.top_level_dir(),
                         b"unzip",
                     ) else {
                         let _ = sys::unlinkat(&save_dir, tmpname);

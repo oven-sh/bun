@@ -1,6 +1,6 @@
 import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "node:path";
 
 type Resolve = (value?: unknown) => void;
@@ -296,6 +296,62 @@ describe("tcp socket binaryType", () => {
   }
 });
 
+it.skipIf(isWindows)("stop(true) between ticks closes every socket when a close handler ticks the loop", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import { expect } from "bun:test";
+        const events = [];
+        const { promise: bothOpen, resolve: onBothOpen } = Promise.withResolvers();
+        let opened = 0;
+        const server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open() {
+              if (++opened === 2) onBothOpen();
+            },
+            data() {},
+            close() {
+              events.push("close");
+              if (events.length === 1) {
+                // "timer" before "ticked" proves that the wait ticked the loop.
+                const timer = new Promise(resolve =>
+                  setTimeout(() => {
+                    events.push("timer");
+                    resolve();
+                  }),
+                );
+                expect(timer).resolves.toBeUndefined();
+                events.push("ticked");
+              }
+            },
+          },
+        });
+        for (let i = 0; i < 2; i++) {
+          await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
+        }
+        await bothOpen;
+        // An immediate runs between event loop ticks.
+        setImmediate(() => {
+          server.stop(true);
+          events.push("stopped");
+          console.log(events.join(","));
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("close,timer,ticked,close,stopped\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 it("should not leak memory", async () => {
   // The fixture counts live Listener and TCPSocket objects after the sockets
   // close. The count is heap-wide, and under `bun test --parallel` this
@@ -311,4 +367,29 @@ it("should not leak memory", async () => {
   expect(stderr).toBe("");
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);
+});
+
+// stop(true) from alpnCallback or serverName closes the socket whose SSL call
+// is on the stack, so that close waits until the callback returns. stop(true)
+// once spun on that socket and never returned. The fixture runs in a child
+// process, because such a spin also blocks the event loop that times a test
+// out. The cases are not concurrent: the runner kills a child that a timed-out
+// test leaves behind only when that test runs alone.
+describe("TLS listener: stop(true) from inside a selection callback", () => {
+  it.each(["alpnCallback", "serverName"])("%s: stop(true) returns and the connection closes", async hook => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "tls-stop-from-selection-fixture.ts"), hook],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      events: ["returned", "handshake:false", "close"],
+      clientConnected: false,
+      serverClosedFirst: true,
+    });
+    expect(exitCode).toBe(0);
+  });
 });

@@ -90,33 +90,8 @@ export function getStdioWriteStream(
   stream._isStdio = true;
   stream.fd = fd;
 
+  // This is undefined if a FileSink couldn't be opened for the fd. The stream then writes through node:fs.
   const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
-  if (!underlyingSink && !stream._writableState.autoDestroy) {
-    // No FileSink: Writable parks every write after a failed one until destroy, so a failed write resets the stream.
-    const failures: unknown[] = []; // in order: a corked batch fails one write per chunk
-    const write = stream._write;
-    const destroy = stream._destroy;
-    stream._write = function (chunk, encoding, cb) {
-      write.$call(this, chunk, encoding, err => {
-        if (err) {
-          failures.push(err);
-          this._writableState.autoDestroy = true;
-        }
-        cb(err);
-      });
-    };
-    stream._destroy = function (err, cb) {
-      if (!err || err !== failures[0]) return destroy.$call(this, err, cb);
-      failures.shift();
-      if (failures.length === 0) this._writableState.autoDestroy = false;
-      this._undestroy();
-      // Not through cb: that marks the reset stream errorEmitted a tick later, and end() then never finishes.
-      process.nextTick(() => {
-        this.emit("error", err);
-        this.emit("close");
-      });
-    };
-  }
   return [stream, underlyingSink];
 }
 
@@ -623,7 +598,7 @@ export function windowsEnv(
 
 export function getChannel() {
   const EventEmitter = require("node:events");
-  const setRef = $newRustFunction("node_cluster_binding.rs", "setRef", 1);
+  const setRef = $bindgen("node_cluster_binding.bind.ts", "setRef");
   return new (class Control extends EventEmitter {
     constructor() {
       super();

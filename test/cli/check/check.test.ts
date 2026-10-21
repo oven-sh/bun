@@ -6276,6 +6276,212 @@ dynamic.getSSRProps = binding => {
       }
     });
 
+    // TypeScript measures the variances of all the type parameters of a generic type when one of them is first read. What it
+    // gets, and what the measurement leaves in the cache of comparisons, depends on that moment and on that order.
+    describe("what depends on when variances are measured", () => {
+      // TypeScript measures all the variances of G and H together, with the first of the two in progress. H's second one reads
+      // as independent then. Measured alone, later, it's covariant.
+      const declarations = {
+        "the cycle comes back through the second type argument": `
+interface G<A, B> { h: H<string, A>; b: B }
+interface H<X, Y> { g: G<X, Y> }`,
+        "the cycle comes back through the first type argument": `
+interface G<A, B> { h: H<A, string>; b: B }
+interface H<X, Y> { g: G<X, Y> }`,
+      };
+      const h = `
+declare let hs: H<1, "a">;
+let h1: H<1, "b"> = hs;`;
+      const g = `
+declare let gs: G<"a", 1>;
+let g1: G<"b", 1> = gs;`;
+      for (const [name, types] of Object.entries(declarations)) {
+        test.each([
+          ["H", h + g],
+          ["G", g + h],
+        ])(
+          `two types that refer to each other are measured together: ${name}, %s is compared first`,
+          async (_, probes) => {
+            using dir = project({ "a.ts": types + probes });
+            const { stdout } = await check(dir);
+            expect(stdout).toBe("");
+          },
+        );
+        test.each([2, 8])(`the same with each comparison in its own file: ${name}, on %d threads`, async threads => {
+          using dir = project({ "d.d.ts": types, "h.ts": h + "\nexport {};", "g.ts": g + "\nexport {};" });
+          const { stdout } = await check(dir, ["--threads", String(threads)]);
+          expect(stdout).toBe("");
+        });
+      }
+
+      // What's left in the cache by measuring B decides what C gets.
+      test("the variances of a type that refers to itself are measured in order", async () => {
+        using dir = project({
+          "a.ts": `
+interface G<A, B, C> { f1: (x: B) => void; m2(x: C): void; next: (x: G<B, C, A>) => void }
+const p7: G<"a", "a", "a"> = null! as G<"a", "a", string>;
+`,
+        });
+        const { stdout } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+          "a.ts(3,7): error TS2322: Type 'G<"a", "a", string>' is not assignable to type 'G<"a", "a", "a">'.
+            Type 'string' is not assignable to type '"a"'."
+        `);
+      });
+
+      // `Wrapper` doesn't refer to itself, and the comparison only needs the variance of B. But measuring A is what reads the
+      // variances of `Core` first, before `Other` is compared. In TypeScript 7.0 and 7.1 the second comparison fails only if
+      // `Other` is read first.
+      const types = `
+type Core<A, B, C> = { other: Other<B>; self: (x: Core<C, C, B>) => C };
+interface Other<T> { core: Core<number, T, number>; f(x: Other<1>): Core<"k", T, T> }
+interface Wrapper<A, B, C> { m: (x: Core<A, C, Core<number, C, "k">>) => C }`;
+      const wrapper = `
+declare let w: Wrapper<1, unknown, 1>;
+export let w2: Wrapper<1, string, 1> = w;`;
+      const other = `
+declare let o: Other<{ x: 1 }>;
+export let o2: Other<{ x: 1; y: 2 }> = o;`;
+      test("a type that leads to a cycle can be what reads it first", async () => {
+        using dir = project({ "a.ts": types + wrapper + other });
+        const { stdout } = await check(dir);
+        expect(stdout).toBe("");
+      });
+      test("and the cycle is read first by what comes first", async () => {
+        using dir = project({ "a.ts": types + other + wrapper });
+        const { stdout } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+          "a.ts(6,12): error TS2322: Type 'Other<{ x: 1; }>' is not assignable to type 'Other<{ x: 1; y: 2; }>'.
+            Property 'y' is missing in type '{ x: 1; }' but required in type '{ x: 1; y: 2; }'."
+        `);
+      });
+
+      // Measuring X resolves the conditional type, whose comparison is the first to read the variances of `A` and `B`.
+      test("a conditional type that's resolved during a measurement", async () => {
+        using dir = project({
+          "a.ts": `
+declare let narrow: Wrapper<1, 2>;
+export let wide: Wrapper<number, number> = narrow;
+export const c: Wrapper<1, 2>["c"] = { x: 1, y: 2 };
+interface A<T> { b: B<T> }
+interface B<T> { a: A<T>; v: T }
+interface Wrapper<X, Y> { c: A<"a"> extends A<string> ? { x: X; y: Y } : never }
+`,
+        });
+        const { stdout } = await check(dir);
+        expect(stdout).toBe("");
+      });
+
+      // Resolving `self` compares two instantiations of `Self`, which reads the variances of `Self`, and measuring those
+      // resolves `self`. What comes out depends on which of the two starts.
+      test("a type whose members ask for its own variances", async () => {
+        using dir = project({
+          "a.ts": `
+export const c: Outer<1, 2, any> extends Outer<1, 2, string> ? 1 : 2 = 1;
+interface Outer<A, B, C> { inner: Inner<A, B, C> }
+interface Inner<A, B, C> extends Self<B> { m: Self<{ x: 1 }> extends Self<C> ? A : B }
+interface Self<T> { self: Self<{ x: 1; y: 2 }> extends Self<{ x: 1 }> ? { [K in keyof T]-?: T } : Self<T>["self"] }
+`,
+        });
+        const { stdout } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`"a.ts(2,14): error TS2322: Type '1' is not assignable to type '2'."`);
+      });
+
+      // Measuring A compares `First<B, sub>` with `First<B, super>`, which measures `First` and `Second`. Their measurement
+      // restarts and leaves a failure in the cache for the same two types. The comparison that started it replaces that.
+      test("a comparison whose result replaces what a restarted measurement stored", async () => {
+        using dir = project({
+          "a.ts": `
+type Second<T> = { first: First<T, 1> };
+interface Wrapper<A, B> { m: First<B, A> }
+declare let w: Wrapper<string, void>;
+export let w2: Wrapper<string, number> = w;
+declare let v: Wrapper<"a", 1>;
+export let v2: Wrapper<string, 1> = v;
+declare class First<A, B> { f: (x: A) => void; b: B; second: Second<(x: First<1, string>) => B> }
+`,
+        });
+        const { stdout } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+          "a.ts(5,12): error TS2322: Type 'Wrapper<string, void>' is not assignable to type 'Wrapper<string, number>'.
+            Type 'number' is not assignable to type 'void'."
+        `);
+      });
+
+      // Measuring the first type parameter of `Inner` compares `Self<sub>` with `Self<super>` by the variance of `Self`. Once
+      // that's measured, the two are its marker types, and they're compared structurally, with another result.
+      test("the marker types of a type that refers to itself, compared before it's measured", async () => {
+        using dir = project({
+          "a.ts": `
+declare let w: Outer<1, never, string, "z">;
+export let w2: Outer<1, string, string, "z"> = w;
+interface Outer<A, B, C, D> { inner: Inner<string, D, C, B> }
+interface Inner<A, B, C, D> { m: Self<() => D>; n: readonly Self<D>[]; f(): [...C[], Self<A>] }
+interface Self<T> { t: T; f(x: (this: Self<1>) => void): Self<(this: Self<T>) => void> }
+`,
+        });
+        const { stdout } = await check(dir);
+        expect(stdout).toBe("");
+      });
+
+      // No type here refers to itself. While B is measured, `Inner<A, super>` and `Inner<A, sub>` have the same key in the cache
+      // as two marker types of `Inner`. Measuring A has compared those, so the result is found there, without the mark
+      // "unreliable" that reading the variance of `Inner` would add. So B allows no structural comparison, which would succeed.
+      test("a comparison that finds the result of an earlier measurement under its own key", async () => {
+        using dir = project({
+          "a.ts": `
+interface Inner<A, B> { b: B; x: { [K in keyof B]: A } }
+interface Outer<A, B, C> { k: keyof B; inner: Inner<A, B> | C }
+declare let s: Outer<1, "a", any>;
+export let t: Outer<1, "b", string> = s;
+`,
+        });
+        const { stdout } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+          "a.ts(5,12): error TS2322: Type 'Outer<1, "a", any>' is not assignable to type 'Outer<1, "b", string>'.
+            Type '"a"' is not assignable to type '"b"'."
+        `);
+      });
+
+      // The other way around. The first comparison only needs the variance of B, but measuring A measures `Mid`, and there
+      // `Inner<super, Q>` and `Inner<sub, Q>` are the first two instantiations of `Inner` to be compared. Nothing is in the cache
+      // yet, so they're compared by the variances of `Inner`, P is marked, and the last line is compared structurally.
+      test("a comparison that's the first to read the variances, under the key of two marker types", async () => {
+        using dir = project({
+          "a.ts": `
+interface Inner<A, B> { a: A; x: { [K in keyof A]: B } }
+interface Mid<P, Q> { k: keyof P; i: Inner<P, Q> | Q }
+interface Outer<A, B> { m: Mid<A, 1>; x: Inner<B[], 1> }
+declare let s1: Outer<1, "a">;
+export let t1: Outer<1, "a" | "b"> = s1;
+declare let s2: Mid<"a", any>;
+export let t2: Mid<"b", string> = s2;
+`,
+        });
+        const { stdout } = await check(dir);
+        expect(stdout).toBe("");
+      });
+
+      test("a type parameter that isn't used", async () => {
+        using dir = project({
+          "a.ts": `
+interface Box<In, Out, Unused> { put(x: In): void; set: (x: In) => void; get: Out }
+declare let a: Box<string, "a", 1>;
+export let ok1: Box<"x", string, 2> = a;
+export let bad1: Box<unknown, "a", 1> = a;
+export let bad2: Box<string, "b", 1> = a;
+`,
+        });
+        const { stdout } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+          "a.ts(5,12): error TS2322: Type 'Box<string, "a", 1>' is not assignable to type 'Box<unknown, "a", 1>'.
+            Type 'unknown' is not assignable to type 'string'.
+          a.ts(6,12): error TS2322: Type 'Box<string, "a", 1>' is not assignable to type 'Box<string, "b", 1>'.
+            Type '"a"' is not assignable to type '"b"'."
+        `);
+      });
+    });
+
     // The argument is wrong: without the cycle through `keyof typeof shapes`, TypeScript reports TS2345. Inside the initializer
     // that the type refers back to, the comparison re-enters itself, and TypeScript 7.0 and 7.1 keep the inner result.
     test("keeps the first result of a comparison that re-enters itself through a variable's initializer", async () => {

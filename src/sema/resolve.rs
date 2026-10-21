@@ -483,6 +483,7 @@ impl ScriptKind {
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Dialect {
     /// Follows TypeScript 5's parser, which typescript-estree runs on, where the native one differs.
+    /// The syntax that TypeScript 7.1 added is still accepted in a TypeScript file.
     pub typescript_5: bool,
     /// Parses JavaScript per ECMAScript, with Annex B and JSX, the way acorn and Babel do, where TypeScript's parser
     /// rejects valid code or parses it differently. Doesn't affect TypeScript files.

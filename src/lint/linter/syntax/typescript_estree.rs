@@ -91,8 +91,6 @@ struct Checks<'a> {
     errors: Vec<SyntaxError>,
 }
 
-const NO_SOURCE: &str = "'source' is not a valid meta-property for keyword 'import'.";
-
 /// `for_prettier` selects the version bundled with Prettier 3.9, which doesn't check the values of import attributes.
 pub(super) fn first_error<'a>(file: &'a File<'a>, for_prettier: bool) -> Option<SyntaxError> {
     let mut checks = Checks {
@@ -1178,10 +1176,6 @@ impl<'a> Checks<'a> {
                 }
             }
             Some(hir::ExprKind::ImportCall { args, phase }) => {
-                // `import.source()` parses because `bun fmt` parses every file in the Babel dialect, which allows it.
-                if self.for_prettier && phase == hir::ImportPhase::Source {
-                    self.fail(it.span(), it.span().start, NO_SOURCE);
-                }
                 let args = file.hir.ids.get(args.range()).unwrap_or_default();
                 let is_missing = |id: u32| {
                     matches!(
@@ -1252,10 +1246,12 @@ impl<'a> Checks<'a> {
             let has_bindings = raw.namespace.is_some() || raw.has_named_imports;
             let message = if raw.type_only && raw.default.is_some() && has_bindings {
                 "A type-only import can specify a default import or named bindings, but not both."
-            } else if raw.phase != hir::ImportPhase::Evaluation && raw.has_named_imports {
+            } else if raw.phase == hir::ImportPhase::Defer && raw.has_named_imports {
                 "Named imports are not allowed in a deferred import."
-            } else if raw.phase != hir::ImportPhase::Evaluation && raw.default.is_some() {
+            } else if raw.phase == hir::ImportPhase::Defer && raw.default.is_some() {
                 "Default imports are not allowed in a deferred import."
+            } else if raw.phase == hir::ImportPhase::Source && has_bindings {
+                "Named and namespace imports are not allowed in a source phase import."
             } else {
                 continue;
             };
@@ -1455,12 +1451,13 @@ impl<'a> Checks<'a> {
             // `import.defer` that isn't called, so the `(` is missing.
             1005 if it.args.first().is_some_and(|it| **it == *b"(") => {
                 let end = self.file.end_of_token_before(at);
-                // Only in the Babel dialect.
                 if let Some(name) = end.checked_sub("source".len() as u32)
                     && self.file.slice(Span::new(name, end)) == b"source"
                     && let Some(start) = self.import_before(name)
                 {
-                    self.fail(Span::new(start, end), start, NO_SOURCE);
+                    let message =
+                        "'import.source' is only valid when called. Use 'import.source()' instead.";
+                    self.fail(Span::new(start, end), start, message);
                 }
                 let Some(name) = end.checked_sub("defer".len() as u32) else {
                     return;

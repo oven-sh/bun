@@ -950,6 +950,87 @@ describe.concurrent("bun fmt", () => {
     expect(checked.exitCode).toBe(0);
   });
 
+  test("formats the syntax that's new in TypeScript 7.1", async () => {
+    // The attributes of an ambient module are printed like those of an import.
+    const rows = [
+      [
+        `declare module '*.css' with {"type":'css'} { const sheet: CSSStyleSheet; export default sheet }`,
+        `declare module "*.css" with { type: "css" } {\n  const sheet: CSSStyleSheet;\n  export default sheet;\n}`,
+      ],
+      [`declare module "a" with {type:"text",}`, `declare module "a" with { type: "text" };`],
+      [`declare module "a" with {type:"text";};`, `declare module "a" with { type: "text" };`],
+      [`declare module "a"\n  with {\n    type: "text"\n  }\n  {}`, `declare module "a" with { type: "text" } {}`],
+      [`declare module "a" with {};`, `declare module "a" with {};`],
+      [`declare module "a" with { b: "c"; 'd-e': "f" } {}`, `declare module "a" with { b: "c", "d-e": "f" } {}`],
+      [`declare module "a" with { b: "c"\n  d: "e" };`, `declare module "a" with { b: "c", d: "e" };`],
+      [`declare module "a" with {\n  b: "c", d: "e" } {}`, `declare module "a" with {\n  b: "c",\n  d: "e",\n} {}`],
+      [
+        `declare module "a" with { type: "text", ${Buffer.alloc(30, "b")}: "${Buffer.alloc(30, "c")}" };`,
+        `declare module "a" with {\n  type: "text",\n  ${Buffer.alloc(30, "b")}: "${Buffer.alloc(30, "c")}",\n};`,
+      ],
+      [
+        `declare module "a" /* 1 */ with /* 2 */ { /* 3 */ type /* 4 */ : /* 5 */ "b" /* 6 */ } /* 7 */ { /* 8 */ }`,
+        `declare module "a" /* 1 */ with /* 2 */ {\n  /* 3 */ type /* 4 */: /* 5 */ "b" /* 6 */,\n} /* 7 */ {\n  /* 8 */\n}`,
+      ],
+      [`declare module "a" with { /* 1 */ };`, `declare module "a" with {/* 1 */};`],
+      [
+        `declare module "a" with { b: "c", // 1\n  d: "e" };`,
+        `declare module "a" with {\n  b: "c", // 1\n  d: "e",\n};`,
+      ],
+      [`declare module "a" // 1\n  with { type: "b" } {}`, `declare module "a" with { type: "b" } {} // 1`],
+      [`declare module "a" with // 1\n  { type: "b" } {}`, `declare module "a" with { type: "b" } {} // 1`],
+      [`declare module "a" with { type: "b" } // 1\n  {}`, `declare module "a" with { type: "b" } {} // 1`],
+      [`import   source   a   from   './a.wasm'`, `import source a from "./a.wasm";`],
+      [
+        `import source /* 1 */ a /* 2 */ from "a" with {type:'b'}`,
+        `import source /* 1 */ a /* 2 */ from "a" with { type: "b" };`,
+      ],
+      [
+        `import source from "a"; import source source from "a"`,
+        `import source from "a";\nimport source source from "a";`,
+      ],
+      [`a = import . source ( './a.wasm' )`, `a = import.source("./a.wasm");`],
+      [`a = import.source(/* 1 */ "a", {with:{type:"b"}})`, `a = import.source(/* 1 */ "a", { with: { type: "b" } });`],
+      [
+        `class A { #a = 1; b(c: A) { let d: typeof   this . #a; let e: typeof c.#a.f; let g: typeof c.h.#a<string> } }`,
+        `class A {\n  #a = 1;\n  b(c: A) {\n    let d: typeof this.#a;\n    let e: typeof c.#a.f;\n    let g: typeof c.h.#a<string>;\n  }\n}`,
+      ],
+    ];
+    // A declaration file has no statements.
+    const extensions = (code: string) => [
+      "ts",
+      "tsx",
+      "mts",
+      "cts",
+      ...(/^(declare|import) /.test(code) ? ["d.ts"] : []),
+    ];
+    const names = rows.flatMap(([code], index) => extensions(code).map(extension => `${index}.${extension}`));
+    const column = (at: 0 | 1) => Object.fromEntries(names.map(name => [name, rows[parseInt(name)][at] + "\n"]));
+    const result = await formatChecked(column(0), [], { reads: names });
+    expect(result.files).toEqual(column(1));
+    expect(result).toMatchObject({ stderr: "", exitCode: 0 });
+    expect((await format(column(1), ["--check"])).exitCode).toBe(0);
+    // An oxfmt config selects another dialect of the parser.
+    const oxfmt = { ".oxfmtrc.json": "{}\n" };
+    expect((await format({ ...oxfmt, ...column(0) }, ["--debug-check"])).exitCode).toBe(0);
+    const withOxfmt = await format({ ...oxfmt, ...column(0) }, [], { reads: names });
+    expect(withOxfmt.exitCode).toBe(0);
+    const again = await format({ ...oxfmt, ...(withOxfmt.files as Record<string, string>) }, ["--check"]);
+    expect(again.exitCode).toBe(0);
+
+    const options = [
+      ["--no-semi", `declare module "a" with { b: "c", "d-e": "f" }\n`],
+      ["--single-quote", `declare module 'a' with { b: 'c', 'd-e': 'f' };\n`],
+      ["--quote-props=consistent", `declare module "a" with { "b": "c", "d-e": "f" };\n`],
+      ["--no-bracket-spacing", `declare module "a" with {b: "c", "d-e": "f"};\n`],
+      ["--print-width=30", `declare module "a" with {\n  b: "c",\n  "d-e": "f",\n};\n`],
+      ["--print-width=30 --trailing-comma=none", `declare module "a" with {\n  b: "c",\n  "d-e": "f"\n};\n`],
+    ];
+    const stdin = `declare module "a" with { b: "c", "d-e": "f" };\n`;
+    const printed = options.map(([flags]) => format({}, [...flags.split(" "), "--stdin-filepath=a.d.ts"], { stdin }));
+    expect((await Promise.all(printed)).map(it => it.raw)).toEqual(options.map(it => it[1]));
+  });
+
   test("keeps two comments before an arrow function's `=>` on the same line", async () => {
     // Prettier 3.9.9 prints `(a) /* b */\n/* c */ => d`, and no line break is allowed before `=>`.
     const files = {

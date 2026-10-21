@@ -166,6 +166,10 @@ impl NoDuplicateImports {
 
     fn collect<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let (module, ty, is_type_only, is_export) = match statement.kind() {
+            // `import source a from "a"` can't be merged with another import.
+            StmtKind::Import(import) if import.is_source_phase() && !cx.language().is_oxlint => {
+                return;
+            }
             StmtKind::Import(import) => {
                 let ty = if import.namespace().is_some() {
                     Type::Namespace

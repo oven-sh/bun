@@ -703,8 +703,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// True if `import source x from "m"` and `import.source("m")` are syntax in the file's dialect.
+    /// True if `import source x from "m"` and `import.source("m")` are syntax in the file's dialect. In a TypeScript
+    /// file they are in every dialect, as in TypeScript 7.1.
     pub(super) fn has_source_phase(&self) -> bool {
+        if !self.options.is_javascript {
+            return true;
+        }
         let dialect = self.options.dialect;
         dialect.babel || dialect.oxc || !dialect.typescript_5
     }

@@ -1491,6 +1491,12 @@ impl<'a> Module<'a> {
         List::ids(self.file, self.raw().body)
     }
 
+    /// The `{ type: "css" }` of `declare module "*.css" with { type: "css" } { }`, a type literal.
+    #[inline]
+    pub fn attributes(self) -> Option<TypeNode<'a>> {
+        TypeNode::in_source(self.file, self.raw().attributes)
+    }
+
     /// False for `declare module "m";`.
     #[inline]
     pub fn has_body(self) -> bool {
@@ -1518,10 +1524,11 @@ impl<'a> Module<'a> {
     pub fn body_span(self) -> Option<Span> {
         let last = self.innermost();
         last.has_body().then(|| {
-            Span::new(
-                skip_trivia(self.file.text(), last.name_span().end),
-                last.span().end,
-            )
+            let before = match last.attributes() {
+                Some(attributes) => attributes.span().end,
+                None => last.name_span().end,
+            };
+            Span::new(skip_trivia(self.file.text(), before), last.span().end)
         })
     }
 
@@ -1604,10 +1611,10 @@ impl<'a> Import<'a> {
         self.raw().type_only
     }
 
-    /// `import defer ..`
+    /// `import source ..`
     #[inline]
-    pub fn is_deferred(self) -> bool {
-        self.phase() == Some("defer")
+    pub fn is_source_phase(self) -> bool {
+        self.raw().phase == hir::ImportPhase::Source
     }
 
     /// `"defer"` for `import defer ..`, `"source"` for `import source ..`.

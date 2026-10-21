@@ -917,7 +917,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 return Some(self.identifier_name());
             }
             // `parsePrivateIdentifier`
-            if private_names == PrivateNames::Allowed && !self.options.dialect.typescript_5 {
+            if private_names == PrivateNames::Allowed && !self.is_flow() {
                 let name = (self.lx.atom, self.lx.start);
                 self.next_after_name();
                 return Some(name);

@@ -414,6 +414,46 @@ describe.concurrent("bun lint", () => {
     expect(lines(eslint.stdout).map(line => /Parsing error: /.test(line))).toEqual(names.map(() => true));
   });
 
+  test("the syntax that's new in TypeScript 7.1 is linted in a TypeScript file with every kind of config", async () => {
+    const code = [
+      'declare module "*.css" with { type: "css" } {}',
+      'declare module "*.txt" with { type: "text" };',
+      'declare module "*.bin" with {};',
+      'import source wasm from "./a.wasm";\nexport type Wasm = typeof wasm;',
+      'export const loading = import.source("./b.wasm");',
+      "export class Counter {\n  #count = 1;\n  pair(other: Counter): [typeof this.#count, typeof other.#count] {\n    return [this.#count, other.#count];\n  }\n}",
+    ];
+    // A declaration file has no statements.
+    const extensions = (text: string) => [
+      "ts",
+      "tsx",
+      "mts",
+      "cts",
+      ...(/^(declare|import) /.test(text) ? ["d.ts"] : []),
+    ];
+    const names = code.flatMap((text, index) => extensions(text).map(extension => `${index}.${extension}`)).sort();
+    // The last line is there to be reported, which shows that the file was parsed.
+    const files = Object.fromEntries(
+      names.map(name => [name, `${code[parseInt(name)]}\nexport declare const z: 1;\n`]),
+    );
+    const rules = { "id-length": "error" };
+    const parser = `{ meta: { name: "typescript-eslint/parser" } }`;
+    const configs: Record<string, string>[] = [
+      { "bunfig.toml": '[lint.rules]\n"id-length" = "error"\n' },
+      { ".oxlintrc.json": JSON.stringify({ rules }) },
+      {
+        "eslint.config.js": `export default [{ files: ["**/*.{ts,tsx,mts,cts}"], languageOptions: { parser: ${parser} }, rules: ${JSON.stringify(rules)} }];\n`,
+      },
+      { ".eslintrc.json": JSON.stringify({ root: true, parser: "@typescript-eslint/parser", rules }) },
+    ];
+    const results = await Promise.all(configs.map(config => lint({ ...config, ...files }, ["-f", "unix", ...names])));
+    for (const { stdout } of results) {
+      const lines = stdout.split("\n").filter(line => /^\S*\d\.[a-z.]+:\d/.test(line));
+      const found = lines.map(line => [basename(line.split(":")[0]), /id-length/.test(line)]);
+      expect(found.sort()).toEqual(names.map(name => [name, true]));
+    }
+  });
+
   // Each row is what oxlint 1.87 prints, in the same order. tsc, typescript-estree, espree and Babel reject an escape
   // in a JSX name.
   test("with .oxlintrc.json, a unicode escape in a JSX name isn't decoded", async () => {

@@ -1048,8 +1048,11 @@ impl<'a> Organizer<'a, '_> {
                 let mut out = b"import ".to_vec();
                 if import.is_type_only() {
                     out.extend_from_slice(b"type ");
-                } else if import.has_clause() && original.is_some_and(|it| it.is_deferred()) {
-                    out.extend_from_slice(b"defer ");
+                } else if import.has_clause()
+                    && let Some(phase) = original.and_then(|it| it.phase())
+                {
+                    out.extend_from_slice(phase.as_bytes());
+                    out.push(b' ');
                 }
                 if let Some(name) = import.name {
                     out.extend_from_slice(self.file.slice(name.span()));

@@ -171,6 +171,100 @@ describe.concurrent("every built-in rule", () => {
     }
   });
 
+  test("reports the syntax that's new in TypeScript 7.1 like the older syntax next to it", async () => {
+    const rules = await listed();
+    const all = bunfig(Object.fromEntries(rules.map(it => [`${it.scope}/${it.value}`, setting(it.value, "error")])));
+    // Each file comes in two versions whose lines correspond.
+    const pairs: Record<string, [is71: string, older: string]> = {
+      "module.d.ts": [
+        `declare module "*.css" with { type: "css" } {
+  const sheet: CSSStyleSheet;
+  export default sheet;
+}
+declare module "*.txt" with { type: "text" };
+declare module "*.bin" with {};
+`,
+        `declare module "*.css" {
+  const sheet: CSSStyleSheet;
+  export default sheet;
+}
+declare module "*.txt";
+declare module "*.bin";
+`,
+      ],
+      "import.ts": [
+        `import source used from "./used.wasm";
+import source onlyType from "./only-type.wasm";
+import source unused from "./unused.wasm";
+import value from "./used.wasm";
+export type T = typeof onlyType;
+export const a = [used, value, import.source("./dynamic.wasm")];
+export { used };
+`,
+        `import used from "./used.wasm";
+import onlyType from "./only-type.wasm";
+import unused from "./unused.wasm";
+import value from "./used.wasm";
+export type T = typeof onlyType;
+export const a = [used, value, import("./dynamic.wasm")];
+export { used };
+`,
+      ],
+      "private.ts": [
+        `export class C {
+  #read = 1;
+  #unused = 2;
+  shown = 3;
+  m(other: C): number {
+    const x: typeof this.#read = 1;
+    const y: typeof other.#read = 2;
+    return x + y;
+  }
+}
+`,
+        `export class C {
+  #read = 1;
+  #unused = 2;
+  shown = 3;
+  m(other: C): number {
+    const x: typeof this.shown = 1;
+    const y: typeof other.shown = 2;
+    return x + y;
+  }
+}
+`,
+      ],
+    };
+    const version = (at: 0 | 1) => Object.fromEntries(Object.entries(pairs).map(([name, pair]) => [name, pair[at]]));
+    const [is71, older, fixed] = await Promise.all([
+      lint({ ...version(0), ...all }, ["-f", "json"]),
+      lint({ ...version(1), ...all }, ["-f", "json"]),
+      lint({ ...version(0), ...all }, ["-f", "json", "--fix-dry-run"]),
+    ]);
+    expect(is71.stderr).not.toContain("error:");
+    // An import in the source phase has no type-only form, can't be merged with another import and can't be turned into
+    // a re-export.
+    const notForPhases = [
+      "import.ts:1 import/no-duplicates",
+      "import.ts:1 unicorn/prefer-export-from",
+      "import.ts:2 @typescript-eslint/consistent-type-imports",
+      "import.ts:4 import/no-duplicates",
+      "import.ts:4 no-duplicate-imports",
+    ];
+    // `typeof this.#read` uses `#read`.
+    const notIfQueried = ["private.ts:2 @typescript-eslint/no-unused-private-class-members"];
+    const expected = problems(older.stdout);
+    expect(expected).toEqual(expect.arrayContaining([...notForPhases, ...notIfQueried]));
+    expect(expected).toContain("private.ts:3 @typescript-eslint/no-unused-private-class-members");
+    expect(problems(is71.stdout)).toEqual(expected.filter(it => ![...notForPhases, ...notIfQueried].includes(it)));
+    // No fix removes or breaks it.
+    const outputs = (JSON.parse(fixed.stdout) as { filePath: string; output?: string }[]).map(it => it.output ?? "");
+    expect(problems(fixed.stdout).filter(it => it.endsWith(" null"))).toEqual([]);
+    for (const kept of [/import source used from/, /import source onlyType from/, /typeof this\.#read/]) {
+      expect(outputs.some(output => kept.test(output))).toBe(true);
+    }
+  });
+
   test("typescript-eslint rules run on JavaScript files", async () => {
     const { stdout, stderr, exitCode } = await lint(
       {

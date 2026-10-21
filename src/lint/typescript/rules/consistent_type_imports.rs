@@ -526,7 +526,9 @@ impl ConsistentTypeImports {
 
         let mut reports: Vec<ReportValueImport<'a>> = Vec::new();
         let mut top_level_scope = None;
-        for &import in imports.iter().filter(|it| !it.is_type_only()) {
+        // There's no `import type source a from "a"`.
+        let can_be_type_only = |it: &&Import<'a>| !it.is_type_only() && !it.is_source_phase();
+        for &import in imports.iter().filter(can_be_type_only) {
             let statement = import.stmt();
             let scope = match statement.parent() {
                 Node::File(_) => {

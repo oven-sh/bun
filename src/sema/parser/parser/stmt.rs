@@ -1137,8 +1137,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 (name, name_pos) = (ModuleName::String(self.lx.atom), self.pos());
                 specifies_module = false;
                 self.next_after_string();
-                // New in TypeScript 7.1. The other parsers report the `with`.
-                if self.token() == T::With && self.options.dialect == Default::default() {
+                if self.token() == T::With && !self.is_ecmascript {
                     self.next();
                     attributes = self.type_literal();
                 }

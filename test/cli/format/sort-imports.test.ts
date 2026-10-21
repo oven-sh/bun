@@ -872,6 +872,32 @@ describe.concurrent("sortImports sources", () => {
     }
   });
 
+  test("an import keeps its phase, whichever sorter moves it", async () => {
+    const lines = [
+      `import source a from "a.wasm";`,
+      `import z from "z";`,
+      `import source b from "./b.wasm";`,
+      `import defer * as d from "./d";`,
+      `console.log(a, z, b, d);`,
+    ];
+    const files = { "a.ts": [1, 2, 3, 0, 4].map(at => `${lines[at]}\n`).join("") };
+    const plugin = (name: string, options?: object) => ({
+      ".prettierrc": JSON.stringify({ plugins: [name], ...options }),
+    });
+    const results = await Promise.all([
+      format({ ...bunfig, ...files }),
+      format({ ".oxfmtrc.json": `{ "sortImports": true }`, ...files }),
+      format({ ...plugin("@trivago/prettier-plugin-sort-imports", { importOrder: ["^[./]"] }), ...files }),
+      format({ ...plugin("@ianvs/prettier-plugin-sort-imports", { importOrder: ["^[./]"] }), ...files }),
+      format({ ...plugin("prettier-plugin-organize-imports"), ...files }),
+    ]);
+    for (const result of results) {
+      expect(result.files["a.ts"].split("\n").filter(Boolean)).toEqual(lines);
+      expect(result.second.files).toEqual(result.files);
+      expect(result.exitCode).toBe(0);
+    }
+  });
+
   test("a Flow file is still a Flow file after its imports are sorted", async () => {
     const code = (imports: string) =>
       `// @flow\n${imports}export function f(x: ?number): %checks {\n  return !!x;\n}\n`;

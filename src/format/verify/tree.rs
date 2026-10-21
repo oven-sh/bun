@@ -986,6 +986,7 @@ impl Walk<'_, '_> {
                 let is_same = (i.flags, i.has_body, i.specifies_module)
                     == (j.flags, j.has_body, j.specifies_module);
                 self.check(is_same, "the keywords of a namespace")?;
+                self.ty(i.attributes, j.attributes)?;
                 self.stmt_list(i.body, j.body)
             }
             (

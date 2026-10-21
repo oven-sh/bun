@@ -9,10 +9,10 @@
 // (including `weak_file_sink_stdin_ptr`'s default of `null`). `onProcessExit`
 // then found no pipe to close and the fd lived until Subprocess finalization.
 
-import { fileSinkInternals } from "bun:internal-for-testing";
+import { fileSinkInternals, getCounters } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isPosix, isWindows, tempDir } from "harness";
-import { readdirSync } from "node:fs";
+import { bunEnv, bunExe, isASAN, isLinux, isPosix, isWindows, tempDir } from "harness";
+import { readdirSync, readlinkSync } from "node:fs";
 import { join } from "node:path";
 
 function countOpenFds(): number {
@@ -145,4 +145,110 @@ test.skipIf(!isPosix)("reading .stdin after child exit still returns a FileSink"
   const stdin = p.stdin;
   expect(stdin).toBeDefined();
   expect(typeof (stdin as any).write).toBe("function");
+});
+
+// On Linux a Blob or buffer `stdin` does not go through a pipe: the bytes are copied into a
+// memfd, and the child gets the memfd as its fd 0. The parent has no use for its own descriptor
+// of the memfd once the child is spawned.
+const stdinMemfd = "/memfd:spawn_stdio_stdin";
+
+function countOpenStdinMemfds(): number {
+  return readdirSync("/proc/self/fd").filter(fd => {
+    try {
+      return readlinkSync(`/proc/self/fd/${fd}`).startsWith(stdinMemfd);
+    } catch {
+      // The descriptor that listed the directory is closed by now.
+      return false;
+    }
+  }).length;
+}
+
+test.skipIf(!isLinux)("a buffer stdin memfd is closed in the parent when the child has it", async () => {
+  const text = "bytes for the child";
+  const stdins = {
+    Uint8Array: new TextEncoder().encode(text),
+    ArrayBuffer: new TextEncoder().encode(text).buffer,
+    Buffer: Buffer.from(text),
+    Blob: new Blob([text]),
+    Response: new Response(text),
+  };
+  const kinds = Object.keys(stdins) as (keyof typeof stdins)[];
+
+  const before = countOpenStdinMemfds();
+  const children = kinds.map(kind =>
+    Bun.spawn({
+      // Prints what its fd 0 is, then what it reads from it.
+      cmd: ["sh", "-c", "readlink /proc/self/fd/0; cat"],
+      stdin: stdins[kind],
+      stdout: "pipe",
+      stderr: "inherit",
+    }),
+  );
+  // No child was reaped yet, and `children` keeps every Subprocess from the GC.
+  const whileRunning = countOpenStdinMemfds() - before;
+  const outputs = await Promise.all(children.map(child => child.stdout.text()));
+  const exitCodes = await Promise.all(children.map(child => child.exited));
+
+  expect({
+    whileRunning,
+    afterExit: countOpenStdinMemfds() - before,
+    outputs: Object.fromEntries(kinds.map((kind, i) => [kind, outputs[i]])),
+    exitCodes,
+  }).toEqual({
+    whileRunning: 0,
+    afterExit: 0,
+    outputs: Object.fromEntries(kinds.map(kind => [kind, `${stdinMemfd} (deleted)\n${text}`])),
+    exitCodes: kinds.map(() => 0),
+  });
+});
+
+test.skipIf(!isLinux)("Bun.spawnSync closes a buffer stdin memfd before it waits for the child", () => {
+  // The parent stays inside spawnSync until the child exits, so the child is the one that looks
+  // at the parent's descriptors. The parent closes the memfd right after the spawn, which can be
+  // a moment after the child starts: the child polls until the memfd is gone.
+  const child = `
+    const fs = require("node:fs");
+    const parentFds = "/proc/" + process.ppid + "/fd";
+    const heldByParent = () =>
+      fs.readdirSync(parentFds).filter(fd => {
+        try {
+          return fs.readlinkSync(parentFds + "/" + fd).startsWith(${JSON.stringify(stdinMemfd)});
+        } catch {
+          return false;
+        }
+      }).length - ${countOpenStdinMemfds()};
+    const deadline = performance.now() + 2000;
+    while (heldByParent() > 0 && performance.now() < deadline) Bun.sleepSync(5);
+    console.log(
+      JSON.stringify({
+        stdin: fs.readlinkSync("/proc/self/fd/0"),
+        heldByParent: heldByParent(),
+        // Read only now: the bytes do not depend on the parent's descriptor.
+        bytesRead: fs.readFileSync(0).length,
+      }),
+    );
+  `;
+  const { stdout, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-e", child],
+    env: bunEnv,
+    stdin: new Uint8Array(1024 * 1024),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+
+  expect(stdout.toString()).toBe(
+    JSON.stringify({ stdin: `${stdinMemfd} (deleted)`, heldByParent: 0, bytesRead: 1024 * 1024 }) + "\n",
+  );
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(!isLinux)("a buffer stdin memfd is closed when the spawn fails", () => {
+  const before = { open: countOpenStdinMemfds(), made: getCounters().spawn_memfd };
+  expect(() => Bun.spawn({ cmd: ["/this/program/does/not/exist"], stdin: new Uint8Array(8) })).toThrow(
+    expect.objectContaining({ code: "ENOENT" }),
+  );
+  expect({
+    open: countOpenStdinMemfds() - before.open,
+    made: getCounters().spawn_memfd - before.made,
+  }).toEqual({ open: 0, made: 1 });
 });

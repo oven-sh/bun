@@ -2264,28 +2264,19 @@ describe.skipIf(!isPosix)("a spawn while fd 0, 1 or 2 is closed", () => {
     });
   });
 
-  it.concurrent.skipIf(!isLinux)("a stdin memfd that is moved off fd 1 keeps its close-on-exec state", async () => {
-    // /proc/self/fdinfo shows FD_CLOEXEC of the parent's memfd as O_CLOEXEC in "flags".
-    const stdinMemfd = (closeFirst: boolean) =>
+  it.concurrent.skipIf(!isLinux)("a memfd that is moved off fd 1 keeps its close-on-exec state", async () => {
+    // bun closes its own descriptor of a stdin memfd inside the spawn call, so this makes a memfd with the
+    // same flags directly. /proc/self/fdinfo shows FD_CLOEXEC as O_CLOEXEC in "flags".
+    const memfd = (closeFirst: boolean) =>
       run(`
+        const { memfd_create } = require("bun:internal-for-testing");
         ${closeFirst ? "fs.closeSync(1);" : ""}
-        const proc = Bun.spawn({ cmd: ["cat"], stdin: new Blob(["hi"]), stdout: "pipe", stderr: "pipe" });
-        const memfd = { aboveStdio: "no memfd", cloexec: "no memfd" };
-        for (let fd = 0; fd < 64; fd++) {
-          let link = "";
-          try {
-            link = fs.readlinkSync("/proc/self/fd/" + fd);
-          } catch {}
-          if (!link.startsWith("/memfd:spawn_stdio_stdin")) continue;
-          const flags = fs.readFileSync("/proc/self/fdinfo/" + fd, "utf8").match(/^flags:\\s*([0-7]+)/m)[1];
-          memfd.aboveStdio = fd > 2;
-          memfd.cloexec = (parseInt(flags, 8) & 0o2000000) !== 0;
-        }
-        await proc.exited;
-        report(2, memfd);
+        const fd = memfd_create(1);
+        const flags = fs.readFileSync("/proc/self/fdinfo/" + fd, "utf8").match(/^flags:\\s*([0-7]+)/m)[1];
+        report(2, { aboveStdio: fd > 2, cloexec: (parseInt(flags, 8) & 0o2000000) !== 0 });
       `);
-    const [moved, inPlace] = await Promise.all([stdinMemfd(true), stdinMemfd(false)]);
-    expect(inPlace).toEqual({ report: { aboveStdio: true, cloexec: expect.any(Boolean) }, exitCode: 0 });
+    const [moved, inPlace] = await Promise.all([memfd(true), memfd(false)]);
+    expect(inPlace).toEqual({ report: { aboveStdio: true, cloexec: true }, exitCode: 0 });
     expect(moved).toEqual(inPlace);
   });
 

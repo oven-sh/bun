@@ -634,8 +634,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         TsIdentKind::Normal => {
                             if GET_METADATA {
                                 let ident = self.lexer.identifier;
-                                // The scan pass binds no symbols. It marks the name as used,
-                                // as it does for an identifier in an expression.
+                                // The scan pass binds no symbols: it marks the name as used.
                                 let ref_ = if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
                                     self.store_name_in_ref(ident)
                                 } else {

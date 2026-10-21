@@ -384,8 +384,7 @@ impl<'a> Options<'a> {
         self.bundle
     }
 
-    /// `emitDecoratorMetadata` implies legacy decorators: it only makes sense with
-    /// TypeScript's `reflect-metadata` system. Every other parse uses TC39 decorators.
+    /// `emitDecoratorMetadata` implies the legacy decorators: TypeScript emits it only for them.
     #[inline]
     pub fn set_tsconfig(&mut self, tsconfig: TsconfigOptions) {
         self.use_define_for_class_fields = tsconfig.use_define_for_class_fields;

@@ -2146,8 +2146,7 @@ impl<'a> Repl<'a> {
             vm.transpiler.options.jsx.clone(),
             bun_ast::Loader::Tsx,
             bun_js_parser::TsconfigOptions {
-                // Legacy decorators: the transform below makes the temporaries of a TC39 class
-                // global, where the next input replaces them.
+                // The REPL transform below supports only the legacy decorators.
                 experimental_decorators: true,
                 emit_decorator_metadata: false,
                 use_define_for_class_fields: vm.transpiler.options.use_define_for_class_fields,

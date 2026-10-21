@@ -1,4 +1,5 @@
 import assert from "assert";
+import { Statement } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { withoutAggressiveGC } from "harness";
 import util from "util";
@@ -190,6 +191,5 @@ test.skip("util.stylizeWithHTML", () => {
 
 test("util.inspect prints a value of Bun whose Symbol.toStringTag getter throws", () => {
   // The getter reads a private field, which the prototype does not have.
-  const { Statement } = require("bun:sqlite");
   expect(util.inspect(Statement.prototype)).toBe("{}");
 });

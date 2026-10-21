@@ -511,6 +511,160 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    const unknownCommand = (name: string) => `Unknown command: ${name}\nType .help for available commands`;
+
+    test("at the prompt, a line that starts with a number or a spread is code", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        ".5 + 1",
+        ".5.toFixed(2)",
+        ".1e3",
+        ".0",
+        "...[1]",
+        "..",
+        // Not JavaScript either way: these still name a command that does not exist.
+        ".",
+        ". 5",
+        ".e1",
+        "._5",
+        ".HELP",
+        ".exit()",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        "1.5",
+        '"0.50"',
+        "100",
+        "0",
+        "SyntaxError: Unexpected token '...'",
+        "SyntaxError: Unexpected token '.'",
+        unknownCommand("."),
+        unknownCommand("."),
+        unknownCommand(".e1"),
+        unknownCommand("._5"),
+        unknownCommand(".HELP"),
+        unknownCommand(".exit()"),
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a line of a pending input that starts with a dot is code", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "[1,",
+        ".5]",
+        "const o = { b: 7 }",
+        "(o",
+        ".b)",
+        "(o",
+        ".",
+        "b)",
+        "[",
+        "...[1, 2],",
+        "...[3]",
+        "]",
+        "(1",
+        ".nope",
+        ")",
+        "await (Promise.resolve([3, 1, 2])",
+        ".then(a => a.sort())",
+        ".then(a => a.slice(1))",
+        ")",
+        "`",
+        ".env",
+        ".DS_Store",
+        "`",
+        // A mistyped `.break` is code too. The error comes when the input is complete, and nothing runs.
+        "function foo() {",
+        ".brek",
+        "}",
+        "typeof foo",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        "[ 1, 0.5 ]",
+        "{\n  b: 7,\n}",
+        "7",
+        "7",
+        "[ 1, 2, 3 ]",
+        "undefined",
+        "[ 2, 3 ]",
+        '"\\n.env\\n.DS_Store\\n"',
+        "SyntaxError: Unexpected token '.'",
+        '"undefined"',
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("tab-indented lines of a pending input keep a line that starts with a spread", async () => {
+      // A Tab on an empty line inserts nothing, so `...defaults,` is the start of its line.
+      const { outputs, stderr, exitCode } = await runRepl([
+        "const defaults = { retries: 3 }",
+        "const cfg = {",
+        "\t...defaults,",
+        "\ttimeout: 50,",
+        "}",
+        "cfg",
+        ".exit",
+      ]);
+      expect(outputs.at(-1)).toBe("{\n  retries: 3,\n  timeout: 50,\n}");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a command name cut short is a command at the prompt and code in a pending input", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        ".sa",
+        "const rgb = { b: 3 }",
+        "(rgb",
+        ".b",
+        ")",
+        "const ev = { e: 4 }",
+        "(ev",
+        ".e",
+        ")",
+        "(ev",
+        ".ex",
+        ")",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["Usage: .save <filename>", "{\n  b: 3,\n}", "3", "{\n  e: 4,\n}", "4", "undefined"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a full command name still runs in a pending input, as the first word of a line", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "(1,",
+        ".save",
+        "2)",
+        // `.clear())` is one word, and no command has that name.
+        "const m = new Map([[1, 2]])",
+        "(m",
+        ".clear())",
+        "m.size",
+        "[1,",
+        ".exit",
+        "2]",
+        "'not reached'",
+      ]);
+      expect(outputs).toEqual(["Usage: .save <filename>\n\n2", "Map(1) {\n  1: 2,\n}", "undefined", "0"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("an assignment to a property in a pending input does not run .save", async () => {
+      using dir = tempDir("repl-dot-line", {});
+      const { outputs, stderr, exitCode } = await runRepl(["const o = { s: 0 }", "(o", ".s = 1)", "o.s", ".exit"], {
+        cwd: String(dir),
+      });
+      // As `.save`, the line would write the session to a file named `= 1)`.
+      const files = [...new Bun.Glob("*").scanSync({ cwd: String(dir), dot: true, onlyFiles: false })];
+      expect({ outputs, files }).toEqual({ outputs: ["{\n  s: 0,\n}", "1", "1"], files: [] });
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe(".copy command", () => {
@@ -1151,6 +1305,69 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
     });
   });
 
+  test("tab completes a property on a line that starts with a number, and none on a `.help`, `.load` or unknown-command line", async () => {
+    await withTerminalRepl(async ({ send, waitFor, waitForScreen }) => {
+      // `Math.ma` has one completion, `max`. The result is not in the echoed input.
+      send(".5 + Math.ma\t(3, 7)\n");
+      await waitFor("7.5");
+
+      // Enter takes each of the next lines as a command, so Tab completes no property on them: the
+      // second Tab lists nothing after `.help `, `proc` does not become `process`, and `ma` stays.
+      const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+      send(".he\t\t\x15.load ./proc\t!");
+      let screen = await waitForScreen(s => s.rows.at(-1) === "> .load ./proc!");
+      expect(screen.rows.slice(top)).toEqual(["> .load ./proc!"]);
+      send("\x15.x Math.ma\t!");
+      screen = await waitForScreen(s => s.rows.at(-1) === "> .x Math.ma!");
+      expect(screen.rows.slice(top)).toEqual(["> .x Math.ma!"]);
+
+      // A lone `.` names no command yet: Tab lists them all.
+      const names = [".help", ".exit", ".clear", ".copy", ".load", ".save", ".editor", ".break", ".history"];
+      send("\x15.\t");
+      screen = await waitForScreen(s => s.rows.length === top + names.length + 2 && s.rows.at(-1) === "> .");
+      expect(screen.rows.slice(top)).toEqual(["> .", ...names.map(name => `  ${name}`), "> ."]);
+    });
+  });
+
+  test("tab completes a property on a line of a pending input that starts with a dot", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send("([41, 1]\n");
+      await waitFor("...");
+      // `Math.ma` has one completion, `max`. The result is not in the echoed input.
+      send(".map(n => Math.ma\t(n, 2))\n");
+      send(".reduce((a, b) => a + b) - 1)\n");
+      await waitFor(/\b42\b/);
+    });
+  });
+
+  test("tab does not complete a command name cut short in a pending input", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send("globalThis.__rgb = { b: 3 }; 'rgb' + 'Ready'\n");
+      await waitFor("rgbReady");
+      send("(__rgb\n");
+      await waitFor("...");
+      // Not `.break `: Tab indents, and the line stays a member access.
+      send(".b\t\n");
+      send(") * 14\n");
+      await waitFor(/\b42\b/);
+    });
+  });
+
+  test("tab does not complete a command name in .editor mode", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send("globalThis.__o = { b: 6 }; 'o' + 'Ready'\n");
+      await waitFor("oReady");
+      send(".editor\n");
+      await waitFor(/editor mode/i);
+      send("__o\n");
+      // Not `.break `: Tab indents, and the line stays a member access.
+      send(".b\t\n");
+      send("* 7\n");
+      send("\x04"); // Ctrl+D to finish editor mode
+      await waitFor(/\b42\b/);
+    });
+  });
+
   describe("inline suggestions", () => {
     // Ghost text is rendered as: ESC[2m<remainder>ESC[0m after the typed text.
     // The feature requires colors, so override bunEnv's NO_COLOR for these.
@@ -1165,6 +1382,24 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
           // shortest match.
           send("cons");
           await waitFor(`${DIM}ole`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("suggests on a line that starts with a number, and not on a command line", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor, waitForScreen }) => {
+          send(".5 + Mat");
+          await waitFor(`${DIM}h`);
+          send("\x1b[C"); // Right arrow accepts the ghost text
+          // The result is not in the echoed input.
+          send(".max(3, 7)\n");
+          await waitFor("7.5");
+
+          // `proc` would get the ghost `ess` on a line of code. Here the right arrow has nothing to accept.
+          send(".load ./proc\x1b[C!");
+          await waitForScreen(s => s.rows.at(-1) === "\u276f .load ./proc!");
         },
         { env: colorEnv },
       );

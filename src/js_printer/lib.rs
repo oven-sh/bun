@@ -872,9 +872,8 @@ pub mod analyze_transpiled_module {
             Ok(())
         }
 
-        /// The finalized record in its self-contained wire form (its own string
-        /// table, then the body). Serialized once: the transpiler cache entry
-        /// and the runtime's record are the same bytes.
+        /// The finalized record's self-contained wire form (string table, then
+        /// body), serialized once and shared by the cache entry and the runtime.
         pub fn serialized(&mut self) -> Option<&[u8]> {
             if !self.finalized && self.finalize().is_err() {
                 return None;
@@ -8201,14 +8200,6 @@ pub(crate) fn print_with_writer_and_platform<
         code: buffer.take_slice().into(),
         source_map,
     })
-}
-
-/// Serializes ModuleInfo (its own string table, then its body) to an owned
-/// byte slice. Returns `None` on failure.
-pub fn serialize_module_info(
-    module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
-) -> Option<Box<[u8]>> {
-    module_info?.take_serialized()
 }
 
 /// Serializes only ModuleInfo's body, with its strings referenced through

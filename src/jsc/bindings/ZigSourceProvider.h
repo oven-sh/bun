@@ -50,6 +50,8 @@ public:
     bun_ModuleInfoDeserialized* m_moduleInfo { nullptr };
     uint32_t m_tag { 0 };
     bool m_alreadyBundled { false };
+    // Set by Bun::releaseModuleInfoAfterLink once this module's subgraph has been walked.
+    bool m_moduleInfoReleased { false };
 
 private:
     SourceProvider(void* bunVM, ResolvedSource& resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,

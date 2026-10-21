@@ -284,9 +284,7 @@ impl ModuleInfoDeserialized {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    /// The self-contained form (a module's own string table followed by its
-    /// body, as the runtime transpiler cache stores it). The record views
-    /// `owned` in place; nothing is copied.
+    /// Parse the self-contained form (string table, then body) in place.
     pub fn create_owned(owned: Box<[u8]>) -> Result<Box<ModuleInfoDeserialized>, ModuleInfoError> {
         // SAFETY: `owned` is moved into the returned struct and never
         // reallocated, so views into its heap buffer stay valid for `self`'s
@@ -304,8 +302,7 @@ impl ModuleInfoDeserialized {
         }))
     }
 
-    /// `create_owned` over the `esm_record` of a transpiler cache entry.
-    /// Returns `None` on corrupt/truncated data.
+    /// `create_owned` over a cache entry's `esm_record`; `None` when corrupt.
     pub fn create_from_cached_record(record: Box<[u8]>) -> Option<Box<ModuleInfoDeserialized>> {
         Self::create_owned(record).ok()
     }

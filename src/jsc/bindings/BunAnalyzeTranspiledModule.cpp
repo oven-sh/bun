@@ -223,21 +223,21 @@ void Bun::releaseModuleInfoAfterLink(JSC::VM& vm, Zig::GlobalObject* globalObjec
         return;
 
     // The evaluate hook runs for the root of a load only, once the whole graph
-    // has linked, so walk the graph. A transpiled record that an earlier walk
-    // released had its dependencies released by that same walk: do not descend
-    // into it again. Iterative, like NodeVMSourceTextModule's
-    // isModuleGraphLinked: a long import chain must not overflow the native
-    // stack here.
+    // has linked, so walk the graph (iteratively: a long import chain must not
+    // overflow the native stack). A subgraph an earlier walk released is skipped.
     WTF::HashSet<JSC::AbstractModuleRecord*> visited;
     WTF::Vector<JSC::AbstractModuleRecord*, 16> worklist;
     worklist.append(root);
     while (!worklist.isEmpty()) {
         JSC::AbstractModuleRecord* record = worklist.takeLast();
         if (auto* provider = transpiledModuleProvider(record)) {
-            if (!provider->m_moduleInfo)
+            if (provider->m_moduleInfoReleased)
                 continue;
-            zig__ModuleInfoDeserialized__deinit(provider->m_moduleInfo);
-            provider->m_moduleInfo = nullptr;
+            provider->m_moduleInfoReleased = true;
+            if (provider->m_moduleInfo) {
+                zig__ModuleInfoDeserialized__deinit(provider->m_moduleInfo);
+                provider->m_moduleInfo = nullptr;
+            }
         }
         if (record->requestedModules().isEmpty() || !visited.add(record).isNewEntry)
             continue;
@@ -260,10 +260,8 @@ namespace JSC {
 
 extern "C" JSModuleRecord* Bun__createPrelinkedModuleRecordForPipeline(Zig::GlobalObject*, JSModuleLoader*, const Identifier& key, const SourceCode&);
 
-// JSModuleLoader::makeModule downcasts what we return before its caller consults
-// the throw scope, so never hand back a null cell. rejectWithCaughtException
-// yields null under termination: return the still-pending promise then, with the
-// exception left on the scope.
+// makeModule downcasts the returned cell before checking the scope, so under
+// termination (where rejectWithCaughtException yields null) return the promise.
 static EncodedJSValue rejectWithCaughtExceptionOrPending(VM& vm, ThrowScope& scope, JSPromise* promise)
 {
     JSPromise* rejected = promise->rejectWithCaughtException(vm, scope);
@@ -295,11 +293,8 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
         RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleLoader, moduleKey, sourceCode, promise));
     }
 
-    // module_info stays on the provider until the module is evaluated (or, under
-    // --isolate, until ~SourceProvider): JSC analyzes the same JSSourceCode more
-    // than once (require(esm) sync replay re-issues makeModule on an entry whose
-    // modulePromise is still pending; --isolate reuses providers across globals),
-    // and every call must produce the same record. See releaseModuleInfoAfterLink.
+    // Not consumed here: JSC can analyze the same source more than once before
+    // evaluation (require(esm) sync replay, --isolate). releaseModuleInfoAfterLink frees it.
     auto* moduleInfo = provider->m_moduleInfo;
     auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleLoader, moduleKey, sourceCode, moduleInfo);
     RETURN_IF_EXCEPTION(scope, rejectWithCaughtExceptionOrPending(vm, scope, promise));

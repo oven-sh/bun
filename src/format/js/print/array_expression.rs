@@ -30,8 +30,8 @@ pub(crate) fn write_array_expression<'a>(
     write!(f, "]");
 }
 
-/// Prettier's `isConciselyPrintedArray`'s opposite `shouldBreak`: there are at least two elements,
-/// all are arrays or all are objects, and each has at least two elements.
+/// Prettier's `shouldBreak` for an array: there are at least two elements, all are arrays or all are objects, and each
+/// has at least two elements.
 fn should_break<'a>(elements: List<'a, Expr<'a>>) -> bool {
     if elements.len() < 2 {
         return false;

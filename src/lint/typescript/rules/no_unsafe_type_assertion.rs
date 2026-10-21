@@ -48,14 +48,14 @@ impl NoUnsafeTypeAssertion {
         let expression_type = expression.ty();
         let asserted_type = type_annotation.ty();
         // oxlint points at the expression: `<A>b`.
-        let place = if cx.language().is_oxlint { expression.outer_span() } else { node.span() };
+        let report_span = if cx.language().is_oxlint { expression.outer_span() } else { node.span() };
         // `as A`, `<A>`
         let (operand, annotation) = (expression.outer_span(), type_annotation.outer_span());
         let assertion = match node.span().start < operand.start {
             true => Span::new(node.span().start, skip_trivia(cx.text(), annotation.end) + 1),
             false => Span::new(skip_trivia(cx.text(), operand.end), annotation.end),
         };
-        // tsgolint says which the two types are, and marks the assertion.
+        // tsgolint labels the two types and marks the assertion.
         let type_label = |ty: Type| if is_intrinsic_error_type(ty) { b"error".to_vec() } else { ty.to_text() };
         let labels = |labels: &mut Details| {
             let (original, asserted) = (type_label(expression_type), type_label(asserted_type));
@@ -73,7 +73,7 @@ impl NoUnsafeTypeAssertion {
 
         // Asserting unknown ==> any.
         if is_type_any_type(asserted_type) && is_type_unknown_type(expression_type) {
-            cx.report(place, UNSAFE_TO_ANY_TYPE_ASSERTION)
+            cx.report(report_span, UNSAFE_TO_ANY_TYPE_ASSERTION)
                 .comments_apply_at(assertion)
                 .data("type", "`any`")
                 .labels_with(labels);
@@ -81,7 +81,7 @@ impl NoUnsafeTypeAssertion {
         }
 
         if let Some(unsafe_expression_any) = is_unsafe_assignment(expression_type, asserted_type, expression) {
-            cx.report(place, UNSAFE_OF_ANY_TYPE_ASSERTION)
+            cx.report(report_span, UNSAFE_OF_ANY_TYPE_ASSERTION)
                 .comments_apply_at(assertion)
                 .data("type", get_any_type_name(unsafe_expression_any.sender))
                 .labels_with(labels);
@@ -89,14 +89,14 @@ impl NoUnsafeTypeAssertion {
         }
 
         if let Some(unsafe_asserted_any) = is_unsafe_assignment(asserted_type, expression_type, None::<Expr<'a>>) {
-            cx.report(place, UNSAFE_TO_ANY_TYPE_ASSERTION)
+            cx.report(report_span, UNSAFE_TO_ANY_TYPE_ASSERTION)
                 .comments_apply_at(assertion)
                 .data("type", get_any_type_name(unsafe_asserted_any.sender))
                 .labels_with(labels);
             return;
         }
 
-        // The widened type of an object literal does not fail on the check for excess properties.
+        // An object literal's widened type doesn't fail the excess property check.
         let expression_widened_type = match is_object_literal_type(expression_type) {
             true => expression_type.get_widened_type(),
             false => expression_type,
@@ -115,7 +115,7 @@ impl NoUnsafeTypeAssertion {
                 Some(_) => {}
             }
         }
-        cx.report(place, message)
+        cx.report(report_span, message)
             .comments_apply_at(assertion)
             .data("type", asserted_type.to_text())
             .labels_with(labels);
@@ -124,7 +124,7 @@ impl NoUnsafeTypeAssertion {
 
 impl Rule for NoUnsafeTypeAssertion {
     const META: Meta = Meta::typescript("no-unsafe-type-assertion", Kind::Problem).requires_types();
-    // The type that `as const` asserts is that of the expression.
+    // `as const` asserts the expression's own type, so it isn't listed.
     const ON: On = On::new().exprs(&[ExprTag::As]);
     no_state!();
 

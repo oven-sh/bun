@@ -15,12 +15,12 @@ const ITERATOR_METHOD: Message =
     Message::new("", "`Iterator` has a `.{{method}}()` method, `.toArray()` is unnecessary.");
 const REMOVE_TO_ARRAY: Message = Message::new("", "Remove `.toArray()`.");
 
-/// The `a.method` of `a.method(..)`, if neither has a `?.` and the name is not computed.
+/// The `a.method` in `a.method(..)`, if neither has a `?.` and the name isn't computed.
 fn plain_method_callee(call: Call<'_>) -> Option<Expr<'_>> {
     get_member_expr(call.callee()).filter(|it| it.tag() == ExprTag::Dot && !it.is_optional() && !call.is_optional())
 }
 
-/// What is wrong with a `.toArray()`, and whether it is safe to remove it.
+/// The problem with a `.toArray()` call, and whether removing it is safe.
 enum Problem<'a> {
     /// `new Set(..)`, `Array.from(..)`
     IterableAccepting { description: Vec<u8>, is_safe: bool },
@@ -30,7 +30,7 @@ enum Problem<'a> {
     IteratorMethod(Name<'a>),
 }
 
-/// `to_array`: a `.toArray()` with what is around it that does not count.
+/// `to_array` is a `.toArray()` call including its outermost wrapper, such as `as T`.
 fn problem_of(to_array: Expr<'_>) -> Option<Problem<'_>> {
     let parent = match to_array.parent() {
         Node::Stmt(parent) => {

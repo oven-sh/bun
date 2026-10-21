@@ -28,7 +28,7 @@ const BUILT_IN_ARRAYS: [&str; 9] = [
     "Uint8ClampedArray",
 ];
 
-/// What a `new` expression initializes.
+/// The thing a `new` expression initializes.
 #[derive(Copy, Clone)]
 enum Owner<'a> {
     /// `VariableDeclarator`
@@ -87,7 +87,7 @@ impl<'a> Owner<'a> {
         }
     }
 
-    /// Where a type annotation goes.
+    /// Returns where a type annotation goes.
     fn end_of_name(self, file: &File<'a>) -> u32 {
         match self {
             Owner::Var(decl) => decl.pat().span().end,
@@ -129,7 +129,7 @@ impl Rule for ConsistentGenericConstructors {
         let Some(callee_name) = callee.as_ident() else {
             return;
         };
-        // For oxlint `(A)` is no name.
+        // For oxlint `(A)` isn't a name.
         if callee.is_parenthesized() && cx.language().is_oxlint {
             return;
         }
@@ -145,8 +145,8 @@ impl Rule for ConsistentGenericConstructors {
                 return;
             }
             // oxlint points at the type arguments.
-            let place = if cx.language().is_oxlint { type_args } else { owner.span(rhs) };
-            cx.report(place, PREFER_TYPE_ANNOTATION).fix(|fixer| {
+            let report_span = if cx.language().is_oxlint { type_args } else { owner.span(rhs) };
+            cx.report(report_span, PREFER_TYPE_ANNOTATION).fix(|fixer| {
                 let file = fixer.file();
                 let mut annotation = b": ".to_vec();
                 annotation.extend_from_slice(callee.text());
@@ -165,7 +165,7 @@ impl Rule for ConsistentGenericConstructors {
         let TypeKind::Ref { name, args } = lhs.kind() else {
             return;
         };
-        // For oxlint `(A<B>)` is no reference.
+        // For oxlint `(A<B>)` isn't a reference.
         if lhs.is_parenthesized() && cx.language().is_oxlint {
             return;
         }
@@ -183,8 +183,8 @@ impl Rule for ConsistentGenericConstructors {
             return;
         };
         // oxlint points at the annotation.
-        let place = if cx.language().is_oxlint { lhs.annotation_span() } else { owner.span(rhs) };
-        cx.report(place, PREFER_CONSTRUCTOR).fix(|fixer| {
+        let report_span = if cx.language().is_oxlint { lhs.annotation_span() } else { owner.span(rhs) };
+        cx.report(report_span, PREFER_CONSTRUCTOR).fix(|fixer| {
             let file = fixer.file();
             let annotation = lhs.annotation_span();
             let mut text = Vec::new();

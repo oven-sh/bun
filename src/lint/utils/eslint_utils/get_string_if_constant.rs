@@ -5,7 +5,7 @@ use crate::ast::Expr;
 use crate::semantic::Scope;
 use std::borrow::Cow;
 
-/// eslint-utils' `getStringIfConstant`: `String(value)` of the static value of `expr`.
+/// eslint-utils' `getStringIfConstant`: `String(value)` of `expr`'s static value.
 ///
 /// A regular expression is `/pattern/flags`, with the flags in the order of `regex.flags`. A
 /// `bigint` is its decimal digits.

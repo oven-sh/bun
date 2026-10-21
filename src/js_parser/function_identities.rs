@@ -11,7 +11,7 @@ use bun_ast::{self as ast, Expr, G, Ref, Stmt, StmtOrExpr, b::B};
 use bun_collections::HashMap;
 use bun_wyhash::Wyhash;
 
-use crate::parse::parse_entry::ParsedOnly;
+use crate::parse::parse_entry::{ParsedOnly, parse_only_text};
 
 /// Which of the functions that may start at one place: JavaScriptCore's `OrderFunctionKind`.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -90,21 +90,12 @@ impl FunctionIdentities {
         {
             return None;
         }
-        let arena = bun_alloc::Arena::new();
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-        let _ast_scope = ast_memory_allocator.enter();
-        let source = bun_ast::Source::init_path_string(&b"chunk.js"[..], text);
-        let mut options = crate::ParserOptions::init(Default::default(), bun_ast::Loader::Js);
-        options.features.no_macros = true;
-        options.features.top_level_await = kind == Text::Module;
-        options.jsc_builtin_syntax = kind == Text::Builtin;
-        options.suppress_warnings_about_weird_code = true;
-        let define = crate::Define::default();
-        let mut log = bun_ast::Log::init();
-        let parser = crate::Parser::init(options, &mut log, &source, &define, &arena).ok()?;
-        let mut identities = parser
-            .parse_only(|parsed| Walker::run(parsed, kind, chunk_paths))
-            .ok()?;
+        let mut identities = parse_only_text(
+            text,
+            kind == Text::Module,
+            kind == Text::Builtin,
+            |parsed| Walker::run(parsed, kind, chunk_paths),
+        )?;
         if let Some(first_non_ascii) = first_non_ascii {
             starts_in_code_units(&mut identities.functions, text, first_non_ascii as usize);
         }

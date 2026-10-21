@@ -19,6 +19,7 @@ import {
   chownSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   lutimesSync,
   mkdirSync,
   readdirSync,
@@ -81,6 +82,8 @@ type FixturePackage = {
   bin?: Record<string, string>;
   dependencies?: Record<string, string>;
   scripts?: Record<string, string>;
+  /** More fields of the package.json, like `directories` or `optionalDependencies`. */
+  fields?: Record<string, unknown>;
   deprecated?: string;
   /** How long ago the version was published. Years, unless given. */
   daysOld?: number;
@@ -145,9 +148,9 @@ async function localRegistry(...packages: FixturePackage[]) {
       ? new Response(null, { status: down.get(pathname) })
       : (tarballs.get(pathname) ?? manifests.get(decodeURIComponent(pathname.slice(1))));
   });
-  for (const { name, version, bin, dependencies, scripts, deprecated, daysOld = 3650, files } of packages) {
+  for (const { name, version, bin, dependencies, scripts, fields, deprecated, daysOld = 3650, files } of packages) {
     const tarballPath = `/${name}/-/${name.slice(name.lastIndexOf("/") + 1)}-${version}.tgz`;
-    const packageJson = { name, version, bin, dependencies, scripts };
+    const packageJson = { name, version, bin, dependencies, scripts, ...fields };
     tarballs.set(
       tarballPath,
       await githubTarball("package", { "package.json": JSON.stringify(packageJson), ...files }),
@@ -2659,6 +2662,398 @@ describe("a package in node_modules", () => {
       });
     },
   );
+
+  // The real path of a bin doesn't have to be below node_modules/<package>. `bun install --backend=symlink` installs
+  // each file of a package as a symlink to the file, and the bin of a workspace can be a symlink to a build output.
+  describe.skipIf(isWindows)("whose files are symlinks", () => {
+    const shBin = (label: string) => `#!/bin/sh\necho "${label} as $0"\n`;
+
+    /** Runs `bun install` with the hoisted linker, then makes `bins` (paths below node_modules) executable. */
+    async function install(
+      box: ReturnType<typeof sandbox>,
+      backend: string,
+      bins: string[],
+      options: { cwd?: string; env?: Record<string, string | undefined> } = {},
+    ) {
+      const bunx = [bunExe(), "install"];
+      expect(await box.run(["--linker=hoisted", `--backend=${backend}`], { bunx, ...options })).toMatchObject({
+        exitCode: 0,
+      });
+      // The files in a fixture tarball are 0644, and the installer doesn't change the mode of a file behind a symlink.
+      for (const bin of bins) chmodSync(join(options.cwd ?? box.cwd, "node_modules", bin), 0o755);
+    }
+    const isSymlink = (...path: string[]) => lstatSync(join(...path)).isSymbolicLink();
+
+    // The hardlink backend installs regular files. It's the control.
+    it.concurrent.each(["symlink", "hardlink"])(
+      "--backend=%s: runs the project's copy, not the latest version",
+      async backend => {
+        const bins = {
+          "exe-tool": "exe-tool",
+          "exe-compiler": "exe-cc",
+          "@corp/exe": "exe",
+          "@corp/create-thing": "create-thing",
+        };
+        const dirTool = (version: string): FixturePackage => ({
+          name: "@corp/dir-tool",
+          version,
+          fields: { directories: { bin: "bin" } },
+          files: { "bin/dir-tool": echoBin(`dir-tool ${version}`) },
+        });
+        using registry = await localRegistry(
+          ...Object.entries(bins).flatMap(([name, bin]) => [
+            fixturePackage(name, "1.0.0", bin),
+            fixturePackage(name, "9.9.9", bin),
+          ]),
+          dirTool("1.0.0"),
+          dirTool("9.9.9"),
+        );
+        const names = [...Object.keys(bins), "@corp/dir-tool"];
+        using box = sandbox(registry, {
+          cwd: {
+            "package.json": JSON.stringify({
+              name: "app",
+              dependencies: Object.fromEntries(names.map(name => [name, "1.0.0"])),
+              scripts: { exe: "npx @corp/exe" },
+            }),
+          },
+        });
+        // The tree that bunx makes before the install has the latest version, and stays fresh for a day.
+        expect(await box.run(["@corp/exe"])).toMatchObject({ stdout: "exe 9.9.9\n", exitCode: 0 });
+        await install(box, backend, [
+          ...Object.keys(bins).map(name => join(name, "cli.js")),
+          "@corp/dir-tool/bin/dir-tool",
+        ]);
+        expect(isSymlink(box.cwd, "node_modules", "@corp", "exe", "cli.js")).toBe(backend === "symlink");
+
+        for (const [args, stdout, bunx] of [
+          [["exe-tool"], "exe-tool 1.0.0\n"],
+          [["exe-cc"], "exe-cc 1.0.0\n"],
+          [["exe-compiler"], "exe-cc 1.0.0\n"],
+          [["-p", "exe-compiler", "exe-cc"], "exe-cc 1.0.0\n"],
+          [["@corp/exe"], "exe 1.0.0\n"],
+          [["-p", "exe-tool", "exe-tool"], "exe-tool 1.0.0\n"],
+          [["@corp/dir-tool"], "dir-tool 1.0.0\n"],
+          // Other ways into the same lookup.
+          [["@corp/thing"], "create-thing 1.0.0\n", [bunExe(), "create"]],
+          [["exe"], "exe 1.0.0\n", [bunExe(), "run", "--silent"]],
+        ] as [string[], string, string[]?][]) {
+          const ran = await box.run(args, bunx && { bunx });
+          expect({ args, ...ran }).toEqual({ args, stdout, stderr: "", exitCode: 0, requests: [] });
+        }
+      },
+    );
+
+    it.concurrent("each of two packages with the same bin name runs its own bin", async () => {
+      using registry = await localRegistry(
+        fixturePackage("aaa-first", "1.0.0", "tool", shBin("aaa-first")),
+        fixturePackage("zzz-last", "1.0.0", "tool", shBin("zzz-last")),
+        // The installer rewrites a `#!` line that ends in CR LF, which replaces its symlink with a regular file.
+        {
+          name: "zzz-crlf",
+          version: "1.0.0",
+          bin: { tool: "cli.js", "zzz-crlf": "cli.js" },
+          files: { "cli.js": shBin("zzz-crlf").replace("\n", "\r\n") },
+        },
+      );
+      const names = ["aaa-first", "zzz-last", "zzz-crlf"];
+      using box = sandbox(registry, {
+        cwd: {
+          "package.json": JSON.stringify({
+            name: "app",
+            dependencies: Object.fromEntries(names.map(name => [name, "1.0.0"])),
+          }),
+        },
+      });
+      await install(
+        box,
+        "symlink",
+        names.map(name => join(name, "cli.js")),
+      );
+      const nodeModules = join(box.cwd, "node_modules");
+      expect(join(nodeModules, ".bin", "tool")).toBeValidBin(join("..", "aaa-first", "cli.js"));
+      expect(names.map(name => isSymlink(nodeModules, name, "cli.js"))).toEqual([true, true, false]);
+      expect(isSymlink(nodeModules, "zzz-crlf", "package.json")).toBe(true);
+
+      // The package that has the entry in .bin starts through it, like it does when its files are regular files.
+      const entry = `aaa-first as ${join(nodeModules, ".bin", "tool")}\n`;
+      for (const [args, stdout] of [
+        [["aaa-first"], entry],
+        [["-p", "aaa-first", "tool"], entry],
+        [["zzz-last"], `zzz-last as ${join(nodeModules, "zzz-last", "cli.js")}\n`],
+        [["-p", "zzz-last", "tool"], `zzz-last as ${join(nodeModules, "zzz-last", "cli.js")}\n`],
+        [["-p", "zzz-crlf", "tool"], `zzz-crlf as ${join(nodeModules, "zzz-crlf", "cli.js")}\n`],
+      ] as [string[], string][]) {
+        const ran = await box.run(args);
+        expect({ args, ...ran }).toEqual({ args, stdout, stderr: "", exitCode: 0, requests: [] });
+      }
+    });
+
+    // The installer points .bin/<name> of a package in `nativeDependencies` at the build for this platform.
+    it.concurrent.each(["symlink", "hardlink"])("--backend=%s: runs the native build of a package", async backend => {
+      using registry = await localRegistry(
+        {
+          name: "natbin",
+          version: "1.0.0",
+          bin: { natbin: "bin/natbin" },
+          fields: { optionalDependencies: { "@natbin/native": "1.0.0" } },
+          files: { "bin/natbin": shBin("launcher") },
+        },
+        {
+          name: "@natbin/native",
+          version: "1.0.0",
+          fields: { os: [process.platform], cpu: [process.arch] },
+          files: { "bin/natbin": shBin("native") },
+        },
+      );
+      using box = sandbox(registry, {
+        cwd: {
+          "package.json": JSON.stringify({
+            name: "app",
+            dependencies: { natbin: "1.0.0" },
+            nativeDependencies: ["natbin"],
+          }),
+        },
+      });
+      await install(box, backend, ["natbin/bin/natbin", "@natbin/native/bin/natbin"]);
+      const entry = join(box.cwd, "node_modules", ".bin", "natbin");
+      expect(entry).toBeValidBin(join("..", "@natbin", "native", "bin", "natbin"));
+
+      for (const args of [["natbin"], ["-p", "natbin", "natbin"]]) {
+        const ran = await box.run(args);
+        expect({ args, ...ran }).toEqual({
+          args,
+          stdout: `native as ${entry}\n`,
+          stderr: "",
+          exitCode: 0,
+          requests: [],
+        });
+      }
+    });
+
+    it.concurrent("a `file:` folder, where the symlinks point into the folder", async () => {
+      using box = sandbox(undefined, {
+        cwd: {
+          "package.json": JSON.stringify({ name: "app", dependencies: { "@corp/mylib": "file:./vendor/mylib" } }),
+          "vendor/mylib/package.json": JSON.stringify({
+            name: "@corp/mylib",
+            version: "1.0.0",
+            bin: { lint: "lint.sh" },
+          }),
+          "vendor/mylib/lint.sh": shBin("mylib"),
+        },
+      });
+      chmodSync(join(box.cwd, "vendor", "mylib", "lint.sh"), 0o755);
+      await install(box, "symlink", []);
+      expect(isSymlink(box.cwd, "node_modules", "@corp", "mylib", "lint.sh")).toBe(true);
+
+      expect(await box.run(["--no-install", "@corp/mylib"])).toEqual({
+        stdout: `mylib as ${join(box.cwd, "node_modules", ".bin", "lint")}\n`,
+        stderr: "",
+        exitCode: 0,
+        requests: [],
+      });
+    });
+
+    // The folder of `mylib` contains the project and the install cache, so the file of every bin is below it.
+    it.concurrent(
+      "a `file:` folder that contains the project doesn't get another package's entry in .bin",
+      async () => {
+        using registry = await localRegistry(fixturePackage("other", "1.0.0", "lint", shBin("other")));
+        using box = sandbox(registry, {
+          cwd: {
+            "package.json": JSON.stringify({ name: "mylib", version: "1.0.0", bin: { lint: "lint.sh" } }),
+            "lint.sh": shBin("mylib"),
+            "apps/web/package.json": JSON.stringify({
+              name: "web",
+              dependencies: { mylib: "file:../..", other: "1.0.0" },
+            }),
+          },
+        });
+        chmodSync(join(box.cwd, "lint.sh"), 0o755);
+        const cwd = join(box.cwd, "apps", "web");
+        // The installer skips the node_modules of a folder, so the cache doesn't become a part of `mylib`.
+        const env = { ...box.env, BUN_INSTALL_CACHE_DIR: join(box.cwd, "node_modules", ".cache") };
+        await install(box, "symlink", ["other/cli.js"], { cwd, env });
+        const nodeModules = join(cwd, "node_modules");
+        expect(join(nodeModules, ".bin", "lint")).toBeValidBin(join("..", "other", "cli.js"));
+        expect(isSymlink(nodeModules, "mylib", "lint.sh")).toBe(true);
+
+        for (const [name, stdout] of [
+          ["mylib", `mylib as ${join(nodeModules, "mylib", "lint.sh")}\n`],
+          ["other", `other as ${join(nodeModules, ".bin", "lint")}\n`],
+        ]) {
+          const ran = await box.run(["--no-install", "-p", name, "lint"], { cwd, env });
+          expect({ name, ...ran }).toEqual({ name, stdout, stderr: "", exitCode: 0, requests: [] });
+        }
+      },
+    );
+
+    // No flag is needed for these two: the installer makes one symlink to the directory of a workspace or a `link:`.
+    it.concurrent("a workspace whose bin is a symlink to a build output", async () => {
+      using registry = await localRegistry();
+      using box = sandbox(registry, {
+        cwd: {
+          "package.json": JSON.stringify({
+            name: "repo",
+            workspaces: ["packages/*"],
+            dependencies: { "@corp/cli": "workspace:*" },
+          }),
+          "packages/cli/package.json": JSON.stringify({
+            name: "@corp/cli",
+            version: "1.0.0",
+            bin: { "corp-cli": "bin/corp-cli" },
+          }),
+          "packages/cli/bin": {},
+          "target/release/corp-cli": shBin("the build"),
+        },
+      });
+      chmodSync(join(box.cwd, "target", "release", "corp-cli"), 0o755);
+      symlinkSync(join("..", "..", "..", "target", "release", "corp-cli"), join(box.cwd, "packages/cli/bin/corp-cli"));
+      expect(await box.run(["--linker=hoisted"], { bunx: [bunExe(), "install"] })).toMatchObject({ exitCode: 0 });
+
+      const stdout = `the build as ${join(box.cwd, "node_modules", ".bin", "corp-cli")}\n`;
+      for (const args of [["@corp/cli"], ["-p", "@corp/cli", "corp-cli"]]) {
+        const ran = await box.run(args);
+        expect({ args, ...ran }).toEqual({ args, stdout, stderr: "", exitCode: 0, requests: [] });
+      }
+    });
+
+    // The directory of `my-lib` contains the project, so the file of every bin is below it.
+    it.concurrent("a `link:` that contains the project doesn't get another package's entry in .bin", async () => {
+      using box = sandbox(undefined, {
+        cwd: {
+          "package.json": JSON.stringify({ name: "my-lib", version: "1.0.0", bin: { tool: "cli.sh" } }),
+          "cli.sh": shBin("my-lib"),
+          "examples/app/package.json": JSON.stringify({
+            name: "app",
+            dependencies: { "aaa-first": "file:./vendor/aaa-first", "my-lib": "link:../.." },
+          }),
+          "examples/app/vendor/aaa-first/package.json": JSON.stringify({
+            name: "aaa-first",
+            version: "1.0.0",
+            bin: { tool: "cli.sh" },
+          }),
+          "examples/app/vendor/aaa-first/cli.sh": shBin("aaa-first"),
+        },
+      });
+      const cwd = join(box.cwd, "examples", "app");
+      for (const bin of [join(box.cwd, "cli.sh"), join(cwd, "vendor", "aaa-first", "cli.sh")]) chmodSync(bin, 0o755);
+      expect(await box.run(["--linker=hoisted"], { bunx: [bunExe(), "install"], cwd })).toMatchObject({ exitCode: 0 });
+      const nodeModules = join(cwd, "node_modules");
+      expect(join(nodeModules, ".bin", "tool")).toBeValidBin(join("..", "aaa-first", "cli.sh"));
+
+      for (const [name, stdout] of [
+        ["my-lib", `my-lib as ${join(nodeModules, "my-lib", "cli.sh")}\n`],
+        ["aaa-first", `aaa-first as ${join(nodeModules, ".bin", "tool")}\n`],
+      ]) {
+        const ran = await box.run(["--no-install", "-p", name, "tool"], { cwd });
+        expect({ name, ...ran }).toEqual({ name, stdout, stderr: "", exitCode: 0, requests: [] });
+      }
+    });
+
+    // Like the bin linker, bunx takes a symlink to a file in `directories.bin` for a bin, also one that the package
+    // has itself. `tool` is the name that bunx looks for first.
+    it.concurrent.each([
+      ["hardlink", "nothing else", undefined, "tool-cli ran\n"],
+      ["hardlink", "a symlink to another script", "../scripts/other", "other ran\n"],
+      ["hardlink", "a symlink to a directory", "../scripts", "tool-cli ran\n"],
+      ["symlink", "nothing else", undefined, "tool-cli ran\n"],
+      ["symlink", "a symlink to another script", "../scripts/other", "other ran\n"],
+      ["symlink", "a symlink to a directory", "../scripts", "tool-cli ran\n"],
+    ])("--backend=%s: directories.bin with a script and %s", async (backend, _, target, stdout) => {
+      using box = sandbox(undefined, {
+        cwd: {
+          "package.json": JSON.stringify({ name: "app", dependencies: { "@corp/tool": "file:./tool" } }),
+          "tool/package.json": JSON.stringify({ name: "@corp/tool", version: "1.0.0", directories: { bin: "bins" } }),
+          "tool/bins/tool-cli": "#!/bin/sh\necho tool-cli ran\n",
+          "tool/scripts/other": "#!/bin/sh\necho other ran\n",
+        },
+      });
+      for (const script of ["bins/tool-cli", "scripts/other"]) chmodSync(join(box.cwd, "tool", script), 0o755);
+      if (target) symlinkSync(target, join(box.cwd, "tool", "bins", "tool"));
+      await install(box, backend, []);
+      expect(isSymlink(box.cwd, "node_modules", "@corp", "tool", "bins", "tool-cli")).toBe(backend === "symlink");
+
+      expect(await box.run(["--no-install", "@corp/tool"])).toEqual({ stdout, stderr: "", exitCode: 0, requests: [] });
+    });
+
+    // `BUN_OPTIONS` also applies to the install that bunx runs for a tree of its own.
+    it.concurrent("a tree that bunx installed with --backend=symlink", async () => {
+      using registry = await localRegistry({
+        name: "@corp/dir-tool",
+        version: "1.0.0",
+        fields: { directories: { bin: "bin" } },
+        files: { "bin/dir-cmd": echoBin("dir-cmd 1.0.0") },
+      });
+      using box = sandbox(registry);
+      const env = { ...box.env, BUN_OPTIONS: "--backend=symlink" };
+      // The bin is 0644 in the fixture tarball, so the first run only installs the tree.
+      expect(await box.run(["@corp/dir-tool"], { env })).toMatchObject({ stdout: "", exitCode: 1 });
+      const bin = join(box.tree("@corp/dir-tool@latest"), "node_modules", "@corp", "dir-tool", "bin", "dir-cmd");
+      expect(isSymlink(bin)).toBe(true);
+      chmodSync(bin, 0o755);
+
+      expect(await box.run(["@corp/dir-tool"], { env })).toEqual({
+        stdout: "dir-cmd 1.0.0\n",
+        stderr: "",
+        exitCode: 0,
+        requests: [],
+      });
+    });
+
+    // Made by hand, with no entry in .bin. The package is where its package.json is: a bin somewhere else isn't its.
+    it.concurrent.each([
+      ["next to the package.json", "store", true],
+      ["in another directory", "elsewhere", false],
+    ])("symlinks to a package.json and to a bin %s", async (_, binDir, runs) => {
+      using box = sandbox(undefined, {
+        store: {
+          "package.json": JSON.stringify({ name: "@corp/pkg", version: "1.0.0", bin: { cli: "cli.sh" } }),
+          "cli.sh": shBin("store"),
+        },
+        elsewhere: { "cli.sh": shBin("elsewhere") },
+      });
+      const pkg = join(box.cwd, "node_modules", "@corp", "pkg");
+      mkdirSync(pkg, { recursive: true });
+      for (const dir of ["store", "elsewhere"]) chmodSync(join(box.dir, dir, "cli.sh"), 0o755);
+      symlinkSync(join(box.dir, "store", "package.json"), join(pkg, "package.json"));
+      symlinkSync(join(box.dir, binDir, "cli.sh"), join(pkg, "cli.sh"));
+
+      expect(await box.run(["--no-install", "@corp/pkg"])).toEqual(
+        runs
+          ? { stdout: `store as ${join(pkg, "cli.sh")}\n`, stderr: "", exitCode: 0, requests: [] }
+          : {
+              stdout: "",
+              stderr:
+                "error: Could not find an existing 'pkg' binary to run. Stopping because --no-install was passed.\n",
+              exitCode: 1,
+              requests: [],
+            },
+      );
+    });
+  });
+
+  // The bin linker doesn't link these either.
+  it.concurrent.each([
+    ["a string", "../other/cli.js"],
+    ["a map", { pkg: "../other/cli.js" }],
+  ])("%s `bin` that points out of the package isn't run", async (_, bin) => {
+    using box = sandbox();
+    addLocalPackage(box.cwd, "@corp/other", "1.0.0", "other");
+    mkdirSync(join(box.cwd, "node_modules", "@corp", "pkg"));
+    writeFileSync(
+      join(box.cwd, "node_modules", "@corp", "pkg", "package.json"),
+      JSON.stringify({ name: "@corp/pkg", version: "1.0.0", bin }),
+    );
+
+    expect(await box.run(["--no-install", "@corp/pkg"])).toEqual({
+      stdout: "",
+      stderr: "error: could not determine executable to run for package @corp/pkg\n",
+      exitCode: 1,
+      requests: [],
+    });
+  });
 
   it.concurrent("without a bin and without a version asked for, it is an error", async () => {
     using box = sandbox();

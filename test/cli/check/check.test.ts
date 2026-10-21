@@ -16525,7 +16525,7 @@ class B0 {}
 function C1(v) { this.v = v; }
 new C1();
 new C1(1);
-// C2: TS8023 for the first @extends only
+// C2: TS8023 for each @extends
 /** @extends {G0<string>} @extends {G0<number>} */
 class C2 extends B0 {}
 // T1: a dotted typedef name in a class body
@@ -16558,6 +16558,7 @@ const k2d = /** @type {const} */ (/** @satisfies {Missing} */ (1));
         a.js(7,1): error TS7009: 'new' expression, whose target lacks a construct signature, implicitly has an 'any' type.
         a.js(8,1): error TS7009: 'new' expression, whose target lacks a construct signature, implicitly has an 'any' type.
         a.js(10,15): error TS8023: JSDoc '@extends G0' does not match the 'extends B0' clause.
+        a.js(10,37): error TS8023: JSDoc '@extends G0' does not match the 'extends B0' clause.
         a.js(14,25): error TS1235: A namespace declaration is only allowed at the top level of a namespace or module.
         a.js(21,26): error TS2322: Type '{ a: number; }' is not assignable to type 'string'.
         a.js(22,34): error TS2353: Object literal may only specify known properties, and 'a' does not exist in type 'string[]'.

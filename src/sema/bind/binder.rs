@@ -3729,6 +3729,9 @@ impl<'f, 's> Binder<'f, 's> {
         for t in self.f.ids(c.implements) {
             self.ty(t);
         }
+        for tag in self.f.augments_tags_of(id) {
+            self.ty(tag.class_name);
+        }
         let was_unchecked = std::mem::replace(&mut self.is_unchecked, true);
         self.tys(c.other_implements);
         self.is_unchecked = was_unchecked;

@@ -55,6 +55,7 @@ impl<'p> Checker<'p, '_> {
         let class = &hir[c];
         let base = self.base_of_class(file, c, sym);
         if let ClassBase::Is { constructor, base } = base {
+            self.check_jsdoc_augments_tag_matches_extends(file, c, base);
             let static_base_type = self.apparent_type(constructor);
             self.check_base_type_accessibility(file, c, static_base_type);
             if self.is_type_variable(constructor) {
@@ -109,6 +110,47 @@ impl<'p> Checker<'p, '_> {
                 let at = (file, hir[node].pos, self.end_of_type_node(file, node));
                 self.error_at(at, 2422, &[]);
             }
+        }
+    }
+
+    /// `checkJSDocAugmentsTagMatchesExtends`
+    fn check_jsdoc_augments_tag_matches_extends(&mut self, file: FileId, c: ClassId, base: TypeId) {
+        let hir = self.hir(file);
+        let extends = hir[c].extends;
+        for tag in hir.augments_tags_of(c) {
+            // It's an `ExpressionWithTypeArguments`, so `getIntendedTypeFromJSDocTypeReference` doesn't apply.
+            let source = self.get_type_reference_type(file, tag.class_name);
+            let TypeNodeKind::Ref { name, .. } = hir[tag.class_name].kind else {
+                continue;
+            };
+            let Some(source_name) = name.iter().last().map(|last| &hir[last]) else {
+                continue;
+            };
+            let target: &[u8] = if hir::is_entity_name_expression(hir, extends) {
+                if self.is_identical(source, base) {
+                    continue;
+                }
+                // `getIdentifierFromEntityNameExpression`
+                match hir[extends].kind {
+                    ExprKind::Ident(name) | ExprKind::Dot { name, .. } => self.atoms().bytes(name),
+                    _ => b"",
+                }
+            } else if self.is_assignable(base, source) {
+                continue;
+            } else {
+                let (_, start, end) = self.span_of_parenthesized_expr(file, extends);
+                hir.text
+                    .get(start as usize..end as usize)
+                    .unwrap_or_default()
+            };
+            let start = source_name.pos();
+            let end = self.end_of_identifier_at(file, source_name.text, start);
+            let names = [
+                Arg::Atom(tag.tag_name),
+                Arg::Atom(source_name.text),
+                Arg::Bytes(target),
+            ];
+            self.error_at((file, start, end), 8023, &names);
         }
     }
 

@@ -1704,6 +1704,16 @@ pub struct Class {
     pub modifiers: Span<ModifierId>,
 }
 
+/// `JSDocAugmentsTag`
+#[derive(Copy, Clone, Debug)]
+pub struct AugmentsTag {
+    pub class: ClassId,
+    /// `tag.ClassName()`. Only `getTypeFromTypeNode` is called for it.
+    pub class_name: TypeNodeId,
+    /// `tag.TagName()`
+    pub tag_name: Atom,
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct Interface {
     pub name: Atom,
@@ -2443,9 +2453,9 @@ pub struct FileIn<S: Storage> {
     /// `containsArgumentsReference` for each of them. The functions in `jsdoc_param_errors` are among them, in the same
     /// order.
     pub functions_with_param_tags: S::Few<FnId>,
-    /// `checkGrammarClassDeclarationHeritageClauses`: the classes with an `@augments` tag that doesn't name the class
-    /// in the `extends` clause, and the start of the 8023 in `diagnostics`.
-    pub unmatched_augments_tags: S::Few<(ClassId, u32)>,
+    /// The `@augments` and `@extends` tags of the classes that have an `extends` clause, in a JavaScript file. Sorted by
+    /// class, then in source order.
+    pub augments_tags: S::Few<AugmentsTag>,
 
     pub ids: S::Nodes<u32>,
     pub numbers: S::Nodes<f64>,
@@ -2739,6 +2749,13 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
+    /// Returns the `@augments` and `@extends` tags of `class`.
+    pub fn augments_tags_of(&self, class: ClassId) -> &[AugmentsTag] {
+        let start = self.augments_tags.partition_point(|tag| tag.class < class);
+        let rest = &self.augments_tags[start..];
+        &rest[..rest.partition_point(|tag| tag.class == class)]
+    }
+
     /// Returns the member `m`'s entry in `jsdoc_member_comments`, or an empty text if there is none.
     pub fn jsdoc_comment_of_member(&self, m: MemberId) -> &[u8] {
         match self
@@ -2989,7 +3006,7 @@ macro_rules! file_in_arena {
             jsdoc_member_comments: $owning!($this.jsdoc_member_comments),
             jsdoc_param_errors: $owning!($this.jsdoc_param_errors),
             functions_with_param_tags: $few!($this.functions_with_param_tags),
-            unmatched_augments_tags: $few!($this.unmatched_augments_tags),
+            augments_tags: $few!($this.augments_tags),
             ids: $long!($this.ids),
             numbers: $long!($this.numbers),
             exprs: $long!($this.exprs),

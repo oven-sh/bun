@@ -1592,7 +1592,7 @@ impl<'a, 's> Reader<'a, 's> {
             name.push(self.parse_jsdoc_identifier_name(Some(1003)));
         }
         let type_args = self.parse_type_arguments();
-        let end = self.scanner.start as u32;
+        let end = self.scanner.full_start as u32;
         if used_brace {
             self.skip_whitespace();
             self.parse_expected(JSDocToken::CloseBrace);
@@ -2373,7 +2373,7 @@ pub mod syntax {
         /// `a.b.c`
         pub name: Vec<Name<'a>>,
         pub type_args: Option<TypeArguments>,
-        /// Where the token after the type arguments starts.
+        /// `TokenFullStart` of the token after the type arguments.
         pub end: u32,
     }
 

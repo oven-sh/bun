@@ -1044,15 +1044,23 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The types in the JSDoc comments of `file` that `checkSourceFile` never reaches: those of the
-    /// `@type` tags for which TypeScript has no annotation (`jsdoc_types`), and the `T` of `T=` and
-    /// `...T`. `getTypeFromTypeNode` only resolves them as far as something requests, so a pass
-    /// over all of a file's nodes skips what they contain.
+    /// `@type` tags for which TypeScript has no annotation (`jsdoc_types`), the class names of
+    /// `@augments` tags, and the `T` of `T=` and `...T`. `getTypeFromTypeNode` only resolves them as
+    /// far as something requests, so a pass over all of a file's nodes skips what they contain.
     pub(super) fn unchecked_jsdoc_types(&self, file: FileId) -> RangeSet {
         let hir = self.hir(file);
         if !hir.is_js {
             return RangeSet::new(std::iter::empty());
         }
         let assigned = hir.jsdoc_types.iter().map(|assigned| assigned.1);
+        let class_names = hir.augments_tags.iter().filter_map(|tag| {
+            // The `extends` clause has a copy of the type arguments, which is checked.
+            let name = &hir[tag.class_name];
+            let mut moved = hir.ids(hir[tag.class].extends_args);
+            let is_moved = moved.any(|it| (name.pos..name.end).contains(&hir[it].pos));
+            (!is_moved).then_some(tag.class_name)
+        });
+        let assigned = assigned.chain(class_names);
         let operands = hir.types.iter().filter_map(|node| match node.kind {
             TypeNodeKind::JSDoc {
                 ty,
@@ -3304,26 +3312,34 @@ impl<'p, 's> Checker<'p, 's> {
                 self.with_type_arguments(ty, &args, InstantiationExpression::TypeNode(file, node))
             }
             TypeNodeKind::Import { .. } => self.get_type_from_import_type_node(file, scope, node),
-            TypeNodeKind::Ref { name, args } => {
-                if let Some(intended) = self.get_intended_type_from_jsdoc_type_reference(file, node)
-                {
-                    return intended;
+            TypeNodeKind::Ref { .. } => {
+                match self.get_intended_type_from_jsdoc_type_reference(file, node) {
+                    Some(intended) => intended,
+                    None => self.get_type_reference_type(file, node),
                 }
-                let names: SmallVec<[Atom; 4]> = hir.texts(name).collect();
-                // `resolveTypeReferenceName`: `getUnresolvedSymbolForEntityName`
-                // `NameResolver.Resolve`: for `const` the walk ends without an error at an `as const`.
-                let is_const_assertion = |n| matches!(hir.data(n), NodeData::Expr(e) if matches!(hir[e].kind, ExprKind::AsConst(_)));
-                let ignore_errors = self.bound(file).is_unchecked_type(node.idx())
-                    || names.first() == Some(&known::r#const)
-                        && (hir.find_ancestor(hir.node(node), is_const_assertion)).is_some();
-                let Some(sym) = self.resolve_type_reference_name(file, scope, name, ignore_errors)
-                else {
-                    let args = self.types_from_nodes(file, args);
-                    return self.unresolved_name_type(&names, &args);
-                };
-                self.type_reference_type_of_node(file, scope, node, sym, args)
             }
         }
+    }
+
+    /// `getTypeReferenceType(node, getSymbolFromTypeReference(node))`
+    pub(super) fn get_type_reference_type(&mut self, file: FileId, node: TypeNodeId) -> TypeId {
+        let hir = self.hir(file);
+        let scope = self.bound(file).type_scope[node.idx()];
+        let TypeNodeKind::Ref { name, args } = hir[node].kind else {
+            return TypeId::ERROR;
+        };
+        let names: SmallVec<[Atom; 4]> = hir.texts(name).collect();
+        // `resolveTypeReferenceName`: `getUnresolvedSymbolForEntityName`
+        // `NameResolver.Resolve`: for `const` the walk ends without an error at an `as const`.
+        let is_const_assertion = |n| matches!(hir.data(n), NodeData::Expr(e) if matches!(hir[e].kind, ExprKind::AsConst(_)));
+        let ignore_errors = self.bound(file).is_unchecked_type(node.idx())
+            || names.first() == Some(&known::r#const)
+                && (hir.find_ancestor(hir.node(node), is_const_assertion)).is_some();
+        let Some(sym) = self.resolve_type_reference_name(file, scope, name, ignore_errors) else {
+            let args = self.types_from_nodes(file, args);
+            return self.unresolved_name_type(&names, &args);
+        };
+        self.type_reference_type_of_node(file, scope, node, sym, args)
     }
 
     /// `getTypeFromImportTypeNode`

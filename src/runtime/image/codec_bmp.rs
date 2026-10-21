@@ -24,20 +24,43 @@ pub(crate) struct Header {
     pub(crate) a_mask: u32,
 }
 
+/// Why `read_header` has no header.
+enum HeaderError {
+    /// These bytes are not a BMP that this decoder reads.
+    Invalid,
+    /// The header runs past the input. It needs this many bytes.
+    Short(usize),
+}
+
 /// Read enough of BITMAPFILEHEADER + BITMAPINFOHEADER (any version ≥ 40)
 /// to size and locate the pixel array. Everything is little-endian.
 pub(crate) fn parse_header(b: &[u8]) -> Result<Header, codecs::Error> {
+    read_header(b).map_err(|_| codecs::Error::DecodeFailed)
+}
+
+/// The length of the head that `parse_header` needs for the answer of the whole file. `None`: `head` has it.
+pub(crate) fn header_needs(head: &[u8]) -> Option<usize> {
+    match read_header(head) {
+        Err(HeaderError::Short(need)) => Some(need),
+        _ => None,
+    }
+}
+
+#[inline]
+fn read_header(b: &[u8]) -> Result<Header, HeaderError> {
     // BITMAPFILEHEADER(14) + at least BITMAPINFOHEADER(40).
-    if b.len() < 54 || b[0] != b'B' || b[1] != b'M' {
-        return Err(codecs::Error::DecodeFailed);
+    if b.len() < 54 {
+        return Err(HeaderError::Short(54));
+    }
+    if b[0] != b'B' || b[1] != b'M' {
+        return Err(HeaderError::Invalid);
     }
     let pix_off = u32::from_le_bytes(b[10..14].try_into().expect("infallible: size matches"));
     let ih_size = u32::from_le_bytes(b[14..18].try_into().expect("infallible: size matches"));
     // OS/2 BITMAPCOREHEADER (12) and other oddities — let the system
     // backend (already tried) or caller deal; clipboards don't emit these.
-    // (usize add: `ih_size` is attacker bytes; u32 14+u32::MAX would wrap.)
-    if ih_size < 40 || 14 + ih_size as usize > b.len() {
-        return Err(codecs::Error::DecodeFailed);
+    if ih_size < 40 {
+        return Err(HeaderError::Invalid);
     }
     let w_raw = i32::from_le_bytes(b[18..22].try_into().expect("infallible: size matches"));
     let h_raw = i32::from_le_bytes(b[22..26].try_into().expect("infallible: size matches"));
@@ -45,16 +68,20 @@ pub(crate) fn parse_header(b: &[u8]) -> Result<Header, codecs::Error> {
     // back into i32 anywhere downstream — reject it as the corrupt header it
     // is rather than letting safety-checked casts trap.
     if w_raw <= 0 || h_raw == 0 || h_raw == i32::MIN {
-        return Err(codecs::Error::DecodeFailed);
+        return Err(HeaderError::Invalid);
     }
     let bpp = u16::from_le_bytes(b[28..30].try_into().expect("infallible: size matches"));
     let compression = u32::from_le_bytes(b[30..34].try_into().expect("infallible: size matches"));
     if bpp != 24 && bpp != 32 {
-        return Err(codecs::Error::DecodeFailed);
+        return Err(HeaderError::Invalid);
     }
     // BI_RGB = 0, BI_BITFIELDS = 3. RLE/JPEG/PNG-in-BMP need a real codec.
     if compression != 0 && compression != 3 {
-        return Err(codecs::Error::DecodeFailed);
+        return Err(HeaderError::Invalid);
+    }
+    // After the fixed fields, so that a wrong one is `Invalid`. (usize add: `ih_size` is attacker bytes; u32 14+u32::MAX would wrap.)
+    if 14 + ih_size as usize > b.len() {
+        return Err(HeaderError::Short(14 + ih_size as usize));
     }
 
     let mut h = Header {
@@ -78,7 +105,7 @@ pub(crate) fn parse_header(b: &[u8]) -> Result<Header, codecs::Error> {
     // plain 40-byte INFOHEADER, immediately after it. Same offset both ways.
     if compression == 3 {
         if b.len() < 14 + 40 + 12 {
-            return Err(codecs::Error::DecodeFailed);
+            return Err(HeaderError::Short(14 + 40 + 12));
         }
         h.r_mask = u32::from_le_bytes(b[54..58].try_into().expect("infallible: size matches"));
         h.g_mask = u32::from_le_bytes(b[58..62].try_into().expect("infallible: size matches"));
@@ -100,7 +127,7 @@ pub(crate) fn parse_header(b: &[u8]) -> Result<Header, codecs::Error> {
             // for the all-ones mask we're rejecting, hence `wrapping_add`.
             let run = m >> m.trailing_zeros();
             if (run & run.wrapping_add(1)) != 0 || m.count_ones() > 8 {
-                return Err(codecs::Error::DecodeFailed);
+                return Err(HeaderError::Invalid);
             }
         }
     }

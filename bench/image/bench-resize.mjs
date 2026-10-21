@@ -5,8 +5,11 @@
 // numbers are reproducible across machines. Run with --sharp to include the
 // sharp column (requires `bun install` in this dir first).
 
-import zlib from "node:zlib";
+import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
+import zlib from "node:zlib";
 
 // ─── synthetic 1920×1080 RGBA8 PNG ───────────────────────────────────────────
 
@@ -72,6 +75,44 @@ const jpeg4k = await new Bun.Image(makePng(3840, 2160)).jpeg({ quality: 92 }).by
 const jpegPhone = await new Bun.Image(makePng(4032, 3024)).jpeg({ quality: 92 }).bytes();
 process.stderr.write(`${(jpeg4k.length / 1024).toFixed(0)} KB / ${(jpegPhone.length / 1024).toFixed(0)} KB\n`);
 
+// The same pictures as files, for metadata() by path: it reads a head of the
+// file, and more when the header is longer than that head.
+const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "bun-image-bench-"));
+process.on("exit", () => fs.rmSync(fixtureDir, { recursive: true, force: true }));
+function fixtureFile(name, bytes) {
+  const file = path.join(fixtureDir, name);
+  fs.writeFileSync(file, bytes);
+  return file;
+}
+// `total` bytes of JPEG comment segments, to go between SOI and the rest.
+function jpegComments(total) {
+  const out = [];
+  while (total > 0) {
+    const size = total <= 65537 ? total : Math.min(65537, total - 4);
+    const segment = Buffer.alloc(size, 0x20);
+    segment.set([0xff, 0xfe, (size - 2) >> 8, (size - 2) & 255]);
+    out.push(segment);
+    total -= size;
+  }
+  return Buffer.concat(out);
+}
+const jpegWith = (...inserted) => Buffer.concat([jpegPhone.subarray(0, 2), ...inserted, jpegPhone.subarray(2)]);
+// libjpeg warns about stray bytes between two segments and reads the header all the same.
+const app0End = 4 + ((jpegPhone[4] << 8) | jpegPhone[5]);
+const jpegStray = Buffer.concat([jpegPhone.subarray(0, app0End), Buffer.alloc(5), jpegPhone.subarray(app0End)]);
+const files = {
+  png: fixtureFile("fixture.png", pngFixture),
+  small: fixtureFile("small.png", makePng(64, 64)),
+  jpeg: fixtureFile("phone.jpg", jpegPhone),
+  jpeg100k: fixtureFile("phone-100k-header.jpg", jpegWith(jpegComments(100_000))),
+  jpeg400k: fixtureFile("phone-400k-header.jpg", jpegWith(jpegComments(400_000))),
+  jpegStray: fixtureFile("phone-stray-bytes.jpg", jpegStray),
+};
+// One metadata() by path is mostly the trip to the thread pool and back. A
+// batch of calls at once shows the read.
+const BATCH = 256;
+const batch = f => file => Promise.all(Array.from({ length: BATCH }, () => f(file)));
+
 // ─── runners ────────────────────────────────────────────────────────────────
 
 const wantSharp = process.argv.includes("--sharp");
@@ -94,6 +135,48 @@ const ops = {
     fixture: pngFixture,
     bun: buf => new Bun.Image(buf).metadata(),
     sharp: buf => sharp(buf).metadata(),
+  },
+  [`metadata() × ${BATCH} [PNG file]`]: {
+    fixture: files.png,
+    bun: batch(file => new Bun.Image(file).metadata()),
+    sharp: batch(file => sharp(file).metadata()),
+  },
+  [`metadata() × ${BATCH} [PNG file, 64 KiB or less]`]: {
+    fixture: files.small,
+    bun: batch(file => new Bun.Image(file).metadata()),
+    sharp: batch(file => sharp(file).metadata()),
+  },
+  [`metadata() × ${BATCH} [12MP JPEG file]`]: {
+    fixture: files.jpeg,
+    bun: batch(file => new Bun.Image(file).metadata()),
+    sharp: batch(file => sharp(file).metadata()),
+  },
+  [`metadata() × ${BATCH} [12MP JPEG file, 100 KB before the frame header]`]: {
+    fixture: files.jpeg100k,
+    bun: batch(file => new Bun.Image(file).metadata()),
+    sharp: batch(file => sharp(file).metadata()),
+  },
+  [`metadata() × ${BATCH} [12MP JPEG file, 400 KB before the frame header: read whole]`]: {
+    fixture: files.jpeg400k,
+    bun: batch(file => new Bun.Image(file).metadata()),
+    sharp: batch(file => sharp(file).metadata()),
+  },
+  [`metadata() × ${BATCH} [12MP JPEG file, stray bytes in the header: read whole]`]: {
+    fixture: files.jpegStray,
+    bun: batch(file => new Bun.Image(file).metadata()),
+    sharp: batch(file => sharp(file).metadata()),
+  },
+  "metadata() then resize 400×300 → jpeg [12MP JPEG file]": {
+    fixture: files.jpeg,
+    bun: async file => {
+      const img = new Bun.Image(file);
+      await img.metadata();
+      return img.resize(400, 300, { fit: "inside" }).jpeg({ quality: 80 }).bytes();
+    },
+    sharp: async file => {
+      await sharp(file).metadata();
+      return sharp(file).resize(400, 300, { fit: "inside" }).jpeg({ quality: 80 }).toBuffer();
+    },
   },
   "PNG resize 400×400 inside → jpeg q80": {
     fixture: pngFixture,

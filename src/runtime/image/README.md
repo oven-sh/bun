@@ -10,7 +10,7 @@ off the JS thread.
 | `Image.classes.ts`                    | JS surface (codegen input)                                                                                      | adding/renaming a JS method              |
 | `Image.rs`                            | JS↔native glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery                  | new options, new chainable, new terminal |
 | `codecs.rs`                           | thin `extern fn` wrappers over libjpeg-turbo / libspng / libwebp + the `Format` sniffer + the pixel-limit guard | bumping a codec, adding a format         |
-| `exif.rs`                             | JPEG APP1/TIFF Orientation reader (tag 0x0112 only)                                                             | extending EXIF coverage                  |
+| `exif.rs`                             | JPEG APP1/TIFF Orientation reader (tag 0x0112 only). Its segment walk sizes the by-path `metadata()` read       | extending EXIF coverage                  |
 | `quantize.rs`                         | median-cut RGBA → palette for `png({palette})`                                                                  | dithering, perceptual weighting          |
 | `backend_coregraphics.rs`             | macOS ImageIO/CoreGraphics, lazy `dlopen`                                                                       | macOS-specific behaviour                 |
 | `backend_wic.rs`                      | Windows WIC, COM                                                                                                | Windows-specific behaviour               |
@@ -59,6 +59,13 @@ flag stays set only when the call ran to completion. `codec_jpeg.rs` accepts a d
   codecs return `Encoded` with the right `free`, not a default_allocator slice.
 - The `max_pixels` guard fires **after the header read, before the RGBA alloc**
   in every codec. New codecs must do the same.
+- `metadata()` on a path string reads a head of the file (`HEAD_BYTES` in
+  `Image.rs`), not the file. `codecs::probe_head` gives that head's answer only
+  when it is the answer of `codecs::probe_oriented` on the whole file, and says
+  how many bytes it needs when it is not. A `probe` arm that reads further needs
+  the same change in `probe_head`. The `metadata() on a path string` tests in
+  `test/js/bun/image/image.test.ts` compare the two answers and count the reads,
+  with each header structure on both sides of the end of a head.
 - `image_resize.cpp` must stay in `noUnify` (see `scripts/build/unified.ts`) —
   highway's `foreach_target.h` has a TU-wide include guard that breaks with
   two highway TUs in one bundle.

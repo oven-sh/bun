@@ -473,8 +473,10 @@ export function getPullRequestFiles(): { allFiles: string[]; newFiles: string[] 
       throw new Error("the checkout is a shallow clone");
     }
     const mergeBase = git("merge-base", `refs/remotes/origin/${getTargetBranch()}`, "HEAD").trim();
-    // No rename detection: it reads file contents, which a clone made with
-    // --filter=blob:none has to download. A renamed file is a removed one and an added one.
+    // No rename detection: a moved file is a removed one and an added one, and
+    // the pipeline step decides on both paths. Detection by similarity also
+    // reads file contents, which a clone made with --filter=blob:none has to
+    // download.
     diff = git("diff", "--name-status", "--no-renames", "-z", mergeBase, "HEAD");
     console.log(`-> git diff ${mergeBase} HEAD`);
   } catch (error) {

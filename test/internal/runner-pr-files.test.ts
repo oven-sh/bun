@@ -4,7 +4,7 @@
  * pipeline step (.buildkite/ci.ts) works out which files a pull request
  * changes, once per build: getPullRequestFiles() in scripts/buildkite.ts reads
  * them from the history its checkout has. The step decides on that list and
- * stores the start of it in the build's meta-data. A test shard
+ * stores up to 500 of its files in the build's meta-data. A test shard
  * (scripts/runner.node.ts) only reads the stored list. Nothing asks GitHub,
  * where every job of every build would spend the hourly quota of one token.
  *
@@ -24,7 +24,7 @@
  * Shell-script stand-ins don't resolve as executables on Windows, hence the skip.
  */
 import { describe, expect, test } from "bun:test";
-import { bunEnv, isDebug, isWindows, nodeExe, tempDir } from "harness";
+import { bunEnv, isWindows, nodeExe, tempDir } from "harness";
 import { chmodSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -95,6 +95,8 @@ async function runNode(args: (dir: string) => string[], { metaData = {}, env = {
       ...args(String(dir)),
     ],
     env: {
+      // test/harness.ts takes every BUILDKITE* variable out of bunEnv, so the build that runs this test is not the
+      // build that the script sees: that one is what a case puts in `env`.
       ...bunEnv,
       PATH: `${bin}:${bunEnv.PATH}`,
       // Whoever runs this test may have either in the environment.
@@ -139,10 +141,10 @@ async function runScript(body: string, fakes: Fakes) {
   return { calls, requests, stderr, result: JSON.parse(stdout.trimEnd().split("\n").at(-1)!) };
 }
 
-/** Runs `git <args>` in `cwd`. */
-async function git(cwd: string, args: string[], stdin = "") {
+/** Runs `cmd` in `cwd`, with `stdin` as its input. */
+async function run(cwd: string, cmd: string[], stdin = "") {
   await using proc = Bun.spawn({
-    cmd: ["git", ...args],
+    cmd,
     cwd,
     env: { ...bunEnv, GIT_CONFIG_NOSYSTEM: "1" },
     stdin: Buffer.from(stdin),
@@ -150,7 +152,7 @@ async function git(cwd: string, args: string[], stdin = "") {
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  if (exitCode !== 0) throw new Error(`git ${args.join(" ")} exited with ${exitCode}: ${stderr}`);
+  if (exitCode !== 0) throw new Error(`${cmd.join(" ")} exited with ${exitCode}: ${stderr}`);
 }
 
 /** Path to contents. */
@@ -195,9 +197,9 @@ async function makeHistory(
     ...Object.entries(refs).flatMap(([ref, at]) => [`reset ${ref}`, `from :${marks[at]}`]),
     "",
   ];
-  await git(directory, ["init", "--quiet"]);
-  await git(directory, ["fast-import", "--quiet"], stream.join("\n"));
-  await git(directory, ["symbolic-ref", "HEAD", "refs/heads/pull-request"]);
+  // One process for the three commands: a debug build of bun is slow to start one.
+  const commands = "git init --quiet && git symbolic-ref HEAD refs/heads/pull-request && git fast-import --quiet";
+  await run(directory, ["sh", "-c", commands], stream.join("\n"));
 }
 
 /**
@@ -218,11 +220,11 @@ const checkOutPullRequest = (directory: string, base: string, start: Files, head
 const pages = (directory: string, count: number) =>
   Array.from({ length: count }, (_, i) => `${directory}/${String(i).padStart(3, "0")}.md`);
 
-/** A pull request that moves 250 pages of the docs to another directory, and changes the files of `other`. */
-const moveDocs = (other: Files) => ({
-  start: { ...Object.fromEntries(pages("docs/old", 250).map(path => [path, "a page\n"])), ...other },
+/** A pull request that moves `count` pages of the docs to another directory, and changes the files of `other`. */
+const moveDocs = (count: number, other: Files) => ({
+  start: { ...Object.fromEntries(pages("docs/old", count).map(path => [path, "a page\n"])), ...other },
   head: {
-    ...Object.fromEntries(pages("docs/new", 250).map(path => [path, "a page\n"])),
+    ...Object.fromEntries(pages("docs/new", count).map(path => [path, "a page\n"])),
     ...Object.fromEntries(Object.keys(other).map(path => [path, "changed\n"])),
   },
 });
@@ -231,10 +233,6 @@ const pullRequestEnv = { BUILDKITE: "true", BUILDKITE_PULL_REQUEST: "45177" };
 
 const skip = isWindows || !nodeExe();
 
-// The binary of a debug build is over 1 GB, and it runs slowly until its pages are in memory: right after a build,
-// the first cases take over 5 s of the test process's own time. No CI lane tests a debug build.
-const slow = isDebug ? 30_000 : undefined;
-
 describe.skipIf(skip)("getPullRequestFiles", () => {
   const getFiles = (base: string, checkout: Fakes["checkout"]) =>
     runScript(`return buildkite.getPullRequestFiles();`, {
@@ -242,133 +240,124 @@ describe.skipIf(skip)("getPullRequestFiles", () => {
       checkout,
     });
 
-  test.concurrent(
-    "lists what differs from the commit where the pull request left its base branch",
-    async () => {
-      expect(
-        await getFiles("main", directory =>
-          checkOutPullRequest(
-            directory,
-            "main",
-            { "src/changed.ts": "before\n", "src/removed.ts": "", "test/old-name.test.ts": "a test\n" },
-            { "src/changed.ts": "after\n", "test/new-name.test.ts": "a test\n", "test/added.test.ts": "" },
-          ),
+  test.concurrent("lists what differs from the commit where the pull request left its base branch", async () => {
+    expect(
+      await getFiles("main", directory =>
+        checkOutPullRequest(
+          directory,
+          "main",
+          { "src/changed.ts": "before\n", "src/removed.ts": "", "test/old-name.test.ts": "a test\n" },
+          { "src/changed.ts": "after\n", "test/new-name.test.ts": "a test\n", "test/added.test.ts": "" },
         ),
-      ).toEqual({
-        // Neither the token nor a request. src/only-on-the-base-branch.ts, which the base branch got later, is not listed.
-        calls: [],
-        requests: [],
-        stderr: "",
-        result: {
-          allFiles: [
-            "src/changed.ts",
-            "src/removed.ts",
-            "test/added.test.ts",
-            // A renamed file is a removed one and an added one.
-            "test/new-name.test.ts",
-            "test/old-name.test.ts",
-          ],
-          newFiles: ["test/added.test.ts", "test/new-name.test.ts"],
-        },
-      });
-    },
-    slow,
-  );
+      ),
+    ).toEqual({
+      // Neither the token nor a request. src/only-on-the-base-branch.ts, which the base branch got later, is not listed.
+      calls: [],
+      requests: [],
+      stderr: "",
+      result: {
+        allFiles: [
+          "src/changed.ts",
+          "src/removed.ts",
+          "test/added.test.ts",
+          // A renamed file is a removed one and an added one.
+          "test/new-name.test.ts",
+          "test/old-name.test.ts",
+        ],
+        newFiles: ["test/added.test.ts", "test/new-name.test.ts"],
+      },
+    });
+  });
 
-  test.concurrent(
-    "compares a stacked pull request with its own base branch",
-    async () => {
-      expect(
-        await getFiles("release/x", directory =>
-          checkOutPullRequest(
-            directory,
-            "release/x",
-            { "src/on-the-release.ts": "" },
-            { "src/on-the-release.ts": "", "src/stacked.ts": "" },
-          ),
+  test.concurrent("compares a stacked pull request with its own base branch", async () => {
+    expect(
+      await getFiles("release/x", directory =>
+        checkOutPullRequest(
+          directory,
+          "release/x",
+          { "src/on-the-release.ts": "" },
+          { "src/on-the-release.ts": "", "src/stacked.ts": "" },
         ),
-      ).toEqual({
-        calls: [],
-        requests: [],
-        stderr: "",
-        result: { allFiles: ["src/stacked.ts"], newFiles: ["src/stacked.ts"] },
-      });
-    },
-    slow,
-  );
+      ),
+    ).toEqual({
+      calls: [],
+      requests: [],
+      stderr: "",
+      result: { allFiles: ["src/stacked.ts"], newFiles: ["src/stacked.ts"] },
+    });
+  });
 
   // output() of scripts/agent.ts keeps 1 MiB. The list is not cut at 500 files either: the pipeline step decides on all of it.
-  test.concurrent(
-    "lists every file of a pull request whose diff is over 1 MiB",
-    async () => {
-      // 1400 paths of 820 bytes. The commit has them without a file on disk, so no limit of a file system applies.
-      const long = Buffer.alloc(200, "d").toString();
-      const paths = pages([long, long, long, long].join("/"), 1400);
-      expect(
-        await runScript(
-          `const { allFiles, newFiles } = buildkite.getPullRequestFiles();
+  test.concurrent("lists every file of a pull request whose diff is over 1 MiB", async () => {
+    // 1400 paths of 820 bytes. The commit has them without a file on disk, so no limit of a file system applies.
+    const long = Buffer.alloc(200, "d").toString();
+    const paths = pages([long, long, long, long].join("/"), 1400);
+    expect(
+      await runScript(
+        `const { allFiles, newFiles } = buildkite.getPullRequestFiles();
          return { files: allFiles.length, bytes: allFiles.join("\\n").length, newFiles: newFiles.length };`,
-          {
-            env: { ...pullRequestEnv, BUILDKITE_PULL_REQUEST_BASE_BRANCH: "main" },
-            checkout: directory =>
-              checkOutPullRequest(
-                directory,
-                "main",
-                { "src/index.ts": "" },
-                Object.fromEntries(paths.map(path => [path, ""])),
-              ),
-          },
-        ),
-      ).toEqual({
-        calls: [],
-        requests: [],
-        stderr: "",
-        // The 1400 added files, and src/index.ts, which the pull request removes.
-        result: { files: 1401, bytes: paths.join("\n").length + "\nsrc/index.ts".length, newFiles: 1400 },
-      });
-    },
-    slow,
-  );
+        {
+          env: { ...pullRequestEnv, BUILDKITE_PULL_REQUEST_BASE_BRANCH: "main" },
+          checkout: directory =>
+            checkOutPullRequest(
+              directory,
+              "main",
+              { "src/index.ts": "" },
+              Object.fromEntries(paths.map(path => [path, ""])),
+            ),
+        },
+      ),
+    ).toEqual({
+      calls: [],
+      requests: [],
+      stderr: "",
+      // The 1400 added files, and src/index.ts, which the pull request removes.
+      result: { files: 1401, bytes: paths.join("\n").length + "\nsrc/index.ts".length, newFiles: 1400 },
+    });
+  });
 
-  test.concurrent(
-    "lists nothing, and says why, when its checkout lacks the base branch",
-    async () => {
-      const { stderr, ...rest } = await getFiles("gone", directory =>
-        makeHistory(
-          directory,
-          "refs/remotes/origin/main",
-          { "src/index.ts": "" },
-          { "src/index.ts": "changed\n" },
-          // A branch of the checkout's own that has the name of origin's is not the base branch.
-          { "refs/heads/origin/gone": "start" },
-        ),
-      );
-      expect(rest).toEqual({ calls: [], requests: [], result: { allFiles: [], newFiles: [] } });
-      expect(stderr).toStartWith("- PR 45177, no file list: git merge-base refs/remotes/origin/gone HEAD: ");
-    },
-    slow,
-  );
+  test.concurrent("lists nothing, and says why, when its checkout lacks the base branch", async () => {
+    const { stderr, ...rest } = await getFiles("gone", directory =>
+      makeHistory(
+        directory,
+        "refs/remotes/origin/main",
+        { "src/index.ts": "" },
+        { "src/index.ts": "changed\n" },
+        // A branch of the checkout's own that has the name of origin's is not the base branch.
+        { "refs/heads/origin/gone": "start" },
+      ),
+    );
+    expect(rest).toEqual({ calls: [], requests: [], result: { allFiles: [], newFiles: [] } });
+    expect(stderr).toStartWith("- PR 45177, no file list: git merge-base refs/remotes/origin/gone HEAD: ");
+  });
+
+  // A build of the merge queue, or of a branch: the step asks for every build that is not of the main branch.
+  test.concurrent("lists nothing, and has no complaint, when the build is not for a pull request", async () => {
+    expect(
+      await runScript(`return buildkite.getPullRequestFiles();`, {
+        env: { BUILDKITE: "true", BUILDKITE_PULL_REQUEST: "false" },
+        checkout: directory =>
+          checkOutPullRequest(directory, "main", { "src/index.ts": "" }, { "src/index.ts": "changed\n" }),
+      }),
+    ).toEqual({ calls: [], requests: [], stderr: "", result: { allFiles: [], newFiles: [] } });
+  });
 
   // A shallow clone can give a merge base that is older than the real one.
-  test.concurrent(
-    "lists nothing, and says why, when its checkout is a shallow clone",
-    async () => {
-      expect(
-        await getFiles("main", async directory => {
-          using origin = tempDir("runner-pr-files-origin", {});
-          await makeHistory(String(origin), "refs/heads/main", { "src/index.ts": "" }, { "src/index.ts": "changed\n" });
-          // Two commits deep: the pull request's commit and main's both still reach the commit they share.
-          await git(directory, ["clone", "--quiet", "--depth=2", "--no-single-branch", `file://${origin}`, "."]);
-        }),
-      ).toEqual({
-        calls: [],
-        requests: [],
-        stderr: "- PR 45177, no file list: the checkout is a shallow clone\n",
-        result: { allFiles: [], newFiles: [] },
-      });
-    },
-    slow,
-  );
+  test.concurrent("lists nothing, and says why, when its checkout is a shallow clone", async () => {
+    expect(
+      await getFiles("main", async directory => {
+        using origin = tempDir("runner-pr-files-origin", {});
+        await makeHistory(String(origin), "refs/heads/main", { "src/index.ts": "" }, { "src/index.ts": "changed\n" });
+        // Two commits deep: the pull request's commit and main's both still reach the commit they share.
+        await run(directory, ["git", "clone", "--quiet", "--depth=2", "--no-single-branch", `file://${origin}`, "."]);
+      }),
+    ).toEqual({
+      calls: [],
+      requests: [],
+      stderr: "- PR 45177, no file list: the checkout is a shallow clone\n",
+      result: { allFiles: [], newFiles: [] },
+    });
+  });
 });
 
 describe.skipIf(skip)("the pipeline step", () => {
@@ -400,61 +389,76 @@ describe.skipIf(skip)("the pipeline step", () => {
     };
   }
 
-  test.concurrent(
-    "uploads nothing for a pull request that only changes docs",
-    async () => {
-      expect(
-        await runPipelineStep({
-          start: { "docs/index.md": "a page\n", "src/index.ts": "" },
-          head: { "docs/index.md": "a better page\n", "docs/new.md": "", "src/index.ts": "" },
-        }),
-      ).toEqual({ calls: [], requests: [], stderr: "", exitCode: 0, skippedAsDocs: true, stored: {} });
-    },
-    slow,
-  );
+  test.concurrent("uploads nothing for a pull request that only changes docs", async () => {
+    expect(
+      await runPipelineStep({
+        start: { "docs/index.md": "a page\n", "src/index.ts": "" },
+        head: { "docs/index.md": "a better page\n", "docs/new.md": "", "src/index.ts": "" },
+      }),
+    ).toEqual({ calls: [], requests: [], stderr: "", exitCode: 0, skippedAsDocs: true, stored: {} });
+  });
 
-  // The 250 moved pages are the first 500 files in path order. The two files under src/ come after them.
-  test.concurrent(
-    "decides on every file, and stores the first 500 for the test shards",
-    async () => {
-      const { start, head } = moveDocs({ "src/index.ts": "" });
-      expect(await runPipelineStep({ start, head: { ...head, "src/new.ts": "" } })).toEqual({
-        calls: ["buildkite-agent meta-data set pr-all-files", "buildkite-agent meta-data set pr-new-files"],
-        requests: [],
-        stderr: "",
-        exitCode: 0,
-        skippedAsDocs: false,
-        stored: {
-          "pr-all-files": [...pages("docs/new", 250), ...pages("docs/old", 250)],
-          "pr-new-files": pages("docs/new", 250),
-        },
-      });
-    },
-    slow,
-  );
+  // No list is not a list of only docs: the build goes on.
+  test.concurrent("does not take a pull request for docs-only when its checkout cannot tell", async () => {
+    const { stderr, ...rest } = await runPipelineStep(
+      { start: { "docs/index.md": "a page\n" }, head: { "docs/index.md": "a better page\n" } },
+      { BUILDKITE_PULL_REQUEST_BASE_BRANCH: "gone" },
+    );
+    expect(stderr).toStartWith("- PR 45177, no file list: ");
+    expect(rest).toEqual({ calls: [], requests: [], exitCode: 0, skippedAsDocs: false, stored: {} });
+  });
+
+  // 500 files in path order: the 249 moved pages at their new paths and at their old ones, src/index.ts, and the test.
+  test.concurrent("stores every file of a pull request with 500 files", async () => {
+    const { start, head } = moveDocs(249, { "src/index.ts": "" });
+    expect(await runPipelineStep({ start, head: { ...head, "test/js/added.test.ts": "" } })).toEqual({
+      calls: ["buildkite-agent meta-data set pr-all-files", "buildkite-agent meta-data set pr-new-files"],
+      requests: [],
+      stderr: "",
+      exitCode: 0,
+      skippedAsDocs: false,
+      stored: {
+        "pr-all-files": [...pages("docs/new", 249), ...pages("docs/old", 249), "src/index.ts", "test/js/added.test.ts"],
+        "pr-new-files": [...pages("docs/new", 249), "test/js/added.test.ts"],
+      },
+    });
+  });
+
+  // 502 files. The 250 moved pages fill the first 500 places in path order, so the two files that are not under docs/
+  // come after them. A shard uses the files under test/: the test is stored, and the last page and src/new.ts are not.
+  test.concurrent("decides on every file, and stores 500 of them for the test shards, the tests first", async () => {
+    const { start, head } = moveDocs(250, {});
+    expect(await runPipelineStep({ start, head: { ...head, "src/new.ts": "", "test/js/added.test.ts": "" } })).toEqual({
+      calls: ["buildkite-agent meta-data set pr-all-files", "buildkite-agent meta-data set pr-new-files"],
+      requests: [],
+      stderr: "",
+      exitCode: 0,
+      skippedAsDocs: false,
+      stored: {
+        "pr-all-files": [...pages("docs/new", 250), ...pages("docs/old", 249), "test/js/added.test.ts"],
+        "pr-new-files": [...pages("docs/new", 250), "test/js/added.test.ts"],
+      },
+    });
+  });
 
   // scripts/agent.ts is one of the files that CI's images are baked from, and a fork's build cannot bake.
-  test.concurrent(
-    "refuses a fork that changes a bake input, wherever the file is in the list",
-    async () => {
-      const { stderr, ...rest } = await runPipelineStep(moveDocs({ "scripts/agent.ts": "" }), {
-        BUILDKITE_PULL_REQUEST_REPO: "https://github.com/a-fork/bun.git",
-        BUILDKITE_MESSAGE: "a commit",
-      });
-      expect(stderr).toContain("This pull request changes what CI's images are baked from (scripts/agent.ts)");
-      expect(rest).toEqual({
-        calls: ["buildkite-agent meta-data set pr-all-files", "buildkite-agent meta-data set pr-new-files"],
-        requests: [],
-        exitCode: 1,
-        skippedAsDocs: false,
-        stored: {
-          "pr-all-files": [...pages("docs/new", 250), ...pages("docs/old", 250)],
-          "pr-new-files": pages("docs/new", 250),
-        },
-      });
-    },
-    slow,
-  );
+  test.concurrent("refuses a fork that changes a bake input, wherever the file is in the list", async () => {
+    const { stderr, ...rest } = await runPipelineStep(moveDocs(250, { "scripts/agent.ts": "" }), {
+      BUILDKITE_PULL_REQUEST_REPO: "https://github.com/a-fork/bun.git",
+      BUILDKITE_MESSAGE: "a commit",
+    });
+    expect(stderr).toContain("This pull request changes what CI's images are baked from (scripts/agent.ts)");
+    expect(rest).toEqual({
+      calls: ["buildkite-agent meta-data set pr-all-files", "buildkite-agent meta-data set pr-new-files"],
+      requests: [],
+      exitCode: 1,
+      skippedAsDocs: false,
+      stored: {
+        "pr-all-files": [...pages("docs/new", 250), ...pages("docs/old", 250)],
+        "pr-new-files": pages("docs/new", 250),
+      },
+    });
+  });
 });
 
 describe.skipIf(skip)("a test shard", () => {
@@ -474,88 +478,68 @@ describe.skipIf(skip)("a test shard", () => {
     return { calls, requests, listLines: stdout.split("\n").filter(line => line.includes("PR file list")) };
   }
 
-  test.concurrent(
-    "reads the list that the pipeline step stored",
-    async () => {
-      expect(
-        await runShard("45177", {
-          "pr-all-files": `["test/js/bun/changed.test.ts","test/js/bun/added.test.ts"]`,
-          "pr-new-files": `["test/js/bun/added.test.ts"]`,
-        }),
-      ).toEqual({
-        calls: ["buildkite-agent meta-data get pr-all-files", "buildkite-agent meta-data get pr-new-files"],
-        requests: [],
-        listLines: ["- PR file list from build meta-data: 2 files, 1 new files"],
-      });
-    },
-    slow,
-  );
+  test.concurrent("reads the list that the pipeline step stored", async () => {
+    expect(
+      await runShard("45177", {
+        "pr-all-files": `["test/js/bun/changed.test.ts","test/js/bun/added.test.ts"]`,
+        "pr-new-files": `["test/js/bun/added.test.ts"]`,
+      }),
+    ).toEqual({
+      calls: ["buildkite-agent meta-data get pr-all-files", "buildkite-agent meta-data get pr-new-files"],
+      requests: [],
+      listLines: ["- PR file list from build meta-data: 2 files, 1 new files"],
+    });
+  });
 
-  test.concurrent(
-    "does not ask GitHub when the pipeline step stored no list",
-    async () => {
-      expect(await runShard("45177", {})).toEqual({
-        calls: ["buildkite-agent meta-data get pr-all-files"],
-        requests: [],
-        listLines: ["- No PR file list in build meta-data: changed tests do not run first"],
-      });
-    },
-    slow,
-  );
+  test.concurrent("does not ask GitHub when the pipeline step stored no list", async () => {
+    expect(await runShard("45177", {})).toEqual({
+      calls: ["buildkite-agent meta-data get pr-all-files"],
+      requests: [],
+      listLines: ["- No PR file list in build meta-data: changed tests do not run first"],
+    });
+  });
 
-  test.concurrent(
-    "looks for no list when the build is not for a pull request",
-    async () => {
-      expect(await runShard("false", {})).toEqual({ calls: [], requests: [], listLines: [] });
-    },
-    slow,
-  );
+  test.concurrent("looks for no list when the build is not for a pull request", async () => {
+    expect(await runShard("false", {})).toEqual({ calls: [], requests: [], listLines: [] });
+  });
 });
 
 describe.skipIf(skip)("getSecret", () => {
-  test.concurrent(
-    "fetches a secret once and does not pass it on to child processes",
-    async () => {
-      expect(
-        await runScript(
-          `const fetched = [buildkite.getSecret("TEST_REPORTING_API"), buildkite.getSecret("TEST_REPORTING_API")];
+  test.concurrent("fetches a secret once and does not pass it on to child processes", async () => {
+    expect(
+      await runScript(
+        `const fetched = [buildkite.getSecret("TEST_REPORTING_API"), buildkite.getSecret("TEST_REPORTING_API")];
          const fromEnvironment = buildkite.getSecret("CI_QUEUE_PROBE_TOKEN");
          return { fetched, fromEnvironment, inherited: inherited("TEST_REPORTING_API") };`,
-          { env: { BUILDKITE: "true", CI_QUEUE_PROBE_TOKEN: "set-by-the-environment" } },
-        ),
-      ).toEqual({
-        calls: ["buildkite-agent secret get TEST_REPORTING_API"],
-        requests: [],
-        stderr: "",
-        result: {
-          fetched: ["secret-of-TEST_REPORTING_API", "secret-of-TEST_REPORTING_API"],
-          fromEnvironment: "set-by-the-environment",
-          inherited: "unset",
-        },
-      });
-    },
-    slow,
-  );
+        { env: { BUILDKITE: "true", CI_QUEUE_PROBE_TOKEN: "set-by-the-environment" } },
+      ),
+    ).toEqual({
+      calls: ["buildkite-agent secret get TEST_REPORTING_API"],
+      requests: [],
+      stderr: "",
+      result: {
+        fetched: ["secret-of-TEST_REPORTING_API", "secret-of-TEST_REPORTING_API"],
+        fromEnvironment: "set-by-the-environment",
+        inherited: "unset",
+      },
+    });
+  });
 
   // Off Buildkite, getJson() sends GitHub the token that `gh auth token` prints.
-  test.concurrent(
-    "asks gh for the GitHub token once and does not pass it on to child processes",
-    async () => {
-      const url = "https://api.github.com/repos/oven-sh/bun/releases/latest";
-      expect(
-        await runScript(
-          `await buildkite.getJson(${JSON.stringify(url)});
+  test.concurrent("asks gh for the GitHub token once and does not pass it on to child processes", async () => {
+    const url = "https://api.github.com/repos/oven-sh/bun/releases/latest";
+    expect(
+      await runScript(
+        `await buildkite.getJson(${JSON.stringify(url)});
          await buildkite.getJson(${JSON.stringify(url)});
          return inherited("GITHUB_TOKEN");`,
-          {},
-        ),
-      ).toEqual({
-        calls: ["gh auth token"],
-        requests: [`${url} Bearer token-of-gh`, `${url} Bearer token-of-gh`],
-        stderr: "",
-        result: "unset",
-      });
-    },
-    slow,
-  );
+        {},
+      ),
+    ).toEqual({
+      calls: ["gh auth token"],
+      requests: [`${url} Bearer token-of-gh`, `${url} Bearer token-of-gh`],
+      stderr: "",
+      result: "unset",
+    });
+  });
 });

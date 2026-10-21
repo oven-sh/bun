@@ -88,8 +88,9 @@ function setBuildMetadata(name: string, value: string): void {
 }
 
 /**
- * How many of a pull request's files the test shards are told about, the
- * first ones in path order: a meta-data value holds at most 100 KB.
+ * How many of a pull request's files the test shards are told about: a
+ * meta-data value holds at most 100 KB. When the list is longer, the files
+ * under test/ are the first to be kept, because a shard uses only those.
  */
 const maxStoredPullRequestFiles = 500;
 
@@ -1939,8 +1940,9 @@ async function main() {
     // GitHub (scripts/runner.node.ts). Only what is stored is cut short: this
     // step decides on every file.
     if (allFiles.length > 0) {
-      const stored = new Set(allFiles.slice(0, maxStoredPullRequestFiles));
-      setBuildMetadata("pr-all-files", JSON.stringify([...stored]));
+      const testsFirst = [...allFiles].sort((a, b) => Number(b.startsWith("test/")) - Number(a.startsWith("test/")));
+      const stored = new Set(testsFirst.slice(0, maxStoredPullRequestFiles));
+      setBuildMetadata("pr-all-files", JSON.stringify(allFiles.filter(filename => stored.has(filename))));
       setBuildMetadata("pr-new-files", JSON.stringify(newFiles.filter(filename => stored.has(filename))));
     }
   }

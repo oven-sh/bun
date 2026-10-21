@@ -34,8 +34,8 @@ namespace Zig {
  * - String properties are exposed (and cached) as JSStrings, instead of WTF::String.
  * - Helper functions like isEval and isConstructor.
  *
- * Note that this is not a garbage collected JSCell and uses no write barriers. Until detachFromCells(), it must be
- * stack allocated and relies on the GC to see the stored JSC object pointers on the stack.
+ * Note that this is not a heap allocated, garbage collected, JSCell. It must be stack allocated, as it doesn't
+ * use any write barriers and rely on the GC to see the stored JSC object pointers on the stack, until detachFromCells().
  */
 class JSCStackFrame {
 public:
@@ -94,8 +94,7 @@ private:
 public:
     JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame);
 
-    // Reads what is still lazy, then lets go of the code block and of the JSC::StackFrame. Runs at the end of a
-    // collection, where they may be dead but are not swept yet. The callee stays, weakly: see clearCalleeIfDead().
+    // For the end of a collection, before the sweep: reads what is still lazy, then keeps no cell but the callee, weakly.
     void detachFromCells();
     void clearCalleeIfDead();
 

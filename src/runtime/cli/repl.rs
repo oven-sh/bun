@@ -28,6 +28,8 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
 use bun_paths as path;
 use bun_sys::{self as sys, Fd};
 
+use crate::cli::escape_sequence::{self, Escape, read_escape};
+
 // ============================================================================
 // C++ Bindings
 // ============================================================================
@@ -1185,84 +1187,65 @@ impl<'a> Repl<'a> {
         Some(self.stdin_buf[0])
     }
 
+    /// The key that an ESC byte starts. The ESC is already read.
+    fn read_escape_key(&mut self) -> Key {
+        let mut params = [0u8; escape_sequence::MAX_PARAMS];
+        match read_escape(|| self.read_byte(), &mut params) {
+            Escape::Sequence {
+                params, final_byte, ..
+            } => Self::sequence_key(params, final_byte),
+            // A terminal that sends ESC for Alt puts one before the key's own sequence.
+            Escape::Other(27) => match read_escape(|| self.read_byte(), &mut params) {
+                Escape::Sequence {
+                    params, final_byte, ..
+                } => match Self::sequence_key(params, final_byte) {
+                    Key::ArrowLeft => Key::AltLeft,
+                    Key::ArrowRight => Key::AltRight,
+                    _ => Key::Unknown,
+                },
+                Escape::Unknown => Key::Unknown,
+                // Esc twice. The byte after them starts the next key.
+                Escape::Other(_) | Escape::Interrupted(_) => {
+                    self.stdin_buf_start -= 1;
+                    Key::Escape
+                }
+                Escape::Eof => Key::Escape,
+            },
+            Escape::Other(b'b') => Key::AltB,
+            Escape::Other(b'd') => Key::AltD,
+            Escape::Other(b'f') => Key::AltF,
+            Escape::Other(127) => Key::AltBackspace,
+            Escape::Other(_) | Escape::Eof => Key::Escape,
+            Escape::Unknown => Key::Unknown,
+            Escape::Interrupted(_) => {
+                self.stdin_buf_start -= 1;
+                Key::Unknown
+            }
+        }
+    }
+
+    fn sequence_key(params: &[u8], final_byte: u8) -> Key {
+        match (params, final_byte) {
+            (b"", b'A') => Key::ArrowUp,
+            (b"", b'B') => Key::ArrowDown,
+            (b"", b'C') => Key::ArrowRight,
+            (b"", b'D') => Key::ArrowLeft,
+            (b"", b'H') | (b"1", b'~') => Key::Home,
+            (b"", b'F') | (b"4", b'~') => Key::End,
+            (b"3", b'~') => Key::Delete,
+            (b"5", b'~') => Key::PageUp,
+            (b"6", b'~') => Key::PageDown,
+            (b"1;5" | b"1;3", b'C') => Key::AltRight,
+            (b"1;5" | b"1;3", b'D') => Key::AltLeft,
+            _ => Key::Unknown,
+        }
+    }
+
     fn read_key(&mut self) -> Option<Key> {
         let byte = self.read_byte()?;
 
-        // Handle escape sequences
         if byte == 27 {
-            // ESC
-            let Some(second) = self.read_byte() else {
-                return Some(Key::Escape);
-            };
-
-            if second == b'[' {
-                // CSI
-                let Some(third) = self.read_byte() else {
-                    return Some(Key::Escape);
-                };
-
-                return Some(match third {
-                    b'A' => Key::ArrowUp,
-                    b'B' => Key::ArrowDown,
-                    b'C' => Key::ArrowRight,
-                    b'D' => Key::ArrowLeft,
-                    b'H' => Key::Home,
-                    b'F' => Key::End,
-                    b'1'..=b'6' => 'blk: {
-                        let Some(fourth) = self.read_byte() else {
-                            break 'blk Key::Unknown;
-                        };
-                        if fourth == b'~' {
-                            break 'blk match third {
-                                b'1' => Key::Home,
-                                b'2' => Key::Unknown, // insert
-                                b'3' => Key::Delete,
-                                b'4' => Key::End,
-                                b'5' => Key::PageUp,
-                                b'6' => Key::PageDown,
-                                _ => Key::Unknown,
-                            };
-                        } else if fourth == b';' {
-                            let Some(modifier) = self.read_byte() else {
-                                break 'blk Key::Unknown;
-                            };
-                            let Some(dir) = self.read_byte() else {
-                                break 'blk Key::Unknown;
-                            };
-                            if modifier == b'5' || modifier == b'3' {
-                                break 'blk match dir {
-                                    b'C' => Key::AltRight,
-                                    b'D' => Key::AltLeft,
-                                    _ => Key::Unknown,
-                                };
-                            }
-                            break 'blk Key::Unknown;
-                        }
-                        Key::Unknown
-                    }
-                    _ => Key::Unknown,
-                });
-            } else if second == b'O' {
-                // SS3
-                let Some(third) = self.read_byte() else {
-                    return Some(Key::Escape);
-                };
-                return Some(match third {
-                    b'H' => Key::Home,
-                    b'F' => Key::End,
-                    _ => Key::Unknown,
-                });
-            } else if second == b'b' {
-                return Some(Key::AltB);
-            } else if second == b'd' {
-                return Some(Key::AltD);
-            } else if second == b'f' {
-                return Some(Key::AltF);
-            } else if second == 127 {
-                return Some(Key::AltBackspace);
-            }
-
-            return Some(Key::Escape);
+            return Some(self.read_escape_key());
         }
 
         // Multi-byte UTF-8: assemble the whole sequence so it is inserted as

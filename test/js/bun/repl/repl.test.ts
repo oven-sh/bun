@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { chmodSync, statSync } from "node:fs";
 import path from "path";
+import { unboundKeys } from "../../../cli/key-sequences";
 
 const stripAnsi = Bun.stripANSI;
 
@@ -835,6 +836,97 @@ describe.concurrent("Bun REPL", () => {
         ".exit",
       ]);
       expect(outputs).toEqual(["42", "42", "undefined", '{\n  name: "test",\n}', '"test"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // The line editor decodes keys from a pipe the same way as from a terminal.
+  describe("key sequences", () => {
+    type Row = [name: string, typed: string, value: string];
+
+    // Types one line per row into one REPL. Pairs the name of each row with what its line printed.
+    async function evaluate(rows: Row[]) {
+      const { outputs, stderr, exitCode } = await runRepl([...rows.map(([, typed]) => typed), ".exit"]);
+      return { printed: outputs.map((output, i) => [rows[i]?.[0], output]), stderr, exitCode };
+    }
+    const expected = (rows: Row[]) => ({
+      printed: rows.map(([name, , value]) => [name, value]),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    // A key's sequence ends at its final byte, however many bytes come before
+    // it. Read by fixed positions, the end of a longer one stayed in the line:
+    // F5 and then `15` was evaluated as `~15`.
+    test("a key that has no binding is read whole and does nothing", async () => {
+      const keys: [name: string, sequence: string][] = [
+        ...unboundKeys,
+        ["Shift+Up", "\x1b[1;2A"],
+        ["Alt+Up", "\x1b[1;3A"],
+        ["Ctrl+Shift+Left", "\x1b[1;6D"],
+        ["Alt+X", "\x1bx"],
+        // A terminal that sends ESC for Alt puts one before the key's own sequence.
+        ["Alt+F5 with an ESC for Alt", "\x1b\x1b[15~"],
+        ["Alt+Up with an ESC for Alt", "\x1b\x1b[A"],
+      ];
+      // The key arrives with the cursor between `1` and `3`, so one that moves or deletes shows too.
+      const rows = keys.map(([name, sequence]): Row => [name, `13\x1b[D${sequence}2`, "123"]);
+      expect(await evaluate(rows)).toEqual(expected(rows));
+    });
+
+    test("a key that has a binding does what it is bound to", async () => {
+      const rows: Row[] = [
+        ["Left", '""\x1b[Done', '"one"'],
+        ["Left with application cursor keys on", '""\x1bODone', '"one"'],
+        ["Right", '""\x01\x1b[Cone', '"one"'],
+        ["Home as ESC [ H", 'one"\x1b[H"', '"one"'],
+        ["Home as ESC [ 1 ~", 'one"\x1b[1~"', '"one"'],
+        ["Home as ESC O H", 'one"\x1bOH"', '"one"'],
+        ["End as ESC [ F", '"one\x01\x1b[F"', '"one"'],
+        ["End as ESC [ 4 ~", '"one\x01\x1b[4~"', '"one"'],
+        ["End as ESC O F", '"one\x01\x1bOF"', '"one"'],
+        ["Delete", 'x"one"\x01\x1b[3~', '"one"'],
+        ["Alt+B", '"one two"\x1bbX', '"one Xtwo"'],
+        ["Ctrl+Left", '"one two"\x1b[1;5DX', '"one Xtwo"'],
+        ["Alt+Left", '"one two"\x1b[1;3DX', '"one Xtwo"'],
+        ["Alt+Left with an ESC for Alt", '"one two"\x1b\x1b[DX', '"one Xtwo"'],
+        ["Alt+F", '"one two"\x01\x1bfX', '"one Xtwo"'],
+        ["Ctrl+Right", '"one two"\x01\x1b[1;5CX', '"one Xtwo"'],
+        ["Alt+Right", '"one two"\x01\x1b[1;3CX', '"one Xtwo"'],
+        ["Alt+Right with an ESC for Alt", '"one two"\x01\x1b\x1b[CX', '"one Xtwo"'],
+        ["Alt+D", 'x "one"\x01\x1bd', '"one"'],
+        ["Alt+Backspace", '"one" x\x1b\x7f', '"one"'],
+        ["a line for Up to recall", '"recalled"', '"recalled"'],
+        ["Up", "\x1b[A", '"recalled"'],
+        ["Down", '"typed"\x1b[A\x1b[B', '"typed"'],
+      ];
+      expect(await evaluate(rows)).toEqual(expected(rows));
+    });
+
+    // A byte that no sequence contains ends the one it arrives in. It is then
+    // read as the key that it is. So is the byte after Esc and Esc.
+    test("the key that cuts a sequence short is not lost", async () => {
+      const rows: Row[] = [
+        ["Enter after ESC [", "1\x1b[", "1"],
+        ["Enter after a parameter byte", "2\x1b[1;", "2"],
+        ["Enter after ESC O", "3\x1bO", "3"],
+        ["Enter after ESC [ [", "4\x1b[[", "4"],
+        ["Enter after Esc twice", "5\x1b\x1b", "5"],
+        ["a digit after Esc twice", "6\x1b\x1b7", "67"],
+        ["the ESC of the next key", "8\x1b[1;\x1b[D9", "98"],
+        ["Backspace", '"a\x1b[1\x7fb"', '"b"'],
+        ["a character that is not ASCII", '"\x1b[1é"', '"é"'],
+      ];
+      expect(await evaluate(rows)).toEqual(expected(rows));
+    });
+
+    // The REPL reads 256 bytes at a time. The ESC here is the last byte of the
+    // first read, and the rest of the Left key comes with the second read.
+    test("a key that arrives in two reads is one key", async () => {
+      const text = Buffer.alloc(253, "a").toString();
+      const { outputs, stderr, exitCode } = await runRepl([`"${text}"\x1b[Db`, "_.length + _.slice(-2)", ".exit"]);
+      expect(outputs).toEqual([`"${text}b"`, '"254ab"']);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });

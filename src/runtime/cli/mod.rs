@@ -15,6 +15,7 @@ pub(crate) mod add_completions;
 pub(crate) mod colon_list_type;
 #[path = "discord_command.rs"]
 pub(crate) mod discord_command;
+pub(crate) mod escape_sequence;
 #[path = "shell_completions.rs"]
 pub(crate) mod shell_completions;
 

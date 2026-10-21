@@ -13,6 +13,7 @@ use bun_resolver::fs as Fs;
 use bun_sys::{self, Fd};
 
 use crate::cli as CLI;
+use crate::cli::escape_sequence::{self, Escape, read_escape};
 use bun_bundler::options;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -97,6 +98,8 @@ impl InitCommand {
         let mut reprint_menu = true;
 
         let mut stdin = bun_core::output::stdin_reader();
+        // A byte that cut a key's sequence short. It is the next key.
+        let mut pending: Option<u8> = None;
 
         // `reprint_menu` is flipped to false on the error paths before returning.
         // Shaped for borrowck — can't both borrow `selected`/`initial_draw`
@@ -150,7 +153,7 @@ impl InitCommand {
             Output::flush();
 
             // Read a single character
-            let byte = match stdin.take_byte() {
+            let byte = match pending.take().map_or_else(|| stdin.take_byte(), Ok) {
                 Ok(b) => b,
                 Err(_) => {
                     finish!(reprint_menu, selected);
@@ -194,49 +197,37 @@ impl InitCommand {
                     }
                 }
                 27 => {
-                    // ESC sequence
-                    // Return immediately on plain ESC
-                    let next = match stdin.take_byte() {
-                        Ok(b) => b,
-                        Err(_) => {
-                            reprint_menu = false;
-                            finish!(reprint_menu, selected);
-                            return Err(crate::Error::Core(bun_core::Error::EndOfStream));
-                        }
-                    };
-                    if next != b'[' {
-                        reprint_menu = false;
-                        finish!(reprint_menu, selected);
-                        return Err(crate::Error::Core(bun_core::Error::EndOfStream));
-                    }
-
-                    // Read arrow key
-                    let arrow = match stdin.take_byte() {
-                        Ok(b) => b,
-                        Err(_) => {
-                            reprint_menu = false;
-                            finish!(reprint_menu, selected);
-                            return Err(crate::Error::Core(bun_core::Error::EndOfStream));
-                        }
-                    };
-                    match arrow {
-                        b'A' => {
+                    let mut params = [0u8; escape_sequence::MAX_PARAMS];
+                    match read_escape(|| stdin.take_byte().ok(), &mut params) {
+                        Escape::Sequence {
+                            params, final_byte, ..
+                        } => match escape_sequence::arrow(params, final_byte) {
                             // Up arrow
-                            if selected.to_index() == 0 {
-                                selected = C::from_index(choices.len() - 1);
-                            } else {
-                                selected = C::from_index(selected.to_index() - 1);
+                            Some(b'A') => {
+                                if selected.to_index() == 0 {
+                                    selected = C::from_index(choices.len() - 1);
+                                } else {
+                                    selected = C::from_index(selected.to_index() - 1);
+                                }
                             }
-                        }
-                        b'B' => {
                             // Down arrow
-                            if selected.to_index() == choices.len() - 1 {
-                                selected = C::from_index(0);
-                            } else {
-                                selected = C::from_index(selected.to_index() + 1);
+                            Some(b'B') => {
+                                if selected.to_index() == choices.len() - 1 {
+                                    selected = C::from_index(0);
+                                } else {
+                                    selected = C::from_index(selected.to_index() + 1);
+                                }
                             }
+                            _ => {}
+                        },
+                        Escape::Unknown => {}
+                        Escape::Interrupted(byte) => pending = Some(byte),
+                        // The Esc key. Only the byte after it tells it from the start of another key.
+                        Escape::Other(_) | Escape::Eof => {
+                            reprint_menu = false;
+                            finish!(reprint_menu, selected);
+                            return Err(crate::Error::Core(bun_core::Error::EndOfStream));
                         }
-                        _ => {}
                     }
                 }
                 _ => {}

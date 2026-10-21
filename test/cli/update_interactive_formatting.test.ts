@@ -4,6 +4,7 @@ import { closeSync, createReadStream } from "fs";
 import { bunEnv, bunExe, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { TestRegistry } from "registry";
+import { unboundKeys } from "./key-sequences";
 
 let registry: TestRegistry;
 let registryUrl: string;
@@ -38,12 +39,17 @@ async function install(dir: string, args: string[] = []) {
 
 async function updateInteractive(
   dir: string,
-  { args = ["--latest"], input = "a\n", cwd }: { args?: string[]; input?: string; cwd?: string } = {},
+  {
+    args = ["--latest"],
+    input = "a\n",
+    cwd,
+    env = bunEnv,
+  }: { args?: string[]; input?: string; cwd?: string; env?: Record<string, string | undefined> } = {},
 ) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "update", "-i", ...args],
     cwd: cwd ?? String(dir),
-    env: bunEnv,
+    env,
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
@@ -1666,6 +1672,99 @@ describe.concurrent("bun update --interactive", () => {
     expect(stdout).toContain("■ no-deps");
     expect(stdout).toContain("Selected 1 package to update");
     expect(exitCode).toBe(0);
+  });
+
+  // The prompt took the third byte of a key's sequence for the key and read the rest as more
+  // keys. The `A` of Shift+Up (ESC [ 1 ; 2 A) was the "select all" shortcut.
+  describe("key sequences", () => {
+    // One project for every row: --dry-run leaves it as it is. The rows of its prompt are
+    // a-dep, dep-with-tags and no-deps.
+    let project: ReturnType<typeof tempDir>;
+    beforeAll(async () => {
+      project = tempDir("update-interactive-key-sequences", {
+        "bunfig.toml": bunfig(),
+        "package.json": JSON.stringify({
+          name: "test-project",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "1.0.0",
+            "dep-with-tags": "1.0.0",
+            "a-dep": "1.0.5",
+          },
+        }),
+      });
+      await install(project);
+    });
+    afterAll(() => project?.[Symbol.dispose]());
+
+    // Types `keys` and Enter. --dry-run then prints one `^ name from -> to` row for each selected package.
+    async function selected(keys: string, env?: Record<string, string | undefined>) {
+      const { stdout, exitCode } = await updateInteractive(project, {
+        args: ["--latest", "--dry-run"],
+        input: keys + "\n",
+        env,
+      });
+      return {
+        selected: [...Bun.stripANSI(stdout).matchAll(/^[\^↑] (\S+) /gm)].map(match => match[1]),
+        exitCode,
+      };
+    }
+
+    it.each([
+      ["Up, Space", "\x1b[A ", ["no-deps"]],
+      ["Down, Space", "\x1b[B ", ["dep-with-tags"]],
+      ["Up with application cursor keys on, Space", "\x1bOA ", ["no-deps"]],
+      ["Shift+Up, Space", "\x1b[1;2A ", ["no-deps"]],
+      ["Ctrl+Down, Space", "\x1b[1;5B ", ["dep-with-tags"]],
+      ["Page Down, Space", "\x1b[6~ ", ["no-deps"]],
+      ["Down twice, Page Up, Space", "\x1b[B\x1b[B\x1b[5~ ", ["a-dep"]],
+      ["Right", "\x1b[C", ["a-dep"]],
+      ["Esc, Up, Space", "\x1b\x1b[A ", ["no-deps"]],
+      ["Esc, Down, Space", "\x1b\x1b[B ", ["dep-with-tags"]],
+      ["Up that cuts a sequence short, Space", "\x1b[1;\x1b[A ", ["no-deps"]],
+      ["Up that cuts ESC O short, Space", "\x1bO\x1b[A ", ["no-deps"]],
+      ["Esc, Enter, a", "\x1b\na", []],
+      ["Alt+A", "\x1ba", []],
+      ["every key that has no binding, Space", unboundKeys.map(([, sequence]) => sequence).join("") + " ", ["a-dep"]],
+    ])("%s", async (_name, keys, packages) => {
+      expect(await selected(keys)).toEqual({ selected: packages, exitCode: 0 });
+    });
+
+    // The prompt turns mouse reports on when it draws in color. A terminal that does not have
+    // the SGR form of them sends a report as ESC [ M and three bytes: button, column and row.
+    it.each([
+      ["wheel down", "\x1b[Ma!!"],
+      ["press and release", "\x1b[M %%\x1b[M#%%"],
+    ])("an X10 mouse report is not read as keys: %s", async (_name, report) => {
+      const color = { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" };
+      expect(await selected(report, color)).toEqual({ selected: [], exitCode: 0 });
+    });
+
+    it("Right selects the latest version and Left the target version", async () => {
+      await using server = manifestRegistry({ dep: ["1.0.0", "1.1.0", "2.0.0"] });
+      const packageJson = (range: string) =>
+        JSON.stringify({ name: "test-project", version: "1.0.0", dependencies: { dep: range } });
+      await using dir = tempDir("update-interactive-left-right", {
+        "bunfig.toml": `[install]\ncache = false\nregistry = "${server.url}"\n`,
+        "package.json": packageJson("1.0.0"),
+      });
+      await install(dir, ["--lockfile-only"]);
+      await Bun.write(join(dir, "package.json"), packageJson("^1.0.0"));
+
+      const rows = async (keys: string) => {
+        const { stdout } = await updateInteractive(dir, { args: ["--dry-run"], input: keys + "\n" });
+        return stdout.split("\n").filter(line => line.startsWith("^ "));
+      };
+      expect({
+        right: await rows("\x1b[C"),
+        left: await rows("\x1b[D"),
+        "right, then left": await rows("\x1b[C\x1b[D"),
+      }).toEqual({
+        right: ["^ dep 1.0.0 -> 2.0.0"],
+        left: ["^ dep 1.0.0 -> 1.1.0"],
+        "right, then left": ["^ dep 1.0.0 -> 1.1.0"],
+      });
+    });
   });
 
   it("keeps the frame within the terminal height with -r and multiple dependency groups", async () => {

@@ -36,6 +36,7 @@ use bun_semver::{self as semver, SlicedString};
 
 use crate::Command;
 use crate::cli::cli_dupe;
+use crate::cli::escape_sequence::{self, Escape, read_escape};
 use crate::cli::outdated_command::{printed, printed_width};
 
 pub(crate) struct UpdateInteractiveCommand;
@@ -985,8 +986,10 @@ impl UpdateInteractiveCommand {
         Output::print(format_args!("\x1B[1A\x1B[2K")); // Move up one line and clear it too
         Output::flush();
 
-        let _mouse_tracking = colors.then(MouseTracking::enable);
+        let mouse_tracking = colors.then(MouseTracking::enable);
 
+        // A byte that is not part of the key before it. It is the next key.
+        let mut pending: Option<u8> = None;
         let mut initial_draw = true;
         let mut total_lines: usize = 0;
         let mut last_terminal_size = initial_terminal_size;
@@ -1232,7 +1235,9 @@ impl UpdateInteractiveCommand {
 
             let mut reader = bun_core::output::stdin_reader();
             // The end of the input confirms, like Enter.
-            let byte = reader.take_byte().unwrap_or(b'\n');
+            let byte = pending
+                .take()
+                .unwrap_or_else(|| reader.take_byte().unwrap_or(b'\n'));
             needs_redraw = true;
             let last = state.packages.len() - 1;
 
@@ -1308,37 +1313,51 @@ impl UpdateInteractiveCommand {
                     state.toggle_all = false;
                 }
                 27 => {
-                    // escape sequence
-                    let Ok(seq) = reader.take_byte() else {
-                        continue;
-                    };
-                    if seq == b'[' {
-                        let Ok(arrow) = reader.take_byte() else {
-                            continue;
-                        };
-                        match arrow {
+                    let mut params = [0u8; escape_sequence::MAX_PARAMS];
+                    let mut button: Option<u32> = None;
+                    match read_escape(|| reader.take_byte().ok(), &mut params) {
+                        // SGR mouse report: ESC [ < button ; column ; row, then M (press) or m (release)
+                        Escape::Sequence {
+                            params: [b'<', report @ ..],
+                            final_byte: b'M' | b'm',
+                            ..
+                        } => {
+                            button = strings::tokenize(report, b";")
+                                .next()
+                                .map(|button| strings::parse_int(button, 10).unwrap_or(0));
+                        }
+                        // X10 mouse report, of a terminal without the SGR mode: ESC [ M, then button, column and row as one byte each
+                        Escape::Sequence {
+                            introducer: b'[',
+                            params: b"",
+                            final_byte: b'M',
+                        } if mouse_tracking.is_some() => {
+                            let report: [Option<u8>; 3] =
+                                core::array::from_fn(|_| reader.take_byte().ok());
+                            button = report[0].map(|byte| u32::from(byte.wrapping_sub(32)));
+                        }
+                        Escape::Sequence {
+                            params, final_byte, ..
+                        } => match escape_sequence::arrow(params, final_byte) {
                             // up arrow
-                            b'A' => {
+                            Some(b'A') => {
                                 state.cursor = state.cursor.checked_sub(1).unwrap_or(last);
                                 Self::update_viewport(state);
                             }
                             // down arrow
-                            b'B' => {
+                            Some(b'B') => {
                                 state.cursor = (state.cursor + 1) % state.packages.len();
                                 Self::update_viewport(state);
                             }
                             // The right arrow selects Latest, and the left arrow selects Target.
-                            b'C' | b'D' => {
+                            Some(arrow) => {
                                 state.packages[state.cursor].use_latest = arrow == b'C';
                                 state.selected[state.cursor] = true;
                             }
                             // Page Up, Page Down
-                            b'5' | b'6' => {
-                                let Ok(tilde) = reader.take_byte() else {
-                                    continue;
-                                };
-                                if tilde == b'~' {
-                                    state.cursor = if arrow == b'5' {
+                            None => {
+                                if let ([page @ (b'5' | b'6')], b'~') = (params, final_byte) {
+                                    state.cursor = if *page == b'5' {
                                         state.cursor.saturating_sub(state.viewport_height)
                                     } else {
                                         (state.cursor + state.viewport_height).min(last)
@@ -1346,46 +1365,33 @@ impl UpdateInteractiveCommand {
                                     Self::update_viewport(state);
                                 }
                             }
-                            b'<' => {
-                                // SGR extended mouse mode
-                                // Read until 'M' or 'm' for button press/release
-                                let mut buffer = [0u8; 32];
-                                let mut buf_idx: usize = 0;
-                                while buf_idx < buffer.len() {
-                                    let Ok(c) = reader.take_byte() else { break };
-                                    if c == b'M' || c == b'm' {
-                                        // Parse SGR mouse event: ESC[<button;col;row(M or m)
-                                        // button: 64 = scroll up, 65 = scroll down
-                                        let mut parts =
-                                            strings::tokenize(&buffer[0..buf_idx], b";");
-                                        if let Some(button_str) = parts.next() {
-                                            let button: u32 =
-                                                strings::parse_int(button_str, 10).unwrap_or(0);
-                                            if button == 64 {
-                                                if state.viewport_start > 0 {
-                                                    state.viewport_start -= 1;
-                                                    Self::ensure_cursor_in_viewport(state);
-                                                }
-                                            } else if button == 65 {
-                                                if state.viewport_start + state.viewport_height
-                                                    < state.packages.len()
-                                                {
-                                                    state.viewport_start += 1;
-                                                    Self::ensure_cursor_in_viewport(state);
-                                                }
-                                            } else {
-                                                // A click changes nothing.
-                                                needs_redraw = false;
-                                            }
-                                        }
-                                        break;
-                                    }
-                                    buffer[buf_idx] = c;
-                                    buf_idx += 1;
-                                }
-                            }
-                            _ => {}
+                        },
+                        Escape::Unknown | Escape::Eof => {}
+                        // A control key after Esc, or any byte that cut a sequence short, is the next key.
+                        Escape::Other(byte @ (0..=0x1f | 0x7f)) | Escape::Interrupted(byte) => {
+                            pending = Some(byte);
                         }
+                        // Alt and a key: no binding.
+                        Escape::Other(_) => {}
+                    }
+                    match button {
+                        // scroll up
+                        Some(64) => {
+                            if state.viewport_start > 0 {
+                                state.viewport_start -= 1;
+                                Self::ensure_cursor_in_viewport(state);
+                            }
+                        }
+                        // scroll down
+                        Some(65) => {
+                            if state.viewport_start + state.viewport_height < state.packages.len() {
+                                state.viewport_start += 1;
+                                Self::ensure_cursor_in_viewport(state);
+                            }
+                        }
+                        // A click changes nothing.
+                        Some(_) => needs_redraw = false,
+                        None => {}
                     }
                     state.toggle_all = false;
                 }

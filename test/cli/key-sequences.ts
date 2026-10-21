@@ -1,0 +1,25 @@
+// Keys, and the replies of a terminal, that no prompt of bun binds. `bun repl`, the template menu
+// of `bun init` and `bun update -i` each have to read every one of them whole and then do nothing.
+export const unboundKeys: [name: string, sequence: string][] = [
+  ["F5", "\x1b[15~"],
+  ["F9", "\x1b[20~"],
+  ["F12", "\x1b[24~"],
+  ["Shift+F5", "\x1b[15;2~"],
+  ["Ctrl+F5", "\x1b[15;5~"],
+  ["F1", "\x1bOP"],
+  ["F4", "\x1bOS"],
+  ["Ctrl+F1 of a VTE terminal", "\x1bO1;5P"],
+  ["F1 of the Linux console", "\x1b[[A"],
+  ["Insert", "\x1b[2~"],
+  ["Ctrl+Delete", "\x1b[3;5~"],
+  ["Home of rxvt", "\x1b[7~"],
+  ["Shift+Delete of rxvt", "\x1b[3$"],
+  ["Ctrl+Enter with modifyOtherKeys", "\x1b[27;5;13~"],
+  ["Ctrl+A in the kitty keyboard protocol", "\x1b[97;5u"],
+  ["a bracketed paste mark", "\x1b[200~"],
+  ["a mouse click report", "\x1b[<0;10;5M"],
+  ["a cursor position report", "\x1b[24;80R"],
+  ["a device attributes reply", "\x1b[?64;1;2c"],
+  ["a mode report", "\x1b[?2026;2$y"],
+  ["more parameter bytes than any key has", `\x1b[${Buffer.alloc(80, "1;").toString()}A`],
+];

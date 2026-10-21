@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import fs, { readdirSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
+import { unboundKeys } from "../key-sequences";
 
 // Whether `bun init` emits CLAUDE.md depends on a `claude` binary being on
 // PATH, which varies by CI machine — disable the detection so the directory
@@ -141,6 +142,111 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(output).not.toContain("EndOfStream");
     expect(exitCode).toBe(0);
     expect(fs.existsSync(path.join(temp, "package.json"))).toBe(false);
+  });
+
+  // Windows is skipped: ConPTY rewrites the child's output, so the frames of the menu cannot be counted.
+  describe.skipIf(isWindows)("template menu keys", () => {
+    // Runs `bun init` on a pty. It stops at its template menu.
+    function openMenu(cwd: string) {
+      const decoder = new TextDecoder();
+      let output = "";
+      let wake: (() => void) | undefined;
+      const closed = Promise.withResolvers<void>();
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "init"],
+        cwd,
+        // The menu draws its marker only in color.
+        env: { ...initEnv, NO_COLOR: undefined, TERM: "xterm-256color" },
+        // The terminal is owned by the subprocess: `exit` fires once the child
+        // exited and all of its output arrived.
+        terminal: {
+          cols: 80,
+          rows: 24,
+          data(_terminal, chunk) {
+            output += decoder.decode(chunk, { stream: true });
+            wake?.();
+          },
+          exit() {
+            closed.resolve();
+            wake?.();
+          },
+        },
+      });
+      let exited = false;
+      closed.promise.then(() => (exited = true));
+      // Every draw of the menu ends with "erase to the end of the screen". Then the menu blocks on its input.
+      const frames = () => output.split("\x1b[0J").length - 1;
+      return {
+        proc,
+        closed: closed.promise,
+        frames,
+        output: () => Bun.stripANSI(output),
+        write: (keys: string) => proc.terminal!.write(keys),
+        // Resolves with the template that has the marker once the menu drew `count` frames.
+        async marked(count: number): Promise<string | undefined> {
+          while (frames() < count) {
+            if (exited) throw new Error(`bun init exited before frame ${count} of its menu:\n${output}`);
+            await new Promise<void>(resolve => (wake = resolve));
+          }
+          return [...Bun.stripANSI(output).matchAll(/❯ +(\w+)/g)].at(-1)?.[1];
+        },
+      };
+    }
+
+    // The menu took the third byte of a key's sequence for the key and read the
+    // rest as more keys. The `2` of Shift+Up (ESC [ 1 ; 2 A) was the shortcut of
+    // the second template, and the ESC O of F1 cancelled.
+    test("an arrow moves the marker, any other key does nothing", async () => {
+      await using temp = tempDir("bun-init-menu-keys", {});
+      const menu = openMenu(String(temp));
+      await using _proc = menu.proc;
+
+      const rows: [name: string, keys: string, marked: string][] = [
+        ["Down", "\x1b[B", "React"],
+        ["Up", "\x1b[A", "Blank"],
+        ["Up from the first row", "\x1b[A", "Library"],
+        ["Down with application cursor keys on", "\x1bOB", "Blank"],
+        ["Up with application cursor keys on", "\x1bOA", "Library"],
+        ["Shift+Up", "\x1b[1;2A", "React"],
+        ["Shift+Down", "\x1b[1;2B", "Library"],
+        ["Alt+Up", "\x1b[1;3A", "React"],
+        ["Ctrl+Down", "\x1b[1;5B", "Library"],
+        ...unboundKeys.map(([name, sequence]): [string, string, string] => [name, sequence, "Library"]),
+        ["Down after all of them", "\x1b[B", "Blank"],
+      ];
+      expect(await menu.marked(1)).toBe("Blank");
+      const seen: [name: string, marked: string | undefined][] = [];
+      for (const [index, [name, keys]] of rows.entries()) {
+        menu.write(keys);
+        // One key draws one frame.
+        seen.push([name, await menu.marked(index + 2)]);
+      }
+      expect(seen).toEqual(rows.map(([name, , marked]) => [name, marked]));
+
+      menu.write("\x03");
+      expect(await menu.proc.exited).toBe(0);
+      await menu.closed;
+      // A sequence that is read as more than one key draws more frames. The last one is the erase of the cancel.
+      expect(menu.frames()).toBe(rows.length + 2);
+      expect(readdirSync(temp)).toEqual([]);
+    });
+
+    test.each([
+      ["Esc, then a key", "\x1bj"],
+      ["Esc twice", "\x1b\x1b"],
+      ["Ctrl+C after a sequence that is cut short", "\x1b[1\x03"],
+    ])("%s cancels", async (_name, keys) => {
+      await using temp = tempDir("bun-init-menu-cancel", {});
+      const menu = openMenu(String(temp));
+      await using _proc = menu.proc;
+
+      expect(await menu.marked(1)).toBe("Blank");
+      menu.write(keys);
+      expect(await menu.proc.exited).toBe(0);
+      await menu.closed;
+      expect(menu.output()).toEndWith("x Cancelled\r\n");
+      expect(readdirSync(temp)).toEqual([]);
+    });
   });
 
   test("bun init in folder", async () => {

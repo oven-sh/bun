@@ -5,11 +5,12 @@ import { connect, type AddressInfo } from "node:net";
 const { expect } = createTest(import.meta.path);
 
 const { promise, resolve, reject } = Promise.withResolvers();
+const { promise: headersReceived, resolve: onHeaders } = Promise.withResolvers<void>();
 await using server = http.createServer(async (req, res) => {
   res.writeHead(200, { "Content-Type": "text/plain", "Transfer-Encoding": "chunked" });
   res.flushHeaders();
-  // make sure headers are flushed
-  await Bun.sleep(10);
+  // the client has the headers before a chunk follows them
+  await headersReceived;
   // send some chunks at once
   res.write("chunk 1");
   res.write("chunk 2");
@@ -47,6 +48,7 @@ socket.on("data", data => {
     // empty line for end of headers aka flushHeaders works
     expect(headers[headers.length - 1]).toBe("");
     expect(headers[headers.length - 2]).toBe("");
+    onHeaders();
   } else {
     chunks.push(data as Buffer);
   }

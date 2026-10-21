@@ -50,6 +50,7 @@ const {
   kClosedWithUnsentData,
   NodeHTTPResponseFlags,
   callCloseCallback,
+  completeIncomingMessage,
   emitCloseNT,
   NodeHTTPResponseAbortEvent,
   STATUS_CODES,
@@ -64,12 +65,13 @@ const {
   fakeSocketSymbol,
   kOutHeaders,
   onDataIncomingMessage,
+  noBodySymbol,
   http1ServerPipeline,
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
 
-const { IncomingMessage, kReqShouldKeepAlive } = require("node:_http_incoming");
+const { IncomingMessage, kReqShouldKeepAlive, readStart } = require("node:_http_incoming");
 const {
   OutgoingMessage,
   kErrored,
@@ -464,6 +466,25 @@ function rethrowUncaught(err) {
   throw err;
 }
 
+// Node's parserOnMessageComplete for a message without a body.
+function completeWithoutBody(req) {
+  try {
+    completeIncomingMessage(req);
+  } catch (err) {
+    // A 'readable' listener threw under the push: an uncaught exception, as in Node.js, and not a failed dispatch.
+    process.nextTick(rethrowUncaught, err);
+  }
+}
+
+// Node's abortIncoming, with no check for an 'error' listener: onError() of IncomingMessage emits to a listener only.
+function abortIncoming(req) {
+  if (!req || req.destroyed) return;
+  // Node runs this from 'close' of the socket. Here the socket can still be open, and it must not get this error.
+  const socket = req.socket;
+  if (socket && !socket.destroyed) socket.destroy();
+  req.destroy(new ConnResetException("aborted"));
+}
+
 // Like Node.js's setupConnectionsTracking: each 'listening' event replaces
 // the connections-checking interval timer (used by the headers/request
 // timeout machinery) and destroys the previous one.
@@ -829,7 +850,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             // Node frees the parser before handing the raw socket to 'connect'.
             releaseServerParserShim(socket, http_req);
             // llhttp completes a CONNECT request at the end of its head, before Node emits 'connect'.
-            http_req.complete = true;
+            completeWithoutBody(http_req);
             try {
               server.emit("connect", http_req, socket, head);
             } catch (err) {
@@ -943,7 +964,13 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         ) {
           // Like Node.js, shouldUpgradeCallback sees req.upgrade === true.
           http_req.upgrade = true;
-          is_upgrade = !!server.shouldUpgradeCallback(http_req);
+          try {
+            is_upgrade = !!server.shouldUpgradeCallback(http_req);
+          } catch (err) {
+            // The connection goes on after a callback that throws, so a request that it reads still ends.
+            if (!hasBody) completeWithoutBody(http_req);
+            throw err;
+          }
         }
         // Like Node.js's parserOnIncoming: req.upgrade is true inside the
         // 'upgrade' listener and false for a declined upgrade that falls
@@ -1059,7 +1086,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             socket[kUpgradeIncoming] = http_req;
             http_req.once("end", clearUpgradeIncoming.bind(undefined, socket));
           } else {
-            http_req.complete = true;
+            completeWithoutBody(http_req);
           }
           const upgradeHead = !hasBody && connectHead ? connectHead : kEmptyBuffer;
           socket.bytesRead += upgradeHead.length;
@@ -1111,8 +1138,12 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           }
         }
 
-        // Node's parserOnMessageComplete: a message without a body is complete once the listener returns. EOF stays lazy (_read).
-        if (!hasBody) http_req.complete = true;
+        // Node's parserOnMessageComplete runs right after the listener of a message without a body.
+        if (!hasBody) {
+          completeWithoutBody(http_req);
+          // Its readStart(), if the socket does not flow. A nested event loop in the listener can dispatch a CONNECT.
+          if (socket.readableFlowing !== true && socket[kHandoffResponse] === undefined) readStart(socket);
+        }
 
         if (isPipelined) {
           // Completion of a queued response is tracked through the pipeline
@@ -1916,11 +1947,7 @@ function getNodeHTTPServerSocket() {
       if (req && !req.destroyed && !req[kHandle]?.upgraded) {
         // At this point the socket is already destroyed; let's avoid UAF
         req[kHandle] = undefined;
-        if (req.listenerCount("error") > 0) {
-          req.destroy(new ConnResetException("aborted"));
-        } else {
-          req.destroy();
-        }
+        abortIncoming(req);
       }
 
       // Pipelined responses (and their requests) that were still queued behind
@@ -2679,11 +2706,18 @@ function stopServerResponsePerf(this: any) {
   }
 }
 
+function clearIncomingOnEnd(this: any) {
+  const parser = this.socket?.parser;
+  if (parser != null && parser.incoming === this) parser.incoming = null;
+}
+
 // Node.js's resOnFinish as one shared listener: connection handling (close or
 // arm keep-alive) runs first because onResponseFinishHandleSocket's guards
 // read pre-detach state, then detach the socket and advance the pipeline.
 function emitResponseFinish() {
   const req = this.req;
+  // A listener that threw after res.end() skipped message-complete. The connection goes on, so the request still ends.
+  if (req && !req.complete && req[noBodySymbol]) completeWithoutBody(req);
   // Node's resOnFinish: dump a body that nobody consumed or resumed.
   if (req && !req._consuming && !req._readableState?.resumeScheduled) {
     req._dump();
@@ -2692,9 +2726,15 @@ function emitResponseFinish() {
   // the response's own socket (set by assignSocket, cleared only by
   // detachSocket) still references the connection then.
   const socket = this.req?.socket ?? this.socket;
-  // Node's clearIncoming: a request that ended before its response did. Any other one is cleared at its EOF.
+  // Node's clearIncoming. Node also keeps a request that nothing reads, with its buffered body, until the next request.
   const parser = socket?.parser;
-  if (parser != null && parser.incoming === req && req.readableEnded) parser.incoming = null;
+  if (parser != null && parser.incoming === req) {
+    if (req.readableEnded || (req.readableFlowing !== true && req.listenerCount("readable") === 0)) {
+      parser.incoming = null;
+    } else {
+      req.on("end", clearIncomingOnEnd);
+    }
+  }
   onResponseFinishHandleSocket(socket?.server, socket, this);
   // The dispatcher detached a synchronously-finished response itself;
   // advancing the pipeline again here would skip a queued response.
@@ -2882,11 +2922,7 @@ function abortQueuedPipelinedResponses(socket, error = $ERR_STREAM_DESTROYED("wr
       failQueuedPipelinedWriteCallbacks(queuedRes[kPipelinedQueuedState], error);
       if (queuedReq && !queuedReq.destroyed) {
         queuedReq[kHandle] = undefined;
-        if (queuedReq.listenerCount("error") > 0) {
-          queuedReq.destroy(new ConnResetException("aborted"));
-        } else {
-          queuedReq.destroy();
-        }
+        abortIncoming(queuedReq);
       }
       if (!queuedRes.destroyed) {
         queuedRes.destroy();
@@ -4320,6 +4356,7 @@ http1ServerPipeline.lastPipelinedResponse = lastPipelinedResponse;
 http1ServerPipeline.maybePauseFallbackReads = maybePauseFallbackReads;
 http1ServerPipeline.resumeFallbackReadsOnDrain = resumeFallbackReadsOnDrain;
 http1ServerPipeline.finishDrainedResponse = finishDrainedResponse;
+http1ServerPipeline.abortIncoming = abortIncoming;
 http1ServerPipeline.kMustCloseConnection = kMustCloseConnection;
 
 export default {

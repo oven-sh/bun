@@ -3,7 +3,7 @@ use bun_lint::selector::{self, EsNode, Selector};
 
 /// Disallow specified syntax.
 pub struct NoRestrictedSyntax {
-    /// In the order in which ESLint calls the listeners for a node.
+    /// In the order ESLint calls a node's listeners.
     restrictions: Vec<Restriction>,
 }
 
@@ -21,7 +21,7 @@ fn selector_of(option: &Json) -> Option<&[u8]> {
 impl Rule for NoRestrictedSyntax {
     const META: Meta = Meta::eslint("no-restricted-syntax", Kind::Suggestion);
     const ON: On = On::new().nodes(NodeTags::ALL).finish();
-    /// What matches, with the index of the restriction.
+    /// The matching nodes, each with the index of its restriction.
     type State<'a> = Vec<(EsNode<'a>, usize)>;
 
     fn new(options: &Options) -> Self {
@@ -34,7 +34,7 @@ impl Rule for NoRestrictedSyntax {
                 Some(message) if !message.is_empty() => message.into(),
                 _ => [b"Using '", source, b"' is not allowed."].concat().into(),
             };
-            // The listeners are the properties of an object, named by the selectors.
+            // ESLint's listeners are properties of an object keyed by selector, so a repeated selector overwrites.
             if let Some(same) = restrictions.iter_mut().find(|it| it.selector.source() == source) {
                 same.message = message;
             } else if let Ok(selector) = Selector::parse(source) {

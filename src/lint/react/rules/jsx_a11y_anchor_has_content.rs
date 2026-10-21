@@ -5,14 +5,14 @@ use bun_lint::rule::Plugin;
 
 /// Enforce that anchors have content and that the content is accessible to screen readers.
 pub struct AnchorHasContent {
-    /// Besides `a`.
+    /// In addition to `a`.
     components: Vec<String>,
 }
 
 const MISSING_CONTENT: Message = Message::new("", "Missing accessible content when using `a` elements.");
 
 impl Rule for AnchorHasContent {
-    // oxlint declares a suggestion. What it makes is a fix.
+    // oxlint declares a suggestion, but what it produces is a fix.
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "anchor-has-content", Kind::Problem).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     no_state!();
@@ -47,7 +47,8 @@ impl Rule for AnchorHasContent {
     }
 }
 
-/// It is all that is in the braces of an attribute of a component, which can give it content: `<Button render={<a />} />`.
+/// True if it's the whole value of a component's attribute. The component can give it content: `<Button render={<a />}
+/// />`.
 fn is_component_prop(e: Expr) -> bool {
     let Node::Prop(attribute) = e.parent() else {
         return false;

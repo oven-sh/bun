@@ -6,19 +6,13 @@ use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSType, JSValue, JsResult, StringJsc};
 
-use crate::generated_bindgen::crypto::{CryptoClass, EncodedUUID, UUIDEncoding};
+use crate::generated_bindgen::crypto::{EncodedUUID, UUIDEncoding};
 use crate::node::Encoding;
 
 pub(crate) struct Crypto;
 
-impl CryptoClass for Crypto {
-    type Error<'a> = bindgen::Error<'a>;
-
-    fn constructor<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, Self> {
-        Err(heap.illegal_constructor())
-    }
-
-    fn get_random_values<'a>(
+impl Crypto {
+    pub(crate) fn get_random_values<'a>(
         _: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
         array: JsLocal<'a>,
@@ -55,7 +49,7 @@ impl CryptoClass for Crypto {
         Ok(array)
     }
 
-    fn random_uuid(&self) -> BunString {
+    pub(crate) fn random_uuid(&self) -> BunString {
         let (str, bytes) = BunString::create_uninitialized_latin1(36);
 
         let uuid = VirtualMachine::get().as_mut().rare_data().next_uuid();
@@ -68,7 +62,7 @@ impl CryptoClass for Crypto {
         str
     }
 
-    fn timing_safe_equal<'a>(
+    pub(crate) fn timing_safe_equal<'a>(
         &self,
         heap: &JsHeap<'a>,
         buf1: &'a [u8],

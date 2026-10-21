@@ -2226,18 +2226,13 @@ bool Bun__deepMatch(
     JSObject* obj = objValue.getObject();
     JSObject* subsetObj = subsetValue.getObject();
 
-    // A URL, URLSearchParams or Headers pattern keeps its state in the native object,
-    // not in own properties. Compare that state the way deepEquals does.
-    uint8_t subsetType = subsetObj->type();
-    if ((subsetType == JSDOMWrapperType || subsetType == JSAsJSONType) && obj->type() == subsetType) {
-        Vector<std::pair<JSValue, JSValue>, 16> stack;
-        MarkedArgumentBuffer specialGCBuffer;
-        std::optional<bool> specialEqual = specialObjectsDequal<false, enableAsymmetricMatchers, false>(globalObject, specialGCBuffer, stack, throwScope, subsetObj, obj);
-        RETURN_IF_EXCEPTION(throwScope, false);
-        if (specialEqual.has_value()) return *specialEqual;
-        specialEqual = specialObjectsDequal<false, enableAsymmetricMatchers, false>(globalObject, specialGCBuffer, stack, throwScope, obj, subsetObj);
-        RETURN_IF_EXCEPTION(throwScope, false);
-        if (specialEqual.has_value()) return *specialEqual;
+    // A URL pattern keeps its state in the native object, not in own properties.
+    // Two URLs compare by href, as toEqual does (#4089, #6492).
+    if (auto* subsetURL = dynamicDowncast<JSDOMURL>(subsetObj)) {
+        auto* objURL = dynamicDowncast<JSDOMURL>(obj);
+        if (objURL && objURL->wrapped().href() != subsetURL->wrapped().href()) {
+            return false;
+        }
     }
 
     // Like Jest, only the subset's own enumerable properties are compared.

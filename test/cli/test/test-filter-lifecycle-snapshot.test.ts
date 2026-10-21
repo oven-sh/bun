@@ -39,3 +39,24 @@ test("snapshot", () => {
   `);
   expect(exitCode).toBe(0);
 });
+
+// No test name is long enough for a{4294967295}b or x{4294967295}. The pattern is valid all the same:
+// that alternative never matches, and the other one selects a test.
+test.concurrent.each(["should run test 2|a{4294967295}b", "(?:z)?x{4294967295}|should run test 2"])(
+  "-t %s",
+  async pattern => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", join(import.meta.dirname, "test-filter-lifecycle.js"), "-t", pattern],
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const output = normalizeBunSnapshot(stdout + stderr);
+    expect(output).toContain("(pass) parent > should run > test 2");
+    expect(output).toContain(" 1 pass\n 5 filtered out\n 0 fail");
+    expect(exitCode).toBe(0);
+  },
+);

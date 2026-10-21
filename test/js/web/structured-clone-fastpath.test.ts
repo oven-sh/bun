@@ -534,6 +534,18 @@ describe("Structured Clone Fast Path", () => {
     expect(cloned[1]).toEqual(/test/gi);
   });
 
+  test("fallback: RegExp whose match went from JIT code to the interpreter", () => {
+    // JavaScriptCore's byte compiler refused this pattern and kept the SyntaxError in the RegExp. In that state
+    // the RegExp could not be deserialized.
+    const regExp = new RegExp("(?:a|b*)+?c(?<!(?<=(?<=x{2147483647})y{2147483647})z{2147483647})");
+    expect(regExp.test("ac")).toBe(true);
+    // An iteration of the first group matches nothing, so the JIT code gives this match to the interpreter.
+    expect(regExp.test("c")).toBe(true);
+    const cloned = structuredClone({ regExp }).regExp;
+    expect(cloned.source).toBe(regExp.source);
+    expect(cloned.test("ac")).toBe(true);
+  });
+
   test("fallback: array with Map", () => {
     const input = [new Map([["key", "value"]])];
     const cloned = structuredClone(input);

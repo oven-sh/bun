@@ -1100,6 +1100,25 @@ export {};
     matches: /Expected 4294967295 empty lines after import statement/,
     exitCode: 1,
   },
+  // ── an option with a pattern that needs more characters than a string has ── JavaScriptCore compiles the pattern.
+  // It refused one with an alternative that needs 2 ** 32 - 1 characters or more, and the rule then checked no name.
+  // That alternative can't match, and the other one can.
+  {
+    name: "id-match with an alternative that no name is long enough for",
+    file: "a.js",
+    text: () => "var ok = 1;\nvar Bad = 2;\n",
+    rules: { "id-match": ["error", "^[a-z]+$|^A{4294967295}B$"] },
+    reports: { "id-match": 1 },
+    exitCode: 1,
+  },
+  {
+    name: "id-match with an alternative that no name is long enough for, after an optional group",
+    file: "a.js",
+    text: () => "var ok = 1;\nvar Bad = 2;\n",
+    rules: { "id-match": ["error", "^[a-z]+$|^(?:Z)?X{4294967295}$"] },
+    reports: { "id-match": 1 },
+    exitCode: 1,
+  },
   // ── eslint-plugin-react: state shared by many components, and work done once per component ──
   {
     name: "30,000 components that are properties of one object, each with its own propTypes",

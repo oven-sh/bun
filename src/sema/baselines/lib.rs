@@ -1632,11 +1632,6 @@ fn run_one(
         }
         project.files.clone_from(&files);
         project.options.files.clone_from(&files);
-        // `NewProgram` gets options and file names, so there's no `ConfigFile` to explain a root
-        // file with.
-        project.options.file_specs.clear();
-        project.options.include_specs.clear();
-        project.options.is_default_include_spec = false;
         project.options.captures_suggestions = settings
             .get("capturesuggestions")
             .is_some_and(|v| v.eq_ignore_ascii_case("true"));

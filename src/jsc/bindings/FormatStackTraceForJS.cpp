@@ -758,7 +758,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
         destination->captureStackTrace(vm, globalObject, 1);
     }
 
-    if (source->stackTrace()) {
+    // The formatter of a source that is being formatted right now still reads its frames.
+    if (source->stackTrace() && !source->hasMaterializedErrorInfo()) {
         destination->stackTrace()->appendVector(*source->stackTrace());
         source->stackTrace()->clear();
     }

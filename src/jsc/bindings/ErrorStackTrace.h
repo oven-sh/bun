@@ -63,7 +63,7 @@ private:
     RefPtr<JSC::SourceProvider> m_sourceProvider;
 
     // Lazy-initialized
-    WTF::String m_frameSourceURL;
+    std::optional<WTF::String> m_frameSourceURL;
     WTF::String m_sourceURL;
     WTF::String m_functionName;
     WTF::String m_stackLineFunctionName;

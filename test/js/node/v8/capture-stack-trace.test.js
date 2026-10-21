@@ -3,6 +3,7 @@ import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
+import vm from "node:vm";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -1426,6 +1427,23 @@ test("Error.appendStackTrace keeps the stack trace when the source and destinati
   f(64);
 });
 
+test.each([
+  ["no formatter", undefined],
+  ["a formatter", (error, sites) => "formatted " + sites.map(site => site.getFunctionName()).join(" ")],
+])("Error.appendStackTrace leaves the frames of a source that is being formatted (%s)", (_, formatter) => {
+  const context = vm.createContext({});
+  const error = vm.runInContext("(function thrower() { return new Error('boom'); })()", context);
+  const other = new Error("other");
+  Object.defineProperty(vm.runInContext("Error", context), "prepareStackTrace", {
+    get() {
+      Error.appendStackTrace(error, other);
+      return formatter;
+    },
+  });
+  expect(error.stack).toStartWith(formatter ? "formatted thrower " : "Error: boom\n    at thrower ");
+  expect(other.stack).not.toContain("thrower");
+});
+
 test("Error.stackTraceLimit default matches the limit captureStackTrace applies", async () => {
   // Run in a fresh process so nothing has written to Error.stackTraceLimit yet.
   const src = `
@@ -2156,6 +2174,34 @@ test.concurrent("Error.captureStackTrace replaces a trace whose frames a collect
   expect(JSON.parse(stdout)).toEqual({
     noFramesLeft: ["TypeError: boom"],
     framesLeft: [["TypeError: boom", "at recapture", false]],
+  });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("Error.appendStackTrace replaces a trace whose frames a collection found dead", async () => {
+  const src = `
+    ${collectedFrames}
+    const destinations = captureAll(() => new TypeError("boom"));
+    await collect();
+    const appenders = new WeakMap();
+    for (const destination of destinations) {
+      const appender = new Function("destination", "function source() { try { return new Error(); } finally {} } Error.appendStackTrace(source(), destination);");
+      appender(destination);
+      appenders.set(destination, new WeakRef(appender));
+    }
+    // The frames that replaced the first ones die as well.
+    await collect();
+    const stacks = destinations
+      .filter(destination => frames.get(destination).deref() === undefined && appenders.get(destination).deref() === undefined)
+      .map(destination => destination.stack.split("\\n").map(line => line.trim().replace(/ ?\\(.*$/, "")).filter(line => /^(TypeError|at (anonymous|source|thrower)$)/.test(line)));
+    console.log(JSON.stringify({ framesCollected: stacks.length > 0, stacks: [...new Set(stacks.map(stack => JSON.stringify(stack)))].map(stack => JSON.parse(stack)) }));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    framesCollected: true,
+    stacks: [["TypeError: boom", "at anonymous", "at source", "at anonymous"]],
   });
   expect(exitCode).toBe(0);
 });

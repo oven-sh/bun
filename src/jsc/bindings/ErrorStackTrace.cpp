@@ -342,8 +342,8 @@ JSC::LineColumn JSCStackFrame::lineColumn()
 const WTF::String& JSCStackFrame::frameSourceURL()
 {
     if (!m_frameSourceURL)
-        m_frameSourceURL = emptyIfNull(Zig::sourceURL(m_vm, *m_stackFrame));
-    return m_frameSourceURL;
+        m_frameSourceURL = Zig::sourceURL(m_vm, *m_stackFrame);
+    return *m_frameSourceURL;
 }
 
 const WTF::String& JSCStackFrame::stackLineFunctionName()

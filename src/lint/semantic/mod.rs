@@ -1,15 +1,17 @@
-//! Scopes, what is declared in them, and what refers to it.
+//! Scopes, the symbols declared in them, and the references to those symbols.
 //!
-//! Three parts, each computed the first time a rule needs it, by passes over the vectors of the HIR
-//! and over what each node is part of (`bun_sema::bind`). Nothing else is asked of a binder.
-//! 1. `scopes.rs`: the scopes as ESLint cuts them. Needed by [`Node::scope`] and all of [`Scope`].
+//! There are three parts. Each is computed the first time a rule needs it, by passes over the HIR's
+//! vectors and over the binder's record of what each node belongs to (`bun_sema::bind`). Nothing
+//! else is needed from a binder.
+//! 1. `scopes.rs`: the scopes, divided the way ESLint divides them. Needed by [`Node::scope`] and
+//!    all of [`Scope`].
 //! 2. `variables.rs`: the symbols by scope and by name. Needed by all of [`Symbol`], [`Pat::symbol`],
 //!    [`Scope::symbols`], [`Scope::get`], [`Scope::resolve`].
 //! 3. `references.rs`: the references, and what they resolve to. Needed by all of [`Reference`] and
 //!    by [`Expr::symbol`].
 //!
-//! The model is that of `@typescript-eslint/scope-manager` for a TypeScript file, and for any file
-//! if that parser is configured. Otherwise it is that of `eslint-scope`. They differ in little.
+//! The model is `@typescript-eslint/scope-manager`'s for a TypeScript file, and for any file if
+//! that parser is configured. Otherwise it's `eslint-scope`'s. The two barely differ.
 //!
 //! | ESLint | here |
 //! | --- | --- |
@@ -38,30 +40,30 @@
 //! | `scope.variables`, `scope.set.get(name)` | [`Scope::symbols`], [`Scope::get`] |
 //! | `scope.references`, `scope.through` | [`Scope::references`], [`Scope::through`] |
 //! | `scope.upper`, `scope.childScopes`, `scope.variableScope` | [`Scope::parent`], [`Scope::children`], [`Scope::variable_scope`] |
-//! | `findVariable(scope, name)`, `getVariableByName` | [`Scope::resolve`]. With the globals and the second variable of a class: [`Scope::find_variable`] |
+//! | `findVariable(scope, name)`, `getVariableByName` | [`Scope::resolve`]. Including globals and a class's second variable: [`Scope::find_variable`] |
 //!
 //! Where the model differs from ESLint's:
-//! - **Globals that the file does not declare are not symbols**: what the configuration, the
-//!   ECMAScript version, a `/* global */` comment or a TypeScript `lib` defines. A reference to one
-//!   resolves to nothing and is among [`File::unresolved_references`]. In ESLint it resolves to a
-//!   variable of the global scope without definitions: [`Reference::global`], `File::global`.
-//! - **A class declaration is one symbol**, in the scope around the class. ESLint has a second
-//!   variable for the name in the scope of the class, which the references inside the class
-//!   resolve to. The name of a class *expression* is a symbol of the scope of the class, as in
-//!   ESLint.
-//! - With a configuration of oxlint the top level of every file is the scope of a module. For
-//!   typescript-eslint, which oxlint hands to a plugin, that of a script is the global scope and
-//!   that of a `.cjs` or `.cts` file the scope of a function, which has an `arguments`.
+//! - **Globals that the file doesn't declare aren't symbols.** That covers anything defined by the
+//!   config, the ECMAScript version, a `/* global */` comment or a TypeScript `lib`. A reference to
+//!   one resolves to nothing and is listed in [`File::unresolved_references`]. In ESLint it
+//!   resolves to a variable of the global scope without definitions: [`Reference::global`],
+//!   `File::global`.
+//! - **A class declaration is one symbol**, in the scope that contains the class. ESLint has a
+//!   second variable for the name in the class's own scope, which references inside the class
+//!   resolve to. The name of a class *expression* is a symbol in the class's scope, as in ESLint.
+//! - With an oxlint config, the top level of every file is a module scope. For typescript-eslint,
+//!   whose scopes oxlint hands to a plugin, a script's top level is the global scope, and a `.cjs`
+//!   or `.cts` file's is a function scope, which has an `arguments`.
 //! - `x as const` has no reference to a type `const`.
 //! - `(a.b as T)++` has one reference to `T`. typescript-eslint visits the type twice.
-//! - In `[a as T] = b` the `T` is a type that is read. typescript-eslint takes every name in the
-//!   type of an assertion in a destructuring pattern for a variable that is written.
+//! - In `[a as T] = b` the `T` is a type that's read. typescript-eslint treats every name in the
+//!   type of an assertion in a destructuring pattern as a variable that's written.
 //!
 //! # ESLint's variables
 //!
-//! A rule that is ported from one that asks "what does this name resolve to" or "what is written
-//! to this variable" can ask [`Variable`], which is ESLint's `Variable` one for one. It undoes the
-//! first two differences above, and has the `arguments` of the third:
+//! A rule ported from one that asks "what does this name resolve to" or "what is written to this
+//! variable" can use [`Variable`], which matches ESLint's `Variable` one to one. It undoes the
+//! first two differences above, and has the `arguments` from the third:
 //!
 //! | ESLint | here |
 //! | --- | --- |
@@ -70,52 +72,56 @@
 //! | `findVariable(scope, name)` | [`Scope::find_variable`] |
 //! | `variable.name`, `scope`, `defs`, `references` | [`Variable::name`], [`Variable::scope`], [`Variable::declarations`], [`Variable::references`] |
 //!
-//! It is a view of the symbols and costs nothing until it is asked.
+//! It's a view over the symbols and costs nothing until it's used.
 //!
 //! # Two analyses
 //!
-//! oxlint analyses a file twice. Its own rules see the scopes of oxc. A rule of a plugin in JavaScript sees those of
-//! typescript-eslint's scope manager, which differ: see
-//! [`has_scopes_of_oxc`](crate::language::LanguageOptions::has_scopes_of_oxc). So it is here with a configuration of
-//! oxlint. A rule that oxlint has sees the scopes of oxc. A plugin in JavaScript, and a rule that is implemented here and that
-//! oxlint lacks, which it could only run as a rule of such a plugin, see those of typescript-eslint. The runner tells the
-//! file which rule is at work, and a rule notices nothing. Each analysis is made when it is asked for the first time, so a
-//! file pays for both only where rules of both kinds ask. What one kind of rule marks ([`Symbol::mark_used`]) the other
-//! does not see, as in oxlint: `markVariableAsUsed` in a plugin does not silence its `no-unused-vars`.
+//! oxlint analyzes a file twice. Its own rules see oxc's scopes. A JavaScript plugin's rule sees
+//! those of typescript-eslint's scope manager, which differ: see
+//! [`has_oxc_scopes`](crate::language::LanguageOptions::has_oxc_scopes). The same happens
+//! here with an oxlint config. A rule that oxlint has sees oxc's scopes. A JavaScript plugin sees
+//! typescript-eslint's, and so does a rule that's implemented here but missing from oxlint, which
+//! oxlint could only run as part of such a plugin. The runner tells the file which kind of rule is
+//! running, so rules don't notice any of this. Each analysis is computed on first use, so a file
+//! only pays for both if rules of both kinds need them. Marks made by one kind of rule
+//! ([`Symbol::mark_used`]) are invisible to the other, as in oxlint: `markVariableAsUsed` in a
+//! plugin doesn't silence oxlint's `no-unused-vars`.
 //!
-//! A [`Symbol`], a [`Scope`] and a [`Reference`] are of the analysis that they come from. A rule keeps them as it likes. What
-//! is kept with the file for rules of both kinds must not hold them.
+//! A [`Symbol`], [`Scope`] or [`Reference`] belongs to the analysis it came from. A rule can keep
+//! them however it likes. Data that's stored with the file for rules of both kinds must not contain
+//! them.
 //!
 //! # What is not visited
 //!
-//! typescript-eslint's scope manager does not visit the type of the parameter of a `catch` clause
-//! or the options of an import type (`import("m", { with: { .. } })`). There are no scopes, no
-//! symbols and no references in them: [`Func::scope`] and [`Pat::symbol`] are `None` there, and
-//! [`Node::scope`] is the scope around. oxc visits both, so with
-//! [`has_scopes_of_oxc`](crate::language::LanguageOptions::has_scopes_of_oxc) they are like any
+//! typescript-eslint's scope manager doesn't visit the type of a `catch` clause's parameter or the
+//! options of an import type (`import("m", { with: { .. } })`). They contain no scopes, symbols or
+//! references: [`Func::scope`] and [`Pat::symbol`] are `None` there, and [`Node::scope`] is the
+//! enclosing scope. oxc visits both, so with
+//! [`has_oxc_scopes`](crate::language::LanguageOptions::has_oxc_scopes) they're like any
 //! other type and any other expression.
 //!
 //! # The order of references
 //!
-//! The scope manager makes the references in the order in which it visits the nodes.
-//! [`Scope::references`] and [`File::references_as_visited`] have that order, so the first
-//! reference to a name is the one that a rule for ESLint finds first. It is worked out when one of
-//! them is asked for the first time. It is the order of the source, but for this:
-//! - the names of a destructuring pattern come before what is in its defaults and computed keys,
-//!   and the index of `a[b]` in a pattern, or at the head of a `for`-`in` or `for`-`of`, before `a`
-//! - the type of a variable comes after its initializer, that of a parameter after its default,
-//!   that of a property of a class after its value and its decorators
-//! - the type arguments of a call, a `new` and a tagged template come after the arguments
-//! - the type parameters of a function come after its parameters and its return type, those of a
-//!   class after what it extends. Signatures and function types are visited as they are written
-//! - the type of `<T>e` comes after `e`, and that of `e as T` before `e` where it is assigned to:
-//!   `(e as T) = 1`, `(e as T)++`
-//! - the decorators of a member come after the member, those of the parameters of a method before
-//!   all its parameters
-//! - the use that JSX makes of `React` is where the first element is
+//! The scope manager creates references in the order it visits the nodes. [`Scope::references`] and
+//! [`File::references_as_visited`] have that order, so the first reference to a name is the one
+//! that an ESLint rule finds first. The order is computed the first time either is called. It's
+//! source order, with these exceptions:
+//! - the names in a destructuring pattern come before the contents of its defaults and computed
+//!   keys, and the index of `a[b]` in a pattern, or in the head of a `for`-`in` or `for`-`of`,
+//!   comes before `a`
+//! - a variable's type comes after its initializer, a parameter's after its default, and a class
+//!   property's after its value and decorators
+//! - the type arguments of a call, `new` or tagged template come after the arguments
+//! - a function's type parameters come after its parameters and return type, and a class's after
+//!   what it extends. Signatures and function types are visited as written
+//! - the type in `<T>e` comes after `e`, and the type in `e as T` comes before `e` where it's
+//!   assigned to: `(e as T) = 1`, `(e as T)++`
+//! - a member's decorators come after the member, and the decorators of a method's parameters come
+//!   before all its parameters
+//! - JSX's implicit use of `React` is at the first element
 //!
-//! [`Symbol::references`] has only the first half of the first of these. [`File::references`]
-//! and what else says so is in source order.
+//! [`Symbol::references`] only has the first half of the first exception. [`File::references`], and
+//! anything else documented that way, is in source order.
 
 use crate::ast::{
     Alias, Class, Enum, EnumMember, Expr, ExprKind, File, Func, Ident, Import, ImportEquals,
@@ -139,55 +145,56 @@ mod variables;
 
 use references::{RawReference, ReferenceSite, References};
 use scopes::{Block, ScopeTree};
-pub use table_of_oxc::{order_in_table, order_in_table_of_oxc};
+pub use table_of_oxc::{hashbrown_table_order, oxc_table_order};
 pub use variable::{Variable, VariableKind};
 use variables::Variables;
 
-/// What is known about the scopes of a file.
+/// Everything that's known about a file's scopes.
 #[derive(Default)]
 pub(crate) struct ReferenceIndex {
-    /// The analysis that the configuration is for.
+    /// The analysis that matches the config.
     analysis: Analysis,
-    /// With a configuration of oxlint: that of typescript-eslint, [beside that of oxc](self#two-analyses). Made when it is asked.
-    of_eslint: OnceCell<Box<Analysis>>,
-    /// `of_eslint` is what is asked.
-    asks_eslint: Cell<bool>,
-    /// What `File::global` has said of late, each name at the place that its number tells. Not
-    /// what a comment of the file names. Empty until something is asked.
+    /// With an oxlint config: typescript-eslint's analysis, [alongside oxc's](self#two-analyses).
+    /// Computed on first use.
+    lazy_eslint_analysis: OnceCell<Box<Analysis>>,
+    /// True if `lazy_eslint_analysis` is the active analysis.
+    uses_eslint_scopes: Cell<bool>,
+    /// A cache of recent `File::global` results, with each name in the slot given by its atom.
+    /// Results that depend on the file's comments aren't cached. Empty until the first lookup.
     globals: RefCell<Vec<(Atom, Option<GlobalVariable<'static>>)>>,
 }
 
 impl ReferenceIndex {
     #[cold]
     #[inline(never)]
-    fn analysis_of_eslint(&self) -> &Analysis {
-        self.of_eslint.get_or_init(Box::default)
+    fn eslint_analysis(&self) -> &Analysis {
+        self.lazy_eslint_analysis.get_or_init(Box::default)
     }
 }
 
-/// Each part is computed the first time it is needed.
+/// Each part is computed the first time it's needed.
 #[derive(Default)]
 struct Analysis {
     scopes: OnceCell<ScopeTree>,
     variables: OnceCell<Variables>,
     references: OnceCell<References>,
-    /// `MARKED_USED`, `MARKED_EXPORTED`, by index in `Variables::list`. Empty until something is
-    /// marked.
+    /// `MARKED_USED` and `MARKED_EXPORTED` bits, indexed like `Variables::list`. Empty until
+    /// something is marked.
     marks: RefCell<Vec<u8>>,
     /// See [`File::mark_global_used`].
     marked_globals: RefCell<FxHashSet<Box<[u8]>>>,
 }
 
-/// While it lives, what asks about the scopes of the file gets the answers of typescript-eslint:
-/// [`File::with_scopes_of_eslint`].
-pub(crate) struct ScopesOfEslint<'f, 'a> {
+/// While this guard is alive, scope queries on the file use typescript-eslint's analysis:
+/// [`File::with_eslint_scopes`].
+pub(crate) struct EslintScopesGuard<'f, 'a> {
     file: &'f File<'a>,
-    asked_before: bool,
+    previous: bool,
 }
 
-impl Drop for ScopesOfEslint<'_, '_> {
+impl Drop for EslintScopesGuard<'_, '_> {
     fn drop(&mut self) {
-        self.file.ask_scopes_of_eslint(self.asked_before);
+        self.file.use_eslint_scopes(self.previous);
     }
 }
 
@@ -203,42 +210,42 @@ impl<'a> File<'a> {
     #[inline]
     fn semantic(&self) -> &Analysis {
         let index = self.semantic_index();
-        match index.asks_eslint.get() {
+        match index.uses_eslint_scopes.get() {
             false => &index.analysis,
-            true => index.analysis_of_eslint(),
+            true => index.eslint_analysis(),
         }
     }
 
-    /// Whether the scopes that are asked now are those of oxc, where they differ from typescript-eslint's:
-    /// [`LanguageOptions::has_scopes_of_oxc`](crate::language::LanguageOptions::has_scopes_of_oxc).
+    /// True if the active scopes are oxc's, where those differ from typescript-eslint's:
+    /// [`LanguageOptions::has_oxc_scopes`](crate::language::LanguageOptions::has_oxc_scopes).
     #[inline]
-    pub(crate) fn has_scopes_of_oxc(&self) -> bool {
-        self.language().has_scopes_of_oxc && !self.semantic_index().asks_eslint.get()
+    pub(crate) fn has_oxc_scopes(&self) -> bool {
+        self.language().has_oxc_scopes && !self.semantic_index().uses_eslint_scopes.get()
     }
 
-    /// From now on, what asks about the scopes gets the [analysis](self#two-analyses) of typescript-eslint, or that of
-    /// oxc again. Only with a configuration of oxlint are these two. Returns what was asked before.
+    /// Switches scope queries to typescript-eslint's [analysis](self#two-analyses), or back to
+    /// oxc's. The two only differ with an oxlint config. Returns the previous setting.
     #[inline]
-    pub(crate) fn ask_scopes_of_eslint(&self, asks: bool) -> bool {
-        let asks = asks && self.language().has_scopes_of_oxc;
-        self.semantic_index().asks_eslint.replace(asks)
+    pub(crate) fn use_eslint_scopes(&self, enable: bool) -> bool {
+        let enable = enable && self.language().has_oxc_scopes;
+        self.semantic_index().uses_eslint_scopes.replace(enable)
     }
 
-    /// [`File::ask_scopes_of_eslint`] for as long as what is returned lives.
-    pub(crate) fn with_scopes_of_eslint(&self) -> ScopesOfEslint<'_, 'a> {
-        ScopesOfEslint {
+    /// [`File::use_eslint_scopes`] for the lifetime of the returned guard.
+    pub(crate) fn with_eslint_scopes(&self) -> EslintScopesGuard<'_, 'a> {
+        EslintScopesGuard {
             file: self,
-            asked_before: self.ask_scopes_of_eslint(true),
+            previous: self.use_eslint_scopes(true),
         }
     }
 
-    // These three are inlined in more than a thousand places. So each has one way out, for what is not computed yet and for
-    // the analysis of typescript-eslint beside that of oxc.
+    // These three are inlined in more than a thousand places. So each has a single slow path, which
+    // covers both "not computed yet" and typescript-eslint's analysis alongside oxc's.
     #[inline]
     fn scope_tree(&'a self) -> &'a ScopeTree {
         let index = self.semantic_index();
         match index.analysis.scopes.get() {
-            Some(computed) if !index.asks_eslint.get() => computed,
+            Some(computed) if !index.uses_eslint_scopes.get() => computed,
             _ => self.compute_scope_tree(),
         }
     }
@@ -253,7 +260,7 @@ impl<'a> File<'a> {
     fn variables(&'a self) -> &'a Variables {
         let index = self.semantic_index();
         match index.analysis.variables.get() {
-            Some(computed) if !index.asks_eslint.get() => computed,
+            Some(computed) if !index.uses_eslint_scopes.get() => computed,
             _ => self.compute_variables(),
         }
     }
@@ -270,7 +277,7 @@ impl<'a> File<'a> {
     fn reference_list(&'a self) -> &'a References {
         let index = self.semantic_index();
         match index.analysis.references.get() {
-            Some(computed) if !index.asks_eslint.get() => computed,
+            Some(computed) if !index.uses_eslint_scopes.get() => computed,
             _ => self.compute_references(),
         }
     }
@@ -285,13 +292,12 @@ impl<'a> File<'a> {
 
 // ───────────────────────────── symbols ─────────────────────────────
 
-/// Something that the file declares in a scope: a variable, a function, a class, a parameter, an
-/// import, a type, a namespace, an enum. Also the `arguments` of a function, which nothing
-/// declares.
+/// Something the file declares in a scope: a variable, function, class, parameter, import, type,
+/// namespace or enum. Also a function's `arguments`, which nothing declares.
 #[derive(Copy, Clone)]
 pub struct Symbol<'a> {
     file: &'a File<'a>,
-    /// In `Variables::list`.
+    /// Index into `Variables::list`.
     index: u32,
 }
 
@@ -321,13 +327,13 @@ impl std::fmt::Debug for Symbol<'_> {
 }
 
 impl<'a> Symbol<'a> {
-    /// What `decl` declares. `None`: nothing that a name can refer to.
+    /// The symbol that `decl` declares. `None` if it declares nothing that a name can refer to.
     fn declared_by(file: &'a File<'a>, decl: Decl) -> Option<Self> {
         let (_, pos) = variables::name_of_declaration(file, decl)?;
         Some(Symbol::at(file, file.variables().declared_at(pos)?))
     }
 
-    /// The variable at `index` of `Variables::list`.
+    /// The symbol at `index` in `Variables::list`.
     #[inline]
     fn at(file: &'a File<'a>, index: u32) -> Self {
         Symbol { file, index }
@@ -338,8 +344,8 @@ impl<'a> Symbol<'a> {
         self.file.variables().list.get(self.index as usize)
     }
 
-    /// A number that no other symbol of the file has, to key a set or a map by. This is what `==`
-    /// compares. The numbers are less than [`File::symbol_key_limit`].
+    /// A number unique among the file's symbols, for use as a set or map key. It's what `==`
+    /// compares. The numbers are below [`File::symbol_key_limit`].
     #[inline]
     pub fn key(self) -> usize {
         self.index as usize
@@ -356,8 +362,9 @@ impl<'a> Symbol<'a> {
             .name(self.variable().map_or(known::arguments, |it| it.name))
     }
 
-    /// typescript-eslint's `variable.isValueVariable`: everything but an interface, a type alias
-    /// and a type parameter. Also an `import type` and a namespace that only has types in it.
+    /// typescript-eslint's `variable.isValueVariable`: everything except an interface, a type alias
+    /// and a type parameter. It's also true for an `import type` and for a namespace that only
+    /// contains types.
     pub fn is_value_variable(self) -> bool {
         self.variable()
             .is_some_and(|it| it.flags & variables::VALUE != 0)
@@ -370,17 +377,16 @@ impl<'a> Symbol<'a> {
             .is_some_and(|it| it.flags & variables::TYPE != 0)
     }
 
-    /// The `arguments` of a function that is not an arrow function, unless the function declares
-    /// something of that name. It has no declarations. ESLint has it as the first variable of the
-    /// scope of the function.
+    /// The `arguments` of a non-arrow function, unless the function declares something with that
+    /// name. It has no declarations. In ESLint it's the first variable in the function's scope.
     #[inline]
     pub fn is_implicit_arguments(self) -> bool {
         self.variable().is_some_and(Variables::is_implicit)
     }
 
-    /// In the order they are written, but for the parameters of a function, which come before its
-    /// type parameters, as in ESLint. What ESLint takes for one variable is one symbol:
-    /// `function f() {} var f;` has two declarations.
+    /// In source order, except that a function's parameters come before its type parameters, as in
+    /// ESLint. Whatever ESLint treats as one variable is one symbol: `function f() {} var f;` has
+    /// two declarations.
     #[inline]
     pub fn declarations(
         self,
@@ -392,10 +398,10 @@ impl<'a> Symbol<'a> {
         all.iter().map(move |&decl| Declaration::new(file, decl))
     }
 
-    /// Everything in the file that refers to it, in source order but for the names of destructuring
-    /// patterns, which [come before the defaults](self#the-order-of-references). A declaration is not a
-    /// reference, but one that gives its name a value makes a write reference of the name, as in
-    /// ESLint: `let a = 1`, `function f(a = 1) {}`, `for (const a of b)`.
+    /// Everything in the file that refers to it, in source order except for the names in
+    /// destructuring patterns, which [come before the defaults](self#the-order-of-references). A
+    /// declaration isn't a reference, but one that gives its name a value makes the name a write
+    /// reference, as in ESLint: `let a = 1`, `function f(a = 1) {}`, `for (const a of b)`.
     #[inline]
     pub fn references(
         self,
@@ -411,26 +417,26 @@ impl<'a> Symbol<'a> {
         self.file.reference_list().has_mark(self.index, marks)
     }
 
-    /// Some of its [`references`](Symbol::references) reads it. This is one load.
+    /// True if one of its [`references`](Symbol::references) reads it. This is one load.
     #[inline]
     pub fn has_reads(self) -> bool {
         self.has_reference_mark(references::HAS_READ)
     }
 
-    /// Some of its references writes it, which can be its declaration. This is one load.
+    /// True if one of its references writes it, which can be its declaration. This is one load.
     #[inline]
     pub fn has_writes(self) -> bool {
         self.has_reference_mark(references::HAS_WRITE)
     }
 
-    /// Some of its references writes it and is not [`is_init`](Reference::is_init): ESLint's
-    /// `getModifyingReferences(variable.references)` is not empty. This is one load.
+    /// True if one of its references writes it and isn't [`is_init`](Reference::is_init), i.e.
+    /// ESLint's `getModifyingReferences(variable.references)` isn't empty. This is one load.
     #[inline]
     pub fn has_modifying_references(self) -> bool {
         self.has_reference_mark(references::HAS_MODIFYING_WRITE)
     }
 
-    /// How many [`declarations`](Symbol::declarations) it has. This is one load.
+    /// The number of [`declarations`](Symbol::declarations). This is one load.
     #[inline]
     pub fn declaration_count(self) -> usize {
         self.variable().map_or(0, |it| it.count as usize)
@@ -442,7 +448,7 @@ impl<'a> Symbol<'a> {
         DeclarationKinds::from_bits_retain(self.variable().map_or(0, |it| it.kinds))
     }
 
-    /// The scope it is declared in.
+    /// The scope it's declared in.
     #[inline]
     pub fn scope(self) -> Scope<'a> {
         Scope::new(self.file, ScopeId(self.variable().map_or(0, |it| it.scope)))
@@ -598,7 +604,7 @@ impl<'a> Declaration<'a> {
         })
     }
 
-    /// It is, or is part of, the `e` of `catch (e)`.
+    /// True if it is, or is part of, the `e` in `catch (e)`.
     pub fn is_catch_parameter(self) -> bool {
         match self {
             Declaration::Var(pat) => match variables::root_of_pattern(pat.file(), pat.id()) {
@@ -609,7 +615,7 @@ impl<'a> Declaration<'a> {
         }
     }
 
-    /// Where the name is written: ESLint's `def.name` without a type annotation.
+    /// The span of the name: ESLint's `def.name` without a type annotation.
     pub fn name_span(self) -> Option<Span> {
         Some(match self {
             Declaration::Var(pat) | Declaration::Param(pat) => pat.span(),
@@ -634,8 +640,8 @@ impl<'a> Declaration<'a> {
         })
     }
 
-    /// The node that declares it: ESLint's `def.node`. For a `Var` the `VarDecl`, also for the
-    /// parameter of a `catch`, where ESLint has the `CatchClause`. For a `Param` the `Func`.
+    /// The node that declares it: ESLint's `def.node`. For a `Var` it's the `VarDecl`, even for a
+    /// `catch` parameter, where ESLint has the `CatchClause`. For a `Param` it's the `Func`.
     pub fn node(self) -> Option<Node<'a>> {
         Some(match self {
             Declaration::Var(pat) => match variables::root_of_pattern(pat.file(), pat.id()) {
@@ -702,12 +708,12 @@ bitflags::bitflags! {
 
 /// An occurrence of a name that refers to something.
 ///
-/// A name that is given several values at once is as many references, as in ESLint:
+/// A name that's assigned several values at once counts as that many references, as in ESLint:
 /// `[a = 1] = b` writes `1` and then `b`.
 #[derive(Copy, Clone)]
 pub struct Reference<'a> {
     file: &'a File<'a>,
-    /// In `References::all`.
+    /// An element of `References::all`.
     raw: &'a RawReference,
 }
 
@@ -741,7 +747,7 @@ impl<'a> Reference<'a> {
         self.raw
     }
 
-    /// The references at `indices` of `References::all`.
+    /// The references at `indices` in `References::all`.
     #[inline]
     fn all_at(
         file: &'a File<'a>,
@@ -754,17 +760,16 @@ impl<'a> Reference<'a> {
         })
     }
 
-    /// What it refers to. `None`: nothing in the file declares it, so it is a global or an error.
+    /// The symbol it refers to. `None` if nothing in the file declares it, so it's a global or an error.
     #[inline]
     pub fn symbol(self) -> Option<Symbol<'a>> {
         let variable = self.raw().variable;
         (variable != scopes::NONE).then(|| Symbol::at(self.file, variable))
     }
 
-    /// The global variable that ESLint resolves it to: what the configuration, the version of
-    /// ECMAScript, a `/* global */` comment or a library of TypeScript defines under its name.
-    /// `None` if the file declares what it refers to, or if nothing defines it: then it is what
-    /// `no-undef` reports.
+    /// The global variable that ESLint resolves it to: whatever the config, the ECMAScript version,
+    /// a `/* global */` comment or a TypeScript library defines under its name. `None` if the file
+    /// declares what it refers to, or if nothing defines it, in which case `no-undef` reports it.
     pub fn global(self) -> Option<GlobalVariable<'a>> {
         if self.raw().variable != scopes::NONE {
             return None;
@@ -817,7 +822,7 @@ impl<'a> Reference<'a> {
         self.flags().contains(ReferenceFlags::INIT)
     }
 
-    /// The identifier, if it is an expression.
+    /// The identifier, if it's an expression.
     #[inline]
     pub fn expr(self) -> Option<Expr<'a>> {
         match self.raw().site {
@@ -832,8 +837,8 @@ impl<'a> Reference<'a> {
     /// - the `Type` that is a `TypeKind::Ref` or a `TypeKind::Predicate`
     /// - the `Stmt` of `import x = a.b` or of `export as namespace a`
     /// - the `ExportSpec` of `export { a }`
-    /// - the `Expr` that is the tag `<A-b>` or `<a:b>`, an `ExprKind::String`. The latter is two
-    ///   references in TypeScript, to `a` and to `b`. There `<this>` is one too.
+    /// - the `Expr` that is the tag `<A-b>` or `<a:b>`, an `ExprKind::String`. In TypeScript
+    ///   `<a:b>` is two references, to `a` and to `b`, and `<this>` is a reference too.
     pub fn node(self) -> Node<'a> {
         let file = self.file;
         match self.raw().site {
@@ -855,14 +860,14 @@ impl<'a> Reference<'a> {
         }
     }
 
-    /// It is the use that JSX makes of `React`, or of what `jsxPragma` and `jsxFragmentName` say.
-    /// typescript-eslint makes a reference of the name of the declaration itself.
+    /// True if it's JSX's implicit use of `React`, or of the names set by `jsxPragma` and
+    /// `jsxFragmentName`. typescript-eslint makes the declaration's own name the reference.
     #[inline]
     pub fn is_jsx_pragma(self) -> bool {
         matches!(self.raw().site, ReferenceSite::Declaration(_))
     }
 
-    /// The name where it is written: ESLint's `reference.identifier`.
+    /// The name at its position in the source: ESLint's `reference.identifier`.
     #[inline]
     pub fn ident(self) -> Ident<'a> {
         self.file.ident(self.raw().name, self.raw().pos)
@@ -878,15 +883,15 @@ impl<'a> Reference<'a> {
         self.ident().span()
     }
 
-    /// ESLint's `reference.writeExpr`: what is assigned. The right side of the assignment, also
-    /// for a part of a destructuring pattern. The initializer or the default of a declaration.
-    /// What a `for`-`in` or a `for`-`of` iterates over. `None` for `a++`.
+    /// ESLint's `reference.writeExpr`, i.e. the assigned value: the right side of the assignment
+    /// (also for part of a destructuring pattern), a declaration's initializer or default, or what
+    /// a `for`-`in` or `for`-`of` iterates over. `None` for `a++`.
     #[inline]
     pub fn write_expr(self) -> Option<Expr<'a>> {
         Expr::some(self.file, self.raw().write)
     }
 
-    /// ESLint's `reference.from`: the scope it is in.
+    /// ESLint's `reference.from`: the scope it's in.
     #[inline]
     pub fn scope(self) -> Scope<'a> {
         Scope::new(self.file, ScopeId(self.raw().from))
@@ -899,7 +904,7 @@ impl Spanned for Reference<'_> {
         Reference::span(*self)
     }
 
-    /// Where the name is a node of its own.
+    /// `Some` if the name is a separate node.
     #[inline]
     fn packed_node(&self) -> Option<Packed> {
         match self.raw().site {
@@ -914,37 +919,37 @@ impl Spanned for Reference<'_> {
 /// ESLint's `scope.type`.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ScopeKind {
-    /// The whole file. In a script, what is declared at the top level is declared here. In a
-    /// module or in CommonJS it declares nothing.
+    /// The whole file. In a script, top-level declarations belong to it. In a module or in CommonJS
+    /// it declares nothing.
     Global,
-    /// The top level of a module. It is in the global scope.
+    /// The top level of a module. Its parent is the global scope.
     Module,
-    /// The parameters and the body of a function. Also the top level of a CommonJS file.
+    /// A function's parameters and body. Also the top level of a CommonJS file.
     Function,
-    /// Only the name of a named function expression. The scope of the function is in it.
+    /// Only the name of a named function expression. The function's scope is inside it.
     FunctionExpressionName,
-    /// `{ }`, unless it is the body of a function.
+    /// `{ }`, unless it's a function's body.
     Block,
-    /// From the `{` of a `switch`.
+    /// Starts at the `{` of a `switch`.
     Switch,
-    /// A `catch` clause: it declares the parameter. The block is a scope in it.
+    /// A `catch` clause. It declares the parameter, and the block is a scope inside it.
     Catch,
     /// The body of a `with`.
     With,
     /// A `for`, `for`-`in` or `for`-`of` whose head declares something with `let`, `const` or
-    /// `using`. Any other has no scope.
+    /// `using`. Other loops have no scope.
     For,
     Class,
-    /// The initializer of a field of a class.
+    /// A class field's initializer.
     ClassFieldInitializer,
     /// `static { }`
     ClassStaticBlock,
     /// `namespace N { }`, `declare module "m" { }`, `declare global { }`
     TsModule,
     TsEnum,
-    /// An interface or a type alias that has type parameters. One without has no scope.
+    /// An interface or type alias with type parameters. Without them it has no scope.
     Type,
-    /// `A extends B ? C : D`, without `D`: it declares what `infer` declares.
+    /// `A extends B ? C : D`, without `D`. It declares whatever `infer` declares.
     ConditionalType,
     /// A function type, a constructor type, a signature.
     FunctionType,
@@ -956,7 +961,7 @@ pub enum ScopeKind {
 #[derive(Copy, Clone)]
 pub struct Scope<'a> {
     file: &'a File<'a>,
-    /// The index in `ScopeTree::scopes`.
+    /// Index into `ScopeTree::scopes`.
     id: ScopeId,
 }
 
@@ -997,7 +1002,7 @@ impl<'a> Scope<'a> {
         scopes.get(self.id.idx()).unwrap_or_else(|| &scopes[0])
     }
 
-    /// Its number among the scopes of the file, in the order they start. It is not the binder's.
+    /// Its index among the file's scopes, ordered by start. This isn't the binder's id.
     #[inline]
     pub fn id(self) -> ScopeId {
         self.id
@@ -1008,7 +1013,7 @@ impl<'a> Scope<'a> {
         self.data().kind
     }
 
-    /// The scope around it. `None` for the global scope.
+    /// The enclosing scope. `None` for the global scope.
     #[inline]
     pub fn parent(self) -> Option<Scope<'a>> {
         let parent = self.data().parent;
@@ -1038,7 +1043,7 @@ impl<'a> Scope<'a> {
         std::iter::successors(Some(self), |scope| scope.parent())
     }
 
-    /// Whether `other` is this scope or inside it.
+    /// True if `other` is this scope or inside it.
     #[inline]
     pub fn contains(self, other: Scope<'a>) -> bool {
         self.file.scope_tree().contains(self.id.0, other.id.0)
@@ -1050,8 +1055,8 @@ impl<'a> Scope<'a> {
     /// - `Class`: the `Class`
     /// - `ClassFieldInitializer`: the `Expr` that is the initializer
     /// - `ConditionalType`, `MappedType`: the `Type`
-    /// - everything else: the `Stmt`. For `Catch` that of the `try`, as a `catch` clause is not a
-    ///   node.
+    /// - everything else: the `Stmt`. For `Catch` it's the `try` statement, because a `catch`
+    ///   clause isn't a node.
     pub fn node(self) -> Node<'a> {
         let file = self.file;
         match self.data().block {
@@ -1108,8 +1113,8 @@ impl<'a> Scope<'a> {
         }
     }
 
-    /// What is declared in it, in the order it is declared. The first of a function that is not
-    /// an arrow function is its [`arguments`](Symbol::is_implicit_arguments).
+    /// The symbols declared in it, in declaration order. For a non-arrow function the first one is
+    /// its [`arguments`](Symbol::is_implicit_arguments).
     pub fn symbols(self) -> impl DoubleEndedIterator<Item = Symbol<'a>> + ExactSizeIterator + 'a {
         let file = self.file;
         file.variables()
@@ -1125,15 +1130,15 @@ impl<'a> Scope<'a> {
     }
 
     fn resolve_atom(self, name: Atom) -> Option<Symbol<'a>> {
-        let (tree, wants) = (self.file.scope_tree(), variables::VALUE | variables::TYPE);
+        let (tree, wanted_flags) = (self.file.scope_tree(), variables::VALUE | variables::TYPE);
         let found = self
             .file
             .variables()
-            .resolve(tree, self.id.0, name, u32::MAX, wants);
+            .resolve(tree, self.id.0, name, u32::MAX, wanted_flags);
         found.map(|index| Symbol::at(self.file, index))
     }
 
-    /// What is declared in it under `name`: ESLint's `scope.set.get(name)`.
+    /// The symbol declared in it as `name`: ESLint's `scope.set.get(name)`.
     #[inline]
     pub fn get(self, name: &str) -> Option<Symbol<'a>> {
         self.get_bytes(name.as_bytes())
@@ -1149,8 +1154,8 @@ impl<'a> Scope<'a> {
         self.get_atom(name.atom())
     }
 
-    /// What `name` means here: declared in this scope or in one around it, as a value or as a
-    /// type. ESLint's `getVariableByName`, eslint-utils' `findVariable`.
+    /// Resolves `name` from here: it can be declared in this scope or an enclosing one, as a value
+    /// or as a type. ESLint's `getVariableByName`, eslint-utils' `findVariable`.
     #[inline]
     pub fn resolve(self, name: &str) -> Option<Symbol<'a>> {
         self.resolve_bytes(name.as_bytes())
@@ -1166,21 +1171,35 @@ impl<'a> Scope<'a> {
         self.resolve_atom(name.atom())
     }
 
-    /// Where a `var` here ends up: the nearest `Function`, `Module`, `Global`, `TsModule`,
-    /// `ClassFieldInitializer` or `ClassStaticBlock`. ESLint's `scope.variableScope`.
+    /// The scope that a `var` here is hoisted to: the nearest `Function`, `Module`, `Global`,
+    /// `TsModule`, `ClassFieldInitializer` or `ClassStaticBlock`. ESLint's `scope.variableScope`.
     #[inline]
     pub fn variable_scope(self) -> Scope<'a> {
         Scope::new(self.file, ScopeId(self.data().variable_scope))
     }
 
-    /// Strict mode applies: a module, a class, or under a `"use strict"` directive.
+    /// True if `scope.type === "module"`. Meant for rules that use this to check whether something is at the top level
+    /// of the file. Without an ESLint or oxlint config, the function scope around a CommonJS file counts too. The user
+    /// didn't choose `sourceType` then, and `import/no-commonjs` and `import/no-amd` are meant for exactly the files
+    /// that have no `import`.
+    pub fn is_top_level_of_module(self) -> bool {
+        match self.kind() {
+            ScopeKind::Module => true,
+            ScopeKind::Function => {
+                self.file.language().has_no_foreign_config && matches!(self.node(), Node::File(_))
+            }
+            _ => false,
+        }
+    }
+
+    /// True if strict mode applies: in a module, in a class, or under a `"use strict"` directive.
     #[inline]
     pub fn is_strict(self) -> bool {
         self.data().is_strict
     }
 
-    /// The references that are written directly in it, not in a scope inside it: ESLint's
-    /// `scope.references`, in [its order](self#the-order-of-references).
+    /// The references directly in it, not those in nested scopes: ESLint's `scope.references`, in
+    /// [its order](self#the-order-of-references).
     pub fn references(
         self,
     ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
@@ -1190,8 +1209,9 @@ impl<'a> Scope<'a> {
         )
     }
 
-    /// The same references, nearly in the order of the source: the names of a pattern come before its defaults. For who does
-    /// not go by ESLint's order, which costs a pass over all references of the file the first time it is asked.
+    /// The same references in nearly source order: a pattern's names come before its defaults. It's
+    /// for callers that don't need ESLint's order, which costs a pass over all of the file's
+    /// references the first time it's requested.
     pub fn references_with_names_of_patterns_first(
         self,
     ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
@@ -1199,8 +1219,8 @@ impl<'a> Scope<'a> {
         Reference::all_at(self.file, in_it)
     }
 
-    /// The references in it, and in the scopes inside it, to what is declared outside it or
-    /// nowhere: ESLint's `scope.through`. Scope by scope, not in source order.
+    /// The references in it and in its nested scopes to symbols declared outside it, or nowhere:
+    /// ESLint's `scope.through`. Scope by scope, not in source order.
     pub fn through(self) -> impl Iterator<Item = Reference<'a>> + 'a {
         let (file, id) = (self.file, self.id.0);
         let (tree, variables) = (file.scope_tree(), file.variables());
@@ -1218,8 +1238,8 @@ impl<'a> Scope<'a> {
 // ───────────────────────────── from the syntax ─────────────────────────────
 
 impl<'a> File<'a> {
-    /// Sets ESLint's `variable.eslintUsed` of a variable that the file does not declare, which is
-    /// no [`Symbol`]: `no-unused-vars` reads it of what a `/* global */` comment defines.
+    /// Sets ESLint's `variable.eslintUsed` on a variable that the file doesn't declare, which isn't
+    /// a [`Symbol`]. `no-unused-vars` reads it for variables defined by a `/* global */` comment.
     pub fn mark_global_used(&self, name: &[u8]) {
         let mut marked = self.semantic().marked_globals.borrow_mut();
         if !marked.contains(name) {
@@ -1232,73 +1252,74 @@ impl<'a> File<'a> {
         self.semantic().marked_globals.borrow().contains(name)
     }
 
-    /// The global scope: ESLint's `scopeManager.globalScope`, `sourceCode.getScope(program)`.
-    /// What a module or a CommonJS file declares at the top level is in
-    /// [`File::top_level_scope`], which is inside it.
+    /// The global scope: ESLint's `scopeManager.globalScope`, `sourceCode.getScope(program)`. The
+    /// top-level declarations of a module or CommonJS file are in [`File::top_level_scope`], which
+    /// is inside it.
     #[inline]
     pub fn scope(&'a self) -> Scope<'a> {
         Scope::new(self, ScopeId(0))
     }
 
-    /// The symbols whose [`Symbol::declaration_count`] is more than 1. It looks at no other.
+    /// The symbols whose [`Symbol::declaration_count`] is more than 1. It doesn't scan the others.
     pub(crate) fn symbols_declared_twice(&'a self) -> impl Iterator<Item = Symbol<'a>> + 'a {
         let several = self.variables().several.iter();
         several.map(move |&index| Symbol::at(self, index))
     }
 
-    /// Whether a block has a declaration of what is a symbol of the function around: a `var`, or a function, as it is for oxc
-    /// outside strict code.
-    pub(crate) fn has_names_that_leave_blocks(&'a self) -> bool {
-        self.variables().has_names_that_leave_blocks
+    /// True if some block contains a declaration whose symbol belongs to the enclosing function: a
+    /// `var`, or for oxc a function declaration outside strict code.
+    pub(crate) fn has_hoisted_block_declarations(&'a self) -> bool {
+        self.variables().has_hoisted_block_declarations
     }
 
-    /// The symbols of the scopes that hold no `var`, each with the scope, as far as another symbol of the file has the same name.
-    /// `only_of_catch`: only the parameters of `catch` clauses.
-    pub(crate) fn symbols_of_blocks(
+    /// The symbols in scopes that can't hold a `var`, each with its scope, limited to those that
+    /// share their name with another symbol in the file. With `only_catch_params`, only `catch`
+    /// parameters.
+    pub(crate) fn block_scoped_symbols(
         &'a self,
-        only_of_catch: bool,
+        only_catch_params: bool,
     ) -> impl Iterator<Item = (Scope<'a>, Symbol<'a>)> {
         let (scopes, variables) = (&self.scope_tree().scopes, self.variables());
         let blocks = (scopes.iter().zip(0u32..)).filter(move |(it, id)| {
-            it.variable_scope != *id && (!only_of_catch || it.kind == ScopeKind::Catch)
+            it.variable_scope != *id && (!only_catch_params || it.kind == ScopeKind::Catch)
         });
         blocks.flat_map(move |(_, id)| {
             let scope = Scope::new(self, ScopeId(id));
-            let shares_its_name = move |it: &usize| {
-                (variables.list.get(*it)).is_some_and(|it| variables.shares_its_name(it))
+            let shares_name = move |it: &usize| {
+                (variables.list.get(*it)).is_some_and(|it| variables.shares_name(it))
             };
-            let symbols = variables.range_of_scope(id).filter(shares_its_name);
+            let symbols = variables.range_of_scope(id).filter(shares_name);
             symbols.map(move |it| (scope, Symbol::at(self, it as u32)))
         })
     }
 
-    /// The scope that a name written at `pos` is declared in.
+    /// The scope in which a name written at `pos` is declared.
     pub(crate) fn scope_at(&'a self, pos: u32) -> Scope<'a> {
         Scope::new(self, ScopeId(self.scope_tree().scope_at(pos)))
     }
 
-    /// The scope of what is declared at the top level: the `Module` scope, the `Function` scope of
-    /// CommonJS, or for a script the global scope.
+    /// The scope of top-level declarations: the `Module` scope, CommonJS's `Function` scope, or the
+    /// global scope for a script.
     pub fn top_level_scope(&'a self) -> Scope<'a> {
         let scopes = self.scope_tree().scopes.iter();
         let count = scopes.take_while(|it| it.block == Block::File).count();
         Scope::new(self, ScopeId(count.saturating_sub(1) as u32))
     }
 
-    /// Every scope, in the order they start: ESLint's `scopeManager.scopes`.
+    /// Every scope, ordered by start: ESLint's `scopeManager.scopes`.
     pub fn scopes(&'a self) -> impl DoubleEndedIterator<Item = Scope<'a>> + ExactSizeIterator + 'a {
         (0..self.scope_tree().scopes.len() as u32).map(move |id| Scope::new(self, ScopeId(id)))
     }
 
-    /// Everything that the file declares in a scope, scope by scope. Without the
-    /// [implicit `arguments`](Symbol::is_implicit_arguments) of functions.
+    /// Everything the file declares in a scope, scope by scope, except functions' [implicit
+    /// `arguments`](Symbol::is_implicit_arguments).
     pub fn symbols(&'a self) -> impl Iterator<Item = Symbol<'a>> + 'a {
         let declared = self.variables().list.iter().enumerate();
         let declared = declared.filter(|it| !Variables::is_implicit(it.1));
         declared.map(move |it| Symbol::at(self, it.0 as u32))
     }
 
-    /// Those of [`File::symbols`] that are called `name`, in the same order. It looks at nothing else.
+    /// The subset of [`File::symbols`] named `name`, in the same order. It doesn't scan the others.
     pub fn symbols_named(&'a self, name: Name<'a>) -> impl Iterator<Item = Symbol<'a>> + 'a {
         let variables = self.variables();
         let named = variables.named(name.atom()).iter();
@@ -1308,8 +1329,8 @@ impl<'a> File<'a> {
         declared.map(move |&index| Symbol::at(self, index))
     }
 
-    /// Those of [`File::symbols`] that have a declaration of one of `kinds`. It looks at a number
-    /// for each symbol of the file.
+    /// The subset of [`File::symbols`] with a declaration of one of `kinds`. It checks one number
+    /// per symbol in the file.
     pub fn symbols_declared_as(
         &'a self,
         kinds: DeclarationKinds,
@@ -1319,15 +1340,15 @@ impl<'a> File<'a> {
         declared.map(move |it| Symbol::at(self, it.0 as u32))
     }
 
-    /// [`File::global`] for a name of the file. It remembers what it has said of late.
+    /// [`File::global`] for a name in the file, with a small cache of recent results.
     pub fn global_named(&'a self, name: Name<'a>) -> Option<GlobalVariable<'a>> {
-        const REMEMBERED: usize = 64;
+        const CACHE_SIZE: usize = 64;
         let atom = name.atom();
-        let mut remembered = self.semantic_index().globals.borrow_mut();
-        if remembered.is_empty() {
-            remembered.resize(REMEMBERED, (Atom::NONE, None));
+        let mut cache = self.semantic_index().globals.borrow_mut();
+        if cache.is_empty() {
+            cache.resize(CACHE_SIZE, (Atom::NONE, None));
         }
-        let slot = &mut remembered[atom.0 as usize % REMEMBERED];
+        let slot = &mut cache[atom.0 as usize % CACHE_SIZE];
         if slot.0 == atom {
             return slot.1;
         }
@@ -1344,7 +1365,7 @@ impl<'a> File<'a> {
         global
     }
 
-    /// More than every [`Symbol::key`] of the file.
+    /// An exclusive upper bound for every [`Symbol::key`] in the file.
     pub fn symbol_key_limit(&'a self) -> usize {
         self.variables().list.len()
     }
@@ -1359,7 +1380,8 @@ impl<'a> File<'a> {
             .map(move |raw| Reference { file: self, raw })
     }
 
-    /// Those of [`File::references`] whose name starts in `span`, in the same order: two searches.
+    /// The subset of [`File::references`] whose name starts in `span`, in the same order. Found
+    /// with two binary searches.
     pub fn references_within(
         &'a self,
         span: Span,
@@ -1370,22 +1392,22 @@ impl<'a> File<'a> {
         within.iter().map(move |raw| Reference { file: self, raw })
     }
 
-    /// Every reference, in [the order ESLint makes them](self#the-order-of-references).
+    /// Every reference, in [the order ESLint creates them](self#the-order-of-references).
     pub fn references_as_visited(
         &'a self,
     ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
-        self.references_in(self.reference_list().as_made(self))
+        self.references_in(self.reference_list().in_creation_order(self))
     }
 
-    /// Every reference, in source order but for the names of destructuring patterns, which come before what else is in the
-    /// pattern.
+    /// Every reference, in source order except that a destructuring pattern's names come before
+    /// everything else in the pattern.
     pub(crate) fn references_with_names_of_patterns_first(
         &'a self,
     ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
         self.references_in(self.reference_list().visiting_order())
     }
 
-    /// `order`: indices into `References::all`, or nothing for the order of that.
+    /// `order` has indices into `References::all`, or is empty to use that list's own order.
     fn references_in(
         &'a self,
         order: &'a [u32],
@@ -1397,14 +1419,14 @@ impl<'a> File<'a> {
         })
     }
 
-    /// The reference whose name starts at `offset`. The first, if it is [several](Reference).
+    /// The reference whose name starts at `offset`. The first one, if there are [several](Reference).
     pub fn reference_at(&'a self, offset: u32) -> Option<Reference<'a>> {
         let raw = self.reference_list().at(offset)?;
         Some(Reference { file: self, raw })
     }
 
-    /// The references to what the file does not declare, in source order: globals, and mistakes.
-    /// ESLint's `globalScope.through` before the globals of the configuration are added.
+    /// The references to names that the file doesn't declare, in source order: globals and
+    /// mistakes. ESLint's `globalScope.through` before the config's globals are added.
     pub fn unresolved_references(
         &'a self,
     ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
@@ -1412,7 +1434,7 @@ impl<'a> File<'a> {
     }
 
     /// The references to `name` among [`File::unresolved_references`], in source order: ESLint's
-    /// `globalScope.set.get(name).references` for a global that the file does not declare.
+    /// `globalScope.set.get(name).references` for a global that the file doesn't declare.
     pub fn unresolved_references_to(
         &'a self,
         name: &[u8],
@@ -1426,20 +1448,20 @@ impl<'a> File<'a> {
 }
 
 impl<'a> Expr<'a> {
-    /// The value that an identifier refers to: what ESLint resolves a reference that reads a value
-    /// to where the identifier is written, whether ESLint makes a reference of it or not. `None` if
-    /// nothing in the file declares it, as for the [`arguments`](Symbol::is_implicit_arguments) of a
-    /// function, or if the expression is not an identifier.
+    /// The value that an identifier refers to: what ESLint would resolve a value read at the
+    /// identifier's position to, whether or not ESLint creates a reference for it. `None` if
+    /// nothing in the file declares it, which includes a function's
+    /// [`arguments`](Symbol::is_implicit_arguments), or if the expression isn't an identifier.
     #[inline]
     pub fn symbol(self) -> Option<Symbol<'a>> {
         self.as_ident()?;
         let file = self.file();
-        let symbol = Symbol::at(file, file.reference_list().of_expr(self.id())?);
+        let symbol = Symbol::at(file, file.reference_list().variable_of_expr(self.id())?);
         (!symbol.is_implicit_arguments()).then_some(symbol)
     }
 
-    /// The identifier as a reference: whether it is read or written, and what it resolves to. The
-    /// first, if it is [several](Reference).
+    /// The identifier as a reference, which tells whether it's read or written and what it resolves
+    /// to. The first one, if there are [several](Reference).
     pub fn reference(self) -> Option<Reference<'a>> {
         let file = self.file();
         self.as_ident()?;
@@ -1450,25 +1472,25 @@ impl<'a> Expr<'a> {
 }
 
 impl<'a> Pat<'a> {
-    /// What an identifier pattern declares.
+    /// The symbol that an identifier pattern declares.
     #[inline]
     pub fn symbol(self) -> Option<Symbol<'a>> {
-        let index = self.file().variables().of_pat(self.id())?;
+        let index = self.file().variables().variable_of_pat(self.id())?;
         Some(Symbol::at(self.file(), index))
     }
 }
 
 impl<'a> Func<'a> {
-    /// What a function declaration or a named function expression declares.
+    /// The symbol that a function declaration or a named function expression declares.
     #[inline]
     pub fn symbol(self) -> Option<Symbol<'a>> {
         Symbol::declared_by(self.file(), Decl::Fn(self.id()))
     }
 
-    /// The scope of its parameters and its body. `None` for an index signature, and in
-    /// [what is not visited](self#what-is-not-visited).
+    /// The scope of its parameters and body. `None` for an index signature, and inside [what is not
+    /// visited](self#what-is-not-visited).
     pub fn scope(self) -> Option<Scope<'a>> {
-        let scope = *self.file().scope_tree().of_fn.get(self.id().idx())?;
+        let scope = *self.file().scope_tree().scope_of_fn.get(self.id().idx())?;
         (scope != scopes::NONE).then(|| Scope::new(self.file(), ScopeId(scope)))
     }
 }
@@ -1479,9 +1501,13 @@ impl<'a> Class<'a> {
         Symbol::declared_by(self.file(), Decl::Class(self.id()))
     }
 
-    /// The scope of its type parameters, its heritage and its members.
+    /// The scope of its type parameters, heritage and members.
     pub fn scope(self) -> Option<Scope<'a>> {
-        let scope = *self.file().scope_tree().of_class.get(self.id().idx())?;
+        let scope = *self
+            .file()
+            .scope_tree()
+            .scope_of_class
+            .get(self.id().idx())?;
         (scope != scopes::NONE).then(|| Scope::new(self.file(), ScopeId(scope)))
     }
 }
@@ -1517,7 +1543,7 @@ impl<'a> Node<'a> {
                 TypeKind::Fn(f) => f.scope(),
                 _ => None,
             },
-            // A signature or a static block. A method is in the scope of the class.
+            // A signature or a static block. A method is in the class's scope.
             Node::Member(m) => m
                 .func()
                 .and_then(Func::scope)
@@ -1535,7 +1561,7 @@ impl<'a> Node<'a> {
         };
         let span = self.span();
         let scope = tree.scope_of_node(span.start, span.end, block);
-        // As in ESLint, which never answers with the scope of the name of a function expression.
+        // Like ESLint, which never returns a function expression's name scope.
         match tree.scopes.get(scope as usize).map(|it| it.kind) {
             Some(ScopeKind::FunctionExpressionName) => Scope::new(file, ScopeId(scope + 1)),
             _ => Scope::new(file, ScopeId(scope)),
@@ -1544,8 +1570,8 @@ impl<'a> Node<'a> {
 
     /// ESLint's `sourceCode.getDeclaredVariables(node)`:
     /// - the `Stmt` of a `var`, `let`, `const`, `using`, or a `VarDecl`: what it declares
-    /// - a `Func`, or the `Stmt`, `Expr` or `Type` that it is: its name and its parameters
-    /// - a `Class`, or the `Stmt` or `Expr` that it is: its name
+    /// - a `Func`, or its `Stmt`, `Expr` or `Type`: its name and its parameters
+    /// - a `Class`, or its `Stmt` or `Expr`: its name
     /// - the `Stmt` of a `try`: the parameter of the `catch`
     /// - the `Stmt` of an import, or an `ImportSpec`: what it imports
     /// - the `Stmt` of an interface, a type alias, an enum or a namespace: its name
@@ -1604,7 +1630,7 @@ impl<'a> Node<'a> {
             },
             _ => {}
         }
-        // Each once, where it is first: `var a, a`, `function f(a, a) {}`.
+        // Keep each one once, at its first position: `var a, a`, `function f(a, a) {}`.
         let mut first: Vec<(u32, usize)> = found
             .iter()
             .enumerate()

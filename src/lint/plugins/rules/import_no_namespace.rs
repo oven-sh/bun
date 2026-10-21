@@ -10,7 +10,7 @@ use std::borrow::Cow;
 
 /// Forbid namespace (a.k.a. "wildcard" `*`) imports.
 pub struct NoNamespace {
-    /// Each as it is written, which is what oxlint reads, and as minimatch reads it.
+    /// Each pattern as written, which is what oxlint matches, and as minimatch compiles it.
     ignore: Vec<(Box<[u8]>, Glob)>,
 }
 
@@ -36,14 +36,14 @@ impl Rule for NoNamespace {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
-        // oxlint looks at the top level only.
+        // oxlint only checks the top level.
         if is_oxlint && !matches!(stmt.parent(), Node::File(_)) {
             return;
         }
         if self.ignores(import.spec().bytes(), is_oxlint) {
             return;
         }
-        // oxlint points at the name, and changes nothing.
+        // oxlint reports the name, and has no fix.
         if is_oxlint {
             cx.report(local, OXLINT);
         } else {
@@ -55,10 +55,10 @@ impl Rule for NoNamespace {
 impl NoNamespace {
     fn ignores(&self, source: &[u8], is_oxlint: bool) -> bool {
         if !is_oxlint {
-            // What `find` returns is tested, and an empty pattern is falsy.
+            // Upstream tests the value that `find` returns, and an empty pattern is falsy.
             return self.ignore.iter().find(|it| it.1.matches(source)).is_some_and(|it| !it.0.is_empty());
         }
-        // oxlint has another syntax of patterns.
+        // oxlint has its own pattern syntax.
         self.ignore.iter().any(|(pattern, _)| {
             let target = match strings::contains_char(pattern, b'/') {
                 true => source,
@@ -69,9 +69,9 @@ impl NoNamespace {
     }
 }
 
-/// A `MemberExpression` that is the parent of a reference to the namespace.
+/// A `MemberExpression` that's the parent of a reference to the namespace.
 struct Member<'a> {
-    /// What tells which scope it is in.
+    /// The node whose scope the member is in.
     node: Node<'a>,
     span: Span,
     /// upstream's `getMemberPropertyName`
@@ -79,8 +79,8 @@ struct Member<'a> {
 }
 
 impl<'a> Member<'a> {
-    /// `None`: what upstream's `usesNamespaceAsObject` looks for.
-    fn around(reference: Reference<'a>) -> Option<Member<'a>> {
+    /// Returns `None` for the uses that upstream's `usesNamespaceAsObject` looks for.
+    fn from_reference(reference: Reference<'a>) -> Option<Member<'a>> {
         if let Some(identifier) = reference.expr() {
             let Node::Expr(parent) = identifier.parent() else {
                 return None;
@@ -97,7 +97,7 @@ impl<'a> Member<'a> {
             };
             return Some(Member { node: parent.into(), span: parent.span(), property });
         }
-        // What an interface extends and what a class implements is an expression for ESLint.
+        // In ESLint's AST, what an interface extends or a class implements is an expression.
         let Node::Type(ty) = reference.node() else {
             return None;
         };
@@ -113,15 +113,27 @@ impl<'a> Member<'a> {
     }
 }
 
-/// Whether `scope.variables` of ESLint has one that is called `name`.
+/// True if ESLint's `scope.variables` has a variable called `name`.
 fn has_variable<'a>(file: &'a File<'a>, scope: Scope<'a>, name: &[u8]) -> bool {
     scope.get_bytes(name).is_some()
         || match (scope.kind(), scope.node()) {
             (ScopeKind::Global, _) => file.global(name).is_some(),
-            // The name of a class declaration is declared in the class once more.
+            // A class declaration's name is declared again inside the class.
             (ScopeKind::Class, Node::Class(class)) => class.name().is_some_and(|it| it.bytes() == name),
             _ => false,
         }
+}
+
+/// Returns the members used from every namespace that is imported before `declaration`. Those imports' fixes can be
+/// applied in the same pass as this one, and each imports a member under its own name when it can.
+fn members_of_namespaces_before<'a>(declaration: Stmt<'a>, scope: Scope<'a>) -> Vec<Cow<'a, [u8]>> {
+    let imports = declaration.file().stmts_of_kind(StmtTag::Import);
+    let before = imports.filter(|it| it.span().start < declaration.span().start);
+    let namespaces = before.filter_map(|it| match it.kind() {
+        StmtKind::Import(import) => scope.get_name(import.namespace()?.name()),
+        _ => None,
+    });
+    namespaces.flat_map(Symbol::references).filter_map(Member::from_reference).map(|it| it.property).collect()
 }
 
 /// One name of upstream's `generateLocalNames`. `has`: `nameConflicts[name].has(..)`
@@ -142,24 +154,26 @@ fn generate_local_name(
     local_name
 }
 
-/// Each `namespace.x` becomes a named import. `None`: the namespace is used otherwise or not at all, or upstream
-/// throws.
+/// Turns each `namespace.x` into a named import. Returns `None` if the namespace is used in any other way or not at
+/// all, or if upstream throws.
 #[cold]
 #[inline(never)]
 fn fix<'a>(fixer: Fixer<'a>, declaration: Stmt<'a>, local: Ident<'a>, node: Span) -> Option<Vec<Fix>> {
     let file = fixer.file();
-    let namespace_variable = Node::Stmt(declaration).scope().get_name(local.name())?;
+    let declared_in = Node::Stmt(declaration).scope();
+    let namespace_variable = declared_in.get_name(local.name())?;
     if namespace_variable.declarations().next().and_then(Declaration::name_span) != Some(local.span()) {
         return None;
     }
-    let members: Vec<Member<'a>> = namespace_variable.references().map(Member::around).collect::<Option<_>>()?;
+    let members: Vec<Member<'a>> = namespace_variable.references().map(Member::from_reference).collect::<Option<_>>()?;
 
-    // `importNameConflicts`. In place of the names the scopes that have them: that of a member, and `scope.upper`.
+    // `importNameConflicts`. Instead of the names, this stores the scopes that declare them: the member's scope and its
+    // `scope.upper`.
     let mut import_name_conflicts: FxHashMap<&[u8], Vec<(Scope<'a>, Scope<'a>)>> = FxHashMap::default();
     let mut import_names: Vec<&[u8]> = Vec::new();
     for member in &members {
         let import_name = &*member.property;
-        // Upstream keeps the names in an object, and throws at these.
+        // Upstream keys an object by these names, and throws on inherited ones.
         if INHERITED.contains(&import_name) {
             return None;
         }
@@ -173,24 +187,31 @@ fn fix<'a>(fixer: Fixer<'a>, declaration: Stmt<'a>, local: Ident<'a>, node: Span
             conflicts.push(local_conflicts);
         }
     }
-    // `Object.keys` has the names that are indices of an array first, by their value.
-    let place = |it: &&[u8]| {
+    // `Object.keys` lists array-index names first, in numeric order.
+    let key_order = |it: &&[u8]| {
         let is_canonical = |index: &u32| *index != u32::MAX && index.to_string().as_bytes() == *it;
         parse_decimal::<u32>(it).filter(is_canonical).map_or((true, 0), |index| (false, index))
     };
-    utils::sort::sort_by_cached_key(&mut import_names, place);
+    utils::sort::sort_by_cached_key(&mut import_names, key_order);
 
     let mut import_local_names: FxHashMap<&[u8], Vec<u8>> = FxHashMap::default();
     let mut named_import_specifiers = Vec::new();
+    // Upstream only checks those two scopes, so it misses a module-level name when the member is two or more functions
+    // deep. It also doesn't track the names that other fixes in this pass declare.
+    let mut taken_names = members_of_namespaces_before(declaration, declared_in);
     for import_name in import_names {
         let conflicts = import_name_conflicts.get(import_name)?;
-        let has =
-            |name: &[u8]| conflicts.iter().any(|it| has_variable(file, it.0, name) || has_variable(file, it.1, name));
+        let has = |name: &[u8]| {
+            conflicts.iter().any(|it| has_variable(file, it.0, name) || has_variable(file, it.1, name))
+                || taken_names.iter().any(|it| **it == *name)
+                || !utils::names::is_free(name, declared_in, conflicts.iter().map(|it| it.0))
+        };
         let local_name = generate_local_name(import_name, &has, local.bytes());
         named_import_specifiers.push(match local_name == import_name {
             true => import_name.to_vec(),
             false => [import_name, b" as ", &local_name[..]].concat(),
         });
+        taken_names.push(Cow::Owned(local_name.clone()));
         import_local_names.insert(import_name, local_name);
     }
     if named_import_specifiers.is_empty() {

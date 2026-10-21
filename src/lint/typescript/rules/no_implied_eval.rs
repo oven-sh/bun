@@ -1,6 +1,6 @@
 use crate::rules::no_wrapper_object_types::GlobalFunctions;
 use bun_lint::prelude::*;
-use bun_lint::types::SymbolFlags;
+use bun_lint::types::{SymbolFlags, TypeFlags};
 use bun_lint::types::utils::is_builtin_symbol_like;
 use bun_lint::utils::ts_scope::is_reference_to_global_function;
 
@@ -33,7 +33,7 @@ fn get_callee_name(node: Expr<'_>, is_oxlint: bool) -> Option<Name<'_>> {
         }
         ExprKind::Index { obj, index, .. } if is_global_candidate(obj) => match index.kind() {
             ExprKind::String(name) => Some(name),
-            // tsgolint names a computed member only by a string literal.
+            // tsgolint only takes a computed member's name from a string literal.
             ExprKind::Ident(name) if !is_oxlint => Some(name),
             _ => None,
         },
@@ -44,12 +44,14 @@ fn get_callee_name(node: Expr<'_>, is_oxlint: bool) -> Option<Name<'_>> {
 fn is_function_type(node: Expr) -> bool {
     let ty = node.ty();
     ty.is_unresolved()
+        // An `any` could be anything. Upstream treats it as a string.
+        || node.file().language().has_no_foreign_config && ty.has_flags(TypeFlags::ANY)
         || ty.get_symbol().is_some_and(|symbol| symbol.has_flags(SymbolFlags::FUNCTION | SymbolFlags::METHOD))
         || is_builtin_symbol_like(ty, FUNCTION_CONSTRUCTOR)
         || !ty.get_call_signatures().is_empty()
 }
 
-// tsgolint has no `ChainExpression` and looks at an identifier or the name of a `PropertyAccessExpression` only.
+// tsgolint has no `ChainExpression`, and it only looks at an identifier or a `PropertyAccessExpression`'s name.
 fn is_bind(node: Expr, is_oxlint: bool) -> bool {
     match node.kind() {
         ExprKind::Ident(name) => name.is("bind"),
@@ -96,7 +98,8 @@ impl Rule for NoImpliedEval {
         Some(GlobalFunctions::default())
     }
 
-    // The outer one first, as upstream: `Function()` as an argument of `setTimeout` is reported twice at one place.
+    // Outer node first, as upstream: `Function()` as an argument of `setTimeout` is reported twice at the same
+    // location.
     fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let Node::Expr(node) = node else {
             return;
@@ -124,7 +127,7 @@ impl Rule for NoImpliedEval {
             return;
         }
         if is_oxlint {
-            // tsgolint asks the checker for the symbol of the callee: one declared in this file is not the global.
+            // tsgolint asks the checker for the callee's symbol. One that's declared in this file isn't the global.
             let is_declared_in_file = call
                 .callee()
                 .ts_symbol()

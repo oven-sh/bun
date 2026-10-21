@@ -1,13 +1,14 @@
-//! The errors of espree, which is acorn with other words for an unexpected token.
+//! espree's errors. espree is acorn with a different message for an unexpected token.
 //!
-//! acorn checks the early errors of the language as it parses, and it is told what the file is: a module or a script, with JSX
-//! or without. TypeScript's parser is told none of that, leaves the early errors to the type checker, and parses TypeScript in
-//! a JavaScript file. What matters most is code that is not what the configuration says: ESLint takes every `.js` file for a
-//! module, so a `return` at the top level of a CommonJS file, or anything that only sloppy mode allows, is an error.
+//! acorn checks the language's early errors as it parses, and it's told what the file is: a module or a script, with or
+//! without JSX. TypeScript's parser is told none of that, leaves the early errors to the type checker, and parses
+//! TypeScript syntax in a JavaScript file. The most common case is code that doesn't match the config. ESLint treats
+//! every `.js` file as a module, so a top-level `return` in a CommonJS file, or anything only sloppy mode allows, is an
+//! error.
 //!
-//! acorn throws at the first error, and it gets to them in the order of the source.
+//! acorn throws at the first error, and it finds errors in source order.
 //!
-//! Here is what depends on the configuration, and the words. The rest is in [`early`].
+//! This file has the checks that depend on the config, and the message wording. The rest is in [`early`].
 
 mod early;
 pub(super) mod editions;
@@ -33,31 +34,32 @@ use std::borrow::Cow;
 
 struct Checks<'a, 'c> {
     file: &'a File<'a>,
-    /// In place of the expressions of the file by kind.
+    /// If set, used instead of the file's index of expressions by kind.
     candidates: Option<&'c Candidates>,
     tops: Tops<'a>,
     /// The first error so far, and how far acorn has read when it throws it.
     first: Option<(u32, SyntaxError)>,
-    /// For oxc, which goes on after an error: all of them.
+    /// All the errors. Only used for oxc, which continues after an error.
     all: Vec<SyntaxError>,
-    /// acorn notices what is being checked only when it has read this far.
+    /// acorn notices the error currently being checked only once it has read this far.
     noticed: u32,
-    /// The tree is whole: the parser has reported nothing.
+    /// True if the tree is complete because the parser reported nothing.
     is_whole: bool,
-    /// Only what Prettier refuses counts: see [`refusal_of_babel`].
+    /// Report only what Prettier rejects. See [`babel_rejection`].
     is_babel: bool,
-    /// Only what oxc refuses counts: see [`Checks::early_errors_of_oxc`].
+    /// Report only what oxc rejects. See [`Checks::oxc_early_errors`].
     is_oxc: bool,
-    /// For oxc: only what its parser reports counts, and nothing is asked of the scopes. TypeScript's parser has an error, so
-    /// that the tree has holes, or the file is formatted.
+    /// For oxc: report only what its parser reports, and don't use the scopes. Set if TypeScript's parser has an error,
+    /// so the tree has holes, or if the file is being formatted.
     only_parser: bool,
-    /// For oxfmt, which has oxc's parser leave regular expressions alone.
+    /// Set for oxfmt, which tells oxc's parser not to parse regular expressions.
     is_oxfmt: bool,
 }
 
-/// The errors, in the words of acorn, that Babel has too, that it does not recover from or Prettier does not let pass, and that
-/// it reports wherever acorn does. What is not listed does not count: Prettier formats a file with such an error.
-const REFUSED_BY_BABEL: [&str; 48] = [
+/// Prefixes of the acorn messages for errors that Babel also has, that Babel either doesn't recover from or Prettier
+/// rethrows, and that Babel reports everywhere acorn does. Prettier formats a file whose only errors aren't listed
+/// here.
+const REJECTED_BY_BABEL: [&str; 48] = [
     "A string literal cannot be used as an exported binding without `from`.",
     "An export name cannot include a lone surrogate.",
     "Assigning to rvalue",
@@ -108,7 +110,8 @@ const REFUSED_BY_BABEL: [&str; 48] = [
     "super() call outside constructor of a subclass",
 ];
 
-/// Where the parser of oxlint, which takes a JavaScript file for JavaScript, stumbles over TypeScript. It has other words for it.
+/// The first TypeScript syntax in a JavaScript file. oxlint's parser doesn't accept it there and reports "Unexpected
+/// token".
 pub(super) fn typescript_in_javascript<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     if file.hir.diagnostics.is_empty() {
         return None;
@@ -135,30 +138,31 @@ pub(super) fn typescript_in_javascript<'a>(file: &'a File<'a>) -> Option<SyntaxE
     })
 }
 
-/// Whether `statement` is an `import` or an `export`.
+/// True if `statement` is an `import` or an `export`.
 fn is_module_syntax(statement: &Stmt) -> bool {
     let is_export = |it: &hir::Modifier| it.kind == ModifierKind::Keyword(Flags::EXPORT);
     let modifiers = &statement.file().hir.modifiers;
     matches!(
         statement.tag(),
         StmtTag::Import | StmtTag::ExportNamed | StmtTag::ExportStar | StmtTag::ExportDefault
-    ) || (statement.try_raw()).is_some_and(|raw| {
+    ) || (statement.try_raw()).is_some_and(|_| {
         (modifiers
-            .get(raw.modifiers.range())
+            .get(statement.file().hir.stmt_modifiers(statement.id()).range())
             .unwrap_or_default()
             .iter())
         .any(is_export)
     })
 }
 
-/// What the parser of oxlint says, in its words, about a file that is CommonJS by its name and has what only a module can have.
-/// It goes on after each. `is_typescript`: `.cts`, in which `import` and `export` are written and mean `require` and `exports`.
+/// oxlint's parser errors for module-only syntax in a file whose extension makes it CommonJS. The parser continues
+/// after each one. `is_typescript` means `.cts`, where `import` and `export` are allowed and compile to `require` and
+/// `exports`.
 pub(super) fn module_syntax_in_commonjs<'a>(
     file: &'a File<'a>,
     is_typescript: bool,
 ) -> Vec<SyntaxError> {
     let tops = std::cell::RefCell::new(Tops::default());
-    // oxc reads the parameters of an arrow function that isn't async in the context around it.
+    // oxc parses the parameters of a non-async arrow function in the enclosing context.
     let is_at_top_level = |node: Node<'a>| {
         let mut inner = node;
         !(tops.borrow_mut().outward(node)).any(|it| {
@@ -166,7 +170,7 @@ pub(super) fn module_syntax_in_commonjs<'a>(
             matches!(it, Node::Func(func) if !(was_parameter && func.is_arrow() && !func.is_async()))
         })
     };
-    // At the token at `at`.
+    // The label covers the token at `at`.
     let error = |at: u32, message: &str| {
         let error = SyntaxError {
             at,
@@ -176,7 +180,7 @@ pub(super) fn module_syntax_in_commonjs<'a>(
         };
         error.stage(Stage::Parser)
     };
-    let waits = |at: u32, what: &str| {
+    let await_error = |at: u32, what: &str| {
         let message =
             format!("{what} only allowed within async functions and at the top levels of modules");
         error(at, &message)
@@ -194,23 +198,23 @@ pub(super) fn module_syntax_in_commonjs<'a>(
     }
     for it in file.exprs_of_kind(ExprTag::ImportMeta) {
         all.push(
-            SyntaxError::of_oxc(it.span(), "Unexpected import.meta expression")
+            SyntaxError::oxc_error(it.span(), "Unexpected import.meta expression")
                 .help("import.meta is only allowed in module code")
                 .stage(Stage::Parser),
         );
     }
     for it in file.exprs_of_kind(ExprTag::Await) {
-        // After a name these go on with the expression, and `await` is a name there.
+        // `await` is an identifier there, and after an identifier these characters continue the expression.
         let operand = it.operand().map(|it| it.outer_span().start as usize);
-        let goes_on = matches!(
+        let continues_expression = matches!(
             operand.and_then(|at| file.text().get(at)),
             Some(b'(' | b'[' | b'/' | b'+' | b'-' | b'`')
         );
-        // Of `await await a` only the first is reported.
-        let follows_one = !it.is_parenthesized()
+        // Only the first `await` of `await await a` is reported.
+        let follows_await = !it.is_parenthesized()
             && matches!(it.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Await);
-        if !goes_on && !follows_one && is_at_top_level(Node::Expr(it)) {
-            all.push(waits(it.span().start, "`await` is"));
+        if !continues_expression && !follows_await && is_at_top_level(Node::Expr(it)) {
+            all.push(await_error(it.span().start, "`await` is"));
         }
     }
     if file.has_rare_syntax(hir::rare::AWAIT_USING) {
@@ -219,7 +223,7 @@ pub(super) fn module_syntax_in_commonjs<'a>(
             if first.is_some_and(|it| it.var_kind() == VarKind::AwaitUsing)
                 && is_at_top_level(Node::Stmt(it))
             {
-                all.push(waits(it.span().start, "`await` is"));
+                all.push(await_error(it.span().start, "`await` is"));
             }
         }
     }
@@ -228,24 +232,24 @@ pub(super) fn module_syntax_in_commonjs<'a>(
             && is_at_top_level(Node::Stmt(it))
         {
             let keyword = skip_trivia(file.text(), it.span().start + 3);
-            all.push(waits(keyword, "`for await` loops are"));
+            all.push(await_error(keyword, "`for await` loops are"));
         }
     }
     all
 }
 
-/// Whether Prettier's `babel` parser throws on a JavaScript file that the parser here, in that dialect, has nothing to say about.
+/// The error Prettier's `babel` parser throws for a JavaScript file that our parser accepted in the Babel dialect.
 ///
-/// Prettier lets Babel go on after an error, and lets pass what is only wrong in strict mode, names that are declared twice or
-/// not at all, `return`, `import` and `export` where they do not belong, and more. It is meant to format code that is not quite
-/// right. So only errors count here of which it is known that it throws. Nothing is asked of the scopes of the file.
+/// Prettier runs Babel with error recovery and ignores errors that only apply in strict mode, redeclared or undeclared
+/// names, misplaced `return`, `import` and `export`, and more. It's meant to format code that isn't quite right. So
+/// this only reports errors that Prettier is known to throw. It doesn't use the file's scopes.
 ///
-/// `finds_candidates`: `false` for a test, which wants to know that it makes no difference.
-pub(super) fn refusal_of_babel<'a>(
+/// `finds_candidates` is `false` only in a test that checks it makes no difference.
+pub(super) fn babel_rejection<'a>(
     file: &'a File<'a>,
     finds_candidates: bool,
 ) -> Option<SyntaxError> {
-    let candidates = finds_candidates.then(|| Candidates::of(file));
+    let candidates = finds_candidates.then(|| Candidates::scan(file));
     let mut checks = Checks {
         file,
         candidates: candidates.as_ref(),
@@ -259,26 +263,27 @@ pub(super) fn refusal_of_babel<'a>(
         only_parser: false,
         is_oxfmt: false,
     };
-    checks.keywords_as_names();
+    checks.keywords_as_identifiers();
     checks.early_errors();
     checks.first.map(|it| it.1)
 }
 
-/// The way up from a node, as [`Node::ancestors`], without the expressions between an expression and the outermost that it is
-/// part of. `a + b + c + ..` is as deep as it is long, and what is asked about each of a, b, c is which function or class it is in.
+/// Walks up from a node like [`Node::ancestors`], but jumps from an expression straight to the outermost expression
+/// containing it. `a + b + c + ..` nests as deep as it is long, and the checks only need the function or class around
+/// each of a, b, c.
 #[derive(Default)]
 struct Tops<'a> {
-    /// The outermost expression around those on a long way.
+    /// Caches the outermost expression for expressions nested at least [`CACHE_DEPTH`] deep.
     known: IdMap<Expr<'a>, Expr<'a>>,
 }
 
 impl<'a> Tops<'a> {
-    /// The outermost expression that `of` is part of, and what that is directly part of, which is no expression.
-    fn top(&mut self, of: Expr<'a>) -> (Expr<'a>, Node<'a>) {
-        // Nearly all ways are short. They are gone without a note.
+    /// Returns the outermost expression containing `expr`, and that expression's parent, which isn't an expression.
+    fn top(&mut self, expr: Expr<'a>) -> (Expr<'a>, Node<'a>) {
+        // Fast path: almost every chain is short and isn't worth caching.
         if self.known.is_empty() {
-            let mut at = of;
-            for _ in 0..LONG {
+            let mut at = expr;
+            for _ in 0..CACHE_DEPTH {
                 match at.parent() {
                     Node::Expr(parent) => at = parent,
                     above => return (at, above),
@@ -286,7 +291,7 @@ impl<'a> Tops<'a> {
             }
         }
         let mut passed = Vec::new();
-        let mut at = of;
+        let mut at = expr;
         let found = loop {
             if let Some(&top) = self.known.get(at) {
                 break (top, top.parent());
@@ -299,7 +304,7 @@ impl<'a> Tops<'a> {
                 above => break (at, above),
             }
         };
-        if passed.len() >= LONG {
+        if passed.len() >= CACHE_DEPTH {
             self.known
                 .extend(passed.into_iter().map(|it| (it, found.0)));
         }
@@ -323,21 +328,22 @@ impl<'a> Tops<'a> {
     }
 }
 
-/// From how many expressions in each other on the outermost is noted.
-const LONG: usize = 16;
+/// The nesting depth from which [`Tops`] caches the outermost expression.
+const CACHE_DEPTH: usize = 16;
 
-/// The expressions that [`refusal_of_babel`] has a question about. Nothing else of `bun fmt` wants all expressions of a file by
-/// kind, and to sort them all costs ten times what the checks cost.
+/// The expressions that [`babel_rejection`] needs to look at. Nothing else in `bun fmt` needs the file's expressions
+/// indexed by kind, and sorting all of them costs ten times as much as the checks.
 ///
-/// A check that asks for more of a kind than it did has to be given more HERE. `prettier-refusals.mjs` compares the two ways.
+/// If a check starts looking at more expressions of a kind, add them HERE. `prettier-refusals.mjs` compares the results
+/// with and without candidates.
 struct Candidates {
-    /// Twice the kind, plus one in an optional chain, and the index of the expression. Sorted, which is the order of
+    /// `(2 * kind + 1 if in an optional chain, expression index)`. Sorted, which matches the order of
     /// [`File::exprs_of_kind`].
     found: Vec<(u8, u32)>,
 }
 
 impl Candidates {
-    /// Of other kinds there are no candidates: who asks for one gets all of the file.
+    /// The kinds that have candidates. A lookup of any other kind falls back to [`File::exprs_of_kind`].
     const KINDS: [ExprTag; 13] = [
         ExprTag::Assign,
         ExprTag::Await,
@@ -354,7 +360,7 @@ impl Candidates {
         ExprTag::Yield,
     ];
 
-    fn of(file: &File) -> Candidates {
+    fn scan(file: &File) -> Candidates {
         use hir::ExprKind as Kind;
         let text = file.text();
         let has_private_names = strings::contains_char(text, b'#');
@@ -362,10 +368,11 @@ impl Candidates {
         let mut found = Vec::new();
         for (i, raw) in file.hir.exprs.iter().enumerate() {
             let is_candidate = match raw.kind {
-                // `keywords_as_names`
+                // `keywords_as_identifiers`
                 Kind::Ident(name) => name.is_keyword_identifier(),
                 // `private_names`: `a.#b`
-                Kind::Dot { name_pos, .. } => {
+                Kind::Dot { .. } => {
+                    let name_pos = file.hir.name_pos(hir::ExprId(i as u32));
                     has_private_names && text.get(name_pos as usize) == Some(&b'#')
                 }
                 // `operators`: `??` beside `&&` or `||`
@@ -397,18 +404,18 @@ impl Candidates {
         Candidates { found }
     }
 
-    /// All expressions of the kinds `tags`, none of which is part of an optional chain, and none of another kind. They are
-    /// looked for in the kinds that the binder has noted on its way, which costs next to nothing. `tags`: in the order of
-    /// `ExprTag`, which leaves what is found in order.
-    fn of_kinds(file: &File, tags: &[ExprTag]) -> Candidates {
+    /// Collects every expression whose kind is in `tags`, and nothing else. None of these kinds can be part of an
+    /// optional chain. It scans the kinds the binder already recorded, which is nearly free. `tags` must be in
+    /// `ExprTag` order so that the result is sorted.
+    fn from_binder_kinds(file: &File, tags: &[ExprTag]) -> Candidates {
         let (kinds, counts) = (file.bound.expr_kinds, file.bound.expr_kind_counts);
-        // As `runner::Exprs::from_binder`.
+        // Same conditions as `runner::Exprs::from_binder`.
         if kinds.len() != file.hir.exprs.len()
             || file.has_synthetic_nodes()
             || !file.hir.import_attributes.is_empty()
             || !tags.is_sorted_by_key(|&tag| tag as u8)
         {
-            return Candidates::of(file);
+            return Candidates::scan(file);
         }
         let count_of = |tag: ExprTag| {
             counts
@@ -433,17 +440,17 @@ impl Candidates {
         Candidates { found }
     }
 
-    fn of_kind(&self, tag: ExprTag) -> &[(u8, u32)] {
+    fn with_kind(&self, tag: ExprTag) -> &[(u8, u32)] {
         let start = self.found.partition_point(|it| it.0 < 2 * tag as u8);
         let len = self.found[start..].partition_point(|it| it.0 < 2 * tag as u8 + 2);
         &self.found[start..start + len]
     }
 }
 
-/// `of_parser`: the error of TypeScript's parser, if it has one, and where it is.
+/// `parser_error` is the error from TypeScript's parser, if any, and its offset.
 pub(super) fn first_error<'a>(
     file: &'a File<'a>,
-    of_parser: Option<(Option<&'a Diagnostic>, u32)>,
+    parser_error: Option<(Option<&'a Diagnostic>, u32)>,
 ) -> Option<SyntaxError> {
     let mut checks = Checks {
         file,
@@ -452,14 +459,14 @@ pub(super) fn first_error<'a>(
         first: None,
         all: Vec::new(),
         noticed: 0,
-        is_whole: of_parser.is_none(),
+        is_whole: parser_error.is_none(),
         is_babel: false,
         is_oxc: false,
         only_parser: false,
         is_oxfmt: false,
     };
-    if let Some((diagnostic, at)) = of_parser {
-        checks.error_of_parser(diagnostic, at);
+    if let Some((diagnostic, at)) = parser_error {
+        checks.translate_parser_error(diagnostic, at);
         checks.at_sign_before(at);
     }
     checks.editions();
@@ -469,7 +476,7 @@ pub(super) fn first_error<'a>(
     checks.module_syntax();
     checks.strict_mode();
     checks.octals_in_strict_code();
-    checks.keywords_as_names();
+    checks.keywords_as_identifiers();
     checks.parameters();
     checks.early_errors();
     if checks.is_whole {
@@ -478,7 +485,8 @@ pub(super) fn first_error<'a>(
     checks.first.map(|it| it.1)
 }
 
-/// `using a = b;` at the top level of a script, in the words of OXC. What CommonJS has is in a function.
+/// oxc's error for `using a = b;` at the top level of a script. CommonJS code runs inside a function, so it's allowed
+/// there.
 pub(super) fn using_in_script<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     if !file.has_rare_syntax(hir::rare::ODD_DECLARATION) {
         return Vec::new();
@@ -493,13 +501,13 @@ pub(super) fn using_in_script<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     }
     all.map(|it| {
         let message = "'using' declarations are not allowed at the top level of a script";
-        SyntaxError::of_oxc(it.span(), message).help("Wrap this code in a block or use a module")
+        SyntaxError::oxc_error(it.span(), message).help("Wrap this code in a block or use a module")
     })
     .collect()
 }
 
-/// `export = a` at the top level of a file that exports something else, in the words of OXC.
-pub(super) fn export_assignment_beside_exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
+/// oxc's error for `export = a` at the top level of a file that also exports something else.
+pub(super) fn export_assignment_with_other_exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     if !file.has_rare_syntax(hir::rare::EXPORT_ASSIGNMENT) {
         return Vec::new();
     }
@@ -516,7 +524,7 @@ pub(super) fn export_assignment_beside_exports<'a>(file: &'a File<'a>) -> Vec<Sy
     let error = |it: Stmt| {
         let message =
             "An export assignment cannot be used in a module with other exported elements";
-        SyntaxError::of_oxc(it.span(), message)
+        SyntaxError::oxc_error(it.span(), message)
             .code(2309)
             .help("If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.")
             .noticed_at(u32::MAX)
@@ -524,9 +532,9 @@ pub(super) fn export_assignment_beside_exports<'a>(file: &'a File<'a>) -> Vec<Sy
     (file.body().iter().filter(is_assignment).map(error)).collect()
 }
 
-/// `for await` in a function that is not `async`, or in no function in a script, in the words of OXC. For a file that is CommonJS by
-/// its name see [`module_syntax_in_commonjs`].
-pub(super) fn for_await_where_nothing_waits<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
+/// oxc's error for `for await` in a non-`async` function, or at the top level of a script. For a file whose extension
+/// makes it CommonJS, see [`module_syntax_in_commonjs`].
+pub(super) fn for_await_outside_async<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     if !file.has_rare_syntax(hir::rare::FOR_AWAIT) {
         return Vec::new();
     }
@@ -544,7 +552,7 @@ pub(super) fn for_await_where_nothing_waits<'a>(file: &'a File<'a>) -> Vec<Synta
         match function {
             Some(func) if func.kind() == FnKind::StaticBlock => {
                 let message = b"Cannot use 'for await' in class static initialization block";
-                return Some(SyntaxError::of_oxc(span, message));
+                return Some(SyntaxError::oxc_error(span, message));
             }
             Some(func) if func.is_async() => return None,
             None if !is_script(file) => return None,
@@ -560,13 +568,13 @@ pub(super) fn for_await_where_nothing_waits<'a>(file: &'a File<'a>) -> Vec<Synta
         let help =
             "Either remove this `await` or add the `async` keyword to the enclosing function";
         let error = error.stage(Stage::Parser).help(Cow::Borrowed(help));
-        // Only at the end of the file does oxc's parser know that it is no module.
+        // oxc's parser only knows at the end of the file that it isn't a module.
         Some(match function {
             None => error.noticed_at(u32::MAX),
             Some(_) => error,
         })
     };
-    // The others are an error after `for await`, which the parser goes on after.
+    // `for await` on a `for-in` or a plain `for` is a syntax error, but the parser recovers from it.
     let loops = [StmtTag::ForOf, StmtTag::ForIn, StmtTag::For];
     let loops = loops.into_iter().flat_map(|it| file.stmts_of_kind(it));
     let mut all: Vec<_> = loops.filter_map(error).collect();
@@ -574,36 +582,36 @@ pub(super) fn for_await_where_nothing_waits<'a>(file: &'a File<'a>) -> Vec<Synta
     all
 }
 
-/// `with` where the code is strict for OXC, and anywhere in TypeScript, in its words.
+/// oxc's error for `with` in code that oxc considers strict, and anywhere in TypeScript.
 pub(super) fn with_in_strict_code<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     if file.hir.with_bodies.is_empty() {
         return Vec::new();
     }
-    let is_refused = |it: &Stmt<'a>| {
+    let is_rejected = |it: &Stmt<'a>| {
         matches!(it.kind(), StmtKind::With { .. })
             && (!file.is_javascript() || is_strict_mode(Node::Stmt(*it).scope(), file))
     };
-    let refused = file.stmts_of_kind(StmtTag::Block).filter(is_refused);
-    refused
+    let rejected = file.stmts_of_kind(StmtTag::Block).filter(is_rejected);
+    rejected
         .map(|it| {
             let start = it.span().start;
             let keyword = Span::new(start, start + "with".len() as u32);
-            // It is reported on the way out of the statement.
-            SyntaxError::of_oxc(keyword, "'with' statements are not allowed")
+            // oxc reports it when it leaves the statement.
+            SyntaxError::oxc_error(keyword, "'with' statements are not allowed")
                 .noticed_at(it.span().end)
         })
         .collect()
 }
 
-/// Those of the checks of [`first_error`] that OXC makes too, for a file that TypeScript's parser has nothing to say about: see
-/// [`super::oxc`]. OXC takes a file for a module if it has `import` or `export`.
-pub(super) fn errors_of_oxc<'a>(
+/// Runs the checks of [`first_error`] that oxc also has. See [`super::oxc`]. oxc treats a file as a module if it has
+/// `import` or `export`.
+pub(super) fn oxc_errors<'a>(
     file: &'a File<'a>,
     only_parser: bool,
     is_oxfmt: bool,
 ) -> Vec<SyntaxError> {
-    // Of TypeScript `early_errors_of_oxc` asks for these only. Of JavaScript it asks for one expression in ten, which the
-    // rules are about to want by kind anyway.
+    // In TypeScript, `oxc_early_errors` only looks at these kinds. In JavaScript it looks at one expression in ten,
+    // and the rules are about to need the index by kind anyway.
     let suspends = hir::rare::SUSPENDS_IN_PARAMETERS | hir::rare::SUSPENDS_IN_STATIC_BLOCK;
     let kinds: &[ExprTag] = match file.has_rare_syntax(suspends) {
         true => &[
@@ -621,19 +629,19 @@ pub(super) fn errors_of_oxc<'a>(
             ExprTag::NewTarget,
         ],
     };
-    // `a.#b` and `delete a` are of kinds of which there are many.
-    let asks_about_many = hir::rare::ODD_PRIVATE_NAME | hir::rare::DELETES_A_NAME;
-    let candidates = (!file.is_javascript()).then(|| match file.has_rare_syntax(asks_about_many) {
-        true => Candidates::of(file),
-        false => Candidates::of_kinds(file, kinds),
+    // `a.#b` and `delete a` belong to kinds that have many expressions.
+    let common_kinds = hir::rare::ODD_PRIVATE_NAME | hir::rare::DELETES_A_NAME;
+    let candidates = (!file.is_javascript()).then(|| match file.has_rare_syntax(common_kinds) {
+        true => Candidates::scan(file),
+        false => Candidates::from_binder_kinds(file, kinds),
     });
-    let mut checks = checks_of_oxc(file, candidates.as_ref());
+    let mut checks = oxc_checks(file, candidates.as_ref());
     (checks.only_parser, checks.is_oxfmt) = (only_parser, is_oxfmt);
-    checks.early_errors_of_oxc();
+    checks.oxc_early_errors();
     checks.all
 }
 
-fn checks_of_oxc<'a, 'c>(file: &'a File<'a>, candidates: Option<&'c Candidates>) -> Checks<'a, 'c> {
+fn oxc_checks<'a, 'c>(file: &'a File<'a>, candidates: Option<&'c Candidates>) -> Checks<'a, 'c> {
     Checks {
         file,
         candidates,
@@ -641,7 +649,7 @@ fn checks_of_oxc<'a, 'c>(file: &'a File<'a>, candidates: Option<&'c Candidates>)
         first: None,
         all: Vec::new(),
         noticed: 0,
-        // Nothing is asked of the scopes, to which a file is a module whatever is in it.
+        // Don't use the scopes, which treat every file as a module.
         is_whole: false,
         is_babel: false,
         is_oxc: true,
@@ -655,25 +663,25 @@ fn is_identifier_byte(byte: u8) -> bool {
 }
 
 impl<'a, 'c> Checks<'a, 'c> {
-    /// [`File::exprs_of_kind`], or those of them that are [`Candidates`].
+    /// Like [`File::exprs_of_kind`], but limited to the [`Candidates`] if there are any.
     fn exprs_of(&self, tag: ExprTag) -> impl Iterator<Item = Expr<'a>> + use<'a, 'c> {
         let file = self.file;
         let candidates = self.candidates.filter(|_| Candidates::KINDS.contains(&tag));
-        let of_file = candidates.is_none().then(|| file.exprs_of_kind(tag));
-        let found = candidates.map_or(&[][..], |it| it.of_kind(tag));
-        (of_file.into_iter().flatten())
+        let all_of_kind = candidates.is_none().then(|| file.exprs_of_kind(tag));
+        let found = candidates.map_or(&[][..], |it| it.with_kind(tag));
+        (all_of_kind.into_iter().flatten())
             .chain(found.iter().map(move |it| Expr::from_raw(file, it.1)))
     }
 
-    /// Of two errors that acorn would notice at one place, the one that is found first counts.
+    /// Records an error at `at`. If acorn would notice two errors at the same offset, the one recorded first wins.
     fn fail(&mut self, at: u32, message: impl Into<Vec<u8>>) {
         self.fail_for(Span::new(at, 0), message.into());
     }
 
-    /// The same for an error that oxc labels up to `label.end`: see [`SyntaxError::end`].
+    /// Like [`Checks::fail`], for an error that oxc labels up to `label.end`. See [`SyntaxError::end`].
     fn fail_for(&mut self, label: Span, message: Vec<u8>) {
         let Span { start: at, end } = label;
-        if self.is_babel && !(REFUSED_BY_BABEL.iter()).any(|it| message.starts_with(it.as_bytes()))
+        if self.is_babel && !(REJECTED_BY_BABEL.iter()).any(|it| message.starts_with(it.as_bytes()))
         {
             return;
         }
@@ -697,7 +705,7 @@ impl<'a, 'c> Checks<'a, 'c> {
         }
     }
 
-    /// For oxc: an error in its words.
+    /// Records an error that's already in oxc's wording.
     fn report(&mut self, error: SyntaxError) {
         self.all.push(error);
     }
@@ -707,12 +715,12 @@ impl<'a, 'c> Checks<'a, 'c> {
         SyntaxError::redeclared(what, name, first, again)
     }
 
-    /// Runs `check`, whose errors are those of oxc's parser.
+    /// Runs `check` and marks its errors as coming from oxc's parser.
     fn as_parser(&mut self, check: impl FnOnce(&mut Self)) {
         let before = self.all.len();
         check(self);
         for it in self.all.iter_mut().skip(before) {
-            it.of_oxc.stage = Stage::Parser;
+            it.oxc_details.stage = Stage::Parser;
         }
     }
 
@@ -721,8 +729,8 @@ impl<'a, 'c> Checks<'a, 'c> {
         Span::new(at, at + self.token_at(at).len() as u32)
     }
 
-    /// Runs `check`, the errors of which acorn notices when it has read up to `noticed`: it parses `[a, b()]` before it sees
-    /// the `=` that makes it a pattern.
+    /// Runs `check`, whose errors acorn notices only once it has read up to `noticed`. For example, it parses all of
+    /// `[a, b()]` before it sees the `=` that makes it a pattern.
     fn when_read_to(&mut self, noticed: u32, check: impl FnOnce(&mut Self)) {
         let before = std::mem::replace(&mut self.noticed, noticed);
         check(self);
@@ -741,7 +749,7 @@ impl<'a, 'c> Checks<'a, 'c> {
                 let same = rest.iter().take(3).take_while(|it| **it == b'>').count();
                 same + usize::from(rest.get(same) == Some(&b'='))
             }
-            // The quote is a token of its own.
+            // The backtick is its own token.
             [b'`', ..] => 1,
             _ => token_len(rest),
         };
@@ -753,7 +761,7 @@ impl<'a, 'c> Checks<'a, 'c> {
         skip_trivia(self.file.text(), at + self.token_at(at).len() as u32)
     }
 
-    /// The start of the token before the one at `at`: a word, or a punctuator of one character.
+    /// The start of the token before the one at `at`. Only correct for a word or a one-character punctuator.
     fn before_token(&self, at: u32) -> u32 {
         let text = self.file.text();
         let end = self.file.end_of_token_before(at) as usize;
@@ -764,7 +772,7 @@ impl<'a, 'c> Checks<'a, 'c> {
         start as u32
     }
 
-    /// espree's `unexpected`, or what acorn's tokenizer says if it cannot read the token at `at`.
+    /// espree's `unexpected`, or acorn's tokenizer error if it can't read the token at `at`.
     fn unexpected(&mut self, at: u32) {
         let at = skip_trivia(self.file.text(), at);
         match self.token_at(at) {
@@ -782,13 +790,13 @@ impl<'a, 'c> Checks<'a, 'c> {
         );
     }
 
-    /// Whether a check for oxc has nothing to look for: the parser has not seen `bit` of `hir::rare`. The checks for acorn and
-    /// Babel look at every file.
+    /// True if a check for oxc can be skipped because the parser didn't see the `hir::rare` syntax `bit`. The checks
+    /// for acorn and Babel never skip.
     fn lacks(&self, bit: u32) -> bool {
         self.is_oxc && !self.file.has_rare_syntax(bit)
     }
 
-    /// What the parser takes the file for.
+    /// The source type the emulated parser uses for the file.
     fn source_type(&self) -> SourceType {
         match self.is_oxc {
             true => source_type(self.file),
@@ -796,7 +804,7 @@ impl<'a, 'c> Checks<'a, 'c> {
         }
     }
 
-    /// All of the file is strict. oxc goes by the name of the file too: `.mjs` and `.mts` are modules whatever is in them.
+    /// True if the whole file is strict. oxc also goes by the extension: `.mjs` and `.mts` are always modules.
     fn is_all_strict(&self) -> bool {
         let language = self.file.language();
         match (self.is_oxc, self.is_babel) {
@@ -807,9 +815,9 @@ impl<'a, 'c> Checks<'a, 'c> {
         }
     }
 
-    /// Whether the code at `node` is strict.
+    /// True if the code at `node` is strict.
     fn is_strict(&self, node: Node<'a>) -> bool {
-        // What is only wrong in strict mode does not keep Prettier from formatting.
+        // Prettier still formats code with errors that only apply in strict mode.
         !self.is_babel
             && (self.is_all_strict()
                 || match self.is_oxc {
@@ -818,14 +826,14 @@ impl<'a, 'c> Checks<'a, 'c> {
                 })
     }
 
-    // ───────────────────────────── the words for an error of the parser ─────────────────────────────
+    // ───────────────────────────── rewording parser errors ─────────────────────────────
 
     #[optimize(size)]
-    fn error_of_parser(&mut self, diagnostic: Option<&Diagnostic>, at: u32) {
+    fn translate_parser_error(&mut self, diagnostic: Option<&Diagnostic>, at: u32) {
         let text = self.file.text();
         match diagnostic.map_or(0, |it| it.code) {
             1002 => {
-                // It is reported where the line ends. acorn reports where the string starts.
+                // TypeScript reports it at the end of the line. acorn reports it at the start of the string.
                 let line =
                     strings::last_index_of_any(&text[..(at as usize).min(text.len())], b"\n\r")
                         .map_or(0, |it| it + 1);
@@ -878,9 +886,9 @@ impl<'a, 'c> Checks<'a, 'c> {
                 };
                 self.fail(at, message);
             }
-            // At a word that nothing can follow. acorn stumbles over what follows.
+            // TypeScript reports the word that nothing can follow. acorn reports the token after it.
             1434 | 1435 => self.unexpected(self.after_token(at)),
-            // Not a keyword for acorn.
+            // acorn treats `enum` as a reserved word, not a keyword.
             1389 | 1390 if self.token_at(at) == b"enum" => self.reserved(at),
             1389 | 1390 => self.fail(
                 at,
@@ -909,7 +917,8 @@ impl<'a, 'c> Checks<'a, 'c> {
                     before >= at || matches!(self.token_at(before), b";" | b"{" | b"}");
                 let is_assignment = token.ends_with(b"=")
                     && !matches!(token, b"==" | b"===" | b"!=" | b"!==" | b"<=" | b">=");
-                // What TypeScript's parser does not let an assignment operator follow, acorn parses first.
+                // TypeScript's parser rejects the assignment operator after an invalid target. acorn parses the target
+                // first and then rejects it.
                 let end = crate::tokens::skip_trivia_back(text, at);
                 let is_before = |it: &&hir::Expr| {
                     it.end == end && it.pos < end && !matches!(it.kind, hir::ExprKind::Missing)
@@ -923,7 +932,7 @@ impl<'a, 'c> Checks<'a, 'c> {
                     .map(|it| it.pos)
                     .min();
                 if before < at && text.get(before as usize) == Some(&b'@') {
-                    // TypeScript's parser takes it for the start of a decorator.
+                    // TypeScript's parser treats `@` as the start of a decorator.
                     self.unexpected_character(before);
                 } else if !is_module
                     && starts_statement
@@ -950,8 +959,8 @@ impl<'a, 'c> Checks<'a, 'c> {
         }
     }
 
-    /// TypeScript's parser takes an `@` for the start of a decorator and fails later. acorn cannot read it. The tokens before
-    /// `limit` are told apart without regard to what is around them, which is good enough for the place of an error.
+    /// TypeScript's parser treats `@` as the start of a decorator and fails later, but acorn can't tokenize it. This
+    /// tokenizes the text before `limit` without context, which is good enough to locate the error.
     fn at_sign_before(&mut self, limit: u32) {
         let text = self.file.text();
         if !strings::contains_char(text.get(..limit as usize).unwrap_or(text), b'@') {
@@ -967,7 +976,7 @@ impl<'a, 'c> Checks<'a, 'c> {
         }
     }
 
-    /// A template that ends with the text. acorn reports where its last piece of text starts.
+    /// A template that's still open at the end of the file. acorn reports it at the start of its last piece of text.
     fn unterminated_template(&mut self, at: u32) {
         let (file, len) = (self.file, self.file.text().len() as u32);
         let is_open =
@@ -979,7 +988,7 @@ impl<'a, 'c> Checks<'a, 'c> {
             .filter(is_open)
             .max_by_key(|it| it.pos)
         else {
-            // The parser did not expect a template there, and neither does acorn.
+            // The parser didn't expect a template there, and neither does acorn.
             let quote = (file.hir.diagnostics.iter().map(|it| it.start))
                 .find(|&it| file.text().get(it as usize) == Some(&b'`'));
             return match quote {
@@ -1025,7 +1034,7 @@ impl<'a, 'c> Checks<'a, 'c> {
         }
     }
 
-    /// What acorn's tokenizer says about the character at `at`, with which no token starts.
+    /// acorn's tokenizer error for the character at `at`, which can't start a token.
     fn unexpected_character(&mut self, at: u32) {
         let (at, rest) = match self.text_from(at) {
             [b'\\', b'u', ..] if self.is_unicode_escape(at) => {
@@ -1033,7 +1042,7 @@ impl<'a, 'c> Checks<'a, 'c> {
             }
             [b'\\', b'u', ..] => return self.fail(at + 2, "Bad character escape sequence"),
             [b'\\', ..] => return self.fail(at + 1, "Expecting Unicode escape sequence \\uXXXX"),
-            // It reads a private name.
+            // acorn tries to read a private name.
             [b'#', rest @ ..] => (at + 1, rest),
             rest => (at, rest),
         };
@@ -1055,8 +1064,8 @@ impl<'a, 'c> Checks<'a, 'c> {
 
     // ───────────────────────────── TypeScript in JavaScript ─────────────────────────────
 
-    /// What acorn stumbles over where TypeScript's parser says that something "can only be used in TypeScript files".
-    /// `allows_modifiers`: `private a` and the like in a class pass, as in oxlint.
+    /// acorn's error wherever TypeScript's parser reports that something "can only be used in TypeScript files". With
+    /// `allows_modifiers`, `private a` and the like in a class are accepted, as in oxlint.
     fn typescript_syntax(&mut self, allows_modifiers: bool) {
         for it in self
             .file
@@ -1073,14 +1082,15 @@ impl<'a, 'c> Checks<'a, 'c> {
             let is_after_export =
                 |checks: &Self, at: u32| checks.token_at(checks.before_token(at)) == b"export";
             match it.code {
-                // A type annotation, a list of type parameters, `as T`, `satisfies T`, `<T>a`: the token before.
+                // A type annotation, a type parameter list, `as T`, `satisfies T`, `<T>a`. acorn fails at the token
+                // before.
                 8010 | 8004 | 8016 | 8037 => self.unexpected(self.before_token(at)),
                 8009 | 8012 if argument == b"?" => self.unexpected(at),
                 8009 | 8012 if allows_modifiers => {}
-                // A modifier is a name for acorn, and nothing can follow it.
+                // acorn parses a modifier as an identifier and fails at the token after it.
                 8009 | 8012 if is_after_export(self, at) => self.unexpected(at),
                 8009 | 8012 => self.unexpected(self.after_token(at)),
-                // `a<T>(b)` is two comparisons.
+                // acorn parses `a<T>(b)` as two comparisons.
                 8011 => {
                     let end = if it.end > at {
                         it.end
@@ -1097,7 +1107,7 @@ impl<'a, 'c> Checks<'a, 'c> {
                     }
                 }
                 8013 => self.unexpected(it.end.max(at + 1) - 1),
-                // At the name.
+                // TypeScript reports these at the name.
                 8006 if matches!(argument, b"enum" | b"interface") => {
                     let keyword = self.before_token(at);
                     if is_after_export(self, keyword) {
@@ -1109,7 +1119,7 @@ impl<'a, 'c> Checks<'a, 'c> {
                     }
                 }
                 8006 if matches!(argument, b"module" | b"namespace") => self.unexpected(at),
-                // `import type a`, `export type { a }`: at the statement.
+                // `import type a`, `export type { a }`. TypeScript reports these at the start of the statement.
                 8006 if self.token_at(at) == b"import" => {
                     self.unexpected(self.after_token(self.after_token(at)))
                 }
@@ -1147,9 +1157,9 @@ impl<'a, 'c> Checks<'a, 'c> {
         }
     }
 
-    // ───────────────────────────── what the kind of file decides ─────────────────────────────
+    // ───────────────────────────── checks that depend on the source type ─────────────────────────────
 
-    /// The first `return` among `statements` and in them, outside of functions.
+    /// The first `return` in `statements`, including nested statements but not nested functions.
     fn first_return(statements: impl Iterator<Item = Stmt<'a>>) -> Option<u32> {
         let mut open: SmallVec<[Stmt<'a>; 16]> = statements.collect();
         open.reverse();
@@ -1227,7 +1237,7 @@ impl<'a, 'c> Checks<'a, 'c> {
 
     fn strict_mode(&mut self) {
         let file = self.file;
-        // For oxc this is about `delete a` alone: for `with` see `with_in_strict_code`.
+        // For oxc this only checks `delete a`. For `with`, see `with_in_strict_code`.
         if self.lacks(hir::rare::DELETES_A_NAME) {
             return;
         }
@@ -1246,7 +1256,7 @@ impl<'a, 'c> Checks<'a, 'c> {
             else {
                 continue;
             };
-            // oxc looks through what only TypeScript has: `delete (a as T)`, `delete a!`.
+            // oxc looks through TypeScript-only wrappers: `delete (a as T)`, `delete a!`.
             let mut operand = Expr::new(file, operand);
             while self.is_oxc
                 && matches!(
@@ -1282,8 +1292,8 @@ impl<'a, 'c> Checks<'a, 'c> {
         }
     }
 
-    /// Octal literals and escapes are errors where the code is strict. The parser reports them wherever they are, as its own
-    /// errors ([`is_tolerated`](super::is_tolerated) lets them pass in a script) or beside them.
+    /// Octal literals and escapes are errors only in strict code. The parser reports them everywhere, either as parse
+    /// errors (which [`is_tolerated`](super::is_tolerated) ignores in a script) or as grammar errors.
     fn octals_in_strict_code(&mut self) {
         let file = self.file;
         let is_octal = |it: &&Diagnostic| {
@@ -1301,16 +1311,16 @@ impl<'a, 'c> Checks<'a, 'c> {
                             false => scope.is_strict(),
                         });
             if is_strict && self.is_oxc {
-                self.octal_of_oxc(it);
+                self.oxc_octal_error(it);
             } else if is_strict {
-                self.error_of_parser(Some(it), it.start);
+                self.translate_parser_error(Some(it), it.start);
             }
         }
     }
 
-    /// An octal literal or escape in strict code, in the words of oxc, which labels the whole literal.
-    fn octal_of_oxc(&mut self, it: &Diagnostic) {
-        // The token that it is in.
+    /// oxc's error for an octal literal or escape in strict code. Its label covers the whole literal.
+    fn oxc_octal_error(&mut self, it: &Diagnostic) {
+        // Find the token that contains the diagnostic.
         let before = self.file.token_before(Span::empty(it.start));
         let literal = self
             .file
@@ -1330,11 +1340,11 @@ impl<'a, 'c> Checks<'a, 'c> {
             ),
             _ => (deprecated, "for octal literals use the '0o' prefix instead"),
         };
-        self.report(SyntaxError::of_oxc(literal, message).help(help));
+        self.report(SyntaxError::oxc_error(literal, message).help(help));
     }
 
-    /// The names that are keywords in some places: one comparison for each identifier of the file.
-    fn keywords_as_names(&mut self) {
+    /// Checks identifiers that are keywords in some contexts. Costs one comparison per identifier in the file.
+    fn keywords_as_identifiers(&mut self) {
         let file = self.file;
         for it in self.exprs_of(ExprTag::Ident) {
             let Some(hir::ExprKind::Ident(name)) = it.try_raw().map(|it| it.kind) else {
@@ -1357,7 +1367,7 @@ impl<'a, 'c> Checks<'a, 'c> {
             let Some(raw) = it.try_raw().filter(|raw| raw.name.is_keyword_identifier()) else {
                 continue;
             };
-            // The name of a method is not a binding.
+            // A method's name isn't a binding.
             if matches!(raw.kind, FnKind::Decl | FnKind::Expr) {
                 self.keyword_as_binding(Node::Func(it), raw.name_pos, raw.name);
             }
@@ -1395,9 +1405,9 @@ impl<'a, 'c> Checks<'a, 'c> {
         }
     }
 
-    /// `checkUnreserved`. `node`: the identifier, or what it names.
+    /// `checkUnreserved`. `node` is the identifier, or the declaration it names.
     fn is_reserved(&mut self, node: Node<'a>, at: u32, name: Atom) -> bool {
-        // The name of a function expression is in the scope of the function.
+        // A function expression's name is in the function's own scope.
         let function = match node {
             Node::Func(func) if func.kind() == FnKind::Expr => Some(func),
             _ => {
@@ -1406,7 +1416,7 @@ impl<'a, 'c> Checks<'a, 'c> {
                     let from = std::mem::replace(&mut inside, it);
                     match it {
                         Node::Func(func) => Some(Some(func)),
-                        // For acorn the initializer of a field is a scope of its own, which is not that of the function around.
+                        // In acorn a field initializer has its own scope, separate from the enclosing function's.
                         Node::Member(member) if member.init().map(Node::Expr) == Some(from) => {
                             Some(None)
                         }
@@ -1471,7 +1481,7 @@ impl<'a, 'c> Checks<'a, 'c> {
                 }
                 _ => it.is_assignment_target(),
             },
-            // oxc takes `for (eval in a)` and `for (eval of a)`.
+            // oxc accepts `for (eval in a)` and `for (eval of a)`.
             Node::Stmt(_) if self.is_oxc => false,
             _ => it.is_assignment_target(),
         };
@@ -1496,7 +1506,7 @@ impl<'a, 'c> Checks<'a, 'c> {
             }
         } else if name == known::let_ {
             let is_lexical = match node {
-                // oxc takes `catch (let)`.
+                // oxc accepts `catch (let)`.
                 Node::Pat(pat) if self.is_oxc && Declaration::Var(pat).is_catch_parameter() => {
                     false
                 }
@@ -1507,7 +1517,7 @@ impl<'a, 'c> Checks<'a, 'c> {
                         _ => None,
                     })
                     .unwrap_or(false),
-                // For Babel the name of a class is only a reserved word there.
+                // For a class name, Babel only reports `let` as a reserved word.
                 Node::Class(_) => !self.is_babel,
                 _ => false,
             };
@@ -1543,7 +1553,7 @@ impl<'a, 'c> Checks<'a, 'c> {
                     }
                 });
             }
-            // The first that is there before. Nearly every list is short.
+            // Find the first duplicate. Almost every list is short.
             let clash = match names.len() {
                 ..=8 => (names.iter().enumerate())
                     .find(|&(i, it)| names[..i].iter().any(|before| before.0 == it.0))
@@ -1577,7 +1587,7 @@ impl<'a, 'c> Checks<'a, 'c> {
         let file = self.file;
         let has_var = file.hir.var_decls.iter().any(|it| it.kind == VarKind::Var);
         for scope in file.scopes() {
-            // The block of a `catch` is one scope with its parameter.
+            // In acorn a `catch` block shares one scope with the `catch` parameter.
             let catch = scope
                 .parent()
                 .filter(|it| it.kind() == ScopeKind::Catch && scope.kind() == ScopeKind::Block);
@@ -1621,7 +1631,7 @@ impl<'a, 'c> Checks<'a, 'c> {
         );
     }
 
-    /// The declarations of one name in `scope`, in the order of the source.
+    /// Checks the declarations of one name in `scope`, in source order.
     fn declarations_in_one_scope(
         &mut self,
         scope: Scope<'a>,
@@ -1650,8 +1660,8 @@ impl<'a, 'c> Checks<'a, 'c> {
         }
     }
 
-    /// A `var` in `scope`, which is a block, or in a block in it, declares the name in every scope up to the function. It
-    /// clashes with what `scope` declares.
+    /// A `var` inside the block `scope`, at any depth, declares its name in every scope up to the function, so it
+    /// clashes with a declaration of that name in `scope`.
     fn var_through(
         &mut self,
         scope: Scope<'a>,
@@ -1698,7 +1708,7 @@ enum Binding {
 }
 
 impl Binding {
-    /// How `declaration`, which is in `scope`, binds its name.
+    /// Returns how `declaration`, which is in `scope`, binds its name.
     fn of<'a>(declaration: Declaration<'a>, scope: Scope<'a>) -> Option<Binding> {
         Some(match declaration {
             Declaration::Var(_) if declaration.is_catch_parameter() => Binding::Lexical,

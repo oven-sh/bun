@@ -69,7 +69,7 @@ impl Rule for RequireDefaultProps {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         let prop_types = declared(&[]);
-        // An import declares nothing.
+        // An import doesn't count as a declaration.
         let mut has_declaration = false;
         prop_types.nodes(file, &mut |node, _| has_declaration |= !matches!(node, Node::Stmt(_)));
         if !has_declaration {
@@ -88,7 +88,7 @@ impl Rule for RequireDefaultProps {
                 continue;
             }
             let default_props = match &component.default_props {
-                // They may come from elsewhere, or from a spread.
+                // The defaults may be defined elsewhere or come from a spread.
                 Some(DefaultProps::Unresolved) => continue,
                 Some(DefaultProps::Known(default_props)) => Some(&**default_props),
                 None => None,
@@ -114,7 +114,7 @@ impl RequireDefaultProps {
         let default_props: FxHashSet<&[u8]> = default_props.iter().map(|(name, _)| &**name).collect();
         for (prop_name, prop) in prop_types.iter() {
             let Some(node) = prop.node else { continue };
-            // `defaultProps[propName]` is also what `Object.prototype` has.
+            // `defaultProps[propName]` also finds `Object.prototype`'s properties.
             let has_default = default_props.contains(prop_name) || is_in_object_prototype(prop_name);
             let message = match (prop.is_required == Some(true), has_default) {
                 (true, true) if self.forbid_default_for_required => NO_DEFAULT_WITH_REQUIRED,
@@ -131,7 +131,7 @@ impl RequireDefaultProps {
         has_default_props: bool,
         cx: &Cx<'a, Self>,
     ) {
-        // With a default it is an `AssignmentPattern`, with `...` a `RestElement`, or it is a `TSParameterProperty`.
+        // Skip an `AssignmentPattern` (it has a default), a `RestElement` (`...`) and a `TSParameterProperty`.
         let props = (component_node.params_with_this().next())
             .filter(|it| it.default().is_none() && !it.is_rest() && !it.is_parameter_property());
         let identifier = props.filter(|it| {
@@ -140,7 +140,7 @@ impl RequireDefaultProps {
         if has_default_props {
             let at = component_node.estree_span();
             let report = cx.report(at, NO_DEFAULT_PROPS_WITH_FUNCTION);
-            // `props => ..`: both are said at one place, this one first.
+            // For `props => ..` both reports start at the same position, and this one comes first.
             if identifier.is_some_and(|it| it.binding_span().start == at.start) {
                 report.on_exit(true);
             }
@@ -150,12 +150,12 @@ impl RequireDefaultProps {
         }
         let Some(PatKind::Object(properties)) = props.map(|it| it.pat().kind()) else { return };
         for prop in properties {
-            // A rest element.
+            // A rest element has no key.
             let Some(key) = prop.key() else { continue };
             let prop_name = name_of_key(key).unwrap_or(UNDEFINED);
             let is_prop_required = match prop_types.get(prop_name) {
                 Some(prop_type) => prop_type.is_required == Some(true),
-                // `propTypes[propName]` is what `Object.prototype` has.
+                // `propTypes[propName]` also finds `Object.prototype`'s properties.
                 None if is_in_object_prototype(prop_name) => false,
                 None => continue,
             };

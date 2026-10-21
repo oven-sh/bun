@@ -1,8 +1,7 @@
-//! transform.go, the functions that only JavaScript reaches: CommonJS exports, and `this.name = e` in a class.
+//! The functions of transform.go that only JavaScript reaches: CommonJS exports, and `this.name = e` in a class.
 
 use super::*;
 use crate::bind::{JsDeclarationKind, assignment_declaration_kind, define_property_call};
-use crate::util::SharedSort;
 
 bun_core::comptime_string_set! {
     /// `textToKeyword`
@@ -27,17 +26,24 @@ struct ExportName {
 
 impl ExportName {
     /// The name as the printer emits it.
-    fn written(&self) -> Vec<u8> {
+    fn printed_name(&self) -> Vec<u8> {
         if self.is_identifier {
             self.text.clone()
         } else {
             super::super::print::quoted(&self.text, b'"', false)
         }
     }
+
+    /// `export { local as name };`
+    fn export_of(&self, local: &[u8]) -> Statement {
+        let text = cat!(b"export { ", local, b" as ", self.printed_name(), b" };");
+        Statement::new(StatementKind::ExportDeclaration, text)
+    }
 }
 
 impl<'p> DeclarationEmit<'_, 'p, '_> {
-    /// `cjsExportAssignmentVisitor`, then the CommonJS cases of `expressionVisitor` (`visitNestedExpression`), over the whole file.
+    /// `cjsExportAssignmentVisitor`, then the CommonJS cases of `expressionVisitor` (`visitNestedExpression`), over the
+    /// whole file. They run before any statement is visited, so `needsDeclare` is true.
     pub(super) fn transform_commonjs_exports(&mut self) {
         let file = self.file();
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
@@ -51,7 +57,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             .chain(by_kind.of(ExprTag::Call));
         let mut declarations: Vec<(ExprId, JsDeclarationKind)> = candidates
             .map(|&e| (e, assignment_declaration_kind(hir, e)))
-            .filter(|&(e, _)| bound.expr_parent[e.idx()] != Parent::None)
+            .filter(|&(e, _)| bound.parent_of_expr(e) != Parent::None)
             .collect();
         // The visitors are pre-order.
         declarations.shared_sort_by_key(|&(e, _)| hir[e].pos);
@@ -63,14 +69,13 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             let ExprKind::Assign { value, .. } = hir[e].kind else {
                 continue;
             };
-            let input = match bound.expr_parent[e.idx()] {
+            let input = match bound.parent_of_expr(e) {
                 Parent::Stmt(s) => hir.node(s),
                 Parent::Expr(parent) => hir.node(parent),
                 _ => hir.node(e),
             };
             self.cjs_export_assignment =
                 self.transform_export_assignment(input, hir.node(e), value, true);
-            self.result_has_scope_marker = true;
             self.result_has_external_module_indicator = true;
             self.tracker.get_symbol_accessibility_diagnostic = saved;
         }
@@ -102,14 +107,14 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             if is_wrapped {
                 self.set_indent(self.indent + 1);
             }
-            let written = self.transform_commonjs_export_worker(e, &name);
+            let export_statements = self.transform_commonjs_export_worker(e, &name);
             if is_wrapped {
                 self.set_indent(self.indent - 1);
             }
             self.tracker.get_symbol_accessibility_diagnostic = saved;
-            if let Some(written) = written {
-                let written = self.wrap_in_cjs_export_namespace(written);
-                self.cjs_export_members.extend(written);
+            if let Some(export_statements) = export_statements {
+                let export_statements = self.wrap_in_cjs_export_namespace(export_statements);
+                self.cjs_export_members.extend(export_statements);
             }
         }
     }
@@ -131,7 +136,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         }
     }
 
-    /// `node.Symbol()`, of `exports.name = e` or `Object.defineProperty(exports, "name", d)`.
+    /// `node.Symbol()` of `exports.name = e` or `Object.defineProperty(exports, "name", d)`.
     fn symbol_of_commonjs_export(&self, name: &ExportName) -> Option<Sym> {
         let files = self.c.files();
         let exports = files.exports(files.file_symbol(self.file()));
@@ -160,8 +165,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             ExprKind::Assign { value, .. } => value,
             _ => ExprId::NONE,
         };
-        let is_top_level_statement = matches!(bound.expr_parent[input.idx()], Parent::Stmt(s)
-            if bound.stmt_parent[s.idx()] == Parent::File);
+        let is_top_level_statement = matches!(bound.parent_of_expr(input), Parent::Stmt(s)
+            if bound.parent_of_stmt(s) == Parent::File);
         // `isCommonJSAliasExport`
         if value.is_some()
             && let ExprKind::Ident(source) = hir[value].kind
@@ -174,20 +179,12 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             let specifier = if name.is_identifier && self.name(source) == &name.text[..] {
                 name.text.clone()
             } else {
-                [self.name(source), b" as ", &name.written()[..]].concat()
+                [self.name(source), b" as ", &name.printed_name()[..]].concat()
             };
             let text = [b"export { ", &specifier[..], b" };"].concat();
             return Some(vec![Statement::new(StatementKind::ExportDeclaration, text)]);
         }
-        let declare = |first: &[Flags], needs_declare: bool| -> Vec<Flags> {
-            let declare: &[Flags] = if needs_declare {
-                &[Flags::AMBIENT]
-            } else {
-                &[]
-            };
-            [first, declare].concat()
-        };
-        let comments = match bound.expr_parent[input.idx()] {
+        let comments = match bound.parent_of_expr(input) {
             Parent::Stmt(s) => self.leading_comments(hir[s].loc.pos),
             _ => Vec::new(),
         };
@@ -210,7 +207,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 return Some(vec![Statement {
                     kind: StatementKind::Other,
                     comments: Vec::new(),
-                    modifiers: declare(&[Flags::EXPORT], self.needs_declare),
+                    modifiers: vec![Flags::EXPORT, Flags::AMBIENT],
                     text: [b"var ", &name.text[..], &ensured.text()[..], b";"].concat(),
                 }]);
             }
@@ -229,27 +226,20 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let statement = Statement {
             kind: StatementKind::Other,
             comments,
-            modifiers: declare(&[], self.needs_declare),
+            modifiers: vec![Flags::AMBIENT],
             text: [b"const ", &new_id[..], &ensured.text()[..], b";"].concat(),
         };
         let export = if is_default {
             let text = [b"export default ", &new_id[..], b";"].concat();
             Statement::new(StatementKind::ExportAssignment, text)
         } else {
-            let text = [
-                b"export { ",
-                &new_id[..],
-                b" as ",
-                &name.written()[..],
-                b" };",
-            ]
-            .concat();
-            Statement::new(StatementKind::ExportDeclaration, text)
+            name.export_of(&new_id)
         };
         Some(vec![statement, export])
     }
 
-    /// `transformCommonJSExportWorker`, where the right side is a class expression: a class declaration instead of a typed variable.
+    /// `transformCommonJSExportWorker`, where the right side is a class expression: emits a class declaration instead
+    /// of a typed variable.
     fn transform_commonjs_class_export(
         &mut self,
         c: ClassId,
@@ -258,44 +248,28 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     ) -> Vec<Statement> {
         let file = self.file();
         let own_name = self.c.hir(file)[c].name;
-        let exported = |needs_declare: bool| match needs_declare {
-            true => vec![Flags::EXPORT, Flags::AMBIENT],
-            false => vec![Flags::EXPORT],
-        };
+        let exported = vec![Flags::EXPORT, Flags::AMBIENT];
         if own_name.is_none() {
             let class_name = match name.is_identifier {
                 true => name.text.clone(),
                 false => self.unique_name(b"_class"),
             };
-            let mut class =
-                self.transform_class_expression(c, &class_name, exported(self.needs_declare));
+            let mut class = self.transform_class_expression(c, &class_name, exported);
             class.comments = comments;
             if name.is_identifier {
                 return vec![class];
             }
-            let text = [
-                b"export { ",
-                &class_name[..],
-                b" as ",
-                &name.written()[..],
-                b" };",
-            ]
-            .concat();
-            return vec![
-                class,
-                Statement::new(StatementKind::ExportDeclaration, text),
-            ];
+            return vec![class, name.export_of(&class_name)];
         }
         let class_name = self.name(own_name).to_vec();
         self.tracker.watched_class_symbol = Some(self.c.class_sym(file, c));
         self.tracker.class_symbol_tracked = false;
         let names_differ = !name.is_identifier || class_name != name.text;
-        // In the namespace the class is one level deeper, and whether it refers to itself is known
-        // once it is emitted.
+        // In the namespace the class is one level deeper, and whether it refers to itself is only known once it's
+        // emitted.
         let mut class = None;
         if !names_differ {
-            class =
-                Some(self.transform_class_expression(c, &class_name, exported(self.needs_declare)));
+            class = Some(self.transform_class_expression(c, &class_name, exported));
         }
         let needs_isolation = names_differ || self.tracker.class_symbol_tracked;
         if needs_isolation {
@@ -304,7 +278,6 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             self.set_indent(self.indent - 1);
         }
         self.tracker.watched_class_symbol = None;
-        self.tracker.class_symbol_tracked = false;
         let Some(mut class) = class else {
             return Vec::new();
         };
@@ -313,27 +286,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             return vec![class];
         }
         let namespace = self.unique_name(b"_ns");
-        self.set_indent(self.indent + 1);
-        let body = self.statements_text(&[class]);
-        self.set_indent(self.indent - 1);
-        let modifiers = match self.needs_declare {
-            true => vec![Flags::AMBIENT],
-            false => Vec::new(),
-        };
-        let namespace_declaration = Statement {
-            kind: StatementKind::Other,
-            comments: Vec::new(),
-            modifiers,
-            text: [
-                b"namespace ",
-                &namespace[..],
-                b" {\n",
-                &body[..],
-                &self.indentation()[..],
-                b"}",
-            ]
-            .concat(),
-        };
+        let namespace_declaration =
+            self.namespace_declaration(vec![Flags::AMBIENT], &namespace, &[class]);
         let alias_base = [b"_", &name.text[..]].concat();
         let alias = match name.is_identifier && bun_core::lexer::is_identifier(&alias_base) {
             true => self.unique_name(&alias_base),
@@ -349,18 +303,10 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             b";",
         ]
         .concat();
-        let export = [
-            b"export { ",
-            &alias[..],
-            b" as ",
-            &name.written()[..],
-            b" };",
-        ]
-        .concat();
         vec![
             namespace_declaration,
             Statement::new(StatementKind::ImportEquals, import),
-            Statement::new(StatementKind::ExportDeclaration, export),
+            name.export_of(&alias),
         ]
     }
 
@@ -375,28 +321,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 .modifiers
                 .retain(|&modifier| modifier != Flags::AMBIENT);
         }
-        self.set_indent(self.indent + 1);
-        let body = self.statements_text(&members);
-        self.set_indent(self.indent - 1);
-        let modifiers = if self.needs_declare {
-            vec![Flags::AMBIENT]
-        } else {
-            Vec::new()
-        };
-        vec![Statement {
-            kind: StatementKind::Other,
-            comments: Vec::new(),
-            modifiers,
-            text: [
-                b"namespace ",
-                &name[..],
-                b" {\n",
-                &body[..],
-                &self.indentation()[..],
-                b"}",
-            ]
-            .concat(),
-        }]
+        vec![self.namespace_declaration(vec![Flags::AMBIENT], &name, &members)]
     }
 
     /// `transformCjsRequireVariableDeclaration`
@@ -408,11 +333,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let (argument, _) = crate::bind::require_call_argument(hir, hir[d].init)?;
         // `rewriteModuleSpecifier`
         self.result_has_external_module_indicator = true;
-        let (start, end) = (
-            hir[argument].pos as usize,
-            self.c.end_of_expr(self.file(), argument) as usize,
-        );
-        let specifier = &hir.text[start..end];
+        let specifier = self.c.get_text_of_node(self.file(), hir.node(argument));
         match hir[hir[d].pat].kind {
             // `const x = require("something")` -> `import x = require("something")`
             PatKind::Ident(name) => {
@@ -437,7 +358,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                         self.name(name).to_vec()
                     } else {
                         let property =
-                            self.text_of(Written::PropertyName(hir.property_name(hir.node(p))));
+                            self.text_of(ReusedNode::PropertyName(hir.property_name(hir.node(p))));
                         [&property[..], b" as ", self.name(name)].concat()
                     });
                 }
@@ -452,16 +373,16 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         }
     }
 
-    /// `collectThisPropertyAssignments`, `visitThisPropertyAssignments`: a property declaration for each name that is only assigned to.
+    /// `collectThisPropertyAssignments`, `visitThisPropertyAssignments`: a property declaration for each name that's
+    /// only assigned to.
     pub(super) fn collect_this_property_assignments(&mut self, c: ClassId) -> Vec<Vec<u8>> {
         let file = self.file();
         let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
         if !hir.is_js {
             return Vec::new();
         }
-        // `thisPropertyAssignmentKey`: the name, `isStatic`. `getThisPropertyAssignmentKey`: a name
-        // that is dynamic, or whose text `TryGetTextOfPropertyName` does not know (`[+1]`), is a
-        // key of its own, which no assignment has.
+        // `thisPropertyAssignmentKey`: the name, `isStatic`. `getThisPropertyAssignmentKey`: a name that's dynamic, or
+        // whose text `TryGetTextOfPropertyName` can't get (`[+1]`), gets a unique key, which no assignment matches.
         let mut seen: Vec<(Atom, bool)> = Vec::new();
         for m in hir[c].members.iter() {
             if let Some(name) = hir[m].key.name() {
@@ -472,7 +393,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let by_kind = self.c.exprs_by_kind(file);
         let mut assignments: Vec<ExprId> = (by_kind.of(ExprTag::Assign).iter().copied())
             .filter(|&e| assignment_declaration_kind(hir, e) == JsDeclarationKind::ThisProperty)
-            .filter(|&e| bound.expr_parent[e.idx()] != Parent::None)
+            .filter(|&e| bound.parent_of_expr(e) != Parent::None)
             .collect();
         assignments.shared_sort_by_key(|&e| hir[e].pos);
         let has_base =
@@ -489,8 +410,9 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 continue;
             };
             // `GetReferencedMemberValueDeclaration`
-            let symbol = bound.expr_symbol[e.idx()];
-            // `HasDynamicName`: an identifier is not `IsSimpleInlineableExpression`, so `this[name] = e` declares nothing here.
+            let symbol = bound.symbol_of_expr(e);
+            // `HasDynamicName`: an identifier isn't `IsSimpleInlineableExpression`, so `this[name] = e` doesn't declare
+            // anything here.
             let name = match hir[target].kind {
                 ExprKind::Dot { name, .. } => Some(name),
                 ExprKind::Index { index, .. } if is_string_or_numeric_literal_like(hir, index) => {
@@ -515,18 +437,18 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             if name == known::constructor {
                 continue;
             }
-            let written = match hir[target].kind {
+            let name_text = match hir[target].kind {
                 // `getLiteralTextOfNode`
-                ExprKind::Index { index, .. } => hir.text
-                    [hir[index].pos as usize..self.c.end_of_expr(file, index) as usize]
-                    .to_vec(),
+                ExprKind::Index { index, .. } => {
+                    self.c.get_text_of_node(file, hir.node(index)).to_vec()
+                }
                 _ if bun_core::lexer::is_identifier(self.name(name)) => self.name(name).to_vec(),
                 _ => super::super::print::quoted(self.name(name), b'"', false),
             };
             let saved = self.tracker.get_symbol_accessibility_diagnostic;
             let ensured = self.ensure_type(hir.node(e), false);
             self.tracker.get_symbol_accessibility_diagnostic = saved;
-            let comments = match bound.expr_parent[e.idx()] {
+            let comments = match bound.parent_of_expr(e) {
                 Parent::Stmt(s) => self.leading_comments(hir[s].loc.pos),
                 _ => Vec::new(),
             };
@@ -535,7 +457,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 [
                     &comments[..],
                     modifier,
-                    &written[..],
+                    &name_text[..],
                     &ensured.text()[..],
                     b";",
                 ]
@@ -582,14 +504,13 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         false
     }
 
-    /// `getTypeOfSymbol(getSymbolOfDeclaration(e))` for an assignment or a call that is a
-    /// declaration in JavaScript.
+    /// `getTypeOfSymbol(getSymbolOfDeclaration(e))` for an assignment or a call that's a declaration in JavaScript.
     pub(super) fn type_of_commonjs_declaration(&mut self, e: ExprId) -> Option<TypeId> {
         let file = self.file();
         let (hir, files) = (self.c.hir(file), self.c.files());
         let name = match assignment_declaration_kind(hir, e) {
             JsDeclarationKind::ThisProperty => {
-                let symbol = self.c.bound(file).expr_symbol[e.idx()];
+                let symbol = self.c.bound(file).symbol_of_expr(e);
                 return symbol
                     .is_some()
                     .then(|| self.c.type_of_symbol(files.sym(file, symbol)));

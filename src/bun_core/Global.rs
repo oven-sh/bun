@@ -676,6 +676,7 @@ fn is_exiting() -> bool {
 // calls. `#[link_name]` avoids colliding with this module's own `pub fn exit`.
 #[allow(suspicious_runtime_symbol_definitions)] // signatures are ABI-identical; `safe fn` is intentional (above)
 unsafe extern "C" {
+    #[cfg(windows)]
     #[link_name = "abort"]
     safe fn libc_abort() -> !;
     #[link_name = "raise"]
@@ -683,6 +684,8 @@ unsafe extern "C" {
     #[cfg(unix)]
     #[link_name = "exit"]
     safe fn libc_exit(code: c_int) -> !;
+    #[cfg(not(windows))]
+    safe fn _exit(code: c_int) -> !;
     #[cfg(all(unix, not(target_os = "macos")))]
     safe fn quick_exit(code: c_int) -> !;
 }
@@ -772,22 +775,50 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
         }
     }
 
-    // clear signal handler
     #[cfg(not(windows))]
+    raise_default_action(sig);
+
+    #[cfg(windows)]
     {
-        // SAFETY: zeroed sigset + SIG_DFL handler is a valid Sigaction.
-        unsafe {
-            let mut sa: libc::sigaction = crate::ffi::zeroed();
-            sa.sa_sigaction = libc::SIG_DFL;
-            libc::sigemptyset(&raw mut sa.sa_mask);
-            sa.sa_flags = libc::SA_RESETHAND;
-            let _ = libc::sigaction(sig, &raw const sa, core::ptr::null_mut());
-        }
+        // kill self; `raise` has no preconditions (see the `safe fn` decl above).
+        let _ = libc_raise(sig);
+        // The CRT's raise() returns for SIGTERM and for signals it doesn't recognize.
+        libc_abort()
+    }
+}
+
+/// Kills the process with `sig`'s default action. Exits with 128 + `sig` if the kernel discards
+/// the signal (PID 1 in a pid namespace). Async-signal-safe.
+#[cfg(not(windows))]
+pub fn raise_default_action(sig: c_int) -> ! {
+    // SAFETY: zeroed sigset + SIG_DFL handler is a valid Sigaction.
+    unsafe {
+        let mut sa: libc::sigaction = crate::ffi::zeroed();
+        sa.sa_sigaction = libc::SIG_DFL;
+        libc::sigemptyset(&raw mut sa.sa_mask);
+        sa.sa_flags = libc::SA_RESETHAND;
+        let _ = libc::sigaction(sig, &raw const sa, core::ptr::null_mut());
     }
 
-    // kill self — `raise`/`abort` have no preconditions (see `safe fn` decls above).
+    // raise() only makes a blocked signal pending, and `sig` is blocked inside its own handler.
+    // SAFETY: zeroed sigset is valid; sigemptyset/sigaddset initialize it.
+    unsafe {
+        let mut set: libc::sigset_t = crate::ffi::zeroed();
+        libc::sigemptyset(&raw mut set);
+        libc::sigaddset(&raw mut set, sig);
+        let _ = libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const set, core::ptr::null_mut());
+    }
+
+    // kill self; `raise` has no preconditions (see the `safe fn` decl above).
     let _ = libc_raise(sig);
-    libc_abort();
+    _exit(128 + sig)
+}
+
+/// Exposes `raise_default_action` to C++ (`onExitSignal` in c-bindings.cpp).
+#[cfg(not(windows))]
+#[unsafe(no_mangle)]
+extern "C" fn Bun__raiseDefaultAction(sig: c_int) -> ! {
+    raise_default_action(sig)
 }
 
 #[derive(Default)]
@@ -831,6 +862,27 @@ unsafe impl Sync for SyncCStr {}
 #[unsafe(no_mangle)]
 static Bun__userAgent: SyncCStr = SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
 
+/// True if TLS should also trust the system's certificate authorities. `root_certs.cpp` reads this
+/// when it builds the default certificate store.
+#[unsafe(no_mangle)]
+pub static Bun__Node__UseSystemCA: AtomicBool = AtomicBool::new(false);
+
+/// Handles `--use-system-ca`, `--use-openssl-ca` and `--use-bundled-ca`. Exits with an error if
+/// more than one is passed, and falls back to `NODE_USE_SYSTEM_CA` if none is.
+pub fn set_ca_store_from_flags(has_flag: impl Fn(&'static [u8]) -> bool) {
+    let flags: [&'static [u8]; 3] = [b"--use-system-ca", b"--use-openssl-ca", b"--use-bundled-ca"];
+    let passed = flags.map(has_flag);
+    let count = passed.iter().filter(|&&passed| passed).count();
+    if count > 1 {
+        crate::pretty_errorln!(
+            "<r><red>error<r>: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca"
+        );
+        exit(1);
+    }
+    let from_env = count == 0 && crate::env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false);
+    Bun__Node__UseSystemCA.store(passed[0] || from_env, Ordering::Relaxed);
+}
+
 /// Prevent the linker from dead-code-eliminating `#[no_mangle]` symbols that are
 /// only ever called from C/C++ (so rustc sees no Rust caller). Expands to one
 /// `core::hint::black_box(f as *const ())` per path — purely a side-effect, so
@@ -853,6 +905,8 @@ extern "C" fn Bun__onExit() {
     run_exit_callbacks();
     Output::flush();
     crate::keep_symbols!(Bun__atexit);
+    #[cfg(not(windows))]
+    crate::keep_symbols!(Bun__raiseDefaultAction);
 
     Output::source::stdio::restore();
 }

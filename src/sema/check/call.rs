@@ -32,22 +32,22 @@ impl crate::table::Packed for ResolvedCall {
 pub(super) enum Arg {
     Expr(ExprId),
     /// `createSyntheticExpression`: a type, and its label (`tupleNameSource`) or `NONE`. The last
-    /// field is the node it is positioned at: the argument whose tuple it is an element of, the
-    /// template whose pieces of text it represents, the expression of the decorator.
+    /// field is the node it's positioned at: the argument whose tuple it's an element of, the
+    /// template whose text pieces it represents, or the decorator's expression.
     Type(TypeId, LabeledDeclaration, ExprId),
     /// `createSyntheticExpression` with `isSpread`, for a variable element of a tuple: any number
     /// of values of the first type. The second is the type of the list that is spread. The third
     /// is the label of the element (`tupleNameSource`), or `NONE`. The last is the argument that
     /// spreads the tuple.
     Spread(TypeId, TypeId, LabeledDeclaration, ExprId),
-    /// A `SpreadElement` that `getEffectiveCallArguments` leaves as it is, since its operand is not
-    /// a tuple: the type it iterates, the type of its operand without a contextual type, the
-    /// operand, and the element itself.
+    /// A `SpreadElement` that `getEffectiveCallArguments` leaves unchanged, since its operand isn't
+    /// a tuple. The fields are the type it iterates, the type of its operand without a contextual
+    /// type, the operand, and the element itself.
     SpreadElement(TypeId, TypeId, ExprId, ExprId),
 }
 
 impl Arg {
-    /// The node at which an error about it is reported.
+    /// The node where an error about it is reported.
     pub(super) fn node(self) -> ExprId {
         match self {
             Arg::Expr(e)
@@ -64,8 +64,8 @@ impl Arg {
 }
 
 /// The node `resolveCall` resolves (`IsCallLikeExpression`). The accompanying expression is the key
-/// for the node in the tables: the call, `new` or tagged template, the binary expression, the
-/// expression of the decorator.
+/// for the node in the tables: the call, `new` or tagged template, the binary expression, or the
+/// decorator's expression.
 #[derive(Copy, Clone)]
 pub(super) enum CallLike {
     Call(CallId),
@@ -79,8 +79,8 @@ pub(super) enum CallLike {
     Jsx(JsxId),
 }
 
-/// Whether the caller of `resolve_call` reads `ret`. If not, `ret` is `any` and the return type of
-/// the signature is not resolved: `checkCallExpression` returns `anyType` for `new` of a call
+/// `Yes` if the caller of `resolve_call` reads `ret`. Otherwise `ret` is `any` and the signature's
+/// return type isn't resolved, because `checkCallExpression` returns `anyType` for `new` of a call
 /// signature before it calls `getReturnTypeOfSignature`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum ExpectsReturn {
@@ -95,8 +95,8 @@ pub(super) enum SignatureKind {
     Construct,
 }
 
-/// `allowMembers` of `getSingleSignature`. If not, a type that has a property or an index signature
-/// has no single signature.
+/// `allowMembers` of `getSingleSignature`. With `No`, a type that has a property or an index
+/// signature has no single signature.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum AllowMembers {
     No,
@@ -116,21 +116,20 @@ pub(super) struct CallState<'a> {
     pub(super) candidates: Sigs,
     pub(super) arg_check_mode: CheckMode,
     pub(super) is_single_non_generic_candidate: bool,
-    /// FOR SPEED: there is one candidate, it is not generic, and the call is not being resolved
-    /// again. The contextual type pushed for an argument is the parameter type of the resolved
-    /// signature, so an argument that tsgo checks uncached (`checkExpression`) and again in the
-    /// deferred check is checked once.
+    /// FOR SPEED: there's one candidate, it isn't generic, and the call isn't being resolved again.
+    /// The contextual type pushed for an argument is the parameter type of the resolved signature,
+    /// so an argument that tsgo checks uncached (`checkExpression`) and again in the deferred check
+    /// is checked once.
     pub(super) checks_arguments_once: bool,
     pub(super) candidates_for_argument_error: Sigs,
     pub(super) candidate_for_argument_arity_error: Option<SigId>,
     pub(super) candidate_for_type_argument_error: Option<SigId>,
 }
 
-/// What `push_inference_context` replaces in the checker, and `pop_inference_context` puts back.
+/// The checker state that `push_inference_context` replaces and `pop_inference_context` restores.
 struct OutsideInferenceContext {
     mode_of_recheck: CheckMode,
-    rechecked_exprs: FxHashMap<(FileId, ExprId), TypeId>,
-    rechecked_members: FxHashMap<(FileId, PropId), TypeId>,
+    rechecked: Rechecked,
     /// The argument for `end_recheck`.
     recheck: (usize, usize),
 }
@@ -154,7 +153,7 @@ enum SigParent {
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    /// `isContextSensitive`. For `JsxAttributes`: `is_jsx_attributes_context_sensitive`.
+    /// `isContextSensitive`. For `JsxAttributes`, see `is_jsx_attributes_context_sensitive`.
     pub fn is_context_sensitive(&self, file: FileId, e: ExprId) -> bool {
         if self.is_stack_low() {
             return false;
@@ -176,7 +175,8 @@ impl<'p, 's> Checker<'p, 's> {
                     && self.is_context_sensitive(file, hir[p].value)
             }),
             ExprKind::Array(items) => hir.ids(items).any(|i| self.is_context_sensitive(file, i)),
-            ExprKind::Cond { yes, no, .. } => {
+            ExprKind::Cond { branches, .. } => {
+                let Branches { yes, no } = hir.branches(branches);
                 self.is_context_sensitive(file, yes) || self.is_context_sensitive(file, no)
             }
             ExprKind::Binary {
@@ -190,30 +190,31 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `isContextSensitiveFunctionLikeDeclaration`
     fn is_context_sensitive_function_like_declaration(&self, file: FileId, f: FnId) -> bool {
-        /// Of fewer functions in each other nothing is kept.
+        /// Results aren't cached for fewer nested functions than this.
         const MANY: u64 = 8;
-        // It is asked of each function from every one around it, each time down to the last, so what many of them come to is
-        // kept. It depends on the tree alone. A function that returns nothing but a function is what that one is, unless its
-        // own parameters decide: so not by recursion.
+        // Every enclosing function asks this about each function nested in it, each time down to
+        // the innermost one, so the answer for a deep nest is cached. It only depends on the syntax
+        // tree. A function that only returns another function has that function's answer, unless
+        // its own parameters decide, so this loops instead of recursing.
         let times_cut_short = self.times_cut_short.get();
-        let asked_before = self.context_sensitivity_asked.get();
+        let asked_before = self.context_sensitivity_visits.get();
         let (mut at, mut passed) = (f, 0);
         let answer = loop {
-            (self.context_sensitivity_asked).set(self.context_sensitivity_asked.get() + 1);
+            (self.context_sensitivity_visits).set(self.context_sensitivity_visits.get() + 1);
             if let Some(&known) = self.context_sensitive_functions.borrow().get(&(file, at)) {
                 break known;
             }
             if self.has_context_sensitive_parameters(file, at) {
                 break true;
             }
-            let Some(returned) = self.only_function_returned(file, at) else {
+            let Some(returned) = self.sole_returned_function(file, at) else {
                 break self.has_context_sensitive_return_expression(file, at)
                     || self.has_context_sensitive_yield_expression(file, at);
             };
             (at, passed) = (returned, passed + 1);
         };
-        // Where the stack was low the answer is that of who asked.
-        if self.context_sensitivity_asked.get() - asked_before > MANY
+        // An answer that was cut short by a low stack depends on the caller, so it isn't cached.
+        if self.context_sensitivity_visits.get() - asked_before > MANY
             && self.times_cut_short.get() == times_cut_short
         {
             let mut known = self.context_sensitive_functions.borrow_mut();
@@ -221,15 +222,16 @@ impl<'p, 's> Checker<'p, 's> {
             for _ in 0..=passed {
                 let Some(it) = at else { break };
                 known.insert((file, it), answer);
-                at = self.only_function_returned(file, it);
+                at = self.sole_returned_function(file, it);
             }
         }
         answer
     }
 
-    /// The function expression that is all that `f` returns, where `hasContextSensitiveReturnExpression` and
-    /// `hasContextSensitiveYieldExpression` ask nothing else.
-    fn only_function_returned(&self, file: FileId, f: FnId) -> Option<FnId> {
+    /// Returns the function expression that's the only thing `f` returns, if
+    /// `hasContextSensitiveReturnExpression` and `hasContextSensitiveYieldExpression` look at
+    /// nothing else.
+    fn sole_returned_function(&self, file: FileId, f: FnId) -> Option<FnId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let func = &hir[f];
         if !func.type_params.is_empty()
@@ -306,7 +308,7 @@ impl<'p, 's> Checker<'p, 's> {
                 .any(|y| self.is_context_sensitive(file, y))
     }
 
-    /// `links.resolvedSignature` of `call`, if it is cached, with the return type of the signature.
+    /// `links.resolvedSignature` of `call`, if it's cached, with the signature's return type.
     #[inline]
     pub(super) fn cached_resolved_signature(
         &self,
@@ -331,10 +333,11 @@ impl<'p, 's> Checker<'p, 's> {
         let key = (file, call);
         if self.task.file == Some(file) {
             if self.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL {
-                self.signatures_resolved_discarding.push(call);
+                self.signatures_resolved_with_errors_discarded.push(call);
             } else {
-                // A resolution around the one that was the first to assign has reported.
-                self.signatures_resolved_discarding.retain(|&it| it != call);
+                // An outer resolution, around the one that assigned first, has reported its errors.
+                self.signatures_resolved_with_errors_discarded
+                    .retain(|&it| it != call);
             }
         }
         ResolvedCall {
@@ -365,7 +368,7 @@ impl<'p, 's> Checker<'p, 's> {
             return self.any_signature_while_arguments_are_checked();
         }
         if self.calls_to_resolve_afresh.is_some()
-            && let Some(resolved) = self.resolve_signature_afresh(file, call)
+            && let Some(resolved) = self.re_resolve_signature(file, call)
         {
             return resolved;
         }
@@ -395,9 +398,14 @@ impl<'p, 's> Checker<'p, 's> {
             .rposition(|&q| q == Query::Call(file, call));
         let is_in_progress = in_progress_at.is_some();
         let resolution_start = self.resolution_start;
-        // There is no re-entrancy guard. A call that a back edge of a loop reaches while it is
-        // being resolved is resolved again, any number of times: see `recheck_in_flow_loop`.
-        if in_progress_at.is_some_and(|at| self.flow_loop_pushed_since(at).is_some()) {
+        // There's no re-entrancy guard. A call that a back edge of a loop reaches while it's being
+        // resolved is resolved again, any number of times. See `recheck_in_flow_loop`. A call
+        // that's re-entered through a resolution is also resolved again, because that resolution is
+        // the guard.
+        if in_progress_at.is_some_and(|at| {
+            self.flow_loop_pushed_since(at).is_some()
+                || self.stack[at..].iter().any(|&q| self.is_resolution(q))
+        }) {
             self.resolution_start = self.stack.len();
         }
         let entered = self.enter(Query::Call(file, call));
@@ -409,24 +417,24 @@ impl<'p, 's> Checker<'p, 's> {
             };
         }
         // `getResolvedSignature`: "temporarily reset the resolution stack", for a caller that
-        // queries something in an argument whose type depends on the call it is an argument of. It
-        // is queried again, this time with the call in progress. If that reaches the call as an
-        // expression, the call is resolved again, without another reset: anything that re-enters
+        // queries something in an argument whose type depends on the call it's an argument of. It's
+        // queried again, this time with the call in progress. If that reaches the call as an
+        // expression, the call is resolved again, without another reset. Anything that re-enters
         // then is a cycle.
         if !is_in_progress {
             self.resolution_start = self.stack.len();
         }
         let serial = self.work;
         if !is_in_progress {
-            // What a resolution inside `resolve_signature_afresh` has left.
+            // Drop what a resolution inside `re_resolve_signature` left behind.
             self.signatures_resolved_within
                 .retain(|r| !(r.0 == file && r.1 == call));
         }
-        let around = self.call_resolution_errors.take();
+        let outer_errors = self.call_resolution_errors.take();
         let is_re_resolved = std::mem::replace(&mut self.is_call_re_resolved, is_in_progress);
         let resolved = self.resolve_signature(file, call);
         self.is_call_re_resolved = is_re_resolved;
-        let reported = std::mem::replace(&mut self.call_resolution_errors, around);
+        let reported = std::mem::replace(&mut self.call_resolution_errors, outer_errors);
         self.resolution_start = resolution_start;
         self.resolved_meanwhile.push((file, call, resolved));
         let resolved = self.with_return_type(resolved);
@@ -453,10 +461,7 @@ impl<'p, 's> Checker<'p, 's> {
         let is_tainted_by_patterns_only = !self.contextual_binding_patterns.is_empty()
             && self.taints == self.taints_before_patterns;
         let stored = (left.ok()).or_else(|| is_tainted_by_patterns_only.then(Stored::new));
-        // `len(c.flowLoopStack) != 0`
-        let is_in_flow_loop =
-            |c: &Self| (c.flow_loops.last()).is_some_and(|pushed| c.is_flow_loop_visible(pushed.5));
-        // A call that is requested while it is being resolved is resolved again, and `resolveCall`
+        // A call that's requested while it's being resolved is resolved again, and `resolveCall`
         // reports its errors in the state at that time. Only the first resolution is retained.
         if is_in_progress {
             if let Some(reported) = reported
@@ -468,50 +473,44 @@ impl<'p, 's> Checker<'p, 's> {
                 (self.p.diagnostics_of_re_resolved_calls)
                     .insert_ref(&self.task, key, reported, stored);
             }
-            // The resolution around this one takes the result: from `Program::calls`, or, if it
-            // depends on a frame in progress, from `signatures_resolved_within`. Not one that was
-            // cut short by a refused query.
+            // The enclosing resolution takes the result from `Program::calls` or, if it depends on
+            // a frame in progress, from `signatures_resolved_within`. It doesn't take a result that
+            // was cut short by a rejected query.
             if let Ok(stored) = left
-                && !is_in_flow_loop(self)
+                && !self.is_in_flow_loop()
             {
                 return self.cache_call(file, call, resolved, stored);
             }
             if left.is_err()
                 && assigned_within.is_none()
-                && self.refused_at < serial
-                && !is_in_flow_loop(self)
+                && self.rejected_at < serial
+                && !self.is_in_flow_loop()
             {
                 self.signatures_resolved_within.push((file, call, resolved));
             }
         } else if let Some(stored) = stored
-            && !is_in_flow_loop(self)
+            && !self.is_in_flow_loop()
         {
-            // A task that sees the call resolved also sees this: both are published at the same
-            // barrier.
+            // A task that sees the call resolved also sees this, because one commit publishes both.
             if let Some(reported) = reported {
                 (self.p.call_diagnostics).insert_ref(&self.task, (file, call), reported, stored);
             }
             return self.cache_call(file, call, resolved, stored);
         } else if let Some(reported) = reported
-            && is_in_flow_loop(self)
+            && self.is_in_flow_loop()
         {
-            // `len(c.flowLoopStack) != 0`: the signature is not stored, and what `resolveCall` has
-            // reported from the temporary types stays.
+            // `len(c.flowLoopStack) != 0`: the signature isn't stored, and the errors that
+            // `resolveCall` reported from the temporary types stay.
             self.reported.extend(reported);
-        }
-        // `getResolvedSignature` assigns `links.resolvedSignature = result` only with an empty
-        // `flowLoopStack`. This is for a result that `Program::calls` does not take.
-        if !is_in_flow_loop(self) {
-            self.resolved_signatures.insert((file, call));
         }
         resolved
     }
 
-    /// `resolved_signature` of one of `calls_to_resolve_afresh`, once for each. What is stored for the call, and what was
-    /// reported for it, stays as it is. `None`: it is not one of them, or it is asked for while it is resolved so: then
-    /// what is stored answers.
+    /// `resolved_signature` for one of `calls_to_resolve_afresh`, run once for each. What's stored and what was
+    /// reported for the call stay unchanged. Returns `None` if `call` isn't one of them, or if it's requested while
+    /// it's being resolved this way. Then the stored result is used.
     #[cold]
-    fn resolve_signature_afresh(&mut self, file: FileId, call: ExprId) -> Option<ResolvedCall> {
+    fn re_resolve_signature(&mut self, file: FileId, call: ExprId) -> Option<ResolvedCall> {
         let (of, start, end) = self.calls_to_resolve_afresh?;
         if of != file || !(start..end).contains(&self.hir(file)[call].pos) {
             return None;
@@ -526,9 +525,9 @@ impl<'p, 's> Checker<'p, 's> {
         let at = self.calls_resolved_afresh.len();
         self.calls_resolved_afresh.push((call, None));
         self.resolution_start = self.stack.len();
-        let around = self.call_resolution_errors.take();
+        let outer_errors = self.call_resolution_errors.take();
         let resolved = self.resolve_signature(file, call);
-        self.call_resolution_errors = around;
+        self.call_resolution_errors = outer_errors;
         self.resolution_start = resolution_start;
         self.resolved_meanwhile.push((file, call, resolved));
         let resolved = self.with_return_type(resolved);
@@ -541,20 +540,20 @@ impl<'p, 's> Checker<'p, 's> {
     fn effective_args(&mut self, file: FileId, args: IdList<ExprId>) -> Args {
         let hir = self.hir(file);
         let mut out = Args::new();
-        if !hir
+        if hir
             .ids(args)
             .any(|a| matches!(hir[a].kind, ExprKind::Spread(_)))
         {
+            for a in hir.ids(args) {
+                self.each_effective_arg(file, a, |arg| out.push(arg));
+            }
+        } else {
             out.extend(hir.ids(args).map(Arg::Expr));
-            return out;
-        }
-        for a in hir.ids(args) {
-            self.each_effective_arg(file, a, |arg| out.push(arg));
         }
         out
     }
 
-    /// What the argument `a` expands to: itself, or the elements it spreads.
+    /// Calls `push` with what the argument `a` expands to: itself, or the elements it spreads.
     #[inline]
     pub(super) fn each_effective_arg(
         &mut self,
@@ -592,8 +591,8 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             _ => {
-                // `checkIteratedTypeOrElementType`: a type that is not iterable is an error, and
-                // yields `any`. The error is not reported for a type the operand is only assumed to
+                // `checkIteratedTypeOrElementType`: a type that isn't iterable is an error, and
+                // yields `any`. The error isn't reported for a type the operand is only assumed to
                 // have.
                 let element = self.iterated_type_of_spread(ty);
                 push(Arg::SpreadElement(element, ty, inner, a));
@@ -602,9 +601,8 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The part of `getContextuallyTypedParameterType` for an immediately invoked function
-    /// expression, whose parameters are typed from its arguments.
-    /// `None`: it is not one;
-    /// `Some(None)`: it is, and the arguments determine nothing for this parameter.
+    /// expression, whose parameters are typed from its arguments. Returns `None` if `func` isn't
+    /// one, and `Some(None)` if it is but the arguments determine nothing for this parameter.
     pub(super) fn iife_param_type(
         &mut self,
         file: FileId,
@@ -616,7 +614,7 @@ impl<'p, 's> Checker<'p, 's> {
         let FnOwner::Expr(e) = bound.fns[func.idx()].owner else {
             return None;
         };
-        let Parent::Expr(parent) = bound.expr_parent[e.idx()] else {
+        let Parent::Expr(parent) = bound.parent_of_expr(e) else {
             return None;
         };
         let ExprKind::Call(c) = hir[parent].kind else {
@@ -639,14 +637,14 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let args = self.effective_args(file, args);
         let own = &hir[hir[func].params.at(index)];
-        // `slices.Index(fn.Parameters(), parameter)`, of which `this` is the first. It is not
-        // subtracted here.
+        // `slices.Index(fn.Parameters(), parameter)`, where `this` comes first. It isn't subtracted
+        // here.
         let index = index + usize::from(hir[func].this_param.is_some());
-        // Not under `anySignature`: a request for the call resolves it again.
-        // `assignParameterType` pushes no type resolution, and the arguments are checked with
-        // `checkExpression`: the resolutions of the parameter hide no loop from them.
+        // This doesn't run under `anySignature`, so a request for the call resolves it again.
+        // `assignParameterType` doesn't push a type resolution, and the arguments are checked with
+        // `checkExpression`, so the parameter's resolutions don't hide any loop from them.
         if own.flags.contains(Flags::REST) {
-            return Some(self.with_loops_in_sight(|c| {
+            return Some(self.with_flow_loops_visible(|c| {
                 c.spread_argument_type(file, &args, index, TypeId::ANY, None, CheckMode::empty())
             }));
         }
@@ -655,7 +653,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // `links.resolvedSignature = c.anySignature`: the contextual type of the argument is
                 // what is being computed.
                 self.iife_resolving.push((file, call));
-                let ty = self.with_loops_in_sight(|c| c.type_of_expr(file, a));
+                let ty = self.with_flow_loops_visible(|c| c.type_of_expr(file, a));
                 self.iife_resolving.pop();
                 Some(self.widen_literal(ty))
             }
@@ -668,8 +666,8 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `callIsIncomplete`: the tagged template is unterminated, or the `)` of the call is missing.
-    /// `close_pos` is the position where the parser expected the `)`. The source text of the
-    /// default library is not available.
+    /// `close_pos` is the position where the parser expected the `)`. The default library's source
+    /// text isn't available.
     pub(super) fn is_call_incomplete(&self, file: FileId, call: ExprId, node: CallLike) -> bool {
         let CallLike::Call(id) = node else {
             return false;
@@ -701,14 +699,15 @@ impl<'p, 's> Checker<'p, 's> {
             _ => args.len(),
         };
         let spread = args.iter().position(|a| a.is_spread());
-        let is_incomplete = self.is_call_incomplete(file, call, node);
+        let is_incomplete = |c: &Self| c.is_call_incomplete(file, call, node);
         let is_open = matches!(params, List::Own(_));
-        self.has_correct_arity_for_count(sig, params, is_open, actual, spread, is_incomplete)
+        self.has_correct_arity_for_count(sig, params, is_open, actual, spread, &is_incomplete)
     }
 
-    /// `hasCorrectArity` for a call with `actual` arguments. `spread`: the first spread argument.
-    /// `is_open`: `sig_params` could not store `params`, so a cycle through the type of a parameter
-    /// is found where tsgo asks for that type.
+    /// `hasCorrectArity` for a call with `actual` arguments. `spread` is the index of the first
+    /// spread argument. `is_open` means `sig_params` couldn't store `params`, so a cycle through a
+    /// parameter's type has to be found where tsgo requests that type. `is_incomplete` computes
+    /// `callIsIncomplete`.
     fn has_correct_arity_for_count(
         &mut self,
         sig: SigId,
@@ -716,11 +715,11 @@ impl<'p, 's> Checker<'p, 's> {
         is_open: bool,
         actual: usize,
         spread: Option<usize>,
-        is_incomplete: bool,
+        is_incomplete: &dyn Fn(&Self) -> bool,
     ) -> bool {
-        // Which parameters accept `void` only matters where a required one is omitted. That
-        // `getMinArgumentCount` asks only matters for `get_type_of_parameter` of a pattern, for a
-        // type that `params` lacks, and where `is_open`.
+        // Which parameters accept `void` only matters if a required one is omitted. That
+        // `getMinArgumentCount` requests their types only matters for `get_type_of_parameter` of a
+        // pattern, for a type that `params` lacks, and if `is_open`.
         let rest = params.last().filter(|p| p.rest);
         if !is_open
             && spread.is_none()
@@ -731,18 +730,18 @@ impl<'p, 's> Checker<'p, 's> {
                 return rest.is_some();
             }
             let may_be_omitted = |p: &SigParam| p.optional || p.rest && !p.is_required_rest;
-            if is_incomplete || params[actual..].iter().all(may_be_omitted) {
+            if params[actual..].iter().all(may_be_omitted) || is_incomplete(self) {
                 return true;
             }
         }
         let count = self.parameter_count(params);
-        let least = self.min_argument_count_asked(Some(sig), params);
+        let least = self.min_argument_count_for(Some(sig), params);
         if is_open {
             // `getParameterCount`, then `getMinArgumentCount`: from the last required parameter
-            // down to one that does not accept `void`.
+            // down to one that doesn't accept `void`.
             let required = &params[..Self::min_args(params)];
-            let asked = required.iter().skip(least.saturating_sub(1)).rev();
-            for param in rest.into_iter().chain(asked) {
+            let requested = required.iter().skip(least.saturating_sub(1)).rev();
+            for param in rest.into_iter().chain(requested) {
                 self.request_type_of_parameter(param);
             }
         }
@@ -755,11 +754,11 @@ impl<'p, 's> Checker<'p, 's> {
         if actual > count && !has_rest {
             return false;
         }
-        if is_incomplete {
+        if is_incomplete(self) {
             return true;
         }
-        // `acceptsVoid`: only a parameter that accepts `void` may be omitted. For a parameter whose
-        // type is not known this cannot be determined.
+        // `acceptsVoid`: only a parameter that accepts `void` may be omitted. That can't be
+        // determined for a parameter whose type isn't known.
         for i in actual..least {
             if is_open && let Some(param) = params.get(i) {
                 self.request_type_of_parameter(param);
@@ -809,7 +808,8 @@ impl<'p, 's> Checker<'p, 's> {
                     self.resolve_error_call(file, exprs)
                 };
             }
-            self.look_at_type_nodes(file, type_args);
+            let type_args = hir.list_at(type_args);
+            self.precheck_type_nodes(file, type_args);
             let type_args = self.types_from_nodes(file, type_args);
             let node = CallLike::Call(c);
             let args = self.effective_call_arguments(file, call, node);
@@ -845,8 +845,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
         };
         // `checkCallExpression`: if the callee is `super` the expression has type `void`, whatever
-        // it resolves to. Only as a callee does `super` represent the constructors of the base
-        // class: the `super` of `new super()` is that of `super.x`.
+        // it resolves to. `super` only represents the base class's constructors as a callee. The
+        // `super` of `new super()` is the same as in `super.x`.
         if matches!(hir[hir[id].callee].kind, ExprKind::Super) {
             let resolved = if is_new {
                 self.resolve_call_or_new(file, call, id, true)
@@ -865,9 +865,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// Anything there that re-enters a resolution in progress is a cycle. The result is
     /// `anySignature`.
     fn resolve_untyped_call(&mut self, file: FileId, args: IdList<ExprId>) -> ResolvedCall {
-        // `getResolvedSignature` resets `resolutionStart` the first time only. When the call is
-        // resolved again the arguments are already being checked: they are checked again, uncached
-        // (`checkExpression`), which has no re-entrancy guard.
+        // `getResolvedSignature` resets `resolutionStart` only the first time. When the call is
+        // resolved again, the arguments are already being checked, and they're checked again,
+        // uncached (`checkExpression`), with no re-entrancy guard.
         let outer = (self.resolution_start != self.stack.len()).then(|| self.begin_recheck());
         for arg in self.hir(file).ids(args) {
             let ty = self.type_of_expr(file, arg);
@@ -885,7 +885,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `resolveErrorCall`: the same, and the result is `unknownSignature`, which returns the error type.
+    /// `resolveErrorCall`: same, but the result is `unknownSignature`, which returns the error
+    /// type.
     fn resolve_error_call(&mut self, file: FileId, args: IdList<ExprId>) -> ResolvedCall {
         ResolvedCall {
             ret: TypeId::ERROR,
@@ -1012,9 +1013,9 @@ impl<'p, 's> Checker<'p, 's> {
             };
         }
         if !matches!(hir[data.callee].kind, ExprKind::Super) {
-            self.look_at_type_nodes(file, data.type_args);
+            self.precheck_type_nodes(file, hir.list_at(data.type_args));
         }
-        let type_args = self.types_from_nodes(file, data.type_args);
+        let type_args = self.types_from_nodes(file, hir.list_at(data.type_args));
         let args = self.effective_args(file, data.args);
         let node = CallLike::Call(id);
         let this_arg = self.this_argument_of_call(file, call, node);
@@ -1035,7 +1036,7 @@ impl<'p, 's> Checker<'p, 's> {
             expects_return,
             None,
         );
-        // `checkCallExpression`: `new` on something that is not a constructor yields `any`.
+        // `checkCallExpression`: `new` on something that isn't a constructor yields `any`.
         if is_call_by_new {
             ResolvedCall {
                 ret: TypeId::ANY,
@@ -1114,10 +1115,8 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         ty: TypeId,
     ) -> Option<TypeId> {
-        // `getPropertyNameForKnownSymbolName`
-        self.resolve_known_symbol(b"hasInstance");
         let name = self.atoms().symbol_name(b"hasInstance");
-        // `getPropertyOfType`: an index signature is not a property.
+        // `getPropertyOfType`: an index signature isn't a property.
         let mut methods = Vec::new();
         for &part in self.parts(ty) {
             if !self.is_assignable(part, TypeId::OBJECT) {
@@ -1135,7 +1134,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `someSignature(constructSignatures, abstract)`: the signature synthesized for a union is
-    /// abstract if that of any member is.
+    /// abstract if any member's is.
     pub(super) fn has_abstract_construct_signature(&mut self, ty: TypeId) -> bool {
         let ty = self.apparent_type(ty);
         if let TypeData::Union(parts) = self.data(ty) {
@@ -1159,7 +1158,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.return_type_of_single_non_generic_signature(func_type, SignatureKind::Construct)
     }
 
-    /// `getQuickTypeOfExpression` for a call. The arguments are not checked.
+    /// `getQuickTypeOfExpression` for a call. The arguments aren't checked.
     pub(super) fn quick_type_of_call(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let hir = self.hir(file);
         let ExprKind::Call(c) = hir[e].kind else {
@@ -1193,8 +1192,8 @@ impl<'p, 's> Checker<'p, 's> {
         Some(self.sig_return(signature))
     }
 
-    /// `getReturnTypeOfSingleNonGenericSignatureOfCallChain`. The signature is that of the type of
-    /// the callee as it is: there is none where the chain may short-circuit before the call.
+    /// `getReturnTypeOfSingleNonGenericSignatureOfCallChain`. The signature comes from the callee's
+    /// type as is, so there's none if the chain may short-circuit before the call.
     fn return_type_of_single_non_generic_signature_of_call_chain(
         &mut self,
         file: FileId,
@@ -1252,7 +1251,7 @@ impl<'p, 's> Checker<'p, 's> {
             s.candidates.len() == 1 && self.sig_type_params(s.candidates[0]).is_empty();
         s.checks_arguments_once = s.is_single_non_generic_candidate
             && matches!(node, CallLike::Call(_) | CallLike::Jsx(_))
-            // `getResolvedSignature` resets `resolutionStart` the first time only.
+            // `getResolvedSignature` resets `resolutionStart` only the first time.
             && self.resolution_start == self.stack.len()
             && self.stack.last() == Some(&Query::Call(file, call));
         let has_context_sensitive_argument = match node {
@@ -1282,7 +1281,7 @@ impl<'p, 's> Checker<'p, 's> {
         let sig = self.optional_call_signature_in_chain(file, call, sig);
         let resolved = ResolvedCall {
             sig: Some(sig),
-            // Not requested yet: see `with_return_type`.
+            // Not requested yet. See `with_return_type`.
             ret: if expects_return == ExpectsReturn::Yes {
                 TypeId::UNRESOLVED
             } else {
@@ -1297,8 +1296,8 @@ impl<'p, 's> Checker<'p, 's> {
             self.resolved_meanwhile.pop();
             // Another checker may be the one to report it.
             let reported = self.take_reported_from(since);
-            // Where `addDiagnostic` has discarded them, the entry says that
-            // `getCandidateForOverloadFailure` has deferred the call.
+            // If `addDiagnostic` discarded them, the entry still records that
+            // `getCandidateForOverloadFailure` deferred the call.
             if !reported.is_empty()
                 || self.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL
             {
@@ -1364,7 +1363,8 @@ impl<'p, 's> Checker<'p, 's> {
                     let mapper = self.mapper_from(&type_params, &filled);
                     check_candidate = self.instantiate_sig(candidate, mapper);
                 } else {
-                    let mut context = Inference::for_params(&type_params, Some(candidate));
+                    let mut context =
+                        Box::new(Inference::for_params(&type_params, Some(candidate)));
                     context.any_default = self.hir(s.file).is_js;
                     let check_mode = s.arg_check_mode | CheckMode::SKIP_GENERIC_FUNCTIONS;
                     let mapper = self.infer_type_arguments(s, candidate, check_mode, &mut context);
@@ -1433,7 +1433,7 @@ impl<'p, 's> Checker<'p, 's> {
         s: &CallState<'_>,
         signature: SigId,
         check_mode: CheckMode,
-        context: &mut Inference,
+        context: &mut Box<Inference>,
     ) -> MapperId {
         let (file, call, args) = (s.file, s.call, s.args);
         if let CallLike::Jsx(j) = s.node
@@ -1460,7 +1460,7 @@ impl<'p, 's> Checker<'p, 's> {
                         self.requested_assignment_target = None;
                         self.contextual_type(file, call, ContextFlags::SKIP_BINDING_PATTERNS)
                             != Some(contextual_type)
-                            || self.is_contextual_type_created_anew(contextual_type)
+                            || self.is_contextual_type_newly_created(contextual_type)
                     };
                     if !is_from_binding_pattern {
                         // `getMapperFromContext(cloneInferenceContext(outerContext, InferenceFlagsNoDefault))`
@@ -1549,11 +1549,11 @@ impl<'p, 's> Checker<'p, 's> {
         self.inference_mapper(context)
     }
 
-    /// Whether the call of `getContextualType` that has just returned `contextual_type` created it,
-    /// so that it is identical to the result of no other call. The contextual type of an assigned
-    /// value is `getTypeOfExpression(left)`: `checkObjectLiteral` creates a type on every call, and
-    /// `flowTypeCache` keeps it only if the check needed control flow analysis.
-    fn is_contextual_type_created_anew(&mut self, contextual_type: TypeId) -> bool {
+    /// True if the `getContextualType` call that just returned `contextual_type` created it, so no
+    /// other call returns an identical type. An assigned value's contextual type is
+    /// `getTypeOfExpression(left)`. `checkObjectLiteral` creates a type on every call, and
+    /// `flowTypeCache` only caches it if the check needed control flow analysis.
+    fn is_contextual_type_newly_created(&mut self, contextual_type: TypeId) -> bool {
         let Some((file, left)) = self.requested_assignment_target.take() else {
             return false;
         };
@@ -1561,7 +1561,7 @@ impl<'p, 's> Checker<'p, 's> {
             && self.is_checked_without_flow_analysis(file, left)
     }
 
-    /// Whether `ty` is the type of an object literal inside `within`, or is composed of one.
+    /// True if `ty` is the type of an object literal inside `within`, or is composed of one.
     fn contains_type_of_literal_in(&mut self, ty: TypeId, file: FileId, within: ExprId) -> bool {
         let object_flags = self.types().object_flags(ty);
         if !object_flags.contains(ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL) {
@@ -1590,8 +1590,8 @@ impl<'p, 's> Checker<'p, 's> {
         of == file && hir[within].pos <= hir[literal].pos && hir[literal].end <= hir[within].end
     }
 
-    /// Whether `checkExpression(e)` leaves `flowInvocationCount` as it is, whatever has been
-    /// resolved by then. `false`: that is not known.
+    /// True if `checkExpression(e)` leaves `flowInvocationCount` unchanged, whatever has been
+    /// resolved by then. False if that isn't known.
     fn is_checked_without_flow_analysis(&self, file: FileId, e: ExprId) -> bool {
         if e.is_none() {
             return false;
@@ -1607,12 +1607,12 @@ impl<'p, 's> Checker<'p, 's> {
             | ExprKind::BigInt(_)
             | ExprKind::Regex => true,
             ExprKind::Template { exprs } => exprs.is_empty(),
-            // `checkIdentifier` returns the declared type of a variable that is assigned. A
-            // declaration that precedes has been checked, so that type is resolved.
+            // `checkIdentifier` returns the declared type of a variable that's being assigned. A
+            // declaration that comes earlier has been checked, so that type is resolved.
             ExprKind::Ident(_) => {
-                let symbol = bound.expr_symbol[e.idx()];
+                let symbol = bound.symbol_of_expr(e);
                 symbol.is_some() && self.target_kind(file, e).definite && {
-                    let declarations = &bound.symbols[symbol.idx()].decls;
+                    let declarations = bound.symbol(symbol).decls;
                     !declarations.is_empty()
                         && declarations.iter().all(|&declaration| {
                             matches!(declaration, Decl::Var(name) | Decl::Param(name)
@@ -1664,7 +1664,7 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         arg: Arg,
         contextual_type: TypeId,
-        inference_context: Option<&mut Inference>,
+        inference_context: Option<&mut Box<Inference>>,
         check_mode: CheckMode,
     ) -> TypeId {
         let (ty, node) = match arg {
@@ -1678,8 +1678,8 @@ impl<'p, 's> Checker<'p, 's> {
                     check_mode,
                 );
             }
-            // `checkSyntheticExpression`. `checkConstEnumAccess`: its parent permits no `const`
-            // enum, and `IsValidTypeOnlyAliasUseSite` holds for it.
+            // `checkSyntheticExpression`. `checkConstEnumAccess`: its parent doesn't permit a
+            // `const` enum, and `IsValidTypeOnlyAliasUseSite` holds for it.
             Arg::Type(ty, _, node) | Arg::Spread(ty, _, _, node) => {
                 if self.is_const_enum_object(ty) {
                     self.error(file, node, 2475, &[]);
@@ -1692,13 +1692,8 @@ impl<'p, 's> Checker<'p, 's> {
                 node,
             ),
         };
-        // FOR SPEED: `instantiateTypeWithSingleGenericCallSignature` returns `ty`, which is not a
-        // fresh literal type.
-        if inference_context.is_none() && !check_mode.contains(CheckMode::SKIP_GENERIC_FUNCTIONS) {
-            return ty;
-        }
-        // A synthetic expression is no node here: what is pushed for it is pushed for the node it
-        // is positioned at, in which nothing is checked meanwhile.
+        // A synthetic expression isn't a node here. Whatever is pushed for it is pushed for the
+        // node it's positioned at, in which nothing is checked meanwhile.
         let contextual_type = self.without_no_infer(contextual_type);
         self.push_contextual_type(file, node, Some(contextual_type), false);
         let ty = self.check_with_inference_context(
@@ -1732,7 +1727,7 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// `cloneInferenceContext`. `no_default`: `InferenceFlagsNoDefault` besides.
+    /// `cloneInferenceContext`. `no_default` adds `InferenceFlagsNoDefault`.
     fn clone_inference_context(n: &Inference, no_default: bool) -> Inference {
         let mut clone = Inference::for_params(&n.params, n.sig);
         clone.candidates.clone_from(&n.candidates);
@@ -1822,8 +1817,8 @@ impl<'p, 's> Checker<'p, 's> {
         self.types().intern_sig(SigData::WithReturn { sig, ret })
     }
 
-    /// `addImplementationSuccessElaboration`: the implementation of the overload `failed`, if
-    /// `chooseOverload` accepts it.
+    /// `addImplementationSuccessElaboration`: returns the implementation of the overload `failed`,
+    /// if `chooseOverload` accepts it.
     pub(super) fn add_implementation_success_elaboration(
         &mut self,
         s: &CallState<'_>,
@@ -1838,7 +1833,7 @@ impl<'p, 's> Checker<'p, 's> {
             FnOwner::Member(member) => bound.member_symbol[member.idx()],
             _ => bound.fn_symbol[func.idx()],
         };
-        let declarations = &bound.symbols.get(symbol.idx())?.decls;
+        let declarations = bound.symbols.get(symbol.idx())?.decls;
         if declarations.len() < 2 {
             return None;
         }
@@ -1876,7 +1871,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if matches!(hir[call].kind, ExprKind::TaggedTemplate(_)) {
                     let strings = self.global_ref_checked(known::TemplateStringsArray, &[]);
                     let no_label = LabeledDeclaration::NONE;
-                    args.insert(0, Arg::Type(strings, no_label, hir[id].template));
+                    args.insert(0, Arg::Type(strings, no_label, hir.template_of(id)));
                 }
                 args
             }
@@ -1952,7 +1947,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !type_args.is_empty() {
             // `getTypeArgumentsFromNodes`: excess type arguments are dropped. A missing one is the
             // default of its type parameter, or its constraint, as declared.
-            let outer = self.mapper_around_sig(candidate);
+            let outer = self.outer_mapper_of_sig(candidate);
             let mut filled: Vec<TypeId> =
                 type_args.iter().copied().take(type_params.len()).collect();
             for &param in &type_params[filled.len()..] {
@@ -1962,13 +1957,13 @@ impl<'p, 's> Checker<'p, 's> {
                         .constraint_of_type_param(param)
                         .unwrap_or(TypeId::UNKNOWN),
                 };
-                filled.push(self.filled_in_around(param, ty, outer));
+                filled.push(self.with_outer_type_arguments(param, ty, outer));
             }
             let mapper = self.mapper_from(&type_params, &filled);
             return self.instantiate_sig(candidate, mapper);
         }
         // `inferSignatureInstantiationForOverloadFailure`
-        let mut context = Inference::for_params(&type_params, Some(candidate));
+        let mut context = Box::new(Inference::for_params(&type_params, Some(candidate)));
         context.any_default = self.hir(s.file).is_js;
         let check_mode = CheckMode::SKIP_CONTEXT_SENSITIVE | CheckMode::SKIP_GENERIC_FUNCTIONS;
         let mapper = self.infer_type_arguments(s, candidate, check_mode, &mut context);
@@ -2045,7 +2040,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let returns: Vec<TypeId> = sigs.iter().map(|&sig| self.sig_return(sig)).collect();
         let ret = self.intersection(&returns);
-        // It has the declaration of the first of them.
+        // It has the first signature's declaration.
         self.types().intern_sig(SigData::Synth {
             type_params: ArenaBox::empty(),
             params: self.list(&params),
@@ -2069,7 +2064,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getInstantiationExpressionType`, `f<Args>` without a call: `ty` restricted to the
-    /// signatures that accept that many type arguments, instantiated with them. `node`: its node,
+    /// signatures that accept that many type arguments, instantiated with them. `node` is its node,
     /// which the created object types store.
     pub fn with_type_arguments(
         &mut self,
@@ -2125,8 +2120,9 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `node.TypeArgumentList() != nil && len(node.TypeArguments()) == 0` for the `ImportType`
-    /// `node`, which then ends with `<>`: the position of the `<`. `TypeNodeKind::Import` is as
-    /// large as a `TypeNodeKind` may be, so it has no `has_type_arguments` as `Typeof` has.
+    /// `node`, which then ends with `<>`. Returns the position of the `<`. `TypeNodeKind::Import`
+    /// is already as large as a `TypeNodeKind` may be, so unlike `Typeof` it has no
+    /// `has_type_arguments`.
     pub(super) fn empty_type_argument_list_of_import_type(
         &self,
         file: FileId,
@@ -2141,7 +2137,9 @@ impl<'p, 's> Checker<'p, 's> {
     fn type_argument_nodes(&self, node: InstantiationExpression) -> (FileId, IdList<TypeNodeId>) {
         match node {
             InstantiationExpression::Expr(file, e) => match self.hir(file)[e].kind {
-                ExprKind::Instantiation { type_args, .. } => (file, type_args),
+                ExprKind::Instantiation { type_args, .. } => {
+                    (file, self.hir(file).list_at(type_args))
+                }
                 _ => (file, IdList::default()),
             },
             InstantiationExpression::TypeNode(file, node) => match self.hir(file)[node].kind {
@@ -2207,7 +2205,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !members.has_signatures() {
             return ty;
         }
-        // Also returns whether the result is `sigs` (`core.Same`).
+        // Also returns true if the result equals `sigs` (`core.Same`).
         let actual = |c: &mut Self, sigs: &[SigId]| -> (ArenaVec<'s, SigId>, bool) {
             let mut out = ArenaVec::new_in(c.arena);
             let mut is_same = true;
@@ -2256,13 +2254,14 @@ impl<'p, 's> Checker<'p, 's> {
             construct,
             index,
             instantiation_expression: Some(node),
+            created_from: Some((ty, TypeId::NEVER)),
             mapper,
             ..Shape::new_in(self.arena)
         })
     }
 
-    /// The symbol that the signature `func` declares and the enclosing block or type of `func`.
-    /// `before`: the same for another signature.
+    /// Returns the symbol that the signature `func` declares and `func`'s enclosing block or type.
+    /// `before` is the same pair for another signature.
     fn sig_home(
         &self,
         file: FileId,
@@ -2278,7 +2277,7 @@ impl<'p, 's> Checker<'p, 's> {
                 });
                 (
                     SigSymbol::Function(symbol),
-                    SigParent::Block(file, bound.stmt_parent[stmt.idx()]),
+                    SigParent::Block(file, bound.parent_of_stmt(stmt)),
                 )
             }
             FnOwner::Member(member) => {
@@ -2315,8 +2314,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `SignatureFlagsHasLiteralTypes`: the type node of a parameter, of which `this` is one, is a
-    /// `LiteralType`. A `ParenthesizedType` around one is not.
+    /// `SignatureFlagsHasLiteralTypes`: some parameter's type node is a `LiteralType`. `this`
+    /// counts as a parameter. A `ParenthesizedType` around a `LiteralType` doesn't count.
     fn has_literal_types(&self, file: FileId, func: FnId) -> bool {
         let hir = self.hir(file);
         let this = hir[func].this_param.some();
@@ -2338,8 +2337,8 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The signature whose declaration `sig` has (`Signature.declaration`).
-    /// `getDefaultConstructSignatures` clones or instantiates the signatures of the base class:
-    /// both preserve the declaration, and whether the signature has literal types.
+    /// `getDefaultConstructSignatures` clones or instantiates the base class's signatures. Both
+    /// preserve the declaration and whether the signature has literal types.
     pub(super) fn declared_sig(&mut self, sig: SigId) -> SigId {
         let mut sig = self.types().sig_origin(sig);
         for _ in 0..64 {
@@ -2352,7 +2351,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `reorderCandidates`: the order in which overloads are tried. For a symbol with several
-    /// declaration sites, the signatures of a later site go first; signatures with literal types go
+    /// declaration sites, the signatures of a later site go first. Signatures with literal types go
     /// before all others.
     pub(super) fn candidates_in_order(&mut self, sigs: &[SigId]) -> List<'p, SigId> {
         let first = match *sigs {
@@ -2361,40 +2360,40 @@ impl<'p, 's> Checker<'p, 's> {
             [first, ..] => first,
         };
         let p = self.p;
-        let kept = p.candidate_orders.get_ref(&self.task, &first);
-        if let Some(kept) = kept
-            && let Some(ordered) = Self::cached_candidate_order(kept, sigs)
+        let cached = p.candidate_orders.get_ref(&self.task, &first);
+        if let Some(cached) = cached
+            && let Some(ordered) = Self::cached_candidate_order(cached, sigs)
         {
-            return List::Kept(ordered);
+            return List::Permanent(ordered);
         }
         let scope = self.begin_scope();
         let ordered = self.candidates_in_order_uncached(sigs);
         let ended = self.end_scope_by_counters(scope);
         // One list is cached per signature.
-        if kept.is_none()
+        if cached.is_none()
             && let Ok(stored) = ended
         {
             let both = self.list_of(sigs.iter().chain(&ordered).copied());
-            let kept = (p.candidate_orders)
+            let cached = (p.candidate_orders)
                 .insert_ref(&self.task, first, both, stored)
                 .1;
             // The entry that remains cached may be a different list with the same first signature.
-            if let Some(ordered) = Self::cached_candidate_order(kept, sigs) {
-                return List::Kept(ordered);
+            if let Some(ordered) = Self::cached_candidate_order(cached, sigs) {
+                return List::Permanent(ordered);
             }
         }
         List::Own(ordered.into_vec())
     }
 
-    /// The second half of an entry of `candidate_orders`, if the first half is `sigs`.
-    fn cached_candidate_order<'a>(kept: &'a [SigId], sigs: &[SigId]) -> Option<&'a [SigId]> {
-        let (of, ordered) = kept.split_at(kept.len() / 2);
+    /// Returns the second half of an entry of `candidate_orders`, if the first half is `sigs`.
+    fn cached_candidate_order<'a>(cached: &'a [SigId], sigs: &[SigId]) -> Option<&'a [SigId]> {
+        let (of, ordered) = cached.split_at(cached.len() / 2);
         (of == sigs).then_some(ordered)
     }
 
     fn candidates_in_order_uncached(&mut self, sigs: &[SigId]) -> Sigs {
         let mut result = Sigs::with_capacity(sigs.len());
-        let mut last: Option<(Option<SigSymbol>, Option<SigParent>)> = None;
+        let mut last: Option<(SigSymbol, SigParent)> = None;
         let (mut cutoff, mut index, mut specialized) = (0usize, 0usize, 0usize);
         for &sig in sigs {
             // A clone has the declaration of its original (`Signature.declaration`).
@@ -2405,31 +2404,16 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 _ => None,
             };
-            let before = match last {
-                Some((Some(symbol), Some(parent))) => Some((symbol, parent)),
-                _ => None,
-            };
-            let (symbol, parent) = match declaration {
-                Some((file, func)) => {
-                    let (symbol, parent) = self.sig_home(file, func, before);
-                    (Some(symbol), Some(parent))
-                }
-                None => (None, None),
-            };
-            match &last {
-                Some((last_symbol, last_parent))
-                    if last_symbol.is_some() && *last_symbol != symbol =>
-                {
-                    let _ = last_parent;
+            let home = declaration.map(|(file, func)| self.sig_home(file, func, last));
+            match last {
+                Some((last_symbol, _)) if Some(last_symbol) != home.map(|it| it.0) => {
                     cutoff = result.len();
                     index = cutoff;
                 }
-                Some((_, last_parent)) if last_parent.is_some() && *last_parent == parent => {
-                    index += 1
-                }
+                Some((_, last_parent)) if Some(last_parent) == home.map(|it| it.1) => index += 1,
                 _ => index = cutoff,
             }
-            last = Some((symbol, parent));
+            last = home;
             let at = if declaration.is_some_and(|(file, func)| self.has_literal_types(file, func)) {
                 specialized += 1;
                 cutoff += 1;
@@ -2462,43 +2446,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.end_recheck(outer);
         self.inference_contexts.pop();
         self.pop_contextual_type();
-        ty
-    }
-
-    /// `checkExpressionWithContextualType(arg, paramType, nil, checkMode)`, as
-    /// `isSignatureApplicable` calls it for every candidate, pass and relation. tsgo rechecks every
-    /// time. The result depends only on the argument, `param` and the mode, so a literal is checked
-    /// once per combination. Not one that is being checked already: `findContextualNode` finds what
-    /// was pushed for it then, not `param`.
-    pub(super) fn arg_type_under(
-        &mut self,
-        file: FileId,
-        arg: Arg,
-        param: TypeId,
-        check_mode: CheckMode,
-    ) -> TypeId {
-        let Arg::Expr(e) = arg else {
-            return self.check_argument(file, arg, param, None, check_mode);
-        };
-        let param = self.without_no_infer(param);
-        if !matches!(
-            self.hir(file)[e].kind,
-            ExprKind::Object(_) | ExprKind::Array(_)
-        ) || self.find_contextual_node(file, e, true).is_some()
-        {
-            return self.check_expression_with_contextual_type(file, e, param, None, check_mode);
-        }
-        let key = (file, e, param, check_mode.bits());
-        if let Some(&known) = self.literals_checked_under.get(&key) {
-            return known;
-        }
-        let cycles = self.cycles;
-        let ty = self.check_expression_with_contextual_type(file, e, param, None, check_mode);
-        // A result that depends on a circular query is only provisional. So is what the check
-        // leaves behind after one: `context_checked_under`. The next check has to leave it again.
-        if self.cycles == cycles && !self.is_innermost_tainted() {
-            self.literals_checked_under.insert(key, ty);
-        }
         ty
     }
 
@@ -2537,7 +2484,7 @@ impl<'p, 's> Checker<'p, 's> {
         args: &[Arg],
         index: usize,
         rest: TypeId,
-        mut context: Option<&mut Inference>,
+        mut context: Option<&mut Box<Inference>>,
         check_mode: CheckMode,
     ) -> TypeId {
         let is_const = self.is_const_type_variable(rest, 0);
@@ -2622,7 +2569,7 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => flag,
             });
         }
-        // For a `const` type parameter it is readonly, unless `rest` may be a mutable array type
+        // For a `const` type parameter it's readonly, unless `rest` may be a mutable array type
         // (`isMutableArrayLikeType`).
         let mut readonly = is_const;
         if is_const {
@@ -2645,17 +2592,21 @@ impl<'p, 's> Checker<'p, 's> {
             .unwrap_or(TypeId::UNKNOWN)
     }
 
-    /// `ty`, the constraint or default of the type parameter `param`, instantiated with the outer
-    /// type arguments of the signature `param` belongs to (`outer`). For a clone
-    /// (`cloneTypeParameter`) that is already done.
-    pub(super) fn filled_in_around(
+    /// Returns `ty`, the constraint or default of the type parameter `param`, instantiated with the
+    /// outer type arguments of the signature `param` belongs to (`outer`). For a clone
+    /// (`cloneTypeParameter`) that's already done.
+    pub(super) fn with_outer_type_arguments(
         &mut self,
         param: TypeId,
         ty: TypeId,
         outer: MapperId,
     ) -> TypeId {
         match *self.data(param) {
-            TypeData::TypeParam(_, _, around) if around != MapperId::IDENTITY => ty,
+            TypeData::TypeParam(_, _, enclosing_mapper)
+                if enclosing_mapper != MapperId::IDENTITY =>
+            {
+                ty
+            }
             _ => self.instantiate(ty, outer),
         }
     }
@@ -2676,7 +2627,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.optional(ret)
     }
 
-    /// `getOptionalCallSignature(sig, callChainFlags)` for the call `call`: `sig` itself where
+    /// `getOptionalCallSignature(sig, callChainFlags)` for the call `call`. Returns `sig` itself if
     /// `callChainFlags` is `SignatureFlagsNone`.
     fn optional_call_signature_in_chain(
         &mut self,
@@ -2701,12 +2652,12 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getThisArgumentType`: the type of the object the method is accessed on, given that the
-    /// chain has reached it. `void` if there is no such object.
+    /// chain has reached it. `void` if there's no such object.
     pub(super) fn this_argument_type(&mut self, file: FileId, this_arg: Option<ExprId>) -> TypeId {
         let Some(this_arg) = this_arg else {
             return TypeId::VOID;
         };
-        let chain = match self.bound(file).expr_parent[this_arg.idx()] {
+        let chain = match self.bound(file).parent_of_expr(this_arg) {
             Parent::Expr(access) => match self.hir(file)[access].kind {
                 ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain,
                 _ => Chain::No,
@@ -2718,11 +2669,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getDefaultFromTypeParameter(param) != nil`
     pub(super) fn has_default(&mut self, param: TypeId) -> bool {
-        if let TypeData::TypeParam(file, tp, around) = *self.data(param)
-            && around != MapperId::IDENTITY
+        if let TypeData::TypeParam(file, tp, enclosing_mapper) = *self.data(param)
+            && enclosing_mapper != MapperId::IDENTITY
         {
             // A clone has one if the declared type parameter does. No instantiation is requested
-            // for one that references no type parameter or is itself a type parameter.
+            // for a default that doesn't reference a type parameter or is itself a type parameter.
             let declared = self.type_param(file, tp);
             match self.default_of_type_param(declared) {
                 None => return false,
@@ -2741,7 +2692,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.default_of_type_param(param).is_some()
     }
 
-    /// `ty` without `true` and `false`, if both are in it.
+    /// Returns `ty` without `true` and `false`, if both are in it.
     pub(super) fn without_boolean(&mut self, ty: TypeId) -> TypeId {
         if let TypeData::Union(parts) = self.data(ty)
             && parts.contains(&TypeId::TRUE)
@@ -2753,8 +2704,8 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `resolveCallExpression` up to the test under `CheckModeSkipGenericFunctions`, as
-    /// `getResolvedSignature` calls it: the callee is checked with `resolvingSignature` in place and
-    /// the resolution stack reset. Returns whether the call is deferred.
+    /// `getResolvedSignature` calls it: the callee is checked with `resolvingSignature` in place
+    /// and the resolution stack reset. Returns true if the call is deferred.
     pub(super) fn defers_call_of_generic_function(&mut self, file: FileId, e: ExprId) -> bool {
         let is_in_progress = self
             .stack
@@ -2804,15 +2755,15 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `checkExpressionWithContextualType`: `pushContextualType`, `pushInferenceContext`,
-    /// `checkExpression`, which is not memoised, and the two pops. What tsgo caches for the nodes
-    /// inside `e` is cached: `resolvedSignature`, `NodeCheckFlagsContextChecked`.
+    /// `checkExpression` (which isn't memoized), and the two pops. Whatever tsgo caches for the
+    /// nodes inside `e` is cached here too: `resolvedSignature`, `NodeCheckFlagsContextChecked`.
     /// `inference_context` is moved into `inference_contexts` for the duration of the check.
     pub(super) fn check_expression_with_contextual_type(
         &mut self,
         file: FileId,
         e: ExprId,
         contextual_type: TypeId,
-        inference_context: Option<&mut Inference>,
+        inference_context: Option<&mut Box<Inference>>,
         check_mode: CheckMode,
     ) -> TypeId {
         self.push_contextual_type(file, e, Some(contextual_type), false);
@@ -2828,13 +2779,13 @@ impl<'p, 's> Checker<'p, 's> {
         ty
     }
 
-    /// `pushInferenceContext`, `checkExpressionEx`, which is not memoised, `popInferenceContext`.
+    /// `pushInferenceContext`, `checkExpressionEx` (which isn't memoized), `popInferenceContext`.
     pub(super) fn check_with_inference_context(
         &mut self,
         file: FileId,
         e: ExprId,
         contextual_type: TypeId,
-        inference_context: Option<&mut Inference>,
+        inference_context: Option<&mut Box<Inference>>,
         check_mode: CheckMode,
         check: impl FnOnce(&mut Self, CheckMode) -> TypeId,
     ) -> TypeId {
@@ -2845,18 +2796,18 @@ impl<'p, 's> Checker<'p, 's> {
         self.pop_inference_context(file, e, contextual_type, inference_context, outside, ty)
     }
 
-    /// `pushInferenceContext`: moves `inference_context` into `inference_contexts` and begins a
-    /// check that is not memoised. Returns the mode of that check, and the argument for
+    /// `pushInferenceContext`: moves `inference_context` into `inference_contexts` and starts a
+    /// check that isn't memoized. Returns the mode of that check, and the argument for
     /// `pop_inference_context`.
     fn push_inference_context(
         &mut self,
         file: FileId,
         e: ExprId,
-        inference_context: Option<&mut Inference>,
+        inference_context: Option<&mut Box<Inference>>,
         check_mode: CheckMode,
     ) -> (CheckMode, OutsideInferenceContext) {
-        let context = inference_context
-            .map(|inference| std::mem::replace(inference, Inference::for_params(&[], None)));
+        let context =
+            inference_context.map(|inference| std::mem::replace(inference, self.spare_inference()));
         let mut check_mode = check_mode | CheckMode::CONTEXTUAL;
         if context.is_some() {
             check_mode |= CheckMode::INFERENTIAL;
@@ -2868,32 +2819,30 @@ impl<'p, 's> Checker<'p, 's> {
         });
         let outside = OutsideInferenceContext {
             mode_of_recheck: std::mem::replace(&mut self.mode_of_recheck, check_mode),
-            // A result computed under one pushed contextual type is not valid under another, or
+            // A result computed under one pushed contextual type isn't valid under another, or
             // under none.
-            rechecked_exprs: std::mem::take(&mut self.rechecked_exprs),
-            rechecked_members: std::mem::take(&mut self.rechecked_members),
+            rechecked: self.set_rechecked_aside(),
             recheck: self.begin_recheck(),
         };
         (check_mode, outside)
     }
 
-    /// `popInferenceContext`: ends the check that `push_inference_context` began, which found `ty`,
-    /// and moves the context back into `inference_context`. Returns `ty`, without its freshness if
-    /// `contextual_type` is a context for literals.
+    /// `popInferenceContext`: ends the check that `push_inference_context` started, whose result is
+    /// `ty`, and moves the context back into `inference_context`. Returns `ty`, without its
+    /// freshness if `contextual_type` is a context for literals.
     fn pop_inference_context(
         &mut self,
         file: FileId,
         e: ExprId,
         contextual_type: TypeId,
-        inference_context: Option<&mut Inference>,
+        inference_context: Option<&mut Box<Inference>>,
         outside: OutsideInferenceContext,
         ty: TypeId,
     ) -> TypeId {
         self.end_recheck(outside.recheck);
-        self.rechecked_exprs = outside.rechecked_exprs;
-        self.rechecked_members = outside.rechecked_members;
+        self.restore_rechecked(outside.rechecked);
         self.mode_of_recheck = outside.mode_of_recheck;
-        let is_literal_of_contextual_type = self.maybe_type_of_kind(ty, Self::is_literal) && {
+        let is_literal_of_contextual_type = self.maybe_type_of_kind(ty, tf::LITERAL) && {
             let instantiated =
                 self.instantiate_contextual_type(contextual_type, file, e, ContextFlags::empty());
             self.is_literal_context(ty, instantiated)
@@ -2906,12 +2855,14 @@ impl<'p, 's> Checker<'p, 's> {
         let lent = self.inference_contexts.pop().and_then(|info| info.context);
         if let (Some(inference), Some(mut lent)) = (inference_context, lent) {
             lent.intra_expression_inference_sites.clear();
-            *inference = lent;
+            // The placeholder was never used, so it's still empty and can be reused.
+            self.spare_inferences
+                .push(std::mem::replace(inference, lent));
         }
         ty
     }
 
-    /// `getSingleSignature`: the single call (or construct) signature of `ty`, if there is none of
+    /// `getSingleSignature`: the single call (or construct) signature of `ty`, if it has none of
     /// the other kind.
     pub(super) fn single_signature(
         &mut self,
@@ -2945,7 +2896,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.single_signature(ty, SignatureKind::Call, AllowMembers::No)
     }
 
-    /// `getSingleCallOrConstructSignature`, and whether it is a construct signature.
+    /// `getSingleCallOrConstructSignature`. Also returns true if it's a construct signature.
     pub(super) fn single_call_or_construct_signature(
         &mut self,
         ty: TypeId,
@@ -2977,8 +2928,9 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// `instantiateSignatureInContextOf`. `with_result`: inferences are also made from the return
-    /// type of `expected`, at a lower priority than from its parameters. `compare`: `compareTypes`.
+    /// `instantiateSignatureInContextOf`. With `with_result`, inferences are also made from
+    /// `expected`'s return type, at a lower priority than from its parameters. `compare` is
+    /// `compareTypes`.
     pub(super) fn instantiate_sig_in_context(
         &mut self,
         sig: SigId,
@@ -2987,7 +2939,7 @@ impl<'p, 's> Checker<'p, 's> {
         compare: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> bool,
     ) -> SigId {
         let mut inference = Inference::for_params(&self.sig_type_params(sig), Some(sig));
-        inference.around_source = self.mapper_around_sig(expected);
+        inference.source_outer_mapper = self.outer_mapper_of_sig(expected);
         for (source, target) in self.parameter_type_pairs(expected, sig) {
             self.infer(&mut inference, source, target, 0);
         }
@@ -3010,8 +2962,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mapper = self.inference_mapper_comparing(&inference, compare);
         let instantiated = self.instantiate_sig(sig, mapper);
-        // `getSignatureInstantiation` erases the type parameters. One that is a clone and is inferred to be itself
-        // (`wrap(id)` where `Id<string>` is both the type of `id` and what is expected) leaves the mapper as it is.
+        // `getSignatureInstantiation` erases the type parameters. One that's a clone and is inferred to be itself
+        // (`wrap(id)` where `Id<string>` is both the type of `id` and what is expected) leaves the mapper unchanged.
         if self.sig_type_params(instantiated).is_empty() {
             instantiated
         } else {
@@ -3021,52 +2973,56 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The name of the type parameter `param`: the name `unique_type_params` gave it, or else the declared name.
     pub fn type_param_name(&self, param: TypeId) -> Option<Atom> {
-        let TypeData::TypeParam(file, tp, around) = *self.data(param) else {
+        let TypeData::TypeParam(file, tp, enclosing_mapper) = *self.data(param) else {
             return None;
         };
         let declared = self.hir(file)[tp].name;
         Some(
-            self.new_type_param_name(declared, around)
+            self.new_type_param_name(declared, enclosing_mapper)
                 .unwrap_or(declared),
         )
     }
 
-    /// The name that the mapper `around` of a clone gives the type parameter declared as
-    /// `declared`: see `unique_type_params`.
-    pub(super) fn new_type_param_name(&self, declared: Atom, around: MapperId) -> Option<Atom> {
-        if around == MapperId::IDENTITY {
+    /// The name that a clone's `enclosing_mapper` gives the type parameter declared as `declared`.
+    /// See `unique_type_params`.
+    pub(super) fn new_type_param_name(
+        &self,
+        declared: Atom,
+        enclosing_mapper: MapperId,
+    ) -> Option<Atom> {
+        if enclosing_mapper == MapperId::IDENTITY {
             return None;
         }
-        let renamed = (self.types()).map(around, self.string_literal(declared, true))?;
+        let renamed = (self.types()).map(enclosing_mapper, self.string_literal(declared, true))?;
         match *self.data(renamed) {
             TypeData::StringLit { value, .. } => Some(value),
             _ => None,
         }
     }
 
-    /// Whether `param` has a symbol of its own, without declarations
-    /// (`newSymbol(SymbolFlagsTypeParameter, name)`), and so none of the modifiers of the type
-    /// parameter it is a clone of.
+    /// True if `param` has its own symbol, without declarations
+    /// (`newSymbol(SymbolFlagsTypeParameter, name)`), and therefore none of the modifiers of the
+    /// type parameter it was cloned from.
     pub(super) fn is_renamed_type_param(&self, param: TypeId) -> bool {
-        matches!(*self.data(param), TypeData::TypeParam(file, tp, around)
-            if self.new_type_param_name(self.hir(file)[tp].name, around).is_some())
+        matches!(*self.data(param), TypeData::TypeParam(file, tp, enclosing_mapper)
+            if self.new_type_param_name(self.hir(file)[tp].name, enclosing_mapper).is_some())
     }
 
     /// `newTypeParameter(newSymbol(SymbolFlagsTypeParameter, name))`. Type parameters without a
-    /// declaration cannot be represented: it is a clone of `param`, renamed the way
-    /// `unique_type_params` renames. `serial` distinguishes it from the other clones of `param`: it
-    /// is a mapper entry like the one for the name.
+    /// declaration can't be represented, so this is a clone of `param`, renamed the way
+    /// `unique_type_params` renames. `serial` distinguishes it from `param`'s other clones. It's
+    /// stored as a mapper entry, like the name.
     pub(super) fn renamed_type_param(
         &self,
         param: TypeId,
         name: Atom,
         serial: usize,
     ) -> Option<TypeId> {
-        let TypeData::TypeParam(file, tp, around) = *self.data(param) else {
+        let TypeData::TypeParam(file, tp, enclosing_mapper) = *self.data(param) else {
             return None;
         };
         let declared = self.string_literal(self.hir(file)[tp].name, true);
-        let mut pairs = self.types().mapping(around).to_vec();
+        let mut pairs = self.types().mapping(enclosing_mapper).to_vec();
         pairs.retain(|pair| pair.0 != declared);
         pairs.push((declared, self.string_literal(name, false)));
         let serial = self.number_literal(serial as f64, true);
@@ -3074,16 +3030,20 @@ impl<'p, 's> Checker<'p, 's> {
         Some(self.cloned_type_param(file, tp, self.types().mapper(pairs)))
     }
 
-    /// `getUniqueTypeParameters`: `own`, with a renamed clone for each type parameter whose name occurs in `inferred` or earlier in
-    /// `own`. The mapper of a renamed clone (`cloneTypeParameter`) maps the fresh string literal type of the declared name to the string
-    /// literal type of the new name. Instantiation only looks up type parameters, so that entry never reaches a type.
-    /// A type parameter that keeps its declared name stays as it is: its constraint and its default name the old siblings.
-    /// `clone_mapper` resolves the renamed siblings of a clone (those of the same function, class or interface with the same mapper)
-    /// with the mapper of the clone, so one that an earlier call renamed is cloned again with the same mapper.
-    /// `None`: the renamed clones cannot be represented.
-    /// `serial`: of the argument. Each call of `getUniqueTypeParameters` makes type parameters of
-    /// its own, with nothing resolved yet: the clones of one argument are distinct from those of
-    /// every other (`renamed_type_param`).
+    /// `getUniqueTypeParameters`: returns `own`, with a renamed clone for each type parameter whose
+    /// name occurs in `inferred` or earlier in `own`. A renamed clone's mapper
+    /// (`cloneTypeParameter`) maps the fresh string literal type of the declared name to the string
+    /// literal type of the new name. Instantiation only looks up type parameters, so that entry
+    /// never reaches a type.
+    /// A type parameter that keeps its declared name stays unchanged. Its constraint and its
+    /// default refer to the old siblings.
+    /// `clone_mapper` resolves a clone's renamed siblings (those of the same function, class or
+    /// interface with the same mapper) with the clone's mapper, so one that an earlier call renamed
+    /// is cloned again with the same mapper.
+    /// Returns `None` if the renamed clones can't be represented.
+    /// `serial` identifies the argument. Each `getUniqueTypeParameters` call creates its own type
+    /// parameters, with nothing resolved yet, so one argument's clones are distinct from every
+    /// other argument's (`renamed_type_param`).
     pub(super) fn unique_type_params(
         &self,
         inferred: &[TypeId],
@@ -3132,11 +3092,12 @@ impl<'p, 's> Checker<'p, 's> {
         if renames.is_empty() {
             return Some(own.to_vec());
         }
-        // The entries are keyed by declared name, so only siblings share them. The type parameters of a signature are those of a
-        // function, or of the class or interface that a construct signature belongs to: `clone_mapper` knows their siblings.
+        // The entries are keyed by declared name, so only siblings share them. The type parameters of a signature are
+        // those of a function, or of the class or interface that a construct signature belongs to. `clone_mapper` knows
+        // their siblings.
         let mut sibling_sets: Vec<(FileId, ScopeId, MapperId)> = Vec::with_capacity(own.len());
         for &param in own {
-            let TypeData::TypeParam(file, tp, around) = *self.data(param) else {
+            let TypeData::TypeParam(file, tp, enclosing_mapper) = *self.data(param) else {
                 return None;
             };
             let scope = self.bound(file).type_param_scope[tp.idx()];
@@ -3148,11 +3109,11 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 return None;
             }
-            sibling_sets.push((file, scope, around));
+            sibling_sets.push((file, scope, enclosing_mapper));
         }
         let mut unique = Vec::with_capacity(own.len());
         for (i, &param) in own.iter().enumerate() {
-            let TypeData::TypeParam(file, tp, around) = *self.data(param) else {
+            let TypeData::TypeParam(file, tp, enclosing_mapper) = *self.data(param) else {
                 return None;
             };
             let renames_of_siblings: SmallVec<[(TypeId, TypeId); 4]> = renames
@@ -3166,7 +3127,7 @@ impl<'p, 's> Checker<'p, 's> {
                 unique.push(param);
                 continue;
             }
-            let mut pairs = self.types().mapping(around).to_vec();
+            let mut pairs = self.types().mapping(enclosing_mapper).to_vec();
             pairs.retain(|pair| !renames_of_siblings.iter().any(|rename| rename.0 == pair.0));
             pairs.extend(renames_of_siblings.iter().copied());
             let serial = self.number_literal(serial as f64, true);
@@ -3179,8 +3140,8 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `instantiateInstantiableTypes`: instantiates the instantiable types, including those inside
-    /// a union or an intersection. Object types are left unchanged. `mapper_for`: the mapper, for
-    /// what a type mentions.
+    /// a union or an intersection. Object types are left unchanged. `mapper_for` returns the mapper
+    /// for what a type mentions.
     pub(super) fn instantiate_instantiable_types(
         &mut self,
         ty: TypeId,
@@ -3212,8 +3173,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// `inferFromAnnotatedParametersAndReturn`: infers to the type parameters in `contextual`, the
     /// contextual signature of `func`, from the parameter annotations of `func`, up to a rest
     /// parameter, and from its return type annotation.
-    /// `level`: the inference context. It stays in `inference_contexts` while an annotation is
-    /// resolved, which can ask `getContextualSignature` of `func` again.
+    /// `level` is the inference context's index. The context stays in `inference_contexts` while an
+    /// annotation is resolved, which can call `getContextualSignature` for `func` again.
     pub(super) fn infer_from_annotated_parameters_and_return(
         &mut self,
         file: FileId,
@@ -3231,7 +3192,7 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             let mut source = self.type_from_node(file, hir[p].ty);
-            // `isOptionalDeclaration`: with a `?`. A default does not count.
+            // `isOptionalDeclaration`: with a `?`. A default doesn't count.
             if hir[p].flags.contains(Flags::OPTIONAL) {
                 source = self.optional(source);
             }
@@ -3255,13 +3216,14 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<TypeId> {
         if self.iife_resolving.contains(&(file, call)) {
             // `anySignature`: the contextual type is `any`.
+            self.note_state_was_read();
             return Some(TypeId::ANY);
         }
         let pulls = self.pulls_contextual_types();
-        // An immediately invoked function provides no contextual type for an unannotated parameter:
-        // the parameter is typed from its argument (`getContextuallyTypedParameterType` checks the
-        // argument under `anySignature`). Once the call is resolved the parameter has that type,
-        // and it is the contextual type like any other.
+        // An immediately invoked function provides no contextual type for an unannotated parameter,
+        // because the parameter is typed from its argument (`getContextuallyTypedParameterType`
+        // checks the argument under `anySignature`). Once the call is resolved the parameter has
+        // that type, and it's the contextual type like any other.
         let hir = self.hir(file);
         if !pulls
             && let ExprKind::Call(c) = hir[call].kind
@@ -3286,7 +3248,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (id, offset) = match hir[call].kind {
             ExprKind::Call(id) | ExprKind::New(id) => (id, 0),
             ExprKind::TaggedTemplate(id) => {
-                // `getEffectiveCallArguments` asks for their type, whatever the tag is.
+                // `getEffectiveCallArguments` requests their type, whatever the tag is.
                 self.global_ref_checked(known::TemplateStringsArray, &[]);
                 (id, 1)
             }
@@ -3302,8 +3264,8 @@ impl<'p, 's> Checker<'p, 's> {
             )?;
         }
         let index = index + offset;
-        // `resolvingSignature`. FOR SPEED the stack is not searched for a cached call: it is never
-        // re-entered.
+        // `resolvingSignature`. FOR SPEED the stack isn't searched for a cached call, which is
+        // never re-entered.
         let is_cached = self.p.calls.get(&self.task, &(file, call)).is_some();
         if !is_cached
             && !self
@@ -3312,6 +3274,7 @@ impl<'p, 's> Checker<'p, 's> {
                 .any(|r| r.0 == file && r.1 == call)
             && self.stack.contains(&Query::Call(file, call))
         {
+            self.note_state_was_read();
             return Some(TypeId::ANY);
         }
         let resolved = self.resolved_signature(file, call);
@@ -3326,7 +3289,7 @@ impl<'p, 's> Checker<'p, 's> {
             Some(last) if last.rest && index + 1 >= params.len() => {
                 self.contextual_indexed_access(last.ty, index + 1 - params.len())
             }
-            // `getTypeAtPosition`: where there is no parameter the contextual type is `any`.
+            // `getTypeAtPosition`: where there's no parameter the contextual type is `any`.
             _ => self
                 .param_type_asked_at(sig, &params, index)
                 .unwrap_or(TypeId::ANY),

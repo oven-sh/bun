@@ -1,8 +1,7 @@
-// The fixtures are the inputs of the tests of @trivago/prettier-plugin-sort-imports, of
-// @ianvs/prettier-plugin-sort-imports (both Apache-2.0) and of oxc's formatter (MIT), and generated ones with comments
-// and empty lines in odd places. What is expected is what Prettier 3.9.9 with the plugin (for
-// prettier-plugin-organize-imports, with TypeScript 5.9), and oxfmt 0.72, print.
-// They are made by test/cli/format/oracle/sort-imports/make-fixtures.mjs.
+// The fixtures are the test inputs of @trivago/prettier-plugin-sort-imports, @ianvs/prettier-plugin-sort-imports (both
+// Apache-2.0) and oxc's formatter (MIT), plus generated ones with comments and empty lines in odd places. The expected
+// output comes from Prettier 3.9.9 with the plugin (for prettier-plugin-organize-imports, with TypeScript 5.9) and from
+// oxfmt 0.72. test/cli/format/oracle/sort-imports/make-fixtures.mjs generates them.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -37,7 +36,10 @@ async function format(files: Record<string, string>, names: string[], flags: str
 }
 
 for (const [tool, config] of Object.entries(tools)) {
-  const cases: Case[] = JSON.parse(readFileSync(join(import.meta.dir, `${tool}.json`), "utf8"));
+  const recorded: Case[] = JSON.parse(readFileSync(join(import.meta.dir, `${tool}.json`), "utf8"));
+  // Where @trivago's plugin puts a module whose name is a hexadecimal number depends on its original position, and a
+  // second run moves it again. `bun fmt` always puts it in the same position.
+  const cases = recorded.filter(it => tool !== "trivago" || !/from (["']) *0x[0-9a-f]+ *\1/i.test(it.input));
   // One run for all the cases with the same options.
   const groups = Map.groupBy(cases, it => JSON.stringify(it.options));
 
@@ -58,10 +60,10 @@ for (const [tool, config] of Object.entries(tools)) {
   });
 }
 
-// hosts.json: scripts in Vue files, in HTML, in HTML in templates and in blocks of code, with what the tools print. The plugins
-// sort the first `<script>` and the first `<script setup>` at the top of a Vue file, and every script anywhere else. oxfmt
-// sorts imports and rewrites JSDoc comments in the scripts of a Vue file only.
-describe.concurrent("in HTML and Vue", () => {
+// hosts.json has scripts in Vue files, in HTML, in HTML in templates and in code blocks, with each tool's output. The
+// plugins sort the first `<script>` and the first `<script setup>` at the top of a Vue file, and every script anywhere
+// else. oxfmt only sorts imports and rewrites JSDoc comments in a Vue file's scripts.
+describe.concurrent("sorts imports in HTML and Vue", () => {
   type Hosts = Record<string, { config: [string, object]; files: Record<string, [input: string, output: string]> }>;
   const hosts: Hosts = JSON.parse(readFileSync(join(import.meta.dir, "hosts.json"), "utf8"));
   for (const [tool, { config, files }] of Object.entries(hosts)) {
@@ -78,11 +80,11 @@ describe.concurrent("in HTML and Vue", () => {
   }
 });
 
-describe.concurrent("when imports are sorted", () => {
+describe.concurrent("import sorting", () => {
   const unsorted = `import b from "b";\nimport a from "a";\n`;
   const sorted = `import a from "a";\nimport b from "b";\n`;
 
-  test("for oxfmt a comment before the `*` makes a default import of it", async () => {
+  test("like oxfmt, treats a namespace import with a comment before the `*` as a default import", async () => {
     const files = {
       ".oxfmtrc.json": `{ "sortImports": { "groups": ["wildcard-import", "default-import", "unknown"] } }`,
       "a.js": 'import d from "d";\nimport /* c */ * as ns from "x";\nimport * as w from "w";\nimport e from "e";\n',
@@ -94,12 +96,21 @@ describe.concurrent("when imports are sorted", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("not without an option that asks for it", async () => {
+  // javascript-natural-sort ranks each of the two below the other, so with the plugin they swap on every run.
+  test("with @trivago's plugin, a hexadecimal module name always sorts to the same position", async () => {
+    const [first, second] = ['import b from "0x10B";\n', 'import a from "12a";\n'];
+    const files = { ".prettierrc.json": JSON.stringify(tools.trivago({ importOrder: [] })[1]) };
+    const result = await format({ ...files, "a.js": first + second, "b.js": second + first }, ["a.js", "b.js"]);
+    expect(result.files).toEqual([first + second, first + second]);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("is off without an option that enables it", async () => {
     const result = await format({ ".prettierrc.json": `{ "semi": true }`, "a.ts": unsorted }, ["a.ts"]);
     expect(result.files).toEqual([unsorted]);
   });
 
-  test("not with the options of a plugin that is not named: Prettier does not know them", async () => {
+  test("is off with the options of a plugin that isn't listed, which Prettier doesn't know", async () => {
     const config = `{ "importOrder": ["^[./]"], "importOrderSeparation": true, "organizeImportsTypeOrder": "last" }`;
     const result = await format({ ".prettierrc.json": config, "a.ts": unsorted, "b.ts": unsorted }, ["a.ts", "b.ts"]);
     expect(result.files).toEqual([unsorted, unsorted]);
@@ -111,21 +122,21 @@ describe.concurrent("when imports are sorted", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("with a plugin that --plugin names", async () => {
+  test("is on with a plugin passed to --plugin", async () => {
     const files = { ".prettierrc.json": `{ "importOrder": ["^[./]"] }`, "a.ts": unsorted };
     const result = await format(files, ["a.ts"], ["--plugin=@trivago/prettier-plugin-sort-imports"]);
     expect(result.files).toEqual([sorted]);
     expect(result.stderr).toBe("");
   });
 
-  test("with a plugin that is named, without any option", async () => {
+  test("is on with a listed plugin and no options", async () => {
     const config = `{ "plugins": ["@ianvs/prettier-plugin-sort-imports"] }`;
     const result = await format({ ".prettierrc.json": config, "a.ts": unsorted }, ["a.ts"]);
     expect(result.files).toEqual([sorted]);
     expect(result.stderr).toBe("");
   });
 
-  test("in the files of an override only", async () => {
+  test("only applies to an override's files", async () => {
     const options = `{ "plugins": ["@trivago/prettier-plugin-sort-imports"], "importOrder": [] }`;
     const config = `{ "overrides": [{ "files": "src/**", "options": ${options} }] }`;
     const result = await format({ ".prettierrc.json": config, "a.ts": unsorted, "src/a.ts": unsorted }, [
@@ -149,14 +160,15 @@ describe.concurrent("when imports are sorted", () => {
       sorted,
     ],
     ["oxfmt", ".oxfmtrc.json", `{ "sortImports": {} }`, sorted],
-    // It asks TypeScript about the file, which is the Markdown. In a.ts it removes both: nothing uses them.
+    // It passes the file to TypeScript, and the file is the Markdown. In a.ts it would remove both imports, because
+    // they're unused.
     [
       "prettier-plugin-organize-imports",
       ".prettierrc.json",
       `{ "plugins": ["prettier-plugin-organize-imports"] }`,
       unsorted,
     ],
-  ])("in a block of code in Markdown: %s", async (_, name, config, expected) => {
+  ])("in a Markdown code block: %s", async (_, name, config, expected) => {
     const result = await format({ [name]: config, "a.md": "```ts\n" + unsorted + "```\n" }, ["a.md"]);
     expect(result.files).toEqual(["```ts\n" + expected + "```\n"]);
   });

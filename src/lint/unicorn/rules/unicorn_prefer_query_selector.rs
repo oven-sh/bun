@@ -2,6 +2,7 @@ use bun_core::strings;
 use bun_lint_oxlint::ast_util::{as_member_expression, plain};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::utils::visible::is_visibly_dom_node;
 
 /// Prefer `.querySelector()` over `.getElementById()`, and `.querySelectorAll()` over `.getElementsByClassName()` and
 /// `.getElementsByTagName()`.
@@ -60,9 +61,10 @@ fn check<'a>(_: &PreferQuerySelector, e: Expr<'a>, cx: &mut Cx<'a, PreferQuerySe
         Some(ExprKind::Null) => Some(&b""[..]),
         Some(ExprKind::String(value)) => Some(strings::trim_unicode_whitespace(value.bytes())),
         Some(ExprKind::Template(literal)) => literal.as_static().map(|it| strings::trim_unicode_whitespace(it.bytes())),
-        // `getElementById(id)` is `` querySelector(`#${id}`) ``.
+        // `getElementById(id)` becomes `` querySelector(`#${id}`) ``. An id like `user.name` or `1st` makes a different
+        // selector or an invalid one.
         Some(ExprKind::Ident(_)) if property_name == b"getElementById" => {
-            report.fix(|fixer| {
+            report.fix_dangerously(|fixer| {
                 let replacement = [preferred_selector.as_bytes(), b"(`#${", argument_expr.text(), b"}`"].concat();
                 fixer.replace(property.span().to(argument_expr.span()), replacement)
             });
@@ -73,14 +75,22 @@ fn check<'a>(_: &PreferQuerySelector, e: Expr<'a>, cx: &mut Cx<'a, PreferQuerySe
     let Some(literal_value) = literal_value else {
         return;
     };
-    report.fix(|fixer| {
+    // `getElementsBy..` returns a live list that tracks the document. `querySelectorAll` returns a static one.
+    let is_safe = || {
+        let is_name = matches!(literal_value, [b'A'..=b'Z' | b'a'..=b'z' | b'_', rest @ ..]
+            if rest.iter().all(|it| it.is_ascii_alphanumeric() || matches!(it, b'_' | b'-')));
+        // Nothing was trimmed.
+        let is_whole = argument_expr.span().len() as usize == literal_value.len() + 2;
+        property_name == b"getElementById" && is_name && is_whole && is_visibly_dom_node(obj)
+    };
+    report.fix_where_safe(is_safe, |fixer| {
         if literal_value.is_empty() {
             return fixer.replace(property, preferred_selector);
         }
         let quotes_symbol = argument_expr.text().get(..1).unwrap_or_default();
         let argument = match property_name {
             b"getElementById" => [b"#", literal_value].concat(),
-            // All of the classes.
+            // All the classes.
             b"getElementsByClassName" => strings::split_unicode_whitespace(literal_value).fold(Vec::new(), |mut all, class| {
                 all.push(b'.');
                 all.extend_from_slice(class);

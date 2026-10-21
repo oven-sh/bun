@@ -336,90 +336,21 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                             [source_index.get() as usize]
                             .as_deref()
                             .expect("css ast present");
-                        // SAFETY: bitwise shallow copy of the
-                        // stylesheet header. All interior allocations are arena-owned and never
-                        // freed via this view, so the duplicated `Vec`/`Vec` headers are
-                        // sound for read-only / reslice use below.
+                        // SAFETY: bitwise shallow copy of the stylesheet header. The
+                        // copy aliases the global-heap `Vec`s of the source sheet. It
+                        // is never dropped, grown or written through: `CssChunk::drop`
+                        // forgets it, and the bundle drops the source sheet once.
                         css_chunk.asts[i] = unsafe { core::ptr::read(original_stylesheet) };
                         break 'ast &mut css_chunk.asts[i];
                     };
 
-                    {
-                        // Strip leading "@import" and ".ignored" rules. Any
-                        // "@layer" statement rules interleaved with them are
-                        // preserved, because they carry layer ordering
-                        // information that is not re-emitted elsewhere by
-                        // the bundler (e.g. Tailwind's
-                        // `@layer theme, base, components, utilities;`).
-                        //
-                        // IMPORTANT: `ast` is only a shallow copy of the
-                        // per-source stylesheet, so `ast.rules.v.items` still
-                        // points at the backing array owned by
-                        // `c.graph.ast.items(.css)`. We MUST NOT mutate that
-                        // buffer in place — a second import of the same
-                        // source_index would observe the compacted prefix and
-                        // drop rules. Instead we always build a fresh rules
-                        // list (copying the retained "@layer" prefix rules +
-                        // the tail).
-                        //
-                        // Regression: #28914
-                        let original_rules = ast.rules.v.as_slice();
-                        let mut layer_count: usize = 0;
-                        let mut prefix_end: usize = original_rules.len();
-                        'prefix_scan: for (idx, rule) in original_rules.iter().enumerate() {
-                            match rule {
-                                BundlerCssRule::Import(_) | BundlerCssRule::Ignored => {}
-                                BundlerCssRule::LayerStatement(_) => layer_count += 1,
-                                _ => {
-                                    prefix_end = idx;
-                                    break 'prefix_scan;
-                                }
-                            }
-                        }
-                        let dropped = prefix_end - layer_count;
-
-                        if dropped == 0 {
-                            // Prefix is all "@layer" (or empty). Nothing to
-                            // strip — leave `ast.rules.v` untouched.
-                        } else {
-                            // Interleaved case: allocate a fresh rules list
-                            // so we don't mutate the shared backing array.
-                            // Preserve the "@layer" statements from the
-                            // prefix and append the remaining tail.
-                            let mut new_rules: ArenaVec<BundlerCssRule> =
-                                ArenaVec::with_capacity_in(
-                                    layer_count + (original_rules.len() - prefix_end),
-                                    bump,
-                                );
-                            for rule in &original_rules[0..prefix_end] {
-                                if matches!(rule, BundlerCssRule::LayerStatement(_)) {
-                                    // SAFETY: bitwise duplicate of a rule. The copy goes into
-                                    // an `arena_rule_list` slab installed in `css_chunk.asts[i]`,
-                                    // whose elements never run `Drop` (see `arena_rule_list` /
-                                    // `CssChunk::Drop`), so the rule's interior heap stays
-                                    // singly-owned by the original.
-                                    new_rules.push(unsafe { core::ptr::read(rule) });
-                                }
-                            }
-                            for rule in &original_rules[prefix_end..] {
-                                // SAFETY: bitwise duplicate of a rule. The copy goes into
-                                // an `arena_rule_list` slab installed in `css_chunk.asts[i]`,
-                                // whose elements never run `Drop` (see `arena_rule_list` /
-                                // `CssChunk::Drop`), so the rule's interior heap stays
-                                // singly-owned by the original.
-                                new_rules.push(unsafe { core::ptr::read(rule) });
-                            }
-                            // `ast.rules` is the shallow-copied header aliasing the
-                            // source stylesheet's arena buffer (see `ptr::read` above).
-                            // Dropping it would `drop_in_place` the aliased rules and
-                            // free the shared backing array. Leak the header
-                            // before installing the freshly-allocated list.
-                            let _ = core::mem::ManuallyDrop::new(core::mem::replace(
-                                &mut ast.rules,
-                                arena_rule_list(new_rules),
-                            ));
-                        }
-                    }
+                    debug_assert!(
+                        !ast.rules
+                            .v
+                            .iter()
+                            .any(|rule| matches!(rule, BundlerCssRule::Import(_))),
+                        "parse_bundler keeps each @import in StyleSheet::imports"
+                    );
 
                     wrap_rules_with_conditions(ast, bump, &entry.conditions);
                     // TODO: Remove top-level duplicate rules across files
@@ -429,7 +360,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
     }
 }
 
-/// Builds a `BundlerCssRuleList` whose backing storage is arena-owned.
+/// Builds a one-rule `BundlerCssRuleList` whose backing storage is arena-owned.
 ///
 /// `CssRuleList::v` is a global `Vec`, but every rule slab built here must be
 /// arena-backed: the elements bitwise-alias the source AST and must never run
@@ -438,24 +369,15 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
 /// because the resulting `Vec` is never dropped (`CssChunk::Drop` `forget`s
 /// the `asts` slab) and never grown after this point; the arena reclaims the
 /// storage on `reset`.
-fn arena_rule_list(rules: ArenaVec<'_, BundlerCssRule>) -> BundlerCssRuleList {
-    let len = rules.len();
-    if len == 0 {
-        return BundlerCssRuleList::default();
-    }
+fn arena_rule_list_one(bump: &Bump, rule: BundlerCssRule) -> BundlerCssRuleList {
+    let mut rules: ArenaVec<BundlerCssRule> = ArenaVec::with_capacity_in(1, bump);
+    rules.push(rule);
     let slab = rules.into_bump_slice_mut();
     BundlerCssRuleList {
         // SAFETY: `slab` is arena-owned; the `Vec` is never dropped or grown
         // (see fn doc).
-        v: unsafe { Vec::from_raw_parts(slab.as_mut_ptr(), len, len) },
+        v: unsafe { Vec::from_raw_parts(slab.as_mut_ptr(), 1, 1) },
     }
-}
-
-/// Single-element shorthand for [`arena_rule_list`].
-fn arena_rule_list_one(bump: &Bump, rule: BundlerCssRule) -> BundlerCssRuleList {
-    let mut v: ArenaVec<BundlerCssRule> = ArenaVec::with_capacity_in(1, bump);
-    v.push(rule);
-    arena_rule_list(v)
 }
 
 fn wrap_rules_with_conditions(
@@ -483,10 +405,7 @@ fn wrap_rules_with_conditions(
                     continue;
                 } else {
                     // Generate "@layer foo;" instead of "@layer foo {}"
-                    // `ast.rules.v` may be the shallow-copied / offset-resliced
-                    // header aliasing the source stylesheet's buffer (see the
-                    // `ptr::read` / `Vec::from_raw_parts` above) — dropping it
-                    // would free into another allocation; leak the header instead.
+                    // `ast.rules.v` can alias the source sheet's buffer, so leak the header.
                     let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut ast.rules.v));
                     do_block_rule = false;
                 }

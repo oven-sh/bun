@@ -931,13 +931,16 @@ describe("an entry is resolved again after other packages of the same install", 
   const dropsMinor = (name: string) => ({ [name]: "1.0.0", [`${name}-caret`]: "1.0.0", [`${name}-exact`]: "1.0.0" });
 
   // One commit with the branches `main` and `other`.
+  let gitDir: ReturnType<typeof tempDir> | undefined;
   let repository = "";
   let commit = "";
   const gitPkg = (ref: string) => `git+${pathToFileURL(repository)}#${ref}`;
 
   beforeAll(async () => {
-    const files = { "git-pkg/package.json": JSON.stringify({ name: "git-pkg", version: "1.0.0" }) };
-    repository = join(String(tempDir("overrides-git-", files)), "git-pkg");
+    gitDir = tempDir("overrides-git-", {
+      "git-pkg/package.json": JSON.stringify({ name: "git-pkg", version: "1.0.0" }),
+    });
+    repository = join(String(gitDir), "git-pkg");
     const git = new Bun.$.Shell().cwd(repository).env({
       ...bunEnv,
       GIT_CONFIG_NOSYSTEM: "1",
@@ -964,6 +967,8 @@ describe("an entry is resolved again after other packages of the same install", 
       },
     ]);
   });
+
+  afterAll(() => gitDir?.[Symbol.dispose]());
 
   /** Installs `pkg`, then puts `rules` in package.json and in bun.lock. Only the entries of bun.lock are then behind. */
   async function behindRules(
@@ -1184,63 +1189,92 @@ describe("an entry is resolved again after other packages of the same install", 
     expect(exitCode).toBe(0);
   });
 
-  // `bun update no-deps --filter b` must not update the `no-deps` of a package that only workspace `c` depends on. It
-  // shares the 1.0.1 of `one-dep`, as after `bun install`. An update takes 1.1.0.
-  test.concurrent.each([
-    {
-      owner: "one-fixed-dep",
-      is: "in bun.lock",
-      rules: { "one-fixed-dep": { "no-deps": "^1.0.0" } },
-      host: "2.0.0",
-      behind: ["no-deps@2.0.0", "^1.0.0"],
-    },
-    {
-      owner: "scope-host",
-      is: "new",
-      rules: { "scope-host": "2.0.0" },
-      host: "1.0.0",
-      behind: ["scope-host@1.0.0", "2.0.0"],
-    },
-  ])("bun update <name> --filter leaves a package of another workspace that is $is to the rule", async row => {
-    using recorded = new TestRegistry({ recordRequests: true }).start();
-    await publish(recorded, [
-      { name: "scope-host", version: "1.0.0" },
-      { name: "scope-host", version: "2.0.0", dependencies: { "no-deps": "^1.0.0" } },
-    ]);
-    const dir = await behindRules(
-      { workspaces: ["packages/*"] },
-      row.rules,
-      {
-        "packages/a/package.json": JSON.stringify({ name: "a" }),
-        "packages/b/package.json": JSON.stringify({ name: "b", dependencies: { "no-deps": "1.0.0" } }),
-        "packages/c/package.json": JSON.stringify({
-          name: "c",
-          dependencies: { "one-dep": "1.0.0", [row.owner]: row.host },
-        }),
-      },
-      recorded,
-    );
-    await expectBehind(dir, row.behind[0], row.behind[1]);
+  // `bun update no-deps --filter b` is not about one-fixed-dep, which only workspace `c` depends on. Its `no-deps` takes
+  // the 1.0.1 of `one-dep`, as after `bun install`, and 1.1.0 is not asked for. With `a`, one-fixed-dep gets the id of
+  // `b` when the lockfile is cleaned.
+  test.concurrent(
+    "bun update <name> --filter leaves a package of another workspace that is in bun.lock to the rule",
+    async () => {
+      using recorded = new TestRegistry({ recordRequests: true }).start();
+      const dir = await behindRules(
+        { workspaces: ["packages/*"] },
+        { "one-fixed-dep": { "no-deps": "^1.0.0" } },
+        {
+          "packages/a/package.json": JSON.stringify({ name: "a" }),
+          "packages/b/package.json": JSON.stringify({ name: "b", dependencies: { "no-deps": "1.0.0" } }),
+          "packages/c/package.json": JSON.stringify({
+            name: "c",
+            dependencies: { "one-dep": "1.0.0", "one-fixed-dep": "2.0.0" },
+          }),
+        },
+        recorded,
+      );
+      await expectBehind(dir, "no-deps@2.0.0", "^1.0.0");
 
-    const { stderr, exitCode } = await bun(dir, "update", "no-deps", "--filter", "b");
-    expect(stderr).toBe("Saved lockfile");
-    expect(await locked(dir, row.owner)).toEqual({
-      "no-deps": "no-deps@1.0.1",
-      all: [
-        "a@workspace:packages/a",
-        "b@workspace:packages/b",
-        "c@workspace:packages/c",
-        "no-deps@1.0.0",
-        "no-deps@1.0.1",
-        "one-dep@1.0.0",
-        `${row.owner}@2.0.0`,
-      ],
-    });
-    expect(recorded.requests.map(request => request.path).filter(path => path.endsWith("no-deps-1.1.0.tgz"))).toEqual(
-      [],
-    );
-    expect(exitCode).toBe(0);
-  });
+      const { stderr, exitCode } = await bun(dir, "update", "no-deps", "--filter", "b");
+      expect(stderr).toBe("Saved lockfile");
+      expect(await locked(dir, "one-fixed-dep")).toEqual({
+        "no-deps": "no-deps@1.0.1",
+        all: [
+          "a@workspace:packages/a",
+          "b@workspace:packages/b",
+          "c@workspace:packages/c",
+          "no-deps@1.0.0",
+          "no-deps@1.0.1",
+          "one-dep@1.0.0",
+          "one-fixed-dep@2.0.0",
+        ],
+      });
+      expect(recorded.requests.map(request => request.path).filter(path => path.endsWith("no-deps-1.1.0.tgz"))).toEqual(
+        [],
+      );
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // Workspace `b` reaches the new scope-leaf@2.0.0 through `scope-host`, and both entries are resolved again. The
+  // packages of the other workspace come first or last by its name, so `scope-leaf` is resolved before `scope-host`
+  // in one project and after it in the other. The `no-deps` of scope-leaf must not depend on that.
+  test.concurrent(
+    "bun update <name> --filter: a new package gets one version, whichever entry comes first",
+    async () => {
+      using published = new TestRegistry().start();
+      await publish(published, [
+        { name: "scope-top", version: "1.0.0", dependencies: { "scope-host": "1.0.0" } },
+        { name: "scope-host", version: "1.0.0", dependencies: { "scope-shared": "1.0.0" } },
+        { name: "scope-host", version: "2.0.0", dependencies: { "scope-shared": "1.0.0" } },
+        { name: "scope-shared", version: "1.0.0", dependencies: { "scope-leaf": "1.0.0" } },
+        { name: "scope-leaf", version: "1.0.0" },
+        { name: "scope-leaf", version: "2.0.0", dependencies: { "no-deps": "^1.0.0" } },
+      ]);
+      const versionForLeaf = async (other: string) => {
+        const dir = await behindRules(
+          { workspaces: ["packages/*"] },
+          { "scope-host": "2.0.0", "scope-leaf": "2.0.0" },
+          {
+            "packages/b/package.json": JSON.stringify({
+              name: "b",
+              dependencies: { "no-deps": "1.0.0", "one-dep": "1.0.0", "scope-top": "1.0.0" },
+            }),
+            [`packages/${other}/package.json`]: JSON.stringify({
+              name: other,
+              dependencies: { "scope-shared": "1.0.0" },
+            }),
+          },
+          published,
+        );
+        const { stderr, exitCode } = await bun(dir, "update", "no-deps", "--filter", "b");
+        expect(stderr).toBe("Saved lockfile");
+        expect(exitCode).toBe(0);
+        const { all, "no-deps": version } = await locked(dir, "scope-leaf");
+        expect(all).toContain("scope-leaf@2.0.0");
+        return version;
+      };
+
+      const [first, last] = await Promise.all([versionForLeaf("a"), versionForLeaf("c")]);
+      expect(last).toBe(first);
+    },
+  );
 
   // Each of these leaves a row behind when package.json changes, so that a row id of the first pass is past the end
   // after the clean.

@@ -2385,7 +2385,7 @@ fn clean_lockfile(
     Ok(before_clean)
 }
 
-/// Moves the ids that `manager` has from the first pass to the cleaned lockfile, and forgets the ones that the clean has no package or no mapping for.
+/// Moves the ids that `manager` has from the first pass to the cleaned lockfile, plans the update scope again, and forgets the ids that the clean has no package or no mapping for.
 #[cold]
 #[inline(never)]
 fn rebind_to_cleaned_lockfile(manager: &mut PackageManager, before_first_clean: &Lockfile) {
@@ -2428,8 +2428,10 @@ fn rebind_to_cleaned_lockfile(manager: &mut PackageManager, before_first_clean: 
         }
     }
 
-    // `UpdateScope` walks the cleaned lockfile instead.
-    manager.named_update_reachable = None;
+    // The pass has not invalidated a row yet. A walk during the pass does not see what is below a row that waits.
+    if manager.named_update_reachable.is_some() {
+        crate::update_scope::plan_named(manager);
+    }
     // The peer pass of the first pass is over.
     manager.look_ahead.in_peer_pass = false;
     // A clean has no mapping for row ids, so the rows that the first pass left waiting are dropped.

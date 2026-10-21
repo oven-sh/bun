@@ -206,13 +206,14 @@ test.concurrent.skipIf(!isPosix)("children do not inherit a signal bun itself ha
 // INT` survives exec), so the flood below is dropped until the handler
 // replaces SIG_IGN, and from then on a delivery every few microseconds covers
 // the spawn. The window is the spawn itself, so short that one flood in ten
-// misses it on a release build; three attempts have to end in SIGINT.
+// misses it on a release build; three attempts have to end in SIGINT. The
+// script only dies from a forwarded SIGINT, so forwarding is covered too.
 // `--shell=system`: the script has to be a process of its own.
 test.concurrent.skipIf(!isPosix)(
   "bun run forwards a signal that arrives before it knows the script's pid",
   async () => {
     using project = tempDir("inherited-signal-mask-early", {
-      "package.json": JSON.stringify({ name: "inherited-signal-mask", scripts: { go: "kill -INT $$" } }),
+      "package.json": JSON.stringify({ name: "inherited-signal-mask", scripts: { go: "exec sleep 30" } }),
     });
     for (let attempt = 0; attempt < 3; attempt++) {
       await using proc = Bun.spawn({
@@ -243,7 +244,7 @@ test.concurrent.skipIf(!isPosix)(
       await proc.stdin.end();
 
       const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain("$ kill -INT $$");
+      expect(stderr).toContain("$ exec sleep 30");
       expect({ attempt, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
         attempt,
         exitCode: null,

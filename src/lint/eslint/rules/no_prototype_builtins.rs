@@ -22,7 +22,7 @@ fn disallowed_prop(name: Name<'_>) -> Option<&'static str> {
 
 /// ESLint's `isAfterOptional`: `e` or something to the left of it in the same chain has a `?.`.
 fn is_after_optional(e: Expr<'_>) -> bool {
-    // Only a `!` can be in the way from a link of a chain to its `?.`.
+    // Only a TypeScript `!` can come between a link of a chain and its `?.`, so JavaScript doesn't need the walk.
     if e.chain() == Chain::No || e.file().is_javascript() {
         return e.chain() != Chain::No;
     }
@@ -52,12 +52,12 @@ impl NoPrototypeBuiltins {
         };
         let callee = call.callee();
         let name = match (callee.member_name(), callee.index()) {
-            // As it is written it starts like one of the names, or with an escape.
+            // Fast check: the source text starts with the first letter of one of the names, or with an escape.
             (Some(name), _) => match cx.text().get(name.start() as usize) {
                 Some(b'h' | b'i' | b'p' | b'\\') => Some(name.name()),
                 _ => None,
             },
-            // Of the literals, only a string can be one of the names.
+            // Among literals, only a string can be one of the names.
             (None, Some(index)) => match index.kind() {
                 ExprKind::String(value) => Some(value),
                 ExprKind::Template(template) => template.as_static(),
@@ -73,18 +73,18 @@ impl NoPrototypeBuiltins {
             ExprKind::Index { obj, index, .. } => (obj, index.span()),
             _ => return,
         };
-        // oxlint points at what is called.
-        let place = if cx.language().is_oxlint { callee.span() } else { property };
+        // oxlint points at the callee.
+        let location = if cx.language().is_oxlint { callee.span() } else { property };
         let hint = || match prop {
             "hasOwnProperty" => Some("Use Object.hasOwn(object, key) instead.".to_owned()),
             _ => Some(format!("Use Object.prototype.{prop}.call(object, value) instead.")),
         };
-        cx.report(place, PROTOTYPE_BUILD_IN).data("prop", prop).hint_with(hint).suggest_with(
+        cx.report(location, PROTOTYPE_BUILD_IN).data("prop", prop).hint_with(hint).suggest_with(
             CALL_OBJECT_PROTOTYPE,
             &[("prop", prop.as_bytes())],
             |fixer| {
                 let file = fixer.file();
-                // The call can be short-circuited, or it is on the result of a chain.
+                // The call can be short-circuited, or it's on the result of a chain.
                 if is_after_optional(e) || callee.is_chain_root() {
                     return None;
                 }

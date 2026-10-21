@@ -14,7 +14,7 @@ pub struct NoElementToOtherRole<const REVERSED: bool = false> {
     allowed_roles: NamesByElement,
 }
 
-const OF_LISTS: &[&str] = &["menu", "menubar", "radiogroup", "tablist", "tree", "treegrid"];
+const LIST_ROLES: &[&str] = &["menu", "menubar", "radiogroup", "tablist", "tree", "treegrid"];
 
 impl<const REVERSED: bool> Rule for NoElementToOtherRole<REVERSED> {
     const META: Meta = Meta::oxlint(
@@ -30,12 +30,12 @@ impl<const REVERSED: bool> Rule for NoElementToOtherRole<REVERSED> {
             allowed_roles: match (options.is_empty(), REVERSED) {
                 (true, false) => NamesByElement::new(&[("tr", &["none", "presentation"]), ("canvas", &["img"])]),
                 (true, true) => NamesByElement::new(&[
-                    ("ul", OF_LISTS),
-                    ("ol", OF_LISTS),
+                    ("ul", LIST_ROLES),
+                    ("ol", LIST_ROLES),
                     ("li", &["menuitem", "menuitemcheckbox", "menuitemradio", "row", "tab", "treeitem"]),
                     ("fieldset", &["radiogroup", "presentation"]),
                 ]),
-                (false, _) => NamesByElement::of_option(options.object(0), ""),
+                (false, _) => NamesByElement::from_option_except(options.object(0), ""),
             },
         }
     }
@@ -53,14 +53,14 @@ impl<const REVERSED: bool> Rule for NoElementToOtherRole<REVERSED> {
             return;
         };
         let element_type = get_element_type(cx.file(), jsx_el);
-        let is_other = || match REVERSED {
+        let is_mismatch = || match REVERSED {
             true => is_non_interactive_element(&element_type, jsx_el) && is_interactive_role(first_role),
             false => {
                 (*element_type == *b"input" || is_interactive_element(&element_type, jsx_el))
                     && (is_non_interactive_role(first_role) || matches!(first_role, b"presentation" | b"none"))
             }
         };
-        if contains_name(&HTML_TAG, &element_type) && !self.allowed_roles.has(&element_type, first_role) && is_other() {
+        if contains_name(&HTML_TAG, &element_type) && !self.allowed_roles.has(&element_type, first_role) && is_mismatch() {
             let message = match REVERSED {
                 true => Message::new("", "Non-interactive elements should not be assigned interactive roles."),
                 false => Message::new("", "Interactive elements should not be assigned non-interactive roles."),

@@ -9,7 +9,7 @@ pub struct SortImports {
     ignore_declaration_sort: bool,
     ignore_member_sort: bool,
     allow_separated_groups: bool,
-    /// The place of each [`Syntax`] in `memberSyntaxSortOrder`.
+    /// The position of each [`Syntax`] in `memberSyntaxSortOrder`.
     rank: [usize; 4],
 }
 
@@ -50,7 +50,7 @@ impl Syntax {
         }
     }
 
-    /// As oxlint writes it.
+    /// The name as oxlint prints it.
     fn capitalized_name(self) -> &'static str {
         match self {
             Syntax::None => "None",
@@ -81,7 +81,7 @@ fn get_first_local_member_name(import: Import<'_>) -> Option<&[u8]> {
     first.map(Ident::bytes)
 }
 
-/// What is compared of the import declaration before.
+/// The parts of the previous import declaration that are compared.
 pub struct Previous<'a> {
     syntax: Syntax,
     first_local_member_name: Option<&'a [u8]>,
@@ -96,8 +96,7 @@ impl SortImports {
         }
     }
 
-    /// `specifiers.sort((a, b) => name(a) > name(b) ? 1 : -1)`: of two with the same name, the later one ends up
-    /// first.
+    /// `specifiers.sort((a, b) => name(a) > name(b) ? 1 : -1)`: if two have the same name, the later one ends up first.
     fn sort(&self, specifiers: &mut [ImportSpec<'_>]) {
         let key = |name| match self.ignore_case {
             true => text::to_lower_case(name),
@@ -110,7 +109,7 @@ impl SortImports {
         }
     }
 
-    /// How the import declaration `statement` is placed after the one before it in the source.
+    /// Checks the order of the import declaration `statement` relative to the previous one.
     fn check_declaration<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let Some(import) = statement.as_import() else {
             return;
@@ -153,15 +152,15 @@ impl SortImports {
 impl Rule for SortImports {
     const META: Meta = Meta::eslint("sort-imports", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().stmts(&[StmtTag::Import]).finish();
-    /// The import declaration before, and where those end that are looked at.
+    /// The previous import declaration, and the end of the last import declaration to check.
     type State<'a> = (Option<Previous<'a>>, u32);
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
         let mut rank = [0, 1, 2, 3];
-        for (place, name) in options.strings("memberSyntaxSortOrder").into_iter().enumerate() {
+        for (position, name) in options.strings("memberSyntaxSortOrder").into_iter().enumerate() {
             if let Some(syntax) = Syntax::ALL.into_iter().find(|it| it.name() == name) {
-                rank[syntax as usize] = place;
+                rank[syntax as usize] = position;
             }
         }
         SortImports {
@@ -188,7 +187,7 @@ impl Rule for SortImports {
         if !file.has_stmts([StmtTag::Import]) {
             return None;
         }
-        // oxlint stops at the first statement that is no import declaration.
+        // oxlint stops at the first statement that isn't an import declaration.
         let first = file.body().iter().skip_while(|it| it.directive().is_some());
         let end = match file.language().is_oxlint {
             true => first.take_while(|it| it.tag() == StmtTag::Import).last().map_or(0, |it| it.span().end),
@@ -238,18 +237,18 @@ impl Rule for SortImports {
                 if specifiers.iter().any(has_comments) {
                     return None;
                 }
-                let written: Vec<ImportSpec<'a>> = specifiers.iter().collect();
-                let mut sorted = written.clone();
+                let original: Vec<ImportSpec<'a>> = specifiers.iter().collect();
+                let mut sorted = original.clone();
                 self.sort(&mut sorted);
-                // What is between the specifiers stays where it is.
+                // The text between the specifiers stays where it is.
                 let mut text = Vec::new();
                 for (i, specifier) in sorted.iter().enumerate() {
                     text.extend_from_slice(specifier.text());
-                    if let (Some(this), Some(next)) = (written.get(i), written.get(i + 1)) {
+                    if let (Some(this), Some(next)) = (original.get(i), original.get(i + 1)) {
                         text.extend_from_slice(file.slice(this.span().between(next.span())));
                     }
                 }
-                Some(fixer.replace(written.first()?.span().to(written.last()?.span()), text))
+                Some(fixer.replace(original.first()?.span().to(original.last()?.span()), text))
             });
     }
 }

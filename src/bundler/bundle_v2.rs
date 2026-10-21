@@ -6057,6 +6057,9 @@ pub mod bv2_impl {
                                 } == 0
                                 {
                                     record.source_index = Index::INVALID;
+                                    // The importer isn't bundled again when the stylesheet is fixed, so its
+                                    // output must treat this import the same as a stylesheet that didn't fail.
+                                    record.path.is_disabled = true;
                                     continue;
                                 }
 

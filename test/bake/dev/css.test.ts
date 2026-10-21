@@ -671,6 +671,35 @@ devTest("changing html file with link tag works", {
     await c.style(".test").fontSize.expect.toBe("24px");
   },
 });
+devTest("a page recovers after the missing @import of a shared stylesheet is created", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["main.css"], scripts: ["main.ts"] }),
+    "about.html": emptyHtmlFile({ styles: ["main.css"], scripts: ["about.ts"] }),
+    "main.ts": `console.log("main");`,
+    "about.ts": `import "./main.css"; console.log("about");`,
+    "main.css": `.main { width: 1px; }`,
+  },
+  async test(dev) {
+    const load = async () => {
+      await dev.fetch("/index").text();
+      const about = await dev.fetch("/about");
+      const links = Array.from((await about.text()).matchAll(/<link[^>]*href="([^"]+)"/g), match => match[1]);
+      return { status: about.status, links };
+    };
+    const loaded = { status: 200, links: [expect.stringMatching(/^\/_bun\/asset\/.*\.css$/)] };
+    expect(await load()).toEqual(loaded);
+    // The other page has a build error of its own the whole time.
+    await dev.write("main.ts", `const = ;`, { errors: null });
+    expect(await load()).toEqual(loaded);
+    await dev.write("main.css", `@import "./n.css";\n.main { width: 1px; }`, { errors: null });
+    expect((await load()).status).toBe(500);
+    await dev.write("n.css", `.n { width: 2px; }`, { errors: null });
+    expect(await load()).toEqual(loaded);
+    await using c = await dev.client("/about");
+    await c.expectMessage("about");
+    await c.style(".n").width.expect.toBe("2px");
+  },
+});
 devTest("css import before create", {
   files: {
     "index.html": emptyHtmlFile({

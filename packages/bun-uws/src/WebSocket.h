@@ -368,13 +368,6 @@ public:
         }
     }
 
-    /* Fails the connection because onData() can't parse a nested read. The peer gets 1011, the close handler 1006. */
-    void failNestedRead() {
-        if (sendClose(1011, ERR_WEBSOCKET_NESTED_READ)) {
-            emitClose(1006, ERR_WEBSOCKET_NESTED_READ);
-        }
-    }
-
     /* Fails the connection because a received message couldn't be buffered or copied for its handler.
      * Nothing here may allocate for this connection, because a failed allocation would abort the process. */
     void failOutOfMemory() {

@@ -31,7 +31,6 @@
 namespace uWS {
 
 inline constexpr std::string_view ERR_WEBSOCKET_TIMEOUT("WebSocket timed out from inactivity");
-inline constexpr std::string_view ERR_WEBSOCKET_NESTED_READ("WebSocket handler ran the event loop with received frames left to parse");
 
 /* Passed (negated) to a wsPackage context's close handler. Keep in sync with serverFailures in src/js/thirdparty/ws.ts. */
 enum class WebSocketFailureKind : int {
@@ -46,7 +45,8 @@ enum class WebSocketFailureKind : int {
     MessageTooBig,
     UnsupportedPayloadLength,
     InvalidCompressedData,
-    OutOfMemory
+    OutOfMemory,
+    NestedRead
 };
 
 /* Reason for failing a connection (RFC 6455 7.1.7) */
@@ -73,6 +73,8 @@ inline constexpr WebSocketFailure FAIL_TOO_BIG_MESSAGE{WebSocketFailureKind::Mes
 inline constexpr WebSocketFailure FAIL_UNSUPPORTED_LENGTH{WebSocketFailureKind::UnsupportedPayloadLength, 1009, "Received too big message"};
 /* Allocating a buffer for the peer's message failed. See WebSocket::failOutOfMemory(). */
 inline constexpr WebSocketFailure FAIL_OUT_OF_MEMORY{WebSocketFailureKind::OutOfMemory, 1011, "Received message that does not fit in memory"};
+/* See WebSocketData::hasUnparsedBytes */
+inline constexpr WebSocketFailure FAIL_NESTED_READ{WebSocketFailureKind::NestedRead, 1011, "WebSocket handler ran the event loop with received frames left to parse"};
 
 enum OpCode : unsigned char {
     CONTINUATION = 0,

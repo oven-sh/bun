@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import { tempDir } from "harness";
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
+import { WebSocketServer } from "ws";
 import { closePayload, OP, RawClient, showFullFrame } from "../../js/web/websocket/raw-peer";
 
 // A message, ping or pong handler runs JS. When it returns, the microtask drain can resume a test
@@ -195,6 +198,43 @@ test.each([
     );
   },
 );
+
+test("a `ws` server gets the same failure as an 'error' event", async () => {
+  const events: unknown[] = [];
+  const ready = Promise.withResolvers<void>();
+  const closed = Promise.withResolvers<void>();
+  const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+  try {
+    wss.on("connection", ws => {
+      ws.on("message", data => {
+        events.push(String(data));
+        if (String(data) === "first") ready.resolve();
+      });
+      ws.on("error", (error: NodeJS.ErrnoException) => events.push({ code: error.code, message: error.message }));
+      ws.on("close", code => {
+        events.push(code);
+        ready.reject(new Error(`${code}`));
+        closed.reject(new Error(`${code}`));
+      });
+    });
+    await once(wss, "listening");
+    using raw = await RawClient.upgrade((wss.address() as AddressInfo).port);
+    raw.write(Buffer.concat([raw.frame(OP.text, "first"), raw.frame(OP.text, "second")]));
+    // Resumes inside the 'message' listener for "first".
+    await ready.promise;
+    raw.text("third");
+    raw.socket.end();
+    await expect(closed.promise).rejects.toThrow("1006");
+    expect(events).toEqual([
+      "first",
+      { code: "ERR_WEBSOCKET_NESTED_READ", message: "Listener ran the event loop with received frames left to parse" },
+      1006,
+    ]);
+    expect(await raw.next()).toBe("close 1011");
+  } finally {
+    wss.close();
+  }
+});
 
 test("a read that ends one split message and starts the next leaves the connection open", async () => {
   const got: string[] = [];

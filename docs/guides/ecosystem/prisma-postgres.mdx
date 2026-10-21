@@ -8,10 +8,10 @@ mode: center
 
 <Steps>
 	<Step title="Create a new project">
-		Scaffold the project with `create-prisma`, whose `minimal` template sets up Prisma ORM 8 in `src/prisma/` and installs the dependencies with Bun. The `--authoring psl` flag writes the schema as `src/prisma/contract.prisma`, the Prisma Schema Language file this guide edits, and the only remaining prompt asks which coding agents to install skills for, which `--yes` answers with the default.
+		Scaffold the project with `create-prisma`, whose `minimal` template sets up Prisma ORM 8 in `src/prisma/` and installs the dependencies with Bun. The `--authoring psl` flag writes the schema as `src/prisma/contract.prisma`, the Prisma Schema Language file this guide edits, and `--yes` answers the only remaining prompt, which asks which coding agents to install skills for, with its default of all of them. Leave `--yes` out if you want to pick the agents yourself.
 
     	```bash terminal icon="terminal"
-    	bun create prisma@latest prisma-postgres-app --template minimal --provider postgres --authoring psl --package-manager bun --no-deploy
+    	bun create prisma@latest prisma-postgres-app --template minimal --provider postgres --authoring psl --package-manager bun --no-deploy --yes
     	cd prisma-postgres-app
     	```
     </Step>

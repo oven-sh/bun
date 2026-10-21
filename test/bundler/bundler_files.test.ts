@@ -339,6 +339,27 @@ describe("bundler files option", () => {
     expect(output).toContain('"b"');
   });
 
+  // The chunk is JavaScript, whatever loader the file behind it had: no `type` follows its path.
+  test("in-memory file that a require() splits out is loaded with a one-argument require", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/main.ts"],
+      files: {
+        "/main.ts": `
+          export function getTool() { return require("./tool.ts").Tool; }
+          console.log(getTool());
+        `,
+        "/tool.ts": `export const Tool = "tool";`,
+      },
+      splitting: true,
+      target: "bun",
+    });
+
+    expect(result.success).toBe(true);
+    const chunk = result.outputs.find(output => output.kind === "chunk")!;
+    const entry = await result.outputs.find(output => output.kind === "entry-point")!.text();
+    expect(entry).toContain(`import.meta.require("${chunk.path}")`);
+  });
+
   test("in-memory file overrides real file on disk", async () => {
     // Create a temp directory with a real file
     using dir = tempDir("bundler-files-override", {

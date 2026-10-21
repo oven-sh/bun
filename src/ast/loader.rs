@@ -184,13 +184,37 @@ impl Loader {
         })
     }
 
-    /// The `type` import attribute that names this loader; `from_string` maps
-    /// it back. `SqliteEmbedded` shares `sqlite`: `embed` is its own attribute.
+    /// The `type` import attribute that names this loader (`embed` is a separate attribute).
     pub fn import_attribute_type(self) -> &'static [u8] {
         match self {
             Loader::Bunsh => b"sh",
             Loader::Sqlite | Loader::SqliteEmbedded => b"sqlite",
             _ => <&'static str>::from(self).as_bytes(),
+        }
+    }
+
+    /// Whether `require(path, { type })` returns the namespace of an ES module that bun generates.
+    pub fn require_returns_generated_es_module(self) -> bool {
+        match self {
+            Loader::Text | Loader::Md | Loader::Sqlite | Loader::SqliteEmbedded => true,
+            Loader::Jsx
+            | Loader::Js
+            | Loader::Ts
+            | Loader::Tsx
+            | Loader::Css
+            | Loader::File
+            | Loader::Json
+            | Loader::Jsonc
+            | Loader::Toml
+            | Loader::Wasm
+            | Loader::Napi
+            | Loader::Base64
+            | Loader::Dataurl
+            | Loader::Bunsh
+            | Loader::Html
+            | Loader::Yaml
+            | Loader::Json5
+            | Loader::Xml => false,
         }
     }
 

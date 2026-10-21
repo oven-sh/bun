@@ -361,3 +361,39 @@ describe("?raw", () => {
     });
   }
 });
+
+// For these types require() returns the namespace of an ES module that bun
+// generates, so the bundler must not print `__toESM`'s node mode for them.
+// `Loader::require_returns_generated_es_module` (src/ast/loader.rs) is its copy of this table.
+test("require(path, { type }) returns a module namespace for text, md and sqlite only", async () => {
+  const types = [
+    ["css", "a { color: red }"],
+    ["file", "file"],
+    ["json", `{ "a": 1 }`],
+    ["jsonc", `{ "a": 1 /* comment */ }`],
+    ["json5", "{ a: 1 }"],
+    ["toml", "a = 1\n"],
+    ["yaml", "a: 1\n"],
+    ["xml", "<a>1</a>"],
+    ["wasm", Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0])],
+    ["base64", "base64"],
+    ["dataurl", "dataurl"],
+    ["text", "text"],
+    ["sh", "echo hi\n"],
+    ["sqlite", ""],
+    ["html", "<p>hi</p>"],
+    ["md", "# hi\n"],
+  ] as const;
+  using dir = tempDir("import-attributes-require-type", {
+    ...Object.fromEntries(types.map(([type, contents]) => [type + ".data", contents])),
+    "main.cjs": `
+      const isNamespace = value =>
+        value != null && typeof value === "object" && !!value.__esModule && Object.hasOwn(value, "default");
+      const namespaces = ${JSON.stringify(types.map(([type]) => type))}.filter(type =>
+        isNamespace(require("./" + type + ".data", { type })),
+      );
+      console.log(JSON.stringify(namespaces));
+    `,
+  });
+  expect(await runCmd([bunExe(), "main.cjs"], String(dir))).toEqual(["text", "sqlite", "md"]);
+});

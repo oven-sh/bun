@@ -290,6 +290,25 @@ describe("Bun.Transpiler replMode", () => {
     });
   });
 
+  describe("import statements", () => {
+    const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true });
+
+    test("the import() that replaces a typed import keeps the type attribute", () => {
+      for (const statement of [
+        `import db from "./my.db" with { type: "sqlite" };`,
+        `import { db } from "./my.db" with { type: "sqlite" };`,
+        `import * as db from "./my.db" with { type: "sqlite" };`,
+        `import "./my.db" with { type: "sqlite" };`,
+      ]) {
+        expect(transpiler.transformSync(statement)).toContain(`await import("./my.db", { with: { type: "sqlite" } })`);
+      }
+    });
+
+    test("an import with no attribute gets no options", () => {
+      expect(transpiler.transformSync(`import path from "node:path";`)).toContain(`await import("node:path")`);
+    });
+  });
+
   describe("replMode option", () => {
     test("replMode false by default", () => {
       const transpiler = new Bun.Transpiler({ loader: "tsx" });

@@ -146,33 +146,40 @@ describe("bundler", () => {
   }
   // "type": "module" makes the importer an ES module by type, so `__toESM`
   // gets `, 1` and takes what require() returns as the default import. For
-  // sqlite and text that is an ES module namespace, which has its own default.
+  // sqlite, text and md that is an ES module namespace, which has its own default.
   itBundled("bun/type-attribute-cjs-es-module-importer", {
     target: "bun",
     format: "cjs",
-    external: ["*.conf"],
+    external: ["*.conf", "*.db"],
     files: {
       "/package.json": `{ "type": "module" }`,
       "/entry.ts": /* js */ `
         import db from './my.db' with { type: "sqlite" };
+        import embedded from './embedded.db' with { type: "sqlite", embed: "true" };
         import text from './text.conf' with { type: "text" };
+        import md from './md.conf' with { type: "md" };
         import toml from './toml.conf' with { type: "toml" };
-        console.log(db.query("select message from messages LIMIT 1").get().message, text.trim(), toml.a);
+        const message = db => db.query("select message from messages LIMIT 1").get().message;
+        console.log([message(db), message(embedded), text.trim(), md.trim(), toml.a].join(" | "));
       `,
     },
     entryPoints: ["/entry.ts"],
     runtimeFiles: {
       "/my.db": messagesDb,
+      "/embedded.db": messagesDb,
       "/text.conf": "plain\n",
+      "/md.conf": "# Title\n",
       "/toml.conf": "a = 1\n",
     },
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
       expect(out).toContain(`__toESM(require("./my.db", { type: "sqlite" }));`);
+      expect(out).toContain(`__toESM(require("./embedded.db", { type: "sqlite" }));`);
       expect(out).toContain(`__toESM(require("./text.conf", { type: "text" }));`);
+      expect(out).toContain(`__toESM(require("./md.conf", { type: "md" }));`);
       expect(out).toContain(`__toESM(require("./toml.conf", { type: "toml" }), 1);`);
     },
-    run: { stdout: "Hello, world! plain 1" },
+    run: { stdout: "Hello, world! | Hello, world! | plain | <h1>Title</h1> | 1" },
   });
   // Node's require() takes one argument.
   itBundled("bun/type-attribute-cjs-target-node", {

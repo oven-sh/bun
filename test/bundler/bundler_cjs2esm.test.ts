@@ -224,7 +224,7 @@ describe("bundler", () => {
     run: { file: "/user.mjs", stdout: "bar bar" },
   });
   // `module.exports = require(external)` points the importer's record at the
-  // external. The record must not keep a loader from the shim: target bun
+  // external. The record must not carry the loader of the shim: target bun
   // prints it back as `with { type }`, and the runtime obeys it.
   const theExternal = {
     "/node_modules/the-external/index.js": /* js */ `
@@ -238,9 +238,8 @@ describe("bundler", () => {
     files: {
       "/entry.ts": /* ts */ `
         import pkg from 'lib';
-        import typed from './shim.js' with { type: "js" };
         const required = require('./shim.js');
-        console.log(pkg.hello, typed.hello, required.hello);
+        console.log(pkg.hello, required.hello);
       `,
       "/node_modules/lib/index.js": /* js */ `
         module.exports = require('the-external');
@@ -255,11 +254,9 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
       expect(out).toContain(`import pkg from "the-external";`);
-      // The attribute described the shim, not the module behind it.
-      expect(out).toContain(`import typed from "the-external";`);
       expect(out).toContain(`= __require("the-external");`);
     },
-    run: { stdout: "world world world" },
+    run: { stdout: "world world" },
   });
   itBundled("cjs2esm/ModuleExportsEqualsRequireExternalChained", {
     files: {

@@ -2683,15 +2683,13 @@ pub(crate) mod __gated_printer {
             &self.import_records[import_record_index]
         }
 
-        /// The loader that the `type` attribute of this import names. Only
-        /// target bun prints it back: its runtime picks the loader from it.
+        /// The loader that the import's `type` attribute names. Other targets still strip the attribute.
         #[inline]
         pub(crate) fn import_type_attribute(record: &ImportRecord) -> Option<bun_ast::Loader> {
             if IS_BUN_PLATFORM { record.loader } else { None }
         }
 
-        /// Prints `prefix`, the attribute value that names `loader`, then `" }`.
-        /// Out of line: most imports have no `type` attribute.
+        /// Out of line: with these prints inline, the `)` of every external require() is no longer inlined.
         #[cold]
         #[inline(never)]
         fn print_type_attribute(&mut self, prefix: Whitespacer, loader: bun_ast::Loader) {
@@ -2972,8 +2970,7 @@ pub(crate) mod __gated_printer {
                     self.print(b"require");
                 }
 
-                // cjs and iife output turn an import statement into this call. The
-                // runtime reads the `type` attribute from the second argument.
+                // An import statement lowered to require(): the runtime reads `type` from the second argument.
                 let type_attribute = Self::import_type_attribute(record);
                 debug_assert!(
                     type_attribute.is_none()
@@ -2998,18 +2995,10 @@ pub(crate) mod __gated_printer {
                 }
 
                 if wrap_with_to_esm {
-                    // With these types require() returns the namespace of an ES
-                    // module that bun generates, never a CommonJS `module.exports`.
-                    // `isNodeMode` would make that whole namespace the default import.
-                    if matches!(
-                        type_attribute,
-                        Some(
-                            bun_ast::Loader::Text
-                                | bun_ast::Loader::Md
-                                | bun_ast::Loader::Sqlite
-                                | bun_ast::Loader::SqliteEmbedded
-                        )
-                    ) {
+                    // `isNodeMode` would make a generated module's whole namespace the default import.
+                    if type_attribute
+                        .is_some_and(|loader| loader.require_returns_generated_es_module())
+                    {
                         self.print(b")");
                     } else {
                         self.print_to_esm_suffix();
@@ -6282,7 +6271,6 @@ pub(crate) mod __gated_printer {
 
                     self.print_import_record_path(record);
 
-                    // backwards compatibility: previously, we always stripped type
                     if let Some(loader) = Self::import_type_attribute(record) {
                         self.print_type_attribute(ws!(b" with { type: \""), loader);
                     }

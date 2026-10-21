@@ -17,9 +17,7 @@ pub struct ImportRecord {
     pub path: Path<'static>,
     pub kind: ImportKind,
     pub tag: Tag,
-    /// The loader the `type` import attribute names, `None` without one. The
-    /// printer prints it back as that attribute, so a loader that the bundler
-    /// picks for the resolved file must not be stored here.
+    /// Only the `type` import attribute: the printer prints it back, so never store a resolved loader here.
     pub loader: Option<Loader>,
 
     pub source_index: Index,

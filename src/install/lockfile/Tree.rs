@@ -34,7 +34,7 @@ use crate::{
 pub struct Tree {
     pub(crate) id: Id,
 
-    // Should not be used for anything other than the package through `owner()`, and name
+    // Should not be used for anything other than name
     // through `folder_name()`. There is no guarantee a dependency
     // id chosen for a tree node is the same behavior or has the
     // same version literal for packages hoisted.
@@ -90,14 +90,6 @@ impl Tree {
             return b"";
         }
         deps[dep_id as usize].name.slice(buf)
-    }
-
-    /// The package whose `node_modules` this tree is. `None` if its dependency didn't resolve.
-    pub(crate) fn owner(&self, resolutions: &[PackageID]) -> Option<PackageID> {
-        match self.dependency_id {
-            ROOT_DEP_ID => Some(0),
-            id => (resolutions.get(id as usize).copied()).filter(|&id| id != invalid_package_id),
-        }
     }
 
     /// Returns true if this tree belongs to a workspace that has no symlink in the root
@@ -465,47 +457,11 @@ pub(crate) struct Hoisted {
     pub(crate) late_bound_peer: bool,
     /// See `Builder::places`.
     pub(crate) places: Vec<(u64, PackageID)>,
-    /// See `Builder::shared_folder`.
-    pub(crate) shared_folder: bool,
 }
-
-/// For each tree, the first tree with the same `folder_keys` key and owner. `None` if all differ.
-pub(crate) fn first_trees_of_folders(lockfile: &Lockfile) -> Option<Vec<Id>> {
-    let trees = lockfile.buffers.trees.as_slice();
-    let resolutions = lockfile.buffers.resolutions.as_slice();
-    let keys = folder_keys(
-        trees,
-        lockfile.buffers.dependencies.as_slice(),
-        resolutions,
-        lockfile.packages.items_resolution(),
-    );
-
-    let mut first: Vec<Id> = Vec::with_capacity(trees.len());
-    let mut first_of: bun_collections::HashMap<(u64, Option<PackageID>), Id> = Default::default();
-    let mut shared = false;
-    for (tree, &key) in trees.iter().zip(&keys) {
-        let group = (key, tree.owner(resolutions));
-        let same = *first_of.entry(group).or_insert_with(|| tree.id);
-        shared |= same != tree.id;
-        first.push(same);
-    }
-    shared.then_some(first)
-}
-
-/// A workspace's `folder_keys` entry is a `place_key` under this folder key, which no tree has.
-const WORKSPACE_FOLDERS: u64 = u64::MAX;
 
 /// Returns a key for each tree's `node_modules` folder: the `place_key` of the package that owns
 /// the folder. Two hoists give the same folder the same key, even when its tree id differs.
-/// Every tree of a workspace, and of the project, has the same key, whichever dependency names it.
-pub(crate) fn folder_keys(
-    trees: &[Tree],
-    dependencies: &[Dependency],
-    resolutions: &[PackageID],
-    packages: &[Resolution],
-) -> Vec<u64> {
-    use crate::resolution::Tag;
-
+pub(crate) fn folder_keys(trees: &[Tree], dependencies: &[Dependency]) -> Vec<u64> {
     let mut keys: Vec<u64> = Vec::with_capacity(trees.len());
     for tree in trees {
         // A tree always comes after its parent, so the parent's key is already in `keys`.
@@ -513,14 +469,7 @@ pub(crate) fn folder_keys(
             keys.get(tree.parent as usize),
             dependencies.get(tree.dependency_id as usize),
         ) {
-            (Some(&parent), Some(named)) => {
-                let owner = tree.owner(resolutions);
-                match owner.and_then(|id| Some((id, packages.get(id as usize)?.tag))) {
-                    Some((_, Tag::Root)) => 0,
-                    Some((id, Tag::Workspace)) => place_key(WORKSPACE_FOLDERS, u64::from(id)),
-                    _ => place_key(parent, named.name_hash),
-                }
-            }
+            (Some(&parent), Some(owner)) => place_key(parent, owner.name_hash),
             _ => 0,
         };
         keys.push(key);
@@ -537,9 +486,8 @@ fn places_of(
     rows: &[DependencyIDList],
     dependencies: &[Dependency],
     resolutions: &[PackageID],
-    packages: &[Resolution],
 ) -> Vec<(u64, PackageID)> {
-    let folders = folder_keys(trees, dependencies, resolutions, packages);
+    let folders = folder_keys(trees, dependencies);
     let mut places = Vec::with_capacity(rows.iter().map(Vec::len).sum());
     for (&folder, rows) in folders.iter().zip(rows) {
         places.extend(rows.iter().map(|&row| {
@@ -614,8 +562,6 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     /// would place every row that this install keeps exactly where it is now.
     pub(crate) places: Vec<(u64, PackageID)>,
     pub(crate) linked: reachable::Linked,
-    /// True once a workspace or the project has a second tree. See `first_trees_of_folders`.
-    pub(crate) shared_folder: bool,
 }
 
 /// The peers of the package that's being hoisted. Each one comes with whether the package loads an
@@ -1015,7 +961,6 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
                 self.list.items_dependencies(),
                 self.dependencies,
                 &*self.resolutions,
-                self.lockfile.get().packages.items_resolution(),
             );
         }
     }
@@ -1516,13 +1461,11 @@ impl Tree {
         let next_id = (builder.list.len() - 1) as Id;
         // A self-contained workspace is a hoisting barrier: nothing below it may be
         // placed above its own node_modules.
-        // So does any dependency that leads to it with no barrier above, but not in 1.4.3's layout.
         let hoist_root_id = if dependency_id != ROOT_DEP_ID
-            && builder.self_contained.contains(&parent_pkg_id)
-            && (builder.dependencies[dependency_id as usize]
+            && builder.dependencies[dependency_id as usize]
                 .behavior
                 .is_workspace()
-                || (hoist_root_id == INVALID_ID && !builder.older_layout))
+            && builder.self_contained.contains(&parent_pkg_id)
         {
             next_id
         } else {
@@ -1539,14 +1482,6 @@ impl Tree {
         let pkgs = lockfile.packages.slice();
         let pkg_resolutions = pkgs.items_resolution();
         let dependencies: &[Dependency] = builder.dependencies;
-        if !first_walk
-            && matches!(
-                pkg_resolutions[parent_pkg_id as usize].tag,
-                crate::resolution::Tag::Workspace | crate::resolution::Tag::Root
-            )
-        {
-            builder.shared_folder = true;
-        }
 
         builder.sort_buf.clear();
         builder

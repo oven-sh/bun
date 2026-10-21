@@ -61,6 +61,9 @@ pub struct PackageInstaller<'a> {
 
     pub(crate) skip_verify_installed_version_number: bool,
     pub(crate) skip_delete: bool,
+    /// For `set_outlived_root`: the workspaces whose first tree the install has reached. The
+    /// project's is tree 0, so it starts out in here.
+    pub(crate) workspaces_seen: Vec<PackageID>,
     pub(crate) root_node_modules_folder: Dir,
     /// Acquired when the first package is linked, so an install with nothing to link never takes
     /// the lock.
@@ -87,8 +90,6 @@ pub struct PackageInstaller<'a> {
     /// (real files) rather than hardlinked/cloned/symlinked from the cache, so tools
     /// that walk, prune or rewrite that node_modules cannot reach the shared cache.
     pub(crate) copy_trees: Bitset,
-    /// `None` when every tree is a `node_modules` directory of its own.
-    pub(crate) shared_folders: Option<SharedFolders>,
 
     // fields used for running lifecycle scripts when it's safe
     //
@@ -208,103 +209,6 @@ impl DeferredLinks {
 
 const NAME_TOO_LONG: crate::Error = crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG);
 
-type FolderEntries<V> = bun_collections::HashMap<
-    (lockfile::tree::Id, PackageNameHash),
-    V,
-    lockfile::tree::PlaceContext,
->;
-
-/// The `node_modules` directories that several trees share, and what this install placed in them.
-pub(crate) struct SharedFolders {
-    /// For each tree, the first tree that is the same directory.
-    first: Vec<lockfile::tree::Id>,
-    /// The trees that share their directory with another tree.
-    trees: Bitset,
-    /// By first tree and name. A link can lead to another folder, so a name can have two entries.
-    placed: FolderEntries<Vec<PlacedRow>>,
-    /// The entries that a tree in `copy_trees` has a row for.
-    copied: FolderEntries<()>,
-    /// For each first tree, whether the directory existed before this install.
-    outlived: bun_collections::HashMap<lockfile::tree::Id, bool>,
-}
-
-#[derive(Clone, Copy)]
-struct PlacedRow {
-    package_id: PackageID,
-    /// `(st_dev, st_ino)` of the entry, or `None` when a `file:` package's folder is missing.
-    entry: Option<(u64, u64)>,
-}
-
-impl SharedFolders {
-    /// Returns `None` if every tree is a directory of its own.
-    pub(crate) fn init(lockfile: &Lockfile, copy_trees: &Bitset) -> Option<SharedFolders> {
-        let first = lockfile::tree::first_trees_of_folders(lockfile)?;
-        let mut trees = Bitset::init_empty(first.len()).unwrap_or_oom();
-        for (tree_id, &first_id) in first.iter().enumerate() {
-            if first_id as usize != tree_id {
-                trees.set(tree_id);
-                trees.set(first_id as usize);
-            }
-        }
-
-        let mut copied = FolderEntries::default();
-        let dependencies = lockfile.buffers.dependencies.as_slice();
-        let rows = lockfile.buffers.hoisted_dependencies.as_slice();
-        for (tree_id, tree) in lockfile.buffers.trees.as_slice().iter().enumerate() {
-            if trees.is_set(tree_id) && copy_trees.is_set(tree_id) {
-                for &dependency_id in tree.dependencies.get(rows) {
-                    let name_hash = dependencies[dependency_id as usize].name_hash;
-                    copied.insert((first[tree_id], name_hash), ());
-                }
-            }
-        }
-
-        Some(SharedFolders {
-            first,
-            trees,
-            placed: FolderEntries::default(),
-            copied,
-            outlived: Default::default(),
-        })
-    }
-
-    fn entry(
-        &self,
-        tree_id: lockfile::tree::Id,
-        name_hash: PackageNameHash,
-    ) -> Option<(lockfile::tree::Id, PackageNameHash)> {
-        (self.trees.is_set(tree_id as usize)).then(|| (self.first[tree_id as usize], name_hash))
-    }
-
-    /// Makes each tree's scripts wait for every tree of its directory, since any can place a row.
-    pub(crate) fn wait_for_each_tree(
-        &self,
-        trees: &[Tree],
-        waits: &bun_collections::DynamicBitSetList,
-    ) {
-        let add = |to: usize, from: usize| {
-            let before = waits.at(to).count();
-            waits.set_union(to, &waits.at(from));
-            waits.at(to).count() != before
-        };
-        loop {
-            let mut grew = false;
-            // A tree also waits for whatever the trees below it wait for.
-            for (id, tree) in trees.iter().enumerate().skip(1).rev() {
-                let first = self.first[id] as usize;
-                if first != id {
-                    grew |= add(first, id);
-                    grew |= add(id, first);
-                }
-                grew |= add(tree.parent as usize, id);
-            }
-            if !grew {
-                break;
-            }
-        }
-    }
-}
-
 /// A cheaper `join_z_buf` for two paths that are already normalized. A warm install calls this for
 /// every package.
 fn join_normalized_z<'b>(buf: &'b mut [u8], folder: &[u8], file_path: &[u8]) -> &'b ZStr {
@@ -389,21 +293,6 @@ impl NodeModulesFolder {
 
         let dir = self.open_dir(root_node_modules_dir).ok()?;
         bun_sys::fstatat(&dir, file_path).ok()
-    }
-
-    /// Like `stat`, but doesn't follow a link at `file_path`.
-    fn lstat(&self, root_node_modules_dir: &Dir, file_path: &ZStr) -> Option<bun_sys::Stat> {
-        if file_path.len() + self.path.len() * 2 < MAX_PATH_BYTES {
-            let mut path_buf = bun_paths::path_buffer_pool::get();
-            return bun_sys::lstatat(
-                root_node_modules_dir.fd(),
-                self.path_from_root(path_buf.as_mut_slice(), file_path),
-            )
-            .ok();
-        }
-
-        let dir = self.open_dir(root_node_modules_dir).ok()?;
-        bun_sys::lstatat(&dir, file_path).ok()
     }
 
     /// Since the stack size of these functions are rather large, let's not let them be inlined.
@@ -502,7 +391,7 @@ impl NodeModulesFolder {
     fn make_and_open_dir(&self, root: &Dir, lockfile: &Lockfile) -> crate::Result<Dir> {
         #[cfg(unix)]
         {
-            if lockfile.is_workspace_tree_id(self.tree_id) {
+            if lockfile.is_importer_tree_id(self.tree_id) {
                 return Ok(root.make_open_path(self.path.as_slice(), Default::default())?);
             }
             let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -833,7 +722,7 @@ impl<'a> PackageInstaller<'a> {
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let mut node_modules_path: AbsPath =
             AbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
-        let mut is_behind_link = (!lockfile.is_workspace_tree_id(tree_id)).then_some(false);
+        let mut is_behind_link = (!lockfile.is_importer_tree_id(tree_id)).then_some(false);
 
         let pkgs = lockfile.packages.slice();
         let pkg_name_hashes = pkgs.items_name_hash();
@@ -1614,18 +1503,17 @@ impl<'a> PackageInstaller<'a> {
         if !self.skip_delete || tree.parent == lockfile::tree::INVALID_ID {
             return;
         }
-        let outlived = if !lockfile.is_workspace_tree_id(tree_id) {
-            self.trees[tree.parent as usize].outlived_root
-        } else {
-            let is_there = || bun_sys::directory_exists_at(Fd::cwd(), path).unwrap_or(true);
-            match &mut self.shared_folders {
-                // One answer per folder: its next tree finds what this install placed there.
-                Some(folders) => match folders.first[tree_id as usize] {
-                    0 => false,
-                    first => *folders.outlived.entry(first).or_insert_with(is_there),
-                },
-                None => is_there(),
+        let outlived = if lockfile.is_importer_tree_id(tree_id) {
+            // A workspace that's depended on under two names has two trees for one folder. Whatever
+            // the second tree finds there was linked by this install for the first tree.
+            let workspace = lockfile.buffers.resolutions[tree.dependency_id as usize];
+            let is_first_tree = !self.workspaces_seen.contains(&workspace);
+            if is_first_tree {
+                self.workspaces_seen.push(workspace);
             }
+            is_first_tree && bun_sys::directory_exists_at(Fd::cwd(), path).unwrap_or(true)
+        } else {
+            self.trees[tree.parent as usize].outlived_root
         };
         self.trees[tree_id as usize].outlived_root = outlived;
     }
@@ -1777,85 +1665,6 @@ impl<'a> PackageInstaller<'a> {
         Ok(path)
     }
 
-    /// The key of `SharedFolders::placed` for this row, if the current tree shares its directory.
-    fn shared_key(
-        &self,
-        dependency_id: DependencyID,
-    ) -> Option<(lockfile::tree::Id, PackageNameHash)> {
-        let dependencies = self.lockfile().buffers.dependencies.as_slice();
-        let name_hash = dependencies[dependency_id as usize].name_hash;
-        (self.shared_folders.as_ref()?).entry(self.current_tree_id, name_hash)
-    }
-
-    /// Returns the `(st_dev, st_ino)` of whatever is at this row's path in the current tree.
-    fn entry_identity(&self, dependency_id: DependencyID) -> Option<(u64, u64)> {
-        let lockfile = self.lockfile();
-        let name = lockfile.buffers.dependencies.as_slice()[dependency_id as usize].name;
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let alias = bun_paths::resolve_path::z(
-            name.slice(lockfile.buffers.string_bytes.as_slice()),
-            &mut path_buf,
-        );
-        let stat = (self.node_modules).lstat(&self.root_node_modules_folder, alias)?;
-        // A file system that reports no inode number can't tell two entries apart.
-        (stat.st_ino != 0).then_some((stat.st_dev as u64, stat.st_ino as u64))
-    }
-
-    /// `Some(true)`: another tree's row placed this package. `Some(false)`: its folder is missing.
-    fn settled_by_another_tree(
-        &self,
-        dependency_id: DependencyID,
-        package_id: PackageID,
-    ) -> Option<bool> {
-        let rows = (self.shared_folders.as_ref()?.placed).get(&self.shared_key(dependency_id)?)?;
-        let rows = || rows.iter().filter(|row| row.package_id == package_id);
-        if rows().any(|row| row.entry.is_none()) {
-            return Some(false);
-        }
-        rows().next()?;
-        let entry = self.entry_identity(dependency_id)?;
-        rows().any(|row| row.entry == Some(entry)).then_some(true)
-    }
-
-    /// Records that this row's package is in place in the current tree, linked now or found there.
-    fn set_placed(&mut self, dependency_id: DependencyID, package_id: PackageID) {
-        let Some(key) = self.shared_key(dependency_id) else {
-            return;
-        };
-        let Some(entry) = self.entry_identity(dependency_id) else {
-            return;
-        };
-        let folders = self.shared_folders.as_mut().expect("has a key");
-        let rows = folders.placed.entry(key).or_default();
-        // A row of another package may have replaced what was at this entry.
-        rows.retain(|row| row.entry != Some(entry));
-        rows.push(PlacedRow {
-            package_id,
-            entry: Some(entry),
-        });
-    }
-
-    /// Records that this row's `file:` folder is missing, so that no other tree reports it again.
-    fn set_missing(&mut self, dependency_id: DependencyID, package_id: PackageID) {
-        let Some(key) = self.shared_key(dependency_id) else {
-            return;
-        };
-        let folders = self.shared_folders.as_mut().expect("has a key");
-        let entry = None;
-        (folders.placed.entry(key).or_default()).push(PlacedRow { package_id, entry });
-    }
-
-    /// Returns true if a `copy_trees` tree that shares the current tree's directory has this row.
-    fn is_copied_by_another_tree(&self, dependency_id: DependencyID) -> bool {
-        let Some(folders) = &self.shared_folders else {
-            return false;
-        };
-        let dependencies = self.lockfile().buffers.dependencies.as_slice();
-        let name_hash = dependencies[dependency_id as usize].name_hash;
-        (folders.entry(self.current_tree_id, name_hash))
-            .is_some_and(|entry| folders.copied.contains_key(&entry))
-    }
-
     fn get_installed_package_scripts_count(
         &mut self,
         alias: &[u8],
@@ -1944,21 +1753,6 @@ impl<'a> PackageInstaller<'a> {
             () => {
                 string_buf_ptr.slice()
             };
-        }
-
-        if let Some(is_placed) = self.settled_by_another_tree(dependency_id, package_id) {
-            self.summary.skipped += is_placed as u32;
-            // Each tree of the directory still links the bins of all its rows, in its own order.
-            if is_placed && self.bins[package_id as usize].tag != bin::Tag::None {
-                self.trees[self.current_tree_id as usize]
-                    .binaries
-                    .add(dependency_id)
-                    .unwrap_or_oom();
-            }
-            if log_level.show_progress() {
-                self.node.complete_one();
-            }
-            return self.increment_tree_install_count(is_pending_package_install, log_level);
         }
 
         let alias = self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize].name;
@@ -2109,7 +1903,7 @@ impl<'a> PackageInstaller<'a> {
 
                 // transitive folder dependencies are not hoisted
                 let is_transitive =
-                    !is_workspace && !self.lockfile().is_workspace_tree_id(self.current_tree_id);
+                    !is_workspace && !self.lockfile().is_importer_tree_id(self.current_tree_id);
                 if folder.len() >= self.folder_path_buf.len() {
                     if log_level != Options::LogLevel::Silent {
                         Output::err(
@@ -2435,7 +2229,7 @@ impl<'a> PackageInstaller<'a> {
 
                     if resolution.tag == resolution::Tag::Root
                         || (resolution.tag == resolution::Tag::Folder
-                            && !self.lockfile().is_workspace_tree_id(self.current_tree_id))
+                            && !self.lockfile().is_importer_tree_id(self.current_tree_id))
                     {
                         // This is a transitive folder dependency. It is not hoisted.
                         //
@@ -2532,11 +2326,8 @@ impl<'a> PackageInstaller<'a> {
                         break 'result result;
                     }
 
-                    // A `file:` folder is verified by hardlinks: another tree can't make it a copy.
                     let copy = (self.copy_trees)
-                        .is_set_allow_out_of_bound(self.current_tree_id as usize, false)
-                        || (resolution.tag != resolution::Tag::Folder
-                            && self.is_copied_by_another_tree(dependency_id));
+                        .is_set_allow_out_of_bound(self.current_tree_id as usize, false);
                     if can_defer_link.unwrap_or_else(|| {
                         self.can_defer_link(
                             alias.slice(string_buf!()),
@@ -2605,7 +2396,6 @@ impl<'a> PackageInstaller<'a> {
                 install_result,
             );
         } else {
-            self.set_placed(dependency_id, package_id);
             if self.manager().options.offline
                 == crate::package_manager_real::options::OfflineMode::Offline
             {
@@ -2680,7 +2470,6 @@ impl<'a> PackageInstaller<'a> {
 
         match install_result {
             package_install::InstallResult::Success => {
-                self.set_placed(dependency_id, package_id);
                 let is_duplicate = self.successfully_installed.is_set(package_id as usize);
                 self.summary.success += (!is_duplicate) as u32;
                 self.successfully_installed.set(package_id as usize);
@@ -2789,7 +2578,6 @@ impl<'a> PackageInstaller<'a> {
                         ),
                         bstr::BStr::new(alias.slice(string_buf!())),
                     );
-                    self.set_missing(dependency_id, package_id);
                 } else if matches!(
                     cause.err,
                     crate::Error::Sys(bun_errno::SystemErrno::EACCES) | crate::Error::AccessDenied

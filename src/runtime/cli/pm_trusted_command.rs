@@ -172,9 +172,6 @@ impl Blocked {
         let mut path = AutoAbsPath::init_top_level_dir();
         let top_level_len = path.len();
 
-        // Two trees can be the same `node_modules`. The key is the folder's `st_dev` and `st_ino`.
-        let mut listed = bun_collections::HashMap::<(u64, u64, PackageID), ()>::default();
-
         let mut tree_iterator =
             tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
         while let Some(node_modules) = tree_iterator.next(None) {
@@ -201,14 +198,6 @@ impl Blocked {
                 if let Some(scripts_list) =
                     Self::scripts_at(log, lockfile, dep_id, package_id, &mut path)?
                 {
-                    if let Ok(entry) = bun_sys::lstat(path.slice_z())
-                        && entry.st_ino != 0
-                        && (listed
-                            .insert((entry.st_dev as u64, entry.st_ino as u64, package_id), ()))
-                        .is_some()
-                    {
-                        continue;
-                    }
                     blocked.push(Blocked {
                         dep_id,
                         package_id,

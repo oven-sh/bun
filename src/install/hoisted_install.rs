@@ -20,9 +20,7 @@ use crate::{DependencyID, ExtractData, PackageID};
 use crate::PackageManager;
 use crate::bin_real as bin;
 use crate::package_install;
-use crate::package_installer::{
-    DeferredLinks, NodeModulesFolder, PackageInstaller, SharedFolders, TreeContext,
-};
+use crate::package_installer::{DeferredLinks, NodeModulesFolder, PackageInstaller, TreeContext};
 use crate::package_manager::{self, WorkspaceFilter};
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_real::run_tasks;
@@ -198,11 +196,7 @@ pub(crate) fn install_hoisted_packages(
     let original_trees = this.lockfile.buffers.trees.clone();
     let original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies.clone();
 
-    let tree::Hoisted {
-        places,
-        shared_folder,
-        ..
-    } = {
+    let places = {
         // `lockfile` is `Box<Lockfile>` so the heap object
         // is disjoint from the `PackageManager` struct; snapshot raw `*mut
         // Lockfile` and `*mut Log` first so `filter` can hold `&mut Lockfile`
@@ -215,13 +209,15 @@ pub(crate) fn install_hoisted_packages(
         // SAFETY: `log` is the always-live logger backref (never null);
         // `mgr_ptr` see shadow-reborrow above.
         unsafe {
-            (*lockfile_ptr).filter(
-                &mut *log,
-                &mut *mgr_ptr,
-                install_root_dependencies,
-                workspace_filters,
-                packages_to_install,
-            )?
+            (*lockfile_ptr)
+                .filter(
+                    &mut *log,
+                    &mut *mgr_ptr,
+                    install_root_dependencies,
+                    workspace_filters,
+                    packages_to_install,
+                )?
+                .places
         }
     };
     // SAFETY: `mgr_ptr` is the provenance root derived from the unique `&mut`
@@ -385,6 +381,34 @@ pub(crate) fn install_hoisted_packages(
 
                         deps.unmanaged.set_all(false);
                     }
+
+                    // Each dependency that leads to a workspace gives its `node_modules` a tree, and
+                    // each tree places its packages there. A script in there waits for all of them.
+                    let resolutions = this.lockfile.buffers.resolutions.as_slice();
+                    let mut first_tree_of = vec![tree::INVALID_ID; this.lockfile.packages.len()];
+                    if let Some(of_the_project) = first_tree_of.first_mut() {
+                        *of_the_project = 0;
+                    }
+                    for tree in trees.iter().skip(1) {
+                        if !this.lockfile.is_importer_tree_id(tree.id) {
+                            continue;
+                        }
+                        let first =
+                            &mut first_tree_of[resolutions[tree.dependency_id as usize] as usize];
+                        if *first == tree::INVALID_ID {
+                            *first = tree.id;
+                            continue;
+                        }
+                        for id in [*first, tree.id] {
+                            let waits_for = tree_ids_to_trees_the_id_depends_on.at(id as usize);
+                            deps.unmanaged.set_union(&waits_for);
+                        }
+                        let mut inside = deps.iterator::<true, true>();
+                        while let Some(id) = inside.next() {
+                            tree_ids_to_trees_the_id_depends_on.set_union(id, &deps.unmanaged);
+                        }
+                        deps.unmanaged.set_all(false);
+                    }
                 }
 
                 break 'trees (completed_trees, tree_ids_to_trees_the_id_depends_on);
@@ -405,16 +429,6 @@ pub(crate) fn install_hoisted_packages(
             let pkg_len = this.lockfile.packages.len();
             let trees_count = this.lockfile.buffers.trees.len();
             let trusted_deps = this.find_trusted_dependencies_from_update_requests();
-            let copy_trees = this.lockfile.trees_below_self_contained_workspaces()?;
-            let shared_folders = shared_folder
-                .then(|| SharedFolders::init(&lockfile_ref, &copy_trees))
-                .flatten();
-            if let Some(folders) = &shared_folders {
-                folders.wait_for_each_tree(
-                    this.lockfile.buffers.trees.as_slice(),
-                    &tree_ids_to_trees_the_id_depends_on,
-                );
-            }
 
             break 'brk PackageInstaller {
                 manager: mgr_ptr,
@@ -441,6 +455,7 @@ pub(crate) fn install_hoisted_packages(
                 progress: unsafe { core::ptr::addr_of_mut!((*mgr_ptr).progress) },
                 skip_verify_installed_version_number,
                 skip_delete,
+                workspaces_seen: vec![0],
                 summary: &mut summary,
                 successfully_installed: Bitset::init_empty(pkg_len)?,
                 command_ctx: ctx,
@@ -472,8 +487,19 @@ pub(crate) fn install_hoisted_packages(
                 current_tree_id: tree::INVALID_ID,
                 pending_lifecycle_scripts: Vec::new(),
                 unfinished_scripts: Default::default(),
-                copy_trees,
-                shared_folders,
+                copy_trees: {
+                    let self_contained = this.lockfile.self_contained_workspace_ids();
+                    let mut set = Bitset::init_empty(trees_count)?;
+                    if !self_contained.is_empty() {
+                        for tid in 0..trees_count {
+                            let owner = this.lockfile.owning_workspace_of_tree(tid as tree::Id);
+                            if owner != 0 && self_contained.contains(&owner) {
+                                set.set(tid);
+                            }
+                        }
+                    }
+                    set
+                },
             };
         };
 

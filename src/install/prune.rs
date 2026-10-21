@@ -1823,12 +1823,7 @@ fn remove_from_older_places(manager: &PackageManager, places: &[(u64, PackageID)
     let trees = lockfile.buffers.trees.as_slice();
     let rows = lockfile.buffers.hoisted_dependencies.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
-    let folders = tree::folder_keys(
-        trees,
-        deps,
-        lockfile.buffers.resolutions.as_slice(),
-        lockfile.packages.items_resolution(),
-    );
+    let folders = tree::folder_keys(trees, deps);
     let today = |place: u64| {
         let found = places.binary_search_by_key(&place, |&(key, _)| key);
         found.ok().map(|i| places[i].1)

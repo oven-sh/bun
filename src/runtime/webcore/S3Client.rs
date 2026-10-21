@@ -427,13 +427,13 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (mut blob, options) = ptr.blob_and_options(
+        let (blob, options) = ptr.blob_and_options(
             global,
             callframe,
             "presign",
             MissingPathError::MissingOrInvalid,
         )?;
-        S3File::get_presign_url_from(&mut blob, global, options)
+        S3File::get_presign_url_from(&blob, global, options)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -550,9 +550,9 @@ impl S3Client {
             ptr.request_payer,
         )?;
 
-        let store = blob.store.get().as_ref().unwrap();
+        let store = blob.store.get().as_ref().unwrap().clone();
         store.data.as_s3().list_objects(
-            store,
+            store.clone(),
             &global.js_thread_of_caller(callframe),
             object_keys,
             options,
@@ -571,11 +571,12 @@ impl S3Client {
             "unlink",
             MissingPathError::AlwaysMissingArgs,
         )?;
-        let store = blob.store.get().as_ref().unwrap();
-        store
-            .data
-            .as_s3()
-            .unlink(store, &global.js_thread_of_caller(callframe), options)
+        let store = blob.store.get().as_ref().unwrap().clone();
+        store.data.as_s3().unlink(
+            store.clone(),
+            &global.js_thread_of_caller(callframe),
+            options,
+        )
     }
 
     // ── Static methods ────────────────────────────────────────────────────
@@ -658,9 +659,9 @@ impl S3Client {
             &existing_credentials,
         )?;
 
-        let store = blob.store.get().as_ref().unwrap();
+        let store = blob.store.get().as_ref().unwrap().clone();
         store.data.as_s3().list_objects(
-            store,
+            store.clone(),
             &global.js_thread_of_caller(callframe),
             object_keys,
             options,

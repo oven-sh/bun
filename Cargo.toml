@@ -3,7 +3,6 @@ resolver = "2"
 members = [
   "src/opaque",
   "src/analytics",
-  "src/api",
   "src/base64",
   "src/bundler",
   "src/collections",
@@ -20,6 +19,27 @@ members = [
   "src/paths",
   "src/resolver",
   "src/safety",
+  "src/sema",
+  "src/sema/baselines",
+  "src/sema/driver",
+  "src/sema/parser",
+  "src/sema/standalone",
+  "src/lint",
+  "src/lint/eslint",
+  "src/lint/typescript",
+  "src/lint/plugins",
+  "src/lint/oxlint",
+  "src/lint/unicorn",
+  "src/lint/react",
+  "src/lint/jest",
+  "src/lint/json",
+  "src/lint/markdown",
+  "src/lint/graph",
+  "src/lint/react_compiler",
+  "src/lint/driver",
+  "src/lint/conformance",
+  "src/format",
+  "src/format/conformance",
   "src/semver",
   "src/sourcemap",
   "src/sql",
@@ -78,6 +98,9 @@ members = [
   "src/standalone_graph",
   "src/uws",
   "src/wyhash",
+  "src/yarr",
+  "src/node_path",
+  "src/text_diff",
   "src/hash",
   "src/boringssl_sys",
   "src/bun_core",
@@ -185,7 +208,7 @@ warnings = { level = "deny", priority = -1 }
 # (`--cfg=...` + `--check-cfg=cfg(...)`) by scripts/build/rust.ts; register
 # them here so a plain `cargo build` / `cargo check` (without those flags)
 # doesn't warn.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(socket_fault_injection)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(socket_fault_injection)', 'cfg(bun_disallow_code_generation_from_strings)', 'cfg(bun_sema_mimalloc)'] }
 # link.exe unconditionally prints "Creating library X.dll.lib and object
 # X.dll.exp" to stdout when linking each proc-macro DLL on Windows hosts;
 # there is no linker flag to suppress it. The lint already exempts itself
@@ -349,7 +372,6 @@ encoding_rs = "0.8.35"
 lol_html = { path = "vendor/lolhtml" }
 bun_opaque = { path = "src/opaque" }
 bun_analytics = { path = "src/analytics" }
-bun_api = { path = "src/api" }
 bun_base64 = { path = "src/base64" }
 bun_bundler = { path = "src/bundler" }
 bun_collections = { path = "src/collections" }
@@ -365,6 +387,26 @@ bun_md = { path = "src/md" }
 bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
 bun_safety = { path = "src/safety" }
+bun_sema = { path = "src/sema" }
+bun_sema_baselines = { path = "src/sema/baselines" }
+bun_sema_driver = { path = "src/sema/driver" }
+bun_sema_parser = { path = "src/sema/parser" }
+bun_lint = { path = "src/lint" }
+bun_lint_eslint = { path = "src/lint/eslint" }
+bun_lint_typescript = { path = "src/lint/typescript" }
+bun_lint_plugins = { path = "src/lint/plugins" }
+bun_lint_oxlint = { path = "src/lint/oxlint" }
+bun_lint_unicorn = { path = "src/lint/unicorn" }
+bun_lint_react = { path = "src/lint/react" }
+bun_lint_jest = { path = "src/lint/jest" }
+bun_lint_json = { path = "src/lint/json" }
+bun_lint_markdown = { path = "src/lint/markdown" }
+bun_lint_graph = { path = "src/lint/graph" }
+bun_lint_react_compiler = { path = "src/lint/react_compiler" }
+bun_format = { path = "src/format" }
+bun_format_conformance = { path = "src/format/conformance" }
+bun_lint_driver = { path = "src/lint/driver" }
+bun_lint_conformance = { path = "src/lint/conformance" }
 bun_semver = { path = "src/semver" }
 bun_sourcemap = { path = "src/sourcemap" }
 bun_sql = { path = "src/sql" }
@@ -423,6 +465,9 @@ bun_semver_jsc = { path = "src/semver_jsc" }
 bun_standalone_graph = { path = "src/standalone_graph" }
 bun_uws = { path = "src/uws" }
 bun_wyhash = { path = "src/wyhash" }
+bun_yarr = { path = "src/yarr" }
+bun_node_path = { path = "src/node_path" }
+bun_text_diff = { path = "src/text_diff" }
 bun_hash = { path = "src/hash" }
 bun_boringssl_sys = { path = "src/boringssl_sys" }
 bun_core = { path = "src/bun_core" }
@@ -446,3 +491,14 @@ bun_transpiler = { path = "src/transpiler" }
 
 [profile.release.package.bun_react_compiler]
 opt-level = "s"
+
+# The runners behind `--run-typescript-tests`, `--run-prettier-tests` and `--run-eslint-tests`. Only canary and debug
+# builds have them, and the time goes into what they test, which keeps its own level.
+[profile.release.package.bun_sema_baselines]
+opt-level = "z"
+
+[profile.release.package.bun_format_conformance]
+opt-level = "z"
+
+[profile.release.package.bun_lint_conformance]
+opt-level = "z"

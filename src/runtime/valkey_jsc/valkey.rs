@@ -134,6 +134,16 @@ impl TLS {
             _ => false,
         }
     }
+
+    /// `tls.serverName`: replaces the URL host as SNI and as the name the certificate must match.
+    pub(crate) fn server_name(&self) -> Option<&[u8]> {
+        match self {
+            TLS::Custom(ssl_config) => ssl_config
+                .server_name_bytes()
+                .filter(|name| !name.is_empty()),
+            _ => None,
+        }
+    }
 }
 
 // Call sites only ever compare against `TLS::None` / `TLS::Enabled`; `SSLConfig`
@@ -541,7 +551,7 @@ impl ValkeyClient {
         let wrote = self.socket.write(chunk);
         if wrote > 0 {
             self.write_buffer
-                .consume(u32::try_from(wrote).expect("int cast"));
+                .consume(usize::try_from(wrote).expect("int cast"));
         }
         self.write_buffer.len() > 0
     }
@@ -800,8 +810,7 @@ impl ValkeyClient {
                     return Ok(());
                 }
 
-                self.read_buffer
-                    .consume(u32::try_from(bytes_consumed).expect("int cast"));
+                self.read_buffer.consume(bytes_consumed);
                 self.reply_scanner.reset();
 
                 let mut value_to_handle = value; // Use temp var for defer

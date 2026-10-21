@@ -272,7 +272,7 @@ test.concurrent.skipIf(!isLinux || !cc)(
       stderrPromise,
       (async () => {
         let out = "";
-        for (let line; (line = await readLine()) !== null; ) out += line + "\n";
+        for (let line; (line = await readLine()) !== null;) out += line + "\n";
         return out;
       })(),
       proc.exited,

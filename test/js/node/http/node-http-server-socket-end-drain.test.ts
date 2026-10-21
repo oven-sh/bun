@@ -116,7 +116,7 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
         ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
         : net.connect(port, "127.0.0.1");
     const chunks: Buffer[] = [];
-    client.on("data", chunk => chunks.push(chunk));
+    client.on("data", (chunk: Buffer) => chunks.push(chunk));
     // The server can close before the client's own FIN lands; only the bytes matter here.
     client.on("error", () => {});
     const closed = new Promise(resolve => client.once("close", resolve));

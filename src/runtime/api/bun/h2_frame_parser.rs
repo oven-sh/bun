@@ -110,12 +110,16 @@ enum BunSocket {
 /// that slot is taken, takes a ref on the socket (`*Writeonly`); `detach` /
 /// `Drop` undo whichever one it was. Readers take a [`BunSocket`] snapshot.
 #[derive(Default)]
-struct NativeSocket(Cell<BunSocket>);
+struct NativeSocket {
+    socket: Cell<BunSocket>,
+    /// The attached socket closed. Sticky until `attach`; `onWrite` tells the session.
+    closed: Cell<bool>,
+}
 
 impl NativeSocket {
     #[inline]
     fn get(&self) -> BunSocket {
-        self.0.get()
+        self.socket.get()
     }
 
     /// `attach_native_callback` stores `h2` (a ref on the parser) in the
@@ -127,12 +131,13 @@ impl NativeSocket {
         socket: *mut crate::socket::NewSocket<SSL>,
         h2: RefPtr<H2FrameParser>,
     ) {
-        debug_assert!(matches!(self.0.get(), BunSocket::None));
+        debug_assert!(matches!(self.socket.get(), BunSocket::None));
+        self.closed.set(false);
         // BACKREF: `socket` is the live `m_ctx` borrowed from the JS wrapper
         // rooted by the caller's `socket_js`.
         let socket_nn = NonNull::new(socket).expect("NewSocket m_ctx");
         let socket = bun_ptr::BackRef::from(socket_nn);
-        self.0
+        self.socket
             .set(if socket.attach_native_callback(NativeCallbacks::H2(h2)) {
                 if SSL {
                     BunSocket::Tls(bun_ptr::BackRef::from(socket_nn.cast::<TLSSocket>()))
@@ -151,13 +156,20 @@ impl NativeSocket {
     }
 
     fn detach(&self) {
-        match self.0.replace(BunSocket::None) {
+        match self.socket.replace(BunSocket::None) {
             BunSocket::Tcp(socket) => socket.detach_native_callback(),
             BunSocket::Tls(socket) => socket.detach_native_callback(),
             // The ref `attach` took.
             BunSocket::TcpWriteonly(socket) => TCPSocket::deref(socket.get()),
             BunSocket::TlsWriteonly(socket) => TLSSocket::deref(socket.get()),
             BunSocket::None => {}
+        }
+    }
+
+    /// The socket released the parser. `detach` gets here too, but with nothing attached.
+    fn note_socket_closed(&self) {
+        if !matches!(self.socket.get(), BunSocket::None) {
+            self.closed.set(true);
         }
     }
 }
@@ -232,6 +244,8 @@ const MAX_WINDOW_SIZE: u32 = i32::MAX as u32;
 const MAX_HEADER_TABLE_SIZE: u32 = u32::MAX;
 const MAX_STREAM_ID: u32 = i32::MAX as u32;
 const MAX_FRAME_SIZE: u32 = 0xFF_FFFF; // u24::MAX
+// node's kMaxALTSVC: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L241
+const MAX_ALTSVC_LENGTH: usize = 16384 - 2;
 const DEFAULT_WINDOW_SIZE: u64 = u16::MAX as u64;
 // Float versions for range validation before integer conversion
 const MAX_WINDOW_SIZE_F64: f64 = MAX_WINDOW_SIZE as f64;
@@ -2409,18 +2423,25 @@ impl H2FrameParser {
         );
     }
 
-    pub(crate) fn call(&self, event: JSH2FrameParser::Gc, value: JSValue) -> JSValue {
+    /// `onWrite(context, bytes, transportClosed)`. The flag is true once the native socket closed.
+    fn call_on_write(&self, bytes: JSValue) -> JSValue {
         let Some(this_value) = self.strong_this.get().try_get() else {
             return JSValue::ZERO;
         };
         let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
             return JSValue::ZERO;
         };
-        value.ensure_still_alive();
+        bytes.ensure_still_alive();
         let _dispatch = self.enter_dispatch();
-        self.handlers
-            .get()
-            .call_event_handler_with_result(event, this_value, &[ctx_value, value])
+        self.handlers.get().call_event_handler_with_result(
+            JSH2FrameParser::Gc::onWrite,
+            this_value,
+            &[
+                ctx_value,
+                bytes,
+                JSValue::from(self.native_socket.closed.get()),
+            ],
+        )
     }
 
     pub(crate) fn dispatch_write_callback(&self, callback: JSValue) {
@@ -2516,9 +2537,57 @@ impl H2FrameParser {
         CORK_OFFSET.with(|c| c.set(0));
     }
 
+    /// Takes the pending bytes out for the write: JS re-entering under it would send them again.
+    fn write_pending_through_js<S: NativeSocketWrite>(
+        &self,
+        mut socket: S,
+        bytes: &[u8],
+    ) -> (usize, usize) {
+        let offset = self.write_buffer_offset.replace(0);
+        let mut pending = self.write_buffer.take();
+        let _ = pending.write(bytes);
+        let result: i32 = socket.write_maybe_corked(&pending[offset..]);
+        self.restore_unwritten_pending(pending, offset, bytes.len(), result)
+    }
+
+    fn restore_unwritten_pending(
+        &self,
+        pending: Vec<u8>,
+        offset: usize,
+        appended: usize,
+        result: i32,
+    ) -> (usize, usize) {
+        let total = pending.len() - offset;
+        let written: usize = if result < 0 {
+            if Self::is_transport_fatal_write_result(result) {
+                self.note_transport_write_fatal();
+            }
+            0
+        } else {
+            usize::try_from(result).expect("int cast")
+        };
+        if written < total {
+            // The rest goes back in front of whatever a re-entrant write buffered meanwhile.
+            let reentrant_offset = self.write_buffer_offset.replace(offset + written);
+            let reentrant = self.write_buffer.replace(pending);
+            let _ = self
+                .write_buffer
+                .with_mut(|wb| wb.write(&reentrant[reentrant_offset..]));
+            self.global()
+                .vm()
+                .deprecated_report_extra_memory(appended.min(total - written));
+        }
+        (written, total)
+    }
+
     pub(crate) fn generic_flush<S: NativeSocketWrite>(&self, mut socket: S) -> usize {
         let buffer_len = self.write_buffer.get().slice()[self.write_buffer_offset.get()..].len();
         if buffer_len > 0 {
+            if self.transport_write_runs_js() {
+                let (written, _) = self.write_pending_through_js(socket, b"");
+                bun_output::scoped_log!(H2FrameParser, "_genericFlush {}", written);
+                return written;
+            }
             let result: i32 = socket.write_maybe_corked(
                 &self.write_buffer.get().slice()[self.write_buffer_offset.get()..],
             );
@@ -2560,6 +2629,10 @@ impl H2FrameParser {
         let global = self.global();
         let buffered_len = self.write_buffer.get().slice()[self.write_buffer_offset.get()..].len();
         if buffered_len > 0 {
+            if self.transport_write_runs_js() {
+                let (written, total) = self.write_pending_through_js(socket, bytes);
+                return written == total;
+            }
             {
                 let result: i32 = socket.write_maybe_corked(
                     &self.write_buffer.get().slice()[self.write_buffer_offset.get()..],
@@ -2716,7 +2789,7 @@ impl H2FrameParser {
                         return 0;
                     };
                     self.js_socket_flushing.set(true);
-                    let result = self.call(JSH2FrameParser::Gc::onWrite, output_value);
+                    let result = self.call_on_write(output_value);
                     self.js_socket_flushing.set(false);
 
                     // Same contract as _write: -1 dropped, 0 queued by the socket, else sent.
@@ -2789,7 +2862,7 @@ impl H2FrameParser {
                     .to_js(bytes, &self.handlers.get().global())
                 {
                     Ok(output_value) => {
-                        let result = self.call(JSH2FrameParser::Gc::onWrite, output_value);
+                        let result = self.call_on_write(output_value);
                         if result.is_number() {
                             result.to_int32()
                         } else {
@@ -3167,7 +3240,7 @@ impl H2FrameParser {
 
     /// Flush the cork buffer's current contents without releasing cork state, so a
     /// fill-to-boundary write can keep accumulating the remainder. The corked bytes are
-    /// moved out before _write — it can re-enter JS (JS-stream-backed sockets) and no
+    /// moved out before _write — a socket that closes inside the write runs JS, and no
     /// thread-local borrow may be held across it.
     fn flush_cork_buffer(&self) -> bool {
         let mut data = BATCH_BUFFER.with_borrow_mut(core::mem::take);
@@ -3197,7 +3270,7 @@ impl H2FrameParser {
             return self._write(bytes);
         }
         self.cork();
-        if matches!(self.native_socket.get(), BunSocket::None) {
+        if self.transport_write_runs_js() {
             return self.write_to_js_transport(bytes);
         }
         let mut ok = true;
@@ -3226,14 +3299,14 @@ impl H2FrameParser {
             });
             CORK_OFFSET.with(|c| c.set(H2_CORK_BUFFER_SIZE as u16));
             ok = self.flush_cork_buffer() && ok;
-            // The flush's _write can re-enter JS and re-cork a different parser;
+            // A close inside the flush's _write runs JS, which can re-cork a different parser;
             // re-assert ownership before touching the shared cork state again.
             self.cork();
             bytes = &bytes[avail..];
         }
     }
 
-    /// `write()` for a session with no native socket, whose bytes reach the wire through the
+    /// `write()` when `transport_write_runs_js`, e.g. when the bytes reach the wire through the
     /// `onWrite` handler (`socket.write()` on a JS stream). That call runs the transport's
     /// `_write` synchronously, and user code there can serialize another frame (ping(),
     /// settings(), goaway(), request()) or flush before it returns. Bytes are therefore only
@@ -3299,7 +3372,8 @@ impl NativeSocketWrite for &TLSSocket {
     fn write_maybe_corked(&mut self, buf: &[u8]) -> i32 {
         // Forward to the inherent NewSocket<true>::write_maybe_corked (R-2: now
         // takes `&self`). UFCS to avoid resolving back to this trait impl.
-        TLSSocket::write_maybe_corked(*self, buf)
+        // No fatal latch: its close would drop what the peer sent before; the TLS layer closes after reading it.
+        TLSSocket::write_maybe_corked(*self, buf).max(-1)
     }
 }
 impl NativeSocketWrite for &TCPSocket {
@@ -3389,7 +3463,7 @@ impl H2FrameParser {
         } else {
             self.local_settings.get().initial_window_size
         };
-        let stream = bun_core::heap::into_raw(Box::new(Stream::init(
+        let mut new_stream = Stream::init(
             stream_identifier,
             local_window_size,
             self.remote_settings
@@ -3397,7 +3471,12 @@ impl H2FrameParser {
                 .map(|s| s.initial_window_size)
                 .unwrap_or(DEFAULT_WINDOW_SIZE as u32),
             self.padding_strategy.get(),
-        )));
+        );
+        // The peer has no half to close on a push, so our END_STREAM closes it (RFC 9113 5.1).
+        if self.is_server.get() && stream_identifier.is_multiple_of(2) {
+            new_stream.state = StreamState::HALF_CLOSED_REMOTE;
+        }
+        let stream = bun_core::heap::into_raw(Box::new(new_stream));
         self.streams
             .with_mut(|s| s.insert(stream_identifier, stream));
 
@@ -4909,20 +4988,25 @@ impl H2FrameParser {
             }
             stream_id = stream_id_js.to_u32();
         }
+        // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L3233-L3239
+        let origin_bytes = origin_view.as_ref().map(header_value_bytes);
+        let value_bytes = value_view.as_ref().map(header_value_bytes);
+        let origin = origin_bytes.as_deref().unwrap_or_default();
+        let value = value_bytes.as_deref().unwrap_or_default();
+        if origin.len() + value.len() > MAX_ALTSVC_LENGTH {
+            let exception = global_object.to_type_error(
+                bun_jsc::ErrorCode::HTTP2_ALTSVC_LENGTH,
+                format_args!("HTTP/2 ALTSVC frames are limited to {MAX_ALTSVC_LENGTH} bytes"),
+            );
+            return Err(global_object.throw_value(exception));
+        }
         if stream_id > 0 {
             // dont error but dont send frame to invalid stream id
             if this.streams.get().get(&stream_id).is_none() {
                 return Ok(JSValue::UNDEFINED);
             }
         }
-        // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L3233-L3239
-        let origin_bytes = origin_view.as_ref().map(header_value_bytes);
-        let value_bytes = value_view.as_ref().map(header_value_bytes);
-        this.send_alt_svc(
-            stream_id,
-            origin_bytes.as_deref().unwrap_or_default(),
-            value_bytes.as_deref().unwrap_or_default(),
-        );
+        this.send_alt_svc(stream_id, origin, value);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -5980,13 +6064,13 @@ impl H2FrameParser {
     #[bun_jsc::host_fn(method)]
     pub(crate) fn set_next_stream_id(
         this: &Self,
-        _global_object: &JSGlobalObject,
+        global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments();
-        debug_assert!(args_list.len() >= 1);
-        let stream_id_arg = args_list[0];
-        debug_assert!(stream_id_arg.is_number());
+        let stream_id_arg = callframe.argument(0);
+        if !stream_id_arg.is_number() {
+            return Err(global_object.throw(format_args!("Expected stream_id to be a number")));
+        }
         // Store the id `get_next_stream_id` steps from. A fractional id passes the JS layer's
         // `id <= 0` check and truncates to 0 here; 0 (and 1 on a client) has no predecessor,
         // so the subtraction saturates to the initial state instead of wrapping.
@@ -6043,10 +6127,19 @@ impl H2FrameParser {
                 "Expected parentId, promisedId, headers and sensitiveHeaders arguments"
             )));
         }
+        if !parent_id_arg.is_number() {
+            return Err(global_object.throw(format_args!("Expected parentId to be a number")));
+        }
+        if !promised_id_arg.is_number() {
+            return Err(global_object.throw(format_args!("Expected promisedId to be a number")));
+        }
         let parent_id = parent_id_arg.to_u32();
         let promised_id = promised_id_arg.to_u32();
         if promised_id > MAX_STREAM_ID {
             return Ok(JSValue::js_number(-1.0));
+        }
+        if parent_id == 0 || parent_id > MAX_STREAM_ID || promised_id == 0 {
+            return Err(global_object.throw(format_args!("Invalid stream id")));
         }
         let Some(headers_obj) = headers_arg.get_object() else {
             return Err(global_object.throw(format_args!("Expected headers to be an object")));
@@ -7369,6 +7462,7 @@ impl H2FrameParser {
         // detach_native_socket can drop the socket's last ref (Writeonly deref),
         // so match on_native_read/on_native_writable and hold our own +1.
         let _keepalive = self.keepalive();
+        self.native_socket.note_socket_closed();
         self.detach_native_socket();
     }
 

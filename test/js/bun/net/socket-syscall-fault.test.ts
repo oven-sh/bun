@@ -1,6 +1,6 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -20,10 +20,17 @@ const skip = !fault.available() || isWindows;
 // The explicit timeout is required: a bare `bun bd test <file>` applies Bun's
 // 5000ms default, and each fixture spawns two Bun processes and takes a few
 // seconds on a debug+ASAN build.
+//
+// On macOS the fixtures get a directory for unix sockets, because TCP loopback
+// does not deliver inside write() there (see tls-fixture-transport.ts). The
+// low-prio fixture does not use it. It needs fault injection, so on macOS only
+// a local debug build runs it and no CI lane does: a change of its transport
+// could not be checked there.
 async function runFixture(name: string) {
+  using unixDir = isMacOS ? tempDir("tlsq", {}) : undefined;
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, name)],
-    env: bunEnv,
+    env: { ...bunEnv, TLS_FIXTURE_UNIX_DIR: unixDir && String(unixDir) },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -346,7 +353,7 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
       socket.on("error", () => {});
       let buf = Buffer.alloc(0);
       let sawPreface = false;
-      socket.on("data", d => {
+      socket.on("data", (d: Buffer) => {
         buf = Buffer.concat([buf, d]);
         if (!sawPreface && buf.length >= 24) {
           buf = buf.subarray(24);
@@ -391,7 +398,7 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
       // Recorded rather than asserted here: a throw inside the listener would
       // not reach the test body, while an unexpected event fails its toEqual.
       if (fd < 0) events.push("connect:no-fd");
-      fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE", after: 0, repeat, fd });
+      fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE" as any, after: 0, repeat, fd });
     });
     const req = client.request({ ":path": "/" });
     req.on("error", e => events.push(`stream-error:${(e as any).code ?? e.message}`));

@@ -16,6 +16,8 @@ scripts/build/xmac.mjs
 
 # the output codeblocks need to stay minified
 docs/bundler/minifier.mdx
+# Prettier would reformat the code examples, and test/cli/lint/rule-docs.test.ts runs them exactly as written
+docs/lint/rules
 
 # `declare module "*" with { type: "text" }` is TypeScript 7.1 syntax that
 # prettier's parser does not accept yet

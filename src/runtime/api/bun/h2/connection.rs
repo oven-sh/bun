@@ -124,9 +124,18 @@ enum BlockDisposition {
     Deliver,
     /// HEADERS arrived on a closed stream: answered with RST_STREAM(STREAM_CLOSED).
     StreamClosed,
-    /// The embedder refused the stream (can_open_stream = false, node's maxSessionMemory):
-    /// answered with RST_STREAM(ENHANCE_YOUR_CALM).
-    Refused,
+    /// The stream is refused before any stream state exists.
+    Refused(RefusedFor),
+    /// A later block on a stream that was refused: no second answer and no second charge.
+    Ignored,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RefusedFor {
+    /// Over the advertised SETTINGS_MAX_CONCURRENT_STREAMS: RST_STREAM(REFUSED_STREAM).
+    Concurrency,
+    /// can_open_stream() is false (node's maxSessionMemory): RST_STREAM(ENHANCE_YOUR_CALM).
+    Memory,
 }
 
 pub(crate) struct Feed {
@@ -141,6 +150,9 @@ const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 /// nghttp2's NGHTTP2_DEFAULT_STREAM_RESET_BURST / _RATE (node's streamResetBurst / streamResetRate).
 pub(crate) const DEFAULT_STREAM_RESET_BURST: u32 = 1000;
 pub(crate) const DEFAULT_STREAM_RESET_RATE: u32 = 33;
+
+/// More ids than the default budgets let a session refuse: 1002 over the limit, 100 for memory.
+const MAX_REFUSED_IDS: usize = 2048;
 
 #[derive(Clone, Copy)]
 enum ResetBy {
@@ -218,6 +230,14 @@ pub(crate) trait Sink {
     /// is allocated; the header block is still decoded for HPACK-table sync (§4.3).
     fn can_open_stream(&self) -> bool {
         true
+    }
+    /// Streams of a server session that hold a slot. The embedder counts: only it sees both halves.
+    fn open_peer_streams(&self) -> u32 {
+        0
+    }
+    /// Queried per HEADERS: a limit submitted mid-dispatch applies from then on, ACKed or not.
+    fn max_concurrent_streams(&self) -> u32 {
+        u32::MAX
     }
     /// Queried per use: a GOAWAY sent mid-dispatch counts for the rest of that read.
     fn goaway_sent(&self) -> bool {
@@ -352,6 +372,8 @@ pub(crate) struct Connection {
     replenish_buf: Vec<(u32, u32)>,
     /// Reused buffer for evicting closed streams after each receive pass (no per-call allocation).
     evict_buf: Vec<u32>,
+    /// Sorted ids of the last refused streams. A later frame on one gets no second answer.
+    refused_ids: Vec<u32>,
 
     preface_received: usize,
     pub last_stream_id: u32,
@@ -392,6 +414,7 @@ impl Connection {
             enc_buf: Vec::new(),
             replenish_buf: Vec::new(),
             evict_buf: Vec::new(),
+            refused_ids: Vec::new(),
             preface_received: 0,
             last_stream_id: 0,
             going_away: false,
@@ -900,6 +923,35 @@ impl Connection {
         true
     }
 
+    /// node's Http2Session::OnInvalidFrame, `count++ > max`. True when the session is terminated.
+    fn count_invalid_frame(&mut self, sink: &impl Sink) -> bool {
+        let count = self.invalid_frame_count;
+        self.invalid_frame_count = count.saturating_add(1);
+        if count > self.max_invalid_frames {
+            self.terminated = true;
+            sink.on_too_many_invalid_frames();
+            return true;
+        }
+        false
+    }
+
+    fn was_refused(&self, stream_id: u32) -> bool {
+        self.refused_ids
+            .last()
+            .is_some_and(|&last| stream_id <= last)
+            && self.refused_ids.binary_search(&stream_id).is_ok()
+    }
+
+    /// Ids rise (RFC 9113 5.1.1), so a push keeps the list sorted. Any other id is not kept.
+    fn remember_refused(&mut self, stream_id: u32) {
+        if self.refused_ids.last().is_none_or(|&last| last < stream_id) {
+            if self.refused_ids.len() == MAX_REFUSED_IDS {
+                self.refused_ids.drain(..MAX_REFUSED_IDS / 2);
+            }
+            self.refused_ids.push(stream_id);
+        }
+    }
+
     fn handle_ping(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         if wire::flags::has(hdr.flags, wire::flags::ACK) {
             sink.on_ping(payload, true);
@@ -1050,12 +1102,22 @@ impl Connection {
             );
             return true;
         }
-        let refused = is_new && self.is_server && !sink.can_open_stream();
-        let mut disposition = if refused {
-            BlockDisposition::Refused
+        // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L3887-L3908
+        let mut disposition = if !(is_new && self.is_server) {
+            BlockDisposition::Deliver
+        } else if self.was_refused(hdr.stream_id) {
+            BlockDisposition::Ignored
+        } else if sink.open_peer_streams() >= sink.max_concurrent_streams() {
+            // Unlike nghttp2, a stream over a limit that the peer ACKed is a stream error too.
+            self.remember_refused(hdr.stream_id);
+            BlockDisposition::Refused(RefusedFor::Concurrency)
+        } else if !sink.can_open_stream() {
+            self.remember_refused(hdr.stream_id);
+            BlockDisposition::Refused(RefusedFor::Memory)
         } else {
             BlockDisposition::Deliver
         };
+        let refused = disposition != BlockDisposition::Deliver;
         if !refused {
             let s = self
                 .streams
@@ -1349,7 +1411,12 @@ impl Connection {
             return true;
         }
         match disposition {
-            BlockDisposition::Refused => {
+            BlockDisposition::Refused(RefusedFor::Concurrency) => {
+                // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L1128-L1143
+                self.send_rst_stream(sink, target, ErrorCode::RefusedStream);
+                return self.count_invalid_frame(sink);
+            }
+            BlockDisposition::Refused(RefusedFor::Memory) => {
                 // node (node_http2.cc, Http2Session::OnBeginHeadersCallback): a stream refused for
                 // the session memory budget is answered with RST_STREAM(ENHANCE_YOUR_CALM), which
                 // is what node's own test-http2-max-session-memory asserts.
@@ -1357,6 +1424,7 @@ impl Connection {
                 sink.on_stream_rejected(target);
                 return false;
             }
+            BlockDisposition::Ignored => return false,
             BlockDisposition::StreamClosed => {
                 // §5.1: HEADERS on a closed/half-closed-remote stream is a stream error of type
                 // STREAM_CLOSED. The block was decoded above purely for HPACK-table sync.
@@ -1399,14 +1467,7 @@ impl Connection {
             }
         }
         if malformed && !rejected {
-            // node (Http2Session::OnInvalidFrame): every locally-rejected invalid frame counts
-            // against maxSessionInvalidFrames; exceeding it tears the session down with
-            // ERR_HTTP2_TOO_MANY_INVALID_FRAMES (same post-increment comparison as node).
-            let count = self.invalid_frame_count;
-            self.invalid_frame_count = count.saturating_add(1);
-            if count > self.max_invalid_frames {
-                self.terminated = true;
-                sink.on_too_many_invalid_frames();
+            if self.count_invalid_frame(sink) {
                 return true;
             }
             // RFC 9113 §8.2: a malformed header block gets a stream error of type PROTOCOL_ERROR and
@@ -1495,8 +1556,11 @@ impl Connection {
         let mut discard = false;
         match self.streams.get_mut(&hdr.stream_id) {
             None => {
-                self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
-                sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
+                // The RST_STREAM of the refusal is the one answer a refused stream gets.
+                if !self.was_refused(hdr.stream_id) {
+                    self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
+                    sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
+                }
                 discard = true;
             }
             Some(st) => {
@@ -1600,17 +1664,18 @@ impl Connection {
             return true;
         }
 
+        // The RST_STREAM of the refusal is the one answer a refused stream gets.
+        if self.was_refused(hdr.stream_id) {
+            return false;
+        }
+
         // An empty DATA frame that does not end the stream carries no information and is only
-        // useful for flooding: count it against the session's invalid-frame allowance (node's
-        // maxSessionInvalidFrames; same post-increment comparison as node).
-        if payload.is_empty() && !wire::flags::has(hdr.flags, wire::flags::END_STREAM) {
-            let count = self.invalid_frame_count;
-            self.invalid_frame_count = count.saturating_add(1);
-            if count > self.max_invalid_frames {
-                self.terminated = true;
-                sink.on_too_many_invalid_frames();
-                return true;
-            }
+        // useful for flooding: count it against the session's invalid-frame allowance.
+        if payload.is_empty()
+            && !wire::flags::has(hdr.flags, wire::flags::END_STREAM)
+            && self.count_invalid_frame(sink)
+        {
+            return true;
         }
 
         // Per-stream flow control + state check, decided under a scoped borrow so the self.* calls
@@ -2141,6 +2206,14 @@ mod tests {
         pushes: RefCell<Vec<(u32, u32)>>,
         altsvc: RefCell<Vec<(u32, Vec<u8>, Vec<u8>)>>,
         origins: RefCell<Vec<Vec<u8>>>,
+        /// What `max_concurrent_streams` returns. `None` is no limit.
+        limit: Cell<Option<u32>>,
+        /// What `open_peer_streams` returns. `on_stream_open` adds 1.
+        open: Cell<u32>,
+        /// Makes `can_open_stream` return false.
+        over_memory: Cell<bool>,
+        rejected: RefCell<Vec<u32>>,
+        too_many_invalid_frames: Cell<bool>,
     }
     impl Sink for CaptureSink {
         fn write(&self, bytes: &[u8]) -> WriteResult {
@@ -2164,6 +2237,22 @@ mod tests {
         fn on_window_update(&self, _id: u32, _inc: u32) {}
         fn on_stream_open(&self, id: u32) {
             self.opens.borrow_mut().push(id);
+            self.open.set(self.open.get() + 1);
+        }
+        fn can_open_stream(&self) -> bool {
+            !self.over_memory.get()
+        }
+        fn open_peer_streams(&self) -> u32 {
+            self.open.get()
+        }
+        fn max_concurrent_streams(&self) -> u32 {
+            self.limit.get().unwrap_or(u32::MAX)
+        }
+        fn on_stream_rejected(&self, id: u32) {
+            self.rejected.borrow_mut().push(id);
+        }
+        fn on_too_many_invalid_frames(&self) {
+            self.too_many_invalid_frames.set(true);
         }
         fn on_header(&self, id: u32, name: &[u8], value: &[u8], _never: bool) {
             self.headers
@@ -2458,5 +2547,189 @@ mod tests {
         // Only 4 of 10 bytes fit in the window.
         let sent = c.send_data(&sink, 1, b"0123456789", true);
         assert_eq!(sent, 4);
+    }
+
+    /// A server engine past the preface, and a sink that advertises `limit` concurrent streams.
+    fn limited(limit: u32) -> (Connection, CaptureSink) {
+        let sink = CaptureSink::default();
+        sink.limit.set(Some(limit));
+        let mut c = Connection::new(true, Settings::default());
+        c.preface_received = wire::CONNECTION_PREFACE.len();
+        (c, sink)
+    }
+
+    /// `GET http://localhost/` with no entry added to the HPACK table.
+    fn request_block() -> Vec<u8> {
+        let mut block = vec![0x82, 0x86, 0x84, 0x01, 9];
+        block.extend_from_slice(b"localhost");
+        block
+    }
+
+    fn request(stream_id: u32) -> Vec<u8> {
+        let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
+        frame(FrameType::Headers, flags, stream_id, &request_block())
+    }
+
+    fn rst_stream(stream_id: u32, code: ErrorCode) -> Vec<u8> {
+        frame(
+            FrameType::RstStream,
+            0,
+            stream_id,
+            &code.as_u32().to_be_bytes(),
+        )
+    }
+
+    #[test]
+    fn stream_over_the_limit_is_refused_before_it_is_opened() {
+        let (mut c, sink) = limited(1);
+        c.receive(&sink, &request(1));
+        sink.out.borrow_mut().clear();
+
+        let fed = c.receive(&sink, &request(3));
+        assert!(!fed.fatal);
+        assert_eq!(*sink.opens.borrow(), vec![1]);
+        assert_eq!(c.streams.len(), 1);
+        assert!(sink.headers.borrow().iter().all(|(id, _, _)| *id == 1));
+        assert!(sink.rejected.borrow().is_empty());
+        assert_eq!(*sink.out.borrow(), rst_stream(3, ErrorCode::RefusedStream));
+    }
+
+    #[test]
+    fn refused_block_keeps_the_hpack_table_in_sync() {
+        let (mut c, sink) = limited(1);
+        c.receive(&sink, &request(1));
+
+        // The refused block adds `x-bun-sync: 1` to the table from its CONTINUATION frame.
+        let mut insert = vec![0x40, 10];
+        insert.extend_from_slice(b"x-bun-sync");
+        insert.extend_from_slice(&[1, b'1']);
+        let mut refused = frame(
+            FrameType::Headers,
+            wire::flags::END_STREAM,
+            3,
+            &request_block(),
+        );
+        refused.extend(frame(
+            FrameType::Continuation,
+            wire::flags::END_HEADERS,
+            3,
+            &insert,
+        ));
+        c.receive(&sink, &refused);
+        assert_eq!(*sink.opens.borrow(), vec![1]);
+
+        // 0xbe is index 62, the entry that the refused block added.
+        sink.open.set(0);
+        let mut block = request_block();
+        block.push(0xbe);
+        let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
+        let fed = c.receive(&sink, &frame(FrameType::Headers, flags, 5, &block));
+        assert!(!fed.fatal);
+        assert!(
+            sink.headers
+                .borrow()
+                .iter()
+                .any(|(id, n, v)| *id == 5 && n == b"x-bun-sync" && v == b"1")
+        );
+    }
+
+    #[test]
+    fn later_frames_on_a_refused_stream_get_no_second_answer() {
+        let (mut c, sink) = limited(0);
+        c.max_invalid_frames = 0;
+        c.receive(
+            &sink,
+            &frame(
+                FrameType::Headers,
+                wire::flags::END_HEADERS,
+                1,
+                &request_block(),
+            ),
+        );
+        assert_eq!(*sink.out.borrow(), rst_stream(1, ErrorCode::RefusedStream));
+        sink.out.borrow_mut().clear();
+
+        let fed = c.receive(&sink, &frame(FrameType::Data, 0, 1, b"hello"));
+        assert!(!fed.fatal);
+        let fed = c.receive(&sink, &frame(FrameType::Data, 0, 1, b""));
+        assert!(!fed.fatal);
+        // A trailer block: literal `x-checksum: 1` without indexing.
+        let mut trailers = vec![0x00, 10];
+        trailers.extend_from_slice(b"x-checksum");
+        trailers.extend_from_slice(&[1, b'1']);
+        let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
+        let fed = c.receive(&sink, &frame(FrameType::Headers, flags, 1, &trailers));
+        assert!(!fed.fatal);
+
+        assert!(sink.out.borrow().is_empty());
+        assert!(sink.resets.borrow().is_empty());
+        assert!(sink.opens.borrow().is_empty());
+        assert!(!sink.too_many_invalid_frames.get());
+    }
+
+    #[test]
+    fn refused_ids_keeps_the_last_ids_only() {
+        let (mut c, sink) = limited(0);
+        c.max_invalid_frames = u32::MAX;
+        let count = MAX_REFUSED_IDS as u32 + 1;
+        for i in 0..count {
+            c.receive(&sink, &request(1 + 2 * i));
+        }
+        assert!(c.refused_ids.len() <= MAX_REFUSED_IDS);
+        assert!(!c.was_refused(1));
+        assert!(c.was_refused(2 * count - 1));
+    }
+
+    #[test]
+    fn a_client_session_has_no_stream_limit() {
+        let sink = CaptureSink::default();
+        sink.limit.set(Some(0));
+        let mut c = Connection::new(false, Settings::default());
+        let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
+        // 0x88 is `:status: 200`.
+        let fed = c.receive(&sink, &frame(FrameType::Headers, flags, 1, &[0x88]));
+        assert!(!fed.fatal);
+        assert_eq!(*sink.headers_done.borrow(), vec![(1, true)]);
+        assert!(sink.out.borrow().is_empty());
+    }
+
+    #[test]
+    fn refusals_use_the_invalid_frame_allowance() {
+        let (mut c, sink) = limited(0);
+        c.max_invalid_frames = 1;
+        let bytes = [request(1), request(3), request(5), request(7)].concat();
+
+        let fed = c.receive(&sink, &bytes);
+        // 1 and 3 are allowed. 5 uses up the allowance after its RST_STREAM. 7 is not read.
+        assert!(fed.fatal);
+        assert!(sink.too_many_invalid_frames.get());
+        assert!(sink.rejected.borrow().is_empty());
+        assert_eq!(
+            *sink.out.borrow(),
+            [
+                rst_stream(1, ErrorCode::RefusedStream),
+                rst_stream(3, ErrorCode::RefusedStream),
+                rst_stream(5, ErrorCode::RefusedStream),
+            ]
+            .concat()
+        );
+    }
+
+    #[test]
+    fn the_limit_is_tested_before_memory() {
+        let (mut c, sink) = limited(1);
+        sink.over_memory.set(true);
+        c.receive(&sink, &request(1));
+        assert_eq!(
+            *sink.out.borrow(),
+            rst_stream(1, ErrorCode::EnhanceYourCalm)
+        );
+
+        sink.out.borrow_mut().clear();
+        sink.open.set(1);
+        c.receive(&sink, &request(3));
+        assert_eq!(*sink.out.borrow(), rst_stream(3, ErrorCode::RefusedStream));
+        assert_eq!(*sink.rejected.borrow(), vec![1]);
+        assert!(sink.opens.borrow().is_empty());
     }
 }

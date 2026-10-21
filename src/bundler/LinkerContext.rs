@@ -5029,20 +5029,20 @@ impl<'a> LinkerContext<'a> {
                 plans.push(plan);
             }
         }
-        let mut held: Vec<Ref> = Vec::new();
-        for plan in &plans {
-            if !held.contains(&plan.base)
-                && self.namespace_is_held(source_index, plan.base, &plans, imports_to_bind)
-            {
-                held.push(plan.base);
-            }
+        if plans.is_empty() {
+            return;
         }
+        let mut held: HashMap<Ref, bool> = HashMap::default();
+        for plan in &plans {
+            held.insert(plan.base, false);
+        }
+        self.mark_held_namespaces(source_index, &plans, imports_to_bind, &mut held);
 
         let id = source_index as usize;
         let mut dependencies: Vec<Dependency> = Vec::new();
         let mut bound_bases: Vec<Ref> = Vec::new();
         for plan in &plans {
-            if held.contains(&plan.base) {
+            if held.get(&plan.base).copied().unwrap_or(false) {
                 continue;
             }
             dependencies.clear();
@@ -5203,53 +5203,68 @@ impl<'a> LinkerContext<'a> {
         })
     }
 
-    /// Does this file use the namespace that `base` holds as a value, anywhere but in the `planned` declarations?
-    fn namespace_is_held(
+    /// Sets `held` for each namespace local that this file uses as a value anywhere but in the planned declarations.
+    fn mark_held_namespaces(
         &self,
         source_index: crate::IndexInt,
-        base: Ref,
-        planned: &[NamespacePatternPlan],
+        plans: &[NamespacePatternPlan],
         imports_to_bind: &crate::RefImportData,
-    ) -> bool {
+        held: &mut HashMap<Ref, bool>,
+    ) {
         let id = source_index as usize;
         let named_imports = &self.graph.ast.items_named_imports()[id];
         for (&item, named_import) in named_imports.keys().iter().zip(named_imports.values()) {
-            if item == base {
-                if named_import.is_exported {
-                    return true;
-                }
-                continue;
+            if named_import.is_exported
+                && let Some(is_held) = held.get_mut(&item)
+            {
+                *is_held = true;
             }
             // An item `base.name` that is not bound to an export prints as a property of the namespace object.
-            if named_import.namespace_ref == base
+            if named_import.namespace_ref != item
                 && !imports_to_bind.contains(&item)
+                && let Some(is_held) = held.get_mut(&named_import.namespace_ref)
                 && self
                     .graph
                     .symbols
                     .get_const(item)
                     .is_none_or(|symbol| symbol.import_item_status != ImportItemStatus::Missing)
             {
-                return true;
+                *is_held = true;
             }
         }
-        self.graph.ast.items_parts()[id]
+        // `plans` is in part order.
+        let mut planned = plans.iter().map(|plan| plan.part_index as usize).peekable();
+        for (part_index, part) in self.graph.ast.items_parts()[id]
             .as_slice()
             .iter()
             .enumerate()
-            .any(|(part_index, part)| {
-                !planned
-                    .iter()
-                    .any(|plan| plan.part_index as usize == part_index)
-                    && (part
-                        .symbol_uses
-                        .get(&base)
-                        .is_some_and(|base_use| base_use.count_estimate() > 0)
-                        || part
-                            .import_symbol_property_uses
-                            .as_ref()
-                            .and_then(|uses| uses.get(&base))
-                            .is_some_and(|properties| properties.count() > 0))
-            })
+        {
+            if planned.next_if_eq(&part_index).is_some() {
+                continue;
+            }
+            for (symbol, symbol_use) in part
+                .symbol_uses
+                .keys()
+                .iter()
+                .zip(part.symbol_uses.values())
+            {
+                if symbol_use.count_estimate() > 0
+                    && let Some(is_held) = held.get_mut(symbol)
+                {
+                    *is_held = true;
+                }
+            }
+            let Some(uses) = part.import_symbol_property_uses.as_ref() else {
+                continue;
+            };
+            for (symbol, properties) in uses.keys().iter().zip(uses.values()) {
+                if properties.count() > 0
+                    && let Some(is_held) = held.get_mut(symbol)
+                {
+                    *is_held = true;
+                }
+            }
+        }
     }
 
     /// Records a `Normal`/`NormalAndNamespace` match for `import_ref`.

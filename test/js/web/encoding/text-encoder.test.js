@@ -638,6 +638,7 @@ describe("TextEncoder latin1 ASCII fast path boundaries", () => {
     expect(Array.from(dest.subarray(70))).toEqual(new Array(130).fill(0xaa));
   });
 
+  // Rust checks for the null destination pointer only in builds with debug assertions (debug, ASAN).
   it.each(["abc", "a😀"])("encodeInto should write nothing into a detached destination (%s)", text => {
     const dest = new Uint8Array(8);
     dest.buffer.transfer();

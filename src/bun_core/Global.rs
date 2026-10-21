@@ -862,13 +862,17 @@ unsafe impl Sync for SyncCStr {}
 #[unsafe(no_mangle)]
 static Bun__userAgent: SyncCStr = SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
 
+#[unsafe(no_mangle)]
+pub static Bun__Node__UseOpenSSLCA: AtomicBool = AtomicBool::new(false);
+
 /// True if TLS should also trust the system's certificate authorities. `root_certs.cpp` reads this
 /// when it builds the default certificate store.
 #[unsafe(no_mangle)]
 pub static Bun__Node__UseSystemCA: AtomicBool = AtomicBool::new(false);
 
 /// Handles `--use-system-ca`, `--use-openssl-ca` and `--use-bundled-ca`. Exits with an error if
-/// more than one is passed, and falls back to `NODE_USE_SYSTEM_CA` if none is.
+/// more than one is passed or OpenSSL conflicts with `NODE_USE_SYSTEM_CA`, and falls back to
+/// `NODE_USE_SYSTEM_CA` if none is.
 pub fn set_ca_store_from_flags(has_flag: impl Fn(&'static [u8]) -> bool) {
     let flags: [&'static [u8]; 3] = [b"--use-system-ca", b"--use-openssl-ca", b"--use-bundled-ca"];
     let passed = flags.map(has_flag);
@@ -879,7 +883,15 @@ pub fn set_ca_store_from_flags(has_flag: impl Fn(&'static [u8]) -> bool) {
         );
         exit(1);
     }
-    let from_env = count == 0 && crate::env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false);
+    let system_ca_from_env = crate::env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false);
+    if passed[1] && system_ca_from_env {
+        crate::pretty_errorln!(
+            "<r><red>error<r>: either --use-openssl-ca or --use-system-ca can be used, not both"
+        );
+        exit(1);
+    }
+    let from_env = count == 0 && system_ca_from_env;
+    Bun__Node__UseOpenSSLCA.store(passed[1], Ordering::Relaxed);
     Bun__Node__UseSystemCA.store(passed[0] || from_env, Ordering::Relaxed);
 }
 

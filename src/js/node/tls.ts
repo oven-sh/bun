@@ -1583,6 +1583,7 @@ function cacheBundledRootCertificates(): string[] {
   bundledRootCertificates ||= getBundledRootCertificates() as string[];
   return bundledRootCertificates;
 }
+const getUseOpensslCA = $bindgen("node_tls_binding.bind.ts", "getUseOpensslCA");
 const getUseSystemCA = $bindgen("node_tls_binding.bind.ts", "getUseSystemCA");
 
 let defaultCACertificates: string[] | undefined;
@@ -1590,16 +1591,18 @@ function cacheDefaultCACertificates() {
   if (defaultCACertificates) return defaultCACertificates;
   defaultCACertificates = [];
 
-  const bundled = cacheBundledRootCertificates();
-  for (let i = 0; i < bundled.length; ++i) {
-    ArrayPrototypePush.$call(defaultCACertificates, bundled[i]);
-  }
+  if (!getUseOpensslCA()) {
+    const bundled = cacheBundledRootCertificates();
+    for (let i = 0; i < bundled.length; ++i) {
+      ArrayPrototypePush.$call(defaultCACertificates, bundled[i]);
+    }
 
-  // Include system certificates when --use-system-ca is set or NODE_USE_SYSTEM_CA=1
-  if (getUseSystemCA() || process.env.NODE_USE_SYSTEM_CA === "1") {
-    const system = cacheSystemCACertificates();
-    for (let i = 0; i < system.length; ++i) {
-      ArrayPrototypePush.$call(defaultCACertificates, system[i]);
+    // Include system certificates when --use-system-ca is set or NODE_USE_SYSTEM_CA=1
+    if (getUseSystemCA() || process.env.NODE_USE_SYSTEM_CA === "1") {
+      const system = cacheSystemCACertificates();
+      for (let i = 0; i < system.length; ++i) {
+        ArrayPrototypePush.$call(defaultCACertificates, system[i]);
+      }
     }
   }
 

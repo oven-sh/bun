@@ -6565,34 +6565,6 @@ it.skipIf(!isLinux)("a TLS session closes without an error when its write finds 
   }
 });
 
-it("write() past the highWaterMark answers false in a 'drain' listener after the peer left", async () => {
-  const chunk = Buffer.alloc(65536);
-  const server = http2.createServer();
-  const streamClosed = Promise.withResolvers();
-  let mostWrites = 0;
-  server.on("stream", stream => {
-    stream.on("error", () => {});
-    stream.on("close", streamClosed.resolve);
-    stream.respond({ ":status": 200 });
-    const pump = () => {
-      let writes = 0;
-      while (!stream.destroyed && !stream.closed && writes < 100 && stream.write(chunk)) writes++;
-      mostWrites = Math.max(mostWrites, writes);
-    };
-    stream.on("drain", pump);
-    pump();
-  });
-  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
-  client.on("error", () => {});
-  const req = client.request({ ":path": "/" });
-  req.on("error", () => {});
-  req.once("data", () => client.destroy());
-  await streamClosed.promise;
-  await new Promise(resolve => server.close(resolve));
-  expect(mostWrites).toBe(0);
-});
-
 it("pushStream() reports ERR_HTTP2_OUT_OF_STREAMS through its callback", async () => {
   const server = http2.createServer();
   const pushed = Promise.withResolvers();

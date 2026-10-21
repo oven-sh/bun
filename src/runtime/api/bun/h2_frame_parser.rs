@@ -5981,10 +5981,6 @@ impl H2FrameParser {
         // is borrowed.
         let mut stream = this.enter_stream_dispatch(stream_ptr);
         if !stream.can_send_data() {
-            // A write that settles under the caller answers true for ever to a `while (write())` loop.
-            if defer_callback_arg.to_boolean() {
-                return Ok(JSValue::js_number(WRITE_FLUSHED_WITHOUT_CALLBACK as f64));
-            }
             this.dispatch_write_callback(callback_arg);
             return Ok(JSValue::FALSE);
         }

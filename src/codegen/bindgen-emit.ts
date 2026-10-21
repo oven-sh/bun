@@ -1631,7 +1631,7 @@ bindgen::host_fn_return(cx, result, |heap, value| ${getter.type.rustToJS("value"
     );
   }
 
-  return `${type.rustTraits.map(path => `use ${path} as _;\n`).join("")}${refCounted ? rustForRefCounted(type) : rustForPayload(type)}
+  return `${refCounted ? rustForRefCounted(type) : rustForPayload(type)}
 #[unsafe(no_mangle)]
 pub static ${symbolName(type, "structSize")}: usize = size_of::<${rustPath}>();
 ${(["memoryCost", "estimatedSize"] as const)
@@ -1879,6 +1879,12 @@ bindgen::host_fn_return(cx, result, |heap, value| ${signature.returns.rustToJS("
     .join("");
 }
 
+/** Once each: two classes of a file may name the same trait. */
+const rustTraitImports = (file: SchemaFile) =>
+  [...new Set(file.types.flatMap(type => (type instanceof ClassType ? type.rustTraits : [])))]
+    .map(path => `\n    use ${path} as _;`)
+    .join("");
+
 export function rustForCrate(files: readonly SchemaFile[]): string {
   return (
     banner(null) +
@@ -1900,7 +1906,7 @@ export function rustForCrate(files: readonly SchemaFile[]): string {
     clippy::redundant_closure
 )]
 pub mod ${file.origin.rustModule} {
-    use bun_jsc::{JSGlobalObject, JSValue, bindgen};
+    use bun_jsc::{JSGlobalObject, JSValue, bindgen};${rustTraitImports(file)}
 ${indent(
   file.types
     .map(type =>

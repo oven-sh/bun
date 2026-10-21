@@ -10,11 +10,9 @@
 
 use bun_core::{Timespec, TimespecMockMode};
 
+use crate::generated_bindgen::timer::{js_Immediate as JSImmediate, js_Timeout as JSTimeout};
 use crate::jsc::JsCell;
-use crate::jsc::{
-    Debugger, JSGlobalObject, JSValue, JsRef, JsResult, ScriptExecutionStatus,
-    generated::{JSImmediate, JSTimeout},
-};
+use crate::jsc::{Debugger, JSGlobalObject, JSValue, JsRef, JsResult, ScriptExecutionStatus};
 use core::cell::Cell;
 // Note: `bun_jsc::VirtualMachine` is a *module* alias; the struct lives at
 // `virtual_machine::VirtualMachine`.
@@ -919,11 +917,7 @@ impl TimerObjectInternals {
         unsafe { (*self.event_loop_timer()).state = state };
     }
 
-    pub(crate) fn do_ref(
-        &self,
-        _global: &JSGlobalObject,
-        this_value: JSValue,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn do_ref(&self, this_value: JSValue) -> JSValue {
         this_value.ensure_still_alive();
 
         let did_have_js_ref = self.flags.get().has_js_ref();
@@ -940,14 +934,10 @@ impl TimerObjectInternals {
             self.set_enable_keeping_event_loop_alive(VirtualMachine::get_mut_ptr(), true);
         }
 
-        Ok(this_value)
+        this_value
     }
 
-    pub(crate) fn do_unref(
-        &self,
-        _global: &JSGlobalObject,
-        this_value: JSValue,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn do_unref(&self, this_value: JSValue) -> JSValue {
         this_value.ensure_still_alive();
 
         let did_have_js_ref = self.flags.get().has_js_ref();
@@ -957,7 +947,7 @@ impl TimerObjectInternals {
             self.set_enable_keeping_event_loop_alive(VirtualMachine::get_mut_ptr(), false);
         }
 
-        Ok(this_value)
+        this_value
     }
 
     /// Node's deadline is `_idleStart + _idleTimeout`; writing `_idleStart`
@@ -992,7 +982,7 @@ impl TimerObjectInternals {
         &self,
         global_object: &JSGlobalObject,
         this_value: JSValue,
-    ) -> JsResult<JSValue> {
+    ) -> JSValue {
         // Immediates do not have a refresh function, and our binding generator should not let this
         // function be reached even if you override the `this` value calling a Timeout object's
         // `refresh` method
@@ -1000,7 +990,7 @@ impl TimerObjectInternals {
 
         // setImmediate does not support refreshing and we do not support refreshing after cleanup
         if self.flags.get().kind() == Kind::SetImmediate || self.flags.get().has_cleared_timer() {
-            return Ok(this_value);
+            return this_value;
         }
 
         self.this_value
@@ -1011,13 +1001,11 @@ impl TimerObjectInternals {
             global_object.as_ptr(),
         );
 
-        Ok(this_value)
+        this_value
     }
 
-    pub(crate) fn has_ref(&self) -> JsResult<JSValue> {
-        Ok(JSValue::from(
-            self.flags.get().is_keeping_event_loop_alive(),
-        ))
+    pub(crate) fn has_ref(&self) -> bool {
+        self.flags.get().is_keeping_event_loop_alive()
     }
 
     /// First access mints an
@@ -1025,7 +1013,7 @@ impl TimerObjectInternals {
     /// `clearImmediate(+t)` (numeric-id form) can resolve it.
     ///
     /// Note (jsc/runtime crate cycle): `vm.timer.maps` resolved via `runtime_state()`.
-    pub(crate) fn to_primitive(&self) -> JsResult<JSValue> {
+    pub(crate) fn to_primitive(&self) -> JsResult<u64> {
         if !self.flags.get().has_accessed_primitive() {
             self.update_flags(|f| f.set_has_accessed_primitive(true));
             let state = crate::jsc_hooks::runtime_state();
@@ -1043,7 +1031,7 @@ impl TimerObjectInternals {
                     .put_no_clobber(self.id, elt)
             }?;
         }
-        Ok(JSValue::js_number_from_uint64(self.id))
+        Ok(self.id)
     }
 
     /// Getter for `_destroyed`
@@ -1061,7 +1049,6 @@ impl TimerObjectInternals {
         }
     }
 
-    /// `.classes.ts` finalizer hook.
     /// Runs on the mutator thread during lazy sweep; do not touch any
     /// `JSValue`/`Strong` content here.
     pub(crate) fn finalize(&self) {

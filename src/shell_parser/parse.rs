@@ -2351,8 +2351,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             CharState::Single => b"Unclosed single quote",
             CharState::Double => b"Unclosed double quote",
         };
-        // After an early error return (`|&`, a JS object ref in double quotes) the rest of the
-        // script is lexed out of context, so the state can be a quote that the script closes.
+        // A lexer error makes this state unreliable: `echo "$(cmd |& tr -d '"')"` ends in Single.
         if self.errors.is_empty() {
             self.add_error(msg);
         }

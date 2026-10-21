@@ -141,8 +141,11 @@ describe.concurrent("run-shell", () => {
       stdout: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    if (exitCode !== 0) expect(stderr).toBe("");
-    expect({ stdout, exitCode }).toEqual({ stdout: JSON.stringify(passthrough) + "\n", exitCode: 0 });
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify(passthrough) + "\n",
+      stderr: String.raw`$ bun args.js ".\\dist\\" "it's" "a\"b"` + "\n",
+      exitCode: 0,
+    });
   });
 });
 

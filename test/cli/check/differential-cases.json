@@ -18734,5 +18734,91 @@
       "node_modules/outer/node_modules/inner/index.d.ts": "export interface Inner { a: number }\nexport declare const value: number;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"declaration\": true, \"noEmit\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"lib\": [\"es2022\"] }, \"files\": [\"a.ts\"] }\n"
     }
+  },
+  "type-arguments-for-an-import-type-of-a-commonjs-module-with-a-typedef": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"commonjs\", \"allowJs\": true, \"checkJs\": true}}\n",
+      "map.js": "/**\n * @template T\n * @typedef {T extends ReadonlyArray<infer E> ? E : never} Element\n */\n/**\n * @template K\n * @template V\n */\nclass TupleMap {\n  constructor() {\n    /** @type {Array<[K, V]>} */\n    this.inner = [];\n  }\n}\nmodule.exports = TupleMap;\n",
+      "missing.js": "/** @typedef {number} Num */\nmodule.exports = Missing;\n",
+      "use.js": "/** @typedef {import(\"./map\")<string, number>} Cache */\n/** @typedef {import(\"./map\")} Plain */\n/** @typedef {import(\"./missing\")<string>} Unresolved */\n/** @typedef {{ [K in \"a\"]: 1; map: import(\"./map\")<string, number>; none: import(\"./missing\")<string> }} Unchecked */\n/** @type {Cache | Plain | Unresolved | Unchecked | undefined} */\nlet cache;\nmodule.exports = { cache };\n"
+    }
+  },
+  "type-arguments-for-an-import-type-of-an-alias-that-is-also-a-value": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}}\n",
+      "box.ts": "export interface Box<T> { value: T }\n",
+      "m.ts": "import type { Box } from \"./box\";\nconst Box = 1;\nexport { Box };\n",
+      "node_modules/pkg/package.json": "{ \"name\": \"pkg\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }\n",
+      "node_modules/pkg/index.d.ts": "export = TupleMap;\nexport type Element<T> = T extends ReadonlyArray<infer E> ? E : never;\ndeclare class TupleMap<K, V> {\n    inner: Array<[K, V]>;\n    constructor();\n}\n",
+      "use.ts": "type A = import(\"./m\").Box<string>;\ntype B = import(\"./m\").Box;\ntype Cache = import(\"pkg\")<string, number>;\ntype Plain = import(\"pkg\");\ntype El = import(\"pkg\").Element<string[]>;\ndeclare const a: A, b: B, cache: Cache | Plain, el: El;\nconst s: number = el;\nexport { a, b, cache, s };\ntype Unchecked = { [K in \"a\"]: 1; box: import(\"./m\").Box<string>; map: import(\"pkg\")<string, number> };\n"
+    }
+  },
+  "type-arguments-for-an-import-type-of-each-kind-of-alias-that-is-also-a-value": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}}\n",
+      "box.ts": "export interface Box<T> { value: T }\nexport default interface DefBox<T> { value: T }\nexport type AliasBox<T> = { value: T };\nexport class ClassBox<T> { value!: T }\nexport enum Color { Red }\n",
+      "m_alias.ts": "import type { AliasBox } from \"./box\";\nconst AliasBox = 1;\nexport { AliasBox };\n",
+      "m_class.ts": "import type { ClassBox } from \"./box\";\nconst ClassBox = 1;\nexport { ClassBox };\n",
+      "m_default.ts": "import type { Box } from \"./box\";\nconst Box = 1;\nexport default Box;\n",
+      "m_defimport.ts": "import type DefBox from \"./box\";\nconst DefBox = 1;\nexport { DefBox };\n",
+      "m_enum.ts": "import type { Color } from \"./box\";\nconst Color = 1;\nexport { Color };\n",
+      "m_fn.ts": "import type { Box } from \"./box\";\nfunction Box() {}\nexport { Box };\n",
+      "m_nontype.ts": "import { Box } from \"./box\";\nconst Box = 1;\nexport { Box };\n",
+      "m_ns.ts": "import type { Box } from \"./box\";\nnamespace Box { export const x = 1; }\nexport { Box };\n",
+      "m_reexport.ts": "export { Box } from \"./m_spec\";\nexport { Box as Again } from \"./m_spec\";\n",
+      "m_renamed.ts": "import type { Box } from \"./box\";\nconst Box = 1;\nexport { Box as Crate };\n",
+      "m_spec.ts": "import type { Box } from \"./box\";\nconst Box = 1;\nexport { Box };\n",
+      "m_star.ts": "export * from \"./m_spec\";\n",
+      "use.ts": "type A1 = import(\"./m_spec\").Box<string>;\ntype A2 = import(\"./m_renamed\").Crate<string>;\ntype A3 = import(\"./m_default\").default<string>;\ntype A4 = import(\"./m_nontype\").Box<string>;\ntype A5 = import(\"./m_ns\").Box<string>;\ntype A6 = import(\"./m_fn\").Box<string>;\ntype A7 = import(\"./m_defimport\").DefBox<string>;\ntype A8 = import(\"./m_alias\").AliasBox<string>;\ntype A9 = import(\"./m_class\").ClassBox<string>;\ntype A10 = import(\"./m_enum\").Color<string>;\ntype A11 = import(\"./m_reexport\").Box<string>;\ntype A12 = import(\"./m_reexport\").Again<string>;\ntype A13 = import(\"./m_star\").Box<string>;\ntype B1 = import(\"./m_spec\").Box;\ntype B9 = import(\"./m_class\").ClassBox;\ntype B10 = import(\"./m_enum\").Color;\ndeclare const a1: A1, a2: A2, a3: A3, a4: A4, a5: A5, a6: A6, a7: A7, a8: A8, a9: A9, a10: A10, a11: A11, a12: A12, a13: A13;\ndeclare const b1: B1, b9: B9, b10: B10;\nconst n: number = b1;\nconst n9: number = b9;\nconst s1: string = a1.value;\nexport { a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, b1, b9, b10, n, n9, s1 };\n"
+    }
+  },
+  "type-arguments-for-an-import-type-of-an-alias-that-does-not-resolve": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}}\n",
+      "box.ts": "export interface Box<T> { value: T }\nexport const val = 1;\n",
+      "m_circ.ts": "import type { Loop } from \"./m_circ2\";\nconst Loop = 1;\nexport { Loop };\n",
+      "m_circ2.ts": "export { Loop } from \"./m_circ\";\n",
+      "m_missing.ts": "import type { Missing } from \"./box\";\nconst Missing = 1;\nexport { Missing };\n",
+      "m_nomodule.ts": "import type { Gone } from \"./nonexistent\";\nconst Gone = 1;\nexport { Gone };\n",
+      "m_value.ts": "import type { val } from \"./box\";\nnamespace val { export type T = string }\nexport { val };\n",
+      "use.ts": "type A1 = import(\"./m_missing\").Missing<string>;\ntype A2 = import(\"./m_nomodule\").Gone<string>;\ntype A3 = import(\"./m_circ\").Loop<string>;\ntype A4 = import(\"./m_value\").val<string>;\ntype B1 = import(\"./m_missing\").Missing;\ntype B2 = import(\"./m_nomodule\").Gone;\ntype B3 = import(\"./m_circ\").Loop;\ntype B4 = import(\"./m_value\").val;\ndeclare const a1: A1, a2: A2, a3: A3, a4: A4, b1: B1, b2: B2, b3: B3, b4: B4;\nexport { a1, a2, a3, a4, b1, b2, b3, b4 };\nconst n1: never = b1;\nconst n2: never = b2;\n"
+    }
+  },
+  "type-arguments-for-an-import-type-of-an-alias-through-a-namespace": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"declaration\": true}}\n",
+      "box.ts": "export interface Box<T> { value: T }\n",
+      "m.ts": "import type { Box } from \"./box\";\nconst Box = 1;\nexport { Box };\nexport type { Box as TypeOnly };\n",
+      "ns.ts": "export * as inner from \"./m\";\nimport * as star from \"./m\";\nexport { star };\n",
+      "use.ts": "type A1 = import(\"./ns\").inner.Box<string>;\ntype A2 = import(\"./ns\").star.Box<string>;\ntype A3 = import(\"./m\").TypeOnly<string>;\n// the same node, asked for many times\nexport function f<T>(x: T, y: import(\"./m\").Box<T>): import(\"./m\").Box<T>[] { return [y]; }\nexport const r1 = f(1, null!);\nexport const r2 = f(\"a\", null!);\nexport class K<T> {\n  p!: import(\"./m\").Box<T>;\n  m(q: import(\"./m\").Box<T> = this.p) { return q; }\n}\nexport interface I extends Array<import(\"./m\").Box<number>> {}\nexport type Cond<T> = T extends import(\"./m\").Box<infer U> ? U : never;\nexport type Mapped = { [K in keyof import(\"./m\").Box<string>]: 1 };\nexport const asserted = null! as import(\"./m\").Box<boolean>;\nexport const sat = null! satisfies import(\"./m\").Box<boolean>;\nlet g: Array<import(\"./m\").Box<string>> = [];\nexport { g };\ndeclare const a1: A1, a2: A2, a3: A3;\nexport { a1, a2, a3 };\n"
+    }
+  },
+  "import-type-of-an-alias-of-an-alias-that-are-also-values": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}}\n",
+      "box.ts": "export interface Box<T> { value: T }\n",
+      "m.ts": "import type { Box } from \"./box\";\nconst Box = 1;\nexport { Box };\n",
+      "ns.ts": "import type { Box } from \"./m\";\nnamespace Box { export type Key = string }\nexport { Box };\n",
+      "use.ts": "declare const b: import(\"./ns\").Box;\nconst n: number = b;\nexport { n };\n"
+    }
+  },
+  "type-arguments-for-an-import-type-of-an-alias-inside-the-type-that-it-names": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}}\n",
+      "box.ts": "export type AliasBox<T> = T | import(\"./m_alias\").AliasBox<T>;\nexport type Plain = number | import(\"./m_plain\").Plain;\nexport type Deep<T> = { value: T; next: import(\"./m_deep\").Deep<T> };\n",
+      "m_alias.ts": "import type { AliasBox } from \"./box\";\nconst AliasBox = 1;\nexport { AliasBox };\n",
+      "m_deep.ts": "import type { Deep } from \"./box\";\nconst Deep = 1;\nexport { Deep };\n",
+      "m_plain.ts": "import type { Plain } from \"./box\";\nconst Plain = 1;\nexport { Plain };\n",
+      "use.ts": "import type { AliasBox, Plain, Deep } from \"./box\";\ndeclare const a: AliasBox<string>, p: Plain, d: Deep<string>;\nexport const all = [a, p, d.next];\n"
+    }
+  },
+  "import-type-of-export-equals-of-an-import-of-export-equals": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"commonjs\", \"allowJs\": true, \"checkJs\": true}}\n",
+      "node_modules/pkg/package.json": "{ \"name\": \"pkg\", \"version\": \"1.0.0\", \"types\": \"a.d.ts\" }\n",
+      "node_modules/pkg/a.d.ts": "export = Store;\nexport type AName = number;\nimport Store = require(\"./b\");\n",
+      "node_modules/pkg/b.d.ts": "export = Store;\nexport type BName = string;\ndeclare class Store<K> {\n    keys: K[];\n    constructor();\n}\n",
+      "use.js": "/** @type {import(\"pkg\")} */\nlet store = /** @type {any} */ (null);\n/** @type {number} */\nconst n = store;\nmodule.exports = { n };\n"
+    }
   }
 }

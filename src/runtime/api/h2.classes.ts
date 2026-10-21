@@ -51,7 +51,7 @@ export default [
       },
       flush: {
         fn: "flushFromJS",
-        length: 0,
+        length: 1,
       },
       detach: {
         fn: "detachFromJS",

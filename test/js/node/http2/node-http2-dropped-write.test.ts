@@ -13,6 +13,7 @@
  *   node --test test/js/node/http2/node-http2-dropped-write.test.ts   (node v26.3.0)
  */
 import assert from "node:assert";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile } from "node:child_process";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { once } from "node:events";
@@ -23,6 +24,7 @@ import path from "node:path";
 import { Duplex, Readable, duplexPair } from "node:stream";
 import { finished, pipeline } from "node:stream/promises";
 import { describe, test } from "node:test";
+import tls from "node:tls";
 import { promisify } from "node:util";
 
 const { NGHTTP2_NO_ERROR, NGHTTP2_INTERNAL_ERROR, NGHTTP2_FLOW_CONTROL_ERROR, NGHTTP2_REFUSED_STREAM, NGHTTP2_CANCEL } =
@@ -36,6 +38,10 @@ const MB = Buffer.alloc(1 << 20, 97);
 // 2.5 MB. It was not measured on the other systems, so they keep the larger body.
 const BIG = Buffer.alloc((process.platform === "linux" ? 12 : 24) << 20, 97);
 const isBun = typeof process.versions.bun === "string";
+// On Windows a loopback socket takes a whole upload at once, so nothing waits behind it.
+const blocked = { skip: process.platform === "win32" };
+// The same, for a case that node does not have. The test says why.
+const held = { skip: !isBun || process.platform === "win32" };
 
 function frame(type: number, flags: number, streamId: number, payload: Buffer = Buffer.alloc(0)) {
   const header = Buffer.alloc(9);
@@ -604,12 +610,70 @@ describe("client: the stream ends with DATA frames still queued", () => {
     });
   }
 
-  // The peer opens every window and reads nothing, so only the socket holds the upload. In Bun
-  // the body is then in the buffer of the session, and the END_STREAM frame waits behind it.
-  // node v26.3.0 never closes this stream (nodejs/node#58252), so these two run in Bun only.
-  // On Windows the socket takes the whole upload at once.
-  const blockedAsks: [string, (request: http2.ClientHttp2Stream) => Promise<string>][] = [
-    ["pipeline(source, request)", request => pipeline(Readable.from([BIG]), request).then(() => "ok", codeOf)],
+  /**
+   * A session whose peer opens every flow-control window and reads nothing, so only the socket
+   * holds an upload: the part that the socket did not take waits in the sender. On Windows a
+   * loopback socket takes the whole upload at once.
+   */
+  async function blockedUpload(transport: "TCP" | "TLS" = "TCP") {
+    const MAX = 0x7fffffff;
+    const { promise: accepted, resolve: accept } = Promise.withResolvers<net.Socket>();
+    const onSocket = (socket: net.Socket) => {
+      socket.on("error", () => {});
+      socket.pause();
+      socket.write(
+        Buffer.concat([
+          frame(FRAME.SETTINGS, 0, 0, Buffer.concat([Buffer.from([0, 4]), uint32(MAX)])),
+          frame(FRAME.WINDOW_UPDATE, 0, 0, uint32(MAX - WINDOW)),
+        ]),
+      );
+      accept(socket);
+    };
+    const keys = path.join(import.meta.dirname, "..", "test", "fixtures", "keys");
+    const server =
+      transport === "TLS"
+        ? tls.createServer(
+            {
+              key: fs.readFileSync(path.join(keys, "agent1-key.pem")),
+              cert: fs.readFileSync(path.join(keys, "agent1-cert.pem")),
+              ALPNProtocols: ["h2"],
+            },
+            onSocket,
+          )
+        : net.createServer(onSocket);
+    const port = await listen(server);
+    const session = http2.connect(`${transport === "TLS" ? "https" : "http"}://127.0.0.1:${port}`, {
+      maxSessionMemory: 1000,
+      rejectUnauthorized: false,
+    });
+    session.on("error", () => {});
+    await once(session, "remoteSettings");
+    // The WINDOW_UPDATE frame is in the same read as the SETTINGS frame.
+    await turns(1);
+    const socket = await accepted;
+    const close = () => {
+      session.destroy();
+      socket.destroy();
+      server.close();
+    };
+    return { session, socket, close };
+  }
+
+  // The write is in flight until the socket has taken its last byte, so the teardown cancels it
+  // and the writes behind it wait. node v26.3.0 does not read the RST_STREAM frame while its
+  // socket is blocked, and it never closes this stream (nodejs/node#58252).
+  // [name, how the request asks, the code that it hears]
+  const blockedAsks: [string, (request: http2.ClientHttp2Stream) => Promise<string>, string][] = [
+    [
+      "request.write(chunk, callback)",
+      request => new Promise(resolve => request.write(BIG, (error?: Error | null) => resolve(codeOf(error)))),
+      "ECANCELED",
+    ],
+    [
+      "pipeline(source, request)",
+      request => pipeline(Readable.from([BIG]), request).then(() => "ok", codeOf),
+      "ERR_HTTP2_STREAM_ERROR",
+    ],
     [
       "request.end(callback) after a write",
       request =>
@@ -617,52 +681,372 @@ describe("client: the stream ends with DATA frames still queued", () => {
           request.write(BIG);
           request.end((error?: Error | null) => resolve(codeOf(error)));
         }),
+      "ERR_HTTP2_STREAM_ERROR",
+    ],
+    [
+      "request.end(chunk, callback)",
+      request => new Promise(resolve => request.end(BIG, (error?: Error | null) => resolve(codeOf(error)))),
+      "ERR_HTTP2_STREAM_ERROR",
+    ],
+    [
+      "each write of cork(); write(); write(); uncork()",
+      request =>
+        new Promise(resolve => {
+          const half = BIG.subarray(0, BIG.length / 2);
+          const codes: string[] = [];
+          const done = (error?: Error | null) => {
+            if (codes.push(codeOf(error)) === 2) resolve([...new Set(codes)].join());
+          };
+          request.cork();
+          request.write(half, done);
+          request.write(half, done);
+          request.uncork();
+        }),
+      "ECANCELED",
     ],
   ];
-  for (const [name, ask] of blockedAsks) {
-    const title = `${name} gets the error of the stream when the peer resets it behind a blocked socket`;
-    test(title, { skip: !isBun || process.platform === "win32" }, async () => {
-      const MAX = 0x7fffffff;
-      const { promise: accepted, resolve: accept } = Promise.withResolvers<net.Socket>();
-      const server = net.createServer(socket => {
-        socket.on("error", () => {});
-        socket.pause();
-        socket.write(
-          Buffer.concat([
-            frame(FRAME.SETTINGS, 0, 0, Buffer.concat([Buffer.from([0, 4]), uint32(MAX)])),
-            frame(FRAME.WINDOW_UPDATE, 0, 0, uint32(MAX - WINDOW)),
-          ]),
-        );
-        accept(socket);
+  for (const transport of ["TCP", "TLS"] as const) {
+    for (const [name, ask, code] of blockedAsks) {
+      const title = `${name} fails when the peer resets the stream behind a blocked ${transport} socket`;
+      test(title, held, async () => {
+        const { session, socket, close } = await blockedUpload(transport);
+        try {
+          const request = session.request({ ":method": "POST", ":path": "/" });
+          const events: string[] = [];
+          request.on("error", error => events.push(`error:${codeOf(error)}`));
+          request.on("finish", () => events.push("finish"));
+          request.on("drain", () => events.push("drain"));
+          const closed = closeOf(request);
+          const answer = ask(request);
+          // The peer must not reset a stream that it has not seen yet.
+          await turns(2);
+          assert.deepStrictEqual({ inFlight: request.writableLength, events }, { inFlight: BIG.length, events: [] });
+          socket.write(frame(FRAME.RST_STREAM, 0, 1, uint32(NGHTTP2_INTERNAL_ERROR)));
+          await closed;
+          assert.deepStrictEqual(
+            { answer: await answer, events },
+            { answer: code, events: ["error:ERR_HTTP2_STREAM_ERROR"] },
+          );
+        } finally {
+          close();
+        }
       });
-      const port = await listen(server);
-      const session = http2.connect(`http://127.0.0.1:${port}`, { maxSessionMemory: 1000 });
+    }
+
+    const title = `a write behind a blocked ${transport} socket completes, and 'drain' comes, when the peer has read it`;
+    test(title, blocked, async () => {
+      const { session, socket, close } = await blockedUpload(transport);
       try {
-        session.on("error", () => {});
-        await once(session, "remoteSettings");
-        // The WINDOW_UPDATE frame is in the same read as the SETTINGS frame.
-        await turns(1);
         const request = session.request({ ":method": "POST", ":path": "/" });
+        request.on("error", () => {});
         const events: string[] = [];
-        request.on("error", error => events.push(`error:${codeOf(error)}`));
-        request.on("finish", () => events.push("finish"));
-        const closed = closeOf(request);
-        const answer = ask(request);
-        for (let i = 0; i < 20 && session.state.outboundQueueSize === 0; i++) await turns(1);
-        assert.notStrictEqual(session.state.outboundQueueSize, 0);
-        (await accepted).write(frame(FRAME.RST_STREAM, 0, 1, uint32(NGHTTP2_INTERNAL_ERROR)));
-        await closed;
-        assert.deepStrictEqual(
-          { answer: await answer, events },
-          { answer: "ERR_HTTP2_STREAM_ERROR", events: ["error:ERR_HTTP2_STREAM_ERROR"] },
-        );
+        request.on("drain", () => events.push("drain"));
+        const { promise: written, resolve: hasWritten } = Promise.withResolvers<void>();
+        const tookAll = request.write(BIG, error => {
+          events.push(`write:${codeOf(error)}`);
+          hasWritten();
+        });
+        await turns(5);
+        assert.deepStrictEqual({ tookAll, events }, { tookAll: false, events: [] });
+
+        let received = 0;
+        const { promise: arrived, resolve: hasArrived } = Promise.withResolvers<void>();
+        readFrames(socket, PREFACE.length, (type, _flags, _streamId, payload) => {
+          if (type === FRAME.DATA && (received += payload.length) === BIG.length) hasArrived();
+        });
+        socket.resume();
+        await Promise.all([written, arrived]);
+        assert.deepStrictEqual(events, ["drain", "write:ok"]);
       } finally {
-        session.destroy();
-        (await accepted).destroy();
-        server.close();
+        close();
       }
     });
   }
+
+  // The peer answers and ends its side before it reads the request body. The last DATA frame of
+  // the body carries END_STREAM, so the stream is closed on both sides while that frame waits
+  // for the socket. node destroys the request at that point and 'finish' never comes. Bun lets
+  // the writable side finish first, and it finishes when the body has left.
+  test("a request that the peer answered finishes when the peer has read its body", held, async () => {
+    const { session, socket, close } = await blockedUpload();
+    try {
+      const request = session.request({ ":method": "POST", ":path": "/" });
+      request.on("error", () => {});
+      const events: string[] = [];
+      request.on("finish", () => events.push("finish"));
+      const closed = closeOf(request).then(() => events.push("close"));
+      request.resume();
+      // The peer must not answer a stream that it has not seen yet.
+      await turns(2);
+      socket.write(frame(FRAME.HEADERS, 0x5, 1, headerBlock([[":status", "200"]])));
+      await once(request, "end");
+      request.end(BIG, (error?: Error | null) => events.push(`end:${codeOf(error)}`));
+      await turns(5);
+      assert.deepStrictEqual(events, []);
+
+      socket.resume();
+      await closed;
+      assert.deepStrictEqual(events, ["end:ok", "finish", "close"]);
+    } finally {
+      close();
+    }
+  });
+
+  // Each 8 KB write fits in the socket by itself. The chain stops when the socket is full.
+  test("writes chained from their callbacks stop behind a blocked socket until the peer reads", blocked, async () => {
+    const { session, socket, close } = await blockedUpload();
+    try {
+      const request = session.request({ ":method": "POST", ":path": "/" });
+      request.on("error", () => {});
+      const chunk = BIG.subarray(0, 8192);
+      const total = BIG.length / chunk.length;
+      const codes = new Set<string>();
+      let completed = 0;
+      const { promise: all, resolve: allCompleted } = Promise.withResolvers<void>();
+      const next = (error?: Error | null) => {
+        codes.add(codeOf(error));
+        if (++completed === total) allCompleted();
+        else request.write(chunk, next);
+      };
+      request.write(chunk, next);
+      await turns(5);
+      assert.deepStrictEqual(
+        { stopped: completed < total, inFlight: request.writableLength },
+        { stopped: true, inFlight: chunk.length },
+      );
+
+      let received = 0;
+      const { promise: arrived, resolve: hasArrived } = Promise.withResolvers<void>();
+      readFrames(socket, PREFACE.length, (type, _flags, _streamId, payload) => {
+        if (type === FRAME.DATA && (received += payload.length) === BIG.length) hasArrived();
+      });
+      socket.resume();
+      await Promise.all([all, arrived]);
+      assert.deepStrictEqual({ completed, codes: [...codes] }, { completed: total, codes: ["ok"] });
+    } finally {
+      close();
+    }
+  });
+
+  // The write that the socket did not take whole has a small rest. The peer reads 1 MB and
+  // stops: the socket takes that rest, but not the large write of the other request behind it.
+  // node gives both writes to its socket as one batch, so there the small write waits too.
+  test(
+    "a write completes when the socket has taken it, with the write of another request still behind it",
+    held,
+    async () => {
+      const { session, socket, close } = await blockedUpload();
+      try {
+        const first = session.request({ ":method": "POST", ":path": "/" });
+        const second = session.request({ ":method": "POST", ":path": "/" });
+        first.on("error", () => {});
+        second.on("error", () => {});
+        await turns(1);
+        const chunk = BIG.subarray(0, 8192);
+        let completed = 0;
+        const next = (error?: Error | null) => {
+          if (error) return;
+          completed++;
+          first.write(chunk, next);
+        };
+        first.write(chunk, next);
+        await turns(5);
+        const stopped = completed;
+        const large = BIG.subarray(0, 4 << 20);
+        second.write(large);
+
+        let received = 0;
+        const { promise: read, resolve: hasRead } = Promise.withResolvers<void>();
+        socket.on("data", (data: Buffer) => {
+          if ((received += data.length) < 1 << 20) return;
+          socket.pause();
+          hasRead();
+        });
+        socket.resume();
+        await read;
+        // The socket sends no drain signal for 1 MB of room. pause() and resume() make the session flush.
+        while (completed === stopped) {
+          second.pause();
+          second.resume();
+          await turns(1);
+        }
+        assert.ok(received < large.length);
+      } finally {
+        close();
+      }
+    },
+  );
+
+  // node completes a write in the async context in which the write started.
+  const storage = new AsyncLocalStorage<string>();
+  /**
+   * Writes `chunk` inside a store. Resolves with what the write callback and 'drain' saw. The
+   * write starts in its write() call when the request has an id and the tick of request() is over.
+   */
+  function writeInStore(request: http2.ClientHttp2Stream, chunk: Buffer, events: string[]) {
+    return new Promise<string[]>(resolve =>
+      storage.run("the store of write()", () => {
+        request.once("drain", () => events.push(`drain in ${storage.getStore()}`));
+        request.write(chunk, () => {
+          events.push(`callback in ${storage.getStore()}`);
+          resolve(events);
+        });
+      }),
+    );
+  }
+  const inStore = ["drain in the store of write()", "callback in the store of write()"];
+
+  test("a write behind a blocked socket completes in the AsyncLocalStorage store of write()", blocked, async () => {
+    const { session, socket, close } = await blockedUpload();
+    try {
+      const request = session.request({ ":method": "POST", ":path": "/" });
+      request.on("error", () => {});
+      await turns(1);
+      const events: string[] = [];
+      const written = writeInStore(request, BIG, events);
+      await turns(5);
+      assert.deepStrictEqual(events, []);
+      socket.on("data", () => {});
+      socket.resume();
+      assert.deepStrictEqual(await written, inStore);
+    } finally {
+      close();
+    }
+  });
+
+  test("a write that waited for the peer's window completes in the AsyncLocalStorage store of write()", async () => {
+    const peer = await rawServer();
+    const session = connectOverTcp(peer.port);
+    try {
+      session.on("error", () => {});
+      await once(session, "connect");
+      const request = session.request({ ":method": "POST", ":path": "/" });
+      request.on("error", () => {});
+      await turns(1);
+      const written = writeInStore(request, MB, []);
+      const { socket, streamId } = await peer.windowFull;
+      socket.write(windowUpdates(streamId, MB.length));
+      assert.deepStrictEqual(await written, inStore);
+    } finally {
+      session.destroy();
+      peer.close();
+    }
+  });
+
+  // The JS stream keeps the callbacks of its writes while `kept` is set: it takes no more, and
+  // its write() returns false.
+  test("a write over a JS stream that is full completes when that stream drains", async () => {
+    const MAX = 0x7fffffff;
+    let kept: (() => void)[] | undefined;
+    const transport = new Duplex({
+      read() {},
+      write(_chunk, _encoding, callback) {
+        if (kept) kept.push(callback);
+        else callback();
+      },
+    });
+    const session = http2.connect("http://localhost", { createConnection: () => transport });
+    try {
+      session.on("error", () => {});
+      // The peer opens every flow-control window.
+      transport.push(
+        Buffer.concat([
+          frame(FRAME.SETTINGS, 0, 0, Buffer.concat([Buffer.from([0, 4]), uint32(MAX)])),
+          frame(FRAME.WINDOW_UPDATE, 0, 0, uint32(MAX - WINDOW)),
+        ]),
+      );
+      await once(session, "remoteSettings");
+      const request = session.request({ ":method": "POST", ":path": "/" });
+      request.on("error", () => {});
+      // The HEADERS frame of the request leaves before the JS stream starts to keep callbacks.
+      await turns(2);
+      const events: string[] = [];
+      const { promise: written, resolve: hasWritten } = Promise.withResolvers<void>();
+      kept = [];
+      request.write(MB, error => {
+        events.push(`write:${codeOf(error)}`);
+        hasWritten();
+      });
+      await turns(3);
+      // A frame from the peer makes the session flush. That is not the drain of the JS stream.
+      transport.push(frame(FRAME.WINDOW_UPDATE, 0, 0, uint32(1)));
+      await turns(3);
+      assert.deepStrictEqual({ inFlight: request.writableLength, events }, { inFlight: MB.length, events: [] });
+      // The JS stream takes what it kept, and its 'drain' follows.
+      const callbacks = kept;
+      kept = undefined;
+      for (const callback of callbacks) callback();
+      await written;
+      assert.deepStrictEqual(events, ["write:ok"]);
+    } finally {
+      session.destroy();
+    }
+  });
+
+  // A transport whose writable side has ended takes no bytes and sends no drain signal. The
+  // write must not wait for one. node calls back too: with no error over the socket, although
+  // the bytes go nowhere.
+  test("a write calls back after user code ended the socket of its session", async () => {
+    const MAX = 0x7fffffff;
+    const server = net.createServer({ allowHalfOpen: true }, socket => {
+      socket.on("error", () => {});
+      socket.resume();
+      socket.write(
+        Buffer.concat([
+          frame(FRAME.SETTINGS, 0, 0, Buffer.concat([Buffer.from([0, 4]), uint32(MAX)])),
+          frame(FRAME.WINDOW_UPDATE, 0, 0, uint32(MAX - WINDOW)),
+        ]),
+      );
+    });
+    const port = await listen(server);
+    const socket = net.connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+    socket.on("error", () => {});
+    const session = http2.connect(`http://127.0.0.1:${port}`, { createConnection: () => socket });
+    try {
+      session.on("error", () => {});
+      await once(session, "remoteSettings");
+      const request = session.request({ ":method": "POST", ":path": "/" });
+      request.on("error", () => {});
+      await turns(2);
+      socket.end();
+      await turns(3);
+      await new Promise<void>(resolve => request.end(MB, () => resolve()));
+    } finally {
+      session.destroy();
+      socket.destroy();
+      server.close();
+    }
+  });
+
+  test("a write calls back after the JS stream of its session ended", async () => {
+    const MAX = 0x7fffffff;
+    const transport = new Duplex({
+      read() {},
+      write(_chunk, _encoding, callback) {
+        callback();
+      },
+    });
+    const session = http2.connect("http://localhost", { createConnection: () => transport });
+    try {
+      session.on("error", () => {});
+      transport.on("error", () => {});
+      transport.push(
+        Buffer.concat([
+          frame(FRAME.SETTINGS, 0, 0, Buffer.concat([Buffer.from([0, 4]), uint32(MAX)])),
+          frame(FRAME.WINDOW_UPDATE, 0, 0, uint32(MAX - WINDOW)),
+        ]),
+      );
+      await once(session, "remoteSettings");
+      const request = session.request({ ":method": "POST", ":path": "/" });
+      request.on("error", () => {});
+      await turns(2);
+      transport.end();
+      await turns(3);
+      await new Promise<void>(resolve => request.end(MB, () => resolve()));
+    } finally {
+      session.destroy();
+    }
+  });
 
   /**
    * A script for `inChild`: the peer resets the request with `code` when it holds one window of
@@ -1387,6 +1771,39 @@ describe("server: the client leaves with DATA frames still queued", () => {
   });
 
   /**
+   * A raw h2c client that opens every flow-control window, asks for `path` on stream 1 and reads
+   * nothing, so only the socket holds the response. `read()` starts to read. It resolves with
+   * the size of the body of stream 1 when that response ends, or when the socket closes.
+   */
+  async function blockedClient(port: number, path = "/") {
+    const MAX = 0x7fffffff;
+    const socket = net.connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    await once(socket, "connect");
+    socket.pause();
+    socket.write(
+      Buffer.concat([
+        PREFACE,
+        frame(FRAME.SETTINGS, 0, 0, Buffer.concat([Buffer.from([0, 4]), uint32(MAX)])),
+        frame(FRAME.WINDOW_UPDATE, 0, 0, uint32(MAX - WINDOW)),
+        frame(FRAME.HEADERS, 0x5, 1, requestHeaders("GET", path)),
+      ]),
+    );
+    const read = () =>
+      new Promise<number>(resolve => {
+        let received = 0;
+        readFrames(socket, 0, (type, flags, streamId, payload) => {
+          if (streamId !== 1) return;
+          if (type === FRAME.DATA) received += payload.length;
+          if ((type === FRAME.DATA || type === FRAME.HEADERS) && flags & 1) resolve(received);
+        });
+        socket.on("close", () => resolve(received));
+        socket.resume();
+      });
+    return { socket, read };
+  }
+
+  /**
    * A server whose socket is blocked: the client asked for `BIG` at /stalled and reads nothing.
    * Every flow-control window is open, so only the socket holds that response. `answer` gets
    * the stream of the second request. node does not read that request while its socket is blocked.
@@ -1403,19 +1820,7 @@ describe("server: the client leaves with DATA frames still queued", () => {
       isStalled();
     });
     const port = await listen(server);
-    const socket = net.connect(port, "127.0.0.1");
-    socket.on("error", () => {});
-    await once(socket, "connect");
-    socket.pause();
-    const MAX = 0x7fffffff;
-    socket.write(
-      Buffer.concat([
-        PREFACE,
-        frame(FRAME.SETTINGS, 0, 0, Buffer.concat([Buffer.from([0, 4]), uint32(MAX)])),
-        frame(FRAME.WINDOW_UPDATE, 0, 0, uint32(MAX - WINDOW)),
-        frame(FRAME.HEADERS, 0x5, 1, requestHeaders("GET", "/stalled")),
-      ]),
-    );
+    const { socket } = await blockedClient(port, "/stalled");
     await stalled;
     await turns(2);
     socket.write(frame(FRAME.HEADERS, 0x5, 3, requestHeaders("GET", "/")));
@@ -1429,7 +1834,6 @@ describe("server: the client leaves with DATA frames still queued", () => {
   // The empty END_STREAM frame of stream 3 waits behind the response of stream 1. close() must
   // not finish the response, or reset the stream, before that frame has left. On Windows the
   // socket takes the whole response of stream 1 at once, so nothing waits.
-  const held = { skip: !isBun || process.platform === "win32" };
   test("end() then close() behind socket backpressure finishes after END_STREAM leaves", held, async () => {
     const events: string[] = [];
     const { promise: answered, resolve: hasAnswered } = Promise.withResolvers<void>();
@@ -1482,6 +1886,207 @@ describe("server: the client leaves with DATA frames still queued", () => {
       assert.deepStrictEqual(events, ["end:ok", "finish"]);
     } finally {
       close();
+    }
+  });
+
+  /**
+   * The server answers the GET of a blocked client with `BIG`, in the turn of the 'stream' event.
+   * The last DATA frame carries END_STREAM, so the stream is closed on both sides while the
+   * socket still holds back a part of the body. `events` gets what the response emits.
+   */
+  async function heldResponse() {
+    const events: string[] = [];
+    const { promise: answered, resolve: answer } = Promise.withResolvers<http2.ServerHttp2Stream>();
+    const { promise: calledBack, resolve: callBack } = Promise.withResolvers<void>();
+    const server = http2.createServer({ maxSessionMemory: 1000 });
+    server.on("sessionError", () => {});
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
+      stream.session!.on("error", () => {});
+      stream.on("error", error => events.push(`error:${codeOf(error)}`));
+      stream.on("finish", () => events.push("finish"));
+      stream.on("close", () => events.push("close"));
+      stream.respond({ ":status": 200 });
+      stream.end(BIG, (error?: Error | null) => {
+        events.push(`end:${codeOf(error)}`);
+        callBack();
+      });
+      answer(stream);
+    });
+    const client = await blockedClient(await listen(server));
+    const stream = await answered;
+    const close = () => {
+      client.socket.destroy();
+      server.close();
+    };
+    return { stream, session: stream.session!, events, calledBack, client, close };
+  }
+  type HeldResponse = Awaited<ReturnType<typeof heldResponse>>;
+  const mine = Object.assign(new Error("mine"), { code: "MINE" });
+  // [name, how the response ends, what the stream emits, where it runs]. A teardown cancels the
+  // write, which is in flight, one turn after 'close'. node v26.3.0 keeps that write in flight
+  // until its socket has taken the body, so the three teardowns run in Bun only.
+  const endsOfHeldResponse: [string, (response: HeldResponse) => unknown, string[], typeof blocked][] = [
+    ["the client reads it", ({ client }) => client.read(), ["end:ok", "finish", "close"], blocked],
+    [
+      "the client destroys its socket",
+      ({ client }) => client.socket.destroy(),
+      ["error:<socket error>", "close", "end:<socket error>"],
+      held,
+    ],
+    ["session.destroy() runs", ({ session }) => session.destroy(), ["close", "end:ECANCELED"], held],
+    ["session.destroy(error) runs", ({ session }) => session.destroy(mine), ["error:MINE", "close", "end:MINE"], held],
+  ];
+  for (const [name, end, expected, where] of endsOfHeldResponse) {
+    test(`stream.end(chunk, callback) behind a blocked socket calls back when ${name}`, where, async () => {
+      const response = await heldResponse();
+      const { stream, events, calledBack } = response;
+      try {
+        await turns(5);
+        assert.deepStrictEqual({ inFlight: stream.writableLength, events }, { inFlight: BIG.length, events: [] });
+        const closed = closeOf(stream);
+        end(response);
+        await closed;
+        await Promise.race([calledBack, turns(10)]);
+        // The reset of the socket reaches the session as a failed read or as a failed write.
+        const socketError = /:(ECONNRESET|EPIPE|ERR_SOCKET_CLOSED)$/;
+        assert.deepStrictEqual(
+          events.map(event => event.replace(socketError, ":<socket error>")),
+          expected,
+        );
+      } finally {
+        response.close();
+      }
+    });
+  }
+
+  // The stream is closed on both sides, so the session has no open stream left to wait for.
+  test(
+    "session.close() after stream.end(chunk) behind a blocked socket sends the whole response",
+    blocked,
+    async () => {
+      const { session, client, close } = await heldResponse();
+      try {
+        // The server has sent its SETTINGS frame. With the ACK, close() has nothing else to wait for.
+        client.socket.write(frame(FRAME.SETTINGS, 1, 0));
+        const sessionClosed = once(session, "close");
+        await turns(2);
+        session.close();
+        await turns(5);
+        assert.strictEqual(await client.read(), BIG.length);
+        await sessionClosed;
+      } finally {
+        close();
+      }
+    },
+  );
+
+  test(
+    "response.end(chunk, callback) behind a blocked socket calls back when the client reads it",
+    blocked,
+    async () => {
+      const events: string[] = [];
+      const { promise: answered, resolve: hasAnswered } = Promise.withResolvers<void>();
+      const { promise: closed, resolve: hasClosed } = Promise.withResolvers<void>();
+      const server = http2.createServer({ maxSessionMemory: 1000 }, (_request, response) => {
+        response.on("finish", () => events.push("finish"));
+        response.on("close", () => hasClosed());
+        response.end(BIG, () => events.push("end"));
+        hasAnswered();
+      });
+      const client = await blockedClient(await listen(server));
+      try {
+        await answered;
+        await turns(5);
+        assert.deepStrictEqual(events, []);
+        assert.strictEqual(await client.read(), BIG.length);
+        await closed;
+        assert.deepStrictEqual(events, ["end", "finish"]);
+      } finally {
+        client.socket.destroy();
+        server.close();
+      }
+    },
+  );
+
+  // Each small response waits in the queue of its stream until the socket takes the large one.
+  // Then one flush sends them all. It must not go one level deeper for each response: the
+  // compat API ends a response from the callback of its write, and 3000 levels do not fit in
+  // the stack. A debug or ASAN build needs some milliseconds for each response.
+  const slowBuild = /debug|asan/.test(`${process.versions.bun} ${path.basename(process.execPath)}`);
+  for (const api of ["stream", "response"] as const) {
+    const title = `${api}.end(chunk, callback) calls that waited behind a blocked socket finish, each in its AsyncLocalStorage store`;
+    test(title, blocked, async () => {
+      const storage = new AsyncLocalStorage<number>();
+      const count = slowBuild ? 20 : 3000;
+      const stores = { own: 0, other: 0 };
+      const { promise: all, resolve: allFinished } = Promise.withResolvers<void>();
+      const answer = (writable: http2.ServerHttp2Stream | http2.Http2ServerResponse, id: number) => {
+        writable.on("error", () => {});
+        if (id === 1) return void writable.end(BIG);
+        storage.run(id, () =>
+          writable.end("x", () => {
+            stores[storage.getStore() === id ? "own" : "other"]++;
+            if (stores.own + stores.other === count) allFinished();
+          }),
+        );
+      };
+      const server = http2.createServer({ maxSessionMemory: 1000 });
+      server.on("sessionError", () => {});
+      if (api === "response") server.on("request", (request, response) => answer(response, request.stream.id!));
+      else
+        server.on("stream", (stream: http2.ServerHttp2Stream) => {
+          stream.respond({ ":status": 200 });
+          answer(stream, stream.id!);
+        });
+      const { socket, read } = await blockedClient(await listen(server));
+      try {
+        const requests: Buffer[] = [];
+        for (let i = 1; i <= count; i++)
+          requests.push(frame(FRAME.HEADERS, 0x5, 1 + 2 * i, requestHeaders("GET", "/")));
+        socket.write(Buffer.concat(requests));
+        // The server reads the requests while its socket is blocked, or after. Both orders end the same.
+        await turns(5);
+        assert.strictEqual(await read(), BIG.length);
+        await all;
+        assert.deepStrictEqual(stores, { own: count, other: 0 });
+      } finally {
+        socket.destroy();
+        server.close();
+      }
+    });
+  }
+
+  // The JS stream is full after each chunk of the file, so each chunk waits for its 'drain'.
+  test("a file response over a JS stream that is full after each chunk arrives whole", async () => {
+    const MAX = 0x7fffffff;
+    const { promise: closed, resolve: hasClosed } = Promise.withResolvers<void>();
+    const { promise: bodyEnd, resolve: ended } = Promise.withResolvers<number>();
+    const server = http2.createServer();
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
+      stream.on("close", () => hasClosed());
+      stream.respondWithFile(file);
+    });
+    const [clientSide, serverSide] = duplexPair();
+    server.emit("connection", serverSide);
+    try {
+      let received = 0;
+      readFrames(clientSide as net.Socket, 0, (type, flags, _streamId, payload) => {
+        if (type === FRAME.DATA) received += payload.length;
+        if (type === FRAME.DATA && flags & 1) ended(received);
+      });
+      clientSide.write(
+        Buffer.concat([
+          PREFACE,
+          frame(FRAME.SETTINGS, 0, 0, Buffer.concat([Buffer.from([0, 4]), uint32(MAX)])),
+          frame(FRAME.WINDOW_UPDATE, 0, 0, uint32(MAX - WINDOW)),
+          frame(FRAME.HEADERS, 0x5, 1, requestHeaders("GET", "/")),
+        ]),
+      );
+      assert.strictEqual(await bodyEnd, fileSize);
+      await closed;
+    } finally {
+      clientSide.end();
+      server.close();
     }
   });
 
@@ -1802,7 +2407,9 @@ describe("client: the request ends before its HEADERS frame is sent", () => {
         await turns(1);
         const upload = session.request({ ":method": "POST", ":path": "/" });
         upload.on("error", () => {});
-        await new Promise<void>(resolve => upload.write(BIG, () => resolve()));
+        upload.write(BIG);
+        // The write stays in flight for the part that the socket did not take.
+        await turns(2);
 
         const request = session.request({ ":method": "POST", ":path": "/" });
         request.on("error", () => {});

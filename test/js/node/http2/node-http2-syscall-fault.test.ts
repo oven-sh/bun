@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as certs, isASAN, isWindows } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
+import net, { type AddressInfo } from "node:net";
 import path from "node:path";
 
 const skip = !fault.available() || isWindows;
@@ -212,6 +213,64 @@ describe.skipIf(skip)("node:http2 under injected syscall faults", () => {
         client.close();
       }
     } finally {
+      server.close();
+    }
+  });
+
+  // The send that fails leaves its bytes in the session, so the write behind them is in flight.
+  // The next flush delivers everything: the transport has recovered, and that write completes.
+  test("send → EPIPE once, then a flush delivers: the write in flight calls back", async () => {
+    const body = Buffer.alloc(10000, "e");
+    const expected = 2 * (9 + body.length);
+    let dataBytes = 0;
+    const { promise: arrived, resolve: hasArrived } = Promise.withResolvers<void>();
+    // A raw peer that answers nothing. It counts the bytes of the DATA frames, with their headers.
+    const server = net.createServer(socket => {
+      let buffered = Buffer.alloc(0);
+      let preface = 24;
+      socket.on("error", () => {});
+      socket.on("data", (chunk: Buffer) => {
+        buffered = Buffer.concat([buffered, chunk]);
+        if (buffered.length < preface) return;
+        buffered = buffered.subarray(preface);
+        preface = 0;
+        while (buffered.length >= 9 && buffered.length >= 9 + buffered.readUIntBE(0, 3)) {
+          const size = 9 + buffered.readUIntBE(0, 3);
+          if (buffered[3] === 0) dataBytes += size;
+          buffered = buffered.subarray(size);
+        }
+        if (dataBytes === expected) hasArrived();
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
+    client.on("error", () => {});
+    try {
+      await once(client, "connect");
+      const first = client.request({ ":path": "/", ":method": "POST" });
+      const second = client.request({ ":path": "/", ":method": "POST" });
+      first.on("error", () => {});
+      second.on("error", () => {});
+      // The HEADERS frames of the two requests leave before the fault is set.
+      await new Promise(resolve => setImmediate(resolve));
+      const said: string[] = [];
+      const { promise: bothSaid, resolve: haveSaid } = Promise.withResolvers<void>();
+      const say = (error?: Error | null) => {
+        if (said.push(error ? ((error as NodeJS.ErrnoException).code ?? error.message) : "ok") === 2) haveSaid();
+      };
+      fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: 1 });
+      // The first frame fits in the cork buffer. The second one does not: the send of the cork fails.
+      first.write(body, say);
+      second.write(body, say);
+      // pause() and resume() make the session flush in this turn, before the deferred flush runs.
+      second.pause();
+      second.resume();
+      await Promise.all([bothSaid, arrived]);
+      expect({ said, dataBytes }).toEqual({ said: ["ok", "ok"], dataBytes: expected });
+    } finally {
+      fault.clear();
+      client.destroy();
       server.close();
     }
   });

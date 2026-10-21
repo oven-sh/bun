@@ -1,6 +1,5 @@
 #include "InspectorLifecycleAgent.h"
 #include "BunModuleRegistry.h"
-#include "JSCommonJSModule.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/InspectorFrontendRouter.h>
 #include <JavaScriptCore/InspectorBackendDispatcher.h>
@@ -157,14 +156,11 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
 
     Ref<JSON::ArrayOf<String>> cjs = JSON::ArrayOf<String>::create();
     {
-        auto iter2 = JSC::JSMapIterator::create(vm, global->mapIteratorStructure(), cjsMap, JSC::IterationKind::Entries);
+        auto iter2 = JSC::JSMapIterator::create(vm, global->mapIteratorStructure(), cjsMap, JSC::IterationKind::Keys);
         RETURN_IF_EXCEPTION(scope, fail("Failed to create iterator"_s));
-        JSC::JSValue value, entry;
-        while (iter2->nextKeyValue(global, value, entry)) {
+        JSC::JSValue value;
+        while (iter2->next(global, value)) {
             RETURN_IF_EXCEPTION(scope, fail("Failed to iterate over cjs map"_s));
-            // A data file that an import loaded first is in the list of ES modules only.
-            if (auto* module = dynamicDowncast<Bun::JSCommonJSModule>(entry); module && module->dataFile == Bun::JSCommonJSModule::DataFile::Imported)
-                continue;
             cjs->addItem(value.toWTFString(global));
             RETURN_IF_EXCEPTION(scope, fail("Failed to add item to cjs array"_s));
         }

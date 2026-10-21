@@ -84,7 +84,7 @@ public:
 
     bool ignoreESModuleAnnotation { false };
     // `exports` is the value of a data file (JSON, TOML, YAML, ...) under the loader its path selects.
-    // An import of the file exports that value too (requireCacheDataFileExports).
+    // It is also the default export of an import of the file (requireCacheDataFileExports).
     enum class DataFile : uint8_t {
         No,
         Required,
@@ -201,9 +201,14 @@ inline std::optional<JSC::SourceCode> createCommonJSModule(
 }
 
 // A data file has one value in a loader, as a JSON file has in Node.js (https://nodejs.org/api/esm.html#json-modules).
-// Returns what an import that parsed `value` exports: the exports of the file's module in the require cache of
-// `graph` (null: the global object's), which this makes if the key is free, or `value` if the key is taken.
+// Returns the default export of an import that parsed `value`: the exports of the file's module in the require cache
+// of `graph` (null: the global object's). If the key is free, this makes that module with `value`. If the key holds
+// anything else, the import keeps `value`.
 JSC::JSValue requireCacheDataFileExports(Zig::GlobalObject*, JSModuleGraph* graph, JSC::JSString* key, JSC::JSValue value);
+
+// What require() returns for `exports`, the object that a plugin or a mock gives a module: its `default` if it is
+// marked `__esModule`. Empty if it is not marked, or has no `default`.
+JSC::JSValue esModuleDefaultExport(JSC::JSGlobalObject*, JSC::JSObject* exports);
 
 class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {
 public:

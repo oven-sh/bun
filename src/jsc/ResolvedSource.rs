@@ -41,6 +41,7 @@ pub struct ResolvedSource {
     pub is_static: bool,
     /// The loader that made this is the one the path alone selects: no type attribute, `?raw` or
     /// `require.extensions` entry chose another. `import` and `require()` share the value of a data file loaded so.
+    /// Only `Bun__transpileFile` sets it.
     pub is_path_loader: bool,
 
     pub bytecode_cache: Bytecode,

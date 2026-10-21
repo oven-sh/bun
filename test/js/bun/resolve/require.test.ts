@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, bunRun, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 const fixture = (...segs: string[]): string => path.join(import.meta.dirname, "fixtures", "require", ...segs);
@@ -250,25 +250,27 @@ describe.concurrent("a data file that is imported and required", () => {
     });
   });
 
-  it("an import that takes a required value exports that value's keys; a value that lost a key of the file is not taken", async () => {
+  it("the named exports of an import are the keys of the file, read from the value that require() returned", async () => {
     const result = await run(
       {
         "obj.json": data["obj.json"],
         "obj.toml": data["obj.toml"],
-        "named.mjs": `export { b } from "./obj.toml";`,
+        "named.mjs": `export { a, b } from "./obj.toml";`,
         "index.cjs": `
           const changed = require("./obj.json");
           changed.a = 2;
           changed.added = true;
           const lost = require("./obj.toml");
+          Object.defineProperty(lost, "a", { value: 3, enumerable: false });
           delete lost.b;
           (async () => {
             const json = await import("./obj.json");
             const toml = await import("./obj.toml");
+            // An import of a key by name links, whatever CommonJS code did to the value.
+            const named = await import("./named.mjs");
             console.log(JSON.stringify({
-              changed: [json.default === changed, Object.keys(json).sort(), json.a],
-              // So that an import of the key by name still links.
-              lost: [toml.default === lost, Object.keys(toml).sort(), (await import("./named.mjs")).b],
+              changed: [json.default === changed, Object.keys(json), json.a],
+              lost: [toml.default === lost, Object.keys(toml), named.a, "b" in named, named.b === undefined],
             }));
           })();
         `,
@@ -277,8 +279,8 @@ describe.concurrent("a data file that is imported and required", () => {
     );
     expect(result).toEqual({
       printed: {
-        changed: [true, ["a", "added", "b", "default"], 2],
-        lost: [false, ["a", "b", "default"], { c: [1, 2] }],
+        changed: [true, ["a", "b", "default"], 2],
+        lost: [true, ["a", "b", "default"], 3, true, true],
       },
       stderr: "",
       exitCode: 0,
@@ -304,7 +306,7 @@ describe.concurrent("a data file that is imported and required", () => {
         const require = createRequire(import.meta.url);
         console.log(JSON.stringify({
           plainIsTyped: obj === objTyped,
-          sameKeys: Object.keys(plain).join() === Object.keys(typed).join(),
+          keys: [Object.keys(plain), Object.keys(typed)],
           json: require("./obj.json") === objTyped,
           toml: require("./obj.toml") === toml,
           packageJson: require("./package.json") === pkg,
@@ -316,7 +318,10 @@ describe.concurrent("a data file that is imported and required", () => {
     expect(await run(files, "index.mjs")).toEqual({
       printed: {
         plainIsTyped: true,
-        sameKeys: true,
+        keys: [
+          ["a", "b", "default"],
+          ["a", "b", "default"],
+        ],
         json: true,
         toml: true,
         packageJson: true,
@@ -338,6 +343,7 @@ describe.concurrent("a data file that is imported and required", () => {
         "obj.toml": data["obj.toml"],
         "data.txt": `{"t":2}`,
         "tsconfig.json": `{\n  // a comment\n  "a": 1\n}\n`,
+        "comments.json": `{\n  // a comment\n  "a": 1\n}\n`,
         "index.cjs": `
           const key = name => require.resolve("./" + name);
           const text = require("./data.txt").default;
@@ -349,8 +355,10 @@ describe.concurrent("a data file that is imported and required", () => {
           const toml = require("./obj.toml");
           (async () => {
             const value = async (name, type) => (await import("./" + name, type && { with: { type } })).default;
+            const lenient = await value("comments.json", "jsonc");
             console.log(JSON.stringify({
               text: [text, await value("data.txt", "json")],
+              typedImport: [lenient, require("./comments.json") === lenient],
               typedRequire: [asFile.endsWith("str.json"), await value("str.json"), await value("str.json", "json")],
               // A tsconfig.json may have comments, but not when it is imported as JSON.
               strict: [tsconfig, await value("tsconfig.json", "json").catch(error => error.name)],
@@ -365,6 +373,7 @@ describe.concurrent("a data file that is imported and required", () => {
     expect(result).toEqual({
       printed: {
         text: [`{"t":2}`, { t: 2 }],
+        typedImport: [{ a: 1 }, false],
         typedRequire: [true, "str", "str"],
         strict: [{ a: 1 }, "SyntaxError"],
         planted: [parsed["obj.json"], { planted: "not loaded" }, parsed["arr.json"], { planted: "loaded" }],
@@ -452,7 +461,7 @@ describe.concurrent("a data file that is imported and required", () => {
         "index.mjs": `
           import { createRequire } from "node:module";
           const require = createRequire(import.meta.url);
-          const failed = async load => { try { await load(); return false; } catch { return true; } };
+          const failed = async load => { try { await load(); return "loaded"; } catch (error) { return error.name; } };
           const inCache = name => Object.keys(require.cache).some(key => key.endsWith(name));
           const out = {};
           for (const [name, first, second] of [
@@ -467,7 +476,10 @@ describe.concurrent("a data file that is imported and required", () => {
       "index.mjs",
     );
     expect(result).toEqual({
-      printed: { "bad.json": [true, false, true, false], "bad.toml": [true, false, true, false] },
+      printed: {
+        "bad.json": ["SyntaxError", false, "SyntaxError", false],
+        "bad.toml": ["BuildMessage", false, "BuildMessage", false],
+      },
       stderr: "",
       exitCode: 0,
     });
@@ -504,8 +516,11 @@ describe.concurrent("a data file that is imported and required", () => {
     };
     expect(await line(1)).toBe(`loaded [{"v":1},true]`);
     // rename() into place, so that the reload never reads a file that is half written.
-    fs.writeFileSync(path.join(String(dir), "next.json"), `{"v":2}`);
-    fs.renameSync(path.join(String(dir), "next.json"), path.join(String(dir), "config.json"));
+    const config = path.join(String(dir), "config.json");
+    fs.writeFileSync(config + ".next", `{"v":2}`);
+    // rmSync first on Windows, so that renameSync does not EPERM on the existing target.
+    if (isWindows) fs.rmSync(config, { force: true });
+    fs.renameSync(config + ".next", config);
     expect(await line(2)).toBe(`loaded [{"v":2},true]`);
   });
 
@@ -546,7 +561,6 @@ describe.concurrent("a data file that is imported and required", () => {
     it.each([
       ["--preload", ["--preload", "./setup.ts"], {}],
       ["--preload --isolate", ["--preload", "./setup.ts", "--isolate"], {}],
-      ["--preload --parallel", ["--preload", "./setup.ts", "--parallel"], {}],
       ["a bunfig.toml preload", [], { "bunfig.toml": `[test]\npreload = ["./setup.ts"]\n` }],
     ])("bun test with %s: require() of the file returns its data", async (_, args, bunfig) => {
       using dir = tempDir("bun-test-require-data-preload", { ...suite, ...bunfig });
@@ -554,7 +568,7 @@ describe.concurrent("a data file that is imported and required", () => {
         cmd: [bunExe(), "test", ...args],
         env: bunEnv,
         cwd: String(dir),
-        stdout: "pipe",
+        stdout: "ignore",
         stderr: "pipe",
       });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

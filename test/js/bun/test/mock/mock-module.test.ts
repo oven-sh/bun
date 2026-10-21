@@ -418,18 +418,26 @@ test("a factory that require()s the module it is mocking also patches the requir
   expect(require(path).extra).toBe("extra");
 });
 
-test("mocking a data file that was imported: require() asks the mock, as it does when nothing required the file", async () => {
-  using dir = tempDir("mock-module-data-file", {
-    "config.json": `{"v":1,"w":5}`,
-  });
-  const path = join(String(dir), "config.json");
-  const ns = await import(path);
-  // The import put its value in require.cache.
-  expect(require(path)).toBe(ns.default);
+// The import of a data file puts the file's module in require.cache. A mock gives that module what it gives a first
+// require() of the file, whatever read the module before.
+test.each([
+  ["an object", (_: string) => () => ({ v: 2 }), { v: 2 }],
+  ["an object with a default", (_: string) => () => ({ default: { v: 2 } }), { default: { v: 2 } }],
+  ["an __esModule object", (_: string) => () => ({ __esModule: true, default: { v: 2 } }), { v: 2 }],
+  ["what it require()s and more", (path: string) => () => ({ ...require(path), extra: 1 }), { v: 1, w: 5, extra: 1 }],
+])("mocking a data file that was imported, with a factory that returns %s", async (_, factoryFor, expected) => {
+  for (const before of ["import", "require", "require.cache"]) {
+    using dir = tempDir("mock-module-data-file", {
+      "config.json": `{"v":1,"w":5}`,
+    });
+    const path = join(String(dir), "config.json");
+    const ns = await import(path);
+    if (before === "require") expect(require(path)).toBe(ns.default);
+    if (before === "require.cache") expect(require.cache[path].exports).toBe(ns.default);
 
-  mock.module(path, () => ({ __esModule: true, default: { v: 2 } }));
-  expect(ns.default).toEqual({ v: 2 });
-  expect(require(path)).toEqual({ v: 2 });
+    mock.module(path, factoryFor(path));
+    expect(require(path)).toEqual(expected);
+  }
 });
 
 test.concurrent(

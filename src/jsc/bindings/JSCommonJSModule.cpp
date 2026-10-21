@@ -1780,29 +1780,6 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
 }
 
-// `import { name }` links against the keys of the value. CommonJS code can have deleted one that the file has.
-static bool hasEveryKeyOf(JSGlobalObject* globalObject, JSValue exports, JSValue file)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* fileObject = file.getObject();
-    if (!fileObject || isJSArray(fileObject))
-        return true;
-    JSObject* object = exports.getObject();
-    if (!object)
-        return false;
-    JSC::PropertyNameArrayBuilder names(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-    fileObject->methodTable()->getOwnPropertyNames(fileObject, globalObject, names, DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(scope, false);
-    for (auto& name : names) {
-        bool has = object->hasProperty(globalObject, name);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!has)
-            return false;
-    }
-    return true;
-}
-
 JSValue requireCacheDataFileExports(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSString* key, JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1814,11 +1791,7 @@ JSValue requireCacheDataFileExports(Zig::GlobalObject* globalObject, JSModuleGra
     if (auto* module = dynamicDowncast<JSCommonJSModule>(entry)) {
         if (module->dataFile == JSCommonJSModule::DataFile::No)
             return value;
-        JSValue exports = module->exportsObject();
-        RETURN_IF_EXCEPTION(scope, {});
-        bool shares = hasEveryKeyOf(globalObject, exports, value);
-        RETURN_IF_EXCEPTION(scope, {});
-        return shares ? exports : value;
+        RELEASE_AND_RETURN(scope, module->exportsObject());
     }
     // What user code put in require.cache stays there.
     if (!entry.isUndefined())
@@ -1831,6 +1804,21 @@ JSValue requireCacheDataFileExports(Zig::GlobalObject* globalObject, JSModuleGra
     requireMap->set(globalObject, key, module);
     RETURN_IF_EXCEPTION(scope, {});
     return value;
+}
+
+JSValue esModuleDefaultExport(JSGlobalObject* globalObject, JSObject* exports)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue esModule = exports->getIfPropertyExists(globalObject, vm.propertyNames->__esModule);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!esModule || !esModule.toBoolean(globalObject))
+        return {};
+    JSValue defaultExport = exports->getIfPropertyExists(globalObject, vm.propertyNames->defaultKeyword);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!defaultExport || defaultExport.isUndefined())
+        return {};
+    return defaultExport;
 }
 
 JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* graph)

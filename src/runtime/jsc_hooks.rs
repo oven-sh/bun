@@ -4414,7 +4414,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
 
     // `package.json` and `tsconfig.json` select `jsonc`; `with { type: "json" }` is still their own type.
     let is_path_loader = match (synchronous_loader, lr.path_loader) {
-        (Loader::Json | Loader::Jsonc, Some(Loader::Json | Loader::Jsonc)) => true,
+        (Loader::Json, Some(Loader::Jsonc)) => true,
         (used, selected) => Some(used) == selected,
     };
 

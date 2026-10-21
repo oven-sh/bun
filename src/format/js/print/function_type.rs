@@ -1,4 +1,4 @@
-//! Function types, and the signatures of interfaces and type literals that have parameters.
+//! Function types, and the interface and type literal signatures that have parameters.
 
 use super::function::write_parameters_and_return_type;
 use super::parameters::FormatFormalParameters;
@@ -74,8 +74,7 @@ pub(crate) fn write_ts_method_signature<'a>(
     write!(f, group(&format_inner));
 }
 
-/// The type parameters, the parameters and the return type of a function type or of a signature
-/// without a name.
+/// The type parameters, parameters and return type of a function type or an unnamed signature.
 fn format_grouped_parameters_with_return_type<'a>(
     func: Func<'a>,
     is_function_or_constructor_type: bool,

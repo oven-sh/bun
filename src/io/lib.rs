@@ -785,7 +785,7 @@ pub struct IoRequestLoop {
     pub(crate) kqueue_fd: Fd,
 }
 
-// §Concurrency: `OnceLock` for init gate; the singleton itself stays raw because
+// §Concurrency: `STAGE` under `INIT_LOCK` is the init gate; the singleton itself stays raw because
 // the IO thread mutates fields concurrently with `schedule()` callers (which only
 // touch the lock-free `pending` queue + `waker`), so wrapping the whole struct in a
 // `Mutex` would be wrong.
@@ -793,34 +793,58 @@ pub struct IoRequestLoop {
 // `ThreadCell` (not `RacyCell`) to encode "IO-thread-only after init" in the
 // type. `claim()` is invoked from `on_spawn_io_thread`. Cross-thread
 // `schedule()` callers go through `get_unchecked` and touch only the
-// lock-free `pending` + `waker` (see `schedule`); `ONCE` provides the
+// lock-free `pending` + `waker` (see `schedule`); `STAGE` provides the
 // happens-before for init.
 static LOOP: bun_core::ThreadCell<core::mem::MaybeUninit<IoRequestLoop>> =
     bun_core::ThreadCell::new(core::mem::MaybeUninit::uninit());
 #[cfg(not(windows))]
-static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+static INIT_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
+#[cfg(not(windows))]
+static STAGE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(STAGE_EMPTY);
+#[cfg(not(windows))]
+const STAGE_EMPTY: u8 = 0;
+/// `LOOP` is initialized but the IO thread hasn't started.
+#[cfg(not(windows))]
+const STAGE_LOADED: u8 = 1;
+#[cfg(not(windows))]
+const STAGE_RUNNING: u8 = 2;
 
 impl IoRequestLoop {
+    /// Initializes `LOOP`. On failure, closes the fds it opened so a later call can retry.
     #[cfg(not(windows))]
-    fn load() {
-        // SAFETY: called exactly once via `ONCE.get_or_init`; no other access
-        // until this returns. `get_unchecked` because this runs on the
+    fn load() -> sys::Result<()> {
+        #[cfg(not(target_os = "macos"))]
+        use bun_sys::FdExt as _;
+
+        let waker = Waker::init().map_err(|err| {
+            let errno = match err {
+                crate::Error::Sys(errno) => errno,
+                _ => E::ENOMEM,
+            };
+            sys::Error::from_code(errno, sys::Tag::open)
+        })?;
+        let waker_fd = waker.get_fd();
+        // SAFETY: `INIT_LOCK` is held and `STAGE` is `STAGE_EMPTY`, so nothing
+        // else accesses `LOOP`. `get_unchecked` because this runs on the
         // *spawning* thread, before the IO thread `claim()`s the cell.
-        let loop_ = unsafe { (*LOOP.get_unchecked()).assume_init_mut() };
-        *loop_ = IoRequestLoop {
-            pending: RequestQueue::default(),
-            waker: Waker::init().unwrap_or_else(|_| panic!("failed to initialize waker")),
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            epoll_fd: Fd::INVALID,
-            #[cfg(target_os = "freebsd")]
-            kqueue_fd: Fd::INVALID,
+        let loop_ = unsafe {
+            (*LOOP.get_unchecked()).write(IoRequestLoop {
+                pending: RequestQueue::default(),
+                waker,
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                epoll_fd: Fd::INVALID,
+                #[cfg(target_os = "freebsd")]
+                kqueue_fd: Fd::INVALID,
+            })
         };
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let raw = safe_c::epoll_create1(libc::EPOLL_CLOEXEC);
             if raw < 0 {
-                panic!("Failed to create epoll file descriptor");
+                let err = sys::Error::from_code(sys::get_errno(raw), sys::Tag::epoll_create1);
+                waker_fd.close();
+                return Err(err);
             }
             loop_.epoll_fd = Fd::from_native(raw);
 
@@ -835,14 +859,16 @@ impl IoRequestLoop {
                     libc::epoll_ctl(
                         loop_.epoll_fd.native(),
                         linux::EPOLL_CTL_ADD,
-                        loop_.waker.get_fd().native(),
+                        waker_fd.native(),
                         &raw mut epoll,
                     )
                 };
                 match sys::get_errno(rc) {
                     E::SUCCESS => {}
                     err => {
-                        bun_core::Output::panic(format_args!("Failed to wait on epoll {:?}", err))
+                        loop_.epoll_fd.close();
+                        waker_fd.close();
+                        return Err(sys::Error::from_code(err, sys::Tag::epoll_ctl));
                     }
                 }
             }
@@ -852,7 +878,9 @@ impl IoRequestLoop {
         {
             let kq = safe_c::kqueue();
             if kq < 0 {
-                panic!("Failed to create kqueue");
+                let err = sys::Error::from_code(sys::get_errno(kq), sys::Tag::kqueue);
+                waker_fd.close();
+                return Err(err);
             }
             loop_.kqueue_fd = Fd::from_native(kq);
             // Register the eventfd waker. udata = 0 → Pollable.tag() == .empty,
@@ -861,7 +889,7 @@ impl IoRequestLoop {
             // makes it edge-triggered so we never need to read() the eventfd.
             // SAFETY: all-zero is a valid kevent (POD).
             let mut change: KEvent = bun_core::ffi::zeroed();
-            change.ident = usize::try_from(loop_.waker.get_fd().native()).expect("int cast");
+            change.ident = usize::try_from(waker_fd.native()).expect("int cast");
             change.filter = libc::EVFILT_READ;
             change.flags = libc::EV_ADD | libc::EV_CLEAR;
             // SAFETY: valid kqueue fd just created; passing 1 change, 0 events.
@@ -877,31 +905,50 @@ impl IoRequestLoop {
             };
             match sys::get_errno(rc as isize) {
                 sys::Errno::SUCCESS => {}
-                err => bun_core::Output::panic(format_args!(
-                    "Failed to register waker on kqueue: {}",
-                    <&'static str>::from(err)
-                )),
+                err => {
+                    loop_.kqueue_fd.close();
+                    waker_fd.close();
+                    return Err(sys::Error::from_code(err, sys::Tag::kevent));
+                }
             }
         }
 
-        // smaller thread, since it's not doing much.
-        std::thread::Builder::new()
-            .stack_size(1024 * 1024 * 2)
-            .spawn(Self::on_spawn_io_thread)
-            .unwrap_or_else(|_| panic!("Failed to spawn IO watcher thread"));
-        // The JoinHandle detaches on drop.
+        #[cfg(target_os = "macos")]
+        let _ = (loop_, waker_fd);
+        Ok(())
     }
 
-    fn ensure_init() {
+    /// Starts the IO thread on first use. If that fails, the next call retries.
+    pub fn ensure_init() -> sys::Result<()> {
         #[cfg(windows)]
         {
             panic!("Do not use this API on windows");
         }
         #[cfg(not(windows))]
         {
-            ONCE.get_or_init(|| {
-                Self::load();
-            });
+            if STAGE.load(Ordering::Acquire) == STAGE_RUNNING {
+                return Ok(());
+            }
+            let _guard = INIT_LOCK.lock_guard();
+            if STAGE.load(Ordering::Relaxed) == STAGE_EMPTY {
+                Self::load()?;
+                STAGE.store(STAGE_LOADED, Ordering::Relaxed);
+            }
+            if STAGE.load(Ordering::Relaxed) == STAGE_LOADED {
+                // smaller thread, since it's not doing much.
+                // The JoinHandle detaches on drop.
+                std::thread::Builder::new()
+                    .stack_size(1024 * 1024 * 2)
+                    .spawn(Self::on_spawn_io_thread)
+                    .map_err(|err| {
+                        sys::Error::from_code_int(
+                            err.raw_os_error().unwrap_or(libc::EAGAIN),
+                            sys::Tag::pthread_create,
+                        )
+                    })?;
+                STAGE.store(STAGE_RUNNING, Ordering::Release);
+            }
+            Ok(())
         }
     }
 
@@ -910,9 +957,9 @@ impl IoRequestLoop {
         // From here on, only this thread may borrow `IoRequestLoop`;
         // `ThreadCell` enforces that in debug builds.
         LOOP.claim();
-        // SAFETY: `ONCE` guarantees `LOOP` is initialized before this thread
-        // is spawned (the spawn in `load()` is sequenced after the store, and
-        // `OnceLock` provides the cross-thread happens-before). We take a
+        // SAFETY: `LOOP` is initialized before this thread is spawned (the
+        // spawn in `ensure_init()` is sequenced after `load()`, and spawning
+        // a thread provides the cross-thread happens-before). We take a
         // *shared* `&IoRequestLoop` — never `&mut` — because `schedule()` on
         // other threads concurrently touches `pending`/`waker` through a
         // sibling raw pointer derived from `LOOP.get_unchecked()`. A `&mut`
@@ -928,12 +975,15 @@ impl IoRequestLoop {
     /// thread: only touches the lock-free `pending` queue and the
     /// async-signal-safe `waker`. This is the *only* cross-thread entry
     /// point — every other `IoRequestLoop` method is IO-thread-only.
+    ///
+    /// Callers must call `ensure_init()` and handle its error before scheduling
+    /// an operation's first request.
     pub fn schedule(request: &mut Request) {
-        Self::ensure_init();
+        Self::ensure_init().expect("IoRequestLoop::ensure_init() succeeded before schedule()");
         debug_assert!(!request.scheduled);
         request.scheduled = true;
         let request = core::ptr::NonNull::from(request);
-        // SAFETY: `ONCE` above established happens-before for `load()`'s
+        // SAFETY: `STAGE` above established happens-before for `load()`'s
         // init of `pending`/`waker`. `get_unchecked` (no owner assert) and a
         // pointer cast of the `repr(transparent)` `MaybeUninit` (not
         // `as_mut_ptr(&mut self)`) keep this in raw-ptr land: the only
@@ -2141,7 +2191,7 @@ pub mod waker {
             Self { loop_: None }
         }
 
-        pub fn init() -> crate::Result<Self> {
+        pub fn init() -> crate::error::Result<Self> {
             Ok(Self {
                 loop_: Some(bun_ptr::BackRef::from(
                     core::ptr::NonNull::new(bun_uws_sys::WindowsLoop::get())

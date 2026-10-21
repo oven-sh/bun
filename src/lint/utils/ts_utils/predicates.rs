@@ -4,8 +4,8 @@ use crate::ast::{BinOp, Expr, FnKind, Func, Node, TypeKind};
 use crate::tokens::{Token, TokenKind};
 use crate::utils::ast_utils::is_function;
 
-/// The function that `node` is in ESTree: a `Func`, the `Expr`, the `Stmt` or the `TypeNode` that
-/// owns one, or a signature of an interface or a type literal.
+/// `node` as its ESTree function: a `Func`, the `Expr`, `Stmt` or `TypeNode` that owns one, or a
+/// signature of an interface or a type literal.
 fn func_of(node: Node<'_>) -> Option<Func<'_>> {
     match node {
         Node::Func(func) => Some(func),
@@ -28,7 +28,7 @@ pub fn is_logical_or_operator(e: Expr<'_>) -> bool {
 
 /// typescript-eslint's `isFunctionType`: a `TSCallSignatureDeclaration`, a `TSConstructorType`, a
 /// `TSConstructSignatureDeclaration`, a `TSDeclareFunction`, a `TSEmptyBodyFunctionExpression`, a
-/// `TSFunctionType` or a `TSMethodSignature`. Takes a `Func`, what owns one, or the `Member` of an
+/// `TSFunctionType` or a `TSMethodSignature`. Takes a `Func`, its owner, or the `Member` of an
 /// interface or a type literal.
 pub fn is_function_type<'a>(node: impl Into<Node<'a>>) -> bool {
     func_of(node.into()).is_some_and(|func| match func.kind() {

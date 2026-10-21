@@ -8,7 +8,7 @@ pub struct ArrayCallbackReturn {
     allow_void: bool,
 }
 
-/// What oxlint says if the last statement is a `switch` without `default`, or an `if` without `else`.
+/// oxlint's messages for a last statement that's a `switch` without `default`, or an `if` without `else`.
 const MAY_FALL_THROUGH_SWITCH: Message = Message::new(
     "mayFallThroughSwitch",
     "Callback for array method \"{{arrayMethodName}}\" may fall through a `switch` without returning",
@@ -58,7 +58,7 @@ const TARGET_METHODS: [&str; 14] = [
 /// ESLint's `getPrecedence({ type: "UnaryExpression", operator: "void" })`.
 const PRECEDENCE_OF_VOID: i32 = 16;
 
-/// The one of `TARGET_METHODS` that `callee` is an access to.
+/// Returns the entry of `TARGET_METHODS` that `callee` accesses.
 fn get_target_method(callee: Expr) -> Option<&'static str> {
     let name = ast_utils::get_static_property_name(callee)?;
     if !matches!(name.first(), Some(b'e' | b'f' | b'm' | b'r' | b's' | b't')) {
@@ -75,8 +75,8 @@ fn full_method_name(array_method_name: &str) -> String {
     [prefix, array_method_name].concat()
 }
 
-/// Where oxlint says that the method is called: at its name, or at the whole of `Array.from`.
-fn place_of_method(callee: Expr, array_method_name: &str) -> Option<Span> {
+/// Where oxlint labels the method call: at the method's name, or at all of `Array.from`.
+fn method_label_span(callee: Expr, array_method_name: &str) -> Option<Span> {
     match callee.kind() {
         _ if matches!(array_method_name, "from" | "fromAsync") => Some(callee.span()),
         ExprKind::Dot { name, .. } => Some(name.span()),
@@ -87,14 +87,14 @@ fn place_of_method(callee: Expr, array_method_name: &str) -> Option<Span> {
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// The outermost of the `&&`, `||`, `??` and `?:` that an expression is an operand of, or itself,
-    /// and the parent of that.
-    around_choices: AncestorMemo<'a, (Node<'a>, Node<'a>)>,
+    /// The outermost `&&`, `||`, `??` or `?:` that an expression is an operand of, or the expression itself, plus that
+    /// node's parent.
+    outermost_logical: AncestorMemo<'a, (Node<'a>, Node<'a>)>,
     /// ESLint's `getUpperFunction`.
     functions: AncestorMemo<'a, Func<'a>>,
 }
 
-/// The name of the method of arrays that the function expression `func` is the callback of, and what is called.
+/// Returns the name of the array method that the function expression `func` is the callback of, and the callee.
 /// Generators are excluded. Async functions are allowed only for `Array.fromAsync`.
 fn get_array_method_name<'a>(func: Func<'a>, state: &mut State<'a>) -> Option<(&'static str, Expr<'a>)> {
     if func.is_generator() {
@@ -105,7 +105,7 @@ fn get_array_method_name<'a>(func: Func<'a>, state: &mut State<'a>) -> Option<(&
     };
     loop {
         // `foo.every(nativeFoo || function foo() { .. })`
-        let (outermost, parent) = state.around_choices.find(Node::Expr(current), |child, parent| {
+        let (outermost, parent) = state.outermost_logical.find(Node::Expr(current), |child, parent| {
             let is_choice = matches!(parent, Node::Expr(parent) if parent.tag() == ExprTag::Cond
                 || matches!(parent.binary_op(), Some(BinOp::And | BinOp::Or | BinOp::Nullish)));
             (!is_choice).then_some((child, parent))
@@ -116,7 +116,7 @@ fn get_array_method_name<'a>(func: Func<'a>, state: &mut State<'a>) -> Option<(&
                 let call = parent.as_call()?;
                 let (callee, args) = (call.callee(), call.args());
                 let is_second = args.get(1) == Some(current);
-                // oxlint looks only at a call without further arguments, and at no `from` but that of `Array`.
+                // oxlint only checks calls without extra arguments, and no `from` other than `Array.from`.
                 if current.file().language().is_oxlint
                     && (args.len() != if is_second { 2 } else { 1 }
                         || is_second
@@ -138,7 +138,7 @@ fn get_array_method_name<'a>(func: Func<'a>, state: &mut State<'a>) -> Option<(&
                 return (is_second && ast_utils::is_array_from_async_method(callee))
                     .then_some(("fromAsync", callee));
             }
-            // What a function that is called at once returns goes where the call is:
+            // The return value of an immediately invoked function ends up where the call is:
             // `foo.every((function() { return function callback() { .. }; })())`
             Node::Stmt(statement) if statement.tag() == StmtTag::Return => {
                 let function = state.functions.find(Node::Stmt(statement), |_, it| ast_utils::as_function(it));
@@ -177,7 +177,7 @@ pub(crate) fn void_prepend_fixer<'a>(fixer: Fixer<'a>, node: Expr<'a>, return_or
     ]
 }
 
-/// Puts `{}` around the body of the arrow function `func`.
+/// Wraps the arrow function `func`'s body in `{}`.
 fn curly_wrap_fixer<'a>(fixer: Fixer<'a>, func: Func<'a>) -> Option<[Fix; 2]> {
     let first_token = skip_trivia(fixer.file().text(), func.arrow_span()?.end);
     Some([
@@ -205,7 +205,7 @@ impl ArrayCallbackReturn {
         let FnBody::Block(body) = func.body() else {
             return;
         };
-        // An `async` function returns something, unless there is nothing in it.
+        // An `async` function always returns something, unless its body is empty.
         if func.is_async() && (!body.is_empty() || self.allow_implicit) {
             return;
         }
@@ -223,12 +223,12 @@ impl ArrayCallbackReturn {
         };
         let can_run_past_the_last = message.id != EXPECTED_INSIDE.id;
         let start = func.estree_span().start;
-        let place = match can_run_past_the_last {
+        let report_span = match can_run_past_the_last {
             true if func.is_arrow() => func.arrow_span(),
             true => func.params_span().map(|params| Span::new(start, params.start)),
             false => func.body_span(),
         };
-        if let Some(place) = place {
+        if let Some(report_span) = report_span {
             // The end of oxlint's `help`.
             let value_requirement = match self.allow_implicit {
                 true => "",
@@ -240,11 +240,11 @@ impl ArrayCallbackReturn {
                 }
                 false => "",
             };
-            Self::report(cx, place, message, func, method)
+            Self::report(cx, report_span, message, func, method)
                 .data("value_requirement", value_requirement)
                 .labels_with(|it| {
                     it.note = note.into();
-                    if let (true, Some(last), Some(called)) = (can_run_past_the_last, last, place_of_method(callee, method)) {
+                    if let (true, Some(last), Some(called)) = (can_run_past_the_last, last, method_label_span(callee, method)) {
                         it.push(last, "This path may reach the end of the callback.");
                         it.push(called, format!("\"{}\" is called here.", full_method_name(method)));
                     }
@@ -252,11 +252,11 @@ impl ArrayCallbackReturn {
         }
     }
 
-    /// Returning a value on any path is not allowed. `callee`: the `a.forEach`.
+    /// Reports a value returned on any path. `callee` is the `a.forEach`.
     fn check_for_each_callback<'a>(&self, func: Func<'a>, callee: Expr<'a>, cx: &Cx<'a, Self>) {
         let is_allowed = |value: Expr<'a>| self.allow_void && is_expression_void(value);
-        // oxlint reports a callback once, at the name of the method.
-        let place_of_oxlint = place_of_method(callee, "forEach").filter(|_| cx.language().is_oxlint);
+        // oxlint reports a callback once, at the method's name.
+        let oxlint_span = method_label_span(callee, "forEach").filter(|_| cx.language().is_oxlint);
         let label = |labels: &mut Details, value: Expr<'a>| {
             labels.first("\"Array.prototype.forEach\" is called here.");
             labels.push(value.outer_span(), match self.allow_void {
@@ -271,10 +271,10 @@ impl ArrayCallbackReturn {
             if is_allowed(argument) {
                 continue;
             }
-            let place = place_of_oxlint.unwrap_or_else(|| statement.span());
-            let mut report = Self::report(cx, place, EXPECTED_NO_RETURN_VALUE, func, "forEach")
+            let report_span = oxlint_span.unwrap_or_else(|| statement.span());
+            let mut report = Self::report(cx, report_span, EXPECTED_NO_RETURN_VALUE, func, "forEach")
                 .labels_with(|labels| label(labels, argument));
-            if self.allow_void && place_of_oxlint.is_some() {
+            if self.allow_void && oxlint_span.is_some() {
                 report = report.help(EXPECTED_VOID);
             }
             if self.allow_void {
@@ -282,7 +282,7 @@ impl ArrayCallbackReturn {
                 let keyword = Span::new(start, start + "return".len() as u32);
                 report.suggest(PREPEND_VOID, |fixer| void_prepend_fixer(fixer, argument, keyword, true));
             }
-            if place_of_oxlint.is_some() {
+            if oxlint_span.is_some() {
                 return;
             }
         }
@@ -292,11 +292,11 @@ impl ArrayCallbackReturn {
         if is_allowed(body) {
             return;
         }
-        let head = place_of_oxlint.unwrap_or_else(|| ast_utils::get_function_head_loc(func));
+        let head = oxlint_span.unwrap_or_else(|| ast_utils::get_function_head_loc(func));
         let mut report = Self::report(cx, head, EXPECTED_NO_RETURN_VALUE, func, "forEach")
             .labels_with(|labels| label(labels, body))
             .suggest(WRAP_BRACES, |fixer| curly_wrap_fixer(fixer, func));
-        if self.allow_void && place_of_oxlint.is_some() {
+        if self.allow_void && oxlint_span.is_some() {
             report = report.help(EXPECTED_VOID);
         }
         if self.allow_void {
@@ -330,7 +330,7 @@ impl Rule for ArrayCallbackReturn {
 
     #[inline]
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        // Only what `forEach` is given can be wrong without a block.
+        // Without a block body, only a `forEach` callback can be wrong.
         if matches!(func.kind(), FnKind::Expr | FnKind::Arrow)
             && (self.check_for_each || matches!(func.body(), FnBody::Block(_)))
         {

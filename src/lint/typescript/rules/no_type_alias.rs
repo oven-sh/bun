@@ -61,7 +61,7 @@ fn is_tuple(ty: TypeNode) -> bool {
     ty.tag() == TypeTag::Tuple
 }
 
-/// Flattens `node` into the types that it is composed of.
+/// Flattens `node` into the types it's composed of.
 fn get_types<'a>(node: TypeNode<'a>, types: &mut SmallVec<[TypeWithLabel<'a>; 8]>) {
     let mut stack: SmallVec<[TypeWithLabel<'a>; 8]> = smallvec::smallvec![TypeWithLabel {
         node,
@@ -101,7 +101,7 @@ fn report_error<'a>(cx: &Cx<'a, NoTypeAlias>, ty: TypeWithLabel<'a>, is_root: bo
         .data("typeName", label);
 }
 
-/// Whether `allowed` allows a type in that place.
+/// True if `allowed` permits a type in that position.
 fn is_allowed(allowed: Values, is_top_level: bool, composition_type: Option<Composition>) -> bool {
     match allowed {
         Values::Always => true,

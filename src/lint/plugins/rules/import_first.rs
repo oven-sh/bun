@@ -5,7 +5,7 @@ use smallvec::SmallVec;
 use std::cell::OnceCell;
 use std::cmp::Ordering;
 
-/// Ensure all imports appear before other statements. `OLD_NAME`: as `imports-first`.
+/// Ensure all imports appear before other statements. `OLD_NAME`: registered under the deprecated name `imports-first`.
 pub struct First<const OLD_NAME: bool = false> {
     absolute_first: bool,
 }
@@ -19,10 +19,10 @@ fn is_relative_path(path: &[u8]) -> bool {
     path.starts_with(b"./") || path.starts_with(b"../") || path.starts_with(b"/")
 }
 
-/// An import after something else.
+/// An import that comes after a non-import statement.
 struct ErrorInfo<'a> {
     node: Stmt<'a>,
-    /// From the end of the statement before it.
+    /// Starts at the end of the previous statement.
     range: Span,
 }
 
@@ -56,7 +56,7 @@ impl<const OLD_NAME: bool> Rule for First<OLD_NAME> {
                     ImportEqualsTarget::Require(Some(source)) => Some(source),
                     _ => None,
                 },
-                // For oxlint a string in parentheses is no directive.
+                // oxlint doesn't treat a parenthesized string as a directive.
                 StmtKind::Expr(e)
                     if !any_expressions && e.as_string().is_some() && !(is_oxlint && e.is_parenthesized()) =>
                 {
@@ -68,22 +68,22 @@ impl<const OLD_NAME: bool> Rule for First<OLD_NAME> {
                 }
             };
             any_expressions = true;
-            // oxlint passes over `import a = b.c`.
+            // oxlint skips `import a = b.c`.
             if is_oxlint && source.is_none() {
                 continue;
             }
             if self.absolute_first && let Some(source) = source {
-                // For oxlint `.a` is absolute and `/a` relative.
+                // oxlint treats `.a` as absolute and `/a` as relative.
                 let source = source.bytes();
                 let is_relative = if is_oxlint { is_relative_path(source) } else { source.starts_with(b".") };
-                // oxlint points at the string in `require("a")` too.
-                let place = || match stmt.kind() {
+                // oxlint reports the string even in `import a = require("a")`.
+                let report_span = || match stmt.kind() {
                     StmtKind::ImportEquals(import) if !is_oxlint => import.require_span(),
                     _ => stmt.module_specifier_span(),
                 };
                 if is_relative {
                     any_relative = true;
-                } else if any_relative && let Some(span) = place() {
+                } else if any_relative && let Some(span) = report_span() {
                     cx.report(span, if is_oxlint { ABSOLUTE_FIRST } else { ABSOLUTE_AFTER_RELATIVE });
                 }
             }
@@ -129,12 +129,12 @@ fn end_with_comments<'a>(import: Stmt<'a>, fixer: Fixer<'a>) -> (u32, bool) {
         },
         _ => (import.span().end, false),
     };
-    let end = fixer.end_with_comments_beside(code_end);
+    let end = fixer.end_with_trailing_comments(code_end);
     (end, !has_semicolon || is_end_of_line_comment(file, end))
 }
 
 fn is_end_of_line_comment<'a>(file: &'a File<'a>, at: u32) -> bool {
-    let comment = at.checked_sub(1).and_then(|it| file.comment_around(it));
+    let comment = at.checked_sub(1).and_then(|it| file.comment_containing(it));
     comment.is_some_and(|it| it.kind() == TokenKind::Line)
 }
 
@@ -168,18 +168,19 @@ fn joins_statements<'a>(file: &'a File<'a>, removed: Span) -> bool {
 }
 
 impl<'a> ErrorInfo<'a> {
-    /// Something that it declares is referred to before its end.
+    /// True if a binding it declares is referenced before the import ends.
     fn is_used_before(&self) -> bool {
         let is_before = |it: Reference| it.ident().start() < self.range.end;
         Node::Stmt(self.node).declared_symbols().iter().any(|it| it.references().any(is_before))
     }
 
-    /// `lastSortNodesIndex`: the last before the first that cannot be moved. The first of all is moved whatever it is.
+    /// `lastSortNodesIndex`: the index of the last import before the first one that can't be moved. The very first
+    /// import is always moved.
     fn last_to_sort(error_infos: &[ErrorInfo]) -> usize {
         error_infos.iter().take_while(|it| !it.is_used_before()).count().saturating_sub(1)
     }
 
-    /// Moves all of `sort_nodes` after the last import that's already in place, or to the start of the file's first
+    /// Moves all of `sort_nodes` after the last import that's already at the top, or to the start of the file's first
     /// statement if there is none. Comments above and beside an import move with it. Returns `None` if the move would
     /// change the program's behavior.
     #[cold]
@@ -196,7 +197,7 @@ impl<'a> ErrorInfo<'a> {
         let mut removed: SmallVec<[Span; 4]> = SmallVec::new();
         for info in sort_nodes {
             let (end, ends_open) = end_with_comments(info.node, fixer);
-            let range = Span::new(fixer.end_with_comments_beside(info.range.start), end);
+            let range = Span::new(fixer.end_with_trailing_comments(info.range.start), end);
             let node_source_code = file.slice(range);
             let is_blank_first = strings::js_whitespace_len(node_source_code) > 0;
             match !is_blank_first || is_open && !starts_on_a_new_line(node_source_code) {
@@ -218,8 +219,8 @@ impl<'a> ErrorInfo<'a> {
         let names_module = |it: Stmt| {
             matches!(it.tag(), StmtTag::ExportNamed | StmtTag::ExportStar) && it.module_specifier_span().is_some()
         };
-        let mut passed = file.body().iter().filter(|it| Span::empty(insert_at).between(*last).contains(it.span()));
-        if passed.any(names_module) || removed.iter().any(|it| joins_statements(file, *it)) {
+        let mut crossed_statements = file.body().iter().filter(|it| Span::empty(insert_at).between(*last).contains(it.span()));
+        if crossed_statements.any(names_module) || removed.iter().any(|it| joins_statements(file, *it)) {
             return None;
         }
         if last_legal_imp.is_none() {
@@ -240,11 +241,11 @@ impl<'a> ErrorInfo<'a> {
         let start_of_text = if file.has_bom() { 3 } else { 0 };
         let mut replace_source_code = file.slice(Span::new(start_of_text, insert_at)).to_vec();
         replace_source_code.append(&mut insert_source_code);
-        let mut kept_from = insert_at;
+        let mut retained_from = insert_at;
         for range in &removed {
-            replace_source_code.extend_from_slice(file.slice(Span::before(kept_from, *range)));
-            kept_from = range.end;
+            replace_source_code.extend_from_slice(file.slice(Span::before(retained_from, *range)));
+            retained_from = range.end;
         }
-        Some(fixer.replace(Span::new(start_of_text, kept_from), replace_source_code))
+        Some(fixer.replace(Span::new(start_of_text, retained_from), replace_source_code))
     }
 }

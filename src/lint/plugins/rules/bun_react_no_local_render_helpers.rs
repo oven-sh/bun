@@ -2,9 +2,9 @@ use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 
-/// Disallow a function that is defined in a component, is named like one that renders, and is used in the JSX there.
+/// Disallow `renderItem()` functions that are defined inside a component and used in its JSX.
 pub struct ReactNoLocalRenderHelpers {
-    /// `pattern`. Without it: `render` and a capital letter.
+    /// `pattern`. The default matches `render` followed by a capital letter.
     pattern: Option<Regex>,
 }
 
@@ -22,7 +22,7 @@ impl ReactNoLocalRenderHelpers {
     }
 }
 
-/// The function that `symbol` is the name of: `function a() {}`, `const a = () => {}`.
+/// Returns the function that `symbol` names: `function a() {}`, `const a = () => {}`.
 fn function_of(symbol: Symbol<'_>) -> Option<Func<'_>> {
     match symbol.declarations().next()? {
         Declaration::Fn(func) => Some(func),
@@ -37,7 +37,7 @@ fn function_of(symbol: Symbol<'_>) -> Option<Func<'_>> {
 impl Rule for ReactNoLocalRenderHelpers {
     const META: Meta = Meta::plugin(Plugin::Bun, "react-no-local-render-helpers", Kind::Suggestion);
     const ON: On = On::new().symbols();
-    /// The innermost JSX element around a node.
+    /// Caches a node's innermost enclosing JSX element.
     type State<'a> = AncestorMemo<'a, Expr<'a>>;
 
     fn new(options: &Options) -> Self {
@@ -62,16 +62,16 @@ impl Rule for ReactNoLocalRenderHelpers {
         if !self.is_render_name(symbol.name().bytes()) {
             return;
         }
-        let Some(around) = function_of(symbol).and_then(Func::enclosing) else {
+        let Some(enclosing_function) = function_of(symbol).and_then(Func::enclosing) else {
             return;
         };
-        // It is called, or it is handed to what calls it.
+        // Either it's called, or it's passed to a function that calls it.
         let uses = symbol.references().filter_map(Reference::expr);
         let mut uses = uses.filter(|it| it.parent().as_expr().is_some_and(|it| it.tag() == ExprTag::Call));
         let element = |_, parent: Node<'a>| parent.as_expr().filter(|it| it.tag() == ExprTag::Jsx);
         let is_in_jsx = uses.any(|it| {
             let found = cx.state.find(Node::Expr(it), element);
-            found.is_some_and(|found| around.span().contains(found.span()))
+            found.is_some_and(|found| enclosing_function.span().contains(found.span()))
         });
         if is_in_jsx && let Some(span) = symbol.declarations().next().and_then(Declaration::name_span) {
             cx.report(span, LOCAL_HELPER).data("name", symbol.name());

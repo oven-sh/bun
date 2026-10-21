@@ -8,7 +8,7 @@ const SocketAddress = b.classRef("SocketAddress");
 export const portOf = b.fn({ args: { address: SocketAddress }, returns: b.u16 });
 export const portOfOrNull = b.fn({ args: { address: SocketAddress.nullable }, returns: b.u16.nullable });
 export const portAfterCallback = b.fn({
-  args: { address: SocketAddress, callback: b.any },
+  args: { address: SocketAddress, callback: b.callable },
   returns: b.u16,
   capability: "js",
   throws: true,

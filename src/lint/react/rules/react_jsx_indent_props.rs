@@ -12,7 +12,7 @@ pub struct JsxIndentProps {
 /// `indentSize` and `indentType`
 #[derive(Copy, Clone)]
 enum Indent {
-    /// As the first prop.
+    /// Aligned with the first prop.
     First,
     Tab,
     Spaces(i64),
@@ -23,7 +23,7 @@ const WRONG_INDENT: Message = Message::new(
     "Expected indentation of {{needed}} {{type}} {{characters}} but found {{gotten}}.",
 );
 
-/// `line`. Upstream keeps it from one element to the next, whose own `<` resets it.
+/// Upstream's `line`. Upstream carries it over from one element to the next, whose own `<` resets it.
 #[derive(Copy, Clone, Default)]
 struct Line {
     is_using_operator: bool,
@@ -59,7 +59,7 @@ impl Rule for JsxIndentProps {
         else {
             return;
         };
-        // Only a prop that is the first in its line is reported.
+        // Only a prop that's first in its line is reported.
         let file = cx.file();
         if !strings::contains_js_line_break(
             file.slice(Span::before(e.span().start, last_prop_node.span())),
@@ -141,7 +141,7 @@ impl JsxIndentProps {
         }
     }
 
-    /// `opening`: the opening element, which ESLint is at.
+    /// `opening`: the opening element, which is the node ESLint is visiting.
     fn report(&self, node: Span, needed: i64, gotten: i64, (opening, cx): (Span, &Cx<'_, Self>)) {
         let character = self.indent.character();
         let Some(count) = cx.repeat_count(needed as f64, opening) else {

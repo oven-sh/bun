@@ -1,4 +1,4 @@
-//! For the tests, which compare this with what Prettier does.
+//! Debug output for the tests, which compare it with Prettier's attachments.
 
 use super::surrounding_nodes::AttachContext;
 use super::{Marker, Options, Owner, Placement, attach};
@@ -7,7 +7,7 @@ use bun_lint::ast::comments::NodeOrName;
 use bun_lint::ast::{File, Node};
 use std::io::Write;
 
-/// A line for each comment: where it is, and what owns it. And one for each node that is ignored by a comment that another
+/// Writes one line per comment with its span and its owner, plus one line per node that's ignored by a comment another
 /// node owns.
 pub(crate) fn list<'a>(
     file: &'a File<'a>,

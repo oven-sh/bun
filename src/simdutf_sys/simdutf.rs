@@ -282,3 +282,9 @@ pub mod base64 {
         }
     }
 }
+
+/// Returns false if this CPU can't run any compiled-in kernel. simdutf then falls back to a stub
+/// that returns false for every query.
+pub fn has_any_implementation() -> bool {
+    validate::ascii(b"a")
+}

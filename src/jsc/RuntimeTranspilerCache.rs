@@ -68,7 +68,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 36: `export`, `require()`, `import()`, a JSX element, an exported async function and
 /// an abstract class are mapped elsewhere.
 /// Version 37: A JSX spread no longer empties an object `--define`. Older entries can print it as `{}`.
-const EXPECTED_VERSION: u32 = 37;
+/// Version 38: `+"0x…"` folds a long hexadecimal, octal or binary string to the nearest double.
+const EXPECTED_VERSION: u32 = 38;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

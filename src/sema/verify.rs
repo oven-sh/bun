@@ -1,11 +1,12 @@
 //! Configuration diagnostics that don't depend on the program: 5051 5052 5053 5059 5061 5062 5063 5066 5067 5069 5074 5089 5090 5091
-//! 5095 5096 5102 5108 5109 5110 6266 6304 6379 18035.
+//! 5095 5096 5102 5108 5109 5110 5116 6266 6304 6379 18035.
 //!
 //! A port of `verifyCompilerOptions` (TypeScript 7.0.2, compiler/program.go) without the checks that depend on output paths.
 
 use crate::check::spans::{line_end, unescaped_identifier};
 use crate::config::{
-    Project, resolve_config_file_name_of_project_reference, starts_with_config_dir_template,
+    Project, is_network_path_value, resolve_config_file_name_of_project_reference,
+    starts_with_config_dir_template,
 };
 use crate::json::{Json, TsConfigSourceFile};
 use crate::resolve::{
@@ -550,6 +551,8 @@ pub fn verify_compiler_options(
                     && !starts_with_config_dir_template(substitution)
                 {
                     out.push(Problem::new(5090, &[], at()));
+                } else if is_network_path_value(substitution, &options.paths_base_dir) {
+                    out.push(Problem::new(5116, &[substitution], at()));
                 }
             }
         }

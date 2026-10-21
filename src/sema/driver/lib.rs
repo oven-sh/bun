@@ -747,6 +747,15 @@ impl CommandLineParser<'_> {
             None => args.get(i).copied().filter(is_value),
         };
         let consumes_next = match compiler_option_from_flag(name, inline_value.or(next)) {
+            Ok(CompilerOption(name, value))
+                if bun_sema::config_options::is_file_path(&name)
+                    && (value.as_str())
+                        .is_some_and(|path| config::is_network_path_value(path, self.cwd)) =>
+            {
+                let path = value.as_str().unwrap_or_default();
+                self.parsed.errors.push(global(5116, &[path]));
+                true
+            }
             Ok(CompilerOption(name, value)) => {
                 // An empty list means `ParseListTypeOption` saw a flag, which isn't consumed and stays the next
                 // argument.

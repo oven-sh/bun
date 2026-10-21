@@ -16,9 +16,9 @@ use crate::resolve::{
     Options, PackageId, ParseOptions, ResolvedModule, Resolver, ScriptKind, ScriptTarget, Tracer,
     ancestors, contains_path, displayed_path, file_extension_is_one_of, file_path,
     format_by_extension, get_base_file_name, get_lib_file_name, has_ts_implementation_extension,
-    inside, is_javascript, is_javascript_file, is_relative, is_same_path, join, path_is_relative,
-    remove_file_extension, run_with_current_helpers, supported_extensions, to_file_name_lower_case,
-    to_path, to_path_in, typescript_path,
+    inside, is_javascript, is_javascript_file, is_network_path, is_relative, is_same_path, join,
+    path_is_relative, remove_file_extension, run_with_current_helpers, supported_extensions,
+    to_file_name_lower_case, to_path, to_path_in, typescript_path,
 };
 use crate::session::{
     Arena, ArenaBox, ArenaHashMap, ArenaHashSet, ArenaVec, Session, map_in, set_in, transfer_arena,
@@ -2927,7 +2927,7 @@ fn unsupported_extension_error(
 /// The full diagnostic for the error `code` that `referenced_file` returns for the file at `path`.
 fn reference_problem(options: &Options, code: u32, path: &[u8]) -> Problem {
     let file_name = displayed_path(path);
-    if code == 6504 || code == 6053 {
+    if matches!(code, 6504 | 6053 | 5116) {
         return Problem::new(code, &[&file_name], ConfigLocation::Nowhere);
     }
     let extensions = supported_extensions(options).concat();
@@ -2962,6 +2962,9 @@ fn source_file_from_reference(
     options: &Options,
     name: &[u8],
 ) -> Result<Vec<u8>, u32> {
+    if is_network_path(&displayed_path(name)) {
+        return Err(5116);
+    }
     let allow_non_ts_extensions = host.script_kind(name).is_some();
     let is_case_sensitive = host.is_case_sensitive();
     // With an extension, it's that exact file or nothing.

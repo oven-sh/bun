@@ -1,5 +1,6 @@
 //! Validates the `compilerOptions` of a config file: unknown options and values of the wrong type.
 
+use crate::config::is_network_path_value;
 use crate::hir::{ExprId, PropId};
 use crate::json::{Json, TsConfigSourceFile};
 
@@ -67,8 +68,8 @@ bun_core::comptime_string_map! {
         b"explainfiles" => (b"explainFiles", Kind::Boolean),
         b"extendeddiagnostics" => (b"extendedDiagnostics", Kind::Boolean),
         b"forceconsistentcasinginfilenames" => (b"forceConsistentCasingInFileNames", Kind::Boolean),
-        b"generatecpuprofile" => (b"generateCpuProfile", Kind::String),
-        b"generatetrace" => (b"generateTrace", Kind::String),
+        b"generatecpuprofile" => (b"generateCpuProfile", Kind::FilePath),
+        b"generatetrace" => (b"generateTrace", Kind::FilePath),
         b"ignoredeprecations" => (b"ignoreDeprecations", Kind::String),
         b"importhelpers" => (b"importHelpers", Kind::Boolean),
         b"incremental" => (b"incremental", Kind::Boolean),
@@ -120,12 +121,12 @@ bun_core::comptime_string_map! {
         b"outfile" => (b"outFile", Kind::FilePath),
         b"paths" => (b"paths", Kind::Object),
         b"plugins" => (b"plugins", Kind::List(Element::Object)),
-        b"pprofdir" => (b"pprofDir", Kind::String),
+        b"pprofdir" => (b"pprofDir", Kind::FilePath),
         b"preserveconstenums" => (b"preserveConstEnums", Kind::Boolean),
         b"preservesymlinks" => (b"preserveSymlinks", Kind::Boolean),
         b"preservewatchoutput" => (b"preserveWatchOutput", Kind::Boolean),
         b"pretty" => (b"pretty", Kind::Boolean),
-        b"project" => (b"project", Kind::String),
+        b"project" => (b"project", Kind::FilePath),
         b"quiet" => (b"quiet", Kind::Boolean),
         b"reactnamespace" => (b"reactNamespace", Kind::String),
         b"removecomments" => (b"removeComments", Kind::Boolean),
@@ -450,8 +451,13 @@ fn kind_of_root(name: &[u8]) -> Option<Kind> {
 }
 
 /// Returns the errors of `onPropertySet`, which runs `convertJsonOption`, for each property of the object `object` in
-/// `file`.
-pub fn problems(file: &TsConfigSourceFile, object: ExprId, within: In) -> Vec<Problem> {
+/// `file`. Paths are relative to `base_path`.
+pub fn problems(
+    file: &TsConfigSourceFile,
+    object: ExprId,
+    within: In,
+    base_path: &[u8],
+) -> Vec<Problem> {
     let mut out = Vec::new();
     // `rootCompilerOptions[0]`
     let mut root_compiler_option = None;
@@ -554,6 +560,9 @@ pub fn problems(file: &TsConfigSourceFile, object: ExprId, within: In) -> Vec<Pr
                 [b"'", &allowed.join(&b"', '"[..])[..], b"'"].concat(),
             ]
         };
+        let is_network_path = |value: &Json| {
+            (value.as_str()).is_some_and(|path| is_network_path_value(path, base_path))
+        };
         let kind = match (kind, value) {
             (Kind::ListOrElement, Json::Array(_)) => Kind::List(Element::String),
             (kind, _) => kind,
@@ -562,6 +571,13 @@ pub fn problems(file: &TsConfigSourceFile, object: ExprId, within: In) -> Vec<Pr
             Kind::ListOrElement if value.as_str().is_none() => wrong(b"string or Array"),
             Kind::Boolean if value.as_bool().is_none() => wrong(b"boolean"),
             Kind::String | Kind::FilePath if value.as_str().is_none() => wrong(b"string"),
+            Kind::FilePath if is_network_path(value) => out.push(Problem {
+                property,
+                index: None,
+                code: 5116,
+                args: value.as_str().map(<[u8]>::to_vec).into_iter().collect(),
+                span: value_span,
+            }),
             Kind::Number if !matches!(value, Json::Number(_)) => wrong(b"number"),
             Kind::Object if value.as_object().is_none() => wrong(b"object"),
             Kind::List(element) => match value.as_array() {
@@ -582,6 +598,9 @@ pub fn problems(file: &TsConfigSourceFile, object: ExprId, within: In) -> Vec<Pr
                         let at = non_null_index;
                         non_null_index += usize::from(*item != Json::Null);
                         let (code, args) = match (element, item) {
+                            (Element::FilePath, Json::String(path)) if is_network_path(item) => {
+                                (5116, vec![path.clone()])
+                            }
                             (_, Json::Null)
                             | (Element::String | Element::FilePath, Json::String(_))
                             | (Element::Object, Json::Object(_)) => continue,

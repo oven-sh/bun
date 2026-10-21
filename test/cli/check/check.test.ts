@@ -22846,6 +22846,54 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(exitCode).toBe(1);
     });
 
+    test("reports network paths in tsconfig.json, in a `/// <reference>` and on the command line", async () => {
+      using dir = project({
+        "tsconfig.json": `{
+  "extends": "//server/base.json",
+  "compilerOptions": {
+    "lib": ["esnext"],
+    "types": [],
+    "outDir": "//server/out",
+    "rootDir": "\\\\\\\\server\\\\src",
+    "tsBuildInfoFile": "/??/info",
+    "typeRoots": ["types", "//server/types"],
+    "paths": { "a": ["//server/a"], "b": ["/??/b"] }
+  },
+  "files": ["a.ts", "//server/b.ts"],
+  "include": ["//server/*"],
+  "exclude": ["//server/*"],
+  "references": [{ "path": "//server/lib" }]
+}
+`,
+        "a.ts": "",
+        "lib/tsconfig.json": tsconfig,
+        "lib/b.ts": `/// <reference path="//server/c.ts" />\n`,
+      });
+      const [fromFile, fromFlag, fromReference] = await Promise.all([
+        check(dir),
+        check(dir, ["-p", "lib", "--outDir", "//server/out"]),
+        check(dir, ["-p", "lib"]),
+      ]);
+      expect(fromFile.stdout).toMatchInlineSnapshot(`
+        "tsconfig.json(2,14): error TS5116: Network path '//server/base.json' is not supported.
+        tsconfig.json(6,15): error TS5116: Network path '//server/out' is not supported.
+        tsconfig.json(7,16): error TS5116: Network path '//server/src' is not supported.
+        tsconfig.json(8,24): error TS5116: Network path '/??/info' is not supported.
+        tsconfig.json(9,28): error TS5116: Network path '//server/types' is not supported.
+        tsconfig.json(10,22): error TS5116: Network path '//server/a' is not supported.
+        tsconfig.json(10,43): error TS5116: Network path '/??/b' is not supported.
+        tsconfig.json(12,21): error TS5116: Network path '//server/b.ts' is not supported.
+        tsconfig.json(13,15): error TS5116: Network path '//server/*' is not supported.
+        tsconfig.json(14,15): error TS5116: Network path '//server/*' is not supported.
+        tsconfig.json(15,28): error TS5116: Network path '//server/lib' is not supported."
+      `);
+      expect(fromFile.exitCode).toBe(1);
+      expect(fromFlag.stdout).toBe("error TS5116: Network path '//server/out' is not supported.");
+      expect(fromFlag.exitCode).toBe(1);
+      expect(fromReference.stdout).toBe("lib/b.ts(1,22): error TS5116: Network path '//server/c.ts' is not supported.");
+      expect(fromReference.exitCode).toBe(1);
+    });
+
     test("a file in `files` hides the files that `include` matches with the same name and a lesser extension", async () => {
       using dir = project({
         "tsconfig.json": `{ "compilerOptions": { "lib": ["esnext"], "types": [], "noEmit": true }, "files": ["a.ts", "./a.ts"], "include": ["a.*"] }`,

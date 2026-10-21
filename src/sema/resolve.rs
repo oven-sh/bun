@@ -1552,6 +1552,17 @@ pub(crate) fn normalize_path(path: Vec<u8>) -> Vec<u8> {
     normalized
 }
 
+/// `nativepath.IsNetworkPath`, for a path in TypeScript's format.
+pub fn is_network_path(path: &[u8]) -> bool {
+    let is_separator = |c: &u8| matches!(c, b'/' | b'\\');
+    match path {
+        [first, second, ..] if is_separator(first) && is_separator(second) => true,
+        [first, b'?', b'?'] => is_separator(first),
+        [first, b'?', b'?', fourth, ..] => is_separator(first) && is_separator(fourth),
+        _ => false,
+    }
+}
+
 /// The length of the `//server` that `path` begins with, or 0 if it has no such root.
 fn unc_root_length(path: &[u8]) -> usize {
     match path {

@@ -9,8 +9,8 @@ use crate::resolve::{
     Host, Options, ancestors, combine_paths, contains_path, displayed_path,
     equate_string_case_insensitive, extra_supported_extensions, file_extension_is_one_of,
     get_base_file_name, get_path_components, get_relative_path_from_directory, inside,
-    is_rooted_disk_path, is_same_path, join, known_extension, remove_file_extension,
-    supported_extensions, to_lowercase_unicode_15, to_path, typescript_path,
+    is_network_path, is_rooted_disk_path, is_same_path, join, known_extension,
+    remove_file_extension, supported_extensions, to_lowercase_unicode_15, to_path, typescript_path,
 };
 use crate::session::Session;
 use crate::util::{FxHashSet, SharedSort};
@@ -420,6 +420,12 @@ fn substitute_if_template(value: &[u8], base: &[u8]) -> Option<Vec<u8>> {
     starts_with_config_dir_template(value).then(|| substitute_config_dir(value, base))
 }
 
+/// `isNetworkPathValue`
+pub fn is_network_path_value(value: &[u8], base: &[u8]) -> bool {
+    let value = strings::replace_owned(value, b"\\", b"/");
+    is_network_path(&displayed_path(&join(base, &value)))
+}
+
 /// `normalizeNonListOptionValue`, for an option that `IsFilePath`.
 pub(crate) fn normalize_non_list_option_value(value: &[u8], base: &[u8]) -> Vec<u8> {
     let value = strings::replace_owned(value, b"\\", b"/");
@@ -659,7 +665,8 @@ fn open_config(
         }
     }
     for value_node in values_of(b"compilerOptions") {
-        let problems = crate::config_options::problems(&file, value_node, In::CompilerOptions);
+        let problems =
+            crate::config_options::problems(&file, value_node, In::CompilerOptions, base);
         // `convertJsonOption`: an invalid value is treated as unspecified. So is an invalid element of a list.
         let omitted: Vec<_> = (problems.iter())
             .map(|problem| (problem.property, problem.index))
@@ -704,11 +711,12 @@ fn open_config(
         .collect();
     // `convertJsonOption` for the properties outside `compilerOptions`.
     if let Some(root) = file.root {
-        let problems = crate::config_options::problems(&file, root, In::Root);
+        let problems = crate::config_options::problems(&file, root, In::Root, base);
         errors.extend(problems.into_iter().map(from_problem));
     }
     for value_node in values_of(b"typeAcquisition") {
-        let problems = crate::config_options::problems(&file, value_node, In::TypeAcquisition);
+        let problems =
+            crate::config_options::problems(&file, value_node, In::TypeAcquisition, base);
         errors.extend(problems.into_iter().map(from_problem));
     }
     own.files = List::of(json.get(b"files"));
@@ -838,6 +846,10 @@ fn extends_config_path(
     errors: &mut Vec<ConfigError>,
 ) -> Option<Vec<u8>> {
     let extended = strings::replace_owned(extended, b"\\", b"/");
+    if is_network_path_value(&extended, base) {
+        errors.push(ConfigError::new(5116, &[&extended]));
+        return None;
+    }
     if is_rooted_disk_path(&extended) || extended.starts_with(b"./") || extended.starts_with(b"../")
     {
         let mut path = join(base, &extended);
@@ -890,13 +902,17 @@ fn invalid_dot_dot_after_recursive_wildcard(s: &[u8]) -> bool {
 fn validate_specs(
     specs: Vec<Vec<u8>>,
     key: &'static [u8],
+    base: &[u8],
     problems: &mut Vec<Problem>,
 ) -> Vec<Vec<u8>> {
     specs
         .into_iter()
         .filter(|spec| {
+            // `?` is a wildcard in a spec, so `/??/` isn't a network path here.
+            let code = if displayed_path(&join(base, spec)).starts_with(b"//") {
+                5116
             // `disallowTrailingRecursion`
-            let code = if key == b"include" && invalid_trailing_recursion(spec) {
+            } else if key == b"include" && invalid_trailing_recursion(spec) {
                 5010
             } else if invalid_dot_dot_after_recursive_wildcard(spec) {
                 5065
@@ -971,6 +987,10 @@ fn get_project_references(
         };
         if path.is_empty() {
             report(18051, &[b"reference.path"], b"path");
+            return None;
+        }
+        if is_network_path_value(path, base) {
+            report(5116, &[path], b"path");
             return None;
         }
         let circular = reference.get(b"circular");
@@ -1079,7 +1099,7 @@ fn project_from_raw(
             .map(|spec| substitute_if_template(&spec, base).unwrap_or(spec))
             .collect()
     };
-    let validated_include = validate_specs(raw.include.strings(), b"include", &mut problems);
+    let validated_include = validate_specs(raw.include.strings(), b"include", base, &mut problems);
     let include = substitute_all(validated_include.clone());
     options.include_specs = validated_include
         .into_iter()
@@ -1088,15 +1108,24 @@ fn project_from_raw(
     let exclude = substitute_all(validate_specs(
         raw.exclude.strings(),
         b"exclude",
+        base,
         &mut problems,
     ));
+    let mut validated_files = raw.files.strings();
+    validated_files.retain(|spec| {
+        let is_network_path = is_network_path_value(spec, base);
+        if is_network_path {
+            let at = ConfigLocation::TopElement(b"files", spec.clone());
+            problems.push(Problem::new(5116, &[spec], at));
+        }
+        !is_network_path
+    });
     let references = get_project_references(&raw.references, base, &mut problems);
     let outside_options = ConfigError::from_problems(host, session, config_path, &problems);
     errors.extend(outside_options.into_iter().map(|error| ConfigError {
         is_about_options: false,
         ..error
     }));
-    let validated_files = raw.files.strings();
     let literal = substitute_all(validated_files.clone());
     options.file_specs = validated_files
         .into_iter()

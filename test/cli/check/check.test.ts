@@ -22777,6 +22777,23 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(exitCode).toBe(1);
     });
 
+    test("reports a missing value in a JSON file at the end of the token before it", async () => {
+      using dir = project({
+        "tsconfig.json": withResolveJsonModule,
+        "a.ts": `import a from "./a.json";\nconsole.log(a);\n`,
+        "a.json": `{\n  "a":   ,\n  "b": [1,   , 2],\n  "c"\n}\n`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      const message =
+        "Property value can only be string literal, numeric literal, 'true', 'false', 'null', object literal or array literal.";
+      expect(stdout.split("\n").filter(line => line.includes("TS1328"))).toEqual([
+        `a.json(2,7): error TS1328: ${message}`,
+        `a.json(3,11): error TS1328: ${message}`,
+        `a.json(4,6): error TS1328: ${message}`,
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports an error when there's nothing to check", async () => {
       using dir = tempDir("bun-check", { "README.md": "", "empty/README.md": "" });
       for (const args of [[], ["empty"]]) {

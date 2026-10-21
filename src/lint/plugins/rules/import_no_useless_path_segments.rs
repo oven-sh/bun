@@ -28,19 +28,19 @@ fn to_relative_path(mut relative_path: Vec<u8>) -> Vec<u8> {
     [&b"./"[..], &relative_path[..]].concat()
 }
 
-/// `countRelativeParents`, of a path that is not split yet.
+/// `countRelativeParents`, for a path that hasn't been split yet.
 fn count_relative_parents(path_segments: &[u8]) -> usize {
     strings::split(path_segments, b"/").filter(|it| *it == b"..").count()
 }
 
-/// What `checkSourceValue` closes over.
+/// The variables that `checkSourceValue` closes over.
 struct Context<'a> {
     file: &'a File<'a>,
     cwd: &'a [u8],
     resolvers: Resolvers<'a>,
     settings: Settings<'a>,
     no_useless_index: bool,
-    /// `None`: `new RegExp` throws.
+    /// `None` if `new RegExp` throws.
     regex_unnecessary_index: OnceCell<Option<Regex>>,
 }
 
@@ -57,7 +57,7 @@ impl Context<'_> {
         regex.as_ref().is_some_and(|it| it.test(import_path))
     }
 
-    /// `checkSourceValue`: what it calls `reportWithProposedPath` with.
+    /// `checkSourceValue`. Returns the path it passes to `reportWithProposedPath`.
     fn check_source_value(&self, source: &Visited<'_>) -> Option<Vec<u8>> {
         let import_path = source.specifier;
         let resolve = |path: &[u8]| self.resolvers.resolve(self.file, path, source.is_require);
@@ -67,7 +67,7 @@ impl Context<'_> {
         let normed_path = to_relative_path(paths::normalize(import_path));
         if normed_path != import_path {
             let (resolved, resolved_normed) = (resolve(import_path), resolve(&normed_path));
-            // `undefined`, `null` and a path are three.
+            // `undefined`, `null` and a path are three different results.
             if (resolved.is_found(), resolved.file()) == (resolved_normed.is_found(), resolved_normed.file()) {
                 return Some(normed_path);
             }
@@ -96,8 +96,8 @@ impl Context<'_> {
         let diff = count_import_path.checked_sub(count_expected).filter(|it| *it > 0)?;
 
         let import_path_split = || strings::split(import_path, b"/");
-        let kept = import_path_split().take(count_expected).chain(import_path_split().skip(count_import_path + diff));
-        Some(to_relative_path(kept.collect::<Vec<&[u8]>>().join(&b'/')))
+        let remaining_segments = import_path_split().take(count_expected).chain(import_path_split().skip(count_import_path + diff));
+        Some(to_relative_path(remaining_segments.collect::<Vec<&[u8]>>().join(&b'/')))
     }
 }
 

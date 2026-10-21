@@ -64,6 +64,29 @@ it("long arrays get cutoff at a nested indent", () => {
   );
 });
 
+it("console.dir treats a BigInt depth like the same number", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `let o = {}, c = o; for (let i = 0; i < 40; i++) { c.n = {}; c = c.n; }
+       for (const depth of [7n, 7, -1n, -1]) {
+         console.dir(o, { depth, colors: false });
+         console.log("--");
+       }`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const [big7, num7, bigNegative, numNegative] = stdout.split("--\n");
+  expect(big7).toBe(num7);
+  expect(bigNegative).toBe(numNegative);
+  expect(exitCode).toBe(0);
+});
+
 // The arguments of one console.log call, and the line that Node.js prints for that call.
 const formatStringCases: [args: string, expected: string][] = [
   // `%%` after the last argument, for each specifier that takes an argument

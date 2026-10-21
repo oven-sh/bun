@@ -110,14 +110,14 @@ fn is_valid_preceding_token(token: &[u8]) -> bool {
     )
 }
 
-/// The `value.raw` of a `TemplateElement`: a line break is a line feed, however it is written.
-fn template_raw_value(written: &[u8]) -> Cow<'_, [u8]> {
-    if !strings::contains_char(written, b'\r') {
-        return Cow::Borrowed(written);
+/// Returns the `value.raw` of a `TemplateElement`, where every line break is normalized to a line feed.
+fn template_raw_value(source_text: &[u8]) -> Cow<'_, [u8]> {
+    if !strings::contains_char(source_text, b'\r') {
+        return Cow::Borrowed(source_text);
     }
-    let mut raw = Vec::with_capacity(written.len());
+    let mut raw = Vec::with_capacity(source_text.len());
     let mut previous = 0;
-    for &byte in written {
+    for &byte in source_text {
         match byte {
             b'\r' => raw.push(b'\n'),
             b'\n' if previous == b'\r' => {}
@@ -128,8 +128,8 @@ fn template_raw_value(written: &[u8]) -> Cow<'_, [u8]> {
     Cow::Owned(raw)
 }
 
-/// ESLint's `getStringValue`. It is `Some` if `isStaticString` holds: for a string literal, a
-/// template without substitutions, and such a template that is tagged with `String.raw`.
+/// ESLint's `getStringValue`. Returns `Some` if `isStaticString` is true: for a string literal, a template without
+/// substitutions, and such a template tagged with `String.raw`.
 fn get_string_value(e: Expr<'_>) -> Option<Cow<'_, [u8]>> {
     match e.kind() {
         ExprKind::String(value) => Some(Cow::Borrowed(value.bytes())),
@@ -166,7 +166,7 @@ fn resolve_escapes(character: &[u8]) -> Option<&'static [u8; 2]> {
 /// ESLint's `isValidRegexForEcmaVersion`
 fn is_valid_regex_for_ecma_version(file: &File<'_>, pattern: &[u8], flags: &[u8]) -> bool {
     let options = regexpp_options(file);
-    validate_pattern(pattern, Mode::of_flags(flags), options, &mut Ignore).is_ok()
+    validate_pattern(pattern, Mode::from_flags(flags), options, &mut Ignore).is_ok()
         && (flags.is_empty() || validate_flags(flags, options, &mut Ignore).is_ok())
 }
 
@@ -221,7 +221,7 @@ fn get_safe_output(node: Expr<'_>, new_regexp_value: &[u8]) -> Vec<u8> {
     output
 }
 
-/// Replaces `node` by `/pattern/flags`, if that is possible.
+/// Replaces `node` with `/pattern/flags`, if possible.
 fn replace_with_literal<'a>(fixer: Fixer<'a>, node: Expr<'a>, pattern: &[u8], flags: &[u8]) -> Option<Fix> {
     if !can_fix_to(node, pattern, flags) {
         return None;
@@ -230,14 +230,14 @@ fn replace_with_literal<'a>(fixer: Fixer<'a>, node: Expr<'a>, pattern: &[u8], fl
     Some(fixer.replace(node, get_safe_output(node, &literal)))
 }
 
-/// Replaces `node` by the literal for `new RegExp(content, flags)`, if that is possible.
+/// Replaces `node` with the literal for `new RegExp(content, flags)`, if possible.
 fn replace_with_equivalent_literal<'a>(
     fixer: Fixer<'a>,
     node: Expr<'a>,
     content: &[u8],
     flags: &[u8],
 ) -> Option<Fix> {
-    // Printable characters of ASCII and whitespace.
+    // Printable ASCII characters and whitespace.
     let is_simple = content.iter().all(|byte| matches!(byte, b' '..=b'~' | b'\t'..=b'\r'));
     if !is_simple || !can_fix_to(node, content, flags) {
         return None;
@@ -247,7 +247,7 @@ fn replace_with_equivalent_literal<'a>(
     if content.is_empty() {
         literal.extend_from_slice(b"(?:)");
     } else {
-        let ast = parse_pattern(content, Mode::of_flags(flags), regexpp_options(fixer.file())).ok()?;
+        let ast = parse_pattern(content, Mode::from_flags(flags), regexpp_options(fixer.file())).ok()?;
         let mut copied = 0;
         for character in ast.root().descendants().filter(|it| it.ty() == NodeType::Character) {
             if let Some(escaped) = resolve_escapes(character.raw()) {
@@ -275,7 +275,7 @@ impl Rule for PreferRegexLiterals {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        // Finding the calls takes resolving every name of the file. ESLint also finds `globalThis["Reg" + "Exp"]`.
+        // Finding the calls requires resolving every name in the file. ESLint also finds `globalThis["Reg" + "Exp"]`.
         let may_be_computed = || file.mentions_any(&["global", "globalThis", "self", "window"]);
         (file.mentions("RegExp") || !file.language().is_oxlint && may_be_computed()).then_some(())
     }
@@ -287,7 +287,7 @@ impl Rule for PreferRegexLiterals {
         }
     }
 
-    /// oxlint looks at what is called, not at what the variable is that is called, and through `as` around an argument.
+    /// oxlint goes by the callee's name without resolving the variable, and looks through an `as` around an argument.
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let ExprKind::Call(call) | ExprKind::New(call) = e.kind()
             && is_regexp_callee(call.callee())
@@ -306,7 +306,7 @@ impl Rule for PreferRegexLiterals {
 }
 
 impl PreferRegexLiterals {
-    /// `node` calls `RegExp`. `inner` is what counts of an argument.
+    /// `node` calls `RegExp`. `inner` unwraps an argument to the expression that counts.
     fn check<'a>(&self, node: Expr<'a>, call: Call<'a>, inner: fn(Expr<'a>) -> Expr<'a>, cx: &Cx<'a, Self>) {
         let arguments = call.args();
         let (Some(first), second) = (arguments.first().map(inner), arguments.get(1).map(inner)) else {
@@ -315,7 +315,7 @@ impl PreferRegexLiterals {
         if arguments.len() > 2 {
             return;
         }
-        // Those of a second argument that is a static string.
+        // The flags, if the second argument is a static string.
         let flags = match second {
             Some(second) => match get_string_value(second) {
                 Some(flags) => flags,

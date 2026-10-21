@@ -18,17 +18,21 @@ impl Rule for ClassMethodsUseThis {
     fn new(options: &Options) -> Self {
         let options = options.object(0);
         let key = "ignoreClassesThatImplementAnInterface";
-        // oxlint, where this rule runs as `class-methods-use-this`, has the option as ESLint calls it.
-        let of_eslint = options.str("ignoreClassesWithImplements");
+        // oxlint runs this rule as `class-methods-use-this`, so it uses ESLint's name for the option.
+        let eslint_option = options.str("ignoreClassesWithImplements");
         let ignore_classes_with_implements =
-            match (options.bool(key), options.str(key).or(of_eslint)) {
+            match (options.bool(key), options.str(key).or(eslint_option)) {
                 (Some(true), _) | (_, Some("all")) => IgnoreClassesWithImplements::All,
                 (_, Some("public-fields")) => IgnoreClassesWithImplements::PublicFields,
                 _ => IgnoreClassesWithImplements::None,
             };
         ClassMethodsUseThis {
-            // As for ESLint, a private name is not public there.
-            checker: Checker::new(options, ignore_classes_with_implements, of_eslint.is_none()),
+            // With ESLint's option a private name doesn't count as public, as in ESLint.
+            checker: Checker::new(
+                options,
+                ignore_classes_with_implements,
+                eslint_option.is_none(),
+            ),
         }
     }
 
@@ -54,7 +58,8 @@ impl Rule for ClassMethodsUseThis {
                 _ => None,
             };
             let head = || ts_utils::get_function_head_loc(func);
-            let place = key.map_or_else(head, |it| utils::oxlint::property_key_span(it, cx.file()));
+            let report_span =
+                key.map_or_else(head, |it| utils::oxlint::property_key_span(it, cx.file()));
             let name = match (
                 cx.language().is_oxlint,
                 key.and_then(utils::oxlint::property_key_name),
@@ -63,7 +68,7 @@ impl Rule for ClassMethodsUseThis {
                 (true, Some(name)) => [&b" `"[..], name, b"`"].concat(),
                 (true, None) => Vec::new(),
             };
-            cx.report(place, MISSING_THIS)
+            cx.report(report_span, MISSING_THIS)
                 .called_with(func.owner())
                 .data("name", name);
         }

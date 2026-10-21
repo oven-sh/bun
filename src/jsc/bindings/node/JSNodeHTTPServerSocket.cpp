@@ -145,7 +145,8 @@ static void upgradeToTunnelModeImpl(us_socket_t* socket, bool afterBody)
 
 void JSNodeHTTPServerSocket::upgradeToTunnelMode(bool afterBody, WebCore::JSNodeHTTPResponse* response)
 {
-    if (!socket || us_socket_is_closed(socket)) {
+    /* Once a WebSocket adopts the connection, its ext block is no longer an HttpResponseData. */
+    if (!socket || upgraded || us_socket_is_closed(socket)) {
         return;
     }
     /* Like Node's http server connections (allowHalfOpen: true): the peer
@@ -313,7 +314,8 @@ static std::string& responseTrailersFor(us_socket_t* socket)
 
 void JSNodeHTTPServerSocket::setResponseTrailers(WTF::StringView trailers)
 {
-    if (!socket || us_socket_is_closed(socket) || trailers.isEmpty()) {
+    /* Once a WebSocket adopts the connection, its ext block is no longer an HttpResponseData. */
+    if (!socket || upgraded || us_socket_is_closed(socket) || trailers.isEmpty()) {
         return;
     }
     // Node writes trailers with encoding 'latin1' (lib/_http_outgoing.js);
@@ -472,7 +474,7 @@ bool JSNodeHTTPServerSocket::isRequestTimedOut(uint64_t headersTimeoutMs, uint64
 bool JSNodeHTTPServerSocket::isAuthorized() const
 {
     // is secure means that tls was established successfully
-    if (!is_ssl || !socket)
+    if (!is_ssl || upgraded || !socket)
         return false;
 
     // Check if the handshake callback has fired. If so, use the isAuthorized flag
@@ -872,11 +874,8 @@ template<bool SSL>
 static bool writeBehindResponse(us_socket_t* socket, const char* data, size_t length)
 {
     auto* asyncSocket = reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket);
-    while (length > 0) {
-        const int chunk = static_cast<int>(std::min(length, static_cast<size_t>(INT_MAX)));
-        asyncSocket->write(data, chunk);
-        data += chunk;
-        length -= chunk;
+    if (length > 0) {
+        asyncSocket->write(data, length);
     }
     return asyncSocket->getBufferedAmount() > 0;
 }

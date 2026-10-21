@@ -145,6 +145,8 @@ export function indent(text: string, by: number): string {
     .join("\n");
 }
 
+const cppThenCheck = (statement: string, check: string) => (check ? `${statement}\n${check}` : statement);
+
 /** C++ statements that engage `optional`, a `std::optional`, then fill what it holds: `fill` is given a name for that. */
 export function cppEmplace(optional: string, fill: (target: string) => string): string {
   const [first, ...rest] = optional.split(/\W+/);
@@ -261,9 +263,9 @@ export abstract class Type {
   get convertsInPlace(): boolean {
     return false;
   }
-  /** C++ statements that convert `value` into `target`, which names an object that was just default-constructed. */
-  cppConvertInto(target: string, value: string, ctx: string, name: string): string {
-    return `${target} = ${this.cppConvert(value, ctx, name)};`;
+  /** C++ statements that convert `value` into `target`, just default-constructed. `check` returns if an exception is pending and follows what can throw; a caller that returns next passes "". */
+  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
+    return cppThenCheck(`${target} = ${this.cppConvert(value, ctx, name)};`, this.conversionThrows ? check : "");
   }
 
   abstract layout(): Layout;
@@ -276,7 +278,7 @@ export abstract class Type {
     return expr;
   }
 
-  /** The type of a field of a returned dictionary. */
+  /** The type of a member of a returned dictionary, and of an alternative of a returned union. */
   rustResultFieldType(scope: RustScope): string {
     return this.rustType(scope);
   }
@@ -435,15 +437,22 @@ export class IntegerType extends PrimitiveType {
   }
 }
 
-export class BigIntResultType extends Type {
+/** What a body returns and nothing takes, so it has no C++ type. */
+export abstract class ResultType extends Type {
   readonly idlType = "";
+  /** What a schema that takes one is told. */
+  abstract readonly refusal: string;
+  layout(): never {
+    throw new TypeError(this.refusal);
+  }
+  rustExternType(): never {
+    return this.layout();
+  }
+}
+
+export class BigIntResultType extends ResultType {
   readonly tsType = "bigint";
-  layout(): Layout {
-    return { size: 8, align: 8 };
-  }
-  rustExternType(): string {
-    return "u64";
-  }
+  readonly refusal = ".asBigInt is a result; an argument is b.u64.allowBigInt";
   rustType(): string {
     return "u64";
   }
@@ -505,6 +514,11 @@ export class DoubleType extends PrimitiveType {
   constructor(idlType = "Bun::Bindgen::IDLStrictDouble", valueKinds: ValueKinds = ["number"]) {
     super(idlType, valueKinds === "any" ? "any" : "number", "f64", 8, valueKinds);
   }
+  /** As a result: a `Date` with that time value. */
+  get asDate(): DateResultType {
+    assert(this.idlType === "Bun::Bindgen::IDLStrictDouble", ".asDate follows b.f64");
+    return new DateResultType();
+  }
   /** `ToNumber`: WebIDL's `unrestricted double`. */
   get loose(): LooseDoubleType {
     return new LooseDoubleType("WebCore::IDLUnrestrictedDouble", "any");
@@ -515,6 +529,17 @@ export class LooseDoubleType extends DoubleType {
   /** `ToNumeric`: a BigInt too, as the double nearest to it, for an argument whose type is `number | bigint`. */
   get allowBigInt(): DoubleType {
     return new DoubleType("Bun::Bindgen::IDLLooseDoubleOrBigInt", "any");
+  }
+}
+
+export class DateResultType extends ResultType {
+  readonly tsType = "Date";
+  readonly refusal = ".asDate is a result";
+  rustType(): string {
+    return "f64";
+  }
+  rustToJS(value: string): string {
+    return `bindgen::to_js::date(heap, ${value})`;
   }
 }
 
@@ -591,6 +616,11 @@ export class StringType extends Type {
   get utf8(): Utf8Type {
     return new Utf8Type(this.valueKinds === "any");
   }
+  /** As a result: the JS string, which the body made. */
+  get local(): LocalStringResultType {
+    assert(this.idlType === "Bun::Bindgen::IDLStrictString", ".local follows b.string");
+    return new LocalStringResultType();
+  }
   get nullRepresentation() {
     return "pointer" as const;
   }
@@ -615,6 +645,20 @@ export class StringType extends Type {
   }
   rustToJS(value: string): string {
     return `bindgen::to_js::string(heap, ${value})`;
+  }
+}
+
+export class LocalStringResultType extends ResultType {
+  readonly tsType = "string";
+  readonly refusal = ".local is a result";
+  get holdsJSValue(): boolean {
+    return true;
+  }
+  rustType(): string {
+    return "bindgen::JsLocal<'a, bun_jsc::JSString>";
+  }
+  rustToJS(value: string): string {
+    return `bindgen::to_js::any(heap, ${value})`;
   }
 }
 
@@ -674,8 +718,11 @@ export class Utf8Type extends Type {
   get convertsInPlace(): boolean {
     return true;
   }
-  cppConvertInto(target: string, value: string, ctx: string): string {
-    return `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target}, "a string"_s);`;
+  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
+    return cppThenCheck(
+      `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target}, "a string"_s);`,
+      check,
+    );
   }
   cppAssign(target: string, value: unknown): string {
     assert(typeof value === "string", `${util.inspect(value)} is not a string`);
@@ -766,7 +813,8 @@ export class BytesType extends Type {
       refuseStringObject: refuse.includes("stringObject"),
     };
     const members = Object.entries(options).flatMap(([name, value]) => (value ? [`.${name} = true`] : []));
-    const sink = this.#isView ? "JSBytesView" : "JSBlobOrStringOrBuffer";
+    const takesString = options.fromString || options.toStringOtherwise;
+    const sink = !this.#isView ? "JSBlobOrStringOrBuffer" : takesString ? "JSBytesView" : "JSBlobOrBufferView";
     return `Bun::Bindgen::IDLBytes<Bun::Bindgen::${sink}, Bun::Bindgen::BytesOptions { ${members.join(", ")} }>`;
   }
   get tsType(): string {
@@ -786,7 +834,7 @@ export class BytesType extends Type {
   get convertsInPlace(): boolean {
     return true;
   }
-  cppConvertInto(target: string, value: string, ctx: string): string {
+  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
     const spelling = { string: ["a string"], buffer: ["ArrayBuffer", "ArrayBufferView"], blob: ["Blob"] };
     const expected = (["string", "buffer", "blob"] as const)
       .filter(kind => this.#options.from.includes(kind))
@@ -794,20 +842,18 @@ export class BytesType extends Type {
     if (!this.#options.from.includes("string")) expected[0] = `${/^A/.test(expected[0]) ? "an" : "a"} ${expected[0]}`;
     const last = expected.pop();
     const list = expected.length > 0 ? `${expected.join(", ")} or ${last}` : last!;
-    return `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target}, ${asciiLiteral(list)});`;
+    const convert = `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target}, ${asciiLiteral(list)})`;
+    return check ? `if (${convert})\n    ${check}` : `${convert};`;
   }
   cppReadLast(target: string, value: string): string[] {
     if (!this.#isView) return [];
-    return [
-      ...(this.#options.held === "borrowed" ? [`${target}.read(${value});`] : []),
-      ...(this.#options.shared === "copied"
-        ? [
-            `WTF::MallocSpan<uint8_t> ${target}Copy;`,
-            `${target}.copyIfShared(*globalObject, ${value}, ${target}Copy);`,
-            `RETURN_IF_EXCEPTION(scope, {});`,
-          ]
-        : []),
-    ];
+    if (this.#options.shared === "copied")
+      return [
+        `WTF::MallocSpan<uint8_t> ${target}Copy;`,
+        `if (${target}.${this.#options.held === "borrowed" ? "readCopyingShared" : "copyIfShared"}(*globalObject, ${value}, ${target}Copy)) [[unlikely]]`,
+        `    RETURN_IF_EXCEPTION(scope, {});`,
+      ];
+    return this.#options.held === "borrowed" ? [`${target}.read(${value});`] : [];
   }
   layout(): Layout {
     const converted = this.#isView ? { size: 16, align: 8 } : { size: 8, align: 8 };
@@ -1078,14 +1124,14 @@ export class OptionalType extends Type {
     return this.inner.cppReadLast(target, value);
   }
   /** What converts in place is null when default-constructed. A pointer to a class instance, which does not, is not. */
-  cppConvertInto(target: string, value: string, ctx: string, name: string): string {
-    if (!this.convertsInPlace) return super.cppConvertInto(target, value, ctx, name);
+  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
+    if (!this.convertsInPlace) return super.cppConvertInto(target, value, ctx, name, check);
     const present = {
       optional: `!${value}.isUndefined()`,
       nullable: `!${value}.isUndefinedOrNull()`,
       falsyAsNull: `${value}.toBoolean(globalObject)`,
     }[this.modifier];
-    const convert = (slot: string) => this.inner.cppConvertInto(slot, value, ctx, name);
+    const convert = (slot: string) => this.inner.cppConvertInto(slot, value, ctx, name, check);
     const body = this.inner.nullRepresentation === "optional" ? cppEmplace(target, convert) : convert(target);
     return `if (${present}) {\n${indent(body, 4)}\n}`;
   }
@@ -1192,12 +1238,12 @@ export class DefaultType extends Type {
   get convertsInPlace(): boolean {
     return this.inner.convertsInPlace;
   }
-  cppConvertInto(target: string, value: string, ctx: string, name: string): string {
-    if (!this.convertsInPlace) return super.cppConvertInto(target, value, ctx, name);
+  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
+    if (!this.convertsInPlace) return super.cppConvertInto(target, value, ctx, name, check);
     return `if (${this.cppIsAbsent(value)}) {
 ${indent(this.cppAssign(target, this.value), 4)}
 } else {
-${indent(this.inner.cppConvertInto(target, value, ctx, name), 4)}
+${indent(this.inner.cppConvertInto(target, value, ctx, name, check), 4)}
 }`;
   }
   cppAssign(target: string, value: unknown): string {
@@ -1288,12 +1334,44 @@ export class ArrayType extends Type {
   }
 }
 
+/** An object with a property for each pair of a key, in UTF-8, and a value. */
+export class RecordResultType extends ResultType {
+  readonly refusal = "b.record is a result";
+  readonly value: Type;
+  constructor(value: Type) {
+    super();
+    assert(
+      !value.holdsJSValue,
+      "the pairs of a record can be a Vec, where the GC does not see JS values: return b.any and make it with to_js::record",
+    );
+    this.value = value;
+  }
+  get tsType(): string {
+    return `Record<string, ${this.value.tsType}>`;
+  }
+  get dependencies(): readonly Type[] {
+    return [this.value];
+  }
+  rustType(): never {
+    throw new TypeError("b.record has no Rust type to name, so it is not a member or an alternative");
+  }
+  rustReturnType(scope: RustScope): string {
+    return `impl IntoIterator<Item = (impl AsRef<[u8]>, ${this.value.rustReturnType(scope)})>`;
+  }
+  rustToJS(value: string, scope: RustScope): string {
+    return `bindgen::to_js::record(heap, ${value}, |heap, value| ${this.value.rustToJS("value", scope)})`;
+  }
+}
+
 // ───────────────────────────── named types ─────────────────────────────
 
 export abstract class NamedType extends Type {
   /** The name it is exported under, and where. Set when the generator finds it among a file's exports. */
   name = "";
   origin: Origin | null = null;
+  /** Reachable from an argument or `fromJS` / from a return type. Set by the generator. */
+  accepted = false;
+  returned = false;
   get cpp(): string {
     return `Bun::Bindgen::Generated::${this.name}`;
   }
@@ -1323,8 +1401,6 @@ export class EnumerationType extends NamedType {
   readonly spellings: readonly (readonly string[])[];
   /** Index of the first canonical spelling in `Tables::enumerationValues`. Set by the generator. */
   firstEnumerationValueIndex = -1;
-  /** Reachable from a return type. Set by the generator. */
-  returned = false;
   constructor(values: readonly (string | readonly string[])[]) {
     super();
     assert(values.length > 0, "an enumeration needs at least one value");
@@ -1413,6 +1489,8 @@ export interface DictionaryOptions {
    * `if (typeof options !== "object") options = null`.
    */
   nonObjectAsEmpty?: boolean | "typeof";
+  /** As a result, the object has no prototype. */
+  nullPrototype?: boolean;
 }
 
 export class DictionaryType extends NamedType {
@@ -1421,9 +1499,6 @@ export class DictionaryType extends NamedType {
   /** Index in `Tables::memberNames` of the first name read, and of the first name written. Set by the generator. */
   firstMemberNameIndex = -1;
   firstReturnedMemberNameIndex = -1;
-  /** Reachable from an argument or `fromJS` / from a return type. Set by the generator. */
-  accepted = false;
-  returned = false;
   /** An element of an array: everywhere else it is converted in place. */
   convertedByValue = false;
   constructor(members: Record<string, Type | MemberOptions>, options: DictionaryOptions = {}) {
@@ -1463,6 +1538,9 @@ export class DictionaryType extends NamedType {
   get nonObjectAsEmpty(): boolean | "typeof" {
     return this.options.nonObjectAsEmpty ?? false;
   }
+  get nullPrototype(): boolean {
+    return !!this.options.nullPrototype;
+  }
   get idlType(): string {
     return `WebCore::IDLDictionary<${this.cpp}>`;
   }
@@ -1472,8 +1550,8 @@ export class DictionaryType extends NamedType {
   get convertsInPlace(): boolean {
     return true;
   }
-  cppConvertInto(target: string, value: string): string {
-    return `Bun::Bindgen::convertDictionaryInto(*globalObject, ${value}, ${target});`;
+  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
+    return cppThenCheck(`Bun::Bindgen::convertDictionaryInto(*globalObject, ${value}, ${target}, ${ctx});`, check);
   }
   /** Every JS name read, in order. */
   get names(): string[] {
@@ -1565,6 +1643,10 @@ export class UnionType extends NamedType {
       ),
     );
   }
+  /** As for a dictionary. */
+  get needsLifetime(): boolean {
+    return this.accepted ? super.needsLifetime : this.holdsJSValue;
+  }
   get alternativesByKind() {
     return alternativesByKind(this.alternatives.map(a => a.type));
   }
@@ -1578,8 +1660,11 @@ export class UnionType extends NamedType {
   get convertsInPlace(): boolean {
     return true;
   }
-  cppConvertInto(target: string, value: string, ctx: string): string {
-    return `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target});`;
+  cppConvertInto(target: string, value: string, ctx: string, name: string, check: string): string {
+    return cppThenCheck(
+      `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target});`,
+      check,
+    );
   }
   get tsType(): string {
     return this.alternatives.map(a => a.type.tsType).join(" | ");
@@ -1619,6 +1704,9 @@ export class UnionType extends NamedType {
   rustFromExtern(expr: string, scope: RustScope): string {
     return `${this.path(scope, this.name)}::from_extern(&${expr}${this.needsLifetime ? ", heap" : ""})`;
   }
+  rustToJS(value: string): string {
+    return `${value}.into_js(heap)`;
+  }
 }
 
 // ───────────────────────────── functions ─────────────────────────────
@@ -1636,12 +1724,12 @@ export interface SignatureOptions {
   rustPath?: string;
   /** The JS function's `length`. Defaults to the number of required arguments. */
   length?: number;
-  /** An argument named here throws Node's `ERR_INVALID_ARG_TYPE(name, expected, actual)` for a value of the wrong type. */
-  expected?: Record<string, readonly string[]>;
+  /** Node's `ERR_INVALID_ARG_TYPE` for a wrong type: a list is its `(name, expected, actual)`, a string the whole message. */
+  expected?: Record<string, readonly string[] | string>;
 }
 
 export class Signature {
-  readonly args: readonly { name: string; type: Type; expected?: readonly string[] }[];
+  readonly args: readonly { name: string; type: Type; expected?: readonly string[] | string }[];
   readonly returns: Type;
   readonly capability: Capability;
   readonly throws: boolean;
@@ -1668,7 +1756,7 @@ export class Signature {
       `length: ${this.length} is not a count`,
     );
     for (const { name, type } of this.args) {
-      assert(!isMadeOf(type, BigIntResultType), `${name}: .asBigInt is a result; an argument is b.u64.allowBigInt`);
+      refuseResultType(name, type);
       assert(
         !type.borrowsHeap || this.capability !== "js",
         `${name}: JavaScript can detach a buffer; held: "handle" borrows the bytes each time they are read`,
@@ -1692,9 +1780,18 @@ export class Signature {
   }
 }
 
-/** `type` is a `kind`, or something it is made of is. */
-function isMadeOf(type: Type, kind: new (...args: never[]) => Type): boolean {
-  return type.dependencies.some(dependency => isMadeOf(dependency, kind)) || type instanceof kind;
+/** The first `ResultType` that `type` is or is made of. */
+function resultTypeIn(type: Type): ResultType | undefined {
+  if (type instanceof ResultType) return type;
+  for (const dependency of type.dependencies) {
+    const found = resultTypeIn(dependency);
+    if (found) return found;
+  }
+}
+
+function refuseResultType(name: string, type: Type): void {
+  const result = resultTypeIn(type);
+  assert(!result, `${name}: ${result?.refusal}`);
 }
 
 /** Call a signature, or look at the kind of one more argument. */
@@ -1770,8 +1867,8 @@ export interface GetterField {
   getter: Type;
   /** Also generate a setter, which takes `&mut self` (or the wrapper, with `capability: "js"`). */
   setter?: true;
-  /** Computed once per object, then kept in the wrapper. */
-  cache?: true;
+  /** Returns an internal field, and computes it while that is `undefined`. `true` declares one of the getter's name, a string names one declared elsewhere. */
+  cache?: true | string;
   capability?: Capability;
   throws?: boolean;
   /** As a function's. */
@@ -1798,7 +1895,7 @@ export interface ClassOptions {
   proto?: Record<string, Field>;
   /** Properties of the constructor. */
   static?: Record<string, StaticField>;
-  /** JS values the object holds. The GC visits them; the wrapper gets `x_field` / `set_x_field` for each. */
+  /** JS values the object holds, `undefined` at first. The GC visits them; the wrapper gets `x_field` / `set_x_field` for each. */
   internalFields?: readonly string[];
   /** `false`: native properties are non-configurable. */
   configurable?: boolean;
@@ -1835,11 +1932,10 @@ export class Getter {
   readonly capability: Capability;
   readonly throws: boolean;
   readonly hasSetter: boolean;
-  readonly cached: boolean;
+  readonly internalField: string | undefined;
+  readonly declaresInternalField: boolean;
   readonly isStatic: boolean;
   readonly rustName: string;
-  /** Where a cached one keeps the value. Set by its class. */
-  internalFieldIndex = -1;
   constructor(name: string, options: GetterField, isStatic = false) {
     this.name = name;
     this.isStatic = isStatic;
@@ -1849,12 +1945,14 @@ export class Getter {
     this.throws = options.throws ?? false;
     this.hasSetter = options.setter ?? false;
     assert(!(options.cache && options.setter), `${name}: a cached getter has no setter`);
+    if (this.hasSetter) refuseResultType(name, this.type);
     assert(!(isStatic && (options.cache || options.setter)), `${name}: a static getter has no cache and no setter`);
     assert(
       !this.type.holdsJSValue || this.capability !== "none",
       `${name}: returning a JS value takes capability: "heap" or "js"`,
     );
-    this.cached = !!options.cache;
+    this.internalField = options.cache === true ? name : options.cache;
+    this.declaresInternalField = options.cache === true;
   }
 }
 
@@ -1903,11 +2001,10 @@ export class ClassType extends NamedType {
   /** The properties of the prototype and of the constructor, as written. */
   readonly protoMembers: readonly ClassMember[];
   readonly staticMembers: readonly ClassMember[];
+  /** The schema's, then those of `cache: true` getters. */
   readonly internalFields: readonly string[];
-  /** Each has an internal field of its own, after `internalFields`. */
-  readonly cachedGetters: readonly Getter[];
   readonly configurable: boolean;
-  /** Index in `Tables::classes`. Set by the generator. */
+  /** Index in `AdditionsToGlobalObject::m_classes`. Set by the generator. */
   classIndex = -1;
   constructor(options: ClassOptions) {
     super();
@@ -1947,7 +2044,15 @@ export class ClassType extends NamedType {
     this.staticGetters = this.staticMembers.filter(member => member instanceof Getter);
     const { getters } = this;
     assert(this.construct || this.staticMembers.length === 0, "static members need a constructor object");
-    this.internalFields = options.internalFields ?? [];
+    this.internalFields = [
+      ...(options.internalFields ?? []),
+      ...getters.filter(getter => getter.declaresInternalField).map(getter => getter.name),
+    ];
+    for (const { name, internalField } of getters)
+      assert(
+        internalField === undefined || this.internalFields.includes(internalField),
+        `${name}: there is no internal field ${internalField}`,
+      );
     for (const field of this.internalFields)
       assert(/^[a-z][A-Za-z0-9]*$/.test(field), `${field}: an internal field is named in camelCase`);
     assertDistinct(
@@ -1962,8 +2067,6 @@ export class ClassType extends NamedType {
       "members' Rust functions",
     );
     assertDistinct(this.internalFields.map(snakeCase), "internal fields");
-    this.cachedGetters = getters.filter(getter => getter.cached);
-    this.cachedGetters.forEach((getter, index) => (getter.internalFieldIndex = this.internalFields.length + index));
     this.configurable = options.configurable ?? true;
     for (const method of this.methods) {
       assert(
@@ -1975,9 +2078,6 @@ export class ClassType extends NamedType {
   /** Every signature of the prototype's and the constructor's functions. */
   get methods(): readonly Method[] {
     return [...this.functions, ...this.staticFunctions].flatMap(fn => fn.signatures as readonly Method[]);
-  }
-  get numberOfInternalFields(): number {
-    return this.internalFields.length + this.cachedGetters.length;
   }
   get cpp(): string {
     return `Bun::Bindgen::Generated::JS${this.name}`;

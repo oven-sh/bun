@@ -12,7 +12,7 @@ const CHANGE: Message = Message::new("", "Change `{{typo}}` to `{{suggestion}}`"
 const NEXTJS_DATA_FETCHING_FUNCTIONS: [&str; 3] = ["getStaticProps", "getStaticPaths", "getServerSideProps"];
 const THRESHOLD: usize = 1;
 
-/// The file is under a directory `pages`, the first in its path, and not in the `api` of that.
+/// True if the file is under the first `pages` directory in its path, but not in that directory's `api`.
 fn is_page(file_path: &[u8]) -> bool {
     let mut components = strings::split(file_path, b"/").filter(|it| !matches!(*it, b"" | b"."));
     components.any(|it| it == b"pages") && components.next().is_some_and(|it| it != b"api")

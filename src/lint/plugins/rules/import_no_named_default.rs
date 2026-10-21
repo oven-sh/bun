@@ -20,7 +20,7 @@ impl Rule for NoNamedDefault {
         if specifier.is_type_only() || !specifier.imported().name().is("default") {
             return;
         }
-        // oxlint points at the name in the other module.
+        // oxlint reports the imported name.
         if cx.language().is_oxlint {
             cx.report(specifier.imported(), OXLINT);
         } else {

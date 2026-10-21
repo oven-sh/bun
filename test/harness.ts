@@ -806,7 +806,7 @@ export function bunRunAsScript(
 }
 
 /** Collects what a child writes, for a test that waits for pieces of it. */
-function collectOutput() {
+export function collectOutput() {
   let output = "";
   let matched = 0;
   let ended = false;
@@ -833,34 +833,6 @@ function collectOutput() {
         }
         await new Promise<void>(resolve => (wake = resolve));
       }
-    },
-  };
-}
-
-/**
- * Spawns `cmd` with its fd 3 on a socket, and talks to it over that socket. Stderr is a pipe. POSIX only.
- *
- * `sh -c 'exec "$0" <&3 >&3'` gives a command one open file description for stdin and stdout, as inetd or
- * `socat EXEC:` do. Its `process.stdout` then makes its stdin O_NONBLOCK too.
- */
-export function spawnWithSocket(cmd: string[], env: Record<string, string | undefined> = bunEnv) {
-  const proc = Bun.spawn({ cmd, env, stdio: ["ignore", "ignore", "pipe", "pipe"] });
-  const socket: import("node:net").Socket = require("node:net").connect({ fd: proc.stdio[3] });
-  const output = collectOutput();
-  socket.setEncoding("utf8");
-  socket.on("data", output.push);
-  socket.on("error", () => {});
-  socket.on("close", output.end);
-  return {
-    proc,
-    write: (text: string) => void socket.write(text),
-    /** Ends the input of the child. What the child still writes arrives. */
-    end: () => void socket.end(),
-    waitFor: output.waitFor,
-    async [Symbol.asyncDispose]() {
-      socket.destroy();
-      proc.kill();
-      await proc.exited;
     },
   };
 }

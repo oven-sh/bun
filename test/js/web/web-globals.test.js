@@ -12,6 +12,7 @@ import {
   untilBunWaitsForInput,
   withoutAggressiveGC,
 } from "harness";
+import { readFileSync } from "node:fs";
 
 test("exists", () => {
   expect(typeof URL !== "undefined").toBe(true);
@@ -525,22 +526,53 @@ describe.skipIf(isWindows).concurrent("dialogs on a non-blocking stdin", () => {
     expect(await exitOf(child)).toEqual({ stderr: "", exitCode: 0, signalCode: null });
   });
 
-  // Linux poll(2) fails with EINVAL once the number of descriptors is above RLIMIT_NOFILE.
-  test.skipIf(!isLinux)("prompt returns null, and does not spin, when nothing can watch stdin", async () => {
+  // Linux poll(2) fails with EINVAL once the number of descriptors is above the soft RLIMIT_NOFILE.
+  test.skipIf(!isLinux)("prompt waits, and does not spin, when nothing can watch stdin", async () => {
     const libc = isMusl ? `libc.musl-${process.arch === "arm64" ? "aarch64" : "x86_64"}.so.1` : "libc.so.6";
     const script = `
       console.log("first=" + prompt("one"));
       const { dlopen, ptr } = require("bun:ffi");
-      const { setrlimit } = dlopen(${JSON.stringify(libc)}, { setrlimit: { args: ["int", "ptr"], returns: "int" } }).symbols;
+      const rlimit = { args: ["int", "ptr"], returns: "int" };
+      const lib = dlopen(${JSON.stringify(libc)}, { getrlimit: rlimit, setrlimit: rlimit });
       const RLIMIT_NOFILE = 7;
-      if (setrlimit(RLIMIT_NOFILE, ptr(new BigUint64Array(2))) !== 0) throw new Error("setrlimit failed");
-      console.log("second=" + prompt("two"));
+      // [soft, hard]
+      const limit = new BigUint64Array(2);
+      const setSoftLimit = soft => {
+        limit[0] = soft;
+        if (lib.symbols.setrlimit(RLIMIT_NOFILE, ptr(limit)) !== 0) throw new Error("setrlimit failed");
+      };
+      if (lib.symbols.getrlimit(RLIMIT_NOFILE, ptr(limit)) !== 0) throw new Error("getrlimit failed");
+      const soft = limit[0];
+      setSoftLimit(0n);
+      const second = prompt("two");
+      // When the process exits, LeakSanitizer opens files, and takes seconds to look at what an open library holds.
+      setSoftLimit(soft);
+      lib.close();
+      console.log("second=" + second);
     `;
     await using child = spawnWithNonBlockingStdin(["sh", "-c", 'exec "$0" -e "$1" <&3', bunExe(), script]);
     await child.waitFor("one ");
     await untilBunWaitsForInput(child.proc);
     child.write("x\n");
-    await child.waitFor("first=x\ntwo second=null\n");
+    await child.waitFor("first=x\ntwo ");
+    await untilBunWaitsForInput(child.proc);
+
+    // The read sleeps between its tries. A loop that spins reads many times before the process sleeps once.
+    const count = (file, counter) =>
+      Number(
+        readFileSync(`/proc/${child.proc.pid}/${file}`, "utf8").match(new RegExp(`^${counter}:\\s+(\\d+)`, "m"))[1],
+      );
+    const counts = () => ({ reads: count("io", "syscr"), sleeps: count("status", "voluntary_ctxt_switches") });
+    const before = counts();
+    let after;
+    do {
+      await Bun.sleep(1);
+      after = counts();
+    } while (after.sleeps - before.sleeps < 50);
+    expect(after.reads - before.reads).toBeLessThan(10 * (after.sleeps - before.sleeps));
+
+    child.write("y\n");
+    await child.waitFor("second=y\n");
     expect(await exitOf(child)).toEqual({ stderr: "", exitCode: 0, signalCode: null });
   });
 });

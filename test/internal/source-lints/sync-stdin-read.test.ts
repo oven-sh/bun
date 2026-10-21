@@ -21,8 +21,9 @@ test("Rust sources outside bun_sys do not read stdin with a plain read", async (
     const file = path.join("src", rel).replaceAll("\\", "/");
     if (file.startsWith("src/sys/")) continue;
     scanned++;
-    const lines = readFileSync(path.join(repoRoot, file), "utf8").split("\n");
-    const count = lines.filter(line => !/^\s*\/\//.test(line) && banned.test(line)).length;
+    const source = readFileSync(path.join(repoRoot, file), "utf8");
+    if (!source.includes("Fd::stdin")) continue;
+    const count = source.split("\n").filter(line => !/^\s*\/\//.test(line) && banned.test(line)).length;
     if (count > 0) found.set(file, count);
   }
   // Guard against repoRoot resolving wrong, which would make the ban pass vacuously.

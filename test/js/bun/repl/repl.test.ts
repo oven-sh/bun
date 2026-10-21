@@ -3,14 +3,15 @@ import { describe, expect, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
+  collectOutput,
   isWindows,
   normalizeBunSnapshot,
   spawnWithNonBlockingStdin,
-  spawnWithSocket,
   tempDir,
   untilBunWaitsForInput,
 } from "harness";
 import { chmodSync, closeSync, constants, openSync, statSync } from "node:fs";
+import { connect } from "node:net";
 import path from "path";
 
 const stripAnsi = Bun.stripANSI;
@@ -1862,6 +1863,34 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
 // O_NONBLOCK is on the open file description, which fd 0 shares with fd 1 and 2 and with every program on the same
 // terminal. A read of stdin then fails with EAGAIN while there is no input. That is not the end of the input.
 describe.skipIf(isWindows).concurrent("Bun REPL on a non-blocking stdin", () => {
+  /**
+   * Spawns `cmd` with its fd 3 on a socket, and talks to it over that socket. Stderr is a pipe.
+   *
+   * `sh -c 'exec "$0" <&3 >&3'` gives a command one open file description for stdin and stdout, as inetd or
+   * `socat EXEC:` do. Its `process.stdout` then makes its stdin O_NONBLOCK too.
+   */
+  function spawnWithSocket(cmd: string[], env: Record<string, string | undefined>) {
+    const proc = Bun.spawn({ cmd, env, stdio: ["ignore", "ignore", "pipe", "pipe"] });
+    const socket = connect({ fd: proc.stdio[3] });
+    const output = collectOutput();
+    socket.setEncoding("utf8");
+    socket.on("data", output.push);
+    socket.on("error", () => {});
+    socket.on("close", output.end);
+    return {
+      proc,
+      write: (text: string) => void socket.write(text),
+      /** Ends the input of the child. What the child still writes arrives. */
+      end: () => void socket.end(),
+      waitFor: output.waitFor,
+      async [Symbol.asyncDispose]() {
+        socket.destroy();
+        proc.kill();
+        await proc.exited;
+      },
+    };
+  }
+
   // Sends each line once the REPL waits for it, then ends the input while the REPL waits for more.
   async function evaluateLinesThenEnd(
     repl: ReturnType<typeof spawnWithSocket | typeof spawnWithNonBlockingStdin>,

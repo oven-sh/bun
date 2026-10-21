@@ -510,6 +510,48 @@ describe.concurrent("otp", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A thread of its own reads ENTER. By the second poll of the done url, 500 ms after the first, it has found no
+  // input.
+  test.skipIf(!isLinux)("ENTER opens the web login page on a non-blocking stdin", async () => {
+    const otp = "616161";
+    using dir = tempDir("publish-web-login-non-blocking", {
+      "package.json": JSON.stringify({ name: "otp-pkg-8", version: "8.8.8" }),
+      "opener/xdg-open": `#!/bin/sh\necho "$1" >> "$OPENED"\n`,
+    });
+    chmodSync(join(dir, "opener", "xdg-open"), 0o755);
+    const opened = () => (existsSync(join(dir, "opened")) ? readFileSync(join(dir, "opened"), "utf8") : "");
+
+    let donePolls = 0;
+    using mock = mockRegistry((req, recorded, mock) => {
+      const url = `http://localhost:${mock.port}`;
+      if (req.method === "PUT") {
+        if (recorded.otp === otp) return new Response("OK");
+        return Response.json(
+          { authUrl: `${url}/auth`, doneUrl: `${url}/done` },
+          { status: 401, headers: { "www-authenticate": "OTP" } },
+        );
+      }
+      if (recorded.pathname !== "/done") return new Response("unexpected url", { status: 500 });
+      if (++donePolls === 2) publishing.write("\n");
+      if (opened() === "") {
+        return new Response("{}", { status: 202, headers: donePolls === 1 ? {} : { "retry-after": "0" } });
+      }
+      return Response.json({ token: otp });
+    });
+    await write(join(dir, "bunfig.toml"), mockBunfig(mock));
+
+    await using publishing = spawnWithNonBlockingStdin(["sh", "-c", 'exec "$0" publish <&3', bunExe()], {
+      cwd: String(dir),
+      env: { ...env, OPENED: join(dir, "opened"), PATH: [join(dir, "opener"), env.PATH ?? ""].join(delimiter) },
+    });
+    await publishing.waitFor(" + otp-pkg-8@8.8.8");
+    const [err, exitCode] = await Promise.all([publishing.proc.stderr.text(), publishing.proc.exited]);
+
+    expect(err).toBe("");
+    expect(opened()).toBe(`http://localhost:${mock.port}/auth\n`);
+    expect(exitCode).toBe(0);
+  });
+
   test.skipIf(!isLinux)(
     "web login opens the auth url with the opener found on PATH, not one in the package directory",
     async () => {

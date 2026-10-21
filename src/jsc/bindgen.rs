@@ -950,7 +950,9 @@ pub mod to_js {
     impl<'a> Any<'a> for JSValue {
         #[inline(always)]
         fn into_value(self, heap: &JsHeap<'a>) -> JsLocal<'a> {
-            JsLocal::new(heap, self)
+            // A function of the older API returns the empty value after it threw.
+            debug_assert!(!self.is_empty() || heap.global_object().has_exception());
+            JsLocal::from_raw(self)
         }
     }
 

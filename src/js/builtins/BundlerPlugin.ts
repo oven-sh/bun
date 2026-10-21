@@ -431,6 +431,8 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
     }
 
     for (let [filter, callback] of results) {
+      // test() on a /g or /y filter starts at lastIndex, which the previous path's match may have advanced.
+      if (filter.global || filter.sticky) filter.lastIndex = 0;
       if (filter.test(inputPath)) {
         var result: ReturnType<OnResolveCallback> = callback({
           path: inputPath,
@@ -545,6 +547,7 @@ export function runOnLoadPlugins(
     }
 
     for (let [filter, callback] of results) {
+      if (filter.global || filter.sticky) filter.lastIndex = 0;
       if (filter.test(path)) {
         var result = callback({
           path,

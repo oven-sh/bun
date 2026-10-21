@@ -1068,7 +1068,8 @@ impl PublishCommand {
             "\nThis operation requires a one-time password.\nEnter OTP: ",
             b"",
         ) {
-            Ok(v) => Ok(v.into()),
+            // A byte order mark in front of a piped OTP is the encoding signature of the writer. No OTP starts with one.
+            Ok(v) => Ok(strings::without_utf8_bom(&v).into()),
             Err(crate::Error::Alloc(_)) => Err(AllocError),
             Err(e) => {
                 Output::err(e, "failed to read OTP input", ());

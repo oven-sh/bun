@@ -548,6 +548,40 @@ describe.concurrent("otp", () => {
     30_000,
   );
 
+  test("a byte order mark in front of a piped OTP is not part of the OTP", async () => {
+    const otp = "424242";
+    using mock = mockRegistry((req, recorded) => {
+      if (req.method === "PUT" && recorded.otp === otp) {
+        return new Response("OK", { status: 200 });
+      }
+      // The 401 has no web login url, so `bun publish` asks for the OTP on stdin.
+      return Response.json({}, { status: 401, headers: { "www-authenticate": "OTP" } });
+    });
+    using dir = tempDir("publish-otp-mark", {
+      "package.json": JSON.stringify({ name: "otp-pkg-mark", version: "1.0.0" }),
+      "bunfig.toml": mockBunfig(mock),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "publish"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      // EF BB BF is the encoding signature of the program that wrote stdin, for example PowerShell.
+      stdin: Buffer.from("\uFEFF" + otp + "\n"),
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toBe("");
+    expect(out).toEndWith("\nThis operation requires a one-time password.\nEnter OTP: \n + otp-pkg-mark@1.0.0\n");
+    expect(mock.requests).toEqual([
+      request("PUT", "/otp-pkg-mark"),
+      request("PUT", "/otp-pkg-mark", { authType: "legacy", otp }),
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   // Situation: user has 2FA enabled account with faceid sign-in.
   // They run `bun publish` with --auth-type=legacy, prompting them
   // to enter their OTP. Because they have faceid sign-in, they don't

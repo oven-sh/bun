@@ -5,17 +5,14 @@
 #include "BunClientData.h"
 #include "ErrorStackFrame.h"
 
-#include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/ErrorInstance.h>
-#include <JavaScriptCore/FunctionCodeBlock.h>
-#include <JavaScriptCore/FunctionExecutable.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
+#include <JavaScriptCore/Interpreter.h>
 #include <JavaScriptCore/JSAsyncFunctionGenerator.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSPromiseReaction.h>
 #include <JavaScriptCore/Options.h>
 #include <JavaScriptCore/StackFrame.h>
-#include <JavaScriptCore/UnlinkedCodeBlock.h>
 
 using namespace JSC;
 
@@ -25,9 +22,7 @@ using namespace JSC;
 // where there's no JS call stack, but the promise being rejected has an await
 // chain that tells us where the user's code is.
 //
-// This replicates the minimal chain-walking from JSC's private
-// Interpreter::getAsyncStackTrace for the common case (direct await). Promise
-// combinators (all/race/any) are not traced through — we stop at them.
+// The lookup here follows a direct await, a .then() chain and Promise.race; JSC's Interpreter::appendAsyncStackFrames does the walk.
 static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, WTF::Vector<JSC::StackFrame>& results, size_t maxStackSize)
 {
     if (!JSC::Options::useAsyncStackTrace() || !promise)
@@ -104,48 +99,14 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return nullptr;
     };
 
-    auto computeBytecodeIndex = [&](JSC::CodeBlock* codeBlock, JSC::JSAsyncFunctionGenerator* generator) -> JSC::BytecodeIndex {
-        JSC::BytecodeIndex bytecodeIndex(0);
-        JSC::JSValue stateValue = generator->internalField(JSC::JSAsyncFunctionGenerator::Field::State).get();
-        if (stateValue.isInt32()) {
-            int32_t state = stateValue.asInt32();
-            size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
-            if (state > 0 && numberOfJumpTables > 0) {
-                size_t lastTableIndex = numberOfJumpTables - 1;
-                const JSC::UnlinkedSimpleJumpTable& jumpTable = codeBlock->unlinkedSwitchJumpTable(lastTableIndex);
-                int32_t offset = jumpTable.offsetForValue(state);
-                if (offset)
-                    bytecodeIndex = JSC::BytecodeIndex(offset);
-            }
-        }
-        return bytecodeIndex;
-    };
-
-    auto appendFrame = [&](JSC::JSAsyncFunctionGenerator* generator) {
-        JSC::JSFunction* asyncFunction = nullptr;
-        if (!dynamicCastValue(generator->next(), &asyncFunction))
-            return;
-        if (asyncFunction->isHostOrPrivateBuiltinFunction())
-            return;
-        JSC::FunctionExecutable* executable = asyncFunction->jsExecutable();
-        if (!executable)
-            return;
-        if (JSC::CodeBlock* codeBlock = executable->codeBlockForCall()) {
-            JSC::BytecodeIndex bytecodeIndex = computeBytecodeIndex(codeBlock, generator);
-            results.append(JSC::StackFrame(vm, owner, asyncFunction, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
-        } else {
-            results.append(JSC::StackFrame(vm, owner, asyncFunction, /* isAsyncFrame */ true));
-        }
-    };
-
-    JSC::JSAsyncFunctionGenerator* gen = getAwaitingGenerator(promise);
-    while (gen && results.size() < maxStackSize) {
-        appendFrame(gen);
+    auto getParentGenerator = [&](JSC::JSAsyncFunctionGenerator* generator) -> JSC::JSAsyncFunctionGenerator* {
         JSC::JSPromise* returnPromise = nullptr;
-        if (!dynamicCastValue(gen->context(), &returnPromise))
-            break;
-        gen = getAwaitingGenerator(returnPromise);
-    }
+        if (!dynamicCastValue(generator->context(), &returnPromise))
+            return nullptr;
+        return getAwaitingGenerator(returnPromise);
+    };
+
+    vm.interpreter.appendAsyncStackFrames(owner, results, getAwaitingGenerator(promise), maxStackSize, getParentGenerator);
 }
 
 extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue errorValue, JSC::JSPromise* promise)

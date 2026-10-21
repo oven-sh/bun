@@ -132,8 +132,9 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     // JSC. If the caller is deep, capping at stackTraceLimit here would collect
     // only frames that get removed, leaving an empty trace. Stack depth is
     // bounded by native stack size so this walk is still O(actual depth).
+    // The await chain comes after the caller, so the trace holds at most stackTraceLimit of its frames.
     WTF::Vector<JSC::StackFrame> rawFrames;
-    vm.interpreter.getStackTrace(owner, rawFrames, 1, std::numeric_limits<size_t>::max());
+    vm.interpreter.getStackTrace(owner, rawFrames, 1, std::numeric_limits<size_t>::max(), nullptr, nullptr, nullptr, stackTraceLimit);
 
     // JSC's getStackTrace uses StackVisitor::isImplementationVisibilityPrivate
     // which differs from Bun's helper — post-filter to keep behavior consistent
@@ -142,6 +143,8 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     for (auto& frame : rawFrames) {
         if (!isImplementationVisibilityPrivate(frame))
             stackTrace.append(WTF::move(frame));
+        else
+            ASSERT(!frame.isAsyncFrame());
     }
 
     if (!caller.isObject()) {

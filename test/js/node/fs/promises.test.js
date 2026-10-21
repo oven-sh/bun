@@ -1,4 +1,4 @@
-import { tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 const assert = require("assert");
 const os = require("os");
@@ -302,6 +302,80 @@ test("fs.promises async stack with Promise.all", async () => {
   expect(caught.code).toBe("ENOENT");
   // Promise.all uses combinator context — must not crash.
   expect(typeof caught.stack === "string" || caught.stack === undefined).toBe(true);
+});
+
+// Async functions that await each other make the await chain a cycle. In `awaitCycle`, `a` awaits a
+// race that holds the promise of `b`, and `b` awaits the promise of `a`. In `awaitCycleWithoutFrames`,
+// an Array.fromAsync call awaits a race that holds its own promise: it awaits in a builtin async
+// function, which has no frame in a trace. readFile() rejects in `c`, under the cycle.
+//
+// The walk over the await chain used to end only at the frame limit. It never returned from a walk
+// with no limit, which also used all memory, or from a cycle that adds no frame. So each child has a
+// timeout, and the children run one at a time.
+const rejectedReadFile = `
+  const functionsOf = stack => stack.split("\\n").map(line => /^\\s*at ((?:async )?\\w+) /.exec(line)?.[1]).filter(Boolean).join(", ");
+  async function c() {
+    await null;
+    try {
+      await require("node:fs/promises").readFile("/nonexistent-path/does-not-exist.txt");
+    } catch (e) {
+      console.log(functionsOf(e.stack));
+    }
+  }`;
+const awaitCycle = `${rejectedReadFile}
+  let pa, pb;
+  async function a() { await null; await Promise.race([pb, c()]); }
+  async function b() { await null; await pa; }
+  pa = a();
+  pb = b();`;
+const awaitCycleWithoutFrames = `${rejectedReadFile}
+  let p;
+  p = Array.fromAsync({ length: 2, 0: null, get 1() { return Promise.race([p, c()]); } });`;
+test.each([
+  // With a limit, the trace repeats the cycle up to the limit, as in Node.
+  ["", awaitCycle, "async c, async a, async b, async a, async b, async a, async b, async a, async b, async a"],
+  // Without a limit, the trace has each generator of the cycle once. Node runs out of memory.
+  [
+    " with Error.stackTraceLimit = Infinity",
+    `Error.stackTraceLimit = Infinity; ${awaitCycle}`,
+    "async c, async a, async b",
+  ],
+  [", no frame in the cycle", awaitCycleWithoutFrames, "async c"],
+])(
+  "the async stack of an fs.promises error ends under a cycle of awaits%s",
+  async (_, source, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 10_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+      stdout: expected,
+      stderr: "",
+      signalCode: null,
+      exitCode: 0,
+    });
+  },
+  20_000,
+);
+
+test("the async stack of an fs.promises error has every frame of a long await chain when there is no limit", async () => {
+  async function chain(depth) {
+    return depth > 1 ? await chain(depth - 1) : await readFile("/nonexistent-path/does-not-exist.txt");
+  }
+  const savedLimit = Error.stackTraceLimit;
+  Error.stackTraceLimit = Infinity;
+  try {
+    const { stack } = await chain(40).catch(e => e);
+    const functions = stack.split("\n").map(line => /^\s*at ((?:async )?\w+) /.exec(line)?.[1]);
+    expect(functions.slice(1, 41)).toEqual(Array(40).fill("async chain"));
+  } finally {
+    Error.stackTraceLimit = savedLimit;
+  }
 });
 
 it("an unused FileHandle.writer() does not prevent close()", async () => {

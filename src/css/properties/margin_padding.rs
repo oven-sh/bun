@@ -322,11 +322,9 @@ pub struct SizeSpec {
     bottom_id: PropertyId,
     left_id: PropertyId,
     right_id: PropertyId,
-    /// The 4-side shorthand is only as old as `feature` (`inset`), so `flush`
-    /// emits it only when the targets support `feature`.
+    /// `flush` emits the 4-side shorthand only for targets that have `feature` (`inset`).
     shorthand_needs_feature: bool,
-    /// Compat feature of the logical longhands. `flush` compiles them to
-    /// physical properties for targets without it.
+    /// Compat feature of the logical longhands.
     feature: Option<Feature>,
     /// Compat feature of the `*-block` / `*-inline` pair shorthands.
     shorthand_feature: Option<Feature>,
@@ -689,8 +687,7 @@ impl SizeHandlerImpl {
             );
         } else if tag == spec.shorthand {
             let val = (spec.extract_shorthand)(property);
-            // `Physical` for `inset` too: lightningcss passes `Logical` there, which
-            // flushes `top: 1px` and an earlier `inset` before `inset: 0` replaces them.
+            // Not upstream's `Logical` for `inset`: that flushes an earlier `top` or `inset` first.
             self.flush_helper_physical(
                 spec,
                 PhysicalSlot::Top,

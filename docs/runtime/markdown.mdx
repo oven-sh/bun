@@ -98,7 +98,7 @@ Bun.markdown.html("## Hello World", { headings: { ids: true } });
 // '<h2 id="hello-world">Hello World</h2>\n'
 ```
 
-A heading ID is the text of the heading in lowercase. Letters, digits, and combining marks of every script stay. A run of spaces and hyphens becomes one hyphen. Bun drops every other character, such as punctuation and emoji.
+A heading ID is the text of the heading in lowercase. Letters, digits, and combining marks of every script stay. A run of spaces (U+0020) and hyphens becomes one hyphen. Bun drops every other character, such as punctuation, emoji, a tab, and a no-break space.
 
 ```ts
 Bun.markdown.html("## Über uns\n\n## 日本語 ガイド 🚀", { headings: { ids: true } });

@@ -1646,11 +1646,11 @@ declare module "bun" {
        * heading IDs and autolink headings, or an object to configure individually.
        *
        * A heading ID is the text of the heading in lowercase. Letters, digits,
-       * and combining marks of every script stay, a run of spaces and hyphens
-       * becomes one hyphen, and every other character is dropped. Each ID is
-       * unique in its document: when an ID is taken, the heading gets `-1` after
-       * it, or the next number that gives a free ID. A heading with no letter and
-       * no digit gets an empty ID.
+       * and combining marks of every script stay, a run of spaces (U+0020) and
+       * hyphens becomes one hyphen, and every other character is dropped. Each
+       * ID is unique in its document: when an ID is taken, the heading gets `-1`
+       * after it, or the next number that gives a free ID. A heading with no
+       * letter and no digit gets an empty ID.
        *
        * These IDs are Bun's own. GitHub's anchors differ for some headings:
        * GitHub keeps `_`, writes one hyphen for each space, and keeps a hyphen

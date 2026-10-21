@@ -513,9 +513,7 @@ fn unique_heading_id<'a>(
     let slug_len = slug.len();
 
     let repeat_id = is_repeat_id(slug, slug_counts);
-    let Ok(gop) = slug_counts.get_or_put(slug.as_slice()) else {
-        return slug.as_slice();
-    };
+    let gop = bun_core::handle_oom(slug_counts.get_or_put(slug.as_slice()));
     if !gop.found_existing && !repeat_id {
         return slug.as_slice();
     }

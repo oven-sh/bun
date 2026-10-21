@@ -148,6 +148,17 @@ describe("headingIds option", () => {
     });
   });
 
+  test("a tab and the spaces outside ASCII are stripped from slug", () => {
+    // Only U+0020 becomes a hyphen, as in the anchors of GitHub.
+    expectIds({
+      "Hello\tWorld": "helloworld",
+      "no\u00A0break space": "nobreak-space",
+      "entity&nbsp;space": "entityspace",
+      "em\u2003space": "emspace",
+      "日本語\u3000ガイド": "日本語ガイド",
+    });
+  });
+
   test("letters outside the BMP stay in the id", () => {
     expectIds({
       "\u{20BB7}野家": "\u{20BB7}野家",

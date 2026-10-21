@@ -14,12 +14,12 @@ const contentOp = (returns: b.Type) =>
     ...chainable(returns),
     args: { content: text, options: ContentOptions.nullable.default({}) },
     expected: { content: "Expected string" },
-    passGlobal: true,
+    capability: "heap",
     throws: true,
   }) as const;
 
-/** `b.any`, not a string: after the handler returns, the setter ignores the value without converting it. */
-const assignable = { getter: b.any, setter: true, passGlobal: true, throws: true } as const;
+/** `b.any`: an accessor has one type, and the getter gives a string or nothing where the setter takes `ToString` of any value. */
+const assignable = { getter: b.any, setter: { capability: "js" }, capability: "heap", throws: true } as const;
 
 export const TextChunk = b.class({
   rustPath: "crate::api::html_rewriter::TextChunk",
@@ -36,8 +36,8 @@ export const TextChunk = b.class({
   },
 });
 
-/** `null` if the doctype has none, `undefined` after the handler returns. */
-const doctypeField = { getter: b.any, cache: true, passGlobal: true, throws: true } as const;
+/** `b.any`: a string, `null` if the doctype has none, `undefined` after the handler returns. */
+const doctypeField = { getter: b.any, cache: true, capability: "heap", throws: true } as const;
 
 export const DocType = b.class({
   rustPath: "crate::api::html_rewriter::DocType",
@@ -87,13 +87,16 @@ export const EndTag = b.class({
   },
 });
 
+/** `value` is `[name, value]`. It is `b.any` for the end, where it is an own `undefined`: an `.optional` member is left out. */
+export const AttributeIteratorResult = b.dictionary({ value: b.any, done: b.bool });
+
 export const AttributeIterator = b.class({
   rustPath: "crate::api::html_rewriter::AttributeIterator",
   refCounted: true,
   finalize: true,
   configurable: false,
   proto: {
-    next: { returns: b.any, passGlobal: true, throws: true },
+    next: { returns: AttributeIteratorResult, capability: "heap", throws: true },
     "@@iterator": { ...chainable(b.self), rustName: "get_this" },
   },
 });
@@ -107,18 +110,23 @@ export const Element = b.class({
   proto: {
     after: contentOp(b.self.optional),
     append: contentOp(b.self.optional),
-    attributes: { getter: AttributeIterator.optional, passGlobal: true },
+    attributes: { getter: AttributeIterator.optional, capability: "heap" },
     before: contentOp(b.self.optional),
     canHaveContent: { getter: b.bool.optional },
     getAttribute: { ...named, returns: b.string.utf8.nullable },
-    hasAttribute: { ...named, returns: b.bool, passGlobal: true, throws: true },
+    hasAttribute: { ...named, returns: b.bool, capability: "heap", throws: true },
     namespaceURI: { getter: b.string.utf8.optional, cache: true },
-    /** `b.any`: after the element handler returns, `handler` is not type-checked. */
-    onEndTag: { ...chainable(b.self.nullable), args: { handler: b.any }, passGlobal: true, throws: true },
+    onEndTag: {
+      ...chainable(b.self.nullable),
+      args: { handler: b.callable },
+      expected: { handler: "Expected a function" },
+      capability: "js",
+      throws: true,
+    },
     prepend: contentOp(b.self.optional),
     remove: chainable(b.self.optional),
     removeAndKeepContent: chainable(b.self.optional),
-    removeAttribute: { ...chainable(b.self.optional), ...named, passGlobal: true, throws: true },
+    removeAttribute: { ...chainable(b.self.optional), ...named, capability: "heap", throws: true },
     removed: { getter: b.bool.optional },
     replace: contentOp(b.self.optional),
     selfClosing: { getter: b.bool.optional },
@@ -126,7 +134,7 @@ export const Element = b.class({
       ...chainable(b.self.optional),
       args: { name: text, value: text },
       expected: { name: "Expected string", value: "Expected string" },
-      passGlobal: true,
+      capability: "heap",
       throws: true,
     },
     setInnerContent: contentOp(b.self.optional),

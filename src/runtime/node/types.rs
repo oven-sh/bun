@@ -354,7 +354,7 @@ impl StringOrBuffer<'static> {
     /// `Ok(true)` on success, `Ok(false)` if `value` is not a string/buffer
     /// type. `*out` is left untouched on `Ok(false)` / `Err`.
     ///
-    /// Hot callers (e.g. `NodeHTTPResponse::write_or_end`) should use this
+    /// Hot callers should use this
     /// directly — returning `JsResult<Option<StringOrBuffer>>` by value lowers
     /// to ~128B of `vmovups` stack-to-stack copies per call which the
     /// `Option<>`-returning wrappers below cannot always NRVO away.
@@ -446,16 +446,20 @@ impl StringOrBuffer<'static> {
         Ok(parsed)
     }
 
-    /// Like [`from_js`](Self::from_js), but for a work-pool job that reads the bytes. Strings are
-    /// thread-isolated, and buffers are pinned and GC-rooted (see [`buffer_from_js`](Self::buffer_from_js)).
+    /// For a work-pool job that reads the bytes.
     #[inline]
-    pub(crate) fn from_js_async(
+    pub(crate) fn thread_isolated_string(
         global: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<Option<ThreadIsolated<Self>>> {
-        let parsed = Self::from_js_maybe_async(global, value, Flavor::Async, StringObjects::Allow)?;
-        // SAFETY: parsed with `Flavor::Async`.
-        Ok(parsed.map(|v| unsafe { ThreadIsolated::new(v) }))
+        str: bun_core::String,
+    ) -> ThreadIsolated<Self> {
+        let isolated = shared_or_utf8(
+            global,
+            str.into_utf8_with_string_thread_isolated(),
+            Self::ThreadIsolatedString,
+            Self::Utf8,
+        );
+        // SAFETY: `ThreadIsolatedString` or `Utf8`.
+        unsafe { ThreadIsolated::new(isolated) }
     }
 
     #[inline]
@@ -465,24 +469,6 @@ impl StringOrBuffer<'static> {
         encoding: Encoding,
     ) -> JsResult<Option<Self>> {
         Self::from_js_with_encoding_maybe_async(
-            global,
-            value,
-            encoding,
-            Flavor::Sync,
-            StringObjects::Allow,
-        )
-    }
-
-    /// Out-param convenience wrapper — see [`from_js_with_encoding_maybe_async_into`].
-    #[inline]
-    pub(crate) fn from_js_with_encoding_into(
-        out: &mut Self,
-        global: &JSGlobalObject,
-        value: JSValue,
-        encoding: Encoding,
-    ) -> JsResult<bool> {
-        Self::from_js_with_encoding_maybe_async_into(
-            out,
             global,
             value,
             encoding,

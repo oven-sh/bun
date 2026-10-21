@@ -10,13 +10,23 @@ using namespace JSC;
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSClassConstructor, InternalFunction);
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSClassConstructor);
 
-void analyzeInternalFields(JSCell* cell, HeapAnalyzer& analyzer, std::span<const WriteBarrier<Unknown>> fields, std::span<const ASCIILiteral> names)
+GCClient::IsoSubspace* createSubspaceForClass(VM& vm, unsigned classIndex, size_t cellSize)
 {
-    VM& vm = cell->vm();
-    for (size_t i = 0; i < fields.size(); ++i) {
-        if (JSValue value = fields[i].get(); value && value.isCell())
-            analyzer.analyzePropertyNameEdge(cell, value.asCell(), Identifier::fromString(vm, names[i]).impl());
-    }
+    RELEASE_ASSERT(cellSize <= MarkedSpace::largeCutoff);
+    return WebCore::subspaceForImplSlow(
+        vm,
+        WebCore::SubspaceForInit { static_cast<unsigned>(cellSize), JSDestructibleObject::numberOfLowerTierPreciseCells, WebCore::SubspaceForInit::CellType::Destructible, false },
+        WebCore::SubspaceSlots {
+            OBJECT_OFFSETOF(WebCore::ExtendedDOMClientIsoSubspaces, m_clientSubspaceForBindgenClass) + classIndex * sizeof(GCClient::IsoSubspace*),
+            OBJECT_OFFSETOF(WebCore::ExtendedDOMIsoSubspaces, m_subspaceForBindgenClass) + classIndex * sizeof(IsoSubspace*),
+        },
+        nullptr);
+}
+
+void analyzeInternalField(JSCell* cell, HeapAnalyzer& analyzer, const WriteBarrier<Unknown>& field, ASCIILiteral name)
+{
+    if (JSValue value = field.get(); value && value.isCell())
+        analyzer.analyzePropertyNameEdge(cell, value.asCell(), Identifier::fromString(cell->vm(), name).impl());
 }
 
 const ClassInfo JSClassConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSClassConstructor) };

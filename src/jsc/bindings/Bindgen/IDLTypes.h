@@ -129,6 +129,11 @@ struct IDLRawBufferSource : WebCore::IDLType<JSC::JSValue> {
     using SequenceStorageType = void;
 };
 
+// A function, or a proxy of one, as the `JSValue` itself. See IDLRawAny.
+struct IDLRawCallable : WebCore::IDLType<JSC::JSValue> {
+    using SequenceStorageType = void;
+};
+
 // An instance of a generated class, as the cell itself. The caller's frame keeps it alive.
 template<typename JSClass>
 struct IDLRawInterface : WebCore::IDLType<JSClass*> {

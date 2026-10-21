@@ -255,9 +255,6 @@ const DEFAULT_MAIN_FIELDS_BUN: &[&[u8]] = &[
 /// `bun_bundler::options` so `use bun_bundler::options::TargetExt;` makes
 /// `.bake_graph()` etc. available on the single canonical type.
 pub trait TargetExt: Copy {
-    // `fromJS` lives in `bun_bundler_jsc::options_jsc::target_from_js`
-    // (PORTING.md "*_jsc alias" rule).
-
     fn bake_graph(self) -> crate::bake_types::Graph;
     fn out_extensions(self) -> StringHashMap<&'static [u8]>;
 
@@ -343,7 +340,7 @@ pub trait LoaderExt: Copy {
     fn to_mime_type(self, paths: &[&[u8]]) -> bun_http_types::MimeType::MimeType;
     fn from_mime_type(mime_type: bun_http::MimeType) -> Loader;
 
-    // `fromJS` lives in `bun_bundler_jsc::options_jsc::loader_from_js`
+    // `fromJS` lives in `bun_bundler_jsc::options_jsc::loader_from_slice`
     // (PORTING.md "*_jsc alias" rule).
 
     // `is_type_script` / `is_java_script_like*` spelling-aliases

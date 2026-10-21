@@ -8,7 +8,6 @@ use std::rc::Rc;
 use bun_jsc::{
     self as jsc, CallFrame, CommonAbortReason, CommonAbortReasonExt as _, GlobalRef,
     JSGlobalObject, JSPromise, JSValue, JsCell, JsCellRefExt as _, JsRef, JsResult, SystemError,
-    bun_string_jsc,
 };
 // Note: `bun_jsc::VirtualMachine` is a *module* re-export
 // (`pub use self::virtual_machine as VirtualMachine;`). The struct lives at
@@ -17,11 +16,14 @@ use bun_jsc::{
 use bun_jsc::virtual_machine::VirtualMachine;
 
 use bun_collections::ByteVecExt;
+use bun_jsc::bindgen::{self, Callable, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_ptr::{BackRef, CellRefCounted, DetachablePtr, RawSlice, RefPtr};
 use bun_sys::Error as SysError;
 
 use crate::api::native_promise_context;
-use crate::generated_bindgen::html_rewriter::{ContentOptions, js_HTMLRewriterTransform};
+use crate::generated_bindgen::html_rewriter::{
+    AttributeIteratorResult, ContentOptions, js_HTMLRewriterTransform,
+};
 use crate::generated_classes::{js_HTMLRewriter, js_Response};
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::sink::JSSink;
@@ -119,18 +121,18 @@ macro_rules! lol_content_ops {
     ) => {
         $(
             $(#[$attr])*
-            pub(crate) fn $name(
+            pub(crate) fn $name<'a>(
                 &self,
-                this_value: JSValue,
-                global_object: &JSGlobalObject,
+                this_value: JsWrapper<'a, Self>,
+                heap: &JsHeap<'a>,
                 content: &[u8],
                 content_options: &ContentOptions,
-            ) -> JsResult<Option<JSValue>> {
+            ) -> bindgen::Result<'a, Option<JsWrapper<'a, Self>>> {
                 let Some(raw) = self.$field.get_mut() else {
                     return Ok(None);
                 };
                 // lol-html content ops are infallible, so the UTF-8 check is the only throw path.
-                let content_str = utf8_or_throw(global_object, content)?;
+                let content_str = utf8_or_error(heap, content)?;
                 $Raw::$name(raw, content_str, content_type(content_options));
                 Ok(Some(this_value))
             }
@@ -2550,6 +2552,14 @@ fn create_lolhtml_error(global: &JSGlobalObject, message: &dyn core::fmt::Displa
     value
 }
 
+/// [`create_lolhtml_error`], for a member of `html_rewriter.bind.ts` to return.
+#[cold]
+fn lolhtml_error<'a>(heap: &JsHeap<'a>, message: &dyn core::fmt::Display) -> bindgen::Error<'a> {
+    // SAFETY: it makes an `Error` and a string, and defines `name`.
+    let global = unsafe { heap.global() };
+    bindgen::Error::from_value(JsLocal::new(heap, create_lolhtml_error(global, message)))
+}
+
 /// lol-html error `Display` text → owned `bun.String`.
 fn lol_err_string(e: impl core::fmt::Display) -> BunString {
     BunString::clone_utf8(e.to_string().as_bytes())
@@ -2562,6 +2572,11 @@ fn utf8_or_throw<'a>(global: &JSGlobalObject, bytes: &'a [u8]) -> JsResult<&'a s
     core::str::from_utf8(bytes).map_err(|e| global.throw_value(create_lolhtml_error(global, &e)))
 }
 
+/// [`utf8_or_throw`], for a member of `html_rewriter.bind.ts`.
+fn utf8_or_error<'a, 'b>(heap: &JsHeap<'a>, bytes: &'b [u8]) -> bindgen::Result<'a, &'b str> {
+    core::str::from_utf8(bytes).map_err(|e| lolhtml_error(heap, &e))
+}
+
 /// Decode a raw-`JSValue` setter argument to owned UTF-8. `to_utf8` runs
 /// ToString (user `toString()`/`[Symbol.toPrimitive]`), so callers MUST do
 /// this BEFORE `DetachablePtr::get_mut`: the re-entered JS would alias its
@@ -2571,17 +2586,20 @@ fn setter_utf8_arg(global: &JSGlobalObject, value: JSValue) -> JsResult<String> 
     Ok(utf8_or_throw(global, slice.slice())?.to_owned())
 }
 
-fn string_to_js(s: &str, global: &JSGlobalObject) -> JsResult<JSValue> {
-    bun_string_jsc::create_utf8_for_js(global, s.as_bytes())
+fn string_to_js<'a>(s: &str, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+    bindgen::to_js::utf8(heap, s)
 }
 
 /// lol-html's optional getters (`get_attribute`, `Doctype` name/ids) return
 /// `None` for "absent" and `Some("")` for present-but-empty. Map only the
 /// former to `null` so `<div a="">` reads as `""`, not `null`.
-fn opt_string_to_js_or_null(s: Option<String>, global: &JSGlobalObject) -> JsResult<JSValue> {
+fn opt_string_to_js_or_null<'a>(
+    s: Option<String>,
+    heap: &JsHeap<'a>,
+) -> bindgen::Result<'a, JsLocal<'a>> {
     match s {
-        None => Ok(JSValue::NULL),
-        Some(s) => string_to_js(&s, global),
+        None => Ok(JsLocal::NULL),
+        Some(s) => string_to_js(&s, heap),
     }
 }
 
@@ -2612,7 +2630,10 @@ impl TextChunk {
         replace,
     }
 
-    pub(crate) fn remove(&self, this_value: JSValue) -> Option<JSValue> {
+    pub(crate) fn remove<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+    ) -> Option<JsWrapper<'a, Self>> {
         self.text_chunk.get_mut()?.remove();
         Some(this_value)
     }
@@ -2654,28 +2675,31 @@ impl DocType {
     }
 
     /// The doctype name.
-    pub(crate) fn get_name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_name<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         let Some(dt) = self.doctype.get_mut() else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(JsLocal::UNDEFINED);
         };
-        opt_string_to_js_or_null(dt.name(), global_object)
+        opt_string_to_js_or_null(dt.name(), heap)
     }
 
-    pub(crate) fn get_system_id(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_system_id<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         let Some(dt) = self.doctype.get_mut() else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(JsLocal::UNDEFINED);
         };
-        opt_string_to_js_or_null(dt.system_id(), global_object)
+        opt_string_to_js_or_null(dt.system_id(), heap)
     }
 
-    pub(crate) fn get_public_id(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_public_id<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         let Some(dt) = self.doctype.get_mut() else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(JsLocal::UNDEFINED);
         };
-        opt_string_to_js_or_null(dt.public_id(), global_object)
+        opt_string_to_js_or_null(dt.public_id(), heap)
     }
 
-    pub(crate) fn remove(&self, this_value: JSValue) -> Option<JSValue> {
+    pub(crate) fn remove<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+    ) -> Option<JsWrapper<'a, Self>> {
         self.doctype.get_mut()?.remove();
         Some(this_value)
     }
@@ -2742,23 +2766,27 @@ impl Comment {
         replace,
     }
 
-    pub(crate) fn remove(&self, this_value: JSValue) -> Option<JSValue> {
+    pub(crate) fn remove<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+    ) -> Option<JsWrapper<'a, Self>> {
         self.comment.get_mut()?.remove();
         Some(this_value)
     }
 
-    pub(crate) fn get_text(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_text<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         let Some(comment) = self.comment.get_mut() else {
-            return Ok(JSValue::NULL);
+            return Ok(JsLocal::NULL);
         };
-        string_to_js(&comment.text(), global_object)
+        string_to_js(&comment.text(), heap)
     }
 
-    pub(crate) fn set_text(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+    pub(crate) fn set_text(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<()> {
+        let global = cx.global();
         if self.comment.is_detached() {
             return Ok(());
         }
-        let text = setter_utf8_arg(global, value)?;
+        let text = setter_utf8_arg(global, value.to_js())?;
         let Some(comment) = self.comment.get_mut() else {
             return Ok(());
         };
@@ -2815,23 +2843,27 @@ impl EndTag {
         after,
     }
 
-    pub(crate) fn remove(&self, this_value: JSValue) -> Option<JSValue> {
+    pub(crate) fn remove<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+    ) -> Option<JsWrapper<'a, Self>> {
         self.end_tag.get_mut()?.remove();
         Some(this_value)
     }
 
-    pub(crate) fn get_name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_name<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         let Some(end_tag) = self.end_tag.get_mut() else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(JsLocal::UNDEFINED);
         };
-        string_to_js(&end_tag.name(), global_object)
+        string_to_js(&end_tag.name(), heap)
     }
 
-    pub(crate) fn set_name(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+    pub(crate) fn set_name(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<()> {
+        let global = cx.global();
         if self.end_tag.is_detached() {
             return Ok(());
         }
-        let name = setter_utf8_arg(global, value)?;
+        let name = setter_utf8_arg(global, value.to_js())?;
         let Some(end_tag) = self.end_tag.get_mut() else {
             return Ok(());
         };
@@ -2872,10 +2904,10 @@ impl AttributeIterator {
         self.detach();
     }
 
-    pub(crate) fn next(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let done_label = bun_core::EncodedSlice::latin1(b"done");
-        let value_label = bun_core::EncodedSlice::latin1(b"value");
-
+    pub(crate) fn next<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+    ) -> bindgen::Result<'a, AttributeIteratorResult<'a>> {
         // Detached (the handler returned, or an attribute was mutated), the
         // element itself is gone, or we ran off the end of the buffer.
         let attribute = self
@@ -2885,35 +2917,23 @@ impl AttributeIterator {
             .and_then(|raw| raw.attributes().get(self.index.get()));
         let Some(attribute) = attribute else {
             self.detach();
-            return JSValue::create_object2(
-                global_object,
-                &done_label,
-                &value_label,
-                JSValue::TRUE,
-                JSValue::UNDEFINED,
-            );
+            return Ok(AttributeIteratorResult {
+                value: JsLocal::UNDEFINED,
+                done: true,
+            });
         };
         self.index.set(self.index.get() + 1);
 
         let value = attribute.value();
         let name = attribute.name();
 
-        JSValue::create_object2(
-            global_object,
-            &done_label,
-            &value_label,
-            JSValue::FALSE,
-            bun_string_jsc::to_js_array(
-                global_object,
-                &[
-                    BunString::clone_utf8(name.as_bytes()),
-                    BunString::clone_utf8(value.as_bytes()),
-                ],
-            )?,
-        )
+        Ok(AttributeIteratorResult {
+            value: bindgen::to_js::array(heap, [name, value], bindgen::to_js::utf8)?,
+            done: false,
+        })
     }
 
-    pub(crate) fn get_this(&self, this_value: JSValue) -> JSValue {
+    pub(crate) fn get_this<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
         this_value
     }
 }
@@ -2980,18 +3000,16 @@ impl Element {
         self.detach_attribute_iterators();
     }
 
-    pub(crate) fn on_end_tag(
+    pub(crate) fn on_end_tag<'a>(
         &self,
-        this_value: JSValue,
-        global_object: &JSGlobalObject,
-        function: JSValue,
-    ) -> JsResult<Option<JSValue>> {
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+        function: JsLocal<'a, Callable>,
+    ) -> bindgen::Result<'a, Option<JsWrapper<'a, Self>>> {
+        let global_object = cx.global();
         let Some(el) = self.element.get_mut() else {
             return Ok(None);
         };
-        if function.is_undefined_or_null() || !function.is_callable() {
-            return Err(global_object.throw_type_error(format_args!("Expected a function")));
-        }
 
         // Every matching `on()` handler gets this lol-html element: its user data keeps the slot.
         let replaced = el.user_data().downcast_ref::<EndTagSlot>().copied();
@@ -3000,12 +3018,12 @@ impl Element {
         // condition lol-html's C API mapped to the "No end tag." error.
         let Some(handlers) = el.end_tag_handlers() else {
             let err = create_lolhtml_error(global_object, &"No end tag.");
-            return Err(global_object.throw_value(err));
+            return Err(global_object.throw_value(err).into());
         };
 
         // Only `invalidate()` clears `pipe`, and it detaches `element` in the same call.
         let pipe = self.pipe.get().expect("attached Element without its pipe");
-        let slot = pipe.hold_end_tag_callback(global_object, replaced, function)?;
+        let slot = pipe.hold_end_tag_callback(global_object, replaced, function.to_js())?;
         let (Some(slot), None) = (slot, replaced) else {
             // No end tag can come, or the earlier call's handler now reads the new callback.
             return Ok(Some(this_value));
@@ -3042,22 +3060,26 @@ impl Element {
     }
 
     /// Returns a boolean indicating whether an attribute exists on the element.
-    pub(crate) fn has_attribute(&self, global: &JSGlobalObject, name: &[u8]) -> JsResult<bool> {
+    pub(crate) fn has_attribute<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+        name: &[u8],
+    ) -> bindgen::Result<'a, bool> {
         let Some(el) = self.element.get_mut() else {
             return Ok(false);
         };
-        let name = utf8_or_throw(global, name)?;
+        let name = utf8_or_error(heap, name)?;
         Ok(el.has_attribute(name))
     }
 
     /// Sets an attribute to a provided value, creating the attribute if it does not exist.
-    pub(crate) fn set_attribute(
+    pub(crate) fn set_attribute<'a>(
         &self,
-        this_value: JSValue,
-        global_object: &JSGlobalObject,
+        this_value: JsWrapper<'a, Self>,
+        heap: &JsHeap<'a>,
         name: &[u8],
         value: &[u8],
-    ) -> JsResult<Option<JSValue>> {
+    ) -> bindgen::Result<'a, Option<JsWrapper<'a, Self>>> {
         let Some(el) = self.element.get_mut() else {
             return Ok(None);
         };
@@ -3066,22 +3088,21 @@ impl Element {
         // to, so end their iteration rather than let them repeat or skip one.
         self.detach_attribute_iterators();
 
-        let name = utf8_or_throw(global_object, name)?;
-        let value = utf8_or_throw(global_object, value)?;
+        let name = utf8_or_error(heap, name)?;
+        let value = utf8_or_error(heap, value)?;
         if let Err(e) = el.set_attribute(name, value) {
-            let err = create_lolhtml_error(global_object, &e);
-            return Err(global_object.throw_value(err));
+            return Err(lolhtml_error(heap, &e));
         }
         Ok(Some(this_value))
     }
 
     /// Removes the attribute.
-    pub(crate) fn remove_attribute(
+    pub(crate) fn remove_attribute<'a>(
         &self,
-        this_value: JSValue,
-        global_object: &JSGlobalObject,
+        this_value: JsWrapper<'a, Self>,
+        heap: &JsHeap<'a>,
         name: &[u8],
-    ) -> JsResult<Option<JSValue>> {
+    ) -> bindgen::Result<'a, Option<JsWrapper<'a, Self>>> {
         let Some(el) = self.element.get_mut() else {
             return Ok(None);
         };
@@ -3090,7 +3111,7 @@ impl Element {
         // AttributeIterator's index would skip the one that took this slot.
         self.detach_attribute_iterators();
 
-        let name = utf8_or_throw(global_object, name)?;
+        let name = utf8_or_error(heap, name)?;
         el.remove_attribute(name);
         Ok(Some(this_value))
     }
@@ -3111,29 +3132,36 @@ impl Element {
     }
 
     /// Removes the element with all its content.
-    pub(crate) fn remove(&self, this_value: JSValue) -> Option<JSValue> {
+    pub(crate) fn remove<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+    ) -> Option<JsWrapper<'a, Self>> {
         self.element.get_mut()?.remove();
         Some(this_value)
     }
 
     /// Removes the start tag and end tag of the element but keeps its inner content intact.
-    pub(crate) fn remove_and_keep_content(&self, this_value: JSValue) -> Option<JSValue> {
+    pub(crate) fn remove_and_keep_content<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+    ) -> Option<JsWrapper<'a, Self>> {
         self.element.get_mut()?.remove_and_keep_content();
         Some(this_value)
     }
 
-    pub(crate) fn get_tag_name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_tag_name<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         let Some(el) = self.element.get_mut() else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(JsLocal::UNDEFINED);
         };
-        string_to_js(&el.tag_name(), global_object)
+        string_to_js(&el.tag_name(), heap)
     }
 
-    pub(crate) fn set_tag_name(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+    pub(crate) fn set_tag_name(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<()> {
+        let global = cx.global();
         if self.element.is_detached() {
             return Ok(());
         }
-        let name = setter_utf8_arg(global, value)?;
+        let name = setter_utf8_arg(global, value.to_js())?;
         let Some(el) = self.element.get_mut() else {
             return Ok(());
         };
@@ -3159,7 +3187,9 @@ impl Element {
         Some(self.element.get_mut()?.namespace_uri())
     }
 
-    pub(crate) fn get_attributes(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
+    pub(crate) fn get_attributes(&self, heap: &JsHeap<'_>) -> Option<JSValue> {
+        // SAFETY: making the iterator's object runs no JavaScript.
+        let global_object = unsafe { heap.global() };
         if self.element.is_detached() {
             return None;
         }

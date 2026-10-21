@@ -4,15 +4,15 @@ use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::bindgen::{
-    self, BufferSource, IntoError as _, JsBytes, JsHeap, JsLocal, JsPayload as _, JsScope,
-    JsWrapper, JsWrapperStrong, PinnedBytes, StringOrJsBytes,
+    self, BufferSource, Callable, IntoError as _, JsBytes, JsHeap, JsLocal, JsPayload as _,
+    JsScope, JsWrapper, JsWrapperStrong, PinnedBytes, StringOrJsBytes,
 };
 use crate::generated_bindgen::bindgen_test::{
-    TestAnything, TestBare, TestChoice, TestColor, TestColorOrRest, TestCounterClass,
-    TestCounterInternalFields as _, TestFailure, TestFlag, TestHolderClass, TestNames, TestOptions,
-    TestOptionsEcho, TestOuter, TestTextOrBytes, TestTokenClass, TestValue, js_TestRefCounted,
+    TestAnything, TestBare, TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag,
+    TestNames, TestOptions, TestOptionsEcho, TestOuter, TestTextOrBytes, TestValue, js_TestCounter,
+    js_TestRefCounted,
 };
-use crate::{JSGlobalObject, JSString, JSValue, JsResult};
+use crate::{JSString, JSValue, JsResult};
 use bun_ptr::{AsCtxPtr as _, RefPtr};
 
 // This example should be kept in sync with bindgen's documentation
@@ -274,10 +274,10 @@ pub(crate) fn string_or_object_echo(text: &bun_core::String) -> bun_core::String
 pub(crate) fn sum_before_and_after_callback<'a>(
     cx: &mut JsScope<'a>,
     buffer: JsLocal<'a, BufferSource>,
-    callback: JsLocal<'a>,
+    callback: JsLocal<'a, Callable>,
 ) -> bindgen::Result<'a, [u32; 2]> {
     let before = buffer.with_bytes(&cx.heap, sum);
-    call(cx, callback)?;
+    callback.call(cx, JsLocal::UNDEFINED, &[])?;
     Ok([before, buffer.with_bytes(&cx.heap, sum)])
 }
 
@@ -293,32 +293,33 @@ pub(crate) fn bytes_of_then_copied(data: Vec<u8>, _: f64) -> Vec<u8> {
     data
 }
 
-fn call<'a>(cx: &mut JsScope<'a>, callback: JsLocal<'a>) -> bindgen::Result<'a, ()> {
-    let Some(callback) = callback.as_callable() else {
-        return Err(cx
-            .heap
-            .type_error(format_args!("callback must be a function")));
-    };
-    callback.call(cx, JsLocal::UNDEFINED, &[])?;
-    Ok(())
+pub(crate) fn call_or<'a>(
+    cx: &mut JsScope<'a>,
+    callback: Option<JsLocal<'a, Callable>>,
+    fallback: JsLocal<'a>,
+) -> bindgen::Result<'a, JsLocal<'a>> {
+    match callback {
+        Some(callback) => Ok(callback.call(cx, JsLocal::UNDEFINED, &[])?),
+        None => Ok(fallback),
+    }
 }
 
 pub(crate) fn bytes_before_and_after_callback<'a>(
     cx: &mut JsScope<'a>,
     data: JsBytes<'a>,
-    callback: JsLocal<'a>,
+    callback: JsLocal<'a, Callable>,
 ) -> bindgen::Result<'a, [Vec<u8>; 2]> {
     let before = data.get(&cx.heap).to_vec();
-    call(cx, callback)?;
+    callback.call(cx, JsLocal::UNDEFINED, &[])?;
     Ok([before, data.get(&cx.heap).to_vec()])
 }
 
 pub(crate) fn pinned_bytes_after_callback<'a>(
     cx: &mut JsScope<'a>,
     data: PinnedBytes,
-    callback: JsLocal<'a>,
+    callback: JsLocal<'a, Callable>,
 ) -> bindgen::Result<'a, Vec<u8>> {
-    call(cx, callback)?;
+    callback.call(cx, JsLocal::UNDEFINED, &[])?;
     let (bytes, data) = std::thread::scope(|scope| {
         scope
             .spawn(move || (data.to_vec(), data))
@@ -389,65 +390,79 @@ impl Drop for TestCounter {
     }
 }
 
-impl TestCounterClass for TestCounter {
-    type Error<'a> = bindgen::Error<'a>;
-
-    fn constructor<'a>(heap: &JsHeap<'a>, start: i32) -> bindgen::Result<'a, Self> {
+impl TestCounter {
+    pub(crate) fn constructor<'a>(heap: &JsHeap<'a>, start: i32) -> bindgen::Result<'a, Self> {
         if start < 0 {
             return Err(heap.range_error(format_args!("start must not be negative")));
         }
         Ok(Self::new(start))
     }
 
-    fn count(&self) -> i32 {
+    pub(crate) fn get_count(&self) -> i32 {
         self.count
     }
 
-    fn label(&self) -> impl AsRef<[u8]> {
+    pub(crate) fn get_label(&self) -> impl AsRef<[u8]> {
         &self.label
     }
 
-    fn set_label<'a>(&mut self, value: &'a [u8]) {
+    pub(crate) fn set_label<'a>(&mut self, value: &'a [u8]) {
         self.label = value.to_vec();
     }
 
-    fn tag<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+    pub(crate) fn get_tag<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         bindgen::to_js::array(heap, [self.count], bindgen::to_js::i32)
     }
 
-    fn same_tag<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
-        self.tag(heap)
+    pub(crate) fn get_same_tag<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+        self.get_tag(heap)
     }
 
-    fn increment(&mut self, by: i32) -> i32 {
+    pub(crate) fn increment(&mut self, by: i32) -> i32 {
         self.count = self.count.wrapping_add(by);
         self.count
     }
 
-    fn add_length<'a>(&mut self, text: &'a [u8], times: i32) -> i32 {
+    pub(crate) fn add_length<'a>(&mut self, text: &'a [u8], times: i32) -> i32 {
         self.increment((text.len() as i32).wrapping_mul(times))
     }
 
-    fn add_number(&mut self, by: i32) -> i32 {
+    pub(crate) fn add_number(&mut self, by: i32) -> i32 {
         self.increment(by)
     }
 
-    fn forget_tag<'a>(&self, this: JsWrapper<'a, Self>, heap: &JsHeap<'a>) {
-        this.set_tag_field(heap, JsLocal::UNDEFINED);
+    pub(crate) fn forget_tag<'a>(&self, this: JsWrapper<'a, Self>, heap: &JsHeap<'a>) {
+        // SAFETY: storing a value runs no JavaScript.
+        js_TestCounter::tag_set_cached(this.to_js(), unsafe { heap.global() }, JSValue::ZERO);
     }
 
-    fn listen<'a>(&self, this: JsWrapper<'a, Self>, heap: &JsHeap<'a>, listener: JsLocal<'a>) {
-        this.set_listener_field(heap, listener);
+    pub(crate) fn listen<'a>(
+        &self,
+        this: JsWrapper<'a, Self>,
+        heap: &JsHeap<'a>,
+        listener: JsLocal<'a>,
+    ) {
+        // SAFETY: storing a value runs no JavaScript.
+        js_TestCounter::listener_set_cached(
+            this.to_js(),
+            unsafe { heap.global() },
+            listener.to_js(),
+        );
     }
 
-    fn notify<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> bindgen::Result<'a, i32> {
-        if let Some(listener) = this.listener_field(&cx.heap).as_callable() {
+    pub(crate) fn notify<'a>(
+        this: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+    ) -> bindgen::Result<'a, i32> {
+        if let Some(listener) = js_TestCounter::listener_get_cached(this.to_js())
+            && let Some(listener) = JsLocal::new(&cx.heap, listener).as_callable()
+        {
             listener.call(cx, this.as_value(), &[])?;
         }
         Ok(this.with(&cx.payloads, |counter| counter.count))
     }
 
-    fn plus<'a>(
+    pub(crate) fn plus<'a>(
         this: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
         other: JsWrapper<'a, Self>,
@@ -456,19 +471,19 @@ impl TestCounterClass for TestCounter {
         this.with(&cx.payloads, |counter| counter.count.wrapping_add(other))
     }
 
-    fn starting<'a>(heap: &JsHeap<'a>, at: i32) -> JsWrapper<'a, Self> {
+    pub(crate) fn starting<'a>(heap: &JsHeap<'a>, at: i32) -> JsWrapper<'a, Self> {
         Self::new(at).into_js(heap)
     }
 
-    fn alive() -> usize {
+    pub(crate) fn alive() -> usize {
         ALIVE.load(Ordering::SeqCst)
     }
 
-    fn static_count() -> usize {
+    pub(crate) fn get_static_count() -> usize {
         Self::alive()
     }
 
-    fn limit<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+    pub(crate) fn get_limit<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         Err(heap.range_error(format_args!("there is no limit")))
     }
 }
@@ -477,18 +492,18 @@ pub(crate) struct TestHolder {
     counter: JsWrapperStrong<TestCounter>,
 }
 
-impl TestHolderClass for TestHolder {
-    fn constructor<'a>(heap: &JsHeap<'a>, counter: JsWrapper<'a, TestCounter>) -> Self {
+impl TestHolder {
+    pub(crate) fn constructor<'a>(heap: &JsHeap<'a>, counter: JsWrapper<'a, TestCounter>) -> Self {
         TestHolder {
             counter: counter.to_strong(heap),
         }
     }
 
-    fn counter<'a>(&self, heap: &JsHeap<'a>) -> JsWrapper<'a, TestCounter> {
+    pub(crate) fn get_counter<'a>(&self, heap: &JsHeap<'a>) -> JsWrapper<'a, TestCounter> {
         self.counter.get(heap)
     }
 
-    fn increment_counter<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> i32 {
+    pub(crate) fn increment_counter<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> i32 {
         let counter = this.with(&cx.payloads, |holder| holder.counter.get(&cx.heap));
         counter.with_mut(&mut cx.payloads, |counter| counter.increment(1))
     }
@@ -535,24 +550,24 @@ impl TestRefCounted {
         self.value.set(value);
     }
 
-    pub(crate) fn get_listener(&self, this_value: JSValue, _: &JSGlobalObject) -> JSValue {
-        js_TestRefCounted::listener_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
+    pub(crate) fn get_listener(&self, this: JsWrapper<'_, Self>) -> JSValue {
+        js_TestRefCounted::listener_get_cached(this.to_js()).unwrap_or(JSValue::UNDEFINED)
     }
 
     pub(crate) fn set_listener(
         &self,
-        this_value: JSValue,
-        global: &JSGlobalObject,
-        value: JSValue,
+        this: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
     ) {
-        js_TestRefCounted::listener_set_cached(this_value, global, value);
+        js_TestRefCounted::listener_set_cached(this.to_js(), cx.global(), value.to_js());
     }
 
-    pub(crate) fn notify(&self, this_value: JSValue, global: &JSGlobalObject) -> JsResult<i32> {
-        if let Some(listener) = js_TestRefCounted::listener_get_cached(this_value)
+    pub(crate) fn notify(&self, this: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<i32> {
+        if let Some(listener) = js_TestRefCounted::listener_get_cached(this.to_js())
             && listener.is_callable()
         {
-            listener.call(global, this_value, &[])?;
+            listener.call(cx.global(), this.to_js(), &[])?;
         }
         Ok(self.value.get())
     }
@@ -566,8 +581,11 @@ impl TestRefCounted {
         self.value.set(-1);
     }
 
-    pub(crate) fn or_undefined(&self, this_value: JSValue) -> Option<JSValue> {
-        (self.value.get() >= 0).then_some(this_value)
+    pub(crate) fn or_undefined<'a>(
+        &self,
+        this: JsWrapper<'a, Self>,
+    ) -> Option<JsWrapper<'a, Self>> {
+        (self.value.get() >= 0).then_some(this)
     }
 
     pub(crate) fn is_same(&self, other: Option<&Self>) -> bool {
@@ -589,8 +607,8 @@ impl TestRefCounted {
         REF_COUNTED_ALIVE.load(Ordering::SeqCst)
     }
 
-    pub(crate) fn value_from_js(object: JSValue) -> Option<i32> {
-        Some(object.as_class_ref::<Self>()?.value.get())
+    pub(crate) fn value_from_js(object: JsLocal<'_>) -> Option<i32> {
+        Some(object.to_js().as_class_ref::<Self>()?.value.get())
     }
 }
 
@@ -598,8 +616,8 @@ pub(crate) struct TestToken {
     id: u32,
 }
 
-impl TestTokenClass for TestToken {
-    fn id(&self) -> u32 {
+impl TestToken {
+    pub(crate) fn get_id(&self) -> u32 {
         self.id
     }
 }

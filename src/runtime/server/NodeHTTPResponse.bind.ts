@@ -1,10 +1,21 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
-const eventHandler = { getter: b.any, setter: true, passThis: true, passGlobal: true } as const;
-const head = { statusCode: b.any, statusMessage: b.any, headers: b.any };
-const autoHeaders = { autoHeaderBits: b.any, keepAliveTimeoutSecs: b.any };
-const method = { returns: b.any, passGlobal: true, throws: true } as const;
-const body = { chunk: b.any, encoding: b.any, callback: b.any, strictContentLength: b.any };
+export const Chunk = b.union({ text: b.string.allowStringObject, buffer: b.bufferSource.allowShared });
+/** `other`: a function is the callback, a falsy value is the default, and it is only checked if there is a chunk. */
+export const ChunkEncoding = b.union({ name: b.string.utf8, other: b.any });
+
+const eventHandler = { getter: b.any, setter: { capability: "js" }, passThis: true } as const;
+const head = {
+  statusCode: b.i32.validateInteger(100, 999).default(200),
+  statusMessage: b.string.loose.utf8.nullable,
+  /** The flat `[name, value, ...]` array, which C++ reads in place. */
+  headers: b.any,
+};
+const autoHeaders = { autoHeaderBits: b.u32.default(0), keepAliveTimeoutSecs: b.u32.default(0) };
+const method = { returns: b.any, capability: "js", throws: true } as const;
+const chunk = { chunk: Chunk.nullable, encoding: ChunkEncoding };
+const strictContentLength = b.f64.optional;
+const body = { ...chunk, callback: b.callable.optional, strictContentLength };
 
 /** The native handle shared by a `node:http` `ServerResponse` and its `IncomingMessage`: `kHandle` in `src/js/internal/http.ts`. */
 export const NodeHTTPResponse = b.class({
@@ -14,37 +25,37 @@ export const NodeHTTPResponse = b.class({
   configurable: false,
   internalFields: ["onAborted", "onWritable", "onData", "pendingWriteBuffer"],
   proto: {
-    abort: { passGlobal: true },
+    abort: { capability: "js" },
     aborted: { getter: b.bool },
     bufferedAmount: { getter: b.u64 },
-    cork: { ...method, args: { callback: b.any } },
+    cork: { ...method, args: { callback: b.callable } },
     end: { ...method, args: body, passThis: true, length: 2 },
     finished: { getter: b.bool },
     flags: { getter: b.i32 },
     flushHeaders: {},
     getBytesWritten: { returns: b.usize },
     hasBody: { getter: b.i32 },
-    headersObject: { returns: b.any, passGlobal: true },
+    headersObject: { returns: b.any, capability: "js" },
     notifyWhenReadParsed: { returns: b.bool },
     onabort: { ...eventHandler, rustName: "on_abort" },
     ondata: { ...eventHandler, rustName: "on_data" },
     onwritable: { ...eventHandler, rustName: "on_writable" },
     pause: { returns: b.bool, rustName: "do_pause" },
     pauseReads: { rustName: "pause_socket_reads" },
-    ref: { passGlobal: true, rustName: "js_ref" },
+    ref: { rustName: "js_ref" },
     resume: { returns: b.bool, rustName: "do_resume" },
     takeRawHeaders: { ...method, args: { headers: b.any } },
-    takeRequestTrailers: { ...method, args: { useInsecureHTTPParser: b.any }, length: 0 },
-    unref: { passGlobal: true, rustName: "js_unref" },
+    takeRequestTrailers: { ...method, args: { useInsecureHTTPParser: b.bool.default(false) }, length: 0 },
+    unref: { rustName: "js_unref" },
     upgraded: { getter: b.bool },
     write: { ...method, args: body, length: 3 },
-    writeContinue: { passGlobal: true, throws: true },
-    writeHead: { args: { ...head, ...autoHeaders }, passGlobal: true, throws: true, length: 3 },
+    writeContinue: { capability: "js", throws: true },
+    writeHead: { args: { ...head, ...autoHeaders }, capability: "js", throws: true, length: 3 },
     writeHeadAndEnd: {
       ...method,
-      args: { ...head, chunk: b.any, encoding: b.any, strictContentLength: b.any, ...autoHeaders },
+      args: { ...head, ...chunk, strictContentLength, ...autoHeaders },
       passThis: true,
     },
-    writeInformational: { args: { data: b.any, encoding: b.any }, passGlobal: true, throws: true, length: 1 },
+    writeInformational: { args: chunk, capability: "js", throws: true, length: 1 },
   },
 });

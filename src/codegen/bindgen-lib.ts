@@ -7,6 +7,7 @@ import {
   BufferSourceType,
   type BytesOptions,
   BytesType,
+  CallableType,
   type ClassOptions,
   ClassRefType,
   ClassType,
@@ -46,6 +47,9 @@ export const string = new StringType();
 
 /** The JS value itself, as a `JsLocal<'a>`. */
 export const any = new AnyType();
+
+/** A function, or a proxy of one, as a `JsLocal<'a, Callable>`. */
+export const callable = new CallableType();
 
 /** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, BufferSource>`. `.arrayBuffer`. */
 export const bufferSource = new BufferSourceType();

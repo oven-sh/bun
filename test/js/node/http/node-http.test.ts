@@ -7589,8 +7589,30 @@ it("the native response's cork() treats a missing callback as undefined", async 
     await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
     expect(await promise).toMatchObject({
       code: "ERR_INVALID_ARG_TYPE",
-      message: 'The "cork" argument must be of type function. Received undefined',
+      message: "callback must be a function",
     });
+  } finally {
+    server.close();
+  }
+});
+
+it("end() throws when statusCode is NaN", async () => {
+  const { promise, resolve } = Promise.withResolvers<unknown>();
+  const server = http.createServer((req, res) => {
+    res.statusCode = NaN;
+    try {
+      resolve(res.end());
+    } catch (error) {
+      resolve(error);
+      res.statusCode = 500;
+      res.end();
+    }
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+    expect(await promise).toMatchObject({ name: "RangeError", code: "ERR_OUT_OF_RANGE" });
+    expect(response.status).toBe(500);
   } finally {
     server.close();
   }

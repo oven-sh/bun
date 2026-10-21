@@ -46,6 +46,10 @@ template<bool allowShared> struct IDLHumanReadableName<Bindgen::IDLRawBufferSour
     static constexpr auto humanReadableName = std::to_array("ArrayBuffer or ArrayBufferView");
 };
 
+template<> struct IDLHumanReadableName<Bindgen::IDLRawCallable> : BaseIDLHumanReadableName {
+    static constexpr auto humanReadableName = std::to_array("function");
+};
+
 template<typename JSClass, auto name> struct IDLHumanReadableName<Bindgen::IDLWrappedInterface<JSClass, name>> : BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = name;
 };
@@ -209,6 +213,22 @@ struct WebCore::Converter<Bun::Bindgen::IDLRawBufferSource<allowShared>> : Bun::
             ctx.throwTypeMustBe(globalObject, scope, "an ArrayBuffer or ArrayBufferView"_s);
         else
             Bun::Bindgen::throwNotUnsharedBufferSource(globalObject, scope, ctx);
+    }
+};
+
+template<> struct WebCore::Converter<Bun::Bindgen::IDLRawCallable> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawCallable> {
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<JSC::JSValue> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    {
+        if (!value.isCallable())
+            return std::nullopt;
+        return value;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwTypeMustBe(globalObject, scope, "a function"_s);
     }
 };
 

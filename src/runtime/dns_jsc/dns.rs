@@ -21,6 +21,7 @@ use bun_dns::{
 #[cfg(not(windows))]
 use bun_io::FilePoll;
 use bun_io::{self as Async, KeepAlive};
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -35,6 +36,8 @@ use bun_uws::{ConnectingSocket, Loop};
 use bun_wyhash::hash as wyhash;
 
 use super::cares_jsc::error_to_deferred;
+use crate::generated_bindgen::dns::LookupOptions;
+use crate::generated_bindgen::dns_internals::RecordTypeLabel;
 use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_cares_sys::c_ares_draft as c_ares;
@@ -73,7 +76,7 @@ type Sockaddr = netc::sockaddr;
 /// `Cell` / `JsCell` fields, so a shared borrow is sufficient and avoids the
 /// `noalias` hazard when c-ares callbacks re-enter on the same global resolver.
 #[inline]
-fn global_resolver(global_this: &JSGlobalObject) -> &Resolver {
+fn global_resolver(global_this: &JSGlobalObject) -> &'static Resolver {
     let gd = crate::jsc_hooks::global_dns_data().get_or_init(|| {
         let gd = GlobalData::init(global_this.bun_vm());
         gd.resolver.ref_(); // pin for the VM's lifetime
@@ -3896,6 +3899,18 @@ impl RecordType {
     pub(crate) const DEFAULT: Self = RecordType::A;
 }
 
+/// Non-NaN, integer-truncated `0..=65535`, else `ERR_SOCKET_BAD_PORT`.
+fn to_port_number(double: f64, global: &JSGlobalObject) -> JsResult<u16> {
+    if double.is_nan() {
+        return Err(jsc::Error::SOCKET_BAD_PORT.throw(global, format_args!("Invalid port number")));
+    }
+    let port = double as i64;
+    if (0..=65535).contains(&port) {
+        return Ok(port as u16);
+    }
+    Err(jsc::Error::SOCKET_BAD_PORT.throw(global, format_args!("Port number out of range: {port}")))
+}
+
 impl Resolver {
     /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
     #[inline]
@@ -4915,54 +4930,42 @@ impl Resolver {
 
     // ───────────── JS host fns: resolve* family ─────────────
 
-    // JSC-ABI shim for this associated fn is emitted by `export_host_fn!` at
-    // module scope; `#[host_fn]` cannot be used here because its Free expansion
-    // calls the function by bare name, which doesn't resolve inside `impl`.
     pub(crate) fn global_resolve(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+        cx: &mut JsScope<'_>,
+        name: &[u8],
+        record: RecordTypeLabel<'_>,
     ) -> JsResult<JSValue> {
-        let [name, record_type] = callframe.arguments_as_array::<2>();
-        let arguments_len = callframe.arguments_count() as usize;
-        if arguments_len < 1 {
-            return Err(global_this.throw_not_enough_arguments("resolve", 3, arguments_len));
-        }
-        global_resolver(global_this).resolve(global_this, name, record_type)
+        global_resolver(cx.global()).resolve(cx, name, record)
     }
 
     pub(crate) fn resolve(
         &self,
-        global_this: &JSGlobalObject,
-        name_value: JSValue,
-        record_type_value: JSValue,
+        cx: &mut JsScope<'_>,
+        name: &[u8],
+        record: RecordTypeLabel<'_>,
     ) -> JsResult<JSValue> {
+        let global_this = cx.global();
         let context = global_this.bun_vm().context_of_caller_no_frame().id();
         let record_type: RecordType = 'brk: {
-            if record_type_value.is_empty_or_undefined_or_null() || !record_type_value.is_string() {
+            let RecordTypeLabel::Label(record_type_label) = record else {
+                break 'brk RecordType::DEFAULT;
+            };
+            if record_type_label.is_empty() {
                 break 'brk RecordType::DEFAULT;
             }
-            let record_type_view = record_type_value.to_js_string_view(global_this)?;
-            if record_type_view.is_empty() {
-                break 'brk RecordType::DEFAULT;
-            }
-            match RECORD_TYPE_MAP.get(record_type_view.to_utf8().slice()) {
+            match RECORD_TYPE_MAP.get(record_type_label) {
                 Some(r) => *r,
                 None => {
                     return Err(global_this.throw_invalid_argument_property_value(
                         b"record",
                         Some("one of: A, AAAA, ANY, CAA, CNAME, MX, NAPTR, NS, PTR, SOA, SRV, TXT"),
-                        record_type_value,
+                        bun_string_jsc::create_utf8_for_js(global_this, record_type_label)?,
                     ));
                 }
             }
         };
 
-        if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
-            return Err(global_this.throw_invalid_argument_type("resolve", "name", "string"));
-        }
-        let name_view = name_value.to_js_string_view(global_this)?;
-        let name = name_view.to_utf8();
-        if name.slice().is_empty() {
+        if name.is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "resolve",
                 "name",
@@ -4971,83 +4974,45 @@ impl Resolver {
         }
 
         match record_type {
-            RecordType::A => {
-                self.do_resolve_cares::<AHostentWithTtls>(name.slice(), global_this, context)
-            }
+            RecordType::A => self.do_resolve_cares::<AHostentWithTtls>(name, global_this, context),
             RecordType::AAAA => {
-                self.do_resolve_cares::<AaaaHostentWithTtls>(name.slice(), global_this, context)
+                self.do_resolve_cares::<AaaaHostentWithTtls>(name, global_this, context)
             }
-            RecordType::ANY => self.do_resolve_cares::<c_ares::struct_any_reply>(
-                name.slice(),
-                global_this,
-                context,
-            ),
-            RecordType::CAA => self.do_resolve_cares::<c_ares::struct_ares_caa_reply>(
-                name.slice(),
-                global_this,
-                context,
-            ),
-            RecordType::CNAME => {
-                self.do_resolve_cares::<CnameHostent>(name.slice(), global_this, context)
+            RecordType::ANY => {
+                self.do_resolve_cares::<c_ares::struct_any_reply>(name, global_this, context)
             }
-            RecordType::MX => self.do_resolve_cares::<c_ares::struct_ares_mx_reply>(
-                name.slice(),
-                global_this,
-                context,
-            ),
-            RecordType::NAPTR => self.do_resolve_cares::<c_ares::struct_ares_naptr_reply>(
-                name.slice(),
-                global_this,
-                context,
-            ),
-            RecordType::NS => {
-                self.do_resolve_cares::<NsHostent>(name.slice(), global_this, context)
+            RecordType::CAA => {
+                self.do_resolve_cares::<c_ares::struct_ares_caa_reply>(name, global_this, context)
             }
-            RecordType::PTR => {
-                self.do_resolve_cares::<PtrHostent>(name.slice(), global_this, context)
+            RecordType::CNAME => self.do_resolve_cares::<CnameHostent>(name, global_this, context),
+            RecordType::MX => {
+                self.do_resolve_cares::<c_ares::struct_ares_mx_reply>(name, global_this, context)
             }
-            RecordType::SOA => self.do_resolve_cares::<c_ares::struct_ares_soa_reply>(
-                name.slice(),
-                global_this,
-                context,
-            ),
-            RecordType::SRV => self.do_resolve_cares::<c_ares::struct_ares_srv_reply>(
-                name.slice(),
-                global_this,
-                context,
-            ),
-            RecordType::TXT => self.do_resolve_cares::<c_ares::struct_ares_txt_reply>(
-                name.slice(),
-                global_this,
-                context,
-            ),
+            RecordType::NAPTR => {
+                self.do_resolve_cares::<c_ares::struct_ares_naptr_reply>(name, global_this, context)
+            }
+            RecordType::NS => self.do_resolve_cares::<NsHostent>(name, global_this, context),
+            RecordType::PTR => self.do_resolve_cares::<PtrHostent>(name, global_this, context),
+            RecordType::SOA => {
+                self.do_resolve_cares::<c_ares::struct_ares_soa_reply>(name, global_this, context)
+            }
+            RecordType::SRV => {
+                self.do_resolve_cares::<c_ares::struct_ares_srv_reply>(name, global_this, context)
+            }
+            RecordType::TXT => {
+                self.do_resolve_cares::<c_ares::struct_ares_txt_reply>(name, global_this, context)
+            }
         }
     }
 
-    // JSC-ABI shim emitted by `export_host_fn!` at module scope (see `global_resolve`).
-    pub(crate) fn global_reverse(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let arguments_len = callframe.arguments_count() as usize;
-        if arguments_len < 1 {
-            return Err(global_this.throw_not_enough_arguments("reverse", 1, arguments_len));
-        }
-        global_resolver(global_this).reverse(global_this, callframe.argument(0))
+    pub(crate) fn global_reverse(cx: &mut JsScope<'_>, ip: &[u8]) -> JsResult<JSValue> {
+        global_resolver(cx.global()).reverse(cx, ip)
     }
 
-    pub(crate) fn reverse(
-        &self,
-        global_this: &JSGlobalObject,
-        ip_value: JSValue,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn reverse(&self, cx: &mut JsScope<'_>, ip: &[u8]) -> JsResult<JSValue> {
+        let global_this = cx.global();
         let context = global_this.bun_vm().context_of_caller_no_frame().id();
-        if ip_value.is_empty_or_undefined_or_null() || !ip_value.is_string() {
-            return Err(global_this.throw_invalid_argument_type("reverse", "ip", "string"));
-        }
-        let ip_view = ip_value.to_js_string_view(global_this)?;
-        let ip_slice = ip_view.to_utf8();
-        if ip_slice.slice().is_empty() {
+        if ip.is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "reverse",
                 "ip",
@@ -5055,7 +5020,6 @@ impl Resolver {
             ));
         }
 
-        let ip = ip_slice.slice();
         let channel: *mut c_ares::Channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
@@ -5105,25 +5069,14 @@ impl Resolver {
         Ok(promise)
     }
 
-    // JSC-ABI shim emitted by `export_host_fn!` at module scope (see `global_resolve`).
     pub(crate) fn global_lookup(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+        cx: &mut JsScope<'_>,
+        name: &[u8],
+        options_object: &LookupOptions<'_>,
     ) -> JsResult<JSValue> {
-        let context = global_this.bun_vm().context_of_caller(callframe).id();
-        let arguments = callframe.arguments_as_array::<2>();
-        let arguments_len = callframe.arguments_count() as usize;
-        if arguments_len < 1 {
-            return Err(global_this.throw_not_enough_arguments("lookup", 2, arguments_len));
-        }
-
-        let name_value = arguments[0];
-        if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
-            return Err(global_this.throw_invalid_argument_type("lookup", "hostname", "string"));
-        }
-        let name_view = name_value.to_js_string_view(global_this)?;
-        let name = name_view.to_utf8();
-        if name.slice().is_empty() {
+        let global_this = cx.global();
+        let context = global_this.bun_vm().context_of_caller_no_frame().id();
+        if name.is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "lookup",
                 "hostname",
@@ -5131,41 +5084,35 @@ impl Resolver {
             ));
         }
 
-        let mut options = GetAddrInfoOptions::default();
         let mut port: u16 = 0;
 
-        if arguments_len > 1 && arguments[1].is_object() {
-            let options_object = arguments[1];
-
-            if let Some(port_value) = options_object.get_truthy(global_this, "port")? {
-                port = port_value.to_port_number(global_this)?;
-            }
-
-            options = match super::options_jsc::options_from_js(options_object, global_this) {
-                Ok(o) => o,
-                Err(err) => {
-                    use bun_dns::OptionsFromJsError as E;
-                    return match err {
-                        E::InvalidFlags => Err(global_this.throw_invalid_argument_value(
-                            b"flags",
-                            options_object
-                                .get_truthy(global_this, "flags")?
-                                .unwrap_or(JSValue::UNDEFINED),
-                        )),
-                        E::JSError => Err(jsc::JsError::Thrown),
-                        // more information with these errors
-                        _ => Err(global_this.throw(format_args!(
-                            "Invalid options passed to lookup(): {}",
-                            <&'static str>::from(&err)
-                        ))),
-                    };
-                }
-            };
+        if let Some(port_value) = options_object.port {
+            port = to_port_number(port_value, global_this)?;
         }
+
+        let options = match super::options_jsc::options_from_js(options_object) {
+            Ok(o) => o,
+            Err(err) => {
+                use bun_dns::OptionsFromJsError as E;
+                return match err {
+                    E::InvalidFlags => Err(global_this.throw_invalid_argument_value(
+                        b"flags",
+                        options_object
+                            .flags
+                            .map_or(JSValue::UNDEFINED, JSValue::js_number),
+                    )),
+                    // more information with these errors
+                    _ => Err(global_this.throw(format_args!(
+                        "Invalid options passed to lookup(): {}",
+                        <&'static str>::from(&err)
+                    ))),
+                };
+            }
+        };
 
         let resolver = global_resolver(global_this);
 
-        resolver.do_lookup(name.slice(), port, options, global_this, context)
+        resolver.do_lookup(name, port, options, global_this, context)
     }
 
     pub(crate) fn do_lookup(
@@ -5236,37 +5183,21 @@ impl Resolver {
 
 macro_rules! resolve_record_fn {
     ($global:ident, $method:ident, $jsname:literal, $ty:ty, $allow_empty:expr) => {
-        // JSC-ABI shim emitted by `export_host_fn!` at module scope (see `global_resolve`).
-        pub(crate) fn $global(
-            global_this: &JSGlobalObject,
-            callframe: &CallFrame,
-        ) -> JsResult<JSValue> {
-            let arguments_len = callframe.arguments_count() as usize;
-            if arguments_len < 1 {
-                return Err(global_this.throw_not_enough_arguments($jsname, 1, arguments_len));
-            }
-            global_resolver(global_this).$method(global_this, callframe.argument(0))
+        pub(crate) fn $global(cx: &mut JsScope<'_>, name: &[u8]) -> JsResult<JSValue> {
+            global_resolver(cx.global()).$method(cx, name)
         }
 
-        pub(crate) fn $method(
-            &self,
-            global_this: &JSGlobalObject,
-            name_value: JSValue,
-        ) -> JsResult<JSValue> {
+        pub(crate) fn $method(&self, cx: &mut JsScope<'_>, name: &[u8]) -> JsResult<JSValue> {
+            let global_this = cx.global();
             let context = global_this.bun_vm().context_of_caller_no_frame().id();
-            if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
-                return Err(global_this.throw_invalid_argument_type($jsname, "hostname", "string"));
-            }
-            let name_view = name_value.to_js_string_view(global_this)?;
-            let name = name_view.to_utf8();
-            if !$allow_empty && name.slice().is_empty() {
+            if !$allow_empty && name.is_empty() {
                 return Err(global_this.throw_invalid_argument_type(
                     $jsname,
                     "hostname",
                     "non-empty string",
                 ));
             }
-            self.do_resolve_cares::<$ty>(name.slice(), global_this, context)
+            self.do_resolve_cares::<$ty>(name, global_this, context)
         }
     };
 }
@@ -5592,25 +5523,23 @@ impl Resolver {
         Ok(values)
     }
 
-    // FFI shim emitted by `export_host_fn!` below — `#[host_fn]` (Free) cannot
-    // expand inside an `impl` block (it emits a bare `fn_name(...)` call).
-    pub(crate) fn get_global_servers(
-        global_this: &JSGlobalObject,
-        _: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn get_global_servers(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global_this = cx.global();
         Self::get_channel_servers(Self::get_channel_from_vm(global_this)?, global_this)
     }
 
-    pub(crate) fn get_servers(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_servers(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global_this = cx.global();
         Self::get_channel_servers(self.get_channel_or_error(global_this)?, global_this)
     }
 
     pub(crate) fn set_local_address(
         &self,
-        global_this: &JSGlobalObject,
-        first: JSValue,
-        second: JSValue,
+        cx: &mut JsScope<'_>,
+        first: &bun_core::String,
+        second: Option<bun_core::String>,
     ) -> JsResult<()> {
+        let global_this = cx.global();
         Self::set_channel_local_addresses(
             self.get_channel_or_error(global_this)?,
             global_this,
@@ -5622,16 +5551,16 @@ impl Resolver {
     fn set_channel_local_addresses(
         channel: *mut c_ares::Channel,
         global_this: &JSGlobalObject,
-        first: JSValue,
-        second: JSValue,
+        first: &bun_core::String,
+        second: Option<bun_core::String>,
     ) -> JsResult<()> {
         let first_af = Self::set_channel_local_address(channel, global_this, first)?;
 
-        if second.is_undefined() {
+        let Some(second) = second else {
             return Ok(());
-        }
+        };
 
-        let second_af = Self::set_channel_local_address(channel, global_this, second)?;
+        let second_af = Self::set_channel_local_address(channel, global_this, &second)?;
 
         if first_af != second_af {
             return Ok(());
@@ -5649,9 +5578,9 @@ impl Resolver {
     fn set_channel_local_address(
         channel: *mut c_ares::Channel,
         global_this: &JSGlobalObject,
-        value: JSValue,
+        value: &bun_core::String,
     ) -> JsResult<c_int> {
-        let address = value.to_bun_string(global_this)?.to_owned_slice_z();
+        let address = value.to_owned_slice_z();
 
         let mut addr = [0u8; 16];
 
@@ -5812,28 +5741,21 @@ impl Resolver {
         Ok(())
     }
 
-    // FFI shim emitted by `export_host_fn!` below.
-    pub(crate) fn set_global_servers(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let channel = Self::get_channel_from_vm(global_this)?;
-        if callframe.arguments_count() == 0 {
-            return Err(global_this.throw_not_enough_arguments("setServers", 1, 0));
-        }
-        Self::set_channel_servers(channel, global_this, callframe.argument(0))?;
-        Ok(JSValue::UNDEFINED)
+    pub(crate) fn set_global_servers(cx: &mut JsScope<'_>, servers: JsLocal<'_>) -> JsResult<()> {
+        let global_this = cx.global();
+        Self::set_channel_servers(
+            Self::get_channel_from_vm(global_this)?,
+            global_this,
+            servers.to_js(),
+        )
     }
 
-    pub(crate) fn set_servers(
-        &self,
-        global_this: &JSGlobalObject,
-        servers: JSValue,
-    ) -> JsResult<()> {
+    pub(crate) fn set_servers(&self, cx: &mut JsScope<'_>, servers: JsLocal<'_>) -> JsResult<()> {
+        let global_this = cx.global();
         Self::set_channel_servers(
             self.get_channel_or_error(global_this)?,
             global_this,
-            servers,
+            servers.to_js(),
         )
     }
 
@@ -5868,8 +5790,8 @@ impl Resolver {
         Ok(unsafe { Resolver::to_js_ptr(resolver, global_this) })
     }
 
-    pub(crate) fn cancel(&self, global_this: &JSGlobalObject) -> JsResult<()> {
-        let channel = self.get_channel_or_error(global_this)?;
+    pub(crate) fn cancel(&self, cx: &mut JsScope<'_>) -> JsResult<()> {
+        let channel = self.get_channel_or_error(cx.global())?;
         // SAFETY: `channel` is a live handle returned by `ares_init_options`.
         c_ares::ares_cancel(unsafe { &mut *channel });
         Ok(())
@@ -5878,39 +5800,22 @@ impl Resolver {
     // Resolves the given address and port into a host name and service using the operating system's underlying getnameinfo implementation.
     // If address is not a valid IP address, a TypeError will be thrown. The port will be coerced to a number.
     // If it is not a legal port, a TypeError will be thrown.
-    // FFI shim emitted by `export_host_fn!` below.
     pub(crate) fn global_lookup_service(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+        cx: &mut JsScope<'_>,
+        addr_s: &[u8],
+        port_value: f64,
     ) -> JsResult<JSValue> {
-        let context = global_this.bun_vm().context_of_caller(callframe).id();
-        let arguments = callframe.arguments_as_array::<2>();
-        let arguments_len = callframe.arguments_count() as usize;
-        if arguments_len < 2 {
-            return Err(global_this.throw_not_enough_arguments("lookupService", 2, arguments_len));
-        }
-
-        let addr_value = arguments[0];
-        if addr_value.is_empty_or_undefined_or_null() || !addr_value.is_string() {
-            return Err(global_this.throw_invalid_argument_type(
-                "lookupService",
-                "address",
-                "string",
-            ));
-        }
-        let addr_view = addr_value.to_js_string_view(global_this)?;
-        if addr_view.is_empty() {
+        let global_this = cx.global();
+        let context = global_this.bun_vm().context_of_caller_no_frame().id();
+        if addr_s.is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "lookupService",
                 "address",
                 "non-empty string",
             ));
         }
-        let addr_slice = addr_view.to_utf8();
-        let addr_s = addr_slice.slice();
 
-        let port_value = arguments[1];
-        let port: u16 = port_value.to_port_number(global_this)?;
+        let port: u16 = to_port_number(port_value, global_this)?;
 
         let mut sa: SockaddrStorage = bun_core::ffi::zeroed();
         // SAFETY: sockaddr_storage is large enough to hold any sockaddr family
@@ -5923,7 +5828,10 @@ impl Resolver {
             &mut *(&raw mut sa).cast()
         }) != 0
         {
-            return Err(global_this.throw_invalid_argument_value(b"address", addr_value));
+            return Err(global_this.throw_invalid_argument_value(
+                b"address",
+                bun_string_jsc::create_utf8_for_js(global_this, addr_s)?,
+            ));
         }
 
         let resolver = global_resolver(global_this);
@@ -5995,7 +5903,7 @@ impl Resolver {
 
 // ───────── JS host-fn FFI exports ─────────
 // The #[host_fn] attribute emits the JSC-ABI shim under the Rust function name;
-// re-export each under its `Bun__DNS__*` link name. Mirrors the proc-macro's
+// re-export each under its JS2Native link name. Mirrors the proc-macro's
 // shim body (see `bun_jsc_macros::host_fn`, `HostFnKind::Free`).
 macro_rules! export_host_fn {
     ($scope:ident :: $f:ident, $name:literal) => {
@@ -6023,22 +5931,6 @@ macro_rules! export_host_fn {
         };
     };
 }
-export_host_fn!(Resolver::global_resolve, "Bun__DNS__resolve");
-export_host_fn!(Resolver::global_lookup, "Bun__DNS__lookup");
-export_host_fn!(Resolver::global_resolve_txt, "Bun__DNS__resolveTxt");
-export_host_fn!(Resolver::global_resolve_soa, "Bun__DNS__resolveSoa");
-export_host_fn!(Resolver::global_resolve_mx, "Bun__DNS__resolveMx");
-export_host_fn!(Resolver::global_resolve_naptr, "Bun__DNS__resolveNaptr");
-export_host_fn!(Resolver::global_resolve_srv, "Bun__DNS__resolveSrv");
-export_host_fn!(Resolver::global_resolve_caa, "Bun__DNS__resolveCaa");
-export_host_fn!(Resolver::global_resolve_ns, "Bun__DNS__resolveNs");
-export_host_fn!(Resolver::global_resolve_ptr, "Bun__DNS__resolvePtr");
-export_host_fn!(Resolver::global_resolve_cname, "Bun__DNS__resolveCname");
-export_host_fn!(Resolver::global_resolve_any, "Bun__DNS__resolveAny");
-export_host_fn!(Resolver::get_global_servers, "Bun__DNS__getServers");
-export_host_fn!(Resolver::set_global_servers, "Bun__DNS__setServers");
-export_host_fn!(Resolver::global_reverse, "Bun__DNS__reverse");
-export_host_fn!(Resolver::global_lookup_service, "Bun__DNS__lookupService");
 // JS2Native ($newRustFunction) entry points — see GeneratedJS2Native.h
 export_host_fn!(
     Resolver::new_resolver,

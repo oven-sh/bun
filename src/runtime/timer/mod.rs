@@ -155,9 +155,11 @@ macro_rules! impl_timer_object {
             }
 
             pub(crate) fn constructor(
-                global: &::bun_jsc::JSGlobalObject,
+                cx: &mut ::bun_jsc::bindgen::JsScope<'_>,
             ) -> ::bun_jsc::JsResult<*mut Self> {
-                Err(global.throw(format_args!(concat!($js_name, " is not constructible"))))
+                Err(cx
+                    .global()
+                    .throw(format_args!(concat!($js_name, " is not constructible"))))
             }
 
             pub(crate) fn to_primitive(this: &Self) -> ::bun_jsc::JsResult<u64> {
@@ -166,16 +168,16 @@ macro_rules! impl_timer_object {
 
             pub(crate) fn do_ref(
                 this: &Self,
-                this_value: ::bun_jsc::JSValue,
+                this_value: ::bun_jsc::bindgen::JsWrapper<'_, Self>,
             ) -> ::bun_jsc::JSValue {
-                this.internals.do_ref(this_value)
+                this.internals.do_ref(this_value.to_js())
             }
 
             pub(crate) fn do_unref(
                 this: &Self,
-                this_value: ::bun_jsc::JSValue,
+                this_value: ::bun_jsc::bindgen::JsWrapper<'_, Self>,
             ) -> ::bun_jsc::JSValue {
-                this.internals.do_unref(this_value)
+                this.internals.do_unref(this_value.to_js())
             }
 
             pub(crate) fn has_ref(this: &Self) -> bool {
@@ -190,8 +192,8 @@ macro_rules! impl_timer_object {
                 this.internals.get_destroyed()
             }
 
-            pub(crate) fn dispose(this: &Self, global: &::bun_jsc::JSGlobalObject) {
-                this.internals.cancel(global.bun_vm_ptr());
+            pub(crate) fn dispose(this: &Self, cx: &mut ::bun_jsc::bindgen::JsScope<'_>) {
+                this.internals.cancel(cx.global().bun_vm_ptr());
             }
         }
     };

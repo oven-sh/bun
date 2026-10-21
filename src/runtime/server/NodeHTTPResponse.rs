@@ -9,11 +9,15 @@ use bun_collections::VecExt;
 use bun_core::scoped_log;
 use bun_http::Method as HttpMethod;
 use bun_jsc::JsCell;
+use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper};
 use bun_ptr::AsCtxPtr;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
-use crate::generated_bindgen::node_http_response::js_NodeHTTPResponse as js;
+use crate::generated_bindgen::node_http_response::{
+    Chunk, ChunkEncoding, js_NodeHTTPResponse as js,
+};
+use crate::node::{Encoding, StringOrBuffer};
 use crate::server::jsc::{
     self, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine,
 };
@@ -839,17 +843,15 @@ impl NodeHTTPResponse {
         0
     }
 
-    pub(crate) fn js_ref(&self, global_object: &JSGlobalObject) {
+    pub(crate) fn js_ref(&self) {
         if !self.is_done() {
-            self.poll_ref
-                .with_mut(|r| r.r#ref(bun_vm_mut(global_object)));
+            self.poll_ref.with_mut(|r| r.r#ref(vm_get()));
         }
     }
 
-    pub(crate) fn js_unref(&self, global_object: &JSGlobalObject) {
+    pub(crate) fn js_unref(&self) {
         if !self.is_done() {
-            self.poll_ref
-                .with_mut(|r| r.unref(bun_vm_mut(global_object)));
+            self.poll_ref.with_mut(|r| r.unref(vm_get()));
         }
     }
 }
@@ -872,59 +874,20 @@ impl NodeHTTPResponse {
     /// natively (kAutoHeader* in NodeHTTP.cpp).
     pub(crate) fn write_head(
         &self,
-        global_object: &JSGlobalObject,
-        status_code_value: JSValue,
-        status_message_value: JSValue,
-        headers_object_value: JSValue,
-        auto_header_bits: JSValue,
-        keep_alive_timeout_secs: JSValue,
+        cx: &mut JsScope<'_>,
+        status_code: i32,
+        status_message: Option<&[u8]>,
+        headers: JsLocal<'_>,
+        auto_header_bits: u32,
+        keep_alive_timeout_secs: u32,
     ) -> JsResult<()> {
-        let auto_header_bits = if auto_header_bits.is_number() {
-            auto_header_bits.to_int32() as u32
-        } else {
-            0
-        };
-        let keep_alive_timeout_secs = if keep_alive_timeout_secs.is_number() {
-            keep_alive_timeout_secs.to_u32()
-        } else {
-            0
-        };
-        // Arguments are converted first: ToString on statusMessage can run JS that ends or destroys the response.
-        let status_message_value: JSValue = if status_message_value != JSValue::NULL {
-            status_message_value
+        let global_object = cx.global();
+        let headers_object_value: JSValue = if headers.to_js() != JSValue::NULL {
+            headers.to_js()
         } else {
             JSValue::UNDEFINED
         };
-        let headers_object_value: JSValue = if headers_object_value != JSValue::NULL {
-            headers_object_value
-        } else {
-            JSValue::UNDEFINED
-        };
-
-        let status_code: i32 = if !status_code_value.is_undefined() {
-            global_object.validate_integer_range::<i32>(
-                status_code_value,
-                200,
-                jsc::IntegerRange {
-                    min: 100,
-                    max: 999,
-                    field_name: b"statusCode",
-                    ..Default::default()
-                },
-            )?
-        } else {
-            200
-        };
-
-        let status_message_view;
-        let status_message_slice;
-        let status_message_bytes: &[u8] = if !status_message_value.is_undefined() {
-            status_message_view = status_message_value.to_js_string_view(global_object)?;
-            status_message_slice = status_message_view.to_utf8();
-            status_message_slice.slice()
-        } else {
-            &[]
-        };
+        let status_message_bytes: &[u8] = status_message.unwrap_or_default();
 
         if self.is_requested_completed_or_ended() {
             return err_throw(
@@ -1043,16 +1006,16 @@ impl NodeHTTPResponse {
     /// crossings and a per-request closure) on the node:http response path.
     pub(crate) fn write_head_and_end(
         &self,
-        this_value: JSValue,
-        global_object: &JSGlobalObject,
-        status_code: JSValue,
-        status_message: JSValue,
-        headers: JSValue,
-        chunk: JSValue,
-        encoding: JSValue,
-        strict_content_length: JSValue,
-        auto_header_bits: JSValue,
-        keep_alive_timeout_secs: JSValue,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        status_code: i32,
+        status_message: Option<&[u8]>,
+        headers: JsLocal<'_>,
+        chunk: Option<Chunk<'_>>,
+        encoding: ChunkEncoding<'_>,
+        strict_content_length: Option<f64>,
+        auto_header_bits: u32,
+        keep_alive_timeout_secs: u32,
     ) -> JsResult<JSValue> {
         // Same gate as cork(): the old flow threw ERR_STREAM_ALREADY_FINISHED
         // from cork() before either phase ran.
@@ -1062,7 +1025,7 @@ impl NodeHTTPResponse {
             || flags.contains(Flags::UPGRADED)
         {
             return err_throw(
-                global_object,
+                cx.global(),
                 ErrorCode::ERR_STREAM_ALREADY_FINISHED,
                 "Stream is already ended",
             );
@@ -1079,7 +1042,7 @@ impl NodeHTTPResponse {
         {
             let run = || -> JsResult<JSValue> {
                 this.write_head(
-                    global_object,
+                    cx,
                     status_code,
                     status_message,
                     headers,
@@ -1088,11 +1051,11 @@ impl NodeHTTPResponse {
                 )?;
                 this.resume_socket();
                 this.write_or_end::<true>(
-                    this_value,
-                    global_object,
+                    this_value.to_js(),
+                    cx.global(),
                     chunk,
                     encoding,
-                    JSValue::UNDEFINED,
+                    None,
                     strict_content_length,
                 )
             };
@@ -1109,6 +1072,29 @@ impl NodeHTTPResponse {
         }
 
         result
+    }
+}
+
+/// The bytes to send: a string as `encoding` says, a buffer where it is.
+#[inline]
+fn chunk_bytes(
+    global_object: &JSGlobalObject,
+    chunk: Chunk<'_>,
+    encoding: Encoding,
+) -> JsResult<StringOrBuffer<'static>> {
+    use crate::webcore::encoding::BunStringEncode as _;
+    match chunk {
+        Chunk::Buffer(buffer) => {
+            StringOrBuffer::buffer_from_js(global_object, buffer.to_js(), crate::node::Flavor::Sync)
+        }
+        Chunk::Text(text) if encoding == Encoding::Utf8 || text.is_empty() => {
+            Ok(StringOrBuffer::String(text.into_utf8_with_string()))
+        }
+        Chunk::Text(text) => {
+            let encoded = text.encode(encoding);
+            global_object.vm().report_extra_memory(encoded.len());
+            Ok(StringOrBuffer::owned(encoded))
+        }
     }
 }
 
@@ -1148,7 +1134,8 @@ fn write_head_internal(
 }
 
 impl NodeHTTPResponse {
-    pub(crate) fn write_continue(&self, global_object: &JSGlobalObject) -> JsResult<()> {
+    pub(crate) fn write_continue(&self, cx: &mut JsScope<'_>) -> JsResult<()> {
+        let global_object = cx.global();
         if self.is_done() || self.is_socket_closed_or_closing() {
             return Ok(());
         }
@@ -1167,35 +1154,20 @@ impl NodeHTTPResponse {
     // ordered ahead of the final response bytes (node:http _writeRaw).
     pub(crate) fn write_informational(
         &self,
-        global_object: &JSGlobalObject,
-        input_value: JSValue,
-        encoding_value: JSValue,
+        cx: &mut JsScope<'_>,
+        chunk: Option<Chunk<'_>>,
+        encoding: ChunkEncoding<'_>,
     ) -> JsResult<()> {
-        if input_value.is_undefined_or_null() {
+        let global_object = cx.global();
+        let Some(chunk) = chunk else {
             return Ok(());
-        }
-        let encoding = if encoding_value.is_string() {
-            crate::node::Encoding::from_js(encoding_value, global_object)?
-                .unwrap_or(crate::node::Encoding::Utf8)
-        } else {
-            crate::node::Encoding::Utf8
         };
+        let encoding = match encoding {
+            ChunkEncoding::Name(name) => Encoding::from(name).unwrap_or(Encoding::Utf8),
+            ChunkEncoding::Other(_) => Encoding::Utf8,
+        };
+        let string_or_buffer = chunk_bytes(global_object, chunk, encoding)?;
 
-        let mut string_or_buffer = crate::node::StringOrBuffer::EMPTY;
-        if !crate::node::StringOrBuffer::from_js_with_encoding_into(
-            &mut string_or_buffer,
-            global_object,
-            input_value,
-            encoding,
-        )? {
-            return Err(global_object.throw_invalid_argument_type_value(
-                b"data",
-                b"string or buffer",
-                input_value,
-            ));
-        }
-
-        // Response state is read only after the conversion above, which can run JS.
         if self.is_done() || self.is_socket_closed_or_closing() {
             return Ok(());
         }
@@ -1544,7 +1516,8 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
 }
 
 impl NodeHTTPResponse {
-    pub(crate) fn abort(&self, global_object: &JSGlobalObject) {
+    pub(crate) fn abort(&self, cx: &mut JsScope<'_>) {
+        let global_object = cx.global();
         if self.is_done() {
             return;
         }
@@ -1830,87 +1803,57 @@ impl NodeHTTPResponse {
         &self,
         this_value: JSValue,
         global_object: &JSGlobalObject,
-        input_value: JSValue,
-        mut encoding_value: JSValue,
-        callback: JSValue,
-        strict_content_length: JSValue,
+        chunk: Option<Chunk<'_>>,
+        encoding: ChunkEncoding<'_>,
+        callback: Option<JsLocal<'_, Callable>>,
+        strict_content_length: Option<f64>,
     ) -> JsResult<JSValue> {
-        // Arguments are converted first: the conversion can run JS that ends or destroys the response.
-        let callback_value: JSValue = 'brk: {
-            if !encoding_value.is_undefined_or_null() && encoding_value.is_callable() {
-                let function = encoding_value;
-                encoding_value = JSValue::UNDEFINED;
-                break 'brk function;
+        let (encoding, callback_value) = match encoding {
+            ChunkEncoding::Other(function) if function.to_js().is_callable() => {
+                (ChunkEncoding::Name(b""), function.to_js())
             }
-
-            if !callback.is_undefined() {
-                if !callback.is_callable() {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"callback",
-                        b"function",
-                        callback,
-                    ));
-                }
-                break 'brk callback;
-            }
-
-            break 'brk JSValue::UNDEFINED;
+            encoding => (
+                encoding,
+                callback.map_or(JSValue::UNDEFINED, |callback| callback.to_js()),
+            ),
         };
 
-        let strict_content_length: Option<u64> = 'brk: {
-            if strict_content_length.is_number() {
-                break 'brk Some(strict_content_length.to_int64().max(0) as u64);
-            }
-            break 'brk None;
-        };
+        let strict_content_length: Option<u64> =
+            strict_content_length.map(|length| (length as i64).max(0) as u64);
 
-        // Construct in place — returning
-        // `JsResult<Option<StringOrBuffer>>` by value here lowered to ~128B of
-        // `vmovups` stack copies per `res.end()`; the `_into` out-param form
-        // writes straight into this slot.
-        let mut string_or_buffer = crate::node::StringOrBuffer::EMPTY;
-        if !input_value.is_undefined_or_null() {
-            let mut encoding = crate::node::Encoding::Utf8;
+        let input_value = match &chunk {
+            Some(Chunk::Buffer(buffer)) => buffer.to_js(),
+            _ => JSValue::ZERO,
+        };
+        let mut string_or_buffer = StringOrBuffer::EMPTY;
+        if let Some(chunk) = chunk {
             // Like Writable.prototype.write: a falsy encoding means the default.
-            if !encoding_value.is_falsey() {
-                let known = if encoding_value.is_string() {
-                    crate::node::Encoding::from_js(encoding_value, global_object)?
-                } else {
-                    None
-                };
-                encoding = match known {
-                    Some(e) => e,
+            let encoding = match encoding {
+                ChunkEncoding::Name([]) => Encoding::Utf8,
+                ChunkEncoding::Name(name) => match Encoding::from(name) {
+                    Some(encoding) => encoding,
                     None => {
-                        let name = if encoding_value.is_string() {
-                            encoding_value.to_bun_string(global_object)?
-                        } else {
-                            JSGlobalObject::inspect_for_error_message(
-                                global_object,
-                                encoding_value,
-                            )?
-                        };
                         return Err(global_object
                             .err(
                                 ErrorCode::UNKNOWN_ENCODING,
-                                format_args!("Unknown encoding: {}", name),
+                                format_args!("Unknown encoding: {}", BStr::new(name)),
                             )
                             .throw());
                     }
-                };
-            }
-
-            if !crate::node::StringOrBuffer::from_js_with_encoding_into(
-                &mut string_or_buffer,
-                global_object,
-                input_value,
-                encoding,
-            )? {
-                return Err(global_object.throw_invalid_argument_type_value(
-                    b"input",
-                    b"string or buffer",
-                    input_value,
-                ));
-            }
+                },
+                ChunkEncoding::Other(value) if value.to_js().is_falsey() => Encoding::Utf8,
+                ChunkEncoding::Other(value) => {
+                    let name =
+                        JSGlobalObject::inspect_for_error_message(global_object, value.to_js())?;
+                    return Err(global_object
+                        .err(
+                            ErrorCode::UNKNOWN_ENCODING,
+                            format_args!("Unknown encoding: {}", name),
+                        )
+                        .throw());
+                }
+            };
+            string_or_buffer = chunk_bytes(global_object, chunk, encoding)?;
         }
         // string_or_buffer drops at scope exit.
 
@@ -2043,7 +1986,7 @@ impl NodeHTTPResponse {
             // the unwritten tail into the uWS backpressure std::string.
             let bytes_len = bytes.len();
             if bytes_len > PINNED_WRITE_THRESHOLD && bytes_len <= c_uint::MAX as usize {
-                let is_buffer = matches!(string_or_buffer, crate::node::StringOrBuffer::Buffer(_));
+                let is_buffer = matches!(string_or_buffer, StringOrBuffer::Buffer(_));
 
                 scoped_log!(NodeHTTPResponse, "tryWriteBody({} bytes)", bytes_len);
                 let consumed = raw_response.try_write_body(bytes, true);
@@ -2133,10 +2076,11 @@ impl NodeHTTPResponse {
 
     pub(crate) fn set_on_writable(
         &self,
-        this_value: JSValue,
-        global_object: &JSGlobalObject,
-        value: JSValue,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
     ) {
+        let (this_value, global_object, value) = (this_value.to_js(), cx.global(), value.to_js());
         // Settable until the response has finished, including while end()'s bytes drain.
         let flags = self.flags.get();
         if flags.intersects(Flags::REQUEST_HAS_COMPLETED | Flags::SOCKET_CLOSED)
@@ -2158,30 +2102,31 @@ impl NodeHTTPResponse {
         }
     }
 
-    pub(crate) fn get_on_writable(&self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_on_writable(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
         // Only the armed drain callback of a live response: end() and a close leave the slot as it was.
         if self.is_done() {
             return JSValue::UNDEFINED;
         }
-        js::on_writable_get_cached(this_value)
+        js::on_writable_get_cached(this_value.to_js())
             .filter(|callback| callback.is_cell())
             .unwrap_or(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn get_on_abort(&self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_on_abort(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
         let flags = self.flags.get();
         if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
             return JSValue::UNDEFINED;
         }
-        js::on_aborted_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
+        js::on_aborted_get_cached(this_value.to_js()).unwrap_or(JSValue::UNDEFINED)
     }
 
     pub(crate) fn set_on_abort(
         &self,
-        this_value: JSValue,
-        global_object: &JSGlobalObject,
-        value: JSValue,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
     ) {
+        let (this_value, global_object, value) = (this_value.to_js(), cx.global(), value.to_js());
         let flags = self.flags.get();
         if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
             return;
@@ -2198,8 +2143,8 @@ impl NodeHTTPResponse {
         }
     }
 
-    pub(crate) fn get_on_data(&self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
-        js::on_data_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
+    pub(crate) fn get_on_data(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
+        js::on_data_get_cached(this_value.to_js()).unwrap_or(JSValue::UNDEFINED)
     }
 
     pub(crate) fn get_upgraded(&self) -> bool {
@@ -2229,10 +2174,11 @@ impl NodeHTTPResponse {
 
     pub(crate) fn set_on_data(
         &self,
-        this_value: JSValue,
-        global_object: &JSGlobalObject,
-        value: JSValue,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
     ) {
+        let (this_value, global_object, value) = (this_value.to_js(), cx.global(), value.to_js());
         // Only `.pending` accepts a callback. `.done` means either uSockets delivered last=true or JS
         // previously cleared `ondata` (which already called clearOnData()); either way, there is no
         // more body to read, so don't re-register with uSockets or churn refs.
@@ -2266,15 +2212,15 @@ impl NodeHTTPResponse {
 
     pub(crate) fn write(
         &self,
-        global_object: &JSGlobalObject,
-        chunk: JSValue,
-        encoding: JSValue,
-        callback: JSValue,
-        strict_content_length: JSValue,
+        cx: &mut JsScope<'_>,
+        chunk: Option<Chunk<'_>>,
+        encoding: ChunkEncoding<'_>,
+        callback: Option<JsLocal<'_, Callable>>,
+        strict_content_length: Option<f64>,
     ) -> JsResult<JSValue> {
         self.write_or_end::<false>(
             JSValue::ZERO,
-            global_object,
+            cx.global(),
             chunk,
             encoding,
             callback,
@@ -2343,18 +2289,18 @@ impl NodeHTTPResponse {
 
     pub(crate) fn end(
         &self,
-        this_value: JSValue,
-        global_object: &JSGlobalObject,
-        chunk: JSValue,
-        encoding: JSValue,
-        callback: JSValue,
-        strict_content_length: JSValue,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        chunk: Option<Chunk<'_>>,
+        encoding: ChunkEncoding<'_>,
+        callback: Option<JsLocal<'_, Callable>>,
+        strict_content_length: Option<f64>,
     ) -> JsResult<JSValue> {
         // We dont wanna a paused socket when we call end, so is important to resume the socket
         self.resume_socket();
         self.write_or_end::<true>(
-            this_value,
-            global_object,
+            this_value.to_js(),
+            cx.global(),
             chunk,
             encoding,
             callback,
@@ -2369,9 +2315,10 @@ impl NodeHTTPResponse {
     /// built first.
     pub(crate) fn take_raw_headers(
         &self,
-        global_object: &JSGlobalObject,
-        headers: JSValue,
+        cx: &mut JsScope<'_>,
+        headers: JsLocal<'_>,
     ) -> JsResult<JSValue> {
+        let global_object = cx.global();
         let section = self.raw_request_headers.replace(Vec::new());
         if section.is_empty() {
             return Ok(JSValue::UNDEFINED);
@@ -2381,14 +2328,15 @@ impl NodeHTTPResponse {
                 global_object,
                 section.as_ptr(),
                 section.len(),
-                headers,
+                headers.to_js(),
             )
         })
     }
 
     /// `handle.headersObject()` — `req.headers` from this request's captured
     /// header section, which it leaves to takeRawHeaders, or undefined.
-    pub(crate) fn headers_object(&self, global_object: &JSGlobalObject) -> JSValue {
+    pub(crate) fn headers_object(&self, cx: &mut JsScope<'_>) -> JSValue {
+        let global_object = cx.global();
         let section = self.raw_request_headers.get();
         if section.is_empty() {
             return JSValue::UNDEFINED;
@@ -2400,16 +2348,16 @@ impl NodeHTTPResponse {
     /// parsed into a flat [name, value, ...] array, or undefined. Consumes it.
     pub(crate) fn take_request_trailers(
         &self,
-        global_object: &JSGlobalObject,
-        use_insecure_http_parser: JSValue,
+        cx: &mut JsScope<'_>,
+        use_insecure_http_parser: bool,
     ) -> JsResult<JSValue> {
+        let global_object = cx.global();
         let section = self.request_trailers.replace(Vec::new());
         if section.is_empty() {
             return Ok(JSValue::UNDEFINED);
         }
         // Lenient (insecureHTTPParser) servers accept CTL bytes in trailer values on
         // the wire; parse them with the same leniency so they surface on req.trailers.
-        let use_insecure_http_parser = use_insecure_http_parser.to_boolean();
         bun_jsc::call_zero_is_throw(global_object, || {
             Bun__NodeHTTP__parseRequestTrailers(
                 global_object,
@@ -2443,16 +2391,10 @@ impl NodeHTTPResponse {
 
     pub(crate) fn cork(
         &self,
-        global_object: &JSGlobalObject,
-        corked_fn: JSValue,
+        cx: &mut JsScope<'_>,
+        corked_fn: JsLocal<'_, Callable>,
     ) -> JsResult<JSValue> {
-        if !corked_fn.is_callable() {
-            return Err(global_object.throw_invalid_argument_type_value(
-                b"cork",
-                b"function",
-                corked_fn,
-            ));
-        }
+        let (global_object, corked_fn) = (cx.global(), corked_fn.to_js());
 
         let flags = self.flags.get();
         if flags.contains(Flags::REQUEST_HAS_COMPLETED)

@@ -280,6 +280,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   fillBuffer: $bindgen("bindgen_test.bind.ts", "fillBuffer"),
   stringOrObjectEcho: $bindgen("bindgen_test.bind.ts", "stringOrObjectEcho"),
   sumBeforeAndAfterCallback: $bindgen("bindgen_test.bind.ts", "sumBeforeAndAfterCallback"),
+  callOr: $bindgen("bindgen_test.bind.ts", "callOr"),
   fail: $bindgen("bindgen_test.bind.ts", "fail"),
   TestCounter: $bindgen("bindgen_test.bind.ts", "TestCounter"),
   TestHolder: $bindgen("bindgen_test.bind.ts", "TestHolder"),

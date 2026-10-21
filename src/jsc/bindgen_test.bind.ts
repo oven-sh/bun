@@ -109,12 +109,19 @@ export const sumBytesThenText = b.fn({
 });
 /** The sum before `callback` runs, then after it. */
 export const sumBeforeAndAfterCallback = b.fn({
-  args: { buffer: b.bufferSource, callback: b.any },
+  args: { buffer: b.bufferSource, callback: b.callable },
   returns: b.array(b.u32),
   capability: "js",
   throws: true,
 });
 
+/** What `callback` returns, or `fallback` if there is no `callback`. */
+export const callOr = b.fn({
+  args: { callback: b.callable.nullable, fallback: b.any },
+  returns: b.any,
+  capability: "js",
+  throws: true,
+});
 export const fillBuffer = b.fn({
   args: { buffer: b.bufferSource.allowShared, value: b.u8 },
   returns: b.usize,
@@ -166,7 +173,7 @@ const bytesBeforeAndAfterCallbackWith = (shared: BytesOptions["shared"]) =>
   b.fn({
     args: {
       data: b.bytes({ from: ["string", "buffer", "blob"], otherwise: "toString", shared, held: "handle" }),
-      callback: b.any,
+      callback: b.callable,
     },
     returns: b.array(b.array(b.u8)),
     capability: "js",
@@ -177,7 +184,7 @@ export const bytesBeforeAndAfterCallback = bytesBeforeAndAfterCallbackWith("borr
 export const bytesBeforeAndAfterCallbackCopyingShared = bytesBeforeAndAfterCallbackWith("copied");
 /** The bytes another thread reads after `callback` has run. */
 export const pinnedBytesAfterCallback = b.fn({
-  args: { data: b.bytes({ from: ["string", "buffer"], held: "pinned" }), callback: b.any },
+  args: { data: b.bytes({ from: ["string", "buffer"], held: "pinned" }), callback: b.callable },
   returns: b.array(b.u8),
   capability: "js",
   throws: true,
@@ -245,11 +252,11 @@ export const TestRefCounted = b.class({
   internalFields: ["listener"],
   proto: {
     value: { getter: b.i32, setter: true },
-    listener: { getter: b.any, setter: true, passThis: true, passGlobal: true },
+    listener: { getter: b.any, setter: { capability: "js" }, passThis: true },
     sameListener: { internalField: "listener", setter: true },
     readOnlyListener: { internalField: "listener" },
     /** Calls the listener, which may call back into this object, then returns the value. */
-    notify: { returns: b.i32, passThis: true, passGlobal: true, throws: true },
+    notify: { returns: b.i32, passThis: true, capability: "js", throws: true },
     /** Makes Rust hold a ref until `TestRefCounted.release()`. */
     keep: {},
     "@@dispose": {},

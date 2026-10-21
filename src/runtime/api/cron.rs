@@ -22,6 +22,7 @@ use bun_core::EncodedSlice;
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
 use bun_io::{KeepAlive, Loop as AsyncLoop};
+use bun_jsc::bindgen::JsWrapper;
 use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
     self as jsc, CallFrame, EncodedSliceJsc as _, EventLoopHandle, GlobalRef, JSFunction,
@@ -1750,19 +1751,19 @@ impl CronJob {
         Self::schedule_next(this, vm);
     }
 
-    pub(crate) fn stop(&self, this_value: JSValue) -> JSValue {
+    pub(crate) fn stop<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
         Self::self_stop(self.self_ref.get().this_ptr(), self.global.bun_vm());
         this_value
     }
 
-    pub(crate) fn do_ref(&self, this_value: JSValue) -> JSValue {
+    pub(crate) fn do_ref<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
         if !self.stopped.get() {
             self.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         }
         this_value
     }
 
-    pub(crate) fn do_unref(&self, this_value: JSValue) -> JSValue {
+    pub(crate) fn do_unref<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
         self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         this_value
     }

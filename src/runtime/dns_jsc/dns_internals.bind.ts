@@ -4,20 +4,37 @@ export default b.module({ rustPath: "crate::dns_jsc::Resolver" });
 
 export const getRuntimeDefaultResultOrderOption = b.fn({ returns: b.string });
 
-const method = { passGlobal: true, throws: true } as const;
+/** What is not a string is not converted: it is "A". */
+export const RecordTypeLabel = b.union({ label: b.string.utf8, ignored: b.any });
 
-const query = { ...method, args: { hostname: b.any }, returns: b.any } as const;
+const method = { capability: "js", throws: true } as const;
 
-/** The native handle behind `new dns.Resolver()`. `Bun.dns` has the same functions, on the VM's global resolver. */
+const query = {
+  ...method,
+  args: { hostname: b.string.utf8 },
+  expected: { hostname: ["string"] },
+  returns: b.any,
+} as const;
+const getServers = { ...method, returns: b.any } as const;
+const resolve = {
+  ...method,
+  args: { name: b.string.utf8, record: RecordTypeLabel },
+  expected: { name: ["string"] },
+  returns: b.any,
+} as const;
+const reverse = { ...method, args: { ip: b.string.utf8 }, expected: { ip: ["string"] }, returns: b.any } as const;
+/** An array of `[family, address, port]` tuples, each element converted according to its position. */
+const setServers = { ...method, args: { servers: b.any } } as const;
+
+/** The native handle behind `new dns.Resolver()`. */
 export const DNSResolver = b.class({
   rustPath: "crate::dns_jsc::Resolver",
   refCounted: true,
   configurable: false,
   proto: {
     cancel: method,
-    getServers: { ...method, returns: b.any },
-    /** `record` is checked before `name`, as Node checks `rrtype`, and a `record` that is not a string defaults to "A". */
-    resolve: { ...method, args: { name: b.any, record: b.any }, returns: b.any, length: 3 },
+    getServers,
+    resolve: { ...resolve, length: 3 },
     resolveAny: query,
     resolveCaa: query,
     resolveCname: query,
@@ -28,9 +45,31 @@ export const DNSResolver = b.class({
     resolveSoa: query,
     resolveSrv: query,
     resolveTxt: query,
-    reverse: { ...method, args: { ip: b.any }, returns: b.any },
-    setLocalAddress: { ...method, args: { first: b.any, second: b.any }, length: 1 },
-    /** An array of `[family, address, port]` tuples, each element converted according to its position. */
-    setServers: { ...method, args: { servers: b.any } },
+    reverse,
+    setLocalAddress: { ...method, args: { first: b.string.loose, second: b.string.loose.optional } },
+    setServers,
   },
+});
+
+// What `Bun.dns` has and the published types do not: the same functions, on the VM's global resolver.
+export const getGlobalServers = b.fn(getServers);
+export const globalResolve = b.fn(resolve);
+export const globalResolveAny = b.fn(query);
+export const globalResolveCaa = b.fn(query);
+export const globalResolveCname = b.fn(query);
+export const globalResolveMx = b.fn(query);
+export const globalResolveNaptr = b.fn(query);
+export const globalResolveNs = b.fn(query);
+export const globalResolvePtr = b.fn(query);
+export const globalResolveSoa = b.fn(query);
+export const globalResolveSrv = b.fn(query);
+export const globalResolveTxt = b.fn(query);
+export const globalReverse = b.fn(reverse);
+export const setGlobalServers = b.fn(setServers);
+
+export const globalLookupService = b.fn({
+  ...method,
+  args: { address: b.string.utf8, port: b.f64 },
+  expected: { address: ["string"], port: ["number"] },
+  returns: b.any,
 });

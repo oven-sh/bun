@@ -622,8 +622,6 @@ impl core::ops::Deref for PinnedBytes {
 pub unsafe trait JsPayload: Sized + 'static {
     #[doc(hidden)]
     const PAYLOAD_OFFSET: usize;
-    #[doc(hidden)]
-    const INTERNAL_FIELDS_OFFSET: usize;
     /// # Safety
     /// The caller writes the payload before anything else runs. A null `structure` is the class's own.
     #[doc(hidden)]
@@ -641,7 +639,7 @@ pub unsafe trait JsPayload: Sized + 'static {
     fn into_js_value(self, global: &JSGlobalObject) -> JSValue {
         // SAFETY: a `JsHeap` is the global object, and the wrapper leaves as a `JSValue`.
         let heap = unsafe { &*core::ptr::from_ref(global).cast::<JsHeap<'_>>() };
-        self.into_js(heap).as_value().to_js()
+        self.into_js(heap).to_js()
     }
 }
 
@@ -680,22 +678,22 @@ pub unsafe fn set_internal_field_at(
     }
 }
 
-/// The JS object that wraps a `T`. The payload is reached only through [`JsPayloads`].
+/// The JS object that wraps a `T`. A payload is reached only through [`JsPayloads`].
 #[repr(transparent)]
-pub struct JsWrapper<'a, T: JsPayload>(
+pub struct JsWrapper<'a, T>(
     NonNull<c_void>,
     InvariantLifetime<'a>,
     PhantomData<*const T>,
 );
-impl<T: JsPayload> Clone for JsWrapper<'_, T> {
+impl<T> Clone for JsWrapper<'_, T> {
     #[inline(always)]
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<T: JsPayload> Copy for JsWrapper<'_, T> {}
+impl<T> Copy for JsWrapper<'_, T> {}
 
-impl<'a, T: JsPayload> JsWrapper<'a, T> {
+impl<'a, T> JsWrapper<'a, T> {
     /// # Safety
     /// `cell` is a wrapper of `T` that something holds for the call `heap` belongs to.
     #[doc(hidden)]
@@ -704,6 +702,18 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
         JsWrapper(cell, PhantomData, PhantomData)
     }
 
+    #[inline(always)]
+    pub fn as_value(self) -> JsLocal<'a, JSObject> {
+        JsLocal::from_raw(self.to_js())
+    }
+
+    #[inline(always)]
+    pub fn to_js(self) -> JSValue {
+        JSValue::from_cell(self.0.as_ptr())
+    }
+}
+
+impl<'a, T: JsPayload> JsWrapper<'a, T> {
     /// # Safety
     /// `structure` is null or a Structure of `T`'s cell class.
     #[doc(hidden)]
@@ -722,19 +732,19 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
     }
 
     /// # Safety
-    /// Nothing can reach the payload mutably for `'b`, and the caller's frame holds the cell.
+    /// Nothing can reach the payload mutably for `'a`, and the caller's frame holds the cell.
     #[doc(hidden)]
     #[inline(always)]
-    pub unsafe fn payload_ref<'b>(self) -> &'b T {
+    pub unsafe fn payload_ref(self) -> &'a T {
         // SAFETY: forwarded.
         unsafe { &*self.payload() }
     }
 
     /// # Safety
-    /// Nothing else can reach the payload for `'b`, and the caller's frame holds the cell.
+    /// Nothing else can reach the payload for `'a`, and the caller's frame holds the cell.
     #[doc(hidden)]
     #[inline(always)]
-    pub unsafe fn payload_mut<'b>(self) -> &'b mut T {
+    pub unsafe fn payload_mut(self) -> &'a mut T {
         // SAFETY: forwarded.
         unsafe { &mut *self.payload() }
     }
@@ -745,17 +755,12 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
         unsafe { self.0.as_ptr().byte_add(T::PAYLOAD_OFFSET).cast() }
     }
 
-    #[inline(always)]
-    pub fn as_value(self) -> JsLocal<'a, JSObject> {
-        JsLocal::from_raw(JSValue::from_cell(self.0.as_ptr()))
-    }
-
     /// Lends the payload. `f` cannot run JavaScript: that takes the `&mut JsScope` the `JsPayloads` is borrowed from.
     #[inline(always)]
     pub fn with<R>(self, _: &JsPayloads<'a>, f: impl FnOnce(&T) -> R) -> R {
         // SAFETY: a `&mut T` is lent by `with_mut`, which holds `JsPayloads` exclusively, or to a body that has no `JsPayloads`.
         let result = f(unsafe { &*self.payload() });
-        self.as_value().0.ensure_still_alive();
+        self.to_js().ensure_still_alive();
         result
     }
 
@@ -764,7 +769,7 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
     pub fn with_mut<R>(self, _: &mut JsPayloads<'a>, f: impl FnOnce(&mut T) -> R) -> R {
         // SAFETY: the exclusive borrow of `JsPayloads` excludes every other payload reference.
         let result = f(unsafe { &mut *self.payload() });
-        self.as_value().0.ensure_still_alive();
+        self.to_js().ensure_still_alive();
         result
     }
 
@@ -772,43 +777,6 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
     #[inline]
     pub fn to_strong(self, heap: &JsHeap<'a>) -> JsWrapperStrong<T> {
         JsWrapperStrong(self.as_value().to_strong(heap), PhantomData)
-    }
-
-    /// # Safety
-    /// `index` is one of the class's internal fields.
-    #[doc(hidden)]
-    #[inline(always)]
-    pub unsafe fn internal_field(self, _: &JsHeap<'a>, index: usize) -> JsLocal<'a> {
-        // SAFETY: generated offset inside the cell; they are initialized to `undefined`.
-        JsLocal::from_raw(unsafe {
-            self.0
-                .as_ptr()
-                .byte_add(T::INTERNAL_FIELDS_OFFSET)
-                .cast::<JSValue>()
-                .add(index)
-                .read()
-        })
-    }
-
-    /// # Safety
-    /// As [`internal_field`](Self::internal_field).
-    #[doc(hidden)]
-    #[inline(always)]
-    pub unsafe fn set_internal_field<V>(
-        self,
-        heap: &JsHeap<'a>,
-        index: usize,
-        value: JsLocal<'a, V>,
-    ) {
-        // SAFETY: as above; C++ stores through the `WriteBarrier`.
-        unsafe {
-            extern_types::Bun__Bindgen__setInternalField(
-                heap.global_ptr(),
-                self.0.as_ptr(),
-                (T::INTERNAL_FIELDS_OFFSET + index * size_of::<JSValue>()) as u32,
-                value.0,
-            )
-        }
     }
 }
 
@@ -879,6 +847,12 @@ pub mod to_js {
         #[inline(always)]
         fn into_value(self, _: &JsHeap<'a>) -> JsLocal<'a> {
             self.as_value()
+        }
+    }
+    impl<'a, T> Any<'a> for JsWrapper<'a, T> {
+        #[inline(always)]
+        fn into_value(self, _: &JsHeap<'a>) -> JsLocal<'a> {
+            self.as_value().as_value()
         }
     }
     impl<'a> Any<'a> for JSValue {

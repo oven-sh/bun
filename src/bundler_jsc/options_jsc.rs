@@ -3,41 +3,19 @@
 
 // `bun_bundler::options` re-exports `Target`/`Loader` but not `Format`; pull it
 // from the lower-tier source crate directly.
-use bun_jsc::ComptimeStringMapExt as _;
 use bun_options_types::compile_target::CompileTarget;
 
 use crate::{JSGlobalObject, JSValue, JsResult};
 
-pub fn target_from_js(
+pub fn loader_from_slice(
     global: &JSGlobalObject,
-    value: JSValue,
-) -> JsResult<Option<bun_ast::Target>> {
-    if !value.is_string() {
-        return Err(global.throw_invalid_arguments(format_args!("target must be a string")));
-    }
-    bun_ast::Target::MAP.from_js(global, value)
-}
-
-pub fn loader_from_js(
-    global: &JSGlobalObject,
-    loader: JSValue,
+    slice: &[u8],
 ) -> JsResult<Option<bun_ast::Loader>> {
-    if loader.is_undefined_or_null() {
+    if slice.is_empty() {
         return Ok(None);
     }
 
-    if !loader.is_string() {
-        return Err(global.throw_invalid_arguments(format_args!("loader must be a string")));
-    }
-
-    let loader_str = loader.to_js_string_view(global)?;
-    if loader_str.is_empty() {
-        return Ok(None);
-    }
-
-    let slice = loader_str.to_utf8();
-
-    let Some(v) = bun_ast::Loader::from_string(slice.slice()) else {
+    let Some(v) = bun_ast::Loader::from_string(slice) else {
         return Err(global.throw_invalid_arguments(format_args!(
             "invalid loader - must be js, jsx, tsx, ts, css, json, jsonc, json5, toml, yaml, xml, text, wasm, or md"
         )));
@@ -57,7 +35,7 @@ pub fn loader_from_js(
     ) {
         return Err(global.throw_invalid_arguments(format_args!(
             "loader \"{}\" is not supported in Bun.Transpiler",
-            bstr::BStr::new(slice.slice()),
+            bstr::BStr::new(slice),
         )));
     }
     Ok(Some(v))

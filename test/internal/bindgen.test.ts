@@ -128,7 +128,6 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.fn({ args: { data: stringOrBuffer }, capability: "js" })).toThrow(
     'data: JavaScript can detach a buffer; held: "handle" borrows the bytes each time they are read',
   );
-  expect(() => b.fn({ args: { data: b.bytes({ from: ["string"] }) }, capability: "js" })).not.toThrow();
   expect(() => b.bytes({ from: [] })).toThrow("from: it takes nothing");
   expect(() => b.bytes({ from: ["string", "string"] })).toThrow("two kinds are both string");
   expect(() => b.bytes({ from: ["string"], refuse: ["null"] })).toThrow(
@@ -214,7 +213,8 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   );
   const label = { getter: b.string, setter: true } as const;
   expect(() => b.class({ rustPath: "T", proto: { label, setLabel: {} } })).toThrow("are both set_label");
-  b.class({ rustPath: "T", proto: { label: { getter: b.string }, setLabel: {}, getLabel: {} } });
+  expect(() => b.class({ rustPath: "T", proto: { label, getLabel: {} } })).toThrow("are both get_label");
+  b.class({ rustPath: "T", proto: { label: { getter: b.string }, setLabel: {} } });
   expect(() => b.class({ rustPath: "T", proto: { value: { getter: b.any } } })).toThrow('takes capability: "heap"');
   expect(() => b.class({ rustPath: "T", internalFields: ["a", "a"] })).toThrow("two internal fields are both a");
   const constructible = { rustPath: "T", construct: {} };
@@ -263,40 +263,26 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ rustPath: "T", construct: {}, static: { "@@x": {} } })).toThrow(
     "@@x: an @@ key is a property of the prototype",
   );
-  for (const members of [
-    { construct: {}, static: { x: { internalField: "x" } } },
-    { refCounted: true, construct: {}, static: { x: { internalField: "x" } } },
-    { proto: { x: { internalField: "x" } } },
-  ]) {
-    // @ts-expect-error
-    expect(() => b.class({ rustPath: "T", internalFields: ["x"], ...members })).toThrow(
-      "x: an internalField accessor is a property of a refCounted class's prototype",
-    );
+  for (const refCounted of [false, true]) {
+    expect(() =>
+      b.class({
+        rustPath: "T",
+        refCounted,
+        internalFields: ["x"],
+        construct: {},
+        // @ts-expect-error
+        static: { x: { internalField: "x" } },
+      }),
+    ).toThrow("x: an internalField accessor is a property of the prototype");
   }
-  expect(() => b.class({ rustPath: "T", proto: { x: { getter: b.i32, passThis: true } } })).toThrow(
-    "x: only an accessor of a refCounted class has passThis",
-  );
+  expect(() =>
+    // @ts-expect-error
+    b.class({ rustPath: "T", construct: {}, static: { x: { getter: b.i32, passThis: true } } }),
+  ).toThrow("x: a static getter has no passThis");
   expect(() => b.class({ rustPath: "T", refCounted: true, proto: { x: { mutates: true } } })).toThrow(
     "x: a refCounted class has no mutates",
   );
-  expect(() => b.class({ rustPath: "T", refCounted: true, proto: { x: { args: { bytes: stringOrBuffer } } } })).toThrow(
-    "bytes: a member of a refCounted class, or a function that takes one or a b.classRef, can run JavaScript",
-  );
-  for (const object of [b.class({ rustPath: "T", refCounted: true }), b.classRef("SocketAddress")])
-    expect(() => b.fn({ args: { object: object.nullable, bytes: stringOrBuffer } })).toThrow(
-      "bytes: a member of a refCounted class, or a function that takes one or a b.classRef, can run JavaScript",
-    );
   expect(() => b.class({ rustPath: "T", finalize: true })).toThrow("finalize is only for a refCounted class");
-  expect(() => b.class({ rustPath: "T", refCounted: true, proto: { x: { capability: "js" } } })).toThrow(
-    "a refCounted class has passGlobal, not capability",
-  );
-  expect(() => b.class({ rustPath: "T", refCounted: true, proto: { x: { getter: b.i32, capability: "js" } } })).toThrow(
-    "x: a refCounted class has passGlobal, not capability",
-  );
-  expect(() => b.fn({ passGlobal: true })).toThrow("passGlobal is only for a refCounted class");
-  expect(() => b.class({ rustPath: "T", proto: { x: { getter: b.i32, passGlobal: true } } })).toThrow(
-    "x: passGlobal is only for a refCounted class",
-  );
   expect(() => b.string.allowStringObject.loose).toThrow(".loose already takes a String object");
   expect(() => b.string.loose.allowStringObject).toThrow(".loose already takes a String object");
   // No overload can have the argument left out, so `undefined` goes to the one that reports its own error.
@@ -1315,6 +1301,31 @@ describe("buffers", () => {
         throw new RangeError("from the callback");
       }),
     ).toThrow(new RangeError("from the callback"));
+  });
+});
+
+describe("b.callable", () => {
+  it("takes what can be called", () => {
+    expect(bindgen.callOr(() => 1, 2)).toBe(1);
+    expect(
+      bindgen.callOr(function () {
+        return this;
+      }, 2),
+    ).toBeUndefined();
+    expect(bindgen.callOr(new Proxy(() => 1, {}), 2)).toBe(1);
+    expect(bindgen.callOr(Math.random.bind(null), 2)).toBeNumber();
+    expect(() => bindgen.callOr(class {}, 2)).toThrow("Cannot call a class constructor");
+  });
+
+  it("can be absent", () => {
+    expect(bindgen.callOr(undefined, 2)).toBe(2);
+    expect(bindgen.callOr(null, 2)).toBe(2);
+  });
+
+  it.each([0, "", "text", {}, [[]], Symbol.iterator, 1n, new Proxy({}, {})])("refuses %p", value => {
+    expect(() => bindgen.callOr(value, 2)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: expect.stringContaining("callback") }),
+    );
   });
 });
 

@@ -2295,12 +2295,17 @@ function hasInvalidTrailer(response) {
   return outHeaders !== null && outHeaders["trailer"] !== undefined;
 }
 
-function _writeHead(statusCode, reason, obj, response) {
+function validateStatusCode(statusCode) {
   const originalStatusCode = statusCode;
   statusCode |= 0;
   if (statusCode < 100 || statusCode > 999) {
     throw $ERR_HTTP_INVALID_STATUS_CODE(require("internal/util/inspect").format("%s", originalStatusCode));
   }
+  return statusCode;
+}
+
+function _writeHead(statusCode, reason, obj, response) {
+  statusCode = validateStatusCode(statusCode);
 
   if (typeof reason === "string") {
     // writeHead(statusCode, reasonPhrase[, headers])
@@ -3100,7 +3105,7 @@ function accountQueuedHeaderBytes(res, queued) {
 function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
   callWriteHeadIfObservable(res, res[headerStateSymbol]);
   if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
-    updateHasBody(res, res.statusCode);
+    updateHasBody(res, (res.statusCode = validateStatusCode(res.statusCode)));
   }
   accountQueuedHeaderBytes(res, queued);
   if (!res._hasBody) {
@@ -3131,7 +3136,7 @@ function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
 function bufferPipelinedEnd(res, queued, chunk, encoding, callback) {
   callWriteHeadIfObservable(res, res[headerStateSymbol], true);
   if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
-    updateHasBody(res, res.statusCode);
+    updateHasBody(res, (res.statusCode = validateStatusCode(res.statusCode)));
   }
   accountQueuedHeaderBytes(res, queued);
   if (chunk && !res._hasBody) {
@@ -3530,7 +3535,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // the header state without deriving _hasBody and a later body write to
     // a 204/304 would reach the wire chunk-framed with no terminator.
     // updateHasBody only ever clears _hasBody, so this is idempotent.
-    updateHasBody(this, this.statusCode);
+    updateHasBody(this, (this.statusCode = validateStatusCode(this.statusCode)));
   }
   if (chunk && !this._hasBody) {
     if (this[kRejectNonStandardBodyWrites]) {
@@ -3592,7 +3597,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
       } catch (e) {
         releaseRenderedHeaders(renderedHeaders);
         // Mirror the old two-call flow's headersSent semantics: errors from
-        // the write-head phase (the batch's upfront gate, status validation,
+        // the write-head phase (the batch's upfront gate, argument validation,
         // headers-already-sent) leave the state unset; anything after that
         // point threw with headers already on the wire, exactly like
         // handle.end throwing after handle.writeHead succeeded.
@@ -3601,6 +3606,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
           code !== "ERR_STREAM_ALREADY_FINISHED" &&
           code !== "ERR_HTTP_HEADERS_SENT" &&
           code !== "ERR_INVALID_CHAR" &&
+          code !== "ERR_INVALID_ARG_TYPE" &&
           !(e instanceof RangeError)
         ) {
           this[headerStateSymbol] = sentState;
@@ -3740,7 +3746,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     // the header state without deriving _hasBody and a later body write to
     // a 204/304 would reach the wire chunk-framed with no terminator.
     // updateHasBody only ever clears _hasBody, so this is idempotent.
-    updateHasBody(this, this.statusCode);
+    updateHasBody(this, (this.statusCode = validateStatusCode(this.statusCode)));
   }
   if (chunk && !this._hasBody) {
     if (this[kRejectNonStandardBodyWrites]) {

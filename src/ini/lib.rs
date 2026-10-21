@@ -1096,7 +1096,16 @@ mod draft {
                 npmrc_path,
                 bun_ast::ToSourceOptions { convert_bom: true },
             ) {
-                Ok(source) => sources.push(source),
+                Ok(source) => {
+                    if source
+                        .check_parseable_len(&mut log, "INI document")
+                        .is_err()
+                    {
+                        report_log(&mut log, diagnostics);
+                        continue;
+                    }
+                    sources.push(source);
+                }
                 Err(_) => continue,
             }
 

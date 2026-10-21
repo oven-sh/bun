@@ -156,13 +156,13 @@ export const pins = {
     },
   },
   buildkiteAgent: {
-    version: "3.114.0",
+    version: "4.7.0",
     // The release's buildkite-agent-<version>.SHA256SUMS.
     sha256: {
-      "linux-x64": "7f574fd8bcc3cd980f6d2d560e7481db4313e100ae587c2c32e4b5084369c4f4",
-      "linux-aarch64": "3eb580a2e39daed2c34b2d821b686131f2a6d8db2c4f255bbb1c2ed67bf6fcc0",
-      "windows-x64": "9a7880ce4ee0e1b6fd6e272bdf13f1b63b67f64a327c7d045be422890572dfb7",
-      "windows-aarch64": "2da2e9a7559b3a995964e721c94ceccc273e7972a5c042cb4a2ee08c079fab7a",
+      "linux-x64": "6a71ae796642ffa15063a1e571f160a758287cb8b028a7c00a599081eecdd2f5",
+      "linux-aarch64": "dfc9a41609cad90e4bf6a5acafcdf73e41790620128f562c88c06b532e9ce99f",
+      "windows-x64": "8fa3e012e646d7203574e34e23e56c1c7f0a36bed496aeab63d7e53d590ac87b",
+      "windows-aarch64": "92c5bdf99002d5f6636d9ad54af438694daafb33f4ed16d65a62449664a196cf",
     },
   },
   cmake: {
@@ -226,14 +226,14 @@ export const pins = {
     // Google only publishes a SHA-1, in dl.google.com/android/repository/repository2-3.xml. This is of the file that has it.
     sha256: "59c2f6dc96743b5daf5d1626684640b20a6bd2b1d85b13156b90333741bad5cc",
   },
-  // A FreeBSD release moves from download.freebsd.org to the archive when it reaches end of life.
+  // download.freebsd.org has a release until its end of life, and then only archive.freebsd.org/old-releases does.
   freebsd: {
-    version: "14.3",
-    baseUrl: "https://archive.freebsd.org/old-releases",
+    version: "14.4",
+    baseUrl: "https://download.freebsd.org/releases",
     // base.txz in the MANIFEST beside it.
     sha256: {
-      x64: "e38b5cf756d60086a6c2f736eff19cc7685f7e2313e31d14342fc8df57200a92",
-      aarch64: "f83e824cb7a20dbadb2888a8bd253e6a1ac35024cc6dc8af9f3e229f75ec7129",
+      x64: "769f60a6eea2938ad6b7943cfbcc17dfaf7d1f7ba59a32b869a00349302df853",
+      aarch64: "c456bf75ee3d0b4da0b0b527402b0a9e61497f02756b2cc5801b51e80b3f90c4",
     },
   },
   // The release WebKit's prebuilt is built on (glibc 2.31).
@@ -551,6 +551,12 @@ const apkPackages = [
 ];
 
 /**
+ * Roots of the distro's ca-certificates package that the machines do not trust,
+ * by how their lines of /etc/ca-certificates.conf start.
+ */
+const droppedRoots = ["mozilla/Comodo_AAA", "mozilla/emSign"];
+
+/**
  * The macOS test machines. CI does not bake them: scripts/darwin-ci runs the
  * generated script in the Tart guest image it builds, or on a bare host.
  */
@@ -570,6 +576,9 @@ const scoopPackages = {
   // Neither has an arm64 build.
   x64: ["nasm", "mingw"],
 } as const;
+
+/** Roots that the Windows machines do not trust, by how their names start. */
+const droppedWindowsRoots = ["AAA Certificate Services", "emSign"];
 
 /** Where `bun run ci:images` and CI write an image's bake directory, from the repository's root. */
 export const bakeDirectory = (key: string) => `build/ci-images/${key}`;
@@ -665,6 +674,48 @@ function packages(image: LinuxImage): Tool {
     identity: packageDatabase,
     steps: [
       image.distro === "alpine" ? apkAdd(apkPackages, { update: true }) : aptInstall(aptPackages, { update: true }),
+    ],
+  };
+}
+
+/**
+ * The system's trusted roots without `droppedRoots`. curl, git, wget and the
+ * agent read them. Bun and Node.js use lists of their own unless told otherwise.
+ */
+function caCertificates(): Tool {
+  const trusted = "/etc/ssl/certs";
+  // Names each file after the first that holds the first file's certificate, and fails if there is one.
+  const stillHeld = [
+    `/^-----BEGIN CERTIFICATE-----/ { body = ""; next }`,
+    `/^-----END CERTIFICATE-----/ {`,
+    `  if (NR == FNR) dropped = body`,
+    `  else if (body == dropped) { print FILENAME " still holds " ARGV[1]; held = 1 }`,
+    `  next`,
+    `}`,
+    `{ body = body $0 }`,
+    `END { exit held }`,
+  ].join("\n");
+  return {
+    name: "ca-certificates",
+    identity: observed(run("grep", "-c", "BEGIN CERTIFICATE", `${trusted}/ca-certificates.crt`)),
+    steps: [
+      comment("A line that starts with ! names a root that the package has and the machine does not trust."),
+      ...droppedRoots.map(root => run("sed", "-i", `s,^${root},!&,`, "/etc/ca-certificates.conf")),
+      run("update-ca-certificates"),
+      comment("A dropped root's file stays in /usr/share. A release without the file has nothing to look for."),
+      ...droppedRoots.map(root =>
+        forEachFile("root", text`/usr/share/ca-certificates/${root}${glob("*")}`, [
+          ifExists(variable("root"), [
+            run(
+              "awk",
+              stillHeld,
+              variable("root"),
+              text`${trusted}/${glob("*.crt")}`,
+              text`${trusted}/${glob("*.pem")}`,
+            ),
+          ]),
+        ]),
+      ),
     ],
   };
 }
@@ -1688,6 +1739,18 @@ function windowsSystem(): Tool {
   };
 }
 
+/**
+ * Windows' trusted roots without `droppedWindowsRoots`. curl.exe, PowerShell, Git
+ * and the agent read them. Bun and Node.js use lists of their own unless told otherwise.
+ */
+function disallowedRoots(): Tool {
+  return {
+    name: "disallowed-roots",
+    identity: observed(printLine(property(cmdlet("Get-ChildItem", {}, "Cert:\\LocalMachine\\Disallowed"), "Count"))),
+    steps: [disallowRoots(droppedWindowsRoots)],
+  };
+}
+
 function scoop(image: WindowsImage): Tool {
   const home = locations.scoop;
   const { installer, core, mainBucket } = pins.scoop;
@@ -1725,6 +1788,8 @@ function scoop(image: WindowsImage): Tool {
       run("git", "config", "--system", "core.autocrlf", "false"),
       run("git", "config", "--system", "core.eol", "lf"),
       run("git", "config", "--system", "core.longpaths", "true"),
+      comment("Windows' trusted roots, not the list Git comes with."),
+      run("git", "config", "--system", "http.sslBackend", "schannel"),
     ],
   };
 }
@@ -1944,6 +2009,7 @@ export function tools(image: Image): readonly Tool[] {
   if (image.os === "windows") {
     return [
       windowsSystem(),
+      disallowedRoots(),
       scoop(image),
       nodejs(image),
       llvm(image),
@@ -1968,6 +2034,7 @@ export function tools(image: Image): readonly Tool[] {
   const apt = image.distro !== "alpine";
   return [
     packages(image),
+    caCertificates(),
     ulimits(image),
     ...(apt ? [] : [cloudInitDhcpClient()]),
     agentAccount(),
@@ -2840,6 +2907,38 @@ const firewallAllowInbound = (options: { name: string; displayName: string; port
       LocalPort: options.port,
     }),
   );
+
+/**
+ * Windows refuses a certificate of the machine's Disallowed store, whichever other store has it. A root is trusted
+ * without being in a store: Windows fetches one that Windows Update lists when a chain first ends in it.
+ */
+const disallowRoots =
+  (names: readonly string[]): Step =>
+  c => {
+    const x509 = "System.Security.Cryptography.X509Certificates";
+    const named = names.map(name => `$name -like ${renderValue(`${name}*`, c, true)}`).join(" -or ");
+    return [
+      ...render([discardOutput(run("certutil", "-generateSSTFromWU", scratch("roots.sst")))], c),
+      `$roots = New-Object ${x509}.X509Certificate2Collection`,
+      `$roots.Import(${renderValue(scratch("roots.sst"), c)})`,
+      `$roots.AddRange((Get-ChildItem 'Cert:\\LocalMachine\\Root', 'Cert:\\LocalMachine\\AuthRoot'))`,
+      `$dropped = $roots | Where-Object { $name = $_.GetNameInfo("SimpleName", $false); ${named} }`,
+      `$disallowed = Get-Item 'Cert:\\LocalMachine\\Disallowed'`,
+      `$disallowed.Open("ReadWrite")`,
+      `foreach ($root in $dropped) { $disallowed.Add($root) }`,
+      `$disallowed.Close()`,
+      // ExplicitDistrust is the status of a certificate that is in a Disallowed store. One that fails otherwise is not refused by it.
+      `foreach ($root in $dropped) {`,
+      `  foreach ($attempt in 1..3) {`,
+      `    $chain = New-Object ${x509}.X509Chain $true`,
+      `    $chain.ChainPolicy.RevocationMode = "NoCheck"`,
+      `    if (-not $chain.Build($root) -and $chain.ChainStatus.Status -contains "ExplicitDistrust") { break }`,
+      `    if ($attempt -eq 3) { throw "bootstrap: $($root.Subject) is not refused" }`,
+      `    Start-Sleep -Seconds 2`,
+      `  }`,
+      "}",
+    ];
+  };
 
 /** A task that runs as SYSTEM each time the machine starts. */
 const scheduledTaskAtStartup = (options: { name: string; program: string; arguments: string }): Step[] => [

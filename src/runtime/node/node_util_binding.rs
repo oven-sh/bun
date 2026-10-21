@@ -82,7 +82,7 @@ pub(crate) fn extracted_split_new_lines_fast_path_strings_only(
 
 fn split<T: Copy + PartialEq + From<u8>>(
     buffer: &[T],
-    clone: fn(&[T]) -> BunString,
+    clone: impl Fn(&[T]) -> BunString,
 ) -> Vec<BunString> {
     let mut lines = Vec::new();
     let mut it = SplitNewlineIterator {

@@ -14,12 +14,16 @@
 // This fixture stays on the real clock: the sweep has to find the sockets where a slow loop leaves
 // them, between iterations that each give the clients time to answer.
 //
-// Prints one JSON line: { clients, answered, errors, servedWhileHeld }.
+// Prints one JSON line: { clients, answered, errors, queueFullAtLastTick }.
 
 import { getEventLoopStats } from "bun:internal-for-testing";
+import { tempDir, tls as certs } from "harness";
 import { existsSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 const N = 40;
+// MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION in packages/bun-usockets/src/loop.c.
+const BUDGET = 5;
 // LIBUS_TIMEOUT_GRANULARITY (packages/bun-usockets/src/libusockets.h) plus a margin.
 const TICK_MS = 4100;
 const TICKS = 3;
@@ -27,21 +31,22 @@ const TICKS = 3;
 const STEP_DEADLINE_MS = 20_000;
 const CLIENT_DEADLINE_MS = TICKS * TICK_MS + STEP_DEADLINE_MS;
 
-// The file that the clients create once every ClientHello is on its way.
-const everyHelloSent = process.env.MARKER!;
-
 if (process.argv[2] === "client") {
-  await client(Number(process.argv[3]));
+  await client(Number(process.argv[3]), process.argv[4]);
 } else {
   await server();
 }
 
 async function server() {
+  // The clients create this file once every ClientHello is on its way.
+  using dir = tempDir("tls-serve-parked-burst", {});
+  const everyHelloSent = join(String(dir), "every-hello-sent");
+
   let served = 0;
   const server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
-    tls: { cert: process.env.TLS_CERT!, key: process.env.TLS_KEY! },
+    tls: { cert: certs.cert, key: certs.key },
     fetch() {
       served++;
       return new Response("ok");
@@ -52,7 +57,7 @@ async function server() {
   const keepClient = await Bun.connect({ hostname: "127.0.0.1", port: keep.port, socket: { data() {} } });
 
   await using child = Bun.spawn({
-    cmd: [process.execPath, import.meta.path, "client", String(server.port)],
+    cmd: [process.execPath, import.meta.path, "client", String(server.port), everyHelloSent],
     env: process.env,
     stdout: "pipe",
     stderr: "inherit",
@@ -69,12 +74,12 @@ async function server() {
     Bun.sleepSync(TICK_MS);
     await oneIteration();
   }
-  // Every iteration completes at most 5 handshakes, so the rest of the burst was still waiting.
-  const servedWhileHeld = served;
+  // An iteration completes at most 5 handshakes, so the rest of the burst was still waiting.
+  const queueFullAtLastTick = served <= TICKS * BUDGET;
 
   const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
   if (exitCode !== 0) throw new Error(`the client process exited with code ${exitCode}`);
-  console.log(JSON.stringify({ ...JSON.parse(stdout), servedWhileHeld }));
+  console.log(JSON.stringify({ ...JSON.parse(stdout), queueFullAtLastTick }));
 
   keepClient.terminate();
   keep.stop(true);
@@ -87,7 +92,7 @@ async function oneIteration() {
   while (getEventLoopStats().iteration < target) await new Promise(resolve => setImmediate(resolve));
 }
 
-async function client(port: number) {
+async function client(port: number, everyHelloSent: string) {
   const summary = { clients: N, answered: 0, errors: {} as Record<string, number> };
   const settled = Promise.withResolvers<void>();
   let opened = 0;

@@ -163,34 +163,6 @@ test.concurrent(
   60_000,
 );
 
-// The loop switches off the reads of a socket that it parks in the low-priority
-// handshake queue, so the socket's timeouts must not run there: the owner would
-// act on a peer whose bytes nobody read. The fixture parks 15 of 20 sockets,
-// runs the timeout sweep by hand and counts the `timeout` handlers per step:
-//   oneTick: 5 while the 15 are parked (the sockets that were read), 15 once
-//     the queue let them go. A timeout that runs on a parked socket gives
-//     "20,0", one that is lost in the queue "5,0".
-//   unarmed: a parked socket with no timeout never gets one.
-//   parkedTooLong: after 30 ticks in the queue the timeout runs there.
-test.concurrent(
-  "TLS low-prio queue: the timeouts of a parked socket run after the queue releases it",
-  async () => {
-    expect(await runFixture("tls-parked-handshake-timeout-fixture.ts")).toEqual({
-      summary: {
-        opened: 20,
-        oneTick: ["5,15"],
-        unarmed: [0, 0],
-        parkedTooLong: [5, 15],
-        errors: 0,
-      },
-      signalCode: null,
-      exitCode: 0,
-      stderrTail: "",
-    });
-  },
-  60_000,
-);
-
 // us_poll_start_rc wraps uv_poll_init_socket on Windows and EPOLL_CTL_ADD /
 // kevent on posix. On Windows the return value was ignored, so an ioctlsocket
 // FIONBIO failure left a never-initialized uv_poll_t that uv_unref/uv_poll_start

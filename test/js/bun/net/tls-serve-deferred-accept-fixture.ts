@@ -14,7 +14,9 @@
 // Prints one JSON line: { clients, closedWhileParked, closedAfterRelease }.
 
 import { getEventLoopStats, sweepSocketTimers } from "bun:internal-for-testing";
+import { tempDir, tls as certs } from "harness";
 import { existsSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 const N = 12;
 // MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION in packages/bun-usockets/src/loop.c.
@@ -26,20 +28,21 @@ const STEP_DEADLINE_MS = 20_000;
 // A handshake record that announces 512 more bytes.
 const RECORD_HEAD = new Uint8Array([0x16, 0x03, 0x01, 0x02, 0x00]);
 
-// The file that the clients create once every record head is on its way.
-const everyHeadSent = process.env.MARKER!;
-
 if (process.argv[2] === "client") {
-  await client(Number(process.argv[3]), Number(process.argv[4]));
+  await client(Number(process.argv[3]), Number(process.argv[4]), process.argv[5]);
 } else {
   await server();
 }
 
 async function server() {
+  // The clients create this file once every record head is on its way.
+  using dir = tempDir("tls-serve-deferred-accept", {});
+  const everyHeadSent = join(String(dir), "every-head-sent");
+
   const server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
-    tls: { cert: process.env.TLS_CERT!, key: process.env.TLS_KEY! },
+    tls: { cert: certs.cert, key: certs.key },
     fetch: () => new Response("ok"),
   });
   // The clients answer a byte on this connection with the number of their sockets that have closed.
@@ -63,7 +66,7 @@ async function server() {
   });
 
   await using child = Bun.spawn({
-    cmd: [process.execPath, import.meta.path, "client", String(server.port), String(control.port)],
+    cmd: [process.execPath, import.meta.path, "client", String(server.port), String(control.port), everyHeadSent],
     env: process.env,
     stdout: "inherit",
     stderr: "inherit",
@@ -96,7 +99,7 @@ async function iterations(n: number) {
   while (getEventLoopStats().iteration < target) await new Promise(resolve => setImmediate(resolve));
 }
 
-async function client(port: number, controlPort: number) {
+async function client(port: number, controlPort: number, everyHeadSent: string) {
   let opened = 0;
   let closed = 0;
   await Bun.connect({

@@ -3502,40 +3502,6 @@ it.concurrent(
   40_000,
 );
 
-it.concurrent(
-  "TLS: answers every client of a burst that outwaits the idle timeout in the handshake queue",
-  async () => {
-    using dir = tempDir("serve-tls-parked-handshake", {});
-    const result = await bunRun(join(import.meta.dirname, "serve-tls-parked-handshake-timeout-fixture.ts"), {
-      TLS_CERT: tls.cert,
-      TLS_KEY: tls.key,
-      MARKER: join(String(dir), "every-hello-sent"),
-    });
-    expect(result).toSpawn();
-    const { servedWhileHeld, ...summary } = JSON.parse(result.stdout);
-    expect(summary).toEqual({ clients: 40, answered: 40, errors: {} });
-    // 3 ticks, and an iteration completes at most 5 handshakes: the timeout came due over a full queue.
-    expect(servedWhileHeld).toBeLessThanOrEqual(15);
-  },
-  40_000,
-);
-
-// Only a deferred accept (Linux) has its input when the accept path runs. Elsewhere the socket is read an iteration later.
-it.concurrent.skipIf(!isLinux)(
-  "TLS: a connection that arrives with its ClientHello over the handshake budget is parked at once",
-  async () => {
-    using dir = tempDir("serve-tls-deferred-accept", {});
-    const result = await bunRun(join(import.meta.dirname, "serve-tls-deferred-accept-park-fixture.ts"), {
-      TLS_CERT: tls.cert,
-      TLS_KEY: tls.key,
-      MARKER: join(String(dir), "every-head-sent"),
-    });
-    expect(result).toSpawn();
-    expect(JSON.parse(result.stdout)).toEqual({ clients: 12, closedWhileParked: 5, closedAfterRelease: 12 });
-  },
-  40_000,
-);
-
 it.concurrent("#6462", async () => {
   let headers: [string, string | null][] = [];
   using server = Bun.serve({

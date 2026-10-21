@@ -564,12 +564,9 @@ impl TimerObjectInternals {
         if kind != KindBig::SetInterval {
             s.this_value.with_mut(|r| r.downgrade());
         } else {
-            // `interval` is 0 for a `setInterval(fn, 0)` armed under fake
-            // timers. Re-arm at least 1ms out so a drain that fires every
-            // timer due at one instant cannot pick it up again.
             time_before_call = Timespec::ms_from_now(
                 TimespecMockMode::AllowMockedTime,
-                i64::from(s.interval.get().max(1)),
+                i64::from(s.interval.get()),
             );
         }
         this_object.ensure_still_alive();
@@ -787,8 +784,8 @@ impl TimerObjectInternals {
         debug_assert!(!state.is_null(), "RuntimeState not installed");
 
         let now = Timespec::now(TimespecMockMode::AllowMockedTime);
-        // `interval` is below 1 for `Bun.sleep(0)`, and for a `setTimeout`
-        // or `setInterval` with a sub-1ms delay armed under fake timers.
+        // `interval` is below 1 for `Bun.sleep(0)` and for a `setTimeout`
+        // with a sub-1ms delay armed under fake timers.
         // SAFETY: `state` is the boxed per-thread `RuntimeState`; field read only.
         let min_delay = unsafe { (*state).timer.fake_timers.min_delay_ms() };
         let scheduled_time = now.add_ms(i64::from(self.interval.get().max(min_delay)));

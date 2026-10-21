@@ -127,16 +127,15 @@ impl All {
         global_this: &JSGlobalObject,
         countdown: JSValue,
         overflow_behavior: CountdownOverflowBehavior,
+        minimum_ms: u32,
         warn: bool,
     ) -> JsResult<u32> {
         // Both match arms below enforce the [0, i32::MAX] range (Clamp
-        // saturates to i32::MAX; OneMs yields either 1 or a value already
-        // validated to be <= i32::MAX), so callers always receive a value
-        // in that range.
+        // saturates to i32::MAX; OneMs yields `minimum_ms`, 1 for an
+        // overflow, or a value already validated to be <= i32::MAX), so
+        // callers always receive a value in that range.
         // We don't deal with nesting levels directly
-        // but we do set the minimum timeout to be 1ms for repeating timers.
-        // Under fake timers a sub-1ms delay stays 0, so `reschedule` keys it
-        // at the current fake time (sinon's rule, via `min_delay_ms`).
+        // but we do set the minimum timeout to be 1ms for repeating timers
         let countdown_double = countdown.to_number(global_this)?;
         let countdown_int: u32 = match overflow_behavior {
             CountdownOverflowBehavior::Clamp => {
@@ -174,11 +173,8 @@ impl All {
                             )?;
                         }
                     }
-                    if self.fake_timers.is_active() && !(countdown_double > i32::MAX as f64) {
-                        0
-                    } else {
-                        1
-                    }
+                    let is_too_long = countdown_double > i32::MAX as f64;
+                    if is_too_long { 1 } else { minimum_ms }
                 } else {
                     countdown_double as u32
                 }
@@ -206,6 +202,7 @@ impl All {
             cx.global(),
             countdown,
             CountdownOverflowBehavior::Clamp,
+            0,
             true,
         )?;
         let wrapped_promise = promise.with_async_context_if_needed(cx.global());
@@ -247,10 +244,15 @@ impl All {
         all.last_id = all.last_id.wrapping_add(1);
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
+        // As in @sinonjs/fake-timers, a fake timer without a delay is due now
+        // (1ms later while a fake timer's callback runs, see
+        // `FakeTimers::min_delay_ms()`). A real one is never below 1ms.
+        let minimum_ms = if all.fake_timers.is_active() { 0 } else { 1 };
         let countdown_int = all.js_value_to_countdown(
             cx.global(),
             countdown,
             CountdownOverflowBehavior::OneMs,
+            minimum_ms,
             true,
         )?;
         Ok(TimeoutObject::init(
@@ -276,10 +278,13 @@ impl All {
         all.last_id = all.last_id.wrapping_add(1);
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
+        // Never 0, on either clock: it would be due again at the time it
+        // fired, so advancing the fake clock would not end.
         let countdown_int = all.js_value_to_countdown(
             cx.global(),
             countdown,
             CountdownOverflowBehavior::OneMs,
+            1,
             true,
         )?;
         Ok(TimeoutObject::init(

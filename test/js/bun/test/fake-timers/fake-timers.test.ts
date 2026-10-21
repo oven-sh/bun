@@ -192,13 +192,15 @@ describe("advanceTimersByTime", () => {
     expect({ at, now: Date.now() }).toEqual({ at: [1000, 1000], now: 1000 });
   });
 
-  test("setInterval(fn, 0) fires at the current fake time and then once per ms", () => {
+  test("setInterval(fn, 0) still waits 1ms and advanceTimersByTime(0) does not fire it", () => {
     vi.useFakeTimers({ now: 1000 });
     const at: number[] = [];
     setInterval(() => at.push(Date.now()), 0);
+    vi.advanceTimersByTime(0);
+    expect({ at, now: Date.now() }).toEqual({ at: [], now: 1000 });
     vi.advanceTimersByTime(3);
     expect({ at, now: Date.now(), pending: vi.getTimerCount() }).toEqual({
-      at: [1000, 1001, 1002, 1003],
+      at: [1001, 1002, 1003],
       now: 1003,
       pending: 1,
     });
@@ -392,8 +394,8 @@ describe("AbortSignal.timeout", () => {
 // later, as in @sinonjs/fake-timers. At the current instant it is due again
 // within the advanceTimersByTime() / runOnlyPendingTimers() call that runs the
 // callback, and a callback that re-arms itself that way keeps the call from
-// ever returning. Under fake timers setTimeout(fn, 0), setInterval(fn, 0),
-// AbortSignal.timeout(0) and Bun.sleep(0) all have no delay.
+// ever returning. setInterval(fn, 0) is always 1ms; under fake timers
+// setTimeout(fn, 0), AbortSignal.timeout(0) and Bun.sleep(0) have no delay.
 describe("a zero-delay timer armed by a timer callback", () => {
   // Ends a chain of re-armed timers, so a drain that keeps firing them at one
   // instant fails an assertion and does not spin.

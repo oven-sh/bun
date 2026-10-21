@@ -375,7 +375,6 @@ settings_setters! {
     delay_onclose => us_nq_settings_set_delay_onclose : c_int,
 }
 
-/// # Safety
 /// `conn` must be a live `lsquic_conn_t`.
 unsafe fn sockaddrs(conn: *mut lsquic_conn) -> Option<(*const sockaddr, *const sockaddr)> {
     let mut local = core::ptr::null();
@@ -390,7 +389,6 @@ unsafe fn sockaddrs(conn: *mut lsquic_conn) -> Option<(*const sockaddr, *const s
 pub struct MiniConn(*mut lsquic_conn);
 
 impl MiniConn {
-    /// # Safety
     /// `raw` must be a live mini conn for the lifetime of the returned value.
     pub unsafe fn from_raw(raw: *mut lsquic_conn) -> Option<Self> {
         (!raw.is_null()).then_some(Self(raw))
@@ -418,9 +416,7 @@ impl MiniConn {
 pub struct Conn(*mut lsquic_conn);
 
 impl Conn {
-    /// # Safety
-    /// `raw` must be a live full `lsquic_conn_t` (not a `MiniConn`) for the lifetime of the
-    /// returned value (i.e. until `on_conn_closed` returns for it).
+    /// `raw` must be a live full conn (not a `MiniConn`) until `on_conn_closed` returns for it.
     pub unsafe fn from_raw(raw: *mut lsquic_conn) -> Option<Self> {
         (!raw.is_null()).then_some(Self(raw))
     }

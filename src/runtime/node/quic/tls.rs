@@ -206,10 +206,7 @@ pub(super) struct TlsContext {
     _alpn: Option<Box<Vec<u8>>>,
 }
 
-/// The session of the handshake that `ssl` runs, if it still has one.
-///
-/// # Safety
-/// `ssl` must be the live SSL of an lsquic conn.
+/// The session of the handshake that `ssl`, a live SSL of an lsquic conn, runs, if it has one.
 unsafe fn session_of<'a>(ssl: *const ssl::SSL) -> Option<&'a super::session::QuicSession> {
     // SAFETY: lsquic keeps the SSL -> conn link for as long as the SSL lives.
     let conn = unsafe { bun_lsquic_sys::lsquic_ssl_to_conn(ssl.cast()) };

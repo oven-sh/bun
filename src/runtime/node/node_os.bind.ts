@@ -1,94 +1,60 @@
 // Internal bindings for node:os
 // The entrypoint for node:os is `src/js/node/os.ts`
-import { fn, t } from "bindgen";
+import * as b from "../../codegen/bindgen-lib.ts";
 
-export const cpus = fn({
+export default b.module({ rustPath: "crate::node::os" });
+
+export const hostCpuCount = b.fn({ returns: b.i32 });
+export const cpus = b.fn({ returns: b.any, capability: "js", throws: true });
+export const freemem = b.fn({ returns: b.u64 });
+export const getPriority = b.fn({
   args: {
-    global: t.globalObject,
+    pid: b.i32.validateInteger().default(0),
   },
-  ret: t.any,
+  returns: b.i32,
+  capability: "js",
+  throws: true,
 });
-export const freemem = fn({
-  args: {},
-  ret: t.u64,
-});
-export const getPriority = fn({
+export const homedir = b.fn({ returns: b.string, capability: "js", throws: true });
+export const hostname = b.fn({ returns: b.any, capability: "js", throws: true });
+export const loadavg = b.fn({ returns: b.array(b.f64) });
+export const networkInterfaces = b.fn({ returns: b.any, capability: "js", throws: true });
+export const release = b.fn({ returns: b.string });
+export const totalmem = b.fn({ returns: b.u64 });
+export const uptime = b.fn({ returns: b.f64, throws: true });
+
+export const UserInfoOptions = b.dictionary(
+  { encoding: b.string.loose.utf8.default("") },
+  { allowArray: true, nonObjectAsEmpty: "typeof" },
+);
+export const userInfo = b.fn({
   args: {
-    global: t.globalObject,
-    pid: t.i32.validateInt32().default(0).nonNull,
+    options: UserInfoOptions.nullable.default({}),
   },
-  ret: t.i32,
+  returns: b.any,
+  capability: "js",
+  throws: true,
 });
-export const homedir = fn({
-  args: {
-    global: t.globalObject,
-  },
-  ret: t.DOMString,
-});
-export const hostname = fn({
-  args: {
-    global: t.globalObject,
-  },
-  ret: t.any,
-});
-export const loadavg = fn({
-  args: {
-    global: t.globalObject,
-  },
-  ret: t.any,
-});
-export const networkInterfaces = fn({
-  args: {
-    global: t.globalObject,
-  },
-  ret: t.any,
-});
-export const release = fn({
-  args: {},
-  ret: t.DOMString,
-});
-export const totalmem = fn({
-  args: {},
-  ret: t.u64,
-});
-export const uptime = fn({
-  args: {
-    global: t.globalObject,
-  },
-  ret: t.f64,
-});
-export const UserInfoOptions = t.dictionary({
-  encoding: t.DOMString.default(""),
-});
-export const userInfo = fn({
-  args: {
-    global: t.globalObject,
-    options: UserInfoOptions.default({}),
-  },
-  ret: t.any,
-});
-export const version = fn({
-  args: {},
-  ret: t.DOMString,
-});
+export const version = b.fn({ returns: b.string, throws: true });
+
 const PRI_MIN = -20;
 const PRI_MAX = 19;
-export const setPriority = fn({
-  variants: [
-    {
-      args: {
-        global: t.globalObject,
-        pid: t.i32.validateInt32(),
-        priority: t.i32.validateInt32(PRI_MIN, PRI_MAX),
-      },
-      ret: t.undefined,
+export const setPriority = b.overloads(
+  {
+    args: {
+      pid: b.i32.validateInteger(),
+      priority: b.i32.validateInteger(PRI_MIN, PRI_MAX),
     },
-    {
-      args: {
-        global: t.globalObject,
-        priority: t.i32.validateInt32(PRI_MIN, PRI_MAX),
-      },
-      ret: t.undefined,
+    capability: "js",
+    throws: true,
+    rustPath: "crate::node::os::set_priority",
+  },
+  {
+    args: {
+      priority: b.i32.validateInteger(PRI_MIN, PRI_MAX),
     },
-  ],
-});
+    capability: "js",
+    throws: true,
+    rustPath: "crate::node::os::set_priority_of_current_process",
+  },
+);

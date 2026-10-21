@@ -1,0 +1,37 @@
+Bounds-check the two output writes that only an ASSERT guards.
+
+deflate_flush_block() checks a block's cost against the remaining output space
+once, after a first pass over the input, then emits the block in a second pass
+with no bounds check. Bun can pass libdeflate memory that another thread writes
+to (a SharedArrayBuffer view, a shared Bun.mmap region). A write between the
+passes can make the block longer than its cost.
+
+The word-at-a-time flush is already bounded by out_fast_end. With this patch,
+the byte-at-a-time tail sets the overflow flag instead of writing past the end,
+and the final partial byte returns 0.
+
+--- a/lib/deflate_compress.c
++++ b/lib/deflate_compress.c
+@@ -742,8 +742,10 @@
+ 	} else {							\
+ 		/* Flush a byte at a time. */				\
+ 		while (bitcount >= 8) {					\
+-			ASSERT(out_next < os->end);			\
+-			*out_next++ = bitbuf;				\
++			if (likely(out_next < os->end))			\
++				*out_next++ = bitbuf;			\
++			else						\
++				os->overflow = true;			\
+ 			bitcount -= 8;					\
+ 			bitbuf >>= 8;					\
+ 		}							\
+@@ -4063,7 +4065,8 @@
+ 	 */
+ 	ASSERT(os.bitcount <= 7);
+ 	if (os.bitcount) {
+-		ASSERT(os.next < os.end);
++		if (unlikely(os.next >= os.end))
++			return 0;
+ 		*os.next++ = os.bitbuf;
+ 	}
+ 

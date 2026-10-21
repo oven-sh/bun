@@ -553,7 +553,7 @@ describe.concurrent.each([
     expect(await runBun(command.split(" "), project.member)).toEqual(before);
   });
 
-  test("bun install reports that package.json, and does not install the member as a project of its own", async () => {
+  test("bun install reports that package.json, and doesn't install the workspace as a separate project", async () => {
     using project = await installThenBreakSibling();
     project.breakSibling();
 
@@ -586,8 +586,8 @@ describe.concurrent.skipIf(isWindows)("package.json in a sticky, shared director
     "shared/proj/dep/package.json": dep,
   };
 
-  // `shared/sub` has no package.json. The walk goes on above a manifest it ignores: the empty
-  // project at the top keeps it inside the fixture.
+  // `shared/sub` has no package.json. The walk continues above a manifest that it ignores, and the empty project at the
+  // top keeps it inside the fixture.
   const projectFiles = {
     "package.json": JSON.stringify({ name: "fence", version: "0.0.0" }),
     "shared/package.json": JSON.stringify({
@@ -604,7 +604,7 @@ describe.concurrent.skipIf(isWindows)("package.json in a sticky, shared director
   const installIn = (root: string, ...subdirectory: string[]) =>
     runBun(["install"], join(root, ...subdirectory), { ...bunEnv, POSTINSTALL_MARKER: marker(root) });
   const ignored = (root: string) =>
-    `warn: other local users can add files to ${join(root, "shared")}, so bun ignored the package.json in it\n`;
+    `warn: ignoring package.json in ${join(root, "shared")}: directory is writable by other users\n`;
 
   test.each([
     ["everyone", 0o1777],

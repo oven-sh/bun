@@ -1,4 +1,4 @@
-//! How each kind of node is written. `format.rs` calls these.
+//! How each kind of node is printed. `format.rs` calls these.
 
 pub(crate) mod array_element_list;
 pub(crate) mod array_expression;

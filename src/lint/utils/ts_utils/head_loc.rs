@@ -9,8 +9,8 @@ use crate::tokens::{skip_trivia, skip_trivia_back};
 use crate::utils::ast_utils::first_opening_paren_nearby;
 use crate::utils::estree_compat::estree_span;
 
-/// The start of the first token after the last decorator among `modifiers`, or `start` if there is
-/// no decorator.
+/// The start of the first token after the last decorator in `modifiers`, or `start` if there's no
+/// decorator.
 fn start_after_decorators<'a>(modifiers: List<'a, Modifier<'a>>, text: &[u8], start: u32) -> u32 {
     match modifiers.iter().rfind(|it| it.decorator().is_some()) {
         Some(last) => skip_trivia(text, last.span().end),
@@ -33,14 +33,14 @@ fn is_method_or_property_definition(member: Member<'_>) -> bool {
         }
 }
 
-/// Whether `e` is the initializer or the computed key of `member`, as opposed to a decorator.
+/// True if `e` is `member`'s initializer or computed key, not a decorator.
 fn is_value_or_key<'a>(member: Member<'a>, e: Expr<'a>) -> bool {
     member.init() == Some(e)
         || matches!(member.key().map(|key| key.kind()), Some(KeyKind::Computed(key)) if key == e)
 }
 
-/// Upstream's `getOpeningParenOfParams`: where the `(` of the parameters starts. For an arrow
-/// function with one parameter and no parentheses, where that parameter starts.
+/// Upstream's `getOpeningParenOfParams`: the offset of the parameters' `(`, or of the parameter
+/// itself for an arrow function with one parameter and no parentheses.
 fn opening_paren_of_params(func: Func<'_>) -> u32 {
     let file = func.file();
     let text = file.text();
@@ -60,7 +60,7 @@ fn opening_paren_of_params(func: Func<'_>) -> u32 {
     {
         return paren;
     }
-    // Upstream takes the first `(` after the name, which can be one in the type parameters.
+    // Upstream uses the first `(` after the name, which can be one in the type parameters.
     let from = match func.name() {
         Some(name) => name.span().end,
         None => estree_span(Node::Func(func)).start,
@@ -73,12 +73,12 @@ fn opening_paren_of_params(func: Func<'_>) -> u32 {
         .map_or(from, |token| token.start())
 }
 
-/// typescript-eslint's `getFunctionHeadLoc`, which is ESLint's except that it leaves out the
-/// decorators of a class member. What to report a function at:
+/// typescript-eslint's `getFunctionHeadLoc`, which is ESLint's except that it skips a class
+/// member's decorators. The span to report a function at:
 ///
 /// - the `=>` of an arrow function,
-/// - a method, an accessor, or a function or an arrow function that is the value of a property of
-///   a class or of an object literal: from the start of the member or the property to the `(`,
+/// - a method, an accessor, or a function or arrow function that's the value of a class property or
+///   an object literal's property: from the start of the member or the property to the `(`,
 /// - any other function: from its start to the `(`.
 pub fn get_function_head_loc(func: Func<'_>) -> Span {
     let text = func.file().text();
@@ -116,8 +116,8 @@ pub fn get_function_head_loc(func: Func<'_>) -> Span {
     }
 }
 
-/// typescript-eslint's `getMemberHeadLoc`: a member of a class from its first modifier, without
-/// its decorators, to the end of its name.
+/// typescript-eslint's `getMemberHeadLoc`: a class member from its first modifier, without its
+/// decorators, to the end of its name.
 pub fn get_member_head_loc(member: Member<'_>) -> Span {
     let file = member.file();
     let text = file.text();

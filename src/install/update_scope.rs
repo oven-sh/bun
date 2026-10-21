@@ -24,7 +24,7 @@ pub struct UpdateScope<'a> {
     pub targets: Option<&'a [UpdateTargetWorkspace]>,
     pub invoking: Option<PackageNameHash>,
     whole_workspace: bool,
-    /// `--depth 0`: no row of a non-workspace package is in scope.
+    /// `--depth 0`: only the dependencies of the root and of workspaces are in scope.
     direct_only: bool,
     /// Walked by `plan_named` before the differ invalidates rows; otherwise `reachable()` walks the lockfile it is given.
     planned: Option<&'a DynamicBitSet>,

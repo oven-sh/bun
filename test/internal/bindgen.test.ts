@@ -2459,24 +2459,30 @@ describe("classes", () => {
   });
 });
 
-itAlways("the classes that can be disposed of", async () => {
+itAlways("a method of a class that is keyed by a symbol is named after it", async () => {
   using server = Bun.serve({ port: 0, fetch: () => new Response() });
   using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
   using socket = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { data() {} } });
   using udpSocket = await Bun.udpSocket({ hostname: "127.0.0.1" });
   using session = new Bun.FetchSession();
   await using subprocess = Bun.spawn({ cmd: [process.execPath, "--version"], stdout: "ignore" });
-  const prototypes = { terminal: Bun.Terminal.prototype };
+  const prototypes = {
+    terminal: Bun.Terminal.prototype,
+    resolveMessage: ResolveMessage.prototype,
+    buildMessage: BuildMessage.prototype,
+  };
   for (const [name, object] of Object.entries({ server, listener, socket, udpSocket, session, subprocess })) {
     prototypes[name] = Object.getPrototypeOf(object);
   }
   for (const [name, prototype] of Object.entries(prototypes)) {
-    const symbol = Symbol.dispose in prototype ? Symbol.dispose : Symbol.asyncDispose;
+    const symbol = [Symbol.dispose, Symbol.asyncDispose, Symbol.toPrimitive].find(symbol =>
+      Object.hasOwn(prototype, symbol),
+    )!;
     const { value, ...attributes } = Object.getOwnPropertyDescriptor(prototype, symbol)!;
     expect({ class: name, name: value.name, length: value.length, ...attributes }).toEqual({
       class: name,
       name: `[${symbol.description}]`,
-      length: 0,
+      length: symbol === Symbol.toPrimitive ? 1 : 0,
       writable: true,
       enumerable: false,
       configurable: true,

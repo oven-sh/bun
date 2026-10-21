@@ -970,6 +970,8 @@ test("an undefined argument of a snapshot matcher is one that is left out", asyn
         expect(2).toMatchSnapshot("hint", undefined);
         expect({ a: 3 }).toMatchSnapshot({ a: 3 }, undefined);
         expect(thrower).toThrowErrorMatchingSnapshot(undefined);
+        expect(thrower).toThrowErrorMatchingSnapshot("hint", "ignored");
+        expect(thrower).toThrowErrorMatchingInlineSnapshot(\`"message"\`, "ignored");
       });
     `,
   });
@@ -981,7 +983,7 @@ test("an undefined argument of a snapshot matcher is one that is left out", asyn
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("4 added");
+  expect(stderr).toContain("5 added");
   expect(exitCode).toBe(0);
 });
 

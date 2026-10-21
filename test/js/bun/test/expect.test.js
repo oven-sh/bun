@@ -2533,6 +2533,8 @@ describe("expect()", () => {
 
   test("expect.not does not need expect as its receiver", () => {
     expect("b").toEqual(Object.create(expect).not.stringContaining("a"));
+    expect(Promise.resolve("a")).toEqual(Object.create(expect).resolvesTo.stringContaining("a"));
+    expect(Promise.reject("a")).toEqual(Object.create(expect).rejectsTo.stringContaining("a"));
   });
 
   test("toBe()", () => {

@@ -1257,6 +1257,7 @@
 7056	E	The inferred type of this node exceeds the maximum length the compiler will serialize. An explicit type annotation is needed.
 7057	E	'yield' expression implicitly results in an 'any' type because its containing generator lacks a return-type annotation.
 7058	E	If the '{0}' package actually exposes this module, try adding a new declaration (.d.ts) file containing `declare module '{1}';`
+7059	E	This syntax is reserved in files with the .mts or .cts extension. Use an `as` expression instead.
 7060	E	This syntax is reserved in files with the .mts or .cts extension. Add a trailing comma or explicit constraint.
 7061	E	A mapped type may not declare properties or methods.
 8002	E	'import ... =' can only be used in TypeScript files.

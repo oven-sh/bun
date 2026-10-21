@@ -584,13 +584,21 @@ impl<'s> Checker<'_, 's> {
         self.p.files.options.erasable_syntax_only && !self.hir(file).is_js
     }
 
-    /// From `checkAssertion`: reports 1294 for `<T>operand`, from the `<` up to
+    /// From `checkAssertion`, for `<T>operand`: reports 7059 in a `.mts` or `.cts` file, and 1294 from the `<` up to
     /// `node.Expression().Pos()`.
-    fn check_erasable_type_assertion(&mut self, file: FileId, e: ExprId, operand: ExprId) {
+    fn check_type_assertion_syntax(&mut self, file: FileId, e: ExprId, operand: ExprId) {
         let hir = self.hir(file);
         let start = self.start_inside_parentheses(file, e);
         let operand_start = self.start_of(file, operand);
-        if start < operand_start && self.should_check_erasable_syntax(file) {
+        if start >= operand_start {
+            return;
+        }
+        let path = self.files().module(file).file_name();
+        if path.ends_with(b".mts") || path.ends_with(b".cts") {
+            let end = self.end_inside_parentheses(file, e);
+            self.grammar_error_at((file, start, end), 7059, &[]);
+        }
+        if self.should_check_erasable_syntax(file) {
             let end = skip_trivia_back(&hir.text, operand_start as usize) as u32;
             self.error_at((file, start, end), 1294, &[]);
         }
@@ -1802,7 +1810,7 @@ impl<'s> Checker<'_, 's> {
             | ExprKind::NonNull(x) => self.check_expression(file, x),
             // `checkAssertion`
             ExprKind::AsConst(x) => {
-                self.check_erasable_type_assertion(file, e, x);
+                self.check_type_assertion_syntax(file, e, x);
                 self.check_expression(file, x);
                 self.check_const_assertion(file, x);
             }
@@ -1815,7 +1823,7 @@ impl<'s> Checker<'_, 's> {
             }
             // `checkAssertion`
             ExprKind::As { expr, ty } => {
-                self.check_erasable_type_assertion(file, e, expr);
+                self.check_type_assertion_syntax(file, e, expr);
                 self.check_expression(file, expr);
                 self.check_type_node(file, ty);
                 self.check_node_deferred(file, e);

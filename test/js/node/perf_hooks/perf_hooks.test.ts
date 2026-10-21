@@ -367,6 +367,47 @@ test("mark/measure toJSON and inspection include detail without perf_hooks being
   expect(exitCode).toBe(0);
 });
 
+// `options.resolution` can be any safe integer >= 1.
+describe("monitorEventLoopDelay with a resolution above the int32 range", () => {
+  const cases = [
+    { resolution: 2 ** 31, earlierCall: false, when: "as the first call" },
+    { resolution: 2 ** 31, earlierCall: true, when: "after an earlier call" },
+    { resolution: 2 ** 32, earlierCall: true, when: "after an earlier call" },
+    { resolution: 2 ** 32 + 1, earlierCall: true, when: "after an earlier call" },
+  ];
+
+  test.concurrent.each(cases)("doesn't wrap resolution $resolution $when", async ({ resolution, earlierCall }) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { monitorEventLoopDelay } = require("node:perf_hooks");
+         ${earlierCall ? "monitorEventLoopDelay();" : ""}
+         const histogram = monitorEventLoopDelay({ resolution: ${resolution} });
+         console.log("enable", histogram.enable());
+         // If the resolution wrapped to 1 ms (2 ** 32 + 1 as an int32), it would record samples during these 10 ms.
+         setTimeout(() => {
+           console.log("count", histogram.count);
+           console.log("disable", histogram.disable());
+         }, 10);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      // If the period wrapped to 0 ms (2 ** 32 as an int32), the timer would re-arm forever and hang the event loop.
+      timeout: 4_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, stdout, exitCode, signalCode: proc.signalCode }).toEqual({
+      stderr: "",
+      stdout: "enable true\ncount 0\ndisable true\n",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
 // What node does too is in perf-hooks-observer.test.ts, which also runs under Node.js. These are Bun's own.
 describe("PerformanceObserver and the entry types that only Node has", () => {
   const timed = perf.performance.timerify(function work(..._args: unknown[]) {});

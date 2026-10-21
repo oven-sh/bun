@@ -1,4 +1,4 @@
-//! What ESTree has and the HIR does not.
+//! ESTree concepts that the HIR doesn't have.
 //!
 //! | ESTree | here |
 //! | --- | --- |
@@ -27,8 +27,8 @@ use smallvec::SmallVec;
 
 // ───────────────────────────── optional chains ─────────────────────────────
 
-/// [`Expr::is_chain_root`]: ESTree has a `ChainExpression` around `e`. It is the whole of
-/// `a?.b.c()`, not a part of it. In `a?.b!`, that is the `ExprKind::NonNull`.
+/// [`Expr::is_chain_root`]: ESTree has a `ChainExpression` around `e`. `e` is the whole `a?.b.c()`, not a part of it.
+/// In `a?.b!`, it's the `ExprKind::NonNull`.
 #[inline]
 pub fn is_chain_root(e: Expr<'_>) -> bool {
     e.is_chain_root()
@@ -41,7 +41,7 @@ fn is_comma(e: Expr<'_>) -> bool {
     matches!(e.as_binary(), Some((BinOp::Comma, _, _)))
 }
 
-/// Whether `e` is the `a, b` of `a, b, c`, which ESTree has no node for.
+/// True if `e` is the `a, b` in `a, b, c`, which ESTree has no node for.
 fn is_inner_comma(e: Expr<'_>) -> bool {
     is_comma(e)
         && !e.is_parenthesized()
@@ -51,15 +51,15 @@ fn is_inner_comma(e: Expr<'_>) -> bool {
         )
 }
 
-/// Whether `e` is a `SequenceExpression` of ESTree: all of `a, b, c`.
+/// True if `e` is an ESTree `SequenceExpression`: the whole `a, b, c`.
 #[inline]
 pub fn is_sequence_root(e: Expr<'_>) -> bool {
     is_comma(e) && !is_inner_comma(e)
 }
 
-/// The `SequenceExpression` of ESTree that `e`, a comma expression, is or is the start of.
+/// The ESTree `SequenceExpression` that the comma expression `e` is, or is the start of.
 pub fn sequence_root(mut e: Expr<'_>) -> Expr<'_> {
-    /// So far up it is looked for. The way is as long as the sequence.
+    /// The number of steps to walk up before using the table. The walk can be as long as the sequence.
     const NEAR: usize = 8;
     for _ in 0..NEAR {
         match e.parent().as_expr() {
@@ -107,8 +107,8 @@ pub fn last_sequence_expression(e: Expr<'_>) -> Expr<'_> {
 
 // ───────────────────────────── the head of a `for` ─────────────────────────────
 
-/// Whether `statement` is the `init` of a `for` or the `left` of a `for`-`in` or a `for`-`of`. If it
-/// is a `StmtKind::Expr`, ESTree has the expression there and no `ExpressionStatement`.
+/// True if `statement` is the `init` of a `for` or the `left` of a `for`-`in` or `for`-`of`. If it's a
+/// `StmtKind::Expr`, ESTree has the expression there and no `ExpressionStatement`.
 pub fn is_for_init(statement: Stmt<'_>) -> bool {
     match statement.parent().as_stmt().map(Stmt::kind) {
         Some(StmtKind::For { init, .. }) => init == Some(statement),
@@ -117,8 +117,7 @@ pub fn is_for_init(statement: Stmt<'_>) -> bool {
     }
 }
 
-/// Whether `statement` is an `ExpressionStatement` of ESTree: a `StmtKind::Expr` that is not in the
-/// head of a `for`.
+/// True if `statement` is an ESTree `ExpressionStatement`: a `StmtKind::Expr` that isn't in the head of a `for`.
 #[inline]
 pub fn is_expression_statement(statement: Stmt<'_>) -> bool {
     matches!(statement.tag(), StmtTag::Expr) && !statement.is_wrapper()
@@ -126,13 +125,12 @@ pub fn is_expression_statement(statement: Stmt<'_>) -> bool {
 
 // ───────────────────────────── patterns ─────────────────────────────
 
-/// Whether `e` is written where ESTree has a pattern: it is what an assignment or a `for`-`in` or
-/// `for`-`of` loop assigns to, or a part of that which is not a default value or a computed key.
+/// True if `e` is in a position where ESTree has a pattern: it's the target of an assignment or of a `for`-`in` or
+/// `for`-`of` loop, or a part of that target other than a default value or a computed key.
 ///
-/// For an `Array`, an `Object`, an `Assign` or a `Spread` it is [`Expr::is_assignment_target`]: ESTree
-/// calls it an `ArrayPattern`, an `ObjectPattern`, an `AssignmentPattern` or a `RestElement`, which
-/// in parentheses it is not. For anything else it tells that it is written to, in parentheses or
-/// not. The operand of `++` and `--` is not a pattern.
+/// For an `Array`, `Object`, `Assign` or `Spread` it's [`Expr::is_assignment_target`]: ESTree calls it an
+/// `ArrayPattern`, `ObjectPattern`, `AssignmentPattern` or `RestElement`, which it isn't when it's parenthesized. For
+/// anything else it means that `e` is written to, parenthesized or not. The operand of `++` and `--` isn't a pattern.
 pub fn is_assignment_target(e: Expr<'_>) -> bool {
     if matches!(
         e.tag(),
@@ -163,7 +161,7 @@ pub fn is_assignment_target(e: Expr<'_>) -> bool {
     }
 }
 
-/// A pattern of ESTree: a [`Pat`] in a declaration or a parameter, an [`Expr`] in an assignment.
+/// An ESTree pattern: a [`Pat`] in a declaration or a parameter, an [`Expr`] in an assignment.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Target<'a> {
     Pat(Pat<'a>),
@@ -174,7 +172,7 @@ pub enum Target<'a> {
 pub enum TargetKind<'a> {
     /// `Identifier`
     Ident(Name<'a>),
-    /// `MemberExpression`, or what else an assignment can have on its left, such as `a!`.
+    /// `MemberExpression`, or anything else that can be on the left of an assignment, such as `a!`.
     Other(Expr<'a>),
     /// `ArrayPattern`
     Array,
@@ -185,16 +183,16 @@ pub enum TargetKind<'a> {
 /// An element of an `ArrayPattern`, or a `Property` or a `RestElement` of an `ObjectPattern`.
 #[derive(Copy, Clone, Debug)]
 pub struct TargetElement<'a> {
-    /// Of a property that is not a rest element.
+    /// The key of a property that isn't a rest element.
     pub key: Option<Key<'a>>,
     /// `None` for a hole in an array.
     pub target: Option<Target<'a>>,
-    /// The `1` of `a = 1`: ESTree's `AssignmentPattern.right`.
+    /// The `1` in `a = 1`: ESTree's `AssignmentPattern.right`.
     pub default: Option<Expr<'a>>,
     pub is_rest: bool,
     /// `{ a }`, `{ a = 1 }`
     pub is_shorthand: bool,
-    /// The node of the element: a `PatElem`, a `PatProp`, a `Prop`, or the `Expr` in an array.
+    /// The element's node: a `PatElem`, a `PatProp`, a `Prop`, or the `Expr` in an array.
     pub node: Node<'a>,
 }
 
@@ -332,8 +330,8 @@ impl<'a> Target<'a> {
 
 // ───────────────────────────── node.type ─────────────────────────────
 
-/// [`Expr::is_in_type_query`]: `e` is the `a.b.c` of the type `typeof a.b.c`, or the `a` or the `a.b`
-/// in it. ESTree has an `Identifier` or a `TSQualifiedName` there, not a `MemberExpression`.
+/// [`Expr::is_in_type_query`]: `e` is the `a.b.c` in the type `typeof a.b.c`, or the `a` or `a.b` in it. ESTree has an
+/// `Identifier` or a `TSQualifiedName` there, not a `MemberExpression`.
 #[inline]
 pub fn is_in_type_query(e: Expr<'_>) -> bool {
     e.is_in_type_query()
@@ -553,14 +551,13 @@ fn type_name_of_param(param: Param<'_>) -> &'static str {
     }
 }
 
-/// ESTree's `node.type`, that of typescript-estree for TypeScript's syntax.
+/// ESTree's `node.type`, or typescript-estree's for TypeScript syntax.
 ///
-/// Where one node here stands for several of ESTree, it is the outermost that is not a mere
-/// wrapper: a `Param` with a default is an `AssignmentPattern`, an exported declaration is the
-/// declaration and not the `ExportNamedDeclaration`, the root of an optional chain is the member
-/// access or the call and not the `ChainExpression`. Where a node here has none in ESTree, it is
-/// what it holds: the `StmtKind::Expr` in the head of a `for` is the expression, the `VarDecl` of
-/// `catch (e)` the pattern.
+/// Where one node here covers several ESTree nodes, this is the outermost one that isn't a mere wrapper. A `Param` with
+/// a default is an `AssignmentPattern`, an exported declaration is the declaration and not the
+/// `ExportNamedDeclaration`, and the root of an optional chain is the member access or the call and not the
+/// `ChainExpression`. Where a node here has no ESTree node, this is the type of its content: the `StmtKind::Expr` in
+/// the head of a `for` is the expression, and the `VarDecl` of `catch (e)` is the pattern.
 pub fn estree_type_name(node: Node<'_>) -> &'static str {
     match node {
         Node::File(_) => "Program",
@@ -626,7 +623,7 @@ pub fn estree_type_name(node: Node<'_>) -> &'static str {
         Node::ImportSpec(_) => "ImportSpecifier",
         Node::ExportSpec(_) => "ExportSpecifier",
         Node::TupleElem(element) => match () {
-            // Of `...name: T`, the `name: T` is a `TSNamedTupleMember` in it.
+            // In `...name: T`, the `name: T` is a `TSNamedTupleMember` inside it.
             () if element.is_rest() => "TSRestType",
             () if element.name().is_some() => "TSNamedTupleMember",
             () if element.is_optional() => "TSOptionalType",
@@ -637,7 +634,7 @@ pub fn estree_type_name(node: Node<'_>) -> &'static str {
 
 // ───────────────────────────── node.range ─────────────────────────────
 
-/// Whether `declaration` is the `e` of `catch (e)`, which in ESTree is the pattern alone.
+/// True if `declaration` is the `e` in `catch (e)`, which is only the pattern in ESTree.
 fn is_catch_param(declaration: VarDecl<'_>) -> bool {
     matches!(declaration.parent(), Node::Stmt(statement) if matches!(statement.tag(), StmtTag::Try))
 }
@@ -652,8 +649,8 @@ fn span_of_pat(pat: Pat<'_>) -> Span {
     }
 }
 
-/// ESTree's `node.range`, that of typescript-estree for TypeScript's syntax, of the node that
-/// [`estree_type_name`] names. It differs from `node.span()` for:
+/// ESTree's `node.range`, or typescript-estree's for TypeScript syntax, of the node whose type [`estree_type_name`]
+/// returns. It differs from `node.span()` for:
 ///
 /// - an exported declaration: without `export` and `export default`,
 /// - the function of a method or an accessor: from its type parameters or its `(`,
@@ -672,16 +669,15 @@ pub fn estree_span(node: Node<'_>) -> Span {
         Node::Func(func) => func.estree_span(),
         Node::Class(class) => class.estree_span(),
         Node::Pat(pat) => span_of_pat(pat),
-        // Only these have their decorators in their range.
+        // Only these include their decorators in their range.
         Node::Param(param) if param.is_parameter_property() || param.is_rest() => param.span(),
         Node::Param(param) => param.span_without_modifiers(),
         _ => node.span(),
     }
 }
 
-/// [`TypeNode::annotation_span`]: typescript-estree's range of the `TSTypeAnnotation` around `ty`,
-/// from the `:`, or from the `=>` of a function type, to the end of the type with the parentheses
-/// around it.
+/// [`TypeNode::annotation_span`]: typescript-estree's range of the `TSTypeAnnotation` around `ty`, from the `:`, or
+/// from the `=>` of a function type, to the end of the type including the parentheses around it.
 #[inline]
 pub fn type_annotation_span(ty: TypeNode<'_>) -> Span {
     ty.annotation_span()
@@ -689,9 +685,9 @@ pub fn type_annotation_span(ty: TypeNode<'_>) -> Span {
 
 // ───────────────────────────── node.parent ─────────────────────────────
 
-/// One node for what ESTree has one node for: the `Expr` or the `Stmt` that is a function becomes
-/// the `Func`, the one that is a class the `Class`, a signature or a static block that is a
-/// `Member` with nothing but a `Func` stays the `Member`.
+/// Returns a single node for what's a single node in ESTree. An `Expr` or `Stmt` that's a function becomes the `Func`,
+/// and one that's a class becomes the `Class`. A signature or a static block, which is a `Member` with nothing but a
+/// `Func`, stays the `Member`.
 pub fn normalize(node: Node<'_>) -> Node<'_> {
     match node {
         Node::Expr(e) => match e.kind() {
@@ -714,13 +710,12 @@ pub fn normalize(node: Node<'_>) -> Node<'_> {
 
 /// ESTree's `node.parent`, [`normalize`]d, for walks that compare node types.
 ///
-/// - The parent of a `Func` or a `Class` is that of the expression or the statement it is. That of
-///   the function of a method is the `Member` or the `Prop`.
-/// - The `a, b` inside `a, b, c` is skipped, and the `StmtKind::Expr` in the head of a `for`.
-/// - The nodes of ESTree that do not exist here are not in the walk: the `BlockStatement` that is
-///   the body of a function (the parent of a statement in it is the `Func`), `ClassBody`,
-///   `ChainExpression`, `ExportNamedDeclaration` and `ExportDefaultDeclaration` around a
-///   declaration, `CatchClause`, `TSTypeAnnotation`, `JSXExpressionContainer`,
+/// - The parent of a `Func` or a `Class` is the parent of its expression or statement. The parent of a method's
+///   function is the `Member` or the `Prop`.
+/// - The `a, b` inside `a, b, c` is skipped, and so is the `StmtKind::Expr` in the head of a `for`.
+/// - ESTree nodes that don't exist here aren't in the walk: the `BlockStatement` that's a function's body (the parent
+///   of a statement in it is the `Func`), `ClassBody`, `ChainExpression`, `ExportNamedDeclaration` and
+///   `ExportDefaultDeclaration` around a declaration, `CatchClause`, `TSTypeAnnotation`, `JSXExpressionContainer`,
 ///   `JSXOpeningElement`, `TSModuleBlock`, `TSInterfaceBody`, `TemplateElement`.
 pub fn estree_parent(node: Node<'_>) -> Node<'_> {
     let parent = match node {
@@ -740,16 +735,15 @@ pub fn estree_parent(node: Node<'_>) -> Node<'_> {
     }
 }
 
-/// ESLint's `sourceCode.getNodeByRangeIndex`: the innermost node whose span contains `offset`.
-/// It is never the `Expr` or the `Stmt` that is a function or a class, but the `Func` or the
-/// `Class`.
+/// ESLint's `sourceCode.getNodeByRangeIndex`: the innermost node whose span contains `offset`. It's never the `Expr` or
+/// `Stmt` that's a function or a class, but the `Func` or the `Class`.
 pub fn get_node_by_range_index<'a>(file: &'a File<'a>, offset: u32) -> Node<'a> {
     let mut at = Node::File(file);
     loop {
         let mut inner = None;
         at.for_each_child_near(offset, |child| {
-            // ESTree has these decorators outside of the range of what they are in, so that the
-            // search does not get to them.
+            // In ESTree these decorators are outside the range of the node that contains them, so the search never
+            // reaches them.
             let span = match child {
                 Node::Param(_) => estree_span(child),
                 Node::Stmt(statement) => {

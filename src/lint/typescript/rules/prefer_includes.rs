@@ -38,14 +38,14 @@ fn parameters(node: TsNode<'_>) -> impl Iterator<Item = TsNode<'_>> {
     node.children().filter(|child| child.kind() == SyntaxKind::Parameter)
 }
 
-/// `param.getText()`: the name, the type and the question token at once.
+/// `param.getText()`: the name, the question token and the type in one string.
 fn get_text(param: TsNode<'_>) -> Cow<'_, [u8]> {
     let text = param.get_source_text();
     if !text.is_empty() {
         return Cow::Borrowed(text);
     }
-    // TODO(api): replace by types::TsNode::get_source_text, which is empty in the default library.
-    // All of its `indexOf` and `includes` are written `name?: T`.
+    // TODO(api): replace with types::TsNode::get_source_text, which returns nothing for the default library. Every
+    // `indexOf` and `includes` parameter there is written `name?: T`.
     let mut text = Vec::new();
     if param.has_dot_dot_dot_token() {
         text.extend_from_slice(b"...");
@@ -70,8 +70,7 @@ fn has_same_parameters<'a>(node_a: TsNode<'a>, node_b: TsNode<'a>) -> bool {
         && parameters(node_a).zip(parameters(node_b)).all(|(a, b)| get_text(a) == get_text(b))
 }
 
-/// Whether the type that declares the `indexOf` method has an `includes` method with the same
-/// parameters.
+/// True if the type that declares the `indexOf` method also has an `includes` method with the same parameters.
 fn has_matching_includes_method(index_of_method_decl: TsNode) -> bool {
     let Some(type_decl) = index_of_method_decl.parent() else {
         return false;
@@ -81,7 +80,7 @@ fn has_matching_includes_method(index_of_method_decl: TsNode) -> bool {
     })
 }
 
-/// tsgolint's `isSimpleLiteralPattern`, which goes by the character before.
+/// tsgolint's `isSimpleLiteralPattern`, which only looks at the previous character to detect an escape.
 fn tsgolint_is_simple_literal_pattern(pattern: &[u8]) -> bool {
     let mut before = 0;
     for &byte in pattern {
@@ -94,15 +93,15 @@ fn tsgolint_is_simple_literal_pattern(pattern: &[u8]) -> bool {
     !pattern.is_empty()
 }
 
-/// tsgolint's `extractRegexLiteralPattern`: what is written between the slashes of a `/a/` without flags.
+/// tsgolint's `extractRegexLiteralPattern`: the source text between the slashes of a `/a/` without flags.
 fn tsgolint_extract_regex_literal_pattern(node: Expr<'_>) -> Option<&[u8]> {
     let regex = node.as_regex().filter(|_| !node.is_parenthesized())?;
     let pattern = regex.pattern();
     (regex.flags().is_empty() && tsgolint_is_simple_literal_pattern(pattern)).then_some(pattern)
 }
 
-/// tsgolint's `extractRegExpConstructorPattern`: the first argument of `new RegExp("a")`. What `RegExp` is and the
-/// other arguments are not looked at.
+/// tsgolint's `extractRegExpConstructorPattern`: the first argument of `new RegExp("a")`. It doesn't check what
+/// `RegExp` resolves to and ignores the other arguments.
 fn tsgolint_extract_reg_exp_constructor_pattern(node: Expr<'_>) -> Option<&[u8]> {
     let ExprKind::New(call) = node.kind() else {
         return None;
@@ -114,9 +113,9 @@ fn tsgolint_extract_reg_exp_constructor_pattern(node: Expr<'_>) -> Option<&[u8]>
     tsgolint_is_simple_literal_pattern(pattern).then_some(pattern)
 }
 
-/// tsgolint's `resolveRegexPattern`, which evaluates nothing: the pattern of `/a/`, or of a variable whose
-/// `valueDeclaration` has that or `new RegExp("a")` as its initializer, whatever is assigned to it later.
-/// With the expression that the pattern is read from.
+/// tsgolint's `resolveRegexPattern`, which evaluates nothing. Returns the pattern of `/a/`, or of a variable whose
+/// `valueDeclaration` is initialized with that or with `new RegExp("a")`, even if the variable is reassigned later.
+/// Also returns the expression the pattern was read from.
 fn tsgolint_resolve_regex_pattern<'a>(node: Expr<'a>) -> Option<(Expr<'a>, &'a [u8])> {
     if let Some(pattern) = tsgolint_extract_regex_literal_pattern(node) {
         return Some((node, pattern));
@@ -133,7 +132,7 @@ fn tsgolint_resolve_regex_pattern<'a>(node: Expr<'a>) -> Option<(Expr<'a>, &'a [
     Some((init, pattern))
 }
 
-/// The one string that `node` matches, if it is a `RegExp` that matches only one and has none of
+/// Returns the only string `node` matches, if it's a `RegExp` that matches exactly one string and has none of
 /// `excluded_flags`.
 fn parse_reg_exp(node: Expr, excluded_flags: &[u8]) -> Option<Vec<u8>> {
     let evaluated = get_static_value(node, Some(node.file().scope()))?;
@@ -141,7 +140,7 @@ fn parse_reg_exp(node: Expr, excluded_flags: &[u8]) -> Option<Vec<u8>> {
     if strings::index_of_any(flags, excluded_flags).is_some() {
         return None;
     }
-    let ast = parse_pattern(pattern, Mode::of_flags(flags), RegexOptions::default()).ok()?;
+    let ast = parse_pattern(pattern, Mode::from_flags(flags), RegexOptions::default()).ok()?;
     let RegexKind::Pattern { alternatives } = ast.pattern().kind() else {
         return None;
     };
@@ -156,7 +155,7 @@ fn parse_reg_exp(node: Expr, excluded_flags: &[u8]) -> Option<Vec<u8>> {
         let RegexKind::Character { value } = element.kind() else {
             return None;
         };
-        // Without the `u` flag a character outside the BMP is two.
+        // Without the `u` flag a character outside the BMP is parsed as two surrogates.
         strings::push_codepoint_wtf8_joined(&mut text, value);
     }
     Some(text)
@@ -180,7 +179,7 @@ fn escape_string(text: &[u8]) -> Vec<u8> {
     out
 }
 
-/// tsgolint's `escapeString`: the pattern goes into the string as it is written.
+/// tsgolint's `escapeString`. It copies the pattern's source text and only escapes `'`.
 fn tsgolint_escape_string(text: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len());
     for &byte in text {
@@ -192,8 +191,8 @@ fn tsgolint_escape_string(text: &[u8]) -> Vec<u8> {
     out
 }
 
-/// The value of the string literal `'{body}'` in a module. `None` if it is none, or has an escape that
-/// `tsgolint_is_simple_literal_pattern` lets no pattern have.
+/// Evaluates the string literal `'{body}'` as module code. Returns `None` if that isn't a valid literal, or if it has
+/// an escape that `tsgolint_is_simple_literal_pattern` never accepts.
 fn string_literal_value(body: &[u8]) -> Option<Vec<u8>> {
     let mut value = Vec::with_capacity(body.len());
     let mut rest = body;
@@ -225,8 +224,8 @@ fn string_literal_value(body: &[u8]) -> Option<Vec<u8>> {
     Some(value)
 }
 
-/// Whether a variable is a `RegExp` that matches `value` alone wherever it is read: nothing but its
-/// declarations writes it, and every initializer is such a `RegExp`. A type of the same name is no value.
+/// True if every read of the variable sees a `RegExp` that matches only `value`: only its declarations write it, and
+/// every initializer is such a `RegExp`. A type declaration with the same name is ignored.
 fn is_always_reg_exp_of(symbol: Symbol<'_>, value: &[u8]) -> bool {
     !symbol.has_modifying_references()
         && symbol.declarations().all(|declaration| match declaration {
@@ -240,10 +239,10 @@ fn is_always_reg_exp_of(symbol: Symbol<'_>, value: &[u8]) -> bool {
         })
 }
 
-/// tsgolint's fix of `/a/.test(b)`: `b` as it is written after the `(`, then `.includes('a')` with the pattern
-/// as it is written. `regex` is where tsgolint reads the pattern: `object`, or the initializer of the variable
-/// that `object` is. No fix where tsgolint's is another program or none: `regex` is not a `RegExp` that
-/// matches one string wherever it starts, the variable is written again, `b` is a spread.
+/// tsgolint's fix for `/a/.test(b)`: `b`'s source text after the `(`, then `.includes('a')` with the pattern's source
+/// text. `regex` is where tsgolint reads the pattern: `object`, or the initializer of the variable `object` refers to.
+/// Returns `None` where tsgolint's fix changes behavior or doesn't parse: `regex` isn't a `RegExp` without `i`, `g` or
+/// `y` that matches exactly one string, the variable is reassigned, or `b` is a spread.
 fn tsgolint_fix_test_call<'a>(
     fixer: Fixer<'a>,
     call_node: Expr<'a>,
@@ -268,9 +267,9 @@ fn tsgolint_fix_test_call<'a>(
     if object.tag() == ExprTag::Ident && !object.symbol().is_some_and(|it| is_always_reg_exp_of(it, &value)) {
         return None;
     }
-    let written_pattern = tsgolint_escape_string(pattern);
-    let escaped = if string_literal_value(&written_pattern).is_some_and(|it| it == value) {
-        written_pattern
+    let pattern_source = tsgolint_escape_string(pattern);
+    let escaped = if string_literal_value(&pattern_source).is_some_and(|it| it == value) {
+        pattern_source
     } else if strings::contains_char(&value, 0) {
         // `\0` before a digit is an octal escape.
         return None;
@@ -300,16 +299,16 @@ impl PreferIncludes {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
-        // tsgolint wants the call on the left as it is written.
+        // tsgolint requires the call on the left to be unparenthesized.
         if is_oxlint && call_node.is_parenthesized() {
             return;
         }
-        // Upstream's selector takes every `MemberExpression` directly in the call: also an argument.
-        // tsgolint takes the callee alone.
+        // Upstream's selector matches every `MemberExpression` directly in the call, including arguments. tsgolint only
+        // matches the callee.
         let candidates = if is_oxlint { 1 } else { usize::MAX };
         for node in std::iter::once(call.callee()).chain(call.args()).take(candidates) {
             let is_index_of = if is_oxlint {
-                // The property access as it is written, with a name that is no `#indexOf`.
+                // An unparenthesized property access whose name isn't the private `#indexOf`.
                 matches!(node.kind(), ExprKind::Dot { name, .. } if name.name().is("indexOf"))
                     && !node.is_parenthesized()
                     && tsgolint_is_number_literal(right, number)
@@ -337,7 +336,7 @@ impl PreferIncludes {
                 continue;
             }
             let report = cx.report(compare_node, PREFER_INCLUDES).claims(compare_node);
-            // `a?.indexOf(b) !== -1` is not the same as `a?.includes(b)`. tsgolint makes it that.
+            // `a?.indexOf(b) !== -1` isn't equivalent to `a?.includes(b)`, but tsgolint rewrites it anyway.
             if call_node.is_chain_root() && !is_oxlint {
                 continue;
             }
@@ -367,14 +366,14 @@ impl PreferIncludes {
             return;
         }
         let is_oxlint = cx.language().is_oxlint;
-        // tsgolint wants the property access as it is written, with a name that is no `#test`.
+        // tsgolint requires an unparenthesized property access whose name isn't the private `#test`.
         if is_oxlint && (callee.is_parenthesized() || !name.name().is("test")) {
             return;
         }
         let Some(argument) = call.args().first().filter(|_| call.args().len() == 1) else {
             return;
         };
-        // tsgolint has the pattern as it is written, and neither evaluates nor parses it.
+        // tsgolint uses the pattern's source text and neither evaluates nor parses it.
         let resolved: Option<(Expr<'a>, Cow<'_, [u8]>)> = if is_oxlint {
             tsgolint_resolve_regex_pattern(obj).map(|(regex, pattern)| (regex, Cow::Borrowed(pattern)))
         } else {

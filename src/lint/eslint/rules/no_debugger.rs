@@ -16,7 +16,7 @@ impl Rule for NoDebugger {
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let report = cx.report(stmt, UNEXPECTED);
-        // oxlint suggests to remove it, or to put a block where a statement has to be.
+        // oxlint suggests removing it, or replacing it with a block where a statement is required.
         if cx.language().is_oxlint {
             let is_body = matches!(stmt.parent(), Node::Stmt(parent) if matches!(
                 parent.tag(),

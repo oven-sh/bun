@@ -4,7 +4,7 @@ use smallvec::SmallVec;
 
 /// Enforce a maximum depth that callbacks can be nested.
 pub struct MaxNestedCallbacks {
-    /// `None`: `{ "maximum": 0 }` without `max`, with which upstream compares to `undefined`.
+    /// `None` for `{ "maximum": 0 }` without `max`, where upstream compares against `undefined`.
     max: Option<usize>,
     check_constructor_call_callbacks: bool,
 }
@@ -16,13 +16,14 @@ const EXCEED: Message = Message::new(
 
 #[derive(Default)]
 pub struct State {
-    /// By the index of a function: one more than how many of it and the functions around it are callbacks. 0: not known.
+    /// By function index: one more than the number of callbacks among the function and its enclosing functions. 0 if
+    /// unknown.
     callbacks: Vec<usize>,
     /// ESLint before 10 counts while it walks.
     depth: usize,
 }
 
-/// A `FunctionExpression` or an `ArrowFunctionExpression` of ESLint.
+/// Returns `node` as an ESLint `FunctionExpression` or `ArrowFunctionExpression`.
 fn as_function_expression(node: Node<'_>) -> Option<Func<'_>> {
     match node {
         Node::Func(func) if func.has_body() && !matches!(func.kind(), FnKind::Decl | FnKind::StaticBlock) => Some(func),
@@ -31,8 +32,8 @@ fn as_function_expression(node: Node<'_>) -> Option<Func<'_>> {
 }
 
 impl MaxNestedCallbacks {
-    /// What is called counts too. Every function expression is looked at, and takes one away where it ends, also one
-    /// that has not been counted: so what follows it is less deep by one.
+    /// A callee counts too. Every function expression decrements the depth on exit, even one that wasn't counted on
+    /// entry, so everything after such a function is one level less deep.
     fn enter_before_10<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let (Some(max), Some(func)) = (self.max, as_function_expression(node)) else {
             return;
@@ -48,9 +49,9 @@ impl MaxNestedCallbacks {
         }
     }
 
-    /// Whether the function expression `e` is an argument of a call.
+    /// True if the function expression `e` is an argument of a call.
     fn is_callback(&self, e: Expr) -> bool {
-        // For oxlint also what is called, and what is in `as T` and the like.
+        // For oxlint a callee counts too, as does a function wrapped in `as T` and the like.
         if e.file().language().is_oxlint {
             return matches!(iter_outer_expressions(e).next(), Some(Node::Expr(it)) if it.tag() == ExprTag::Call);
         }
@@ -99,7 +100,7 @@ impl Rule for MaxNestedCallbacks {
         if !self.is_callback(e) {
             return;
         }
-        // From function to function, as far as it is not known.
+        // Walk outwards from function to function until one with a known depth.
         let known = &mut cx.state.callbacks;
         let (mut unknown, mut depth): (SmallVec<[Func<'a>; 8]>, usize) = (SmallVec::new(), 0);
         for outer in std::iter::successors(Some(func), |it| it.enclosing()) {
@@ -120,12 +121,12 @@ impl Rule for MaxNestedCallbacks {
             }
         }
         if depth > max {
-            // oxlint points at the whole function.
-            let place = match cx.language().is_oxlint {
+            // oxlint reports the whole function.
+            let report_span = match cx.language().is_oxlint {
                 true => func.estree_span(),
                 false => ast_utils::get_function_head_loc(func),
             };
-            cx.report(place, EXCEED).data("num", depth).data("max", max);
+            cx.report(report_span, EXCEED).data("num", depth).data("max", max);
         }
     }
 

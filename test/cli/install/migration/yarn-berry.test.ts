@@ -678,6 +678,7 @@ describe("yarn berry migration", () => {
     /** A frozen install takes no-deps@1.1.0 as it is. `bun install` resolves it again if a rule doesn't allow it. */
     async function expectInstallToLock(dir: string, locked: string[]) {
       await expectFrozenInstall(dir);
+      expect((await Bun.file(join(dir, "node_modules", "no-deps", "package.json")).json()).version).toBe("1.1.0");
       await expectToPass(dir, "install", "--lockfile-only");
       expect(lockedVersions(await bunLockOf(dir))).toEqual(locked);
     }

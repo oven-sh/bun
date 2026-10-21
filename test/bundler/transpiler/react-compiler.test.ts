@@ -3522,6 +3522,57 @@ describe("bundler", () => {
     });
   }
 
+  itBundled("react-compiler/SourceMapOfCatch", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Comp({ a }) {
+          let y;
+          try {
+            y = [a()];
+          } catch {
+            y = null;
+          }
+          let z;
+          try {
+            z = [a()];
+          } catch (e) {
+            z = [e];
+          }
+          return <div>{y}{z}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    outdir: "/out",
+    sourceMap: "external",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    async onAfterBundle(api) {
+      const source = api.readFile("/entry.jsx").split("\n");
+      expect(api.readFile("/out/entry.js")).toMatch(/\b_c\(\d+\)/);
+      await SourceMapConsumer.with(JSON.parse(api.readFile("/out/entry.js.map")), null, map => {
+        const original = (line: number, column: number) => {
+          const position = map.originalPositionFor({ line: line + 1, column });
+          const text = source[position.line! - 1];
+          return text.slice(0, position.column!).trimStart() + "|" + text.slice(position.column!);
+        };
+        const words = api
+          .readFile("/out/entry.js")
+          .split("\n")
+          .flatMap((text, line) =>
+            Array.from(text.matchAll(/\bcatch(?: \([\w$]+\))? \{/g), ({ 0: clause, index }) => [
+              original(line, index),
+              original(line, index + clause.length - 1),
+            ]),
+          );
+        expect(words).toEqual([
+          ["} |catch {", "} catch |{"],
+          ["} |catch (e) {", "} catch (e) |{"],
+        ]);
+      });
+    },
+  });
+
   // The fbt transform rejects a variable in place of a nested fbt.param()
   // call, so the call stays inside the fbt() call. The value given to
   // fbt.param() can be a variable, and it keeps its place ahead of a statement.

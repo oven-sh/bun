@@ -271,6 +271,7 @@ pub fn install_with_manager(
                 let left_out = core::mem::take(&mut manager.summary.members_left_out);
                 if manager.summary.changes_dependencies() {
                     manager.summary.add += left_out.len() as u32;
+                    manager.summary.second_entries.clear();
                 } else {
                     for &row in left_out.iter().rev() {
                         let _ = (lockfile.buffers.dependencies)
@@ -330,21 +331,26 @@ pub fn install_with_manager(
                     let new_dependencies =
                         maybe_root.dependencies.get(&lockfile.buffers.dependencies);
 
-                    let kept_pruned: Vec<(Dependency, PackageID)> =
-                        if summary.pruned_workspaces.is_empty() {
-                            Vec::new()
-                        } else {
-                            root.dependencies
-                                .get(&lf.dependencies[..])
-                                .iter()
-                                .zip(root.resolutions.get(&lf.resolutions[..]))
-                                .filter(|(dep, _)| {
-                                    dep.behavior.is_workspace()
-                                        && summary.pruned_workspaces.contains(&dep.name_hash)
-                                })
-                                .map(|(dep, &res)| (dep.clone(), res))
-                                .collect()
-                        };
+                    let kept_pruned: Vec<(Dependency, PackageID)> = if summary
+                        .pruned_workspaces
+                        .is_empty()
+                        && summary.second_entries.is_empty()
+                    {
+                        Vec::new()
+                    } else {
+                        root.dependencies
+                            .get(&lf.dependencies[..])
+                            .iter()
+                            .zip(root.resolutions.get(&lf.resolutions[..]))
+                            .enumerate()
+                            .filter(|(i, (dep, _))| {
+                                summary.second_entries.contains(&(*i as u32))
+                                    || (dep.behavior.is_workspace()
+                                        && summary.pruned_workspaces.contains(&dep.name_hash))
+                            })
+                            .map(|(_, (dep, &res))| (dep.clone(), res))
+                            .collect()
+                    };
 
                     for new_dep in new_dependencies {
                         new_dep.count(&lockfile.buffers.string_bytes, builder);

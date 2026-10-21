@@ -22,6 +22,7 @@ import {
   lutimesSync,
   mkdirSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -2702,6 +2703,9 @@ describe("flags", () => {
     [["--nope", "hello"]],
     [["--cwdx=sub"]],
     [["-Z", "hello"]],
+    [["-w", "hello"]],
+    [["--userconfig", "hello"]],
+    [["--userconfig=.npmrc"]],
     [["--trust=true"]],
     [["-"]],
   ])("a flag bunx does not have is an error: %j", async flags => {
@@ -2722,7 +2726,8 @@ describe("flags", () => {
 
   // `bun run` runs `bun x` where a script says `npx`.
   it.concurrent("the flags of npx and npm are skipped", async () => {
-    const flags = "--no --quiet -q -dd --prefer-offline --loglevel=error --registry=http://localhost:1 --yes=true --";
+    const flags =
+      "--no --quiet -q -n -c -dd --offline --prefer-offline --loglevel=error --registry=http://localhost:1 --yes=true --";
     using box = sandbox(undefined, {
       cwd: { "package.json": JSON.stringify({ scripts: { tool: `npx ${flags} local-tool ${flags}` } }) },
     });
@@ -2736,21 +2741,78 @@ describe("flags", () => {
     expect(await box.run(["run", "--silent", "tool"], { env, bunx: [bunExe()] })).toEqual(expected);
   });
 
-  it.concurrent.each([
-    [["--registry", "hello"]],
-    [["--loglevel", "hello"]],
-    [["--node-arg", "hello"]],
-    [["-c", "hello"]],
-    [["-w", "hello"]],
-  ])("the value of npm's %j is not the package", async flags => {
-    using registry = await localRegistry(fixturePackage("hello", "1.0.0", "hello"), ...toolWithDep());
+  it.concurrent.each([[["--loglevel", "hello"]], [["--force", "true"]], [["--node-arg", "--inspect"]], [["-w=hello"]]])(
+    "the value of npm's %j is not the package",
+    async flags => {
+      using registry = await localRegistry(fixturePackage("hello", "1.0.0", "hello"), ...toolWithDep());
+      using box = sandbox(registry);
+
+      const { stdout, exitCode, requests } = await box.run([...flags, "tool"]);
+      expect(stdout).toBe("tool 1.1.0 with dep 1.0.0\n");
+      expect(requests).not.toContain("/hello");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it.concurrent.each(["-n", "-c", "-q"])("%s doesn't take the name of the package for its value", async flag => {
+    using registry = await localRegistry(fixturePackage("hello", "1.0.0", "hello"));
+    using box = sandbox(registry);
+    addLocalBin(box.cwd, "local-tool", `console.log("local", ...process.argv.slice(2));`);
+
+    expect(await box.run([flag, "local-tool", "hello"])).toEqual({
+      stdout: "local hello\n",
+      stderr: "",
+      exitCode: 0,
+      requests: [],
+    });
+  });
+
+  it.concurrent.each([[["--registry"]], [["--registry="]], [["--reg="]]])(
+    "%j installs from that registry, into a tree of its own",
+    async ([flag]) => {
+      using registry = await localRegistry(fixturePackage("hello", "1.0.0", "hello"));
+      using other = await localRegistry(fixturePackage("hello", "2.0.0", "hello"));
+      using box = sandbox(registry);
+      const flags = flag.endsWith("=") ? [flag + other.url] : [flag, other.url];
+
+      expect(await box.run(["hello"])).toMatchObject({ stdout: "hello 1.0.0\n", exitCode: 0 });
+      expect(await box.run([...flags, "hello"])).toMatchObject({ stdout: "hello 2.0.0\n", exitCode: 0, requests: [] });
+      expect(other.requests).toEqual(["/hello", "/hello/-/hello-2.0.0.tgz"]);
+    },
+  );
+
+  it.concurrent("--cafile and --ca are for the install", async () => {
+    using registry = await localRegistry(...toolWithDep());
     using box = sandbox(registry);
 
-    const { stdout, exitCode, requests } = await box.run([...flags, "tool"]);
-    expect(stdout).toBe("tool 1.1.0 with dep 1.0.0\n");
-    expect(requests).not.toContain("/hello");
-    expect(exitCode).toBe(0);
+    expect(await box.run(["--cafile", "absent.pem", "tool"])).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining(`could not find CA file: '${join(realpathSync(box.cwd), "absent.pem")}'`),
+      exitCode: 1,
+      requests: [],
+    });
+    expect(await box.run(["--ca=invalid", "tool"])).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining("the CA is invalid"),
+      exitCode: 1,
+      requests: [],
+    });
   });
+
+  it.concurrent.each(["--no", "--no-yes", "--yes=false", "-n", "--offline"])(
+    "npm's %s means --no-install",
+    async flag => {
+      using registry = await localRegistry(...toolWithDep());
+      using box = sandbox(registry);
+
+      expect(await box.run([flag, "--", "tool"])).toEqual({
+        stdout: "",
+        stderr: "error: Could not find an existing 'tool' binary to run. Stopping because --no-install was passed.\n",
+        exitCode: 1,
+        requests: [],
+      });
+    },
+  );
 
   it.concurrent("--yes, -y and -- are accepted", async () => {
     using box = sandbox();

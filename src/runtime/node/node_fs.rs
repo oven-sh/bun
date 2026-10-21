@@ -7729,10 +7729,15 @@ impl NodeFS {
             // Linux appends " (deleted)" to the path of a file that has been unlinked.
             #[cfg(any(target_os = "linux", target_os = "android"))]
             if buf.as_bytes().ends_with(b" (deleted)") {
-                let is_real_name = matches!(
-                    (Syscall::fstat(fd), Syscall::lstat(buf)),
-                    (Ok(a), Ok(b)) if a.st_dev == b.st_dev && a.st_ino == b.st_ino
-                );
+                let opened = match Syscall::fstat(fd) {
+                    Err(err) => return Err(err.with_path(path)),
+                    Ok(stat_) => stat_,
+                };
+                let is_real_name = match Syscall::lstat(buf) {
+                    Ok(named) => named.st_dev == opened.st_dev && named.st_ino == opened.st_ino,
+                    Err(err) if matches!(err.get_errno(), E::ENOENT | E::ENOTDIR) => false,
+                    Err(err) => return Err(err.with_path(path)),
+                };
                 if !is_real_name {
                     return Err(sys::Error::from_code(E::ENOENT, sys::Tag::realpath));
                 }

@@ -110,6 +110,10 @@ pub(crate) struct Options {
     pub(crate) trust: bool,
     /// In seconds, as typed. It's forwarded to `bun add` and is part of the cache directory's name.
     pub(crate) minimum_release_age: Option<&'static [u8]>,
+    /// Forwarded to `bun add`, like `ca` and `cafile`. It's part of the cache directory's name.
+    pub(crate) registry: Option<&'static [u8]>,
+    pub(crate) ca: Vec<&'static [u8]>,
+    pub(crate) cafile: Option<&'static [u8]>,
 }
 
 impl Options {
@@ -177,7 +181,11 @@ impl Options {
                     opts.silent_install = true;
                 } else if positional == b"--bun" || positional == b"-b" {
                     ctx.debug.run_in_bun = true;
-                } else if positional == b"--no-install" {
+                } else if matches!(
+                    positional,
+                    // The others are npm's names for it.
+                    b"--no-install" | b"--no" | b"--no-yes" | b"--yes=false" | b"-n" | b"--offline"
+                ) {
                     opts.no_install = true;
                 } else if positional == b"--package" || positional == b"-p" {
                     i += 1;
@@ -215,6 +223,15 @@ impl Options {
                         Global::exit(1);
                     }
                     opts.minimum_release_age = Some(age);
+                } else if let Some(url) = Self::flag_value(argv, &mut i, "--registry")
+                    // npm's short name for it.
+                    .or_else(|| Self::flag_value(argv, &mut i, "--reg"))
+                {
+                    opts.registry = Some(url);
+                } else if let Some(ca) = Self::flag_value(argv, &mut i, "--ca") {
+                    opts.ca.push(ca);
+                } else if let Some(path) = Self::flag_value(argv, &mut i, "--cafile") {
+                    opts.cafile = Some(path);
                 } else if positional == b"--help" || positional == b"-h" {
                     crate::cli::command::tag_print_help(Command::Tag::BunxCommand, false);
                     Global::exit(0);
@@ -812,6 +829,9 @@ impl BunxCommand {
             package_fmt.extend_from_slice(b"+min-age=");
             package_fmt.extend_from_slice(age);
         }
+        if let Some(registry) = opts.registry {
+            package_fmt.extend_from_slice(format!("+registry={:x}", hash(registry)).as_bytes());
+        }
         bun_output::scoped_log!(bunx, "package_fmt: {}", BStr::new(&package_fmt));
 
         // The `{what}` of 'node_modules/{what}/package.json': without a clear name (URL/GitHub/etc), the bin name.
@@ -1073,9 +1093,23 @@ impl BunxCommand {
             .then(|| bun_sys::stat(&package_json_path).ok())
             .flatten();
 
-        let minimum_release_age_arg = opts
-            .minimum_release_age
-            .map(|age| [b"--minimum-release-age=".as_slice(), age].concat());
+        // `bun add` runs in another directory.
+        let cafile = opts.cafile.map(|path| {
+            bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(top_level_dir, path)
+                .to_vec()
+        });
+        let flags_with_value: Vec<Vec<u8>> = [
+            (
+                b"--minimum-release-age=".as_slice(),
+                opts.minimum_release_age,
+            ),
+            (b"--registry=", opts.registry),
+            (b"--cafile=", cafile.as_deref()),
+        ]
+        .into_iter()
+        .chain(opts.ca.iter().map(|ca| (b"--ca=".as_slice(), Some(*ca))))
+        .filter_map(|(name, value)| Some([name, value?].concat()))
+        .collect();
         let mut args: Vec<&[u8]> = vec![
             bun_core::self_exe_path()?.as_bytes(),
             b"add",
@@ -1099,9 +1133,7 @@ impl BunxCommand {
         if opts.trust {
             args.push(b"--trust");
         }
-        if let Some(arg) = &minimum_release_age_arg {
-            args.push(arg);
-        }
+        args.extend(flags_with_value.iter().map(Vec::as_slice));
 
         bun_output::scoped_log!(
             bunx,

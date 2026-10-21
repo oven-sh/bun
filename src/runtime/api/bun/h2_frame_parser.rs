@@ -3827,9 +3827,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         let Some(chunk) = self.or_stop(self.handlers.get().binary_type.to_js(debug, &g)) else {
             return;
         };
-        // The peer is gone, so no GOAWAY reaches it and its responses are still queued. The session
-        // ends without an error, as it does at the close that follows.
-        if lib_error_code != 0 && !self.transport_send_rejected() {
+        // The client is gone, so no GOAWAY reaches it and its responses are still queued. The server's
+        // session ends without an error, as it does at the close that follows.
+        let client_is_gone = self.is_server.get() && self.transport_send_rejected();
+        if lib_error_code != 0 && !client_is_gone {
             self.dispatch_with_2_extra(
                 JSH2FrameParser::Gc::onError,
                 JSValue::js_number(lib_error_code as f64),

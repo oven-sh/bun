@@ -895,6 +895,9 @@ pub struct DiffSummary {
     /// Indexes, in the new root's dependencies, of the workspaces that a lockfile from Bun 1.4 or
     /// older has no entry for, because the root also depends on a registry version of that package.
     pub(crate) members_left_out: Vec<u32>,
+    /// Indexes, in the old root's dependencies, of the entries that Bun 1.4 and older kept next to
+    /// the optional dependency of the same name. They stay until the dependencies change.
+    pub(crate) second_entries: Vec<u32>,
 }
 
 impl DiffSummary {
@@ -1145,11 +1148,13 @@ impl Diff {
                     dep.name_hash == from_dep.name_hash && dep.behavior.is_optional()
                 };
                 if is_root
+                    && to_lockfile.workspace_paths.contains(&from_dep.name_hash)
                     && !from_dep.behavior.is_workspace()
                     && !from_dep.behavior.is_peer()
                     && from_deps.iter().any(is_optional_twin)
                     && to_deps!().iter().any(is_optional_twin)
                 {
+                    summary.second_entries.push(i as u32);
                     continue;
                 }
                 if is_root
@@ -1204,7 +1209,18 @@ impl Diff {
             to_i = cur_to_i + 1;
             paired.set(cur_to_i);
 
-            if is_root {
+            if is_root
+                && from_dep.version.tag != to_deps!()[cur_to_i].version.tag
+                // A workspace that the lockfile doesn't have may be new, and `bun install` links it.
+                // Next to a published version, a frozen install leaves it out either way.
+                && (from_dep.version.tag == dependency::version::Tag::Workspace
+                    || from_lockfile.workspace_paths.contains(&from_dep.name_hash)
+                    || (frozen
+                        && to_deps!().iter().any(|own| {
+                            own.name_hash == from_dep.name_hash
+                                && Self::is_published_version_of(own, to_buf!(), own.name_hash)
+                        })))
+            {
                 let row = to.dependencies.off as usize + cur_to_i;
                 Self::keep_older_link(from_dep, from_buf!(), &mut to_lockfile.buffers, row);
                 to_deps = to
@@ -1217,6 +1233,7 @@ impl Diff {
             // Bun 1.4 and older wrote an optional peer with a workspace's name twice.
             if !same
                 && is_root
+                && to_lockfile.workspace_paths.contains(&from_dep.name_hash)
                 && from_deps.iter().any(|twin| {
                     twin.name_hash == from_dep.name_hash
                         && twin.behavior == from_dep.behavior
@@ -1261,9 +1278,13 @@ impl Diff {
                         cur_to_i,
                     )
                     // Bun 1.4 and older could leave out the packages that a workspace depends on.
-                    || (from.resolution.tag == ResolutionTag::Workspace
+                    // These are the rows that `verify_resolutions` fails the install for.
+                    || (!frozen
+                        && from.resolution.tag == ResolutionTag::Workspace
                         && from_resolutions[i] as usize >= from_lockfile.packages.len()
-                        && !lockfile::bun_lock::may_stay_unresolved(from_dep))
+                        && !lockfile::bun_lock::may_stay_unresolved(from_dep)
+                        && (from_dep.behavior)
+                            .is_enabled(pm.options.dependency_features(from.resolution.tag)))
                 {
                     summary.update += 1;
                     continue;
@@ -1468,21 +1489,34 @@ impl Diff {
         }
 
         if is_root {
+            let second_entries = &summary.second_entries;
             summary.members_left_out = (to_deps!().iter().enumerate())
                 .filter(|(to_i, member)| {
                     // Bun 1.4 and older replaced the root's entry for a workspace with the root's
-                    // own dependency on that package if the workspace did not satisfy its range.
+                    // own dependency on that package if the workspace did not satisfy its range, or
+                    // if the dependency was in two groups. bun.lockb still has the workspace's path.
                     member.behavior.is_workspace()
                         && !paired.is_set(*to_i)
                         && to_lockfile.workspace_versions.contains(&member.name_hash)
-                        && from_deps.iter().any(|own| {
-                            !own.behavior.is_workspace()
-                                && own.version.try_npm().is_some_and(|npm| {
-                                    semver::string::Builder::string_hash(
-                                        npm.name.slice(from_buf!()),
-                                    ) == member.name_hash
-                                })
-                        })
+                        && (from_lockfile.workspace_paths.contains(&member.name_hash)
+                            || (to_deps!().iter().enumerate()).any(|(own_i, own)| {
+                                // bun.lock looks the same if the workspace is new. Next to an
+                                // alias, `bun install` adds it either way.
+                                (frozen || own.name_hash == member.name_hash)
+                                    && paired.is_set(own_i)
+                                    && Self::is_published_version_of(
+                                        own,
+                                        to_buf!(),
+                                        member.name_hash,
+                                    )
+                            })
+                            || second_entries.iter().any(|&own| {
+                                Self::is_published_version_of(
+                                    &from_deps[own as usize],
+                                    from_buf!(),
+                                    member.name_hash,
+                                )
+                            }))
                 })
                 .map(|(to_i, _)| to_i as u32)
                 .collect();
@@ -1693,6 +1727,14 @@ impl Diff {
         resolution.tag == ResolutionTag::Npm
             && (npm.name).eql(packages.items_name()[locked as usize], to_buf, from_buf)
             && (npm.version).satisfies(resolution.npm().version, to_buf, from_buf)
+    }
+
+    /// Returns true for a range of registry versions of the package that `member` is the name of.
+    fn is_published_version_of(own: &Dependency, buf: &[u8], member: PackageNameHash) -> bool {
+        !own.behavior.is_workspace()
+            && own.version.try_npm().is_some_and(|npm| {
+                semver::string::Builder::string_hash(npm.name.slice(buf)) == member
+            })
     }
 
     /// Bun 1.4 and older took a dist-tag of a workspace's name from the registry, and linked the

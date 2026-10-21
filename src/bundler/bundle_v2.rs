@@ -5056,7 +5056,22 @@ pub mod bv2_impl {
                     // If it's a file namespace, we should run it through the parser like normal.
                     // The file could be on disk.
                     if source.path.is_file() {
-                        this.graph.pool().schedule(load.parse_task_mut());
+                        let source_index = load.source_index;
+                        let default_loader = load.default_loader;
+                        let parse_task = load.parse_task_mut();
+                        let loader = parse_task.loader.unwrap_or(default_loader);
+                        if loader.should_copy_for_bundling() {
+                            let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
+                                &mut this.graph.input_files.items_additional_files_mut()
+                                    [source_index.get() as usize];
+                            additional_files
+                                .push(crate::AdditionalFile::SourceIndex(source_index.get()));
+                            this.graph.input_files.items_side_effects_mut()
+                                [source_index.get() as usize] =
+                                bun_ast::SideEffects::NoSideEffectsPureData;
+                            this.graph.estimated_file_loader_count += 1;
+                        }
+                        this.graph.pool().schedule(parse_task);
                         return;
                     }
 

@@ -4128,6 +4128,43 @@ describe.concurrent("import.meta.resolve()", () => {
     });
   });
 
+  it("gives onResolve the parent's path when the parent is a file: URL", async () => {
+    using dir = tempDir("plugin-import-meta-resolve-parent-url", {
+      "src/a.ts": ``,
+      "entry.ts": `
+        import { dirname, resolve } from "node:path";
+        const importers = [];
+        Bun.plugin({
+          name: "js to ts",
+          setup(build) {
+            build.onResolve({ filter: /\\.js$/ }, ({ path, importer }) => {
+              importers.push(importer === import.meta.path);
+              return { path: resolve(dirname(importer), path.replace(/\\.js$/, ".ts")) };
+            });
+          },
+        });
+        const root = import.meta.url.slice(0, -"/entry.ts".length);
+        for (const parent of [undefined, import.meta.path, import.meta.url]) {
+          console.log(import.meta.resolve("./src/a.js", parent).replace(root, "<root>"));
+        }
+        console.log(importers);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "<root>/src/a.ts\n<root>/src/a.ts\n<root>/src/a.ts\n[ true, true, true ]\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it.skipIf(process.platform === "win32")("of a path inside an onResolve callback runs no callbacks", async () => {
     using dir = tempDir("plugin-import-meta-resolve-in-callback", {
       "src/a.ts": `export const a = 1;`,

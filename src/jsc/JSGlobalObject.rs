@@ -1422,17 +1422,16 @@ extern "C" fn Bun__resolveWithOnResolve(
     if global.bun_vm().is_in_on_resolve.get() {
         return false;
     }
-    let path;
-    let specifier = if specifier.starts_with_ascii(b"file://") {
-        path = bun_url::path_from_file_url(specifier);
-        &path
-    } else {
-        specifier
+    let path_of_url = |string: &BunString| {
+        string
+            .starts_with_ascii(b"file://")
+            .then(|| bun_url::path_from_file_url(string))
     };
+    let (specifier_path, source_path) = (path_of_url(specifier), path_of_url(source));
     match VirtualMachine::resolve_with_on_resolve::<true>(
         global,
-        specifier,
-        source,
+        specifier_path.as_ref().unwrap_or(specifier),
+        source_path.as_ref().unwrap_or(source),
         Some(query),
         crate::virtual_machine::ResolveMode::Esm,
         true,

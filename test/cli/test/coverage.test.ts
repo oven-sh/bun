@@ -755,6 +755,55 @@ test("calls second", () => {
 // it is loaded. Each case has a subject file of its own. Where a case loads
 // its subject twice, one load runs the `if` branch and the other runs the
 // `return` after it.
+test("what is after a rejected await at the top level of a module did not run", async () => {
+  using dir = tempDir("cov-top-level-await", {
+    "subject.ts": `let ran = 0;
+export const first = await 1;
+ran++;
+try {
+  await Promise.reject(new Error());
+  ran++;
+} catch {
+  ran++;
+}
+export default await ran;
+export { ran };
+`,
+    "subject.test.ts": `
+import { expect, test } from "bun:test";
+import ran from "./subject.ts";
+
+test("ran", () => {
+  expect(ran).toBe(2);
+});
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  const record = lcov.split("end_of_record").find(r => r.includes("SF:subject.ts"));
+  expect(record?.match(/^DA:.*$/gm)).toEqual([
+    "DA:1,1",
+    "DA:2,1",
+    "DA:3,1",
+    "DA:4,1",
+    "DA:5,1",
+    "DA:6,0",
+    "DA:7,1",
+    "DA:8,1",
+    "DA:10,1",
+    "DA:11,1",
+  ]);
+  expect(stderr).toContain(" 1 pass");
+  expect(exitCode).toBe(0);
+});
+
 describe("a file loaded more than once counts every load", () => {
   const esm = `export function covered(n: number): number {
   if (n > 5) {

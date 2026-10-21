@@ -10,10 +10,10 @@ use bun_lint::span::Span;
 use bun_parsers::json5::{Error, SourceToken as Token, SourceTokenKind as Kind, SourceTokens};
 
 /// A syntax error: its offset and its message. `JSON5` in the message is a placeholder for the name of the language.
-type Refused = (usize, &'static [u8]);
+type ParseError = (usize, &'static [u8]);
 
 /// Uses the message of Bun's JSON5 parser.
-fn refused(error: Error) -> Refused {
+fn parse_error(error: Error) -> ParseError {
     error.describe().unwrap_or((0, b"Out of memory"))
 }
 
@@ -25,7 +25,7 @@ struct Reader<'a> {
 }
 
 /// Returns true if `text`, which is a valid JSON5 number, matches `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?`.
-fn is_number_of_json(text: &[u8]) -> bool {
+fn is_json_number(text: &[u8]) -> bool {
     let unsigned = text.strip_prefix(b"-").unwrap_or(text);
     let after_point = strings::index_of_char_usize(unsigned, b'.').map(|at| unsigned.get(at + 1));
     matches!(
@@ -35,7 +35,7 @@ fn is_number_of_json(text: &[u8]) -> bool {
 }
 
 /// The offset of the first escape sequence in `string` that's valid in JSON5 but not in JSON.
-fn escape_only_in_json5(string: &[u8]) -> Option<usize> {
+fn first_json5_only_escape(string: &[u8]) -> Option<usize> {
     let mut from = 0;
     while let Some(found) = strings::index_of_char_usize(string.get(from..)?, b'\\') {
         let at = from + found;
@@ -51,40 +51,40 @@ fn escape_only_in_json5(string: &[u8]) -> Option<usize> {
 
 impl<'a> Reader<'a> {
     /// The error that JSON and JSONC give for `token`, or for the text before it.
-    fn only_in_json5(&self, token: Option<&Token>) -> Option<Refused> {
+    fn json5_only_error(&self, token: Option<&Token>) -> Option<ParseError> {
         if let Some(at) = self.tokens.not_in_json() {
             return Some(match token.is_some_and(|it| it.start < at) {
                 true => (at, b"Control characters in strings must be escaped"),
-                false => refused(Error::UnexpectedCharacter { pos: at }),
+                false => parse_error(Error::UnexpectedCharacter { pos: at }),
             });
         }
         let token = token?;
-        let written = self.text.get(token.start..token.end)?;
-        let has_escapes = token.value.len() + 2 != written.len();
+        let source_text = self.text.get(token.start..token.end)?;
+        let has_escapes = token.value.len() + 2 != source_text.len();
         match token.kind {
             Kind::LineComment | Kind::BlockComment if self.mode == Mode::Json => {
                 Some((token.start, b"Comments are not allowed in JSON5"))
             }
-            Kind::String if written.starts_with(b"'") => {
+            Kind::String if source_text.starts_with(b"'") => {
                 Some((token.start, b"Strings must be in double quotes"))
             }
-            Kind::String if has_escapes => escape_only_in_json5(written)
+            Kind::String if has_escapes => first_json5_only_escape(source_text)
                 .map(|at| (token.start + at, &b"Invalid escape sequence"[..])),
-            Kind::Number if !is_number_of_json(written) => {
-                Some(refused(Error::InvalidNumber { pos: token.start }))
+            Kind::Number if !is_json_number(source_text) => {
+                Some(parse_error(Error::InvalidNumber { pos: token.start }))
             }
             _ => None,
         }
     }
 
     /// The next token that isn't a comment.
-    fn next(&mut self) -> Result<Option<Token<'a>>, Refused> {
+    fn next(&mut self) -> Result<Option<Token<'a>>, ParseError> {
         loop {
-            let token = self.tokens.next().map_err(refused)?;
+            let token = self.tokens.next().map_err(parse_error)?;
             if self.mode != Mode::Json5
-                && let Some(refused) = self.only_in_json5(token.as_ref())
+                && let Some(parse_error) = self.json5_only_error(token.as_ref())
             {
-                return Err(refused);
+                return Err(parse_error);
             }
             let delimiters = match token.map(|it| it.kind) {
                 Some(Kind::LineComment) => (2, 0),
@@ -107,7 +107,7 @@ enum State<'a> {
     AfterValue,
 }
 
-fn run(reader: &mut Reader, tree: &mut Tree, options: Options) -> Result<(), Refused> {
+fn run(reader: &mut Reader, tree: &mut Tree, options: Options) -> Result<(), ParseError> {
     let (is_json5, end) = (options.mode == Mode::Json5, reader.text.len());
     // The objects and arrays that aren't closed yet.
     let mut open: Vec<u32> = Vec::new();
@@ -115,11 +115,11 @@ fn run(reader: &mut Reader, tree: &mut Tree, options: Options) -> Result<(), Ref
     loop {
         state = match state {
             State::Value(None) | State::Member(None) => {
-                return Err(refused(Error::UnexpectedEof { pos: end }));
+                return Err(parse_error(Error::UnexpectedEof { pos: end }));
             }
             State::Value(Some(token)) => {
-                let written = reader.text.get(token.start..token.end).unwrap_or_default();
-                let kind = match (token.kind, written) {
+                let source_text = reader.text.get(token.start..token.end).unwrap_or_default();
+                let kind = match (token.kind, source_text) {
                     (Kind::String, _) => NodeKind::String,
                     (Kind::Boolean, _) => NodeKind::Boolean,
                     (Kind::Null, _) => NodeKind::Null,
@@ -132,15 +132,15 @@ fn run(reader: &mut Reader, tree: &mut Tree, options: Options) -> Result<(), Ref
                     (Kind::Number, _) => NodeKind::Number,
                     (Kind::LeftBrace, _) => NodeKind::Object,
                     (Kind::LeftBracket, _) => NodeKind::Array,
-                    _ => return Err(refused(Error::UnexpectedToken { pos: token.start })),
+                    _ => return Err(parse_error(Error::UnexpectedToken { pos: token.start })),
                 };
                 let index = tree.push(&token, kind);
                 // The only rule that reads string values looks for lone surrogates, and only an escape can produce one.
                 if kind == NodeKind::String
-                    && token.value.len() + 2 != written.len()
+                    && token.value.len() + 2 != source_text.len()
                     && strings::wtf8_has_surrogate(token.value)
                 {
-                    tree.keep_unescaped(index, token.value);
+                    tree.store_unescaped(index, token.value);
                 }
                 let closing = match kind {
                     NodeKind::Object => Kind::RightBrace,
@@ -165,7 +165,7 @@ fn run(reader: &mut Reader, tree: &mut Tree, options: Options) -> Result<(), Ref
                         NodeKind::Identifier
                     }
                     _ if is_json5 => {
-                        return Err(refused(Error::InvalidIdentifier { pos: name.start }));
+                        return Err(parse_error(Error::InvalidIdentifier { pos: name.start }));
                     }
                     _ => return Err((name.start, b"Keys must be strings in double quotes")),
                 };
@@ -173,20 +173,20 @@ fn run(reader: &mut Reader, tree: &mut Tree, options: Options) -> Result<(), Ref
                 let quotes = if kind == NodeKind::String { 2 } else { 0 };
                 let is_word = matches!(name.kind, Kind::Boolean | Kind::Null);
                 if !is_word && name.value.len() + quotes != name.end - name.start {
-                    tree.keep_unescaped(index, name.value);
+                    tree.store_unescaped(index, name.value);
                 }
                 match reader.next()? {
                     Some(token) if token.kind == Kind::Colon => State::Value(reader.next()?),
                     token => {
                         let pos = token.map_or(end, |it| it.start);
-                        return Err(refused(Error::ExpectedColon { pos }));
+                        return Err(parse_error(Error::ExpectedColon { pos }));
                     }
                 }
             }
             State::AfterValue => {
                 let Some(&container) = open.last() else {
                     return match reader.next()? {
-                        Some(token) => Err(refused(Error::TrailingData { pos: token.start })),
+                        Some(token) => Err(parse_error(Error::TrailingData { pos: token.start })),
                         None => Ok(()),
                     };
                 };
@@ -212,15 +212,15 @@ fn run(reader: &mut Reader, tree: &mut Tree, options: Options) -> Result<(), Ref
                         token => State::Value(token),
                     },
                     None if is_object => {
-                        return Err(refused(Error::UnterminatedObject { pos: end }));
+                        return Err(parse_error(Error::UnterminatedObject { pos: end }));
                     }
-                    None => return Err(refused(Error::UnterminatedArray { pos: end })),
+                    None => return Err(parse_error(Error::UnterminatedArray { pos: end })),
                     Some(Token {
                         kind, start: pos, ..
                     }) => {
                         let starts_value =
                             !matches!(kind, Kind::Colon | Kind::RightBrace | Kind::RightBracket);
-                        return Err(refused(match (starts_value, is_object) {
+                        return Err(parse_error(match (starts_value, is_object) {
                             (true, _) => Error::ExpectedComma { pos },
                             (false, true) => Error::ExpectedClosingBrace { pos },
                             (false, false) => Error::ExpectedClosingBracket { pos },
@@ -244,7 +244,7 @@ impl Tree {
         index
     }
 
-    fn keep_unescaped(&mut self, index: u32, value: &[u8]) {
+    fn store_unescaped(&mut self, index: u32, value: &[u8]) {
         let start = self.texts.len() as u32;
         self.texts.extend_from_slice(value);
         let span = Span::new(start, self.texts.len() as u32);

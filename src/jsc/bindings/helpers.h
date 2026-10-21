@@ -72,6 +72,8 @@ static void free_global_string(void* str, void* ptr, unsigned len)
     EncodedSlice__freeGlobal(reinterpret_cast<const unsigned char*>(ptr), len);
 }
 
+static WTF::String tryConvertValidUTF8ToString(std::span<const unsigned char> bytes);
+
 static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
 {
     // fromUTF8ReplacingInvalidSequences CRASH()es past a ~2^30-byte input
@@ -82,6 +84,13 @@ static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
     const char* data = reinterpret_cast<const char*>(bytes.data());
     if (!simdutf::validate_utf8(data, bytes.size())) [[unlikely]]
         return {};
+    return tryConvertValidUTF8ToString(bytes);
+}
+
+// `bytes` must be valid UTF-8. Returns null if the allocation fails or the result exceeds the max string length.
+static WTF::String tryConvertValidUTF8ToString(std::span<const unsigned char> bytes)
+{
+    const char* data = reinterpret_cast<const char*>(bytes.data());
     size_t utf16Length = simdutf::utf16_length_from_utf8(data, bytes.size());
     if (utf16Length > WTF::String::MaxLength) [[unlikely]]
         return {};
@@ -267,14 +276,6 @@ static EncodedSlice toEncodedSlice(const WTF::StringView& str)
         ? EncodedSliceEmpty
         : EncodedSlice { str.is8Bit() ? byteCast<uint8_t>(str.span8().data()) : taggedUTF16Ptr(str.span16().data()),
               str.length() };
-}
-
-static EncodedSlice toEncodedSlice(JSC::JSString* str, JSC::JSGlobalObject* global)
-{
-    if (str->isSubstring()) {
-        return toEncodedSlice(str->view(global));
-    }
-    return toEncodedSlice(str->value(global));
 }
 
 static void throwException(JSC::ThrowScope& scope, JSC::EncodedJSValue err, JSC::JSGlobalObject* global)

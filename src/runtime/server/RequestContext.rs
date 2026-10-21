@@ -277,7 +277,7 @@ use crate::node::types::PathLikeExt as _;
 use crate::server::jsc::CallFrame;
 use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText, file_response_stream};
 use crate::webcore::blob::BlobExt as _;
-use crate::webcore::{Blob, ReadableStream, body as Body, s3 as S3};
+use crate::webcore::{Blob, ReadableStream, body as Body};
 use bun_jsc::SysErrorJsc as _;
 
 /// RAII: releases one intrusive ref on a [`RequestContext`] at scope exit.
@@ -810,6 +810,8 @@ where
 
     fn render_missing_invalid_response(&self, value: JSValue) {
         let class_name = value.get_class_info_name().unwrap_or(b"");
+        // Inspecting `value` can run user code (`[inspect.custom]`, `toString`), which can throw.
+        let mut inspect_error: Option<JSValue> = None;
 
         if let Some(server) = self.server.get() {
             // server is a BACKREF — valid while this RequestContext is alive
@@ -825,10 +827,17 @@ where
             } else if !value.is_empty() && !global_this.has_exception() {
                 let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
                 formatter.quote_strings = true;
-                bun_core::err_generic!(
-                    "Expected a Response object, but received '{}'",
-                    jsc::console_object::formatter::ZigFormatter::new(&mut formatter, value),
-                );
+                let mut received: Vec<u8> = Vec::new();
+                match formatter.format_value::<false>(value, &mut received) {
+                    Ok(()) => bun_core::err_generic!(
+                        "Expected a Response object, but received '{}'",
+                        bstr::BStr::new(&received),
+                    ),
+                    Err(err) => {
+                        bun_core::err_generic!("Expected a Response object");
+                        inspect_error = Some(global_this.take_error(err));
+                    }
+                }
                 // `formatter` drops here.
             } else {
                 bun_core::err_generic!("Expected a Response object");
@@ -847,6 +856,11 @@ where
         // allocation alive across the re-entry; re-check the request state so
         // we never render onto a response that was ended underneath us.
         if self.is_aborted_or_ended() {
+            return;
+        }
+        if let Some(error) = inspect_error {
+            // Report it as if the handler threw it.
+            self.run_error_handler(error);
             return;
         }
         self.render_missing();
@@ -1278,7 +1292,7 @@ where
 
         let bb = DevErrorPage {
             message,
-            cwd: bun_resolver::fs::FileSystem::get().top_level_dir,
+            cwd: bun_resolver::fs::FileSystem::get().top_level_dir(),
             exceptions,
             log: Some(log),
         }
@@ -1409,6 +1423,18 @@ where
             self.end_request_streaming_and_drain();
             self.deref();
         }
+    }
+
+    /// Answers 500 with no body, for a request that was saved to run later and now never will.
+    /// A request that got an answer while it waited (a 413) has detached its response, so
+    /// nothing more is written to it.
+    pub(crate) fn end_with_internal_server_error(&self) {
+        if let Some(resp) = self.resp.get() {
+            self.flags.set_has_written_status(true);
+            resp.write_status(b"500 Internal Server Error");
+            resp.write_header_int(b"Content-Length", 0);
+        }
+        self.end_without_body(true);
     }
 
     pub(crate) fn force_close(&self) {
@@ -2560,49 +2586,6 @@ where
             || self.server().terminated()
     }
 
-    fn do_render_head_response_after_s3_size_resolved(
-        pair: *mut HeaderResponseSizePair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, MUX>,
-    ) {
-        // SAFETY: `pair` is the live stack-local threaded through the
-        // synchronous cork call.
-        let pair = unsafe { &*pair };
-        let this = pair.this;
-        this.render_metadata();
-
-        if let Some(resp) = this.resp.get() {
-            // SAFETY: FFI handle
-            resp.write_header_int(b"content-length", pair.size as u64);
-        }
-        this.end_without_body(this.should_close_connection());
-        // `end_without_body` released the base ref; the caller
-        // (`on_s3_size_resolved`) releases the ref taken for the S3 stat.
-    }
-
-    /// `S3::client::stat` callback shape: `fn(S3StatResult, *mut c_void) -> JsResult<()>`.
-    fn on_s3_size_resolved_thunk(
-        result: S3::simple_request::S3StatResult<'_>,
-        this: *mut c_void,
-    ) -> JsResult<()> {
-        let stat_ref = RequestContextRef::adopt(this.cast::<Self>());
-        stat_ref.ctx().on_s3_size_resolved(result);
-        Ok(())
-    }
-
-    pub(crate) fn on_s3_size_resolved(&self, result: S3::simple_request::S3StatResult<'_>) {
-        if let Some(resp) = self.resp.get() {
-            let size = match result {
-                S3::simple_request::S3StatResult::Failure(_)
-                | S3::simple_request::S3StatResult::NotFound(_) => 0,
-                S3::simple_request::S3StatResult::Success(stat) => stat.size,
-            };
-            let mut pair = HeaderResponseSizePair { this: self, size };
-            resp.run_corked_with_type(
-                |p| Self::do_render_head_response_after_s3_size_resolved(p),
-                &raw mut pair,
-            );
-        }
-    }
-
     fn do_render_head_response(
         pair: *mut HeaderResponsePair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, MUX>,
     ) {
@@ -2708,36 +2691,17 @@ where
             }
 
             Body::Value::Blob(blob) => {
-                if shim::blob_is_s3(blob) {
-                    // we need to read the size asynchronously
-                    // in this case should always be a redirect so should not hit this path, but in case we change it in the future lets handle it
-                    // Ref for the S3 stat; adopted and released by
-                    // `on_s3_size_resolved_thunk`.
-                    this.ref_();
-
-                    let crate::webcore::blob::store::Data::S3(s3) =
-                        &blob.store.get().as_ref().unwrap().data
-                    else {
-                        unreachable!()
-                    };
-                    let credentials = s3.get_credentials();
-                    let path = s3.path();
-                    let _ = S3::client::stat(
-                        credentials,
-                        this.script_context(),
-                        path,
-                        Self::on_s3_size_resolved_thunk,
-                        this.as_ctx_ptr().cast::<c_void>(),
-                        s3.request_payer,
-                    ); // TODO: properly propagate exception upwards
-                    return;
-                }
                 // Size the blob *before* `render_metadata()`: it re-fetches the
                 // Response from `response_weakref`, so no borrow of the Response
                 // (here, `blob`) may still be live across it. Nothing is written
                 // to the socket in between, so the wire output is unchanged.
-                blob.resolve_size();
-                let blob_size = blob.size.get();
+                let blob_size = if shim::blob_is_s3(blob) {
+                    // Match the body GET sends (`render_bytes`). `resolve_size()` would set the blob's size to 0.
+                    blob.shared_view().len() as BlobSizeType
+                } else {
+                    blob.resolve_size();
+                    blob.size.get()
+                };
                 this.render_metadata();
 
                 if blob_size == crate::webcore::blob::MAX_SIZE {
@@ -3140,7 +3104,7 @@ where
 
         let bb = DevErrorPage {
             message: b"Stream error during server-side rendering",
-            cwd: bun_resolver::fs::FileSystem::get().top_level_dir,
+            cwd: bun_resolver::fs::FileSystem::get().top_level_dir(),
             exceptions: &exception_list,
             log: None,
         }
@@ -3905,13 +3869,19 @@ where
         }
 
         if let Some(mut cookies) = self.cookies.replace(None) {
-            let global_this = self.server().global_this();
+            let server = self.server();
+            let global_this = server.global_this();
             let resp = self.resp.get().expect("infallible: resp bound");
-            let r = cookies.write(global_this, uws::ResponseKind::of(resp), resp.as_ptr());
+            // The status line is already written, so report the error and send the response
+            // without that Set-Cookie header.
+            if let Err(err) = cookies.write(global_this, uws::ResponseKind::of(resp), resp.as_ptr())
+            {
+                server
+                    .vm()
+                    .as_mut()
+                    .run_error_handler(global_this.take_exception(err), None);
+            }
             // `cookies` drops here, releasing the ref taken in `set_cookies`.
-            if r.is_err() {
-                return;
-            } // TODO: properly propagate exception upwards
         }
         let blob = self.blob.get();
 
@@ -4673,11 +4643,6 @@ request_ctx_exports! {
 struct StreamPair<'a, ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> {
     pub this: &'a RequestContext<ThisServer, SSL, DBG, MUX>,
     pub stream: WebCore::ReadableStream,
-}
-
-struct HeaderResponseSizePair<'a, ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> {
-    pub this: &'a RequestContext<ThisServer, SSL, DBG, MUX>,
-    pub(crate) size: usize,
 }
 
 struct HeaderResponsePair<'a, ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> {

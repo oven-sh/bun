@@ -17,20 +17,20 @@ const NEWLINE_AFTER_IMPORT: Message = Message::new(
     "Expected {{count}} empty line{{line_suffix}} after {{keyword}} statement not followed by another {{keyword}}.",
 );
 
-/// What a line is to follow.
+/// The kind of statement the blank line has to follow.
 #[derive(Copy, Clone)]
 enum After<'a> {
     Import,
-    /// The last call in its statement.
+    /// The last `require` call in its statement.
     Require(Expr<'a>),
 }
 
 #[derive(Default)]
 pub struct State<'a> {
     is_oxlint: bool,
-    /// Each `require("a")` which counts, with where its statement at the top level starts.
+    /// Each `require("a")` that counts, with the start of its top-level statement.
     requires: Vec<(u32, Expr<'a>)>,
-    /// That something is in a function, a block, an object literal or a decorator.
+    /// Caches whether a node is inside a function, block, object literal or decorator.
     hidden: AncestorMemo<'a, ()>,
 }
 
@@ -80,10 +80,10 @@ impl Rule for NewlineAfterImport {
         if !is_import_statement(stmt) {
             return;
         }
-        // Only the program has `comments`.
+        // Only the `Program` node has `comments`.
         let (siblings, comments_from) = match stmt.parent() {
             Node::File(file) => (file.body(), Some(stmt.span().end)),
-            // oxlint looks at the statements of the program only.
+            // oxlint only checks top-level statements.
             Node::Stmt(parent) if !cx.state.is_oxlint => match parent.kind() {
                 StmtKind::Module(module) => (module.innermost().body(), None),
                 _ => return,
@@ -105,11 +105,11 @@ impl Rule for NewlineAfterImport {
         let body = cx.file().body();
         let mut requires = std::mem::take(&mut cx.state.requires);
         utils::sort::sort_unstable_by_key(&mut requires, |it| (it.0, it.1.span().end));
-        // Of each statement the last call.
-        requires.dedup_by(|call, kept| {
-            let is_in_same_statement = call.0 == kept.0;
+        // Keep only the last call of each statement.
+        requires.dedup_by(|call, retained| {
+            let is_in_same_statement = call.0 == retained.0;
             if is_in_same_statement {
-                kept.1 = call.1;
+                retained.1 = call.1;
             }
             is_in_same_statement
         });
@@ -120,7 +120,7 @@ impl Rule for NewlineAfterImport {
             let next_is_same_kind = requires
                 .get(index + 1)
                 .is_some_and(|it| it.0 == next.span().start);
-            // oxlint looks for a comment between two statements that require.
+            // oxlint still looks for a comment between two `require` statements.
             if !next_is_same_kind || cx.state.is_oxlint {
                 let call_end = Some(call.span().end);
                 self.check(
@@ -140,7 +140,7 @@ fn is_import_statement(stmt: Stmt) -> bool {
     stmt.tag() == StmtTag::Import || stmt.tag() == StmtTag::ImportEquals && !stmt.is_exported()
 }
 
-/// `require("a")` that is in no function, block, object literal or decorator.
+/// `require("a")` that isn't inside a function, block, object literal or decorator.
 fn is_top_level_static_require_call<'a>(
     e: Expr<'a>,
     is_oxlint: bool,
@@ -152,11 +152,11 @@ fn is_top_level_static_require_call<'a>(
     else {
         return false;
     };
-    // oxlint takes nothing in parentheses, and no `require` that is declared.
+    // oxlint rejects a parenthesized argument, and (below) a `require` that's declared in the file.
     if is_oxlint && argument.is_parenthesized() {
         return false;
     }
-    // oxlint counts a function without a body, and an object that is assigned to.
+    // oxlint also counts a function without a body and an object pattern that's assigned to.
     let hides = |child: Node<'a>, parent: Node<'a>| match parent {
         Node::Func(func) => func.kind() != FnKind::StaticBlock && (is_oxlint || func.has_body()),
         Node::Stmt(stmt) => matches!(stmt.kind(), StmtKind::Block(_)),
@@ -174,7 +174,7 @@ fn is_top_level_static_require_call<'a>(
         && (!is_oxlint || is_global_reference_name(call.callee(), "require"))
 }
 
-/// Where what counts of `stmt` starts: its first decorator, which can be after the `export`.
+/// Returns where `stmt` starts for this rule: at its first decorator, which can come after the `export`.
 fn next_statement_start(stmt: Stmt) -> u32 {
     let first_decorator = match stmt.kind() {
         StmtKind::Class(class) => class.modifiers().iter().find(|it| it.decorator().is_some()),
@@ -184,7 +184,7 @@ fn next_statement_start(stmt: Stmt) -> u32 {
 }
 
 impl NewlineAfterImport {
-    /// `comments_from`: the end of the import or of the call, if comments can count.
+    /// `comments_from`: the end of the import or call, if comments can count.
     fn check<'a>(
         &self,
         stmt: Stmt<'a>,
@@ -202,17 +202,17 @@ impl NewlineAfterImport {
             .unwrap_or_else(|| stmt.span());
         let next_start = next.map(next_statement_start);
         let line_difference = |to: u32| match is_oxlint {
-            // oxlint counts the line feeds.
+            // oxlint counts `\n` characters.
             true => strings::count_char(file.slice(Span::after(node, to)), b'\n') as i64,
             false => i64::from(file.line_of(to)) - i64::from(file.line_of(node.end)),
         };
         let expected_line_diff = (self.count as i64).saturating_add(1);
-        // The first: the others are further away.
+        // Only the first comment matters, because the others are further away.
         let comment = comments_from
             .filter(|_| self.consider_comments)
             .and_then(|from| {
                 if is_oxlint {
-                    // oxlint looks between the two statements.
+                    // oxlint searches between the two statements.
                     let first = file
                         .comments_in(Span::after(node, next_start?))
                         .next()?
@@ -241,7 +241,7 @@ impl NewlineAfterImport {
         let report = match (is_oxlint, after) {
             (true, After::Import) => cx.report(node, NEWLINE_AFTER_IMPORT),
             (true, After::Require(call)) => cx.report(node, NEWLINE_AFTER_IMPORT).called_with(call),
-            // ESLint is given the line on which it ends, and the column at which it starts if it starts there, else 0.
+            // ESLint gets the line the node ends on, and the node's start column if it starts on that line, else 0.
             (false, _) => cx.report_at(
                 node.start.max(file.line_span(file.line_of(node.end)).start),
                 NEWLINE_AFTER_IMPORT,
@@ -255,13 +255,13 @@ impl NewlineAfterImport {
             return;
         }
         if is_oxlint {
-            // What oxlint calls its fix.
+            // oxlint's label for its fix.
             report = report.help(match after {
                 After::Import => "Add empty line(s) after import",
                 After::Require(_) => "Add empty line(s) after require",
             });
         }
-        // The calls of `require` are looked at when the program ends.
+        // Upstream checks the `require` calls in `Program:exit`.
         let at = if matches!(after, After::Require(_)) {
             Span::empty(0)
         } else {

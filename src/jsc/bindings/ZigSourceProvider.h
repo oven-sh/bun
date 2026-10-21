@@ -6,6 +6,7 @@
 namespace JSC {
 class Structure;
 class Identifier;
+class SourceCode;
 class SourceCodeKey;
 class SourceProvider;
 } // namespace JSC
@@ -76,6 +77,10 @@ private:
 } // namespace Zig
 
 namespace Bun {
+
+// JSC's bytecode encoder aborts on a string of 2^27 or more characters unless it encodes against a string table.
+// Call this after `source`'s unlinked code is generated.
+bool hasStringTooLongForBytecodeCache(JSC::VM&, const JSC::SourceCode& source);
 
 // Bytecode that is a section of the executable: not owned, and there for the life of the process. `entryOffset` is where
 // the module's cache entry starts in `bytes` when they are the one payload of a link.

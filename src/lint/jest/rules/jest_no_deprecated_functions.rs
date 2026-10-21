@@ -6,13 +6,13 @@ use smallvec::SmallVec;
 
 /// Disallow Jest functions that have been deprecated, renamed, or replaced.
 pub struct NoDeprecatedFunctions {
-    /// The major version of Jest.
+    /// Jest's major version.
     version: usize,
 }
 
 const DEPRECATED_FUNCTION: Message = Message::new("", "\"{{deprecated}}\" has been deprecated in favor of \"{{new}}\"");
 
-/// The property, since which version it is deprecated, what it is a property of, and the replacement.
+/// (property, major version that deprecated it, object it belongs to, replacement)
 const DEPRECATED_FUNCTIONS: [(&str, usize, &str, &str); 6] = [
     ("resetModuleRegistry", 15, "jest", "jest.resetModules"),
     ("addMatchers", 17, "jest", "expect.extend"),
@@ -22,7 +22,7 @@ const DEPRECATED_FUNCTIONS: [(&str, usize, &str, &str); 6] = [
     ("genMockFromModule", 26, "jest", "jest.createMockFromModule"),
 ];
 
-/// The `29` of `29.1.0`.
+/// Returns the `29` in `29.1.0`.
 fn major(version: &[u8]) -> Option<usize> {
     std::str::from_utf8(strings::split(version, b".").next()?).ok()?.parse().ok()
 }
@@ -30,7 +30,7 @@ fn major(version: &[u8]) -> Option<usize> {
 impl Rule for NoDeprecatedFunctions {
     const META: Meta = Meta::oxlint(Plugin::Jest, "no-deprecated-functions", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]);
-    /// The names of the properties that the file mentions.
+    /// The deprecated property names that the file mentions.
     type State<'a> = SmallVec<[Name<'a>; 6]>;
 
     fn new(options: &Options) -> Self {
@@ -62,7 +62,7 @@ impl Rule for NoDeprecatedFunctions {
     }
 }
 
-/// `settings.jest.version`: `29`, `"29.1.0"` or `"v29.1.0"`
+/// Reads `settings.jest.version`, which can be `29`, `"29.1.0"` or `"v29.1.0"`.
 fn jest_version(file: &File) -> Option<usize> {
     let version = file.settings().get(b"jest")?.get(b"version")?;
     match version {

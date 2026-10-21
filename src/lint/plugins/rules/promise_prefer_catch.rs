@@ -21,7 +21,7 @@ impl Rule for PreferCatch {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        // Only a call that is a statement. What is in parentheses, and an optional chain, is not a call for oxlint.
+        // Only a call that's a statement. In oxlint's AST a parenthesized expression or an optional chain isn't a call.
         if let Some(call_expr) = e.as_call()
             && call_expr.args().len() >= 2
             && get_member_expr(call_expr.callee()).and_then(static_property_name).is_some_and(|name| name.is("then"))

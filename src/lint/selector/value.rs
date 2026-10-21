@@ -1,5 +1,4 @@
-//! The values of JavaScript that following a path from a node leads to, and what JavaScript's
-//! operators make of them.
+//! The JavaScript values that a path from a node can lead to, and how JavaScript's operators treat them.
 
 use super::program::{JsType, Key, Literal, Names, Property};
 use crate::ast::File;
@@ -15,7 +14,7 @@ pub(super) enum Val<'a> {
     Bool(bool),
     Number(f64),
     Str(&'a [u8]),
-    /// A string that is not written anywhere.
+    /// A string that doesn't appear anywhere in the source.
     Short(Short),
     /// In decimal.
     BigInt(&'a [u8]),
@@ -25,8 +24,8 @@ pub(super) enum Val<'a> {
     },
     Object(Object<'a>),
     Node(VNode<'a>),
-    /// The list that this field of this node is. It is computed again when it is looked at: a list is several times the size of
-    /// everything else here, and few selectors look at one.
+    /// The list in this field of this node. It's recomputed each time it's needed, because a list
+    /// is several times the size of everything else here and few selectors look at one.
     List(VNode<'a>, &'static FieldEntry),
     /// `node.range`
     Range(VNode<'a>),
@@ -59,7 +58,7 @@ impl Short {
     }
 
     /// The UTF-16 code unit `unit`, in WTF-8.
-    fn of_unit(unit: u32) -> Short {
+    fn from_unit(unit: u32) -> Short {
         match unit {
             0..0x80 => Short::new(&[unit as u8]),
             0x80..0x800 => Short::new(&[0xC0 | (unit >> 6) as u8, 0x80 | (unit & 0x3F) as u8]),
@@ -72,14 +71,14 @@ impl Short {
     }
 
     /// `regex.flags`, which has them in alphabetical order.
-    fn of_flags(flags: &[u8]) -> Short {
+    fn from_flags(flags: &[u8]) -> Short {
         let mut short = Short::new(flags);
         crate::utils::sort::sort_unstable(&mut short.bytes[..short.len as usize]);
         short
     }
 }
 
-/// `offset` as ESLint counts: in UTF-16 code units, without a byte order mark.
+/// `offset` the way ESLint counts: in UTF-16 code units, not counting a byte order mark.
 fn utf16_offset(file: &File, offset: u32) -> f64 {
     let units = bun_core::strings::wtf8_len_utf16(file.slice(Span::new(0, offset)));
     f64::from(units.saturating_sub(u32::from(file.has_bom())))
@@ -91,7 +90,7 @@ fn unit_at(text: &[u8], index: u32) -> Option<Short> {
     for (_, c) in bun_core::strings::wtf8_codepoints(text) {
         let width = bun_core::strings::codepoint_len_utf16(c);
         if index < at + width {
-            return Some(Short::of_unit(match (width, index - at) {
+            return Some(Short::from_unit(match (width, index - at) {
                 (1, _) => c,
                 (_, 0) => 0xD800 + ((c - 0x1_0000) >> 10),
                 _ => 0xDC00 + ((c - 0x1_0000) & 0x3FF),
@@ -103,9 +102,9 @@ fn unit_at(text: &[u8], index: u32) -> Option<Short> {
 }
 
 impl<'a> Val<'a> {
-    /// The value of the field of `entry` in `node`, which is of the type that `entry` is of.
+    /// The value of `entry`'s field in `node`. `node` must be of the type that `entry` belongs to.
     #[inline]
-    pub(super) fn of_field(
+    pub(super) fn from_field(
         node: VNode<'a>,
         entry: &'static FieldEntry,
         dialect: Dialect,
@@ -127,7 +126,7 @@ impl<'a> Val<'a> {
         }
     }
 
-    /// The elements, if it is a list.
+    /// The elements, if it's a list.
     pub(super) fn elements(self) -> Option<Nodes<'a>> {
         match self {
             Val::List(node, entry) => match (entry.get)(node) {
@@ -156,7 +155,7 @@ impl<'a> Val<'a> {
         }
     }
 
-    /// `value[key]`, for a value that is not nullish.
+    /// `value[key]`, for a value that isn't nullish.
     pub(super) fn get(self, key: Key, dialect: Dialect) -> Val<'a> {
         use Property as P;
         // oxlint's nodes have `start` and `end` too.
@@ -180,7 +179,9 @@ impl<'a> Val<'a> {
             }
             (Val::Node(node), _) => {
                 let entry = key.field.and_then(|field| node.node_type().field(field));
-                entry.map_or(Val::Undefined, |entry| Val::of_field(node, entry, dialect))
+                entry.map_or(Val::Undefined, |entry| {
+                    Val::from_field(node, entry, dialect)
+                })
             }
 
             (Val::List(..), P::Length) => Val::Number(self.elements().map_or(0, Nodes::len) as f64),
@@ -203,7 +204,7 @@ impl<'a> Val<'a> {
             (Val::Object(Object::Regex { flags, .. }), P::Flags) => Val::Str(flags),
 
             (Val::Regex { pattern, .. }, P::Source) => Val::Str(pattern),
-            (Val::Regex { flags, .. }, P::Flags) => Val::Short(Short::of_flags(flags)),
+            (Val::Regex { flags, .. }, P::Flags) => Val::Short(Short::from_flags(flags)),
             (Val::Regex { flags, .. }, P::HasFlag(flag)) => {
                 Val::Bool(bun_core::strings::contains_char(flags, flag))
             }
@@ -242,13 +243,13 @@ impl<'a> Val<'a> {
                 then(b"[object Object]")
             }
             Val::Regex { pattern, flags } => {
-                then(&[b"/", pattern, b"/", Short::of_flags(flags).as_bytes()].concat())
+                then(&[b"/", pattern, b"/", Short::from_flags(flags).as_bytes()].concat())
             }
             Val::List(..) | Val::Range(_) => then(&self.joined()),
         }
     }
 
-    /// `String(value)` of an array.
+    /// `String(value)` for an array.
     fn joined(self) -> Vec<u8> {
         if let Val::Range(node) = self {
             let (file, span) = (node.file(), node.span());

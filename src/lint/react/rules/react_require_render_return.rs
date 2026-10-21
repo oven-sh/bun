@@ -30,7 +30,7 @@ impl Rule for RequireRenderReturn {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        // What is a component depends for upstream on what comes before.
+        // For upstream, what counts as a component depends on the code before it, so the work happens in `finish`.
         if file.language().is_oxlint { On::new().funcs() } else { On::new().finish() }
     }
 
@@ -38,18 +38,18 @@ impl Rule for RequireRenderReturn {
         let is_candidate = if file.language().is_oxlint {
             is_jsx(file) && file.mentions("render")
         } else {
-            // upstream takes a private name for its text.
+            // Upstream treats `#render` like `render`.
             file.mentions_any(&["render", "#render"]) && Components::may_have_any(file)
         };
         is_candidate.then_some(())
     }
 
-    /// oxlint asks its control flow graph whether a `render` of what is a component by its name gets to a `return`.
+    /// oxlint detects components by name, and uses its control flow graph to check that `render` reaches a `return`.
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         if as_function(Node::Func(func)).is_none() {
             return;
         }
-        // The method or the property that the function is the value of.
+        // The method or property whose value is the function.
         let parent = match func.owner() {
             Node::Expr(e) if !e.is_parenthesized() => e.parent(),
             owner => owner,
@@ -76,12 +76,12 @@ impl Rule for RequireRenderReturn {
         }
     }
 
-    /// upstream's listeners for `ReturnStatement` and `ArrowFunctionExpression`, in the order of ESLint's walk, and
-    /// then its `Program:exit`.
+    /// Runs upstream's `ReturnStatement` and `ArrowFunctionExpression` listeners in ESLint's traversal order, then its
+    /// `Program:exit`.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         let pragmas = Pragmas::new(file);
-        // Whether something can be reported at all does not take the list of components.
+        // Checking whether anything can be reported at all doesn't need the component list.
         let has_render = |node| render_of_component(node, &pragmas).is_some();
         let mentions_create_class = mentions_create_class(file, pragmas.create_class);
         if !file.classes().map(Node::Class).any(has_render)
@@ -120,7 +120,7 @@ impl Rule for RequireRenderReturn {
     }
 }
 
-/// upstream's `findRenderMethod`, of what is a component by `isES5Component` or `isES6Component`.
+/// Upstream's `findRenderMethod`, for a node that `isES5Component` or `isES6Component` accepts.
 fn render_of_component<'a>(node: Node<'a>, pragmas: &Pragmas<'_>) -> Option<Node<'a>> {
     let mut properties = get_component_properties(node).into_iter();
     let render = properties.find(|it| it.func().is_some() && is_called_render(it.node()))?;
@@ -129,7 +129,7 @@ fn render_of_component<'a>(node: Node<'a>, pragmas: &Pragmas<'_>) -> Option<Node
     is_component.then(|| render.node())
 }
 
-/// On the way up from a function: `true` at what is called `render`, `false` at the next function.
+/// One step of the ancestor walk from a function. `true` at a member named `render`, `false` at the next function.
 fn render_or_function(_: Node<'_>, ancestor: Node<'_>) -> Option<bool> {
     let is_a = |suffix: &str| estree_type_name(ancestor).ends_with(suffix);
     match ancestor {
@@ -145,11 +145,11 @@ fn is_called_render(node: Node<'_>) -> bool {
     get_property_name(node).is_some_and(|name| name == b"render")
 }
 
-/// `astUtil.getPropertyName(node.parent) === "render"`: also for the `a` of `a.render`.
+/// `astUtil.getPropertyName(node.parent) === "render"`. Also true for the `a` in `a.render`.
 fn is_value_of_render(arrow: Func<'_>) -> bool {
     let value = arrow.owner().as_expr();
     let parent = estree_parent(Node::Func(arrow));
-    // ESTree has a node between it and a member that it decorates or a property of a pattern whose default it is.
+    // If the arrow is a member's decorator or a pattern property's default, ESTree has a node in between.
     let is_child = match parent {
         Node::Member(member) => member.init() == value,
         Node::Prop(property) => property.value() == value,
@@ -165,13 +165,13 @@ enum Jump<'a> {
     Continue(Option<Name<'a>>),
 }
 
-/// The way through a function that oxlint takes in its control flow graph: it does not go into a `catch` or a
-/// `finally`, nor past a `try` with a `finally`, and it goes on after every `while` and `for`.
+/// Follows the same paths through a function as oxlint does in its control flow graph. It doesn't enter a `catch` or
+/// `finally`, doesn't continue past a `try` that has a `finally`, and always continues after a `while` or `for`.
 #[derive(Default)]
 struct Walk<'a> {
-    /// It got to a `return` with a value.
+    /// Reached a `return` with a value.
     found: bool,
-    /// The `break` and `continue` that it got to and whose statement it is still in.
+    /// The `break`s and `continue`s reached so far whose target statement is still being walked.
     jumps: SmallVec<[Jump<'a>; 4]>,
 }
 
@@ -188,32 +188,32 @@ fn contains_return_statement(func: Func) -> bool {
 }
 
 impl<'a> Walk<'a> {
-    /// Whether it gets to the end.
+    /// True if control reaches the end of the list.
     fn list(&mut self, statements: List<'a, Stmt<'a>>) -> bool {
         statements.iter().all(|it| self.statement(it))
     }
 
-    /// Takes the jumps after the first `from` for which `is_for_it` holds out, and tells whether there were any.
-    fn take_jumps(&mut self, from: usize, is_for_it: impl Fn(Jump<'a>) -> bool) -> bool {
+    /// Removes the jumps at index `from` and later that match `is_target`. Returns true if any were removed.
+    fn take_jumps(&mut self, from: usize, is_target: impl Fn(Jump<'a>) -> bool) -> bool {
         let before = self.jumps.len();
         let others: SmallVec<[Jump<'a>; 4]> =
-            self.jumps.drain(from.min(before)..).filter(|it| !is_for_it(*it)).collect();
+            self.jumps.drain(from.min(before)..).filter(|it| !is_target(*it)).collect();
         self.jumps.extend(others);
         self.jumps.len() < before
     }
 
-    /// Whether it gets to the end of the statement.
+    /// True if control reaches the end of the statement.
     fn statement(&mut self, statement: Stmt<'a>) -> bool {
         if self.found {
             return false;
         }
-        // It is taken to return something.
+        // Too deep to walk, so assume it returns something.
         if !bun_core::StackCheck::init().is_safe_to_recurse() {
             self.found = true;
             return false;
         }
         let from = self.jumps.len();
-        let is_of_loop = |jump: Jump| matches!(jump, Jump::Break(None) | Jump::Continue(None));
+        let targets_loop = |jump: Jump| matches!(jump, Jump::Break(None) | Jump::Continue(None));
         match statement.kind() {
             StmtKind::Return(Some(_)) => {
                 self.found = true;
@@ -231,7 +231,7 @@ impl<'a> Walk<'a> {
             StmtKind::Block(statements) => self.list(statements),
             StmtKind::With { body, .. } => self.statement(body),
             StmtKind::If { .. } => {
-                // `else if` is not nested.
+                // Loop over an `else if` chain instead of recursing.
                 let (mut at, mut completes) = (statement, false);
                 loop {
                     let StmtKind::If { yes, no, .. } = at.kind() else {
@@ -249,10 +249,10 @@ impl<'a> Walk<'a> {
             | StmtKind::ForIn { body, .. }
             | StmtKind::ForOf { body, .. } => {
                 self.statement(body);
-                self.take_jumps(from, is_of_loop);
+                self.take_jumps(from, targets_loop);
                 true
             }
-            StmtKind::DoWhile { body, .. } => self.statement(body) | self.take_jumps(from, is_of_loop),
+            StmtKind::DoWhile { body, .. } => self.statement(body) | self.take_jumps(from, targets_loop),
             StmtKind::Labeled { label, body } => {
                 self.statement(body)
                     | self.take_jumps(

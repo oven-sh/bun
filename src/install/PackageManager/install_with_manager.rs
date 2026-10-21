@@ -16,7 +16,7 @@ use crate::lockfile::{self, Lockfile, reachable};
 use crate::resolution::Tag as ResolutionTag;
 use crate::update_transitive::{
     DirectDependencies, TransitiveUpdate, enqueue_peer_rows, moved_targets_after_clean,
-    plannable_peer_rows, print_kept_patched, redirect_moved_edges,
+    packages_after_clean, plannable_peer_rows, print_kept_patched, redirect_moved_edges,
 };
 use crate::{
     Dependency, DependencyID, Features, PackageID, PackageNameHash, PatchTask, Resolution,
@@ -629,23 +629,26 @@ pub fn install_with_manager(
     }
 
     // Rows an earlier install could not resolve: the registry may have the version now.
-    let mut retried_rows: Vec<DependencyID> = Vec::new();
+    let mut retried_targets: Vec<PackageID> = Vec::new();
     if manager.lockfile.has_unresolved_optional_rows
         && !needs_new_lockfile
         && !manager.options.enable.frozen_lockfile()
         && !manager.log_mut().has_errors()
         && !manager.update_requests.iter().any(|request| request.failed)
     {
-        retried_rows = retry_unresolved_optional_rows(manager);
-        if !retried_rows.is_empty()
+        let rows = retry_unresolved_optional_rows(manager);
+        if !rows.is_empty()
             && (manager.pending_task_count() > 0 || manager.peer_dependencies.readable_length() > 0)
         {
             resolve_pending_tasks(manager, &root, log_level, &mut NamedUpdates::default())?;
         }
-        // A re-bind to a package the tree already has moves nothing, but leaves the "unresolved" list.
+        // Taken now: rows move before the lockfile is cleaned (`fold_resolved_positionals`).
         let resolutions = manager.lockfile.buffers.resolutions.as_slice();
-        had_any_diffs |=
-            (retried_rows.iter()).any(|&row| resolutions[row as usize] != invalid_package_id);
+        retried_targets = (rows.iter().map(|&row| resolutions[row as usize]))
+            .filter(|&id| id != invalid_package_id)
+            .collect();
+        // A re-bind to a package the tree already has moves nothing, but leaves the "unresolved" list.
+        had_any_diffs |= !retried_targets.is_empty();
     }
 
     if manager.summary.changes_resolutions()
@@ -728,13 +731,10 @@ pub fn install_with_manager(
             let loaded_bun_lockfile = lockfile_before_clean.loaded_package_count > 0
                 && load_result.migrated_from().is_none();
             // `bun add <name>` scans only what it adds: that includes what a retried row brought.
-            let retried: Vec<(DependencyID, PackageID)> = (retried_rows.iter())
-                .map(|&row| (row, invalid_package_id))
-                .collect();
-            moved_by_overrides.extend(moved_targets_after_clean(
+            moved_by_overrides.extend(packages_after_clean(
                 &lockfile_before_clean,
                 &manager.lockfile,
-                &retried,
+                retried_targets.iter().copied(),
             ));
             run_security_scanner(
                 manager,

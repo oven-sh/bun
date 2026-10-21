@@ -505,10 +505,22 @@ pub(crate) fn moved_targets_after_clean(
     cleaned: &Lockfile,
     moved: &[(DependencyID, PackageID)],
 ) -> Vec<PackageID> {
-    if moved.is_empty() {
-        return Vec::new();
-    }
     let old_resolutions = before_clean.buffers.resolutions.as_slice();
+    packages_after_clean(
+        before_clean,
+        cleaned,
+        moved
+            .iter()
+            .filter_map(|&(dep_id, _)| old_resolutions.get(dep_id as usize).copied()),
+    )
+}
+
+/// The ids `clean` gave the packages that had `old_ids` before it. A dropped package has none.
+pub(crate) fn packages_after_clean(
+    before_clean: &Lockfile,
+    cleaned: &Lockfile,
+    old_ids: impl Iterator<Item = PackageID>,
+) -> Vec<PackageID> {
     let old_name_hashes = before_clean.packages.items_name_hash();
     let old_res = before_clean.packages.items_resolution();
     let old_buf = before_clean.buffers.string_bytes.as_slice();
@@ -516,10 +528,7 @@ pub(crate) fn moved_targets_after_clean(
     let new_buf = cleaned.buffers.string_bytes.as_slice();
 
     let mut targets: Vec<PackageID> = Vec::new();
-    for &(dep_id, _) in moved {
-        let Some(&old_id) = old_resolutions.get(dep_id as usize) else {
-            continue;
-        };
+    for old_id in old_ids {
         if (old_id as usize) >= old_res.len() {
             continue;
         }

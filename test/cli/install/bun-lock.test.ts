@@ -3668,13 +3668,27 @@ describe.each(["hoisted", "isolated"] as const)("an unresolved optional dependen
     expect(await file(lockfilePath).text()).toBe(incomplete);
     await installWithOwnCache(String(dir), "--lockfile-only");
     expect(await file(lockfilePath).text()).toBe(incomplete);
-    registry.requests.length = 0;
-    await installWithOwnCache(String(dir), "--frozen-lockfile");
-    await installWithOwnCache(String(dir), "--production");
-    await installWithOwnCache(String(dir), "--offline");
-    expect(registry.requests).toEqual([]);
-    expect(await file(lockfilePath).text()).toBe(incomplete);
   });
+
+  it.concurrent.each([["--frozen-lockfile"], ["--production"], ["--offline"]])(
+    "not by %s, which keeps bun.lock as it is",
+    async flag => {
+      using registry = await serveRegistry(manifests(), latest);
+      using dir = tempDir("retry-unresolved-optional-kept-", {
+        "package.json": JSON.stringify({ name: "app", dependencies: { cli: "1.0.0" } }),
+        "bunfig.toml": bunfig(registry.url),
+      });
+      const lockfilePath = join(String(dir), "bun.lock");
+
+      await installWithOwnCache(String(dir));
+      const incomplete = await file(lockfilePath).text();
+
+      registry.requests.length = 0;
+      await installWithOwnCache(String(dir), flag);
+      expect(registry.requests).toEqual([]);
+      expect(await file(lockfilePath).text()).toBe(incomplete);
+    },
+  );
 
   // `bun i -g cli@latest` resolves the parent again, to the package bun.lock has.
   it.concurrent("by an install that asks for the parent again", async () => {

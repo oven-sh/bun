@@ -534,7 +534,7 @@ impl Image {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let args = callframe.arguments();
-        let mut m: Modulate = self.pipeline.get().modulate.unwrap_or_default();
+        let (mut brightness, mut saturation) = (None, None);
         if args.len() > 0 && args[0].is_object() {
             let opt = args[0];
             // Clamp finite + bounded so Infinity doesn't reach ModulateImpl as
@@ -542,25 +542,30 @@ impl Image {
             if let Some(v) = opt.get(global, "brightness")? {
                 if v.is_number() {
                     let x = v.as_number();
-                    m.brightness = if x.is_finite() {
+                    brightness = Some(if x.is_finite() {
                         x.clamp(0.0, 1e4) as f32
                     } else {
                         1.0
-                    };
+                    });
                 }
             }
             if let Some(v) = opt.get(global, "saturation")? {
                 if v.is_number() {
                     let x = v.as_number();
-                    m.saturation = if x.is_finite() {
+                    saturation = Some(if x.is_finite() {
                         x.clamp(0.0, 1e4) as f32
                     } else {
                         1.0
-                    };
+                    });
                 }
             }
         }
-        self.update_pipeline(|p| p.modulate = Some(m));
+        // A getter above can call modulate() again: read the pipeline only now.
+        self.update_pipeline(|p| {
+            let m = p.modulate.get_or_insert_default();
+            m.brightness = brightness.unwrap_or(m.brightness);
+            m.saturation = saturation.unwrap_or(m.saturation);
+        });
         Ok(callframe.this())
     }
 
@@ -571,39 +576,50 @@ impl Image {
         fmt: codecs::Format,
         recorded: &Cell<codecs::EncodeOptions>,
     ) -> JsResult<JSValue> {
-        let mut enc: codecs::EncodeOptions = recorded.get();
-        enc.format = fmt;
         let args = callframe.arguments();
+        let (mut quality, mut lossless, mut compression_level, mut palette) =
+            (None, None, None, None);
+        let (mut colors, mut dither, mut progressive) = (None, None, None);
         if args.len() > 0 && args[0].is_object() {
             let opt = args[0];
             if let Some(q) = opt.get(global, "quality")? {
                 if q.is_number() {
-                    enc.quality = coerce_int!(u8, q.as_number(), 1.0, 100.0);
+                    quality = Some(coerce_int!(u8, q.as_number(), 1.0, 100.0));
                 }
             }
             if let Some(l) = opt.get(global, "lossless")? {
-                enc.lossless = l.to_boolean();
+                lossless = Some(l.to_boolean());
             }
             if let Some(c) = opt.get(global, "compressionLevel")? {
                 if c.is_number() {
-                    enc.compression_level = coerce_int!(i8, c.as_number(), 0.0, 9.0);
+                    compression_level = Some(coerce_int!(i8, c.as_number(), 0.0, 9.0));
                 }
             }
             if let Some(p) = opt.get(global, "palette")? {
-                enc.palette = p.to_boolean();
+                palette = Some(p.to_boolean());
             }
             if let Some(c) = opt.get(global, "colors")? {
                 if c.is_number() {
-                    enc.colors = coerce_int!(u16, c.as_number(), 2.0, 256.0);
+                    colors = Some(coerce_int!(u16, c.as_number(), 2.0, 256.0));
                 }
             }
             if let Some(d) = opt.get(global, "dither")? {
-                enc.dither = d.to_boolean();
+                dither = Some(d.to_boolean());
             }
             if let Some(p) = opt.get(global, "progressive")? {
-                enc.progressive = p.to_boolean();
+                progressive = Some(p.to_boolean());
             }
         }
+        // A getter above can call this setter again: read the record only now.
+        let mut enc = recorded.get();
+        enc.format = fmt;
+        enc.quality = quality.unwrap_or(enc.quality);
+        enc.lossless = lossless.unwrap_or(enc.lossless);
+        enc.compression_level = compression_level.unwrap_or(enc.compression_level);
+        enc.palette = palette.unwrap_or(enc.palette);
+        enc.colors = colors.unwrap_or(enc.colors);
+        enc.dither = dither.unwrap_or(enc.dither);
+        enc.progressive = progressive.unwrap_or(enc.progressive);
         recorded.set(enc);
         self.update_pipeline(|p| p.output = Some(enc));
         Ok(callframe.this())

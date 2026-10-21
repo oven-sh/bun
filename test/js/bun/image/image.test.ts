@@ -1286,6 +1286,21 @@ describe("Bun.Image", () => {
       expect(data[0]).toBe(50);
     });
 
+    test("a modulate() call made from an option getter of modulate() is not overwritten", async () => {
+      const png = async (img: Bun.Image) => Buffer.from(await img.png().bytes());
+      const img = new Bun.Image(cornersPng);
+      img.modulate({
+        get brightness() {
+          img.modulate({ saturation: 0 });
+          return 0.5;
+        },
+      });
+      const both = await png(new Bun.Image(cornersPng).modulate({ brightness: 0.5, saturation: 0 }));
+      // Control: the nested call changes the output of the outer call.
+      expect(both.equals(await png(new Bun.Image(cornersPng).modulate({ brightness: 0.5 })))).toBe(false);
+      expect((await png(img)).equals(both)).toBe(true);
+    });
+
     test("png({palette:true}) emits indexed PNG that round-trips colours", async () => {
       // 2×2 with 4 distinct, well-separated colours — median-cut at 4 slots
       // is exact when input has ≤ slots distinct values with equal counts.
@@ -1533,6 +1548,28 @@ describe("Bun.Image", () => {
         nested: await same(img.jpeg(), image().jpeg({ quality: 10, progressive: true })),
       }).toEqual({ outer: true, nested: true });
     });
+
+    // [format, the options of the nested call, the key whose getter makes the nested call, the value of that key]
+    test.each([
+      ["jpeg", { progressive: true }, "quality", 10],
+      ["png", { palette: true, colors: 4 }, "dither", true],
+      ["webp", { lossless: true }, "quality", 50],
+    ] as const)(
+      "a %s(%j) call made from the %s getter of the same format is not overwritten",
+      async (format, nested, key, value) => {
+        const img = image();
+        img[format]({
+          get [key]() {
+            img[format](nested);
+            return value;
+          },
+        });
+        const both = image()[format]({ ...nested, [key]: value });
+        // Control: the nested call changes the output of the outer call.
+        expect(await same(both, image()[format]({ [key]: value }))).toBe(false);
+        expect(await same(img, both)).toBe(true);
+      },
+    );
 
     test("a terminal uses the format and options as they are when it is called", async () => {
       using dir = tempDir("image-format-snapshot", { "src.png": Buffer.from(src) });

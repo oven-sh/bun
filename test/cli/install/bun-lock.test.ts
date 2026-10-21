@@ -1115,12 +1115,14 @@ describe.concurrent("registry-independent npm entries in bun.lock", () => {
     return match ? JSON.parse(match[1]) : undefined;
   };
 
-  // Runs bun in `cwd` and fails with the full output when it does not exit 0.
+  // Runs bun in `cwd` and fails with the full output when it does not exit 0. The cache
+  // is per project: the test runner's BUN_INSTALL_CACHE_DIR would be shared by the
+  // concurrent tests here, which extract the same packages at the same time.
   async function bun(cwd: string, args: string[], extraEnv: Record<string, string> = {}) {
     await using proc = spawn({
       cmd: [bunExe(), ...args],
       cwd,
-      env: { ...env, ...extraEnv },
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache"), ...extraEnv },
       stdout: "pipe",
       stderr: "pipe",
     });

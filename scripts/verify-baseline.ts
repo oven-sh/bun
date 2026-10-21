@@ -197,7 +197,11 @@ let staticViolations = "";
 if (await Bun.file(staticChecker).exists()) {
   console.log("+++ Static instruction scan");
   const start = performance.now();
-  const proc = Bun.spawn([staticChecker, "--binary", binary, "--allowlist", staticAllowlist], {
+  // The Windows x64 scan leaves out the switch tables that MSVC marks in the
+  // PDB. Without the marks it passes at most link layouts and fails at a few,
+  // so a build whose PDB has none is a tool error at once.
+  const markArgs = isWindows && !isAarch64 ? ["--min-data-ranges", "1"] : [];
+  const proc = Bun.spawn([staticChecker, "--binary", binary, "--allowlist", staticAllowlist, ...markArgs], {
     stdout: "pipe",
     stderr: "inherit",
   });

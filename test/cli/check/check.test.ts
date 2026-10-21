@@ -10919,7 +10919,8 @@ export function t7(c: boolean) {
 
     test("truncates a long type at the same place however many declarations come before it", async () => {
       using dir = project({
-        // The length estimate counts the internal name of a property keyed by a `unique symbol`.
+        // The length estimate counts the internal name of a property keyed by a `unique symbol`, which ends with the
+        // 15 digits of the symbol's id.
         "index.ts": `${Array.from({ length: 1200 }, (_, i) => `declare const d${i}: ${i};`).join("\n")}
 declare const NamedGroupsS: unique symbol; declare const CapturedGroupsArrS: unique symbol; declare const ValueS: unique symbol; declare const FlagsS: unique symbol;
 declare const r: RegExp;
@@ -10928,7 +10929,7 @@ export const m: { [NamedGroupsS]: string; [CapturedGroupsArrS]: (string | undefi
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(
-        `"index.ts(1203,14): error TS2739: Type 'RegExp' is missing the following properties from type '{ [NamedGroupsS]: string; [CapturedGroupsArrS]: (string | undefined)[]; [ValueS]: string; [FlagsS]: "d" | "i" | "m" | "s" | "u" | "y"; }': [NamedGroupsS], [CapturedGroupsArrS], [ValueS], [FlagsS]"`,
+        `"index.ts(1203,14): error TS2739: Type 'RegExp' is missing the following properties from type '{ [NamedGroupsS]: string; [CapturedGroupsArrS]: (string | undefined)[]; [ValueS]: string; [FlagsS]: "d" | ... 4 more ... | "y"; }': [NamedGroupsS], [CapturedGroupsArrS], [ValueS], [FlagsS]"`,
       );
       expect(exitCode).toBe(1);
     });

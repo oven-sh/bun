@@ -1155,8 +1155,8 @@ fn sanitize_trace(lines: &[Vec<u8>], is_case_sensitive: bool) -> Vec<u8> {
     for line in lines {
         let is_missing = |file: &[u8]| [b"File '", file, b"' does not exist."].concat();
         let is_found = |file: &[u8]| [b"Found 'package.json' at '", file, b"'."].concat();
-        let sanitized = if strings::contains(line, b"'7.0.2'") {
-            line.replacen("'7.0.2'", "'FakeTSVersion'", 1)
+        let sanitized = if strings::contains(line, b"'7.1.0-beta'") {
+            line.replacen("'7.1.0-beta'", "'FakeTSVersion'", 1)
         } else if let Some(start) =
             line.strip_suffix(b"' does not exist according to earlier cached lookups.")
         {

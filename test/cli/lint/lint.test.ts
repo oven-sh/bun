@@ -9305,7 +9305,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         return stderr.split("\n").filter(it => it.startsWith("note: "));
       };
       expect(await notes("5.8.3")).toEqual([
-        "note: typescript 5.8.3 is installed, but bun lint checks types like TypeScript 7",
+        "note: typescript 5.8.3 is installed, but bun lint checks types like TypeScript 7.1",
       ]);
       expect(await notes("7.0.2")).toEqual([]);
       expect(await notes("5.8.3", {}, "--quiet")).toEqual([]);

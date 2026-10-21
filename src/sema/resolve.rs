@@ -4874,15 +4874,15 @@ pub(crate) fn mangle_scoped(name: &[u8]) -> Vec<u8> {
 /// `typeScriptVersion`: `semver.MustParse(core.Version())`
 const TYPESCRIPT_VERSION: Version<'static> = Version {
     major: 7,
-    minor: 0,
-    patch: 2,
-    prerelease: b"",
+    minor: 1,
+    patch: 0,
+    prerelease: b"beta",
 };
 /// `core.Version`
-pub const VERSION_C: &core::ffi::CStr = c"7.0.2";
+pub const VERSION_C: &core::ffi::CStr = c"7.1.0-beta";
 const VERSION: &[u8] = VERSION_C.to_bytes();
 /// `core.VersionMajorMinor`
-const VERSION_MAJOR_MINOR: &[u8] = b"7.0";
+const VERSION_MAJOR_MINOR: &[u8] = b"7.1";
 
 /// `IsApplicableVersionedTypesKey`
 pub(crate) fn is_applicable_versioned_types_key(key: &[u8]) -> bool {

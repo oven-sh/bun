@@ -907,7 +907,7 @@ impl<'l> Loader<'l> {
             let line = [
                 b"typescript ",
                 &installed[..],
-                b" is installed, but bun lint checks types like TypeScript 7",
+                b" is installed, but bun lint checks types like TypeScript 7.1",
             ];
             self.advise(line.concat());
         }

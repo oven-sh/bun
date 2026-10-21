@@ -3,7 +3,7 @@ title: "Type checking"
 description: "Type check your TypeScript project with bun check"
 ---
 
-`bun check` type checks your TypeScript project. It reads your `tsconfig.json`, reports the same errors as `tsc` from TypeScript 7, and uses every CPU core.
+`bun check` type checks your TypeScript project. It reads your `tsconfig.json`, reports the same errors as `tsc` from TypeScript 7.1, and uses every CPU core.
 
 ```bash terminal icon="terminal"
 bun check
@@ -89,7 +89,7 @@ Keep `tsc` to generate `.d.ts` files. `bun check` only checks.
 
 ### Coming from TypeScript 5
 
-`bun check` behaves like TypeScript 7, whichever version of `typescript` you have installed. TypeScript 6 and 7 changed some defaults and removed some compiler options.
+`bun check` behaves like TypeScript 7.1, whichever version of `typescript` you have installed. TypeScript 6 and 7 changed some defaults and removed some compiler options.
 
 Three defaults changed:
 
@@ -620,7 +620,7 @@ Then tell your editor to use the version in your project. In VS Code, run **Type
 
 Run the command again after you upgrade Bun, because a new version of Bun can match a newer TypeScript.
 
-If `bun check` and `tsc` from TypeScript 7 report different errors, that is a bug in Bun. [Open an issue on GitHub](https://github.com/oven-sh/bun/issues) with code that shows the difference.
+If `bun check` and `tsc` from TypeScript 7.1 report different errors, that is a bug in Bun. [Open an issue on GitHub](https://github.com/oven-sh/bun/issues) with code that shows the difference.
 
 ## Compiler options as flags
 
@@ -642,7 +642,7 @@ bun check -b --strict
 
 ## Differences from `tsc`
 
-`bun check` aims to report exactly what `tsc` from TypeScript 7 reports. `process.versions.typescript` is the exact version.
+`bun check` aims to report exactly what `tsc` from TypeScript 7.1 reports. `process.versions.typescript` is the exact version.
 
 ```bash terminal icon="terminal"
 bun -p process.versions.typescript

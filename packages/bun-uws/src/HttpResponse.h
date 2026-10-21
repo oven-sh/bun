@@ -66,6 +66,7 @@ public:
     }
     /* The chunk-size line of a chunk. Returns its length. */
     static constexpr size_t CHUNK_HEAD_MAX = 10;
+    static_assert(BackPressure::TAIL_ROOM >= 2 + CHUNK_HEAD_MAX);
     static size_t chunkHead(char (&buf)[CHUNK_HEAD_MAX], unsigned int chunkLength) {
         int length = utils::u32toaHex(chunkLength, buf);
         buf[length++] = '\r';
@@ -204,20 +205,6 @@ public:
         getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_SEND_WHEN_COMPLETE;
     }
 
-    /* Ends the 101 of upgrade(): terminates the header section and marks the
-     * response done. Not internalEnd(), because the socket leaves HTTP right
-     * after: the connection close gate does not apply (Connection: close,
-     * HTTP/1.0 and close-when-idle describe the HTTP connection, not the
-     * WebSocket that takes over the socket), and the cork stays so the
-     * handshake batches with the first frames written from open(). */
-    void endUpgradeHandshake() {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-        writeMark();
-        Super::write("\r\n", 2);
-        httpResponseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;
-        httpResponseData->markDone(this);
-    }
-
     /* Returns true on success, indicating that it might be feasible to write more data.
      * Will start timeout if stream reaches totalSize or write failure. */
     bool internalEnd(std::string_view data, uint64_t totalSize, bool optional, bool allowContentLength = true, bool closeConnection = false) {
@@ -299,7 +286,7 @@ public:
                 std::string &trailers = nodeHttpResponseData->nodeHttpResponseTrailers;
                 trailers.insert(0, "0\r\n", 3);
                 trailers.append("\r\n", 2);
-                Super::write(trailers.data(), (int) trailers.length());
+                Super::write(trailers.data(), trailers.length());
                 trailers.clear();
                 httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_HAS_RESPONSE_TRAILERS;
             } else if (!terminated) {
@@ -345,19 +332,10 @@ public:
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;
             }
 
-            /* Even if we supply no new data to write, its failed boolean is useful to know
-             * if it failed to drain any prior failed header writes */
-
-            /* Write as much as possible without causing backpressure */
-            size_t written = 0;
-            bool failed = false;
-            while (written < data.length() && !failed) {
-                /* uSockets only deals with int sizes, so pass chunks of max signed int size */
-                auto writtenFailed = Super::write(data.data() + written, (int) std::min<size_t>(data.length() - written, INT_MAX), optional);
-
-                written += (size_t) writtenFailed.first;
-                failed = writtenFailed.second;
-            }
+            /* tryEnd() stops at a short write and end() buffers the rest. Skip the call when there's no data,
+             * because write(src, 0) would retry flushing the backpressure buffer. */
+            auto [written, failed] = data.empty() ? std::pair<size_t, bool>{0, false} : Super::write(data.data(), data.length(), optional);
+            ASSERT(optional || written == data.length());
 
             httpResponseData->offset += written;
 
@@ -381,16 +359,25 @@ public:
     }
 
     /* Manually upgrade to WebSocket. Typically called in upgrade handler. Immediately calls open handler.
-     * NOTE: Will invalidate 'this' as socket might change location in memory. Throw away after use. */
+     * NOTE: Will invalidate 'this' as socket might change location in memory. Throw away after use.
+     * Returns nullptr and leaves userData untouched if the socket is closed or shut down. Nothing was written in
+     * that case, unless the 101 overflowed the cork buffer and that write is what closed the socket. */
     template <typename UserData>
     us_socket_t *upgrade(UserData&& userData, std::string_view secWebSocketKey, std::string_view secWebSocketProtocol,
             std::string_view secWebSocketExtensions,
             WebSocketContext<SSL, true, UserData> *webSocketContext) {
 
+        /* Check up front: us_socket_adopt() rejects these sockets, but by then HttpResponseData is already destructed */
+        if (us_socket_is_closed((us_socket_t *) this) || us_socket_is_shut_down((us_socket_t *) this)) {
+            return nullptr;
+        }
+
+        /* Cork so the 101 and anything the open handler sends are flushed in one write */
+        Super::cork();
+
         /* Extract needed parameters from WebSocketContextData */
         WebSocketContextData<SSL, UserData> *webSocketContextData = webSocketContext->getExt();
 
-        /* Note: OpenSSL can be used here to speed this up somewhat */
         char secWebSocketAccept[29] = {};
         char secWebSocketKeyBuffer[24] = {};
         secWebSocketKey.copy(secWebSocketKeyBuffer, 24);
@@ -427,38 +414,74 @@ public:
             if (negCompression) {
                 perMessageDeflate = true;
 
-                /* Map from negotiated windowBits to compressor and decompressor */
-                if (negCompressionWindow == 0) {
-                    compressOptions = CompressOptions::SHARED_COMPRESSOR;
-                } else {
-                    compressOptions = (CompressOptions) ((uint32_t) (negCompressionWindow << 4)
-                                                        | (uint32_t) (negCompressionWindow - 7));
+                /* A negotiated window of 0 means no context takeover */
+                compressOptions = compressOptionsFor({
+                    .serverMaxWindowBits = negCompressionWindow ? negCompressionWindow : 15,
+                    .clientMaxWindowBits = negInflationWindow ? negInflationWindow : 15,
+                    .serverNoContextTakeover = !negCompressionWindow,
+                    .clientNoContextTakeover = !negInflationWindow,
+                });
 
-                    /* If we are dedicated and have the 3kb then correct any 4kb to 3kb,
-                     * (they both share the windowBits = 9) */
-                    if (webSocketContextData->compression & DEDICATED_COMPRESSOR_3KB) {
-                        compressOptions = DEDICATED_COMPRESSOR_3KB;
-                    }
-                }
-
-                /* Here we modify the above compression with negotiated decompressor */
-                if (negInflationWindow == 0) {
-                    compressOptions = CompressOptions(compressOptions | CompressOptions::SHARED_DECOMPRESSOR);
-                } else {
-                    compressOptions = CompressOptions(compressOptions | (negInflationWindow << 8));
+                /* If we are dedicated and have the 3kb then correct any 4kb to 3kb,
+                 * (they both share the windowBits = 9) */
+                if (negCompressionWindow && (webSocketContextData->compression & CompressOptions::_COMPRESSOR_MASK) == CompressOptions::DEDICATED_COMPRESSOR_3KB) {
+                    compressOptions = CompressOptions((compressOptions & ~CompressOptions::_COMPRESSOR_MASK) | CompressOptions::DEDICATED_COMPRESSOR_3KB);
                 }
 
                 writeHeader("Sec-WebSocket-Extensions", negResponse);
             }
         }
 
-        endUpgradeHandshake();
+        writeMark();
+        Super::write("\r\n", 2);
+
+        return adoptWebSocket(std::forward<UserData>(userData), perMessageDeflate, compressOptions, webSocketContext);
+    }
+
+    /* Like upgrade(), but the caller already negotiated and built the 101 response head, which is written verbatim.
+     * deflateParams is nullptr if permessage-deflate wasn't negotiated. */
+    template <typename UserData>
+    us_socket_t *upgradeRaw(UserData&& userData, std::string_view handshake, const PerMessageDeflateParams *deflateParams,
+            WebSocketContext<SSL, true, UserData> *webSocketContext) {
+
+        if (us_socket_is_closed((us_socket_t *) this) || us_socket_is_shut_down((us_socket_t *) this)) {
+            return nullptr;
+        }
+
+        Super::cork();
+        Super::write(handshake.data(), (int) handshake.length());
+
+        return adoptWebSocket(std::forward<UserData>(userData), deflateParams != nullptr,
+            deflateParams ? compressOptionsFor(*deflateParams) : CompressOptions::DISABLED, webSocketContext);
+    }
+
+private:
+    /* Moves the socket into webSocketContext. It must be corked, with the 101 already written. */
+    template <typename UserData>
+    us_socket_t *adoptWebSocket(UserData&& userData, bool perMessageDeflate, CompressOptions compressOptions,
+            WebSocketContext<SSL, true, UserData> *webSocketContext) {
+
+        /* If TLS rejected the 101 write, the socket is now closed or shut down. Leave it as an HTTP socket;
+         * the next writable event closes it. */
+        if (us_socket_is_closed((us_socket_t *) this) || us_socket_is_shut_down((us_socket_t *) this)) {
+            return nullptr;
+        }
+
+        WebSocketContextData<SSL, UserData> *webSocketContextData = webSocketContext->getExt();
+
+        /* Not internalEnd(), because the socket leaves HTTP right after: the
+         * connection close gate does not apply (Connection: close, HTTP/1.0
+         * and close-when-idle describe the HTTP connection, not the WebSocket
+         * that takes over the socket), and the cork stays so the handshake
+         * batches with the first frames written from open(). */
+        auto* responseData = getHttpResponseData();
+        responseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;
+        responseData->markDone(this);
 
         /* Grab the httpContext from res */
         HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((struct us_socket_t *) this);
 
         /* Move any backpressure out of HttpResponse */
-        auto* responseData = getHttpResponseData();
         BackPressure backpressure(std::move(((AsyncSocketData<SSL> *) responseData)->buffer));
 
         auto* socketData = responseData->socketData;
@@ -539,9 +562,13 @@ public:
             webSocketContextData->openHandler(webSocket);
         }
 
+        /* Uncork here. An enclosing HttpResponse::cork() can't uncork a WebSocket, and after an await there isn't one. */
+        ((AsyncSocket<SSL> *) webSocket)->uncork();
+
         return usSocket;
     }
 
+public:
     /* Immediately terminate this Http response */
     using Super::close;
 
@@ -576,7 +603,7 @@ public:
      * the AsyncSocket write path (and buffer) writeStatus/end use, so a
      * pipelined replay stays ordered ahead of the final response bytes. */
     HttpResponse *writeRawInformational(std::string_view data) {
-        Super::write(data.data(), (int) data.length());
+        Super::write(data.data(), data.length());
         return this;
     }
 
@@ -601,7 +628,7 @@ public:
         httpResponseData->state |= HttpResponseData<SSL>::HTTP_STATUS_CALLED;
 
         Super::write("HTTP/1.1 ", 9);
-        Super::write(status.data(), (int) status.length());
+        Super::write(status.data(), status.length());
         Super::write("\r\n", 2);
         return this;
     }
@@ -610,9 +637,9 @@ public:
     HttpResponse *writeHeader(std::string_view key, std::string_view value) {
         writeStatus(HTTP_200_OK);
 
-        Super::write(key.data(), (int) key.length());
+        Super::write(key.data(), key.length());
         Super::write(": ", 2);
-        Super::write(value.data(), (int) value.length());
+        Super::write(value.data(), value.length());
         Super::write("\r\n", 2);
         return this;
     }
@@ -627,7 +654,7 @@ public:
             return this;
         }
 
-        Super::write(key.data(), (int) key.length());
+        Super::write(key.data(), key.length());
         Super::write(": ", 2);
         writeUnsigned64(value);
         Super::write("\r\n", 2);
@@ -819,48 +846,16 @@ public:
             Super::write("\r\n", 2);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
-        size_t total_written = 0;
-        bool has_failed = false;
-
-        if (length <= INT_MAX) {
-            auto [written, failed] = Super::writeFramed({chunkHeadBuffer, chunkHeadLength}, data.data(), (int) length, chunkTail);
-            this->resetTimeout();
-            if (writtenPtr) {
-                *writtenPtr = (size_t) written;
-            }
-            return !failed;
-        }
-        Super::write(chunkHeadBuffer, (int) chunkHeadLength);
-
-        // Handle data larger than INT_MAX by writing it in chunks of INT_MAX bytes
-        while (length > INT_MAX) {
-            // Write the maximum allowed chunk size (INT_MAX)
-            auto [written, failed] = Super::write(data.data(), INT_MAX);
-            // If the write failed, set the has_failed flag we continue writting because the data will be buffered
-            has_failed = has_failed || failed;
-            total_written += written;
-            length -= INT_MAX;
-            data = data.substr(INT_MAX);
-        }
-        // Handle the remaining data (less than INT_MAX bytes)
-        if (length > 0) {
-            // Write the final chunk with exact remaining length
-            auto [written, failed] = Super::write(data.data(), (int) length);
-            has_failed = has_failed || failed;
-            total_written += written;
-        }
-
-        /* Empty for a close-delimited body, which is raw. */
-        Super::write(chunkTail.data(), (int) chunkTail.length());
+        auto [written, failed] = Super::writeFramed({chunkHeadBuffer, chunkHeadLength}, data.data(), length, chunkTail);
 
         /* Reset timeout on each sended chunk */
         this->resetTimeout();
 
         if (writtenPtr) {
-            *writtenPtr = total_written;
+            *writtenPtr = written;
         }
         /* If we did not fail the write, accept more */
-        return !has_failed;
+        return !failed;
     }
 
     /* Like write(), but the body payload is written with optionally=true so the
@@ -894,25 +889,7 @@ public:
             }
         }
 
-        size_t consumed = 0;
-        size_t length = data.length();
-        if (length <= INT_MAX) {
-            consumed = (size_t) Super::writeFramed({chunkHeadBuffer, chunkHeadLength}, data.data(), (int) length, chunked ? "\r\n" : "", true).first;
-            this->resetTimeout();
-            return consumed;
-        }
-        Super::write(chunkHeadBuffer, (int) chunkHeadLength);
-        while (consumed < length) {
-            int chunk = (int) std::min(length - consumed, (size_t) INT_MAX);
-            auto [written, failed] = Super::write(data.data() + consumed, chunk, true);
-            consumed += (size_t) written;
-            if (written < chunk || failed) break;
-        }
-
-        if (consumed == length && chunked) {
-            Super::write("\r\n", 2);
-        }
-
+        size_t consumed = Super::writeFramed({chunkHeadBuffer, chunkHeadLength}, data.data(), data.length(), chunked ? "\r\n" : "", true).first;
         this->resetTimeout();
         return consumed;
     }
@@ -924,12 +901,8 @@ public:
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         bool chunked = !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED));
 
-        size_t length = data.length();
-        size_t done = 0;
-        while (done < length) {
-            int chunk = (int) std::min(length - done, (size_t) INT_MAX);
-            Super::write(data.data() + done, chunk);
-            done += (size_t) chunk;
+        if (!data.empty()) {
+            Super::write(data.data(), data.length());
         }
         if (chunked) {
             Super::write("\r\n", 2);
@@ -970,10 +943,9 @@ public:
             /* If we're no longer in a cork slot, either: (a) the handler wrote
              * large data that triggered an internal uncork, (b) our empty slot
              * was stolen by another request during an await, or (c) we were
-             * upgraded to a WebSocket (upgrade path transferred the slot). In
-             * all cases our data (if any) was already flushed; nothing to do.
-             * The upgrade case is handled by HttpContext's uncork or the drain
-             * loop. */
+             * upgraded to a WebSocket (upgrade() uncorked it). In all cases
+             * our data (if any) was already flushed; nothing to do. After an
+             * upgrade HttpResponseData is already destructed, so don't read it. */
             if (loopData->findCorkSlot(this) == LoopData::INVALID_CORK_SLOT) {
                 return this;
             }

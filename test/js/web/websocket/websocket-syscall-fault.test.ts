@@ -280,9 +280,7 @@ describe.concurrent.skipIf(skip)("WebSocket client close-frame under faults", ()
       /* js */ `
       const ws = new WebSocket(url);
       // Arm only after open so the upgrade request/response are full-size; the
-      // close frame is the first write under the clamp. onclose fires before
-      // the buffered remainder of the close frame flushes (it's queued for the
-      // next writable turn), so let the event loop drain instead of exiting.
+      // close frame is the first write under the clamp.
       ws.onopen = () => {
         fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
         ws.close(3001, "short-write-close");
@@ -325,30 +323,46 @@ describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected sysc
     expect(exitCode).toBe(0);
   });
 
-  test("writev → zero (once) on a ≥16 KB server frame: client receives full payload", async () => {
-    // The Bun.serve WS plain-TCP fast path (≥16 KB, no backpressure) uses
-    // us_socket_write2 → bsd_write2/writev — keyed US_FAULT_WRITEV. This is
-    // the only test exercising that hook.
+  test("writev → zero (once) on a ≥16 KB server frame: send() reports backpressure, client receives full payload", async () => {
+    // The Bun.serve WS plain-TCP fast path (WebSocket.h send(): ≥16 KB frame,
+    // nothing buffered, empty cork buffer) writes header + payload with
+    // us_socket_write2 → bsd_write2, which is the writev hook; nothing else in
+    // this file reaches it.
+    //
+    // The send cannot be issued from open(): upgrade() keeps the 101 response
+    // corked so it can batch with the first frames, so inside open() the cork
+    // buffer is non-empty, send() takes the ordinary send path and a writev
+    // rule is never consumed. By the time the client's first frame reaches
+    // message() the handshake has been flushed.
+    //
+    // With writev returning 0 the fast path buffers the whole frame, a 4-byte
+    // header (FIN|binary, 126 marker, 16-bit length) plus the 20000 payload
+    // bytes, returns -1, and drains it on the next writable event.
     const fixture = /* js */ `
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const payload = Buffer.alloc(20000, 0x57);
+      let sent;
       const s = Bun.serve({ port: 0, hostname: "127.0.0.1",
         fetch(req, server) { if (server.upgrade(req)) return; return new Response("no", {status:426}); },
         websocket: {
-          open(ws) {
+          open() {},
+          message(ws) {
             fault.set({ syscall: "writev", action: "zero", repeat: 1 });
-            ws.send(Buffer.alloc(20000, 0x57));
+            const status = ws.send(payload);
+            fault.clear();
+            sent = { status, buffered: ws.getBufferedAmount() };
           },
-          message() {},
           close() {},
         } });
       const ws = new WebSocket("ws://127.0.0.1:" + s.port);
       ws.binaryType = "arraybuffer";
+      ws.onopen = () => ws.send("go");
       ws.onmessage = (e) => {
-        console.log(JSON.stringify({ len: e.data.byteLength }));
+        console.log(JSON.stringify({ ...sent, len: e.data.byteLength, intact: Buffer.from(e.data).equals(payload) }));
         ws.close();
       };
-      ws.onclose = () => { fault.clear(); s.stop(true); process.exit(0); };
-      ws.onerror = () => { console.log(JSON.stringify({ err: true })); process.exit(1); };
+      ws.onclose = () => { s.stop(true); process.exit(0); };
+      ws.onerror = () => { console.log(JSON.stringify({ ...sent, err: true })); process.exit(1); };
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
@@ -358,7 +372,7 @@ describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected sysc
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ out: JSON.parse(stdout.trim() || "{}"), signal: proc.signalCode, stderr }).toEqual({
-      out: { len: 20000 },
+      out: { status: -1, buffered: 20004, len: 20000, intact: true },
       signal: null,
       stderr: expect.any(String),
     });
@@ -413,17 +427,32 @@ describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected sysc
 describe.concurrent.skipIf(skip)(
   "WebSocket client (wss:// via HTTP CONNECT proxy) under injected syscall faults",
   () => {
-    // Regression for the proxy-tunnel pending-close path: a close frame that is
-    // only partially flushed defers `close` until handle_tunnel_writable() drains
-    // it. The wss endpoint below never answers the close frame, so the deferred
-    // dispatch is the ONLY way `onclose` can fire — without the drain this hangs.
-    test("send → short writes (1 byte): close() still dispatches 'close' once the tunnel drains", async () => {
+    // A Close frame queued behind other frames is sent once handle_tunnel_writable() drains
+    // them. The wss endpoint only replies once it has received the whole Close frame.
+    test("send → short writes (1 byte): the whole Close frame arrives after the queued frames", async () => {
+      // Each client frame's opcode, plus the Close frame's payload.
+      const clientFrames: (number | string)[] = [];
       const wss = tls.createServer({ cert: certs.cert, key: certs.key }, sock => {
         let buf = Buffer.alloc(0);
         let upgraded = false;
         sock.on("data", (chunk: Buffer) => {
-          if (upgraded) return; // absorb frames (including close) without replying
           buf = Buffer.concat([buf, chunk]);
+          while (upgraded && buf.length >= 4) {
+            const extended = (buf[1] & 0x7f) === 126;
+            const length = extended ? buf.readUInt16BE(2) : buf[1] & 0x7f;
+            const payloadOffset = (extended ? 4 : 2) + 4;
+            if (buf.length < payloadOffset + length) return;
+            clientFrames.push(buf[0] & 0x0f);
+            if ((buf[0] & 0x0f) === 0x8) {
+              const payload = buf
+                .subarray(payloadOffset, payloadOffset + length)
+                .map((byte, i) => byte ^ buf[payloadOffset - 4 + (i & 3)]);
+              clientFrames.push(`${Buffer.from(payload).readUInt16BE(0)} ${Buffer.from(payload).toString("utf8", 2)}`);
+              sock.end(Buffer.from([0x88, 0x02, 0x03, 0xe8]));
+            }
+            buf = buf.subarray(payloadOffset + length);
+          }
+          if (upgraded) return;
           const end = buf.indexOf("\r\n\r\n");
           if (end === -1) return;
           const m = /Sec-WebSocket-Key:\s*([A-Za-z0-9+/=]+)/i.exec(buf.subarray(0, end).toString("latin1"));
@@ -437,6 +466,7 @@ describe.concurrent.skipIf(skip)(
               `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
           );
           upgraded = true;
+          buf = buf.subarray(end + 4);
         });
         sock.on("error", () => {});
       });
@@ -455,9 +485,8 @@ describe.concurrent.skipIf(skip)(
           });
           // Arm only once the tunnel is up so CONNECT + TLS handshake stay fast.
           // Two sends before close(): the 1st short-writes into the tunnel's
-          // write_buffer, so the 2nd queues in send_buffer under backpressure.
-          // That is the only tunnel state where the close dispatch is deferred
-          // (the SSL layer always absorbs the close frame itself in full).
+          // write_buffer, so the 2nd queues in send_buffer under backpressure,
+          // and the Close frame queues behind it.
           ws.onopen = () => {
             fault.set(rule);
             ws.send(Buffer.alloc(256, 0x41));
@@ -469,6 +498,7 @@ describe.concurrent.skipIf(skip)(
         `,
         );
         expect(r).toMatchObject({ ok: true, code: 1000, signal: null, exitCode: 0 });
+        expect(clientFrames).toEqual([0x2, 0x1, 0x8, "1000 bye"]);
       } finally {
         proxy.close();
         wss.close();

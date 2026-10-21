@@ -636,7 +636,7 @@ describe("HTTP server CONNECT", () => {
     const socket = await upgradeSocket.promise;
     const highWaterMark = socket.readableHighWaterMark;
     const pongs: Buffer[] = [];
-    for (let left = highWaterMark; left > 0; ) {
+    for (let left = highWaterMark; left > 0;) {
       // A frame is 6 to 131 bytes. Never leave less than a frame.
       const length = left <= 131 ? left : Math.min(131, left - 6);
       pongs.push(frame(0xa, Buffer.alloc(length - 6)));
@@ -2303,6 +2303,110 @@ test("a tunnel write that waits for a drain settles its callbacks when the clien
     server.closeAllConnections();
     server.close();
   }
+});
+
+describe("tunnel socket bytesWritten and bytesRead", () => {
+  describe.each(["http", "https"] as const)("%s", proto => {
+    // Compares deltas, because Node also counts the HTTP bytes sent on this connection before the tunnel.
+    test.each(["connect", "upgrade"] as const)(
+      "'%s': count raw bytes and keep the counts after 'close'",
+      async event => {
+        const server = proto === "https" ? https.createServer(tlsCert) : http.createServer();
+        const reply =
+          event === "connect"
+            ? "HTTP/1.1 200 Connection Established\r\n\r\n"
+            : "HTTP/1.1 101 Switching Protocols\r\nUpgrade: x\r\nConnection: Upgrade\r\n\r\n";
+        const seen: Record<string, number | number[]> = {};
+        const closed = Promise.withResolvers<void>();
+        server.on(event, (req, duplex, head) => {
+          const socket = duplex as net.Socket;
+          const writtenBefore = socket.bytesWritten;
+          const readBefore = socket.bytesRead - head.length;
+          let received = head.length;
+          socket.cork();
+          socket.write(reply);
+          socket.write("héllo");
+          seen.corked = socket.bytesWritten - writtenBefore;
+          socket.uncork();
+          seen.uncorked = socket.bytesWritten - writtenBefore;
+          socket.on("data", chunk => {
+            received += chunk.length;
+            if (received < 8) return;
+            seen.read = socket.bytesRead - readBefore;
+            socket.end("bye");
+            seen.ended = socket.bytesWritten - writtenBefore;
+          });
+          socket.on("close", () => {
+            seen.closed = [socket.bytesWritten - writtenBefore, socket.bytesRead - readBefore];
+            closed.resolve();
+          });
+        });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const port = (server.address() as AddressInfo).port;
+        const client =
+          proto === "https"
+            ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+            : net.connect(port, "127.0.0.1");
+        try {
+          const replyLength = reply.length + Buffer.byteLength("héllo");
+          let got = 0;
+          client.on("data", chunk => {
+            const before = got;
+            got += chunk.length;
+            if (before < replyLength && got >= replyLength) client.write("12345");
+          });
+          client.on("end", () => client.end());
+          client.write(
+            (event === "connect"
+              ? "CONNECT a.test:443 HTTP/1.1\r\nHost: a.test:443\r\n\r\n"
+              : "GET / HTTP/1.1\r\nHost: x\r\nUpgrade: x\r\nConnection: Upgrade\r\n\r\n") + "abc",
+          );
+          await closed.promise;
+          expect(seen).toEqual({
+            corked: replyLength,
+            uncorked: replyLength,
+            read: 8,
+            ended: replyLength + 3,
+            closed: [replyLength + 3, 8],
+          });
+        } finally {
+          client.destroy();
+          server.closeAllConnections();
+          server.close();
+        }
+      },
+    );
+  });
+
+  test("bytesWritten includes a write waiting for drain and the write queued behind it", async () => {
+    const server = http.createServer();
+    // Two chunks are more than a loopback socket buffers while the peer isn't reading. Winsock accepts them whole.
+    const chunk = Buffer.alloc(16 * 1024 * 1024, "a");
+    const seen = Promise.withResolvers<{ waiting: boolean; written: number }>();
+    server.on("upgrade", (req, duplex) => {
+      const socket = duplex as net.Socket;
+      socket.on("error", () => {});
+      const before = socket.bytesWritten;
+      socket.write(chunk);
+      socket.write(chunk);
+      seen.resolve({ waiting: socket.writableLength > 0, written: socket.bytesWritten - before });
+      socket.destroy();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      client.write("GET / HTTP/1.1\r\nHost: x\r\nUpgrade: x\r\nConnection: Upgrade\r\n\r\n");
+      expect(await seen.promise).toEqual({
+        waiting: isWindows ? expect.any(Boolean) : true,
+        written: 2 * chunk.length,
+      });
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
 });
 
 // The handed-off socket writes straight to the kernel. While uWS still holds

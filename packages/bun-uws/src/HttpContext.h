@@ -34,6 +34,7 @@
 #include <span>
 #include <array>
 #include <mutex>
+#include <openssl/ssl.h>
 
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
@@ -144,6 +145,10 @@ private:
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
             // Set per-socket authorization status
             auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(s));
+            /* Opened already: this reports the failure of the established session, and usockets closes behind it. */
+            if (httpResponseData->filteredOpen) {
+                return;
+            }
             /* The app-level flag reflects the default entry; a per-serverName
              * entry adds its own client-certificate policy for its name. */
             bool rejectUnauthorized = httpContextData->flags.rejectUnauthorized ||
@@ -317,6 +322,18 @@ private:
         return us_socket_close(s, 0, nullptr);
     }
 
+    /* A TLS send that the kernel rejected ends the write side too, and the next writable event closes the socket.
+     * Like Node, node:https still dispatches the requests that came with this read. */
+    template <bool IsNodeHttp>
+    static bool isShutDownByOwner(us_socket_t *s) {
+        if constexpr (SSL && IsNodeHttp) {
+            if (us_socket_ssl_send_rejected(s) && !(SSL_get_shutdown((const ssl_st *) us_socket_get_native_handle(s)) & SSL_SENT_SHUTDOWN)) {
+                return false;
+            }
+        }
+        return us_socket_is_shut_down(s);
+    }
+
     template <bool IsNodeHttp>
     static us_socket_t *onData(us_socket_t *s, char *data, int length) {
         // ref the socket to make sure we process it entirely before it is closed
@@ -486,7 +503,7 @@ private:
                 /* node:http also queues behind responses that were dispatched but
                  * are not the connection's current response yet, and behind a
                  * response that has ended but not finished: its bytes are still
-                 * in the outgoing buffer (or the TLS spill slot), and it owns the
+                 * in the outgoing buffer (or the TLS spill), and it owns the
                  * connection (Node's socket._httpMessage) until they have been
                  * written out, with later responses queued behind it (Node's
                  * state.outgoing). A write or uncork can empty the buffer before
@@ -555,15 +572,6 @@ private:
                 }
             }
 
-            /* Select the router based on SNI (only possible for SSL) */
-            auto *selectedRouter = &httpContextData->router;
-            if constexpr (SSL) {
-                void *domainRouter = us_socket_server_name_userdata((struct us_socket_t *) s);
-                if (domainRouter) {
-                    selectedRouter = (decltype(selectedRouter)) domainRouter;
-                }
-            }
-
             /* Bun.serve: every request of this read is dispatched corked, not only
              * the first. A response to an earlier request can release the cork
              * taken above (a response that JavaScript produced, a body larger
@@ -576,8 +584,8 @@ private:
             }
 
             /* Route the method and URL */
-            selectedRouter->getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
-            if (!selectedRouter->route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting())) {
+            httpContextData->router.getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
+            if (!httpContextData->router.route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting())) {
                 /* We have to force close this socket as we have no handler for it.
                  * close() first sends the responses to earlier requests of this read. */
                 ((AsyncSocket<SSL> *) s)->close();
@@ -596,7 +604,7 @@ private:
             }
 
             /* We absolutely have to terminate parsing if shutdown */
-            if (us_socket_is_shut_down((us_socket_t *) s)) {
+            if (isShutDownByOwner<IsNodeHttp>((us_socket_t *) s)) {
                 return nullptr;
             }
 
@@ -688,7 +696,7 @@ private:
                 }
 
                 /* We absolutely have to terminate parsing if shutdown */
-                if (us_socket_is_shut_down((us_socket_t *) user)) {
+                if (isShutDownByOwner<IsNodeHttp>((us_socket_t *) user)) {
                     /* node:http: this socket can be a tunnel that still reads. Its bytes are not for a body that ended. */
                     if constexpr (IsNodeHttp) {
                         if (fin) {
@@ -846,24 +854,16 @@ private:
             AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) httpContextData->upgradedWebSocket;
 
             /* Uncork here as well (note: what if we failed to uncork and we then pub/sub before we even upgraded?) */
-            auto [written, failed] = asyncSocket->uncork();
-
-            /* If we succeeded in uncorking, check if we have sent WebSocket FIN */
-            if (!failed) {
-                WebSocketData *webSocketData = (WebSocketData *) asyncSocket->getAsyncSocketData();
-                if (webSocketData->isShuttingDown) {
-                    /* In that case, also send TCP FIN (this is similar to what we have in ws drain handler) */
-                    asyncSocket->shutdown();
-                }
-            }
+            asyncSocket->uncork();
 
             /* Reset upgradedWebSocket before we return */
             httpContextData->upgradedWebSocket = nullptr;
 
             /* Frames that a client sent without waiting for the 101 (RFC 6455 4.1) follow the
              * request head in this read, and the HTTP parser stopped there. Give them to the
-             * WebSocket now, as the loop would have for a read of its own. The parser counts a
-             * body that the request declared as consumed, so that is never taken for frames.
+             * WebSocket now, as the loop would have for a read of its own. If the request declared
+             * a body, the parser counts the whole read as consumed, so what this read holds of the
+             * body is not taken for frames. Nothing remembers the rest: a later read is all frames.
              * Not when upgradedWebSocket names another connection (upgrade() adopts in place,
              * so ours is s): the field is per context, and a microtask of this dispatch, or an
              * earlier upgrade from a request body handler, can set it. */
@@ -1138,7 +1138,8 @@ private:
         if (httpResponseData->onTimeout) {
             httpResponseData->onTimeout((HttpResponse<SSL> *)s, httpResponseData->userData);
         }
-        return asyncSocket->close();
+        asyncSocket->uncork();
+        return us_socket_close_now(s);
     }
 
     /* Static .rodata vtables — one per (SSL, IsNodeHttp), shared by every
@@ -1198,17 +1199,17 @@ public:
             methods = {&method_sv_buffer, 1};
         }
 
-        uint32_t priority = method == "*" ? httpContextData->currentRouter->LOW_PRIORITY : (upgrade ? httpContextData->currentRouter->HIGH_PRIORITY : httpContextData->currentRouter->MEDIUM_PRIORITY);
+        uint32_t priority = method == "*" ? httpContextData->router.LOW_PRIORITY : (upgrade ? httpContextData->router.HIGH_PRIORITY : httpContextData->router.MEDIUM_PRIORITY);
 
         /* If we are passed nullptr then remove this */
         if (!handler) {
             for (const auto &method : methods) {
-                httpContextData->currentRouter->remove(method, pattern, priority);
+                httpContextData->router.remove(method, pattern, priority);
             }
             return;
         }
 
-        httpContextData->currentRouter->add(methods, pattern, [handler = std::move(handler), httpContextData](auto *r) mutable {
+        httpContextData->router.add(methods, pattern, [handler = std::move(handler), httpContextData](auto *r) mutable {
             auto user = r->getUserData();
             user.httpRequest->setYield(false);
             user.httpRequest->setParameters(r->getParameters());

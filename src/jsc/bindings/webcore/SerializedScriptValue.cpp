@@ -1971,12 +1971,17 @@ private:
             write(*downcast<CryptoKeyRSA>(*key).exportData());
             break;
         }
-        case CryptoKeyClass::OKP:
+        case CryptoKeyClass::OKP: {
+            auto& okpKey = downcast<CryptoKeyOKP>(*key);
             write(CryptoKeyClassSubtag::OKP);
             write(key->algorithmIdentifier());
-            write(downcast<CryptoKeyOKP>(*key).namedCurve());
-            write(downcast<CryptoKeyOKP>(*key).platformKey());
+            write(okpKey.namedCurve());
+            // X25519 public and private keys are both 32 bytes, so write which one this is.
+            if (okpKey.namedCurve() == CryptoKeyOKP::NamedCurve::X25519)
+                write(key->type() == CryptoKey::Type::Public ? CryptoKeyAsymmetricTypeSubtag::Public : CryptoKeyAsymmetricTypeSubtag::Private);
+            write(okpKey.platformKey());
             break;
+        }
         }
     }
 #endif
@@ -2533,7 +2538,7 @@ private:
         if (is8Bit) {
             if ((end - ptr) < static_cast<int>(length))
                 return false;
-            str = String { std::span { ptr, length } };
+            str = String { std::span { byteCast<Latin1Character>(ptr), length } };
             ptr += length;
             return true;
         }
@@ -3201,8 +3206,6 @@ private:
         CryptoAlgorithmIdentifier algorithm;
         if (!read(algorithm))
             return false;
-        if (!CryptoKeyOKP::isValidOKPAlgorithm(algorithm))
-            return false;
         CryptoKeyOKP::NamedCurve namedCurve;
         if (!read(namedCurve))
             return false;
@@ -3211,10 +3214,19 @@ private:
             if (algorithm != CryptoAlgorithmIdentifier::Ed25519)
                 return false;
             break;
-        case CryptoKeyOKP::NamedCurve::X25519:
+        case CryptoKeyOKP::NamedCurve::X25519: {
             if (algorithm != CryptoAlgorithmIdentifier::X25519)
                 return false;
-            break;
+            // Records from Bun <= 1.4.3 don't have a type subtag, so they fail its range check. No release could read them anyway.
+            CryptoKeyAsymmetricTypeSubtag type;
+            if (!read(type))
+                return false;
+            Vector<uint8_t> keyData;
+            if (!read(keyData))
+                return false;
+            result = CryptoKeyOKP::create(algorithm, namedCurve, type == CryptoKeyAsymmetricTypeSubtag::Public ? CryptoKeyType::Public : CryptoKeyType::Private, WTF::move(keyData), extractable, usages);
+            return !!result;
+        }
         }
         Vector<uint8_t> keyData;
         if (!read(keyData))
@@ -3656,7 +3668,8 @@ private:
             double d;
             if (!read(d))
                 return JSValue();
-            DateInstance* obj = DateInstance::create(m_lexicalGlobalObject->vm(), m_globalObject->dateStructure(), d);
+            // timeClip() preserves a NaN's payload and getTime() boxes the number as-is, so purify it here.
+            DateInstance* obj = DateInstance::create(m_lexicalGlobalObject->vm(), m_globalObject->dateStructure(), purifyNaN(d));
             addTerminalToObjectPool(obj);
             return obj;
         }
@@ -4271,8 +4284,11 @@ size_t SerializedScriptValue::computeMemoryCost() const
 #if ENABLE(WEBASSEMBLY)
     // We are not supporting WebAssembly Module memory estimation yet.
     if (m_wasmMemoryHandlesArray) {
-        for (auto& content : *m_wasmMemoryHandlesArray)
-            cost += content->sizeInBytes(std::memory_order_relaxed);
+        // A shared memory with a maximum of zero has null contents.
+        for (auto& content : *m_wasmMemoryHandlesArray) {
+            if (content)
+                cost += content->sizeInBytes(std::memory_order_relaxed);
+        }
     }
 #endif
 
@@ -4337,6 +4353,9 @@ size_t SerializedScriptValue::computeMemoryCost() const
 
 static void markObjectWithPrivateName(VM& vm, JSObject& object, const Identifier& privateName)
 {
+    // A WebAssembly GC object's Structure can't transition, and these objects aren't cloneable or transferable anyway.
+    if (object.type() == WebAssemblyGCObjectType)
+        return;
     if (object.getDirect(vm, privateName))
         return;
     object.putDirect(vm, privateName, jsBoolean(true), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);

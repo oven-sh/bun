@@ -108,15 +108,16 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceMarkDOMConstruct
     auto markOptions = convert<IDLDictionary<PerformanceMarkOptions>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     auto object = PerformanceMark::create(*castedThis->globalObject(), *context, WTF::move(markName), WTF::move(markOptions));
-    if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, {});
-    static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<PerformanceMark>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
-    if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, {});
-    setSubclassStructureIfNeeded<PerformanceMark>(lexicalGlobalObject, callFrame, asObject(jsValue));
     RETURN_IF_EXCEPTION(throwScope, {});
-    return JSValue::encode(jsValue);
+    if (object.hasException()) [[unlikely]] {
+        propagateException(*lexicalGlobalObject, throwScope, object.releaseException());
+        return {};
+    }
+    // Node's PerformanceMark validates and clones `detail` before it reads `new.target.prototype`.
+    // create() leaves nothing behind, so the read can follow it here too.
+    auto* structure = structureForNewTarget<PerformanceMark>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    return JSValue::encode(createWrapper<PerformanceMark>(castedThis->globalObject(), structure, object.releaseReturnValue()));
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSPerformanceMarkDOMConstructorConstruct, JSPerformanceMarkDOMConstructor::construct);
 

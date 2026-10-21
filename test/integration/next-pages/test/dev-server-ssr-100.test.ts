@@ -170,7 +170,7 @@ test(
     queue.once("error", e => {
       reject(e);
     });
-    queue.onEmpty().then(resolve);
+    queue.onIdle().then(resolve);
     await promise;
   },
   timeout,

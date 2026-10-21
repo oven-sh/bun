@@ -5,7 +5,7 @@
 //!
 //! A build configured with `codeGenerationFromStrings` off
 //! (scripts/build/config.ts) has no level to set: it is the constant
-//! [`CodeGenerationFromStrings::Disallowed`].
+//! [`CodeGenerationFromStrings::Strict`].
 
 /// Ordered: a level refuses everything the levels below it refuse.
 #[repr(u8)]
@@ -18,7 +18,7 @@ pub enum CodeGenerationFromStrings {
     DisallowedLikeNode = 1,
     /// `--disallow-code-generation-from-strings=strict`: nothing turns a string
     /// into script.
-    Disallowed = 2,
+    Strict = 2,
 }
 
 impl CodeGenerationFromStrings {
@@ -27,13 +27,13 @@ impl CodeGenerationFromStrings {
     pub fn from_flag_value(value: &[u8]) -> Option<Self> {
         match value {
             b"" => Some(Self::DisallowedLikeNode),
-            b"strict" => Some(Self::Disallowed),
+            b"strict" => Some(Self::Strict),
             _ => None,
         }
     }
 }
 
-/// Whether this build is at [`CodeGenerationFromStrings::Disallowed`] with no flag given.
+/// Whether this build is at [`CodeGenerationFromStrings::Strict`] with no flag given.
 pub const CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD: bool =
     cfg!(bun_disallow_code_generation_from_strings);
 
@@ -48,7 +48,7 @@ mod level {
         match LEVEL.load(Ordering::Relaxed) {
             0 => CodeGenerationFromStrings::Allowed,
             1 => CodeGenerationFromStrings::DisallowedLikeNode,
-            _ => CodeGenerationFromStrings::Disallowed,
+            _ => CodeGenerationFromStrings::Strict,
         }
     }
 
@@ -64,7 +64,7 @@ mod level {
 
     #[inline(always)]
     pub const fn code_generation_from_strings() -> CodeGenerationFromStrings {
-        CodeGenerationFromStrings::Disallowed
+        CodeGenerationFromStrings::Strict
     }
 
     /// The level is already the highest, so a flag that asks for one changes nothing.

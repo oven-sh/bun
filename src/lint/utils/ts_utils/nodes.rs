@@ -26,8 +26,8 @@ pub fn get_this_expression(e: Expr<'_>) -> Option<Expr<'_>> {
     }
 }
 
-/// typescript-eslint's `getStringLength`: the number of characters as a reader counts them, which
-/// is that of the grapheme clusters.
+/// typescript-eslint's `getStringLength`: the number of characters as a reader counts them, which is the number of
+/// grapheme clusters.
 pub fn get_string_length(value: &[u8]) -> usize {
     match value.iter().all(|c| matches!(c, 0x20..=0x7F)) {
         true => value.len(),
@@ -44,9 +44,8 @@ pub fn is_undefined_identifier(e: Expr<'_>) -> bool {
 /// typescript-eslint's `isNodeEqual`: both are `this`, the same identifier, literals with the same
 /// value, or member accesses whose objects and properties are equal in this sense.
 ///
-/// As upstream: `a.b` equals `a[b]`, `a.b` equals `a?.b` where neither is all of its chain, two
-/// regular expressions are never equal, nor are two `a.#b`, nor two `ChainExpression`s, which is
-/// what all of an optional chain is.
+/// As upstream, `a.b` equals `a[b]`, and `a.b` equals `a?.b` where neither is its whole chain. Two regular expressions
+/// are never equal, and neither are two `a.#b` or two `ChainExpression`s, which is what a whole optional chain is.
 pub fn is_node_equal<'a>(a: Expr<'a>, b: Expr<'a>) -> bool {
     let (mut a, mut b) = (a, b);
     loop {
@@ -101,8 +100,8 @@ pub fn is_node_equal<'a>(a: Expr<'a>, b: Expr<'a>) -> bool {
     }
 }
 
-/// typescript-eslint's `isTypeImport`: whether the declaration is `import type { A }`,
-/// `import type A`, `import type * as A`, `import { type A }` or `import type A = require()`.
+/// typescript-eslint's `isTypeImport`: true if the declaration is `import type { A }`, `import type A`,
+/// `import type * as A`, `import { type A }` or `import type A = require()`.
 pub fn is_type_import(declaration: Declaration<'_>) -> bool {
     match declaration {
         Declaration::ImportDefault(import) | Declaration::ImportNamespace(import) => {
@@ -116,14 +115,14 @@ pub fn is_type_import(declaration: Declaration<'_>) -> bool {
     }
 }
 
-/// typescript-eslint's `isAssignee`: whether `e` is written to or deleted. It is the left of an
-/// assignment, the operand of `delete`, `++` or `--`, an element or the rest of an array pattern,
-/// or inside `!`, `as`, `<T>` or `satisfies` in one of these places.
+/// typescript-eslint's `isAssignee`: true if `e` is written to or deleted. It's the left side of an assignment, the
+/// operand of `delete`, `++` or `--`, an element or the rest of an array pattern, or inside `!`, `as`, `<T>` or
+/// `satisfies` in one of these positions.
 ///
-/// As upstream: a value in an object pattern is not an assignee, except in `({ a: e }) = b`, where
-/// the parentheses make it an `ObjectExpression`. Nor is the left of a default in a pattern, nor
-/// the left of a `for`-`in` or a `for`-`of`. Upstream is given a `MemberExpression`: for all of an
-/// optional chain, whose parent is the `ChainExpression`, the answer is `false`.
+/// As upstream, a value in an object pattern isn't an assignee, except in `({ a: e }) = b`, where the parentheses make
+/// it an `ObjectExpression`. Neither is the left side of a default in a pattern, or of a `for`-`in` or `for`-`of`.
+/// Upstream receives a `MemberExpression`, so for a whole optional chain, whose parent is the `ChainExpression`, the
+/// answer is `false`.
 pub fn is_assignee(e: Expr<'_>) -> bool {
     let mut node = e;
     loop {
@@ -166,9 +165,9 @@ pub fn is_assignee(e: Expr<'_>) -> bool {
     }
 }
 
-/// typescript-eslint's `isConditionalTest`: whether the value of `e` only matters as true or false.
-/// It is the test of an `if`, a loop or a conditional expression, possibly through `&&`, `||`,
-/// `??`, `!`, a branch of a conditional expression or the last operand of a comma.
+/// typescript-eslint's `isConditionalTest`: true if only `e`'s truthiness matters. It's the test of an `if`, a loop or
+/// a conditional expression, possibly through `&&`, `||`, `??`, `!`, a branch of a conditional expression or the last
+/// operand of a comma.
 pub fn is_conditional_test(e: Expr<'_>) -> bool {
     let mut node = e;
     loop {
@@ -202,16 +201,16 @@ pub fn is_conditional_test(e: Expr<'_>) -> bool {
     }
 }
 
-/// typescript-eslint's `getParentFunctionNode`: the innermost function around the node, not the
-/// node itself. Static blocks, signatures and function types do not count.
+/// typescript-eslint's `getParentFunctionNode`: the innermost function around the node, not the node itself. Static
+/// blocks, signatures and function types don't count.
 pub fn get_parent_function_node<'a>(node: impl Into<Node<'a>>) -> Option<Func<'a>> {
     node.into()
         .ancestors()
         .find_map(|it| it.as_func().and_then(as_function))
 }
 
-/// typescript-eslint's `getTextWithParentheses`: the text of `e` with the innermost pair of
-/// parentheses around it, if there is one.
+/// typescript-eslint's `getTextWithParentheses`: `e`'s text with the innermost pair of parentheses around it, if there
+/// is one.
 pub fn get_text_with_parentheses(e: Expr<'_>) -> &[u8] {
     e.file()
         .slice(e.parens().next().unwrap_or_else(|| e.span()))
@@ -265,7 +264,7 @@ pub fn get_fix_or_suggest_with<'a, F: IntoFix>(
 }
 
 /// `context.report({ loc: { start: { line: 0, column: 0 }, end: { line: 0, column: 0 } }, messageId })`. tsgolint
-/// points at the start of the file.
+/// reports the start of the file.
 pub fn report_at_line_zero<R: Rule>(cx: &Cx<'_, R>, message: Message) {
     let report = cx.report(Span::empty(0), message);
     if !cx.language().is_oxlint {
@@ -274,11 +273,11 @@ pub fn report_at_line_zero<R: Rule>(cx: &Cx<'_, R>, message: Message) {
     }
 }
 
-/// typescript-eslint's `forEachChildESTree`: calls `callback` with the node and then with
-/// everything in it, in source order, until it returns `Some`, which is the result.
+/// typescript-eslint's `forEachChildESTree`: calls `callback` with the node and then with all its descendants, in
+/// source order, until it returns `Some`, which becomes the result.
 ///
-/// The nodes are those of this AST. What ESTree has one node for can be two here: an `Expr` or a
-/// `Stmt` and the `Func` or the `Class` in it.
+/// The nodes are this AST's nodes. One ESTree node can be two here: an `Expr` or a `Stmt`, and the `Func` or the
+/// `Class` in it.
 pub fn for_each_child_estree<'a, T>(
     node: impl Into<Node<'a>>,
     mut callback: impl FnMut(Node<'a>) -> Option<T>,

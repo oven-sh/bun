@@ -54,7 +54,7 @@ const REQ_FILE: u8 = 1 << 1;
 const REQ_MODULE: u8 = 1 << 2;
 const REQ_COMPUTED: u8 = 1 << 3;
 
-/// ESLint's `inferModuleType`, of an initializer that is a `DECL_REQUIRE`.
+/// ESLint's `inferModuleType`. `init` is a `DECL_REQUIRE` initializer.
 fn infer_module_type(mut init: Expr) -> u8 {
     while let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = init.kind() {
         init = obj;
@@ -115,7 +115,7 @@ impl Rule for NoMixedRequires {
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        // One declaration is mixed with nothing.
+        // A single declaration can't be mixed with anything.
         let Some(declarations) = stmt.as_var().filter(|it| it.len() > 1) else {
             return;
         };

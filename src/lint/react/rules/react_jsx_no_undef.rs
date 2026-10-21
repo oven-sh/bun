@@ -36,7 +36,7 @@ impl Rule for JsxNoUndef {
         let (ExprKind::Ident(name) | ExprKind::String(name)) = ident.kind() else {
             return;
         };
-        // oxlint asks what the name refers to, and knows no option.
+        // oxlint resolves the reference, and has no option.
         if is_oxlint {
             if ident.symbol().is_none() && !is_enabled_global(cx.file(), name.bytes()) {
                 cx.report(ident, JSX_NO_UNDEF).data("ident_name", name);
@@ -48,8 +48,8 @@ impl Rule for JsxNoUndef {
 }
 
 impl JsxNoUndef {
-    /// The search in `checkIdentifierInJSX`: by the name alone, up to the module or the global scope, and then in the
-    /// first scope in that one and in the first scope in that.
+    /// The search in `checkIdentifierInJSX`: by name only, up to the module or global scope, then in that scope's first
+    /// child scope and in that child's first child.
     fn is_name_of_variable<'a>(&self, node: Expr<'a>, name: Name<'a>) -> bool {
         let is_in = |scope: Scope<'a>| scope.get_name(name).is_some();
         let mut scope = Node::Expr(node).scope();
@@ -70,13 +70,13 @@ impl JsxNoUndef {
     }
 }
 
-/// The variable that the name of an element refers to: the `A` of `<A>` and the `a` of `<a.b.c>`. `<a>` is the name of
-/// an element of HTML.
+/// Returns the variable reference in an element's name: the `A` in `<A>`, the `a` in `<a.b.c>`. `<a>` is an HTML
+/// element's name.
 fn get_resolvable_ident(name: Expr<'_>, is_oxlint: bool) -> Option<Expr<'_>> {
     let is_dom_component = |ident: Name| ident.bytes().first().is_some_and(u8::is_ascii_lowercase);
     match name.kind() {
         ExprKind::Ident(ident) => (!is_dom_component(ident)).then_some(name),
-        // For oxlint `<A-b>` names no variable.
+        // For oxlint `<A-b>` doesn't refer to a variable.
         ExprKind::String(ident) if !is_oxlint => {
             (!is_dom_component(ident) && !strings::contains_char(ident.bytes(), b':')).then_some(name)
         }

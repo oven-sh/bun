@@ -8,7 +8,7 @@ const UNNECESSARY_CALL: Message = Message::new("unnecessaryCall", "Unnecessary '
 impl Rule for NoUselessCall {
     const META: Meta = Meta::eslint("no-useless-call", Kind::Suggestion);
     const ON: On = On::new().method_calls(&["call", "apply"]);
-    /// `call` and `apply`, as far as the file mentions them.
+    /// The names `call` and `apply`, each `None` if the file doesn't mention it.
     type State<'a> = [Option<Name<'a>>; 2];
 
     fn new(_: &Options) -> Self {
@@ -48,7 +48,7 @@ impl Rule for NoUselessCall {
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
                 ast_utils::equal_tokens(cx.file(), obj, this_arg)
             }
-            // oxlint knows what `this` is only in the call of a name.
+            // Other than for a member call, oxlint only knows what `this` is when the callee is an identifier.
             _ if cx.language().is_oxlint && applied.tag() != ExprTag::Ident => false,
             _ => ast_utils::is_null_or_undefined(this_arg),
         };

@@ -413,6 +413,12 @@ impl VmHandle {
         self.0.state() == State::Open
     }
 
+    /// Returns true once teardown has finished waiting. Nothing waits for a ticket issued after that.
+    #[inline]
+    pub fn closed(&self) -> bool {
+        self.0.state() == State::Closed
+    }
+
     pub(crate) fn tickets_outstanding(&self) -> u32 {
         self.0.tickets.load(Ordering::SeqCst)
     }
@@ -515,10 +521,16 @@ impl VirtualMachine {
         let h = self.handle_ref();
         h.assert_js_thread();
         debug_assert!(
-            h.0.state() != State::Closed,
+            !h.closed(),
             "off-thread work started after the VM finished draining"
         );
         Ticket::issue(&h.0, self.current_loop_kind())
+    }
+
+    /// See [`VmHandle::closed`].
+    #[inline]
+    pub fn closed(&self) -> bool {
+        self.handle_ref().closed()
     }
 }
 

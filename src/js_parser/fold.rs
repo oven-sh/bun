@@ -217,8 +217,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .copied();
                             let ref_ = match existing {
                                 Some(loc_ref) => {
-                                    if p.symbols[loc_ref.ref_.inner_index() as usize]
-                                        .only_in_type_metadata()
+                                    if Self::IS_TYPESCRIPT_ENABLED
+                                        && p.symbols[loc_ref.ref_.inner_index() as usize]
+                                            .only_in_type_metadata()
                                     {
                                         p.take_over_metadata_import_item(id.ref_, name, name_loc);
                                     }

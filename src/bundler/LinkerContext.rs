@@ -4022,11 +4022,6 @@ impl<'a> LinkerContext<'a> {
                     // Warn about importing from a file that is known to not have any exports
                     if status == ImportTrackerStatus::CjsWithoutExports
                         && !self.is_call_record(prev_source_index, named_import.import_record_index)
-                        && !self
-                            .graph
-                            .symbols
-                            .get_const(tracker.import_ref)
-                            .is_some_and(|symbol| symbol.only_in_type_metadata())
                     {
                         let source = self.get_source(tracker.source_index.get());
                         // SAFETY: `alias` is an arena `*const [u8]` valid for the link pass.
@@ -4661,6 +4656,12 @@ impl<'a> LinkerContext<'a> {
                     self.graph.meta.items_probably_typescript_type_mut()[source_index as usize]
                         .put(import_ref, ())
                         .expect("unreachable");
+                    // SAFETY: the mutated symbol slot is disjoint from `named_import` (graph.ast SoA).
+                    let symbol = unsafe { self.graph.symbol_mut(import_ref) };
+                    // The namespace omits a name that is probably a type, so `ns.name` is `undefined`.
+                    if symbol.import_item_status == ImportItemStatus::Generated {
+                        symbol.import_item_status = ImportItemStatus::Missing;
+                    }
                 }
                 MatchImportKind::Ambiguous => {
                     let source = self.get_source(source_index);

@@ -661,7 +661,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         self.lexer.next()?;
                         self.skip_type_script_type(Level::Lowest)?;
                         // The name before "is" is a parameter, not a type.
-                        if GET_METADATA && kind != TsIdentKind::Asserts {
+                        if GET_METADATA
+                            && kind != TsIdentKind::Asserts
+                            && opts.contains(SkipTypeOptions::IsReturnType)
+                        {
                             **result
                                 .as_mut()
                                 .expect("infallible: GET_METADATA implies Some") =

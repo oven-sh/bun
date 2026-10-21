@@ -7895,15 +7895,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// The type `name`, bound like an identifier at the class. `None`: it names a symbol the parser declares.
+    /// The type `name`, bound like an identifier at the class. `None`: no declaration of the file has the name.
     fn metadata_type_reference(
         &mut self,
         name: &'a [u8],
         is_property_access_target: bool,
     ) -> Result<Option<Expr>, crate::Error> {
+        // A type is not a read of `arguments`, which a class body forbids.
+        if name == b"arguments" {
+            return Ok(None);
+        }
         let result = self.find_symbol(bun_ast::Loc::EMPTY, name)?;
-        if self.is_parser_ambient(result.r#ref) {
-            // A type is not a use of `module` or `jest`: a use changes the module format.
+        // A type is not a use of `module`: a use makes the file CommonJS.
+        if result.declare_loc == Some(bun_ast::Loc::EMPTY) && self.is_parser_ambient(result.r#ref) {
             self.ignore_usage(result.r#ref);
             return Ok(None);
         }
@@ -7920,7 +7924,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    /// A symbol that `prepare_for_visit_pass` declares: a CommonJS variable, a global of bun:test, `hmr`.
+    /// A local of the module wrapper that `prepare_for_visit_pass` declares: a CommonJS variable or `hmr`.
     fn is_parser_ambient(&self, ref_: Ref) -> bool {
         ref_.eql(self.exports_ref)
             || ref_.eql(self.module_ref)
@@ -7928,9 +7932,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             || ref_.eql(self.dirname_ref)
             || ref_.eql(self.filename_ref)
             || ref_.eql(self.hmr_api_ref)
-            || Jest::FIELDS
-                .iter()
-                .any(|(_, field)| ref_.eql(field(&self.jest)))
     }
 
     /// In a bundle, `ns.member` of `import * as ns` is the import item that a written `ns.member` is.
@@ -7966,8 +7967,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Some(item)
     }
 
-    /// A written `ns.member` reuses an item that decorator metadata made: a miss is reported, at `loc`.
+    /// `ns.member` reuses an item that decorator metadata made. A written one is reported at `loc` if it is missing.
     #[cold]
+    #[inline(never)]
     pub(crate) fn take_over_metadata_import_item(
         &mut self,
         ns: Ref,
@@ -7981,7 +7983,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Counts the `extra` more times that the guard prints `expr`. `find_symbol` counted the first.
+    /// Counts the `extra` more times that the guard prints `expr`. The first use is already counted.
     fn count_metadata_uses(&mut self, expr: Expr, extra: u32) {
         let ref_ = match expr.data {
             js_ast::ExprData::EIdentifier(e) => e.ref_,

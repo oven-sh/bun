@@ -1450,6 +1450,22 @@ describe("bundler", () => {
     run: { stdout: "Object,Object\n" },
   });
 
+  // A file without import or export declares its own `exports` and `module`. The types name them.
+  itBundled("decorator_metadata/TypeWithTheNameOfAVarOfAScript", {
+    backend: "cli",
+    files: {
+      "/entry.ts": /* ts */ `
+        (Reflect as any).metadata = (key: string, value: any) => () => console.log(key, value.name);
+        const d: any = () => {};
+        var exports: any = class Exp {};
+        var module: any = class Mod {};
+        class K { @d a: exports; @d b: module; }
+      `,
+      "/tsconfig.json": tsconfig,
+    },
+    run: { stdout: "design:type Exp\ndesign:type Mod\n" },
+  });
+
   // The member of a qualified name is not an identifier, so it does not take the name `Client`
   // from the class.
   itBundled("decorator_metadata/MemberNameKeepsTheClassName", {
@@ -1484,6 +1500,101 @@ describe("bundler", () => {
       "/tsconfig.json": tsconfig,
     },
     run: { stdout: "Client,Bar\n" },
+  });
+
+  // A file can export an interface without the `type` keyword. Its namespace has no such member.
+  itBundled("decorator_metadata/QualifiedNameOfAReExportedType", {
+    backend: "cli",
+    files: {
+      "/entry.ts": /* ts */ `
+        import { d, design } from "./collect";
+        import * as ns from "./barrel";
+        class K { @d m(a: ns.Shape, b: ns.Real) {} }
+        ${names}
+        // @ts-ignore
+        console.log(typeof ns.Shape);
+      `,
+      "/barrel.ts": `export { Shape, Real } from "./types";`,
+      "/types.ts": `
+        export interface Shape { side: number }
+        export class Real {}
+      `,
+      "/collect.ts": collect,
+      "/tsconfig.json": tsconfig,
+    },
+    run: { stdout: "Object,Real\nundefined\n" },
+  });
+
+  // The item of `ns.Shape` is silent while only the metadata names it. The first written
+  // `ns.Shape` takes it over, and the missing export is reported at that place.
+  for (const [name, body] of [
+    ["WrittenMemberAfterTheMetadata", `class K { @d m(a: ns.Shape) {} }\nconsole.log(typeof ns.Shape);`],
+    ["WrittenMemberBeforeTheMetadata", `console.log(typeof ns.Shape);\nclass K { @d m(a: ns.Shape) {} }`],
+  ]) {
+    itBundled(`decorator_metadata/${name}`, {
+      backend: "cli",
+      files: {
+        "/entry.ts": /* ts */ `
+          import { d, design } from "./collect";
+          import * as ns from "./ns";
+          ${body}
+          console.log(design.paramtypes[0] === Object);
+        `,
+        "/ns.ts": `export interface Shape { side: number }`,
+        "/collect.ts": collect,
+        "/tsconfig.json": tsconfig,
+      },
+      bundleWarnings: {
+        "/entry.ts": [`Import "Shape" will always be undefined because there is no matching export in "ns.ts"`],
+      },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").not.toContain("exports_");
+      },
+      run: { stdout: "undefined\ntrue\n" },
+    });
+  }
+
+  // Two `export *` give `Shape`, so the namespace has no such member. The metadata reports nothing.
+  itBundled("decorator_metadata/MemberWithTwoExports", {
+    backend: "cli",
+    files: {
+      "/entry.ts": /* ts */ `
+        import { d, design } from "./collect";
+        import * as ns from "./both";
+        class K { @d m(a: ns.Shape) {} }
+        console.log(design.paramtypes[0] === Object);
+      `,
+      "/both.ts": `export * from "./a";\nexport * from "./b";`,
+      "/a.ts": `export class Shape {}`,
+      "/b.ts": `export class Shape {}`,
+      "/collect.ts": collect,
+      "/tsconfig.json": tsconfig,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("exports_");
+    },
+    run: { stdout: "true\n" },
+  });
+
+  // An item that stays unbound prints `ns.name` or `undefined`. It does not take the name of a class.
+  itBundled("decorator_metadata/MemberNameOfATypeKeepsTheClassName", {
+    backend: "cli",
+    target: "bun",
+    files: {
+      "/entry.ts": /* ts */ `
+        import { d, design } from "./collect";
+        import * as dto from "./dto";
+        import * as http from "node:http";
+        class User { @d merge(other: dto.User) {} }
+        const user = design.paramtypes[0];
+        class Server { @d attach(server: http.Server) {} }
+        console.log(User.name, Server.name, user === Object, design.paramtypes[0].name);
+      `,
+      "/dto.ts": `export interface User { id: number }`,
+      "/collect.ts": collect,
+      "/tsconfig.json": tsconfig,
+    },
+    run: { stdout: "User Server true Server\n" },
   });
 
   itBundled("decorator_metadata/ExportOfAnotherNamespaceBlock", {

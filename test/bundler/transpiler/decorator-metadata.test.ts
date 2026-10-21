@@ -547,7 +547,8 @@ describe("decorator metadata", () => {
   });
 
   // tsc emits design:type for a decorated `declare` field the same way it does for a
-  // regular or `abstract` field, while the field itself is still erased.
+  // regular or `abstract` field, while the field itself is still erased. For `declare static`,
+  // Bun decorates the constructor, as for a static field. tsc decorates the prototype.
   test("declare and abstract fields", () => {
     const types: Record<string, unknown> = {};
     // The design:type metadata decorator is appended after the user's decorators and
@@ -881,10 +882,10 @@ describe("decorator metadata binds a type name when the class is lowered", () =>
       "a type with the name of a CommonJS variable",
       `interface module { id: string }
        class K {
-         @d m(a: module, b: exports, c: require, e: __dirname) {}
+         @d m(a: module, b: exports, c: require, e: __dirname, f: __filename) {}
          @d isLoaded(module: unknown): module is K { return true }
        }`,
-      "returntype=undefined paramtypes=[Object,Object,Object,Object] type=Function " +
+      "returntype=undefined paramtypes=[Object,Object,Object,Object,Object] type=Function " +
         "returntype=Boolean paramtypes=[Object] type=Function\n",
     ],
     [
@@ -920,6 +921,13 @@ describe("decorator metadata binds a type name when the class is lowered", () =>
        export default @d class { constructor(a: Tag) {} }`,
       "\n",
     ],
+    // The file re-exports the type `PathLike` as a value. A member of the file loads that statement.
+    [
+      "a member of a file that re-exports a type of a built-in module",
+      `import * as fs from "./fstypes";
+       class K { @d m(a: fs.Stats) {} }`,
+      { error: "'PathLike' not found" },
+    ],
     // https://github.com/oven-sh/bun/pull/41984 renames the argument of the namespace closure.
     [
       "a parameter with the name of the namespace that exports the type",
@@ -935,6 +943,7 @@ describe("decorator metadata binds a type name when the class is lowered", () =>
     "collect.ts": collect,
     "svc.ts": `export class Svc {}\n`,
     "tag.ts": `console.log("tag.ts is evaluated");\nexport class Tag {}\n`,
+    "fstypes.ts": `export { Stats, PathLike } from "node:fs";\n`,
     "types.ts": `export interface IFoo { x: number }\nexport interface File { x: number }\n`,
   };
 
@@ -962,7 +971,7 @@ describe("decorator metadata binds a type name when the class is lowered", () =>
     expect(exitCode).toBe(0);
   });
 
-  // A type with the name of a global of bun:test is not a use of that global, and does not hide it.
+  // A type with the name of a global of bun:test does not hide that global.
   test.concurrent("a type with the name of a bun:test global", async () => {
     using dir = tempDir("decorator-metadata-jest", {
       "tsconfig.json": tsconfig,
@@ -979,14 +988,7 @@ describe("decorator metadata binds a type name when the class is lowered", () =>
         });
       `,
     });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "./globals.test.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const { stderr, exitCode } = await run([bunExe(), "test", "./globals.test.ts"], String(dir));
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
   });
@@ -1011,7 +1013,7 @@ describe("decorator metadata binds a type name when the class is lowered", () =>
   describe.each([
     ["in a conditional's arrow body", conditional],
     ["outside a conditional", declarationOrder],
-    ["where Bun and tsc differ", limits],
+    ["at the limits of this change", limits],
   ] as const)("%s", (_group, fixtures) => {
     test.concurrent.each(fixtures)("%s", async (_name, index, prints) => {
       using dir = tempDir("decorator-metadata-names", { ...files, "index.ts": head + index + tail });
@@ -1019,7 +1021,8 @@ describe("decorator metadata binds a type name when the class is lowered", () =>
     });
   });
 
-  // What the output of tsc 6.0 prints where it is not what `bun index.ts` prints.
+  // What the output of tsc 6.0 prints where it is not what `bun index.ts` prints. tsc runs with
+  // strictNullChecks off: Bun prints `T` for `T | null`, as tsc does with that option off.
   const tscPrints: Record<string, Prints> = {
     // tsc keeps the import of the interface. The interface has no export at run time.
     "the arrow function is kept and its parameter has the name of a type-only import": {
@@ -1124,6 +1127,7 @@ describe("decorator metadata binds a type name when the class is lowered", () =>
       };
       // tsc prints the element type of a rest parameter. Bun prints Object, which names no import.
       const onlyTsc = ["rest-parameter"];
+      // `strict` is off for "nullable": the transpiler prints `T` for `T | null`, as tsc does then.
       const source = (shape: string) => `import { IFoo } from "./types";\ndeclare const d: any;\n${shape}\n`;
 
       using dir = tempDir("decorator-metadata-ts1272", {

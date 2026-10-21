@@ -109,7 +109,7 @@ pub struct Symbol {
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
     pub struct SymbolFlags: u8 {
-        /// An import item (`ns.name`) that only decorator metadata names. A type has no export, so a miss is silent.
+        /// An import item (`ns.name`) that only decorator metadata names: no report if it has no export, no name of its own.
         const ONLY_IN_TYPE_METADATA = 1 << 0;
 
         const MUST_START_WITH_CAPITAL_LETTER_FOR_JSX = 1 << 1;

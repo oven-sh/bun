@@ -925,6 +925,10 @@ impl NumberRenamer {
         if symbol.slot_namespace() != SlotNamespace::Default {
             return;
         }
+        // Left unbound, this item prints `ns.name` or `undefined`, so it takes no name of the chunk.
+        if symbol.only_in_type_metadata() {
+            return;
+        }
 
         let original_name = symbol.original_name;
         let name = self

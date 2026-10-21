@@ -2738,6 +2738,37 @@ describe("GC lifetime", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: expect.any(String), exitCode: 0 });
     });
+
+    test.concurrent.each([
+      ["a user function", `db.function("lower2", text => text.toLowerCase())`],
+      ["an authorizer that allowed a write before", `db.setAuthorizer(() => 0), db.exec("INSERT INTO ft VALUES (1)")`],
+    ])("is committed at process exit on a connection with %s", async (_, setup) => {
+      using dir = tempDir("node-sqlite-exit-write", {});
+      const file = path.join(String(dir), "db.sqlite");
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { DatabaseSync } = require("node:sqlite");
+            const db = new DatabaseSync(process.argv[1]);
+            db.exec("CREATE VIRTUAL TABLE ft USING fts5(x)");
+            ${setup};
+            db.prepare("INSERT INTO ft VALUES ('a'), ('b') RETURNING 1").iterate().next();
+            console.log(db.prepare("INSERT INTO ft VALUES ('c')").run().changes);
+          `,
+          file,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1\n", stderr: expect.any(String), exitCode: 0 });
+      const db = new DatabaseSync(file);
+      expect(db.prepare("SELECT count(*) AS n FROM ft WHERE ft MATCH 'a OR b OR c'").get()!.n).toBe(3);
+      db.close();
+    });
   });
 
   test.concurrent("a database swept before its statements leaves nothing that points into its cell", async () => {

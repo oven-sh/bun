@@ -142,11 +142,10 @@ public:
     // sqlite3_next_stmt(), which also returns the private statements of virtual table modules (FTS5).
     void trackStatement(JSStatementSync&);
     void finalizeStatements(bool mayCallScript = true);
-    // ~JSStatementSync() can't finalize a statement whose commit would run JS, so it queues it here.
+    // ~JSStatementSync() queues a statement here if its commit asks the authorizer.
     // The next outermost BusyScope finalizes it, or whatever closes the connection does.
     void orphanStatement(sqlite3_stmt* stmt) { m_orphanedStatements.append(stmt); }
     void finalizeOrphanedStatements();
-    bool hasCallbacks() const { return m_authorizer || !m_callbacks.isEmpty(); }
     bool allowLoadExtension() const { return m_config.allowExtension; }
     bool enableLoadExtensionIsOn() const { return m_enableLoadExtension; }
     void setEnableLoadExtension(bool v) { m_enableLoadExtension = v; }

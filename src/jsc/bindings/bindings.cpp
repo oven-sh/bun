@@ -197,6 +197,7 @@
 #include "AsyncStackTrace.h"
 #include "ErrorStackTrace.h"
 #include "ObjectBindings.h"
+#include "NodeVM.h"
 
 #include <JavaScriptCore/VMInlines.h>
 #include "wtf-bindings.h"
@@ -1915,13 +1916,21 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
     compareAsNormalValue:
         break;
     }
-    // NOTE: globalThis from JS is a JSGlobalProxy (GlobalProxyType) wrapping Zig::GlobalObject (GlobalObjectType).
-    // Two different proxies are compared by their properties, like plain objects.
+    // globalThis is only equal to globalThis
+    // NOTE: globalThis from JS is a JSGlobalProxy (GlobalProxyType) wrapping Zig::GlobalObject (GlobalObjectType)
     case GlobalObjectType: {
         if (c1Type != c2Type) return false;
         auto* g1 = dynamicDowncast<JSC::JSGlobalObject>(c1);
         auto* g2 = dynamicDowncast<JSC::JSGlobalObject>(c2);
         return g1->m_globalThis == g2->m_globalThis;
+    }
+    case GlobalProxyType: {
+        auto* gp1 = dynamicDowncast<JSC::JSGlobalProxy>(c1);
+        // The global of a node:vm context is compared by its properties, as in Node.
+        if (gp1->target()->inherits<Bun::NodeVMGlobalObject>()) break;
+        if (c1Type != c2Type) return false;
+        auto* gp2 = dynamicDowncast<JSC::JSGlobalProxy>(c2);
+        return gp1->target()->m_globalThis == gp2->target()->m_globalThis;
     }
     case NumberObjectType:
     case BooleanObjectType: {
@@ -2111,6 +2120,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     case JSAsJSONType:
     case JSDOMWrapperType:
     case GlobalObjectType:
+    case GlobalProxyType:
     case NumberObjectType:
     case BooleanObjectType:
         return specialObjectsDequalSlow(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, c1, c2);

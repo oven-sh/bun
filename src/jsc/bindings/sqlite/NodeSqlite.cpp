@@ -610,7 +610,6 @@ void JSDatabaseSync::trackStatement(JSStatementSync& statement)
 
 void JSDatabaseSync::finalizeStatements(bool mayCallScript)
 {
-    mayCallScript |= !hasCallbacks();
     // From the head each time: xFinal can run script, so a GC can sweep
     // (and unlink) any other statement in between.
     while (!m_statements.isEmpty())
@@ -1488,6 +1487,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncEnableDefensive, (JSGlobalObject * global
 // CHECK_UDF_EXCEPTION observes to surface it over "not authorized".
 static int nodeSqliteAuthorizerCallback(void* userData, int actionCode, const char* p1, const char* p2, const char* p3, const char* p4)
 {
+    if (sqliteScriptIsForbidden) [[unlikely]]
+        return SQLITE_DENY;
     auto* db = static_cast<JSDatabaseSync*>(userData);
     auto* globalObject = db->globalObject();
     auto& vm = getVM(globalObject);
@@ -2065,12 +2066,12 @@ JSStatementSync::~JSStatementSync()
     // Do NOT dereference m_database unless this is on the list. Otherwise GC
     // may have already destroyed the JSDatabaseSync, leaving the WriteBarrier
     // pointing at freed memory.
-    if (auto* database = m_database.unvalidatedGet(); isOnList() && database->hasCallbacks() && sqliteCommitsWhenFinalized(m_stmt)) {
+    if (auto* database = m_database.unvalidatedGet(); isOnList() && database->m_authorizer && sqliteCommitsWhenFinalized(m_stmt)) {
         remove();
         database->orphanStatement(m_stmt);
         return;
     }
-    finalizeStatement();
+    finalizeStatement(false);
 }
 
 void JSStatementSync::reset()

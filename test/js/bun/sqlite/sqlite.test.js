@@ -928,6 +928,33 @@ it("serialize(name) rejects a db closed during name toString()", async () => {
   });
 });
 
+it("Statement#run works before any Database has been opened", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Statement } = require("bun:sqlite");
+        let ran = 0;
+        const withoutParams = new Statement({ paramsCount: 0, run() { ran++; } });
+        const withParams = new Statement({ paramsCount: 1, run() { ran++; } });
+        console.log(JSON.stringify([Object.keys(withoutParams.run()), Object.keys(withParams.run(1)), ran]));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify([["changes", "lastInsertRowid"], ["changes", "lastInsertRowid"], 2]),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("Database.deserialize accepts an ArrayBuffer", () => {
   const db = Database.open(":memory:");
   db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");

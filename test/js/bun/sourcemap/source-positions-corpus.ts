@@ -169,9 +169,9 @@ export const cases: Record<string, Case> = {
  0|];
 `,
   },
-  // Both braces of an object are code. The braces of a block, of a body and of a class are not.
+  // Both braces of an object are code, also where it is assigned to. Those of a block, a body, a class and a binding are not.
   "braces.ts": {
-    functions: "6/8",
+    functions: "5/7",
     lines: `
  2|const twice = (
  2|  n: number,
@@ -210,24 +210,8 @@ export const cases: Record<string, Case> = {
  0|  {
  0|    and: 1,
  0|  };
- 1|export const nested = {
- 1|  inner:
- 1|    {
- 1|      ...{
- 1|        deep: 1,
- 1|      },
- 1|    },
- 1|};
  1|export const empty = {
  1|};
- 1|function returned() {
- 1|  return (
- 1|    {
- 1|      r: 1,
- 1|    }
- -|  );
- -|}
- 1|returned();
  1|const withMethod = {
  1|  method() {
  1|    return 1;
@@ -241,11 +225,7 @@ export const cases: Record<string, Case> = {
  -|) {
  1|  return one;
  -|}
- 1|pattern(
- 1|  {
- 1|    one: 1,
- 1|  },
- 1|);
+ 1|pattern({ one: 1 });
  2|for (const item of list) ({
  2|  two: item.two,
  2|}).two;

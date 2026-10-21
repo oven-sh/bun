@@ -1357,7 +1357,7 @@ pub struct Options<'a> {
     pub minify_identifiers: bool,
     pub minify_syntax: bool,
     pub print_dce_annotations: bool,
-    /// Coverage lists each line that is mapped, so the braces of blocks and of class bodies are not.
+    /// Coverage lists every line the source map has, so the braces of blocks and classes stay out.
     pub code_coverage: bool,
 
     pub inline_require_and_import_errors: bool,

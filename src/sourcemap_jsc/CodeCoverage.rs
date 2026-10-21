@@ -608,7 +608,7 @@ pub struct BasicBlockRange {
 pub struct ByteRangeMapping {
     /// A bit for each code unit of the text JSC compiled, which is what JSC's offsets and the
     /// source map's generated columns count. Set if the unit can make its line executable:
-    /// not white space or a brace, or the printer maps it. The text is borrowed to make this.
+    /// it is not white space or a brace, or the printer maps it. The text is only borrowed.
     executable_units: Bitset,
     /// Code unit offset of the first unit of each line of the text.
     line_starts: Vec<u32>,
@@ -821,7 +821,7 @@ impl ByteRangeMapping {
     fn set_mapped_units_executable(&mut self, text: &[u8], already_bundled: bool) {
         let vm = bun_jsc::VirtualMachine::VirtualMachine::get().as_mut();
         if already_bundled {
-            // Bun runs a `// @bun` file as it is written, so it is the original of a map made here.
+            // JSC compiles a `// @bun` file as written, so the original positions are in `text`.
             if let Some(source_map) = print_for_coverage(self.source_url.slice(), text) {
                 for &original in source_map.mappings.original() {
                     if let Some(offset) = self.offset_of(original) {
@@ -856,7 +856,7 @@ fn for_each_distinct_mapping(source_map: &ParsedSourceMap, mut each: impl FnMut(
     });
 }
 
-/// The source map from printing `text`, or `None` if it does not parse.
+/// The source map from parsing and printing `text`, if both succeed.
 fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<ParsedSourceMap> {
     let arena = bun_alloc::Arena::new();
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);

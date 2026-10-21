@@ -129,7 +129,7 @@ pub struct If {
     pub test: ExprNodeIndex,
     pub yes: StmtNodeIndex,
     pub no: Option<StmtNodeIndex>,
-    /// Only read with `no`. `Loc::EMPTY` in an `if` that the parser did not make.
+    /// Where the `else` of `no` is. `Loc::EMPTY` in an `if` that the parser did not make.
     pub else_loc: crate::Loc,
 }
 

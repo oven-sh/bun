@@ -1209,7 +1209,8 @@ test.concurrent.each(["// @bun", "// @bun with a source map", "coverageIgnoreSou
     const record = lcov.split("end_of_record").find(r => r.includes("lib.js\n"));
     expect(record).toBeDefined();
     const above = mode === "// @bun" ? 1 : 0;
-    expect([2, 4, 6, 8, 11, 12].filter(line => record!.includes(`DA:${line + above},`))).toEqual([4, 6]);
+    const count = (line: number) => record!.match(new RegExp(`^DA:${line + above},(\\d+)$`, "m"))?.[1];
+    expect([2, 4, 6, 8, 11, 12].map(count)).toEqual([undefined, "1", "1", undefined, undefined, undefined]);
     if (mode === "// @bun") {
       expect(record).toContain("DA:16,0");
       expect(record).toContain("DA:17,0");

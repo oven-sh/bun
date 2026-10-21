@@ -220,7 +220,7 @@ pub mod Runtime {
         /// This comment must never be used manually.
         pub dont_bundle_twice: bool,
 
-        /// `js_printer::Options::code_coverage` changes the source map (runtime transpiler cache key).
+        /// Only hashed: `js_printer::Options::code_coverage` changes the source map that is cached.
         pub code_coverage: bool,
 
         /// This is a list of packages which even when require() is used, we will

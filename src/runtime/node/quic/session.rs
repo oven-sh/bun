@@ -281,9 +281,9 @@ pub(super) struct DeferredAbort {
     ls: *mut lsquic::lsquic_stream,
     reset: Option<u64>,
     stop: Option<u64>,
-    /// A STOP_SENDING of the stream already reached lsquic, so the peer can
-    /// know the stream: these frames are always sent.
-    peer_knows: bool,
+    /// The app stopped the stream itself, or holds its writer: these frames
+    /// are always sent (`QuicStream::abort_always_sent`).
+    always_sent: bool,
     /// The peer never hears of the stream (`silence_opening_flight_aborts`).
     silent: bool,
 }
@@ -685,23 +685,23 @@ impl QuicSession {
     }
     /// Whether `destroy()` leaves the frames of a stream that never sent to
     /// `flush_deferred_aborts`: a client before its handshake is reported, and
-    /// JS of this session's dispatch when the peer cannot know the stream.
-    pub(super) fn parks_stream_abort(&self, peer_knows: bool) -> bool {
-        self.awaits_handshake() || (self.dispatching.get() && !peer_knows)
+    /// JS of this session's dispatch unless the frames are `always_sent`.
+    pub(super) fn parks_stream_abort(&self, always_sent: bool) -> bool {
+        self.awaits_handshake() || (self.dispatching.get() && !always_sent)
     }
     pub(super) fn defer_stream_abort(
         &self,
         ls: *mut lsquic::lsquic_stream,
         stop: Option<u64>,
         reset: Option<u64>,
-        peer_knows: bool,
+        always_sent: bool,
     ) {
         self.deferred_aborts.with_mut(|v| {
             v.push(DeferredAbort {
                 ls,
                 reset,
                 stop,
-                peer_knows,
+                always_sent,
                 silent: false,
             });
         });
@@ -715,14 +715,14 @@ impl QuicSession {
         self.deferred_aborts.with_mut(|v| {
             for (index, e) in v.iter_mut().enumerate().skip(parked_before) {
                 // SAFETY: as in `has_opened_stream`.
-                e.silent = !e.peer_knows
+                e.silent = !e.always_sent
                     && streams
                         .iter()
                         .any(|&(_, s)| unsafe { (*s).wrote_after_park(index) });
             }
         });
     }
-    /// Sends the parked aborts. A stream the peer cannot know is retired with
+    /// Sends the parked aborts. One that is not `always_sent` is retired with
     /// no frame when it is `silent`, and when the connection closes.
     fn settle_deferred_aborts(&self, closing: bool) {
         let entries = self.deferred_aborts.with_mut(core::mem::take);
@@ -735,7 +735,7 @@ impl QuicSession {
             let Some(s) = (unsafe { lsquic::Stream::from_raw(e.ls) }) else {
                 continue;
             };
-            if e.silent || (closing && !e.peer_knows) {
+            if e.silent || (closing && !e.always_sent) {
                 s.shutdown_internal();
             } else {
                 super::stream::send_abort(s, e.stop, e.reset);

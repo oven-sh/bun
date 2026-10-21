@@ -137,8 +137,9 @@ pub(crate) struct QuicStream {
     announce_suppressed: Cell<bool>,
     close_reported: Cell<bool>,
     destroyed: Cell<bool>,
-    /// An explicit `stopSending()` reached lsquic.
-    stop_sent: Cell<bool>,
+    /// An explicit `stopSending()` reached lsquic, or `destroy()` failed a
+    /// live writer: the frames of the destroy are never retracted.
+    abort_always_sent: Cell<bool>,
     /// A JS `destroy()` is between `abortForDestroy` and the native `destroy`.
     destroying: Cell<bool>,
     /// The STOP_SENDING and RESET_STREAM codes that destroy owes the peer.
@@ -183,7 +184,7 @@ impl QuicStream {
             announce_suppressed: Cell::new(false),
             close_reported: Cell::new(false),
             destroyed: Cell::new(false),
-            stop_sent: Cell::new(false),
+            abort_always_sent: Cell::new(false),
             destroying: Cell::new(false),
             destroy_codes: Cell::new([NO_FRAME; 2]),
         };
@@ -865,12 +866,12 @@ impl QuicStream {
         });
         if self.destroying.get() {
             // `destroy()` fails a live writer. Its reset goes out with the
-            // other frame of the destroy, in the call.
+            // other frame of the destroy.
             let [stop, reset] = self.destroy_codes.get();
             if reset == NO_FRAME {
                 self.destroy_codes.set([stop, code & CODE_MASK]);
             }
-            self.wrote_to_lsquic.set(true);
+            self.abort_always_sent.set(true);
             return Ok(JSValue::UNDEFINED);
         }
         if let Some(s) = self.ls() {
@@ -893,7 +894,7 @@ impl QuicStream {
             }
         } else if let Some(s) = self.ls() {
             s.stop_sending(code);
-            self.stop_sent.set(true);
+            self.abort_always_sent.set(true);
         }
         self.inbound.with_mut(|i| i.ended = true);
         self.with_state(|s| {
@@ -969,12 +970,18 @@ impl QuicStream {
         // cannot finish such a stream, so its pointer stays valid for
         // `QuicSession::flush_deferred_aborts`.
         let parks = (stop.is_some() || reset.is_some()) && !self.wrote_to_lsquic.get();
-        let stop_sent = self.stop_sent.get();
+        let always_sent = self.abort_always_sent.get();
         let parked_on = self
             .session_ref()
-            .filter(|session| parks && session.parks_stream_abort(stop_sent));
+            .filter(|session| parks && session.parks_stream_abort(always_sent));
         match parked_on {
-            Some(session) => session.defer_stream_abort(s.raw(), stop, reset, stop_sent),
+            Some(session) => {
+                // `teardown` clears the ctx next: lsquic must not poll a
+                // stream that has no owner until the flush releases it.
+                s.want_read(false);
+                s.want_write(false);
+                session.defer_stream_abort(s.raw(), stop, reset, always_sent);
+            }
             None => send_abort(s, stop, reset),
         }
     }

@@ -1201,6 +1201,7 @@ describe("QuicStream.destroy before the first write", () => {
     // cannot read, so that row does not depend on the places.
     test.each([
       ["an unwritten stream", 3, () => {}],
+      ["a stream with a writer", 3, (stream: any) => void stream.writer],
       ["a stream after stopSending()", 8, (stream: any) => stream.stopSending(7n)],
     ] as const)("the destroy of %s reaches the server once the handshake is done", async (_, limit, touch) => {
       const { endpoint, logs } = await echoServer(limit);
@@ -1297,22 +1298,29 @@ describe("QuicStream.destroy before the first write", () => {
     test.each(directions)(
       "when it ends the wait of an earlier close(), the peer counts no %s stream",
       async direction => {
-        const { endpoint, log, sessions, sessionClosed } = await echoServer(4);
+        const { endpoint, log, sessions, sessionClosed } = await echoServer(4, {
+          transportParams: { initialMaxStreamDataBidiRemote: 1024 },
+        });
         await using server = endpoint;
         const client = await connectTo(server);
-        const { id, echoed } = await fromTimer(async () => {
+        const id = await fromTimer(async () => {
           const unwritten = await open(client, direction);
-          const request = write(await open(client), "request");
-          // Waits for the request's data.
+          const blocked = await open(client);
+          // Runs inside a dispatch. The close waits for `blocked` alone, so
+          // the dispatch that destroys it is the one that applies the close.
+          blocked.onblocked = () => {
+            destroy(unwritten);
+            destroy(blocked);
+          };
+          // More than the stream's window: the write blocks in this turn, and
+          // the close waits for the rest of the data.
+          blocked.writer.writeSync(new Uint8Array(4096).fill(97));
           client.close();
-          // Resumes inside the dispatch that delivers the echo.
-          const echoed = await readAll(request);
-          destroy(unwritten);
-          return { id: String(unwritten.id), echoed };
+          return String(unwritten.id);
         });
         await Promise.all([sessionEnd(client), sessionClosed]);
-        expect({ echoed, ...shown(log, id), counted: streamsCounted(sessions[0]) }).toEqual({
-          echoed: "request",
+        // The one stream that the peer counts is `blocked`.
+        expect({ ...shown(log, id), counted: streamsCounted(sessions[0]) }).toEqual({
           seen: false,
           resets: [],
           counted: { bidi: 1n, uni: 0n },
@@ -1354,7 +1362,7 @@ describe("QuicStream.destroy before the first write", () => {
       // Leave the opening flight: what follows an echo runs inside the
       // dispatch that delivered it.
       await fromTimer(() => echo(client, "first"));
-      write(await open(client), "s".repeat(4096));
+      write(await open(client), Buffer.alloc(4096, "s").toString());
       const id = await abandon(client);
       client.close();
       await Promise.all([sessionEnd(client), sessionClosed]);

@@ -294,7 +294,7 @@ it("should not list packages missing from node_modules", async () => {
   }
 });
 
-it("should error when node_modules does not exist", async () => {
+it("should list the packages in bun.lock when node_modules does not exist", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
   await writeFile(
@@ -330,12 +330,14 @@ it("should error when node_modules does not exist", async () => {
     stderr: "pipe",
     env,
   });
-  expect(await stderr.text()).toContain("node_modules not found");
-  expect(await stdout.text()).toBe("");
-  expect(await exited).toBe(1);
+  expect(await stderr.text()).toBe("");
+  expect(await stdout.text()).toBe(`${package_dir} node_modules (1 installed)
+└── bar@0.0.2
+`);
+  expect(await exited).toBe(0);
 });
 
-describe.concurrent("bun pm ls lists what is on disk", () => {
+describe.concurrent("bun pm ls lists what's on disk", () => {
   const registry = new TestRegistry();
   beforeAll(() => registry.start());
   afterAll(() => registry.stop());
@@ -380,7 +382,8 @@ describe.concurrent("bun pm ls lists what is on disk", () => {
         listed("<dir> node_modules", "├── a-dep@1.0.1", "├── no-deps@1.0.0", "└── one-fixed-dep@1.0.0"),
       );
 
-      // The project cannot load a-dep any more. The isolated store still has it, which is what the count and `--all` are about.
+      // The project can't load a-dep anymore. The isolated store still has it, which is what the count and `--all`
+      // show.
       await rm(join(packageDir, "node_modules", "a-dep"), { recursive: true });
       expect(await bun("pm", "ls")).toEqual(
         listed(`<dir> node_modules (${isolated ? 3 : 2} installed)`, "└── one-fixed-dep@1.0.0"),
@@ -405,14 +408,37 @@ describe.concurrent("bun pm ls lists what is on disk", () => {
         listed("<dir> node_modules", ...(isolated ? ["├── a-dep@1.0.1"] : []), "└── one-fixed-dep@1.0.0"),
       );
 
+      // With no node_modules, it lists what's in bun.lock.
       await rm(join(packageDir, "node_modules"), { recursive: true });
-      expect(await bun("pm", "ls")).toEqual({
-        stdout: "",
-        stderr: "error: node_modules not found, nothing to list\nnote: run 'bun install' first\n",
-        exitCode: 1,
-      });
+      expect(await bun("pm", "ls")).toEqual(
+        listed("<dir> node_modules (3 installed)", "├── a-dep@1.0.1", "└── one-fixed-dep@1.0.0"),
+      );
+      expect(await bun("pm", "ls", "--all")).toEqual(
+        listed("<dir> node_modules", "├── a-dep@1.0.1", "├── no-deps@1.0.0", "└── one-fixed-dep@1.0.0"),
+      );
     },
   );
+
+  test("skips an optional peer dependency that isn't installed", async () => {
+    const { packageDir, bun } = await project(
+      { linker: "hoisted" },
+      {
+        "package.json": {
+          name: "foo",
+          dependencies: { "a-dep": "1.0.1" },
+          peerDependencies: { "no-deps": "1.0.0" },
+          peerDependenciesMeta: { "no-deps": { optional: true } },
+        },
+      },
+    );
+    expect(await bun("install")).toMatchObject({ exitCode: 0 });
+
+    const list = listed("<dir> node_modules (1 installed)", "└── a-dep@1.0.1");
+    expect(await bun("pm", "ls")).toEqual(list);
+    await rm(join(packageDir, "node_modules"), { recursive: true });
+    expect(await bun("pm", "ls")).toEqual(list);
+    expect(await bun("pm", "ls", "--all")).toEqual(listed("<dir> node_modules", "└── a-dep@1.0.1"));
+  });
 
   test("isolated: a dependency of the root that only a workspace member has linked", async () => {
     const { bun } = await project(
@@ -431,6 +457,53 @@ describe.concurrent("bun pm ls lists what is on disk", () => {
     const member = `└── member@workspace:${join("packages", "member")}`;
     expect(await bun("pm", "ls")).toEqual(listed("<dir> node_modules (2 installed)", member));
     expect(await bun("pm", "ls", "--all")).toEqual(listed("<dir> node_modules", "├── a-dep@1.0.1", member));
+  });
+
+  test("--production, --omit, --depth=0 and package names narrow the list", async () => {
+    const { bun } = await project(
+      { linker: "hoisted" },
+      {
+        "package.json": {
+          name: "foo",
+          dependencies: { "a-dep": "1.0.1" },
+          devDependencies: { "one-fixed-dep": "1.0.0" },
+        },
+      },
+    );
+    expect(await bun("install")).toMatchObject({ exitCode: 0 });
+
+    const direct = listed("<dir> node_modules (3 installed)", "├── a-dep@1.0.1", "└── one-fixed-dep@1.0.0");
+    const noMatch = (header: string, names: string) => ({
+      stdout: header + "\n",
+      stderr: `error: no packages match: ${names}\n`,
+      exitCode: 1,
+    });
+    const cases: [string, object][] = [
+      ["pm ls", direct],
+      ["pm ls --production", listed("<dir> node_modules (1 installed)", "└── a-dep@1.0.1")],
+      ["pm ls --omit=dev", listed("<dir> node_modules (1 installed)", "└── a-dep@1.0.1")],
+      ["list --all --prod", listed("<dir> node_modules", "└── a-dep@1.0.1")],
+      ["pm ls --depth=0", direct],
+      ["pm ls --all --depth 0", direct],
+      [
+        "pm ls --depth=1",
+        {
+          stdout: "",
+          stderr:
+            "error: bun pm ls --depth only accepts 0 (direct dependencies, the default). --all lists every installed package\n",
+          exitCode: 1,
+        },
+      ],
+      // no-deps is a dependency of one-fixed-dep only.
+      ["pm ls no-deps", listed("<dir> node_modules", "└── no-deps@1.0.0")],
+      ["list no-deps a-dep nope", listed("<dir> node_modules", "├── a-dep@1.0.1", "└── no-deps@1.0.0")],
+      ["pm ls a-dep no-deps --depth=0", listed("<dir> node_modules (3 installed)", "└── a-dep@1.0.1")],
+      ["pm ls no-deps --depth=0", noMatch("<dir> node_modules (3 installed)", "no-deps")],
+      ["pm ls no-deps --production", noMatch("<dir> node_modules", "no-deps")],
+      ["pm ls nope nada", noMatch("<dir> node_modules", "nope, nada")],
+    ];
+    const results = await Promise.all(cases.map(([cmd]) => bun(...cmd.split(" "))));
+    expect(results.map((result, i) => [cases[i][0], result])).toEqual(cases);
   });
 });
 
@@ -905,6 +978,34 @@ it.each([
   expect(urls).toEqual([]);
 });
 
+// bun.lockb keeps a package for each of the two entries. node_modules has one of them.
+it.each([
+  { lockfile: "bun.lock", saveTextLockfile: true },
+  { lockfile: "bun.lockb", saveTextLockfile: false },
+])("should list a name in two dependency groups once ($lockfile)", async ({ lockfile, saveTextLockfile }) => {
+  setHandler(dummyRegistry([], { "0.0.3": {}, "0.0.5": {} }));
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    Bun.TOML.stringify({ install: { cache: false, registry: `${root_url}/`, saveTextLockfile } }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "foo", dependencies: { baz: "0.0.3" }, devDependencies: { baz: "~0.0.3" } }),
+  );
+  const [, err, installed] = await spawnAndCollect("install");
+  expect(err).toContain("Saved lockfile");
+  expect(installed).toBe(0);
+  expect(await exists(join(package_dir, lockfile))).toBeTrue();
+
+  const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls");
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout, package_dir)).toMatchInlineSnapshot(`
+    "<dir> node_modules (1 installed)
+    └── baz@0.0.5"
+  `);
+  expect(exitCode).toBe(0);
+});
+
 // bun.lockb stores only the hashes of trustedDependencies and bun does not trust
 // a hash alone, so --trusted lists nothing from a bun.lockb. Use bun.lock here.
 it("should list a trusted workspace the root also depends on once with --trusted", async () => {
@@ -1055,7 +1156,7 @@ it("should remove all cache", async () => {
   expect(await new Response(stderr2).text()).toBe("");
   expect(await new Response(stdout2).text()).toInclude("Cleared 'bun install' cache\n");
   expect(await exited2).toBe(0);
-  expect(await exists(cache_dir)).toBeFalse();
+  expect(await readdirSorted(cache_dir)).toEqual([]);
 });
 
 it("bun pm migrate", async () => {
@@ -1581,9 +1682,9 @@ function refused(cacheDir: string, what: string, bunx = "Cleared") {
   return {
     stdout: `${bunx} 0 cached 'bunx' packages\n`,
     stderr:
-      `error: refusing to clear "${cacheDir}": it is or contains ${what}\n` +
-      "note: the cache directory comes from $BUN_INSTALL_CACHE_DIR, --cache-dir or $BUN_INSTALL. " +
-      "Point it at a directory that holds nothing but the bun install cache.\n",
+      `error: refusing to clear "${cacheDir}": is or contains ${what}\n` +
+      "note: cache directory comes from $BUN_INSTALL_CACHE_DIR, --cache-dir, ~/.bunfig.toml or $BUN_INSTALL. " +
+      "point it at a directory used only for the bun install cache\n",
     exitCode: 1,
   };
 }
@@ -1631,7 +1732,7 @@ describe.concurrent("bun pm cache with an empty variable", () => {
 
     expect(await pmCache(["rm"], proj, spawnEnv)).toEqual(cleared);
     expect(await readdirSorted(proj)).toEqual(projectEntries);
-    expect(await exists(envCache)).toBeFalse();
+    expect(await readdirSorted(envCache)).toEqual([]);
   });
 
   test.each([
@@ -1778,8 +1879,69 @@ describe.concurrent("bun pm cache rm", () => {
     await symlink(sibling, join(envCache, "escape@1.0.0@@@1"), "junction");
 
     expect(await pmCache(["rm"], join(String(root), "proj"), cacheEnv(String(side)))).toEqual(cleared);
-    expect(await exists(envCache)).toBeFalse();
+    expect(await readdirSorted(envCache)).toEqual([]);
     expect(await readdirSorted(sibling)).toEqual(["keep.txt"]);
+  });
+
+  test("a cache directory that is a symlink is emptied, and the link still works", async () => {
+    using side = tempDir("pm-cache-rm-root-symlink", {
+      ...sideFiles,
+      "big-disk/bar@0.0.2@@@1/package.json": "{}",
+    });
+    using root = tempDir("pm-cache-rm-root-symlink-project", projectFiles);
+    const proj = join(String(root), "proj");
+    const target = join(String(side), "big-disk");
+    const spawnEnv = cacheEnv(String(side), { BUN_INSTALL_CACHE_DIR: join(String(side), "cache-link") });
+    await symlink(target, join(String(side), "cache-link"), "junction");
+
+    expect(await pmCache(["rm"], proj, spawnEnv)).toEqual(cleared);
+    expect(await readdirSorted(target)).toEqual([]);
+    expect(await pmCache([], proj, spawnEnv)).toEqual({ stdout: target, stderr: "", exitCode: 0 });
+  });
+
+  // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+  test.serial.skipIf(isWindows)("a cache directory in a read-only parent is emptied", async () => {
+    using dir = tempDir("pm-cache-rm-read-only-parent", {
+      ...sideFiles,
+      ...projectFiles,
+      "var/cache/bar@0.0.2@@@1/package.json": "{}",
+    });
+    const parent = join(String(dir), "var");
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
+    await chmod(parent, 0o555);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "cache", "rm"],
+      cwd: join(String(dir), "proj"),
+      env: cacheEnv(String(dir), { BUN_INSTALL_CACHE_DIR: join(parent, "cache") }),
+      stdout: "pipe",
+      stderr: "pipe",
+      ...unprivileged,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await chmod(parent, 0o755);
+
+    expect({ stdout, stderr, exitCode }).toEqual(cleared);
+    expect(await readdirSorted(join(parent, "cache"))).toEqual([]);
+  });
+
+  test.each([
+    [["rm", "bar"], "bar"],
+    [["rm", "bar@0.0.2"], "bar@0.0.2"],
+    [["rm", "--dry-run", "bar"], "bar"],
+    [["prune", "--max-age", "0", "bar"], "bar"],
+    [["clean"], "clean"],
+    [["clear", "--force"], "clear"],
+  ] as const)("a word the command does not take is an error and nothing is deleted: %j", async (args, word) => {
+    using side = tempDir("pm-cache-unexpected-word", sideFiles);
+    using root = tempDir("pm-cache-unexpected-word-project", projectFiles);
+
+    expect(await pmCache([...args], join(String(root), "proj"), cacheEnv(String(side)))).toEqual({
+      stdout: "",
+      stderr:
+        `error: unexpected argument "${word}"\n` + "usage: bun pm cache [rm | prune | pack <file> | unpack <file>]\n",
+      exitCode: 1,
+    });
+    expect(await readdirSorted(join(String(side), "bun-install", "install", "cache"))).toEqual(envCacheEntries);
   });
 
   test.each([[["rm"]], [["rm", "--dry-run"]]])(
@@ -1817,7 +1979,7 @@ describe.concurrent("bun pm cache rm", () => {
 
     expect(await pmCache(["rm"], proj, spawnEnv)).toEqual(cleared);
     expect(await readdirSorted(proj)).toEqual([".git", ".npmrc", "package.json", "src"]);
-    expect(await exists(join(String(side), "bun-install", "install", "cache"))).toBeFalse();
+    expect(await readdirSorted(join(String(side), "bun-install", "install", "cache"))).toEqual([]);
   });
 
   test("--dry-run prints what would be deleted and deletes nothing", async () => {
@@ -1856,9 +2018,7 @@ describe.concurrent("bun pm cache rm", () => {
     const envCache = join(String(side), "bun-install", "install", "cache");
 
     const { stderr, exitCode } = await pmCache([...args], join(String(root), "proj"), cacheEnv(String(side)));
-    expect(stderr).toBe(
-      `note: the global store ${verb} removed with it. Run 'bun install' again in each project that uses it.\n`,
-    );
+    expect(stderr).toBe(`note: global store ${verb} removed too, run 'bun install' in each project that uses it\n`);
     expect(exitCode).toBe(0);
     expect(await exists(join(envCache, "links"))).toBe(args.length === 2);
   });
@@ -1943,7 +2103,7 @@ describe.concurrent("bun pm cache prune", () => {
     });
   });
 
-  test("--dry-run lists what the next run removes and removes nothing", async () => {
+  test("--dry-run lists what the next run would remove, and removes nothing", async () => {
     using dir = tempDir("pm-cache-prune-dry", { "package.json": JSON.stringify({ name: "cache-prune-dry" }) });
     const cache = join(String(dir), "cache");
     seedPruneCache(cache);
@@ -2076,7 +2236,7 @@ describe.concurrent("bun pm cache prune", () => {
     expect(await readdirSorted(envCache)).toEqual(["0123456789abcdef.npm"]);
   });
 
-  test.each([[[]], [["--dry-run"]]])("refuses what bun pm cache rm refuses: %j", async args => {
+  test.each([[[]], [["--dry-run"]]])("refuses the same directories as bun pm cache rm: %j", async args => {
     using side = tempDir("pm-cache-prune-refused", sideFiles);
     using root = tempDir("pm-cache-prune-refused-project", {
       ...projectFiles,
@@ -2097,8 +2257,8 @@ describe.concurrent("bun pm cache prune", () => {
 describe.concurrent.each(["rm", "prune"] as const)("the directory of bun pm cache %s", action => {
   const done =
     action === "rm" ? cleared : { stdout: "Removed 1 package older than 30 days (2 bytes)\n", stderr: "", exitCode: 0 };
-  const left = action === "rm" ? null : ["0123456789abcdef.npm"];
-  const entries = async (cache: string) => ((await exists(cache)) ? await readdirSorted(cache) : null);
+  const left = action === "rm" ? [] : ["0123456789abcdef.npm"];
+  const entries = readdirSorted;
 
   /** The cache that the environment names, and `mine` with the same entries next to the project. */
   function caches(name: string) {
@@ -2114,6 +2274,7 @@ describe.concurrent.each(["rm", "prune"] as const)("the directory of bun pm cach
     return {
       envCache,
       mine,
+      home: join(String(side), "home"),
       proj: join(String(root), "proj"),
       spawnEnv: cacheEnv(String(side)),
       [Symbol.dispose]() {
@@ -2123,11 +2284,33 @@ describe.concurrent.each(["rm", "prune"] as const)("the directory of bun pm cach
     };
   }
 
-  test("--cache-dir names it", async () => {
+  test("--cache-dir sets it", async () => {
     using box = caches(`pm-cache-${action}-flag`);
     expect(await pmCache([action, "--cache-dir", box.mine], box.proj, box.spawnEnv)).toEqual(done);
     expect(await entries(box.mine)).toEqual(left);
     expect(await entries(box.envCache)).toEqual(envCacheEntries);
+  });
+
+  test("~/.bunfig.toml sets it", async () => {
+    using box = caches(`pm-cache-${action}-user-bunfig`);
+    const spawnEnv = { ...box.spawnEnv, XDG_CONFIG_HOME: undefined };
+    await writeFile(join(box.home, ".bunfig.toml"), `[install.cache]\ndir = ${JSON.stringify(box.mine)}\n`);
+    expect(await pmCache([], box.proj, spawnEnv)).toEqual({ stdout: box.mine, stderr: "", exitCode: 0 });
+
+    expect(await pmCache([action], box.proj, spawnEnv)).toEqual(done);
+    expect(await entries(box.mine)).toEqual(left);
+    expect(await entries(box.envCache)).toEqual(envCacheEntries);
+  });
+
+  // `cache` in .npmrc is also npm's cache directory, so it has npm's own files in it.
+  test("~/.npmrc does not", async () => {
+    using box = caches(`pm-cache-${action}-user-npmrc`);
+    await writeFile(join(box.home, ".npmrc"), `cache=${box.mine}\n`);
+    expect(await pmCache([], box.proj, box.spawnEnv)).toEqual({ stdout: box.mine, stderr: "", exitCode: 0 });
+
+    expect(await pmCache([action], box.proj, box.spawnEnv)).toEqual(done);
+    expect(await entries(box.mine)).toEqual(envCacheEntries);
+    expect(await entries(box.envCache)).toEqual(left);
   });
 
   test("the project's bunfig.toml does not", async () => {
@@ -2141,7 +2324,7 @@ describe.concurrent.each(["rm", "prune"] as const)("the directory of bun pm cach
   });
 });
 
-it("bun pm cache prune removes packages that bun install cached and leaves the rest of the cache alone", async () => {
+it("bun pm cache prune removes packages that bun install cached and doesn't touch the rest of the cache", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
   await writeFile(
@@ -2222,8 +2405,8 @@ describe.concurrent.skipIf(isWindows)("cache directory setting longer than the p
 
   const project = {
     "package.json": JSON.stringify({ name: "pm-cache-too-long", version: "1.0.0" }),
-    // $XDG_CONFIG_HOME stands in for $HOME when bun looks for .npmrc and .bunfig.toml, so the
-    // oversized $HOME below is only ever used as a cache directory candidate.
+    // Bun looks for .npmrc and .bunfig.toml in $XDG_CONFIG_HOME before $HOME, so the oversized $HOME below is only ever
+    // used as a cache directory candidate.
     "config/.npmrc": "",
   };
 
@@ -2291,7 +2474,7 @@ describe.concurrent.skipIf(isWindows)("cache directory setting longer than the p
     expect(exitCode).toBe(0);
   });
 
-  // What has to fit the buffer is the normalized directory, not the value as written.
+  // The normalized directory has to fit in the buffer, not the value as written.
   test("bun pm cache uses a directory that only fits the path buffer once normalized", async () => {
     using dir = tempDir("pm-cache-long-normalized", project);
     const cacheDir = `${String(dir)}/${Buffer.alloc("x/../".length * 2000, "x/../").toString()}cache`;
@@ -2629,7 +2812,7 @@ describe.concurrent.skipIf(isWindows)("global directories longer than the path b
     expectNameTooLong(await runGlobal(["pm", "bin", "-g"], "global directory", "BUN_INSTALL", value));
   });
 
-  // What has to fit the buffer is the normalized path, not the value as written.
+  // The normalized path has to fit in the buffer, not the value as written.
   test("a value that only fits the path buffer once normalized is used", async () => {
     const { dir, stdout, stderr, exitCode } = await runGlobal(
       ["pm", "bin", "-g"],
@@ -2660,8 +2843,6 @@ describe.concurrent("the global bin directory and $PATH", () => {
       BUN_INSTALL_GLOBAL_DIR: join(String(dir), "global"),
       ...extraEnv,
     };
-    // Windows spells the inherited variable `Path`.
-    delete spawnEnv.Path;
     spawnEnv.PATH = path(bin) + (isWindows ? ";" : ":") + process.env.PATH;
 
     await using proc = spawn({
@@ -2954,7 +3135,7 @@ describe.concurrent("without a package.json", () => {
     });
   });
 
-  test("bun pm ls -g leaves out a global package that is gone from disk", async () => {
+  test("bun pm ls -g skips a global package that's missing on disk", async () => {
     using project = fresh("pm-ls-global-deleted");
     expect(await project.run("add", "-g", join(project.root, "pkg"))).toMatchObject({ exitCode: 0 });
     await rm(join(project.globalDir, "node_modules", "pkg"), { recursive: true });
@@ -3008,6 +3189,47 @@ describe.concurrent("without a package.json", () => {
   );
 });
 
+describe.concurrent("bun pm refuses a flag that only other subcommands take", () => {
+  const json = "`bun pm diff`, `bun pm licenses`, `bun pm pkg`, `bun pm view`";
+  test.each([
+    ["pm why x --json", "--json", json],
+    ["pm ls --json", "--json", json],
+    ["list --all --json", "--json", json],
+    ["pm untrusted --json", "--json", json],
+    ["pm hash --json", "--json", json],
+    ["pm bin --json", "--json", json],
+    ["pm pack --dry-run --json", "--json", json],
+    ["pm version patch --dry-run --json", "--json", json],
+    ["pm default-trusted --json", "--json", json],
+    ["pm hash --all", "--all", "`bun pm ls`, `bun pm trust`"],
+    ["pm bin --depth=1", "--depth", "`bun pm ls`, `bun pm why`"],
+    ["pm ls --top", "--top", "`bun pm why`"],
+    ["pm ls -m x", "--message", "`bun pm version`"],
+    ["pm why x -D", "--dev", "`bun pm licenses`"],
+    ["pm cache --stat", "--stat", "`bun pm diff`"],
+    ["pm pack --max-age=1", "--max-age", "`bun pm cache`"],
+    ["pm pkg get name --filename=x", "--filename", "`bun pm pack`"],
+  ])("bun %s", async (cmd, flag, commands) => {
+    using dir = tempDir("bun-pm-flags", {
+      "package.json": JSON.stringify({ name: "foo", version: "0.0.1" }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd.split(" ")],
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: `error: ${flag} is only supported by ${commands}\n`,
+      exitCode: 1,
+    });
+  });
+});
+
 describe.concurrent("usage text keeps its indent", () => {
   async function run(...args: string[]) {
     using dir = tempDir("bun-pm-usage", {
@@ -3047,9 +3269,11 @@ describe.concurrent("usage text keeps its indent", () => {
     );
     expect(lines).toContain("  └ --json                    one JSON document (files, patch text, notes, totals)");
     const ls = lines.indexOf("  bun pm ls                   list the tree of installed dependencies");
-    expect(lines.slice(ls + 1, ls + 5)).toEqual([
+    expect(lines.slice(ls + 1, ls + 7)).toEqual([
+      "  ├ names ...                 list every installed package with one of these names",
       "  ├ --all                     list the entire tree of installed dependencies",
       "  ├ --trusted                 list only trusted dependencies",
+      "  ├ --prod                    omit devDependencies",
       "  └ -g                        list the tree of globally installed dependencies",
       "  bun pm why <pkg>            show dependency tree explaining why a package is installed",
     ]);

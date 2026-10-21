@@ -34,6 +34,10 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 // MOVE_DOWN: bun_core::ZStr → bun_core (move-in pass).
 use crate::ZStr;
 
+/// Parses the value of a boolean variable that can also be set in a `.env` file. The accessors
+/// below only read the process environment.
+pub use kind::boolean::string_is_truthy;
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Declarations
 // ──────────────────────────────────────────────────────────────────────────────
@@ -174,6 +178,7 @@ new!(pub JENKINS_URL: string, "JENKINS_URL", {});
 new!(pub MI_VERBOSE: boolean, "MI_VERBOSE", { default: false });
 new!(pub NO_COLOR: boolean, "NO_COLOR", { default: false });
 new!(pub NODE_CHANNEL_FD: string, "NODE_CHANNEL_FD", {});
+new!(pub NODE_CHANNEL_SERIALIZATION_MODE: string, "NODE_CHANNEL_SERIALIZATION_MODE", {});
 // A string, not a boolean: node suppresses warnings only when the value is
 // exactly "1" (lib/internal/process/pre_execution.js).
 new!(pub NODE_NO_WARNINGS: string, "NODE_NO_WARNINGS", {});
@@ -181,6 +186,9 @@ new!(pub NODE_COMPILE_CACHE: string, "NODE_COMPILE_CACHE", {});
 new!(pub NODE_COMPILE_CACHE_PORTABLE: string, "NODE_COMPILE_CACHE_PORTABLE", {});
 new!(pub NODE_DEBUG_NATIVE: string, "NODE_DEBUG_NATIVE", {});
 new!(pub NODE_DISABLE_COMPILE_CACHE: string, "NODE_DISABLE_COMPILE_CACHE", {});
+// Set by `bunx` for the `bun add` it spawns, to the directory that `bun add` installs into.
+// A command that inherits it but runs in any other directory ignores it.
+new!(pub BUN_INTERNAL_BUNX_INSTALL: string, "BUN_INTERNAL_BUNX_INSTALL", {});
 // Set by `bun run` for a script named `check`, `lint` or `format`: the packages whose script of that
 // name is running. In those, `bun check` is the type checker and not the script again.
 new!(pub BUN_INTERNAL_SCRIPTS_OF_COMMANDS: string, "BUN_INTERNAL_SCRIPTS_OF_COMMANDS", {});
@@ -196,6 +204,7 @@ new!(pub NODE_USE_SYSTEM_CA: boolean, "NODE_USE_SYSTEM_CA", { default: false });
 new!(pub npm_lifecycle_event: string, "npm_lifecycle_event", {});
 new!(pub npm_package_json: string, "npm_package_json", {});
 new!(pub PATH: string, "PATH", {});
+platform_specific_new!(pub PWD: string, posix = "PWD", windows = None, {});
 new!(pub REPL_ID: boolean, "REPL_ID", { default: false });
 new!(pub RUNNER_DEBUG: boolean, "RUNNER_DEBUG", { default: false });
 platform_specific_new!(pub SDKROOT: string, posix = "SDKROOT", windows = None, {});
@@ -299,7 +308,7 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_IO_POOL, "BUN_FEATURE_FLAG_FORCE_IO_POOL", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS, "BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", {});
     new_feature_flag!(pub BUN_INSTRUMENTS, "BUN_INSTRUMENTS", {});
-    new_feature_flag!(pub BUN_INTERNAL_BUNX_INSTALL, "BUN_INTERNAL_BUNX_INSTALL", {});
+    new_feature_flag!(pub BUN_INTERNAL_BUNX_HAS_COPY, "BUN_INTERNAL_BUNX_HAS_COPY", {});
     // Debug-only fault injection for test/js/bun/spawn/spawn-pipe-start-error.test.ts.
     new_feature_flag!(pub BUN_INTERNAL_FAIL_PIPE_READER_START, "BUN_INTERNAL_FAIL_PIPE_READER_START", {});
     // Test-only: bypass the stdin isatty gate in `bun update --interactive` so
@@ -427,7 +436,7 @@ pub(crate) mod kind {
         pub(crate) type ValueType = bool;
         pub(crate) type Output = CacheOutput<ValueType>;
 
-        pub(crate) fn string_is_truthy(s: &[u8]) -> bool {
+        pub fn string_is_truthy(s: &[u8]) -> bool {
             // Most values are considered truthy, except for "", "0", "false", "no", and "off".
             !crate::strings::eql_any_case_insensitive_ascii(
                 s,

@@ -5,9 +5,7 @@ use bun_collections::{DynamicBitSet, HashMap, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 use bun_glob::Prepared;
 use bun_paths::path_buffer_pool;
-use bun_paths::resolve_path::{
-    join_abs_string_buf, join_abs_string_buf_checked, platform, platform_to_posix_in_place,
-};
+use bun_paths::resolve_path::{join_abs_string_buf_checked, platform, platform_to_posix_in_place};
 
 use crate::bun_fs::FileSystem;
 use crate::dependency::Behavior;
@@ -73,12 +71,14 @@ fn strip_negations(raw: &[u8]) -> (&[u8], bool) {
     (remain, negated)
 }
 
-/// The `!` entries of a `workspaces` array: one rule for `bun install` and `bun run --filter`.
+/// The `!` entries of a `workspaces` array. `bun install` and `bun run --filter` apply the same
+/// rule.
 #[derive(Default)]
 pub struct NegatedWorkspaces(Vec<Box<[u8]>>);
 
 impl NegatedWorkspaces {
-    /// Whether `entry` is negated: it is kept, in the shape of a matched directory, and not walked.
+    /// Returns true if `entry` is negated. It's then stored in the form of a matched directory, and
+    /// isn't walked.
     pub fn take(&mut self, entry: &[u8]) -> bool {
         let (glob, negated) = strip_negations(entry);
         if negated {
@@ -93,7 +93,8 @@ impl NegatedWorkspaces {
         negated
     }
 
-    /// For a `dir` that a glob entry matched. One listed by its path stays a member: do not ask.
+    /// Only call this for a `dir` that a glob entry matched. A workspace that's listed by its exact
+    /// path is never excluded.
     pub fn excludes(&self, dir: &[u8]) -> bool {
         // `dir/**` also removes `dir` itself, as in npm.
         self.0.iter().any(|glob| {
@@ -138,14 +139,13 @@ fn parse(raw: &[u8], original_cwd: &[u8], path_buf: &mut [u8]) -> Selector {
     }
 
     let resolve = |part: &[u8], path_buf: &mut [u8]| -> Prepared<Box<[u8]>> {
-        Prepared::new(
-            strings::without_trailing_slash(join_abs_string_buf::<platform::Posix>(
-                original_cwd,
-                path_buf,
-                &[part],
-            ))
-            .into(),
-        )
+        let Some(joined) =
+            join_abs_string_buf_checked::<platform::Posix>(original_cwd, path_buf, &[part])
+        else {
+            Output::err_generic("--filter \"{}\" path is too long", (BStr::new(raw),));
+            Global::crash();
+        };
+        Prepared::new(strings::without_trailing_slash(joined).into())
     };
 
     let base = if remain == b"*" || remain == b"**" {
@@ -419,7 +419,8 @@ impl WorkspaceGraph {
             if order.len() == n {
                 return order;
             }
-            // Stalled on a cycle. Follow unmet edges until one repeats: that candidate is on it.
+            // The sort is stuck on a cycle. Follow unmet dependencies until one repeats, which
+            // means that candidate is on the cycle.
             let mut on_walk = bitset(n);
             let mut cur = (0..n)
                 .find(|&i| !queued.is_set(i))

@@ -27,9 +27,9 @@ impl Rule for NoBarrelFile {
             return None;
         }
         match modules_of(file) {
-            // What the other files import is read when it is asked for.
+            // The other files' imports are read on demand.
             Some(modules) if !modules.is_complete() => {
-                let flavor = oxlint::flavor_of_modules(file);
+                let flavor = oxlint::module_flavor(file);
                 modules.follow_packages();
                 modules.record(file.path(), &requests_of(file, flavor), true, flavor);
                 None
@@ -41,7 +41,7 @@ impl Rule for NoBarrelFile {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         let modules = modules_of(file);
-        // Where each module is named that imports others, and how many.
+        // `counts`: the specifier span of each module that imports others, and how many it imports.
         let (mut total, mut counts) = (0u32, Vec::new());
         // `export * as a from "m"` comes first.
         for has_alias in [true, false] {
@@ -52,7 +52,7 @@ impl Rule for NoBarrelFile {
                 if alias.is_some() != has_alias {
                     continue;
                 }
-                // The module itself.
+                // Count the module itself.
                 total += 1;
                 let remote_module = modules.and_then(|it| Some((it, it.resolve(file.path(), specifier.bytes(), false)?.module)));
                 if let Some(count) = remote_module.and_then(|(modules, module)| count_loaded_modules(modules, module)) {
@@ -81,12 +81,13 @@ impl Rule for NoBarrelFile {
     }
 }
 
-/// Without the plugin `import` oxlint knows nothing about the other files.
+/// Without the `import` plugin oxlint has no information about other files.
 fn modules_of<'a>(file: &'a File<'a>) -> Option<&'a dyn Modules> {
     file.modules().filter(|_| file.path() != b"<text>" && !file.language().without_modules)
 }
 
-/// How many modules `module` imports, directly or not. It can be one of them. `None` if it imports nothing.
+/// Returns how many modules `module` imports, directly or indirectly, which can include itself. `None` if it imports
+/// nothing.
 fn count_loaded_modules(modules: &dyn Modules, module: ModuleId) -> Option<u32> {
     if modules.imports(module).is_empty() {
         return None;

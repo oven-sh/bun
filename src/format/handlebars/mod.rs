@@ -1,14 +1,15 @@
-//! Handlebars, as Glimmer reads it: Prettier's `language-handlebars`, with ports of the parsers that it uses.
+//! Handlebars as Glimmer parses it: Prettier's `language-handlebars`, with ports of the parsers it uses.
 //!
 //! ```text
 //! text ─ lexer::lex ─→ [Token] ─ parser::parse ─→ [Statement] ─ tokenizer::build ─→ Tree ─ printer::Printer ─→ Elements
 //!        @handlebars/parser                                     simple-html-tokenizer, @glimmer/syntax
 //! ```
 //!
-//! Prettier prints what the parsers give it, and they drop and change things: there is no `<!DOCTYPE html>` in the
-//! tree, `{{this/a}}` is `{{a}}`. Its printer changes some more: the lines of a `<script>` are joined. Here the output
-//! says what the template says. Where Prettier's does, it is Prettier's. Where it does not, it is what Prettier would
-//! have to print, or the text of the smallest node around the place as it is written (`ast::Node::is_as_written`).
+//! Prettier prints what the parsers give it, and they drop and change things: there's no `<!DOCTYPE html>` in the tree,
+//! and `{{this/a}}` becomes `{{a}}`. Its printer changes more, for example by joining the lines of a `<script>`. Here
+//! the output always means the same as the template. Where Prettier's output does too, this matches it. Where it
+//! doesn't, this prints what Prettier should have printed, or the source text of the smallest node around the problem
+//! (`ast::Node::is_as_written`).
 
 mod ast;
 mod lexer;
@@ -22,18 +23,18 @@ use crate::css::doc::{self, Elements};
 use crate::options::{HtmlWhitespaceSensitivity, QuoteStyle};
 use crate::range::{Offsets, normalized_len};
 use crate::stack::Stack;
-use crate::syntax_error::{Message, Refusal, Refused};
+use crate::syntax_error::{Message, Rejected, Rejection};
 use crate::text::BOM;
 use crate::{FormatError, FormatOptions};
 use std::borrow::Cow;
 
 #[derive(Copy, Clone, Debug)]
 enum Error {
-    Syntax(Refused),
+    Syntax(Rejected),
     NestedTooDeeply,
 }
 
-/// Whether Prettier takes the file at `path` for Handlebars.
+/// True if Prettier treats the file at `path` as Handlebars.
 pub fn is_handlebars_path(path: &[u8]) -> bool {
     let ends_with = |extension: &[u8]| {
         path.len()
@@ -43,7 +44,7 @@ pub fn is_handlebars_path(path: &[u8]) -> bool {
     ends_with(b".hbs") || ends_with(b".handlebars")
 }
 
-/// What can be used again for the next file.
+/// Allocations that are reused for the next file.
 #[derive(Default)]
 pub struct Scratch {
     tokens: Vec<lexer::Token>,
@@ -52,13 +53,13 @@ pub struct Scratch {
     elements: Elements,
 }
 
-/// Prettier's `parse`, of a text without `\r` that has blanks in the place of its front matter, which ends at
-/// `front_matter_end`. Returns the template.
+/// Prettier's `parse`. `content` has no `\r`, and its front matter, which ends at `front_matter_end`, has been replaced
+/// with spaces. Returns the template node.
 fn parse(
     content: &[u8],
     front_matter_end: usize,
     scratch: &mut Scratch,
-    refusal: &Refusal,
+    rejection: &Rejection,
 ) -> Result<ast::NodeId, Error> {
     let Scratch {
         tokens,
@@ -69,19 +70,19 @@ fn parse(
     tokens.clear();
     statements.clear();
     tree.clear();
-    // Positions have 31 bits.
+    // Offsets are stored in 31 bits.
     if content.len() > i32::MAX as usize {
-        return Err(Error::Syntax(refusal.note(Message::TooLarge, 0)));
+        return Err(Error::Syntax(rejection.note(Message::TooLarge, 0)));
     }
-    lexer::lex(content, tokens, refusal)?;
-    parser::parse(content, tokens, tree, statements, refusal)?;
+    lexer::lex(content, tokens, rejection)?;
+    parser::parse(content, tokens, tree, statements, rejection)?;
     let front_matter =
         (front_matter_end > 0).then(|| tree.add(ast::Kind::FrontMatter, 0, front_matter_end));
-    tokenizer::build(content, statements, front_matter, tree, refusal)
+    tokenizer::build(content, statements, front_matter, tree, rejection)
 }
 
-/// `text`, which has no `\r`, with blanks in the place of its front matter, so that all positions stay. And where the
-/// front matter ends.
+/// Returns `text`, which has no `\r`, with its front matter replaced with spaces so that all offsets stay valid, and
+/// the end of the front matter.
 fn without_front_matter(text: &[u8]) -> (Cow<'_, [u8]>, usize) {
     let front_matter_end = crate::front_matter::parse(text).map_or(0, |it| it.end);
     let mut content = Cow::Borrowed(text);
@@ -95,21 +96,22 @@ fn without_front_matter(text: &[u8]) -> (Cow<'_, [u8]>, usize) {
     (content, front_matter_end)
 }
 
-/// `--debug-check`: whether `after`, which `format` has made of `before`, says what that says. See `verify.rs`.
-pub fn says_the_same(
+/// `--debug-check`: true if `after`, the output of `format` for `before`, still means the same as `before`. See
+/// `verify.rs`.
+pub fn has_same_meaning(
     before: &[u8],
     after: &[u8],
     options: &FormatOptions,
 ) -> Result<bool, FormatError> {
     let mut scratch = Scratch::default();
-    let written = [before, after].map(|text| {
+    let serialized = [before, after].map(|text| {
         let text = bun_core::strings::crlf_as_lf(text.strip_prefix(BOM).unwrap_or(text));
         let (content, front_matter_end) = without_front_matter(&text);
         let template = parse(
             &content,
             front_matter_end,
             &mut scratch,
-            &Refusal::default(),
+            &Rejection::default(),
         )
         .ok()?;
         if scratch.tree.has_lost_text {
@@ -132,7 +134,7 @@ pub fn says_the_same(
         writer.template(template);
         Some((writer.out, writer.stack.ran_out()))
     });
-    let [Some(before), Some(after)] = written else {
+    let [Some(before), Some(after)] = serialized else {
         return Ok(false);
     };
     if before.1 || after.1 {
@@ -161,16 +163,16 @@ pub fn format(
         return Ok(());
     }
     let is_range = start > 0 || end < text.len();
-    // For Prettier a no-break space is white space too.
+    // Prettier also counts a no-break space as whitespace here.
     if !is_range && text.trim_ascii().is_empty() {
         out.extend_from_slice(&original[..first]);
         return Ok(());
     }
     let (content, front_matter_end) = without_front_matter(text);
-    let refusal = Refusal::default();
+    let rejection = Rejection::default();
     let template =
-        parse(&content, front_matter_end, scratch, &refusal).map_err(|error| match error {
-            Error::Syntax(_) => FormatError::SyntaxErrorAt(refusal.reason())
+        parse(&content, front_matter_end, scratch, &rejection).map_err(|error| match error {
+            Error::Syntax(_) => FormatError::SyntaxErrorAt(rejection.reason())
                 .before_normalizing_end_of_line(&original[first..]),
             Error::NestedTooDeeply => FormatError::NestedTooDeeply,
         })?;
@@ -179,7 +181,7 @@ pub fn format(
         return Ok(());
     }
     out.extend_from_slice(&original[..first]);
-    // Nothing in a template is something that Prettier formats on its own.
+    // Prettier can't format a part of a template on its own, so with a range the text is printed back unchanged.
     if is_range {
         return doc::print(
             doc::replace_end_of_line_with_literal_lines(Cow::Borrowed(text)),

@@ -8,7 +8,7 @@ pub struct PreferReadOnlyProps;
 
 const READ_ONLY_PROP: Message = Message::new("readOnlyProp", "Prop '{{name}}' should be read-only.");
 
-/// upstream's `isReadonly`: without a type annotation nothing is.
+/// Upstream's `isReadonly`. Nothing is read-only without a type annotation.
 fn is_readonly(signature: Member<'_>) -> bool {
     signature.ty().is_some() && signature.flags().contains(Flags::READONLY)
 }
@@ -31,7 +31,7 @@ impl Rule for PreferReadOnlyProps {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         let prop_types = declared(&[]);
-        // Only a type declares a signature.
+        // Signatures only come from types, so a file without any has nothing to report.
         let mut has_type = false;
         prop_types.nodes(file, &mut |node, _| {
             has_type |= match node {
@@ -48,7 +48,7 @@ impl Rule for PreferReadOnlyProps {
         for id in components.list() {
             let Some(declared_prop_types) = &components.component(id).declared_prop_types else { continue };
             for (prop_name, prop) in declared_prop_types.iter() {
-                // A method, a getter and a setter are `TSMethodSignature`s.
+                // Methods, getters and setters are `TSMethodSignature`s.
                 if let Some(Node::Member(signature)) = prop.node
                     && signature.kind() == MemberKind::Property
                     && !is_readonly(signature)

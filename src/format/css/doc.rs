@@ -1,16 +1,14 @@
 //! Prettier's documents (`src/document/builders`) and `printDocToString`.
 //!
-//! The printer for CSS counts on what Prettier's printer does with its documents: two line breaks in a row are an
-//! empty line, `dedent` undoes the last `indent`, a `fill` measures its items the way it does. The one for YAML
-//! counts on `markAsRoot`, `dedentToRoot` and literal lines. So this is a printer that follows Prettier's step by
-//! step.
+//! The CSS printer relies on details of Prettier's doc printer: two line breaks in a row make an empty line, `dedent`
+//! undoes the last `indent`, and a `fill` measures its items in a particular way. The YAML printer relies on
+//! `markAsRoot`, `dedentToRoot` and literal lines. So this printer follows Prettier's step by step.
 //!
-//! What it prints is `Elements`: the parts of a document one after the other, in one list. `Doc` is a tree like
-//! Prettier's, for who takes documents apart and puts them together in other ways. It is written to `Elements` to be
-//! printed.
+//! The printer's input is `Elements`, a document flattened into one list. `Doc` is a tree like Prettier's, for code
+//! that takes documents apart and reassembles them. It's written into `Elements` to be printed.
 //!
-//! The list is shorter than the document: texts that follow each other are one element, and a group with nothing but
-//! text in it is one element before its text. So whoever wants to know where an element is asks `position`.
+//! The list can be shorter than the document. Adjacent texts are merged into one element, and a group that contains
+//! only text becomes a single marker before that text. So call `position` to find out where an element is.
 
 use crate::FormatError;
 use crate::options::{FormatOptions, IndentStyle, LineEnding};
@@ -29,15 +27,15 @@ pub(crate) enum Line {
     Literal,
 }
 
-/// What `align` indents by.
+/// How much `align` indents by.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Alignment {
     /// `align(" ".repeat(n), ..)`
     Spaces(u32),
     /// `align("> ", ..)`
     Text(&'static str),
-    /// `ifBreak(align(" ".repeat(broken), x), align(" ".repeat(flat), x), { groupId })`, with `x` in it once: a document
-    /// of Prettier can have the same thing in two places, these cannot.
+    /// `ifBreak(align(" ".repeat(broken), x), align(" ".repeat(flat), x), { groupId })`, storing `x` only once.
+    /// Prettier's documents can share a subtree between two places. These can't.
     IfBreak {
         group_id: u32,
         broken: u32,
@@ -60,9 +58,9 @@ pub(crate) enum Doc<'a> {
     Group {
         contents: Box<Doc<'a>>,
         should_break: bool,
-        /// Not 0: what an `ifBreak` can ask about it by.
+        /// If nonzero, an `ifBreak` can refer to the group by this id.
         id: u32,
-        /// `conditionalGroup([contents])`: a line break in it does not break it, nor what is around it.
+        /// `conditionalGroup([contents])`: a forced line break inside doesn't break this group or the groups around it.
         is_conditional: bool,
     },
     /// Alternating content and separators.
@@ -70,13 +68,15 @@ pub(crate) enum Doc<'a> {
     IfBreak {
         break_contents: Box<Doc<'a>>,
         flat_contents: Box<Doc<'a>>,
-        /// Not 0: the group that it is about. Otherwise the one that it is in.
+        /// If nonzero, the group to test. Otherwise the enclosing group.
         group_id: u32,
     },
     LineSuffix(Box<Doc<'a>>),
     LineSuffixBoundary,
     BreakParent,
     Line(Line),
+    /// Stops later line breaks from trimming the spaces and tabs printed before it. Prettier has no equivalent.
+    KeepTrailingWhitespace,
 }
 
 impl<'a> Doc<'a> {
@@ -88,17 +88,21 @@ impl<'a> Doc<'a> {
         matches!(self, Doc::Text(text) if text.is_empty())
     }
 
-    /// What it is. It is nothing afterwards.
+    /// Moves the document out and leaves `EMPTY`.
     fn take(&mut self) -> Doc<'a> {
         std::mem::replace(self, Doc::EMPTY)
     }
 
-    /// Moves what is in it, and has something in it, to `rest`.
+    /// Moves the children that can have children themselves to `rest`.
     fn take_contents(&mut self, rest: &mut Vec<Doc<'a>>) {
         let mut take = |contents: &mut Doc<'a>| {
             if !matches!(
                 contents,
-                Doc::Text(_) | Doc::LineSuffixBoundary | Doc::BreakParent | Doc::Line(_)
+                Doc::Text(_)
+                    | Doc::LineSuffixBoundary
+                    | Doc::BreakParent
+                    | Doc::Line(_)
+                    | Doc::KeepTrailingWhitespace
             ) {
                 rest.push(contents.take());
             }
@@ -120,13 +124,17 @@ impl<'a> Doc<'a> {
                 take(break_contents);
                 take(flat_contents);
             }
-            Doc::Text(_) | Doc::LineSuffixBoundary | Doc::BreakParent | Doc::Line(_) => {}
+            Doc::Text(_)
+            | Doc::LineSuffixBoundary
+            | Doc::BreakParent
+            | Doc::Line(_)
+            | Doc::KeepTrailingWhitespace => {}
         }
     }
 }
 
-/// In a loop: a document is nested as deeply as what it is made of, and what the compiler makes to let go of one calls
-/// itself for each level without asking whether there is stack for that.
+/// Drops iteratively. A document is nested as deeply as its source, and the compiler-generated drop recurses once per
+/// level without a stack check.
 impl Drop for Doc<'_> {
     fn drop(&mut self) {
         let mut rest = Vec::new();
@@ -167,7 +175,7 @@ impl<'a> From<Vec<Doc<'a>>> for Doc<'a> {
     }
 }
 
-/// `[a, b, ..]`, of anything that is a document or can be made one. `Doc` has to be in scope.
+/// `[a, b, ..]`, where each part is anything that converts into a `Doc`. `Doc` must be in scope.
 macro_rules! docs {
     ($($part:expr),* $(,)?) => {
         Doc::Array(vec![$(Doc::from($part)),*])
@@ -216,7 +224,7 @@ pub(crate) fn join<'a>(separator: &Doc<'a>, docs: Vec<Doc<'a>>) -> Vec<Doc<'a>> 
     parts
 }
 
-/// What Prettier's `textToDoc` makes of the document of a text in another language: `stripTrailingHardline(cleanDoc(doc))`.
+/// Does what Prettier's `textToDoc` does to an embedded language's document: `stripTrailingHardline(cleanDoc(doc))`.
 pub(crate) fn text_to_doc(doc: Doc<'_>) -> Result<Doc<'_>, FormatError> {
     let stack = Stack::new();
     let doc = strip_trailing_hardline(clean(doc, &stack), &stack);
@@ -226,8 +234,7 @@ pub(crate) fn text_to_doc(doc: Doc<'_>) -> Result<Doc<'_>, FormatError> {
     }
 }
 
-/// Prettier's `cleanDoc`: no arrays in arrays, no empty strings, strings that follow each other are
-/// one.
+/// Prettier's `cleanDoc`: flattens nested arrays, drops empty strings and merges adjacent strings.
 fn clean<'a>(mut doc: Doc<'a>, stack: &Stack) -> Doc<'a> {
     if !stack.has_room() {
         return doc;
@@ -329,13 +336,15 @@ fn clean<'a>(mut doc: Doc<'a>, stack: &Stack) -> Doc<'a> {
                 _ => Doc::Array(cleaned),
             }
         }
-        leaf @ (Doc::Text(_) | Doc::Line(_) | Doc::LineSuffixBoundary | Doc::BreakParent) => {
-            leaf.take()
-        }
+        leaf @ (Doc::Text(_)
+        | Doc::Line(_)
+        | Doc::LineSuffixBoundary
+        | Doc::BreakParent
+        | Doc::KeepTrailingWhitespace) => leaf.take(),
     }
 }
 
-/// Prettier's `stripTrailingHardlineFromDoc`. `doc` is clean.
+/// Prettier's `stripTrailingHardlineFromDoc`. `doc` must already be clean.
 fn strip_trailing_hardline<'a>(mut doc: Doc<'a>, stack: &Stack) -> Doc<'a> {
     if !stack.has_room() {
         return doc;
@@ -377,7 +386,8 @@ fn strip_trailing_hardline<'a>(mut doc: Doc<'a>, stack: &Stack) -> Doc<'a> {
         | Doc::MarkAsRoot(_)
         | Doc::Line(_)
         | Doc::LineSuffixBoundary
-        | Doc::BreakParent => {}
+        | Doc::BreakParent
+        | Doc::KeepTrailingWhitespace => {}
     }
     doc
 }
@@ -393,9 +403,9 @@ pub(crate) fn replace_end_of_line_with_literal_lines(text: Cow<'_, [u8]>) -> Doc
     Doc::Array(join(&Doc::Line(Line::Literal), lines))
 }
 
-// ───────────────────────────── a document in one piece ─────────────────────────────
+// ───────────────────────────── a flattened document ─────────────────────────────
 
-/// What `indent`, `align` and the like do to the indentation.
+/// How `indent`, `align` and friends change the indentation.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum IndentCommand {
     Indent,
@@ -405,7 +415,8 @@ pub(crate) enum IndentCommand {
     MarkAsRoot,
 }
 
-/// A part of a document. What has contents starts with one and ends with another, and knows where that is.
+/// One entry of a flattened document. A container is a start element and an end element, and the start stores the end's
+/// index.
 #[derive(Copy, Clone)]
 enum Element {
     /// A range of `Elements::texts`, and its width.
@@ -417,43 +428,42 @@ enum Element {
     Line(Line),
     /// `hardline`
     HardLine,
-    /// It has done what it does when it was written.
+    /// Already applied when it was written (see `break_groups`).
     BreakParent,
     LineSuffixBoundary,
-    /// What has been taken out.
+    /// A removed element.
     Nothing,
-    /// The blanks at the end of what has been written stay, whatever follows. Prettier has no word for it, so neither
-    /// has a tree.
-    KeepBlanks,
-    /// A group with nothing but text in it, which follows. To come to a group is all that it does to the printer, so it
-    /// has no end.
+    /// `Doc::KeepTrailingWhitespace`
+    KeepTrailingWhitespace,
+    /// A group that contains only the text that follows. It only affects the printer at its start, so it has no end
+    /// element.
     TextGroup,
     StartGroup {
         end: u32,
-        /// Not 0: what an `ifBreak` can ask about it by.
+        /// If nonzero, an `ifBreak` can refer to the group by this id.
         id: u32,
         should_break: bool,
-        /// `conditionalGroup([contents])`: a line break in it does not break it, nor what is around it.
+        /// `conditionalGroup([contents])`: a forced line break inside doesn't break this group or the groups around it.
         is_conditional: bool,
-        /// There is nothing in it that is printed one way in a broken group and another way in one that is not.
+        /// Nothing inside prints differently depending on whether the group is broken.
         is_plain: bool,
     },
     /// An index into `Elements::indents`.
     StartIndent(u32),
-    /// Of a group or an indentation.
+    /// Ends a group or an indentation.
     End,
     StartFill,
     EndFill,
-    /// What is in a `fill`: contents and separators, which take turns.
+    /// An item of a `fill`. Contents and separators alternate.
     StartItem {
         end: u32,
     },
     EndItem,
-    /// The contents for a broken group follow, then `Else`, then the others.
+    /// Followed by the contents for a broken group, then `Else`, then the flat contents.
     StartIfBreak {
         otherwise: u32,
         end: u32,
-        /// Not 0: the group that it is about. Otherwise the one that it is in.
+        /// If nonzero, the group to test. Otherwise the enclosing group.
         group_id: u32,
     },
     Else {
@@ -464,31 +474,32 @@ enum Element {
     },
 }
 
-/// What a group is started with.
+/// Arguments of `start_group`.
 #[derive(Copy, Clone, Default)]
 pub(crate) struct Group {
     pub(crate) should_break: bool,
-    /// Not 0: what an `ifBreak` can ask about it by.
+    /// If nonzero, an `ifBreak` can refer to the group by this id.
     pub(crate) id: u32,
     /// `conditionalGroup([contents])`
     pub(crate) is_conditional: bool,
 }
 
-/// A document: its parts, one after the other. It is written from the first to the last.
+/// A flattened document. It's written front to back.
 pub(crate) struct Elements {
-    /// The first is a `hardlineWithoutBreakParent`, for the printer.
+    /// Index 0 is a `hardlineWithoutBreakParent`, which the printer jumps to at a `lineSuffixBoundary`.
     list: Vec<Element>,
     texts: Vec<u8>,
     indents: Vec<IndentCommand>,
-    /// Where what has been started and not ended starts.
+    /// Start indexes of the containers that are still open.
     open: Vec<u32>,
-    /// The same, of the groups only.
+    /// The same, for groups only.
     open_groups: Vec<u32>,
-    /// How many of `open_groups`, from the first on, are known not to be plain.
-    groups_with_lines: usize,
-    /// So many of `list` stay where they are and as they are: somebody has asked where the next one goes.
+    /// The first `groups_marked_not_plain` entries of `open_groups` are already marked as not plain.
+    groups_marked_not_plain: usize,
+    /// The first `settled` elements of `list` can't be merged or moved anymore, because `position` handed out an index
+    /// after them.
     settled: usize,
-    /// Not all of a [`Doc`] has been written.
+    /// A [`Doc`] was too deep to write completely.
     is_nested_too_deeply: bool,
 }
 
@@ -500,7 +511,7 @@ impl Default for Elements {
             indents: Vec::new(),
             open: Vec::new(),
             open_groups: Vec::new(),
-            groups_with_lines: 0,
+            groups_marked_not_plain: 0,
             settled: 1,
             is_nested_too_deeply: false,
         }
@@ -514,21 +525,21 @@ impl Elements {
         self.indents.clear();
         self.open.clear();
         self.open_groups.clear();
-        self.groups_with_lines = 0;
+        self.groups_marked_not_plain = 0;
         self.settled = 1;
         self.is_nested_too_deeply = false;
     }
 
-    /// What is written next depends on whether the group that it is in is broken.
-    fn mark_groups(&mut self) {
-        for index in self.groups_with_lines..self.open_groups.len() {
+    /// Marks every open group as not plain. Called before writing anything that prints differently in a broken group.
+    fn mark_groups_not_plain(&mut self) {
+        for index in self.groups_marked_not_plain..self.open_groups.len() {
             if let Element::StartGroup { is_plain, .. } =
                 &mut self.list[self.open_groups[index] as usize]
             {
                 *is_plain = false;
             }
         }
-        self.groups_with_lines = self.open_groups.len();
+        self.groups_marked_not_plain = self.open_groups.len();
     }
 
     pub(crate) fn text(&mut self, text: &[u8]) {
@@ -540,8 +551,8 @@ impl Elements {
         self.add_text(start, text.len() as u32, string_width(text) as u32);
     }
 
-    /// `text`, for what the printers write of their own: printable ASCII, so it is as wide as it is long. Where it is
-    /// written, how long it is is known most of the time.
+    /// Like `text`, for the printers' own literals. They're printable ASCII, so the width equals the length. Inlined
+    /// because the length is usually a constant at the call site.
     #[inline]
     pub(crate) fn token(&mut self, text: &str) {
         debug_assert!(crate::ir::width::is_all_printable(text.as_bytes()));
@@ -553,7 +564,7 @@ impl Elements {
         self.add_text(start, len, len);
     }
 
-    /// Texts that follow each other, here and in `texts`, are one.
+    /// Merges the text into the previous element if the two are adjacent both in `list` and in `texts`.
     fn add_text(&mut self, start: u32, len: u32, width: u32) {
         match self.list.get_mut(self.settled..) {
             Some(
@@ -573,8 +584,8 @@ impl Elements {
         }
     }
 
-    /// A group around the text that is written next. Where it starts in a text makes no difference, nor how many there
-    /// are: it comes first.
+    /// Starts a group around the text written next. Its position within a run of text doesn't matter, nor does the
+    /// number of groups, so a single marker goes before the whole run.
     pub(crate) fn text_group(&mut self) {
         match self.list.get_mut(self.settled..) {
             Some([.., Element::TextGroup] | [.., Element::TextGroup, Element::Text { .. }]) => {}
@@ -587,13 +598,13 @@ impl Elements {
     }
 
     pub(crate) fn line(&mut self, line: Line) {
-        self.mark_groups();
+        self.mark_groups_not_plain();
         self.list.push(Element::Line(line));
     }
 
     /// `hardline`
     pub(crate) fn hard_line(&mut self) {
-        self.mark_groups();
+        self.mark_groups_not_plain();
         self.list.push(Element::HardLine);
         self.break_groups();
     }
@@ -603,11 +614,11 @@ impl Elements {
         self.break_groups();
     }
 
-    /// What Prettier's `propagateBreaks` makes of a `breakParent`.
+    /// Does what Prettier's `propagateBreaks` does for a `breakParent`.
     fn break_groups(&mut self) {
         for &group in self.open_groups.iter().rev() {
             match &mut self.list[group as usize] {
-                // So are the groups around it.
+                // The groups around it are already broken too.
                 Element::StartGroup {
                     should_break: true, ..
                 } => break,
@@ -621,12 +632,12 @@ impl Elements {
         }
     }
 
-    pub(crate) fn keep_blanks(&mut self) {
-        self.list.push(Element::KeepBlanks);
+    pub(crate) fn keep_trailing_whitespace(&mut self) {
+        self.list.push(Element::KeepTrailingWhitespace);
     }
 
     pub(crate) fn line_suffix_boundary(&mut self) {
-        self.mark_groups();
+        self.mark_groups_not_plain();
         self.list.push(Element::LineSuffixBoundary);
     }
 
@@ -635,7 +646,7 @@ impl Elements {
         self.list.push(element);
     }
 
-    /// Ends what has been started last with `last`, if that is something.
+    /// Closes the innermost open container, if any, with `last`.
     fn end(&mut self, last: Element) {
         let Some(start) = self.open.pop() else {
             return;
@@ -661,9 +672,9 @@ impl Elements {
         if should_break {
             self.break_groups();
         }
-        // Whether it is broken depends on the groups around it, and something else on that.
+        // This group's mode depends on the groups around it, and an `ifBreak` elsewhere depends on this group's mode.
         if id != 0 {
-            self.mark_groups();
+            self.mark_groups_not_plain();
         }
         self.open_groups.push(self.list.len() as u32);
         self.start(Element::StartGroup {
@@ -677,7 +688,7 @@ impl Elements {
 
     pub(crate) fn end_group(&mut self) {
         self.open_groups.pop();
-        self.groups_with_lines = self.groups_with_lines.min(self.open_groups.len());
+        self.groups_marked_not_plain = self.groups_marked_not_plain.min(self.open_groups.len());
         let start = self.open.last().map_or(0, |start| *start as usize);
         let text = match self.list.get(start..) {
             _ if start < self.settled => return self.end(Element::End),
@@ -710,7 +721,7 @@ impl Elements {
 
     pub(crate) fn start_indent(&mut self, command: IndentCommand) {
         let known = match command {
-            // There is no other for the same group.
+            // Each group id has only one of these, so there's nothing to reuse.
             IndentCommand::Align(Alignment::IfBreak { .. }) => None,
             _ => self.indents.iter().position(|it| *it == command),
         };
@@ -741,9 +752,9 @@ impl Elements {
         self.end(Element::EndItem);
     }
 
-    /// Starts an `ifBreak`, with the contents for a broken group.
+    /// Starts an `ifBreak`. The contents for a broken group come first.
     pub(crate) fn start_if_break(&mut self, group_id: u32) {
-        self.mark_groups();
+        self.mark_groups_not_plain();
         self.start(Element::StartIfBreak {
             otherwise: 0,
             end: 0,
@@ -751,7 +762,7 @@ impl Elements {
         });
     }
 
-    /// Starts the contents for a group on one line.
+    /// Starts the flat contents of an `ifBreak`.
     pub(crate) fn otherwise(&mut self) {
         let at = self.list.len() as u32;
         if let Some(&start) = self.open.last()
@@ -763,14 +774,14 @@ impl Elements {
     }
 
     pub(crate) fn end_if_break(&mut self) {
-        // The `Else` and the start end at the same place.
+        // `Else` and `StartIfBreak` have the same end index.
         self.end(Element::Nothing);
         self.list.pop();
         self.end(Element::Nothing);
     }
 
     pub(crate) fn start_line_suffix(&mut self) {
-        self.mark_groups();
+        self.mark_groups_not_plain();
         self.start(Element::StartLineSuffix { end: 0 });
     }
 
@@ -778,13 +789,13 @@ impl Elements {
         self.end(Element::Nothing);
     }
 
-    /// Where the next element goes, for `remove_lines_from`.
+    /// Returns the index of the next element, for `remove_lines_from`. Pins the elements before it.
     pub(crate) fn position(&mut self) -> usize {
         self.settled = self.list.len();
         self.settled
     }
 
-    /// Prettier's `removeLines` for everything from `start` on.
+    /// Prettier's `removeLines`, applied to every element from `start` on.
     pub(crate) fn remove_lines_from(&mut self, start: usize) {
         let mut at = start;
         while let Some(element) = self.list.get_mut(at) {
@@ -799,7 +810,7 @@ impl Elements {
                     };
                 }
                 Element::Line(Line::Soft) => *element = Element::Nothing,
-                // Only the contents for a group on one line stay.
+                // Keep only the flat contents.
                 Element::StartIfBreak { otherwise, .. } => {
                     self.list[at..=(otherwise as usize).max(at)].fill(Element::Nothing);
                     at = otherwise as usize;
@@ -810,7 +821,6 @@ impl Elements {
         }
     }
 
-    /// Puts `inserted` before the element `at`.
     fn insert(&mut self, at: usize, inserted: &[Element]) {
         let count = inserted.len() as u32;
         let shift = |position: &mut u32| {
@@ -839,8 +849,8 @@ impl Elements {
         self.settled = self.list.len();
     }
 
-    /// In an item of a `fill`: makes a `fill` of its own of what the `fill` has so far, which starts the only item
-    /// that there is then.
+    /// Call inside an item of a `fill`. Closes the `fill` and nests it at the start of the first item of a new `fill`.
+    /// That item stays open.
     pub(crate) fn nest_fill(&mut self) {
         self.end_item();
         let Some(&start) = self.open.last() else {
@@ -854,7 +864,7 @@ impl Elements {
         self.open.extend([start, start + 1]);
     }
 
-    /// In an item of a `fill`: puts an empty item and a `hardline` before the items of the `fill`.
+    /// Call inside an item of a `fill`. Inserts an empty item and a `hardline` separator before the `fill`'s items.
     pub(crate) fn start_fill_with_hard_line(&mut self) {
         let [.., fill, _] = self.open[..] else {
             return;
@@ -870,11 +880,11 @@ impl Elements {
                 Element::EndItem,
             ],
         );
-        self.mark_groups();
+        self.mark_groups_not_plain();
         self.break_groups();
     }
 
-    /// Ends a `fill` the way `cleanDoc` leaves it: with a single item, it is that item.
+    /// Ends a `fill` the way `cleanDoc` would leave it: a `fill` with a single item becomes that item.
     pub(crate) fn end_cleaned_fill(&mut self) {
         let has_one_item = self.open.last().is_some_and(|&start| {
             matches!(
@@ -888,7 +898,7 @@ impl Elements {
         }
     }
 
-    /// Ends a `fill` that is to be an array of its items after all.
+    /// Ends a `fill`, but turns it into a plain array of its items.
     pub(crate) fn end_fill_as_array(&mut self) {
         let Some(start) = self.open.pop() else {
             return;
@@ -903,7 +913,7 @@ impl Elements {
         }
     }
 
-    /// Writes `doc`.
+    /// Appends `doc`.
     pub(crate) fn document(&mut self, doc: &Doc<'_>) {
         self.write(doc, bun_core::StackCheck::init());
     }
@@ -971,10 +981,10 @@ impl Elements {
             Doc::LineSuffixBoundary => self.line_suffix_boundary(),
             Doc::BreakParent => self.break_parent(),
             Doc::Line(line) => self.line(*line),
+            Doc::KeepTrailingWhitespace => self.keep_trailing_whitespace(),
         }
     }
 
-    /// The document as a tree.
     pub(crate) fn to_tree(&self) -> Result<Doc<'static>, FormatError> {
         let (mut at, stack) = (1, Stack::for_tree());
         let tree = Doc::Array(self.tree_up_to(&mut at, self.list.len(), &stack));
@@ -992,7 +1002,7 @@ impl Elements {
         while *at < end {
             let element = self.list[*at];
             *at += 1;
-            // What is in it, and its end.
+            // Reads a container's contents and skips its end element.
             let contents = |at: &mut usize, end: u32| {
                 let contents = Doc::Array(self.tree_up_to(at, end as usize, stack));
                 *at = end as usize + 1;
@@ -1006,6 +1016,7 @@ impl Elements {
                 Element::BreakParent => Doc::BreakParent,
                 Element::Line(line) => Doc::Line(line),
                 Element::LineSuffixBoundary => Doc::LineSuffixBoundary,
+                Element::KeepTrailingWhitespace => Doc::KeepTrailingWhitespace,
                 Element::TextGroup => match self.list.get(*at) {
                     Some(&Element::Text { start, len, .. }) if *at < end => {
                         *at += 1;
@@ -1059,7 +1070,6 @@ impl Elements {
                 }
                 Element::StartLineSuffix { end } => Doc::LineSuffix(contents(at, end)),
                 Element::Nothing
-                | Element::KeepBlanks
                 | Element::End
                 | Element::EndFill
                 | Element::StartItem { .. }
@@ -1072,7 +1082,7 @@ impl Elements {
         parts
     }
 
-    /// Where the indentation ends whose contents start at `from`.
+    /// Returns the index of the `End` of the indentation whose contents start at `from`.
     fn end_of_indent(&self, from: usize) -> usize {
         let mut depth = 0usize;
         let mut at = from;
@@ -1100,42 +1110,43 @@ enum Mode {
 
 /// Prettier's `Indent`.
 struct Indent {
-    /// An indentation that has its `queue`, in which there are only `Indent` and `Align`, without the last. `None`: there
-    /// is nothing in the queue.
+    /// The indentation whose `queue` is this one's without its last entry. The queue only has `Indent` and `Align`
+    /// entries. `None` if the queue is empty.
     before_last: Option<u32>,
-    /// Its `value` is that of `after`, and then `last`: a text for each would take the square of the depth.
+    /// `value` is `after`'s `value` followed by `last`. Storing the whole string for each indentation would be
+    /// quadratic in the depth.
     after: u32,
-    last: Written,
-    /// How long the `value` is.
+    last: IndentPart,
+    /// Length of `value` in bytes.
     bytes: usize,
-    /// The byte that all of the `value` is, as nearly every one is.
+    /// Set if `value` is a single byte repeated, which it nearly always is.
     only: Option<u8>,
     length: usize,
     root: u32,
-    /// What has been made of it.
+    /// Indentations already derived from this one.
     derived: Vec<(IndentCommand, u32)>,
 }
 
 #[derive(Copy, Clone)]
-enum Written {
+enum IndentPart {
     Nothing,
     Tab,
-    Blanks(usize),
+    Padding(usize),
     Text(&'static str),
 }
 
-/// What is set back at the end of something that is being printed.
+/// State to restore when the container being printed ends.
 #[derive(Copy, Clone)]
 struct Frame {
     mode: Mode,
     indent: u32,
-    /// Of a `fill`: how the separator is printed that follows the contents that are being printed, and whether the
-    /// next item is a separator.
+    /// For a `fill`: the mode of the separator after the contents being printed, and whether the next item is a
+    /// separator.
     separator_mode: Mode,
     is_at_separator: bool,
 }
 
-/// Elements that are printed later.
+/// A range of elements to print later.
 #[derive(Copy, Clone)]
 struct Task {
     start: u32,
@@ -1149,21 +1160,21 @@ pub(crate) struct Printer<'o> {
     use_tabs: bool,
     tab_width: usize,
     new_line: &'static [u8],
-    /// What a line break in a text and a literal line are written as. See `FormatOptions::is_in_markdown`.
+    /// Printed for a line break inside a text and for a literal line. See `FormatOptions::is_in_markdown`.
     literal_new_line: &'static [u8],
     pub(crate) out: &'o mut Vec<u8>,
-    /// Where `out` started.
+    /// Trailing whitespace isn't trimmed past this offset. Starts as `out`'s initial length.
     start: usize,
-    /// The first is `ROOT_INDENT`.
+    /// Index 0 is `ROOT_INDENT`.
     indents: Vec<Indent>,
-    /// The modes of the groups that have an id and have been printed.
+    /// Modes of the printed groups that have an id.
     group_modes: Vec<(u32, Mode)>,
     frames: Vec<Frame>,
     tasks: Vec<Task>,
     line_suffixes: Vec<Task>,
-    /// For `fits`: the modes around what it is looking at.
+    /// Scratch space for `fits`: the modes of the containers around the current element.
     outer_modes: Vec<Mode>,
-    /// Why what has been printed is of no use. From there on nothing is indented.
+    /// Set once the output is unusable. Nothing is indented after that.
     failure: Option<FormatError>,
 }
 
@@ -1180,7 +1191,7 @@ fn group_mode(group_modes: &[(u32, Mode)], id: u32) -> Option<Mode> {
 }
 
 impl<'o> Printer<'o> {
-    /// `text`: what is formatted, for `endOfLine: "auto"`.
+    /// `text` is the source being formatted, for `endOfLine: "auto"`.
     pub(crate) fn new(options: &FormatOptions, text: &[u8], out: &'o mut Vec<u8>) -> Self {
         let start = out.len();
         Printer {
@@ -1203,7 +1214,7 @@ impl<'o> Printer<'o> {
             indents: vec![Indent {
                 before_last: None,
                 after: 0,
-                last: Written::Nothing,
+                last: IndentPart::Nothing,
                 bytes: 0,
                 only: None,
                 length: 0,
@@ -1219,12 +1230,12 @@ impl<'o> Printer<'o> {
         }
     }
 
-    /// What is printed from now on is of no use.
+    /// Marks the output as unusable.
     pub(crate) fn fail(&mut self, failure: FormatError) {
         self.failure = Some(failure);
     }
 
-    /// Whether what has been printed is what the documents print.
+    /// Returns the failure, if any, that made the output unusable.
     pub(crate) fn result(&self) -> Result<(), FormatError> {
         match self.failure {
             Some(failure) => Err(failure),
@@ -1232,17 +1243,17 @@ impl<'o> Printer<'o> {
         }
     }
 
-    /// What `indent` makes of the indentation `indent`. That of the root is 0.
+    /// Returns `indent` with one more `indent` level. The root indentation is 0.
     pub(crate) fn indented(&mut self, indent: u32) -> u32 {
         self.make_indent(indent, IndentCommand::Indent)
     }
 
-    /// What `dedent` makes of the indentation `indent`.
+    /// Returns `indent` after a `dedent`.
     pub(crate) fn dedented(&mut self, indent: u32) -> u32 {
         self.make_indent(indent, IndentCommand::Dedent)
     }
 
-    /// What a `hardline` does. Returns the column behind the indentation.
+    /// Prints a `hardline`. Returns the column after the indentation.
     pub(crate) fn write_hard_line(&mut self, indent: u32) -> usize {
         self.trim();
         self.out.extend_from_slice(self.new_line);
@@ -1267,7 +1278,7 @@ impl<'o> Printer<'o> {
         if let Some((_, derived)) = parent.derived.iter().find(|(it, _)| *it == command) {
             return *derived;
         }
-        // What is written depends on the queue alone.
+        // The printed indentation depends only on the queue.
         let (same_queue, root) = match command {
             IndentCommand::Dedent => (parent.before_last.unwrap_or(indent), parent.root),
             IndentCommand::MarkAsRoot => (indent, indent),
@@ -1275,19 +1286,21 @@ impl<'o> Printer<'o> {
         };
         let same = &self.indents[same_queue as usize];
         let (after, last, bytes, width) = match command {
-            IndentCommand::Indent if self.use_tabs => (same_queue, Written::Tab, 1, self.tab_width),
+            IndentCommand::Indent if self.use_tabs => {
+                (same_queue, IndentPart::Tab, 1, self.tab_width)
+            }
             IndentCommand::Indent => {
                 let width = self.tab_width;
-                (same_queue, Written::Blanks(width), width, width)
+                (same_queue, IndentPart::Padding(width), width, width)
             }
             IndentCommand::Align(Alignment::Spaces(width)) => {
                 let width = width as usize;
-                (same_queue, Written::Blanks(width), width, width)
+                (same_queue, IndentPart::Padding(width), width, width)
             }
             IndentCommand::Align(Alignment::Text(text)) => {
-                (same_queue, Written::Text(text), text.len(), text.len())
+                (same_queue, IndentPart::Text(text), text.len(), text.len())
             }
-            // The printer has made spaces of the first.
+            // `print` has already turned `IfBreak` into `Spaces`.
             IndentCommand::Align(Alignment::IfBreak { .. })
             | IndentCommand::Dedent
             | IndentCommand::DedentToRoot
@@ -1295,8 +1308,8 @@ impl<'o> Printer<'o> {
         };
         let only = match last {
             _ if bytes == 0 => same.only,
-            Written::Blanks(_) if same.bytes == 0 || same.only == Some(b' ') => Some(b' '),
-            Written::Tab if same.bytes == 0 || same.only == Some(b'\t') => Some(b'\t'),
+            IndentPart::Padding(_) if same.bytes == 0 || same.only == Some(b' ') => Some(b' '),
+            IndentPart::Tab if same.bytes == 0 || same.only == Some(b'\t') => Some(b'\t'),
             _ => None,
         };
         let (bytes, length) = (same.bytes + bytes, same.length + width);
@@ -1345,13 +1358,13 @@ impl<'o> Printer<'o> {
                 break;
             }
             match last {
-                Written::Nothing => {}
-                Written::Blanks(count) => end -= count,
-                Written::Tab => {
+                IndentPart::Nothing => {}
+                IndentPart::Padding(count) => end -= count,
+                IndentPart::Tab => {
                     end -= 1;
                     self.out[end] = b'\t';
                 }
-                Written::Text(text) => {
+                IndentPart::Text(text) => {
                     end -= text.len();
                     self.out[end..][..text.len()].copy_from_slice(text.as_bytes());
                 }
@@ -1376,8 +1389,8 @@ impl<'o> Printer<'o> {
         }
     }
 
-    /// Prettier's `fits`, for `elements[start..end]` on one line. `rest`: what follows it, in the mode that it is
-    /// printed in, up to its end. Behind that come `self.tasks`. `None`: nothing counts but the elements.
+    /// Prettier's `fits` for `elements[start..end]` in flat mode. `rest` is the range that follows, with the mode it's
+    /// printed in, and `self.tasks` come after that. With `None`, only the elements themselves are measured.
     fn fits(
         &mut self,
         elements: &Elements,
@@ -1390,13 +1403,13 @@ impl<'o> Printer<'o> {
         let mut has_line_suffix = !self.line_suffixes.is_empty();
         let mut has_pending_space = false;
         let (mut at, mut end, mut mode) = (start, end, Mode::Flat);
-        // What is left of what follows: the frames that end there, and the tasks.
+        // What's left to measure after the elements: the frames that end in `rest`, and the tasks.
         let mut rest = rest;
         let (mut frames_left, mut tasks_left) = (
             self.frames.len(),
             if rest.is_some() { self.tasks.len() } else { 0 },
         );
-        // How the next item of the `fill` that is being printed is printed, if that has been decided.
+        // The mode of the next item of the `fill` being printed, if that's already decided.
         let mut separator_mode = None;
         let outer_modes = &mut self.outer_modes;
         outer_modes.clear();
@@ -1448,7 +1461,7 @@ impl<'o> Printer<'o> {
                 }
                 Element::End | Element::EndFill | Element::EndItem => match outer_modes.pop() {
                     Some(outer) => mode = outer,
-                    // It is the end of something that is being printed.
+                    // This ends a container that the printer is currently inside.
                     None => {
                         frames_left = frames_left.saturating_sub(1);
                         let Some(frame) = self.frames.get(frames_left) else {
@@ -1491,17 +1504,17 @@ impl<'o> Printer<'o> {
                 Element::BreakParent
                 | Element::Nothing
                 | Element::TextGroup
-                | Element::KeepBlanks => {}
+                | Element::KeepTrailingWhitespace => {}
             }
         }
         false
     }
 
-    /// Prints `elements`, which are a part of a document that no group is around and that a line break follows: with
-    /// the indentation `indent`, from the column `position` on. Returns the column behind it.
+    /// Prints `elements` with indentation `indent`, starting at column `position`, and returns the column after them.
+    /// They must be a part of a document that isn't inside a group and is followed by a line break.
     ///
-    /// This is Prettier's `printDocToString`. Its stack of commands is `frames` here, for what the elements that
-    /// follow are in, and `tasks`, for what is not printed where it is.
+    /// This is Prettier's `printDocToString`. Its command stack is split in two here: `frames` for the containers
+    /// around the current element, and `tasks` for ranges that are printed out of order.
     pub(crate) fn print(&mut self, elements: &Elements, indent: u32, mut position: usize) -> usize {
         let list = &elements.list[..];
         let (mut at, mut end, mut mode, mut indent) = (1, list.len(), Mode::Break, indent);
@@ -1655,7 +1668,7 @@ impl<'o> Printer<'o> {
                 }
                 Element::LineSuffixBoundary => {
                     if !self.line_suffixes.is_empty() {
-                        // A `hardlineWithoutBreakParent`, then what follows.
+                        // Print the `hardlineWithoutBreakParent` at index 0, then continue from here.
                         self.tasks.push(Task {
                             start: at as u32,
                             end: end as u32,
@@ -1679,11 +1692,11 @@ impl<'o> Printer<'o> {
                         continue;
                     }
                     if mode == Mode::Flat {
-                        // The groups that follow have been measured without it.
+                        // The groups that follow were measured without this line break.
                         should_remeasure = true;
                     }
                     if !self.line_suffixes.is_empty() {
-                        // They come first, then the line once more.
+                        // Print the line suffixes first, then this line again.
                         self.tasks.push(Task {
                             start: at as u32 - 1,
                             end: end as u32,
@@ -1701,15 +1714,15 @@ impl<'o> Printer<'o> {
                         position = self.write_indent(indent);
                     }
                 }
-                Element::KeepBlanks => self.start = self.out.len(),
+                Element::KeepTrailingWhitespace => self.start = self.out.len(),
                 Element::BreakParent | Element::Nothing => {}
             }
         }
         position
     }
 
-    /// What Prettier does with a `fill`: how the contents that are in `elements[start..end]` are printed, and the
-    /// separator behind them.
+    /// Prettier's `fill` logic. Returns the mode of the contents in `elements[start..end]` and the mode of the
+    /// separator after them.
     fn measure_fill(
         &mut self,
         elements: &Elements,
@@ -1742,7 +1755,7 @@ impl<'o> Printer<'o> {
     }
 }
 
-/// Appends what `doc` prints to `out`. `text`: what is formatted, for `endOfLine: "auto"`.
+/// Prints `doc` and appends the result to `out`. `text` is the source being formatted, for `endOfLine: "auto"`.
 pub(crate) fn print(
     doc: Doc<'_>,
     options: &FormatOptions,

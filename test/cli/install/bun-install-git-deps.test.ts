@@ -21,7 +21,7 @@ import {
   writeFileSync,
 } from "fs";
 import { lstat, readdir, readlink } from "fs/promises";
-import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, hostedGitRepository, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { dirname, join, resolve } from "path";
 import { pathToFileURL } from "url";
 
@@ -52,6 +52,8 @@ async function run(cwd: string, cmd: string[], what: string, stdin?: string) {
 function git(cwd: string, ...args: string[]) {
   return run(cwd, ["git", ...args], `git ${args.join(" ")}`);
 }
+
+const nullDevice = isWindows ? "NUL" : "/dev/null";
 
 // `path` as one word of a `sh` script.
 const quote = (path: string) => `'${path.replaceAll("'", "'\\''")}'`;
@@ -347,9 +349,8 @@ test.concurrent(
       [nameOf("a")]: sharedTransitive,
     });
 
-    // the race depends on threadpool scheduling; two fresh-cache attempts to
-    // make the failure reliable on the unfixed code. Each has a project and a
-    // cache of its own so that both run at once: a cold install of 16 git
+    // The race depends on thread pool scheduling, so two attempts with a fresh cache make the failure reliable without
+    // the fix. Each attempt has its own project and cache so that both can run at once. A cold install of 16 git
     // packages spawns about 60 git processes, which is slow on Windows.
     const attempts = await Promise.all(
       [0, 1].map(async attempt => {
@@ -504,11 +505,10 @@ test.concurrent(
   30_000,
 );
 
-// The URL parser hands back the committish of a GitHub dependency
-// percent-decoded, and one that was written with an escape was then dropped
-// from the request: `#feat%2Fx` asked for `/tarball/` (the default branch). It
-// goes into the request as written, and GitHub decodes it.
-test.concurrent("requests a github: dependency as written when its committish holds a percent-escape", async () => {
+// The URL parser returns the committish of a GitHub dependency percent-decoded. A committish that was written with an
+// escape was then dropped from the request: `#feat%2Fx` requested `/tarball/` (the default branch). Now it's sent as
+// written, and GitHub decodes it.
+test.concurrent("requests a github: dependency as written when its committish has a percent-escape", async () => {
   using dir = tempDir("github-dep-escapes", {});
   const root = String(dir);
 
@@ -552,10 +552,10 @@ test.concurrent("requests a github: dependency as written when its committish ho
   expect(exitCode).toBe(0);
 });
 
-// A part of a GitHub dependency that is not in it the way the URL parser hands
-// it back was left empty: an empty committish installed the default branch, an
-// empty owner asked for `/repos//<repo>/`. Such a dependency fails to resolve.
-test.concurrent("does not request a github: dependency with a part it cannot find", async () => {
+// If a part of a GitHub dependency couldn't be found in the form that the URL parser returns, it was left empty. An
+// empty committish installed the default branch, and an empty owner requested `/repos//<repo>/`. Now such a dependency
+// fails to resolve.
+test.concurrent("does not request a github: dependency if a part of it can't be found", async () => {
   using dir = tempDir("github-dep-not-found", {});
   const root = String(dir);
   const tarball = await tarballOf("scope-pkg-a-0000000", packageFiles(nameOf("a"), "default-branch"));
@@ -592,16 +592,14 @@ test.concurrent("does not request a github: dependency with a part it cannot fin
   expect(exitCode).toBe(1);
 });
 
-// Each ref of a GitHub repository is its own tarball download, and each
-// extracted tarball became a new package. Refs on one commit gave packages with
-// the same name and resolution, which bun.lock holds as one package. The
-// isolated linker linked all of them into the same store directory at once and
-// failed at random with `EEXIST: File exists: failed to link package`.
+// Each ref of a GitHub repository is a separate tarball download, and each extracted tarball became a new package. Refs
+// that point to the same commit produced packages with the same name and resolution, which bun.lock stores as one
+// package. The isolated linker linked all of them into the same store directory at once and failed at random with
+// `EEXIST: File exists: failed to link package`.
 //
-// The fixture serves `testowner/testrepo` (gh-dep) and `testowner/leaf`
-// (gh-leaf, a dependency of gh-dep). Every branch and tag of a repository
-// answers with the tarball of the commit in `heads`, so all of them resolve to
-// that commit: bun reads it from the name of the tarball's root directory.
+// The fixture serves `testowner/testrepo` (gh-dep) and `testowner/leaf` (gh-leaf, a dependency of gh-dep). Every branch
+// and tag of a repository returns the tarball of the commit in `heads`, so they all resolve to that commit. Bun reads
+// the commit from the name of the tarball's root directory.
 async function serveGithub() {
   const tarballs = {
     testrepo: {
@@ -657,8 +655,8 @@ const ghLeafStoreEntry = "gh-leaf@github+testowner+leaf+bbbbbbb";
 // where the isolated linker puts gh-leaf for gh-dep, relative to node_modules
 const ghLeafOfGhDep = join(".bun", ghDepStoreEntry, "node_modules", "gh-leaf");
 
-// What the isolated linker must leave in node_modules: one store entry for
-// gh-dep, with gh-leaf linked next to it, and every alias linked to that entry.
+// Checks what the isolated linker should leave in node_modules: one store entry for gh-dep, with gh-leaf linked next to
+// it, and every alias linked to that entry.
 function expectOneStoreEntry(project: string, aliases: string[]) {
   const modules = join(project, "node_modules");
   expect({
@@ -673,13 +671,12 @@ function expectOneStoreEntry(project: string, aliases: string[]) {
   });
 }
 
-// Not on Windows: the three extracts finish into one cache folder, and there an
-// extract that finds the folder taken moves it away (`move_to_cache_directory`
-// in extract_tarball.rs) while another one still reads its package.json. Now
-// and then that one makes a package with no name and no dependencies.
+// Skipped on Windows. The three extractions all end up in one cache folder, and on Windows an extraction that finds the
+// folder taken moves it away (`move_to_cache_directory` in extract_tarball.rs) while another one is still reading its
+// package.json. Occasionally that one creates a package with no name and no dependencies.
 for (const linker of ["isolated", "hoisted"] as const) {
   test.concurrent.skipIf(isWindows)(
-    `${linker} linker installs github: refs on one commit as one package`,
+    `${linker} linker installs github: refs that point to one commit as one package`,
     async () => {
       using dir = tempDir(`github-one-commit-${linker}`, {});
       const root = String(dir);
@@ -692,8 +689,8 @@ for (const linker of ["isolated", "hoisted"] as const) {
       // the hoisted linker puts gh-leaf in the root node_modules
       const leaf = linker === "isolated" ? ghLeafOfGhDep : "gh-leaf";
 
-      // the collision depends on threadpool scheduling; two fresh-cache attempts
-      // to make the failure reliable on the unfixed code
+      // The collision depends on thread pool scheduling, so two attempts with a fresh cache make the failure reliable
+      // without the fix.
       for (let attempt = 0; attempt < 2; attempt++) {
         rmSync(join(project, "node_modules"), { recursive: true, force: true });
         rmSync(join(project, "bun.lock"), { force: true });
@@ -740,13 +737,13 @@ for (const linker of ["isolated", "hoisted"] as const) {
   );
 }
 
-// The same for a repository whose package.json has no name, or that has no
-// package.json: the package is named after the repository, for every ref.
+// The same for a repository whose package.json has no name, or that has no package.json. The package is named after the
+// repository, for every ref.
 test.concurrent.skipIf(isWindows).each([
   ["a package.json without a name", { "package.json": JSON.stringify({ version: "1.0.0" }) }],
   ["no package.json", {}],
 ])(
-  "isolated linker installs github: refs on one commit of a repository with %s as one package",
+  "isolated linker installs github: refs that point to one commit of a repository with %s as one package",
   async (_, manifest) => {
     using dir = tempDir("github-one-commit-nameless", {});
     const root = String(dir);
@@ -776,10 +773,10 @@ test.concurrent.skipIf(isWindows).each([
   },
 );
 
-// The same collision with a lockfile: the locked package and the package of a
-// new ref on its commit were two packages.
+// The same collision with a lockfile: the locked package and the package for a new ref to the same commit were two
+// packages.
 test.concurrent(
-  "isolated linker reuses a locked github: package for a new ref on its commit",
+  "isolated linker reuses a locked github: package for a new ref to the same commit",
   async () => {
     using dir = tempDir("github-one-commit-locked", {});
     const root = String(dir);
@@ -793,8 +790,8 @@ test.concurrent(
       expect(exitCode).toBe(0);
     }
 
-    // a fresh machine that adds a second ref: keep bun.lock, drop node_modules + cache.
-    // The branch of gh-leaf moved in the meantime; bun.lock pins its old commit.
+    // Simulate a fresh machine that adds a second ref: keep bun.lock, delete node_modules and the cache. gh-leaf's
+    // branch has moved in the meantime, and bun.lock pins its old commit.
     writeProject(root, { a: "github:testowner/testrepo#main", b: "github:testowner/testrepo#v1" });
     rmSync(join(project, "node_modules"), { recursive: true });
     github.heads.leaf = "ccccccc";
@@ -834,7 +831,7 @@ test.concurrent(
 // commit did not move, so a nested branch ref follows its branch.
 for (const parent of ["github:", "git+"] as const) {
   test.concurrent(
-    `bun update moves a nested github: ref when the commit of its ${parent} parent did not move`,
+    `bun update moves a nested github: ref when the commit of its ${parent} parent hasn't moved`,
     async () => {
       using dir = tempDir("git-update-nested", {});
       const root = String(dir);
@@ -870,8 +867,8 @@ for (const parent of ["github:", "git+"] as const) {
   );
 }
 
-// The `git+` twin: the checkout task is keyed by the resolved commit, so two
-// refs on one commit share one task and one package.
+// The same with `git+`. The checkout task is keyed by the resolved commit, so two refs to one commit share one task and
+// one package.
 test.concurrent(
   "isolated linker reuses a locked git package for a new ref on its commit",
   async () => {
@@ -936,8 +933,8 @@ test.concurrent(
     const urlOf = (name: string) => `http://localhost:${server.port}/${name}.tgz`;
     tarballs = {
       "/tb-dep.tgz": await tarballOf("package", packageFiles("tb-dep", "tb-dep")),
-      // q-dep -> r-dep -> tb-dep: bun reads r-dep's package.json two downloads
-      // after it started the download of tb-dep for `b`
+      // q-dep -> r-dep -> tb-dep. Bun reads r-dep's package.json two downloads after it started downloading tb-dep for
+      // `b`.
       "/q-dep.tgz": await tarballOf("package", packageFiles("q-dep", "q-dep", { "r-dep": urlOf("r-dep") })),
       "/r-dep.tgz": await tarballOf("package", packageFiles("r-dep", "r-dep", { c: urlOf("tb-dep") })),
     };
@@ -958,7 +955,7 @@ test.concurrent(
     writeProject(root, { a: urlOf("tb-dep"), b: urlOf("tb-dep"), q: urlOf("q-dep") });
     rmSync(join(project, "node_modules"), { recursive: true });
     const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), {}, "--linker=isolated");
-    // q-dep and r-dep: `b` and `c` find the locked tb-dep by its URL, and the linker downloads it
+    // Only q-dep and r-dep. `b` and `c` find the locked tb-dep by its URL, and the linker downloads it.
     expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
       "Resolving dependencies
       Resolved, downloaded and extracted [4]
@@ -1099,8 +1096,8 @@ for (const linker of ["hoisted", "isolated"] as const) {
   );
 }
 
-// A registry that has version 1.0.0 of each package: name -> the rest of its
-// package.json. The marker its index.js exports is `<name>-from-registry`.
+// Serves a registry that has version 1.0.0 of each package. `packages` maps a name to the rest of its package.json. The
+// marker that its index.js exports is `<name>-from-registry`.
 async function serveRegistry(packages: Record<string, object>) {
   const tarballs = new Map<string, Uint8Array>();
   for (const [name, fields] of Object.entries(packages)) {
@@ -1135,14 +1132,14 @@ async function lockedResolutions(project: string): Promise<Record<string, unknow
   );
 }
 
-// Where the isolated linker installed the `name` that `dir` resolves: the
-// store entry, whose node_modules has the package and what it resolves.
+// Returns where the isolated linker installed the `name` that `dir` resolves. That's the store entry, whose
+// node_modules has the package and its dependencies.
 function storeEntryOf(dir: string, name: string) {
   return dirname(dirname(realpathSync(join(dir, "node_modules", name))));
 }
 
-// `<root>/project`, a workspace root with no dependencies of its own, and its
-// one member `packages/m`. A new workspace gets the isolated linker.
+// Writes `<root>/project`, a workspace root with no dependencies of its own, and its only workspace, `packages/m`. A
+// new project with workspaces gets the isolated linker.
 function writeWorkspace(root: string, dependencies: Record<string, string>) {
   const project = join(root, "project");
   const member = join(project, "packages", "m");
@@ -1156,8 +1153,7 @@ function writeWorkspace(root: string, dependencies: Record<string, string>) {
 // and keeps one of them with it: the first that its depth-first, name-ordered
 // walk reaches. In the tests below that is, for the git package `b` of the
 // workspace member `m`, the peer dependency `b: "*"` of `a`, which is walked
-// first. It is not a git dependency, and bun.lock resolves a required one to
-// the registry's `b` (`a/b`). Once the repository was cloned, the install took
+// first. It is not a git dependency. Once the repository was cloned, the install took
 // the checkout to start from that dependency: it started none and never exited.
 for (const peer of ["required", "optional"] as const) {
   test.concurrent(
@@ -1167,7 +1163,6 @@ for (const peer of ["required", "optional"] as const) {
       const root = String(dir);
       const bare = await makeSharedRepo(root, [{ name: "b", branch: "main" }], "b.git");
       const repoUrl = `git+${pathToFileURL(bare)}`;
-      // A required peer is also resolved on its own, from the registry.
       await using registry = await serveRegistry(
         peer === "required"
           ? { a: { peerDependencies: { b: "*" } }, b: {} }
@@ -1179,9 +1174,8 @@ for (const peer of ["required", "optional"] as const) {
         a: "a@1.0.0",
         b: `b@${repoUrl}#${branchCommits(bare).main}`,
         m: "m@workspace:packages/m",
-        ...(peer === "required" && { "a/b": "b@1.0.0" }),
       };
-      // What `m` resolves, and the `b` that `a` resolves: the git one.
+      // What `m` resolves, and the `b` that `a` resolves, which should be the git one.
       const installed = async () => ({
         ...(await installedVersions(member, ["a", "b"])),
         "a > b": await installedVersionOf(storeEntryOf(member, "a"), "b"),
@@ -1199,7 +1193,7 @@ for (const peer of ["required", "optional"] as const) {
         expect(exitCode).toBe(0);
       }
 
-      // simulate a fresh machine: keep bun.lock, drop node_modules + cache
+      // Simulate a fresh machine: keep bun.lock, delete node_modules and the cache.
       rmSync(join(project, "node_modules"), { recursive: true });
       rmSync(join(member, "node_modules"), { recursive: true });
       const { stdout, stderr, exitCode } = await runInstall(
@@ -1216,62 +1210,63 @@ for (const peer of ["required", "optional"] as const) {
   );
 }
 
-// One clone serves every package of a repository. Three wait for it here, and
-// the one that a's peer dependency stands for is neither the first nor the last.
-test.concurrent("checks out every package of a repository when a peer dependency stands for one of them", async () => {
-  using dir = tempDir("git-dep-peer-shared-repo", {});
-  const root = String(dir);
-  const names = ["aa", "b", "c"];
-  const bare = await makeSharedRepo(
-    root,
-    names.map(name => ({ name, branch: name })),
-  );
-  const repoUrl = `git+${pathToFileURL(bare)}`;
-  const commits = branchCommits(bare);
-  await using registry = await serveRegistry({ a: { peerDependencies: { b: "*" } }, b: {} });
-  const env = { BUN_CONFIG_REGISTRY: registry.url.href };
-  const { project, member } = writeWorkspace(root, {
-    a: "1.0.0",
-    ...Object.fromEntries(names.map(name => [name, `${repoUrl}#${name}`])),
-  });
-  const locked = {
-    a: "a@1.0.0",
-    ...Object.fromEntries(names.map(name => [name, `${name}@${repoUrl}#${commits[name]}`])),
-    m: "m@workspace:packages/m",
-    "a/b": "b@1.0.0",
-  };
-  const installed = async () => ({
-    ...(await installedVersions(member, ["a", ...names])),
-    "a > b": await installedVersionOf(storeEntryOf(member, "a"), "b"),
-  });
-  const expected = { a: "a-from-registry", aa: "aa", b: "b", c: "c", "a > b": "b" };
-  const output = [expect.stringContaining("bun install v"), "", "4 packages installed"];
+// One clone serves every package of a repository. Three packages wait for it here, and the one that's installed through
+// a's peer dependency is neither the first nor the last.
+test.concurrent(
+  "checks out every package of a repository when one of them is installed through a peer dependency",
+  async () => {
+    using dir = tempDir("git-dep-peer-shared-repo", {});
+    const root = String(dir);
+    const names = ["aa", "b", "c"];
+    const bare = await makeSharedRepo(
+      root,
+      names.map(name => ({ name, branch: name })),
+    );
+    const repoUrl = `git+${pathToFileURL(bare)}`;
+    const commits = branchCommits(bare);
+    await using registry = await serveRegistry({ a: { peerDependencies: { b: "*" } }, b: {} });
+    const env = { BUN_CONFIG_REGISTRY: registry.url.href };
+    const { project, member } = writeWorkspace(root, {
+      a: "1.0.0",
+      ...Object.fromEntries(names.map(name => [name, `${repoUrl}#${name}`])),
+    });
+    const locked = {
+      a: "a@1.0.0",
+      ...Object.fromEntries(names.map(name => [name, `${name}@${repoUrl}#${commits[name]}`])),
+      m: "m@workspace:packages/m",
+    };
+    const installed = async () => ({
+      ...(await installedVersions(member, ["a", ...names])),
+      "a > b": await installedVersionOf(storeEntryOf(member, "a"), "b"),
+    });
+    const expected = { a: "a-from-registry", aa: "aa", b: "b", c: "c", "a > b": "b" };
+    const output = [expect.stringContaining("bun install v"), "", "4 packages installed"];
 
-  // fresh install to produce a complete lockfile
-  {
-    const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache-warm"), env);
-    expect(stderr).toContain("Saved lockfile");
+    // fresh install to produce a complete lockfile
+    {
+      const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache-warm"), env);
+      expect(stderr).toContain("Saved lockfile");
+      expect(installOutput(stdout)).toEqual(output);
+      expect(await installed()).toEqual(expected);
+      expect(await lockedResolutions(project)).toEqual(locked);
+      expect(exitCode).toBe(0);
+    }
+
+    // Simulate a fresh machine: keep bun.lock, delete node_modules and the cache.
+    rmSync(join(project, "node_modules"), { recursive: true });
+    rmSync(join(member, "node_modules"), { recursive: true });
+    const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), env, "--frozen-lockfile");
+    expect(stderr).toBe("");
     expect(installOutput(stdout)).toEqual(output);
     expect(await installed()).toEqual(expected);
-    expect(await lockedResolutions(project)).toEqual(locked);
     expect(exitCode).toBe(0);
-  }
+  },
+);
 
-  // simulate a fresh machine: keep bun.lock, drop node_modules + cache
-  rmSync(join(project, "node_modules"), { recursive: true });
-  rmSync(join(member, "node_modules"), { recursive: true });
-  const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), env, "--frozen-lockfile");
-  expect(stderr).toBe("");
-  expect(installOutput(stdout)).toEqual(output);
-  expect(await installed()).toEqual(expected);
-  expect(exitCode).toBe(0);
-});
-
-// The repository is gone when the cold install clones it. The failed clone
-// fails every package that waits for it. The one that a's peer dependency
-// stands for was left waiting, and the install never exited.
+// The repository is gone by the time the cold install clones it. The failed clone fails every package that's waiting
+// for it. The one that's installed through a's peer dependency used to be left waiting, and the install never exited.
 test.concurrent(
-  "fails every package of a repository that cannot be cloned when a peer dependency stands for one of them",
+  "fails every package of a repository that can't be cloned when one of them is installed through a peer dependency",
   async () => {
     using dir = tempDir("git-dep-peer-clone-fails", {});
     const root = String(dir);
@@ -1293,7 +1288,6 @@ test.concurrent(
       const { stderr, exitCode } = await runInstall(project, join(root, "cache-warm"), env);
       expect(stderr).toContain("Saved lockfile");
       expect(await installedVersions(member, ["a", ...names])).toEqual({ a: "a-from-registry", b: "b", c: "c" });
-      expect((await lockedResolutions(project))["a/b"]).toBe("b@1.0.0");
       expect(exitCode).toBe(0);
     }
 
@@ -1360,7 +1354,7 @@ test.concurrent(
       expect(exitCode).toBe(0);
     }
 
-    // simulate a fresh machine: keep bun.lock, drop node_modules + cache
+    // Simulate a fresh machine: keep bun.lock, delete node_modules and the cache.
     rmSync(join(project, "node_modules"), { recursive: true });
     const { stdout, stderr, exitCode } = await runInstall(
       project,
@@ -1376,11 +1370,10 @@ test.concurrent(
   },
 );
 
-// bun.lock can spell a repository's URL differently from the dependency: an
-// scp-form URL comes back from it with `ssh://` in front. Here the locked URL
-// has a `.` segment. The install clones and checks out what bun.lock names. It
-// used to go by the dependency once the clone ended: it cloned a second time
-// and left the package waiting.
+// bun.lock can spell a repository's URL differently than the dependency does. For example, an scp-style URL is read
+// back from it with `ssh://` in front. Here the locked URL has a `.` segment. The install clones and checks out what's
+// in bun.lock. It used to switch to the dependency's URL once the clone finished, so it cloned a second time and left
+// the package waiting.
 test.concurrent(
   "isolated linker checks out a git package whose URL bun.lock spells differently from the dependency",
   async () => {
@@ -1413,10 +1406,9 @@ test.concurrent(
   },
 );
 
-// A patch is applied to a git package right after its checkout when the
-// repository was cloned earlier in the same process, here to resolve the new
-// dependency `c`. The package to patch was looked up by the name of the
-// dependency, which an alias does not share with it: `panic: Package not found`.
+// A patch is applied to a git package right after its checkout if the repository was cloned earlier in the same
+// process, which happens here to resolve the new dependency `c`. The package to patch was looked up by the dependency's
+// name, which is different for an alias: `panic: Package not found`.
 for (const [added, editsPackageJson] of [
   ["`bun install <url>`", false],
   ["an edit of package.json", true],
@@ -1461,7 +1453,7 @@ index 0000000000000000000000000000000000000000..11111111111111111111111111111111
         expect(exitCode).toBe(0);
       }
 
-      // a fresh machine: keep bun.lock, drop node_modules + cache, and add `c`
+      // Simulate a fresh machine: keep bun.lock, delete node_modules and the cache, and add `c`.
       rmSync(join(project, "node_modules"), { recursive: true });
       const args: string[] = [];
       if (editsPackageJson) writePackageJson({ "b-alias": `${repoUrl}#b`, c: `${repoUrl}#c` });
@@ -1496,12 +1488,160 @@ test.concurrent("installs a git+file:// dependency", async () => {
   expect(exitCode).toBe(0);
 });
 
-// Two installs of different projects that share a cold cache both clone the
-// repository of a git dependency. The one that finishes second finds the
-// other's clone in the cache already. It used to swap its own clone in and
-// delete the other one, which the first install still had open: its checkout
-// then failed with "fatal: repository '<cache>/.<id>.tmp (deleted)' does not
-// exist". The same applies to the checkout folder.
+test.concurrent(
+  "a failed prepare script of a git dependency explains that its devDependencies aren't installed",
+  async () => {
+    using dir = tempDir("git-dep-prepare", {});
+    const root = String(dir);
+    const manifest = {
+      name: "lib",
+      version: "1.0.0",
+      scripts: { prepare: "exit 3" },
+      devDependencies: { tool: "1.0.0" },
+    };
+    const bare = await makeSharedRepo(root, [{ branch: "lib", files: { "package.json": JSON.stringify(manifest) } }]);
+    const project = writeProject(root, { lib: `git+${pathToFileURL(bare)}#lib` });
+    const packageJson = JSON.parse(readFileSync(join(project, "package.json"), "utf8"));
+    writeFileSync(join(project, "package.json"), JSON.stringify({ ...packageJson, trustedDependencies: ["lib"] }));
+
+    const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+    expect(stderr.split(/\r?\n/).filter(line => /^(error|note):/.test(line))).toEqual([
+      'error: prepare script from "lib" exited with 3',
+      "note: devDependencies of a git dependency are not installed before its prepare scripts",
+    ]);
+    expect(exitCode).toBe(3);
+  },
+);
+
+// `lib` on the branch of that name, with the given dependencies and files next to its package.json.
+function libWithFolders(dependencies: Record<string, string>, more: Partial<BranchPackage> = {}): BranchPackage {
+  const manifest = JSON.stringify({ name: "lib", version: "1.0.0", dependencies });
+  return { branch: "lib", ...more, files: { "package.json": manifest, ...more.files } };
+}
+
+for (const linker of ["hoisted", "isolated"]) {
+  test.concurrent(`the dependencies of a file: folder inside a git dependency are installed (${linker})`, async () => {
+    using dir = tempDir("git-dep-contained-folder", {});
+    const root = String(dir);
+    const repoUrl = `git+${pathToFileURL(join(root, "shared-repo.git"))}`;
+    await makeSharedRepo(root, [
+      { name: "leaf", branch: "leaf" },
+      libWithFolders(
+        { sub: "file:./packages/sub" },
+        {
+          files: {
+            "index.js": "module.exports = require('sub');",
+            "packages/sub/package.json": JSON.stringify({
+              name: "sub",
+              version: "1.0.0",
+              dependencies: { leaf: `${repoUrl}#leaf`, next: "file:../next" },
+            }),
+            "packages/sub/index.js": "module.exports = ['sub', require('leaf'), require('next')].join('+');",
+            "packages/next/package.json": JSON.stringify({ name: "next", version: "1.0.0" }),
+            "packages/next/index.js": "module.exports = 'next';",
+          },
+        },
+      ),
+    ]);
+    const project = writeProject(root, { lib: `${repoUrl}#lib` });
+    const lockfile = () => readFileSync(join(project, "bun.lock"), "utf8");
+    const load = (cache: string) => runBun(project, cache, {}, "-e", "console.log(require('lib'))");
+
+    const first = await runInstall(project, join(root, "cache"), {}, `--linker=${linker}`);
+    expect(first.stderr).not.toContain("error:");
+    expect((await load(join(root, "cache"))).stdout).toBe("sub+leaf+next\n");
+    const locked = await lockedPackages(project);
+    expect(Object.keys(locked).sort()).toEqual(["leaf", "lib", "lib/next", "lib/sub"]);
+    expect(locked.lib[1]).toEqual({
+      dependencies: { leaf: `${repoUrl}#leaf`, next: "file:packages/next", sub: "file:./packages/sub" },
+    });
+    expect(first.exitCode).toBe(0);
+
+    // bun.lock alone produces the same tree on a machine with an empty cache.
+    const saved = lockfile();
+    rmSync(join(project, "node_modules"), { recursive: true, force: true });
+    const frozen = await runInstall(project, join(root, "cache-2"), {}, `--linker=${linker}`, "--frozen-lockfile");
+    expect(frozen.stderr).not.toContain("error:");
+    expect((await load(join(root, "cache-2"))).stdout).toBe("sub+leaf+next\n");
+    expect(frozen.exitCode).toBe(0);
+
+    rmSync(join(project, "bun.lock"));
+    const again = await runInstall(project, join(root, "cache-3"), {}, `--linker=${linker}`, "--lockfile-only");
+    expect(lockfile()).toBe(saved);
+    expect(again.exitCode).toBe(0);
+  });
+}
+
+// The author of `lib` wrote these for their own monorepo. In the user's project `mine` is another package.
+test.concurrent("a file: folder inside a git dependency can't reach into the project that installs it", async () => {
+  using dir = tempDir("git-dep-contained-folder-project", {});
+  const root = String(dir);
+  const repoUrl = `git+${pathToFileURL(join(root, "shared-repo.git"))}`;
+  await makeSharedRepo(root, [
+    libWithFolders(
+      { sub: "file:./packages/sub" },
+      {
+        files: {
+          "packages/sub/package.json": JSON.stringify({
+            name: "sub",
+            version: "1.0.0",
+            dependencies: { mine: "workspace:*", theirs: "workspace:*", linked: "link:linked", listed: "catalog:" },
+          }),
+        },
+      },
+    ),
+  ]);
+  const project = writeProject(root, { lib: `${repoUrl}#lib` });
+  writeFileSync(
+    join(project, "package.json"),
+    JSON.stringify({ name: "project", workspaces: ["packages/*"], dependencies: { lib: `${repoUrl}#lib` } }),
+  );
+  mkdirSync(join(project, "packages", "mine"), { recursive: true });
+  writeFileSync(join(project, "packages", "mine", "package.json"), JSON.stringify({ name: "mine", version: "1.0.0" }));
+
+  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(stderr).not.toContain("error:");
+  expect((await lockedPackages(project)).lib[1]).toEqual({ dependencies: { sub: "file:./packages/sub" } });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a file: folder that's missing from a git dependency is an error", async () => {
+  using dir = tempDir("git-dep-missing-folder", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [libWithFolders({ sub: "file:./packages/typo" })]);
+  const repoUrl = `git+${pathToFileURL(bare)}`;
+  const project = writeProject(root, { lib: `${repoUrl}#lib` });
+
+  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(stderr).toContain(
+    `error: failed to read package.json of "sub@file:./packages/typo" declared by lib@${repoUrl}#${branchCommits(bare).lib}: ENOENT`,
+  );
+  expect(existsSync(join(project, "bun.lock"))).toBe(false);
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent(
+  "a file: folder of a git dependency isn't read through a symlink that leaves the checkout",
+  async () => {
+    using dir = tempDir("git-dep-linked-folder", {
+      "outside/package.json": JSON.stringify({ name: "sub", version: "1.0.0" }),
+    });
+    const root = String(dir);
+    const bare = await makeSharedRepo(root, [
+      libWithFolders({ sub: "file:./packages/sub" }, { links: { "packages/sub": join(root, "outside") } }),
+    ]);
+    const project = writeProject(root, { lib: `git+${pathToFileURL(bare)}#lib` });
+
+    const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+    expect(stderr).toMatch(/error: failed to read package\.json of "sub@file:\.\/packages\/sub" declared by lib@.*: E/);
+    expect(exitCode).toBe(1);
+  },
+);
+
+// Two installs of different projects that share a cold cache both clone the repository of a git dependency. The one
+// that finishes second finds the other's clone already in the cache. It used to swap in its own clone and delete the
+// other one, which the first install still had open. The first install's checkout then failed with "fatal: repository
+// '<cache>/.<id>.tmp (deleted)' does not exist". The same applies to the checkout folder.
 test.concurrent.skipIf(isWindows)(
   "an install keeps the git cache folders that another install published first",
   async () => {
@@ -1522,14 +1662,14 @@ reach() { : > "$steps/$1"; }
 wait_for() { i=0; while [ ! -e "$steps/$1" ] && [ $i -lt 200 ]; do sleep 0.05; i=$((i+1)); done; }
 case "$INSTALL $*" in
   # Both look for the bare clone in the cache before "first" publishes its own.
-  "first clone "*" --bare "*) wait_for second-clones-bare ;;
+  "first "*" clone "*" --bare "*) wait_for second-clones-bare ;;
   # "second" publishes its bare clone after "first" did, and before "first" uses its own.
-  "second clone "*" --bare "*) reach second-clones-bare; wait_for first-runs-log ;;
-  "first -C "*" log "*) reach first-runs-log; wait_for second-runs-log ;;
-  "second -C "*" log "*) reach second-runs-log ;;
+  "second "*" clone "*" --bare "*) reach second-clones-bare; wait_for first-runs-log ;;
+  "first "*" --git-dir="*" log "*) reach first-runs-log; wait_for second-runs-log ;;
+  "second "*" --git-dir="*" log "*) reach second-runs-log ;;
   # Both look for the checkout in the cache before either publishes its own.
-  "first clone "*" --no-checkout "*) reach first-clones-checkout; wait_for second-clones-checkout ;;
-  "second clone "*" --no-checkout "*) reach second-clones-checkout; wait_for first-clones-checkout ;;
+  "first "*" --git-dir="*" ls-tree "*) reach first-clones-checkout; wait_for second-clones-checkout ;;
+  "second "*" --git-dir="*" ls-tree "*) reach second-clones-checkout; wait_for first-clones-checkout ;;
 esac
 exec ${quote(Bun.which("git", { PATH: gitEnv.PATH })!)} "$@"
 `,
@@ -1556,8 +1696,8 @@ exec ${quote(Bun.which("git", { PATH: gitEnv.PATH })!)} "$@"
       expect(await lockedPackages(project)).toEqual(locked);
       expect(exitCode).toBe(0);
     }
-    // The installs met at every step, and the cache holds one bare clone and
-    // one checkout: an install that lost removed the folder it had built.
+    // The installs met at every step, and the cache has one bare clone and one checkout, because the install that lost
+    // the race removed the folder that it had built.
     expect(readdirSync(steps).sort()).toEqual([
       "first-clones-checkout",
       "first-runs-log",
@@ -1574,11 +1714,9 @@ exec ${quote(Bun.which("git", { PATH: gitEnv.PATH })!)} "$@"
   30_000,
 );
 
-// The same race on Windows, where a script cannot stand in for git, so nothing
-// orders the installs. There the install that lost deleted the published
-// folder by its name, and three of four installs failed, with "fatal:
-// 'C:\$Extend\$Deleted\<id>' does not appear to be a git repository" or
-// "moving <name> to cache dir failed: ENOTEMPTY".
+// The same race on Windows, where a script can't replace git, so nothing orders the installs. There, the install that
+// lost the race deleted the published folder by name, and three of four installs failed with "fatal:
+// 'C:\$Extend\$Deleted\<id>' does not appear to be a git repository" or "moving <name> to cache dir failed: ENOTEMPTY".
 test.concurrent.skipIf(!isWindows)(
   "installs that share a cold cache and a git dependency all succeed",
   async () => {
@@ -1609,9 +1747,8 @@ test.concurrent.skipIf(!isWindows)(
   30_000,
 );
 
-// Only a folder with `.bun-tag` is a complete checkout. A folder without it
-// (what a killed install of an older version left) is replaced, and so is a
-// link to one. What the link points to is left alone.
+// Only a folder with `.bun-tag` is a complete checkout. A folder without it (left by a killed install of an older
+// version) is replaced, and so is a symlink to one. The symlink's target is left alone.
 test.concurrent.each(["folder", "link"] as const)(
   "replaces a %s that has the cache name of a git checkout and no .bun-tag",
   async kind => {
@@ -1686,8 +1823,8 @@ async function serveY() {
 
 type Linker = "hoisted" | "isolated";
 
-// A project with a docs/ folder of its own. The hoisted linker puts a package's own
-// dependencies in node_modules/<package>/node_modules, the isolated linker beside it.
+// Writes a project that has its own docs/ folder. The hoisted linker puts a package's own dependencies in
+// node_modules/<package>/node_modules, and the isolated linker puts them next to the package.
 function writeProjectWithDocs(
   root: string,
   dependencies: Record<string, string>,
@@ -1701,8 +1838,8 @@ function writeProjectWithDocs(
   return project;
 }
 
-// The folder of the `name` that the installed package `dependent` loads: its own copy
-// if it has one, else the one in the node_modules folder that `dependent` is in.
+// Returns the folder of the `name` that the installed package `dependent` loads: its own copy if it has one, or else
+// the one in the node_modules folder that `dependent` is in.
 function dependencyOf(project: string, dependent: string, name: string) {
   const linked = join(project, "node_modules", dependent);
   const installed = existsSync(linked) ? realpathSync(linked) : linked;
@@ -1710,8 +1847,8 @@ function dependencyOf(project: string, dependent: string, name: string) {
   return existsSync(own) ? own : join(dirname(installed), name);
 }
 
-// The repository `a` needs its own copy of @x/docs (the project has another version).
-// `commit` is what the repository itself commits in node_modules.
+// The repository `a` needs its own copy of @x/docs, because the project has another version. `commit` is what the
+// repository itself commits in node_modules.
 async function makeRepoWithNestedDependency(root: string, commit: Pick<BranchPackage, "files" | "links">) {
   const bare = await makeSharedRepo(
     root,
@@ -1727,8 +1864,7 @@ async function makeRepoWithNestedDependency(root: string, commit: Pick<BranchPac
   };
 }
 
-// What the project looks like when `a` and both copies of @x/docs are installed and
-// nothing else changed.
+// Returns what the project looks like when `a` and both copies of @x/docs are installed and nothing else has changed.
 async function nestedDependencyState(project: string) {
   const nested = dependencyOf(project, "a", "@x/docs");
   const committedScope = join(project, "node_modules", "a", "node_modules", "@x");
@@ -1757,9 +1893,9 @@ const committedPackage = {
   },
 };
 
-// bun installs the packages a dependency needs, so what a repository commits in its
-// node_modules is not installed. Each repository here commits something at
-// node_modules/@x, where the hoisted linker puts its copy of @x/docs.
+// Bun installs the packages that a dependency needs, so whatever a repository commits in its node_modules isn't
+// installed. Each repository here commits something at node_modules/@x, which is where the hoisted linker puts its copy
+// of @x/docs.
 const committedNodeModules: { name: string; commit: Pick<BranchPackage, "files" | "links">; linker: Linker }[] = [
   {
     // three directories up from node_modules/a/node_modules is the project
@@ -1778,7 +1914,7 @@ const committedNodeModules: { name: string; commit: Pick<BranchPackage, "files" 
     linker: "hoisted",
   },
   {
-    // the isolated linker puts @x/docs beside `a`, and `a` loads a copy of its own first
+    // The isolated linker puts @x/docs next to `a`, but `a` would load its own copy first.
     name: "a package committed in a git dependency's node_modules is not loaded in place of the one bun installs",
     commit: committedPackage,
     linker: "isolated",
@@ -1800,7 +1936,7 @@ for (const { name, commit, linker } of committedNodeModules) {
       const afterInstall = await nestedDependencyState(project);
       const cached = readdirSync(join(cache, `@G@${sha}`)).sort();
 
-      // a reinstall removes what is at the package's path before it writes there
+      // A reinstall removes whatever is at the package's path before it writes there.
       const reinstall = await runInstall(project, cache, {}, "--force");
       const afterReinstall = await nestedDependencyState(project);
 
@@ -1826,8 +1962,8 @@ function treeOf(dir: string, prefix = ""): string[] {
     .sort();
 }
 
-// A bundled dependency comes inside its dependent, so bun does not install it. The
-// repository `b` bundles `y`. `committed` is what it commits in node_modules.
+// A bundled dependency ships inside its dependent, so Bun doesn't install it. The repository `b` bundles `y`.
+// `committed` is what it commits in node_modules.
 async function makeRepoWithBundledDependency(root: string, committed: Pick<BranchPackage, "files" | "links">) {
   const bare = await makeSharedRepo(
     root,
@@ -1851,9 +1987,8 @@ async function makeRepoWithBundledDependency(root: string, committed: Pick<Branc
   return { url: `git+${pathToFileURL(bare)}`, sha: branchCommits(bare).main };
 }
 
-// The committed copy of `y` needs `@s/w`, which is committed beside it. A package
-// that bundles dependencies keeps the node_modules it commits, but for the links
-// in it: two here, which point out of the package.
+// The committed copy of `y` needs `@s/w`, which is committed next to it. A package that bundles dependencies keeps the
+// node_modules that it commits, except for symlinks. There are two here, and they point out of the package.
 for (const linker of ["hoisted", "isolated"] as const) {
   test.concurrent(
     `a git dependency that bundles dependencies keeps its node_modules without the links in it (${linker} linker)`,
@@ -1894,8 +2029,6 @@ for (const linker of ["hoisted", "isolated"] as const) {
         "y/index.js",
         "y/package.json",
       ];
-      // On Windows git writes a link as a file.
-      if (isWindows) kept.push("@x", "y/up");
       const state = async () => ({
         cached: treeOf(join(checkout, "node_modules")),
         "b's y": await markerIn(dependencyOf(project, "b", "y")),
@@ -1954,7 +2087,11 @@ test.concurrent.each([
     // the static server answers 404 "not found", which git reports as a missing repository
     what: "an http repository that does not exist",
     spec: () => `git+http://localhost:${sharedServer.port}/no-such-repo.git`,
-    warnings: ['warn: "git clone" for "nope" failed', "warn: RepositoryNotFound cloning repository for nope"],
+    warnings: [
+      gitFailed("warn"),
+      'warn: "git clone" for "nope" failed',
+      "warn: RepositoryNotFound cloning repository for nope",
+    ],
   },
   {
     what: "a file repository that does not exist",
@@ -1995,8 +2132,7 @@ test.concurrent("skips an optional git dependency when git is not installed", as
   const emptyPath = join(root, "empty-path");
   mkdirSync(emptyPath);
 
-  // `Path` is how Windows spells it
-  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), { PATH: emptyPath, Path: emptyPath });
+  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), { PATH: emptyPath });
   expect(diagnostics(stderr)).toEqual([
     'warn: "git" is not installed (needed for "nope")',
     "warn: ENOENT cloning repository for nope",
@@ -2025,9 +2161,8 @@ test.concurrent("--silent prints nothing about optional git dependencies that ca
   expect(exitCode).toBe(0);
 });
 
-// One clone serves every dependency on a repository. It stays an error when
-// any of them is not optional, also when an optional one started it (optional
-// dependencies are enqueued first, so the clone is named after `nope`).
+// One clone serves every dependency on a repository. A failure is still an error if any of them isn't optional, even if
+// an optional one started the clone. Optional dependencies are enqueued first, so the clone is named after `nope`.
 test.concurrent("fails when a required dependency shares the repository an optional one cannot clone", async () => {
   using dir = tempDir("git-dep-optional-shared", {});
   const root = String(dir);
@@ -2117,11 +2252,9 @@ test.concurrent(
   },
 );
 
-// A clone or checkout that failed while the dependencies were resolved stayed
-// on record, and a locked dependency that needed the same one joined it when
-// it got installed: the isolated linker waited forever, the hoisted linker
-// skipped the package. The new dependency is optional or a peer, so its
-// missing resolution does not end the install before that.
+// A clone or checkout that failed during resolution stayed registered, and a locked dependency that needed the same one
+// joined it at install time. The isolated linker then waited forever, and the hoisted linker skipped the package. The
+// new dependency is optional or a peer, so its missing resolution doesn't end the install earlier.
 for (const linker of ["hoisted", "isolated"] as const) {
   const failedToInstall = (name: string, resolution: string, hoistedError: string) =>
     linker === "hoisted" ? hoistedError : expect.stringContaining(`error: failed to download ${name}@${resolution}`);
@@ -2178,7 +2311,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
         join(bin, "git"),
         `#!/bin/sh
 for arg in "$@"; do
-  if [ "$arg" = checkout ] && [ -e '${failCheckout}' ]; then echo 'fatal: cannot check out' >&2; exit 128; fi
+  if [ "$arg" = restore ] && [ -e '${failCheckout}' ]; then echo 'fatal: cannot check out' >&2; exit 128; fi
 done
 exec '${Bun.which("git")}' "$@"
 `,
@@ -2203,10 +2336,10 @@ exec '${Bun.which("git")}' "$@"
       const { stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), env, `--linker=${linker}`);
       expect(diagnostics(stderr)).toEqual([
         gitFailed("error"),
-        'error: "git checkout" for "alias" failed',
+        'error: "git restore" for "alias" failed',
         "error: InstallFailed checking out repository for alias",
         gitFailed("error"),
-        `error: "git checkout" for "${nameOf("b")}" failed`,
+        `error: "git restore" for "${nameOf("b")}" failed`,
         failedToInstall(
           nameOf("b"),
           `${repoUrl}#${sharedCommits["pkg-b"]}`,
@@ -2219,9 +2352,8 @@ exec '${Bun.which("git")}' "$@"
   );
 }
 
-// A commit lookup that failed stayed on record too. A peer dependency is
-// resolved in a later pass: it joined the finished lookup, ran no `git log`,
-// and the install ended with an error about the first package only.
+// A failed commit lookup stayed registered too. A peer dependency is resolved in a later pass, so it joined the
+// finished lookup and ran no `git log`, and the install ended with an error about the first package only.
 test.concurrent("looks the commit up again for a peer dependency after the lookup failed for another one", async () => {
   using dir = tempDir("git-dep-failed-commit", {});
   const root = String(dir);
@@ -2229,7 +2361,7 @@ test.concurrent("looks the commit up again for a peer dependency after the looku
   const project = writeProject(root, {}, { optionalDependencies: { first: spec }, peerDependencies: { second: spec } });
 
   const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
-  // git's own failures print at once, the lines about the packages after the resolve phase
+  // git's own errors are printed immediately, and the lines about the packages come after the resolve phase.
   expect(diagnostics(stderr)).toEqual([
     gitFailed("warn"),
     gitFailed("error"),
@@ -2300,9 +2432,8 @@ test.concurrent.each(["the environment", "the project's .env"])(
   },
 );
 
-// The same for the `git init` / `git add` / `git commit` that `bun create` runs
-// in the new project: they operated on the other repository, whose tracked
-// files were committed away, and the new project got no `.git`.
+// The same for the `git init`, `git add` and `git commit` that `bun create` runs in the new project. They operated on
+// the other repository, whose tracked files were deleted by the commit, and the new project got no `.git`.
 test.concurrent(
   "bun create initializes the new project's own repository when GIT_DIR points at another one",
   async () => {
@@ -2335,7 +2466,7 @@ test.concurrent(
       join(root, "cache"),
       {
         BUN_CREATE_DIR: join(root, "bun-create"),
-        // not the machine's: `commit.gpgsign` would fail the commit
+        // Don't use the machine's config, because `commit.gpgsign` would make the commit fail.
         GIT_CONFIG_GLOBAL: join(root, "gitconfig"),
         GIT_DIR: join(other, ".git"),
         GIT_INDEX_FILE: join(other, ".git", "index"),
@@ -2352,14 +2483,13 @@ test.concurrent(
   },
 );
 
-// `bun install` loads the project's `.env*` files so that bunfig.toml can
-// reference `$VARIABLES`. Those files come with the repository being installed,
-// so they must not configure the git the install spawns: git runs whatever
-// `GIT_SSH_COMMAND`, `GIT_EXEC_PATH` or a `GIT_CONFIG_*` entry names, also under
-// `--ignore-scripts`. Only the environment `bun install` was started with does.
+// `bun install` loads the project's `.env*` files so that bunfig.toml can reference `$VARIABLES`. Those files come with
+// the repository that's being installed, so they must not configure the git that the install spawns. git runs whatever
+// `GIT_SSH_COMMAND`, `GIT_EXEC_PATH` or a `GIT_CONFIG_*` entry points to, even with `--ignore-scripts`. Only the
+// environment that `bun install` was started with is passed on.
 //
-// The variables a test sets through `.env` are removed from the install's real
-// environment: a real one wins over `.env` in every build.
+// The variables that a test sets through `.env` are removed from the install's real environment, because a real
+// variable wins over `.env` in every build.
 const noGitTooling = {
   GIT_SSH: undefined,
   GIT_SSH_COMMAND: undefined,
@@ -2369,8 +2499,8 @@ const noGitTooling = {
   XDG_CONFIG_HOME: undefined,
 };
 
-// `<bun> <script> <args>` as git runs it: through `sh -c`. Forward slashes, so
-// that the sh of Git for Windows takes the paths too.
+// Returns `<bun> <script> <args>` in the form that git runs it, which is through `sh -c`. Uses forward slashes so that
+// the sh in Git for Windows accepts the paths too.
 function shCommand(script: string, ...args: string[]) {
   return [bunExe(), script, ...args].map(arg => `"${arg.replaceAll("\\", "/")}"`).join(" ");
 }
@@ -2408,7 +2538,7 @@ test.concurrent("a git config entry in the project's .env does not reach the git
 
 test.concurrent("a GIT_SSH_COMMAND in the project's .env does not replace the user's ssh command", async () => {
   using dir = tempDir("git-dep-dotenv-ssh", {
-    // Stands in for ssh: records that git ran it and fails, so that the clone ends there.
+    // Replaces ssh. It records that git ran it and then fails, so that the clone ends there.
     "ssh.js": `
       import { writeFileSync } from "node:fs";
       writeFileSync(process.argv[2], "");
@@ -2481,7 +2611,7 @@ test.concurrent("git credentials in the project's .env are not sent", async () =
       "",
     ].join("\n"),
   );
-  // No global git config of the machine: it can carry an `http.extraHeader` of its own.
+  // Don't use the machine's global git config, because it can have its own `http.extraHeader`.
   const home = join(root, "home");
   mkdirSync(home);
 
@@ -2497,17 +2627,17 @@ test.concurrent("git credentials in the project's .env are not sent", async () =
   expect(exitCode).toBe(1);
 });
 
-// Installs `{ pkg: dependency }` with a `git` that records its arguments and
-// fails, so that the install goes through every form of the clone URL without
-// a connection. Returns the arguments of each call, without the temporary
-// folder a clone ends with.
+// Installs `{ pkg: dependency }` with a `git` that records its arguments and fails, so that the install tries every
+// form of the clone URL without a connection. Returns the arguments of each call, without the temporary folder at the
+// end of a clone.
 async function failingGitCalls(dependency: string) {
   using dir = tempDir("git-dep-clone-url", {
-    "bin/git": `#!/bin/sh\nfor arg in "$@"; do printf '%s\\n' "$arg"; done >> "$GIT_CALLS"\necho >> "$GIT_CALLS"\nexit 128\n`,
+    // `git config` comes first, because the install asks for the user's own ssh command.
+    "bin/git": `#!/bin/sh\n[ "$6" = config ] && exit 1\nfor arg in "$@"; do printf '%s\\n' "$arg"; done >> "$GIT_CALLS"\necho >> "$GIT_CALLS"\nexit 128\n`,
   });
   const root = String(dir);
   chmodSync(join(root, "bin", "git"), 0o755);
-  // what is not a git dependency goes to this registry
+  // Anything that isn't a git dependency is requested from this registry.
   await using registry = Bun.serve({ port: 0, fetch: () => new Response("not found", { status: 404 }) });
   const project = writeProject(root, { pkg: dependency });
   const calls = join(root, "git-calls");
@@ -2539,10 +2669,17 @@ test.concurrent.skipIf(isWindows).each([
   ["git+ssh://git@localhost/user/re:po.git", "git@localhost/user/re:po.git"],
   // Without userinfo, the colon of the scheme itself used to be rewritten (`ssh///localhost/...`).
   ["git+ssh://localhost/user/repo.git", "localhost/user/repo.git"],
-  // scp-style colons are still rewritten in the ssh form, whatever the path starts with.
-  ["git+ssh://git@localhost:user/repo.git", "git@localhost:user/repo.git", "git@localhost/user/repo.git"],
-  ["git+ssh://git@localhost:1user/repo.git", "git@localhost:1user/repo.git", "git@localhost/1user/repo.git"],
-  ["git+ssh://git@höst:user/repo.git", "git@höst:user/repo.git", "git@höst/user/repo.git"],
+  // On the hosts of the shorthands, `git` is only the ssh account.
+  ["git+ssh://git@gitlab.com/user/repo", "gitlab.com/user/repo", "git@gitlab.com/user/repo"],
+  ["git+ssh://git@github.com/user/repo.git", "github.com/user/repo.git", "git@github.com/user/repo.git"],
+  ["git+ssh://deploy@gitlab.com/user/repo", "deploy@gitlab.com/user/repo"],
+  // An scp-style path behind `ssh://`, which is how bun.lock spells one, whatever the path starts with.
+  // The https form used to keep the colon, which no https client takes for a URL.
+  ["git+ssh://git@localhost:user/repo.git", "git@localhost/user/repo.git"],
+  ["git+ssh://git@localhost:1user/repo.git", "git@localhost/1user/repo.git"],
+  ["git+ssh://git@höst:user/repo.git", "git@höst/user/repo.git"],
+  ["git+ssh://git@[::1]:user/repo.git", "git@[::1]/user/repo.git"],
+  ["git+ssh://myhost.example:org/repo.git", "myhost.example/org/repo.git", "git@myhost.example/org/repo.git"],
   // An scp-style path gets `git@` only if it names no user (it used to become `ssh://git@deploy@...`).
   ["git+myhost.example:org/repo.git", "myhost.example/org/repo.git", "git@myhost.example/org/repo.git"],
   ["git+github:mishoo/UglifyJS.git", "github.com/mishoo/UglifyJS.git", "git@github.com/mishoo/UglifyJS.git"],
@@ -2550,25 +2687,41 @@ test.concurrent.skipIf(isWindows).each([
   ["git+deploy@myhost.example:org/repo.git", "deploy@myhost.example/org/repo.git"],
   ["git+deploy@myhost.example/org/repo.git", "deploy@myhost.example/org/repo.git"],
   ["bun@github.com:owner/repo.git", "bun@github.com/owner/repo.git"],
-  // As it is, git would read it as a directory of the project.
+  // A shorthand host means a domain, even after `ssh://`. It used to be cloned from the host `gitlab`.
+  ["gitlab:group/sub/repo", "gitlab.com/group/sub/repo", "git@gitlab.com/group/sub/repo"],
+  ["git+ssh://gitlab:group/sub/repo", "gitlab.com/group/sub/repo", "git@gitlab.com/group/sub/repo"],
+  ["bitbucket:user/repo", "bitbucket.org/user/repo", "git@bitbucket.org/user/repo"],
+  ["git+ssh://bitbucket:user/repo", "bitbucket.org/user/repo", "git@bitbucket.org/user/repo"],
+  ["gist:0123456789abcdef", "gist.github.com/0123456789abcdef", "git@gist.github.com/0123456789abcdef"],
+  ["sourcehut:~user/repo", "git.sr.ht/~user/repo", "git@git.sr.ht/~user/repo"],
+  // Passed as it is, git would read it as a directory in the project.
   ["git@localhost/user/repo.git", "git@localhost/user/repo.git"],
-  // ssh must not read the user as an option.
+  // ssh must not read the user or the host as an option.
   [
     "git+-oProxyCommand=x@localhost:org/repo.git",
     "-oProxyCommand=x@localhost/org/repo.git",
     "git@-oProxyCommand=x@localhost/org/repo.git",
   ],
+  [
+    "git+ssh://-oProxyCommand=x@localhost:org/repo.git",
+    "-oProxyCommand=x@localhost/org/repo.git",
+    "git@-oProxyCommand=x@localhost/org/repo.git",
+  ],
+  ["git+ssh://-oProxyCommand=x:org/repo.git", "-oProxyCommand=x/org/repo.git", "git@-oProxyCommand=x/org/repo.git"],
 ])("clones %s from the right URLs", async (dependency, https, ssh = https) => {
   const { calls, stderr, exitCode } = await failingGitCalls(dependency);
-  // `--`: whatever follows is not an option of git
+  // After `--`, git doesn't treat anything as an option.
   const clone = [
+    "-c",
+    `core.hooksPath=${nullDevice}`,
+    "-c",
+    "submodule.recurse=false",
     "clone",
     "-c",
     "core.longpaths=true",
     "--quiet",
     "--bare",
-    "-c",
-    "clone.defaultRemoteName=origin",
+    "--template=",
     "--",
   ];
   expect(calls).toEqual([
@@ -2579,12 +2732,104 @@ test.concurrent.skipIf(isWindows).each([
   expect(exitCode).toBe(1);
 });
 
-// Neither a URL nor an scp-style path: git would read it as a directory of the
-// project and clone that.
+const libPackage = { "package.json": JSON.stringify({ name: "lib", version: "1.0.0" }) };
+
+// The lockfile is all that a clean machine has, so it names the host itself.
+// It used to say `git+ssh://gitlab:group/lib`, which was then cloned from the host `gitlab`.
+test.concurrent.each([
+  ["gitlab:group/lib", "gitlab.com/group/lib", "bun.lock"],
+  ["gitlab:group/lib", "gitlab.com/group/lib", "bun.lockb"],
+  ["gitlab:group/lib#main", "gitlab.com/group/lib", "bun.lock"],
+  ["gitlab:group/sub/lib", "gitlab.com/group/sub/lib", "bun.lock"],
+  ["bitbucket:team/lib", "bitbucket.org/team/lib", "bun.lock"],
+  ["gist:0123456789abcdef", "gist.github.com/0123456789abcdef", "bun.lock"],
+  ["sourcehut:~user/lib", "git.sr.ht/~user/lib", "bun.lock"],
+])("%s installs on a clean machine from %s in %s", async (dependency, hostAndPath, lockfile) => {
+  using repo = await hostedGitRepository([`https://${hostAndPath}`], libPackage);
+  using dir = tempDir("git-dep-shorthand", {});
+  const root = String(dir);
+  const project = writeProject(root, { lib: dependency });
+  writeFileSync(join(project, "bunfig.toml"), `[install]\nsaveTextLockfile = ${lockfile === "bun.lock"}\n`);
+  const resolution = `git+ssh://git@${hostAndPath}#${repo.sha}`;
+
+  const first = await runInstall(project, join(root, "cache"), repo.env);
+  expectInstalled(first.stdout, { lib: resolution });
+  expect(existsSync(join(project, lockfile))).toBe(true);
+  if (lockfile === "bun.lock") {
+    expect(await lockedPackages(project)).toEqual({ lib: [`lib@${resolution}`, {}, repo.sha] });
+  }
+  expect(first.exitCode).toBe(0);
+
+  rmSync(join(project, "node_modules"), { recursive: true });
+  const clean = await runInstall(project, join(root, "clean-cache"), repo.env, "--frozen-lockfile");
+  expectInstalled(clean.stdout, { lib: resolution });
+  expect(clean.exitCode).toBe(0);
+});
+
+// Lockfiles like that exist. So do lockfiles with a `host:path` that has no user. Their https form kept the colon, and
+// their ssh form logged in as whoever ran the install.
+test.concurrent.each([
+  ["gitlab:group/lib", "gitlab:group/lib", "gitlab.com/group/lib"],
+  ["bitbucket:team/lib", "bitbucket:team/lib", "bitbucket.org/team/lib"],
+  ["gitlab.com:group/lib", "gitlab.com:group/lib", "gitlab.com/group/lib"],
+  // Tried over https first, like without a bun.lock, because a machine without an ssh key can still read a public
+  // repository.
+  ["git@example.com:group/lib.git", "git@example.com:group/lib.git", "git@example.com/group/lib.git"],
+])("a bun.lock that has %s as git+ssh://%s installs on a clean machine", async (dependency, locked, hostAndPath) => {
+  using repo = await hostedGitRepository([`https://${hostAndPath}`], libPackage);
+  using dir = tempDir("git-dep-shorthand-locked", {});
+  const root = String(dir);
+  const project = writeProject(root, { lib: dependency });
+  const resolution = `git+ssh://${locked}#${repo.sha}`;
+  const lockfile = JSON.stringify({
+    lockfileVersion: 1,
+    configVersion: 1,
+    workspaces: { "": { name: "project", dependencies: { lib: dependency } } },
+    packages: { lib: [`lib@${resolution}`, {}, repo.sha] },
+  });
+  writeFileSync(join(project, "bun.lock"), lockfile);
+
+  const frozen = await runInstall(project, join(root, "cache"), repo.env, "--frozen-lockfile");
+  expectInstalled(frozen.stdout, { lib: resolution });
+  expect(frozen.exitCode).toBe(0);
+
+  // Nothing changed, so nothing is saved.
+  const again = await runInstall(project, join(root, "cache"), repo.env);
+  expect(again.stderr).not.toContain("Saved lockfile");
+  expect(again.stdout).toContain("(no changes)");
+  expect(readFileSync(join(project, "bun.lock"), "utf8")).toBe(lockfile);
+  expect(again.exitCode).toBe(0);
+});
+
+// The name of the store entry comes from the repository as the lockfile has it. That text used to differ between the
+// install that wrote the lockfile and the installs that read it.
+test.concurrent.each([
+  ["gitlab:group/lib", "gitlab.com/group/lib"],
+  ["gitlab.com:group/lib", "gitlab.com/group/lib"],
+  ["git@example.com:group/lib.git", "git@example.com/group/lib.git"],
+])("a second isolated install of %s changes nothing", async (dependency, hostAndPath) => {
+  using repo = await hostedGitRepository([`https://${hostAndPath}`], libPackage);
+  using dir = tempDir("git-dep-shorthand-isolated", {});
+  const root = String(dir);
+  const project = writeProject(root, { lib: dependency });
+  const store = join(project, "node_modules", ".bun");
+
+  const first = await runInstall(project, join(root, "cache"), repo.env, "--linker", "isolated");
+  expect(first.stderr).toContain("Saved lockfile");
+  expect(first.exitCode).toBe(0);
+  const entries = readdirSync(store).sort();
+
+  const second = await runInstall(project, join(root, "cache"), repo.env, "--linker", "isolated");
+  expect(second.stdout).toContain("(no changes)");
+  expect(readdirSync(store).sort()).toEqual(entries);
+  expect(second.exitCode).toBe(0);
+});
+
+// It's neither a URL nor an scp-style path, so git would read it as a directory in the project and clone that.
 test.concurrent.skipIf(isWindows)("does not hand a bare word to git clone", async () => {
   const { calls, stderr, exitCode } = await failingGitCalls("git+:latest");
   expect(calls).toEqual([]);
-  // It is a git dependency: the registry was not asked for a `git+:latest` tag.
+  // It's a git dependency, so the registry wasn't asked for a `git+:latest` tag.
   expect(diagnostics(stderr)).toContain("error: RepositoryNotFound cloning repository for pkg");
   expect(exitCode).toBe(1);
 });
@@ -2687,10 +2932,11 @@ test.concurrent.skipIf(isWindows)(
     // `exited` when it ends, and blocks until the test deletes `running`. A
     // SIGINT that bun forwards to one of them is recorded in `gotSigint`, which
     // makes every other fake git (the concurrent clone, the retry over ssh)
-    // exit at once.
+    // exit at once. The `git config` that comes before the first clone is not one of them.
     writeFileSync(
       join(bin, "git"),
       `#!/bin/sh
+[ "$6" = config ] && exit 1
 trap 'echo $$ >> ${quote(exited)}' EXIT
 trap ': > ${quote(gotSigint)}; exit 130' INT
 echo $$ >> ${quote(running)}
@@ -2732,7 +2978,7 @@ exit 1
       const gone = Date.now() + 10_000;
       const pids = readFileSync(running, "utf8").trim().split("\n").map(Number);
       if (isLinux) {
-        // The kernel kills them with bun (PR_SET_PDEATHSIG); `running` still exists.
+        // The kernel kills them together with bun (PR_SET_PDEATHSIG). `running` still exists.
         const alive = (pid: number) => {
           try {
             return !readFileSync(`/proc/${pid}/status`, "utf8").includes("State:\tZ");
@@ -2811,9 +3057,8 @@ for (const linker of ["hoisted", "isolated"] as const) {
     30_000,
   );
 
-  // The commit that bun.lock holds is gone from the repository: the clone
-  // works and `git checkout` fails. That stays an error for every package,
-  // like a tarball that cannot be extracted.
+  // The commit in bun.lock is gone from the repository, so the clone works and `git checkout` fails. That's still an
+  // error for every package, like a tarball that can't be extracted.
   test.concurrent(
     `${linker} linker fails for a locked optional git dependency that cannot be checked out`,
     async () => {
@@ -2836,7 +3081,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
       const { stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), {}, `--linker=${linker}`);
       expect(diagnostics(stderr)).toEqual([
         expect.stringMatching(/^error: git failed with exit code \d+$/),
-        `error: "git checkout" for "${nameOf("o")}" failed`,
+        `error: "git ls-tree" for "${nameOf("o")}" failed`,
         failed("checking out", nameOf("o"), `${optionalUrl}#${lockedCommit}`),
       ]);
       expect(exitCode).toBe(1);
@@ -2882,8 +3127,8 @@ for (const linker of ["hoisted", "isolated"] as const) {
     30_000,
   );
 
-  // The root's optional dependency comes first and asks for the package. The
-  // dependency of `req` on the same package still makes it a required one.
+  // The root's optional dependency comes first and requests the package. `req` also depends on the package, which still
+  // makes it required.
   test.concurrent(
     `${linker} linker fails for an optional git dependency that a required package depends on too`,
     async () => {
@@ -2945,7 +3190,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
       rmSync(bare, { recursive: true });
       rmSync(join(project, "node_modules"), { recursive: true });
       const { stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), {}, `--linker=${linker}`);
-      // the optional package comes first and starts the clone
+      // The optional package comes first and starts the clone.
       expect(diagnostics(stderr)).toEqual([
         expect.stringMatching(/^error: git failed with exit code \d+$/),
         `error: "git clone" for "${nameOf("n")}" failed`,
@@ -2962,10 +3207,9 @@ for (const linker of ["hoisted", "isolated"] as const) {
   );
 }
 
-// The hoisted linker handles finished tasks after every 16 dependencies. The
-// optional package comes first, and without git its clone fails at once. The
-// required package, 40 dependencies later, must not join that finished clone:
-// nothing would report that it is missing.
+// The hoisted linker handles finished tasks after every 16 dependencies. The optional package comes first, and without
+// git its clone fails immediately. The required package, 40 dependencies later, must not join that finished clone,
+// because nothing would report that it's missing.
 test.concurrent(
   "hoisted linker fails for a required git dependency after an optional one failed to clone the same repository",
   async () => {
@@ -2995,16 +3239,14 @@ test.concurrent(
     rmSync(join(project, "node_modules"), { recursive: true });
     const emptyPath = join(root, "empty-path");
     mkdirSync(emptyPath);
-    // Windows spells it `Path`, and the first spelling in an environment wins there.
-    const pathKey = Object.keys(gitEnv).find(key => key.toUpperCase() === "PATH") ?? "PATH";
     const { stderr, exitCode } = await runInstall(
       project,
       join(root, "cache-cold"),
-      { [pathKey]: emptyPath },
+      { PATH: emptyPath },
       "--linker=hoisted",
     );
-    // The error names the optional package when the required one was reached
-    // before the failed clone was handled: then both waited for that clone.
+    // The error mentions the optional package if the required one was reached before the failed clone was handled,
+    // because then both were waiting for that clone.
     expect(diagnostics(stderr)).toContainEqual(
       expect.stringMatching(/^error: ENOENT cloning repository for (aa-optional|zz-required)$/),
     );
@@ -3019,15 +3261,13 @@ test.concurrent(
 // and failed the install with `sub@file:./sub failed to resolve`.
 const FILE_DEPS_NAME = "has-file-deps";
 
-// `file:` folder dependencies on a subfolder, on the package itself, and on a
-// folder that is not part of the package.
+// `file:` folder dependencies on a subfolder and on the package itself.
 const fileDepsManifest = {
   name: FILE_DEPS_NAME,
   version: "1.0.0",
   dependencies: {
     "sub": "file:./sub",
     [`${FILE_DEPS_NAME}-self`]: "file:.",
-    "gone": "file:./not-in-package",
   },
 };
 
@@ -3054,12 +3294,10 @@ async function expectFileDepsInstalled(project: string) {
   const lockfile = await Bun.file(join(project, "bun.lock")).text();
   expect(lockfile).toContain(`"${name}/sub": ["sub@file:./sub", {}]`);
   expect(lockfile).toContain(`"${name}/${name}-self": ["${name}-self@file:.", {}]`);
-  expect(lockfile).toContain(`"${name}/gone": ["gone@file:./not-in-package", {}]`);
 
   // Transitive folder dependencies are not hoisted: each one is linked into
   // the declaring package's own node_modules, relative to that package, as one
-  // link to the folder (`file:.` as one symlink per file). The folder missing
-  // from the package is skipped, as it is for a registry package.
+  // link to the folder (`file:.` as one symlink per file).
   expect((await readdir(nested)).sort()).toEqual([`${name}-self`, "sub"]);
   expect((await lstat(join(nested, "sub"))).isSymbolicLink()).toBe(true);
   expect((await lstat(join(nested, "sub", "package.json"))).isFile()).toBe(true);
@@ -3123,6 +3361,21 @@ test.concurrent(
   30_000,
 );
 
+test.concurrent("a file: folder that's missing from a tarball package is an error", async () => {
+  using dir = tempDir("tarball-missing-folder", {});
+  const root = String(dir);
+  const manifest = { name: "lib", version: "1.0.0", dependencies: { sub: "file:./packages/typo" } };
+  await packTarball(join(root, "tarballs", "lib.tgz"), manifest, {});
+  const project = writeProject(root, { lib: "file:../tarballs/lib.tgz" });
+
+  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(stderr).toMatch(
+    /error: failed to read package\.json of "sub@file:\.\/packages\/typo" declared by lib@.*lib\.tgz: ENOENT/,
+  );
+  expect(existsSync(join(project, "bun.lock"))).toBe(false);
+  expect(exitCode).toBe(1);
+});
+
 test.concurrent("rejects a file: folder dependency of a tarball package that points outside of it", async () => {
   using dir = tempDir("tarball-escaping-file-dep", {
     "outside/package.json": JSON.stringify({ name: "outside", version: "1.0.0" }),
@@ -3133,7 +3386,7 @@ test.concurrent("rejects a file: folder dependency of a tarball package that poi
   const project = writeProject(root, { escaping: `file:../tarballs/escaping.tgz` });
 
   const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
-  expect(stderr).toContain('error: Could not find package.json for "file:../outside" dependency "outside"');
+  expect(stderr).toContain('error: package.json not found for "file:../outside" dependency "outside"');
   expect(stderr).toContain("error: outside@file:../outside failed to resolve");
   expect(await Bun.file(join(project, "node_modules", "outside", "package.json")).exists()).toBe(false);
   expect(
@@ -3299,8 +3552,8 @@ test.concurrent("bun update leaves the lockfile alone when the upstream reposito
   expect(exitCode).toBe(0);
 });
 
-// A plain `bun install` refreshes the clone too when the cache lacks the locked
-// commit's checkout. That moves refs in the clone, never what bun.lock pins.
+// A plain `bun install` also refreshes the clone if the cache doesn't have a checkout of the locked commit. That moves
+// refs in the clone, but never what bun.lock pins.
 for (const linker of ["hoisted", "isolated"] as const) {
   test.concurrent(`bun install keeps the locked commit after the upstream branch moves (${linker})`, async () => {
     using dir = tempDir(`git-dep-install-pinned-${linker}`, {});
@@ -3387,7 +3640,7 @@ test.concurrent("bun update follows a tag that was moved upstream", async () => 
   await using server = serveStatic(root);
   const { bare, project, cache } = await installedFromBranch(root, server.port!, "main", { tag: "v1" });
 
-  // No parent: not a fast-forward of the old tag.
+  // It has no parent, so it isn't a fast-forward of the old tag.
   await commitTo(bare, [{ ref: "refs/tags/v1-moved", message: "v1", files: packageFiles("dep", "main-v2") }]);
   await git(bare, "tag", "-f", "v1", "v1-moved");
   await git(bare, "update-server-info");
@@ -3398,10 +3651,936 @@ test.concurrent("bun update follows a tag that was moved upstream", async () => 
   expect(exitCode).toBe(0);
 });
 
-// bun.lock writes an scp-form repository ("git@host:path") with "ssh://" in front, so
-// the locked package and the dependency spell one repository in two ways. A cold-cache
-// install from the lockfile with the isolated linker cloned it under both spellings and
-// never finished. The stand-in for ssh runs the command on this machine.
+// HEAD of the clone names the branch that was the default when it was made, and no
+// fetch moves it. A dependency without a committish, or with `#HEAD`, means the remote's
+// HEAD of today.
+test.concurrent.each([
+  { what: "renames its default branch", branch: ["-m", "master", "main"], ref: "" },
+  { what: "renames its default branch", branch: ["-m", "master", "main"], ref: "#HEAD" },
+  { what: "makes a new branch the default and keeps the old one", branch: ["main", "master"], ref: "" },
+  { what: "makes a new branch the default and keeps the old one", branch: ["main", "master"], ref: "#HEAD" },
+])("a cached repository follows an upstream that $what (ref: '$ref')", async ({ branch, ref }) => {
+  using dir = tempDir("git-dep-default-branch", {});
+  const root = String(dir);
+  await using server = serveStatic(root);
+  const { bare, cache, repoUrl } = await installedFromBranch(root, server.port!, "master", {
+    committish: ref.slice(1),
+  });
+
+  await git(bare, "branch", ...branch);
+  await git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
+  await moveBranch(bare, "main", "main-v2");
+
+  const project = writeProject(join(root, "second"), { dep: repoUrl + ref });
+  const { stderr, exitCode } = await runInstall(project, cache, {});
+  expect(stderr).not.toContain("error:");
+  expect(await installedVersionOf(project, "dep")).toBe("main-v2");
+  expect(exitCode).toBe(0);
+});
+
+// Every branch and tag of `repo`, with its commit.
+async function refsOf(repo: string) {
+  await using proc = Bun.spawn({ cmd: ["git", "for-each-ref"], cwd: repo, env: gitEnv, stdout: "pipe" });
+  return (await proc.stdout.text()).split("\n").filter(Boolean);
+}
+
+// The one bare clone that `cache` holds.
+function bareCloneIn(cache: string) {
+  const [clone] = readdirSync(cache).filter(entry => entry.endsWith(".git"));
+  return join(cache, clone);
+}
+
+// Leaves `folder` the way a tool that doesn't copy empty folders would: aws s3 sync, rclone, zip -D, many CI cache
+// plugins.
+function dropEmptyFolders(folder: string) {
+  for (const entry of readdirSync(folder, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const path = join(folder, entry.name);
+    dropEmptyFolders(path);
+    if (readdirSync(path).length === 0) rmSync(path, { recursive: true });
+  }
+}
+
+// A fresh bare clone has its refs in `packed-refs`, so `refs` holds only empty folders,
+// and without `refs` git does not take the folder for a repository. Started in it with
+// `-C`, git went on to look above it. With the cache inside the project's work tree (a CI
+// cache folder, `node_modules/.bun-cache`, a $HOME under git) it found the project's own
+// repository, where the forced, pruning fetch deleted every branch and tag that was not
+// pushed and reset the others.
+test.concurrent.each([
+  { command: "update", hook: false, broken: true },
+  { command: "install --frozen-lockfile", hook: false, broken: true },
+  { command: "install --frozen-lockfile", hook: true, broken: true },
+  { command: "update", hook: true, broken: false },
+])(
+  "bun $command leaves the project's own repository alone (in a git hook: $hook, cached repository without refs: $broken)",
+  async ({ command, hook, broken }) => {
+    using dir = tempDir("git-dep-cache-in-work-tree", {});
+    const root = String(dir);
+    const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
+    await git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
+    const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}` });
+    const cache = join(project, ".bun-cache");
+
+    // A clone of origin.git. `feature`, which is checked out, and the tag were never
+    // pushed, and `main` is ahead of origin's.
+    await git(project, "init", "-q", "-b", "main");
+    await git(project, "commit", "-q", "--allow-empty", "-m", "pushed");
+    await git(root, "clone", "-q", "--bare", project, "origin.git");
+    await git(project, "remote", "add", "origin", join(root, "origin.git"));
+    await git(project, "checkout", "-q", "-b", "feature");
+    await git(project, "commit", "-q", "--allow-empty", "-m", "not pushed");
+    await git(project, "tag", "local-tag");
+    await git(project, "branch", "-f", "main", "feature");
+    const refs = await refsOf(project);
+    expect(refs.map(ref => ref.split("\t")[1])).toEqual([
+      "refs/heads/feature",
+      "refs/heads/main",
+      "refs/tags/local-tag",
+    ]);
+
+    expect((await runInstall(project, cache, {})).exitCode).toBe(0);
+    dropCheckouts(project, cache);
+    const clone = bareCloneIn(cache);
+    if (broken) dropEmptyFolders(clone);
+    expect(existsSync(join(clone, "refs"))).toBe(!broken);
+
+    // git exports these to the hooks it runs
+    const env = hook ? { GIT_DIR: join(project, ".git"), GIT_INDEX_FILE: join(project, ".git", "index") } : {};
+    const { stderr, exitCode } = await runBun(project, cache, env, ...command.split(" "));
+    expect(await refsOf(project)).toEqual(refs);
+    expect(diagnostics(stderr)).toEqual([]);
+    expect(await installedVersionOf(project, "dep")).toBe("main");
+    // A broken one was cloned again.
+    expect(await refsOf(clone)).toContain(`${branchCommits(bare).main} commit\trefs/heads/main`);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// The refresh writes the refs of a repository that every install on the machine shares. If two run at once, the second
+// one to write a ref finds that it has moved, and its `git fetch` exits with 1, even though everything it needed is
+// there by then.
+test.concurrent("installs that refresh one cached repository at the same time all succeed", async () => {
+  using dir = tempDir("git-dep-refresh-race", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
+  await git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
+  const dependencies = { dep: `git+${pathToFileURL(bare)}` };
+  const cache = join(root, "cache");
+  expect((await runInstall(writeProject(join(root, "first"), dependencies), cache, {})).exitCode).toBe(0);
+
+  await moveBranch(bare, "main", "main-v2");
+
+  const installs = [0, 1, 2, 3].map(async i => {
+    const project = writeProject(join(root, `${i}`), dependencies);
+    return { project, ...(await runInstall(project, cache, {})) };
+  });
+  for (const { project, stderr, exitCode } of await Promise.all(installs)) {
+    expect(diagnostics(stderr)).toEqual([]);
+    expect(await installedVersionOf(project, "dep")).toBe("main-v2");
+    expect(exitCode).toBe(0);
+  }
+});
+
+// The same without relying on timing: while the first `git fetch` runs, another git holds the lock on the branch.
+test.concurrent.skipIf(isWindows)("runs git fetch once more when it could not write a ref", async () => {
+  using dir = tempDir("git-dep-refresh-locked", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
+  await git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
+  const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}` });
+  const cache = join(root, "cache");
+  expect((await runInstall(project, cache, {})).exitCode).toBe(0);
+
+  await moveBranch(bare, "main", "main-v2");
+
+  const lock = join(bareCloneIn(cache), "refs", "heads", "main.lock");
+  const fetches = join(root, "fetches");
+  const realGit = quote(Bun.which("git", { PATH: gitEnv.PATH })!);
+  mkdirSync(join(root, "bin"));
+  writeFileSync(
+    join(root, "bin", "git"),
+    `#!/bin/sh
+case " $* " in
+  *" fetch "*)
+    if [ ! -e ${quote(fetches)} ]; then
+      : > ${quote(lock)}
+      ${realGit} "$@"
+      code=$?
+      rm ${quote(lock)}
+      echo $code >> ${quote(fetches)}
+      exit $code
+    fi
+    echo again >> ${quote(fetches)} ;;
+esac
+exec ${realGit} "$@"
+`,
+    { mode: 0o755 },
+  );
+
+  const { stderr, exitCode } = await runBun(project, cache, { PATH: `${join(root, "bin")}:${gitEnv.PATH}` }, "update");
+  expect(stderr).not.toContain("main.lock");
+  expect(diagnostics(stderr)).toEqual([]);
+  expect(readFileSync(fetches, "utf8")).toBe("1\nagain\n");
+  expect(await installedVersionOf(project, "dep")).toBe("main-v2");
+  expect(exitCode).toBe(0);
+});
+
+// A git that does not know the format yet ignores the setting.
+test.concurrent.each([
+  { where: "a variable", env: { GIT_DEFAULT_REF_FORMAT: "reftable" } },
+  {
+    where: "a setting",
+    env: { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "init.defaultRefFormat", GIT_CONFIG_VALUE_0: "reftable" },
+  },
+])("the user's own format for refs, from $where", async ({ env }) => {
+  using dir = tempDir("git-dep-ref-format", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
+  await git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
+  const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}` });
+
+  for (const [command, version] of [
+    ["install", "main"],
+    ["update", "main-v2"],
+  ]) {
+    const { stderr, exitCode } = await runBun(project, join(root, "cache"), env, command);
+    expect(diagnostics(stderr)).toEqual([]);
+    expect(await installedVersionOf(project, "dep")).toBe(version);
+    expect(exitCode).toBe(0);
+    await moveBranch(bare, "main", "main-v2");
+  }
+});
+
+test.concurrent.each(["files", "reftable"])(
+  "a clone that an older version left in the cache is not cloned again (%s)",
+  async format => {
+    using dir = tempDir("git-dep-older-clone", {});
+    const root = String(dir);
+    const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
+    await git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
+    const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}` });
+    const cache = join(root, "cache");
+    expect((await runInstall(project, cache, {})).exitCode).toBe(0);
+
+    const clone = bareCloneIn(cache);
+    rmSync(clone, { recursive: true });
+    const options = ["-q", "--bare", "-c", "core.longpaths=true"];
+    await git(cache, "-c", `init.defaultRefFormat=${format}`, "clone", ...options, pathToFileURL(bare).href, clone);
+    writeFileSync(join(clone, "still-the-same-folder"), "");
+
+    for (const [command, version] of [
+      ["install --offline", "main"],
+      ["update", "main-v2"],
+    ]) {
+      dropCheckouts(project, cache);
+      rmSync(join(project, "bun.lock"));
+      const { stderr, exitCode } = await runBun(project, cache, {}, ...command.split(" "));
+      expect(diagnostics(stderr)).toEqual([]);
+      expect(await installedVersionOf(project, "dep")).toBe(version);
+      expect(existsSync(join(clone, "still-the-same-folder"))).toBe(true);
+      expect(exitCode).toBe(0);
+      await moveBranch(bare, "main", "main-v2");
+    }
+  },
+);
+
+test.concurrent("a commit is installed under the hash that identifies it", async () => {
+  using dir = tempDir("git-dep-named-by-hash", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
+  const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}#main` });
+  const cache = join(root, "cache");
+  expect((await runInstall(project, cache, {})).exitCode).toBe(0);
+
+  const clone = bareCloneIn(cache);
+  const other = await gitOutput(clone, ["hash-object", "-w", "--stdin"], indexJs("other"));
+  await git(clone, "update-ref", `refs/replace/${await gitOutput(clone, ["rev-parse", "main:index.js"])}`, other);
+  dropCheckouts(project, cache);
+
+  const { stderr, exitCode } = await runInstall(project, cache, {});
+  expect(diagnostics(stderr)).toEqual([]);
+  expect(await installedVersionOf(project, "dep")).toBe("main");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a git dependency with a submodule, under the user's own settings for submodules", async () => {
+  using dir = tempDir("git-dep-submodule-settings", { gitconfig: "[submodule]\n\trecurse = true\n\tactive = .\n" });
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
+  const commit = branchCommits(bare).main;
+  await run(
+    bare,
+    ["git", "fast-import", "--quiet"],
+    "git fast-import",
+    `commit refs/heads/main\ncommitter Test <test@example.com> 0 +0000\n${fastImportData("submodule")}from ${commit}\n` +
+      `M 100644 inline .gitmodules\n${fastImportData('[submodule "vendored"]\n\tpath = vendored\n\turl = ./vendored.git\n')}` +
+      `M 160000 ${commit} vendored\n\n`,
+  );
+  await git(bare, "update-server-info");
+  const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}#main` });
+
+  const env = { GIT_CONFIG_GLOBAL: join(root, "gitconfig") };
+  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), env);
+  expect(diagnostics(stderr)).toEqual([]);
+  // Checked in the cache, because not every install backend creates empty folders.
+  expect(treeOf(join(root, "cache", `@G@${branchCommits(bare).main}`))).toEqual(
+    [".bun-tag", ".gitmodules", "index.js", "package.json", "vendored"].sort(),
+  );
+  expect(await installedVersionOf(project, "dep")).toBe("main");
+  expect(exitCode).toBe(0);
+});
+
+// How git fails when it can't use the clone depends on its version.
+test.concurrent.skipIf(isWindows)("clones again after a git fetch that did not fail at the remote", async () => {
+  using dir = tempDir("git-dep-fetch-exit-code", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
+  await git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
+  const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}` });
+  const cache = join(root, "cache");
+  expect((await runInstall(project, cache, {})).exitCode).toBe(0);
+  await moveBranch(bare, "main", "main-v2");
+
+  mkdirSync(join(root, "bin"));
+  writeFileSync(
+    join(root, "bin", "git"),
+    `#!/bin/sh
+case " $* " in *" fetch "*) echo 'error: the refs cannot be written' >&2; exit 254 ;; esac
+exec ${quote(Bun.which("git", { PATH: gitEnv.PATH })!)} "$@"
+`,
+    { mode: 0o755 },
+  );
+  const { stderr, exitCode } = await runBun(project, cache, { PATH: `${join(root, "bin")}:${gitEnv.PATH}` }, "update");
+  expect(diagnostics(stderr)).toEqual([]);
+  expect(await installedVersionOf(project, "dep")).toBe("main-v2");
+  expect(exitCode).toBe(0);
+});
+
+// Creates `levels` nested folders below `folder`. It works in parts, and each part moves what exists so far into
+// itself, so that no call needs a long path.
+function nestFolders(folder: string, levels: number) {
+  const part = new Array(299).fill("d");
+  for (let made = 0; made < levels; made += part.length + 1) {
+    mkdirSync(join(folder, "next", ...part), { recursive: true });
+    if (made > 0) renameSync(join(folder, "d"), join(folder, "next", ...part, "d"));
+    renameSync(join(folder, "next"), join(folder, "d"));
+  }
+}
+
+// git only reads the refs and objects of a cached clone from its folder. A folder that git can't use, or that points
+// somewhere else, is replaced by a new clone.
+type Places = { clone: string; other: string; kept: string; command: string };
+// since git 2.45
+const usageOfInit = Bun.spawnSync({ cmd: ["git", "init", "-h"], env: gitEnv });
+const gitKnowsReftable = `${usageOfInit.stdout}${usageOfInit.stderr}`.includes("--ref-format");
+test.concurrent.skipIf(isWindows).each<{ what: string; change(at: Places): void }>([
+  {
+    what: "is a link",
+    change({ clone, other }) {
+      rmSync(clone, { recursive: true });
+      symlinkSync(join(other, ".git"), clone);
+    },
+  },
+  {
+    what: "has more settings",
+    change: ({ clone, command }) =>
+      writeFileSync(join(clone, "config"), `[remote "origin"]\n\tuploadpack = "${command}; git-upload-pack"\n`, {
+        flag: "a",
+      }),
+  },
+  {
+    what: "has a hook",
+    change({ clone, command }) {
+      mkdirSync(join(clone, "hooks"), { recursive: true });
+      writeFileSync(join(clone, "hooks", "reference-transaction"), `#!/bin/sh\n${command}\n`, { mode: 0o755 });
+    },
+  },
+  {
+    what: "names another folder",
+    change: ({ clone, other }) => writeFileSync(join(clone, "commondir"), join(other, ".git")),
+  },
+  {
+    what: "holds a link to a folder",
+    change({ clone, other }) {
+      rmSync(join(clone, "refs", "heads"), { recursive: true });
+      symlinkSync(join(other, ".git", "refs", "heads"), join(clone, "refs", "heads"));
+    },
+  },
+  {
+    what: "holds a link to a file",
+    change({ clone, kept }) {
+      rmSync(join(clone, "FETCH_HEAD"), { force: true });
+      symlinkSync(kept, join(clone, "FETCH_HEAD"));
+    },
+  },
+  {
+    what: "has another hook",
+    change({ clone, command }) {
+      mkdirSync(join(clone, "hooks"), { recursive: true });
+      writeFileSync(join(clone, "hooks", "post-checkout"), `#!/bin/sh\n${command}\n`, { mode: 0o755 });
+    },
+  },
+  {
+    what: "has settings for the files",
+    change({ clone, command }) {
+      writeFileSync(join(clone, "config"), `[filter "all"]\n\tsmudge = "${command}; cat"\n`, { flag: "a" });
+      mkdirSync(join(clone, "info"), { recursive: true });
+      writeFileSync(join(clone, "info", "attributes"), "* filter=all\n");
+    },
+  },
+  // This is what a full disk, a power cut or a killed git can leave behind.
+  { what: "has an empty HEAD", change: ({ clone }) => writeFileSync(join(clone, "HEAD"), "") },
+  { what: "has refs that git cannot read", change: ({ clone }) => writeFileSync(join(clone, "packed-refs"), "?\n") },
+  {
+    what: "has a lock that nobody holds",
+    change: ({ clone }) => writeFileSync(join(clone, "refs", "heads", "main.lock"), ""),
+  },
+  // An older git doesn't get as far as the refs, because it doesn't know the setting.
+  ...(gitKnowsReftable
+    ? [
+        {
+          what: "says that its refs are stored in another way",
+          change: ({ clone }: Places) =>
+            writeFileSync(
+              join(clone, "config"),
+              "[core]\n\trepositoryformatversion = 1\n\tbare = true\n[extensions]\n\trefstorage = reftable\n",
+            ),
+        },
+      ]
+    : []),
+  // A path has room for about 500 levels on macOS, and 2,000 on Linux.
+  { what: "holds folders nested deep", change: ({ clone }) => nestFolders(clone, 1500) },
+  // On macOS the row above is already this case.
+  ...(isLinux
+    ? [
+        {
+          what: "holds folders nested deeper than a path can name",
+          change: ({ clone }: Places) => nestFolders(clone, 3000),
+        },
+      ]
+    : []),
+])(
+  "a cached clone that $what",
+  async ({ change }) => {
+    using dir = tempDir("git-dep-clone-as-left", { kept: "kept\n", other: {} });
+    const root = String(dir);
+    const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
+    await git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
+    const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}` });
+    const cache = join(root, "cache");
+    expect((await runInstall(project, cache, {})).exitCode).toBe(0);
+
+    // another checkout, with work that was never pushed
+    const other = join(root, "other");
+    await git(other, "init", "-q", "-b", "main");
+    await git(other, "commit", "-q", "--allow-empty", "-m", "pushed");
+    await git(root, "clone", "-q", "--bare", other, "other-origin.git");
+    await git(other, "remote", "add", "origin", join(root, "other-origin.git"));
+    await git(other, "checkout", "-q", "-b", "feature");
+    await git(other, "commit", "-q", "--allow-empty", "-m", "not pushed");
+    await git(other, "tag", "local-tag");
+    const refs = await refsOf(other);
+
+    const [clone, ran, kept] = [bareCloneIn(cache), join(root, "ran"), join(root, "kept")];
+    change({ clone, other, kept, command: `: > ${quote(ran)}` });
+    await moveBranch(bare, "main", "main-v2");
+
+    const { stderr, exitCode } = await runBun(project, cache, {}, "update", "--ignore-scripts");
+    expect({ ran: existsSync(ran), refs: await refsOf(other), kept: readFileSync(kept, "utf8") }).toEqual({
+      ran: false,
+      refs,
+      kept: "kept\n",
+    });
+    expect(diagnostics(stderr)).toEqual([]);
+    expect(lstatSync(clone).isDirectory()).toBe(true);
+    expect(await installedVersionOf(project, "dep")).toBe("main-v2");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+// Only a file of the repository itself is read as its package.json.
+test.concurrent.each([
+  { what: "a text file", target: "notes.txt" },
+  { what: "another package.json", target: "other/package.json" },
+])("a git dependency whose package.json is a link to $what has no package.json", async ({ target }) => {
+  using dir = tempDir("git-dep-package-json-kind", {
+    "notes.txt": "the first line of the notes\n",
+    "other/package.json": JSON.stringify({
+      name: "other",
+      version: "1.0.0",
+      dependencies: { "only-for-other": "1.0.0" },
+    }),
+  });
+  const root = String(dir);
+  const requests: string[] = [];
+  await using registry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      requests.push(new URL(req.url).pathname);
+      return new Response("not found", { status: 404 });
+    },
+  });
+  const bare = join(root, "repo.git");
+  await git(root, "init", "-q", "--bare", "repo.git");
+  await commitTo(bare, [
+    {
+      ref: "refs/heads/main",
+      message: "main",
+      files: { "index.js": indexJs("main") },
+      links: { "package.json": join(root, target) },
+    },
+  ]);
+  const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}#main` });
+  const cache = join(root, "cache");
+  const install = async () => {
+    const { stdout, stderr, exitCode } = await runInstall(project, cache, { BUN_CONFIG_REGISTRY: registry.url.href });
+    expect(diagnostics(stderr)).toEqual([]);
+    expect(stdout + stderr).not.toContain("the first line of the notes");
+    expect(stdout + stderr).not.toContain(join(root, target));
+    expect(requests).toEqual([]);
+    expect(treeOf(realpathSync(join(project, "node_modules", "dep")))).toEqual([".bun-tag", "index.js"]);
+    expect(exitCode).toBe(0);
+  };
+  await install();
+
+  // A checkout that an older version left in the cache is created again.
+  if (isWindows) return;
+  const checkout = join(cache, `@G@${branchCommits(bare).main}`);
+  symlinkSync(join(root, target), join(checkout, "package.json"));
+  rmSync(join(project, "node_modules"), { recursive: true });
+  rmSync(join(project, "bun.lock"));
+  await install();
+  expect(treeOf(checkout)).toEqual([".bun-tag", "index.js"]);
+});
+
+test.concurrent("a package.json that is a link to a file of the repository is a copy of that file", async () => {
+  using dir = tempDir("git-dep-package-json-inside", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [{ name: "leaf", branch: "leaf" }]);
+  const url = `git+${pathToFileURL(bare)}`;
+  const manifest = JSON.stringify({ name: "dep", version: "1.2.3", dependencies: { leaf: `${url}#leaf` } });
+  await commitTo(bare, [
+    {
+      ref: "refs/heads/main",
+      message: "main",
+      files: { "index.js": indexJs("main"), "real/manifest.json": manifest },
+      links: { "package.json": "real/manifest.json" },
+    },
+  ]);
+  const project = writeProject(root, { dep: `${url}#main` });
+  const cached = join(root, "cache", `@G@${branchCommits(bare).main}`, "package.json");
+  const install = async () => {
+    const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+    expect(diagnostics(stderr)).toEqual([]);
+    expect(lstatSync(cached).isFile()).toBe(true);
+    expect(readFileSync(join(project, "node_modules", "dep", "package.json"), "utf8")).toBe(manifest);
+    expect(await installedVersions(project, ["dep", "leaf"])).toEqual({ dep: "main", leaf: "leaf" });
+    expect((await lockedPackages(project)).dep[1]).toEqual({ dependencies: { leaf: `${url}#leaf` } });
+    expect(exitCode).toBe(0);
+  };
+  await install();
+
+  // A checkout that an older version left in the cache is created again.
+  if (isWindows) return;
+  rmSync(cached);
+  symlinkSync("real/manifest.json", cached);
+  rmSync(join(project, "node_modules"), { recursive: true });
+  rmSync(join(project, "bun.lock"));
+  await install();
+});
+
+// A link to a file of the repository is installed as a copy of that file. No other link is installed.
+for (const linker of ["hoisted", "isolated"] as const) {
+  test.concurrent(`a git dependency is installed without the links of its repository (${linker} linker)`, async () => {
+    using dir = tempDir("git-dep-links", { "outside.txt": "outside\n" });
+    const root = String(dir);
+    const copies = {
+      "to-a-file.js": "index.js",
+      "to-a-link.js": "to-a-file.js",
+      "lib/from-a-folder.js": "../index.js",
+      "through-a-link.js": "to-a-folder/../index.js",
+      "lib/through-two-links.js": "to-the-parent/to-a-folder/to-the-parent/index.js",
+      // plain characters of a name, where the file system takes them
+      ...(isWindows ? {} : { "\\a": "index.js", "C:\\b": "index.js", "c\\..\\d": "index.js", "e:/f": "../index.js" }),
+    };
+    const bare = await makeSharedRepo(root, [
+      {
+        name: "dep",
+        branch: "main",
+        files: { "lib/real.js": indexJs("real"), ".bun-tag": "committed" },
+        links: {
+          ...copies,
+          "to-a-folder": "lib",
+          "lib/to-the-parent": "..",
+          "to-the-outside.txt": join(root, "outside.txt"),
+          "above.txt": "../outside.txt",
+          "above-through-a-link.txt": "lib/to-the-parent/../outside.txt",
+          "to-nothing": "nowhere",
+          "to-the-tag": ".bun-tag",
+          "round-a": "round-b",
+          "round-b": "round-a",
+          "round-c": "round-c/index.js",
+        },
+      },
+    ]);
+    const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}#main` });
+    const cache = join(root, "cache");
+
+    const { stderr, exitCode } = await runInstall(project, cache, {}, `--linker=${linker}`);
+    expect(diagnostics(stderr)).toEqual([]);
+    const folders = isWindows ? ["lib"] : ["lib", "e:"];
+    const files = [".bun-tag", "index.js", "lib/real.js", "package.json", ...folders, ...Object.keys(copies)].sort();
+    const checkout = join(cache, `@G@${branchCommits(bare).main}`);
+    for (const folder of [checkout, realpathSync(join(project, "node_modules", "dep"))]) {
+      expect(treeOf(folder)).toEqual(files);
+      expect(Object.keys(copies).map(copy => readFileSync(join(folder, copy), "utf8"))).toEqual(
+        Object.keys(copies).map(() => indexJs("main")),
+      );
+    }
+    // It's a separate file, so editing one doesn't edit the other.
+    expect(lstatSync(join(checkout, "to-a-file.js")).ino).not.toBe(lstatSync(join(checkout, "index.js")).ino);
+    // nothing that git or the install needed on the way is left beside the bare clone and the checkout
+    expect(readdirSync(cache).filter(entry => !entry.endsWith(".git") && !entry.startsWith("@G@"))).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+}
+
+async function gitOutput(cwd: string, args: string[], stdin = "") {
+  await using proc = Bun.spawn({ cmd: ["git", ...args], cwd, env: gitEnv, stdin: Buffer.from(stdin), stdout: "pipe" });
+  return (await proc.stdout.text()).trim();
+}
+
+test.concurrent("a path that git doesn't write is skipped", async () => {
+  using dir = tempDir("git-dep-unwritable-path", { "cache/beside": "kept\n" });
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
+  const blob = await gitOutput(bare, ["hash-object", "-w", "--stdin"], "index.js");
+  const folder = await gitOutput(bare, ["mktree"], `120000 blob ${blob}\tbeside\n`);
+  const entries = await gitOutput(bare, ["ls-tree", "main"]);
+  const tree = await gitOutput(bare, ["mktree"], `${entries}\n040000 tree ${folder}\t..\n`);
+  await git(bare, "update-ref", "refs/heads/main", await gitOutput(bare, ["commit-tree", tree, "-m", "main"]));
+  const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}#main` });
+
+  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(readFileSync(join(root, "cache", "beside"), "utf8")).toBe("kept\n");
+  expect(diagnostics(stderr)).toEqual([]);
+  expect(treeOf(join(project, "node_modules", "dep"))).toEqual([".bun-tag", "index.js", "package.json"]);
+  expect(exitCode).toBe(0);
+});
+
+// Every link is followed once, however many lead to it.
+test.concurrent(
+  "a long chain of links costs no more than as many links to one file",
+  async () => {
+    using dir = tempDir("git-dep-link-chain", {});
+    const root = String(dir);
+    const count = 4000;
+    const linksTo = (target: (link: number) => string) =>
+      Object.fromEntries(Array.from({ length: count }, (_, link) => [`link-${link + 1}`, target(link)]));
+    const bare = await makeSharedRepo(root, [
+      { name: "dep", branch: "star", files: { "link-0": "end" }, links: linksTo(() => "link-0") },
+      { name: "dep", branch: "chain", files: { "link-0": "end" }, links: linksTo(link => `link-${link}`) },
+    ]);
+    const cpuTime: Record<string, number> = {};
+    for (const branch of ["star", "chain"]) {
+      const project = writeProject(join(root, branch), { dep: `git+${pathToFileURL(bare)}#${branch}` });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: project,
+        env: { ...gitEnv, BUN_INSTALL_CACHE_DIR: join(root, branch, "cache"), BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(diagnostics(stderr)).toEqual([]);
+      expect(readFileSync(join(project, "node_modules", "dep", `link-${count}`), "utf8")).toBe("end");
+      expect(exitCode).toBe(0);
+      cpuTime[branch] = Number(proc.resourceUsage()!.cpuTime.total);
+    }
+    expect(cpuTime.chain).toBeLessThan(3 * cpuTime.star);
+  },
+  30_000,
+);
+
+// For the other kinds of entry, Bun installs whatever git itself writes.
+test.concurrent("a git dependency keeps its executable files and the folder of a submodule", async () => {
+  using dir = tempDir("git-dep-entry-kinds", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
+  const commit = branchCommits(bare).main;
+  await run(
+    bare,
+    ["git", "fast-import", "--quiet"],
+    "git fast-import",
+    `commit refs/heads/main\ncommitter Test <test@example.com> 0 +0000\n${fastImportData("kinds")}from ${commit}\n` +
+      `M 100755 inline run.sh\n${fastImportData("#!/bin/sh\n")}M 160000 ${commit} vendored\n` +
+      `M 120000 inline run-too.sh\n${fastImportData("run.sh")}M 120000 inline to-vendored\n${fastImportData("vendored")}\n`,
+  );
+  await git(bare, "update-server-info");
+  const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}#main` });
+
+  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(diagnostics(stderr)).toEqual([]);
+  const checkout = join(root, "cache", `@G@${branchCommits(bare).main}`);
+  expect(treeOf(checkout)).toEqual([".bun-tag", "index.js", "package.json", "run-too.sh", "run.sh", "vendored"]);
+  expect(lstatSync(join(checkout, "vendored")).isDirectory()).toBe(true);
+  // The copy that replaces a symlink to it is executable too.
+  for (const file of isWindows ? [] : ["run.sh", "run-too.sh"]) {
+    expect(lstatSync(join(checkout, file)).mode).toBe(lstatSync(join(checkout, "run.sh")).mode | 0o111);
+  }
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent.skipIf(isWindows)("reports the required git version when git has no `restore` command", async () => {
+  const notACommand = "git: 'restore' is not a git command. See 'git --help'.";
+  using dir = tempDir("git-dep-old-git", {
+    "bin/git": `#!/bin/sh
+case " $* " in *" restore "*) echo ${quote(notACommand)} >&2; exit 1 ;; esac
+exec ${quote(Bun.which("git", { PATH: gitEnv.PATH })!)} "$@"
+`,
+  });
+  const root = String(dir);
+  chmodSync(join(root, "bin", "git"), 0o755);
+  const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
+  const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}#main` });
+
+  const env = { PATH: `${join(root, "bin")}:${gitEnv.PATH}` };
+  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), env);
+  expect(stderr.split("\n")).toContain("note: git dependencies need git 2.24 or newer");
+  expect(diagnostics(stderr)).toContain('error: "git restore" for "dep" failed');
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent("two commits of one repository in one install", async () => {
+  using dir = tempDir("git-dep-two-commits", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
+  const first = branchCommits(bare).main;
+  await moveBranch(bare, "main", "main-v2");
+  const url = `git+${pathToFileURL(bare)}`;
+  const project = writeProject(root, { first: `${url}#${first}`, second: `${url}#${branchCommits(bare).main}` });
+
+  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(diagnostics(stderr)).toEqual([]);
+  expect(await installedVersions(project, ["first", "second"])).toEqual({ first: "main", second: "main-v2" });
+  expect(exitCode).toBe(0);
+});
+
+// The https form of an ssh URL is tried first. A host answers "not found" for a private
+// repository to a login without access, so that answer does not end the search. What git
+// said of a form that failed is of interest only if no form works.
+test.concurrent.skipIf(isWindows).each([
+  { status: 404, body: "Repository not found.", sshWorks: true },
+  { status: 403, body: "Forbidden", sshWorks: true },
+  { status: 404, body: "Repository not found.", sshWorks: false },
+])(
+  "clones an ssh URL over ssh after https answered $status $body (ssh works: $sshWorks)",
+  async ({ status, body, sshWorks }) => {
+    using dir = tempDir("git-dep-https-then-ssh", {});
+    const root = String(dir);
+    const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
+    await git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
+    let requests = 0;
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        requests++;
+        return new Response(`${body}\n`, { status, headers: { "content-type": "text/plain" } });
+      },
+    });
+    writeFileSync(
+      join(root, "gitconfig"),
+      `[url "http://127.0.0.1:${server.port}/"]\n\tinsteadOf = https://git@example.com/\n`,
+    );
+    const serve = sshWorks
+      ? `exec git upload-pack ${quote(bare)}`
+      : "echo 'Permission denied (publickey).' >&2; exit 255";
+    writeFileSync(join(root, "ssh.sh"), `#!/bin/sh\ncase "$*" in *git-upload-pack*) ${serve} ;; esac\n`, {
+      mode: 0o755,
+    });
+    const project = writeProject(root, { dep: "git+ssh://git@example.com/org/private.git" });
+
+    const env = {
+      GIT_CONFIG_GLOBAL: join(root, "gitconfig"),
+      GIT_SSH_COMMAND: join(root, "ssh.sh"),
+      GIT_TERMINAL_PROMPT: "0",
+    };
+    const { stderr, exitCode } = await runInstall(project, join(root, "cache"), env);
+    if (sshWorks) {
+      expect(stderr).not.toContain(body);
+      expect(stderr).not.toContain("git clone");
+      expect(diagnostics(stderr)).toEqual([]);
+      expect(await installedVersionOf(project, "dep")).toBe("main");
+      expect(exitCode).toBe(0);
+
+      // the form that worked is the first one that the cached clone is refreshed from
+      const requestsOfTheClone = requests;
+      await moveBranch(bare, "main", "main-v2");
+      const update = await runBun(project, join(root, "cache"), env, "update");
+      expect(diagnostics(update.stderr)).toEqual([]);
+      expect(await installedVersionOf(project, "dep")).toBe("main-v2");
+      expect(requests).toBe(requestsOfTheClone);
+      expect(update.exitCode).toBe(0);
+      return;
+    }
+    expect(stderr).toMatch(
+      /^git clone https:\S+example\.com\/org\/private\.git\n(.*\n)*?remote: Repository not found\.\n(.*\n)*?git clone ssh:\S+example\.com\/org\/private\.git\nPermission denied \(publickey\)\.\n/m,
+    );
+    expect(diagnostics(stderr)).toEqual([
+      gitFailed("error"),
+      'error: "git clone" for "dep" failed',
+      "error: InstallFailed cloning repository for dep",
+      expect.stringContaining("failed to resolve"),
+    ]);
+    expect(exitCode).toBe(1);
+  },
+);
+
+// git itself notes the arguments that it was started with.
+test.concurrent("every git starts with the same settings, spelled for the platform", async () => {
+  using dir = tempDir("git-dep-first-arguments", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
+  const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}#main` });
+  const trace = join(root, "trace");
+
+  for (const command of ["install", "update"]) {
+    const { stderr, exitCode } = await runBun(project, join(root, "cache"), { GIT_TRACE2_EVENT: trace }, command);
+    expect(diagnostics(stderr)).toEqual([]);
+    expect(exitCode).toBe(0);
+  }
+  const started: string[][] = readFileSync(trace, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map(line => JSON.parse(line))
+    // the id of a git that another git started holds the id of that one
+    .filter(({ event, sid }) => event === "start" && !sid.includes("/"))
+    .map(({ argv }) => argv.slice(1));
+  const commandOf = (argv: string[]) => argv.find(arg => /^[a-z][a-z-]+$/.test(arg));
+  expect([...new Set(started.map(commandOf))].sort()).toEqual([
+    "clone",
+    "config",
+    "fetch",
+    "log",
+    "ls-tree",
+    "restore",
+  ]);
+  expect([...new Set(started.map(argv => argv.slice(0, 4).join(" ")))]).toEqual([
+    `-c core.hooksPath=${nullDevice} -c submodule.recurse=false`,
+  ]);
+  expect(started[0][4]).toBe(`--git-dir=${nullDevice}`);
+});
+
+test.concurrent.skipIf(isWindows)("asks git for the user's own commands once, before the first clone", async () => {
+  using dir = tempDir("git-dep-config-once", { "bin/git": `#!/bin/sh\necho "$5 $6 $7" >> "$GIT_CALLS"\nexit 1\n` });
+  const root = String(dir);
+  chmodSync(join(root, "bin", "git"), 0o755);
+  const calls = join(root, "git-calls");
+  const env = { PATH: `${join(root, "bin")}:${gitEnv.PATH}`, GIT_CALLS: calls };
+
+  // not at all without a git dependency
+  expect((await runInstall(writeProject(join(root, "plain"), {}), join(root, "cache"), env)).exitCode).toBe(0);
+  expect(existsSync(calls)).toBe(false);
+
+  const names = ["a", "b", "c"];
+  const project = writeProject(root, Object.fromEntries(names.map(name => [name, `git+http://localhost/${name}.git`])));
+  const { exitCode } = await runInstall(project, join(root, "cache"), env);
+  expect(readFileSync(calls, "utf8").trim().split("\n")).toEqual([
+    `--git-dir=${nullDevice} config --name-only`,
+    ...names.map(() => "clone -c core.longpaths=true"),
+  ]);
+  expect(exitCode).toBe(1);
+});
+
+// Installs a dependency on `url` with two commands that only record that they ran: `<root>/mine`, and the `ssh` on
+// PATH. `files` (relative to `<root>`; $HOME is `<root>/home`) and `env` configure the first one as the user's own ssh
+// command. ROOT in them is replaced with `<root>`. Returns the calls with their arguments.
+async function commandsThatGitRuns(url: string, files: Record<string, string>, env: Record<string, string> = {}) {
+  using dir = tempDir("git-dep-own-command", { home: {} });
+  const root = String(dir);
+  const ran = join(root, "ran");
+  const stub = (name: string) => `#!/bin/sh\necho ${name} "$@" >> ${quote(ran)}\nexit 1\n`;
+  for (const [file, text] of Object.entries({ mine: stub("mine"), "bin/ssh": stub("ssh"), ...files })) {
+    mkdirSync(dirname(join(root, file)), { recursive: true });
+    writeFileSync(join(root, file), text.replaceAll("ROOT", root), { mode: 0o755 });
+  }
+  const { exitCode } = await runInstall(writeProject(root, { dep: url }), join(root, "cache"), {
+    ...noGitTooling,
+    GIT_ASKPASS: undefined,
+    GIT_TERMINAL_PROMPT: "0",
+    HOME: join(root, "home"),
+    PATH: `${join(root, "bin")}:${gitEnv.PATH}`,
+    ...Object.fromEntries(Object.entries(env).map(([name, value]) => [name, value.replaceAll("ROOT", root)])),
+  });
+  expect(exitCode).toBe(1);
+  return existsSync(ran) ? readFileSync(ran, "utf8").trim().split("\n") : [];
+}
+
+const sshUrl = "git+ssh://git@127.0.0.1/org/repo.git";
+// git refuses the https form, which is tried first, so nothing connects to port 443.
+const onlySsh = { GIT_ALLOW_PROTOCOL: "ssh" };
+const mySshCommand = "[core]\n\tsshCommand = ROOT/mine\n";
+type Place = { where: string; files?: Record<string, string>; env?: Record<string, string> };
+
+// `GIT_SSH_COMMAND`, which the install sets to accept the key of a new host, outranks every
+// other way to name an ssh command. So it is set only if the user has named none.
+test.concurrent.skipIf(isWindows).each<Place>([
+  { where: "~/.gitconfig", files: { "home/.gitconfig": mySshCommand } },
+  { where: "~/.gitconfig, under [Core]", files: { "home/.gitconfig": "[Core]\n\tsshCommand = ROOT/mine\n" } },
+  { where: "~/.gitconfig, in one line", files: { "home/.gitconfig": "[core] sshCommand = ROOT/mine\n" } },
+  { where: "~/.config/git/config", files: { "home/.config/git/config": mySshCommand } },
+  {
+    where: "a file that ~/.gitconfig includes",
+    files: { "home/.gitconfig": "[include]\n\tpath = work.gitconfig\n", "home/work.gitconfig": mySshCommand },
+  },
+  { where: "$GIT_CONFIG_GLOBAL", files: { elsewhere: mySshCommand }, env: { GIT_CONFIG_GLOBAL: "ROOT/elsewhere" } },
+  {
+    where: "$GIT_CONFIG_COUNT",
+    env: { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.sshCommand", GIT_CONFIG_VALUE_0: "ROOT/mine" },
+  },
+  { where: "$GIT_SSH", env: { GIT_SSH: "ROOT/mine" } },
+])("git runs the user's own ssh command from $where", async ({ files = {}, env = {} }) => {
+  const ran = await commandsThatGitRuns(sshUrl, files, { ...onlySsh, ...env });
+  expect(ran).not.toEqual([]);
+  expect(ran.filter(line => !line.startsWith("mine "))).toEqual([]);
+});
+
+// No clone reads the config of the repository it is started in.
+test.concurrent.skipIf(isWindows).each<Place>([
+  { where: "nowhere" },
+  {
+    where: "only in the repository of the project",
+    files: {
+      "project/.git/HEAD": "ref: refs/heads/main\n",
+      "project/.git/config": mySshCommand,
+      "project/.git/objects/keep": "",
+      "project/.git/refs/keep": "",
+    },
+  },
+])("git accepts the key of a new host when the user names an ssh command $where", async ({ files = {} }) => {
+  const ran = await commandsThatGitRuns(sshUrl, files, onlySsh);
+  expect(ran).not.toEqual([]);
+  expect(ran.filter(line => !line.startsWith("ssh -oStrictHostKeyChecking=accept-new "))).toEqual([]);
+});
+
+test.concurrent.skipIf(isWindows)("git runs the user's own core.askPass from ~/.config/git/config", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch: () => new Response("", { status: 401, headers: { "www-authenticate": 'Basic realm="git"' } }),
+  });
+  const ran = await commandsThatGitRuns(`git+http://127.0.0.1:${server.port}/org/repo.git`, {
+    "home/.config/git/config": "[core]\n\taskPass = ROOT/mine\n",
+  });
+  expect(ran[0]).toStartWith("mine Username for ");
+});
+
+// bun.lock writes an scp-style repository ("git@host:path") with "ssh://" in front, so the locked package and the
+// dependency spell the same repository in two ways. A cold-cache install from the lockfile with the isolated linker
+// cloned it under both spellings and never finished. The ssh replacement runs the command on this machine.
 for (const user of ["git", "alice"]) {
   test
     .skipIf(isWindows)
@@ -3429,7 +4608,6 @@ exec sh -c "$1"
         const project = writeProject(root, { dep: `${user}@localhost:${bare}` });
         const env = { GIT_SSH_COMMAND: join(root, "ssh.sh"), GIT_TERMINAL_PROMPT: "0" };
 
-        // stderr holds git's complaint about the https form, which is tried first.
         expect((await runInstall(project, join(root, "cache-1"), env, "--linker=isolated")).exitCode).toBe(0);
         const lockfile = readFileSync(join(project, "bun.lock"), "utf8");
         expect(lockfile).toContain(`"dep@git+ssh://${user}@localhost:`);

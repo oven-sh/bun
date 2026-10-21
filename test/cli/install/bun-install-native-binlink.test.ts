@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { chmodSync, existsSync, readFileSync, realpathSync, statSync, symlinkSync } from "fs";
-import { rm, writeFile } from "fs/promises";
+import { chmodSync, existsSync, lstatSync, readFileSync, realpathSync, statSync, symlinkSync } from "fs";
+import { mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join, sep } from "path";
 import { TestRegistry } from "registry";
@@ -210,6 +210,49 @@ describe.concurrent("native binlink optimization", () => {
       expect(binExitCode2).toBe(0);
     });
   }
+
+  // The link leaves node_modules, so its text depends on where node_modules really is.
+  test.skipIf(isWindows)("in a workspace whose node_modules is a link to another folder", async () => {
+    const { packageDir, packageJson } = await verdaccio.createTestDir();
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") };
+    const app = join(packageDir, "packages", "app");
+    await mkdir(app, { recursive: true });
+    await mkdir(join(packageDir, "volume"));
+    symlinkSync(join("..", "..", "volume"), join(app, "node_modules"));
+    await Promise.all([
+      writeFile(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: { cache: join(packageDir, ".bun-cache"), registry: verdaccio.registryUrl(), linker: "isolated" },
+        }),
+      ),
+      writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "test-app",
+          workspaces: ["packages/*"],
+          nativeDependencies: ["test-native-binlink"],
+          trustedDependencies: ["test-native-binlink"],
+        }),
+      ),
+      writeFile(
+        join(app, "package.json"),
+        JSON.stringify({ name: "app", dependencies: { "test-native-binlink": "1.0.0" } }),
+      ),
+    ]);
+
+    const binDir = join(app, "node_modules", ".bin");
+    for (const removed of [null, null, binDir]) {
+      if (removed) await rm(removed, { recursive: true });
+      await using proc = spawn({ cmd: [bunExe(), "install"], cwd: packageDir, stdout: "pipe", stderr: "pipe", env });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).not.toContain("error:");
+      expect(lstatSync(join(app, "node_modules")).isSymbolicLink()).toBe(true);
+      expect(readBinTarget(binDir, "test-binlink-cmd")).toContain(join("test-native-binlink-target", "bin", "main.js"));
+      expect(exitCode).toBe(0);
+    }
+  });
 
   // test-native-binlink-libc has a glibc and a musl platform package with identical os/cpu
   // lists (the shape of @anthropic-ai/claude-code, which is on the default list). Only the one

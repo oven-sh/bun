@@ -1,8 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
-import { pipeline, Writable } from "node:stream";
+import { duplexPair, pipeline, Writable } from "node:stream";
 
 // Each test opens a raw TCP socket against a server whose timeout knob is a
 // few hundred ms and waits for the server to close the connection. A small
@@ -455,6 +455,55 @@ describe("node:http server timeout enforcement", () => {
     } finally {
       client.destroy();
       server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  // A stream that the server did not accept itself is served from JS, by the same sweep.
+  test("headersTimeout answers 408 on a stream that server.emit('connection') gave the server", async () => {
+    const server = http.createServer({ connectionsCheckingInterval: 50 }, () => {});
+    server.headersTimeout = 200;
+    server.requestTimeout = 800;
+    const [client, serverSide] = duplexPair();
+    const { promise: answered, resolve: onAnswered } = Promise.withResolvers<string>();
+    let received = "";
+    client.on("data", chunk => {
+      received += chunk;
+      if (received.endsWith("\r\n\r\n")) onAnswered(received);
+    });
+    try {
+      await listen(server);
+      server.emit("connection", serverSide);
+      // A valid but incomplete request head: no terminating CRLF.
+      client.write("GET / HTTP/1.1\r\nHost: a\r\n");
+      expect(await answered).toBe("HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n");
+      expect(serverSide.destroyed).toBe(true);
+    } finally {
+      serverSide.destroy();
+      server.close();
+    }
+  });
+
+  // The sweep is a timer, but the age of a connection is real time, as in Node. A test that advances fake timers
+  // past headersTimeout must not end the connections that it holds open.
+  test("fake timers do not time out a connection that server.emit('connection') gave the server", async () => {
+    jest.useFakeTimers();
+    const server = http.createServer(() => {});
+    const [client, serverSide] = duplexPair();
+    let received = "";
+    client.on("data", chunk => (received += chunk));
+    try {
+      await listen(server);
+      server.emit("connection", serverSide);
+      // Four ticks of the default connectionsCheckingInterval, and twice the default headersTimeout.
+      jest.advanceTimersByTime(120_000);
+      jest.useRealTimers();
+      // A 408 would reach the other side of the pair in this turn.
+      await new Promise(resolve => setImmediate(resolve));
+      expect({ received, destroyed: serverSide.destroyed }).toEqual({ received: "", destroyed: false });
+    } finally {
+      jest.useRealTimers();
+      serverSide.destroy();
       server.close();
     }
   });

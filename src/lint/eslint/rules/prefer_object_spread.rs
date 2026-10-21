@@ -42,7 +42,7 @@ fn has_proto_property<'a>(properties: List<'a, Prop<'a>>) -> bool {
     })
 }
 
-/// What is reported for `call` if it calls `Object.assign`. It depends on the arguments only.
+/// Returns the message to report for `call` if it calls `Object.assign`. It only depends on the arguments.
 fn message_for(call: Call) -> Option<Message> {
     let args = call.args();
     if args.first()?.tag() != ExprTag::Object || args.iter().any(|it| it.tag() == ExprTag::Spread) {
@@ -56,8 +56,9 @@ fn message_for(call: Call) -> Option<Message> {
     (!cannot_be_inlined).then_some(USE_SPREAD_MESSAGE)
 }
 
-/// What oxlint reports for `call`. It follows no variable: `Object.assign` or `globalThis.Object.assign` is written out.
-fn message_for_oxlint(call: Call) -> Option<Message> {
+/// Returns the message oxlint reports for `call`. It doesn't follow variables: the callee has to be a literal
+/// `Object.assign` or `globalThis.Object.assign`.
+fn oxlint_message_for(call: Call) -> Option<Message> {
     let args = call.args();
     if get_inner_expression(args.first()?).tag() != ExprTag::Object
         || !is_method_call(call, None, Some(&["assign"]), Some(1), None)
@@ -82,8 +83,7 @@ fn message_for_oxlint(call: Call) -> Option<Message> {
     (!cannot_be_inlined).then_some(USE_SPREAD_MESSAGE)
 }
 
-/// ESLint's `needsParens`: whether an object literal in the place of `node` has to be in
-/// parentheses.
+/// ESLint's `needsParens`: true if an object literal in place of `node` needs parentheses.
 fn needs_parens(node: Expr) -> bool {
     let is_safe = !node.is_chain_root()
         && match node.parent() {
@@ -116,7 +116,7 @@ fn arg_needs_parens(node: Expr) -> bool {
 
 /// ESLint's `getStartWithSpaces`: the start of `token` and the whitespace before it.
 fn get_start_with_spaces<'a>(file: &'a File<'a>, token: Span) -> u32 {
-    // What follows a line comment would become part of it.
+    // Anything moved right after a line comment would become part of it.
     let before = file.tokens_before(token).with_comments().next();
     if before.is_some_and(|it| it.kind() == TokenKind::Line) {
         return token.start;
@@ -161,7 +161,7 @@ fn define_fixer<'a>(fixer: Fixer<'a>, node: Expr<'a>, call: Call<'a>) -> Option<
             continue;
         };
 
-        // The braces and the parentheses go, the outermost pair with the whitespace inside of it.
+        // Remove the braces and the parentheses, and with the outermost pair the whitespace just inside it.
         let parens = arg.parens();
         let count = parens.len();
         let pairs = (count > 0).then_some(inner).into_iter().chain(parens.take(count.saturating_sub(1)));
@@ -175,7 +175,7 @@ fn define_fixer<'a>(fixer: Fixer<'a>, node: Expr<'a>, call: Call<'a>) -> Option<
         fixes.push(fixer.remove(Span::new(left.start, left_end)));
         fixes.push(fixer.remove(Span::new(get_start_with_spaces(file, right).max(left_end), right.end)));
 
-        // The comma after this argument would be a second one.
+        // The comma after this argument would be a second comma in a row.
         let ends_with_comma = properties.is_empty()
             || file.tokens_in(arg).nth_back(1).is_some_and(|it| ast_utils::is_comma_token(&it));
         if ends_with_comma
@@ -191,7 +191,7 @@ fn define_fixer<'a>(fixer: Fixer<'a>, node: Expr<'a>, call: Call<'a>) -> Option<
 impl Rule for PreferObjectSpread {
     const META: Meta = Meta::eslint("prefer-object-spread", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Call]).finish();
-    /// Whether some call has the arguments that are reported for `Object.assign`.
+    /// True if some call has arguments that would be reported for `Object.assign`.
     type State<'a> = bool;
 
     fn new(_: &Options) -> Self {
@@ -212,7 +212,7 @@ impl Rule for PreferObjectSpread {
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if cx.language().is_oxlint {
             if let Some(call) = e.as_call()
-                && let Some(message) = message_for_oxlint(call)
+                && let Some(message) = oxlint_message_for(call)
             {
                 cx.report(e, message).fix(|fixer| define_fixer(fixer, e, call));
             }

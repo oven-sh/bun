@@ -536,7 +536,7 @@ snapshots:
       expect(beside.exitCode).toBe(0);
     });
 
-    // `user:password@`, and a username alone, which is `user:` (a token some registries take that way)
+    // `user:password@`, and a bare username, which is `user:` (some registries accept a token that way).
     test.concurrent.each(["builder:hunter2secret", "hunter2token"])(
       "a registry with its credentials in the URL still installs after migration (%s)",
       async userinfo => {
@@ -658,7 +658,7 @@ snapshots:
       `);
     });
 
-    test("credentials in a namedRegistries URL stay out of bun.lock and a token in its path is masked in the warning", async () => {
+    test("credentials in a namedRegistries URL aren't written to bun.lock, and a token in its path is masked in the warning", async () => {
       const password = "s3cret";
       const token = "npm_" + "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8";
       const { packageDir } = await verdaccio.createTestDir({
@@ -1122,7 +1122,7 @@ snapshots:
       const bunLock = await bunLockOf(packageDir);
       expect(bunLock).toContain(`"patchedDependencies": {\n    "no-deps@1.0.1": "patches/no-deps.patch",\n  }`);
 
-      // The versioned key only goes to the root; pnpm keeps reading the bare key from its own block.
+      // The versioned key is only copied to the root. pnpm keeps reading the bare key from its own block.
       const packageJson = await Bun.file(join(packageDir, "package.json")).json();
       expect(packageJson).toStrictEqual({
         name: "patch-path-in-package-json",
@@ -1983,7 +1983,7 @@ snapshots:
       `);
     });
 
-    test("a peer nothing in the lockfile satisfies keeps the version pnpm resolved it to", async () => {
+    test("a peer that nothing in the lockfile satisfies keeps the version that pnpm resolved it to", async () => {
       // strict-peer-dep wants no-deps@^2.0.0; pnpm resolved it to 1.0.0 (the snapshot suffix) while
       // one-dep brings in 1.0.1. Neither satisfies the range, so there is nothing to rebind the
       // peer by; binding it to the highest version present would drop pnpm's 1.0.0 from the tree.
@@ -2064,7 +2064,7 @@ snapshots:
       `);
     });
 
-    test("a peer nothing in the lockfile satisfies and pnpm left unmet is not given a copy of the highest version", async () => {
+    test("a peer that nothing in the lockfile satisfies and that pnpm left unmet doesn't get a copy of the highest version", async () => {
       // pnpm recorded no resolution for strict-peer-dep's no-deps@^2.0.0 (no snapshot suffix),
       // so in pnpm's layout the package sees whatever no-deps sits at the root: 1.0.1, hoisted
       // there from one-dep. Binding the peer to the highest version present instead (1.1.0,
@@ -2439,7 +2439,7 @@ snapshots:
       ).toBeTrue();
     });
 
-    describe("a peer pnpm left unmet is bound by the install that migrates", () => {
+    describe("a peer that pnpm left unmet is bound by the install that migrates", () => {
       // pnpm records a met peer as a suffix on the dependent's snapshot key; an unmet one (autoInstallPeers
       // off) has no suffix, so the migration has nothing to bind peer-deps-too's `no-deps` edge to. Loading
       // the migrated bun.lock binds it to the no-deps hoisted to the root, and the isolated store keys
@@ -4565,11 +4565,12 @@ patchedDependencies:
     });
   });
 
-  // The YAML parser charges an alias the depth of what it names, so these are too deep like the same tree written out.
+  // The YAML parser counts an alias as deep as the node it refers to, so these are too deep, like the same tree written
+  // out.
   describe("a deep chain of YAML aliases", () => {
     test.concurrent.each([
       ["", undefined],
-      // The parser gives `&b` no node, and what came before it in `&a` still counts.
+      // The parser creates no node for `&b`, and what came before it in `&a` still counts.
       [", each link followed by an anchor on an alias", "{&b\n      *scalar : 1}"],
     ])("in pnpm-lock.yaml%s is a parse error", async (_, sibling) => {
       using dir = tempDir("pnpm-v9-alias-chain-lockfile", {
@@ -4585,7 +4586,7 @@ patchedDependencies:
       expect(exitCode).toBe(1);
     });
 
-    test.concurrent("is not what more aliases than the stack has levels are when they do not nest", async () => {
+    test.concurrent("isn't reported for many aliases that don't nest", async () => {
       const pairs = Array.from({ length: 12_000 }, (_, i) => `  x${i}: &x${i} {z: 1}\n  y${i}: &y${i} {w: *x${i}}\n`);
       using dir = tempDir("pnpm-v9-alias-pairs", {
         "package.json": JSON.stringify({ name: "alias-pairs" }),
@@ -4615,7 +4616,7 @@ patchedDependencies:
     });
   });
 
-  // How deep the parser goes depends on the build. Whatever it accepts the migration has to cope with.
+  // How deep the parser goes depends on the build. The migration has to handle whatever it accepts.
   test.concurrent("pnpm-lock.yaml nested as deep as the YAML parser accepts is migrated", async () => {
     const depths = [250, 500, 750, 1000, 1500, ...Array.from({ length: 17 }, (_, i) => 2000 + 500 * i)];
     // One at a time: a debug build takes 250 MB per process.
@@ -4809,7 +4810,7 @@ snapshots:
     });
 
     test.concurrent(
-      "removing extensions removes what they added and nothing that a package declares itself",
+      "removing extensions removes what they added, and nothing that a package declares itself",
       async () => {
         const dir = await migrated();
         await setRules(dir, {});
@@ -5594,7 +5595,8 @@ snapshots:
       expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
     });
 
-    // The row stays `catalog:`, as a package.json parse gives it, and is bound to the member pnpm linked.
+    // The dependency stays `catalog:`, like when package.json is parsed, and is bound to the workspace that pnpm
+    // linked.
     test.concurrent.each(
       ["workspace:*", "^1.0.0"].flatMap(range => ["hoisted", "isolated"].map(linker => [range, linker] as const)),
     )("a catalog: dependency (%s) that pnpm linked to a workspace member, %s linker", async (range, linker) => {
@@ -5717,7 +5719,7 @@ snapshots:
         expect(install.exitCode).toBe(0);
       });
 
-      // Without an allow-list the scripts stay blocked, and the install has to say so.
+      // Without an allow-list, the scripts stay blocked, and the install has to report that.
       test.concurrent(`blocked scripts are reported after migrating (${linker})`, async () => {
         const { packageDir } = await verdaccio.createTestDir({
           bunfigOpts: { linker },
@@ -5799,7 +5801,7 @@ importers:
       });
     });
 
-    test.concurrent("a list that adds nothing leaves package.json alone", async () => {
+    test.concurrent("a list that adds nothing doesn't change package.json", async () => {
       const packageJson = {
         name: "only-built-nothing-new",
         trustedDependencies: ["esbuild"],

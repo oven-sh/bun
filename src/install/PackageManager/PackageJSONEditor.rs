@@ -446,7 +446,8 @@ pub(crate) fn edit_update_entries(
             let Some((key_str, value_literal)) = string_pair(dep) else {
                 continue;
             };
-            // `catalog:` references are never rewritten; the root catalog entry is updated instead.
+            // `catalog:` references are never rewritten. The root's catalog entry is updated
+            // instead.
             if literal_tag(value_literal) == dependency::Tag::Catalog
                 || !selected(key_str, value_literal)
             {
@@ -625,7 +626,8 @@ pub(crate) fn steers_catalogs_to_latest(manager: &PackageManager) -> bool {
     !manager.updating_catalogs.is_empty() && manager.options.do_.contains(Do::UPDATE_TO_LATEST)
 }
 
-/// An entry that only an override reaches keeps its range: no row carries a version back to it.
+/// A catalog entry that's only used through an override keeps its range, because no dependency
+/// reports a version back to it.
 #[cold]
 #[inline(never)]
 pub(crate) fn steer_used_catalogs_to_latest(
@@ -687,7 +689,8 @@ pub(crate) fn steer_used_catalogs_to_latest(
     Ok(())
 }
 
-/// On the loaded lockfile, before the differ: the summary prints an entry's move as an update row.
+/// Runs on the loaded lockfile, before the differ, so that the summary can print a catalog entry's
+/// change as an update.
 pub(crate) fn record_catalog_originals(
     manager: &mut PackageManager,
 ) -> Result<(), bun_alloc::AllocError> {
@@ -734,7 +737,8 @@ pub(crate) fn record_catalog_originals(
     Ok(())
 }
 
-/// Writes the literal each recorded catalog entry resolved to into the root AST; returns `changed`.
+/// Writes the literal that each recorded catalog entry resolved to into the root AST. Returns true
+/// if anything changed.
 pub(crate) fn edit_catalogs_after_update(
     manager: &mut PackageManager,
     root_package_json: &Expr,
@@ -941,13 +945,15 @@ pub(crate) enum Declared {
     Removed,
 }
 
-/// What becomes of the entry `list` already has for a package `bun add` puts into `target`.
+/// Decides what happens to the entry that `list` already has for a package that `bun add` puts into
+/// `target`.
 pub(crate) fn fate_of_declared(list: &[u8], target: &[u8], move_to_target: bool) -> Declared {
     let peer = DependencyGroup::PEER.prop;
     if list == target {
         Declared::TakesSpec
     } else if !move_to_target {
-        // A peer entry and the entry of another list may share a name: neither replaces the other.
+        // A peer entry and an entry in another list can have the same name. Neither replaces the
+        // other.
         if (list == peer) == (target == peer) {
             Declared::TakesSpec
         } else {
@@ -956,7 +962,7 @@ pub(crate) fn fate_of_declared(list: &[u8], target: &[u8], move_to_target: bool)
     } else if list == peer {
         Declared::Stays
     } else if target == peer && list == DependencyGroup::DEV.prop {
-        // What provides the peer during development follows its range.
+        // The entry that provides the peer during development follows the peer's range.
         Declared::TakesSpec
     } else {
         Declared::Removed
@@ -1019,7 +1025,7 @@ pub(crate) fn edit(
     let fold_positionals = !options.before_install
         && manager.subcommand == Subcommand::Add
         && manager.options.add_catalog.is_none();
-    // `(slot of a request, another slot that takes what it gets)`
+    // Pairs of (the slot of a request, another slot that gets the same value).
     let mut also_declared = Vec::new();
 
     // There are three possible scenarios here
@@ -1046,7 +1052,7 @@ pub(crate) fn edit(
                     None
                 };
                 if let Some(name) = resolved_name {
-                    // An optional peer's row is not folded into: left to the rebuild below.
+                    // An optional peer isn't updated here. The rebuild below handles it.
                     let optional_peer = current_package_json
                         .as_property(b"peerDependenciesMeta")
                         .and_then(|meta| meta.expr.as_property(name))
@@ -1306,7 +1312,8 @@ pub(crate) fn edit(
                     bun_ast::Loc::EMPTY,
                 ));
 
-                // Read by the `workspace:` arm of the write-back below; the others overwrite it.
+                // Read by the `workspace:` arm of the write-back below. The other arms overwrite
+                // it.
                 let declared: &[u8] = match new_dependencies[k]
                     .value
                     .as_ref()
@@ -1450,7 +1457,7 @@ pub(crate) fn edit(
             // derived from a `StoreRef` to the same `E::EString` is live inside this loop body,
             // so this is the sole mutable borrow.
             let e_string = unsafe { &mut *e_string };
-            // `bun update <pkg>` only moves registry entries; `bun add` replaces any.
+            // `bun update <pkg>` only moves registry entries. `bun add` replaces any entry.
             if manager.subcommand == Subcommand::Update
                 && !literal_tag(e_string.data.slice()).is_npm()
             {
@@ -1459,7 +1466,8 @@ pub(crate) fn edit(
             if request.package_id as usize >= resolutions.len()
                 || resolutions[request.package_id as usize].tag == resolution::Tag::Uninitialized
             {
-                // Nothing satisfies it, or `picks_latest_tag` steers it later: stays as declared.
+                // Either nothing satisfies it, or `picks_latest_tag` handles it later, so it stays
+                // as declared.
                 if update_to_latest
                     || (manager.subcommand == Subcommand::Update && !options.before_install)
                 {
@@ -1577,7 +1585,8 @@ pub(crate) fn edit(
 
                 // A range that linked a workspace member has nothing to move to.
                 resolution::Tag::Workspace if manager.subcommand == Subcommand::Update => continue,
-                // Not the bound row: an unchanged resolution keeps the old row's literal.
+                // Don't use the bound dependency, because an unchanged resolution keeps the old
+                // dependency's literal.
                 resolution::Tag::Workspace => match literal_tag(e_string.data.slice()) {
                     dependency::Tag::Workspace => e_string.data.slice(),
                     // An `npm:` alias stays as written. `workspace:*` would look the workspace up

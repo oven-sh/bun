@@ -32,7 +32,7 @@ fn starts_with_uppercase(name: &[u8]) -> bool {
     strings::wtf8_first_codepoint(name).and_then(char::from_u32).is_some_and(char::is_uppercase)
 }
 
-/// The name of an `async function Name`.
+/// Returns the name of an `async function Name`.
 fn name_of_async_component(func: Func<'_>) -> Option<Ident<'_>> {
     func.name().filter(|name| func.is_async() && starts_with_uppercase(name.bytes()))
 }

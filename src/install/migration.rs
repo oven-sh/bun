@@ -32,7 +32,8 @@ macro_rules! debug {
 
 mod npm_lock;
 
-/// A fresh `Buf` per append: one held longer would lock out every other `lockfile.*` access.
+/// Creates a new `Buf` for each append, because holding one longer would lock out every other
+/// `lockfile.*` access.
 macro_rules! sbuf {
     ($lockfile:expr) => {
         bun_semver::string::Buf {
@@ -48,7 +49,8 @@ macro_rules! string_bytes {
 }
 pub(crate) use {sbuf, string_bytes};
 
-/// YAML / package.json strings are Store-backed; the `'static` is the field's own lifetime.
+/// YAML and package.json strings are backed by the Store. The `'static` is the field's own
+/// lifetime.
 pub(crate) fn as_str(expr: &Expr) -> Option<&'static [u8]> {
     match &expr.data {
         ExprData::EString(s) if s.is_utf8() => Some(s.data.slice()),
@@ -60,7 +62,7 @@ pub(crate) fn get_str(expr: &Expr, key: &[u8]) -> Option<&'static [u8]> {
     expr.get(key).and_then(|e| as_str(&e))
 }
 
-/// The entries of a mapping; none for anything else.
+/// Returns the entries of a mapping, or nothing for any other value.
 pub(crate) fn props(expr: &Expr) -> impl Iterator<Item = (&Expr, &Expr)> {
     let properties = match &expr.data {
         ExprData::EObject(object) => object.properties.as_slice(),
@@ -149,7 +151,7 @@ pub fn detect_and_load_other_lockfile<'a>(
     // if it exists, do an in-memory migration
     let timer = std::time::Instant::now();
 
-    // npm itself reads npm-shrinkwrap.json over package-lock.json; the two share a format.
+    // npm itself prefers npm-shrinkwrap.json over package-lock.json. The two have the same format.
     let mut found = Vec::new();
     for (name, name_z) in [
         ("npm-shrinkwrap.json", zstr!("npm-shrinkwrap.json")),
@@ -275,7 +277,8 @@ fn finish_migration(
     {
         return Err(migrating_error(err, lockfile_name));
     }
-    // Nor the root's `patchedDependencies`. Its package.json was read just above.
+    // The root's `patchedDependencies` aren't recorded either. Its package.json was read just
+    // above.
     if let Some(path) = crate::lockfile_real::join_top_level_dir(&[b"package.json"])
         && let crate::GetJsonResult::Entry(root) = manager
             .workspace_package_json_cache
@@ -564,7 +567,8 @@ fn migrate_npm_lockfile<'a>(
     }))
 }
 
-/// What the install then resolves, to a version the lockfile does not name: `dropped`, and the rows that are bound to nothing.
+/// Warns about the dependencies that the install is going to resolve to a version that the migrated
+/// lockfile doesn't specify: the ones in `dropped`, and the ones that aren't bound to anything.
 pub(crate) fn warn_unlocked_dependencies(
     lockfile: &Lockfile,
     manager: &PackageManager,

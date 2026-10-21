@@ -97,8 +97,8 @@ async function lookUp(from: string, name: string) {
 const seenFrom = async (dir: string, from: string, name: string) =>
   (await file(join(await lookUp(join(dir, from), name), "package.json")).json()).version;
 
-// After the install that wrote bun.lock: a second one changes nothing, and frozen installs accept the file over the
-// node_modules that is there, over a wiped root node_modules, and over none at all.
+// After the install that wrote bun.lock, a second one changes nothing, and frozen installs accept the file with the
+// existing node_modules, with the root node_modules wiped, and with no node_modules at all.
 async function expectRoundTrip(dir: string, check: () => Promise<void>) {
   const lock = await lockText(dir);
   await check();
@@ -178,7 +178,7 @@ describe.each(linkers)("%s linker", linker => {
     });
 
     // The workspace's own dependencies are printed below the key the workspace is printed at.
-    test.concurrent("the workspace's own dependency that cannot hoist stays on its version", async () => {
+    test.concurrent("the workspace's own dependency that can't be hoisted keeps its version", async () => {
       const dir = await project(linker, {
         "": root({ dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.2" } }),
         "packages/no-deps": { name: "no-deps", version: "3.0.0", dependencies: { "a-dep": "1.0.1" } },
@@ -254,9 +254,9 @@ describe.each(linkers)("%s linker", linker => {
     });
   });
 
-  // Nobody depends on the workspace, so nothing links it. It stays in bun.lock and what it depends on is installed. What
-  // cannot hoist to the root is in its own node_modules, printed below "./<name>".
-  describe("a workspace stays installed when the root gives its name to a registry version written as", () => {
+  // Nobody depends on the workspace, so nothing links it. It stays in bun.lock, and its dependencies are installed.
+  // Those that can't be hoisted to the root are in its own node_modules, printed below "./<name>".
+  describe("a workspace is still installed when the root gives its name to a registry version written as", () => {
     const member = { name: "no-deps", version: "3.0.0", dependencies: { "a-dep": "1.0.1", "what-bin": "1.0.0" } };
     const unlinked = {
       workspaces: ["", "packages/no-deps"],
@@ -311,7 +311,7 @@ describe.each(linkers)("%s linker", linker => {
     }
 
     // Bun 1.4 and older left such a workspace out of bun.lock: the file they wrote is the one of a root without it.
-    test.concurrent("a range, in a bun.lock of Bun 1.4: it stays as it is until the dependencies change", async () => {
+    test.concurrent("a range, in a bun.lock from Bun 1.4: it isn't changed until the dependencies change", async () => {
       const dependencies = { "no-deps": "1.0.0" };
       const dir = await project(linker, { "": { name: "sandbox", version: "1.0.0", dependencies } });
       await ok(dir, "install", "--lockfile-only");
@@ -337,7 +337,7 @@ describe.each(linkers)("%s linker", linker => {
       await expectRoundTrip(dir, () => check(dir));
     });
 
-    test.concurrent("an alias under its own name, in a bun.lock of Bun 1.4: it stays as it is", async () => {
+    test.concurrent("an alias under its own name, in a bun.lock from Bun 1.4: it isn't changed", async () => {
       const dependencies = { "no-deps": "npm:no-deps@1.0.0" };
       const dir = await project(linker, { "": { name: "sandbox", version: "1.0.0", dependencies } });
       await ok(dir, "install", "--lockfile-only");
@@ -388,7 +388,7 @@ describe.each(linkers)("%s linker", linker => {
       expect(await seenFrom(dir, "packages/no-deps", "what-bin")).toBe("1.0.0");
     });
 
-    test.concurrent("a range, and the install fails on what the workspace cannot get", async () => {
+    test.concurrent("a range, and the install fails if a dependency of the workspace can't be installed", async () => {
       const dir = await project(linker, {
         "": root({ dependencies: { "no-deps": "1.0.0" } }),
         "packages/no-deps": { ...member, dependencies: { "this-package-does-not-exist-in-the-registry": "1.0.0" } },
@@ -414,8 +414,8 @@ describe.each(linkers)("%s linker", linker => {
     });
   });
 
-  // An alias installs in `node_modules/<alias>`: it takes no folder from the workspace, so the workspace and its own
-  // dependencies stay installed, whether or not the workspace has a version.
+  // An alias is installed in `node_modules/<alias>`. It doesn't take a folder from the workspace, so the workspace and
+  // its own dependencies are still installed, whether or not the workspace has a version.
   describe("a root alias of the registry package that has the name of a workspace", () => {
     test.concurrent.each([
       { title: "a version out of the alias's range", version: { version: "3.0.0" }, add: false },
@@ -449,7 +449,7 @@ describe.each(linkers)("%s linker", linker => {
       });
     });
 
-    // Such a file is out of date like any lockfile that misses a workspace.
+    // Such a file is out of date, like any lockfile that's missing a workspace.
     test.concurrent("a bun.lock from a bun that dropped the workspace fails frozen and is repaired", async () => {
       const dir = await project(linker, {
         "": root({ dependencies: { published: "npm:no-deps@1.0.0" } }),
@@ -539,7 +539,7 @@ describe.each(linkers)("%s linker", linker => {
       });
     });
 
-    // What bun 1.4 wrote for this project, and ignored on every install. One install replaces it.
+    // This is what Bun 1.4 wrote for this project, and ignored on every install. One install replaces it.
     test.concurrent("a bun.lock with both keys is replaced", async () => {
       const dir = await project(linker, {
         "": root({ dependencies: { alpha: "file:./vendor/alpha" } }),
@@ -595,7 +595,7 @@ describe.each(linkers)("%s linker", linker => {
   });
 
   // The range of the row accepts the workspace, or names it, and the row is bound to something else.
-  describe("a row that could link a workspace and does not", () => {
+  describe("a dependency that could link to a workspace but doesn't", () => {
     const published = { "no-deps": "^1.0.0" };
     test.concurrent.each([
       ["peerDependenciesMeta", { dependencies: published, peerDependenciesMeta: { "no-deps": { optional: true } } }],
@@ -649,7 +649,7 @@ describe.each(linkers)("%s linker", linker => {
 
     test.concurrent.each([
       {
-        // The workspace stays installed, without a link: the peer finds the root's copy.
+        // The workspace is still installed, without a link, and the peer finds the root's copy.
         history: "a root dependency takes the name of the workspace",
         root: { workspaces: ["packages/*"], devDependencies: { "no-deps": "1.0.0" } },
         workspaces: ["", "packages/app", "packages/no-deps"],
@@ -740,7 +740,7 @@ describe.each(linkers)("%s linker", linker => {
       });
       expect(await peer()).toBe(peerVersion);
 
-      // bun.lock installs what the install that wrote it installed
+      // Installing from bun.lock gives the same result as the install that wrote it.
       await wipeNodeModules(dir);
       await ok(dir, "install", "--frozen-lockfile");
       expect(await peer()).toBe(peerVersion);

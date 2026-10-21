@@ -19,13 +19,13 @@ fn precedence_of_exponentiation_expr() -> i32 {
     ast_utils::get_binary_operator_precedence(BinOp::Pow)
 }
 
-/// Whether `base` needs parentheses as the left operand of `**`, which is right-associative and
-/// does not allow a unary operator directly before it.
+/// True if `base` needs parentheses as the left operand of `**`, which is right-associative and doesn't allow a unary
+/// operator directly before it.
 fn does_base_need_parens(base: Expr) -> bool {
     ast_utils::get_precedence(base) <= precedence_of_exponentiation_expr() || is_unary_or_await(base)
 }
 
-/// An `UnaryExpression` or an `AwaitExpression`
+/// True for a `UnaryExpression` or an `AwaitExpression`.
 fn is_unary_or_await(e: Expr) -> bool {
     match e.kind() {
         ExprKind::Await(_) => true,
@@ -53,7 +53,7 @@ fn needs_parens_for_parent(node: Expr) -> bool {
     }
 }
 
-/// What oxlint makes of `Math.pow(base, exponent)`, which is `node`.
+/// oxlint's fix for `node`, which is `Math.pow(base, exponent)`.
 fn fix_as_oxlint<'a>(fixer: Fixer<'a>, node: Expr<'a>, base: Expr<'a>, exponent: Expr<'a>) -> Fix {
     let file = fixer.file();
     let is_at_most = |e: Expr, limit: u8| get_precedence_without_parentheses(e).is_some_and(|it| it <= limit);
@@ -72,10 +72,10 @@ fn does_exponent_need_parens(exponent: Expr) -> bool {
     ast_utils::get_precedence(exponent) < precedence_of_exponentiation_expr()
 }
 
-/// Whether a `**` expression in the place of `node` would need parentheses.
+/// True if a `**` expression in place of `node` would need parentheses.
 fn does_exponentiation_expression_need_parens(node: Expr) -> bool {
-    // ESLint compares the operand, the arguments and the property of the parent with the call, and
-    // never finds it there if a `ChainExpression` is around it.
+    // ESLint compares the parent's operand, arguments and property with the call, and never finds it there if the call
+    // is wrapped in a `ChainExpression`.
     let is_in_chain_expression = node.is_chain_root();
     let needs_parens = match node.parent() {
         // Not for a decorator.
@@ -89,7 +89,8 @@ fn does_exponentiation_expression_need_parens(node: Expr) -> bool {
             }
             ExprKind::TaggedTemplate(call) => call.callee() == node,
             ExprKind::Index { obj, .. } => obj == node || is_in_chain_expression,
-            // ESLint goes by the name of the type: `TSAsExpression`, but `TSTypeAssertion`.
+            // ESLint goes by the type's name, which ends in `Expression` for `TSAsExpression` but not for
+            // `TSTypeAssertion`.
             ExprKind::As { .. } | ExprKind::AsConst(_) => !parent.is_angle_bracket_assertion(),
             ExprKind::Unary { .. }
             | ExprKind::Await(_)
@@ -136,7 +137,7 @@ fn fix<'a>(fixer: Fixer<'a>, node: Expr<'a>, call: Call<'a>) -> Option<Fix> {
     let mut should_parenthesize_all = does_exponentiation_expression_need_parens(node);
     let first_token_of_base = file.first_token(base)?;
 
-    // A statement that starts with `function`, `class` or `{` is not an expression statement.
+    // A statement that starts with `function`, `class` or `{` isn't an expression statement.
     if !should_parenthesize_all && !should_parenthesize_base && is_start_of_expression_statement {
         let first = first_token_of_base;
         should_parenthesize_all = ast_utils::is_opening_brace_token(&first)
@@ -207,10 +208,10 @@ impl Rule for PreferExponentiationOperator {
             let (Some(node), Some(call)) = (reference.expr(), reference.call()) else {
                 continue;
             };
-            // oxlint wants two arguments, and `Math.pow` written out, with nothing in parentheses.
+            // oxlint requires exactly two arguments and a literal `Math.pow`, with nothing in parentheses.
             let object = as_member_expression(call.callee()).and_then(Expr::object);
-            let is_written_out = object.is_some_and(|it| !it.is_parenthesized() && !it.is_chain_root());
-            if cx.language().is_oxlint && !(is_written_out && call.args().len() == 2) {
+            let is_literal_math_pow = object.is_some_and(|it| !it.is_parenthesized() && !it.is_chain_root());
+            if cx.language().is_oxlint && !(is_literal_math_pow && call.args().len() == 2) {
                 continue;
             }
             cx.report(node, USE_EXPONENTIATION).fix(|fixer| fix(fixer, node, call));

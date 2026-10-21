@@ -85,9 +85,9 @@ async function pruneMerged(dir: string, ...args: string[]) {
   }
 }
 
-// Whatever a prune removes from node_modules/.bun, no package link of the store that stays may point at it: not
-// in an entry's node_modules, not in the package's own node_modules (where a dependency with the package's name
-// is linked), and not in the hidden hoisted folder node_modules/.bun/node_modules.
+// No matter what a prune removes from node_modules/.bun, no package link in the remaining store may point at it: not in
+// an entry's node_modules, not in the package's own node_modules (where a dependency with the package's name is
+// linked), and not in the hidden hoisted folder node_modules/.bun/node_modules.
 function expectNoDanglingStoreLinks(dir: string) {
   const store = join(dir, "node_modules", ".bun");
   const isRealDirectory = (path: string) => lstatSync(path, { throwIfNoEntry: false })?.isDirectory() ?? false;
@@ -408,7 +408,7 @@ test.concurrent.each([["--production"], ["--prod"], ["--omit=dev"]] as string[][
   },
 );
 
-// As `bun install --production`. A required peer stays: bun installs peerDependencies by default.
+// Same as `bun install --production`. A required peer is kept, because Bun installs peerDependencies by default.
 test.concurrent.each(linkers)(
   "%s: --production removes a devDependency that is also an optional peerDependency",
   async linker => {
@@ -522,7 +522,7 @@ test.concurrent("--check reports and exits 1 without deleting", async () => {
   expect(out(dryRun.stdout)).toBe(out(check.stdout));
   expect(dryRun.exitCode).toBe(0);
 
-  // The hint omits both flags, so it stays copy-pasteable.
+  // The hint omits both flags, so it can be copied and pasted.
   const both = await prune(dir, "--dry-run", "--check");
   expect(lines(both.stdout)).toStrictEqual(lines(check.stdout));
   expect(both.exitCode).toBe(1);
@@ -967,9 +967,9 @@ test.concurrent("hoisted: dot entries and files are never touched even when the 
   expect(existsSync(integrity)).toBeTrue();
 });
 
-// `bun install` links a package in a `.bun-tmp-<hash>` directory next to it, and moves the one it
-// replaces to `.old-<random>`. One that is there while no install is running is what a killed install left.
-test.concurrent("hoisted: what a killed install left in its staging directories is removed", async () => {
+// `bun install` links a package in a `.bun-tmp-<hash>` directory next to it, and moves the one that it replaces to
+// `.old-<random>`. If one exists while no install is running, a killed install left it behind.
+test.concurrent("hoisted: leftovers of a killed install in its staging directories are removed", async () => {
   using tmp = tempDir("prune-staging-leftovers", {
     "package.json": JSON.stringify({ name: "empty" }),
     "bun.lock": `{
@@ -1029,7 +1029,7 @@ test.concurrent("isolated: removes staging leftovers inside a store entry it kee
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
   expect([left, leftInScope].map(path => existsSync(path))).toEqual([false, false]);
-  // the packages next to them stay
+  // The packages next to them are kept.
   expect(storeEntries(dir)).toStrictEqual(entries);
   expect(existsSync(join(store, "no-deps@1.0.0", "node_modules", "no-deps", "package.json"))).toBeTrue();
   expect(
@@ -2685,7 +2685,7 @@ test.concurrent(
     expect(await file(rootPkgJson).json()).toMatchObject({ version: "2.0.0" });
     expect(await file(nestedPkgJson).json()).toMatchObject({ version: "1.0.0" });
 
-    // Nothing waits for the place at the root, so whatever version is in it goes without a warning.
+    // Nothing needs the slot at the root, so whatever version is in it is removed without a warning.
     const rootPkg = await file(rootPkgJson).json();
     await write(rootPkgJson, JSON.stringify({ ...rootPkg, version: "9.9.9" }));
     const other = await prune(dir, "--production", "--dry-run");
@@ -2776,40 +2776,43 @@ async function serveGraph(graph: Record<string, Record<string, Record<string, st
   });
 }
 
-test.concurrent("hoisted: --production keeps what is below a package in the place of another version", async () => {
-  // The devDependencies take the top `d` and `g`, which is where `b` finds the 2.0.0 that it needs. The 1.0.0 that
-  // `a` needs would get these places without them.
-  using server = await serveGraph({
-    a: { "1.0.0": { d: "1.0.0", g: "1.0.0" } },
-    b: { "1.0.0": { d: "2.0.0", g: "2.0.0" } },
-    d: { "1.0.0": { k: "1.0.0" }, "2.0.0": { e: "2.0.0", k: "1.0.0" } },
-    g: { "1.0.0": {}, "2.0.0": { e: "2.0.0" } },
-    k: { "1.0.0": { e: "1.0.0", f: "1.0.0" }, "2.0.0": {} },
-    e: { "1.0.0": {}, "2.0.0": {} },
-    f: { "1.0.0": {}, "2.0.0": {} },
-  });
-  using tmp = tempDir("prune-other-version", {
-    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
-    "package.json": JSON.stringify({
-      name: "foo",
-      dependencies: { a: "1.0.0", b: "1.0.0", e: "1.0.0", f: "2.0.0", k: "2.0.0" },
-      devDependencies: { d: "2.0.0", g: "2.0.0" },
-    }),
-  });
-  const dir = String(tmp);
-  await install(dir);
-  const before = listing(dir, "node_modules");
-  // g@1.0.0 has nothing below it, d@1.0.0 has only `k`, and the `k` below d@1.0.0 finds its `e` at the top.
-  for (const path of ["g/node_modules/e", "d/node_modules/e", "d/node_modules/k/node_modules/e"]) {
-    expect(before).toContain(join("node_modules", path));
-  }
+test.concurrent(
+  "hoisted: --production keeps what's below a package that's in the slot of another version",
+  async () => {
+    // The devDependencies take the top `d` and `g`, which is where `b` finds the 2.0.0 that it needs. The 1.0.0 that
+    // `a` needs would get these places without them.
+    using server = await serveGraph({
+      a: { "1.0.0": { d: "1.0.0", g: "1.0.0" } },
+      b: { "1.0.0": { d: "2.0.0", g: "2.0.0" } },
+      d: { "1.0.0": { k: "1.0.0" }, "2.0.0": { e: "2.0.0", k: "1.0.0" } },
+      g: { "1.0.0": {}, "2.0.0": { e: "2.0.0" } },
+      k: { "1.0.0": { e: "1.0.0", f: "1.0.0" }, "2.0.0": {} },
+      e: { "1.0.0": {}, "2.0.0": {} },
+      f: { "1.0.0": {}, "2.0.0": {} },
+    });
+    using tmp = tempDir("prune-other-version", {
+      "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+      "package.json": JSON.stringify({
+        name: "foo",
+        dependencies: { a: "1.0.0", b: "1.0.0", e: "1.0.0", f: "2.0.0", k: "2.0.0" },
+        devDependencies: { d: "2.0.0", g: "2.0.0" },
+      }),
+    });
+    const dir = String(tmp);
+    await install(dir);
+    const before = listing(dir, "node_modules");
+    // g@1.0.0 has nothing below it, d@1.0.0 has only `k`, and the `k` below d@1.0.0 finds its `e` at the top.
+    for (const path of ["g/node_modules/e", "d/node_modules/e", "d/node_modules/k/node_modules/e"]) {
+      expect(before).toContain(join("node_modules", path));
+    }
 
-  const { stdout, stderr, exitCode } = await prune(dir, "--production");
-  expect(listing(dir, "node_modules")).toEqual(before);
-  expect(out(stdout)).toEndWith("(nothing to prune)");
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
-});
+    const { stdout, stderr, exitCode } = await prune(dir, "--production");
+    expect(listing(dir, "node_modules")).toEqual(before);
+    expect(out(stdout)).toEndWith("(nothing to prune)");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent(
   "hoisted: inside a tree folder, junk is removed but a copy shadowed by a mismatched root package is kept",
@@ -3117,7 +3120,8 @@ test.concurrent(
   },
 );
 
-// Up to Bun 1.4 nothing deleted it, and an install that fails keeps it. The store in it is no evidence of the layout.
+// Up to Bun 1.4, nothing deleted it, and an install that fails keeps it. The store inside it doesn't prove anything
+// about the layout.
 test.concurrent.each(linkers)(
   "%s: the trees that earlier switches of linkers set aside are removed",
   async (linker: Linker) => {
@@ -3583,7 +3587,7 @@ function nodeModulesTree(dir: string, { storeBins }: { storeBins: boolean }) {
   return tree;
 }
 
-// What `bun install <flags>` lays out in an empty folder from the package.json, bun.lock and tarballs of `dir`.
+// Returns what `bun install <flags>` creates in an empty folder from the package.json, bun.lock and tarballs of `dir`.
 async function freshInstallTree(dir: string, ...flags: string[]) {
   const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
   for (const name of readdirSync(dir)) {
@@ -3628,7 +3632,7 @@ test.concurrent.each([["--omit=optional"], ["--os=aix"], ["--cpu=s390x"]])(
 
 // one-fixed-dep@2.0.0 needs no-deps@2.0.0, and one-dep needs no-deps@1.0.1. A full install comes to the
 // devDependencies first.
-test.concurrent("isolated: the fallback link of a removed version goes to the version that stays", async () => {
+test.concurrent("isolated: the fallback link of a removed version is relinked to the remaining version", async () => {
   const dir = await setupWithLinker("isolated", {
     name: "foo",
     dependencies: { "one-dep": "1.0.0" },
@@ -3645,30 +3649,33 @@ test.concurrent("isolated: the fallback link of a removed version goes to the ve
   expect((await prune(dir, "--production", "--check", "--linker", "isolated")).exitCode).toBe(0);
 });
 
-// A folder has its name among the fallback links without a link, so none goes when the folder goes.
-test.concurrent("isolated: the fallback name of a removed file: folder goes to the version that stays", async () => {
-  const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
-  await write(join(dir, "vendor", "no-deps", "package.json"), JSON.stringify({ name: "no-deps", version: "9.9.9" }));
-  await write(
-    packageJson,
-    JSON.stringify({
-      name: "foo",
-      dependencies: { "one-dep": "1.0.0" },
-      devDependencies: { "no-deps": "file:./vendor/no-deps" },
-    }),
-  );
-  await install(dir, "--linker", "isolated");
-  const fallback = () => nodeModulesTree(dir, { storeBins: false })["node_modules/.bun/node_modules/no-deps"];
-  expect(fallback()).toBeUndefined();
+// A folder reserves its name among the fallback links without having a link, so no link is removed when the folder is.
+test.concurrent(
+  "isolated: the fallback name of a removed file: folder is linked to the remaining version",
+  async () => {
+    const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await write(join(dir, "vendor", "no-deps", "package.json"), JSON.stringify({ name: "no-deps", version: "9.9.9" }));
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "one-dep": "1.0.0" },
+        devDependencies: { "no-deps": "file:./vendor/no-deps" },
+      }),
+    );
+    await install(dir, "--linker", "isolated");
+    const fallback = () => nodeModulesTree(dir, { storeBins: false })["node_modules/.bun/node_modules/no-deps"];
+    expect(fallback()).toBeUndefined();
 
-  const { exitCode } = await prune(dir, "--production", "--linker", "isolated");
-  expect(storeEntries(dir)).toStrictEqual(["no-deps@1.0.1", "one-dep@1.0.0"]);
-  expect(fallback()).toBe("-> node_modules/.bun/no-deps@1.0.1/node_modules/no-deps");
-  expect(exitCode).toBe(0);
-});
+    const { exitCode } = await prune(dir, "--production", "--linker", "isolated");
+    expect(storeEntries(dir)).toStrictEqual(["no-deps@1.0.1", "one-dep@1.0.0"]);
+    expect(fallback()).toBe("-> node_modules/.bun/no-deps@1.0.1/node_modules/no-deps");
+    expect(exitCode).toBe(0);
+  },
+);
 
-// Of two packages with one command, the first by name has the link.
-test.concurrent.each(linkers)("%s: the command of a removed package goes to the package that stays", async linker => {
+// If two packages have the same bin, the first one by name gets the link.
+test.concurrent.each(linkers)("%s: the bin of a removed package is relinked to the remaining package", async linker => {
   const dir = await setupWithLinker(linker, {
     name: "foo",
     dependencies: { "what-bin": "1.0.0" },
@@ -3687,7 +3694,7 @@ test.concurrent.each(linkers)("%s: the command of a removed package goes to the 
 
 // A dependency on a workspace package or a `file:` folder is a link out of the store.
 test.concurrent(
-  "isolated: a link in a kept store entry to a folder outside the store stays while it resolves",
+  "isolated: a link in a kept store entry to a folder outside the store is kept while it resolves",
   async () => {
     const dir = await setupWithLinker("isolated", { name: "foo", dependencies: { "test-postinstall-skip": "1.0.0" } });
     const dependent = "node_modules/.bun/test-postinstall-skip@1.0.0/node_modules";
@@ -4029,7 +4036,8 @@ function listing(dir: string, prefix = ""): string[] {
     .toSorted();
 }
 
-// Puts a link at the workspace's `node_modules`. What the install wrote there moves to `storage`, which the link leads to.
+// Replaces the workspace's `node_modules` with a link. What the install wrote there is moved to `storage`, which the
+// link points to.
 function linkToOwnStorage(dir: string, workspace: string) {
   const workspaceModules = join(dir, "packages", workspace, "node_modules");
   const storage = join(dir, "packages", workspace, "storage");
@@ -4103,7 +4111,7 @@ test.concurrent("hoisted: two workspaces behind links get one error each and one
   expect(exitCode).toBe(1);
 });
 
-test.concurrent("hoisted: a file at a workspace's node_modules is no error", async () => {
+test.concurrent("hoisted: a file at a workspace's node_modules isn't an error", async () => {
   const dir = await setupWorkspaces("hoisted", {
     root: { dependencies: { "no-deps": "2.0.0" } },
     packages: { a: { dependencies: { "a-dep": "1.0.1" } } },
@@ -4158,7 +4166,8 @@ test.concurrent("hoisted: bun update does not look behind a workspace node_modul
   expect(exitCode).toBe(0);
 });
 
-// `a` finds its own what-bin in `b`'s folder, through the link. There the pass takes it for a copy that hides the root's.
+// `a` finds its own what-bin in `b`'s folder, through the link. There, the pass mistakes it for a copy that hides the
+// root's.
 test.concurrent("hoisted: bun update removes no copy while a workspace node_modules is a link", async () => {
   const dir = await setupWorkspaces("hoisted", {
     root: { dependencies: { "no-deps": "1.0.0", "what-bin": "1.0.0" } },
@@ -4184,7 +4193,7 @@ test.concurrent("hoisted: bun update removes no copy while a workspace node_modu
   expect(exitCode).toBe(0);
 });
 
-// lerna and `npm link` put such a link there, and somebody who tries `a` against a packed `b` such a folder.
+// lerna and `npm link` create such a link there, and someone who tests `a` against a packed `b` creates such a folder.
 test.concurrent.each(["a link to it", "a link to another checkout", "a folder"])(
   "hoisted: bun update keeps what bun.lock never placed in a workspace under the name of another workspace: %s",
   async kind => {
@@ -4210,25 +4219,28 @@ test.concurrent.each(["a link to it", "a link to another checkout", "a folder"])
   },
 );
 
-test.concurrent("hoisted: bun install says so when a copy left a workspace node_modules that is a link", async () => {
-  const dir = await setupWorkspaces("hoisted", {
-    root: { dependencies: { "no-deps": "2.0.0" } },
-    packages: { a: { dependencies: { "no-deps": "1.0.0" } } },
-  });
-  const storage = linkToOwnStorage(dir, "a");
-  await write(
-    join(dir, "packages", "a", "package.json"),
-    JSON.stringify({ name: "a", version: "1.0.0", dependencies: { "no-deps": "2.0.0" } }),
-  );
+test.concurrent(
+  "hoisted: bun install reports it when a copy is removed from a workspace node_modules that's a link",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", {
+      root: { dependencies: { "no-deps": "2.0.0" } },
+      packages: { a: { dependencies: { "no-deps": "1.0.0" } } },
+    });
+    const storage = linkToOwnStorage(dir, "a");
+    await write(
+      join(dir, "packages", "a", "package.json"),
+      JSON.stringify({ name: "a", version: "1.0.0", dependencies: { "no-deps": "2.0.0" } }),
+    );
 
-  const { stderr, exitCode } = await bun(dir, "install", "--linker", "hoisted");
-  expect(out(stderr)).toContain(
-    "warn: cannot prune symlink packages/a/node_modules\n" +
-      "note: remove the link and run 'bun install', then 'bun prune'",
-  );
-  expect(await file(join(storage, "no-deps", "package.json")).json()).toMatchObject({ version: "1.0.0" });
-  expect(exitCode).toBe(0);
-});
+    const { stderr, exitCode } = await bun(dir, "install", "--linker", "hoisted");
+    expect(out(stderr)).toContain(
+      "warn: cannot prune symlink packages/a/node_modules\n" +
+        "note: remove the link and run 'bun install', then 'bun prune'",
+    );
+    expect(await file(join(storage, "no-deps", "package.json")).json()).toMatchObject({ version: "1.0.0" });
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent("hoisted: an install removes the packages of the last dependency that left package.json", async () => {
   const dir = await setup({ name: "foo", dependencies: { "one-dep": "1.0.0", "what-bin": "1.0.0" } });

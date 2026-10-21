@@ -76,7 +76,7 @@ impl Kinds {
     }
 }
 
-/// The part of a selector before its last component: which ancestors the node needs.
+/// The part of a selector before its last component, which determines which ancestors the node needs.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Within {
     Anything,
@@ -95,8 +95,9 @@ pub(crate) struct Listener {
     kinds: Kinds,
     within: Within,
     is_exit: bool,
-    /// The selector isn't just a type name. On the same node, ESLint calls such listeners after the plain type names.
-    is_more_than_a_type: bool,
+    /// True if the selector isn't just a type name. On the same node, ESLint calls such listeners after the plain type
+    /// names.
+    is_complex_selector: bool,
 }
 
 impl Listener {
@@ -104,16 +105,16 @@ impl Listener {
     pub(crate) const fn new(selector: &'static str, kinds: Kinds) -> Listener {
         let bytes = selector.as_bytes();
         let is_exit = matches!(bytes, [.., b':', b'e', b'x', b'i', b't']);
-        let (mut is_more_than_a_type, mut at) = (false, 0);
+        let (mut is_complex_selector, mut at) = (false, 0);
         while at < bytes.len() - if is_exit { 5 } else { 0 } {
-            is_more_than_a_type |= !bytes[at].is_ascii_alphabetic();
+            is_complex_selector |= !bytes[at].is_ascii_alphabetic();
             at += 1;
         }
         Listener {
             kinds,
             within: Within::Anything,
             is_exit,
-            is_more_than_a_type,
+            is_complex_selector,
         }
     }
 
@@ -290,7 +291,7 @@ where
                 report = match (kind, is_exit) {
                     (Kind::Root, true) => report.at_the_end(),
                     (_, true) => report.listened_on(node.span()).on_exit(true),
-                    (_, false) if listener.is_more_than_a_type => {
+                    (_, false) if listener.is_complex_selector => {
                         report.listened_on(node.span()).by_selector()
                     }
                     (_, false) => report.listened_on(node.span()),

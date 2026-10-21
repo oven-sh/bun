@@ -13,7 +13,7 @@ const PREFER_FUNCTION_COMPONENT: Message =
     Message::new("", "Class component should be written as a function component.");
 
 pub struct State<'a> {
-    /// `None`: it is not asked for.
+    /// `None` if `allowJsxUtilityClass` is set, because it isn't needed then.
     functions_with_jsx: Option<FunctionsWithJsx<'a>>,
 }
 
@@ -48,7 +48,7 @@ impl Rule for PreferFunctionComponent {
     }
 }
 
-/// It has `componentDidCatch` or `static getDerivedStateFromError`.
+/// True if the class has `componentDidCatch` or `static getDerivedStateFromError`.
 fn is_error_boundary(class: Class) -> bool {
     class.members().iter().any(|member| {
         let node = Node::Member(member);
@@ -61,7 +61,7 @@ fn is_error_boundary(class: Class) -> bool {
     })
 }
 
-/// A method, or a function that a property is initialized with, has JSX in it.
+/// True if a method, or a function assigned to a property, contains JSX.
 fn class_body_contains_jsx<'a>(class: Class<'a>, functions_with_jsx: &FunctionsWithJsx<'a>) -> bool {
     class.members().iter().any(|member| {
         let node = Node::Member(member);

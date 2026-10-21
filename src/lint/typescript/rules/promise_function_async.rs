@@ -18,7 +18,7 @@ pub struct PromiseFunctionAsync {
 
 const MISSING_ASYNC: Message =
     Message::new("missingAsync", "Functions that return promises must be async.");
-/// Of tsgolint.
+/// tsgolint only.
 const MISSING_ASYNC_HYBRID_RETURN_SUGGESTION: Message =
     Message::new("missingAsyncHybridReturnSuggestion", "Add `async` keyword to the function.");
 const MISSING_ASYNC_HYBRID_RETURN: Message = Message::new(
@@ -26,8 +26,8 @@ const MISSING_ASYNC_HYBRID_RETURN: Message = Message::new(
     "Functions that return promises must be async. Consider adding an explicit return type annotation if the function is intended to return a union of promise and non-promise types.",
 );
 
-/// Where tsgolint 7.0 puts it, and with which spaces: before the name of a method, after `export` or `default`, or else
-/// before the function.
+/// Inserts `async` where tsgolint 7.0 does, with the same spacing: before a method's name, after `export` or `default`,
+/// or else before the function.
 fn add_async_as_tsgolint<'a>(fixer: Fixer<'a>, node: Func<'a>) -> Fix {
     let file = fixer.file();
     let key = match node.owner() {
@@ -69,7 +69,7 @@ fn add_async<'a>(fixer: Fixer<'a>, node: Func<'a>) -> Option<Fix> {
         _ => return Some(fixer.insert_before(node.estree_span(), "async ")),
     };
 
-    // The token to put `async` before.
+    // The token to insert `async` before.
     let mut key_token = match last_decorator {
         Some(last_decorator) => file.token_after(last_decorator)?,
         None => file.first_token(method)?,
@@ -84,8 +84,8 @@ fn add_async<'a>(fixer: Fixer<'a>, node: Func<'a>) -> Option<Fix> {
     Some(fixer.insert_before(key_token, if insert_space { " async " } else { "async " }))
 }
 
-/// oxlint points at the function, from its first decorator or modifier.
-fn place<'a>(node: Func<'a>, cx: &Cx<'a, PromiseFunctionAsync>) -> Span {
+/// oxlint reports the whole function, starting at its first decorator or modifier.
+fn report_span<'a>(node: Func<'a>, cx: &Cx<'a, PromiseFunctionAsync>) -> Span {
     if cx.language().is_oxlint { node.span() } else { get_function_head_loc(node) }
 }
 
@@ -99,15 +99,15 @@ impl PromiseFunctionAsync {
             FnKind::Decl => self.check_function_declarations,
             FnKind::Expr => self.check_function_expressions,
             FnKind::Method | FnKind::Constructor => match node.owner() {
-                // The type of a constructor has no call signatures.
+                // A constructor's type has no call signatures.
                 Node::Member(member) => {
                     self.check_method_declarations
                         && !member.is_constructor()
                         && !member.flags().contains(Flags::ABSTRACT)
                 }
-                // In an object literal it is a `MethodDeclaration` for tsgolint.
+                // In an object literal it's a `MethodDeclaration` for tsgolint.
                 _ if cx.language().is_oxlint => self.check_method_declarations,
-                // For typescript-eslint a `FunctionExpression` in a `Property`.
+                // For typescript-eslint it's a `FunctionExpression` in a `Property`.
                 _ => self.check_function_expressions,
             },
             _ => false,
@@ -131,8 +131,8 @@ impl PromiseFunctionAsync {
         if !self.allow_any
             && return_types.iter().any(|ty| is_type_flag_set(*ty, TypeFlags::ANY | TypeFlags::UNKNOWN))
         {
-            // Without a fix: what is returned is unknown.
-            cx.report(place(node, cx), MISSING_ASYNC);
+            // No fix, because the returned value is unknown.
+            cx.report(report_span(node, cx), MISSING_ASYNC);
             return;
         }
 
@@ -142,7 +142,7 @@ impl PromiseFunctionAsync {
         let every_signature_returns_promise = return_types.iter().all(|ty| match is_oxlint {
             // tsgolint passes `hasExplicitReturnType` as `matchAnyInstead`.
             true => contains_all_types_by_name_as_tsgolint(*ty, names, has_explicit_return_type),
-            // Without an explicit return type, one part of the return type that is a Promise is enough.
+            // Without an explicit return type, it's enough if one part of the return type is a Promise.
             false => contains_all_types_by_name(*ty, true, names, !has_explicit_return_type),
         });
         if !every_signature_returns_promise {
@@ -164,7 +164,7 @@ impl PromiseFunctionAsync {
             true => MISSING_ASYNC_HYBRID_RETURN,
             false => MISSING_ASYNC,
         };
-        let report = cx.report(place(node, cx), message);
+        let report = cx.report(report_span(node, cx), message);
         match (cx.language().is_oxlint, is_hybrid_return_type) {
             // tsgolint only suggests it.
             (true, true) => report.suggest(MISSING_ASYNC_HYBRID_RETURN_SUGGESTION, |fixer| {

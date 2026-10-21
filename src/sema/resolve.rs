@@ -1387,7 +1387,7 @@ pub fn to_file_name_lower_case(file_name: &[u8]) -> Vec<u8> {
     out
 }
 
-/// `ensurePathIsNonModuleName`
+/// `EnsurePathIsNonModuleName`
 pub(crate) fn ensure_path_is_non_module_name(path: Vec<u8>) -> Vec<u8> {
     if get_root_length(&path) != 0 || path_is_relative(&path) {
         path
@@ -2088,7 +2088,7 @@ pub struct Resolver<'h> {
     redirect: u32,
 }
 
-/// `guessDirectorySymlink`: the real path of the symlinked directory and the path of the symlink,
+/// `guessDirectorySymlinkFromFilePaths`: the real path of the symlinked directory and the path of the symlink,
 /// inferred from a file at `real` that was found at `link`.
 fn guess_directory_link(
     real: &[u8],

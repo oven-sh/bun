@@ -2023,7 +2023,7 @@ fn run_one(
         })
         .collect();
     let mut declarations = std::mem::take(&mut *dts.lock());
-    // `HandleNoEmitOnError`
+    // `HandleNoEmitOptions`
     if no_emit_on_error && !report.diagnostics.is_empty() {
         declarations.clear();
     }

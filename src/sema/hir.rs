@@ -1689,7 +1689,7 @@ pub struct Class {
     pub name_pos: u32,
     pub flags: Flags,
     pub type_params: Span<TypeParamId>,
-    /// `GetExtendsHeritageClauseElement`: the first element of the first `extends` clause.
+    /// `GetClassExtendsHeritageElement`: the first element of the first `extends` clause.
     pub extends: ExprId,
     pub extends_args: IdList<TypeNodeId>,
     /// The other elements of `extends` clauses, which are an error and which the checker never

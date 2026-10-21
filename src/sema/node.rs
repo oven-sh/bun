@@ -222,7 +222,7 @@ parts! {
     Extends = 6,
     /// The `HeritageClause` with the `implements` keyword.
     Implements = 7,
-    /// The `ExpressionWithTypeArguments` a class extends: `GetExtendsHeritageClauseElement`.
+    /// The `ExpressionWithTypeArguments` a class extends: `GetClassExtendsHeritageElement`.
     Base = 8,
     /// The `VariableDeclarationList`. In the head of a `for`, the statement it belongs to isn't a tsgo node.
     DeclarationList = 9,

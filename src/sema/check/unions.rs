@@ -436,7 +436,7 @@ impl<'p, 's> Checker<'p, 's> {
         let pair = match *types {
             [] => return (TypeId::NEVER, true),
             [one] => return (one, true),
-            // `addTypeToUnion` sets `TypeFlagsIncludesError`, so the error type is returned unchanged only from a list
+            // `addTypesToUnion` sets `TypeFlagsIncludesError`, so the error type is returned unchanged only from a list
             // of one.
             [a, b]
                 if a == b
@@ -532,7 +532,7 @@ impl<'p, 's> Checker<'p, 's> {
         if members.first() == Some(&TypeId::UNRESOLVED) {
             return TypeId::UNRESOLVED;
         }
-        // `addTypeToUnion`: without strictNullChecks, null and undefined are never members. If there are no other
+        // `addTypesToUnion`: without strictNullChecks, null and undefined are never members. If there are no other
         // members, the result is never.
         if !self.p.files.options.strict_null_checks {
             members.retain(|m| !m.is_undefined() && !m.is_null());
@@ -603,7 +603,7 @@ impl<'p, 's> Checker<'p, 's> {
             [only] => return (only, Inspected::Members),
             _ => {}
         }
-        // `addTypeToUnion`: without strictNullChecks, every type includes null and undefined, and they are never
+        // `addTypesToUnion`: without strictNullChecks, every type includes null and undefined, and they are never
         // members. If there are no other members, the result is null in preference to undefined, in its non-widening
         // form if any input was non-widening (`TypeFlagsIncludesNonWideningType`).
         if !self.p.files.options.strict_null_checks {

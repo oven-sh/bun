@@ -3439,7 +3439,7 @@ fn check_with_references(
             awaited.dedup();
             return Err(awaited);
         }
-        // `HandleNoEmitOnError`
+        // `HandleNoEmitOptions`
         if !(no_emit_on_error && !checked.diagnostics.is_empty()) && !reads_sources {
             let mut files = Vec::new();
             for (source, emitted_text) in std::mem::take(&mut checked.declaration_files) {

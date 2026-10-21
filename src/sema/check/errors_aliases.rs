@@ -202,7 +202,7 @@ impl Checker<'_, '_> {
     // ───────────────────────────── diagnostics reported during emit ─────────────────────────────
 
     /// True if `Emit` comes before the check (`Options::emits_first`). Under `noEmitOnError` it begins with the check
-    /// itself (`HandleNoEmitOnError`).
+    /// itself (`HandleNoEmitOptions`).
     pub(super) fn emits_first(&self) -> bool {
         let options = &self.p.files.options;
         options.emits_first && !options.no_emit_on_error

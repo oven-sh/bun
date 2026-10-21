@@ -1123,7 +1123,7 @@ impl Expected {
     }
 }
 
-/// `unmarshalJSONValueV2`. Returns `None` if `strconv.ParseFloat` returns `ErrRange` for a number, or if the stack,
+/// `unmarshalJSONValueFrom`. Returns `None` if `strconv.ParseFloat` returns `ErrRange` for a number, or if the stack,
 /// which grows in Go, is exhausted.
 fn unmarshal_json_value(value: &JsonValue, has_duplicates: bool) -> Option<Json> {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {

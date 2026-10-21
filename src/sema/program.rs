@@ -4462,7 +4462,7 @@ fn source_file_path_in_new_dir(
     }
 }
 
-/// `GetDeclarationEmitOutputFilePath`
+/// `getDeclarationEmitOutputFilePathForFileName`
 pub fn declaration_emit_output_file_path(
     options: &Options,
     path: &[u8],
@@ -4543,7 +4543,7 @@ pub fn get_output_extension(options: &Options, path: &[u8]) -> &'static [u8] {
     }
 }
 
-/// `getOwnEmitOutputFilePath`
+/// `getOwnEmitOutputFilePathForFileName`
 pub fn own_emit_output_file_path(
     options: &Options,
     path: &[u8],

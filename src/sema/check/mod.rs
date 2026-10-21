@@ -449,7 +449,7 @@ pub struct Program<'s> {
     /// mappers arrive at one object type.
     keys_of_properties: ById<TypeId, TypeId, buffered!(keys_of_properties), &'s Session>,
     never_intersections: ById<TypeId, bool, buffered!(never_intersections), &'s Session>,
-    /// `getMappedTargetWithSymbol` of a mapped type.
+    /// `getRecursionIdentityTarget` of a mapped type.
     mapped_targets: ById<TypeId, TypeId, buffered!(mapped_targets), &'s Session>,
     inferred_constraints:
         ById<TypeId, Option<TypeId>, buffered!(inferred_constraints), &'s Session>,

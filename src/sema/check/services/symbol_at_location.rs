@@ -464,9 +464,9 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
         }
     }
 
-    /// `isInNameOfExpressionWithTypeArguments`, in the extends clause of a class: `e` is either the
-    /// whole entity name expression, resolved with the value meaning, or the part before a dot in
-    /// it, resolved with the namespace meaning. An alias matches regardless of its target.
+    /// `isInNameOfExpressionWithTypeArgumentsOrHeritageTypeReference`, in the extends clause of a class: `e` is either
+    /// the whole entity name expression, resolved with the value meaning, or the part before a dot in it, resolved with
+    /// the namespace meaning. An alias matches regardless of its target.
     fn get_symbol_of_name_in_class_extends(&self, e: ExprId) -> Option<Found<'p>> {
         let (hir, bound) = (self.c.hir(self.file), self.c.bound(self.file));
         // Checked first, because the walk below from each link of `a.b.b ..` is as long as the rest

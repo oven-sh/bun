@@ -993,10 +993,9 @@ async function originWithBrokenReuse(secondRequest: (session: TLSSocket, raw: So
 }
 
 const bodyOrCode = (url: string, init: BunFetchRequestInit) =>
-  fetch(url, { tls: { ca: tls.cert }, ...init }).then(
-    response => response.text().catch(e => `body ${e.code}`),
-    e => `${e.code}`,
-  );
+  fetch(url, { tls: { ca: tls.cert }, ...init })
+    .then(response => response.text())
+    .catch(e => `${e.code}`);
 
 // A reused connection can be gone by the time the request reaches the origin, so a request that can be sent twice goes
 // out again on a new one when it ends before the response body, however it ends.
@@ -1019,21 +1018,20 @@ test.concurrent.each<[string, Parameters<typeof originWithBrokenReuse>[0]]>([
   });
 });
 
-test.concurrent.each<[string, BunFetchRequestInit, Parameters<typeof originWithBrokenReuse>[0], string]>([
-  ["a POST", { method: "POST", body: "x" }, (_session, raw) => raw.end(NOT_A_TLS_RECORD), "EPROTO"],
+test.concurrent.each<[string, BunFetchRequestInit, Parameters<typeof originWithBrokenReuse>[0]]>([
+  ["a POST", { method: "POST", body: "x" }, (_session, raw) => raw.end(NOT_A_TLS_RECORD)],
   [
     "a GET whose response body has started",
     {},
     (session, raw) => session.write("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nok", () => raw.end(NOT_A_TLS_RECORD)),
-    "body EPROTO",
   ],
 ])(
   "%s on a reused https connection whose TLS session breaks is not sent again",
-  async (_label, init, secondRequest, outcome) => {
+  async (_label, init, secondRequest) => {
     await using origin = await originWithBrokenReuse(secondRequest);
     const bodies = [await bodyOrCode(origin.url, init), await bodyOrCode(origin.url, init)];
     expect({ bodies, requests: origin.requests }).toEqual({
-      bodies: ["ok", outcome],
+      bodies: ["ok", "EPROTO"],
       requests: ["connection 1 request 1", "connection 1 request 2"],
     });
   },

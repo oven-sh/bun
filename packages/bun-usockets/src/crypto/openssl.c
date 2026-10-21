@@ -2121,10 +2121,10 @@ static int ssl_handle_shutdown(struct us_socket_t *s) {
       s->ssl_fatal_error = 1;
       return 1;
     }
-    /* The kernel refused the close_notify, and SSL_SENT_SHUTDOWN (is_shut_down) ends the writable
-     * poll that would drain it: close now without it, the peer still observes the FIN. Node parks
+    /* A close_notify that the kernel refused is spilled, and the writable event sends it (loop.c keeps
+     * that poll for it): the peer may still send, and a close over what it sent is a reset. Node parks
      * the alert in its stream write queue (crypto_tls.cc DoShutdown). */
-    return ret == 1 || s->ssl_spilled;
+    return ret == 1;
   }
   return 1;
 }
@@ -2178,10 +2178,12 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
   /* Neither node's `_handle.close()` (FAST_SHUTDOWN, no reason) nor a graceful
    * close (code 0: peer close_notify / end-completion) may cut off spilled
    * ciphertext already reported as written: SSL sealed it, so it can only be
-   * delivered, never re-sent. Mirror ssl_shutdown_after_spill; defer at most once. */
+   * delivered, never re-sent. Mirror ssl_shutdown_after_spill; defer at most once.
+   * Behind our own close_notify the spill holds that alert and nothing write() reported: no close waits for it. */
   if ((code == LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN || code == LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN)
       && !reason
-      && !s->ssl_close_after_spill && !s->ssl_fatal_error && !us_socket_is_closed(s)) {
+      && !s->ssl_close_after_spill && !s->ssl_fatal_error && !us_socket_is_closed(s)
+      && !(s->ssl_spilled && (SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN))) {
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
     if (loop_ssl_data && !ssl_drain_spill(loop_ssl_data, s)) {
       s->ssl_close_after_spill = 1;
@@ -2459,7 +2461,7 @@ struct us_socket_t *us_internal_ssl_on_timeout(struct us_socket_t *s) {
     ssl_release_spill(s->group->loop, s);
     return us_internal_socket_close_raw(s, s->ssl_pending_close_code, NULL);
   }
-  /* close_notify without the FIN: the spill drained, and the graceful close now waits for the peer's reply. */
+  /* close_notify without the FIN: the graceful close waits for the peer's reply, or still for the kernel to take that close_notify. */
   if ((SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN) && us_internal_socket_can_raw_write(s)) {
     return us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
   }
@@ -2521,6 +2523,10 @@ static struct us_socket_t *ssl_on_writable(struct us_socket_t *s) {
    * still get write-completion dispatch after a half-close in either
    * direction. */
   if (ssl_is_uws_http_tls(s) && us_internal_ssl_is_shut_down(s)) return s;
+  /* The owner let go with its graceful close. This event sent the close_notify that the kernel had refused,
+   * or was asked for before the close: the owner would take it for the end of a flush, or for a socket it
+   * no longer knows (fetch resets that one). */
+  if (ssl_close_awaits_peer(s)) return s;
 
   if (s->ssl_handshake_state != HANDSHAKE_PENDING) {
     s->ssl_write_parked = 0;

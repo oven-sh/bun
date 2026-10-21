@@ -302,6 +302,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// A module-scope `var` has the name of a top-level function, which module code rejects.
     pub(crate) has_top_level_function_merged_with_var: bool,
 
+    /// Some symbol has `SymbolFlags::REDECLARED_IN_NESTED_SCOPE`.
+    pub(crate) has_var_redeclared_in_nested_scope: bool,
+
     pub(crate) is_file_considered_to_have_esm_exports: bool,
 
     pub(crate) has_called_runtime: bool,
@@ -2127,6 +2130,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// See `SymbolFlags::REDECLARED_IN_NESTED_SCOPE`, which is on the root of the link chain.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn is_redeclared_in_nested_scope(&self, ref_: Ref) -> bool {
+        let root = js_ast::symbol::follow_symbols(&self.symbols, ref_);
+        self.symbols[root.inner_index() as usize].redeclared_in_nested_scope()
+    }
+
     /// The renamer follows links before it reads the flag, so pin the whole chain.
     pub(crate) fn set_must_not_be_renamed_through_links(&mut self, ref_: Ref) {
         let mut ref_ = ref_;
@@ -3428,8 +3439,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // scope is arena-owned and valid for the parser 'a lifetime; the visit
         // pass is single-threaded so no aliasing `&mut` is outstanding. Read the
         // immutable bits (kind/parent/strict_mode/members snapshot) up front; the
-        // only later access is the `scope.generated` push (DerefMut, after the
-        // shared borrow is dropped) and the post-loop `children` walk.
+        // only later accesses are the `scope.generated` push and the removal of
+        // a merged `var` from `scope.members` (DerefMut, after the shared borrow
+        // is dropped) and the post-loop `children` walk.
         let scope_ref = &*scope;
         if !scope_ref.kind_stops_hoisting() {
             let arena = self.arena;
@@ -3451,8 +3463,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     v
                 };
                 // `scope_ref` (shared borrow of the `StoreRef` local) must end
-                // before the `DerefMut` write to `scope.generated` inside the
-                // loop; NLL drops it at last use (the snapshot block above).
+                // before the `DerefMut` writes to `scope.generated` and
+                // `scope.members` inside the loop; NLL drops it at last use
+                // (the snapshot block above).
                 'next_member: for (_key_ptr, mut value) in member_snapshot.into_iter() {
                     let mut symbol_idx = value.ref_.inner_index() as usize;
 
@@ -3592,6 +3605,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     _scope.get_or_put_member_with_hash(name, hash.unwrap())
                                 }
                                 .value_ptr = member_in_scope;
+
+                                // "var foo; { var foo; foo }" declares one module-level
+                                // variable. The block gives up its member, so a lookup there
+                                // goes on up the scope chain, and a use in the block is a use
+                                // of the module scope's symbol. Left as they are: a sloppy
+                                // block-level function (another variable), a `var` in a file
+                                // where a top-level function and a `var` share a name (module
+                                // code rejects the function next to the block's relocated
+                                // `var`), and the CommonJS `module` and `exports`.
+                                if _scope_ptr == self.module_scope
+                                    && value.ref_ == original_member_ref
+                                    && self.symbols[symbol_idx].kind
+                                        == js_ast::symbol::Kind::Hoisted
+                                    && existing_kind == js_ast::symbol::Kind::Hoisted
+                                    && !self.has_top_level_function_merged_with_var
+                                    && (self.has_es_module_syntax
+                                        || (name != b"module" && name != b"exports"))
+                                {
+                                    self.symbols[existing_idx].set_redeclared_in_nested_scope(true);
+                                    self.has_var_redeclared_in_nested_scope = true;
+                                    scope.members.remove_hashed(hash.unwrap(), name);
+                                }
 
                                 // "function foo() {} { var foo; }"
                                 if _scope_ptr == self.module_scope
@@ -9486,6 +9521,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// logic in `LinkerContext.generateCodeForFileInChunkJS`
     fn needs_wrapper_ref(&self, parts: &[js_ast::Part]) -> bool {
         debug_assert!(self.options.bundle);
+        // The linker keeps the initializer of such a `var` inside the wrapper.
+        if self.has_var_redeclared_in_nested_scope {
+            return true;
+        }
         for part in parts {
             // Part.stmts is an arena-owned slice valid for 'a.
             for stmt in part.stmts.iter() {
@@ -9731,6 +9770,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
             has_with_scope: false,
             has_top_level_function_merged_with_var: false,
+            has_var_redeclared_in_nested_scope: false,
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,
             symbol_uses,

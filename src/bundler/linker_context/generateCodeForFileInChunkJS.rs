@@ -677,6 +677,18 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         Expr::init_identifier(ref_, loc)
                     }
 
+                    /// A block that declares the `var` again can read it before its
+                    /// top-level declaration runs, so the value stays in the wrapper.
+                    fn is_redeclared_in_nested_scope(&self, binding: Binding) -> bool {
+                        let bun_ast::binding::Data::BIdentifier(id) = binding.data else {
+                            return false;
+                        };
+                        let symbols = self.symbols.get();
+                        symbols
+                            .get_const(symbols.follow(id.get().r#ref))
+                            .is_some_and(|symbol| symbol.redeclared_in_nested_scope())
+                    }
+
                     /// The pattern without the locals the linker bound to exports
                     /// (`const { a } = await import(…)`): assigning one would
                     /// overwrite the export.
@@ -763,6 +775,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                         // Keep in sync with `needs_wrapper_ref` in the parser.
                                         if initializer.can_be_moved()
                                             && matches!(decl.binding.data, B::B::BIdentifier(_))
+                                            && !hoist.is_redeclared_in_nested_scope(decl.binding)
                                         {
                                             // ie `const main = class { static main() {} }` => `var main = class { static main() {} }`
                                             hoist.decls.push(G::Decl {

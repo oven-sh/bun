@@ -2804,6 +2804,25 @@ describe("bundler", () => {
     },
   });
 
+  // A block that declares the `var` again reads the same variable. The read
+  // was not counted for the local, so its export was dropped from the importee
+  // and the block read `undefined`.
+  itBundled("dynamic_import_dce/VarLocalReadInBlockThatDeclaresItAgain", {
+    files: {
+      "/entry.js": /* js */ `
+        var { a } = await import("./m.js");
+        {
+          var a;
+          console.log(a);
+        }
+      `,
+      "/m.js": `export const a = "A"; export const b = "B";`,
+    },
+    target: "bun",
+    format: "esm",
+    run: { stdout: "A" },
+  });
+
   // A file that is BOTH statically imported and a tracked `import()` target
   // must keep every export the static side may need.
   itBundled("dynamic_import_dce/SplittingStaticStarPlusDynamicTracked", {

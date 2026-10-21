@@ -109,6 +109,11 @@ pub struct Symbol {
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
     pub struct SymbolFlags: u8 {
+        /// A nested scope declares this module-level `var` again, and the name
+        /// can resolve to this symbol there. That declaration can assign the
+        /// variable, and a read there can run before this symbol's declaration.
+        const REDECLARED_IN_NESTED_SCOPE = 1 << 0;
+
         const MUST_START_WITH_CAPITAL_LETTER_FOR_JSX = 1 << 1;
 
         /// Certain symbols must not be renamed or minified. For example, the
@@ -152,6 +157,7 @@ macro_rules! symbol_flag_accessors {
 }
 
 symbol_flag_accessors! {
+    redeclared_in_nested_scope, set_redeclared_in_nested_scope => REDECLARED_IN_NESTED_SCOPE;
     must_start_with_capital_letter_for_jsx, set_must_start_with_capital_letter_for_jsx => MUST_START_WITH_CAPITAL_LETTER_FOR_JSX;
     must_not_be_renamed, set_must_not_be_renamed => MUST_NOT_BE_RENAMED;
     import_used_as_value, set_import_used_as_value => IMPORT_USED_AS_VALUE;
@@ -163,6 +169,11 @@ symbol_flag_accessors! {
 
 const _: () = assert!(core::mem::size_of::<Option<bun_alloc::AstBox<G::NamespaceAlias>>>() == 8);
 const _: () = assert!(core::mem::size_of::<Symbol>() <= 48);
+// Two flags on one bit alias with no other diagnostic.
+const _: () = assert!(
+    SymbolFlags::all().bits().count_ones() as usize
+        == <SymbolFlags as bitflags::Flags>::FLAGS.len()
+);
 
 const INVALID_CHUNK_INDEX: u32 = u32::MAX;
 pub const INVALID_NESTED_SCOPE_SLOT: u32 = u32::MAX;

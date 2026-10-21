@@ -510,6 +510,12 @@ function processCallback() {
     $assert(have === 0, "have should not go down");
   }
 
+  const afterWrite = handle.afterWrite;
+  if (afterWrite) {
+    handle.afterWrite = null;
+    afterWrite();
+  }
+
   if (self.destroyed) {
     this.cb();
     return;
@@ -544,11 +550,15 @@ function processCallback() {
       );
     } else {
       const oldRead = self._read;
+      // `buffer` is set only while a write is on the threadpool.
+      const buffer = this.buffer;
+      this.buffer = null;
       self._read = n => {
         self._read = oldRead;
+        this.buffer = buffer;
         this.write(
           handle.flushFlag, // flush
-          this.buffer, // in
+          buffer, // in
           handle.inOff, // in_off
           handle.availInBefore, // in_len
           self._outBuffer, // out
@@ -673,8 +683,8 @@ Zlib.prototype.params = function params(level, strategy, callback) {
         this.once("end", apply);
       } else if (handle?.buffer) {
         // 'finish' comes while the last chunk is still on the threadpool.
-        const cb = handle.cb;
-        handle.cb = () => (cb(), apply());
+        const afterWrite = handle.afterWrite;
+        handle.afterWrite = afterWrite ? () => (afterWrite(), apply()) : apply;
       } else {
         process.nextTick(apply);
       }

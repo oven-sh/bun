@@ -1088,14 +1088,20 @@ it("params() between two writes changes the level for the second write", async (
   expect(compressed.length).toBeLessThan(b.length + 200);
 });
 
-it("params() after 'finish' calls back while the output is unread", async () => {
-  const gzip = zlib.createGzip({ level: 9 });
-  gzip.end("hello");
-  await new Promise(resolve => gzip.once("finish", resolve));
-  await new Promise(resolve => gzip.params(0, zlib.constants.Z_FILTERED, resolve));
-  expect(gzip._level).toBe(0);
-  expect(zlib.gunzipSync(Buffer.concat(await gzip.toArray())).toString()).toBe("hello");
-});
+// With the small sizes, the last chunk waits for a reader before it is done.
+it.each([{}, { chunkSize: 64, highWaterMark: 64 }])(
+  "params() after 'finish' calls back while the output is unread (%j)",
+  async options => {
+    const input = Buffer.from(Array.from({ length: 1000 }, (_, i) => (i * 2654435761) >>> 24));
+    const gzip = zlib.createGzip({ level: 9, ...options });
+    gzip.write(input, () => gzip.end());
+    await new Promise(resolve => gzip.once("finish", resolve));
+    await new Promise(resolve => gzip.params(0, zlib.constants.Z_FILTERED, resolve));
+    await new Promise(resolve => gzip.params(1, zlib.constants.Z_FILTERED, resolve));
+    expect(gzip._level).toBe(1);
+    expect(zlib.gunzipSync(Buffer.concat(await gzip.toArray()))).toEqual(input);
+  },
+);
 
 describe("crc32", () => {
   it("rejects String objects", () => {

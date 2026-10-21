@@ -7573,6 +7573,10 @@ pub mod bv2_impl {
 
             let fake_input_file = crate::Graph::InputFile {
                 source: empty_html_file_source.clone(),
+                // With splitting, this module is the entry point of its own
+                // chunk, and the chunk's `loader` and bytecode decisions
+                // read the entry point's loader.
+                loader: Loader::Js,
                 side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
                 ..Default::default()
             };

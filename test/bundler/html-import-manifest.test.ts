@@ -798,12 +798,15 @@ console.log("✓ Both import types work correctly");
       `,
     });
 
-    await buildServer(dir, ["server.ts"], { splitting: true });
+    const result = await buildServer(dir, ["server.ts"], { splitting: true });
 
     // With splitting, the manifest module is loaded lazily from a chunk of its own.
     const serverCode = readFileSync(join(dir, "out", "server.js"), "utf8");
     const lazyChunk = serverCode.match(/import\("(\.\/[^"]+)"\)/)![1];
     expect(readFileSync(join(dir, "out", lazyChunk), "utf8")).toStartWith("// @bun\n");
+    // The chunk is JavaScript, and Bun.build reports it as such.
+    const lazyArtifact = result.outputs.find(output => output.path.endsWith(lazyChunk.slice(1)))!;
+    expect([lazyArtifact.kind, lazyArtifact.loader]).toEqual(["chunk", "js"]);
 
     const { stdout, stderr, exitCode } = await bunRun(join(dir, "out", "server.js"));
     expect(stderr).toBe("");
@@ -826,6 +829,57 @@ console.log("✓ Both import types work correctly");
     });
 
     await buildServer(dir, ["server.ts"]);
+
+    const { stdout, stderr, exitCode } = await bunRun(join(dir, "out", "server.js"));
+    expect(stderr).toBe("");
+    expectPageManifest(stdout);
+    expect(exitCode).toBe(0);
+  });
+
+  // With splitting, require() splits only an ES module. The manifest module is
+  // a JSON-style module, so, like require() of a JSON file, it stays in the
+  // requiring file's chunk.
+  test("html-import/require-with-splitting", async () => {
+    await using dir = tempDir("html-import-require-splitting", {
+      ...pageFiles,
+      "server.ts": `
+        const manifest = require("./page.html");
+        console.log(JSON.stringify(manifest));
+      `,
+    });
+
+    const result = await buildServer(dir, ["server.ts"], { splitting: true });
+
+    const { stdout, stderr, exitCode } = await bunRun(join(dir, "out", "server.js"));
+    expect(stderr).toBe("");
+    const manifest = expectPageManifest(stdout);
+    expect(exitCode).toBe(0);
+
+    // The outputs are the server entry point and the page's browser files: no chunk.
+    expect(result.outputs.map(output => [basename(output.path), output.kind]).sort()).toEqual(
+      [["server.js", "entry-point"], ...manifest.files.map(f => [basename(f.path), "entry-point"])].sort(),
+    );
+  });
+
+  // The manifest module takes the importer's target. On target "node" the output
+  // carries no "// @bun" pragma, with or without splitting.
+  test.each([false, true])("html-import/dynamic-import-target-node (splitting: %p)", async splitting => {
+    await using dir = tempDir(`html-import-node-${splitting}`, {
+      ...pageFiles,
+      "server.ts": `
+        const { default: manifest } = await import("./page.html");
+        console.log(JSON.stringify(manifest));
+      `,
+    });
+
+    await buildServer(dir, ["server.ts"], { target: "node", splitting });
+
+    const serverCode = readFileSync(join(dir, "out", "server.js"), "utf8");
+    expect(serverCode).not.toContain("// @bun");
+    if (splitting) {
+      const lazyChunk = serverCode.match(/import\("(\.\/[^"]+)"\)/)![1];
+      expect(readFileSync(join(dir, "out", lazyChunk), "utf8")).not.toContain("// @bun");
+    }
 
     const { stdout, stderr, exitCode } = await bunRun(join(dir, "out", "server.js"));
     expect(stderr).toBe("");

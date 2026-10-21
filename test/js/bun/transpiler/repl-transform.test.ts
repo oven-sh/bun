@@ -313,120 +313,123 @@ function f() {
     });
 
     // Each input declares a binding beside a function. The same text runs as a plain script in a second context, and both must answer the same.
-    test.each(["", "await 0; "])("an input with a function gives what its text gives as a script (prefix %j)", async prefix => {
-      type Form = { stmt: (b: string) => string; script?: (b: string) => string; read?: (b: string) => string };
-      const call = (b: string) => `${b}()`;
-      const variables: Form[] = [
-        { stmt: b => `var ${b} = 1` },
-        { stmt: b => `var { ${b} } = { ${b}: 1 }` },
-        { stmt: b => `if (1) var ${b} = 1` },
-        { stmt: b => `if (0) ; else var ${b} = 1` },
-        { stmt: b => `{ var ${b} = 1 }` },
-        { stmt: b => `for (var ${b} = 1; ; ) break` },
-        { stmt: b => `for (var ${b}; ; ) { ${b} = 1; break }` },
-        { stmt: b => `for (var ${b} in { k: 1 }) ;` },
-        { stmt: b => `for (var ${b} of [1]) ;` },
-        { stmt: b => `while (typeof ${b} !== "number") var ${b} = 1` },
-        { stmt: b => `do var ${b} = 1; while (false)` },
-        { stmt: b => `try { throw 0 } catch { var ${b} = 1 }` },
-        { stmt: b => `switch (1) { case 1: var ${b} = 1 }` },
-        { stmt: b => `lbl: var ${b} = 1` },
-        { stmt: b => `${b} = 1` },
-      ];
-      const functions: Form[] = [
-        { stmt: b => `function ${b}() { return 1 }`, read: call },
-        { stmt: b => `function* ${b}() { yield 1 }`, read: b => `[...${b}()][0]` },
-      ];
-      // A script rejects these beside a function of the same name, or has no `export`.
-      const readOnly: Form[] = [
-        { stmt: b => `let ${b} = 1` },
-        { stmt: b => `export var ${b} = 1`, script: b => `var ${b} = 1` },
-        { stmt: b => `export function ${b}() { return 1 }`, script: b => `function ${b}() { return 1 }`, read: call },
-        {
-          stmt: b => `export default function ${b}() { return 1 }`,
-          script: b => `function ${b}() { return 1 }`,
-          read: call,
-        },
-      ];
-      type Relation = {
-        input: (stmt: string, b: string, read: string, f: string) => string;
-        next?: (b: string, f: string) => string;
-        probes: (b: string, f: string) => string[];
-      };
-      const show = (b: string) => `typeof ${b} == "function" ? "function" : ${b}`;
-      const reads: Relation[] = [
-        {
-          input: (stmt, b, read, f) => `${stmt}; function ${f}() { return ${read} }`,
-          next: b => `${b} = () => 7`,
-          probes: (b, f) => [show(b), `typeof ${f}()`, `${f}.name`],
-        },
-        {
-          input: (stmt, b, read, f) =>
-            `var t${f} = typeof ${f}; ${stmt}; var r${f} = ${f}(); function ${f}() { return ${read} }`,
-          probes: (b, f) => [`t${f}`, `r${f}`, `${f}()`],
-        },
-        {
-          input: (stmt, b, read, f) => `${stmt}; function ${f}() { ${b} = 2 }`,
-          next: (b, f) => `${f}()`,
-          probes: b => [show(b)],
-        },
-      ];
-      const names: Relation[] = [
-        {
-          input: (stmt, b) => `function ${b}() { return "function" }; ${stmt}`,
-          next: b => `function ${b}() { return "again" }`,
-          probes: b => [`typeof ${b} == "function" ? String(${b}()) : ${b}`],
-        },
-        {
-          input: (stmt, b) => `${stmt}; function ${b}() { return "function" }`,
-          probes: b => [`typeof ${b} == "function" ? String(${b}()) : ${b}`],
-        },
-      ];
-
-      const session = vm.createContext({});
-      const script = vm.createContext({});
-      const answers = async (context: object, code: string, probes: string[]) => {
-        const out: string[] = [];
-        for (const expr of [code, ...probes]) {
-          try {
-            out.push(String(await vm.runInContext(expr, context)));
-          } catch (e) {
-            out.push((e as Error).name);
-          }
-        }
-        return out.slice(1);
-      };
-      const differ: object[] = [];
-      let rows = 0;
-      const run = async (form: Form, relation: Relation) => {
-        const b = `b${rows}`;
-        const f = `f${rows++}`;
-        const read = (form.read ?? (b => b))(b);
-        const steps = [
-          [
-            prefix + relation.input(form.stmt(b), b, read, f),
-            relation.input((form.script ?? form.stmt)(b), b, read, f),
-          ],
+    test.each(["", "await 0; "])(
+      "an input with a function gives what its text gives as a script (prefix %j)",
+      async prefix => {
+        type Form = { stmt: (b: string) => string; script?: (b: string) => string; read?: (b: string) => string };
+        const call = (b: string) => `${b}()`;
+        const variables: Form[] = [
+          { stmt: b => `var ${b} = 1` },
+          { stmt: b => `var { ${b} } = { ${b}: 1 }` },
+          { stmt: b => `if (1) var ${b} = 1` },
+          { stmt: b => `if (0) ; else var ${b} = 1` },
+          { stmt: b => `{ var ${b} = 1 }` },
+          { stmt: b => `for (var ${b} = 1; ; ) break` },
+          { stmt: b => `for (var ${b}; ; ) { ${b} = 1; break }` },
+          { stmt: b => `for (var ${b} in { k: 1 }) ;` },
+          { stmt: b => `for (var ${b} of [1]) ;` },
+          { stmt: b => `while (typeof ${b} !== "number") var ${b} = 1` },
+          { stmt: b => `do var ${b} = 1; while (false)` },
+          { stmt: b => `try { throw 0 } catch { var ${b} = 1 }` },
+          { stmt: b => `switch (1) { case 1: var ${b} = 1 }` },
+          { stmt: b => `lbl: var ${b} = 1` },
+          { stmt: b => `${b} = 1` },
         ];
-        if (relation.next) steps.push([relation.next(b, f), relation.next(b, f)]);
-        const got: string[][] = [];
-        const want: string[][] = [];
-        for (const [input, text] of steps) {
-          // The `;` keeps an input that starts with `{` from being read as an object literal.
-          got.push(await answers(session, transpiler.transformSync(input + ";"), relation.probes(b, f)));
-          want.push(await answers(script, text + ";", relation.probes(b, f)));
+        const functions: Form[] = [
+          { stmt: b => `function ${b}() { return 1 }`, read: call },
+          { stmt: b => `function* ${b}() { yield 1 }`, read: b => `[...${b}()][0]` },
+        ];
+        // A script rejects these beside a function of the same name, or has no `export`.
+        const readOnly: Form[] = [
+          { stmt: b => `let ${b} = 1` },
+          { stmt: b => `export var ${b} = 1`, script: b => `var ${b} = 1` },
+          { stmt: b => `export function ${b}() { return 1 }`, script: b => `function ${b}() { return 1 }`, read: call },
+          {
+            stmt: b => `export default function ${b}() { return 1 }`,
+            script: b => `function ${b}() { return 1 }`,
+            read: call,
+          },
+        ];
+        type Relation = {
+          input: (stmt: string, b: string, read: string, f: string) => string;
+          next?: (b: string, f: string) => string;
+          probes: (b: string, f: string) => string[];
+        };
+        const show = (b: string) => `typeof ${b} == "function" ? "function" : ${b}`;
+        const reads: Relation[] = [
+          {
+            input: (stmt, b, read, f) => `${stmt}; function ${f}() { return ${read} }`,
+            next: b => `${b} = () => 7`,
+            probes: (b, f) => [show(b), `typeof ${f}()`, `${f}.name`],
+          },
+          {
+            input: (stmt, b, read, f) =>
+              `var t${f} = typeof ${f}; ${stmt}; var r${f} = ${f}(); function ${f}() { return ${read} }`,
+            probes: (b, f) => [`t${f}`, `r${f}`, `${f}()`],
+          },
+          {
+            input: (stmt, b, read, f) => `${stmt}; function ${f}() { ${b} = 2 }`,
+            next: (b, f) => `${f}()`,
+            probes: b => [show(b)],
+          },
+        ];
+        const names: Relation[] = [
+          {
+            input: (stmt, b) => `function ${b}() { return "function" }; ${stmt}`,
+            next: b => `function ${b}() { return "again" }`,
+            probes: b => [`typeof ${b} == "function" ? String(${b}()) : ${b}`],
+          },
+          {
+            input: (stmt, b) => `${stmt}; function ${b}() { return "function" }`,
+            probes: b => [`typeof ${b} == "function" ? String(${b}()) : ${b}`],
+          },
+        ];
+
+        const session = vm.createContext({});
+        const script = vm.createContext({});
+        const answers = async (context: object, code: string, probes: string[]) => {
+          const out: string[] = [];
+          for (const expr of [code, ...probes]) {
+            try {
+              out.push(String(await vm.runInContext(expr, context)));
+            } catch (e) {
+              out.push((e as Error).name);
+            }
+          }
+          return out.slice(1);
+        };
+        const differ: object[] = [];
+        let rows = 0;
+        const run = async (form: Form, relation: Relation) => {
+          const b = `b${rows}`;
+          const f = `f${rows++}`;
+          const read = (form.read ?? (b => b))(b);
+          const steps = [
+            [
+              prefix + relation.input(form.stmt(b), b, read, f),
+              relation.input((form.script ?? form.stmt)(b), b, read, f),
+            ],
+          ];
+          if (relation.next) steps.push([relation.next(b, f), relation.next(b, f)]);
+          const got: string[][] = [];
+          const want: string[][] = [];
+          for (const [input, text] of steps) {
+            // The `;` keeps an input that starts with `{` from being read as an object literal.
+            got.push(await answers(session, transpiler.transformSync(input + ";"), relation.probes(b, f)));
+            want.push(await answers(script, text + ";", relation.probes(b, f)));
+          }
+          if (JSON.stringify(got) !== JSON.stringify(want)) differ.push({ input: steps[0][0], got, want });
+        };
+        for (const relation of reads) {
+          for (const form of [...variables, ...functions, ...readOnly]) await run(form, relation);
         }
-        if (JSON.stringify(got) !== JSON.stringify(want)) differ.push({ input: steps[0][0], got, want });
-      };
-      for (const relation of reads) {
-        for (const form of [...variables, ...functions, ...readOnly]) await run(form, relation);
-      }
-      for (const relation of names) {
-        for (const form of [...variables, ...functions]) await run(form, relation);
-      }
-      expect(differ).toEqual([]);
-      expect(rows).toBe(3 * 21 + 2 * 17);
-    });
+        for (const relation of names) {
+          for (const form of [...variables, ...functions]) await run(form, relation);
+        }
+        expect(differ).toEqual([]);
+        expect(rows).toBe(3 * 21 + 2 * 17);
+      },
+    );
 
     test("minify.identifiers keeps the name of a function", () => {
       const minifying = new Bun.Transpiler({ loader: "tsx", replMode: true, minify: { identifiers: true } });

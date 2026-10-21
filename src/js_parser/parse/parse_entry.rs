@@ -32,22 +32,19 @@ type BumpVec<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
 /// Stack-local in-place `P` constructor. `P` is ~5 KiB; the previous
 /// `let mut p = P::init(..)?` shape forced 2-3 by-value moves of the whole
 /// struct (ASM-verified: `_scan_imports` 14168-B frame, 5× `memcpy`). This
-/// macro reserves an uninitialized slot on the caller's stack, has `P::init`
+/// macro reserves an uninitialized slot on the caller's stack, has `P::init_with_text_len`
 /// write to it directly, and yields a `&mut P` borrow that runs `P::drop` via
 /// `scopeguard` on scope exit — no `Self`-sized moves, no heap.
 ///
 /// On `init` `Err`, the slot is still uninitialized so the guard's
 /// `assume_init_drop` would be UB; the macro `?`-returns *before* arming the
-/// guard. (`P::init` itself only fails before `out.write` — see its doc.)
+/// guard. (`P::init_with_text_len` only fails before `out.write`: see the doc of `P::init`.)
 macro_rules! init_p {
-    ($ty:ty; $($arg:expr),* $(,)?) => {
-        init_p!($ty, init; $($arg),*)
-    };
-    ($ty:ty, $init:ident; $($arg:expr),* $(,)?) => {{
+    ($ty:ty; $($arg:expr),* $(,)?) => {{
         let mut __slot = MaybeUninit::<$ty>::uninit();
-        // `P::init` takes `&mut MaybeUninit<Self>` and writes a
+        // `P::init_with_text_len` takes `&mut MaybeUninit<Self>` and writes a
         // fully-initialized value on `Ok` (safe call; type guarantees align).
-        <$ty>::$init(&mut __slot, $($arg),*)?;
+        <$ty>::init_with_text_len(&mut __slot, $($arg),*)?;
         // SAFETY: `init` returned `Ok`, so `*__slot` is initialized; the
         // guard's drop closure is the sole owner of the slot from here.
         scopeguard::guard(__slot, |mut s| unsafe { s.assume_init_drop() })
@@ -448,7 +445,8 @@ impl<'a> Parser<'a> {
         );
         let options = core::mem::take(&mut self.options);
         let mut __p = init_p!(Pi<'_>;
-            self.bump, self.log, self.source, self.define, lexer, options);
+            self.bump, self.log, self.source, self.define, lexer, options,
+            self.source.contents.len());
         // SAFETY: `init_p!` only yields after `init` succeeded.
         let p: &mut Pi<'_> = unsafe { __p.assume_init_mut() };
         p.starts_for_parse_only = Some(Default::default());
@@ -513,7 +511,8 @@ impl<'a> Parser<'a> {
         // field docs), so handing the same raw pointer to both is defined —
         // no `&mut` is materialized.
         let mut __p = init_p!(Pi<'_, TS>;
-            self.bump, self.log, self.source, self.define, lexer, options);
+            self.bump, self.log, self.source, self.define, lexer, options,
+            self.source.contents.len());
         // SAFETY: `init_p!` only yields after `init` succeeded.
         let p: &mut Pi<'_, TS> = unsafe { __p.assume_init_mut() };
         p.import_records = crate::p::ImportRecordList::Borrowed(&mut scan_pass.import_records);
@@ -653,7 +652,7 @@ impl<'a> Parser<'a> {
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
         // no `&mut` is materialized.
-        let mut __p = init_p!(JavaScriptParser<'_>, init_with_text_len;
+        let mut __p = init_p!(JavaScriptParser<'_>;
             self.bump, self.log, self.source, self.define, lexer, options, 0);
         // SAFETY: `init_p!` only yields after `init` succeeded.
         let p: &mut JavaScriptParser<'_> = unsafe { __p.assume_init_mut() };
@@ -856,7 +855,7 @@ impl<'a> Parser<'a> {
         // field docs), so handing the same raw pointer to both is defined —
         // no `&mut` is materialized.
         let mut __p = init_p!(P<'_, TS, false>;
-            bump, log, source, define, lexer, options);
+            bump, log, source, define, lexer, options, source.contents.len());
         // SAFETY: `init_p!` only yields after `init` succeeded.
         let p: &mut P<'_, TS, false> = unsafe { __p.assume_init_mut() };
 

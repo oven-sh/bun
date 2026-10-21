@@ -9573,8 +9573,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         lexer: js_lexer::Lexer<'a>,
         opts: ParserOptions<'a>,
     ) -> Result<(), crate::Error> {
-        let text_len = source.contents.len();
-        Self::init_with_text_len(out, arena, log, source, define, lexer, opts, text_len)
+        // 0: only a pass over the whole source sizes the tables, through `init_with_text_len`.
+        Self::init_with_text_len(out, arena, log, source, define, lexer, opts, 0)
     }
 
     /// [`Self::init`], where `text_len` sizes the symbol tables: the bytes that a parse pass reads.

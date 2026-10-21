@@ -342,9 +342,17 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                     SymFlags::NAMESPACE
                 };
                 let scope = bound.import_equals_scope[import.idx()];
-                files
-                    .resolve_entity(file, scope, &names, meaning)
-                    .map(Found::Symbol)
+                let found = files.resolve_entity(file, scope, &names, meaning);
+                // `resolveEntityName`: `else if namespace == c.unknownSymbol { return namespace }`
+                if found.is_none()
+                    && names.len() > 1
+                    && let Some(first) =
+                        files.resolve_name(file, scope, names[0], SymFlags::NAMESPACE)
+                    && files.resolve_alias(first).is_none()
+                {
+                    return Some(Found::Symbol(files.unknown_symbol));
+                }
+                found.map(Found::Symbol)
             }
             VisitedKind::Parenthesized(..)
             | VisitedKind::ModuleSpecifier(_)

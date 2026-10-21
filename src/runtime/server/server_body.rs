@@ -1405,6 +1405,36 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 }
 
+fn set_request_timeout<'a>(
+    address: &server_config::Address,
+    heap: &JsHeap<'a>,
+    request: JsLocal<'a>,
+    seconds: JsLocal<'a>,
+) -> bindgen::Result<'a, JSValue> {
+    let (request, seconds) = (request.to_js(), seconds.to_js());
+
+    if address.is_unix() {
+        return Ok(JSValue::NULL);
+    }
+
+    if !seconds.is_number() {
+        return Err(heap.error(format_args!("timeout() requires a number")));
+    }
+    let value = seconds.to_u32();
+
+    if let Some(request) = <Request as bun_jsc::JsClass>::from_js(request) {
+        // SAFETY: from_js returns a live *mut Request; shared access only.
+        let _ = unsafe { (*request).request_context.set_timeout(value) };
+    } else if let Some(response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(request) {
+        // SAFETY: from_js returns a live *mut NodeHTTPResponse
+        unsafe { (*response).set_timeout((value % 255) as u8) };
+    } else {
+        return Err(heap.invalid_arguments(format_args!("timeout() requires a Request object")));
+    }
+
+    Ok(JSValue::UNDEFINED)
+}
+
 impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG>
 where
     // NOTE (const-generic dispatch): `RequestContextHostFns` (the host-fn
@@ -1544,28 +1574,7 @@ where
         request: JsLocal<'a>,
         seconds: JsLocal<'a>,
     ) -> bindgen::Result<'a, JSValue> {
-        let (request, seconds) = (request.to_js(), seconds.to_js());
-
-        if self.config.get().address.is_unix() {
-            return Ok(JSValue::NULL);
-        }
-
-        if !seconds.is_number() {
-            return Err(heap.error(format_args!("timeout() requires a number")));
-        }
-        let value = seconds.to_u32();
-
-        if let Some(request) = <Request as bun_jsc::JsClass>::from_js(request) {
-            // SAFETY: from_js returns a live *mut Request; shared access only.
-            let _ = unsafe { (*request).request_context.set_timeout(value) };
-        } else if let Some(response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(request) {
-            // SAFETY: from_js returns a live *mut NodeHTTPResponse
-            unsafe { (*response).set_timeout((value % 255) as u8) };
-        } else {
-            return Err(heap.invalid_arguments(format_args!("timeout() requires a Request object")));
-        }
-
-        Ok(JSValue::UNDEFINED)
+        set_request_timeout(&self.config.get().address, heap, request, seconds)
     }
 
     pub(crate) fn on_upgrade(

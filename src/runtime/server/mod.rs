@@ -661,6 +661,82 @@ pub(crate) fn wrap_handler_slot(
     *shadow = v;
 }
 
+#[cold]
+fn throw_listen_failed(global: &JSGlobalObject, address: &server_config::Address) {
+    let error_instance = match address {
+        server_config::Address::Tcp {
+            port,
+            hostname: _hostname,
+        } => {
+            // `target_os = "linux"` excludes Android.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            {
+                let errno = bun_sys::last_error();
+                if errno == bun_sys::E::EACCES {
+                    let host = _hostname
+                        .as_ref()
+                        .map(|h| h.as_bytes())
+                        .unwrap_or(b"0.0.0.0");
+                    let err = jsc::SystemError {
+                        message: bun_core::String::create_format(format_args!(
+                            "permission denied {}:{}",
+                            bstr::BStr::new(host),
+                            port
+                        )),
+                        code: bun_core::String::static_("EACCES"),
+                        syscall: bun_core::String::static_("listen"),
+                        ..Default::default()
+                    };
+                    let _ = global.throw_value(err.to_error_instance(global));
+                    return;
+                }
+                // e.g. ENOSPC from epoll_ctl(EPOLL_CTL_ADD). Elsewhere errno does not reliably get here: #30364.
+                if errno != bun_sys::E::SUCCESS && errno != bun_sys::E::EADDRINUSE {
+                    let err = jsc::SystemError::from(
+                        bun_sys::Error::from_code(errno, bun_sys::Tag::listen).to_system_error(),
+                    );
+                    let _ = global.throw_value(err.to_error_instance(global));
+                    return;
+                }
+            }
+            jsc::SystemError {
+                message: bun_core::String::create_format(format_args!(
+                    "Failed to start server. Is port {} in use?",
+                    port
+                )),
+                code: bun_core::String::static_("EADDRINUSE"),
+                syscall: bun_core::String::static_("listen"),
+                ..Default::default()
+            }
+            .to_error_instance(global)
+        }
+        server_config::Address::Unix(unix) => {
+            let unix = unix.as_bytes();
+            match bun_sys::last_error() {
+                bun_sys::E::SUCCESS => jsc::SystemError {
+                    message: bun_core::String::create_format(format_args!(
+                        "Failed to listen on unix socket {}",
+                        bun_core::fmt::QuotedFormatter { text: unix }
+                    )),
+                    code: bun_core::String::static_("EADDRINUSE"),
+                    syscall: bun_core::String::static_("listen"),
+                    ..Default::default()
+                }
+                .to_error_instance(global),
+                e => jsc::SystemError::from(
+                    bun_sys::Error::from_code(e, bun_sys::Tag::listen)
+                        .with_path(unix)
+                        .to_system_error(),
+                )
+                .to_error_instance(global),
+            }
+        }
+    };
+
+    error_instance.ensure_still_alive();
+    let _ = global.throw_value(error_instance);
+}
+
 impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// Per-monomorphization static.
     /// Rust statics cannot be const-generic; routed through a
@@ -2018,84 +2094,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     #[cold]
     pub(crate) fn on_listen_failed(&self) {
         self.listener.set(None);
-        let global = self.global_this();
-
-        let error_instance = match &self.config.get().address {
-            server_config::Address::Tcp {
-                port,
-                hostname: _hostname,
-            } => {
-                // Rust's `target_os = "linux"` excludes
-                // Android, so match both explicitly.
-                #[cfg(any(target_os = "linux", target_os = "android"))]
-                {
-                    let errno = bun_sys::last_error();
-                    if errno == bun_sys::E::EACCES {
-                        let host = _hostname
-                            .as_ref()
-                            .map(|h| h.as_bytes())
-                            .unwrap_or(b"0.0.0.0");
-                        let err = jsc::SystemError {
-                            message: bun_core::String::create_format(format_args!(
-                                "permission denied {}:{}",
-                                bstr::BStr::new(host),
-                                port
-                            )),
-                            code: bun_core::String::static_("EACCES"),
-                            syscall: bun_core::String::static_("listen"),
-                            ..Default::default()
-                        };
-                        let _ = global.throw_value(err.to_error_instance(global));
-                        return;
-                    }
-                    // e.g. ENOSPC from epoll_ctl(EPOLL_CTL_ADD). Linux-only because
-                    // on other platforms errno is not reliably preserved through
-                    // the C++/callback chain to here; see PR #30364.
-                    if errno != bun_sys::E::SUCCESS && errno != bun_sys::E::EADDRINUSE {
-                        let err = jsc::SystemError::from(
-                            bun_sys::Error::from_code(errno, bun_sys::Tag::listen)
-                                .to_system_error(),
-                        );
-                        let _ = global.throw_value(err.to_error_instance(global));
-                        return;
-                    }
-                }
-                jsc::SystemError {
-                    message: bun_core::String::create_format(format_args!(
-                        "Failed to start server. Is port {} in use?",
-                        port
-                    )),
-                    code: bun_core::String::static_("EADDRINUSE"),
-                    syscall: bun_core::String::static_("listen"),
-                    ..Default::default()
-                }
-                .to_error_instance(global)
-            }
-            server_config::Address::Unix(unix) => {
-                let unix = unix.as_bytes();
-                match bun_sys::last_error() {
-                    bun_sys::E::SUCCESS => jsc::SystemError {
-                        message: bun_core::String::create_format(format_args!(
-                            "Failed to listen on unix socket {}",
-                            bun_core::fmt::QuotedFormatter { text: unix }
-                        )),
-                        code: bun_core::String::static_("EADDRINUSE"),
-                        syscall: bun_core::String::static_("listen"),
-                        ..Default::default()
-                    }
-                    .to_error_instance(global),
-                    e => jsc::SystemError::from(
-                        bun_sys::Error::from_code(e, bun_sys::Tag::listen)
-                            .with_path(unix)
-                            .to_system_error(),
-                    )
-                    .to_error_instance(global),
-                }
-            }
-        };
-
-        error_instance.ensure_still_alive();
-        let _ = global.throw_value(error_instance);
+        throw_listen_failed(self.global_this(), &self.config.get().address);
     }
 
     pub(crate) fn on_h3_listen(&self, socket: Option<*mut uws_sys::h3::ListenSocket>) {

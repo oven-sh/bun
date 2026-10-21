@@ -208,11 +208,6 @@ impl<const MAX: usize> Arguments<MAX> {
     }
 
     #[inline]
-    pub fn slice(&self) -> &[JSValue] {
-        &self.ptr[0..self.len]
-    }
-
-    #[inline]
     pub fn mut_(&mut self) -> &mut [JSValue] {
         &mut self.ptr[..]
     }
@@ -264,11 +259,6 @@ impl<'a> ArgumentsSlice<'a> {
             will_be_async: false,
             deferred_error: None,
         }
-    }
-
-    #[inline]
-    pub fn len(&self) -> u16 {
-        self.remaining().len() as u16
     }
 
     pub fn eat(&mut self) {

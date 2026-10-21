@@ -122,8 +122,8 @@ impl ExternArguments {
     /// The host function that passed this is the call `heap` belongs to.
     #[inline(always)]
     pub unsafe fn get<'a>(self, _: &JsHeap<'a>) -> &'a [JsLocal<'a>] {
-        // SAFETY: C++ never passes a null pointer, and `JsLocal` is a transparent `JSValue`.
-        unsafe { core::slice::from_raw_parts(self.data.cast(), self.length) }
+        // SAFETY: C++ never passes a null pointer, and the frame holds the values.
+        unsafe { JsLocal::slice_from_raw_parts(self.data, self.length) }
     }
 }
 

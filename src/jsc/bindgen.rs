@@ -343,6 +343,14 @@ impl<'a, T> JsLocal<'a, T> {
         JsLocal(value, PhantomData, PhantomData)
     }
 
+    /// # Safety
+    /// As [`core::slice::from_raw_parts`], and something holds each value for `'a`.
+    #[inline(always)]
+    unsafe fn slice_from_raw_parts(data: *const JSValue, length: usize) -> &'a [Self] {
+        // SAFETY: `JsLocal` is a transparent `JSValue`.
+        unsafe { core::slice::from_raw_parts(data.cast(), length) }
+    }
+
     #[inline(always)]
     fn from_js_result(result: crate::JsResult<JSValue>) -> Result<'a, Self> {
         result.map(Self::from_raw).map_err(Error::pending)

@@ -4,6 +4,7 @@ const none = {};
 const key = { key: b.any };
 const keyValue = { ...key, value: b.any };
 const keyValueValue2 = { ...keyValue, value2: b.any };
+const keyFieldValue = { ...key, field: b.any, value: b.any };
 const variadic = { args: b.any.variadic };
 const keyVariadic = { ...key, ...variadic };
 const keyValueVariadic = { ...keyValue, ...variadic };
@@ -67,8 +68,8 @@ const commands: Record<string, readonly [args: Record<string, b.Type>, length: n
   hgetall: [key, 0],
   hgetdel: [variadic, 2],
   hgetex: [variadic, 2],
-  hincrby: [keyValueValue2, 3],
-  hincrbyfloat: [keyValueValue2, 3],
+  hincrby: [keyFieldValue, 3],
+  hincrbyfloat: [keyFieldValue, 3],
   hkeys: [key, 0],
   hlen: [key, 0],
   hmget: [keyVariadic, 2],
@@ -82,7 +83,7 @@ const commands: Record<string, readonly [args: Record<string, b.Type>, length: n
   hscan: [variadic, 2],
   hset: [keyVariadic, 2],
   hsetex: [variadic, 3],
-  hsetnx: [keyValueValue2, 3],
+  hsetnx: [keyFieldValue, 3],
   hstrlen: [keyValue, 0],
   httl: [variadic, 2],
   hvals: [key, 0],

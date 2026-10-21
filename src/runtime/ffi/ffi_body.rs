@@ -2,6 +2,7 @@
 
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_long, c_void};
+use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use std::io::Write as _;
 use std::sync::{Once, OnceLock};
@@ -207,7 +208,7 @@ impl Offsets {
 
 pub(crate) struct FFI {
     pub dylib: JsCell<Option<bun_sys::DynLib>>,
-    pub functions: JsCell<StringArrayHashMap<Function>>,
+    pub functions: ManuallyDrop<JsCell<StringArrayHashMap<Function>>>,
     pub closed: Cell<bool>,
     pub shared_state: Cell<Option<NonNull<TCC::State>>>,
 }
@@ -216,7 +217,7 @@ impl Default for FFI {
     fn default() -> Self {
         Self {
             dylib: JsCell::new(None),
-            functions: JsCell::new(StringArrayHashMap::default()),
+            functions: ManuallyDrop::new(JsCell::new(StringArrayHashMap::default())),
             closed: Cell::new(false),
             shared_state: Cell::new(None),
         }
@@ -226,8 +227,9 @@ impl Default for FFI {
 impl Drop for FFI {
     // Intentional leak when not close()d: dlclose on GC is unsound because .ptr addresses escape the collector's view.
     fn drop(&mut self) {
-        if !self.closed.get() {
-            core::mem::forget(self.functions.replace(StringArrayHashMap::default()));
+        if self.closed.get() {
+            // SAFETY: nothing reads `functions` after this.
+            unsafe { ManuallyDrop::drop(&mut self.functions) };
         }
     }
 }
@@ -1233,7 +1235,7 @@ impl FFI {
         let lib = FFI {
             dylib: JsCell::new(None),
             shared_state: Cell::new(scopeguard::ScopeGuard::into_inner(_tcc_guard).take()),
-            functions: JsCell::new(core::mem::take(&mut compile_c.symbols.map)),
+            functions: ManuallyDrop::new(JsCell::new(core::mem::take(&mut compile_c.symbols.map))),
             closed: Cell::new(false),
         };
 

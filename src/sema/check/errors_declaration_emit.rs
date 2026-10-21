@@ -3994,8 +3994,14 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     modified,
                 );
                 let type_parameters = self.visit_type_parameters(hir[a].type_params);
-                self.visit_type(hir[a].ty, true);
-                let ty = self.text_of(ReusedNode::Type(hir[a].ty));
+                // "stripInternal can elide an @internal type RHS"
+                let pos = (self.c).end_of_token_before(self.file(), hir[hir[a].ty].pos);
+                let ty = if self.c.should_strip_internal(self.file(), pos) {
+                    b"any".to_vec()
+                } else {
+                    self.visit_type(hir[a].ty, true);
+                    self.text_of(ReusedNode::Type(hir[a].ty))
+                };
                 let name = self.name(hir[a].name);
                 Some(vec![Statement {
                     kind: match hir[a].flags.contains(Flags::REPARSED) {

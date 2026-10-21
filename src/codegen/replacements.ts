@@ -176,11 +176,18 @@ export const function_replacements = [
   "$bindgen",
 ];
 const function_regexp = new RegExp(`__intrinsic__(${function_replacements.join("|").replaceAll("$", "")})`);
+const publicProcessBinding = /\bprocess\s*\??\.\s*binding\b/;
 
 /** Applies source code replacements as defined in `replacements` */
 export function applyReplacements(src: string, length: number) {
   let slice = src.slice(0, length);
   let rest = src.slice(length);
+  if (publicProcessBinding.test(slice)) {
+    throw new Error(
+      "process.binding is a public property that a program can replace, so a builtin must not read it. " +
+        "Read the binding through its private accessor. src/js/README.md lists them.",
+    );
+  }
   slice = slice.replace(/([^a-zA-Z0-9_\$])\$([a-zA-Z0-9_]+\b)/gm, `$1__intrinsic__$2`);
   for (const replacement of replacements) {
     slice = slice.replace(

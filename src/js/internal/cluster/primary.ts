@@ -9,7 +9,7 @@ const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimar
 const onInternalMessage = $bindgen("node_cluster_binding.bind.ts", "onInternalMessagePrimary");
 const validateFd = $bindgen("node_cluster_binding.bind.ts", "clusterValidateFd");
 const isDgramSocketFd = $bindgen("udp_socket.bind.ts", "dgramIsFdAdopted");
-const { UV_EEXIST, UV_EINVAL, UV_ENOBUFS } = process.binding("uv");
+const { UV_EEXIST, UV_EINVAL, UV_ENOBUFS } = $cpp("ProcessBindingUV.cpp", "getProcessBindingUV");
 
 let child_process;
 let RoundRobinHandle;

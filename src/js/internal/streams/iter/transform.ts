@@ -16,7 +16,7 @@ const { checkRangesOrGetDefault, validateFiniteNumber, validateObject } = requir
 const NativeZlib = $rust("node_zlib_binding.rs", "NativeZlib");
 const NativeBrotli = $rust("node_zlib_binding.rs", "NativeBrotli");
 const NativeZstd = $rust("node_zlib_binding.rs", "NativeZstd");
-const constants = process.binding("constants").zlib;
+const constants = $processBindingConstants.zlib;
 
 const Uint8ArraySlice = Uint8Array.prototype.slice;
 

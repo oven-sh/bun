@@ -2,6 +2,10 @@
 
 #include "root.h"
 
+namespace Zig {
+class GlobalObject;
+}
+
 namespace Bun {
 
 // The object returned from process.binding('http_parser')
@@ -29,5 +33,9 @@ private:
     {
     }
 };
+
+// The object process.binding("http_parser") returns, for builtins:
+// $cpp("ProcessBindingHTTPParser.cpp", "getProcessBindingHTTPParser").
+JSC::JSValue getProcessBindingHTTPParser(Zig::GlobalObject*);
 
 } // namespace Bun

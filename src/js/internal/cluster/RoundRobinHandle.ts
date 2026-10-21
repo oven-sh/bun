@@ -5,7 +5,7 @@ let net;
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
 const uvTranslateSysError = $bindgen("node_util_binding.bind.ts", "uvTranslateSysError");
-const { UV_EINVAL } = process.binding("uv");
+const { UV_EINVAL } = $cpp("ProcessBindingUV.cpp", "getProcessBindingUV");
 
 const ArrayIsArray = Array.isArray;
 

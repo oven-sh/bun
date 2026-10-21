@@ -369,7 +369,7 @@ function connectionListenerHTTP1(server, socket, options) {
     finishDrainedResponse,
     kMustCloseConnection,
   } = http1ServerPipeline;
-  const { allMethods } = process.binding("http_parser");
+  const { allMethods } = $cpp("ProcessBindingHTTPParser.cpp", "getProcessBindingHTTPParser");
 
   const http1Options = options.http1Options || {};
   const IncomingMessageClass: new (socket) => Http1FallbackRequest =

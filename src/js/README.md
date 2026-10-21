@@ -46,6 +46,8 @@ On top of this, we have some special functions that are handled by the builtin p
 
 - `process.platform` and `process.arch` is properly inlined and DCE'd. Do use this to run different code on different platforms.
 
+- `process.binding(name)` does not build. It is a public property that a program can replace, and a builtin module can load after the program did that. Read the same objects through their private accessors: `$processBindingConstants` for `"constants"`, `$cpp("ProcessBindingUV.cpp", "getProcessBindingUV")` for `"uv"` and `$cpp("ProcessBindingHTTPParser.cpp", "getProcessBindingHTTPParser")` for `"http_parser"`. For another binding, add a `$cpp` accessor next to the code that creates it.
+
 ## Builtin Modules
 
 Files in `node`, `bun`, `thirdparty`, and `internal` are all bundled as "modules". These go through the preprocessor to construct a JS function, where `export default`/`export function`/etc are converted into a `return` statement. Due to this, non-type `import` statements are not supported.

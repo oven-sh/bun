@@ -78,7 +78,7 @@ let uvErrorMap;
 // Mirrors node's UVException for the watch syscall:
 // "ENOENT: no such file or directory, watch '/path'".
 function makeWatchUVException(status, filename) {
-  uvErrorMap ??= process.binding("uv").getErrorMap();
+  uvErrorMap ??= $cpp("ProcessBindingUV.cpp", "getProcessBindingUV").getErrorMap();
   const entry = uvErrorMap.$get(status);
   const code = entry ? entry[0] : "UNKNOWN";
   const description = entry ? entry[1] : "unknown error";

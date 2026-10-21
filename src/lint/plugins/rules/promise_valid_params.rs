@@ -28,7 +28,7 @@ impl Rule for ValidParams {
         let Some(call_expr) = e.as_call() else {
             return;
         };
-        // Nearly every call of these has one argument.
+        // Fast path: nearly every call to these has one argument.
         let args_len = call_expr.args().len();
         if args_len == 1 {
             return;

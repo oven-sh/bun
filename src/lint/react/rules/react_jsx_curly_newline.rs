@@ -43,7 +43,7 @@ impl Rule for JsxCurlyNewline {
             return;
         };
         for expression in jsx.attrs().iter().filter_map(Prop::value).chain(jsx.children()) {
-            // `{...a}` among the children is a `JSXSpreadChild`.
+            // A `{...a}` child is a `JSXSpreadChild`.
             if expression.tag() != ExprTag::Spread
                 && let Some(container) = expression.jsx_container_span()
             {
@@ -62,20 +62,20 @@ impl JsxCurlyNewline {
         let left_curly = Span::new(container.start, container.start + 1);
         let right_curly = Span::new(container.end.saturating_sub(1), container.end);
         let inside = left_curly.between(right_curly);
-        // The tokens between the braces are those of the expression and of the parentheses around it.
+        // The tokens between the braces belong to the expression and the parentheses around it.
         let tokens = (!expression.is_missing()).then(|| expression.outer_span());
         let after_left_curly = tokens.map_or(inside, |it| left_curly.between(it));
         let before_right_curly = tokens.map_or(inside, |it| it.between(right_curly));
         let has_left_newline = !ast_utils::is_on_one_line(file, after_left_curly);
         let has_right_newline = !ast_utils::is_on_one_line(file, before_right_curly);
-        // A `JSXEmptyExpression` is all that is between the braces.
+        // A `JSXEmptyExpression` spans everything between the braces.
         let is_multiline = !ast_utils::is_on_one_line(file, if tokens.is_some() { expression.span() } else { inside });
         let needs_newlines = match if is_multiline { self.multiline } else { self.singleline } {
             Newlines::Forbid => false,
             Newlines::Require => true,
             Newlines::Consistent => has_left_newline,
         };
-        // Not if there is a comment.
+        // No fix if there's a comment.
         let remove = |fixer: Fixer<'a>, space: Span| {
             strings::trim_js_whitespace(file.slice(space)).is_empty().then(|| fixer.remove(space))
         };

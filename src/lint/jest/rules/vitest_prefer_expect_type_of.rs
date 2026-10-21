@@ -5,7 +5,7 @@ use bun_lint::prelude::*;
 pub struct PreferExpectTypeOf<const RUNNER: u8 = { jest::VITEST }>;
 
 const PREFER_EXPECT_TYPE_OF: Message = Message::new("", "Type assertions should be done using `toBeTypeOf`.");
-/// Without the page of Vitest about it.
+/// Bun's version. Its `help` omits the link to Vitest's docs.
 const PREFER_EXPECT_TYPE_OF_IN_BUN: Message = Message::new("", "Type assertions should be done using `toBeTypeOf()`.");
 
 impl<const RUNNER: u8> Rule for PreferExpectTypeOf<RUNNER> {
@@ -39,7 +39,7 @@ fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         && type_expected.tag() != ExprTag::Spread
     {
         let file = ctx.file;
-        let (expect, rest) = expect_call.around_first_argument(ctx.runner);
+        let (expect, rest) = expect_call.expect_prefix_and_suffix(ctx.runner);
         let mut code = [expect, b"(".as_slice(), file.slice(operand.outer_span()), rest].concat();
         for modifier in expect_call.modifiers() {
             let (open, close) = match modifier.element {

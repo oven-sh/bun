@@ -47,6 +47,7 @@
 #include "GeneratedGlob.h"
 #include "GeneratedHashObject.h"
 #include "GeneratedImage.h"
+#include "GeneratedInterpreter.h"
 #include "GeneratedJSON5Object.h"
 #include "GeneratedJSONCObject.h"
 #include "GeneratedPasswordObject.h"
@@ -347,7 +348,7 @@ JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
 static JSValue createBunShell(VM& vm, Zig::GlobalObject* globalObject)
 {
     JSFunction* createParsedShellScript = JSFunction::create(vm, globalObject, 2, "createParsedShellScript"_s, BunObject_callback_createParsedShellScript, ImplementationVisibility::Private, NoIntrinsic);
-    JSFunction* createShellInterpreterFunction = JSFunction::create(vm, globalObject, 1, "createShellInterpreter"_s, BunObject_callback_createShellInterpreter, ImplementationVisibility::Private, NoIntrinsic);
+    JSFunction* createShellInterpreterFunction = JSFunction::create(vm, globalObject, 1, "createShellInterpreter"_s, Bun::Bindgen::Generated::Interpreter::jsCreateShellInterpreter, ImplementationVisibility::Private, NoIntrinsic);
     JSC::JSFunction* createShellFn = JSC::JSFunction::create(vm, globalObject, shellCreateBunShellTemplateFunctionCodeGenerator(vm), globalObject);
 
     auto scope = DECLARE_THROW_SCOPE(vm);

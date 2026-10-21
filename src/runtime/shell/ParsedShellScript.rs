@@ -1,11 +1,11 @@
 use core::cell::Cell;
-use core::mem::size_of;
 use core::sync::atomic::Ordering;
 
 use bun_core::String as BunString;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell,
-    JsRef, JsResult, MarkedArgumentBuffer, StringJsc as _,
+    JsClass as _, JsResult, MarkedArgumentBuffer,
 };
 
 use super::env_map::EnvMap;
@@ -13,20 +13,13 @@ use super::interpreter::ShellArgs;
 use super::shell_body::shell_cmd_from_js;
 use super::{EnvStr, Interpreter};
 
-pub(crate) use crate::generated_classes::js_ParsedShellScript as js;
+pub(crate) use crate::generated_bindgen::parsed_shell_script::js_ParsedShellScript as js;
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
-#[bun_jsc::JsClass(no_constructor)]
 pub(crate) struct ParsedShellScript {
     pub args: JsCell<Option<Box<ShellArgs>>>,
     pub(crate) export_env: JsCell<Option<EnvMap>>,
     pub(crate) quiet: Cell<bool>,
     pub(crate) cwd: JsCell<Option<BunString>>,
-    /// Self-wrapper backref. `.classes.ts` has `finalize: true`, so the weak arm is
-    /// sound: the codegen finalizer drops this Box (and the `JsRef`) at sweep.
-    /// Read-only after construction.
-    pub(crate) this_jsvalue: JsRef,
     /// Read-only after construction (set once before the JS wrapper exists).
     pub(crate) estimated_size_for_gc: usize,
 }
@@ -38,15 +31,14 @@ impl Default for ParsedShellScript {
             export_env: JsCell::new(None),
             quiet: Cell::new(false),
             cwd: JsCell::new(None),
-            this_jsvalue: JsRef::empty(),
             estimated_size_for_gc: 0,
         }
     }
 }
 
 impl ParsedShellScript {
-    fn compute_estimated_size_for_gc(&self) -> usize {
-        let mut size: usize = size_of::<ParsedShellScript>();
+    pub(crate) fn memory_cost(&self) -> usize {
+        let mut size: usize = 0;
         if let Some(args) = self.args.get() {
             size += args.memory_cost();
         }
@@ -57,10 +49,6 @@ impl ParsedShellScript {
             size += cwd.estimated_size();
         }
         size
-    }
-
-    pub(crate) fn memory_cost(&self) -> usize {
-        self.compute_estimated_size_for_gc()
     }
 
     pub(crate) fn estimated_size(&self) -> usize {
@@ -79,42 +67,19 @@ impl ParsedShellScript {
         (args, quiet, cwd, export_env)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn set_cwd(
-        &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        // SAFETY: `bun_vm()` is non-null for a Bun-owned global.
-        let vm = global.bun_vm();
-        let mut arguments = bun_jsc::ArgumentsSlice::init(vm, callframe.arguments());
-        let Some(str_js) = arguments.next_eat() else {
-            return Err(global.throw(format_args!("$`...`.cwd(): expected a string argument")));
-        };
-        let str = BunString::from_js(str_js, global)?;
-        throw_if_nul(global, "cwd", &str.to_utf8())?;
-        self.cwd.set(Some(str));
-        Ok(JSValue::UNDEFINED)
+    pub(crate) fn set_cwd(&self, cx: &mut JsScope<'_>, cwd: &BunString) -> JsResult<()> {
+        throw_if_nul(cx.global(), "cwd", &cwd.to_utf8())?;
+        self.cwd.set(Some(cwd.clone()));
+        Ok(())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn set_quiet(
-        &self,
-        _global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let arg = callframe.argument(0);
-        self.quiet.set(arg.to_boolean());
-        Ok(JSValue::UNDEFINED)
+    pub(crate) fn set_quiet(&self, quiet: bool) {
+        self.quiet.set(quiet);
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn set_env(
-        &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let Some(value1) = callframe.argument(0).get_object() else {
+    pub(crate) fn set_env(&self, cx: &mut JsScope<'_>, env: JsLocal<'_>) -> JsResult<()> {
+        let global = cx.global();
+        let Some(value1) = env.to_js().get_object() else {
             return Err(global.throw_invalid_arguments(format_args!("env must be an object")));
         };
 
@@ -153,7 +118,7 @@ impl ParsedShellScript {
         }
         // Dropping the previous Option<EnvMap> deinits it.
         self.export_env.set(Some(env));
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 }
 
@@ -269,18 +234,12 @@ fn create_parsed_shell_script_impl(
 
     shargs.set_script_ast(script_ast);
 
-    let mut parsed_shell_script = Box::new(ParsedShellScript {
+    let mut parsed_shell_script = ParsedShellScript {
         args: JsCell::new(Some(shargs)),
         ..Default::default()
-    });
-    parsed_shell_script.estimated_size_for_gc = parsed_shell_script.compute_estimated_size_for_gc();
-    let parsed_shell_script_ptr = bun_core::heap::into_raw(parsed_shell_script);
-    // `parsed_shell_script_ptr` is a fresh `heap::alloc`; ownership transfers
-    // to the C++ wrapper (stored opaquely, freed via the generated finalize
-    // callback).
-    let this_jsvalue = js::to_js(parsed_shell_script_ptr, global);
-    // SAFETY: pointer just created above; wrapper now owns it but we need one more field write.
-    unsafe { (*parsed_shell_script_ptr).this_jsvalue = JsRef::init_weak(this_jsvalue) };
+    };
+    parsed_shell_script.estimated_size_for_gc = parsed_shell_script.memory_cost();
+    let this_jsvalue = parsed_shell_script.to_js(global);
     if jsobjs_len > 0 {
         let jsobjs = marked_argument_buffer.construct_array(global)?;
         js::jsobjs_set_cached(this_jsvalue, global, jsobjs);

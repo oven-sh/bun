@@ -26,7 +26,6 @@
     macro(color) \
     macro(connect) \
     macro(createParsedShellScript) \
-    macro(createShellInterpreter) \
     macro(file) \
     macro(jest) \
     macro(listen) \

@@ -139,12 +139,6 @@ mod static_adapters {
         // by the macro); call it directly.
         crate::shell::parsed_shell_script::CREATE_PARSED_SHELL_SCRIPT(g, cf)
     }
-    pub(super) fn shell_interpreter_create(
-        g: &JSGlobalObject,
-        cf: &CallFrame,
-    ) -> JsResult<JSValue> {
-        crate::shell::interpreter::create_shell_interpreter(g, cf)
-    }
 }
 
 /// How to add a new function or property to the Bun global
@@ -252,12 +246,9 @@ pub(crate) mod bun_object {
         BunObject_callback_udpSocket => super::static_adapters::udp_socket,
         BunObject_callback_write => crate::webcore::blob::write_file,
     }
-    // `createParsedShellScript` / `createShellInterpreter` go through the same
-    // `to_js_host_call` thunk as the macro-generated callbacks (their bodies
-    // are already `JSHostFnZig`-shaped).
+    // Its body is already `JSHostFnZig`-shaped, so it takes the thunk of the callbacks above.
     export_callbacks! {
         BunObject_callback_createParsedShellScript => super::static_adapters::parsed_shell_script_create,
-        BunObject_callback_createShellInterpreter => super::static_adapters::shell_interpreter_create,
     }
     // --- Callbacks ---
 

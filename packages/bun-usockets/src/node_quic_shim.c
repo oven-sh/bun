@@ -451,6 +451,8 @@ void us_nq_settings_init(struct lsquic_engine_settings *s, int is_server,
     /* lsquic then parses nothing past an unclaimed header block. A client's
      * default of 2 lets the body reach JS ahead of the `onheaders` before it. */
     s->es_max_header_sets = 1;
+    /* node's handshakeTimeout bounds the whole handshake. */
+    s->es_handshake_to_strict = 1;
 }
 
 #define NQ_SET(field, ctype) \

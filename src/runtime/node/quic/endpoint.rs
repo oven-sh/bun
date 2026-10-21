@@ -221,7 +221,7 @@ pub(crate) struct QuicEndpoint {
     /// a native callback (on_data, the timer) is on the stack and owns the
     /// flush when it unwinds -- JS it dispatches (onSessionNew and friends) must
     /// not re-enter lsquic mid-callback, which is why `processing` alone is not
-    /// enough: on_data announces to JS *before* it feeds packets.
+    /// enough: `on_new_mini_conn` creates a session while on_data feeds packets.
     send_scope_depth: Cell<u32>,
 
     global: Cell<*const JSGlobalObject>,
@@ -1385,9 +1385,7 @@ impl QuicEndpoint {
         let _keep_alive = bun_jsc::Strong::create(self.this_value.get().get(), global);
 
         loop {
-            // Arrival order: both push sites append, and a burst of Initials in
-            // one recvmmsg batch must announce in the order the sessions loop
-            // below then walks them.
+            // In the order the ClientHellos were parsed.
             let Some(session) = self.pending_new_sessions.with_mut(|v| {
                 if v.is_empty() {
                     None
@@ -1607,16 +1605,13 @@ impl QuicEndpoint {
     }
 
     /// Makes a new mini conn skip its TLS handshake and answer CONNECTION_REFUSED.
-    fn refuse_mini_conn(conn: *mut lsquic::lsquic_conn) -> *mut QuicSession {
-        // SAFETY: `conn` is the live mini conn lsquic just created.
-        unsafe {
-            lsquic::lsquic_conn_abort_error(conn, 0, QUIC_TRANSPORT_CONNECTION_REFUSED, null());
-        }
+    fn refuse_mini_conn(conn: lsquic::MiniConn) -> *mut QuicSession {
+        conn.refuse(QUIC_TRANSPORT_CONNECTION_REFUSED);
         null_mut()
     }
 
     /// Creates the session that lsquic keeps as a new mini conn's ctx, or refuses the conn.
-    pub(super) fn on_new_mini_conn(&self, conn: *mut lsquic::lsquic_conn) -> *mut QuicSession {
+    pub(super) fn on_new_mini_conn(&self, conn: lsquic::MiniConn) -> *mut QuicSession {
         let global_ptr = self.global.get();
         // A session accepted during close() keeps `sessions` non-empty: the finish gate stays shut.
         if global_ptr.is_null() || self.closing.get() {
@@ -1644,8 +1639,6 @@ impl QuicEndpoint {
                 // SAFETY: session was just created.
                 unsafe { (*session).bind_mini_conn(conn) };
                 self.sessions.with_mut(|v| v.push(session));
-                self.pending_new_sessions.with_mut(|v| v.push(session));
-                self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
                 session
             }
             Err(e) => {
@@ -1653,6 +1646,12 @@ impl QuicEndpoint {
                 Self::refuse_mini_conn(conn)
             }
         }
+    }
+
+    /// Queues the listen callback for a server session whose ClientHello TLS has parsed.
+    pub(super) fn announce(&self, session: *mut QuicSession) {
+        self.pending_new_sessions.with_mut(|v| v.push(session));
+        self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
     }
 
     /// Binds a promoted conn to the session its mini conn had, or drops it if that session is gone.
@@ -2146,7 +2145,7 @@ impl QuicEndpoint {
         unsafe {
             lsquic::lsquic_conn_set_ctx(conn, session.cast());
             (*session).conn.set(conn);
-            (*session).cache_sockaddrs(conn);
+            (*session).cache_sockaddrs(lsquic::Conn::from_raw(conn).and_then(|c| c.sockaddrs()));
             // `conn` is set above, so teardown clears the conn's ctx and the
             // late callbacks no-op instead of reaching an unrooted session.
             if let Err(e) = (*session).apply_options(global, options) {

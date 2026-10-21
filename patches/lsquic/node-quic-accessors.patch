@@ -1,6 +1,6 @@
 --- a/include/lsquic.h
 +++ b/include/lsquic.h
-@@ -243,6 +243,51 @@ struct lsquic_stream_if {
+@@ -243,6 +243,50 @@ struct lsquic_stream_if {
       * The user may pick it off immediately using lsquic_stream_get_hset().
       */
      void (*on_hset_in)  (lsquic_stream_t *s, lsquic_stream_ctx_t *h);
@@ -10,13 +10,12 @@
 +     */
 +    void (*on_hsk_confirmed)(lsquic_conn_t *c);
 +    /**
-+     * Optional callback fired when a server mini connection is destroyed
-+     * without promoting (handshake failure or client abandonment).  The
-+     * peer address identifies which connection attempt died.  bun addition.
++     * Optional callback fired when a server mini connection that has a
++     * context is destroyed without promoting (handshake failure or client
++     * abandonment).  The context is already off the connection.  bun
++     * addition.
 +     */
-+    void (*on_mini_conn_failed)(void *stream_if_ctx,
-+                                const struct sockaddr *peer_sa,
-+                                uint64_t error_code);
++    void (*on_mini_conn_failed)(lsquic_conn_ctx_t *ctx, uint64_t error_code);
 +    /**
 +     * Optional callback fired when a packet carrying DATAGRAM frames is
 +     * acknowledged by the peer (`acked` is 1) or declared lost (`acked` is
@@ -52,7 +51,7 @@
  };
  
  struct ssl_ctx_st;
-@@ -880,6 +925,12 @@ struct lsquic_engine_settings {
+@@ -880,6 +924,12 @@ struct lsquic_engine_settings {
       */
      unsigned        es_ping_period;
  
@@ -65,7 +64,7 @@
      /**
       * Source Connection ID length.  Only applicable to the IETF QUIC
       * versions.  Valid values are 0 through 20, inclusive.
-@@ -1209,6 +1260,57 @@ struct lsquic_engine_settings {
+@@ -1209,6 +1259,64 @@ struct lsquic_engine_settings {
       * and @ref LSQUIC_DF_MAX_HEADER_SETS_CLIENT in client mode.
       */
      unsigned        es_max_header_sets;
@@ -120,10 +119,17 @@
 +     * maxIdleTimeout transport parameter is specified in milliseconds).
 +     */
 +    unsigned        es_idle_timeout_ms;
++
++    /**
++     * bun: when nonzero, @ref es_handshake_to bounds the whole handshake of
++     * a server connection.  By default a mini connection that has read a
++     * Handshake packet may live until the idle timeout.
++     */
++    int             es_handshake_to_strict;
  };
  
  /* Initialize `settings' to default values */
-@@ -1630,6 +1732,13 @@ lsquic_conn_cancel_pending_streams (lsquic_conn_t *, unsigned n);
+@@ -1630,6 +1738,13 @@ lsquic_conn_cancel_pending_streams (lsquic_conn_t *, unsigned n);
  void
  lsquic_conn_going_away (lsquic_conn_t *);
  
@@ -137,7 +143,7 @@
  /**
   * This forces connection close.  on_conn_closed and on_close callbacks
   * will be called.  Closing an established IETF QUIC connection sends a
-@@ -1864,6 +1973,20 @@ lsquic_stream_is_pushed (const lsquic_stream_t *s);
+@@ -1864,6 +1979,20 @@ lsquic_stream_is_pushed (const lsquic_stream_t *s);
  int
  lsquic_stream_is_rejected (const lsquic_stream_t *s);
  
@@ -158,7 +164,7 @@
  /**
   * Retained for API compatibility with removed server push support.  Current
   * LSQUIC versions do not create pushed streams.
-@@ -2061,6 +2184,112 @@ lsquic_logger_lopt (const char *optarg);
+@@ -2061,6 +2190,112 @@ lsquic_logger_lopt (const char *optarg);
   */
  unsigned lsquic_engine_quic_versions (const lsquic_engine_t *);
  
@@ -571,14 +577,15 @@
  
      engine->mini_conns_count -= !!(conn->cn_flags & LSCONN_MINI);
 +    /* bun: a server mini-conn dying WITHOUT promotion means the handshake
-+     * failed or the client abandoned it; tell the application (which may
-+     * have announced a session at Initial receipt) so it isn't orphaned.
++     * failed or the client abandoned it; hand its context back to the
++     * application, so that it isn't orphaned.
 +     * The error code mirrors imico_generate_conn_close's choice. */
 +    if ((conn->cn_flags & (LSCONN_MINI|LSCONN_PROMOTED)) == LSCONN_MINI
 +            && (conn->cn_flags & LSCONN_IETF)
++            && conn->cn_conn_ctx
 +            && engine->pub.enp_stream_if->on_mini_conn_failed)
 +    {
-+        const struct sockaddr *local_sa, *peer_sa;
++        lsquic_conn_ctx_t *const conn_ctx = conn->cn_conn_ctx;
 +        const struct ietf_mini_conn *imc = (struct ietf_mini_conn *) conn;
 +        uint64_t error_code;
 +        if (imc->imc_flags & IMC_ABORT_ERROR)
@@ -589,9 +596,8 @@
 +            error_code = TEC_TRANSPORT_PARAMETER_ERROR;
 +        else
 +            error_code = TEC_NO_ERROR;
-+        if (0 == lsquic_conn_get_sockaddr(conn, &local_sa, &peer_sa))
-+            engine->pub.enp_stream_if->on_mini_conn_failed(
-+                        engine->pub.enp_stream_if_ctx, peer_sa, error_code);
++        conn->cn_conn_ctx = NULL;
++        engine->pub.enp_stream_if->on_mini_conn_failed(conn_ctx, error_code);
 +    }
      if (engine->purga && !(conn->cn_flags & LSCONN_NO_BL)
          /* Blacklist all CIDs except for promoted mini connections */
@@ -715,13 +721,12 @@
  
      if (!conn)
      {
-@@ -3308,6 +3432,41 @@ lsquic_engine_quic_versions (const lsquic_engine_t *engine)
+@@ -3308,6 +3432,40 @@ lsquic_engine_quic_versions (const lsquic_engine_t *engine)
  }
  
  
 +/* bun: total live conns (mini + full). Used to defer a graceful endpoint
-+ * close while mini-conn handshakes are still in flight, since lsquic only
-+ * surfaces mini-conns to the application after promotion. */
++ * close while a conn that has no application context is still in flight. */
 +unsigned
 +lsquic_engine_conn_count (const lsquic_engine_t *engine)
 +{
@@ -732,7 +737,7 @@
 +/* bun: whether the engine already tracks a connection ID — live conn
 + * (including mini-conns, hashed by every CCE including the client's
 + * original DCID) or a purgatory entry of a recently closed conn.  Used to
-+ * announce server sessions only for genuinely new Initials. */
++ * give a datagram to the engine that owns its connection. */
 +int
 +lsquic_engine_cid_in_use (lsquic_engine_t *engine,
 +                          const unsigned char *cid_buf, size_t cid_len)
@@ -757,7 +762,7 @@
  void
  lsquic_engine_cooldown (lsquic_engine_t *engine)
  {
-@@ -3530,6 +3689,21 @@ lsquic_engine_count_attq (lsquic_engine_t *engine, int from_now)
+@@ -3530,6 +3688,21 @@ lsquic_engine_count_attq (lsquic_engine_t *engine, int from_now)
  }
  
  
@@ -1745,20 +1750,22 @@
       * point we have to support a frame that is wider than 4 byte, it will
 --- a/src/liblsquic/lsquic_mini_conn_ietf.c
 +++ b/src/liblsquic/lsquic_mini_conn_ietf.c
-@@ -1516,8 +1516,11 @@ ignore_init (struct ietf_mini_conn *conn)
+@@ -1516,9 +1516,12 @@ ignore_init (struct ietf_mini_conn *conn)
      LSQ_DEBUG("henceforth, no Initial packets shall be sent or received; "
          "destroyed %u packet%.*s", count, count != 1, "s");
  
 -    int ext_to = conn->imc_enpub->enp_settings.es_idle_timeout * 1000000
 -            - conn->imc_enpub->enp_settings.es_handshake_to;
+-    if (ext_to > 0)
 +    /* bun: ms-granular idle override; 64-bit signed (INT_MAX us is ~2148s). */
 +    int64_t ext_to = (int64_t) (conn->imc_enpub->enp_settings.es_idle_timeout_ms
 +            ? (lsquic_time_t) conn->imc_enpub->enp_settings.es_idle_timeout_ms * 1000
 +            : (lsquic_time_t) conn->imc_enpub->enp_settings.es_idle_timeout * 1000000)
 +            - (int64_t) conn->imc_enpub->enp_settings.es_handshake_to;
-     if (ext_to > 0)
++    if (ext_to > 0 && !conn->imc_enpub->enp_settings.es_handshake_to_strict)
      {
          conn->imc_expire += ext_to;
+         LSQ_DEBUG("extend mini-conn expire time to %d seconds",
 @@ -2159,7 +2162,9 @@ imico_generate_conn_close (struct ietf_mini_conn *conn)
          is_app = 0;
          error_code = 0x100 + conn->imc_tls_alert;

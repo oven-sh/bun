@@ -52,7 +52,7 @@
 +            error_code = (1ULL << 63) | imc->imc_close_code;
          else
              error_code = TEC_NO_ERROR;
-         if (0 == lsquic_conn_get_sockaddr(conn, &local_sa, &peer_sa))
+         conn->cn_conn_ctx = NULL;
 --- a/src/liblsquic/lsquic_enc_sess_ietf.c
 +++ b/src/liblsquic/lsquic_enc_sess_ietf.c
 @@ -2368,8 +2368,21 @@

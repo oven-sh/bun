@@ -206,26 +206,40 @@ pub(super) struct TlsContext {
     _alpn: Option<Box<Vec<u8>>>,
 }
 
+/// The session of the handshake that `ssl` runs, if it still has one.
+///
+/// # Safety
+/// `ssl` must be the live SSL of an lsquic conn.
+unsafe fn session_of<'a>(ssl: *const ssl::SSL) -> Option<&'a super::session::QuicSession> {
+    // SAFETY: lsquic keeps the SSL -> conn link for as long as the SSL lives.
+    let conn = unsafe { bun_lsquic_sys::lsquic_ssl_to_conn(ssl.cast()) };
+    if conn.is_null() {
+        return None;
+    }
+    // SAFETY: `conn` is live. Its ctx is its session from its first packet on, or null (`ctx_ref`).
+    unsafe { super::ffi::ctx_ref(bun_lsquic_sys::lsquic_conn_get_ctx(conn)) }
+}
+
 unsafe extern "C" fn keylog_cb(ssl: *const ssl::SSL, line: *const core::ffi::c_char) {
     if line.is_null() {
         return;
     }
-    // SAFETY: lsquic keeps the SSL -> conn link for as long as the SSL lives.
-    let conn = unsafe { bun_lsquic_sys::lsquic_ssl_to_conn(ssl.cast()) };
-    if conn.is_null() {
-        return;
-    }
-    // SAFETY: `conn` is live. Its ctx is its session from its first packet on, or null (`ctx_ref`).
-    let Some(session) = (unsafe {
-        super::ffi::ctx_ref::<super::session::QuicSession>(bun_lsquic_sys::lsquic_conn_get_ctx(
-            conn,
-        ))
-    }) else {
+    // SAFETY: BoringSSL passes the SSL of the handshake that made the line.
+    let Some(session) = (unsafe { session_of(ssl) }) else {
         return;
     };
     // SAFETY: BoringSSL passes a NUL-terminated line that is valid for this callback.
     let bytes = unsafe { core::ffi::CStr::from_ptr(line).to_bytes().to_vec() };
     session.push_event(super::session::SessionEvent::Keylog(bytes));
+}
+
+/// BoringSSL calls this when it has parsed a server handshake's ClientHello.
+unsafe extern "C" fn client_hello_cb(hello: *const ssl::SSL_CLIENT_HELLO) -> c_int {
+    // SAFETY: BoringSSL passes a live ClientHello, and `ssl` is the SSL of its handshake.
+    if let Some(session) = unsafe { session_of((*hello).ssl) } {
+        session.on_client_hello();
+    }
+    ssl::ssl_select_cert_success
 }
 
 unsafe extern "C" fn alpn_select_cb(
@@ -458,6 +472,7 @@ impl TlsContext {
                 ssl::SSL_CTX_set_keylog_callback(ctx, Some(keylog_cb));
             }
             if config.is_server {
+                ssl::SSL_CTX_set_select_certificate_cb(ctx, Some(client_hello_cb));
                 if config.verify_client {
                     // SSL_VERIFY_PEER alone matches Node's TLS 1.3 semantics (see QuicSession::maybe_report_handshake).
                     ssl::SSL_CTX_set_verify(ctx, ssl::SSL_VERIFY_PEER, None);

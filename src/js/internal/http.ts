@@ -39,6 +39,8 @@ const kAbortController = Symbol.for("kAbortController");
 const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
+// Getter of the JS response handle of internal/http1_server_fallback: whether its socket takes the callback of a chunk. The native handle has none.
+const kTakesWriteCallback = Symbol("kTakesWriteCallback");
 const kRequest = Symbol("request");
 // IncomingMessage slot for the request's native response. null if the request was parsed in JS.
 const kHeaderSource = Symbol("kHeaderSource");
@@ -565,6 +567,7 @@ export {
   kRealListen,
   kRememberPeer,
   kRequest,
+  kTakesWriteCallback,
   kWaitForProxyTunnel,
   noBodySymbol,
   onDataIncomingMessage,

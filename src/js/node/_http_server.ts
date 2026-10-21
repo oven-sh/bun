@@ -46,6 +46,7 @@ const {
   kPendingCallbacks,
   kRememberPeer,
   kRequest,
+  kTakesWriteCallback,
   kCloseCallback,
   kClosedWithUnsentData,
   NodeHTTPResponseFlags,
@@ -1530,6 +1531,10 @@ const kStopParsingOnCloseListener = Symbol("kStopParsingOnCloseListener");
 // Set when the dispatcher already detached a synchronously-finished response,
 // so the 'finish' listener does not detach/advance the pipeline a second time.
 const kDispatcherDetached = Symbol("kDispatcherDetached");
+// Node.js emits a response's 'drain' only while the response is the message of its socket. A response that the dispatcher detached for a 'close' from its handler still writes, so it is owed the 'drain' too.
+function isOwedDrain(res) {
+  return res[kDispatcherDetached] || res[kSocket]?._httpMessage === res;
+}
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js (socketOnError)
 const badRequestResponse = Buffer.from(`HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n`, "latin1");
@@ -3034,7 +3039,7 @@ function advanceResponsePipeline(server, socket) {
       res[kNeedDrain] = needDrain;
     }
   }
-  // What waited for the turn comes now when the handle is empty. From v26.8 Node.js also emits 'drain' here while the socket holds bytes under its mark: https://github.com/nodejs/node/pull/64991
+  // What waited for the turn comes now when the handle is empty. From v26.8 Node.js also emits 'drain' here while the socket holds bytes under its mark (https://github.com/nodejs/node/pull/64991). Bun waits: the native handle can hold the tail of a write by reference.
   settleWhenEmpty(res);
 }
 
@@ -3067,11 +3072,11 @@ function settleWhenEmpty(res) {
     }
     return;
   }
-  // The connection is gone: no 'drain' comes, and the close path fails the callbacks.
+  // The connection is gone: no 'drain' comes. Its close path fails the callbacks of the response that has the socket.
   if (handle.flags & NodeHTTPResponseFlags.closed_or_completed) return;
+  noteSocketActivity(res);
   if (held !== 0) res._callPendingCallbacks();
-  // A response that gave its socket away gets no 'drain'. One that the dispatcher detached for a 'close' from its handler still writes.
-  if (owed && (res[kDispatcherDetached] || res[kSocket]?._httpMessage === res)) {
+  if (owed && isOwedDrain(res)) {
     res[kNeedDrain] = false;
     // The count of the turn starts again for what the 'drain' listeners write.
     res[kBytesBuffered] = 0;
@@ -3794,8 +3799,8 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   // Node returns true for every write to a response that cannot have a body (write_ in lib/_http_outgoing.js).
   const hasBody = this._hasBody;
   const onWritable = hasBody ? allowWritesToContinue.bind(this) : undefined;
-  // A stream takes the callback with the chunk, like the socket of Node.js, unless callbacks wait here ahead of it: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L419
-  if (callback && hasBody && this[kPendingCallbacks].length === 0 && handle.takesWriteCallback) {
+  // A stream takes the callback with the chunk, like the socket of Node.js, unless callbacks wait here ahead of it: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L419 The native handle has no such getter and reads four arguments.
+  if (callback && hasBody && this[kPendingCallbacks].length === 0 && handle[kTakesWriteCallback]) {
     onWritten = callback;
     callback = undefined;
     // The job of the turn goes ahead of the tick in which the stream runs the callback: a 'drain' of this turn comes first, as in Node.js.
@@ -4005,7 +4010,7 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
   // Not `callback`: it would replace the armed drain callback of a write() that returned false. A queued response arms nothing: its turn settles it.
   const onWritable = queued ? undefined : allowWritesToContinue.bind(this);
   let onWritten;
-  if ($isCallable(callback) && !queued && this[kPendingCallbacks].length === 0 && handle.takesWriteCallback) {
+  if ($isCallable(callback) && !queued && this[kPendingCallbacks].length === 0 && handle[kTakesWriteCallback]) {
     onWritten = callback;
     callback = undefined;
   }
@@ -4248,8 +4253,17 @@ function allowWritesToContinue() {
 
 // Every write() that returns false goes through here. What settles its 'drain': the drain callback that the handle armed, the job of the turn for the count, or the turn of a queued response.
 function refuseWrite(res) {
-  res[kNeedDrain] = true;
+  if (!res[kNeedDrain]) {
+    res[kNeedDrain] = true;
+    noteSocketActivity(res);
+  }
   return false;
+}
+
+// A response that starts to wait for its 'drain', and one whose bytes the peer took, are not idle: Node.js refreshes the timer of the socket at every write and completion. Only for a socket with a timeout of its own, so the keep-alive timer is left alone.
+function noteSocketActivity(res) {
+  const socket = res[kSocket];
+  if (socket?.timeout) socket._unrefTimer?.();
 }
 
 function failPendingWriteCallbacks(res, error) {

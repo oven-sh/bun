@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { isWindows, tempDir } from "harness";
 import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
+import { join } from "node:path";
 import { pipeline, Writable } from "node:stream";
 
 // Each test opens a raw TCP socket against a server whose timeout knob is a
@@ -582,4 +584,111 @@ describe.concurrent("node:http server socket setTimeout(msecs) checks", () => {
       ]);
     },
   );
+});
+
+// A response that waits for its 'drain' is not idle: Node.js refreshes the timer of the socket at every write and at
+// every write that completes. So server.timeout cuts a response only when its client takes nothing for that long.
+// On a unix socket the kernel takes a few hundred KiB from a client that does not read, so a block of 2 MiB waits.
+describe.skipIf(isWindows)("server.timeout and a response that waits for 'drain'", () => {
+  const BLOCK = Buffer.alloc(2 * 1024 * 1024, "a");
+
+  async function listenOnUnixSocket(server: http.Server, dir: string) {
+    const path = join(dir, "http.sock");
+    server.listen(path);
+    await once(server, "listening");
+    return path;
+  }
+
+  // Two waits in each round, each shorter than the timeout: the handler takes a while to have the next block, and
+  // the client takes a while to read it. The timer starts over when the response starts to wait for its 'drain',
+  // and when the client has taken the block.
+  test("a body whose blocks each wait for less than the timeout arrives whole", async () => {
+    const TIMEOUT = 1000;
+    const ROUNDS = 2;
+    const pause = () => new Promise(resolve => setTimeout(resolve, TIMEOUT * 0.6));
+    using dir = tempDir("http-drain-timeout", {});
+    const written = Array.from({ length: ROUNDS }, () => Promise.withResolvers<boolean>());
+    const server = http.createServer(async (req, res) => {
+      res.setHeader("Content-Length", ROUNDS * BLOCK.length);
+      for (let round = 0; round < ROUNDS; round++) {
+        await pause();
+        const waits = !res.write(BLOCK);
+        const drained = once(res, "drain");
+        written[round].resolve(waits);
+        await drained;
+      }
+      res.end();
+    });
+    let timeouts = 0;
+    server.setTimeout(TIMEOUT, socket => {
+      timeouts++;
+      socket.destroy();
+    });
+    const path = await listenOnUnixSocket(server, String(dir));
+    const client = net.connect(path);
+    try {
+      client.on("error", () => {});
+      const closed = once(client, "close");
+      let received = 0;
+      let target = Infinity;
+      let reached = Promise.withResolvers<void>();
+      client.on("data", chunk => {
+        received += chunk.length;
+        if (received < target) return;
+        // The client takes nothing more until the next block has waited.
+        client.pause();
+        reached.resolve();
+      });
+      client.pause();
+      client.write("GET / HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n");
+      const waited: boolean[] = [];
+      // A connection that the timeout closed ends every wait.
+      for (let round = 0; round < ROUNDS && !client.destroyed; round++) {
+        waited.push(await Promise.race([written[round].promise, closed.then(() => false)]));
+        await pause();
+        reached = Promise.withResolvers<void>();
+        target = (round + 1) * BLOCK.length;
+        client.resume();
+        await Promise.race([reached.promise, closed]);
+      }
+      target = Infinity;
+      client.resume();
+      await closed;
+      // The body and its head.
+      expect({ timeouts, waited, complete: received > ROUNDS * BLOCK.length }).toEqual({
+        timeouts: 0,
+        waited: [true, true],
+        complete: true,
+      });
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test("a client that takes nothing still gets the timeout", async () => {
+    using dir = tempDir("http-drain-timeout", {});
+    const timedOut = Promise.withResolvers<boolean>();
+    let waits = false;
+    const server = http.createServer((req, res) => {
+      waits = !res.write(BLOCK);
+    });
+    server.setTimeout(200, socket => {
+      timedOut.resolve(waits);
+      socket.destroy();
+    });
+    const path = await listenOnUnixSocket(server, String(dir));
+    const client = net.connect(path);
+    try {
+      client.on("error", () => {});
+      client.pause();
+      client.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
+      expect(await timedOut.promise).toBe(true);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
 });

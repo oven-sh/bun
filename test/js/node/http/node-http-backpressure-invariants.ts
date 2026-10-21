@@ -73,6 +73,8 @@ export type Transport = {
   buffersUnderTheMark: boolean;
   // False when a 'drain' or a write callback can come before the bytes that it stands for are sent.
   signalsAfterSend: boolean;
+  // True when a destroyed socket never runs the callbacks of the writes that it held. Node.js then never runs them either.
+  forgetsHeldWrites: boolean;
 };
 
 type Fault = {
@@ -187,6 +189,8 @@ class CapacitySocket extends Duplex {
   constructor(
     highWaterMark: number,
     private onTick: boolean,
+    // Like Bun's net.Socket at a reset of the peer, and like readable-stream@3: the held writes are dropped.
+    private forgets: boolean,
   ) {
     super({ highWaterMark });
   }
@@ -209,14 +213,14 @@ class CapacitySocket extends Duplex {
     return true;
   }
   _destroy(err: Error | null, callback: (err?: Error | null) => void) {
-    for (const held of this.held.splice(0)) held.callback(err ?? new Error("canceled"));
+    for (const held of this.held.splice(0)) if (!this.forgets) held.callback(err ?? new Error("canceled"));
     callback(err);
   }
 }
 
 // A stream that the plan drives, given to server.emit('connection').
-export function streamTransport(plan: Plan): Transport {
-  const socket = new CapacitySocket(plan.hwm, plan.onTick);
+export function streamTransport(plan: Plan, forgetsHeldWrites = false): Transport {
+  const socket = new CapacitySocket(plan.hwm, plan.onTick, forgetsHeldWrites);
   socket.on("error", () => {});
   socket.budget = plan.budget;
   return {
@@ -252,13 +256,16 @@ export function streamTransport(plan: Plan): Transport {
     idleTurns: 6,
     buffersUnderTheMark: true,
     signalsAfterSend: true,
+    forgetsHeldWrites,
   };
 }
 
 // A listening server and a client in this process. Short sends stand for the room in the kernel buffer.
-export function listenTransport(plan: Plan, fault: Fault): Transport {
+// With `handOver`, a net.Server accepts the connection and gives its socket to server.emit('connection').
+export function listenTransport(plan: Plan, fault: Fault, handOver = false): Transport {
   let client: net.Socket | undefined;
-  let listening: Server | undefined;
+  let listening: net.Server | undefined;
+  let accepted: net.Socket | undefined;
   const received: Buffer[] = [];
   const clamp = (bytes: number) => {
     fault.clear();
@@ -269,9 +276,10 @@ export function listenTransport(plan: Plan, fault: Fault): Transport {
   };
   return {
     start(server, requests) {
-      listening = server;
-      server.listen(0, "127.0.0.1", () => {
-        const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1", () =>
+      const front = handOver ? net.createServer(socket => server.emit("connection", (accepted = socket))) : server;
+      listening = front;
+      front.listen(0, "127.0.0.1", () => {
+        const socket = net.connect((front.address() as net.AddressInfo).port, "127.0.0.1", () =>
           socket.write(requests),
         );
         socket.on("data", chunk => received.push(chunk));
@@ -281,8 +289,9 @@ export function listenTransport(plan: Plan, fault: Fault): Transport {
     },
     // The rules are process-wide: they start once the request is in, so that only the response meets them.
     begin: () => clamp(plan.budget || 512),
-    held: () => null,
-    pending: res => res.writableLength > 0,
+    // What the stream holds in JS. The native handle does not say.
+    held: () => accepted?.writableLength ?? null,
+    pending: res => res.writableLength > 0 || (accepted?.writableLength ?? 0) > 0,
     release: () => false,
     budget: clamp,
     foreign: () => false,
@@ -291,7 +300,12 @@ export function listenTransport(plan: Plan, fault: Fault): Transport {
       client?.resetAndDestroy();
       return false;
     },
-    eof: () => false,
+    eof(ended) {
+      if (!accepted || !client) return false;
+      accepted.once("end", ended);
+      client.end();
+      return true;
+    },
     taken: () => null,
     async wire(complete) {
       fault.clear();
@@ -308,13 +322,15 @@ export function listenTransport(plan: Plan, fault: Fault): Transport {
     stop() {
       fault.clear();
       client?.destroy();
+      accepted?.destroy();
       listening?.close();
-      listening?.closeAllConnections();
+      if (!handOver) (listening as Server | undefined)?.closeAllConnections();
     },
     idleTurns: 40,
-    buffersUnderTheMark: false,
-    // The cork of the loop holds the writes under 16 KiB outside of what the handle counts, so a 'drain' or a write callback can come before those bytes are sent.
-    signalsAfterSend: false,
+    buffersUnderTheMark: handOver,
+    // The cork of the loop holds the writes under 16 KiB outside of what the handle counts, so a 'drain' or a write callback can come before those bytes are sent. A stream has no such cork.
+    signalsAfterSend: handOver,
+    forgetsHeldWrites: false,
   };
 }
 
@@ -629,8 +645,10 @@ async function runPlan(
 
   if (tornDown || closed || resetting) {
     if (!(await settle(() => closed))) violation("no 'close' after the socket was destroyed");
+    // Bun fails at 'close' the callbacks of the writes that a stream forgot. Node.js leaves them.
+    const left = T.forgetsHeldWrites && !process.versions.bun;
     const missing =
-      plan.pipelined || lossy ? 0 : callbacks.filter(callback => callback.ran !== 1 && !callback.late).length;
+      plan.pipelined || lossy || left ? 0 : callbacks.filter(callback => callback.ran !== 1 && !callback.late).length;
     if (missing) violation(`${missing} write callbacks did not run exactly once after the teardown`);
   } else if (!stalled && plan.end) {
     ended = true;

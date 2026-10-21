@@ -19,9 +19,9 @@ afterEach(() => fault.clear());
 describe.skipIf(skip)("node:http under injected syscall faults", () => {
   test("upRes.pipe(res) with res.destroy() racing a queued drain (subprocess)", async () => {
     // A TLS-terminating proxy re-streams a large upstream body via pipe(),
-    // 1-byte sends force backpressure → on_writable/on_drain on every
+    // short sends force backpressure → on_writable/on_drain on every
     // event-loop turn, and the downstream is destroyed while a drain callback
-    // is queued. Forcing 1-byte sends makes the backpressure deterministic
+    // is queued. Forcing short sends makes the backpressure deterministic
     // without depending on kernel buffer sizes.
     //
     // Runs in a subprocess so the outcome is observable as exitCode/signal.
@@ -49,14 +49,15 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
         up.on("error", () => res.destroy());
       });
       proxy.listen(0, "127.0.0.1", async () => {
-        // 1-byte sends → guaranteed backpressure → on_drain is exercised on
+        // 256-byte sends → guaranteed backpressure → on_drain is exercised on
         // every event-loop turn for both the proxy→client and upstream→proxy legs.
-        fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
-        fault.set({ syscall: "writev", action: "short", bytes: 1, repeat: -1 });
+        // With 1-byte sends and four clients this took 5 s and more on a debug build.
+        fault.set({ syscall: "send", action: "short", bytes: 256, repeat: -1 });
+        fault.set({ syscall: "writev", action: "short", bytes: 256, repeat: -1 });
 
         const port = proxy.address().port;
         const reqs = [];
-        for (let i = 0; i < 4; i++) {
+        for (let i = 0; i < 2; i++) {
           reqs.push(new Promise(resolve => {
             const r = https.get({ port, host: "127.0.0.1", ca: process.env.CERT }, res => {
               let n = 0;
@@ -100,8 +101,7 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
     } finally {
       upstream.close();
     }
-    // About 5 s on a debug build, which is the default limit.
-  }, 30_000);
+  });
 
   test("Bun.serve streaming response under 1-byte sends with client abort mid-body (subprocess)", async () => {
     // Covers the uWS HttpResponse path (AsyncSocket → us_socket_write →
@@ -536,6 +536,34 @@ describe.skipIf(skip)("node:http seeded plans of write(), res._send() and end() 
           listener => http.createServer({ highWaterMark: plan.hwm }, listener),
           plan,
           listenTransport(plan, fault),
+        );
+        expect({ seed: plan.seed, plan: describePlan(plan), violations }).toEqual({
+          seed: plan.seed,
+          plan: describePlan(plan),
+          violations: [],
+        });
+      }
+    },
+  );
+});
+
+// The same plans on a net.Socket that a net.Server accepted and gave to server.emit('connection'). These include
+// a client that resets the connection, and one that ends its side, while the socket holds chunks.
+describe.skipIf(skip)("node:http seeded plans on a socket from server.emit('connection') under short sends", () => {
+  const seed = Number(process.env.BUN_HTTP_DRAIN_FUZZ_SEED ?? 1000003);
+  const iterations = Number(process.env.BUN_HTTP_DRAIN_FUZZ_ITERS ?? 9);
+
+  test.each([0, 1, 2, 3, 4])(
+    "keep the rules of 'drain', write() callbacks and writableLength (group %i)",
+    async group => {
+      for (let i = 0; i < iterations; i++) {
+        const made = makePlan(seed + group * iterations + i, false);
+        // Every second plan without a teardown of its own gets a reset of the client.
+        const plan = { ...made, teardown: made.teardown ?? (made.seed % 2 ? ("reset" as const) : null) };
+        const violations = await checkPlan(
+          listener => http.createServer({ highWaterMark: plan.hwm }, listener),
+          plan,
+          listenTransport(plan, fault, true),
         );
         expect({ seed: plan.seed, plan: describePlan(plan), violations }).toEqual({
           seed: plan.seed,

@@ -371,9 +371,18 @@ impl ResolveMessage {
     fn node_message(&self) -> Option<Vec<u8>> {
         use bstr::BStr;
         let (kind, specifier, referrer) = self.node_error_shape()?;
-        // The case hint `fmt` appended to the original text, if any.
+        // The case hint `fmt` appended after `Cannot find module '<specifier>'
+        // from '<referrer>'`, if any.
         let text: &[u8] = &self.msg.data.text;
-        let hint = strings::index_of(text, CASE_HINT_PREFIX).map_or(&b""[..], |i| &text[i..]);
+        let hint_start = b"Cannot find module '".len()
+            + specifier.len()
+            + b"' from '".len()
+            + self.referrer.as_deref().map_or(0, <[u8]>::len)
+            + b"'".len();
+        let hint = text
+            .get(hint_start..)
+            .filter(|tail| tail.starts_with(CASE_HINT_PREFIX))
+            .unwrap_or(&b""[..]);
         let mut out = Vec::new();
         match kind {
             ImportKind::Require | ImportKind::RequireResolve => {

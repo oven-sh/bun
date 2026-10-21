@@ -84,8 +84,9 @@ pub struct ExportFrom {
 }
 
 pub struct ExportDefault {
-    pub default_name: LocRef, // value may be a SFunction or SClass
-    pub value: StmtOrExpr,
+    /// Always a module-scope symbol: never the inner name of a function or class expression.
+    pub default_name: LocRef,
+    pub value: StmtOrExpr, // may be a SFunction or SClass
 }
 
 impl ExportDefault {

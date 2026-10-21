@@ -186,6 +186,382 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     run: { file: "/importer.js", stdout: "2 2" },
   });
+  // `export default (function a(n) {...})` binds `a` in the scope of the
+  // function, and a class expression does the same. That name was also the
+  // symbol of the default export, so `--no-bundle` pinned it, but only the
+  // pinned names of the module scope are reserved: `function a(n) { var
+  // longname = n - 1; return n * a(longname) }` printed as `function a(a) {
+  // var e = a - 1; return a * a(e) }`. Each body declares 54 locals, one for
+  // each one-character name the minifier can produce, so one of them takes the
+  // name `a` whatever the character frequency of the file is.
+  const manyLocals = singleCharNames.map((_, i) => `var local${i} = ${i};`).join(" ");
+  const sumOfLocals = singleCharNames.map((_, i) => `local${i}`).join(" + ");
+  const localsTotal = singleCharNames.reduce((total, _, i) => total + i, 0);
+  itBundled("minify/NoBundleDefaultExportFunctionExpressionName", {
+    files: {
+      "/entry.js": `export default (function a(n) { ${manyLocals} return n <= 1 ? ${sumOfLocals} : n * a(n - 1); });`,
+    },
+    runtimeFiles: {
+      "/importer.js": `import factorial from "./out.js";\nconsole.log(factorial(3));`,
+    },
+    bundling: false,
+    minifyIdentifiers: true,
+    run: { file: "/importer.js", stdout: String(6 * localsTotal) },
+  });
+  // The name of `function a(a)` links to the parameter, so the pin reached the
+  // parameter too: `var longname = 5; return a + longname` printed as `var a
+  // = 5; return a + a`.
+  itBundled("minify/NoBundleDefaultExportFunctionExpressionNamedLikeItsParameter", {
+    files: {
+      "/entry.js": `export default (function a(a) { ${manyLocals} return a + ${sumOfLocals}; });`,
+    },
+    runtimeFiles: {
+      "/importer.js": `import add from "./out.js";\nconsole.log(add(1000));`,
+    },
+    bundling: false,
+    minifyIdentifiers: true,
+    run: { file: "/importer.js", stdout: String(1000 + localsTotal) },
+  });
+  itBundled("minify/NoBundleDefaultExportClassExpressionName", {
+    files: {
+      "/entry.js": `export default (class a { static make(n) { ${manyLocals} return new a(n + ${sumOfLocals}); } constructor(value) { this.value = value; } });`,
+    },
+    runtimeFiles: {
+      "/importer.js": `import Model from "./out.js";\nconsole.log(Model.make(1).value);`,
+    },
+    bundling: false,
+    minifyIdentifiers: true,
+    run: { file: "/importer.js", stdout: String(1 + localsTotal) },
+  });
+  // The same symbol without --minify. With a lowered top-level `using`, the
+  // default export is printed as a `var` and an export clause. That `var` is
+  // not the name of the function expression: `var a = function a(n) {...}`
+  // replaced the module's own `a`.
+  itBundled("minify/NoBundleDefaultExportFunctionExpressionWithLoweredUsing", {
+    files: {
+      "/entry.js": /* js */ `
+        let a = 1;
+        using resource = { [Symbol.dispose]() { console.log("disposed"); } };
+        export default (function a(n) { return n <= 1 ? 1 : n * a(n - 1); });
+        console.log("top", a);
+      `,
+    },
+    runtimeFiles: {
+      "/importer.js": `import factorial from "./out.js";\nconsole.log(factorial(5));`,
+    },
+    bundling: false,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("entry_default as default");
+    },
+    run: { file: "/importer.js", stdout: "top 1\ndisposed\n120" },
+  });
+  // That `var` is named after the file. A module that declares the same name
+  // itself printed both as `var entry_default`, and the second one won.
+  for (const [form, source] of [
+    ["FunctionExpression", `export default (function work(n) { return n + entry_default; });`],
+    ["Arrow", `export default (n) => n + entry_default;`],
+  ] as const) {
+    itBundled(`minify/NoBundleDefaultExport${form}WithLoweredUsingAndTakenName`, {
+      files: {
+        "/entry.js": /* js */ `
+          const entry_default = 9;
+          using resource = { [Symbol.dispose]() {} };
+          ${source}
+        `,
+      },
+      runtimeFiles: {
+        "/importer.js": `import work from "./out.js";\nconsole.log(work(3));`,
+      },
+      bundling: false,
+      minifyIdentifiers: false,
+      run: { file: "/importer.js", stdout: "12" },
+    });
+  }
+  // https://github.com/oven-sh/bun/issues/23810
+  // A bundle declares the default export of a module at the top level. For a
+  // named function or class expression that declaration used the name symbol
+  // of the expression, which has a slot in the scope of the expression. So it
+  // shared its minified name with the first parameter of every other function
+  // and with the default export of every module of the same shape:
+  // `var n=function(o,a,s){...};async function e(n,o){await o.register(n)}`.
+  for (const [name, minify] of [
+    ["Identifiers", { minifyIdentifiers: true }],
+    ["All", { minifyIdentifiers: true, minifySyntax: true, minifyWhitespace: true }],
+  ] as const) {
+    itBundled(`minify/DefaultExportExpressionNameIsNotANestedName${name}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import { registerRoutes } from "./registerRoutes";
+          const seen: string[] = [];
+          const app = {
+            get(path: string, handler: () => string) { seen.push(path + "=" + handler()); },
+            register(plugin: Plugin, options: { prefix: string }) { plugin(app, options, () => seen.push("done")); },
+          };
+          type Plugin = (instance: typeof app, options: { prefix: string }, done: () => void) => void;
+          registerRoutes({ environment: "development" }, app);
+          console.log(seen.join(","));
+        `,
+        "/registerRoutes.ts": /* ts */ `
+          import Users from "./routes/users";
+          import Orders from "./routes/orders";
+          import Model from "./model";
+          export function registerRoutes(config, app) {
+            app.register(Users, { prefix: config.environment });
+            app.register(Orders, { prefix: Model.create(config.environment).name });
+          }
+        `,
+        "/routes/users.ts": /* ts */ `
+          export default (function Controller(fastify, options, done) {
+            fastify.get("/users", () => options.prefix);
+            done();
+          } as (fastify: any, options: any, done: () => void) => void);
+        `,
+        "/routes/orders.ts": /* ts */ `
+          export default (function Controller(fastify, options, done) {
+            fastify.get("/orders", () => options.prefix);
+            done();
+          });
+        `,
+        "/model.ts": /* ts */ `
+          export default (class Model {
+            static create(name) { return new Model(name); }
+            constructor(name) { this.name = name; }
+          });
+        `,
+      },
+      ...minify,
+      run: { stdout: "/users=development,done,/orders=development,done" },
+    });
+  }
+  // With --splitting the binding is declared in a shared chunk and imported by
+  // the entry chunks, which printed `function r(o) { return o(o) }` for
+  // `factorial(x)`.
+  itBundled("minify/DefaultExportExpressionNameIsNotANestedNameAcrossChunks", {
+    files: {
+      "/a.js": /* js */ `
+        import factorial from './factorial.js'
+        import Model from './model.js'
+        export function a(x) { return [factorial(x), Model.make(x).value].join() }
+        console.log(a(4))
+      `,
+      "/b.js": /* js */ `
+        import factorial from './factorial.js'
+        import Model from './model.js'
+        export function b(x) { return [factorial(x) + 1, Model.make(x).value + 1].join() }
+        console.log(b(4))
+      `,
+      "/factorial.js": /* js */ `
+        export default (function factorial(n) { return n <= 1 ? 1 : n * factorial(n - 1) })
+      `,
+      "/model.js": /* js */ `
+        export default (class Model {
+          static make(value) { return new Model(value * 2) }
+          constructor(value) { this.value = value }
+        })
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    minifyIdentifiers: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "24,8" },
+      { file: "/out/b.js", stdout: "25,9" },
+    ],
+  });
+  // The entry chunks have no nested scope here, so they have no slot for the
+  // name symbol of the class expression: the build failed with `panic: index
+  // out of bounds: the len is 0 but the index is 0`. The CLI backend keeps
+  // such a crash out of the test runner.
+  itBundled("minify/DefaultExportExpressionNameIsNotANestedNameInChunkWithoutScopes", {
+    files: {
+      "/a.js": /* js */ `
+        import User from './user.js'
+        console.log("a", new User(1).value)
+      `,
+      "/b.js": /* js */ `
+        import User from './user.js'
+        console.log("b", new User(2).value)
+      `,
+      "/user.js": /* js */ `
+        export default (class User { constructor(value) { this.value = value } })
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    minifyIdentifiers: true,
+    outdir: "/out",
+    format: "esm",
+    backend: "cli",
+    run: [
+      { file: "/out/a.js", stdout: "a 1" },
+      { file: "/out/b.js", stdout: "b 2" },
+    ],
+  });
+  // `require()` reads the binding through the exports object of the module
+  // (`default: () => x`). A function and a plain class are declared outside
+  // the `__esm` wrapper, a class with `extends` is assigned inside it.
+  itBundled("minify/DefaultExportExpressionNameIsNotANestedNameInWrappedModules", {
+    files: {
+      "/entry.js": /* js */ `
+        const factorial = require("./factorial.js").default;
+        const Model = require("./model.js").default;
+        const Derived = require("./derived.js").default;
+        function run(x) { return [factorial(x), Model.make(x).value, Derived.make(x).value].join(); }
+        console.log(run(4));
+      `,
+      "/factorial.js": /* js */ `
+        export default (function factorial(n) { return n <= 1 ? 1 : n * factorial(n - 1); });
+      `,
+      "/model.js": /* js */ `
+        export default (class Model {
+          static make(value) { return new Model(value * 2); }
+          constructor(value) { this.value = value; }
+        });
+      `,
+      "/derived.js": /* js */ `
+        class Base { constructor(value) { this.value = value; } }
+        export default (class Derived extends Base { static make(value) { return new Derived(value + 10); } });
+      `,
+    },
+    minifyIdentifiers: true,
+    run: { stdout: "24,8,14" },
+  });
+  // A `require()` pattern over a re-export. The linker bound the local `inc`
+  // straight to the name symbol of the function expression, and `call`
+  // printed as `function l(n) { return n(n.n) }`.
+  itBundled("minify/DefaultExportFunctionExpressionReexportedToRequirePattern", {
+    files: {
+      "/entry.js": /* js */ `
+        const { inc } = require("./barrel.js");
+        function call(config) { return inc(config.n); }
+        console.log(call({ n: 1 }));
+      `,
+      "/barrel.js": /* js */ `
+        export { default as inc } from "./lib.js";
+      `,
+      "/lib.js": /* js */ `
+        export default (function f(x) { return x + 1; });
+      `,
+    },
+    minifyIdentifiers: true,
+    run: { stdout: "2" },
+  });
+  // A decorated default class reaches the importer through the same binding.
+  itBundled("minify/DefaultExportDecoratedClassNameIsNotANestedName", {
+    files: {
+      "/entry.js": /* js */ `
+        import Model from "./model.js";
+        function run(config) { return Model.make(config.n).value; }
+        console.log(run({ n: 4 }));
+      `,
+      "/model.js": /* js */ `
+        function dec(value) { return value; }
+        export default @dec class Model {
+          static make(value) { return new Model(value * 2); }
+          constructor(value) { this.value = value; }
+        }
+      `,
+    },
+    minifyIdentifiers: true,
+    run: { stdout: "8" },
+  });
+  // The same bundle binding without --minify. It is named after the file, and
+  // the name of the expression stays in the scope of the expression: a
+  // top-level binding of that name in another module does not number either.
+  itBundled("minify/DefaultExportOfNamedExpressionHasItsOwnBindingWithoutMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        import handler from "./controller.js";
+        import M from "./model.js";
+        const Controller = "top-level";
+        class Model {}
+        console.log(JSON.stringify([handler.name, handler(1), M.name, M.make(2).value, Controller, Model.name]));
+      `,
+      "/controller.js": /* js */ `
+        export default (function Controller(a) { return a + 1; });
+      `,
+      "/model.js": /* js */ `
+        export default (class Model {
+          static make(value) { return new Model(value); }
+          constructor(value) { this.value = value; }
+        });
+      `,
+    },
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("var controller_default = function Controller(");
+      expect(out).toContain("var model_default = class Model {");
+      expect(out).not.toMatch(/\b(Controller|Model)[0-9]\b/);
+    },
+    run: { stdout: `["Controller",2,"Model",2,"top-level","Model"]` },
+  });
+  // The name of `function a(a)` links to its parameter. As the symbol of the
+  // default export it sent the linker to the declaration of a parameter: the
+  // importer printed `a(x)` with nothing that declares `a`, and the module as
+  // an entry point printed only `export { a as default }`.
+  itBundled("minify/DefaultExportFunctionExpressionNamedLikeItsParameterWithoutMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        import increment from "./lib.js";
+        export function call(x) { return increment(x); }
+        console.log(call(1));
+      `,
+      "/lib.js": /* js */ `
+        export default (function a(a) { return a + 1; });
+      `,
+    },
+    minifyIdentifiers: false,
+    run: { stdout: "2" },
+  });
+  itBundled("minify/DefaultExportFunctionExpressionNamedLikeItsParameterAsEntryWithoutMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        export default (function a(a) { return a + 1; });
+      `,
+    },
+    runtimeFiles: {
+      "/importer.js": `import increment from "./out.js";\nconsole.log(increment(1));`,
+    },
+    minifyIdentifiers: false,
+    run: { file: "/importer.js", stdout: "2" },
+  });
+  // The exports object of a CommonJS entry point reads the same binding.
+  itBundled("minify/DefaultExportFunctionExpressionNamedLikeItsParameterAsCjsEntryWithoutMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        export default (function a(a) { return a + 1; });
+      `,
+    },
+    runtimeFiles: {
+      "/importer.cjs": `console.log(require("./out.js").default(1));`,
+    },
+    format: "cjs",
+    minifyIdentifiers: false,
+    run: { file: "/importer.cjs", stdout: "2" },
+  });
+  // A direct `eval` keeps each name of its scope chain as written, so the two
+  // default exports were both declared as `var a`.
+  itBundled("minify/DefaultExportFunctionExpressionsWithDirectEvalWithoutMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        import first from "./first.js";
+        import second from "./second.js";
+        console.log(first(1), second(1));
+      `,
+      "/first.js": /* js */ `
+        export default (function a(n) { return eval("n + 1"); });
+      `,
+      "/second.js": /* js */ `
+        export default (function a(n) { return eval("n + 100"); });
+      `,
+    },
+    minifyIdentifiers: false,
+    run: { stdout: "2 101" },
+  });
   itBundled("minify/TemplateStringFolding", {
     files: {
       "/entry.js": /* js */ `
@@ -341,6 +717,28 @@ describe("bundler", () => {
     keepNames: true,
     target: "bun",
   });
+  // A default-exported function expression loses a name it never reads, like
+  // any other function expression. Its top-level binding in a bundle is named
+  // after the file, so that is the inferred name, unless --keep-names is set.
+  for (const [keepNames, name] of [
+    [false, "controller_default"],
+    [true, "Controller"],
+  ] as const) {
+    itBundled(`minify/DefaultExportFunctionExpressionName${keepNames ? "KeepNames" : "Removed"}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import handler from "./controller.js";
+          console.log(handler.name, handler(1));
+        `,
+        "/controller.js": /* js */ `
+          export default (function Controller(a) { return a + 1; });
+        `,
+      },
+      minifySyntax: true,
+      keepNames,
+      run: { stdout: `${name} 2` },
+    });
+  }
   itBundled("minify/PrivateIdentifiersNameCollision", {
     files: {
       "/entry.js": /* js */ `
@@ -2061,3 +2459,94 @@ test.each(["transformSync", "transform"] as const)(
     expect(output).toBe("export var t = 1;\nvar t = 2;\nexport function read() {\n  return t;\n}\n");
   },
 );
+
+// The name of a default-exported function or class expression is bound in the
+// scope of the expression. Each body declares a local for every one-character
+// name, as in the `minify/NoBundleDefaultExport*` cases above, so one of them
+// takes the name `a` if that name is pinned and not reserved. The declaration
+// at the end is the control: its name is a module-scope binding and is kept.
+test.concurrent.each(["transformSync", "transform"] as const)(
+  "minify.identifiers: %s gives no local the name of a default-exported function or class expression",
+  async method => {
+    const names = [..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$"];
+    const locals = names.map((_, i) => `var local${i} = ${i};`).join(" ");
+    const sum = names.map((_, i) => `local${i}`).join(" + ");
+    const total = names.reduce((acc, _, i) => acc + i, 0);
+    const factorial = `(n) { ${locals} return n <= 1 ? ${sum} : n * a(n - 1); }`;
+    const cases: [name: string, source: string, read: string][] = [
+      ["function", `export default (function a${factorial});`, "value(3)"],
+      ["parameter", `export default (function a(a) { ${locals} return a + ${sum}; });`, "value(1000)"],
+      [
+        "class",
+        `export default (class a { static make(n) { ${locals} return new a(n + ${sum}); } constructor(v) { this.v = v; } });`,
+        "value.make(1).v",
+      ],
+      [
+        "async",
+        `export default (async function a(n) { ${locals} return n <= 1 ? ${sum} : n * (await a(n - 1)); });`,
+        "await value(3)",
+      ],
+      [
+        "generator",
+        `export default (function* a(n) { ${locals} if (n > 1) yield* a(n - 1); yield n + ${sum}; });`,
+        "[...value(2)]",
+      ],
+      ["parenthesized", `export default ((function a${factorial}));`, "value(3)"],
+      ["cast", `export default (function a${factorial} as (n: number) => number);`, "value(3)"],
+      ["satisfies", `export default (function a${factorial} satisfies (n: number) => number);`, "value(3)"],
+      ["declaration", `export default function a${factorial}`, "[value(3), value.name]"],
+    ];
+    const transpiler = new Bun.Transpiler({ loader: "ts", minify: { identifiers: true } } as any);
+    const files: Record<string, string> = {};
+    for (const [i, [, source]] of cases.entries()) files[`case${i}.js`] = await transpiler[method](source);
+    files["main.js"] = [
+      ...cases.map((_, i) => `import value${i} from "./case${i}.js";`),
+      `const results = {};`,
+      ...cases.map(
+        ([name, , read], i) =>
+          `try { results.${name} = ${read.replaceAll("value", `value${i}`)}; } catch (error) { results.${name} = String(error); }`,
+      ),
+      `console.log(JSON.stringify(results));`,
+    ].join("\n");
+    using dir = tempDir("minify-default-export-expression", files);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      function: 6 * total,
+      parameter: 1000 + total,
+      class: 1 + total,
+      async: 6 * total,
+      generator: [1 + total, 2 + total],
+      parenthesized: 6 * total,
+      cast: 6 * total,
+      satisfies: 6 * total,
+      declaration: [6 * total, "a"],
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// Only the declaration binds its name in the module, so only that name is the
+// default export. The name of the expression is minified like any local name.
+test("minify.identifiers renames the name of a default-exported function expression, not of a declaration", () => {
+  const transpiler = new Bun.Transpiler({ loader: "js", minify: { identifiers: true } } as any);
+  expect({
+    expression: transpiler.transformSync(
+      "export default (function factorial(n) { return n <= 1 ? 1 : n * factorial(n - 1); });\n",
+    ),
+    declaration: transpiler.transformSync(
+      "export default function factorial(n) { return n <= 1 ? 1 : n * factorial(n - 1); }\n",
+    ),
+  }).toEqual({
+    expression: "export default (function r(t) {\n  return t <= 1 ? 1 : t * r(t - 1);\n});\n",
+    declaration: "export default function factorial(t) {\n  return t <= 1 ? 1 : t * factorial(t - 1);\n}\n",
+  });
+});

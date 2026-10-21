@@ -4556,44 +4556,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    pub(crate) fn default_name_for_expr(&mut self, expr: Expr, loc: bun_ast::Loc) -> LocRef {
-        match &expr.data {
-            js_ast::ExprData::EFunction(func_container) => {
-                if let Some(_name) = &func_container.func.name {
-                    if let Some(r#ref) = _name.ref_.to_nullable() {
-                        return LocRef { loc, ref_: r#ref };
-                    }
-                }
-            }
-            js_ast::ExprData::EIdentifier(ident) => {
-                return LocRef {
-                    loc,
-                    ref_: ident.ref_,
-                };
-            }
-            js_ast::ExprData::EImportIdentifier(ident) => {
-                if !Self::ALLOW_MACROS
-                    || (Self::ALLOW_MACROS && !self.macro_.refs.contains(&ident.ref_))
-                {
-                    return LocRef {
-                        loc,
-                        ref_: ident.ref_,
-                    };
-                }
-            }
-            js_ast::ExprData::EClass(class) => {
-                if let Some(_name) = &class.class_name {
-                    if let Some(r#ref) = _name.ref_.to_nullable() {
-                        return LocRef { loc, ref_: r#ref };
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        self.create_default_name(loc)
-    }
-
     pub(crate) fn discard_scopes_up_to(&mut self, scope_index: usize) {
         // Remove any direct children from their parent. `StoreRef` is `Copy` and
         // does not borrow `self`, so the immutable iter over `scopes_in_order`

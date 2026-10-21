@@ -2159,9 +2159,6 @@ impl BlobExt for Blob {
         Ok(Blob::new(blob))
     }
 
-    // `finalize` is inherent on `Blob` (bun_jsc::webcore_types) so codegen's
-    // `Blob::finalize(b)` resolves there ahead of the blanket `JsFinalize`.
-
     fn init_with_all_ascii(
         bytes: Vec<u8>,
         global_this: &JSGlobalObject,

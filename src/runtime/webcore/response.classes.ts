@@ -142,7 +142,7 @@ export default [
     sharedThis: true,
     final: false,
     construct: true,
-    finalize: true,
+    refCounted: true,
     JSType: "0b11101110",
     klass: {},
     configurable: false,

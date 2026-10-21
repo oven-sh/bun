@@ -125,9 +125,8 @@ pub struct Blob {
     pub charset: Cell<AsciiStatus>,
     /// Was it created via the `File` constructor?
     pub is_jsdom_file: Cell<bool>,
-    /// `bun.ptr.RawRefCount(u32, .single_threaded)` — counts in-flight `*Blob`
-    /// borrows handed to async readers; not the JS GC retain count. Zero while
-    /// the JS cell is the sole owner.
+    /// Zero for a by-value `Blob`. A heap one ([`Blob::new`]) starts at 1; the JS
+    /// wrapper, each C++ `BlobRefPtr` and each `ExternalShared<Blob>` hold a ref.
     ///
     /// Public so `bun_runtime` can construct `Blob { ref_count: …, .. }`
     /// literals.
@@ -213,25 +212,6 @@ impl Blob {
     pub fn new(mut blob: Blob) -> *mut Blob {
         blob.ref_count = bun_ptr::RawRefCount::init(1);
         bun_core::heap::into_raw(Box::new(blob))
-    }
-
-    /// JS-wrapper finalizer (codegen `BlobClass__finalize` thunk). Releases the
-    /// JS wrapper's `+1` on the intrusive refcount; the allocation may outlive
-    /// this call if other refs remain.
-    ///
-    /// Inherent (not on `BlobExt`) so the generated `Blob::finalize(b)` call
-    /// resolves here ahead of the blanket [`crate::JsFinalize::finalize`] —
-    /// trait-vs-trait would be ambiguous.
-    pub fn finalize(self: Box<Self>) {
-        debug_assert!(
-            self.is_heap_allocated(),
-            "`finalize` may only be called on a heap-allocated Blob"
-        );
-        // SAFETY: `self` is the allocation `Blob::new` produced and the JS
-        // wrapper's `+1` is the count released here. `into_raw` hands the box
-        // over without dropping it; `Blob__deref` runs `deinit()` (which
-        // `drop(heap::take)`s) when the count reaches zero.
-        unsafe { Blob__deref(bun_core::heap::into_raw(self)) }
     }
 
     #[inline]
@@ -476,8 +456,27 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for Blob {
     }
 }
 
+/// Only for a `Blob` produced by [`Blob::new`].
+impl bun_ptr::AnyRefCounted for Blob {
+    #[inline]
+    unsafe fn rc_ref(this: *mut Self) {
+        // SAFETY: caller guarantees `this` points to a live heap-allocated Blob.
+        unsafe { Blob__ref(this) }
+    }
+    #[inline]
+    unsafe fn rc_deref(this: *mut Self) {
+        // SAFETY: as `rc_ref`, and the caller releases a ref it owns.
+        unsafe { Blob__deref(this) }
+    }
+    #[inline]
+    unsafe fn rc_has_one_ref(this: *const Self) -> bool {
+        // SAFETY: caller guarantees `this` points to a live heap-allocated Blob.
+        unsafe { (*this).ref_count.unsafe_get_value() == 1 }
+    }
+}
+
 /// Retain half of the refcount protocol behind `BlobImplRefDerefTraits`
-/// (`src/jsc/bindings/blob.h`) and [`bun_ptr::ExternalShared`].
+/// (`src/jsc/bindings/blob.h`), [`bun_ptr::ExternalShared`] and [`bun_ptr::AnyRefCounted`].
 ///
 /// # Safety
 /// `this` must point to a live `Blob` produced by [`Blob::new`], and the call
@@ -497,8 +496,8 @@ unsafe extern "C" fn Blob__ref(this: *mut Blob) {
 }
 
 /// Release half of the refcount protocol behind `BlobImplRefDerefTraits`
-/// (`src/jsc/bindings/blob.h`), [`bun_ptr::ExternalShared`] and the JS
-/// wrapper's [`Blob::finalize`].
+/// (`src/jsc/bindings/blob.h`), [`bun_ptr::ExternalShared`] and
+/// [`bun_ptr::AnyRefCounted`] (the JS wrapper's ref).
 ///
 /// # Safety
 /// `this` must point to a live `Blob` produced by [`Blob::new`], the caller

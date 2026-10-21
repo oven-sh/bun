@@ -10309,6 +10309,7 @@ impl LowerUsingDeclarationsContext {
                 finally: Some(js_ast::Finally {
                     loc,
                     stmts: bun_ast::StoreSlice::new_mut(finally_stmts),
+                    body_loc: loc,
                 }),
             },
             loc,

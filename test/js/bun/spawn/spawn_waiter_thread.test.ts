@@ -112,7 +112,10 @@ test.skipIf(!isLinux)("`exited` rejects when the waiter thread can't start, and 
     try {
       for (;;) held.push(fs.openSync("/dev/null", "r"));
     } catch {}
-    console.log(await Bun.spawn({ cmd: ["sleep", "1000"], stdio }).exited.catch(e => e.code));
+    const unwatched = Bun.spawn({ cmd: ["sleep", "1000"], stdio });
+    // If the thread did start, this ends the child and the output shows its status.
+    unwatched.kill("SIGKILL");
+    console.log(await unwatched.exited.catch(e => e.code));
     for (const fd of held) fs.closeSync(fd);
     console.log(await Bun.spawn({ cmd: ["sleep", "0"], stdio }).exited);
   `;

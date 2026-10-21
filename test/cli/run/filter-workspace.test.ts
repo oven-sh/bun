@@ -1515,7 +1515,7 @@ describe("output timing", () => {
 
 // The runner relays a script's output. It must not decode it: output in Latin-1, Shift-JIS or GBK
 // is not valid UTF-8, and each byte of it would become U+FFFD.
-describe("a script's output that is not UTF-8 is relayed without a changed byte", () => {
+describe.concurrent("a script's output that is not UTF-8 is relayed without a changed byte", () => {
   // One read of the runner returns at most 256 KiB, so a line of this length always takes several
   // reads, and a later read completes it.
   const longLine = 600_000;

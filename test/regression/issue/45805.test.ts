@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { tempDir } from "harness";
 import path from "node:path";
-import { closePayload, OP, RawClient } from "../../js/web/websocket/raw-peer";
+import { closePayload, OP, RawClient, showFullFrame } from "../../js/web/websocket/raw-peer";
 
 // A message, ping or pong handler runs JS. When it returns, the microtask drain can resume a test
 // body that then calls `expect(promise).rejects`, which ticks the event loop from inside the
@@ -190,6 +190,9 @@ test.each([
       "1006: WebSocket handler ran the event loop with received frames left to parse",
     );
     expect(got).toEqual(["first"]);
+    expect(showFullFrame((await raw.nextFrame())!)).toBe(
+      'close 1011 "WebSocket handler ran the event loop with received frames left to parse"',
+    );
   },
 );
 

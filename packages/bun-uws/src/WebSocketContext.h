@@ -360,7 +360,7 @@ private:
 
         /* This read overwrote the bytes the outer consume() has left to parse: the loop has one receive buffer */
         if (webSocketData->hasUnparsedBytes) {
-            us_socket_close(s, (int) ERR_WEBSOCKET_NESTED_READ.length(), (void *) ERR_WEBSOCKET_NESTED_READ.data());
+            ((WebSocket<SSL, isServer, USERDATA> *) s)->failNestedRead();
             return s;
         }
 

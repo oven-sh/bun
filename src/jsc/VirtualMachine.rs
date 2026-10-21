@@ -1726,6 +1726,7 @@ impl VirtualMachine {
         SourceMapHandlerGetter {
             vm: self,
             printer,
+            input_source_map: None,
             _marker: core::marker::PhantomData,
         }
     }
@@ -3855,6 +3856,8 @@ pub fn process_fetch_log(
 pub struct SourceMapHandlerGetter<'a> {
     vm: *mut VirtualMachine,
     printer: *mut bun_js_printer::BufferPrinter,
+    /// The map the source came with.
+    pub input_source_map: Option<&'a bun_sourcemap::ParsedSourceMap>,
     _marker: core::marker::PhantomData<&'a mut ()>,
 }
 
@@ -3874,6 +3877,7 @@ impl<'a> SourceMapHandlerGetter<'a> {
         Self {
             vm,
             printer,
+            input_source_map: None,
             _marker: core::marker::PhantomData,
         }
     }
@@ -3932,11 +3936,15 @@ impl<'a> SourceMapHandlerGetter<'a> {
             Some(d) if d.mode != crate::debugger::Mode::Connect
         );
         if !wants_inline_source_map {
+            let input_source_map = self.input_source_map;
             // `source_mappings` is a value field on the VM, exclusively
             // borrowed for the returned handler's lifetime (bounded by
             // `&mut self`).
-            return bun_js_printer::SourceMapHandler::for_(self.vm_source_mappings_mut());
+            let mut handler = bun_js_printer::SourceMapHandler::for_(self.vm_source_mappings_mut());
+            handler.input_source_map = input_source_map;
+            return handler;
         }
+        // The inspector shows the source, so the mappings stay positions in it.
         bun_js_printer::SourceMapHandler::for_(self)
     }
 }

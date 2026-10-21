@@ -1179,3 +1179,313 @@ test("reports an error for a coverage directory longer than the path buffer", as
   expect(stderr).toContain("ENAMETOOLONG: File name too long: Failed to write lcov.info");
   expect(exitCode).toBe(1);
 });
+
+describe("a module that ends with an inline source map", () => {
+  const moved = `export function never() {
+  return 2;
+}
+export function ran() {
+  return [
+    { one: 1 },
+  ];
+}
+export function throws() {
+  throw new Error("here");
+}
+`;
+  const injected = "globalThis.injected = function injected() { return new Error().stack; };\n";
+
+  type Rewrite = {
+    /** `sources[0]`. The absolute path of the file when it is `null`. */
+    source: string | null;
+    /** `sources[1]`. */
+    secondSource?: string;
+    sourcesContent?: boolean | null;
+    mediaType?: string;
+    /** Lines above the text, which the map does not cover. */
+    above?: string;
+    /** One mapping for each character of the file, or one for each line. */
+    mappings?: "character" | "line";
+  };
+
+  /** `above`, then the text with four spaces before each of its lines. */
+  function rewrite(
+    text: string,
+    {
+      source,
+      secondSource,
+      sourcesContent = true,
+      mediaType = "",
+      above = "// 1\n// 2\nglobalThis.injected = function injected() { return new Error().stack; };\n",
+      mappings = "character",
+    }: Rewrite,
+  ) {
+    const digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    function vlq(n: number) {
+      let rest = n < 0 ? (-n << 1) | 1 : n << 1;
+      let out = "";
+      do {
+        const digit = rest & 31;
+        rest >>>= 5;
+        out += digits[rest ? digit | 32 : digit];
+      } while (rest);
+      return out;
+    }
+    const lines = text.split("\n");
+    let column = 0;
+    const sources = secondSource ? [source, secondSource] : [source];
+    const map = {
+      version: 3,
+      sources,
+      sourcesContent: sourcesContent === null ? null : sourcesContent ? sources.map(() => text) : undefined,
+      names: [],
+      mappings:
+        ";".repeat(above.split("\n").length - 1) +
+        lines
+          .map((line, i) =>
+            Array.from(mappings === "line" ? line.slice(0, 1) : line, (_, j) => {
+              const segment = vlq(j ? 1 : 4) + "A" + vlq(j || !i ? 0 : 1) + vlq(j - column);
+              column = j;
+              return segment;
+            }).join(","),
+          )
+          .join(";"),
+    };
+    return `${above}${lines.map(line => "    " + line).join("\n")}
+//# sourceMappingURL=data:application/json${mediaType};base64,${btoa(JSON.stringify(map))}`;
+  }
+
+  /** `plugin` is what a plugin does to `moved.ts`. */
+  function files(movedOnDisk: string, plugin?: Rewrite | "nothing") {
+    return tempDir("cov-input-source-map", {
+      "moved.ts": movedOnDisk,
+      "plugin.js": `
+        ${rewrite}
+        Bun.plugin({
+          name: "rewrite",
+          setup(build) {
+            const options = ${JSON.stringify(plugin)};
+            build.onLoad({ filter: /moved\\.ts$/ }, async ({ path }) => {
+              const text = await Bun.file(path).text();
+              return {
+                contents: options === "nothing" ? text : rewrite(text, { ...options, source: options.source ?? path }),
+                loader: "ts",
+              };
+            });
+          },
+        });
+      `,
+      "other.ts": "",
+      "uncaught.ts": `import { throws } from "./moved"; throws();`,
+      "moved.test.ts": `
+        import { ran, throws } from "./moved";
+        test("moved", () => {
+          ran();
+          try {
+            throws();
+          } catch (e) {
+            console.log("thrown at", /moved\\.ts:\\d+:\\d+/.exec(e.stack)[0]);
+          }
+          console.log("injected at", /moved\\.ts:\\d+:\\d+/.exec(globalThis.injected?.())?.[0]);
+        });
+      `,
+    });
+  }
+
+  /** Without `plugin` there is no plugin. */
+  async function report(movedOnDisk: string, plugin?: Rewrite | "nothing") {
+    using dir = files(movedOnDisk, plugin);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "test",
+        ...(plugin ? ["--preload", "./plugin.js"] : []),
+        "--coverage",
+        "--coverage-reporter=lcov",
+        "moved.test.ts",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8");
+    return {
+      positions: stdout.match(/^(thrown|injected) at .*$/gm)?.join(", "),
+      lines: lcov
+        .slice(lcov.indexOf("SF:moved.ts"))
+        .split("end_of_record")[0]
+        .match(/^(DA|FNF|FNH):.*$/gm)
+        ?.join(" "),
+      exitCode,
+    };
+  }
+
+  const inTheFile = {
+    positions: "thrown at moved.ts:10:13, injected at moved.ts:3:56",
+    lines: "FNF:3 FNH:2 DA:1,0 DA:2,0 DA:4,1 DA:5,1 DA:6,1 DA:7,1 DA:9,1 DA:10,1",
+    exitCode: 0,
+  };
+  const inTheText = {
+    positions: "thrown at moved.ts:13:17, injected at moved.ts:3:56",
+    lines: "FNF:4 FNH:3 DA:3,1 DA:4,0 DA:5,0 DA:7,1 DA:8,1 DA:9,1 DA:10,1 DA:12,1 DA:13,1",
+    exitCode: 0,
+  };
+
+  test.concurrent("the file without a plugin", async () => {
+    expect(await report(moved)).toEqual({
+      ...inTheFile,
+      positions: "thrown at moved.ts:10:13, injected at undefined",
+    });
+  });
+
+  test.concurrent.each<[string, Rewrite]>([
+    ["the name of the file", { source: "moved.ts" }],
+    ["the name of the file after ./", { source: "./moved.ts" }],
+    ["the absolute path of the file", { source: null }],
+    ["no sourcesContent", { source: "moved.ts", sourcesContent: false }],
+    ["sourcesContent: null", { source: "moved.ts", sourcesContent: null }],
+    ["charset=utf-8", { source: "moved.ts", mediaType: ";charset=utf-8" }],
+    ["one mapping for each line", { source: "moved.ts", mappings: "line" }],
+  ])("from a plugin, of the file: %s", async (_, plugin) => {
+    expect(await report(moved, plugin)).toEqual(inTheFile);
+  });
+
+  test.concurrent.each(["character", "line"] as const)(
+    "from a plugin, of the file: an inline snapshot, with one mapping for each %s",
+    async mappings => {
+      const text = (snapshot: string) =>
+        `import { expect, test } from "bun:test";\ntest("snapshot", () => {\n  expect(1).toMatchInlineSnapshot(${snapshot});\n});\n`;
+      using dir = files(text(""), { source: "moved.ts", mappings });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--preload", "./plugin.js", "--update-snapshots", "./moved.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "inherit",
+      });
+      const exitCode = await proc.exited;
+      expect(readFileSync(path.join(String(dir), "moved.ts"), "utf8")).toBe(text("`1`"));
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent("from a plugin, of the file: a text that Bun does not transpile", async () => {
+    expect(await report(moved, { source: "moved.ts", above: "// @bun\n// 2\n" + injected })).toEqual({
+      positions: "thrown at moved.ts:10:18, injected at moved.ts:3:61",
+      lines: "FNF:3 FNH:2 DA:1,1 DA:2,0 DA:4,1 DA:5,1 DA:6,1 DA:7,1 DA:9,1 DA:10,1",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("from a plugin, of the file: one statement above a line with one statement", async () => {
+    const text = `import "./other";\n${moved}`;
+    const expected = {
+      positions: "thrown at moved.ts:11:13, injected at undefined",
+      lines: "FNF:3 FNH:2 DA:1,1 DA:2,0 DA:3,0 DA:5,1 DA:6,1 DA:7,1 DA:8,1 DA:10,1 DA:11,1",
+      exitCode: 0,
+    };
+    expect(await report(text)).toEqual(expected);
+    expect(await report(text, { source: "moved.ts", above: `import "./other";\n` })).toEqual(expected);
+  });
+
+  test.concurrent("from a plugin, of the file: the preview of an error", async () => {
+    using dir = files(moved, { source: "moved.ts" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./plugin.js", "uncaught.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(
+      ` 9 | export function throws() {\n10 |   throw new Error("here");\n                 ^\nerror: here`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent.each<[string, Rewrite]>([
+    ["another file", { source: "another.ts" }],
+    ["the file and another file", { source: "moved.ts", secondSource: "another.ts" }],
+  ])("from a plugin, of %s", async (_, plugin) => {
+    expect(await report(moved, plugin)).toEqual(inTheText);
+  });
+
+  test.concurrent("from a plugin, which the file ends with too", async () => {
+    expect(await report(rewrite(moved, { source: "moved.ts" }), "nothing")).toEqual(inTheText);
+  });
+
+  test.concurrent("from a plugin, of a module that is not a file", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const map = { version: 3, sources: [""], names: [], mappings: "AAAA" };
+          Bun.plugin({
+            name: "virtual",
+            setup(build) {
+              build.module("virtual", () => ({
+                contents: "export default 1;\\n//# sourceMappingURL=data:application/json;base64," + btoa(JSON.stringify(map)),
+                loader: "js",
+              }));
+            },
+          });
+          console.log((await import("virtual")).default);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("1\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("from bun build: the lines are those of the bundle", async () => {
+    async function records(sourcemap: "none" | "inline") {
+      using dir = tempDir("cov-bundle-source-map", {
+        "a.ts": "export function a1() {\n  return 1;\n}\nexport function a2() {\n  return 2;\n}\n",
+        "b.ts": "export function b1() {\n  return 1;\n}\nexport function b2() {\n  return 2;\n}\n",
+        "index.ts": `export * from "./a";\nexport * from "./b";\n`,
+        "bundle.test.ts": `
+          import { a1, b1 } from "./dist/index.js";
+          test("bundle", () => {
+            a1();
+            b1();
+          });
+        `,
+      });
+      for (const args of [
+        ["build", "index.ts", "--outdir", "dist", "--target=bun", "--sourcemap=" + sourcemap],
+        ["test", "--coverage", "--coverage-reporter=lcov", "bundle.test.ts"],
+      ]) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "ignore",
+          stderr: "inherit",
+        });
+        expect(await proc.exited).toBe(0);
+      }
+      const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8");
+      return lcov
+        .slice(lcov.indexOf("SF:dist"))
+        .split("end_of_record")[0]
+        .match(/^(DA|FNF|FNH):.*$/gm);
+    }
+    const [none, inline] = await Promise.all([records("none"), records("inline")]);
+    expect(none).toContain("FNF:4");
+    expect(none).toContain("FNH:2");
+    // The bundle with a source map has two more lines at the end, which are comments.
+    expect(inline!.slice(0, none!.length)).toEqual(none);
+  });
+
+  test.concurrent("from the file itself", async () => {
+    expect(await report(rewrite(moved, { source: "moved.ts" }))).toEqual(inTheText);
+  });
+});

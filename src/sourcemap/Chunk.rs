@@ -4,8 +4,9 @@ use bun_paths::fs::FileSystem;
 use bun_ptr::RawSlice;
 
 use crate::{
-    InternalSourceMap, LineOffsetTable, SourceMapState, append_mapping_to_buffer,
-    internal_source_map, line_offset_table, line_offset_table::LineOffsetTableColumns as _,
+    InternalSourceMap, LineOffsetTable, Ordinal, ParsedSourceMap, SourceMapState,
+    append_mapping_to_buffer, internal_source_map, line_offset_table,
+    line_offset_table::LineOffsetTableColumns as _,
 };
 
 #[derive(Clone)]
@@ -350,6 +351,9 @@ impl LineOffsetTables<'_> {
     }
 }
 
+/// The `source_index` of a mapping that [`NewBuilder::input_source_map`] does not cover.
+pub const NOT_IN_INPUT_SOURCE_MAP: i32 = 1;
+
 pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
     pub source_map: SourceMapFormat<T>,
     pub line_offset_tables: LineOffsetTables<'a>,
@@ -382,6 +386,9 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
 
     /// When generating sourcemappings for bun, we store a count of how many mappings there were
     pub prepend_count: bool,
+
+    /// The map the source came with. Each mapping goes through it, or gets [`NOT_IN_INPUT_SOURCE_MAP`].
+    pub input_source_map: Option<&'a ParsedSourceMap>,
 }
 
 impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
@@ -401,6 +408,7 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
             line_starts_with_mapping: false,
             cover_lines_without_mappings: false,
             prepend_count: false,
+            input_source_map: None,
         }
     }
 }
@@ -603,7 +611,23 @@ impl NewBuilder<'_, VLQSourceMap> {
     }
 
     #[inline(always)]
-    pub(crate) fn append_mapping(&mut self, current_state: SourceMapState) {
+    pub(crate) fn append_mapping(&mut self, mut current_state: SourceMapState) {
+        if let Some(input) = self.input_source_map {
+            if let Some(mapping) = input.find_mapping(
+                Ordinal::from_zero_based(current_state.original_line),
+                Ordinal::from_zero_based(current_state.original_column),
+            ) {
+                current_state.source_index = 0;
+                current_state.original_line = mapping.original.lines.zero_based();
+                // The distance from the mapping stays, so a map with one mapping per line keeps the columns.
+                current_state.original_column =
+                    mapping.original.columns.zero_based().saturating_add(
+                        current_state.original_column - mapping.generated.columns.zero_based(),
+                    );
+            } else {
+                current_state.source_index = NOT_IN_INPUT_SOURCE_MAP;
+            }
+        }
         self.append_mapping_without_remapping(current_state);
     }
 

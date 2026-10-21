@@ -2515,6 +2515,7 @@ fn transpile_source_code_of_any_provenance(
             // ── Node-fallback virtual source ────────────────────────────────
             let fallback_source: bun_ast::Source;
             let mut virtual_source = args.virtual_source;
+            let input_source_map = virtual_source.and_then(bun_sourcemap::parse_input_source_map);
             if is_node_override {
                 if let Some(code) = node_fallbacks::contents_from_path(specifier) {
                     {
@@ -2657,7 +2658,9 @@ fn transpile_source_code_of_any_provenance(
                     keep_json_and_toml_as_one_statement: true,
                     allow_bytecode_cache: true,
                     set_breakpoint_on_first_line,
+                    // The cache's key is the text. With an input source map the path matters too.
                     runtime_transpiler_cache: if !disable_transpilying
+                        && input_source_map.is_none()
                         && !<RuntimeTranspilerCache as bun_bundler::RuntimeTranspilerCacheExt>::disabled()
                     {
                         Some(&mut cache)
@@ -3126,6 +3129,7 @@ fn transpile_source_code_of_any_provenance(
                     // is bounded by the block.
                     let mut mapper =
                         unsafe { (*jsc_vm).source_map_handler((*extra).source_code_printer) };
+                    mapper.input_source_map = input_source_map.as_deref();
                     // SAFETY: per fn contract — `jsc_vm` / `extra.source_code_printer`
                     // are live; the printer borrow is scoped to this call.
                     let print_result = unsafe {

@@ -244,6 +244,38 @@ Bun.build({
 
 This plugin transforms all imports of the form `import env from "env"` into a JavaScript module that exports the current environment variables.
 
+#### Source maps
+
+A plugin that you register with `Bun.plugin()` can end `contents` with an inline source map of the file it rewrote: a `//# sourceMappingURL=` comment on a line of its own, with the map as a base64 `data:application/json` URL. Bun then reports stack traces and `bun test --coverage` lines at their positions in the file instead of their positions in `contents`.
+
+```ts plugin.ts icon="/icons/typescript.svg"
+import MagicString from "magic-string";
+import { basename } from "node:path";
+
+Bun.plugin({
+  name: "banner",
+  setup(build) {
+    build.onLoad({ filter: /\.ts$/ }, async ({ path }) => {
+      const code = new MagicString(await Bun.file(path).text());
+      code.prepend("/* generated */\n");
+      const map = code.generateMap({ source: basename(path), hires: true });
+      return {
+        contents: `${code}\n//# sourceMappingURL=${map.toUrl()}`,
+        loader: "ts",
+      };
+    });
+  },
+});
+```
+
+Load `plugin.ts` with [`preload`](/runtime/bunfig#preload), so that it runs before the files it rewrites.
+
+The map's `sources` must have exactly one entry, and it must resolve to the file. Bun resolves a relative entry from the file's directory, and does not read `sourceRoot`. Bun ignores any other map.
+
+Code that the map does not cover has no position in the file. Coverage leaves it out, and a stack frame in it keeps its position in `contents`.
+
+`Bun.build()` does not read the comment. With `--inspect`, the debugger shows `contents`, so all positions stay in `contents`.
+
 #### `.defer()`
 
 The `onLoad` callback receives a `defer` function, which returns a `Promise` that resolves once Bun has loaded all _other_ modules. Await it when a module's contents depend on other modules.

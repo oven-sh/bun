@@ -859,3 +859,29 @@ try {
     expectRemappedFrameAndStoredSourceMap(run());
   });
 });
+
+test("leaves out what a plugin returned with a source map of the file", async () => {
+  writeFileSync(join(temp_dir, "big.js"), "");
+  writeFileSync(
+    join(temp_dir, "entry.js"),
+    `
+      const map = { version: 3, sources: ["big.js"], names: [], mappings: "AAAA" };
+      Bun.plugin({
+        name: "big",
+        setup(build) {
+          build.onLoad({ filter: /big\\.js$/ }, () => ({
+            contents:
+              "console.log('big'); //" + Buffer.alloc(50 * 1024, "/") + "\\n" +
+              (process.env.WITH_MAP ? "//# sourceMappingURL=data:application/json;base64," + btoa(JSON.stringify(map)) : ""),
+            loader: "js",
+          }));
+        },
+      });
+      await import("./big.js");
+    `,
+  );
+  expect(await bunRun(join(temp_dir, "entry.js"), env)).toSpawn("big");
+  expect(newCacheCount()).toBe(1);
+  expect(await bunRun(join(temp_dir, "entry.js"), { ...env, WITH_MAP: "1" })).toSpawn("big");
+  expect(newCacheCount()).toBe(0);
+});

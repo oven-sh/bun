@@ -7,7 +7,8 @@ use bun_collections::VecExt;
 use bun_collections::bit_set::DynamicBitSet;
 use bun_core::{self, Utf8Bytes};
 use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
-use bun_sourcemap::{Ordinal, ParsedSourceMap};
+use bun_sourcemap::chunk::NOT_IN_INPUT_SOURCE_MAP;
+use bun_sourcemap::{Mapping, Ordinal, ParsedSourceMap};
 
 type LinesHits = Vec<u32>;
 type Bitset = DynamicBitSet;
@@ -687,6 +688,8 @@ impl ByteRangeMapping {
                 .as_mut()
                 .source_mappings()
                 .get(source_url)
+                // The lines in the map of a bundle are lines of other files.
+                .filter(|map| !map.is_external() || map.only_source_is(source_url))
         };
 
         let mut blocks: Vec<CountedRange> =
@@ -718,6 +721,9 @@ impl ByteRangeMapping {
         if let Some(source_map) = source_map.as_deref() {
             let mut previous_original = None;
             source_map.for_each_mapping(|mapping| {
+                if is_added_to_the_file(&mapping) {
+                    return;
+                }
                 // The printer repeats a mapping at column 0 of a line that starts without one.
                 let original = (
                     mapping.original.lines.zero_based(),
@@ -752,7 +758,9 @@ impl ByteRangeMapping {
         if let Some(source_map) = source_map.as_deref() {
             functions.retain(|function| {
                 let (line, column) = self.line_and_column_of(function.range.start);
-                source_map.find_mapping(line, column).is_some()
+                source_map
+                    .find_mapping(line, column)
+                    .is_some_and(|mapping| !is_added_to_the_file(&mapping))
             });
         }
 
@@ -825,6 +833,11 @@ impl ByteRangeMapping {
             source_url,
         }
     }
+}
+
+/// Code that a plugin added to the file it rewrote: it has no line in the file.
+fn is_added_to_the_file(mapping: &Mapping) -> bool {
+    mapping.source_index == NOT_IN_INPUT_SOURCE_MAP
 }
 
 /// `ByteRangeMapping::line_starts` and `executable_units`. Lines end where

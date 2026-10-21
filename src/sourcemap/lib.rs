@@ -841,7 +841,9 @@ pub(crate) fn parse_url(
                         else {
                             break 'try_data_url;
                         };
-                        if &after[..comma] != b"base64" {
+                        // Babel and magic-string write `charset=utf-8;base64`.
+                        let parameters = &after[..comma];
+                        if parameters != b"base64" && !parameters.ends_with(b";base64") {
                             break 'try_data_url;
                         }
                         let base64_data = &after[comma + 1..];
@@ -864,6 +866,22 @@ pub(crate) fn parse_url(
     };
 
     parse_json(json_bytes, hint)
+}
+
+/// The inline source map of what an `onLoad` plugin returned for a file, if it is a map of that file.
+pub fn parse_input_source_map(source: &bun_ast::Source) -> Option<std::sync::Arc<ParsedSourceMap>> {
+    let url = find_source_mapping_url_u8(source.contents())?;
+    let arena = bun_alloc::Arena::new();
+    let map = parse_url(&arena, url.slice(), ParseUrlResultHint::MappingsOnly)
+        .ok()?
+        .map?;
+    if !map.only_source_is(source.path.text) {
+        return None;
+    }
+    // A map that the file ends with too says how the file was made, and the plugin passed it on.
+    let is_from_the_file = bun_sys::File::read_from(bun_sys::Fd::cwd(), source.path.text)
+        .is_ok_and(|file| find_source_mapping_url_u8(&file).is_some_and(|own| *own == *url));
+    (!is_from_the_file).then_some(map)
 }
 
 /// Parses a JSON source-map
@@ -907,15 +925,12 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
         return Err(crate::Error::InvalidSourceMap);
     };
 
-    let sources_content = match json
-        .get(b"sourcesContent")
-        .ok_or(crate::Error::InvalidSourceMap)?
-        .data
-    {
-        bun_ast::ExprData::EArrayJSON(arr) => arr,
-        _ => return Err(crate::Error::InvalidSourceMap),
+    let sources_content = match json.get(b"sourcesContent").map(|contents| contents.data) {
+        Some(bun_ast::ExprData::EArrayJSON(arr)) => Some(arr),
+        Some(bun_ast::ExprData::ENull(_)) | None => None,
+        Some(_) => return Err(crate::Error::InvalidSourceMap),
     };
-    let sources_content = sources_content.get();
+    let sources_content = sources_content.as_ref().map(|arr| arr.get().items());
 
     let sources_paths = match json
         .get(b"sources")
@@ -927,15 +942,16 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
     };
     let sources_paths = sources_paths.get();
 
-    if sources_content.items().len() != sources_paths.items().len() {
+    if sources_content.is_some_and(|contents| contents.len() != sources_paths.items().len()) {
         return Err(crate::Error::InvalidSourceMap);
     }
+    let sources_content = sources_content.unwrap_or_default();
 
     let source_only = matches!(hint, ParseUrlResultHint::SourceOnly(_));
 
     // `Vec<Box<[u8]>>` drops automatically on error.
     let source_paths_slice: Option<Vec<Box<[u8]>>> = if !source_only {
-        let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_content.items().len());
+        let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_paths.items().len());
         for item in sources_paths.items() {
             let Some(s) = item.as_str() else {
                 return Err(crate::Error::InvalidSourceMap);
@@ -1028,9 +1044,9 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
     let content_slice: Option<Box<[u8]>> = match source_index {
         Some(idx)
             if !matches!(hint, ParseUrlResultHint::MappingsOnly)
-                && (idx as usize) < sources_content.items().len() =>
+                && (idx as usize) < sources_content.len() =>
         'content: {
-            let item = &sources_content.items()[idx as usize];
+            let item = &sources_content[idx as usize];
             let Some(str) = item.as_str() else {
                 break 'content None;
             };

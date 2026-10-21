@@ -237,6 +237,19 @@ impl ParsedSourceMap {
         !self.external_source_names.is_empty()
     }
 
+    pub fn only_source_is(&self, path: &[u8]) -> bool {
+        use bun_paths::{platform::Auto, resolve_path};
+
+        let [name] = self.external_source_names.as_slice() else {
+            return false;
+        };
+        bun_paths::is_absolute(path)
+            && resolve_path::join_abs_string_checked::<Auto>(
+                resolve_path::dirname::<Auto>(path),
+                &[name],
+            ) == Some(path)
+    }
+
     pub fn find_mapping(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
         if let Some(ism) = &self.internal {
             return ism.find(line, column);

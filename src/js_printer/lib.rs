@@ -1267,6 +1267,8 @@ pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
 pub struct SourceMapHandler<'a> {
     pub(crate) ctx: NonNull<()>,
     pub(crate) callback: fn(*mut (), SourceMap::Chunk, &bun_ast::Source) -> crate::Result<()>,
+    /// The map the source came with.
+    pub input_source_map: Option<&'a SourceMap::ParsedSourceMap>,
     _marker: core::marker::PhantomData<&'a mut ()>,
 }
 
@@ -1306,6 +1308,7 @@ impl<'a> SourceMapHandler<'a> {
             // Type-erased to `*mut ()` and cast back to `*mut T` inside the thunk before dereference.
             ctx: NonNull::from(ctx).cast::<()>(),
             callback: thunk::<T>,
+            input_source_map: None,
             _marker: core::marker::PhantomData,
         }
     }
@@ -7674,6 +7677,10 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
             },
             None => LineOffsetTables::None,
         },
+        input_source_map: opts
+            .source_map_handler
+            .as_ref()
+            .and_then(|handler| handler.input_source_map),
         ..Default::default()
     };
     // Pre-size the VLQ mappings buffer. With `--minify` we emit roughly one

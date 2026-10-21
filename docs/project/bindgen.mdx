@@ -327,8 +327,8 @@ export const Formatter = b.enumeration(["highlight-javascript", "highlight-javas
 ```
 
 generates `enum Formatter { HighlightJavascript, .. }`. An entry can be a list of
-spellings; the first is the one returned to JavaScript. Returning an enumeration
-allocates nothing after the first time.
+spellings; the first is the one returned to JavaScript. A `String` object is taken like
+the string, except in a union. Returning an enumeration allocates nothing after the first time.
 
 ### Unions and kinds
 

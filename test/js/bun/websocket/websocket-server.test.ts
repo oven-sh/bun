@@ -900,11 +900,11 @@ describe("ServerWebSocket", () => {
       open(ws) {
         try {
           const seen: string[] = [];
-          for (const spelling of ["Buffer", "buffer", "ArrayBuffer", "Uint8Array", "nodebuffer"]) {
+          for (const spelling of ["Buffer", "buffer", "ArrayBuffer", "Uint8Array", "nodebuffer", new String("blob")]) {
             ws.binaryType = spelling as typeof ws.binaryType;
             seen.push(ws.binaryType!);
           }
-          expect(seen).toEqual(["nodebuffer", "nodebuffer", "arraybuffer", "uint8array", "nodebuffer"]);
+          expect(seen).toEqual(["nodebuffer", "nodebuffer", "arraybuffer", "uint8array", "nodebuffer", "blob"]);
           done();
         } catch (err) {
           done(err);

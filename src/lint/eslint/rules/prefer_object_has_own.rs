@@ -8,8 +8,7 @@ const USE_HAS_OWN: Message = Message::new(
     "Use 'Object.hasOwn()' instead of 'Object.prototype.hasOwnProperty.call()'.",
 );
 
-/// The object of `e`, if ESLint has a `MemberExpression` for `e` and not a `ChainExpression`
-/// around one.
+/// Returns the object of `e`, if ESLint's node for `e` is a `MemberExpression` and not a `ChainExpression` around one.
 fn object_of_member(e: Expr<'_>) -> Option<Expr<'_>> {
     e.object().filter(|_| !e.is_chain_root())
 }
@@ -18,7 +17,7 @@ fn is_named(member: Expr<'_>, name: &str) -> bool {
     ast_utils::get_static_property_name(member).is_some_and(|it| *it == *name.as_bytes())
 }
 
-/// Whether `object` is `Object`, `Object.prototype` or `{}`.
+/// True if `object` is `Object`, `Object.prototype` or `{}`.
 fn is_left_hand_object(object: Expr<'_>) -> bool {
     if let Some(props) = object.as_object() {
         return props.is_empty();
@@ -67,7 +66,7 @@ impl Rule for PreferObjectHasOwn {
             }
             let start = callee.span().start;
             let needs_space = match file.language().is_oxlint {
-                // It goes by the character before.
+                // oxlint goes by the previous character.
                 true => start > 1 && !matches!(file.text().get(start as usize - 1), Some(b' ' | b'=' | b'/' | b'(')),
                 false => file.tokens_before(callee).with_comments().next().is_some_and(|before| {
                     before.end() == start && !ast_utils::can_tokens_be_adjacent(before, "Object.hasOwn")

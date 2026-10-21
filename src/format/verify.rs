@@ -1,29 +1,30 @@
-//! A check that formatting has not changed the program: `bun fmt --debug-check`.
+//! Checks that formatting didn't change the program. Used by `bun fmt --debug-check`.
 //!
-//! What would be written is parsed, and its syntax tree is compared with that of the file ([`tree`]). So are
-//! the comments ([`comments`]). All that is not in the tree is free to change: white space, semicolons,
-//! parentheses that mean nothing, the comma after the last element of a list, the separators of the members
-//! of interfaces and type literals. Parentheses that mean something make another tree.
+//! The output is parsed, and its syntax tree is compared with the input's ([`tree`]). So are the comments
+//! ([`comments`]). Anything that isn't in the tree may change: whitespace, semicolons, redundant parentheses,
+//! the comma after a list's last element, the separators between the members of interfaces and type literals.
+//! Parentheses that matter produce a different tree.
 //!
-//! What the formatter changes in the tree is allowed:
+//! The changes that the formatter makes to the tree are allowed:
 //!
-//! - The quotes of strings, and the escapes of quotes in them. A property name without escapes can get or
+//! - A string's quotes, and the escaping of quotes inside it. A property name without escapes can gain or
 //!   lose its quotes.
 //! - How numbers are written: `0XAB`, `1.0`, `.5`, `1E5`.
-//! - The order of the flags of a regular expression.
-//! - The order of modifiers: `readonly abstract` is `abstract readonly`.
-//! - `a && (b && c)` is `a && b && c`, and the same for `||` and `??`.
-//! - Empty statements in a list of statements are left out.
-//! - `new A` is `new A()`.
-//! - The `|` or `&` before a type that is alone.
-//! - The white space in JSX text, `{" "}`, and the quotes of the values of attributes.
+//! - The order of a regular expression's flags.
+//! - The order of modifiers: `readonly abstract` equals `abstract readonly`.
+//! - `a && (b && c)` equals `a && b && c`, and the same for `||` and `??`.
+//! - Empty statements in a statement list are dropped.
+//! - `new A` equals `new A()`.
+//! - The `|` or `&` before a single type.
+//! - Whitespace in JSX text, `{" "}`, and the quotes around attribute values.
 //! - The empty braces of `import a, {} from "a"`.
-//! - Escapes in names: `\u0061b` is `ab`.
-//! - The text of a template that is in another language, like `` css`a{}` ``, and the white space in
-//!   the table of a `` describe.each`..` ``.
-//! - The line breaks in templates: `\r\n` is `\n`.
-//! - The indentation of the lines of block comments, and the order of the comments.
-//! - With the options for it, the order of imports and of the names in them, and all that is in JSDoc comments.
+//! - Escapes in names: `\u0061b` equals `ab`.
+//! - The text of a template in another language, like `` css`a{}` ``, and the whitespace in the table of a ``
+//!   describe.each`..` ``.
+//! - Line breaks in templates: `\r\n` becomes `\n`.
+//! - The indentation of lines in block comments, and the order of comments.
+//! - With the matching options, the order of imports and of the names in them, and everything inside JSDoc
+//!   comments.
 
 mod comments;
 mod tree;
@@ -32,21 +33,21 @@ pub use tree::{Program, Scratch, compare};
 
 use bun_lint::ast::{Expr, ExprKind, Node};
 
-/// Where the programs differ.
+/// A difference between the two programs.
 #[derive(Debug)]
 pub struct Difference {
     pub what: &'static str,
-    /// The offset in the file before, and the text there.
+    /// The offset in the input, and the text there.
     pub before: (u32, Vec<u8>),
-    /// The same for the file after.
+    /// The same for the output.
     pub after: (u32, Vec<u8>),
 }
 
 impl Difference {
-    /// `before`, `after`: the text of the program, and where in it the difference is.
+    /// `before` and `after` are each a program's text and the offset of the difference in it.
     #[optimize(size)]
     fn new(what: &'static str, before: (&[u8], u32), after: (&[u8], u32)) -> Difference {
-        // The rest of the line, if that is not long.
+        // The rest of the line, cut off at 40 bytes.
         let excerpt = |(text, at): (&[u8], u32)| {
             let rest = text.get(at as usize..).unwrap_or_default();
             let line = rest
@@ -80,7 +81,7 @@ impl std::fmt::Display for Difference {
     }
 }
 
-/// Whether the text of the template `e` may be formatted as a style sheet, as GraphQL, as HTML or as Markdown.
+/// True if the text of template `e` may be formatted as CSS, GraphQL, HTML or Markdown.
 #[optimize(size)]
 pub(crate) fn is_in_another_language(e: Expr<'_>) -> bool {
     let has_tag = match e.parent() {
@@ -110,14 +111,14 @@ pub(crate) fn is_in_another_language(e: Expr<'_>) -> bool {
         || crate::html::in_js::can_be_html(e)
 }
 
-/// Whether the template `e` is the table of a `` describe.each`..` ``.
+/// True if template `e` is the table of a `` describe.each`..` ``.
 #[optimize(size)]
 pub(crate) fn is_table(e: Expr<'_>) -> bool {
     matches!(e.parent(), Node::Expr(parent) if matches!(parent.kind(), ExprKind::TaggedTemplate(call)
         if call.template() == Some(e) && call.callee().text().ends_with(b".each")))
 }
 
-/// `name` with the characters that `\u0061` and `\u{61}` in it stand for.
+/// `name` with escapes like `\u0061` and `\u{61}` decoded.
 pub(crate) fn without_unicode_escapes(name: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(name.len());
     let mut rest = name;

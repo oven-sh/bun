@@ -404,7 +404,7 @@ impl ShellSubprocess {
         }
     }
 
-    /// Tear down a subprocess whose stdio start() failed. Ends the child, marks pending pipe
+    /// Tear down a subprocess whose stdin writer start() failed. Ends the child, marks pending pipe
     /// readers as errored so PipeReader.deinit's done-assert passes, drops the exit handler so
     /// a later onProcessExit doesn't touch the freed Subprocess, then deinits.
     ///
@@ -894,31 +894,23 @@ impl ShellSubprocess {
 
         // SAFETY: `subprocess` is live; the slot is passed raw because the
         // reader can complete synchronously and overwrite it via `on_close_io`.
-        if let Err(err) = unsafe {
+        unsafe {
             Readable::start_pipe_reader(
                 &raw mut (*subprocess).stdout,
                 subprocess,
                 event_loop,
                 !spawn_args.lazy,
-            )
-        } {
-            let sys_err = err.to_shell_system_error();
-            Self::abort_after_failed_start(subprocess);
-            return Err(ShellErr::Sys(sys_err));
+            );
         }
 
         // SAFETY: as for stdout above.
-        if let Err(err) = unsafe {
+        unsafe {
             Readable::start_pipe_reader(
                 &raw mut (*subprocess).stderr,
                 subprocess,
                 event_loop,
                 !spawn_args.lazy,
-            )
-        } {
-            let sys_err = err.to_shell_system_error();
-            Self::abort_after_failed_start(subprocess);
-            return Err(ShellErr::Sys(sys_err));
+            );
         }
 
         log!("returning");
@@ -1200,24 +1192,32 @@ impl Readable {
         process: *mut ShellSubprocess,
         event_loop: EventLoopHandle,
         eager: bool,
-    ) -> bun_sys::Result<()> {
+    ) {
         // The reader must outlive the re-entrant calls below even if they
         // drop this slot's `Arc`; clone it as a keepalive.
         // SAFETY: caller contract; borrow scoped to the clone.
         let keepalive = match unsafe { &*slot } {
             Readable::Pipe(pipe) => Arc::clone(pipe),
-            _ => return Ok(()),
+            _ => return,
         };
         let p = arc_as_mut_ptr(&keepalive);
         // SAFETY: see `arc_as_mut_ptr` — single-threaded shell; the
         // re-entrant reader callbacks only hold raw `*mut PipeReader`, and
         // each `&mut` below is scoped to its own call.
-        unsafe { (*p).start(process, event_loop) }?;
+        if let Err(err) = unsafe { (*p).start(process, event_loop) } {
+            // Only Windows returns an error here. Close the pipe and report it as
+            // a read error, so the `Cmd` is still alive when the child exits.
+            // SAFETY: as above.
+            unsafe {
+                (*p).reader.deinit();
+                PipeReader::on_reader_error(p, &err);
+            }
+            return;
+        }
         if eager {
             // SAFETY: as above.
             unsafe { (*p).read_all() };
         }
-        Ok(())
     }
 
     pub(crate) fn r#ref(&mut self) {
@@ -1536,10 +1536,14 @@ impl BufferedOutput {
         }
     }
 
+    /// Returns the bytes the command has written so far. With `2>&1 ${buf}`, the tee reads them from the `ArrayBuffer`.
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
             BufferedOutput::Bytelist(b) => b.slice(),
-            BufferedOutput::ArrayBuffer { buf, .. } => buf.slice(),
+            BufferedOutput::ArrayBuffer { buf, i } => {
+                let live = buf.live_slice();
+                &live[..(*i as usize).min(live.len())]
+            }
         }
     }
 
@@ -1549,7 +1553,8 @@ impl BufferedOutput {
                 let _ = b.append_slice(bytes); // OOM/capacity: fire-and-forget
             }
             BufferedOutput::ArrayBuffer { buf, i } => {
-                let array_buf_slice = buf.slice_mut();
+                // JS can resize the buffer between chunks.
+                let array_buf_slice = buf.live_slice_mut();
                 let idx = *i as usize;
                 // TODO: We should probably throw error here?
                 if idx >= array_buf_slice.len() {
@@ -1639,6 +1644,11 @@ impl CapturedWriter {
                 e.syscall
             );
             self.err = Some(e);
+            // The Cmd signaled below can free this PipeReader, so the chunks still queued must not call back.
+            if let Some(writer) = self.writer.clone() {
+                let child = std::ptr::from_mut(self).cast::<c_void>();
+                writer.cancel_chunks(io_writer::ChildPtr::subproc_capture(child));
+            }
         } else if !all_written {
             return Yield::Suspended;
         }

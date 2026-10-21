@@ -1,5 +1,5 @@
-//! Which node a comment belongs to. Prettier's `main/comments/attach.js`, with the two of the
-//! handlers of `language-js/comments/handle-comments.js` that have a say in JSON.
+//! Decides which node each comment belongs to. Prettier's `main/comments/attach.js`, plus the two handlers in
+//! `language-js/comments/handle-comments.js` that apply to JSON.
 
 use super::parser::{Comment, Owner, Tree};
 use crate::text::{has_newline, has_newline_backwards};
@@ -14,7 +14,7 @@ pub(super) enum Placement {
 #[derive(Copy, Clone, Debug)]
 pub(super) struct Attached {
     pub(super) owner: Owner,
-    /// The index of the comment.
+    /// The comment's index.
     pub(super) comment: u32,
     pub(super) placement: Placement,
 }
@@ -36,7 +36,7 @@ fn is_gap(text: &[u8]) -> bool {
     true
 }
 
-/// `!/[\S\n  ]/`: white space without a line break.
+/// `!/[\S\n  ]/`: whitespace without a line break.
 fn is_blank_without_line_break(text: &[u8]) -> bool {
     is_gap(text)
         && !bun_core::strings::contains_char(text, b'(')
@@ -52,12 +52,12 @@ fn is_type_cast_comment(source: &[u8]) -> bool {
 
 /// Comments with text before and after them on their line, between the same two nodes.
 struct Ties {
-    /// The index of the first.
+    /// The index of the first one.
     first: usize,
     count: usize,
 }
 
-/// Fills `attached`, which ends up sorted by owner, and for one owner by position.
+/// Fills `attached`, which ends up sorted by owner, then by position.
 pub(super) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
     attached.clear();
     let comments = &tree.comments[..];
@@ -65,8 +65,8 @@ pub(super) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
     let start_of = |owner: Owner| tree.nodes.get(owner.index()).map_or(0, |node| node.start);
     let mut ties = Ties { first: 0, count: 0 };
 
-    // Prettier's `breakTies`: those that only have white space between them and the node after
-    // them lead it, the others trail the node before them.
+    // Prettier's `breakTies`: comments with only whitespace between them and the following node lead it. The others
+    // trail the preceding node.
     let break_ties = |ties: &mut Ties, attached: &mut Vec<Attached>| {
         let tied = comments
             .get(ties.first..ties.first + ties.count)
@@ -96,8 +96,8 @@ pub(super) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
         }
     };
 
-    // Of the comments next to each other on a line that the comment at hand is one of: where the first starts, and
-    // the index of the last and where it ends.
+    // For the run of adjacent comments on one line that includes the current comment: the start of the first, and the
+    // index and end of the last.
     let mut start = 0;
     let mut last = None;
     for (index, comment) in comments.iter().enumerate() {
@@ -139,7 +139,7 @@ pub(super) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
         };
 
         let (first_choice, second_choice) = if has_newline_backwards(text, start as usize) {
-            // On a line of its own
+            // On its own line
             (
                 (following, Placement::Leading),
                 (preceding, Placement::Trailing),
@@ -177,7 +177,7 @@ pub(super) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
             if ties.count == 0 {
                 ties.first = index;
             }
-            // Between two comments that are tied there can be one that is not.
+            // Between two tied comments there can be one that isn't tied.
             if ties.first + ties.count != index {
                 break_ties(&mut ties, attached);
                 ties.first = index;
@@ -206,7 +206,7 @@ pub(super) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
     crate::sort::sort_by_key(&mut attached[..], |it| (it.owner, it.comment));
 }
 
-/// The comments of `owner`.
+/// `owner`'s comments.
 pub(super) fn comments_of(attached: &[Attached], owner: Owner) -> &[Attached] {
     let start = attached.partition_point(|it| it.owner < owner);
     let len = attached[start..].partition_point(|it| it.owner == owner);

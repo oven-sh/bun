@@ -7,13 +7,13 @@ const REDUNDANT_BLOCK: Message = Message::new("redundantBlock", "Block is redund
 const REDUNDANT_NESTED_BLOCK: Message =
     Message::new("redundantNestedBlock", "Nested block is redundant.");
 
-/// `list.len() == 1`, without counting a long list for each of its elements.
+/// `list.len() == 1`, without counting a long list once per element.
 fn has_one<'a>(list: List<'a, Stmt<'a>>) -> bool {
     let mut rest = list.iter();
     rest.next().is_some() && rest.next().is_none()
 }
 
-/// Whether a statement directly in `body` declares something in the scope of the block.
+/// True if a statement directly in `body` declares something in the block's scope.
 fn has_block_level_binding<'a>(body: List<'a, Stmt<'a>>) -> bool {
     let is_lexical = |statement: Stmt<'a>| match statement.kind() {
         StmtKind::Var(decls) => decls.first().is_some_and(|it| it.var_kind() != VarKind::Var),
@@ -24,13 +24,13 @@ fn has_block_level_binding<'a>(body: List<'a, Stmt<'a>>) -> bool {
         StmtKind::Fn(func) => func.has_body() && Node::Stmt(statement).scope().is_strict(),
         _ => false,
     };
-    // What is exported, which is an error here, is in an `ExportNamedDeclaration`.
+    // An exported declaration, which is an error here, is in an `ExportNamedDeclaration`.
     let declarations = || body.iter().filter(|it| !it.is_exported());
     declarations().any(is_lexical) || declarations().any(is_function_in_strict_mode)
 }
 
-/// The rule of oxlint 1.87. It is about every empty block that is not part of a `try` statement or the body of a loop,
-/// and about a block in the body of a function only if each of the two has one statement.
+/// oxlint 1.87's rule. It reports every empty block that isn't part of a `try` statement or a loop body, and a block in
+/// a function body only if both have exactly one statement.
 fn check_as_oxlint<'a>(block: Stmt<'a>, body: List<'a, Stmt<'a>>, cx: &mut Cx<'a, NoLoneBlocks>) {
     let parent = block.parent();
     let siblings = match parent {
@@ -77,7 +77,7 @@ fn check<'a>(block: Stmt<'a>, body: List<'a, Stmt<'a>>, cx: &mut Cx<'a, NoLoneBl
     if cx.language().is_oxlint {
         return check_as_oxlint(block, body, cx);
     }
-    // Whether it is in a block, which the body of a function is too, and alone in it.
+    // Whether it's in a block, which includes a function body, and whether it's the only statement there.
     let (is_nested, is_only_child) = match block.parent() {
         Node::Stmt(parent) => match parent.as_block() {
             Some(siblings) => (true, has_one(siblings)),
@@ -108,7 +108,7 @@ impl Rule for NoLoneBlocks {
         let Some(body) = block.as_block() else {
             return;
         };
-        // Most are the body of an `if`, of a loop or of a `try` statement.
+        // Fast path: most blocks are the body of an `if`, a loop or a `try` statement.
         if let Node::Stmt(parent) = block.parent()
             && parent.tag() != StmtTag::Block
             && !(cx.language().is_oxlint && body.is_empty())

@@ -6,10 +6,11 @@ use rustc_hash::FxHashSet;
 
 /// Enforce the maximum number of dependencies a module can have.
 pub struct MaxDependencies {
-    /// As oxlint reads it.
+    /// `max` as oxlint parses it.
     max: u32,
-    /// `None`: there are options, and no `max` among them. Nothing is more than `undefined`.
-    written_max: Option<f64>,
+    /// `max` as the plugin reads it. `None` if there are options without a `max`, because no count is greater than
+    /// `undefined`.
+    plugin_max: Option<f64>,
     ignore_type_imports: bool,
 }
 
@@ -27,13 +28,13 @@ impl Rule for MaxDependencies {
     fn new(options: &Options) -> Self {
         let as_u32 = |n: f64| (n.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(&n)).then_some(n as u32);
         if let Some(max) = options.number(0).and_then(as_u32) {
-            return MaxDependencies { max, written_max: None, ignore_type_imports: false };
+            return MaxDependencies { max, plugin_max: None, ignore_type_imports: false };
         }
-        let written_max = if options.is_empty() { Some(10.0) } else { options.object(0).number("max") };
+        let plugin_max = if options.is_empty() { Some(10.0) } else { options.object(0).number("max") };
         let options = options.object(0);
         MaxDependencies {
             max: options.number("max").and_then(as_u32).unwrap_or(10),
-            written_max,
+            plugin_max,
             ignore_type_imports: options.bool_or("ignoreTypeImports", false),
         }
     }
@@ -42,25 +43,26 @@ impl Rule for MaxDependencies {
         if file.language().is_oxlint {
             return import_declarations(file).nth(self.max as usize).is_some().then_some(());
         }
-        // There are no more modules than places that can name one.
+        // Upper bound: a file can't depend on more modules than it has statements and calls that can load one.
         let declarations = [StmtTag::Import, StmtTag::ExportNamed, StmtTag::ExportStar];
-        let mut places = declarations.iter().map(|it| file.stmts_of_kind(*it).count()).sum::<usize>();
-        places += file.exprs_of_kind(ExprTag::ImportCall).count();
+        let mut candidates = declarations.iter().map(|it| file.stmts_of_kind(*it).count()).sum::<usize>();
+        candidates += file.exprs_of_kind(ExprTag::ImportCall).count();
         if file.mentions("require") {
-            places += file.exprs_of_kind(ExprTag::Call).count();
+            candidates += file.exprs_of_kind(ExprTag::Call).count();
         }
-        (places as f64 > self.written_max?).then_some(())
+        (candidates as f64 > self.plugin_max?).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut dependency_sources: FxHashSet<&[u8]> = FxHashSet::default();
-        // Whether it is the first that is too many.
+        // Returns true for the first dependency over the limit.
         let mut add = |source, is_type: bool| {
             !(self.ignore_type_imports && is_type)
                 && dependency_sources.insert(source)
                 && dependency_sources.len() == self.max as usize + 1
         };
-        // oxlint looks at the names that `import`s at the top level declare, and points at the first that is too many.
+        // oxlint only iterates over the bindings that top-level `import`s declare, and reports the first source over
+        // the limit.
         if cx.language().is_oxlint {
             let mut first_exceeding = None;
             for entry in import_entries(cx.file()) {
@@ -78,7 +80,7 @@ impl Rule for MaxDependencies {
             let is_import_type = |it: Stmt| matches!(it.kind(), StmtKind::Import(it) if it.is_type_only());
             add(it.specifier, matches!(it.importer, Node::Stmt(it) if is_import_type(it)));
         }
-        if let (Some(last_node), Some(max)) = (visited.last(), self.written_max)
+        if let (Some(last_node), Some(max)) = (visited.last(), self.plugin_max)
             && dependency_sources.len() as f64 > max
         {
             cx.report(last_node.source, EXCEEDED).data("max", text::number_to_string(max));

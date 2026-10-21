@@ -27,7 +27,7 @@ impl<const RUNNER: u8> Rule for NoConditionalTests<RUNNER> {
 }
 
 fn run_once(ctx: &Ctx) {
-    // The innermost `if` around something.
+    // Caches the innermost `if` around a node.
     let mut if_statements = AncestorMemo::default();
     let kinds = [JestFnKind::General(JestGeneralFnKind::Describe), JestFnKind::General(JestGeneralFnKind::Test)];
     for possible_jest_node in jest::iter_possible_jest_call_node(ctx.file, ctx.runner) {

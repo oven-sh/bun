@@ -16,12 +16,12 @@ fn is_function_call(init: Expr<'_>, name: &str) -> bool {
     init.as_call().is_some_and(|call| call.callee().is_ident(name))
 }
 
-/// Whether `new RegExp` accepts the literal. If not, the `value` of typescript-estree's `Literal` is `null`.
+/// True if `new RegExp` accepts the literal. If not, the `value` of typescript-estree's `Literal` is `null`.
 fn is_valid_regex(literal: Expr<'_>) -> bool {
     regex::validate_literal(literal.text(), regex::Options::default(), &mut regex::Ignore).is_ok()
 }
 
-/// The operand, if `init` is a unary expression with one of `operators`. Otherwise `init`.
+/// Returns the operand if `init` is a unary expression with one of `operators`, and `init` otherwise.
 fn without_unary_prefix<'a>(init: Expr<'a>, operators: &[UnOp]) -> Expr<'a> {
     match init.kind() {
         ExprKind::Unary { op, operand } if operators.contains(&op) => operand,
@@ -29,11 +29,10 @@ fn without_unary_prefix<'a>(init: Expr<'a>, operators: &[UnOp]) -> Expr<'a> {
     }
 }
 
-/// typescript-eslint's `isInferrable`: the name of the type `annotation`, if that is what `init`
-/// is inferred to be.
+/// typescript-eslint's `isInferrable`: the name of the type `annotation`, if `init` would be inferred as that type.
 fn inferrable_type(annotation: TypeNode<'_>, init: Expr<'_>) -> Option<&'static str> {
-    // oxlint takes the type of a literal for the type that it is one of, and but for strings it looks at what is
-    // asserted to have a type.
+    // oxlint treats a literal type like its base type, and except for strings it looks through type assertions on
+    // `init`.
     let is_oxlint = init.file().language().is_oxlint;
     let kind = match annotation.kind() {
         TypeKind::StringLit(_) if is_oxlint => TypeKind::Keyword(Keyword::String),
@@ -99,8 +98,8 @@ fn inferrable_type(annotation: TypeNode<'_>, init: Expr<'_>) -> Option<&'static 
     is_inferrable.then_some(name)
 }
 
-/// `at`: the range of ESLint's node. `removes_token_before`: whether the fix also removes the `?` or
-/// the `!` before the annotation.
+/// `at` returns the range of ESLint's node. `removes_token_before` makes the fix also remove the `?` or `!` before the
+/// annotation.
 fn check<'a>(
     at: impl FnOnce() -> Span,
     annotation: Option<TypeNode<'a>>,
@@ -115,8 +114,8 @@ fn check<'a>(
         return;
     };
     // oxlint points at the annotation.
-    let place = if cx.language().is_oxlint { annotation.annotation_span() } else { at() };
-    cx.report(place, NO_INFERRABLE_TYPE).data("type", name).fix(|fixer| {
+    let report_span = if cx.language().is_oxlint { annotation.annotation_span() } else { at() };
+    cx.report(report_span, NO_INFERRABLE_TYPE).data("type", name).fix(|fixer| {
         let annotation = annotation.annotation_span();
         let mut fixes = vec![fixer.remove(annotation)];
         if removes_token_before && let Some(token) = fixer.file().token_before(annotation) {
@@ -169,7 +168,7 @@ impl Rule for NoInferrableTypes {
     }
 
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
-        // Without its annotation, the type of a `readonly` property is that of the literal.
+        // Without its annotation, a `readonly` property gets the literal's type.
         if member.kind() != MemberKind::Property
             || member.init().is_none()
             || member.flags().intersects(Flags::READONLY | Flags::OPTIONAL | Flags::ABSTRACT)

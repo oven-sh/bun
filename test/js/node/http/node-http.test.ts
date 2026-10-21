@@ -7596,10 +7596,11 @@ it("the native response's cork() treats a missing callback as undefined", async 
   }
 });
 
-it("end() throws when statusCode is NaN", async () => {
+it.each([NaN, 99, 1000, null, undefined, "abc"])("end() throws when statusCode is %p", async statusCode => {
   const { promise, resolve } = Promise.withResolvers<unknown>();
   const server = http.createServer((req, res) => {
-    res.statusCode = NaN;
+    // @ts-expect-error
+    res.statusCode = statusCode;
     try {
       resolve(res.end());
     } catch (error) {
@@ -7611,8 +7612,31 @@ it("end() throws when statusCode is NaN", async () => {
   await once(server.listen(0, "127.0.0.1"), "listening");
   try {
     const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
-    expect(await promise).toMatchObject({ name: "RangeError", code: "ERR_OUT_OF_RANGE" });
+    expect(await promise).toMatchObject({
+      name: "RangeError",
+      code: "ERR_HTTP_INVALID_STATUS_CODE",
+      message: `Invalid status code: ${statusCode}`,
+    });
     expect(response.status).toBe(500);
+  } finally {
+    server.close();
+  }
+});
+
+it.each([
+  ["404", 404],
+  [200.5, 200],
+  [2 ** 32 + 200, 200],
+])("end() sends statusCode %p as %d", async (statusCode, expected) => {
+  const server = http.createServer((req, res) => {
+    // @ts-expect-error
+    res.statusCode = statusCode;
+    res.end();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+    expect(response.status).toBe(expected);
   } finally {
     server.close();
   }

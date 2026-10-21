@@ -2295,12 +2295,17 @@ function hasInvalidTrailer(response) {
   return outHeaders !== null && outHeaders["trailer"] !== undefined;
 }
 
-function _writeHead(statusCode, reason, obj, response) {
+function validateStatusCode(statusCode) {
   const originalStatusCode = statusCode;
   statusCode |= 0;
   if (statusCode < 100 || statusCode > 999) {
     throw $ERR_HTTP_INVALID_STATUS_CODE(require("internal/util/inspect").format("%s", originalStatusCode));
   }
+  return statusCode;
+}
+
+function _writeHead(statusCode, reason, obj, response) {
+  statusCode = validateStatusCode(statusCode);
 
   if (typeof reason === "string") {
     // writeHead(statusCode, reasonPhrase[, headers])
@@ -3580,7 +3585,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
         // One native crossing for cork + writeHead + end (writeHeadAndEnd
         // corks natively around both phases).
         contentLength = handle.writeHeadAndEnd(
-          this[kSnapshotStatusCode] ?? this.statusCode,
+          validateStatusCode(this[kSnapshotStatusCode] ?? this.statusCode),
           this[kSnapshotStatusMessage] ?? this.statusMessage,
           renderedHeaders,
           chunk,
@@ -3768,7 +3773,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
       const renderedHeaders = renderNativeHeaders(this);
       try {
         handle.writeHead(
-          this[kSnapshotStatusCode] ?? this.statusCode,
+          validateStatusCode(this[kSnapshotStatusCode] ?? this.statusCode),
           this[kSnapshotStatusMessage] ?? this.statusMessage,
           renderedHeaders,
           renderedAutoHeaders,
@@ -3968,7 +3973,7 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
       const renderedHeaders = renderNativeHeaders(this);
       try {
         handle.writeHead(
-          this[kSnapshotStatusCode] ?? this.statusCode,
+          validateStatusCode(this[kSnapshotStatusCode] ?? this.statusCode),
           this[kSnapshotStatusMessage] ?? this.statusMessage,
           renderedHeaders,
           renderedAutoHeaders,
@@ -4113,7 +4118,7 @@ ServerResponse.prototype.flushHeaders = function () {
       const renderedHeaders = renderNativeHeaders(this);
       try {
         handle.writeHead(
-          this[kSnapshotStatusCode] ?? this.statusCode,
+          validateStatusCode(this[kSnapshotStatusCode] ?? this.statusCode),
           this[kSnapshotStatusMessage] ?? this.statusMessage,
           renderedHeaders,
           renderedAutoHeaders,

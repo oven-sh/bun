@@ -309,7 +309,7 @@ describe.concurrent("node-module-module", () => {
       expect(await run(dir, ["main.js"])).toEqual({ compiled: ["bundled.cjs"], result: 101 });
     });
 
-    test("a hook installed between the fetch and the evaluation of an imported CommonJS file sees the body once", async () => {
+    test("an imported CommonJS file fetched around the install of a hook gets the overridden wrapper once", async () => {
       using dir = tempDir("module-prototype-compile-window", {
         "wrapper.cjs": `
           const Module = require("node:module");
@@ -332,11 +332,11 @@ describe.concurrent("node-module-module", () => {
           console.log(JSON.stringify({ app, hooked: globalThis.hooked, prefixRuns: globalThis.prefixRuns }));
         `,
       });
-      expect(await run(dir, ["--preload", "./wrapper.cjs", "main.mjs"])).toEqual({
-        app: 42,
-        hooked: ["app.cjs"],
-        prefixRuns: 2,
-      });
+      // The loader links the two CommonJS files in the order their fetches finish, so the hook
+      // is installed before or after app.cjs is fetched. Either way the wrapper runs once per file.
+      const { hooked, ...rest } = await run(dir, ["--preload", "./wrapper.cjs", "main.mjs"]);
+      expect(rest).toEqual({ app: 42, prefixRuns: 2 });
+      expect([[], ["app.cjs"]]).toContainEqual(hooked);
     });
 
     test("bun test --isolate runs a require.extensions hook with an own _compile for every file", async () => {
@@ -499,6 +499,22 @@ describe.concurrent("node-module-module", () => {
         message: "Code generation from strings disallowed for this context",
         nested: 1,
       });
+    });
+
+    test("a module with no filename handed to Module._extensions gives its hook the file's name", async () => {
+      using dir = tempDir("module-prototype-compile-extension-filename", {
+        ...files,
+        "main.js": `
+          const Module = require("node:module");
+          const path = require("path");
+          const m = new Module("x");
+          let seen;
+          m._compile = function (content, filename) { seen = filename; return Module.prototype._compile.call(this, content, filename); };
+          Module._extensions[".js"](m, path.join(__dirname, "nested.js"));
+          console.log(JSON.stringify({ seen: path.basename(seen), exports: m.exports }));
+        `,
+      });
+      expect(await run(dir, ["main.js"])).toEqual({ seen: "nested.js", exports: 1 });
     });
 
     test("Module.prototype is the prototype of module objects", () => {

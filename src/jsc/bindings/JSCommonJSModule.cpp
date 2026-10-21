@@ -442,6 +442,9 @@ static bool evaluateCommonJSModuleWithCompileHook(JSC::VM& vm, Zig::GlobalObject
 
     // Evaluated while the hook runs, as the body is; the default _compile reuses the source.
     moduleObject->hasEvaluated = true;
+    // A `new Module(id)` handed to Module._extensions has no filename: the hook gets the file's.
+    if (!filename.isString())
+        filename = jsString(vm, moduleObject->sourceCode.provider()->sourceURL());
     MarkedArgumentBuffer args;
     args.append(jsString(vm, WTF::move(body)));
     args.append(filename);

@@ -20,7 +20,6 @@ The generator lives in `src/codegen/bindgen*.ts`, the Rust it generates against 
 
 The body of a binding is always Rust. These do overlapping work:
 
-- "Classes generator", converting `*.classes.ts` for custom classes.
 - "JS2Native", allowing ad-hoc calls from `src/js` to native code (`$rust`, `$cpp`).
 - `#[bun_jsc::host_fn]` functions, which take a `CallFrame`.
 
@@ -485,8 +484,6 @@ A list of values goes in a `MarkedArgumentBuffer`, never a `Vec` or a `Box`: the
 not look inside heap allocations. The compiler does not check this one.
 
 ## Classes
-
-The keys are mostly those of `.classes.ts`, with types. `klass` is `static` and `values` is `internalFields`.
 
 ```ts
 export const Glob = b.class({

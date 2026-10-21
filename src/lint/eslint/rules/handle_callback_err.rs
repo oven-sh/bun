@@ -7,13 +7,13 @@ pub struct HandleCallbackErr {
 
 enum ErrorArgument {
     Name(Box<str>),
-    /// It starts with `^`. `None` if it is not a valid regular expression.
+    /// The option starts with `^`. `None` if it isn't a valid regular expression.
     Pattern(Option<Box<Regex>>),
 }
 
 const EXPECTED: Message = Message::new("expected", "Expected error to be handled.");
 
-/// The first identifier that the parameters of `func` bind.
+/// Returns the first identifier that `func`'s parameters bind.
 fn first_parameter(func: Func<'_>) -> Option<Pat<'_>> {
     let mut first = None;
     for param in func.params_with_this() {

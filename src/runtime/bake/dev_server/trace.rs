@@ -15,6 +15,7 @@ impl DevServer {
         Ok(GraphTraceState {
             server_bits,
             client_bits,
+            failures: Vec::new(),
         })
     }
 }

@@ -61,8 +61,8 @@ fn check<'a>(_: &PreferQuerySelector, e: Expr<'a>, cx: &mut Cx<'a, PreferQuerySe
         Some(ExprKind::Null) => Some(&b""[..]),
         Some(ExprKind::String(value)) => Some(strings::trim_unicode_whitespace(value.bytes())),
         Some(ExprKind::Template(literal)) => literal.as_static().map(|it| strings::trim_unicode_whitespace(it.bytes())),
-        // `getElementById(id)` is `` querySelector(`#${id}`) ``.
-        // An id like `user.name` or `1st` makes a different selector or an invalid one.
+        // `getElementById(id)` becomes `` querySelector(`#${id}`) ``. An id like `user.name` or `1st` makes a different
+        // selector or an invalid one.
         Some(ExprKind::Ident(_)) if property_name == b"getElementById" => {
             report.fix_dangerously(|fixer| {
                 let replacement = [preferred_selector.as_bytes(), b"(`#${", argument_expr.text(), b"}`"].concat();
@@ -90,7 +90,7 @@ fn check<'a>(_: &PreferQuerySelector, e: Expr<'a>, cx: &mut Cx<'a, PreferQuerySe
         let quotes_symbol = argument_expr.text().get(..1).unwrap_or_default();
         let argument = match property_name {
             b"getElementById" => [b"#", literal_value].concat(),
-            // All of the classes.
+            // All the classes.
             b"getElementsByClassName" => strings::split_unicode_whitespace(literal_value).fold(Vec::new(), |mut all, class| {
                 all.push(b'.');
                 all.extend_from_slice(class);

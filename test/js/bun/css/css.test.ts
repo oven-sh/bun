@@ -7546,8 +7546,8 @@ describe("css tests", () => {
   // and invalid values are those of the web-platform-tests parsing suites (css/css-transforms/parsing
   // and css/css-masking/parsing). A value that a property does not take prints as written.
   describe("transform-origin", () => {
-    // [as written, printed with minify]. A row runs in upper case, and a number has a spelling that
-    // only a typed value shortens, so a row fails when the value is not typed.
+    // [as written, printed with minify]. A row runs in upper case, and a percentage has a spelling
+    // that only a typed value shortens, so a row fails when the value is not typed.
     const valid = [
       // A side keyword prints as `0` or `100%`.
       ["left", "0"],
@@ -7555,8 +7555,6 @@ describe("css tests", () => {
       ["right", "100%"],
       ["top", "top"],
       ["bottom", "bottom"],
-      ["calc(-1px)", "-1px"],
-      ["calc(2em + 3ex)", "calc(2em + 3ex)"],
       ["-4.0%", "-4%"],
       ["left center", "0"],
       ["center top", "top"],
@@ -7580,18 +7578,18 @@ describe("css tests", () => {
       ["-1px bottom 5px", "-1px 100% 5px"],
       ["center left 6px", "0 50% 6px"],
       ["bottom right 7px", "100% 100% 7px"],
-      ["-1px -2px calc(-3px)", "-1px -2px -3px"],
+      ["-4.0% -2px -3px", "-4% -2px -3px"],
       ["left top 10px", "0 0 10px"],
       ["top left 10px", "0 0 10px"],
       ["center center 10px", "50% 50% 10px"],
       ["center top 10px", "50% 0 10px"],
-      ["left top calc(1px + 2em)", "0 0 calc(1px + 2em)"],
       ["left top 0", "0 0"],
     ];
-    // A side keyword takes no offset, the z offset is a length, and it cannot follow one component.
-    // These rows pass without the typed value too. The keywords are in upper case, so a row fails when
-    // a parser takes the value: lightningcss 1.33.0 prints `10px 0` for `left 10px top`.
-    const invalid = [
+    // These rows stay as written, and they pass without the typed value too. The keywords are in
+    // upper case, so a row fails when a parser takes the value.
+    const asWritten = [
+      // A side keyword takes no offset, the z offset is a length, and it cannot follow one
+      // component. lightningcss 1.33.0 prints `10px 0` for `left 10px top`.
       "1px 2px 3%",
       "1px 2px LEFT",
       "1px 2px 3px 4px",
@@ -7604,11 +7602,23 @@ describe("css tests", () => {
       "RIGHT 20px BOTTOM 30px",
       "LEFT 10px TOP",
       "LEFT TOP 10%",
+      // A value with a math function is valid, but the length parser that every typed property
+      // shares folds some of these wrongly: `margin-left:rem(10px,3em)` prints `0`.
+      "LEFT calc(1px + 2em)",
+      "LEFT rem(10px,3em)",
+      "LEFT max(1px + 2em)",
+      "RIGHT min(10% + 1px)",
+      "LEFT TOP hypot(-3px)",
+      "LEFT TOP round(up,7px,-2px)",
+      // A number needs a unit. The shared length parser reads `10` as `10px`.
+      "10 20",
+      "LEFT TOP 5",
+      "LEFT TOP calc(0)",
     ];
     for (const [written, printed] of valid) {
       minify_test(`.foo{transform-origin:${written.toUpperCase()}}`, `.foo{transform-origin:${printed}}`);
     }
-    for (const written of invalid) {
+    for (const written of asWritten) {
       minify_test(`.foo{transform-origin:${written}}`, `.foo{transform-origin:${written}}`);
     }
 
@@ -7657,29 +7667,6 @@ describe("css tests", () => {
       ".foo{transform-origin:LEFT TOP 10PX;transform-origin:LEFT 10px TOP}",
       ".foo{transform-origin:0 0 10px;transform-origin:LEFT 10px TOP}",
     );
-
-    // Known wrong, and not in the typed values: the length parser that every typed property shares
-    // folds these math functions wrongly and takes a number without a unit. `margin-left` and
-    // `background-position` print the same. Each row names the pull request that has the fix.
-    // [fix, property, as written, what it must print]
-    const shared = [
-      [46145, "transform-origin", "hypot(3px) max(1px + 2em)", "3px calc(1px + 2em)"],
-      [46145, "transform-origin", "min(10% + 1px) top", "calc(10% + 1px) 0"],
-      [46145, "transform-origin", "left top hypot(-3px)", "0 0 3px"],
-      [38489, "transform-origin", "rem(10px,3em) top", "rem(10px,3em) 0"],
-      [38489, "transform-origin", "left top rem(10px,3em)", "0 0 rem(10px,3em)"],
-      [38489, "perspective-origin", "mod(10px,3em) rem(10%,3%)", "mod(10px,3em) 1%"],
-      [38489, "mask-position", "rem(10px,3em) top", "rem(10px,3em) 0"],
-      [45249, "transform-origin", "left top round(up,7px,-2px)", "0 0 8px"],
-      [42104, "transform-origin", "10 20", "10 20"],
-      [42104, "transform-origin", "left top calc(0)", "left top calc(0)"],
-    ] as const;
-    for (const [fix, property, written, printed] of shared) {
-      test.todo(`#${fix}: .foo{${property}:${written}}`, () => {
-        const css = minify_test_with_options(`.foo{${property}:${written}}`, "");
-        expect(css).toBe(`.foo{${property}:${printed}}`);
-      });
-    }
   });
 
   describe("perspective-origin and mask-position", () => {
@@ -7687,7 +7674,7 @@ describe("css tests", () => {
     // upper case, as in the block above.
     const valid = [
       ["+10%", "10%"],
-      ["20% calc(30px)", "20% 30px"],
+      ["+20% 30px", "20% 30px"],
       ["30px center", "30px"],
       ["40px top", "40px 0"],
       ["bottom right", "100% 100%"],
@@ -7710,14 +7697,15 @@ describe("css tests", () => {
       ["right 30% top 60px", "right 30% top 60px"],
       ["left 10px top 20px", "10px 20px"],
     ];
-    // Only background-position takes the three-value form (the last 8 rows). These rows pass without
-    // the typed value too. The keywords are in upper case, so a row fails when a parser takes the
-    // value: lightningcss 1.33.0 prints `50% 2px` for `center top 2px`.
-    const invalid = [
+    // These rows stay as written, and they pass without the typed value too. The keywords are in
+    // upper case, so a row fails when a parser takes the value.
+    const asWritten = [
       "AUTO",
       "1px 2px 3px",
       "LEFT RIGHT",
       "BOTTOM 10% TOP 20%",
+      // Only background-position takes the three-value form. lightningcss 1.33.0 prints `50% 2px`
+      // for `center top 2px`.
       "CENTER LEFT 1px",
       "CENTER TOP 2px",
       "RIGHT 3% CENTER",
@@ -7726,12 +7714,17 @@ describe("css tests", () => {
       "BOTTOM 6% CENTER",
       "BOTTOM 7% LEFT",
       "BOTTOM RIGHT 8%",
+      // A math function and a number without a unit, as in the block above.
+      "LEFT calc(1px + 2em)",
+      "LEFT mod(10px,3em)",
+      "RIGHT rem(10%,3%)",
+      "10 20",
     ];
     for (const property of ["perspective-origin", "mask-position"]) {
       for (const [written, printed] of valid) {
         minify_test(`.foo{${property}:${written.toUpperCase()}}`, `.foo{${property}:${printed}}`);
       }
-      for (const written of invalid) {
+      for (const written of asWritten) {
         minify_test(`.foo{${property}:${written}}`, `.foo{${property}:${written}}`);
       }
     }
@@ -7752,8 +7745,8 @@ describe("css tests", () => {
     // Known wrong, and the same in lightningcss: a gradient takes a `<position>` after `at`. The
     // three-value form is still read there and printed with two values, which a browser accepts.
     for (const gradient of [
-      "radial-gradient(circle at LEFT TOP 10px,red,blue)",
-      "conic-gradient(at LEFT TOP 10px,red,blue)",
+      "radial-gradient(circle at LEFT TOP 10px,red,blue)", // today: radial-gradient(circle at 0 10px,red,#00f)
+      "conic-gradient(at LEFT TOP 10px,red,blue)", // today: conic-gradient(at 0 10px,red,#00f)
     ]) {
       test.todo(`.foo{background:${gradient}}`, () => {
         const css = minify_test_with_options(`.foo{background:${gradient}}`, "");

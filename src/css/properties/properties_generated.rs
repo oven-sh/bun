@@ -1896,6 +1896,26 @@ fn parse_value<T: css::generic::ParseWithOptions>(
     input.expect_exhausted().is_ok().then_some(value)
 }
 
+/// `parse_value` for a row that reads no math function and no number without a unit. A value
+/// with a function, or with a number other than `0`, stays as written: the shared length parser
+/// folds some math functions wrongly (#38489, #46145, #45249) and reads `10` as `10px` (#42104).
+fn parse_plain_value<T: css::generic::ParseWithOptions>(
+    input: &mut css::Parser,
+    options: &css::ParserOptions,
+) -> Option<T> {
+    let state = input.state();
+    loop {
+        match input.next() {
+            Ok(css::Token::Function(_)) => return None,
+            Ok(css::Token::Number(number)) if number.value != 0.0 => return None,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    input.reset(&state);
+    parse_value(input, options)
+}
+
 impl Property {
     /// Returns the [`PropertyId`] for this declaration.
     pub(crate) fn property_id(&self) -> PropertyId {
@@ -3626,7 +3646,7 @@ impl Property {
                 }
             }
             PropertyId::TransformOrigin(pre) => {
-                if let Some(c) = parse_value::<transform::TransformOrigin>(input, options) {
+                if let Some(c) = parse_plain_value::<transform::TransformOrigin>(input, options) {
                     return Ok(Property::TransformOrigin((c, pre)));
                 }
             }
@@ -3651,7 +3671,8 @@ impl Property {
                 }
             }
             PropertyId::PerspectiveOrigin(pre) => {
-                if let Some(c) = parse_value::<css::css_values::position::Position>(input, options)
+                if let Some(c) =
+                    parse_plain_value::<css::css_values::position::Position>(input, options)
                 {
                     return Ok(Property::PerspectiveOrigin((c, pre)));
                 }
@@ -3731,8 +3752,9 @@ impl Property {
                 }
             }
             PropertyId::MaskPosition(pre) => {
-                if let Some(c) =
-                    parse_value::<SmallList<css::css_values::position::Position, 1>>(input, options)
+                if let Some(c) = parse_plain_value::<
+                    SmallList<css::css_values::position::Position, 1>,
+                >(input, options)
                 {
                     return Ok(Property::MaskPosition((c, pre)));
                 }

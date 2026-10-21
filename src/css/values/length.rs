@@ -619,7 +619,7 @@ impl Length {
         }
     }
 
-    pub(crate) fn is_zero(&self) -> bool {
+    fn is_zero(&self) -> bool {
         match self {
             Self::Value(v) => v.is_zero(),
             _ => false,

@@ -5,7 +5,7 @@ use bun_alloc::ArenaVecExt as _;
 use crate::css_properties::{Property, PropertyIdTag};
 use crate::css_values::angle::Angle;
 use crate::css_values::gradient::GradientSideKeyword;
-use crate::css_values::length::{self, LengthPercentage, LengthValue as Length};
+use crate::css_values::length::{LengthPercentage, LengthValue as Length};
 use crate::css_values::number::CSSNumberFns;
 use crate::css_values::percentage::NumberOrPercentage;
 use crate::css_values::position::{HorizontalPositionKeyword, VerticalPositionKeyword};
@@ -674,9 +674,8 @@ pub struct TransformOrigin {
     pub(crate) x: OriginComponent<HorizontalPositionKeyword>,
     /// The y offset.
     pub(crate) y: OriginComponent<VerticalPositionKeyword>,
-    /// The z offset. `length::Length` takes math functions. The `Length` of this file's other
-    /// types is `LengthValue`, which does not.
-    pub(crate) z: length::Length,
+    /// The z offset.
+    pub(crate) z: Length,
 }
 
 impl TransformOrigin {
@@ -696,7 +695,7 @@ impl TransformOrigin {
                 return Ok(TransformOrigin {
                     x,
                     y: Center,
-                    z: length::Length::zero(),
+                    z: Length::zero(),
                 });
             }
         } else {
@@ -706,14 +705,14 @@ impl TransformOrigin {
                 return Ok(TransformOrigin {
                     x: Center,
                     y,
-                    z: length::Length::zero(),
+                    z: Length::zero(),
                 });
             };
             (x, y)
         };
         let z = input
-            .try_parse(length::Length::parse)
-            .unwrap_or_else(|_| length::Length::zero());
+            .try_parse(Length::parse)
+            .unwrap_or_else(|_| Length::zero());
         Ok(TransformOrigin { x, y, z })
     }
 

@@ -536,11 +536,12 @@ impl Dialect {
     }
 }
 
-/// True if `GetScriptKindFromFileName` is `ScriptKindTSX` or `ScriptKindJSX`.
-pub fn is_jsx_file_name(path: &[u8]) -> bool {
+/// `resolveImportsAndModuleAugmentations`: true if a file with this name imports the JSX runtime, which is
+/// `isJavaScriptFile || file.ScriptKind == core.ScriptKindTSX`.
+pub fn imports_jsx_runtime(path: &[u8]) -> bool {
     matches!(
         ScriptKind::from_file_name(path),
-        Some(ScriptKind::Tsx | ScriptKind::Jsx)
+        Some(ScriptKind::Tsx | ScriptKind::Jsx | ScriptKind::Js)
     )
 }
 

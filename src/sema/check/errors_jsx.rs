@@ -30,11 +30,10 @@ impl Checker<'_, '_> {
         let options = &self.p.files.options;
         let (jsx, no_implicit_any) = (options.jsx, options.no_implicit_any);
         let atoms = &self.atoms();
-        // `resolveImportsAndModuleAugmentations`: only `ScriptKindTSX` and `ScriptKindJSX` import it.
         let path = self.files().module(file).file_name();
         // The only atom it reads is one that the parser interned.
         let runtime = crate::program::jsx_runtime_of(options, hir, &self.p.files.atoms)
-            .filter(|_| crate::resolve::is_jsx_file_name(path))
+            .filter(|_| crate::resolve::imports_jsx_runtime(path))
             .map(|spec| atoms.intern(&spec));
         // `getJsxNamespaceContainerForImplicitImport`: the JSX runtime module is imported implicitly, and must exist.
         let runtime_is_missing =

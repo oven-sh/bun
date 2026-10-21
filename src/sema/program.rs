@@ -3565,7 +3565,7 @@ impl Included<'_, '_> {
         if imports_helpers(options, hir) {
             specifiers.push((known::tslib, module.default_mode, 1395, 0, 0));
         }
-        if crate::resolve::is_jsx_file_name(module.file_name())
+        if crate::resolve::imports_jsx_runtime(module.file_name())
             && let Some(runtime) = jsx_runtime_of(options, hir, atoms)
         {
             specifiers.push((atoms.intern(&runtime), module.default_mode, 1397, 0, 0));
@@ -6388,8 +6388,7 @@ impl<'s> Files<'s> {
         // which only accepts published atoms.
         let runtime = jsx_runtime_of(options, hir, atoms);
         let runtime = runtime.map(|runtime| (atoms.intern(&runtime), runtime));
-        // Only a file that can contain JSX tags, according to its file name, imports their runtime.
-        let runtime = runtime.filter(|_| crate::resolve::is_jsx_file_name(path));
+        let runtime = runtime.filter(|_| crate::resolve::imports_jsx_runtime(path));
         // Each entry of `moduleNames` is resolved, even one that repeats another.
         let (types_tracer, tracer) = (Tracer::default(), Tracer::default());
         // A name that the file itself declares as an ambient module isn't looked up on disk.
@@ -6786,8 +6785,7 @@ impl<'s> Files<'s> {
     /// The module that `file` imports implicitly for its JSX.
     pub fn jsx_runtime(&self, file: FileId) -> Option<Atom> {
         let module = &self.modules[file.idx()];
-        // `resolveImportsAndModuleAugmentations`: only `ScriptKindTSX` and `ScriptKindJSX` import it.
-        if !crate::resolve::is_jsx_file_name(module.file_name()) {
+        if !crate::resolve::imports_jsx_runtime(module.file_name()) {
             return None;
         }
         let runtime = jsx_runtime_of(self.options, &module.hir, &self.atoms)?;

@@ -5,6 +5,7 @@ use core::sync::atomic::{AtomicI32, Ordering};
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{self, WriteResult, WriteStatus};
 use bun_jsc::JsCell;
+use bun_jsc::bindgen::JsScope;
 use bun_ptr::RefPtr;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
@@ -165,6 +166,9 @@ pub struct Options {
     pub(crate) truncate: bool,
     /// `Bun.write(path, stream)`: create missing parent directories.
     pub(crate) mkdirp: bool,
+    /// Open only a terminal, and do not register it with the event loop.
+    #[cfg(unix)]
+    pub(crate) unwatched_terminal: bool,
 }
 
 impl Default for Options {
@@ -174,6 +178,8 @@ impl Default for Options {
             mode: 0o664,
             truncate: false,
             mkdirp: false,
+            #[cfg(unix)]
+            unwatched_terminal: false,
         }
     }
 }
@@ -272,6 +278,38 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
 
         // Fallback to WriteFile() if it fails.
         this.force_sync.set(true);
+    }
+}
+
+/// For an `fs.WriteStream` on a terminal that the event loop refuses to watch, as kqueue refuses `/dev/tty`: a sink with no poll.
+pub(crate) fn open_unwatched_terminal(cx: &mut JsScope<'_>, fd: i32) -> JSValue {
+    #[cfg(windows)]
+    {
+        let _ = (cx, fd);
+        JSValue::UNDEFINED
+    }
+    #[cfg(unix)]
+    {
+        if fd < 0 {
+            return JSValue::UNDEFINED;
+        }
+        let global = cx.global();
+        let vm = global.bun_vm();
+        let sink = FileSink::init(
+            Fd::INVALID,
+            EventLoopHandle::init(vm.as_mut().event_loop().cast::<()>()),
+        );
+        let start = streams::Start::FileSink(Options {
+            input_path: PathOrFileDescriptor::Fd(Fd::from_native(fd)),
+            unwatched_terminal: true,
+            ..Default::default()
+        });
+        // Not a terminal, or no descriptor left for the duplicate: the stream keeps its node:fs fallback.
+        if sink.start(&start, vm.context_of_caller_no_frame()).is_err() {
+            return JSValue::UNDEFINED;
+        }
+        // SAFETY: `sink` is live and not yet shared. `to_js` takes the wrapper's ref; the one from `init` drops here.
+        unsafe { (*sink.as_ptr()).to_js(global) }
     }
 }
 
@@ -751,6 +789,23 @@ impl FileSink {
 
         if matches!(options.input_path, PathOrFileDescriptor::Path(_)) {
             self.close_with_graph(context);
+        }
+
+        #[cfg(unix)]
+        if options.unwatched_terminal {
+            if !is_tty_out {
+                fd.close();
+                return sys::Result::Err(sys::Error::from_code(sys::E::ENOTTY, sys::Tag::open));
+            }
+            // `open_for_writing` made the terminal blocking, so a write never waits for a poll.
+            let started = self.writer.with_mut(|w| {
+                w.force_sync = true;
+                w.start(fd, false)
+            });
+            if started.is_err() {
+                fd.close();
+            }
+            return started;
         }
 
         #[cfg(windows)]

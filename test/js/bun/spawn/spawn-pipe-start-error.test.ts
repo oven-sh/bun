@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -627,6 +627,119 @@ describe.skipIf(!isLinux || !cc)("a Bun.Terminal whose writer fails to re-arm it
     expect(await runFixture(kind, { FAIL_EPOLL_CTL: "pty-writer-mod", FAIL_EPOLL_CTL_SKIP: skip })).toEqual({
       report: { error: null, write: { closed: true, drains: 0 }, leakedFds: 0, leakedWrappers: 0 },
       stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// A stream on a terminal that the event loop refuses to watch still gets a sink, with no poll: a terminal is written
+// synchronously. kqueue refuses /dev/tty on macOS (#24158), and the shim makes epoll refuse it on Linux. Such a
+// stream had no sink and wrote through the thread pool, so process.exit() lost what was written.
+describe.skipIf(!isMacOS && !(isLinux && cc))("a stream on a terminal that the event loop refuses to watch", () => {
+  const refused = isMacOS ? "EINVAL" : "ENOSPC";
+
+  // Runs the script in a bun whose controlling terminal is a new pty. Returns what the terminal received.
+  async function onTerminal(script: string, redirect = "") {
+    let output = "";
+    const closed = Promise.withResolvers<void>();
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `exec "$0" -e "$1" ${redirect}`, bunExe(), script],
+      env: isLinux ? { ...bunEnv, LD_PRELOAD: join(String(dir), "shim.so") } : bunEnv,
+      terminal: {
+        data(_terminal, chunk) {
+          output += Buffer.from(chunk).toString();
+        },
+        exit() {
+          closed.resolve();
+        },
+      },
+    });
+    await closed.promise;
+    return { output: output.replaceAll("\r\n", "\n"), exitCode: await proc.exited };
+  }
+
+  // Bun.file(fd).writer() still throws for the fd of `stream`, which shows the refusal. fd 0 is the terminal too.
+  const reportRefusal = /* js */ `
+    let refused = null;
+    try {
+      Bun.file(stream.fd).writer();
+    } catch (e) {
+      refused = e.code;
+    }
+    require("fs").writeSync(0, JSON.stringify({ refused }) + "\\n");
+  `;
+
+  test.concurrent.each([
+    ["tty.WriteStream", `new (require("tty").WriteStream)(require("fs").openSync("/dev/tty", "w"))`, ""],
+    ["process.stdout", "process.stdout", ">/dev/tty"],
+    ["process.stderr", "process.stderr", "2>/dev/tty"],
+  ])("%s delivers a write made before process.exit()", async (_name, stream, redirect) => {
+    const script = `const stream = ${stream};${reportRefusal}stream.write("written before exit\\n"); process.exit(0);`;
+    expect(await onTerminal(script, redirect)).toEqual({
+      output: `{"refused":"${refused}"}\nwritten before exit\n`,
+      exitCode: 0,
+    });
+  });
+
+  // The stream keeps the write() of Writable: it decodes a chunk, holds it while corked, and calls an instance _write.
+  test.concurrent("the stream writes each chunk at once, through Writable", async () => {
+    const script = /* js */ `
+      const fs = require("fs");
+      const stream = new (require("tty").WriteStream)(fs.openSync("/dev/tty", "w"));
+      ${reportRefusal}
+      stream.write("6162630a", "hex");
+      stream.cork();
+      stream.write("corked\\n");
+      fs.writeSync(stream.fd, "not corked\\n");
+      stream.uncork();
+      let intercepted = 0;
+      stream._write = (chunk, encoding, callback) => {
+        intercepted++;
+        callback(null);
+      };
+      stream.write("not on the terminal\\n", () => {
+        fs.writeSync(0, JSON.stringify({ intercepted, bytesWritten: stream.bytesWritten }) + "\\n");
+      });
+    `;
+    expect(await onTerminal(script)).toEqual({
+      output: `{"refused":"${refused}"}\nabc\nnot corked\ncorked\n{"intercepted":1,"bytesWritten":11}\n`,
+      exitCode: 0,
+    });
+  });
+
+  // destroy() ends the sink, which closes its own duplicate of the fd. The fd of the caller stays open, as with any sink.
+  test.concurrent.skipIf(!isLinux)("tty.WriteStream closes the fd of its sink when it is destroyed", async () => {
+    const script = /* js */ `
+      const fs = require("fs");
+      // The fd of the listing is closed by the time it is checked.
+      const openFds = () =>
+        fs.readdirSync("/proc/self/fd").filter(name => {
+          try {
+            return fs.fstatSync(Number(name)) !== undefined;
+          } catch {
+            return false;
+          }
+        }).length;
+      const fd = fs.openSync("/dev/tty", "w");
+      const before = openFds();
+      const stream = new (require("tty").WriteStream)(fd);
+      const opened = openFds() - before;
+      stream.write("written\\n");
+      stream.destroy();
+      await new Promise(resolve => stream.once("close", resolve));
+      // The close runs on the work pool.
+      const deadline = performance.now() + 2000;
+      while (openFds() > before && performance.now() < deadline) await Bun.sleep(1);
+      let fdOpen = true;
+      try {
+        fs.fstatSync(fd);
+      } catch {
+        fdOpen = false;
+      }
+      fs.writeSync(0, JSON.stringify({ opened, left: openFds() - before, fdOpen }) + "\\n");
+    `;
+    expect(await onTerminal(script)).toEqual({
+      output: 'written\n{"opened":1,"left":0,"fdOpen":true}\n',
       exitCode: 0,
     });
   });

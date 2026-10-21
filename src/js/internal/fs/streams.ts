@@ -44,6 +44,7 @@ const kIoDone = Symbol("kIoDone");
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
 const kFs = Symbol("kFs");
+const openUnwatchedTerminal = $bindgen("FileSink.bind.ts", "openUnwatchedTerminal");
 
 const {
   read: fileHandlePrototypeRead,
@@ -457,16 +458,16 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
     this.pos = start;
   }
 
-  // A writer cannot be opened for every fd a caller may hand us -- a read-only
-  // descriptor is the common case, and node's tty.WriteStream accepts one. Fall
-  // back to the general path there, which surfaces the failure at write time the
-  // way node does, rather than throwing from the constructor.
+  // No writer opens for an fd that cannot be duplicated or that the event loop refuses to watch: node:fs writes it then.
   let fastWriter;
+  let unwatchedSink;
   if (fastPath && fd != null) {
     try {
       fastWriter = Bun.file(fd).writer();
     } catch {
       fastPath = false;
+      // A terminal is written synchronously, so it needs no watch. kqueue refuses /dev/tty (#24158).
+      unwatchedSink = openUnwatchedTerminal(fd);
     }
   }
 
@@ -483,6 +484,10 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
       // tty.WriteStream), which never allocate construct TickObjects.
       this._construct = undefined;
     }
+  } else if (unwatchedSink) {
+    // write() stays Writable's. The prototype's _write sends each chunk to the sink before it returns.
+    this[kWriteStreamFastPath] = unwatchedSink;
+    this._construct = undefined;
   }
 
   Writable.$call(this, options);
@@ -575,12 +580,14 @@ function _write(data, encoding, cb) {
     if ($isPromise(maybePromise)) {
       maybePromise
         .then(() => {
+          this.bytesWritten += data.length;
           emitDrain(this);
           cb(null);
         })
         .catch(cb);
       return false; // Indicate backpressure
     } else {
+      this.bytesWritten += data.length;
       cb(null);
       return true; // No backpressure
     }

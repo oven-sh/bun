@@ -138,7 +138,7 @@ typedef struct ResolvedSource {
     bool is_prelinked_module;
     // JSC::SourceProvenance::Static: source_code comes from where the program is stored or from Bun itself, not from a JavaScript value.
     bool is_static;
-    // The loader that made this is the one the path alone selects: no type attribute, `?raw` or require.extensions entry chose another. Only Bun__transpileFile sets it.
+    // The path alone selected the loader: no type attribute, `?raw` or require.extensions entry. Only Bun__transpileFile sets it.
     bool is_path_loader;
     // -- Bytecode cache fields --
     // Owned (`ResolvedSource__freeBytecode`) iff `bytecode_cache_owned`; otherwise

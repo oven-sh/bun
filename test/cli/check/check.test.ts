@@ -22777,6 +22777,25 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(exitCode).toBe(1);
     });
 
+    test("suggests the option that an unknown option in tsconfig.json resembles", async () => {
+      using dir = project({
+        "tsconfig.json": `{
+  "compilerOptions": { "lib": ["esnext"], "types": [], "strct": true, "wach": true, "qqqqqq": true },
+  "typeAcquisition": { "enabl": true, "qqqqqq": true }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "tsconfig.json(2,56): error TS5025: Unknown compiler option 'strct'. Did you mean 'strict'?
+        tsconfig.json(2,71): error TS5025: Unknown compiler option 'wach'. Did you mean 'watch'?
+        tsconfig.json(2,85): error TS5023: Unknown compiler option 'qqqqqq'.
+        tsconfig.json(3,24): error TS17018: Unknown type acquisition option 'enabl'. Did you mean 'enable'?
+        tsconfig.json(3,39): error TS17010: Unknown type acquisition option 'qqqqqq'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports a missing value in a JSON file at the end of the token before it", async () => {
       using dir = project({
         "tsconfig.json": withResolveJsonModule,

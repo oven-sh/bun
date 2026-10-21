@@ -340,6 +340,14 @@ pub fn possible_option(name: &[u8]) -> Option<&'static [u8]> {
     }
 }
 
+/// `CommandLineOptionNameMap.GetSpellingSuggestion`
+fn spelling_suggestion(
+    name: &[u8],
+    options: impl Iterator<Item = &'static [u8]>,
+) -> Option<&'static [u8]> {
+    crate::check::get_spelling_suggestion(name, options, |option| option, |a, b| a.cmp(b))
+}
+
 /// The object of a configuration file that the options are in.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum In {
@@ -475,11 +483,18 @@ pub fn problems(file: &TsConfigSourceFile, object: ExprId, within: In) -> Vec<Pr
             let (suggestion, with, without) = match within {
                 In::Root => continue,
                 In::TypeAcquisition => {
-                    let mut options = TYPE_ACQUISITION_OPTIONS.iter();
-                    let other_case = options.find(|option| option.0.eq_ignore_ascii_case(name));
-                    (other_case.map(|option| option.0), 17018, 17010)
+                    let options = || TYPE_ACQUISITION_OPTIONS.iter().map(|option| option.0);
+                    let other_case = options().find(|option| option.eq_ignore_ascii_case(name));
+                    let suggestion = other_case.or_else(|| spelling_suggestion(name, options()));
+                    (suggestion, 17018, 17010)
                 }
-                In::CompilerOptions => (possible_option(name), 5025, 5023),
+                In::CompilerOptions => {
+                    let options = OPTIONS.values().map(|option| option.0);
+                    let options = options.chain(COMMAND_LINE_ONLY_OPTIONS.iter());
+                    let suggestion =
+                        possible_option(name).or_else(|| spelling_suggestion(name, options));
+                    (suggestion, 5025, 5023)
+                }
             };
             let (code, args) = match suggestion {
                 Some(suggestion) => (with, vec![name.clone(), suggestion.to_vec()]),

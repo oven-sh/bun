@@ -603,43 +603,51 @@ process.exit(0);
   }, 30_000);
 });
 
-test("a stream that reuses a destroyed stream's allocation doesn't get its queued close event", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      join(import.meta.dir, "quic-stream-recycled-close-fixture.ts"),
-      join(keysDir, "agent1-key.pem"),
-      join(keysDir, "agent1-cert.pem"),
-    ],
-    // ASAN only reuses a freed block right away when its quarantine is off.
-    env: withoutAsanQuarantine(bunEnv),
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toBe(
-    JSON.stringify({ opened: 16, delivered: Array.from({ length: 16 }, (_, id) => id), closedBeforeSent: [] }) + "\n",
-  );
-  expect(exitCode).toBe(0);
-}, 30_000);
+test.concurrent(
+  "a stream that reuses a destroyed stream's allocation doesn't get its queued close event",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        join(import.meta.dir, "quic-stream-recycled-close-fixture.ts"),
+        join(keysDir, "agent1-key.pem"),
+        join(keysDir, "agent1-cert.pem"),
+      ],
+      // ASAN only reuses a freed block right away when its quarantine is off.
+      env: withoutAsanQuarantine(bunEnv),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe(
+      JSON.stringify({ opened: 16, delivered: Array.from({ length: 16 }, (_, id) => id), closedBeforeSent: [] }) + "\n",
+    );
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
 
-test("a stream that reuses a destroyed stream's allocation doesn't get its queued response headers", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      join(import.meta.dir, "quic-stream-recycled-headers-fixture.ts"),
-      join(keysDir, "agent1-key.pem"),
-      join(keysDir, "agent1-cert.pem"),
-    ],
-    // ASAN only reuses a freed block right away when its quarantine is off.
-    env: withoutAsanQuarantine(bunEnv),
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toBe(JSON.stringify(Array.from({ length: 16 }, (_, id) => ["/fresh/" + id])) + "\n");
-  expect(exitCode).toBe(0);
-}, 30_000);
+test.concurrent(
+  "a stream that reuses a destroyed stream's allocation doesn't get its queued response headers",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        join(import.meta.dir, "quic-stream-recycled-headers-fixture.ts"),
+        join(keysDir, "agent1-key.pem"),
+        join(keysDir, "agent1-cert.pem"),
+      ],
+      // ASAN only reuses a freed block right away when its quarantine is off.
+      env: withoutAsanQuarantine(bunEnv),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe(JSON.stringify(Array.from({ length: 16 }, (_, id) => ["/fresh/" + id])) + "\n");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
 
 // A stream opened above the peer's stream limit waits for the peer's next
 // grant. When it is destroyed while it waits, the grant goes to the stream
@@ -659,13 +667,13 @@ test("a stream destroyed before it opens leaves the next grant to the stream que
           received.push(body);
           stream.writer.endSync();
           if (body === "third") gotThird.resolve();
-        })().catch(() => {});
+        })().catch(gotThird.reject);
       };
     },
     {
       alpn: ["echo"],
       sni: { "*": { keys: [key], certs: [cert] } },
-      transportParams: { maxIdleTimeout: 5, initialMaxStreamsBidi: 1 },
+      transportParams: { maxIdleTimeout: 1, initialMaxStreamsBidi: 1 },
     },
   );
 
@@ -673,9 +681,13 @@ test("a stream destroyed before it opens leaves the next grant to the stream que
     alpn: "echo",
     servername: "localhost",
     verifyPeer: "manual",
-    transportParams: { maxIdleTimeout: 5 },
+    transportParams: { maxIdleTimeout: 1 },
   } as SessionOptions);
-  client.closed.catch(() => {});
+  // A stream that never opens ends as the idle close of the session.
+  client.closed.then(
+    () => gotThird.reject(new Error("the session closed before the third stream opened")),
+    gotThird.reject,
+  );
   await client.opened;
 
   const [first, second, third] = await Promise.all(

@@ -2,7 +2,7 @@
 //! annotation.
 //!
 //! Mirrors `checkSourceElementUnreachable`, `checkAllCodePathsInNonVoidFunctionReturnOrThrow` and
-//! `checkGeneratorInstantiationAssignabilityToReturnType` in TypeScript 7.0.2's checker.go.
+//! `checkGeneratorInstantiationAssignabilityToReturnType` in TypeScript 7.1's checker.go.
 
 use super::*;
 use crate::bind::{FnOwner, Parent, UNREACHABLE};

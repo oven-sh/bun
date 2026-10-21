@@ -3,7 +3,7 @@
 //! expressions), 2536 4105 (`T[K]`), and 2514 for `T[-1]` through `type_from_node`.
 //!
 //! Mirrors `checkTupleType`, `checkInferType`, `checkTypeAliasDeclaration`, `checkPropertySignature`,
-//! `checkMethodDeclaration`, `checkIndexedAccessIndexType` and `checkExpressionWithTypeArguments` in TypeScript 7.0.2's
+//! `checkMethodDeclaration`, `checkIndexedAccessIndexType` and `checkExpressionWithTypeArguments` in TypeScript 7.1's
 //! checker.go, and `checkGrammarIndexSignatureParameters`, `checkGrammarInterfaceDeclaration` and
 //! `checkGrammarTypeOperatorNode` in its grammarchecks.go.
 //!

@@ -3,7 +3,7 @@
 //!
 //! Mirrors `checkClassLikeDeclaration`, `issueMemberSpecificError`, `checkKindsOfPropertyMemberOverrides`,
 //! `checkInterfaceDeclaration`, `checkInheritedPropertiesAreIdentical` and `checkIndexConstraints` in TypeScript
-//! 7.0.2's checker.go.
+//! 7.1's checker.go.
 
 use super::relate::Relation;
 use super::sink::held;

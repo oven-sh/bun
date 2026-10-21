@@ -1,7 +1,7 @@
 //! Property names, names in namespaces, and type-only names used as values: 2464, 2694 2713 2724 2749, 1361 1362.
 //!
 //! Mirrors `checkComputedPropertyName`, `resolveQualifiedName`, `getTypeOnlyAliasDeclarationEx` and the end of
-//! `onSuccessfullyResolvedSymbol` in TypeScript 7.0.2's checker.go, and `IsValidTypeOnlyAliasUseSite` in its
+//! `onSuccessfullyResolvedSymbol` in TypeScript 7.1's checker.go, and `IsValidTypeOnlyAliasUseSite` in its
 //! ast/utilities.go. Also has the position where `declareSymbolEx` in its binder.go reports a conflicting default
 //! export or `export =`.
 

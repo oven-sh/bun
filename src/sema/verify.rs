@@ -1,7 +1,7 @@
 //! Configuration diagnostics that don't depend on the program: 5051 5052 5053 5059 5061 5062 5063 5066 5067 5069 5074 5089 5090 5091
 //! 5095 5096 5102 5108 5109 5110 5116 6266 6304 6379 18035.
 //!
-//! A port of `verifyCompilerOptions` (TypeScript 7.0.2, compiler/program.go) without the checks that depend on output paths.
+//! A port of `verifyCompilerOptions` (TypeScript 7.1, compiler/program.go) without the checks that depend on output paths.
 
 use crate::check::spans::{line_end, unescaped_identifier};
 use crate::config::{

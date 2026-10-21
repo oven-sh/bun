@@ -4,7 +4,7 @@
 //! Mirrors `checkPropertyAccessExpressionOrQualifiedName`, `reportNonexistentProperty`,
 //! `checkPropertyAccessibilityAtLocation`, `checkElementAccessExpression`, `getPropertyTypeForIndexType`, and
 //! `checkVariableLikeDeclaration` with `getBindingElementTypeFromParentType` for binding elements, in TypeScript
-//! 7.0.2's checker.go.
+//! 7.1's checker.go.
 
 use super::enclosing_declaration::Enclosing;
 use super::errors::is_close;

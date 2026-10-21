@@ -1,6 +1,6 @@
 //! A file's type-independent errors: uses of syntax that the options or strict mode don't allow.
 //!
-//! From TypeScript 7.0.2's grammarchecks.go, the `checkStrictMode*` functions in its binder.go, and the checks of this
+//! From TypeScript 7.1's grammarchecks.go, the `checkStrictMode*` functions in its binder.go, and the checks of this
 //! kind in checker.go. As in tsgo, none of this is reported for a file with parse errors.
 
 use super::sink::held;

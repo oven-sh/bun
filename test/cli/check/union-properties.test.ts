@@ -26,7 +26,7 @@ const tsconfig = JSON.stringify({
 const each = (count: number, text: (i: number) => string, separator = " | ") =>
   Array.from({ length: count }, (_, i) => text(i)).join(separator);
 
-// `errors`: what TypeScript 7.0.2 reports for `program(count)`, for every `count` in `sizes`, without the file name.
+// `errors`: what TypeScript 7.1 reports for `program(count)`, for every `count` in `sizes`, without the file name.
 const cases: Record<string, { sizes?: number[]; program: (count: number) => string; errors: string }> = {
   "a property that all, some, one or none of the members have": {
     program: count => `
@@ -1010,7 +1010,7 @@ test.concurrent.skipIf(!tsc)("matches tsc for every kind of union member and pro
 // that was narrowed, it picks them from that union by position. It also caches the results for lists of types it has
 // seen. A failed assignment prints the union, and the line after it mentions the first member.
 
-// The expected output of each program is TypeScript 7.0.2's, with `noErrorTruncation`.
+// The expected output of each program is TypeScript 7.1's, with `noErrorTruncation`.
 const orders: Record<string, { program: string; errors: string }> = {
   "unions whose members interleave, overlap, follow each other, are the same or are `never`": {
     program: `
@@ -2102,7 +2102,7 @@ const reads = (prefix: string, values: string[]) =>
 /** `owner.name`, `owner[0]`, `owner()` */
 const accesses = (owner: string, names: string[]) => names.map(name => `${owner}${/^\w/.test(name) ? "." : ""}${name}`);
 
-// `errors`: what TypeScript 7.0.2 reports for `program(count)`, for every `count` in `sizes`, without the file name.
+// `errors`: what TypeScript 7.1 reports for `program(count)`, for every `count` in `sizes`, without the file name.
 const members: Record<string, { sizes: number[]; program: (count: number) => string; errors: string }> = {
   "names that one, two or all of the constituents have": {
     // The constituents have 21 properties besides the filler.

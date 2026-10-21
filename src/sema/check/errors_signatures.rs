@@ -5,7 +5,7 @@
 //! * Return types: 2505 1064 1058 1062, 1228 1229 2677 1230 1225.
 //!
 //! Mirrors `checkTypeParameter`, `checkTypeParameterDeferred`, `checkSignatureDeclaration`,
-//! `checkAsyncFunctionReturnType` and `checkTypePredicate` in TypeScript 7.0.2's checker.go.
+//! `checkAsyncFunctionReturnType` and `checkTypePredicate` in TypeScript 7.1's checker.go.
 
 use super::*;
 use crate::bind::{FnOwner, MemberOwner};

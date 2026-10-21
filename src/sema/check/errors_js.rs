@@ -1,7 +1,7 @@
 //! JavaScript files: which diagnostics apply to them.
 //!
 //! A port of `canIncludeBindAndCheckDiagnostics`, `getBindAndCheckDiagnosticsWithChecker` and
-//! `getAdditionalJSSyntacticDiagnostics` (TypeScript 7.0.2, compiler/program.go). `checkJSSyntax` (parser/parser.go)
+//! `getAdditionalJSSyntacticDiagnostics` (TypeScript 7.1, compiler/program.go). `checkJSSyntax` (parser/parser.go)
 //! runs in the parser: `hir::DiagnosticKind::Js`.
 
 use super::*;

@@ -2,7 +2,7 @@
 //! 1240, 1241, 1270, 1271.
 //!
 //! Mirrors `getLegacyDecoratorCallSignature`, `getESDecoratorCallSignature`, `resolveDecorator`, `checkDecorator` and
-//! `checkGrammarDecorator` in TypeScript 7.0.2's checker.go and grammarchecks.go.
+//! `checkGrammarDecorator` in TypeScript 7.1's checker.go and grammarchecks.go.
 
 use super::call::{CallLike, ExpectsReturn};
 use super::errors_statements::is_binder_diagnostic;

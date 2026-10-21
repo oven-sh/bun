@@ -2569,7 +2569,7 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       expect([timed.stdout, timed.exitCode]).toEqual(["", 0]);
     });
 
-    // TypeScript 7.0.2 reports no errors here. `Pick` and `Omit` look up the properties they keep by name. Creating a
+    // TypeScript 7.1 reports no errors here. `Pick` and `Omit` look up the properties they keep by name. Creating a
     // union's property resolves the types of the properties it combines, and `shape`'s is still being resolved.
     test.each([`Pick<N, "id">`, `Omit<N, "shape">`, `Pick<N, Exclude<keyof N, "shape">>`])(
       "accepts %s of a union whose other property's type is still being resolved",
@@ -4164,7 +4164,7 @@ export { n, area, u };
     );
 
     // The first module after the sort is the one used to name the type. Here no module can be used, so the error quotes
-    // it. Where the ordering is cyclic, which one comes first depends on the sort algorithm. The names are tsc 7.0.2's.
+    // it. Where the ordering is cyclic, which one comes first depends on the sort algorithm. The names are tsc 7.1's.
     test.each([
       [5, 5, "lib/shared/shim"],
       [10, 11, "page08"],
@@ -21210,7 +21210,7 @@ export const loaded = loader.load(key, options, key);
       expect(exitCode).toBe(1);
     });
 
-    // The expected output of each program is TypeScript 7.0.2's.
+    // The expected output of each program is TypeScript 7.1's.
     describe("cached parts of conditional types, mapped types and aliases", () => {
       test("checks conditional types in relations, in inference and in messages", async () => {
         using dir = project({
@@ -22296,7 +22296,7 @@ export {};
       });
     });
 
-    // The expected output of each program is TypeScript 7.0.2's.
+    // The expected output of each program is TypeScript 7.1's.
     describe("cached facts about signatures, literal types, members and scopes", () => {
       test("narrows by declared type predicates of functions, methods, unions of signatures and optional calls", async () => {
         using dir = project({
@@ -22916,7 +22916,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       });
     });
 
-    // `instantiateType` fails at 100 nested calls. The expected output of each program is TypeScript 7.0.2's.
+    // `instantiateType` fails at 100 nested calls. The expected output of each program is TypeScript 7.1's.
     test("reports TS5114 at the same recursion depth as tsc for every way a type can recur", async () => {
       // `E` is the element type of the counting tuples, and it's different in every file. The first `length` lookup on
       // a tuple takes two more levels, and tuple types are shared by the whole program.

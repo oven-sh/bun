@@ -1,7 +1,7 @@
 //! Small independent checks: 2481, 2774 2801 2845, 2698, 2432 2473.
 //!
 //! Mirrors `checkVarDeclaredNamesNotShadowed`, `checkTestingKnownTruthyCallableOrAwaitableOrEnumMemberType`,
-//! `getSymbolAtLocation`, `isValidSpreadType` and the end of `checkEnumDeclaration` in TypeScript 7.0.2's checker.go.
+//! `getSymbolAtLocation`, `isValidSpreadType` and the end of `checkEnumDeclaration` in TypeScript 7.1's checker.go.
 
 use super::*;
 use crate::bind::{

@@ -1,6 +1,6 @@
 //! Type relations: whether a value of one type can be used where another type is expected.
 //!
-//! Follows `internal/checker/relater.go` of TypeScript 7.0.2 function by function. The names in
+//! Follows `internal/checker/relater.go` of TypeScript 7.1 function by function. The names in
 //! `backticks` at the head of a function are the names used there. `REPORT` is `reportErrors`. Code
 //! that only serves error elaboration is in `explain_relation.rs`.
 

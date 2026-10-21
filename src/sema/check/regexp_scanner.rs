@@ -1,7 +1,7 @@
 //! Parses regular expression literals the way an engine does and reports errors 1499 to 1538, plus
 //! the scanner's errors about escapes and missing syntax (1005, 1125, 1126, 1198, 1199, 1487, 1488).
 //!
-//! Ported from TypeScript 7.0.2:
+//! Ported from TypeScript 7.1:
 //! - regexp.go and unicodeproperties.go from the scanner
 //! - `ReScanSlashToken`, `scanEscapeSequence`, `scanUnicodeEscape`, `scanIdentifier` and
 //!   `scanIdentifierParts` from scanner.go, as far as regular expressions use them

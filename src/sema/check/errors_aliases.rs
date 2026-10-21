@@ -5,7 +5,7 @@
 //!
 //! Mirrors `checkAliasSymbol`, `checkAndReportErrorForResolvingImportAliasToTypeOnlySymbol`,
 //! `getExportsOfModuleWorker`, `getExternalModuleMember`, `resolveExternalModule`, `checkImportCallExpression`,
-//! `checkConstEnumAccess`, `checkNewTargetMetaProperty` and `checkImportMetaProperty` in TypeScript 7.0.2's checker.go,
+//! `checkConstEnumAccess`, `checkNewTargetMetaProperty` and `checkImportMetaProperty` in TypeScript 7.1's checker.go,
 //! `getBindAndCheckDiagnosticsWithChecker` and `GetIncludeProcessorDiagnostics` in its program.go, and
 //! `processCommentDirective` in its scanner.go.
 //!

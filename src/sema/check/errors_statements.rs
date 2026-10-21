@@ -12,7 +12,7 @@
 //!
 //! Mirrors `checkWithStatement`, `checkReturnStatement`, `checkIfStatement`, `checkForInStatement`,
 //! `checkForOfStatement`, `checkReferenceExpression`, `checkCatchClause`, `checkVariableStatement` and
-//! `checkVariableLikeDeclaration` in TypeScript 7.0.2's checker.go, `checkGrammarStatementInAmbientContext`,
+//! `checkVariableLikeDeclaration` in TypeScript 7.1's checker.go, `checkGrammarStatementInAmbientContext`,
 //! `checkGrammarForInOrForOfStatement`, `checkGrammarVariableDeclarationList`, `checkGrammarAwaitOrAwaitUsing`,
 //! `checkGrammarYieldExpression` and, for `using`, `checkGrammarModifiers` in its grammarchecks.go,
 //! `checkStrictModeWithStatement` in its binder.go, and `reparseTopLevelAwait` in its parser.go.

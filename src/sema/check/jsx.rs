@@ -5,7 +5,7 @@
 //! `instantiateAliasOrInterfaceWithDefaults`, `getStaticTypeOfReferencedJsxConstructor`,
 //! `getNameFromJsxElementAttributesContainer`, `getUninstantiatedJsxSignaturesOfType`,
 //! `getIntrinsicAttributesTypeFromStringLiteralType` and
-//! `createJsxAttributesTypeFromAttributesProperty` in TypeScript 7.0.2's jsx.go.
+//! `createJsxAttributesTypeFromAttributesProperty` in TypeScript 7.1's jsx.go.
 
 use super::*;
 use crate::resolve::JsxEmit;

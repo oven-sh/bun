@@ -3,7 +3,7 @@
 //!
 //! The order of the checks, the messages and their positions mirror `resolveCallExpression`, `resolveNewExpression`,
 //! `resolveTaggedTemplateExpression`, `resolveCall`, `chooseOverload`, `isSignatureApplicable`,
-//! `reportCallResolutionErrors` and `getArgumentArityError` in TypeScript 7.0.2's checker.go. One difference: an
+//! `reportCallResolutionErrors` and `getArgumentArityError` in TypeScript 7.1's checker.go. One difference: an
 //! argument that isn't a literal has a single type here, the one computed when the call was resolved, whereas tsgo
 //! rechecks it for each candidate (`check_argument`). Whenever that leaves a candidate's applicability undecided,
 //! nothing is reported.

@@ -2,7 +2,7 @@
 //! 2860 2861, 7057, and 2364 for `=`.
 //!
 //! Mirrors `checkAssignmentOperator` for `=`, `checkAssertion`, `checkSatisfiesExpression`, `checkTemplateExpression`,
-//! `resolveTaggedTemplateExpression`, `checkInstanceOfExpression` and `checkYieldExpression` in TypeScript 7.0.2's
+//! `resolveTaggedTemplateExpression`, `checkInstanceOfExpression` and `checkYieldExpression` in TypeScript 7.1's
 //! checker.go, and `checkGrammarBigIntLiteral` and `checkGrammarBindingElement` in its grammarchecks.go.
 
 use super::*;

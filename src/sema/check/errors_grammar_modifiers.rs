@@ -1,4 +1,4 @@
-//! `checkGrammarModifiers` (TypeScript 7.0.2, grammarchecks.go), on `node.Modifiers()` as stored in the HIR.
+//! `checkGrammarModifiers` (TypeScript 7.1, grammarchecks.go), on `node.Modifiers()` as stored in the HIR.
 
 use super::*;
 use crate::bind::{Decl, MemberOwner, Parent};

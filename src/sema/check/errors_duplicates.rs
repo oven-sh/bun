@@ -1,7 +1,7 @@
 //! Conflicting declarations of one name: 2300 2451 2528 2567 2649 2699. Also declarations that merge only under certain
 //! conditions: 2309 2323 2433 2434.
 //!
-//! In TypeScript 7.0.2 this is spread over `declareSymbolEx` and `declareModuleMember` in binder.go, which reject a
+//! In TypeScript 7.1 this is spread over `declareSymbolEx` and `declareModuleMember` in binder.go, which reject a
 //! declaration excluded by the symbol already in the table, `mergeSymbol` in checker.go, which does the same across
 //! files, `checkObjectTypeForDuplicateDeclarations`, `checkExternalModuleExports` and `checkTypeParameters`. The
 //! declarations the binder rejected are recorded (`Bound::redeclarations`) and are reported here.

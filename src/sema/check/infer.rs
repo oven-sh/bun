@@ -1,7 +1,7 @@
 //! Infers type arguments for type parameters from a source type and a target type that mentions
 //! them.
 //!
-//! Follows TypeScript 7.0.2's `internal/checker/inference.go` function by function. A name in
+//! Follows TypeScript 7.1's `internal/checker/inference.go` function by function. A name in
 //! `backticks` at the top of a function's doc comment is its name there. Not ported: what the
 //! language service blocks, and the arity a spread argument implies for `[...T, ...U]`.
 

@@ -1,7 +1,7 @@
 //! Misplaced or conflicting declarations: 2372 2373, 2428, 2374, 2717 2403 2687.
 //!
 //! Mirrors the end of `onSuccessfullyResolvedSymbol`, `checkTypeParameterListsIdentical`,
-//! `checkTypeForDuplicateIndexSignatures` and `checkVariableLikeDeclaration` in TypeScript 7.0.2's checker.go, and
+//! `checkTypeForDuplicateIndexSignatures` and `checkVariableLikeDeclaration` in TypeScript 7.1's checker.go, and
 //! `Resolve` in its nameresolver.go.
 
 use super::*;

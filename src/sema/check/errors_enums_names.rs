@@ -7,7 +7,7 @@
 //! Mirrors `isBlockScopedNameDeclaredBeforeUse`, `checkConstEnumAccess`, `checkElementAccessExpression`,
 //! `initializeChecker`, `addUndefinedToGlobalsOrErrorOnRedeclaration`, `getCannotFindNameDiagnosticForName`,
 //! `checkAndReportErrorForUsingTypeAsValue`, `maybeMappedType`, `allTypesAssignableToKindEx`,
-//! `onSuccessfullyResolvedSymbol`, `checkImportEqualsDeclaration` and `markJsxAliasReferenced` in TypeScript 7.0.2's
+//! `onSuccessfullyResolvedSymbol`, `checkImportEqualsDeclaration` and `markJsxAliasReferenced` in TypeScript 7.1's
 //! checker.go, and `Resolve` in its nameresolver.go.
 //!
 //! Runs after the passes that report unresolved names, because it rewords some of their diagnostics.

@@ -2,7 +2,7 @@
 //! 2871 5076, 2703 2704 2790 18011, 2378, and 2678 through `check_type_comparable_to`.
 //!
 //! Mirrors `checkTruthinessOfType`, `checkNullishCoalesceOperands`, `checkDeleteExpression`, `checkAccessorDeclaration`
-//! and `checkSwitchStatement` in TypeScript 7.0.2's checker.go.
+//! and `checkSwitchStatement` in TypeScript 7.1's checker.go.
 
 use super::*;
 use crate::bind::{FnOwner, Parent, UNREACHABLE};

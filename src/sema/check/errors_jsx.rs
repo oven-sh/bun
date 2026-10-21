@@ -5,7 +5,7 @@
 //!
 //! Mirrors `checkJsxOpeningLikeElementOrOpeningFragment`, `checkJsxPreconditions`, `getIntrinsicTagSymbol`,
 //! `getJsxNamespace`, `getJsxFactoryEntity`, `getJSXFragmentType`, `resolveJsxOpeningLikeElement`,
-//! `elaborateJsxComponents` and `checkJsxReturnAssignableToAppropriateBound` in TypeScript 7.0.2's jsx.go, and
+//! `elaborateJsxComponents` and `checkJsxReturnAssignableToAppropriateBound` in TypeScript 7.1's jsx.go, and
 //! `markJsxAliasReferenced`, `checkSpreadPropOverrides`, `getTypeArgumentArityError` and
 //! `getCandidateForOverloadFailure` in its checker.go. `getJsxNamespaceContainerForImplicitImport` mirrors TypeScript
 //! 7.1.

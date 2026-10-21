@@ -5,7 +5,7 @@
 //!
 //! Mirrors `checkClassLikeDeclaration`, `checkBaseTypeAccessibility`, `checkMembersForOverrideModifier`,
 //! `checkMemberForOverrideModifier`, `isValidBaseType`, `checkInterfaceDeclaration` and `checkConstructorDeclaration`
-//! in TypeScript 7.0.2's checker.go.
+//! in TypeScript 7.1's checker.go.
 
 use super::*;
 use crate::bind::MemberOwner;

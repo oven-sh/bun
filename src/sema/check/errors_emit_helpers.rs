@@ -3,7 +3,7 @@
 //!
 //! With `importHelpers`, syntax the target doesn't support is emitted as calls to functions imported from `tslib`,
 //! which must exist. Mirrors `checkExternalEmitHelpers`, `resolveHelpersModule`, `getHelperNames` and the callers of
-//! the first, in TypeScript 7.0.2's checker.go.
+//! the first, in TypeScript 7.1's checker.go.
 //!
 //! A file requests each helper once, where `checkSourceFile` first reaches syntax that needs it. So the requesting
 //! positions are collected and sorted in the order it visits them: source order, except for nodes that

@@ -1,6 +1,6 @@
 //! Unused declarations: 6133 6138 6192 6196 6198 6199 6205, under `noUnusedLocals` and `noUnusedParameters`.
 //!
-//! Mirrors `checkUnusedIdentifiers` and its callees in TypeScript 7.0.2's checker.go. They record references during
+//! Mirrors `checkUnusedIdentifiers` and its callees in TypeScript 7.1's checker.go. They record references during
 //! checking. Here one pass over the file collects them.
 
 use super::errors_enums_names::Location;

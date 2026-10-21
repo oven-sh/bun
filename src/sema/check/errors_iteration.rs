@@ -8,7 +8,7 @@
 //!
 //! Mirrors `checkForOfStatement`, `checkForInStatement`, `checkIteratedTypeOrElementType`,
 //! `checkDestructuringAssignment` with its callees, and `checkVariableLikeDeclaration` for binding patterns, in
-//! TypeScript 7.0.2's checker.go.
+//! TypeScript 7.1's checker.go.
 
 use super::errors_access::PropertyAccess;
 use super::errors_operators::{

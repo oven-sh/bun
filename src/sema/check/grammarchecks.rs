@@ -1,4 +1,4 @@
-//! TypeScript 7.0.2's grammarchecks.go, for signatures, members, object literals and variables. The
+//! TypeScript 7.1's grammarchecks.go, for signatures, members, object literals and variables. The
 //! walk (check_source_file.rs) and `checkObjectLiteral` call these where checker.go does. Each
 //! returns whether it reported, and the caller continues or stops as checker.go does.
 //!

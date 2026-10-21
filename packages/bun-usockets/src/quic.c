@@ -543,7 +543,7 @@ static int us_quic_hsi_process(void *hset_p, struct lsxpack_header *hdr) {
         /* Drop the field but let lsqpack finish the block, so that it still
          * acknowledges the block and the connection stays usable. */
         h->too_large = 1;
-        return h->size > US_QUIC_HSET_HARD_CAP_FACTOR * h->max_size;
+        return h->size > US_QUIC_HSET_HARD_CAP_FACTOR * h->max_size ? -1 : 0;
     }
     if (h->is_server && us_quic_field_is_malformed(hdr)) return 1;
     if (h->count == h->hcap) {

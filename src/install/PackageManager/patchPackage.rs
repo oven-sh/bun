@@ -1254,11 +1254,24 @@ fn is_in_global_store(cache_path: &[u8], real: &[u8]) -> bool {
     resolve_path::is_parent_or_equal(cache_path, real) != resolve_path::ParentEqual::Unrelated
 }
 
-/// Returns true if `real`, which has its symlinks resolved, is inside the `node_modules` of the
-/// root or of a workspace.
-fn is_in_node_modules(lockfile: &Lockfile, real: &[u8]) -> bool {
+/// Returns the part of `folder` before its first `node_modules`.
+fn outermost_package(folder: &[u8]) -> &[u8] {
+    let mut start = 0;
+    for name in strings::split(folder, b"/") {
+        if name == b"node_modules" {
+            return &folder[..start];
+        }
+        start += name.len() + 1;
+    }
+    folder
+}
+
+/// Returns true if `real`, which has its symlinks resolved, is inside the `node_modules` that
+/// `folder` starts in, the root's or a workspace's.
+fn is_in_node_modules(lockfile: &Lockfile, folder: &[u8], real: &[u8]) -> bool {
     let workspaces = lockfile.workspace_paths.values().iter();
-    core::iter::once(&b""[..])
+    [outermost_package(folder), b""]
+        .into_iter()
         .chain(workspaces.map(|path| lockfile.str(path)))
         .any(|package| {
             let node_modules =
@@ -1286,8 +1299,9 @@ fn real_folder(
             Global::crash();
         }
     };
-    let is_own =
-        |real: &[u8]| !is_in_global_store(cache_path, real) && is_in_node_modules(lockfile, real);
+    let is_own = |real: &[u8]| {
+        !is_in_global_store(cache_path, real) && is_in_node_modules(lockfile, folder, real)
+    };
 
     let real = resolve(folder);
     if is_own(&real) {

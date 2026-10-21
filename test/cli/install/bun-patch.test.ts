@@ -3016,12 +3016,12 @@ describe.concurrent("the links on the way to the package folder", () => {
     });
 
     // The install that `bun patch` starts with puts the link to the store back.
-    test.each(["no-deps", "node_modules/no-deps"])("isolated linker: bun patch %s keeps the checkout", async arg => {
+    test("isolated linker: bun patch keeps the checkout", async () => {
       await using project = await linkedProject("isolated", { "no-deps": "1.1.0" }, noDeps);
       const { dir, env, link, outside } = project;
       const before = outside();
 
-      await expectPrepared(dir, env, arg, "no-deps", "node_modules/no-deps");
+      await expectPrepared(dir, env, "no-deps", "no-deps", "node_modules/no-deps");
       expect({ link: realpathSync(link), outside: outside() }).toEqual({
         link: join(dir, storeFolder("no-deps@1.1.0", "no-deps")),
         outside: before,
@@ -3081,6 +3081,33 @@ describe.concurrent("the links on the way to the package folder", () => {
       },
     );
   });
+
+  // No link on the way leaves the node_modules that the path starts in.
+  test.each(["hoisted", "isolated"] as const)(
+    "a path into the node_modules of a nested project that isn't a workspace (%s linker)",
+    async linker => {
+      await using project = await installedProject(
+        { dependencies: { "no-deps": "1.1.0" } },
+        {
+          files: {
+            "nested/package.json": JSON.stringify({ name: "nested", dependencies: { "no-deps": "1.1.0" } }),
+            "nested/bunfig.toml": `[install]\nlinker = "${linker}"\nglobalStore = false\n`,
+          },
+        },
+      );
+      const { dir, env } = project;
+      await bunOk(join(dir, "nested"), env, "install");
+      const folder = "nested/node_modules/no-deps";
+      expect(kind(dir, folder)).toBe(linker === "hoisted" ? "directory" : "link");
+
+      await expectPrepared(dir, env, folder, "no-deps", folder);
+      await Bun.write(join(dir, folder, "index.js"), patched);
+      await bunOk(dir, env, "patch", "--commit", folder);
+      expect(await Bun.file(join(dir, "patches", "no-deps@1.1.0.patch")).text()).toContain(
+        "+module.exports = 'patched';",
+      );
+    },
+  );
 
   // A link that `publicHoistPattern` created isn't removed when the pattern is. The hoisted tree has no-deps@1.0.0 at
   // `node_modules/no-deps`, and the link there points to no-deps@1.0.1.

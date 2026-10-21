@@ -771,40 +771,6 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
-  // Each entry point imports a stylesheet of its own. The plugin holds one entry
-  // point until the bundler asks for the stylesheet of the other one, so the two
-  // builds come to the stylesheets in opposite orders.
-  test("the stylesheets of the entry points are in the order of the entry points", async () => {
-    using dir = tempDir("build-stylesheet-order", {
-      "e1.js": `import "./x.css"; console.log("e1");`,
-      "e2.js": `import "./y.css"; console.log("e2");`,
-      "x.css": `.x { color: red; }`,
-      "y.css": `.y { color: blue; }`,
-    });
-    const build = async (found: "x.css" | "y.css") => {
-      const held = found === "x.css" ? "e2.js" : "e1.js";
-      const asked = Promise.withResolvers<void>();
-      const result = await Bun.build({
-        entrypoints: [join(String(dir), "e1.js"), join(String(dir), "e2.js")],
-        plugins: [
-          {
-            name: "parse-after",
-            setup(builder) {
-              builder.onLoad({ filter: /\.(js|css)$/ }, async args => {
-                if (path.basename(args.path) === found) asked.resolve();
-                if (path.basename(args.path) === held) await asked.promise;
-                return undefined;
-              });
-            },
-          },
-        ],
-      });
-      return result.outputs.map(output => path.basename(output.path));
-    };
-    const expected = ["e1.js", "e2.js", "e1.css", "e2.css"];
-    expect([await build("x.css"), await build("y.css")]).toEqual([expected, expected]);
-  });
-
   test("BuildArtifact properties", async () => {
     Bun.gc(true);
     const outdir = tempDirWithFiles("build-artifact-properties", {

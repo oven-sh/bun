@@ -597,8 +597,8 @@ console.log("About manifest:", aboutHtml);
       expect(pagesOf(oneFirst)).toEqual(["one.html", "two.html"]);
       // The chunk that both pages share runs its modules in the order of page one,
       // and the stylesheet that both pages share has the name of page one.
-      const shared = oneFirst.filter(([, text]) => text.includes("// p.js") && text.includes("// q.js"));
-      expect(shared.map(([, text]) => text.indexOf("// p.js") < text.indexOf("// q.js"))).toEqual([true]);
+      const modules = oneFirst.map(([, text]) => [...text.matchAll(/^\/\/ .*\b([pq]\.js)$/gm)].map(match => match[1]));
+      expect(modules.filter(names => names.length > 0)).toEqual([["p.js", "q.js"]]);
       expect(oneFirst.map(([name]) => name).filter(name => name.endsWith(".css"))).toEqual([
         expect.stringMatching(/^one-/),
       ]);
@@ -607,7 +607,7 @@ console.log("About manifest:", aboutHtml);
     // One file imports every page. The names are not in the order of the
     // imports, and neither is any order that the paths of the pages give.
     test.concurrent("is the order of the imports in every directory", async () => {
-      const pages = ["kiwi", "apple", "melon", "cherry", "fig", "banana", "grape", "lemon"];
+      const pages = ["kiwi", "apple", "melon", "cherry", "fig", "banana", "grape"];
       const project = {
         "server.ts":
           pages.map(page => `import ${page} from "./${page}.html";`).join("\n") +

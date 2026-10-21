@@ -926,6 +926,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
         match target_symbol {
             AliasTarget::Symbol(target) if target == sym => TypeId::ERROR,
+            // "It only makes sense to get the type of a value symbol." Only a target that's merged with another alias
+            // needs the test here.
+            AliasTarget::Symbol(target)
+                if self.files().flags(target).contains(SymFlags::ALIAS)
+                    && !self.get_symbol_flags(target).intersects(SymFlags::VALUE) =>
+            {
+                TypeId::ERROR
+            }
             target => self.type_of_alias_target(target),
         }
     }

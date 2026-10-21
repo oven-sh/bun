@@ -2249,6 +2249,145 @@ describe("bun update <name> semantics", () => {
       await install(dir, "--frozen-lockfile");
     });
 
+    // Writes one package.json per workspace path ("" is the root) plus pkg-b, which declares nothing, and installs.
+    async function aliasRepo(manifests: Record<string, Json>) {
+      const dir = await createDir({
+        ...Object.fromEntries(
+          Object.entries(manifests).map(([rel, json]) => [`${rel && `${rel}/`}package.json`, json]),
+        ),
+        "packages/pkg-b/package.json": '{"name":"pkg-b"}',
+      });
+      await install(dir);
+      return { dir, pkgB: await packageJsonText(dir, "packages/pkg-b") };
+    }
+
+    // Each package.json is exactly `expected`, and bun.lock repeats its name, version and dependency groups.
+    async function expectManifests(dir: string, expected: Record<string, Json>) {
+      const { workspaces } = await lock(dir);
+      const manifests: Record<string, Json> = {};
+      const locked: Record<string, Json> = {};
+      const lockedFields: Record<string, Json> = {};
+      for (const [rel, json] of Object.entries(expected)) {
+        manifests[rel] = await packageJsonOf(dir, rel);
+        locked[rel] = workspaces[rel];
+        lockedFields[rel] = Object.fromEntries(LOCKED_FIELDS.filter(f => f in json).map(f => [f, json[f]]));
+      }
+      expect(manifests).toStrictEqual(expected);
+      expect(locked).toStrictEqual(lockedFields);
+    }
+
+    // No key is named `no-deps` here, so a request for it reaches these entries through `npm:` only.
+    const ROOT = { name: "root", workspaces: ["packages/*"] };
+    const API = { name: "api", version: "1.0.0" };
+    const ALIAS_ONLY = {
+      "": { ...ROOT, dependencies: { aliased: "npm:no-deps@^1.0.0" } },
+      "packages/api": { ...API, dependencies: { aliased: "npm:no-deps@~1.0.0" } },
+    };
+    const ALIAS_ONLY_LATEST = {
+      "": { ...ROOT, dependencies: { aliased: "npm:no-deps@^2.0.0" } },
+      "packages/api": { ...API, dependencies: { aliased: "npm:no-deps@~2.0.0" } },
+    };
+
+    it.concurrent.each([
+      [["no-deps", "-r"]],
+      [["no-*", "-r"]],
+      [["alias*", "-r"]],
+      [["--prod", "-r"]],
+      [["--prod", "aliased", "-r"]],
+      [["--depth", "0", "-r"]],
+      [["no-deps", "--filter", "*"]],
+    ])("--latest %p moves the entries that only an npm: alias declares", async args => {
+      const { dir, pkgB } = await aliasRepo(ALIAS_ONLY);
+      expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.1", "1.1.0"]);
+      const { stdout } = await update(dir, ...args, "--latest");
+      expect(stdout.match(/^\^ .*$/gm)).toStrictEqual(["^ aliased 1.1.0 -> 2.0.0"]);
+      await expectManifests(dir, ALIAS_ONLY_LATEST);
+      expect(await packageJsonText(dir, "packages/pkg-b")).toBe(pkgB);
+      expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
+      await install(dir, "--frozen-lockfile");
+    });
+
+    it.concurrent("--filter moves the alias entry of the selected workspace only", async () => {
+      const { dir } = await aliasRepo(ALIAS_ONLY);
+      const rootText = await packageJsonText(dir);
+      await update(dir, "no-deps", "--latest", "--filter", "api");
+      await expectManifests(dir, { "": ALIAS_ONLY[""], "packages/api": ALIAS_ONLY_LATEST["packages/api"] });
+      expect(await packageJsonText(dir)).toBe(rootText);
+      expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0", "2.0.0"]);
+      await install(dir, "--frozen-lockfile");
+    });
+
+    // api is kept for `a-dep` and web for nothing. Neither may keep a stale alias entry, nor gain the root's `no-deps` key.
+    it.concurrent.each([[["a-dep", "no-deps"]], [["*"]]])(
+      "-r --latest %p moves alias entries in every group beside the entries keyed by a request, and adds no key",
+      async names => {
+        const { dir, pkgB } = await aliasRepo({
+          "": { ...ROOT, dependencies: { "no-deps": "^1.0.0" } },
+          "packages/api": { ...API, dependencies: { "a-dep": "~1.0.1", aliased: "npm:no-deps@~1.0.0" } },
+          "packages/web": {
+            name: "web",
+            devDependencies: { aliased: "npm:no-deps@^1.0.0" },
+            optionalDependencies: { "opt-alias": "npm:no-deps@~1.0.0" },
+          },
+        });
+        await update(dir, ...names, "-r", "--latest");
+        await expectManifests(dir, {
+          "": { ...ROOT, dependencies: { "no-deps": "^2.0.0" } },
+          "packages/api": { ...API, dependencies: { "a-dep": "~1.0.10", aliased: "npm:no-deps@~2.0.0" } },
+          "packages/web": {
+            name: "web",
+            devDependencies: { aliased: "npm:no-deps@^2.0.0" },
+            optionalDependencies: { "opt-alias": "npm:no-deps@~2.0.0" },
+          },
+        });
+        expect(await packageJsonText(dir, "packages/pkg-b")).toBe(pkgB);
+        expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
+        await install(dir, "--frozen-lockfile");
+      },
+    );
+
+    it.concurrent("-r without --latest moves alias entries inside their ranges and keeps an exact pin", async () => {
+      const pinned = { dependencies: { aliased: "npm:no-deps@1.0.0" } };
+      const { dir } = await aliasRepo({
+        "": { ...ROOT, ...pinned },
+        "packages/api": { ...API, ...pinned },
+        "packages/web": { name: "web", ...pinned },
+      });
+      const widened = {
+        "": { ...ROOT, dependencies: { aliased: "npm:no-deps@^1.0.0" } },
+        "packages/api": { ...API, dependencies: { aliased: "npm:no-deps@~1.0.0" } },
+      };
+      for (const [rel, json] of Object.entries(widened)) {
+        await writeFile(join(dir, rel, "package.json"), stringify(json));
+      }
+      expect(await install(dir)).toContain("Saved lockfile");
+      expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+      const webText = await packageJsonText(dir, "packages/web");
+
+      const first = await update(dir, "no-deps", "-r");
+      expect(first.stdout.match(/^\^ .*$/gm)).toStrictEqual(["^ aliased 1.0.0 -> 1.1.0 (v2.0.0 available)"]);
+      await expectManifests(dir, {
+        "": { ...ROOT, dependencies: { aliased: "npm:no-deps@^1.1.0" } },
+        "packages/api": { ...API, dependencies: { aliased: "npm:no-deps@~1.0.1" } },
+        "packages/web": { name: "web", ...pinned },
+      });
+      expect(await packageJsonText(dir, "packages/web")).toBe(webText);
+      expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0", "1.0.1", "1.1.0"]);
+      await install(dir, "--frozen-lockfile");
+
+      // Nothing is left to move, so a second run writes nothing.
+      const files = async () => ({
+        root: await packageJsonText(dir),
+        api: await packageJsonText(dir, "packages/api"),
+        lock: await lockText(dir),
+      });
+      const before = await files();
+      const second = await update(dir, "no-deps", "-r");
+      expect(second.stdout).toContain("(no changes)");
+      expect(second.stderr).not.toContain("Saved lockfile");
+      expect(await files()).toStrictEqual(before);
+    });
+
     it.concurrent.each([
       [
         ["no-deps", "--filter", "pkg-b"],

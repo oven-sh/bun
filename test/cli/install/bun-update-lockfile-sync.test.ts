@@ -833,6 +833,18 @@ describe.concurrent("npm: aliases", () => {
     },
   );
 
+  // pkg1 has no entry keyed `no-deps`, so the request reaches its entry through the alias only.
+  test.each([[["-r"]], [["--filter", "pkg1"]]])(
+    "bun update <real name> --latest %j moves a member's alias entry together with its bun.lock row",
+    async flags => {
+      const dir = await setup(MONOREPO({ dependencies: { aliased: "npm:no-deps@~1.0.0" } }));
+      expect((await run(dir, "update", "no-deps", "--latest", ...flags)).stderr).toBe(SAVED);
+      expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ aliased: "npm:no-deps@~2.0.0" });
+      expect(await resolutions(dir)).toStrictEqual(["no-deps@2.0.0", "pkg1@workspace:packages/pkg1"]);
+      await expectInSync(dir, ["", PKG1], { reinstall: true });
+    },
+  );
+
   test("bun update <alias>@npm:<other> retargets the alias", async () => {
     const dir = await setup({ "package.json": root({ dependencies: { aliased: "npm:no-deps@~1.0.0" } }) });
     expect((await run(dir, "update", "aliased@npm:a-dep")).stderr).toBe(SAVED);

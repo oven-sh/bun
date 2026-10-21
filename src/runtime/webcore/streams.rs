@@ -1069,24 +1069,32 @@ impl SourceHandle {
         }
     }
 
-    /// Whether the wrapper of this producer's stream is a GC root while a read waits on it
-    /// (`NewSource::hold_waiting_read`). `true`: work that the collector does not own (a socket)
-    /// settles the read whatever script drops. `false`: only the collector keeps the producer
-    /// alive, so what feeds it reaches the stream, and a root would keep both for a read that
-    /// nothing can settle.
-    pub fn roots_waiting_read(self) -> bool {
+    /// Whether I/O that the collector does not own (a socket) keeps this producer alive and
+    /// delivers its data, whatever script drops.
+    pub fn is_driven_by_io(self) -> bool {
         match self {
             SourceHandle::FetchResponseBody(_)
             | SourceHandle::S3DownloadBody(_)
             | SourceHandle::ServerRequestBody(_) => true,
-            SourceHandle::HTMLRewriter(p) => p.roots_output_read(),
             SourceHandle::None
             | SourceHandle::JSController(_)
             | SourceHandle::ByteStream(_)
             | SourceHandle::FileReader(_)
             | SourceHandle::Subprocess(_)
             | SourceHandle::ShellWritable(_)
+            | SourceHandle::HTMLRewriter(_)
             | SourceHandle::TestingCancelOnDrain(_) => false,
+        }
+    }
+
+    /// Whether the wrapper of this producer's stream is a GC root while a read waits on it
+    /// (`NewSource::hold_waiting_read`). Only the collector keeps any other producer alive, so
+    /// what feeds it reaches the stream, and a root would keep both for a read that nothing can
+    /// settle.
+    pub fn roots_waiting_read(self) -> bool {
+        match self {
+            SourceHandle::HTMLRewriter(p) => p.roots_output_read(),
+            _ => self.is_driven_by_io(),
         }
     }
 

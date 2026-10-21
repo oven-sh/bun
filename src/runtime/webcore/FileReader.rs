@@ -14,7 +14,7 @@ use bun_sys::{self as sys, Fd, FdExt};
 use crate::webcore::SinkHandle;
 use crate::webcore::blob;
 use crate::webcore::jsc::{self as jsc, EventLoopHandle, JSValue};
-use crate::webcore::jsc::EnsureStillAlive;
+use crate::webcore::jsc::{EnsureStillAlive, strong::Optional as Strong};
 use crate::webcore::node_types::PathOrFileDescriptor;
 use crate::webcore::readable_stream;
 use crate::webcore::streams;
@@ -39,6 +39,7 @@ pub struct FileReader {
     pub(crate) reader: UnsafeCell<IOReader>,
     pub(crate) done: Cell<bool>,
     pub(crate) pending: JsCell<streams::Pending>,
+    pub(crate) pending_value: JsCell<Strong>, // Strong.Optional
     pub(crate) fd: Cell<Fd>,
     /// Read-only after construction (set via struct literal in `from_blob_*`).
     pub(crate) start_offset: Option<usize>,
@@ -67,6 +68,7 @@ impl Default for FileReader {
             reader: UnsafeCell::new(IOReader::init::<FileReader>()),
             done: Cell::new(false),
             pending: JsCell::new(streams::Pending::default()),
+            pending_value: JsCell::new(Strong::empty()),
             fd: Cell::new(Fd::INVALID),
             start_offset: None,
             max_size: None,
@@ -626,7 +628,7 @@ impl FileReader {
     // Not `pub`: reached only via the `SourceContext` trait impl below.
     //
     // Only side-effect teardown lives here. Owned fields (buffered: Vec, reader:
-    // BufferedReader, lazy: Arc) drop when the caller
+    // BufferedReader, pending_value: Strong, lazy: Arc) drop when the caller
     // (`NewSource::decrement_count`) reclaims the `Box<Source>` *after* this
     // returns. Freeing the parent here would
     // deallocate the storage backing `&self` while the borrow is still live
@@ -726,12 +728,13 @@ impl FileReader {
         let was_done = self.reader().is_done();
         let global = self.parent_global();
         // Taken before the settle: that can run script, which can park the next pull.
-        let Some(read) = self.parent_const().take_parked_pull(&self.pending) else {
+        let Some(_read) = self.parent_const().take_parked_pull(&self.pending) else {
             return false;
         };
-        let view = read.view.unwrap_or_default();
-        let mut pending_array_buffer = read
-            .view
+        let mut pending_array_buffer = self
+            .pending_value
+            .get()
+            .get()
             .and_then(|view| view.as_array_buffer(&global))
             .unwrap_or_default();
         let pending_buf = pending_array_buffer.slice_mut();
@@ -742,7 +745,7 @@ impl FileReader {
             } else if pending_buf.len() >= buffered.len() {
                 pending_buf[..buffered.len()].copy_from_slice(&buffered);
                 streams::Result::IntoArrayAndDone(streams::IntoArray {
-                    value: view,
+                    value: self.pending_value.get().get().unwrap_or_default(),
                     len: buffered.len() as u64,
                 })
             } else {
@@ -754,7 +757,7 @@ impl FileReader {
             let result = if pending_buf.len() >= chunk.len() {
                 pending_buf[..chunk.len()].copy_from_slice(&chunk);
                 let into = streams::IntoArray {
-                    value: view,
+                    value: self.pending_value.get().get().unwrap_or_default(),
                     len: chunk.len() as u64,
                 };
                 if was_done {
@@ -776,6 +779,8 @@ impl FileReader {
             self.pending.with_mut(|p| p.result = result);
             !was_done
         };
+        self.pending_value
+            .with_mut(|p| p.clear_without_deallocation());
         // A re-entrant cancel() inside `run()` reaches on_reader_done, which drops the across-read ref and lets a GC free this box while the io caller still holds `&mut` into it.
         // SAFETY: see `parent()`.
         let _pin = unsafe { SourcePin::new(self.parent()) };
@@ -792,6 +797,9 @@ impl FileReader {
 
         if drained.len() > 0 {
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), drained.len());
+
+            self.pending_value
+                .with_mut(|p| p.clear_without_deallocation());
 
             if buffer.len() >= drained.len() as usize {
                 let drained_len = drained.len();
@@ -858,8 +866,9 @@ impl FileReader {
             }
         }
 
-        // The wrapper holds `array` with the promise of this pull (`NewSource::hold_waiting_read`).
         let buffer_len = buffer.len();
+        let global = self.parent_global();
+        self.pending_value.with_mut(|p| p.set(&global, array));
         #[cfg(windows)]
         if self.flowing.get() {
             self.reader().unpause();
@@ -1086,7 +1095,6 @@ impl readable_stream::SourceContext for FileReader {
     const NAME: &'static str = "File";
     const SUPPORTS_REF: bool = true;
     crate::source_context_codegen!(js_FileInternalReadableStreamSource);
-    crate::source_context_pending_view_codegen!(js_FileInternalReadableStreamSource);
 
     // The reader's own I/O settles a parked pull.
     fn roots_waiting_read(&self) -> bool {

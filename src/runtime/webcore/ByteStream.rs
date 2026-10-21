@@ -5,6 +5,7 @@ use bun_jsc::strong::Optional as StrongOptional;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell};
 use bun_sys::Error as SysError;
 
+use crate::generated_classes::js_BytesInternalReadableStreamSource as BytesSourceJs;
 use crate::webcore::streams::{self, BufferAction, IntoArray};
 use crate::webcore::{DrainResult, SinkHandle, blob, readable_stream};
 
@@ -25,10 +26,11 @@ pub struct ByteStream {
     pub(crate) has_received_last_chunk: Cell<bool>,
     pub(crate) pending: JsCell<streams::Pending>,
     pub(crate) done: Cell<bool>,
-    /// Borrowed view into a JS `Uint8Array` passed from `on_pull`; kept alive by the wrapper's
-    /// `pendingView` slot.
+    /// Borrowed view into a JS `Uint8Array` passed from `on_pull`; kept alive by `pending_value`,
+    /// or by the wrapper's `pendingView` slot ([`Self::set_value`]).
     // Raw fat slice ptr because the backing store is JS-heap-owned. Never freed by Rust.
     pub(crate) pending_buffer: Cell<*mut [u8]>,
+    pub(crate) pending_value: JsCell<StrongOptional>, // jsc.Strong.Optional
     pub(crate) high_water_mark: blob::SizeType,
     /// Native sink this stream is piped into; `on_data` dispatches and honors `Writable`.
     pub(crate) sink: JsCell<SinkHandle>,
@@ -49,6 +51,7 @@ impl Default for ByteStream {
             }),
             done: Cell::new(false),
             pending_buffer: Cell::new(Self::empty_pending_buffer()),
+            pending_value: JsCell::new(StrongOptional::empty()),
             high_water_mark: 0,
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
@@ -282,7 +285,6 @@ impl readable_stream::SourceContext for ByteStream {
     // setRefUnrefFn = null
     const SUPPORTS_REF: bool = false;
     crate::source_context_codegen!(js_BytesInternalReadableStreamSource);
-    crate::source_context_pending_view_codegen!(js_BytesInternalReadableStreamSource);
 
     fn roots_waiting_read(&self) -> bool {
         self.parent_const().producer.get().roots_waiting_read()
@@ -379,6 +381,32 @@ impl ByteStream {
         let page_size: blob::SizeType =
             blob::SizeType::try_from(bun_sys::page_size()).expect("int cast");
         streams::Start::ChunkSize((512 * 1024 + page_size).min(self.high_water_mark.max(page_size)))
+    }
+
+    fn value(&self) -> JSValue {
+        self.pending_value.with_mut(|pv| {
+            let Some(result) = pv.get() else {
+                return JSValue::ZERO;
+            };
+            pv.clear_without_deallocation();
+            result
+        })
+    }
+
+    /// The buffer of the pull that `read` parked: the one in `pending_value`, or the one that the
+    /// wrapper's `pendingView` slot held, which is taken out of it.
+    fn parked_view(&self, read: &readable_stream::WaitingRead) -> Option<JSValue> {
+        if let Some(view) = self.pending_value.get().get() {
+            return Some(view);
+        }
+        let wrapper = read.wrapper();
+        let view = BytesSourceJs::pending_view_get_cached(wrapper).filter(|view| view.is_cell())?;
+        BytesSourceJs::pending_view_set_cached(
+            wrapper,
+            self.parent_const().global_this(),
+            JSValue::UNDEFINED,
+        );
+        Some(view)
     }
 
     /// Drop the native sink and end the stream locked to it: errored with the producer's `err`, else closed.
@@ -649,11 +677,11 @@ impl ByteStream {
             // ArrayBuffer between the pull and the data arriving, leaving
             // `pending_buffer` dangling. A detached view re-derives to an empty slice.
             let global = self.parent_const().global_this();
-            let view = read.view.unwrap_or(JSValue::ZERO);
-            let mut pending_view = read
-                .view
+            let view = self.parked_view(&read);
+            let mut pending_view = view
                 .and_then(|view| view.as_array_buffer(global))
                 .unwrap_or_default();
+            let view = view.unwrap_or(JSValue::ZERO);
             let pending_buf = pending_view.slice_mut();
             let to_copy_len = chunk.len().min(pending_buf.len());
             let pending_buffer_len = pending_buf.len();
@@ -676,6 +704,7 @@ impl ByteStream {
                         self.pending.with_mut(|p| p.result = streams::Result::Done);
                     }
                 } else {
+                    self.value();
                     self.pending.with_mut(|p| {
                         p.result = streams::Result::IntoArrayAndDone(IntoArray {
                             value: view,
@@ -684,6 +713,7 @@ impl ByteStream {
                     });
                 }
             } else {
+                self.value();
                 self.pending.with_mut(|p| {
                     p.result = streams::Result::IntoArray(IntoArray {
                         value: view,
@@ -772,13 +802,28 @@ impl ByteStream {
         Ok(())
     }
 
+    /// Keeps the buffer of the pull that parks. A producer that I/O drives has it in a Strong:
+    /// the wrapper is a root for that pull anyway. For any other producer a root on the buffer
+    /// would keep the buffer's realm for a pull that nothing can settle, so the wrapper holds it
+    /// in a visited slot.
+    fn set_value(&self, view: JSValue) {
+        bun_jsc::mark_binding!();
+        let source = self.parent_const();
+        let global = source.global_this();
+        if source.producer.get().is_driven_by_io() {
+            self.pending_value.with_mut(|pv| pv.set(global, view));
+        } else if let Some(wrapper) = source.this_jsvalue.try_get() {
+            BytesSourceJs::pending_view_set_cached(wrapper, global, view);
+        }
+    }
+
     fn on_pull(&self, buffer: &mut [u8], view: JSValue) -> streams::Result {
         bun_jsc::mark_binding!();
         debug_assert!(!buffer.is_empty());
         debug_assert!(self.buffer_action.get().is_none());
 
         if !self.buffered.is_empty() {
-            debug_assert!(self.pending.get().state != streams::PendingState::Pending);
+            debug_assert!(self.value().is_empty()); // == .zero
             let to_write = self.buffered.copy_out(buffer);
             // Both sides are non-empty, so the copy moved at least one byte.
             debug_assert!(to_write > 0);
@@ -804,9 +849,9 @@ impl ByteStream {
             return streams::Result::Done;
         }
 
-        // Raw borrow of a JS-owned buffer, which the wrapper holds with the promise of this pull
-        // (`NewSource::hold_waiting_read`).
+        // Raw borrow of a JS-owned buffer; kept alive by `set_value`.
         self.pending_buffer.set(std::ptr::from_mut::<[u8]>(buffer));
+        self.set_value(view);
 
         // R-2: `JsCell::as_ptr` yields the stable `*mut Pending` that the
         // returned `streams::Result::Pending` raw-backref needs.
@@ -830,8 +875,12 @@ impl ByteStream {
     pub(crate) fn on_cancel(&self) {
         bun_jsc::mark_binding!();
         let parked = self.parent_const().take_parked_pull(&self.pending);
+        if let Some(read) = &parked {
+            self.parked_view(read);
+        }
         self.buffered.clear();
         self.done.set(true);
+        self.pending_value.with_mut(|pv| pv.deinit());
         // A native sink wired to this stream must fail, not later see an EOF and commit what it
         // has (an S3 upload would complete with a truncated object).
         let sink = *self.sink.get();
@@ -902,6 +951,7 @@ impl ByteStream {
         bun_jsc::mark_binding!();
         self.buffered.clear();
 
+        self.pending_value.with_mut(|pv| pv.deinit());
         if !self.done.get() {
             self.done.set(true);
 
@@ -1007,7 +1057,7 @@ impl ByteStream {
         self.buffer_action.set(Some(action));
         let source = self.parent_const();
         if let Some(wrapper) = source.this_jsvalue.try_get() {
-            source.hold_waiting_read(cx.global(), wrapper, promise, JSValue::UNDEFINED);
+            source.hold_waiting_read(cx.global(), wrapper, promise);
         }
         // Signal after the action is installed so a backpressure-gated
         // producer observes it; a synchronous producer may fulfil it inline.

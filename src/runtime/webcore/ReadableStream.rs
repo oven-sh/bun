@@ -805,13 +805,6 @@ pub trait SourceContext: Sized {
     fn js_owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
     /// `js_${NAME}InternalReadableStreamSource::sink_owner_set_cached`
     fn js_sink_owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
-    /// `js_${NAME}InternalReadableStreamSource::pending_view_set_cached`, bound by
-    /// `source_context_pending_view_codegen!`. A source that never parks a pull has no such slot.
-    fn js_pending_view_set_cached(_this: JSValue, _global: &JSGlobalObject, _value: JSValue) {}
-    /// `js_${NAME}InternalReadableStreamSource::pending_view_get_cached`
-    fn js_pending_view_get_cached(_this: JSValue) -> Option<JSValue> {
-        None
-    }
 
     /// Whether the wrapper is a GC root while a read waits on this source
     /// ([`NewSource::hold_waiting_read`]): work that the collector does not own settles the read
@@ -869,13 +862,17 @@ pub trait SourceContext: Sized {
     fn set_flowing(&mut self, _flag: bool) {}
 }
 
-/// A read that waited on a source, taken from the wrapper that held it to be settled
-/// ([`NewSource::take_waiting_read`]). The wrapper is kept alive until this is dropped: its
-/// `pendingPromise` slot is what holds the read's promise.
+/// A read that waited on a source, taken to be settled ([`NewSource::take_waiting_read`]). It
+/// keeps the wrapper alive until it is dropped: the wrapper's `pendingPromise` slot is what holds
+/// the read's promise.
 pub(crate) struct WaitingRead {
-    /// The buffer that a parked pull fills.
-    pub(crate) view: Option<JSValue>,
     wrapper: jsc::EnsureStillAlive,
+}
+
+impl WaitingRead {
+    pub(crate) fn wrapper(&self) -> JSValue {
+        self.wrapper.0
+    }
 }
 
 // Hand-wired JSC class (the `#[bun_jsc::JsClass]` derive cannot be used on a
@@ -1038,28 +1035,6 @@ macro_rules! source_context_codegen {
     };
 }
 
-/// Binds the `pendingView` accessors of [`SourceContext`] for a source that can park a pull.
-/// Invoke beside `source_context_codegen!`.
-#[macro_export]
-macro_rules! source_context_pending_view_codegen {
-    ($gen:ident) => {
-        #[inline]
-        fn js_pending_view_set_cached(
-            this: $crate::webcore::jsc::JSValue,
-            global: &$crate::webcore::jsc::JSGlobalObject,
-            value: $crate::webcore::jsc::JSValue,
-        ) {
-            $crate::generated_classes::$gen::pending_view_set_cached(this, global, value)
-        }
-        #[inline]
-        fn js_pending_view_get_cached(
-            this: $crate::webcore::jsc::JSValue,
-        ) -> Option<$crate::webcore::jsc::JSValue> {
-            $crate::generated_classes::$gen::pending_view_get_cached(this)
-        }
-    };
-}
-
 impl<C: SourceContext> NewSourceCodegen for NewSource<C> {
     fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
         // `self` is a heap-allocated `NewSource<C>` produced by [`NewSource::new`]
@@ -1111,38 +1086,30 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     /// A read starts to wait on this source: a pull parked, or a whole-body read is installed.
-    /// `wrapper` holds its `promise`, and the buffer `view` that a parked pull fills, in visited
-    /// slots until the read is taken to be settled. Neither is a GC root: a read that nothing can
-    /// settle is collected with its stream. The wrapper is the root where the context says that
-    /// work of its own settles the read.
+    /// `wrapper` holds its `promise` in a visited slot until the read is taken to be settled. The
+    /// promise is no GC root: a read that nothing can settle is collected with its stream. The
+    /// wrapper is the root where the context says that work of its own settles the read.
     pub(crate) fn hold_waiting_read(
         &self,
         global: &JSGlobalObject,
         wrapper: JSValue,
         promise: JSValue,
-        view: JSValue,
     ) {
         <Self as NewSourceCodegen>::pending_promise_set_cached(wrapper, global, promise);
-        C::js_pending_view_set_cached(wrapper, global, view);
         if self.context.roots_waiting_read() {
             self.waiting_read_root
                 .with_mut(|root| root.set(global, wrapper));
         }
     }
 
-    /// The read that waits is about to be settled: the wrapper stops being a root for it and
-    /// gives back the view. `None`: the wrapper was collected, and the read's promise with it.
+    /// The read that waits is about to be settled: the wrapper stops being a root for it.
+    /// `None`: the wrapper was collected, and the read's promise with it.
     pub(crate) fn take_waiting_read(&self) -> Option<WaitingRead> {
         let wrapper = match self.waiting_read_root.with_mut(|root| root.try_swap()) {
             Some(rooted) => rooted,
             None => self.this_jsvalue.try_get()?,
         };
-        let view = C::js_pending_view_get_cached(wrapper).filter(|view| view.is_cell());
-        if view.is_some() {
-            C::js_pending_view_set_cached(wrapper, self.global_this(), JSValue::UNDEFINED);
-        }
         Some(WaitingRead {
-            view,
             wrapper: jsc::EnsureStillAlive(wrapper),
         })
     }
@@ -1501,7 +1468,6 @@ impl<C: SourceContext> NewSource<C> {
         self.process_result(
             this_jsvalue,
             &global_this.js_thread_of_caller(call_frame),
-            view,
             flags,
             result,
         )
@@ -1533,7 +1499,6 @@ impl<C: SourceContext> NewSource<C> {
         &self,
         this_jsvalue: JSValue,
         cx: &bun_jsc::JsThread<'_>,
-        view: JSValue,
         flags: JSValue,
         mut result: streams::Result,
     ) -> JsResult<JSValue> {
@@ -1545,7 +1510,7 @@ impl<C: SourceContext> NewSource<C> {
             }
             streams::Result::Pending(_) => {
                 let out = result.to_js(cx)?;
-                self.hold_waiting_read(cx.global(), this_jsvalue, out, view);
+                self.hold_waiting_read(cx.global(), this_jsvalue, out);
                 Ok(out)
             }
             streams::Result::TemporaryAndDone(_)

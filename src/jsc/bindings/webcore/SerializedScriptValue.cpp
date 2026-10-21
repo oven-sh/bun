@@ -32,7 +32,6 @@
 // #include "ByteArrayPixelBuffer.h"
 #include "CryptoKeyAES.h"
 #include "CryptoKeyAKP.h"
-#include <openssl/err.h>
 #include "CryptoKeyEC.h"
 #include "CryptoKeyHMAC.h"
 #include "CryptoKeyOKP.h"
@@ -3227,7 +3226,7 @@ private:
             if (!read(keyData))
                 return false;
             result = CryptoKeyOKP::create(algorithm, namedCurve, type == CryptoKeyAsymmetricTypeSubtag::Public ? CryptoKeyType::Public : CryptoKeyType::Private, WTF::move(keyData), extractable, usages);
-            return !!result;
+            return true;
         }
         }
         Vector<uint8_t> keyData;
@@ -3273,15 +3272,15 @@ private:
             result = CryptoKeyAKP::importPkcs8(algorithm, WTF::move(keyData), extractable, usages, nullptr);
             break;
         }
-        // A corrupt payload leaves the BoringSSL parse error in the queue;
-        // nothing here attaches it as a cause, so clear it.
-        if (!result)
-            ERR_clear_error();
-        return !!result;
+        return true;
     }
 
     bool readCryptoKey(JSValue& cryptoKey)
     {
+        // A corrupt payload leaves the BoringSSL parse error in the queue;
+        // nothing here attaches it as a cause, so clear it.
+        ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+
         uint32_t keyFormatVersion;
         if (!read(keyFormatVersion) || keyFormatVersion > currentKeyFormatVersion)
             return false;
@@ -3373,6 +3372,8 @@ private:
                 return false;
             break;
         }
+        if (!result)
+            return false;
         cryptoKey = getJSValue(result.get());
         return true;
     }

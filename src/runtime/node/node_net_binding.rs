@@ -46,24 +46,6 @@ pub(crate) fn set_default_auto_select_family_attempt_timeout(value: u32) -> u32 
     value
 }
 
-// codegen (`generated_js2native.rs`) snake-cases the symbol; alias the
-// PascalCase fns so both spellings resolve.
-pub(crate) use self::{BlockList as block_list, SocketAddress as socket_address};
-
-// Forward to the codegen'd `js_${Type}::get_constructor` wrappers — they go through
-// `jsc_abi_extern!` so the extern uses `extern "sysv64"` on win-x64 (matching
-// C++ `JSC_CALLCONV`). A bare `extern "C"` redecl here would be the wrong ABI on
-// Windows and trips `clashing_extern_declarations`.
-#[allow(non_snake_case)]
-pub(crate) fn SocketAddress(global: &JSGlobalObject) -> JSValue {
-    crate::generated_classes::js_SocketAddress::get_constructor(global)
-}
-
-#[allow(non_snake_case)]
-pub(crate) fn BlockList(global: &JSGlobalObject) -> JSValue {
-    crate::generated_classes::js_BlockList::get_constructor(global)
-}
-
 pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue {
     // Only `socket`, `ref_count`, `protos`, `handlers` are
     // specified; the rest take their struct defaults.

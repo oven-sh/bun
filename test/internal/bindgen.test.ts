@@ -610,7 +610,7 @@ describe("strings", () => {
   });
 });
 
-describe("instances of a class of a .classes.ts file", () => {
+describe("instances of a class of another schema", () => {
   const address = new SocketAddress({ port: 8080 });
   const notInstances = [undefined, null, 1, "a", {}, SocketAddress.prototype, Object.create(address), new BlockList()];
 

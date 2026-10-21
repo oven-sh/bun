@@ -93,6 +93,7 @@
 #include "blob.h"
 #include "GeneratedBlob.h"
 #include "ZigGeneratedClasses.h"
+#include "GeneratedBlockList.h"
 #include "JSX509Certificate.h"
 #include "ncrypto.h"
 #include "JSKeyObject.h"
@@ -1423,7 +1424,7 @@ private:
                 return true;
             }
 
-            if (auto* blockList = dynamicDowncast<JSBlockList>(obj)) {
+            if (auto* blockList = dynamicDowncast<Bun::Bindgen::Generated::JSBlockList>(obj)) {
                 if (!startObjectInternal(blockList)) // handle duplicates
                     return true;
                 if (m_forTransfer == SerializationForCrossProcessTransfer::Yes || m_forStorage == SerializationForStorage::Yes) {

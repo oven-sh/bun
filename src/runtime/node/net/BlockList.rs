@@ -1,16 +1,11 @@
 use core::ffi::c_void;
 
-// ─── JsClass payload + host fns ───────────────────────────────────────────
-// `BlockList` is the `m_ctx` payload for a `.classes.ts` wrapper; every method
-// is a `#[bun_jsc::host_fn]` and the struct itself carries `#[bun_jsc::JsClass]`.
-
 use core::cmp::Ordering;
 use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 use bun_core::{String as BunString, ZStr};
-use bun_jsc::{
-    CallFrame, CloneSerializer, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _,
-};
+use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::{CloneSerializer, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _};
 use bun_threading::{Guarded, Mutex};
 
 /// `(serialize_nonce, address)` of `BlockList` instances currently embedded in
@@ -34,9 +29,6 @@ fn z(s: &ZStr) -> &str {
     unsafe { core::str::from_utf8_unchecked(s.as_bytes()) }
 }
 
-/// `.classes.ts`-backed payload (`m_ctx`) for `JSBlockList`.
-/// `fromJS` / `toJS` are provided by the codegen via `#[bun_jsc::JsClass]`.
-#[bun_jsc::JsClass]
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub(crate) struct BlockList {
     // Intrusive thread-safe refcount.
@@ -76,10 +68,8 @@ impl BlockList {
         unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
     }
 
-    // NOTE: no `#[bun_jsc::host_fn]` — the `#[bun_jsc::JsClass]` derive emits
-    // the `${T}Class__construct` C-ABI shim that calls `<Self>::constructor`.
-    pub(crate) fn constructor(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
-        let ptr = bun_core::heap::into_raw(Box::new(Self {
+    pub(crate) fn constructor() -> *mut Self {
+        bun_core::heap::into_raw(Box::new(Self {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             da_rules: JsCell::new(Vec::new()),
             mutex: Mutex::default(),
@@ -89,32 +79,27 @@ impl BlockList {
                 bun_boringssl_sys::rand_bytes(&mut n);
                 u64::from_ne_bytes(n)
             },
-        }));
-        Ok(ptr)
+        }))
     }
 
     /// May be called from any thread.
     pub(crate) fn estimated_size(&self) -> usize {
-        (core::mem::size_of::<Self>() + self.estimated_size.load(AtomicOrdering::SeqCst) as usize)
+        self.estimated_size.load(AtomicOrdering::SeqCst) as usize
             / (self.ref_count.get().max(1) as usize)
     }
 
-    // NOTE: no `#[bun_jsc::host_fn]` — receiver-less assoc fns aren't supported
-    // by the Free-kind shim (it emits a bare `fn_name(...)` call). The
-    // `.classes.ts` codegen owns the static-method link name and calls
-    // `<Self>::is_block_list` directly.
-    pub(crate) fn is_block_list(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let [value] = frame.arguments_as_array::<1>();
-        Ok(JSValue::from(value.as_::<Self>().is_some()))
+    pub(crate) fn is_block_list(value: JsLocal<'_>) -> bool {
+        value.to_js().as_::<Self>().is_some()
     }
 
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn add_address(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [address_js, mut family_js] = frame.arguments_as_array::<2>();
+        &self,
+        cx: &mut JsScope<'_>,
+        address: JsLocal<'_>,
+        family: JsLocal<'_>,
+    ) -> JsResult<()> {
+        let global = cx.global();
+        let (address_js, mut family_js) = (address.to_js(), family.to_js());
         if family_js.is_undefined() {
             family_js = global.common_strings().ipv4_lower();
         }
@@ -126,22 +111,24 @@ impl BlockList {
             SocketAddress::init_from_addr_family(global, address_js, family_js)?._addr
         };
 
-        let _guard = this.mutex.lock_guard();
-        this.da_rules.with_mut(|r| r.insert(0, Rule::Addr(address)));
-        this.estimated_size.fetch_add(
+        let _guard = self.mutex.lock_guard();
+        self.da_rules.with_mut(|r| r.insert(0, Rule::Addr(address)));
+        self.estimated_size.fetch_add(
             u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
             AtomicOrdering::Relaxed,
         );
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn add_range(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [start_js, end_js, mut family_js] = frame.arguments_as_array::<3>();
+        &self,
+        cx: &mut JsScope<'_>,
+        start: JsLocal<'_>,
+        end: JsLocal<'_>,
+        family: JsLocal<'_>,
+    ) -> JsResult<()> {
+        let global = cx.global();
+        let (start_js, end_js, mut family_js) = (start.to_js(), end.to_js(), family.to_js());
         if family_js.is_undefined() {
             family_js = global.common_strings().ipv4_lower();
         }
@@ -168,23 +155,26 @@ impl BlockList {
                 ));
             }
         }
-        let _guard = this.mutex.lock_guard();
-        this.da_rules
+        let _guard = self.mutex.lock_guard();
+        self.da_rules
             .with_mut(|r| r.insert(0, Rule::Range { start, end }));
-        this.estimated_size.fetch_add(
+        self.estimated_size.fetch_add(
             u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
             AtomicOrdering::Relaxed,
         );
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn add_subnet(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [network_js, prefix_js, mut family_js] = frame.arguments_as_array::<3>();
+        &self,
+        cx: &mut JsScope<'_>,
+        network: JsLocal<'_>,
+        prefix: JsLocal<'_>,
+        family: JsLocal<'_>,
+    ) -> JsResult<()> {
+        let global = cx.global();
+        let (network_js, prefix_js, mut family_js) =
+            (network.to_js(), prefix.to_js(), family.to_js());
         if family_js.is_undefined() {
             family_js = global.common_strings().ipv4_lower();
         }
@@ -216,23 +206,24 @@ impl BlockList {
             )?)
             .unwrap();
         }
-        let _guard = this.mutex.lock_guard();
-        this.da_rules
+        let _guard = self.mutex.lock_guard();
+        self.da_rules
             .with_mut(|r| r.insert(0, Rule::Subnet { network, prefix }));
-        this.estimated_size.fetch_add(
+        self.estimated_size.fetch_add(
             u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
             AtomicOrdering::Relaxed,
         );
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn check(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [address_js, mut family_js] = frame.arguments_as_array::<2>();
+        &self,
+        cx: &mut JsScope<'_>,
+        address: JsLocal<'_>,
+        family: JsLocal<'_>,
+    ) -> JsResult<bool> {
+        let global = cx.global();
+        let (address_js, mut family_js) = (address.to_js(), family.to_js());
         if family_js.is_undefined() {
             family_js = global.common_strings().ipv4_lower();
         }
@@ -250,11 +241,11 @@ impl BlockList {
                 Err(err) => {
                     debug_assert!(err == bun_jsc::JsError::Thrown);
                     global.clear_exception();
-                    return Ok(JSValue::FALSE);
+                    return Ok(false);
                 }
             }
         };
-        Ok(JSValue::js_boolean(this.check_sockaddr(address)))
+        Ok(self.check_sockaddr(address))
     }
 
     pub(crate) fn check_sockaddr(&self, address: &sockaddr) -> bool {
@@ -340,10 +331,10 @@ impl BlockList {
         false
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn rules(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let _guard = this.mutex.lock_guard();
-        let rules = this.da_rules.get();
+    pub(crate) fn get_rules(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
+        let _guard = self.mutex.lock_guard();
+        let rules = self.da_rules.get();
         // GC must be able to visit
         let array = JSValue::create_empty_array(global, rules.len())?;
 

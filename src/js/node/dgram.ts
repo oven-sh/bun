@@ -164,7 +164,7 @@ const getSockNameFn = $bindgen("udp_socket.bind.ts", "dgramGetSockNameFd");
 
 let BlockList;
 function isBlockList(value) {
-  BlockList ??= $rust("node_net_binding.rs", "BlockList");
+  BlockList ??= $bindgen("BlockList.bind.ts", "BlockList");
   return BlockList.isBlockList(value);
 }
 

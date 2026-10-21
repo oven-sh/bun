@@ -8,7 +8,7 @@ mode: center
 
 <Steps>
 	<Step title="Create a new project">
-		Scaffold the project with `create-prisma`. The `minimal` template sets up Prisma ORM 8 in `src/prisma/` and installs the dependencies with Bun. `--authoring psl` writes the schema as `src/prisma/contract.prisma`, the Prisma Schema Language file this guide edits. Answer the prompt for agent skills, or pass `--yes` to accept the default.
+		Scaffold the project with `create-prisma`, whose `minimal` template sets up Prisma ORM 8 in `src/prisma/` and installs the dependencies with Bun. The `--authoring psl` flag writes the schema as `src/prisma/contract.prisma`, the Prisma Schema Language file this guide edits, and the only remaining prompt asks which coding agents to install skills for, which `--yes` answers with the default.
 
     	```bash terminal icon="terminal"
     	bun create prisma@latest prisma-postgres-app --template minimal --provider postgres --authoring psl --package-manager bun --no-deploy
@@ -17,13 +17,13 @@ mode: center
     </Step>
 
     <Step title="Create a Prisma Postgres database">
-    	Create a database with `create-db`. It needs no account and prints a `postgres://` connection string and a claim URL. The database is deleted after 24 hours unless you claim it. Any other PostgreSQL 15 or newer connection string works too.
+    	Create a database with `create-db`, which needs no account and prints a `postgres://` connection string together with a claim URL. An unclaimed database is deleted after 24 hours, so open that URL if you want to keep it. Any other PostgreSQL 15 or newer connection string works too.
 
     	```bash terminal icon="terminal"
     	bunx create-db
     	```
 
-    	Put the connection string in a `.env` file. Change `sslmode=require` to `sslmode=verify-full`, because with `require` the `pg` driver prints a security warning on every connection.
+    	Put the connection string in a `.env` file, changing `sslmode=require` to `sslmode=verify-full` because with `require` the `pg` driver prints a security warning on every connection.
 
     	```ini .env icon="settings"
     	DATABASE_URL="postgres://USER:PASSWORD@db.prisma.io:5432/postgres?sslmode=verify-full"
@@ -31,7 +31,7 @@ mode: center
     </Step>
 
     <Step title="Initialize the database">
-    	Prisma ORM 8 compiles the schema in `src/prisma/contract.prisma` into a contract that your queries are type-checked against. Emit it, then create the tables. Bun loads `.env` when it runs a file, but it does not pass `.env` to `package.json` scripts unless you add [`--env-file`](/runtime/environment-variables#manually-specifying-env-files).
+    	Prisma ORM 8 compiles the schema in `src/prisma/contract.prisma` into a contract that your queries are type-checked against, so emit it first and then create the tables. The second command needs the connection string, and because Bun loads `.env` when it runs a file but not when it runs a `package.json` script, pass the file with [`--env-file`](/runtime/environment-variables#manually-specifying-env-files).
 
     	```bash terminal icon="terminal"
     	bun run contract:emit
@@ -50,7 +50,7 @@ mode: center
     	└─ marker a51b4833fdaffe730572670ccc27dd89af7e0726ab3de7f428d21702d687cc15
     	```
 
-    	If `db:init` stops with `Connection terminated unexpectedly`, the new database is still starting. Wait a few seconds and run it again; it is safe to repeat.
+    	If `db:init` stops with `Connection terminated unexpectedly`, the new database is still starting, so wait a few seconds and run the command again, which is safe to repeat.
     </Step>
 
     <Step title="Create a test script">
@@ -72,11 +72,11 @@ mode: center
     	await db.close();
     	```
 
-    	`db.close()` lets the script exit. Without it, the connection pool keeps the process alive.
+    	The final `db.close()` lets the script exit, because otherwise the connection pool keeps the process alive.
     </Step>
 
     <Step title="Run and test the application">
-    	Run the script with `bun`, which loads `.env` on its own. Each run creates a new user.
+    	Run the script with `bun`, which loads `.env` on its own, and watch the count grow because each run creates a new user.
 
     	```bash terminal icon="terminal"
     	bun src/index.ts
@@ -104,7 +104,7 @@ mode: center
     </Step>
 
     <Step title="Serve users over HTTP">
-    	Create `src/server.ts` with a `Bun.serve` server that returns the users as JSON. The server shares one connection pool across requests, so it never calls `db.close()`.
+    	Create `src/server.ts` with a `Bun.serve` server that returns the users as JSON. Unlike the script, the server shares one connection pool across requests, so it never calls `db.close()`.
 
     	```ts src/server.ts icon="/icons/typescript.svg"
     	import { db } from "./prisma/db";
@@ -124,7 +124,7 @@ mode: center
     	console.log(`Listening on http://localhost:${server.port}`);
     	```
 
-    	The scaffold ships Node.js types only. Install Bun's types and add `"bun"` to the `types` array in `tsconfig.json` so `Bun.serve` type-checks:
+    	Because the scaffold ships Node.js types only, install Bun's types and add `"bun"` to the `types` array in `tsconfig.json` so that `Bun.serve` type-checks:
 
     	```bash terminal icon="terminal"
     	bun add -d @types/bun

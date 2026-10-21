@@ -18,7 +18,7 @@ mode: center
     </Step>
 
     <Step title="Initialize Prisma ORM">
-    	Run `orm init` with `bunx`. It installs `prisma` and `@prisma/orm-postgres` with `bun add`, and writes a starter schema to `src/prisma/contract.prisma`, a database client to `src/prisma/db.ts`, a `prisma.config.ts` and a `.env` file. `--authoring psl` picks the Prisma Schema Language, the `.prisma` format from earlier Prisma versions.
+    	Run `orm init` with `bunx`, which installs `prisma` and `@prisma/orm-postgres` with `bun add` and writes a starter schema to `src/prisma/contract.prisma`, a database client to `src/prisma/db.ts`, a `prisma.config.ts` and a `.env` file. The `--authoring psl` flag picks the Prisma Schema Language, the `.prisma` format from earlier Prisma versions.
 
     	```bash terminal icon="terminal"
     	bunx prisma@latest orm init --yes --target postgres --authoring psl --write-env
@@ -50,13 +50,13 @@ mode: center
     	}
     	```
 
-    	Prisma ORM compiles this file into a contract, `src/prisma/contract.json` and `src/prisma/contract.d.ts`, that your queries are type-checked against. `orm init` emits it once. After every change to the schema, run `bunx prisma contract emit` to update it.
+    	Prisma ORM compiles this file into a contract, `src/prisma/contract.json` and `src/prisma/contract.d.ts`, that your queries are type-checked against. `orm init` emits it once, and after every later change to the schema you run `bunx prisma contract emit` to update it.
 
-    	Every `prisma` command ends with a line that says the agent skills are out of date. It changes nothing; run `bunx prisma@latest init` once to install skills for your coding agent and silence it.
+    	Every `prisma` command ends with a line that says the agent skills are out of date, which changes nothing and goes away once you run `bunx prisma@latest init` to install the skills for your coding agent.
     </Step>
 
     <Step title="Configure database connection">
-    	Set `DATABASE_URL` in the `.env` file to the connection string of a PostgreSQL 15 or newer database. If you do not have one, `bunx create-db` creates a [Prisma Postgres](https://www.prisma.io/postgres) database without an account and prints its connection string and a claim URL. The database and its data are deleted after 24 hours unless you open the claim URL, so claim it if you want to keep it. Change `sslmode=require` to `sslmode=verify-full` so the `pg` driver does not print a security warning on every connection.
+    	Set `DATABASE_URL` in the `.env` file to the connection string of a PostgreSQL 15 or newer database. If you do not have one, `bunx create-db` creates a [Prisma Postgres](https://www.prisma.io/postgres) database without an account and prints its connection string together with a claim URL, and because the database and its data are deleted after 24 hours unless you open that URL, claim it if you want to keep it. If the connection string ends in `sslmode=require`, change it to `sslmode=verify-full` so that the `pg` driver does not print a security warning on every connection.
 
     	```ini .env icon="settings"
     	DATABASE_URL="postgres://USER:PASSWORD@db.prisma.io:5432/postgres?sslmode=verify-full"
@@ -104,11 +104,11 @@ mode: center
     	await db.close();
     	```
 
-    	`db.close()` lets the script exit. Without it, the connection pool keeps the process alive.
+    	The final `db.close()` lets the script exit, because otherwise the connection pool keeps the process alive.
     </Step>
 
     <Step title="Run and test the application">
-    	Run the script with `bun`. Each run creates a new user.
+    	Run the script with `bun` and watch the count grow, because each run creates a new user.
 
     	```bash terminal icon="terminal"
     	bun index.ts

@@ -8,15 +8,16 @@
 // when its timeout comes due. The time a socket spends there, unread, is the server's own delay:
 // the timeout must not run against it.
 //
-// The clients run in a child process. On the server's loop their handshakes would go through the
-// same queue.
+// The clients run in a child process. On this loop their own handshake reads would wait in the
+// same queue, and the timeout of a server socket does run while it waits for such a client.
 //
-// Prints one JSON line: { clients, answered, errors }.
+// This fixture stays on the real clock: the sweep has to find the sockets where a slow loop leaves
+// them, between iterations that each give the clients time to answer.
+//
+// Prints one JSON line: { clients, answered, errors, servedWhileHeld }.
 
 import { getEventLoopStats } from "bun:internal-for-testing";
-import { bunEnv, bunExe, tempDir, tls as certs } from "harness";
 import { existsSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 
 const N = 40;
 // LIBUS_TIMEOUT_GRANULARITY (packages/bun-usockets/src/libusockets.h) plus a margin.
@@ -26,31 +27,33 @@ const TICKS = 3;
 const STEP_DEADLINE_MS = 20_000;
 const CLIENT_DEADLINE_MS = TICKS * TICK_MS + STEP_DEADLINE_MS;
 
-type Summary = { clients: number; answered: number; errors: Record<string, number> };
+// The file that the clients create once every ClientHello is on its way.
+const everyHelloSent = process.env.MARKER!;
 
 if (process.argv[2] === "client") {
-  await client(Number(process.argv[3]), process.argv[4]);
+  await client(Number(process.argv[3]));
 } else {
   await server();
 }
 
 async function server() {
-  using dir = tempDir("parked-handshake", {});
-  const everyHelloSent = join(String(dir), "every-hello-sent");
-
+  let served = 0;
   const server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
-    tls: { cert: certs.cert, key: certs.key },
-    fetch: () => new Response("ok"),
+    tls: { cert: process.env.TLS_CERT!, key: process.env.TLS_KEY! },
+    fetch() {
+      served++;
+      return new Response("ok");
+    },
   });
   // The sweep only ticks while a socket is linked, and a parked socket is not. This pair keeps it ticking.
   const keep = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
   const keepClient = await Bun.connect({ hostname: "127.0.0.1", port: keep.port, socket: { data() {} } });
 
   await using child = Bun.spawn({
-    cmd: [bunExe(), import.meta.path, "client", String(server.port), everyHelloSent],
-    env: bunEnv,
+    cmd: [process.execPath, import.meta.path, "client", String(server.port)],
+    env: process.env,
     stdout: "pipe",
     stderr: "inherit",
   });
@@ -63,14 +66,15 @@ async function server() {
   }
   await oneIteration();
   for (let tick = 0; tick < TICKS; tick++) {
-    // No signal says that a sweep tick is due. The tick is a clock, and the test is about that clock.
     Bun.sleepSync(TICK_MS);
     await oneIteration();
   }
+  // Every iteration completes at most 5 handshakes, so the rest of the burst was still waiting.
+  const servedWhileHeld = served;
 
   const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
   if (exitCode !== 0) throw new Error(`the client process exited with code ${exitCode}`);
-  console.log(stdout.trim());
+  console.log(JSON.stringify({ ...JSON.parse(stdout), servedWhileHeld }));
 
   keepClient.terminate();
   keep.stop(true);
@@ -83,8 +87,8 @@ async function oneIteration() {
   while (getEventLoopStats().iteration < target) await new Promise(resolve => setImmediate(resolve));
 }
 
-async function client(port: number, everyHelloSent: string) {
-  const summary: Summary = { clients: N, answered: 0, errors: {} };
+async function client(port: number) {
+  const summary = { clients: N, answered: 0, errors: {} as Record<string, number> };
   const settled = Promise.withResolvers<void>();
   let opened = 0;
   let pending = N;

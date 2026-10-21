@@ -3505,11 +3505,19 @@ it.concurrent(
 it.concurrent(
   "TLS: answers every client of a burst that outwaits the idle timeout in the handshake queue",
   async () => {
-    const result = await bunRun(join(import.meta.dirname, "serve-tls-parked-handshake-timeout-fixture.ts"));
+    using dir = tempDir("serve-tls-parked-handshake", {});
+    const result = await bunRun(join(import.meta.dirname, "serve-tls-parked-handshake-timeout-fixture.ts"), {
+      TLS_CERT: tls.cert,
+      TLS_KEY: tls.key,
+      MARKER: join(String(dir), "every-hello-sent"),
+    });
     expect(result).toSpawn();
-    expect(JSON.parse(result.stdout)).toEqual({ clients: 40, answered: 40, errors: {} });
+    const { servedWhileHeld, ...summary } = JSON.parse(result.stdout);
+    expect(summary).toEqual({ clients: 40, answered: 40, errors: {} });
+    // 3 ticks, and an iteration completes at most 5 handshakes: the timeout came due over a full queue.
+    expect(servedWhileHeld).toBeLessThanOrEqual(15);
   },
-  60_000,
+  40_000,
 );
 
 it.concurrent("#6462", async () => {

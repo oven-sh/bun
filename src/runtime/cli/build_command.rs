@@ -1239,6 +1239,7 @@ pub(crate) fn collect_compile_assets(
 ) -> Result<(), String> {
     use bun_ast::Loader;
     use bun_collections::StringArrayHashMap;
+    use bun_standalone_module_graph::StandaloneModuleGraph::embedded_name;
     use bun_sys::EntryKind;
 
     let fail = |err: bun_sys::Error| -> Result<(), String> {
@@ -1248,19 +1249,19 @@ pub(crate) fn collect_compile_assets(
             err,
         ))
     };
-    let entry_name = bun_paths::basename(outfile);
+    let entry_name = embedded_name(bun_paths::basename(outfile));
 
     let mut seen: StringArrayHashMap<()> = StringArrayHashMap::new();
     for f in out.iter() {
         if !f.output_kind.is_file_in_standalone_mode() {
             continue;
         }
-        let _ = seen.put(strings::remove_leading_dot_slash(&f.dest_path), ());
+        let _ = seen.put(&embedded_name(&f.dest_path), ());
     }
     let mut push =
         |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {
             // Names are stored as valid UTF-8, so two names that differ only in invalid bytes collide.
-            let dest = bstr::BStr::new(&dest).to_string().into_bytes();
+            let dest = embedded_name(&dest).into_owned();
             if seen.contains_key(&dest) {
                 return Err(format!(
                     "asset {} collides with another embedded file at {}",
@@ -1301,7 +1302,7 @@ pub(crate) fn collect_compile_assets(
                 bun_sys::Error::from_code(bun_sys::E::EINVAL, bun_sys::Tag::open).with_path(asset),
             );
         }
-        if base == entry_name {
+        if embedded_name(base) == entry_name {
             return Err(format!(
                 "asset {} would embed at the same path as the entry point; use a different outfile",
                 bun_fmt::quote(asset),

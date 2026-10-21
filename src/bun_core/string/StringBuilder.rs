@@ -175,25 +175,6 @@ impl StringBuilder {
         &self.allocated_slice()[start..start + written]
     }
 
-    pub fn fmt_append_count_z(&mut self, args: fmt::Arguments<'_>) -> StringPointer {
-        debug_assert!(self.len <= self.cap); // didn't count everything
-        debug_assert!(self.ptr.is_some()); // must call allocate first
-
-        let off = self.len;
-        let written = crate::fmt::buf_print_z(self.writable(), args)
-            .expect("unreachable")
-            .len();
-        self.len += written;
-        self.len += 1;
-
-        debug_assert!(self.len <= self.cap);
-
-        StringPointer {
-            offset: off as u32,
-            length: written as u32,
-        }
-    }
-
     pub fn fmt_count(&mut self, args: fmt::Arguments<'_>) {
         self.cap += bun_alloc::fmt_count(args);
     }

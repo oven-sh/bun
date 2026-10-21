@@ -384,6 +384,76 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
     TIMEOUT,
   );
 
+  // macOS and Windows reject these file names.
+  test.skipIf(!isLinux)(
+    "two embedded names that differ only in bytes that aren't valid UTF-8",
+    async () => {
+      using dir = tempDir("bunfs-invalid-utf8-clash", {
+        "index.ts": `console.log(JSON.stringify((await Promise.all(Bun.embeddedFiles.map(file => file.text()))).sort()));`,
+        "public/z.png": "third",
+        "chunk/.keep": "",
+        "same/.keep": "",
+        "entry/.keep": "",
+      });
+      // A name is text and single bytes, in order. Alone, 0xE8 and 0xE9 are not valid UTF-8.
+      const write = (name: (string | number)[], contents: string) => {
+        const parts = name.map(part => (typeof part === "string" ? Buffer.from(part) : Buffer.from([part])));
+        writeFileSync(Buffer.concat([Buffer.from(String(dir) + sep), ...parts]), contents);
+      };
+      write(["public/a", 0xe9, ".png"], "first");
+      write(["public/a", 0xe8, ".png"], "second");
+      write(["chunk/a", 0xe8, ".ts"], "export {};");
+      write(["chunk/a", 0xe9, ".js"], "an asset");
+      write(["same/a", 0xe9, ".ts"], "export {};");
+      write(["same/a", 0xe9, ".js"], "an asset");
+      write(["entry/ap", 0xe8, "p"], "an asset");
+
+      // A shell glob gives bun each file name as it is. `$0` is bun.
+      const build = async (args: string) => {
+        await using proc = Bun.spawn({
+          cmd: ["sh", "-c", `"$0" build --compile ./index.ts ${args}`, bunExe()],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, code] = await Promise.all([proc.stderr.text(), proc.exited]);
+        return { stderr, code };
+      };
+      const [chunks, assets, chunk, same, entry] = await Promise.all([
+        build(`./public/* --outfile app`),
+        build(`./public/* --asset-naming='[name].[ext]' --outfile lost`),
+        build(`./chunk/*.ts --asset ./chunk --outfile chunk-app`),
+        build(`./same/*.ts --asset ./same --outfile same-app`),
+        build(`--outfile "$(printf 'ap\\351p')" --asset ./entry/*`),
+      ]);
+
+      // Only the chunks of the two entry points share a name (`public/a\uFFFD.js`). Each chunk
+      // exports the path of its file, and the three files have three names.
+      if (chunks.code !== 0) throw new Error(`compile failed (exit ${chunks.code})\n${chunks.stderr}`);
+      expect(await run(String(dir))).toEqual({ stdout: `["first","second","third"]\n`, stderr: "", code: 0 });
+
+      // With this naming the two files share the name `a\uFFFD.png`, and one would be lost.
+      expect(assets.stderr).toMatch(
+        /a\\xe[89]\.png" collides with "[^"]*a\\xe[89]\.png": both would be embedded as "a\uFFFD\.png"/,
+      );
+      expect(assets.code).toBe(1);
+
+      // The chunk of `a<E8>.ts` and the asset `a<E9>.js`.
+      expect(chunk.stderr).toContain(`collides with another embedded file at "chunk/a\uFFFD.js"`);
+      expect(chunk.code).toBe(1);
+
+      // The chunk of `a<E9>.ts` and the asset `a<E9>.js`: the same bytes in both names.
+      expect(same.stderr).toContain(`collides with another embedded file at "same/a\uFFFD.js"`);
+      expect(same.code).toBe(1);
+
+      // The asset `ap<E8>p` and the entry point, which has the name of the executable.
+      expect(entry.stderr).toContain("would embed at the same path as the entry point");
+      expect(entry.code).toBe(1);
+    },
+    TIMEOUT,
+  );
+
   test(
     "--asset errors when its basename matches --outfile",
     async () => {

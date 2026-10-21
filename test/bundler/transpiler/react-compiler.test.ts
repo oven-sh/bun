@@ -3639,6 +3639,7 @@ describe("bundler", () => {
     external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
     async onAfterBundle(api) {
       const source = api.readFile("/entry.jsx").split("\n");
+      expect(api.readFile("/out/entry.js")).toMatch(/\b_c\(\d+\)/);
       await SourceMapConsumer.with(JSON.parse(api.readFile("/out/entry.js.map")), null, map => {
         const words = api
           .readFile("/out/entry.js")

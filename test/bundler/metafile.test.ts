@@ -989,55 +989,52 @@ describe("Bun.build metafile artifacts", () => {
 
   // A compile returns the executable alone, and the metafile as `result.metafile`. It puts the outputs that hold
   // bytes in the executable, and a metafile must stay out of it.
-  // Not concurrent, one compile each, and with a timeout: a compile copies the whole bun binary (about 1 GB in a
-  // debug build) on the thread that runs the tests.
+  // Not concurrent, and one compile each: a compile copies the whole bun binary on the thread that runs the tests.
+  // Not on a debug or ASAN build: that binary is so large (about 1 GB for a debug build) that one compile can take
+  // longer than the default timeout.
   describe("a compile to an executable has no metafile artifact, and no metafile in the executable", () => {
-    test.each([
+    test.skipIf(isDebug || isASAN).each([
       ["without an outdir", false],
       ["with an outdir", true],
-    ])(
-      "%s",
-      async (_name, hasOutdir) => {
-        using dir = tempDir("metafile-compile", files);
-        const cwd = String(dir);
-        const outdir = join(cwd, "out");
-        const result = await Bun.build({
-          entrypoints: [join(cwd, "app.js")],
-          ...(hasOutdir
-            ? { outdir, compile: { outfile: "app" }, metafile: { json: "meta.json", markdown: "meta.md" } }
-            : { compile: { outfile: join(cwd, "app") }, metafile: both(cwd) }),
-        });
-        const executable = isWindows ? "app.exe" : "app";
+    ])("%s", async (_name, hasOutdir) => {
+      using dir = tempDir("metafile-compile", files);
+      const cwd = String(dir);
+      const outdir = join(cwd, "out");
+      const result = await Bun.build({
+        entrypoints: [join(cwd, "app.js")],
+        ...(hasOutdir
+          ? { outdir, compile: { outfile: "app" }, metafile: { json: "meta.json", markdown: "meta.md" } }
+          : { compile: { outfile: join(cwd, "app") }, metafile: both(cwd) }),
+      });
+      const executable = isWindows ? "app.exe" : "app";
 
-        expect(
-          result.outputs.map(({ kind, path }) => ({ kind, path: relative(cwd, path).replaceAll("\\", "/") })),
-        ).toEqual([{ kind: "entry-point", path: hasOutdir ? `out/${executable}` : executable }]);
-        expect(Object.keys(result.metafile!)).toEqual(["inputs", "outputs"]);
-        // Only a build with an outdir writes the metafiles, and it writes them in the outdir.
-        await expectNotWritten(cwd);
-        if (hasOutdir) {
-          expect(readdirSync(outdir).sort()).toEqual([executable, "meta.json", "meta.md"]);
-          expect(await Bun.file(join(outdir, "meta.json")).json()).toEqual(result.metafile);
-          expect(await Bun.file(join(outdir, "meta.md")).text()).toStartWith("# Bundle Analysis Report");
-        }
+      expect(
+        result.outputs.map(({ kind, path }) => ({ kind, path: relative(cwd, path).replaceAll("\\", "/") })),
+      ).toEqual([{ kind: "entry-point", path: hasOutdir ? `out/${executable}` : executable }]);
+      expect(Object.keys(result.metafile!)).toEqual(["inputs", "outputs"]);
+      // Only a build with an outdir writes the metafiles, and it writes them in the outdir.
+      await expectNotWritten(cwd);
+      if (hasOutdir) {
+        expect(readdirSync(outdir).sort()).toEqual([executable, "meta.json", "meta.md"]);
+        expect(await Bun.file(join(outdir, "meta.json")).json()).toEqual(result.metafile);
+        expect(await Bun.file(join(outdir, "meta.md")).text()).toStartWith("# Bundle Analysis Report");
+      }
 
-        await using proc = Bun.spawn({
-          cmd: [result.outputs[0].path],
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stdout, stderr }).toEqual({ stdout: "[]\n", stderr: "" });
-        expect(exitCode).toBe(0);
-      },
-      60_000,
-    );
+      await using proc = Bun.spawn({
+        cmd: [result.outputs[0].path],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "[]\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    });
   });
 });
 
 // CLI tests for --metafile-md
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows } from "harness";
 
 describe("bun build --metafile-md", () => {
   test("generates markdown metafile with default name", async () => {

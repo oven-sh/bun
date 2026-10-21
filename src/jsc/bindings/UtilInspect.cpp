@@ -12,15 +12,12 @@
 #include "JavaScriptCore/IdentifierInlines.h"
 #include "JavaScriptCore/BigIntObject.h"
 #include "JavaScriptCore/DisallowVMEntry.h"
-#include "JavaScriptCore/ErrorInstance.h"
 #include "JavaScriptCore/FunctionExecutable.h"
 #include "JavaScriptCore/InternalFunction.h"
 #include "JavaScriptCore/JSArrayBuffer.h"
 #include "JavaScriptCore/JSBoundFunction.h"
-#include "JavaScriptCore/JSFinalizationRegistry.h"
 #include "JavaScriptCore/JSFunctionInlines.h"
 #include "JavaScriptCore/JSRemoteFunction.h"
-#include "JavaScriptCore/JSWeakObjectRef.h"
 #include "JavaScriptCore/SymbolObject.h"
 #include "ErrorCode.h"
 
@@ -206,40 +203,6 @@ static ASCIILiteral functionKindName(JSFunction* function)
     return "Function"_s;
 }
 
-// Stands in for the constructor on the map of the receiver, which JSC does not record: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/deps/v8/src/objects/js-objects.cc#L596-L622
-static ASCIILiteral mapConstructorName(JSObject* receiver)
-{
-    // V8 skips this step for a value that is or was a prototype. JSC sets the bit when an object gets the value as its prototype, so not yet for `F.prototype = value`.
-    if (receiver->mayBePrototype())
-        return {};
-    if (auto* function = dynamicDowncast<JSFunction>(receiver))
-        return functionKindName(function);
-    // The type names the value as if its built-in constructor made it. V8 names an instance of a subclass from its chain, and JSC cannot tell the two apart.
-    switch (receiver->type()) {
-    // The constructor of a generator object is its generator function, which JSC does not record.
-    case JSGeneratorType:
-    case JSAsyncGeneratorType:
-        return {};
-    case ErrorInstanceType:
-        return errorTypeName(uncheckedDowncast<ErrorInstance>(receiver)->errorType());
-    case JSMapIteratorType:
-        return "MapIterator"_s;
-    case JSSetIteratorType:
-        return "SetIterator"_s;
-    case JSPromiseType:
-        return "Promise"_s;
-    case DataViewType:
-        return "DataView"_s;
-    default:
-        break;
-    }
-    if (receiver->inherits<JSWeakObjectRef>())
-        return "WeakRef"_s;
-    if (receiver->inherits<JSFinalizationRegistry>())
-        return "FinalizationRegistry"_s;
-    return v8ClassName(receiver);
-}
-
 // The name a function was made with, which V8 calls its debug name. Null when V8 does not take the value for a constructor.
 static JSString* constructorDebugName(JSGlobalObject* globalObject, JSValue value)
 {
@@ -270,22 +233,26 @@ static JSString* constructorDebugName(JSGlobalObject* globalObject, JSValue valu
     return name;
 }
 
-// V8's GetConstructorHelper, with mapConstructorName for its first step: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/deps/v8/src/objects/js-objects.cc#L594-L686
+// V8's GetConstructorHelper: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/deps/v8/src/objects/js-objects.cc#L594-L686
 static JSString* getConstructorName(JSGlobalObject* globalObject, JSObject* receiver)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     DisallowVMEntry disallowVMEntry(vm);
 
-    ASCIILiteral constructed = mapConstructorName(receiver);
-    if (!constructed.isNull())
-        return jsNontrivialString(vm, constructed);
+    // V8 first takes the constructor that made the receiver, unless the receiver is or was a prototype. JSC records no such constructor, so only a function has this step: its kind stands in. JSC sets the prototype bit when an object gets the value as its prototype, so not yet for `F.prototype = value`.
+    if (receiver->isCallable() && receiver->type() != ProxyObjectType && !receiver->mayBePrototype()) {
+        auto* function = dynamicDowncast<JSFunction>(receiver);
+        ASCIILiteral kind = function ? functionKindName(function) : "Function"_s;
+        if (!kind.isNull())
+            return jsNontrivialString(vm, kind);
+    }
 
     for (JSObject* object = receiver; object && object->type() != ProxyObjectType;) {
-        // The lookup of the base class: no getOwnPropertySlot override of a class runs, as V8 skips interceptors here.
+        // JSObject::getOwnPropertySlot is the lookup of the base class. It reads the structure and the static table, so it cannot throw, and no override of a class runs (V8 skips interceptors here).
         PropertySlot tagSlot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
         bool hasTag = JSObject::getOwnPropertySlot(object, globalObject, vm.propertyNames->toStringTagSymbol, tagSlot);
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        scope.assertNoException();
         if (hasTag && tagSlot.isValue()) {
             JSValue tag = tagSlot.getValue(globalObject, vm.propertyNames->toStringTagSymbol);
             if (tag.isString())
@@ -296,7 +263,7 @@ static JSString* getConstructorName(JSGlobalObject* globalObject, JSObject* rece
         if (object != receiver) {
             PropertySlot constructorSlot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
             bool hasConstructor = JSObject::getOwnPropertySlot(object, globalObject, vm.propertyNames->constructor, constructorSlot);
-            RETURN_IF_EXCEPTION(scope, nullptr);
+            scope.assertNoException();
             if (hasConstructor && constructorSlot.isValue()) {
                 JSString* name = constructorDebugName(globalObject, constructorSlot.getValue(globalObject, vm.propertyNames->constructor));
                 RETURN_IF_EXCEPTION(scope, nullptr);

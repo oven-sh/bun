@@ -115,7 +115,7 @@ test("util.inspect reports the non-index keys of a typed array", () => {
 // Node.js takes the name of a value whose prototype chain has no usable constructor from V8's GetConstructorName.
 // That lookup reads data properties only: no getter and no Proxy trap runs. UtilInspect.cpp has a port of its walk
 // of the chain and of V8's word for a type. V8 first asks for the constructor that made the value, which
-// JavaScriptCore does not record: the type of a built-in value and the kind of a function stand in for it.
+// JavaScriptCore does not record. Only the kind of a function stands in for it.
 // Every expected string is the output of Node.js v26.3.0, but for the first strings of `differsFromNode`.
 const getterRuns = [];
 // An accessor that records each run. It throws, or returns `result` when one is given.
@@ -202,18 +202,18 @@ const constructorNames = [
   ["constructor on the prototype, tag above it", () => util.inspect(child(define(child(define(bare(), tag, data("Top"))), "constructor", data(Foo)))), "Foo <Top <[Object: null prototype] [Top] {}>> [Top] {}"],
   ["tag on the prototype, constructor above it", () => util.inspect(child(define(child(define(bare(), "constructor", data(Foo))), tag, data("Mid")))), "Mid <Mid <[Object: null prototype] {}>> [Mid] {}"],
 
-  // The type of a built-in value names it before its chain does, unless the value is a prototype.
-  ["Map with a constructor on the prototype", () => util.inspect(reproto(new Map(), define(bare(), "constructor", data(Foo)))), "Map <[Object: null prototype] {}> {}"],
-  ["Map with a tag on the prototype", () => util.inspect(reproto(new Map(), tagged())), "Map <[Object: null prototype] [Tag] {}> [Tag] {}"],
+  // The chain names a built-in value first. The word for its type names it when the chain has no name.
+  ["instance of a subclass of Map, with a tag on the prototype", () => util.inspect(reproto(new (class M extends Map {})(), tagged())), "Tag <[Object: null prototype] [Tag] {}> [Tag] {}"],
+  ["Buffer with a tag on the prototype", () => util.inspect(reproto(Buffer.alloc(1), tagged())), "Tag <[Object: null prototype] [Tag] {}> [Tag] { '0': 0 }"],
   ["Map that is a prototype, with a tag on the prototype", () => util.inspect(asPrototype(reproto(new Map(), tagged()))), "Tag <[Object: null prototype] [Tag] {}> [Tag] {}"],
+  ["Map that is the prototype property of a function, with a tag on the prototype", () => util.inspect(Object.assign(function F() {}, { prototype: reproto(new Map(), tagged()) }).prototype), "Tag <[Object: null prototype] [Tag] {}> [Tag] {}"],
   ["generator object with a tag on the prototype", () => util.inspect(reproto((function* () {})(), tagged())), "Tag <[Object: null prototype] [Tag] {}> [Tag] {}"],
   ["Buffer", () => util.inspect(reproto(Buffer.alloc(2), bare())), "Uint8Array <[Object: null prototype] {}> { '0': 0, '1': 0 }"],
-  ["RangeError", () => firstLine(util.inspect(reproto(new RangeError("m"), bare()))), "RangeError <[Object: null prototype] {}>: m"],
+  ["instance of a subclass of RangeError", () => firstLine(util.inspect(reproto(new (class E extends RangeError {})("m"), bare()))), "Error <[Object: null prototype] {}>: m"],
+  ["instance of a subclass of Promise", () => util.inspect(reproto(new (class P extends Promise {})(() => {}), bare())), "Object <[Object: null prototype] {}> { <pending> }"],
+  ["Promise that is the prototype property of a function", () => util.inspect(Object.assign(function F() {}, { prototype: reproto(Promise.resolve(1), bare()) }).prototype), "Object <[Object: null prototype] {}> { 1 }"],
   ["WeakMap with no prototype, past the depth", () => pastDepth(reproto(new WeakMap(), null)), "{ a: [WeakMap: null prototype] }"],
-  ["Promise with no prototype, past the depth", () => pastDepth(reproto(Promise.resolve(1), null)), "{ a: [Promise: null prototype] }"],
   ["SharedArrayBuffer with no prototype, past the depth", () => pastDepth(reproto(new SharedArrayBuffer(1), null)), "{ a: [SharedArrayBuffer: null prototype] }"],
-  ["DataView with no prototype, past the depth", () => pastDepth(reproto(new DataView(new ArrayBuffer(1)), null)), "{ a: [DataView: null prototype] }"],
-  ["Set iterator with no prototype, past the depth", () => pastDepth(reproto(new Set().values(), null)), "{ a: [SetIterator: null prototype] }"],
 
   // The kind of a function names it, unless the function is a prototype. A class and a bound function get
   // their name from the chain.
@@ -244,64 +244,65 @@ test.each(constructorNames)("util.inspect names a value from data properties: %s
   expect({ printed: print(), getterRuns }).toEqual({ printed: expected, getterRuns: runs });
 });
 
-// The word for each built-in type: for a value on a chain with no constructor, and for the same value once it
-// is a prototype. V8 has two lists for these, so some words differ.
+// The word for each built-in type, on a chain with no name. It is the word of V8's class_name(), which Node.js
+// prints for a value that is or was a prototype. A fourth string is the word that Node.js prints for a value
+// that never was a prototype: the name of the constructor that made it.
 const argumentsOf = fn => fn(1);
 // prettier-ignore
 const builtinNames = [
-  ["arguments", () => argumentsOf(function () { return arguments; }), "Arguments", "Arguments"],
-  ["arguments of a function that closes over a parameter", () => argumentsOf(function (a) { (() => a)(); return arguments; }), "Arguments", "Arguments"],
-  ["arguments of a strict function", () => argumentsOf(function () { "use strict"; return arguments; }), "Arguments", "Arguments"],
-  ["Array", () => [1], "Array", "Array"],
-  ["ArrayBuffer", () => new ArrayBuffer(1), "ArrayBuffer", "ArrayBuffer"],
-  ["SharedArrayBuffer", () => new SharedArrayBuffer(1), "SharedArrayBuffer", "SharedArrayBuffer"],
-  ["DataView", () => new DataView(new ArrayBuffer(1)), "DataView", "Object"],
-  ["Date", () => new Date(0), "Date", "Date"],
-  ["RegExp", () => /x/, "RegExp", "RegExp"],
-  ["Error", () => new Error("m"), "Error", "Error"],
-  ["TypeError", () => new TypeError("m"), "TypeError", "Error"],
-  ["AggregateError", () => new AggregateError([], "m"), "AggregateError", "Error"],
-  ["Map", () => new Map(), "Map", "Map"],
-  ["Set", () => new Set(), "Set", "Set"],
-  ["WeakMap", () => new WeakMap(), "WeakMap", "WeakMap"],
-  ["WeakSet", () => new WeakSet(), "WeakSet", "WeakSet"],
-  ["WeakRef", () => new WeakRef({}), "WeakRef", "Object"],
-  ["FinalizationRegistry", () => new FinalizationRegistry(() => {}), "FinalizationRegistry", "Object"],
-  ["Promise", () => Promise.resolve(1), "Promise", "Object"],
-  ["Boolean", () => new Boolean(true), "Boolean", "Boolean"],
-  ["Number", () => new Number(1), "Number", "Number"],
-  ["String", () => new String("s"), "String", "String"],
-  ["Symbol", () => Object(Symbol("s")), "Symbol", "Symbol"],
-  ["BigInt", () => Object(1n), "BigInt", "BigInt"],
-  ["generator object", () => (function* () {})(), "Generator", "Generator"],
-  ["async generator object", () => (async function* () {})(), "Generator", "Generator"],
-  ["Array iterator", () => [][Symbol.iterator](), "Array Iterator", "Array Iterator"],
-  ["Map iterator", () => new Map().entries(), "MapIterator", "Map Iterator"],
-  ["Set iterator", () => new Set().values(), "SetIterator", "Set Iterator"],
+  ["arguments", () => argumentsOf(function () { return arguments; }), "Arguments"],
+  ["arguments of a function that closes over a parameter", () => argumentsOf(function (a) { (() => a)(); return arguments; }), "Arguments"],
+  ["arguments of a strict function", () => argumentsOf(function () { "use strict"; return arguments; }), "Arguments"],
+  ["Array", () => [1], "Array"],
+  ["ArrayBuffer", () => new ArrayBuffer(1), "ArrayBuffer"],
+  ["SharedArrayBuffer", () => new SharedArrayBuffer(1), "SharedArrayBuffer"],
+  ["DataView", () => new DataView(new ArrayBuffer(1)), "Object", "DataView"],
+  ["Date", () => new Date(0), "Date"],
+  ["RegExp", () => /x/, "RegExp"],
+  ["Error", () => new Error("m"), "Error"],
+  ["TypeError", () => new TypeError("m"), "Error", "TypeError"],
+  ["AggregateError", () => new AggregateError([], "m"), "Error", "AggregateError"],
+  ["Map", () => new Map(), "Map"],
+  ["Set", () => new Set(), "Set"],
+  ["WeakMap", () => new WeakMap(), "WeakMap"],
+  ["WeakSet", () => new WeakSet(), "WeakSet"],
+  ["WeakRef", () => new WeakRef({}), "Object", "WeakRef"],
+  ["FinalizationRegistry", () => new FinalizationRegistry(() => {}), "Object", "FinalizationRegistry"],
+  ["Promise", () => Promise.resolve(1), "Object", "Promise"],
+  ["Boolean", () => new Boolean(true), "Boolean"],
+  ["Number", () => new Number(1), "Number"],
+  ["String", () => new String("s"), "String"],
+  ["Symbol", () => Object(Symbol("s")), "Symbol"],
+  ["BigInt", () => Object(1n), "BigInt"],
+  ["generator object", () => (function* () {})(), "Generator"],
+  ["async generator object", () => (async function* () {})(), "Generator"],
+  ["Array iterator", () => [][Symbol.iterator](), "Array Iterator"],
+  ["Map iterator", () => new Map().entries(), "Map Iterator", "MapIterator"],
+  ["Set iterator", () => new Set().values(), "Set Iterator", "SetIterator"],
   ...[Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float16Array, Float32Array, Float64Array, BigInt64Array, BigUint64Array].map(
-    TypedArray => [TypedArray.name, () => new TypedArray(1), TypedArray.name, TypedArray.name],
+    TypedArray => [TypedArray.name, () => new TypedArray(1), TypedArray.name],
   ),
 ];
 
-test.each(builtinNames)("util.inspect names a built-in value by its type: %s", (_, make, name, nameOfPrototype) => {
+test.each(builtinNames)("util.inspect names a built-in value by its type: %s", (_, make, name) => {
   const nameOf = value => /([\w ]+) <\[Object: null prototype\] \{\}>/.exec(util.inspect(value))?.[1];
   expect({
     value: nameOf(reproto(make(), bare())),
     prototype: nameOf(asPrototype(reproto(make(), bare()))),
-  }).toEqual({ value: name, prototype: nameOfPrototype });
+  }).toEqual({ value: name, prototype: name });
 });
 
-// What the port cannot know. V8 keeps the constructor that made a value, and marks a value as a prototype as
-// soon as it is the `prototype` property of a function. The last string of each row is the output of Node.js.
+// What the port cannot know: V8 keeps the constructor that made a value, and names the value by it first.
+// The last string of each row is the output of Node.js.
 // prettier-ignore
 const differsFromNode = [
   ["an instance of a class, with no prototype", () => util.inspect(reproto(new (class Foo {})(), null)), "[Object: null prototype] {}", "[Foo: null prototype] {}"],
   ["the object of a generator function that has a name", () => util.inspect(reproto((function* gen() {})(), bare())), "Generator <[Object: null prototype] {}> {}", "gen <[Object: null prototype] {}> {}"],
-  ["an instance of a subclass of Map, with a tag on the prototype", () => util.inspect(reproto(new (class M extends Map {})(), tagged())), "Map <[Object: null prototype] [Tag] {}> [Tag] {}", "Tag <[Object: null prototype] [Tag] {}> [Tag] {}"],
-  ["a Buffer with a tag on the prototype", () => util.inspect(reproto(Buffer.alloc(1), tagged())), "Uint8Array <[Object: null prototype] [Tag] {}> [Tag] { '0': 0 }", "Tag <[Object: null prototype] [Tag] {}> [Tag] { '0': 0 }"],
-  ["an instance of a subclass of Promise", () => util.inspect(reproto(new (class P extends Promise {})(() => {}), bare())), "Promise <[Object: null prototype] {}> { <pending> }", "Object <[Object: null prototype] {}> { <pending> }"],
-  ["an instance of a subclass of RangeError", () => firstLine(util.inspect(reproto(new (class E extends RangeError {})("m"), bare()))), "RangeError <[Object: null prototype] {}>: m", "Error <[Object: null prototype] {}>: m"],
-  ["a Map that is the prototype property of a function, with a tag on the prototype", () => util.inspect(Object.assign(function F() {}, { prototype: reproto(new Map(), tagged()) }).prototype), "Map <[Object: null prototype] [Tag] {}> [Tag] {}", "Tag <[Object: null prototype] [Tag] {}> [Tag] {}"],
+  ["an instance of a class whose own constructor is the class, with no prototype", () => { class Foo {} return util.inspect(reproto(Object.assign(new Foo(), { constructor: Foo }), null)); }, "[Object: null prototype] { constructor: [class Foo] }", "[Foo: null prototype] { constructor: [class Foo] }"],
+  ["a Map with a tag on the prototype", () => util.inspect(reproto(new Map(), tagged())), "Tag <[Object: null prototype] [Tag] {}> [Tag] {}", "Map <[Object: null prototype] [Tag] {}> [Tag] {}"],
+  ["a Map with a constructor on the prototype", () => util.inspect(reproto(new Map(), define(bare(), "constructor", data(Foo)))), "Foo <[Object: null prototype] {}> {}", "Map <[Object: null prototype] {}> {}"],
+  ["a RangeError on a chain with no name", () => firstLine(util.inspect(reproto(new RangeError("m"), bare()))), "Error <[Object: null prototype] {}>: m", "RangeError <[Object: null prototype] {}>: m"],
+  ["a Promise with no prototype, past the depth", () => pastDepth(reproto(Promise.resolve(1), null)), "{ a: [Object: null prototype] }", "{ a: [Promise: null prototype] }"],
 ];
 
 test.each(differsFromNode)("util.inspect does not name %s as Node.js does", (_, print, printed) => {

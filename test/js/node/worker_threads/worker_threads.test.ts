@@ -1045,7 +1045,7 @@ const duplicateNames: [label: string, key: PropertyKey, descriptor: PropertyDesc
   ["a constructor of its own", "constructor", { value: function Fake() {} }, "FileHandle"],
   ["a Symbol.toStringTag of its own", Symbol.toStringTag, { value: "Tagged" }, "Tagged"],
 ];
-test.each(duplicateNames)(
+test.concurrent.each(duplicateNames)(
   "the duplicate FileHandle message names a handle with %s",
   async (_, key, descriptor, name) => {
     using dir = tempDir("worker-fh-duplicate", { "x.txt": "hello" });

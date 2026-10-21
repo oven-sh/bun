@@ -8,9 +8,9 @@ use crate::json::{Json, TsConfigSourceFile};
 use crate::resolve::{
     Host, Options, ancestors, combine_paths, contains_path, displayed_path,
     equate_string_case_insensitive, extra_supported_extensions, file_extension_is_one_of,
-    get_base_file_name, get_path_components, get_relative_path_from_directory, inside,
-    is_network_path, is_rooted_disk_path, is_same_path, join, known_extension,
-    remove_file_extension, supported_extensions, to_lowercase_unicode_15, to_path, typescript_path,
+    get_base_file_name, get_path_components, get_relative_path_from_directory, is_network_path,
+    is_rooted_disk_path, is_same_path, join, known_extension, remove_file_extension, root_length,
+    supported_extensions, to_lowercase_unicode_15, to_path, typescript_path,
 };
 use crate::session::Session;
 use crate::util::{FxHashSet, SharedSort};
@@ -1677,41 +1677,25 @@ fn include_base_path(absolute: &[u8]) -> Vec<u8> {
         }
         Some(wildcard) => {
             let end = strings::last_index_of_char(&absolute[..wildcard], b'/').unwrap_or(0);
-            absolute[..end].to_vec()
+            absolute[..end.max(root_length(absolute))].to_vec()
         }
     }
 }
 
-/// `getBasePaths`: the directories to start the search from, none nested in another. A rooted include is taken as
-/// written: nothing is reduced from its first `.` or `..` on.
+/// `getBasePaths`: the directories to start the search from, none nested in another.
 fn base_paths(path: &[u8], includes: &[Vec<u8>], case_sensitive: bool) -> Vec<Vec<u8>> {
     let mut out = vec![path.to_vec()];
     let mut include_bases: Vec<Vec<u8>> = includes
         .iter()
-        .map(|include| {
-            let names = strings::split_any(include, b"/\\");
-            let reduced = names.take_while(|name| !matches!(*name, b"." | b".."));
-            let end: usize = match is_rooted_disk_path(include) {
-                true => reduced.map(|name| name.len() + 1).sum(),
-                false => include.len(),
-            };
-            let (reduced, unreduced) = include.split_at(end.min(include.len()));
-            let unreduced = strings::split_any(unreduced, b"/\\").filter(|name| !name.is_empty());
-            let absolute = unreduced.fold(join(path, reduced), |dir, name| inside(&dir, name));
-            include_base_path(&absolute)
-        })
+        .map(|include| include_base_path(&join(path, include)))
         .collect();
     if case_sensitive {
         include_bases.shared_sort();
     } else {
         include_bases.shared_sort_by(|a, b| compare_strings_case_insensitive(a, b));
     }
-    // `ContainsPath` is relative to `path` and reduces the components.
-    let contains = |parent: &[u8], child: &[u8]| {
-        contains_path(&join(path, parent), &join(path, child), case_sensitive)
-    };
     for base in include_bases {
-        if out.iter().all(|known| !contains(known, &base)) {
+        if (out.iter()).all(|known| !contains_path(known, &base, case_sensitive)) {
             out.push(base);
         }
     }

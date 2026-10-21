@@ -22904,6 +22904,18 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(stdout.split("\n").filter(line => !/\/lib\.[\w.]+\.d\.ts$/.test(line))).toEqual(["<dir>/a.ts"]);
     });
 
+    test("normalizes an absolute path in `include`", async () => {
+      using dir = project({ "a.ts": "", "lib/b.ts": `export const b: number = "";\n`, "app/c.ts": "" });
+      const include = [`${String(dir).replaceAll("\\", "/")}/app/../lib/*.ts`];
+      writeFileSync(
+        join(String(dir), "app", "tsconfig.json"),
+        JSON.stringify({ compilerOptions: JSON.parse(tsconfig).compilerOptions, include }),
+      );
+      const { stdout, exitCode } = await check(dir, ["-p", "app"]);
+      expect(stdout).toBe("lib/b.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.");
+      expect(exitCode).toBe(1);
+    });
+
     test.skipIf(isCaseInsensitive)("compares `rootDir` and `baseUrl` case-sensitively", async () => {
       using dir = project({
         "tsconfig.json": `{ "compilerOptions": { "lib": ["esnext"], "types": [], "noEmit": true, "rootDir": "SRC" }, "files": ["src/a.ts"] }`,

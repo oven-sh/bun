@@ -505,7 +505,8 @@ it("reload() works with new dirs/files", () => {
 const notFound = expect.objectContaining({ code: "ERR_MODULE_NOT_FOUND" });
 
 it("reload() finds a directory that was deleted and created again", () => {
-  const { dir } = make(["a/b/one.tsx", "keep.tsx"]);
+  using tmp = tempDir("fsr-reload", { "a/b/one.tsx": "", "keep.tsx": "" });
+  const dir = String(tmp).replaceAll("\\", "/");
   const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
   expect(Object.keys(router.routes).sort()).toEqual(["/a/b/one", "/keep"]);
 
@@ -525,7 +526,8 @@ it("reload() finds a directory that was deleted and created again", () => {
 });
 
 it("reload() throws while the root directory is gone and lists it again when it is back", () => {
-  const { dir } = make(["a/b/one.tsx", "keep.tsx"]);
+  using tmp = tempDir("fsr-reload", { "a/b/one.tsx": "", "keep.tsx": "" });
+  const dir = String(tmp).replaceAll("\\", "/");
   const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
   const held = router.match("/a/b/one")!;
 
@@ -543,7 +545,8 @@ it("reload() throws while the root directory is gone and lists it again when it 
 });
 
 it("reload() finds what is new in a directory that the resolver cached before the router listed it", () => {
-  const { dir } = make(["keep.tsx"]);
+  using tmp = tempDir("fsr-reload", { "keep.tsx": "" });
+  const dir = String(tmp).replaceAll("\\", "/");
   const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
   expect(Object.keys(router.routes)).toEqual(["/keep"]);
 
@@ -572,7 +575,8 @@ it("reload() lists what is on disk after random changes to the directories", () 
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return Math.floor((((t ^ (t >>> 14)) >>> 0) / 4294967296) * n);
   };
-  const { dir } = make(["keep.tsx"]);
+  using tmp = tempDir("fsr-reload", { "keep.tsx": "" });
+  const dir = String(tmp).replaceAll("\\", "/");
 
   // directory ("" is the root, "/d0/d2") -> names of the route files in it
   const tree = new Map<string, Set<string>>([["", new Set(["keep"])]]);
@@ -642,9 +646,10 @@ it.skipIf(!isLinux)("reload() opens each route directory once", () => {
   try {
     expect(fd).toBeGreaterThan(-1);
     // IN_ACCESS keeps two opens of one directory from being merged into one queued event.
-    const watch = (p: string) => libc.symbols.inotify_add_watch(fd, ptr(Buffer.from(p + "\0")), IN_OPEN | IN_ACCESS);
+    const watch = (p: string) => libc.symbols.inotify_add_watch(fd, Buffer.from(p + "\0"), IN_OPEN | IN_ACCESS);
     const router = new Bun.FileSystemRouter({ dir: pages, style: "nextjs" });
     const watched = { root: watch(pages), sub: watch(path.join(pages, "sub")) };
+    expect(Math.min(watched.root, watched.sub)).toBeGreaterThan(-1);
     const buf = new Uint8Array(1 << 16);
     const view = new DataView(buf.buffer);
     const opens = () => {

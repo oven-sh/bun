@@ -90,7 +90,7 @@ pub(crate) fn read_array<T: Copy>(stream: &mut Stream) -> crate::Result<Vec<T>> 
     stream.pos = end_pos as usize;
 
     if byte_len == 0 {
-        // `write_array` does not pad before an empty array: its start need not be aligned.
+        // `write_array` doesn't pad before an empty array, so its start may be unaligned.
         return Ok(Vec::new());
     }
 

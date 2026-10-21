@@ -53,7 +53,7 @@ fn scope_node_span(statement: Stmt<'_>) -> Span {
             {
                 return it.span();
             }
-            // The body of a function is a `BlockStatement`. A `StaticBlock` is not a scope node.
+            // A function's body is a `BlockStatement`. A `StaticBlock` isn't a scope node.
             Node::Func(func)
                 if func.kind() != FnKind::StaticBlock && matches!(child, Node::Stmt(_)) =>
             {
@@ -103,10 +103,10 @@ fn has_self_reference_in_tdz(declarator: VarDecl<'_>) -> bool {
         })
 }
 
-/// What the fixes of a file find out.
+/// Per-file caches for the fixes.
 #[derive(Default)]
 pub struct State<'a> {
-    /// Where a function is called first.
+    /// The start offset of each function's first call.
     first_calls: RefCell<IdMap<Symbol<'a>, u32>>,
     /// ESLint's `isInLoop`
     loops: RefCell<AncestorMemo<'a, bool>>,
@@ -114,7 +114,7 @@ pub struct State<'a> {
 }
 
 impl<'a> State<'a> {
-    /// Where the first call of `function` starts.
+    /// Returns the start offset of the first call to `function`.
     fn first_call(&self, function: Symbol<'a>) -> u32 {
         *self
             .first_calls
@@ -139,7 +139,7 @@ impl<'a> State<'a> {
         is_in_loop == Some(true)
     }
 
-    /// ESLint's `hasUnsafeHoistedFunctionReference`. `declaration_start`: where the declarator starts.
+    /// ESLint's `hasUnsafeHoistedFunctionReference`. `declaration_start` is the declarator's start offset.
     fn has_unsafe_hoisted_function_reference(
         &self,
         variable: Symbol<'a>,
@@ -180,13 +180,14 @@ impl<'a> State<'a> {
             return false;
         }
         let is_in_statement_list = ast_utils::is_statement_list_parent(parent)
-            || matches!(parent, Node::Stmt(it) if it.tag() == StmtTag::Module);
+            || matches!(parent, Node::Stmt(it) if it.tag() == StmtTag::Module)
+                && knows_typescript(statement.file());
         if !is_in_statement_list && !utils::is_for_init(statement) {
             return false;
         }
 
-        // What takes no look at the references comes first: those of a variable that is declared once
-        // are then looked at for one declaration.
+        // The checks that don't need the references come first. After them every variable is declared once, so its
+        // references are only scanned for one declaration.
         let variables = Node::Stmt(statement).declared_symbols();
         let is_never_let = |variable: &Symbol<'a>| {
             variable.scope().kind() == ScopeKind::Global
@@ -236,7 +237,18 @@ impl<'a> State<'a> {
     }
 }
 
-/// The `var` of `statement`, which modifiers can precede.
+/// True if the rule treats TypeScript's blocks as ESLint 9 and later do. ESLint 8's rule only knows JavaScript.
+fn knows_typescript(file: &File<'_>) -> bool {
+    file.language().eslint_major >= 9
+}
+
+/// True if `node` is a `global { }` block.
+fn is_global_block(node: Node<'_>) -> bool {
+    let module = node.as_stmt().and_then(Stmt::as_module);
+    module.is_some_and(|it| matches!(it.name(), ModuleName::Global))
+}
+
+/// Returns the `var` keyword of `statement`, which can come after modifiers.
 fn var_keyword(statement: Stmt<'_>) -> Option<Span> {
     let source = statement.file().text();
     let start = match statement.modifiers().last() {
@@ -249,8 +261,8 @@ fn var_keyword(statement: Stmt<'_>) -> Option<Span> {
         .then(|| Span::new(start, start + 3))
 }
 
-/// oxlint's `is_written_to`: something is assigned to one of the variables after the declaration. A default value
-/// counts as that, and the rest element of an array pattern is not looked at.
+/// oxlint's `is_written_to`: true if one of the variables is assigned after the declaration. A default value counts as
+/// an assignment, and an array pattern's rest element isn't checked.
 fn oxlint_is_written_to(pat: Pat) -> bool {
     let mut pending: SmallVec<[Pat; 8]> = smallvec![pat];
     while let Some(pat) = pending.pop() {
@@ -286,43 +298,42 @@ fn oxlint_is_written_to(pat: Pat) -> bool {
     false
 }
 
-/// The fix of oxlint 1.87. There is none if a variable is referred to outside of what the declaration is in. It is
-/// `const` if nothing is assigned later and all have a value. All of the declaration is replaced, so that no other fix
-/// changes it in the same pass.
+/// oxlint 1.87's fix. There's none if a variable is referenced outside the declaration's parent. The keyword is `const`
+/// if nothing is assigned later and every variable has an initializer. The fix replaces the whole declaration, so that
+/// no other fix changes it in the same pass.
 fn fix_as_oxlint<'a>(
     fixer: Fixer<'a>,
     statement: Stmt<'a>,
     declarations: List<'a, VarDecl<'a>>,
 ) -> Option<Fix> {
     let var = var_keyword(statement)?;
-    // A variable does not leave the file. The default value of a parameter is outside of the body of the function.
-    let around = match statement.parent() {
+    // A variable can't escape the file. A parameter's default value is outside the function's body.
+    let enclosing_span = match statement.parent() {
         _ if statement.is_exported() => Some(statement.span()),
         Node::Stmt(parent) => Some(parent.span()),
         Node::Case(case) => Some(case.span()),
         Node::Func(func) => func.body_span(),
         _ => None,
     };
-    if let Some(around) = around {
+    if let Some(enclosing_span) = enclosing_span {
         let is_body = matches!(statement.parent(), Node::Func(_));
-        let mut leaves = false;
+        let mut escapes = false;
         for declaration in declarations {
             declaration.pat().for_each_binding(&mut |pat| {
-                // That a parameter gets its default value is no reference for it.
-                leaves |= pat.symbol().is_some_and(|it| {
+                // oxlint doesn't count a parameter getting its default value as a reference.
+                escapes |= pat.symbol().is_some_and(|it| {
                     it.references()
-                        .any(|it| !around.contains(it.span()) && !(is_body && it.is_init()))
+                        .any(|it| !enclosing_span.contains(it.span()) && !(is_body && it.is_init()))
                 });
             });
         }
-        if leaves {
+        if escapes {
             return None;
         }
     }
-    let is_let = statement.flags().contains(Flags::AMBIENT)
-        || declarations
-            .iter()
-            .any(|it| it.init().is_none() || oxlint_is_written_to(it.pat()));
+    let is_let = declarations
+        .iter()
+        .any(|it| it.init().is_none() || oxlint_is_written_to(it.pat()));
     let (file, span) = (fixer.file(), statement.span_without_export());
     let before = file.slice(Span::before(span.start, var));
     let after = file.slice(Span::after(var, span.end));
@@ -362,26 +373,35 @@ impl Rule for NoVar {
         {
             return;
         }
-        if let Node::Stmt(parent) = statement.parent()
-            && let StmtKind::Module(module) = parent.kind()
-            && matches!(module.name(), ModuleName::Global)
-            && !statement.is_exported()
-        {
-            return;
-        }
         let span = statement.span_without_export();
-        // oxlint says nothing about ambient declarations, and points at the keyword.
         let is_oxlint = cx.language().is_oxlint;
-        if is_oxlint
-            && cx
-                .state
-                .ambient
-                .has_ambient_typescript_ancestor(statement.into())
-        {
+        let is_eslint = !is_oxlint && !cx.language().has_no_foreign_config;
+        // ESLint reports every ambient `var` that isn't directly in a `global` block, and projects have comments that
+        // disable those reports. ESLint 8 reports that one too. oxlint reports `declare var`, but no `var` in an ambient
+        // block.
+        // Without either config, no ambient `var` is reported. It declares that a global exists. Only a `var` becomes a
+        // property of `globalThis`, and only a `var` can be declared in two files, so with `let` the project would stop
+        // type checking.
+        let is_allowed = match is_eslint {
+            true => {
+                knows_typescript(cx)
+                    && !statement.is_exported()
+                    && is_global_block(statement.parent())
+            }
+            false => {
+                (!is_oxlint && statement.flags().contains(Flags::AMBIENT))
+                    || cx
+                        .state
+                        .ambient
+                        .has_ambient_typescript_ancestor(statement.into())
+            }
+        };
+        if is_allowed {
             return;
         }
-        let place = var_keyword(statement).filter(|_| is_oxlint).unwrap_or(span);
-        cx.report(place, UNEXPECTED_VAR)
+        // oxlint reports only the `var` keyword.
+        let location = var_keyword(statement).filter(|_| is_oxlint).unwrap_or(span);
+        cx.report(location, UNEXPECTED_VAR)
             .called_with(statement)
             .fix(|fixer| {
                 if is_oxlint {

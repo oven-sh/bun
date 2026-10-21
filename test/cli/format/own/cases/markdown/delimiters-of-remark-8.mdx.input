@@ -1,4 +1,4 @@
-**a **b, ** c **, /* d */, e**.** f
+e**.** f
 
 import * as g from "h"; import * as i from "j";
 

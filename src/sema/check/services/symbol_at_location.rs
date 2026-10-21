@@ -1,6 +1,6 @@
 //! `getSymbolAtLocation`: what a name refers to.
 //!
-//! Members of classes, interfaces, type literals and object literals have no `SymbolId`: such a
+//! Members of classes, interfaces, type literals and object literals have no `SymbolId`. Their
 //! symbol is a [`Prop`].
 
 use super::super::*;
@@ -22,10 +22,10 @@ pub(in crate::check) enum Declaration {
     ThisParameter(FnId),
 }
 
-/// A property that is found in a type, or is made up for the declaration of one.
+/// A property found in a type, or synthesized for a property's declaration.
 pub(in crate::check) enum FoundProp<'p> {
-    Of(&'p Prop<'p>),
-    Made(Prop<'p>),
+    Existing(&'p Prop<'p>),
+    Synthesized(Prop<'p>),
 }
 
 impl<'p> std::ops::Deref for FoundProp<'p> {
@@ -33,8 +33,8 @@ impl<'p> std::ops::Deref for FoundProp<'p> {
     #[inline]
     fn deref(&self) -> &Prop<'p> {
         match self {
-            FoundProp::Of(prop) => prop,
-            FoundProp::Made(prop) => prop,
+            FoundProp::Existing(prop) => prop,
+            FoundProp::Synthesized(prop) => prop,
         }
     }
 }
@@ -52,23 +52,25 @@ pub(in crate::check) enum Undeclared {
     GlobalThis,
 }
 
-/// What `getSymbolAtLocation` returns.
+/// The result of `getSymbolAtLocation`.
 pub(in crate::check) enum Found<'p> {
     Symbol(Sym),
-    /// With the mapper to read it with.
+    /// A property and the mapper to read it with.
     Property(FoundProp<'p>, MapperId),
-    /// What `createUnionOrIntersectionProperty` makes for a union, with the mapper to read it with.
+    /// The property `createUnionOrIntersectionProperty` creates for a union, and the mapper to read
+    /// it with.
     Properties(&'p Prop<'p>, MapperId),
-    /// A symbol with one declaration that is in no table: `__object`, `__type`, a `this` parameter.
+    /// A symbol with one declaration that isn't in any table: `__object`, `__type`, a `this`
+    /// parameter.
     Anonymous {
         file: FileId,
         declaration: Declaration,
     },
     Undeclared(Undeclared),
-    /// The `prototype` of a class: no declarations, and the class as its parent.
+    /// A class's `prototype`. It has no declarations, and its parent is the class.
     Prototype(Sym),
-    /// The `default` that `createDefaultPropertyWrapperForModule` creates: no declarations, and the
-    /// module as its parent.
+    /// The `default` that `createDefaultPropertyWrapperForModule` creates. It has no declarations,
+    /// and its parent is the module.
     SyntheticDefault(Sym),
     /// `getApplicableIndexSymbol`: `__index`, declared by the index signature of `of` that applies.
     /// The parent is `t.symbol`.
@@ -81,8 +83,8 @@ pub(in crate::check) enum Found<'p> {
 }
 
 impl<'p> Found<'p> {
-    fn made(prop: Prop<'p>) -> Found<'p> {
-        Found::Property(FoundProp::Made(prop), MapperId::IDENTITY)
+    fn synthesized_property(prop: Prop<'p>) -> Found<'p> {
+        Found::Property(FoundProp::Synthesized(prop), MapperId::IDENTITY)
     }
 }
 
@@ -110,11 +112,11 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                 if matches!(kind, VisitedKind::DeclarationName(..)) {
                     return Some(Found::Symbol(symbol));
                 }
-                // `getImmediateAliasedSymbol`: the `a` of `import { a as b }` and of `export { a as
-                // b }`.
+                // `getImmediateAliasedSymbol`: the `a` of `import { a as b }` and of
+                // `export { a as b }`.
                 // `getTargetOfModuleDefault`: a synthesized default is
                 // `resolveExternalModuleSymbol(moduleSymbol, dontResolveAlias)`, which stops at the
-                // `export =` of the module.
+                // module's `export =`.
                 if let Some((specifier, mode, known::default)) =
                     files.external_module_member_of(file, decl)
                     && let Some(module) = files.module_of_specifier_as(file, specifier, mode)
@@ -130,16 +132,16 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                     None => self
                         .c
                         .property_of_alias(symbol)
-                        .map(|prop| Found::Property(FoundProp::Of(prop), MapperId::IDENTITY)),
+                        .map(|prop| Found::Property(FoundProp::Existing(prop), MapperId::IDENTITY)),
                 }
             }
-            // `IsLiteralComputedPropertyDeclarationName`: the literal in `["name"]`, `` [`name`] `` and `[0]` has the symbol of the
-            // declaration.
+            // `IsLiteralComputedPropertyDeclarationName`: the literal in `["name"]`, `` [`name`] `` and `[0]` has the
+            // declaration's symbol.
             VisitedKind::LiteralInEnumMemberName(m) => Some(Found::Symbol(
                 files.sym(file, bound.enum_member_symbol[m.idx()]),
             )),
-            // `declareSymbolEx`: a name that declares nothing, `#x` outside a class or `1n`, still
-            // gets a symbol (`InternalSymbolNameMissing`), which is in no symbol table.
+            // `declareSymbolEx`: a name that declares nothing, like `#x` outside a class or `1n`,
+            // still gets a symbol (`InternalSymbolNameMissing`) that isn't in any symbol table.
             VisitedKind::MemberName(m) | VisitedKind::LiteralInMemberName(m) => {
                 let start = hir[m].name_pos;
                 (!matches!(hir[m].key, PropKey::None) || is_literal_name_at(hir, start))
@@ -149,7 +151,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                 let name = hir[p].key.name().unwrap_or(Atom::NONE);
                 (!matches!(hir[p].key, PropKey::None) || is_literal_name_at(hir, hir[p].pos)).then(
                     || {
-                        Found::made(Prop {
+                        Found::synthesized_property(Prop {
                             name,
                             flags: PropFlags::empty(),
                             source: PropSource::Literal(file, p),
@@ -163,13 +165,14 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                 let PatKind::Ident(name) = hir[pat].kind else {
                     return None;
                 };
-                // `bindParameter` declares the property last, so that is the symbol of the node. `IsParameterPropertyDeclaration`
+                // `IsParameterPropertyDeclaration`: `bindParameter` declares the property last, so that's the node's
+                // symbol.
                 if let PatParent::Param(parameter) = bound.pat_parent[pat.idx()]
                     && hir[parameter].flags.contains(Flags::PARAMETER_PROPERTY)
                     && hir[bound.param_fn[parameter.idx()]].kind == FnKind::Constructor
                 {
                     let property = bound.symbol_of_declaration(Decl::ParameterProperty(parameter));
-                    return Some(Found::made(Prop {
+                    return Some(Found::synthesized_property(Prop {
                         name,
                         flags: PropFlags::empty(),
                         source: PropSource::Symbol(files.sym(file, property)),
@@ -193,16 +196,16 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                     .is_some()
                     .then(|| Found::Symbol(files.sym(file, symbol)))
             }
-            // `{ name: local }`: the property of the type of the pattern.
+            // `{ name: local }`: the property of the pattern's type.
             VisitedKind::BindingPropertyName(p) => {
                 let parent = bound.pat_parent[hir[p].value.idx()];
                 let (PropKey::Name(name), PatParent::Prop(pattern, _)) = (hir[p].key, parent)
                 else {
                     return None;
                 };
-                // `getTypeOfNode` of a binding pattern is `getTypeForVariableLikeDeclaration` of its parent: of a parameter,
-                // `getContextuallyTypedParameterType`. "If inference didn't come up with anything but unknown, fall back to the
-                // binding pattern" (`assignParameterType`) only reaches the type of the symbol.
+                // `getTypeOfNode` of a binding pattern is `getTypeForVariableLikeDeclaration` of its parent, which for
+                // a parameter is `getContextuallyTypedParameterType`. "If inference didn't come up with anything but
+                // unknown, fall back to the binding pattern" (`assignParameterType`) only affects the symbol's type.
                 if let PatParent::Param(param) = bound.pat_parent[pattern.idx()]
                     && hir[param].ty.is_none()
                 {
@@ -230,11 +233,13 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                 let location = hir.node(element);
                 let elements = self.c.jsx_type(file, location, known::IntrinsicElements)?;
                 match self.c.prop_ref(elements, name) {
-                    Some((prop, mapper)) => Some(Found::Property(FoundProp::Of(prop), mapper)),
+                    Some((prop, mapper)) => {
+                        Some(Found::Property(FoundProp::Existing(prop), mapper))
+                    }
                     None => match self.get_applicable_index_symbol(elements, name) {
                         Some(found) => Some(found),
-                        // An index signature without a declaration, such as that of `Record<string,
-                        // any>`: `intrinsicElementsType.symbol`.
+                        // An index signature without a declaration, like the one of
+                        // `Record<string, any>`, gives `intrinsicElementsType.symbol`.
                         None => {
                             let members = self.c.members(elements)?;
                             self.c.applicable_index_info_for_name(&members, name)?;
@@ -361,7 +366,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
         }
         match hir[e].kind {
             // Not bound.
-            _ if matches!(bound.expr_parent[e.idx()], Parent::None) => None,
+            _ if matches!(bound.parent_of_expr(e), Parent::None) => None,
             ExprKind::Ident(name) => self.get_symbol_of_identifier(e, name),
             // `isRightSideOfQualifiedNameOrPropertyAccess`: the name has the symbol of the whole access.
             ExprKind::Dot {
@@ -394,12 +399,12 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                 };
                 match self.get_property_of_type(access.apparent, name) {
                     Some(found) => Some(found),
-                    None if self.c.is_private_name(name) => None,
+                    None if self.c.atoms().is_private_name(name) => None,
                     None if queried_module.is_some() => queried_module
                         .and_then(|module| self.c.files().namespace_member(module, name))
                         .map(Found::Symbol),
-                    // `checkExpressionCached(name.Expression())`: the type unchanged, including its
-                    // `undefined`.
+                    // `checkExpressionCached(name.Expression())`: the unmodified type, including
+                    // its `undefined`.
                     None => {
                         let ty = self.c.type_of_expr(file, obj);
                         self.get_applicable_index_symbol(ty, name)
@@ -424,12 +429,12 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                 {
                     return Some(found);
                 }
-                // `IsInExpressionContext`: false for the `this` of a bare `typeof this`, whose
-                // parent is the type query, so its symbol is `getThisType(node).symbol`, which
-                // narrowing does not affect. The `this` of `typeof this.x` is under a qualified
+                // `IsInExpressionContext` is false for the `this` of a bare `typeof this`, whose
+                // parent is the type query. Its symbol is `getThisType(node).symbol`, which
+                // narrowing doesn't affect. The `this` of `typeof this.x` is under a qualified
                 // name, which is an expression node.
                 if is_queried
-                    && !matches!(bound.expr_parent[e.idx()], Parent::Expr(_))
+                    && !matches!(bound.parent_of_expr(e), Parent::Expr(_))
                     && let Some(function) = function
                 {
                     return match bound.fns[function.idx()].owner {
@@ -439,7 +444,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                         _ => None,
                     };
                 }
-                // `c.checkExpression(node).symbol`, which is not memoised.
+                // `c.checkExpression(node).symbol`, which is not memoized.
                 let ty = self.c.get_type_of_expression_after_check(file, e);
                 self.symbol_of_type(ty)
             }
@@ -462,13 +467,14 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
     /// it, resolved with the namespace meaning. An alias matches regardless of its target.
     fn get_symbol_of_name_in_class_extends(&self, e: ExprId) -> Option<Found<'p>> {
         let (hir, bound) = (self.c.hir(self.file), self.c.bound(self.file));
-        // The walk from each link of `a.b.b ..` is as long as what is left of the chain.
+        // Checked first, because the walk below from each link of `a.b.b ..` is as long as the rest
+        // of the chain.
         if !hir.is_in_class_extends(e) {
             return None;
         }
         let mut whole = e;
         loop {
-            match bound.expr_parent[whole.idx()] {
+            match bound.parent_of_expr(whole) {
                 Parent::ClassExtends(_) => break,
                 Parent::Expr(access)
                     if access.is_some()
@@ -523,7 +529,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
     ) -> Option<Found<'p>> {
         let (hir, bound) = (self.c.hir(self.file), self.c.bound(self.file));
         let &class = bound.private_class.get(&e)?;
-        // `lookupSymbolForPrivateIdentifierDeclaration`: the members of the class before its statics.
+        // `lookupSymbolForPrivateIdentifierDeclaration` searches the class's instance members before its statics.
         let declaration = |is_static: bool| {
             hir[class].members.iter().find(|&member| {
                 hir[member].key == PropKey::Private(name)
@@ -538,7 +544,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
     fn get_symbol_of_literal(&mut self, e: ExprId) -> Option<Found<'p>> {
         let file = self.file;
         let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
-        let Parent::Expr(parent) = bound.expr_parent[e.idx()] else {
+        let Parent::Expr(parent) = bound.parent_of_expr(e) else {
             return None;
         };
         if parent.is_none() {
@@ -570,7 +576,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
             }
             // `IsVariableDeclarationInitializedToRequire`
             ExprKind::Call(_)
-                if matches!(bound.expr_parent[parent.idx()], Parent::VarInit(d)
+                if matches!(bound.parent_of_expr(parent), Parent::VarInit(d)
                     if bound.required_by(hir, hir[d].pat).is_some()
                         && !hir[d].flags.contains(Flags::EXPORT))
                     && crate::bind::require_argument(hir, parent) == Some(e) =>
@@ -581,7 +587,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
             // the property in JavaScript.
             ExprKind::Call(_) if hir.is_js && !matches!(hir[e].kind, ExprKind::Number(_)) => {
                 let (object, key) = crate::bind::define_property_call(hir, parent)?;
-                // Nil where the binder did not treat the call as a declaration:
+                // Nil if the binder didn't treat the call as a declaration, as for
                 // `Object.defineProperty(module, "exports", ..)`.
                 let is_declaration = bound.is_expando_declaration(parent)
                     || crate::bind::assignment_declaration_kind(hir, parent)
@@ -596,13 +602,13 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
         }
     }
 
-    /// `member.Symbol` for a member of the file being written.
+    /// `member.Symbol` for a member of `self.file`.
     fn property_of_member(&mut self, member: MemberId) -> Found<'p> {
         let file = self.file;
         let name = self
             .c
             .declared_member_name(file, self.c.hir(file)[member].key);
-        Found::made(Prop {
+        Found::synthesized_property(Prop {
             name: name.unwrap_or(Atom::NONE),
             flags: PropFlags::empty(),
             source: PropSource::Symbol(self.c.symbol_of_member(file, member)),
@@ -626,7 +632,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
         if let Some(found) = other.and_then(|(file, other)| self.this_parameter(file, other)) {
             return Some(found);
         }
-        // `assignContextualParameterTypes`: a copy of that of the contextual signature, with its declarations.
+        // `assignContextualParameterTypes` copies the contextual signature's `this` parameter, declarations included.
         let FnOwner::Expr(owner) = self.c.bound(file).fns[function.idx()].owner else {
             return None;
         };
@@ -665,10 +671,10 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
             if matches!(s.kind, ScopeKind::File | ScopeKind::Module(_))
                 && let Some(local) = bound.lookup(s.locals, name)
             {
-                let leads_there = bound.symbols[local.idx()].export_symbol.is_some()
+                let maps_to_exported = bound.symbol(local).export_symbol.is_some()
                     && files.export_symbol_of_value_symbol_if_exported(files.sym(file, local))
                         == exported;
-                return if leads_there {
+                return if maps_to_exported {
                     files.resolve_name(file, scope, name, SymFlags::VALUE)
                 } else {
                     Some(exported)
@@ -685,7 +691,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
         let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
 
         // `export default a`, `export = a`: all meanings are accepted.
-        if let Parent::Stmt(statement) = bound.expr_parent[e.idx()]
+        if let Parent::Stmt(statement) = bound.parent_of_expr(e)
             && statement.is_some()
             && matches!(
                 hir[statement].kind,
@@ -708,7 +714,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
             .resolve_identifier(file, e, name, true)
             .unwrap_or(None)
         {
-            // `getSymbol`: an alias whose target is not a value is not found.
+            // `getSymbol`: an alias whose target isn't a value is not found.
             Some(symbol) if !files.means(symbol, SymFlags::VALUE) => None,
             Some(symbol) => self
                 .resolve_without_export_value(e, name, symbol)
@@ -720,7 +726,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                 // `RequireSymbol`
                 known::require
                     if hir.is_js
-                        && matches!(bound.expr_parent[e.idx()], Parent::Expr(call) if call.is_some() && crate::bind::require_argument(hir, call).is_some()) =>
+                        && matches!(bound.parent_of_expr(e), Parent::Expr(call) if call.is_some() && crate::bind::require_argument(hir, call).is_some()) =>
                 {
                     Some(Found::Undeclared(Undeclared::Name(name)))
                 }
@@ -736,7 +742,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
         if !matches!(self.c.data(ty), TypeData::Union(_)) {
             let members = self.c.members(ty)?;
             // `typeOnlyExportStarMap`: a member that a module has through `export type *` is listed
-            // but cannot be looked up.
+            // but can't be looked up.
             if members.shape().prop(name).is_some() && self.c.prop_ref(ty, name).is_none() {
                 return None;
             }
@@ -779,12 +785,12 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                     return Some(Found::SyntheticDefault(module));
                 }
             }
-            return Some(Found::Property(FoundProp::Of(prop), mapper));
+            return Some(Found::Property(FoundProp::Existing(prop), mapper));
         }
         let (prop, mapper) = self.c.get_property_of_type(ty, name)?;
         Some(match &prop.source {
             PropSource::Intersected(..) => Found::Properties(prop, mapper),
-            _ => Found::Property(FoundProp::Of(prop), mapper),
+            _ => Found::Property(FoundProp::Existing(prop), mapper),
         })
     }
 
@@ -905,20 +911,19 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
     }
 }
 
-/// Whether the source has a `#x` or a number at `pos`, where the HIR stores no name.
+/// True if the source has a `#x` or a number at `pos`. The HIR stores no name for those.
 fn is_literal_name_at(hir: &hir::File, pos: u32) -> bool {
     matches!(hir.text.get(pos as usize), Some(b'#' | b'0'..=b'9'))
 }
 
 impl<'c, 'p, 's> Services<'c, 'p, 's> {
-    fn symbol_found(&mut self, found: Found<'p>) -> SymbolRef {
+    fn symbol_of_found(&mut self, found: Found<'p>) -> SymbolRef {
         match found {
             Found::Symbol(symbol) => self.symbol(symbol),
-            Found::Property(FoundProp::Of(prop), mapper) | Found::Properties(prop, mapper) => {
-                self.symbol_of_prop(prop, mapper)
-            }
-            // What is made up for a declared member says nothing but which symbol it is.
-            Found::Property(FoundProp::Made(prop), mapper) => match prop.source {
+            Found::Property(FoundProp::Existing(prop), mapper)
+            | Found::Properties(prop, mapper) => self.symbol_of_prop(prop, mapper),
+            // A property synthesized for a declared member only identifies the symbol.
+            Found::Property(FoundProp::Synthesized(prop), mapper) => match prop.source {
                 PropSource::Symbol(symbol) => {
                     let symbol = self.c.files().canonical(symbol);
                     self.named_symbol(Key::Symbol(symbol), prop.name)
@@ -979,8 +984,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
 
     /// `type.symbol`
     pub fn symbol_of_type(&mut self, ty: TypeId) -> Option<SymbolRef> {
-        // The declared type of an enum with several members is a union that has the symbol of the
-        // enum.
+        // The declared type of an enum with several members is a union with the enum's symbol.
         if self.c.flags(ty) & (tf::UNION | tf::ENUM_LITERAL) == tf::UNION | tf::ENUM_LITERAL
             && let Some(symbol) = self.c.alias_symbol_of_type(ty)
         {
@@ -996,14 +1000,16 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 // `Symbol.iterator`: the property of the global `SymbolConstructor`.
                 UniqueSymbolDeclaration::SymbolConstructor => {
                     let atoms = self.c.atoms();
-                    let written = atoms
+                    let property_name = atoms
                         .bytes(name)
                         .strip_prefix(crate::atom::SYMBOL_NAME_PREFIX)?;
-                    let (written, constructor) =
-                        (atoms.lookup(written)?, atoms.lookup(b"SymbolConstructor")?);
+                    let (property_name, constructor) = (
+                        atoms.lookup(property_name)?,
+                        atoms.lookup(b"SymbolConstructor")?,
+                    );
                     let constructor = self.c.global_type_symbol(constructor)?;
                     let constructor = self.c.declared_type(constructor);
-                    let (prop, mapper) = self.c.get_property_of_type(constructor, written)?;
+                    let (prop, mapper) = self.c.get_property_of_type(constructor, property_name)?;
                     Some(self.symbol_of_prop(prop, mapper))
                 }
             };
@@ -1011,7 +1017,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         use super::super::errors_small::SymbolAtLocation;
         let key = match self.c.symbol_of_type(ty)? {
             SymbolAtLocation::Symbol(symbol) => return Some(self.symbol(symbol)),
-            // The type of a method has the symbol of the method.
+            // A method's type has the method's symbol.
             SymbolAtLocation::Anonymous(file, node) => match self.c.hir(file).data(node) {
                 NodeData::Member(member) => {
                     let symbol = self.c.symbol_of_member(file, member);
@@ -1057,13 +1063,13 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         if hir.is_in_with(start) || hir.is_in_jsdoc(start) {
             return None;
         }
-        // The specifier of an import or an export: the module.
+        // An import or export specifier resolves to the module.
         if at.part() == Some(Part::Specifier) {
             let specifier = Some(hir.text(at)).filter(|text| text.is_some())?;
             let module = files.module_of_specifier(file, specifier)?;
             return Some(self.symbol(module));
         }
-        // The literal in `T["name"]`: the property.
+        // The literal in `T["name"]` resolves to the property.
         if at.part() == Some(Part::Literal)
             && let NodeData::Type(literal) = hir.data(at.row())
             && let NodeData::Type(access) = hir.data(hir.parent(at.row()))
@@ -1088,7 +1094,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         }
         let kind = self.visited_kind(node)?;
         let found = SymbolFinder { c: self.c, file }.get_symbol_at_visited_node(kind)?;
-        Some(self.symbol_found(found))
+        Some(self.symbol_of_found(found))
     }
 
     pub fn shorthand_assignment_value_symbol(&mut self, node: NodeRef) -> Option<SymbolRef> {
@@ -1130,7 +1136,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         Some(self.symbol(symbol))
     }
 
-    /// `getSymbolsInScope(node, meaning).find(it => it.name === name)`, without the others.
+    /// `getSymbolsInScope(node, meaning).find(it => it.name === name)`, without collecting the
+    /// others.
     pub fn symbol_in_scope(
         &mut self,
         node: NodeRef,
@@ -1144,7 +1151,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         Some(self.symbol(found))
     }
 
-    /// `only`: nothing but the symbol that has this name.
+    /// With `only`, collects just the symbol with that name.
     fn copy_symbols_in_scope(
         &self,
         node: NodeRef,
@@ -1168,7 +1175,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             // `getCombinedLocalAndExportSymbolFlags`
             let own = files.symbol(symbol);
             let exported = match own.export_symbol.is_some() {
-                true => bound.symbols[own.export_symbol.idx()].flags,
+                true => bound.symbol(own.export_symbol).flags,
                 false => SymFlags::empty(),
             };
             let text = files.atoms.bytes(name);
@@ -1182,10 +1189,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         };
         let (mut is_static, mut depth) = (false, 0);
         while let Some(at) = bound.scopes.get(scope.idx()) {
-            // The declarations of a script are globals.
+            // A script's declarations are globals.
             let is_global_source_file = at.kind == ScopeKind::File && at.symbol.is_none();
-            // The type parameters of a class or an interface are among its members, which a static
-            // member does not see.
+            // The type parameters of a class or interface are among its members, which a static
+            // member can't see.
             let meaning_of_locals = match at.kind {
                 ScopeKind::Class(_) | ScopeKind::Interface(_) if is_static => SymFlags::empty(),
                 ScopeKind::Class(_) | ScopeKind::Interface(_) => meaning & SymFlags::TYPE,

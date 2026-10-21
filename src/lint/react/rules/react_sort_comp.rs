@@ -9,7 +9,7 @@ use std::sync::LazyLock;
 
 /// Enforce component methods order
 pub struct SortComp {
-    /// `None`: [`Rule::validate`] has refused the options, and the rule does not run.
+    /// `None` if [`Rule::validate`] rejected the options. The rule doesn't run then.
     methods_order: Option<MethodsOrder>,
 }
 
@@ -46,7 +46,7 @@ const LIFECYCLE: [&str; 25] = [
 
 static REG_EXP_REG_EXP: LazyLock<Regex> = LazyLock::new(|| Regex::literal(r"/\/(.*)\/([gimsuy]*)/"));
 
-/// What an element of upstream's `propertiesInfos` has beside the name, as bits.
+/// Everything but the name in an element of upstream's `propertiesInfos`, as bits.
 type Kinds = u8;
 const GETTER: Kinds = 1 << 0;
 const SETTER: Kinds = 1 << 1;
@@ -63,7 +63,7 @@ enum Group {
 }
 
 impl Group {
-    /// The error is what `new RegExp(..)` throws.
+    /// Fails with the error that `new RegExp(..)` throws.
     fn new(group: &[u8]) -> Result<Group, SyntaxError> {
         let has_slash = strings::contains_char(group, b'/');
         Ok(match group {
@@ -82,7 +82,7 @@ impl Group {
     }
 }
 
-/// The first and the last of what upstream's `getRefPropIndexes` returns: those between them decide nothing.
+/// The first and last index that upstream's `getRefPropIndexes` returns. The ones in between never affect the result.
 #[derive(Copy, Clone, PartialEq, Eq)]
 struct RefPropIndexes {
     first: u32,
@@ -93,22 +93,22 @@ struct PropertyInfo<'a> {
     node: Property<'a>,
     name: Option<&'a [u8]>,
     indexes: RefPropIndexes,
-    /// Which of the [`Alike`] it is one of.
-    alike: usize,
+    /// Index of its [`IndexGroup`] group.
+    index_group: usize,
 }
 
-/// The properties of a component that have the same indexes: each is as right or as wrong beside another as the others.
-struct Alike {
+/// A component's properties that have the same indexes. They all compare the same way against any other property.
+struct IndexGroup {
     indexes: RefPropIndexes,
     count: u64,
-    /// Where the last of them is.
+    /// Position of the last one.
     last: usize,
-    /// The same for those before the property that is looked at.
+    /// The same two, counting only the properties before the one being checked.
     count_before: u64,
     last_before: usize,
 }
 
-/// A value of upstream's `errors`, whose key is where it is in the list.
+/// A value in upstream's `errors`. Its key is its index in the list.
 #[derive(Copy, Clone)]
 struct Error<'a> {
     node: Property<'a>,
@@ -126,7 +126,7 @@ struct MethodsOrder {
 }
 
 impl MethodsOrder {
-    /// upstream's `getMethodsOrder`
+    /// Upstream's `getMethodsOrder`.
     fn new(user_config: Object<'_>) -> Result<MethodsOrder, SyntaxError> {
         let user_groups = user_config.object("groups");
         let order = match user_config.has("order") {
@@ -152,12 +152,12 @@ impl MethodsOrder {
         Ok(MethodsOrder { groups, everything_else: everything_else.unwrap_or(infinity) })
     }
 
-    /// What stands for `Infinity` among the indexes.
+    /// The index that represents `Infinity`.
     fn infinity(&self) -> u32 {
         self.groups.len() as u32
     }
 
-    /// `Math.abs(a - b)`, for two that are not the same.
+    /// `Math.abs(a - b)`, for two different indexes.
     fn distance(&self, a: u32, b: u32) -> u32 {
         if a.max(b) == self.infinity() { u32::MAX } else { a.abs_diff(b) }
     }
@@ -183,33 +183,34 @@ impl MethodsOrder {
         self.get_ref_prop_indexes(get_property_name(node, kinds), kinds)
     }
 
-    /// upstream's `checkPropsOrder`, which compares each property with each other. Two are in the wrong order if all
-    /// indexes of the one that comes first are higher than all of the other.
+    /// Upstream's `checkPropsOrder`, which compares every pair of properties. Two are in the wrong order if every index
+    /// of the earlier one is higher than every index of the later one.
     fn check_props_order<'a>(&self, properties: &[Property<'a>], errors: &mut [Option<Error<'a>>]) {
-        let mut all_alike: Vec<Alike> = Vec::new();
+        let mut index_groups: Vec<IndexGroup> = Vec::new();
         let mut properties_infos = Vec::with_capacity(properties.len());
         for (i, &node) in properties.iter().enumerate() {
             let kinds = kinds_of(node);
             let name = get_property_name(node, kinds);
             let indexes = self.get_ref_prop_indexes(name, kinds);
-            let known = all_alike.iter().position(|it| it.indexes == indexes);
-            let next = all_alike.len();
-            let alike = known.unwrap_or(next);
+            let known = index_groups.iter().position(|it| it.indexes == indexes);
+            let next = index_groups.len();
+            let index_group = known.unwrap_or(next);
             if known.is_none() {
-                all_alike.push(Alike { indexes, count: 0, last: i, count_before: 0, last_before: i });
+                index_groups.push(IndexGroup { indexes, count: 0, last: i, count_before: 0, last_before: i });
             }
-            if let Some(it) = all_alike.get_mut(alike) {
+            if let Some(it) = index_groups.get_mut(index_group) {
                 it.count += 1;
                 it.last = i;
             }
-            properties_infos.push(PropertyInfo { node, name, indexes, alike });
+            properties_infos.push(PropertyInfo { node, name, indexes, index_group });
         }
         for (i, prop_a) in properties_infos.iter().enumerate() {
             let index_a = prop_a.indexes.last;
             let mut score = 0;
-            // The last of those that upstream's `storeError` finds no farther than any before it.
+            // Upstream's `storeError` keeps a candidate that's no farther than any earlier one, so this is the last of
+            // the closest.
             let mut closest: Option<(u32, usize)> = None;
-            for it in &all_alike {
+            for it in &index_groups {
                 let (count, k) = if it.indexes.first > index_a {
                     (it.count_before, it.last_before)
                 } else if it.indexes.last < prop_a.indexes.first {
@@ -223,7 +224,7 @@ impl MethodsOrder {
                 }
                 score += count;
             }
-            if let Some(it) = all_alike.get_mut(prop_a.alike) {
+            if let Some(it) = index_groups.get_mut(prop_a.index_group) {
                 it.count_before += 1;
                 it.last_before = i;
             }
@@ -263,7 +264,7 @@ fn kinds_of(node: Property<'_>) -> Kinds {
     let kinds = match member.kind() {
         MemberKind::Getter => GETTER,
         MemberKind::Setter => SETTER,
-        // Also of an `accessor`, and of what is `abstract`.
+        // Also applies to `accessor` and `abstract` fields.
         MemberKind::Property if member.ty().is_some() && member.init().is_none() => TYPE_ANNOTATION,
         _ => 0,
     };
@@ -281,7 +282,7 @@ fn kinds_of(node: Property<'_>) -> Kinds {
     if is_method_definition && is_function && node.is_static() { kinds | STATIC_METHOD } else { kinds }
 }
 
-/// upstream's `getPropertyName`. `None`: `undefined`, which is the `name` of a key that is no identifier.
+/// Upstream's `getPropertyName`. `None` is `undefined`, the `name` of a key that isn't an identifier.
 fn get_property_name(node: Property<'_>, kinds: Kinds) -> Option<&[u8]> {
     if kinds & GETTER != 0 {
         return Some(&b"getter functions"[..]);
@@ -296,7 +297,8 @@ fn get_property_name(node: Property<'_>, kinds: Kinds) -> Option<&[u8]> {
 impl Rule for SortComp {
     const META: Meta = Meta::plugin(Plugin::React, "sort-comp", Kind::None).reports_at_the_end();
     const ON: On = On::new().classes().finish();
-    /// Whether something that can be a component is out of order: few files need the components.
+    /// True if a class that might be a component has members out of order. Most files don't, and skip component
+    /// detection.
     type State<'a> = bool;
 
     fn new(options: &Options) -> Self {
@@ -309,7 +311,7 @@ impl Rule for SortComp {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<bool> {
         self.methods_order.as_ref()?;
-        // The object literals are not looked at before the components are known.
+        // Object literals aren't checked up front, so a file that mentions `createClass` always runs the detection.
         let creates_classes = mentions_create_class(file, get_create_class_from_context(file));
         ((file.has_classes() || creates_classes) && Components::may_have_any(file)).then_some(creates_classes)
     }
@@ -328,13 +330,13 @@ impl Rule for SortComp {
         let Some(methods_order) = self.methods_order.as_ref().filter(|_| cx.state) else { return };
         let mut components = Components::new(cx.file());
         components.finish();
-        // One for all components, as upstream has it.
+        // One list for all components, like upstream.
         let mut errors = vec![None; methods_order.groups.len() + 1];
         for id in components.list() {
             let properties = get_component_properties(components.component(id).node);
             methods_order.check_props_order(&properties, &mut errors);
         }
-        // upstream's `dedupeErrors`. It goes through all that there were at first.
+        // Upstream's `dedupeErrors`. It iterates over the errors that existed at the start.
         for (i, error) in errors.clone().iter().enumerate() {
             let Some(error) = error else { continue };
             let index = error.ref_index as usize;

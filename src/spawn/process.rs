@@ -470,6 +470,7 @@ impl Process {
         {
             let ctx = self.event_loop_ctx();
             if WaiterThread::should_use_waiter_thread() {
+                WaiterThread::start()?;
                 self.poller = Poller::WaiterThread(KeepAlive::default());
                 if let Poller::WaiterThread(w) = &mut self.poller {
                     w.ref_(ctx);
@@ -535,6 +536,7 @@ impl Process {
     pub(crate) fn rewatch_posix(&mut self) -> bun_sys::Result<()> {
         let ctx = self.event_loop_ctx();
         if WaiterThread::should_use_waiter_thread() {
+            WaiterThread::start()?;
             if !matches!(self.poller, Poller::WaiterThread(_)) {
                 self.poller = Poller::WaiterThread(KeepAlive::default());
             }
@@ -1423,11 +1425,10 @@ pub mod waiter_thread_posix {
     /// Shared borrow of the singleton — sole deref site for the set-once
     /// `INSTANCE` cell. All fields are either atomic (`started`),
     /// interior-mutable (`js_process.active` via `UnsafeCell`, `js_process.queue`
-    /// lock-free), or write-once-before-spawn (`eventfd`, set in `init()` under
-    /// the `started` fetch_max guard before any reader thread exists), so a
-    /// shared `&'static` is sound. The lone mutating write (`eventfd` in
-    /// `init()`) goes through the raw [`instance()`] pointer; no `&` from this
-    /// accessor is live across it.
+    /// lock-free), or write-once-before-spawn (`eventfd`, set in `start()` under
+    /// `START_LOCK` before any reader thread exists), so a shared `&'static` is
+    /// sound. The lone mutating write (`eventfd` in `start()`) goes through the
+    /// raw [`instance()`] pointer; no `&` from this accessor is live across it.
     #[inline]
     fn instance_ref() -> &'static WaiterThreadPosix {
         // SAFETY: see doc comment — process-lifetime singleton, fields are
@@ -1446,17 +1447,49 @@ pub mod waiter_thread_posix {
             bun_spawn_sys::waiter_thread_flag::get()
         }
 
+        /// Starts the thread on first use. If that fails, the next call retries.
+        pub(crate) fn start() -> bun_sys::Result<()> {
+            debug_assert!(bun_spawn_sys::waiter_thread_flag::get());
+
+            if instance_ref().started.load(Ordering::Acquire) > 0 {
+                return Ok(());
+            }
+            let _guard = START_LOCK.lock_guard();
+            if instance_ref().started.load(Ordering::Relaxed) > 0 {
+                return Ok(());
+            }
+
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if !instance_ref().eventfd.is_valid() {
+                let fd = bun_sys::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC)?;
+                // SAFETY: `START_LOCK` is held and the thread doesn't exist yet, so nothing reads `eventfd`.
+                unsafe { (*instance()).eventfd = fd };
+            }
+
+            // Dropping the JoinHandle detaches the thread.
+            std::thread::Builder::new()
+                .stack_size(STACK_SIZE)
+                .spawn(loop_)
+                .map_err(|err| {
+                    bun_sys::Error::from_code_int(
+                        err.raw_os_error().unwrap_or(libc::EAGAIN),
+                        bun_sys::Tag::pthread_create,
+                    )
+                })?;
+            instance_ref().started.store(1, Ordering::Release);
+            Ok(())
+        }
+
+        /// Only call this after `start()` returns `Ok`.
         pub(crate) fn append(process: *mut Process) {
             // `js_process.queue` is an MPSC lock-free queue; `append` is the
             // producer half and only touches `queue`, never `active`.
             instance_ref().js_process.append(process);
 
-            init().unwrap_or_else(|_| panic!("Failed to start WaiterThread"));
-
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 let one: [u8; 8] = (1usize).to_ne_bytes();
-                // SAFETY: write(2) is async-signal-safe; eventfd valid after init().
+                // SAFETY: write(2) is async-signal-safe; eventfd valid after start().
                 let n =
                     unsafe { libc::write(instance_ref().eventfd.native(), one.as_ptr().cast(), 8) };
                 if n < 0 {
@@ -1490,32 +1523,12 @@ pub mod waiter_thread_posix {
         }
     }
 
-    pub(crate) fn init() -> Result<(), std::io::Error> {
-        debug_assert!(bun_spawn_sys::waiter_thread_flag::get());
-
-        if instance_ref().started.fetch_max(1, Ordering::Relaxed) > 0 {
-            return Ok(());
-        }
-
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            let fd = bun_sys::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC)
-                .map_err(|e| std::io::Error::from_raw_os_error(e.errno as i32))?;
-            // SAFETY: single-writer init path (guarded by fetch_max above).
-            unsafe { (*instance()).eventfd = fd };
-        }
-
-        let thread = std::thread::Builder::new()
-            .stack_size(STACK_SIZE)
-            .spawn(loop_)?;
-        drop(thread); // detach
-        Ok(())
-    }
+    static START_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     extern "C" fn wakeup(_: c_int) {
         let one: [u8; 8] = (1usize).to_ne_bytes();
-        // eventfd is write-once in init() before this handler is installed.
+        // eventfd is write-once in start() before this handler is installed.
         let _ = bun_sys::write(instance_ref().eventfd, &one).unwrap_or(0);
     }
 
@@ -1538,7 +1551,7 @@ pub mod waiter_thread_posix {
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
-                // `eventfd` is written once in `init()` before this thread is
+                // `eventfd` is written once in `start()` before this thread is
                 // spawned; read-only thereafter.
                 let efd = this.eventfd;
                 let mut polls = [libc::pollfd {
@@ -3264,7 +3277,7 @@ mod spawn_process_body {
                 }
             }
 
-            Bun__currentSyncPID.store(0, core::sync::atomic::Ordering::Relaxed);
+            Bun__currentSyncPID.store(0, core::sync::atomic::Ordering::SeqCst);
             let _signals = SignalForwarding::register();
 
             // SAFETY: caller-built argv/envp are null-terminated C-string
@@ -3278,13 +3291,14 @@ mod spawn_process_body {
             // Negative → kill() in the C++ signal forwarder targets the pgroup, so
             // a SIGTERM/SIGINT delivered to `bun run` reaches every descendant
             // that hasn't `setsid()`-escaped.
+            // SeqCst pairs with the signal handler (see `Bun__sendPendingSignalIfNecessary`).
             Bun__currentSyncPID.store(
                 if no_orphans {
                     -i64::from(process.pid)
                 } else {
                     i64::from(process.pid)
                 },
-                core::sync::atomic::Ordering::Relaxed,
+                core::sync::atomic::Ordering::SeqCst,
             );
 
             let mut jc = JobControl {

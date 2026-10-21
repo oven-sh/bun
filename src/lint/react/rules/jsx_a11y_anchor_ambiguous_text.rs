@@ -43,38 +43,39 @@ impl Rule for AnchorAmbiguousText {
     }
 }
 
-/// The text of the children of the anchors that have been read, by where the name in the tag is: anchors can be in each other.
-/// `None`: it is longer than every word.
+/// Caches the text of each visited anchor's children, keyed by the start of its tag name, because anchors can be
+/// nested. `None` means the text is longer than every word.
 pub type Texts = FxHashMap<u32, Option<Normalized>>;
 
-/// What a screen reader says for an element.
+/// The text a screen reader reads for an element.
 enum AccessibleText<'a> {
-    Of(&'a [u8]),
-    OfChildren,
+    Explicit(&'a [u8]),
+    FromChildren,
     None,
 }
 
 fn get_accessible_text<'a>(file: &'a File<'a>, jsx_el: Jsx<'a>) -> AccessibleText<'a> {
     let string_of = |name: &str| has_jsx_prop_ignore_case(jsx_el, name).and_then(get_string_literal_prop_value);
     if let Some(label_text) = string_of("aria-label") {
-        return AccessibleText::Of(label_text);
+        return AccessibleText::Explicit(label_text);
     }
     if *get_element_type(file, jsx_el) == *b"img"
         && let Some(alt_text) = string_of("alt")
     {
-        return AccessibleText::Of(alt_text);
+        return AccessibleText::Explicit(alt_text);
     }
     match is_hidden_from_screen_reader(file, jsx_el) {
         true => AccessibleText::None,
-        false => AccessibleText::OfChildren,
+        false => AccessibleText::FromChildren,
     }
 }
 
-/// `normalize_str` of pieces of text with a blank between them: in lower case, without punctuation, one blank for any whitespace.
+/// `normalize_str` of pieces of text joined by a space: lowercased, punctuation removed, each run of whitespace
+/// collapsed to one space.
 #[derive(Clone, Default)]
 pub struct Normalized {
     text: String,
-    /// Whether a piece had more than whitespace.
+    /// True if any piece had more than whitespace.
     has_text: bool,
 }
 
@@ -98,7 +99,7 @@ impl Normalized {
         }
     }
 
-    /// The same for pieces that have been put together.
+    /// Like `push`, for pieces that are already normalized.
     fn append(&mut self, pieces: &Normalized) {
         self.has_text |= pieces.has_text;
         if !pieces.text.is_empty() {
@@ -111,23 +112,23 @@ impl Normalized {
 }
 
 impl AnchorAmbiguousText {
-    /// The text of `anchor`, if it is one of the words.
+    /// Returns `anchor`'s text if it's one of the words.
     fn ambiguous_text<'a>(&self, file: &'a File<'a>, anchor: Jsx<'a>, texts: &mut Texts) -> Option<String> {
         let longest = self.words.iter().map(String::len).max().unwrap_or(0);
         let normalized = match get_accessible_text(file, anchor) {
-            AccessibleText::Of(text) => {
+            AccessibleText::Explicit(text) => {
                 let mut normalized = Normalized::default();
                 normalized.push(text);
                 Some(normalized)
             }
-            AccessibleText::OfChildren => text_of_children(file, anchor, longest, texts),
+            AccessibleText::FromChildren => text_of_children(file, anchor, longest, texts),
             AccessibleText::None => None,
         };
         normalized.filter(|it| it.has_text && self.words.contains(&it.text)).map(|it| it.text)
     }
 }
 
-/// `None`: it is longer than `longest`.
+/// Returns `None` if the text is longer than `longest`.
 fn text_of_children<'a>(file: &'a File<'a>, anchor: Jsx<'a>, longest: usize, texts: &mut Texts) -> Option<Normalized> {
     let key_of_anchor = |jsx_el: Jsx<'a>| match *get_element_type(file, jsx_el) == *b"a" {
         true => jsx_el.tag().map(|it| it.span().start),
@@ -137,8 +138,8 @@ fn text_of_children<'a>(file: &'a File<'a>, anchor: Jsx<'a>, longest: usize, tex
     if let Some(known) = key.and_then(|it| texts.get(&it)) {
         return known.clone();
     }
-    // The elements that are being read, each in the one before: the key of an anchor, the children that are still to be read, and
-    // the text of those that are read.
+    // The stack of elements being read, each nested in the previous one: (an anchor's key, the children still to read,
+    // the text of those already read).
     let mut open = SmallVec::<[_; 4]>::new();
     open.push((key, children(file, anchor), Normalized::default()));
     loop {
@@ -147,8 +148,8 @@ fn text_of_children<'a>(file: &'a File<'a>, anchor: Jsx<'a>, longest: usize, tex
         match siblings.next() {
             Some(Child::Text(piece)) => text.push(piece),
             Some(Child::Element(child_el)) => match get_accessible_text(file, child_el) {
-                AccessibleText::Of(piece) => text.push(piece),
-                AccessibleText::OfChildren => {
+                AccessibleText::Explicit(piece) => text.push(piece),
+                AccessibleText::FromChildren => {
                     let key = key_of_anchor(child_el);
                     match key.and_then(|it| texts.get(&it)) {
                         Some(Some(known)) => text.append(known),
@@ -170,7 +171,7 @@ fn text_of_children<'a>(file: &'a File<'a>, anchor: Jsx<'a>, longest: usize, tex
                 }
             }
         }
-        // Then the text of all that it is in is too long too.
+        // Then the text of every enclosing element is too long as well.
         if is_too_long || open.last().is_some_and(|it| it.2.text.len() > longest) {
             texts.extend(open.iter().filter_map(|it| it.0).map(|key| (key, None)));
             return None;

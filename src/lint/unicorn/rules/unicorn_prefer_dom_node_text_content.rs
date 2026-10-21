@@ -6,7 +6,7 @@ pub struct PreferDomNodeTextContent;
 
 const PREFER_TEXT_CONTENT: Message = Message::new("", "Prefer `.textContent` over `.innerText`.");
 
-/// Where the key is written, if it is the identifier `innerText`.
+/// The key's span, if it's the identifier `innerText`.
 fn inner_text_key<'a>(key: Option<Key<'a>>, file: &File<'a>) -> Option<Span> {
     let key = key?;
     matches!(key.kind(), KeyKind::Ident(name) if name.is("innerText")).then(|| key.span(file))
@@ -32,7 +32,8 @@ impl Rule for PreferDomNodeTextContent {
             && !member.is_jsx_tag_name()
             && !member.is_in_type_query()
         {
-            cx.report(name, PREFER_TEXT_CONTENT).fix(|fixer| fixer.replace(name, "textContent"));
+            // `innerText` skips text hidden by CSS and turns `<br>` into line breaks. `textContent` doesn't.
+            cx.report(name, PREFER_TEXT_CONTENT).fix_dangerously(|fixer| fixer.replace(name, "textContent"));
         }
     }
 

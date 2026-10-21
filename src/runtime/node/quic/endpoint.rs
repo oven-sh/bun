@@ -1730,6 +1730,7 @@ impl QuicEndpoint {
             endpoint_handle,
             null_mut(),
             true,
+            self.application(true),
         )?;
         let applied = self.apply_server_session_options(global, session);
         self.sessions.with_mut(|v| v.push(session));
@@ -1809,6 +1810,12 @@ impl QuicEndpoint {
         }
         // SAFETY: as in `on_data`.
         let global = unsafe { &*global_ptr };
+        // lsquic promotes a server conn only after its handshake completes, and never
+        // calls `on_hsk_done` for it.
+        // SAFETY: `conn` is the live conn lsquic just created.
+        let Some(handshaken) = (unsafe { lsquic::Conn::from_raw(conn) }) else {
+            return null_mut();
+        };
         let endpoint_handle = self.this_value.get().get();
         let peer = conn_peer_addr(conn);
         let provisional = self.provisional.with_mut(|v| {
@@ -1820,7 +1827,7 @@ impl QuicEndpoint {
         if let Some(session) = provisional {
             if let Some(live) = self.live_session(session) {
                 live.bind_conn(conn);
-                live.push_event(session::SessionEvent::HandshakeDone { ok: true });
+                live.note_handshake_ok(handshaken);
                 return session;
             }
         }
@@ -1884,6 +1891,7 @@ impl QuicEndpoint {
             endpoint_handle,
             conn,
             true,
+            self.application(true),
         ) {
             Ok((session, _handle)) => {
                 if let Err(err) = self.apply_server_session_options(global, session) {
@@ -1893,7 +1901,7 @@ impl QuicEndpoint {
                 self.pending_new_sessions.with_mut(|v| v.push(session));
                 self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
                 // SAFETY: session was just created.
-                unsafe { (*session).push_event(session::SessionEvent::HandshakeDone { ok: true }) };
+                unsafe { (*session).note_handshake_ok(handshaken) };
                 session
             }
             Err(e) => {
@@ -1928,6 +1936,14 @@ impl QuicEndpoint {
             self.server_is_http.get()
         } else {
             self.client_is_http.get()
+        }
+    }
+
+    fn application(&self, is_server: bool) -> session::Application {
+        if self.is_http(is_server) {
+            session::Application::Http3
+        } else {
+            session::Application::Default
         }
     }
 
@@ -2353,6 +2369,7 @@ impl QuicEndpoint {
             frame.this(),
             null_mut(),
             false,
+            self.application(false),
         )?;
         // `TlsConfig::from_js` defaults servername to "localhost\0" (Node parity).
         let sni = config.servername.as_ref();
@@ -2443,6 +2460,7 @@ impl QuicEndpoint {
             this_value,
             null_mut(),
             false,
+            session::Application::None,
         )?;
         let mut dcid = [0u8; VERNEG_PROBE_CID_LEN];
         let mut scid = [0u8; VERNEG_PROBE_CID_LEN];
@@ -2646,6 +2664,26 @@ impl QuicEndpoint {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// Swaps in close callbacks that are safe to run during VM teardown.
+    ///
+    /// Teardown finalizes endpoints, sessions and streams in any order, so
+    /// `lsquic_engine_destroy` can call back for a session or stream that's already freed.
+    /// `finalize` nulls a freed object's lsquic ctx, and for a live one these callbacks
+    /// don't dereference session or endpoint pointers.
+    fn detach_for_finalize(&self) {
+        self.sessions.with_mut(Vec::clear);
+        self.pending_new_sessions.with_mut(Vec::clear);
+        self.provisional.with_mut(Vec::clear);
+        self.pending_verneg.with_mut(Vec::clear);
+        self.vtable.with_mut(|vt| {
+            if let Some(vt) = vt.as_mut() {
+                vt.owner = null_mut();
+                vt.on_stream_close = stream::QuicStream::on_close_detached;
+                vt.on_conn_closed = QuicSession::on_closed_detached;
+            }
+        });
+    }
+
     #[expect(
         clippy::boxed_local,
         reason = "codegen's host_fn_finalize calls this as `|b| QuicEndpoint::finalize(b)` and requires `self: Box<Self>`"
@@ -2656,6 +2694,7 @@ impl QuicEndpoint {
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             timer_all().remove(self.event_loop_timer.as_ptr());
         }
+        self.detach_for_finalize();
         self.release_native();
     }
 }

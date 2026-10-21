@@ -1,10 +1,10 @@
-// Generates `table.rs`: when oxlint calls each of its rules, and with which kinds of node.
+// Generates `table.rs`: when oxlint calls each of its rules, and with which node kinds.
 //
 //   OXC_DIR=<checkout of oxc> OXLINT=<the oxlint executable> node generate-table.mjs
 //
-// All of it is read from what oxc generates for itself: `rule_runner_impls.rs` has `NODE_TYPES` and `RUN_FUNCTIONS` of every rule,
-// `rules_enum.rs` has the rules in the order of their numbers. The executable only says which version it is. `OXLINT_VERSION` does
-// in its place.
+// Everything comes from files that oxc generates for itself: `rule_runner_impls.rs` has every rule's `NODE_TYPES` and
+// `RUN_FUNCTIONS`, and `rules_enum.rs` has the rules in number order. The executable is only used to get the version.
+// `OXLINT_VERSION` can be set instead.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -16,7 +16,7 @@ const version = process.env.OXLINT
   : process.env.OXLINT_VERSION;
 if (!version) throw new Error("OXLINT or OXLINT_VERSION");
 
-// The plugins of which something is implemented here, as oxc calls their directories.
+// The plugins that are at least partly built in, keyed by oxc's directory names.
 const plugins = {
   import: "Import",
   eslint: "Eslint",
@@ -33,9 +33,10 @@ const plugins = {
   node: "Node",
 };
 const notBuiltIn = ["jsdoc", "vue"];
-// oxlint has these in `react`. Here they can be configured under the name of their own plugin, too.
-const ofReactHooks = ["exhaustive-deps", "rules-of-hooks"];
-// The rules that have `run_once` and `run`, and which of the two reports what the rule here reports. Each was tried.
+// oxlint has these in `react`. Bun also lets you configure them under their own plugin's name.
+const reactHooksRules = ["exhaustive-deps", "rules-of-hooks"];
+// The rules that have both `run_once` and `run`, and which of the two reports what Bun's rule reports. Each was
+// verified.
 const both = {
   "eslint/no-irregular-whitespace": "Once",
   "eslint/no-restricted-imports": "Once",
@@ -66,7 +67,8 @@ for (const [, plugin, module, body] of impls.matchAll(
   rules.push({ plugin, name, when, kinds: isCalledWithNodes ? kinds : [] });
 }
 
-// A rule has no number here: the table is sorted by the plugin and the name when it is read. That has to be oxlint's order.
+// The table doesn't store rule numbers. It's sorted by plugin and name when it's read, which has to match oxlint's
+// order.
 const enumeration = readFileSync(join(generated, "rules_enum.rs"), "utf8");
 const aliases = Object.fromEntries(
   [...enumeration.matchAll(/pub use crate::rules::(\w+)::([\w:]+)::\w+ as (\w+);/g)].map(it => [
@@ -86,7 +88,7 @@ if (mine.join() !== sorted.join()) throw new Error("the rules are not numbered b
 if (mine.length !== rules.length) throw new Error(`${mine.length} rules have a number, ${rules.length} a runner`);
 
 const kinds = [...new Set(rules.flatMap(it => it.kinds))].sort();
-// The last two numbers of a byte mean something else.
+// The two highest byte values are reserved (`NONE` and `ASK` in `visited.rs`).
 if (kinds.length > 253) throw new Error("a kind does not fit in a byte");
 
 const lines = (words, indent, width = 118) => {
@@ -102,7 +104,8 @@ const lines = (words, indent, width = 118) => {
   all.push(line.trimEnd());
   return all;
 };
-// A string of Rust that is `words` with spaces between them, over as many lines as it takes. `indent`: that of the line it starts in.
+// A Rust string literal with `words` separated by spaces, split over as many lines as needed. `indent` is the
+// indentation of the line it starts on.
 const text = (words, indent) => {
   const all = lines(words, `${indent}    `);
   return all.length === 1
@@ -110,7 +113,7 @@ const text = (words, indent) => {
     : `concat!(\n${all.map(it => `${indent}    "${it}",`).join("\n")}\n${indent})`;
 };
 const whens = ["Once", "Entering", "AtTheEnd", "Last"];
-// The rules of a plugin that report at one time, those that are called with the same kinds side by side.
+// The words for one plugin's rules that report at the same time. Rules called with the same kinds are grouped together.
 const words = list => {
   const groups = new Map();
   for (const it of list) {
@@ -141,7 +144,7 @@ const tables = Object.entries(plugins).map(([directory, plugin]) =>
 tables.push(
   group(
     "ReactHooks",
-    rules.filter(it => it.plugin === "react" && ofReactHooks.includes(it.name)),
+    rules.filter(it => it.plugin === "react" && reactHooksRules.includes(it.name)),
   ),
 );
 
@@ -152,13 +155,15 @@ writeFileSync(
 use crate::rule::Plugin;
 use crate::rule::When::{self, AtTheEnd, Entering, Last, Once};
 
-/// The kinds of node that some rule of oxlint is called with, as oxc calls them (\`AstType\`), sorted and separated by spaces.
+/// The node kinds that at least one oxlint rule is called with, under oxc's names (\`AstType\`), sorted and separated
+/// by spaces.
 #[rustfmt::skip]
 pub(super) static KINDS: &str = ${text(kinds, "")};
 
-/// The plugins in the order of oxlint. The rules of each by when they report: \`run_once\` ([\`Once\`]), \`run\` ([\`Entering\`]),
-/// \`run_on_jest_node\` ([\`AtTheEnd\`]) or tsgolint ([\`Last\`]). The names are separated by spaces. Before those of \`run\` are the
-/// kinds of node that they are called with (\`NODE_TYPES\`): places in [\`KINDS\`], separated by commas.
+/// The plugins in oxlint's order. Each plugin's rules are grouped by when they report: \`run_once\` ([\`Once\`]),
+/// \`run\` ([\`Entering\`]), \`run_on_jest_node\` ([\`AtTheEnd\`]) or tsgolint ([\`Last\`]). The names are separated by
+/// spaces. Before each group of \`run\` rules are the node kinds they're called with (\`NODE_TYPES\`), as
+/// comma-separated indices into [\`KINDS\`].
 #[rustfmt::skip]
 pub(super) static RULES: &[(Plugin, When, &str)] = &[
 ${tables.join("\n")}

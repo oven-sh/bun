@@ -1,15 +1,15 @@
-//! `cursorOffset`: where the cursor is in the formatted text.
+//! `cursorOffset`: finds the cursor's position in the formatted text.
 //!
-//! What Prettier does (`main/get-cursor-node.js`, `main/core.js`):
-//! 1. Before formatting, it finds the smallest part of the text that the cursor is in: a node
-//!    without children, or what is between two nodes. [`locate`].
-//! 2. While formatting, it notes where that part ends up in the output.
-//! 3. It compares the part before and after, character by character, with the cursor as one more
-//!    character of the text before. Where the cursor is deleted is where it is now. [`resolve`].
+//! Prettier's algorithm (`main/get-cursor-node.js`, `main/core.js`):
+//! 1. Before formatting, it finds the smallest part of the text that contains the cursor: a node without children, or
+//!    the gap between two nodes. See [`locate`].
+//! 2. While formatting, it records where that part ends up in the output.
+//! 3. It diffs the part before and after formatting, character by character, with the cursor inserted as an extra
+//!    character in the old text. The cursor's new position is where the diff deletes that character. See [`resolve`].
 //!
-//! Which nodes there are matters for 1. Prettier sees Babel's tree for JavaScript and
-//! typescript-estree's for TypeScript. [`Walk`] says what their nodes are in terms of the handles:
-//! only where they start and end, what is in them, and in which order Prettier visits that.
+//! Step 1 depends on which nodes exist. Prettier sees Babel's tree for JavaScript and typescript-estree's for
+//! TypeScript. [`Walk`] maps our AST handles to those nodes, but only as far as needed here: where each node starts and
+//! ends, what its children are, and in which order Prettier visits them.
 
 use crate::ir::element::{CursorMark, FormatElement};
 use crate::ir::formatter::Formatter;
@@ -28,12 +28,12 @@ use bun_lint::span::Span;
 use bun_lint::tokens::{skip_trivia, skip_trivia_back};
 use smallvec::SmallVec;
 
-/// The part of the text that the cursor is in.
+/// The part of the text that contains the cursor.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Region {
     /// A node without children.
     Node(Span),
-    /// What is between two nodes. `None`: the start or the end of the text.
+    /// The gap between two nodes. `None` means the start or the end of the text.
     Between {
         before: Option<Span>,
         after: Option<Span>,
@@ -42,7 +42,7 @@ pub enum Region {
 
 // ───────────────────────────── the tree that Prettier sees ─────────────────────────────
 
-/// A node of ESTree: Prettier's `locStart` and `locEnd` of it, and what tells its children.
+/// An ESTree node: its `locStart` and `locEnd` in Prettier, and what's needed to list its children.
 #[derive(Copy, Clone)]
 struct Item<'a> {
     span: Span,
@@ -52,10 +52,10 @@ struct Item<'a> {
 #[derive(Copy, Clone)]
 enum Kind<'a> {
     Leaf,
-    /// A leaf that Prettier does not print, so that it does not learn where it ends up: the second
-    /// name of `import { a }`.
+    /// A leaf that Prettier doesn't print, so it never records where the leaf ends up: the second name of
+    /// `import { a }`.
     UnmarkedLeaf,
-    /// Text in the JSX element that starts there.
+    /// Text in the JSX element that starts at this offset.
     JsxText(u32),
     /// The name of a property or a member, which is a leaf.
     Name,
@@ -67,24 +67,24 @@ enum Kind<'a> {
     Expr(Expr<'a>),
     /// Without the `ChainExpression` around it.
     ChainElement(Expr<'a>),
-    /// A `ParenthesizedExpression`: of those around the expression, the one that is in so many.
+    /// The n-th `ParenthesizedExpression` around the expression, counting from the outermost, which is 1.
     Parenthesized(Expr<'a>, usize),
-    /// The `LogicalExpression` of the left side and so many of the operands in the right side.
+    /// The `LogicalExpression` made of the left side and the first n operands of the right side.
     Logical(Expr<'a>, usize),
-    /// The left side of a binary expression that is written as one list of operands with it.
-    /// Prettier does not print it as a node of its own, so that it does not learn where it ends up.
+    /// The left side of a binary expression that's printed as one flat list of operands together with it. Prettier
+    /// doesn't print it as a separate node, so it never records where it ends up.
     FlattenedOperand(Expr<'a>),
-    /// `x!!`: the `TSNonNullExpression` that has so many others in it.
+    /// `x!!`: the `TSNonNullExpression` that contains n others.
     NonNull(Expr<'a>, usize),
-    /// With its `export`.
+    /// Includes its `export`.
     Stmt(Stmt<'a>),
-    /// Without its `export`.
+    /// Excludes its `export`.
     Declaration(Stmt<'a>),
     Statements(List<'a, Stmt<'a>>),
     CatchClause(Stmt<'a>),
     Case(bun_lint::ast::Case<'a>),
     VarDecl(VarDecl<'a>),
-    /// `has_name`: not for a method, whose name is the key.
+    /// The flag is `has_name`. It's false for a method, whose name is the key.
     Func(Func<'a>, bool),
     ClassBody(Class<'a>),
     Member(Member<'a>),
@@ -95,7 +95,7 @@ enum Kind<'a> {
     ParameterProperty(Param<'a>),
     /// `AssignmentPattern` or `RestElement` of a parameter.
     ParameterPattern(Param<'a>),
-    /// A pattern with the type that is part of it in ESTree, and the parameter whose decorators are.
+    /// A pattern. In ESTree its type annotation is part of it, and so are the decorators of the given parameter.
     Binding(Pat<'a>, Option<TypeNode<'a>>, Option<Param<'a>>),
     /// `AssignmentPattern`
     PatternWithDefault(Pat<'a>, Expr<'a>),
@@ -112,9 +112,9 @@ enum Kind<'a> {
     TupleElem(TupleElem<'a>),
     /// `TSNamedTupleMember`, without the `...` before it.
     NamedTupleMember(TupleElem<'a>),
-    /// The first so many names of `A.B.C`.
+    /// The first n names of `A.B.C`.
     EntityName(EntityName<'a>, usize),
-    /// The first so many names of `namespace A.B.C`.
+    /// The first n names of `namespace A.B.C`.
     ModuleName(Module<'a>, usize),
     InterfaceBody(Interface<'a>),
     EnumBody(Enum<'a>),
@@ -140,7 +140,7 @@ const fn unmarked_leaf<'a>(span: Span) -> Item<'a> {
 
 struct Walk<'a> {
     file: &'a File<'a>,
-    /// Babel's tree. Otherwise typescript-estree's.
+    /// True for Babel's tree, false for typescript-estree's.
     is_babel: bool,
 }
 
@@ -149,7 +149,7 @@ impl<'a> Walk<'a> {
         self.file.text()
     }
 
-    /// Prettier's `__contentEnd`: `end`, or if a `;` is before it, where what is before that ends.
+    /// Prettier's `__contentEnd`: `end`, or, if a `;` comes right before `end`, the end of the code before that `;`.
     fn content_end(&self, end: u32) -> u32 {
         match end
             .checked_sub(1)
@@ -160,7 +160,7 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// Prettier's `locEnd` of a statement. `is_export`: of the `export` around it.
+    /// Prettier's `locEnd` for a statement or, with `is_export`, for the `export` around it.
     fn statement_end(&self, mut statement: Stmt<'a>, is_export: bool) -> u32 {
         if is_export {
             return self.content_end(statement.span().end);
@@ -205,7 +205,7 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// What is in the head of a `for`: a declaration, or an expression.
+    /// The initializer in the head of a `for`: a declaration or an expression.
     fn head(&self, statement: Stmt<'a>) -> Item<'a> {
         match statement.kind() {
             StmtKind::Expr(e) => self.expr(e),
@@ -226,8 +226,8 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// The parentheses around `e` that are a `ParenthesizedExpression` for Prettier, the outermost
-    /// first: those of Babel's tree that a type cast comment is before.
+    /// Returns the parentheses around `e` that Prettier keeps as a `ParenthesizedExpression`, outermost first. Those
+    /// are the ones in Babel's tree that follow a type cast comment.
     fn kept_parentheses(&self, e: Expr<'a>) -> SmallVec<[Span; 2]> {
         let mut kept = SmallVec::new();
         if !self.is_babel || !e.is_parenthesized() {
@@ -249,8 +249,7 @@ impl<'a> Walk<'a> {
         kept
     }
 
-    /// Whether there is a comment before `at`, with nothing but blanks between them, for which
-    /// Prettier's `isTypeCastComment` holds.
+    /// True if the last comment before `at`, with only whitespace in between, passes Prettier's `isTypeCastComment`.
     fn is_after_type_cast_comment(&self, at: u32) -> bool {
         let text = self.text();
         let trivia = text
@@ -278,8 +277,8 @@ impl<'a> Walk<'a> {
         })
     }
 
-    /// `a && (b && c)` is `(a && b) && c` for Prettier (`rebalanceLogicalTree`). The operands that are
-    /// in the right side of `e`, if that has the operator of `e`.
+    /// Prettier turns `a && (b && c)` into `(a && b) && c` (`rebalanceLogicalTree`). Returns the operands in `e`'s
+    /// right side if that side has the same operator as `e`, and nothing otherwise.
     fn operands_in_right_side(e: Expr<'a>) -> SmallVec<[Expr<'a>; 4]> {
         let mut operands = SmallVec::new();
         let ExprKind::Binary { op, right, .. } = e.kind() else {
@@ -305,8 +304,7 @@ impl<'a> Walk<'a> {
         operands
     }
 
-    /// What is in the `LogicalExpression` of the left side of `e` and the first `count` of
-    /// `operands`.
+    /// Appends the children of the `LogicalExpression` made of `e`'s left side and the first `count` of `operands`.
     fn logical_parts(
         &self,
         e: Expr<'a>,
@@ -329,7 +327,7 @@ impl<'a> Walk<'a> {
         out.push(self.expr(last));
     }
 
-    /// `left`, which is the left side of a binary expression with the operator `op`.
+    /// Returns the item for `left`, the left side of a binary expression with operator `op`.
     fn left_operand(&self, op: BinOp, left: Expr<'a>) -> Item<'a> {
         let item = self.expr(left);
         match (item.kind, left.kind()) {
@@ -385,7 +383,7 @@ impl<'a> Walk<'a> {
         })
     }
 
-    /// The module that the name at `index` of `namespace A.B.C` is the name of.
+    /// Returns the module that the name at `index` in `namespace A.B.C` belongs to.
     fn nested_module(module: Module<'a>, index: usize) -> Option<Module<'a>> {
         let mut at = module;
         for _ in 0..index {
@@ -519,7 +517,7 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// The function of a method. In Babel's tree its parts are in the method itself.
+    /// A method's function. In Babel's tree its parts are children of the method itself.
     fn method_value(&self, func: Func<'a>, out: &mut Vec<Item<'a>>) {
         match self.is_babel {
             true => self.function_parts(func, false, out),
@@ -605,7 +603,7 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// A child of a JSX element, or the value of an attribute: in braces it is in a
+    /// A child of a JSX element, or an attribute's value. If it's in braces, it's wrapped in a
     /// `JSXExpressionContainer`.
     fn jsx_child(&self, e: Expr<'a>) -> Item<'a> {
         match (e.jsx_container_span(), e.kind()) {
@@ -613,7 +611,7 @@ impl<'a> Walk<'a> {
                 span,
                 kind: Kind::Expr(e),
             },
-            // `{}` has a `JSXEmptyExpression` in it.
+            // `{}` contains a `JSXEmptyExpression`.
             (Some(span), ExprKind::Missing) => Item {
                 span,
                 kind: Kind::LeafIn(span.shrink(1, 1)),
@@ -655,7 +653,7 @@ impl<'a> Walk<'a> {
         statement.label().map(|label: Ident<'a>| leaf(label.span()))
     }
 
-    /// The text of a template between its delimiters. `span`: with them.
+    /// A template's text between its delimiters. `span` includes the delimiters.
     fn template_element(span: Span, is_last: bool) -> Item<'a> {
         leaf(span.shrink(1, if is_last { 1 } else { 2 }))
     }
@@ -797,7 +795,7 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// What is in the `TSNonNullExpression` of `e` that has `inner` others in it.
+    /// Appends the child of the `TSNonNullExpression` in `e` that contains `inner` others.
     fn non_null_parts(&self, e: Expr<'a>, inner: usize, out: &mut Vec<Item<'a>>) {
         let ExprKind::NonNull(operand) = e.kind() else {
             return;
@@ -826,7 +824,7 @@ impl<'a> Walk<'a> {
         match statement.kind() {
             StmtKind::Empty | StmtKind::Debugger => {}
             StmtKind::Break(_) | StmtKind::Continue(_) => out.extend(Self::label(statement)),
-            // Babel has a `DirectiveLiteral` in a `Directive`, which comes to the same.
+            // Babel has a `DirectiveLiteral` in a `Directive`, which has the same shape.
             StmtKind::Expr(e)
             | StmtKind::Throw(e)
             | StmtKind::ExportDefault(e)
@@ -1101,7 +1099,7 @@ impl<'a> Walk<'a> {
         match item.kind {
             Kind::Leaf | Kind::UnmarkedLeaf | Kind::JsxText(_) | Kind::Name => {}
             Kind::LeafIn(span) => out.push(leaf(span)),
-            // Of a name that stands for two, the first is printed.
+            // When one name serves as both, Prettier prints the first.
             Kind::Leaves(first, second) if first == second => {
                 out.extend([leaf(first), unmarked_leaf(second)])
             }
@@ -1134,7 +1132,7 @@ impl<'a> Walk<'a> {
                     self.statement_end(statement, false),
                 );
                 out.push(Item {
-                    // The decorators of a class can be before the `export`.
+                    // A class's decorators can come before the `export`.
                     span: match statement.kind() {
                         StmtKind::Class(class) => Self::with_decorators(span, class.modifiers()),
                         _ => span,
@@ -1192,7 +1190,7 @@ impl<'a> Walk<'a> {
                         out.extend(param.ty().map(|ty| self.type_annotation(ty)));
                     }
                 }
-                // Otherwise they are those of the `TSParameterProperty`.
+                // Otherwise the decorators belong to the `TSParameterProperty`.
                 if param.modifiers().iter().all(|it| it.decorator().is_some()) {
                     self.decorators(param.modifiers(), out);
                 }
@@ -1201,7 +1199,7 @@ impl<'a> Walk<'a> {
                 let modifiers = param.map(Param::modifiers);
                 match pat.kind() {
                     PatKind::Missing | PatKind::Ident(_) => {}
-                    // The decorators of an object pattern are visited first.
+                    // An object pattern's decorators are visited first.
                     PatKind::Object(props) => {
                         if let Some(modifiers) = modifiers {
                             self.decorators(modifiers, out);
@@ -1316,7 +1314,7 @@ impl<'a> Walk<'a> {
 
 // ───────────────────────────── where the cursor is ─────────────────────────────
 
-/// Prettier's `getCursorLocation`. `offset`: of the cursor in the text of `file`.
+/// Prettier's `getCursorLocation`. `offset` is the cursor's offset in `file`'s text.
 pub fn locate<'a>(file: &'a File<'a>, offset: u32) -> Region {
     match locate_items(file, offset) {
         (Some(node), None, true) => Region::Node(node.span),
@@ -1327,7 +1325,8 @@ pub fn locate<'a>(file: &'a File<'a>, offset: u32) -> Region {
     }
 }
 
-/// The node that the cursor is in and `true`, or the nodes before and after the cursor.
+/// Returns `(node, None, true)` if the cursor is in a node without children. Otherwise returns the nodes before and
+/// after the cursor, and `false`.
 fn locate_items<'a>(file: &'a File<'a>, offset: u32) -> (Option<Item<'a>>, Option<Item<'a>>, bool) {
     let walk = Walk {
         file,
@@ -1335,7 +1334,7 @@ fn locate_items<'a>(file: &'a File<'a>, offset: u32) -> (Option<Item<'a>>, Optio
     };
     let contains = |item: &Item<'a>| item.span.start <= offset && offset <= item.span.end;
 
-    // Breadth first, like `getDescendants`: the last one is the last of those that are deepest.
+    // Breadth first, like `getDescendants`, so the last entry is the last of the deepest nodes.
     let mut containing = vec![Item {
         span: Span::new(0, file.text().len() as u32),
         kind: Kind::Program,
@@ -1383,14 +1382,14 @@ fn locate_items<'a>(file: &'a File<'a>, offset: u32) -> (Option<Item<'a>>, Optio
 
 // ───────────────────────────── where the region ends up ─────────────────────────────
 
-/// What tells, while the document is written, where the ends of the region are in it. Prettier's
-/// `callPluginPrintFunction` puts `cursor` around what is printed for a node, within its comments.
+/// Used while the document is written to mark where the region starts and ends in it. Prettier's
+/// `callPluginPrintFunction` puts `cursor` around a node's printed output, inside its comments.
 ///
-/// The nodes here are not those of ESTree, so what is compared is where they start and end. Of
-/// several that qualify, the printer takes the innermost.
+/// Our nodes aren't ESTree's, so nodes are matched by their start and end offsets. If several match, the printer uses
+/// the innermost.
 #[derive(Copy, Clone)]
 pub(crate) struct CursorRegion {
-    /// Everything that overlaps this is written on the paths that call `enter` and `exit`.
+    /// Anything that overlaps this span must be written by code paths that call `enter` and `exit`.
     extent: Span,
     /// The cursor is in this node.
     node: Extent,
@@ -1398,23 +1397,23 @@ pub(crate) struct CursorRegion {
     before: Extent,
     /// The region ends where this node starts.
     after: Extent,
-    /// The region starts where the children of the JSX element that starts there do.
+    /// The region starts where the children of the JSX element at this offset start.
     starts_with_children_of: u32,
-    /// The region ends where the children of the JSX element that starts there do.
+    /// The region ends where the children of the JSX element at this offset end.
     ends_with_children_of: u32,
 }
 
-/// Where a node is.
+/// A node's position.
 #[derive(Copy, Clone)]
 struct Extent {
     span: Span,
-    /// Prettier has most statements end before their `;`. Here they are also written as what ends
-    /// after it.
+    /// In Prettier most statements end before their `;`. Here the same statement can also be written with a span that
+    /// ends after it.
     end_with_semicolon: u32,
 }
 
 impl Extent {
-    /// No node is there.
+    /// Matches no node.
     const NOWHERE: Extent = Extent {
         span: Span::new(u32::MAX, u32::MAX),
         end_with_semicolon: u32::MAX,
@@ -1442,7 +1441,7 @@ impl CursorRegion {
         let marked = |item: Option<Item<'a>>| match item {
             None
             | Some(Item {
-                // The left side of a rebalanced expression has its operator.
+                // The left side of a rebalanced expression has the same operator, so it's flattened too.
                 kind:
                     Kind::UnmarkedLeaf
                     | Kind::JsxText(_)
@@ -1484,7 +1483,7 @@ impl CursorRegion {
             },
             after: marked(second),
             starts_with_children_of: element_of(first),
-            // Prettier looks at the node after the cursor only if the one before it is no text.
+            // Prettier only looks at the node after the cursor if the node before it isn't text.
             ends_with_children_of: match (is_node, element_of(first)) {
                 (true, element) => element,
                 (false, u32::MAX) => element_of(second),
@@ -1502,7 +1501,7 @@ impl CursorRegion {
         span.start <= self.extent.end && self.extent.start <= span.end
     }
 
-    /// Before what is at `span` is written, after the comments that lead it.
+    /// Call before writing the node at `span`, after its leading comments.
     pub(crate) fn enter(&self, span: Span, f: &mut Formatter<'_>) {
         if span.start == self.node.span.start && self.node.ends_at(span.end) {
             f.write_element(FormatElement::Cursor(CursorMark::RegionStart));
@@ -1512,7 +1511,7 @@ impl CursorRegion {
         }
     }
 
-    /// After what is at `span` is written, before the comments that trail it.
+    /// Call after writing the node at `span`, before its trailing comments.
     pub(crate) fn exit(&self, span: Span, f: &mut Formatter<'_>) {
         if span.start == self.node.span.start && self.node.ends_at(span.end) {
             f.write_element(FormatElement::Cursor(CursorMark::RegionEnd));
@@ -1523,20 +1522,20 @@ impl CursorRegion {
     }
 }
 
-/// Calls `write`, which writes the node of ESTree at `span`. For a node that is not written by the
-/// `impl Format` of a handle: the body of an interface, the text of a template.
+/// Calls `write`, which writes the ESTree node at `span`. Use it for a node that isn't written by a handle's
+/// `impl Format`, like an interface's body or a template's text.
 #[inline]
-pub(crate) fn around_node<'a>(
+pub(crate) fn with_node_marks<'a>(
     span: Span,
     f: &mut Formatter<'a>,
     write: impl FnOnce(&mut Formatter<'a>),
 ) {
-    around_node_at(|| span, f, write);
+    with_node_marks_at(|| span, f, write);
 }
 
-/// The same. `span` is only called if there is a cursor.
+/// Like `with_node_marks`, but `span` is only computed if there's a cursor.
 #[inline]
-pub(crate) fn around_node_at<'a>(
+pub(crate) fn with_node_marks_at<'a>(
     span: impl FnOnce() -> Span,
     f: &mut Formatter<'a>,
     write: impl FnOnce(&mut Formatter<'a>),
@@ -1550,13 +1549,13 @@ pub(crate) fn around_node_at<'a>(
     cursor.exit(span, f);
 }
 
-/// Calls `write`, which writes the children of the JSX element that starts at `element` on lines of
-/// their own. Prettier does not print the text in an element as nodes. For text that the region
-/// starts or ends with, it takes all of the children, if they are written that way.
+/// Calls `write`, which writes the children of the JSX element starting at `element` on their own lines. Prettier
+/// doesn't print an element's text as nodes. If the region starts or ends with text, it uses all of the children
+/// instead, provided they're printed on their own lines.
 ///
-/// `in_group`: they are only on lines of their own if the group that this is in breaks.
+/// With `in_group`, the children are only on their own lines if the enclosing group breaks.
 #[inline]
-pub(crate) fn around_jsx_children<'a>(
+pub(crate) fn with_jsx_children_marks<'a>(
     element: u32,
     in_group: bool,
     f: &mut Formatter<'a>,
@@ -1584,8 +1583,8 @@ pub(crate) fn around_jsx_children<'a>(
     }
 }
 
-/// What has been written since the node at `span` is part of what Prettier prints for that node:
-/// the `;` after a member.
+/// Call when what was written since the node at `span` is part of that node's output in Prettier, like the `;` after a
+/// member.
 #[inline]
 pub(crate) fn extend_node(span: Span, f: &mut Formatter<'_>) {
     if f.context().cursor.is_active() {
@@ -1600,8 +1599,8 @@ pub(crate) fn extend_node(span: Span, f: &mut Formatter<'_>) {
 type Unit = u32;
 const CURSOR: Unit = u32::MAX;
 
-/// Appends `text` as UTF-16 code units. `normalize`: `\r\n` and `\r` are `\n`, as in the text that
-/// Prettier parses.
+/// Appends `text` as UTF-16 code units. With `normalize`, `\r\n` and `\r` become `\n`, as in the text that Prettier
+/// parses.
 fn push_units(text: &[u8], normalize: bool, out: &mut Vec<Unit>) {
     let text = match normalize {
         true => strings::crlf_as_lf(text),
@@ -1610,24 +1609,24 @@ fn push_units(text: &[u8], normalize: bool, out: &mut Vec<Unit>) {
     out.extend(strings::wtf8_to_utf16(&text).into_iter().map(Unit::from));
 }
 
-/// The furthest that a number of changes gets on a diagonal of the edit graph.
+/// The furthest point reachable on one diagonal of the edit graph with a given number of edits.
 #[derive(Copy, Clone)]
 struct Path {
-    /// The last unit of the old text that is dealt with. -1: none.
+    /// Index of the last consumed unit of the old text, or -1.
     old_pos: i64,
-    /// How many units of the new text were dealt with when the cursor was removed.
+    /// How many units of the new text had been consumed when the cursor was removed.
     new_units_before_cursor: i64,
 }
 
-/// `diffArrays` of jsdiff 9, as far as it takes to tell how much of `new` is before the place where
-/// the cursor is removed from `old`. The choices between equally short ways are those of jsdiff.
+/// `diffArrays` from jsdiff 9, reduced to what's needed to find how much of `new` comes before the point where the
+/// cursor is removed from `old`. Ties between equally short edit scripts are broken the way jsdiff does.
 ///
-/// Prettier adds up the lengths of what is added or kept before the run of removals with the cursor
-/// in it. Removals do not add to that, so it is what has been added or kept when the cursor goes.
+/// Prettier sums the lengths of the added and kept runs before the run of removals that contains the cursor. Removals
+/// don't count, so that's the number of units added or kept by the time the cursor is removed.
 fn units_before_cursor(old: &[Unit], new: &[Unit]) -> usize {
     let (old_len, new_len) = (old.len() as i64, new.len() as i64);
 
-    // `extractCommon`. Returns the last unit of the new text that is dealt with.
+    // `extractCommon`. Returns the index of the last consumed unit of the new text.
     let extract_common = |path: &mut Path, diagonal: i64| -> i64 {
         let start = (path.old_pos + 1) as usize;
         let new_start = (path.old_pos - diagonal + 1) as usize;
@@ -1644,7 +1643,7 @@ fn units_before_cursor(old: &[Unit], new: &[Unit]) -> usize {
         path.old_pos - diagonal
     };
 
-    // `bestPath[diagonal]`: 0, -1, 1, -2, 2 and so on. It grows with the number of changes.
+    // `bestPath[diagonal]`, stored in the order 0, -1, 1, -2, 2 and so on. It grows with the number of edits.
     let mut best_path: Vec<Option<Path>> = Vec::new();
     let slot = |diagonal: i64| match diagonal < 0 {
         true => (-2 * diagonal - 1) as usize,
@@ -1662,7 +1661,7 @@ fn units_before_cursor(old: &[Unit], new: &[Unit]) -> usize {
     best_path.push(Some(first));
 
     let (mut min_diagonal, mut max_diagonal) = (i64::MIN, i64::MAX);
-    // To remove all of `old` and to add all of `new` is that many changes.
+    // Removing all of `old` and adding all of `new` takes `old_len + new_len` edits, so that's the maximum.
     for edit_length in 1..=old_len + new_len {
         best_path.resize(slot(edit_length + 1) + 1, None);
         let mut diagonal = min_diagonal.max(-edit_length);
@@ -1704,19 +1703,19 @@ fn units_before_cursor(old: &[Unit], new: &[Unit]) -> usize {
     new.len()
 }
 
-/// Where the cursor is in a text.
+/// The cursor's position in a text.
 #[derive(Copy, Clone)]
 struct Offset {
     bytes: u32,
-    /// It is between the two UTF-16 code units of the character there.
+    /// The cursor is between the two UTF-16 code units of the character at `bytes`.
     is_in_character: bool,
 }
 
-/// The end of Prettier's `coreFormat`: where the cursor is in `formatted`, in UTF-16 code units.
+/// The end of Prettier's `coreFormat`. Returns the cursor's position in `formatted`, in UTF-16 code units.
 ///
-/// `offset`: where it is in `source`. `marks`: where the start and the end of `region` are in
-/// `formatted`, if the printer came by both. `names`: whether the node that `region` starts with, and
-/// the one that it ends with, is the name of a property.
+/// `offset` is its position in `source`. `marks` is where `region` starts and ends in `formatted`, if the printer
+/// reached both marks. `names` tells whether the node at the start of `region`, and the one at its end, is a property
+/// name.
 fn resolve(
     source: &[u8],
     offset: Offset,
@@ -1730,7 +1729,7 @@ fn resolve(
         Span::new(0, formatted.len() as u32),
     );
     let (old_span, new_span) = match marks {
-        // An empty text counts as none.
+        // An empty range counts as no marks.
         Some((start, end)) if start < end && end as usize <= formatted.len() => {
             let old_span = match region {
                 Region::Node(span) => span,
@@ -1743,22 +1742,21 @@ fn resolve(
         }
         _ => whole,
     };
-    // Prettier does not print the name of a property as a node if it adds or removes its quotes, so
-    // that it does not learn where it ends up.
+    // Prettier doesn't print a property name as a node if it adds or removes the quotes, so it never records where the
+    // name ends up.
     let is_quote = |text: &[u8], at: Option<u32>| {
         matches!(at.and_then(|at| text.get(at as usize)), Some(b'"' | b'\''))
     };
-    let has_other_quotes =
+    let quotes_differ =
         |old: Option<u32>, new: Option<u32>| is_quote(source, old) != is_quote(formatted, new);
-    let is_name_with_other_quotes = match region {
-        Region::Node(_) => names.0 && has_other_quotes(Some(old_span.start), Some(new_span.start)),
+    let is_name_with_changed_quotes = match region {
+        Region::Node(_) => names.0 && quotes_differ(Some(old_span.start), Some(new_span.start)),
         Region::Between { .. } => {
-            (names.0
-                && has_other_quotes(old_span.start.checked_sub(1), new_span.start.checked_sub(1)))
-                || (names.1 && has_other_quotes(Some(old_span.end), Some(new_span.end)))
+            (names.0 && quotes_differ(old_span.start.checked_sub(1), new_span.start.checked_sub(1)))
+                || (names.1 && quotes_differ(Some(old_span.end), Some(new_span.end)))
         }
     };
-    let (old_span, new_span) = if is_name_with_other_quotes {
+    let (old_span, new_span) = if is_name_with_changed_quotes {
         whole
     } else {
         (old_span, new_span)
@@ -1775,7 +1773,7 @@ fn resolve(
     let cursor = (offset.bytes.saturating_sub(old_span.start) as usize).min(old_text.len());
     let (before_cursor, after_cursor) = old_text.split_at(cursor);
 
-    // Prettier compares with the text that it parses, in which every line break is `\n`.
+    // Prettier diffs against the text it parsed, where every line break is `\n`.
     let mut old_units = Vec::with_capacity(old_text.len() + 1);
     push_units(before_cursor, true, &mut old_units);
     let units_before = old_units.len() + usize::from(offset.is_in_character);
@@ -1791,9 +1789,8 @@ fn resolve(
     new_start + units_before_cursor(&old_units, &new_units)
 }
 
-/// `options.cursor_offset`, which counts UTF-16 code units, as an offset in `source`. Prettier's
-/// `normalizeInputAndOptions`: `None` if it is not in the text, of which a byte order mark is no
-/// part.
+/// Converts `options.cursor_offset`, which counts UTF-16 code units, to a byte offset in `source`. As in Prettier's
+/// `normalizeInputAndOptions`, returns `None` if it's outside the text. A byte order mark isn't part of the text.
 fn offset_in(source: &[u8], options: &FormatOptions) -> Option<Offset> {
     let units = options.cursor_offset? as usize;
     if units > bun_core::strings::element_length_utf8_into_utf16(source)
@@ -1804,7 +1801,7 @@ fn offset_in(source: &[u8], options: &FormatOptions) -> Option<Offset> {
     let offset = strings::wtf8_offset_of_utf16_index(source, units as u32);
     let is_in_character =
         bun_core::strings::element_length_utf8_into_utf16(source.get(..offset)?) < units;
-    // After `\r\n` has become `\n`, an offset between the two is behind it.
+    // Once `\r\n` has become `\n`, an offset between the two ends up after it.
     let is_in_line_break = offset > 0 && source.get(offset - 1..=offset) == Some(b"\r\n");
     Some(Offset {
         bytes: (offset + usize::from(is_in_line_break)) as u32,
@@ -1812,9 +1809,9 @@ fn offset_in(source: &[u8], options: &FormatOptions) -> Option<Offset> {
     })
 }
 
-/// Appends the formatted text of `file` to `out`. Returns where the cursor, which is at
-/// `options.cursor_offset` in the text of `file`, is in what is appended, in UTF-16 code units like
-/// the option. `None` without the option, if it is not in the text, and if the text is blank.
+/// Appends `file`'s formatted text to `out`. Returns the cursor's new position, relative to the appended text and in
+/// UTF-16 code units, like `options.cursor_offset`. Returns `None` if the option isn't set or is outside the text, or
+/// if the text is blank.
 pub fn format_with_cursor<'a>(
     file: &'a File<'a>,
     options: &FormatOptions,
@@ -1824,10 +1821,10 @@ pub fn format_with_cursor<'a>(
     format_with(file, options, scratch, out, false, crate::js::format_file)
 }
 
-/// The same for the document that `write` writes: Prettier's `coreFormat`.
+/// Like `format_with_cursor`, for the document that `write` writes. This is Prettier's `coreFormat`.
 ///
-/// `is_aligned`: its `addAlignmentSize > 0`. Of what is printed, the blanks at both ends are left
-/// out, and a line break ends it.
+/// `is_aligned` is its `addAlignmentSize > 0`: the output is trimmed at both ends and then terminated with a line
+/// break.
 pub(crate) fn format_with<'a>(
     file: &'a File<'a>,
     options: &FormatOptions,
@@ -1849,7 +1846,7 @@ pub(crate) fn format_with<'a>(
     let start = out.len();
     let [mut first, mut second] =
         crate::ir::run::format_with_marks(file, options, cursor, scratch, out, write)?;
-    // Without a node on one side, the region goes to that end of the document.
+    // Without a node on one side, the region extends to that end of the document.
     match items {
         Some((None, Some(_), _)) => first = Some(0),
         Some((Some(_), None, false)) => second = Some((out.len() - start) as u32),
@@ -1892,13 +1889,13 @@ pub(crate) fn format_with<'a>(
     ) as u32))
 }
 
-/// `options.cursor_offset` as an offset in `source`, for a language whose tree is looked at elsewhere.
+/// Returns `options.cursor_offset` as a byte offset in `source`, for a language whose tree is searched elsewhere.
 pub(crate) fn cursor_offset_in_bytes(source: &[u8], options: &FormatOptions) -> Option<u32> {
     offset_in(source, options).map(|offset| offset.bytes)
 }
 
-/// Where the cursor, which is at `offset` in `source`, is in `formatted`. `marks`: where the start and the end of `region`
-/// are in `formatted`, if the printer came by both.
+/// Returns the position in `formatted` of the cursor that's at `offset` in `source`. `marks` is where `region` starts
+/// and ends in `formatted`, if the printer reached both marks.
 pub(crate) fn cursor_in_region(
     source: &[u8],
     offset: u32,
@@ -1906,8 +1903,8 @@ pub(crate) fn cursor_in_region(
     formatted: &[u8],
     marks: Option<(u32, u32)>,
 ) -> u32 {
-    // HTML has a text end before the blanks at its end once it has been printed. Prettier does not ask whether the
-    // cursor is still in a node that has been printed as it was.
+    // Once an HTML text node is printed, its span ends before its trailing whitespace. Prettier doesn't check whether
+    // the cursor is still inside a node that was printed unchanged.
     if let (Region::Node(span), Some((start, end))) = (region, marks)
         && offset > span.end
         && start < end
@@ -1917,12 +1914,12 @@ pub(crate) fn cursor_in_region(
         )
         && old == new
     {
-        let behind = source
+        let up_to_cursor = source
             .get(span.start as usize..offset as usize)
             .unwrap_or_default();
         return (bun_core::strings::element_length_utf8_into_utf16(
             formatted.get(..start as usize).unwrap_or_default(),
-        ) + bun_core::strings::element_length_utf8_into_utf16(behind)) as u32;
+        ) + bun_core::strings::element_length_utf8_into_utf16(up_to_cursor)) as u32;
     }
     let offset = Offset {
         bytes: offset,
@@ -1931,9 +1928,9 @@ pub(crate) fn cursor_in_region(
     resolve(source, offset, region, (false, false), formatted, marks) as u32
 }
 
-/// Where the cursor, which is at `options.cursor_offset` in `source`, is in `formatted`, which is what
-/// has become of all of `source`: what Prettier says if it does not learn where the part around the
-/// cursor ends up. For the languages whose trees are not looked at here.
+/// Returns the cursor's new position by diffing all of `source` against all of `formatted`. That's Prettier's fallback
+/// when it hasn't recorded where the part around the cursor ends up. Used for the languages whose trees aren't searched
+/// here.
 pub fn cursor_in_formatted_text(
     source: &[u8],
     options: &FormatOptions,

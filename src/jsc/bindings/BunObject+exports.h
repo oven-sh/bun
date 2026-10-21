@@ -6,12 +6,10 @@
     macro(Archive) \
     macro(FFI) \
     macro(FetchSession) \
-    macro(FileSystemRouter) \
     macro(Image) \
     macro(markdown) \
     macro(S3Client) \
     macro(Terminal) \
-    macro(Transpiler) \
     macro(ValkeyClient) \
     macro(argv) \
     macro(cron) \

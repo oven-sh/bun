@@ -1093,6 +1093,18 @@ describe("parse shell interpolated array", () => {
     ]);
   });
 
+  test("typed text that spells a keyword at the end of a longer word is a part of that word", () => {
+    const { assigns, name_and_args, redirect_file } = cmd(
+      parse`A="x"then${[[], "y"]} B=${["x", []]}fi${[[], "y", "z"]} export C='x'else${[[], "y"]} > "x"elif${[[], "y"]}`,
+    );
+    expect(assigns).toEqual([
+      { label: "A", value: joined("x", "then", " ", "y") },
+      { label: "B", value: joined("x", " ", "fi", " ", "y", " ", "z") },
+    ]);
+    expect(name_and_args).toEqual([text("export"), joined("C=", "x", "else", " ", "y")]);
+    expect(redirect_file).toEqual({ atom: text("") });
+  });
+
   test("in [[ ]] an array parses like typed words", () => {
     expect(parse`[[ ${["a", "==", "b"]} ]]`).toBe(parse`[[ a ${"=="} b ]]`);
     expect(parse`[[ ${["-n", "a"]} ]]`).toBe(parse`[[ -n a ]]`);
@@ -1136,6 +1148,11 @@ describe("parse shell interpolated array", () => {
       "echo {@,c}", "echo *.@", "echo ~@", "echo $V@", "echo a#@", "echo \\@", "export @", "export -p @", "[[ @ ]]", "[[ a @ ]]",
       "i@; then echo a; fi", "if true; the@; fi", "if true; then echo a; f@", "if false; then echo a; els@; fi",
       "if@; then echo a; fi", "if true; then@; fi", "[[@ ]]", "[[ a == b ]]@",
+      "true && if@; then echo a; fi", "true || if@; then echo a; fi", "true | if@; then cat; fi", "true; if@; then echo a; fi",
+      "true\nif@; then echo a; fi", "(if@; then echo a; fi)", "echo $(if@; then echo a; fi)", 'echo "$(if@; then echo a; fi)"',
+      "(true) if@; then echo a; fi", "[[ a == a ]] if@; then echo a; fi", "echo > out if@; then echo a; fi",
+      "if false; then echo a; elif@; then echo b; fi", "if false; then echo a; else@; fi", "if true; then echo a; fi@",
+      'echo "x"if@', "echo $V''fi@",
     ];
     const arrays: [string, () => unknown[]][] = [
       ['["x","y"]', () => ["x", "y"]],

@@ -550,6 +550,37 @@ describe("lex shell", () => {
       ]);
     });
 
+    test("after a typed keyword the blank stays a Delimit where a command can start", () => {
+      const array = [[], "y"];
+      // prettier-ignore
+      const commandStarts = [
+        ["", ""], ["a; ", ""], ["a\n", ""], ["a | ", ""], ["a || ", ""], ["a && ", ""], ["(", ")"], ["(a) ", ""],
+        ["$(", ")"], ['"$(', ')"'], ["[[ a ]] ", ""], ["then ", ""],
+      ];
+      const differing = commandStarts.filter(
+        ([before, after]) =>
+          lex({ raw: [before + "fi", after] } as any, array) !== lex({ raw: [before + "fi y" + after] } as any),
+      );
+      expect(differing).toEqual([]);
+      const buf = new Uint8Array(1);
+      expect(lex`echo > ${buf}fi${array}`).toBe(lex`echo > ${buf}fi y`);
+    });
+
+    test("typed text that spells a keyword is not one after a part of its word, a redirect operator or a separator", () => {
+      const array = [[], "y"];
+      const tail = [{ Text: "fi" }, sep, { Text: "y" }, { Delimit: {} }, { Eof: {} }];
+      // prettier-ignore
+      const notCommandStarts = [
+        'A="x"', "A='x'", 'A="$V"', 'A="$1"', "A=$(a)", "A=*", "A=**", "A={", "A={a,b}", "A=x,", "echo > ", "echo 2>&1 ",
+      ];
+      const tails = notCommandStarts.map(before => [
+        before,
+        JSON.parse(lex({ raw: [before + "fi", ""] } as any, array)).slice(-5),
+      ]);
+      expect(tails).toEqual(notCommandStarts.map(before => [before, tail]));
+      expect(JSON.parse(lex`A=${["x", []]}fi${array}`)).toEqual([{ Text: "A=x" }, sep, ...tail]);
+    });
+
     test("inside quotes a separator is a space", () => {
       expect(JSON.parse(lex`"${["a", "b"]}" '${["c", "d"]}' "${[]}"`)).toEqual([
         { DoubleQuotedText: "a b" },

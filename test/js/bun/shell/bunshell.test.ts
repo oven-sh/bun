@@ -3583,6 +3583,27 @@ describe("interpolated arrays", () => {
     TestBuilder.command`if${[[], "true"]}; then [[${[[], "-n"]} x ]] && echo yes; fi`
       .stdout("yes\n")
       .runAsTest("after typed syntax, as before");
+    TestBuilder.command`true && if${[[], "true"]}; then${[[], "echo", "a"]}; fi; (if false; then echo no; elif${[[], "true"]}; then echo b; fi); echo $(if false; then echo no; else${[[], "echo", "c"]}; fi) "$(if${[[], "true"]}; then echo d; fi)"`
+      .stdout("a\nb\nc d\n")
+      .runAsTest("after a typed keyword where a command can start, as before");
+
+    describe("after typed text that ends in a keyword, in the same word", () => {
+      TestBuilder.command`A="x"then${[[], "echo", "INJECTED"]} echo tail`
+        .stdout("tail\n")
+        .runAsTest("no element is run as the command");
+      TestBuilder.command`D=d; A="$D"fi${[[], "y", "z"]}; B=${["x", []]}else${[[], "y"]}; echo "[$A] [$B]"`
+        .stdout("[dfi y z] [x else y]\n")
+        .runAsTest("an assignment keeps the elements in its value");
+      TestBuilder.command`export FOO="a"fi${[[], "BAR=evil"]}; echo "[$FOO] [$BAR]"`
+        .stdout("[afi BAR=evil] []\n")
+        .runAsTest("an element does not export a second variable");
+      TestBuilder.command`echo hi > "out"fi${[[], "echo", "INJECTED"]}`
+        .ensureTempDir()
+        .exitCode(1)
+        .stderr("bun: ambiguous redirect: at `echo`\n")
+        .doesNotExist("outfi")
+        .runAsTest("a redirect target is ambiguous");
+    });
   });
 
   describe("[[ ]] reads an array as typed words, as before", () => {

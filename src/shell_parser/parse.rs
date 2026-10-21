@@ -3229,12 +3229,29 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         Ok(())
     }
 
-    /// The tokens end with a typed `if` clause keyword and its `Delimit`, and the keyword is not a redirect target.
+    /// The tokens end with a typed `if` clause keyword and its `Delimit`, and the parser can start a command at the keyword.
     fn ends_with_keyword(&self) -> bool {
-        let [.., before, Token::Text(word), Token::Delimit] = &self.tokens[..] else {
-            return matches!(&self.tokens[..], [Token::Text(word), Token::Delimit] if self.is_typed_keyword(*word));
+        let (before, word) = match &self.tokens[..] {
+            [Token::Text(word), Token::Delimit] => return self.is_typed_keyword(*word),
+            [.., before, Token::Text(word), Token::Delimit] => (before.tag(), *word),
+            _ => return false,
         };
-        before.tag() != TokenTag::Redirect && self.is_typed_keyword(*word)
+        // Not after a part of the same word, a redirect operator or a separator.
+        matches!(
+            before,
+            TokenTag::Delimit
+                | TokenTag::Semicolon
+                | TokenTag::Newline
+                | TokenTag::Pipe
+                | TokenTag::DoublePipe
+                | TokenTag::DoubleAmpersand
+                | TokenTag::OpenParen
+                | TokenTag::CloseParen
+                | TokenTag::CmdSubstBegin
+                | TokenTag::CmdSubstQuoted
+                | TokenTag::DoubleBracketClose
+                | TokenTag::JSObjRef
+        ) && self.is_typed_keyword(word)
     }
 
     fn is_typed_keyword(&self, word: TextRange) -> bool {

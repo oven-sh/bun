@@ -3300,22 +3300,16 @@ pub(crate) mod args {
         Ok(default)
     }
 
-    /// Node converts `options.flag` where it opens the file, and for any target in its sync UTF-8 fast paths: https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L432-L440
+    /// Node converts `options.flag` where it opens the file. For an fd it opens nothing, and only its sync UTF-8 fast paths convert the flag: https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L432-L440
     fn converts_flag(
         options: JSValue,
         global_object: &JSGlobalObject,
         target: &PathOrFileDescriptor,
-        will_be_async: bool,
-        signal: Option<&AbortSignalRef>,
-        fast_path_takes_flag: bool,
+        flag_may_reach_utf8_fast_path: bool,
     ) -> JsResult<bool> {
         match target {
-            // An async call that is already aborted opens nothing.
-            PathOrFileDescriptor::Path(_) => {
-                Ok(!(will_be_async && signal.is_some_and(|signal| signal.aborted())))
-            }
-            PathOrFileDescriptor::Fd(_) => Ok(!will_be_async
-                && fast_path_takes_flag
+            PathOrFileDescriptor::Path(_) => Ok(true),
+            PathOrFileDescriptor::Fd(_) => Ok(flag_may_reach_utf8_fast_path
                 && has_utf8_fast_path_encoding(options, global_object)?),
         }
     }
@@ -4200,12 +4194,11 @@ pub(crate) mod args {
                     encoding = Encoding::assert(arg, ctx, encoding)?;
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
-                    // `fs.promises.readFile` reads `options.flag || 'r'`. `fs.readFileSync` converts `''`, which throws.
-                    let flag_value = if arguments.will_be_async {
-                        arg.get_truthy(ctx, "flag")?
-                    } else {
-                        arg.get(ctx, "flag")?
-                    };
+                    if let Some(flag_) = arg.get_truthy(ctx, "flag")?
+                        && converts_flag(arg, ctx, &path, !arguments.will_be_async)?
+                    {
+                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
+                    }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {
                             signal.pending_activity_ref();
@@ -4217,18 +4210,6 @@ pub(crate) mod args {
                                 value,
                             ));
                         }
-                    }
-                    if let Some(flag_) = flag_value
-                        && converts_flag(
-                            arg,
-                            ctx,
-                            &path,
-                            arguments.will_be_async,
-                            abort_signal.as_ref(),
-                            true,
-                        )?
-                    {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                     }
                 }
             }
@@ -4311,8 +4292,22 @@ pub(crate) mod args {
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
                     // Node: `options.flag || default` https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2343
-                    let flag_value = arg.get(ctx, "flag")?.filter(|flag| flag.is_truthy());
-                    let mode_value = arg.get(ctx, "mode")?;
+                    if let Some(flag_) = arg.get(ctx, "flag")?.filter(|flag| flag.is_truthy())
+                        && converts_flag(
+                            arg,
+                            ctx,
+                            &path,
+                            // The write fast path takes string data. appendFile forces the flag of an fd to 'a': https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2485-L2486
+                            !arguments.will_be_async
+                                && data_value.is_string_literal()
+                                && default_flag != FileSystemFlags::A,
+                        )?
+                    {
+                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
+                    }
+                    if let Some(mode_) = arg.get_truthy(ctx, "mode")? {
+                        mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
+                    }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {
                             signal.pending_activity_ref();
@@ -4333,23 +4328,6 @@ pub(crate) mod args {
                                 ctx.throw_invalid_argument_type_value(b"flush", b"boolean", flush_)
                             );
                         }
-                    }
-                    // Node parses the mode after `flush`, for every target since v26.4.0: https://github.com/nodejs/node/blob/v26.4.0/lib/fs.js#L2839-L2841
-                    if let Some(mode_) = mode_value {
-                        mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
-                    }
-                    // appendFile forces the flag of an fd to 'a': https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2485-L2486
-                    if let Some(flag_) = flag_value
-                        && converts_flag(
-                            arg,
-                            ctx,
-                            &path,
-                            arguments.will_be_async,
-                            abort_signal.as_ref(),
-                            data_value.is_string_literal() && default_flag != FileSystemFlags::A,
-                        )?
-                    {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                     }
                 }
             }

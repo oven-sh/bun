@@ -1058,7 +1058,7 @@ describe("a falsy flag option means the default flag in writeFile and appendFile
     });
   });
 
-  // The fixture prints what each readFile, writeFile and appendFile form does with each `flag` value.
+  // The fixture prints what each form does with each `flag` value, for a path and for an fd or a FileHandle.
   const targets = ["path", "descriptor"];
   it.concurrent.skipIf(!nodeExe()).each(targets)("every flag gives the same output as Node.js (%s)", async target => {
     const fixture = join(import.meta.dir, "fs-write-flag-fixture.js");
@@ -3337,91 +3337,6 @@ describe("open/mkdir mode string validation matches node", () => {
     mkdirSync(wrapped, new String("700") as any);
     mkdirSync(plain);
     expect(statSync(wrapped).mode).toBe(statSync(plain).mode);
-  });
-});
-
-// Node parses `options.mode` at the top of writeFile and appendFile since v26.4.0, so for an fd
-// and a FileHandle too. Node v26.3.0 parses it only where it opens the file.
-// https://github.com/nodejs/node/blob/v26.4.0/lib/fs.js#L2841
-describe("writeFile and appendFile parse options.mode for every target", () => {
-  const thrown = (run: () => unknown) => {
-    try {
-      run();
-      return "returns";
-    } catch (e: any) {
-      return `throws ${e.name} ${e.code}`;
-    }
-  };
-  // What the call threw, or what the callback received.
-  const viaCallback = (run: (callback: (err: NodeJS.ErrnoException | null) => void) => void) => {
-    const { promise, resolve } = Promise.withResolvers<string>();
-    try {
-      run(err => resolve(err ? `calls back with ${err.name} ${err.code}` : "calls back"));
-    } catch (e: any) {
-      resolve(`throws ${e.name} ${e.code}`);
-    }
-    return promise;
-  };
-  const rejected = (promise: Promise<unknown>) =>
-    promise.then(
-      () => "resolves",
-      (e: any) => `rejects ${e.name} ${e.code}`,
-    );
-
-  it.each(["a path", "an fd or a FileHandle"])("an empty mode string is invalid for %s", async target => {
-    using dir = tempDir("fs-write-mode-empty", { "f.txt": "old" });
-    const file = join(String(dir), "f.txt");
-    const fd = target === "a path" ? undefined : openSync(file, "r+");
-    const handle = target === "a path" ? undefined : await promises.open(file, "r+");
-    const options: any = { mode: "" };
-    try {
-      expect({
-        "fs.writeFileSync": thrown(() => fs.writeFileSync(fd ?? file, "new", options)),
-        "fs.appendFileSync": thrown(() => fs.appendFileSync(fd ?? file, "new", options)),
-        "fs.writeFile": await viaCallback(cb => fs.writeFile(fd ?? file, "new", options, cb)),
-        "fs.appendFile": await viaCallback(cb => fs.appendFile(fd ?? file, "new", options, cb)),
-        "fs.promises.writeFile": await rejected(promises.writeFile(handle ?? file, "new", options)),
-        "fs.promises.appendFile": await rejected(promises.appendFile(handle ?? file, "new", options)),
-      }).toEqual({
-        "fs.writeFileSync": "throws TypeError ERR_INVALID_ARG_VALUE",
-        "fs.appendFileSync": "throws TypeError ERR_INVALID_ARG_VALUE",
-        "fs.writeFile": "throws TypeError ERR_INVALID_ARG_VALUE",
-        "fs.appendFile": "throws TypeError ERR_INVALID_ARG_VALUE",
-        "fs.promises.writeFile": "rejects TypeError ERR_INVALID_ARG_VALUE",
-        "fs.promises.appendFile": "rejects TypeError ERR_INVALID_ARG_VALUE",
-      });
-    } finally {
-      if (fd !== undefined) closeSync(fd);
-      await handle?.close();
-    }
-    expect(readFileSync(file, "utf8")).toBe("old");
-  });
-
-  it("a null or undefined mode is the default mode", () => {
-    using dir = tempDir("fs-write-mode-nullish", {});
-    const file = join(String(dir), "f.txt");
-    fs.writeFileSync(file, "new", { mode: null as any });
-    fs.appendFileSync(file, "+", { mode: undefined });
-    expect(readFileSync(file, "utf8")).toBe("new+");
-  });
-
-  it.each(["", "bogus"])("an invalid signal or flush is reported before the mode %p", async mode => {
-    using dir = tempDir("fs-write-mode-order", { "f.txt": "old" });
-    const file = join(String(dir), "f.txt");
-    const signal: any = "not a signal";
-    const flush: any = "yes";
-    expect({
-      "fs.writeFileSync, signal": thrown(() => fs.writeFileSync(file, "new", { mode, signal })),
-      "fs.appendFileSync, signal": thrown(() => fs.appendFileSync(file, "new", { mode, signal } as any)),
-      "fs.writeFileSync, flush": thrown(() => fs.writeFileSync(file, "new", { mode, flush })),
-      "fs.writeFile, flush": await viaCallback(cb => fs.writeFile(file, "new", { mode, flush }, cb)),
-    }).toEqual({
-      "fs.writeFileSync, signal": "throws TypeError ERR_INVALID_ARG_TYPE",
-      "fs.appendFileSync, signal": "throws TypeError ERR_INVALID_ARG_TYPE",
-      "fs.writeFileSync, flush": "throws TypeError ERR_INVALID_ARG_TYPE",
-      "fs.writeFile, flush": "throws TypeError ERR_INVALID_ARG_TYPE",
-    });
-    expect(readFileSync(file, "utf8")).toBe("old");
   });
 });
 

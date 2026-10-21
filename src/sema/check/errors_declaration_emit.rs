@@ -2151,8 +2151,18 @@ impl<'p, 's> Checker<'p, 's> {
             return Rc::clone(&known.modules);
         }
         let mut results = Vec::new();
+        let hir = self.hir(at.file);
         for &specifier in &self.bound(at.file).specifiers {
-            if let Some(module) = files.module_of_specifier_as(at.file, specifier, mode)
+            // `getImportAttributesTypeForModuleSpecifier`
+            let mut uses = hir.specifier_uses.iter();
+            let attributes = match hir.import_attributes.is_empty() {
+                true => None,
+                false => (uses.find(|it| it.spec == specifier))
+                    .and_then(|it| hir.attributes_after_specifier(it.pos)),
+            };
+            let attributes = files.import_attributes(at.file, attributes);
+            if let Some(module) =
+                files.module_of_specifier_with(at.file, specifier, mode, &attributes)
                 && self.alias_for_symbol_in_container(module, symbol).is_some()
             {
                 results.push(module);

@@ -282,8 +282,8 @@ extern "C" void Bun__closeAllSQLiteDatabasesForTermination(JSC::JSGlobalObject* 
             record->abandonStatements();
         else if (record->db) {
             Bun__sqliteCheckpointForTermination(record->db);
-            // Statements go first. sqlite3_close_v2() drops what a full-text index has not written yet, and a write that
-            // is finalized after it commits its rows without them.
+            // This finalizes the statements before it closes. sqlite3_close_v2() discards the entries that a full-text
+            // index hasn't written yet, so a write finalized after it would commit rows that are missing from the index.
             record->close(true, false);
         }
     }

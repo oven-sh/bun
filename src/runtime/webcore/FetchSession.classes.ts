@@ -5,7 +5,7 @@ export default [
     name: "FetchSession",
     construct: true,
     constructNeedsThis: true,
-    finalize: true,
+    refCounted: true,
     configurable: false,
     klass: {},
     JSType: "0b11101110",

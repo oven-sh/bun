@@ -12,6 +12,7 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsClass as _,
     JsError, JsRef, JsResult, URLJsc as _,
 };
+use bun_ptr::RefPtr;
 
 use crate::socket::ssl_config::{SSLConfig, SSLConfigFromJs as _};
 use crate::webcore::FetchHeaders;
@@ -159,6 +160,7 @@ pub(crate) fn parse_proxy(global: &JSGlobalObject, proxy_arg: JSValue) -> JsResu
 static NEXT_POOL_ID: AtomicU64 = AtomicU64::new(1);
 
 #[bun_jsc::JsClass]
+#[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct FetchSession {
     pool: http::PoolOptions,
     keep_alive: bool,
@@ -168,25 +170,25 @@ pub(crate) struct FetchSession {
     unix: Box<[u8]>,
     /// Whether a request ever named this session, so its pool can hold sockets.
     used: Cell<bool>,
-    /// The wrapper. Strong while `in_flight` is not zero: a request parks its
+    /// The wrapper. Strong while a `SessionHold` exists: a request parks its
     /// socket in this session's pool, and collecting the session closes the pool.
     this_value: JsCell<JsRef>,
-    /// Requests that hold a `SessionHold`.
-    in_flight: Cell<u32>,
+    /// The wrapper and each `SessionHold` hold a ref.
+    ref_count: Cell<u32>,
     /// Armed in the context whose script made the session: the connections its pool keeps
     /// alive are that context's, and close with it. (The session itself stays usable.)
     abort_handle: bun_jsc::AbortHandle,
 }
 
 bun_jsc::impl_abort_handle_owner!(FetchSession, abort_handle, |this, _cause| {
-    // SAFETY: trait contract: `this` is live (the wrapper's `m_ctx`; `finalize` drops the handle).
+    // SAFETY: trait contract: `this` is live (dropping it drops the handle).
     unsafe { &*this }.close_idle_sockets()
 });
 
 /// One request's hold on its session, from the moment `fetch()` reads the
 /// `session` option: the option is a property of `init`, so nothing else keeps
 /// the wrapper alive while the rest of `init` is read. JS thread only.
-pub(crate) struct SessionHold(core::ptr::NonNull<FetchSession>);
+pub(crate) struct SessionHold(RefPtr<FetchSession>);
 
 impl SessionHold {
     pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<SessionHold> {
@@ -197,22 +199,16 @@ impl SessionHold {
         };
         // SAFETY: `from_js` returned the live `m_ctx` of the wrapper, which
         // `value` keeps alive across this function.
-        let session = unsafe { &*session };
+        let session = unsafe { RefPtr::init_ref(session) };
         session.used.set(true);
-        let held = session.in_flight.get();
-        session.in_flight.set(held + 1);
-        if held == 0 {
+        if session.is_only_hold() {
             session.this_value.with_mut(|this| this.upgrade(global));
         }
-        Ok(SessionHold(core::ptr::NonNull::from(session)))
+        Ok(SessionHold(session))
     }
 
     fn session(&self) -> &FetchSession {
-        // SAFETY: this hold is part of `in_flight`, and the box is not freed
-        // while that is not zero: the wrapper is strongly held, and a
-        // `finalize` that runs anyway (VM teardown) leaves the box to the
-        // last hold.
-        unsafe { self.0.as_ref() }
+        &self.0
     }
 
     pub(crate) fn pool(&self) -> http::PoolOptions {
@@ -241,26 +237,24 @@ impl SessionHold {
 impl Drop for SessionHold {
     fn drop(&mut self) {
         let session = self.session();
-        let left = session.in_flight.get() - 1;
-        session.in_flight.set(left);
-        if left != 0 {
-            return;
-        }
-        if session.this_value.get().is_finalized() {
-            // SAFETY: `finalize` ran under this hold and left the box to it.
-            drop(unsafe { bun_core::heap::take(self.0.as_ptr()) });
-        } else {
-            session.this_value.with_mut(|this| this.downgrade());
+        if session.is_only_hold() {
+            session.this_value.with_mut(JsRef::downgrade);
         }
     }
 }
 
 impl FetchSession {
+    /// Called by a `SessionHold`: the other ref is the wrapper's. (Or, once the VM's
+    /// teardown finalized the wrapper, another hold's: `this_value` is inert then.)
+    fn is_only_hold(&self) -> bool {
+        self.ref_count.get() == 2
+    }
+
     pub(crate) fn constructor(
         global: &JSGlobalObject,
         frame: &CallFrame,
         this_value: JSValue,
-    ) -> JsResult<Box<FetchSession>> {
+    ) -> JsResult<*mut FetchSession> {
         let vm = global.bun_vm();
         let options = frame.argument(0);
         let mut this = Box::new(FetchSession {
@@ -276,16 +270,16 @@ impl FetchSession {
             unix: Box::default(),
             used: Cell::new(false),
             this_value: JsCell::new(JsRef::init_weak(this_value)),
-            in_flight: Cell::new(0),
+            ref_count: Cell::new(1),
             abort_handle: bun_jsc::AbortHandle::for_owner::<FetchSession>(),
         });
-        // SAFETY: a heap allocation at its final address; its `Drop` (in `finalize`, or when
+        // SAFETY: a heap allocation at its final address; its `Drop` (with the last ref, or when
         // this constructor fails) disarms the handle.
         unsafe {
             bun_jsc::AbortHandle::arm_owner(&raw mut *this, vm.context_of_caller(frame));
         }
         if options.is_undefined_or_null() {
-            return Ok(this);
+            return Ok(bun_core::heap::into_raw(this));
         }
         if !options.is_object() {
             return Err(global
@@ -370,7 +364,7 @@ impl FetchSession {
             }
         }
 
-        Ok(this)
+        Ok(bun_core::heap::into_raw(this))
     }
 
     /// `fetch` bound to this session, so it can be handed to anything that
@@ -410,18 +404,9 @@ impl FetchSession {
         }
     }
 
-    #[allow(
-        clippy::boxed_local,
-        reason = "reclaim point for the generated finalizer"
-    )]
-    pub(crate) fn finalize(self: Box<Self>) {
-        self.this_value.with_mut(|this| this.finalize());
+    pub(crate) fn finalize(&self) {
+        self.this_value.with_mut(JsRef::finalize);
         self.close_idle_sockets();
-        // Only when the VM is torn down under requests in flight: their holds
-        // still point here, and the last one frees the box.
-        if self.in_flight.get() != 0 {
-            let _ = bun_core::heap::into_raw(self);
-        }
     }
 }
 

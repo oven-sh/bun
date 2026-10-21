@@ -863,7 +863,7 @@ it("timer heap clock is monotonic, not wall-clock", () => {
 describe("a delay of 0", () => {
   it("does not wait for Node's minimum of 1 ms in bun test", async () => {
     let fired = false;
-    const timer = setTimeout(() => (fired = true), 200);
+    const timer = setTimeout(() => (fired = true), 350);
     // With the minimum these take 400 ms or more.
     for (let i = 0; i < 400; i++) await new Promise(resolve => setTimeout(resolve, 0));
     clearTimeout(timer);

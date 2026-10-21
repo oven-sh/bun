@@ -23,6 +23,11 @@ export const libspng: Dependency = {
     commit: LIBSPNG_COMMIT,
   }),
 
+  // libspng expands a gray row of at most 8 bits and a 1, 2 or 4-bit palette
+  // row to RGBA8 in its per-pixel loop: a chain of branches for each pixel.
+  // The patch gives those rows a row routine, as an 8-bit palette row has.
+  patches: ["patches/libspng/gray-palette-rows-rgba8.patch"],
+
   // spng.c includes <zlib.h>; zlib-ng generates that header into its build
   // dir during its own configure, so we need zlib BUILT (not just fetched).
   fetchDeps: ["zlib"],

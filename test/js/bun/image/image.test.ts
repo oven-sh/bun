@@ -1329,6 +1329,339 @@ describe("Bun.Image", () => {
   });
 });
 
+// Every PNG layout: colour type 0 (gray), 2 (RGB), 3 (palette), 4 (gray+alpha)
+// and 6 (RGBA) at each bit depth the type allows. The files are built here
+// (Bun writes 8-bit RGBA and 8-bit palette, never interlaced), and the
+// expected RGBA8 pixels come from the builder, not from a decoder.
+describe("PNG decode of each colour type and depth", () => {
+  type Rgb = [number, number, number];
+  const GRAY = 0;
+  const RGB = 2;
+  const PALETTE = 3;
+  const GRAY_ALPHA = 4;
+  const RGBA = 6;
+  const channelsOf: Record<number, number> = { [GRAY]: 1, [RGB]: 3, [PALETTE]: 1, [GRAY_ALPHA]: 2, [RGBA]: 4 };
+  // The first column and row of each Adam7 pass, and the steps between its pixels.
+  const adam7 = [
+    [0, 0, 8, 8],
+    [4, 0, 8, 8],
+    [0, 4, 4, 8],
+    [2, 0, 4, 4],
+    [0, 2, 2, 4],
+    [1, 0, 2, 2],
+    [0, 1, 1, 2],
+  ];
+  // The top `depth` bits of a hash of the position: every value occurs, in no pattern.
+  const sampleAt = (x: number, y: number, c: number, depth: number) =>
+    Math.imul(x * 31 + y * 17 + c * 101 + 7, 0x9e3779b1) >>> (32 - depth);
+  const entry = (i: number): Rgb => [(i * 53 + 17) & 255, (i * 97 + 5) & 255, (i * 193 + 91) & 255];
+
+  type Layout = {
+    type: number;
+    depth: number;
+    w: number;
+    h: number;
+    interlace?: boolean;
+    // One list of entries per PLTE chunk.
+    plte?: Rgb[][];
+    // The alpha of the first palette entries, the transparent sample of a gray
+    // image, or the transparent colour of an RGB image.
+    trns?: number[] | number;
+    // Replaces the sample of channel `c` at (x, y).
+    sample?: (x: number, y: number, c: number) => number;
+  };
+
+  function pngOf(o: Layout) {
+    const { type, depth, w, h } = o;
+    const channels = channelsOf[type];
+    const sample = o.sample ?? ((x: number, y: number, c: number) => sampleAt(x, y, c, depth));
+    const row = (xs: number[], y: number) => {
+      const bytes = new Uint8Array(1 + Math.ceil((xs.length * channels * depth) / 8));
+      let bit = 0;
+      for (const x of xs) {
+        for (let c = 0; c < channels; c++, bit += depth) {
+          const v = sample(x, y, c);
+          if (depth === 16) bytes.set([v >> 8, v & 255], 1 + (bit >> 3));
+          else bytes[1 + (bit >> 3)] |= v << (8 - depth - (bit & 7));
+        }
+      }
+      // A decoder must ignore the bits after the last pixel of a row. Set them.
+      bytes[bytes.length - 1] |= (1 << ((8 - (bit & 7)) & 7)) - 1;
+      return bytes;
+    };
+    const rows: Uint8Array[] = [];
+    for (const [x0, y0, dx, dy] of o.interlace ? adam7 : [[0, 0, 1, 1]]) {
+      const xs: number[] = [];
+      for (let x = x0; x < w; x += dx) xs.push(x);
+      if (xs.length) for (let y = y0; y < h; y += dy) rows.push(row(xs, y));
+    }
+
+    const ihdr = new Uint8Array(13);
+    const dv = new DataView(ihdr.buffer);
+    dv.setUint32(0, w);
+    dv.setUint32(4, h);
+    ihdr.set([depth, type, 0, 0, o.interlace ? 1 : 0], 8);
+    const chunks = [pngChunk("IHDR", ihdr)];
+    for (const list of o.plte ?? []) chunks.push(pngChunk("PLTE", Uint8Array.from(list.flat())));
+    const keys = typeof o.trns === "number" ? [o.trns] : o.trns;
+    if (keys) {
+      const bytes = type === PALETTE ? keys : keys.flatMap(key => [key >> 8, key & 255]);
+      chunks.push(pngChunk("tRNS", Uint8Array.from(bytes)));
+    }
+    chunks.push(pngChunk("IDAT", zlib.deflateSync(Buffer.concat(rows))), pngChunk("IEND", new Uint8Array(0)));
+    const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), ...chunks]);
+
+    // A later PLTE chunk replaces the first entries of an earlier one. An
+    // index past the palette reads what is left there: black, or the earlier chunk.
+    const palette: Rgb[] = Array.from({ length: 256 }, () => [0, 0, 0]);
+    for (const list of o.plte ?? []) list.forEach((rgb, i) => (palette[i] = rgb));
+    // An 8-bit sample as it is, the high byte of a 16-bit sample, a smaller sample spread over 0 to 255.
+    const to8 = (v: number) => (depth === 16 ? v >> 8 : (v * 255) / ((1 << depth) - 1));
+    const rgba = new Uint8Array(w * h * 4);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const s = Array.from({ length: channels }, (_, c) => sample(x, y, c));
+        const gray = to8(s[0]);
+        let pixel: number[];
+        // A gray or RGB pixel is transparent when every sample equals the tRNS value.
+        if (type === GRAY) pixel = [gray, gray, gray, s[0] === keys?.[0] ? 0 : 255];
+        else if (type === RGB) pixel = [...s.map(to8), keys && s.every((v, c) => v === keys[c]) ? 0 : 255];
+        else if (type === PALETTE) pixel = [...palette[s[0]], keys?.[s[0]] ?? 255];
+        else if (type === GRAY_ALPHA) pixel = [gray, gray, gray, to8(s[1])];
+        else pixel = s.map(to8);
+        // `pixelsOf` reads a 16-bit file through flop(), which mirrors each row.
+        rgba.set(pixel, (y * w + (depth === 16 ? w - 1 - x : x)) * 4);
+      }
+    }
+    return { png, rgba, depth };
+  }
+
+  type Case = [name: string, file: ReturnType<typeof pngOf>];
+  // The RGBA8 pixels that Bun.Image decodes. For a 16-bit file a geometry op
+  // keeps the output at 8 bits per channel if png() keeps 16 bits later (#30462).
+  async function pixelsOf({ png, depth }: ReturnType<typeof pngOf>) {
+    const image = new Bun.Image(png);
+    return decodePngRaw(await (depth === 16 ? image.flop() : image).png().bytes()).data;
+  }
+  // The names of the cases that do not decode to the builder's pixels.
+  async function wrong(cases: Case[]) {
+    const names: string[] = [];
+    for (const [name, file] of cases) {
+      if (!Buffer.from(await pixelsOf(file)).equals(Buffer.from(file.rgba))) names.push(name);
+    }
+    return names;
+  }
+
+  const fullPalette = (depth: number) => Array.from({ length: 1 << depth }, (_, i) => entry(i));
+  // Widths 1 to 17 give the last group of 8 pixels of a row every length. 31 to 33 add rows of 3 and 4 whole groups.
+  const widths = [...Array.from({ length: 17 }, (_, i) => i + 1), 31, 32, 33];
+  const sizes: [number, number][] = [
+    [1, 1],
+    [2, 3],
+    [5, 7],
+    [9, 9],
+    [17, 13],
+  ];
+
+  describe.each([1, 2, 4])("depth %d", depth => {
+    const plte = [fullPalette(depth)];
+    // Alpha for the first half of the palette: the chunk is shorter than PLTE.
+    const trns = Array.from({ length: 1 << (depth - 1) }, (_, i) => (i * 151 + 40) & 255);
+
+    test("palette", async () => {
+      const cases = widths.map((w): Case => [`${w}x3`, pngOf({ type: PALETTE, depth, w, h: 3, plte, trns })]);
+      expect(await wrong(cases)).toEqual([]);
+    });
+
+    test("palette, Adam7", async () => {
+      const cases = sizes.map(([w, h]): Case => [
+        `${w}x${h}`,
+        pngOf({ type: PALETTE, depth, w, h, interlace: true, plte, trns }),
+      ]);
+      expect(await wrong(cases)).toEqual([]);
+    });
+
+    test("palette with no tRNS, and with one as long as PLTE", async () => {
+      const full = Array.from({ length: 1 << depth }, (_, i) => 255 - i * 16);
+      expect(
+        await wrong([
+          ["no tRNS", pngOf({ type: PALETTE, depth, w: 13, h: 4, plte })],
+          ["full tRNS", pngOf({ type: PALETTE, depth, w: 13, h: 4, plte, trns: full })],
+        ]),
+      ).toEqual([]);
+    });
+
+    test("gray", async () => {
+      const cases = widths.map((w): Case => [`${w}x3`, pngOf({ type: GRAY, depth, w, h: 3 })]);
+      expect(await wrong(cases)).toEqual([]);
+    });
+
+    test("gray, Adam7", async () => {
+      const cases = sizes.map(([w, h]): Case => [
+        `${w}x${h}`,
+        pngOf({ type: GRAY, depth, w, h, interlace: true, trns: 1 }),
+      ]);
+      expect(await wrong(cases)).toEqual([]);
+    });
+
+    test("gray with the smallest and the largest sample as tRNS", async () => {
+      const cases = [0, (1 << depth) - 1].map((key): Case => [
+        `tRNS ${key}`,
+        pngOf({ type: GRAY, depth, w: 13, h: 4, trns: key }),
+      ]);
+      expect(await wrong(cases)).toEqual([]);
+    });
+
+    test("new Response(image) decodes the same pixels", async () => {
+      const { png, rgba } = pngOf({ type: PALETTE, depth, w: 13, h: 4, plte, trns });
+      const body = await new Response(new Bun.Image(png).png()).bytes();
+      expect(decodePngRaw(body).data).toEqual(rgba);
+    });
+  });
+
+  describe("depth 8", () => {
+    // Sample 0 is in every file: a decoder must not take "no tRNS" for "tRNS 0".
+    const withZero = (x: number, y: number, c: number) => (x === 0 && y === 0 && c === 0 ? 0 : sampleAt(x, y, c, 8));
+
+    test.each([
+      ["gray", GRAY],
+      ["gray+alpha", GRAY_ALPHA],
+    ])("%s", async (_name, type) => {
+      const cases = widths.map((w): Case => [`${w}x3`, pngOf({ type, depth: 8, w, h: 3, sample: withZero })]);
+      expect(await wrong(cases)).toEqual([]);
+    });
+
+    test.each([
+      ["gray", GRAY],
+      ["gray+alpha", GRAY_ALPHA],
+    ])("%s, Adam7", async (_name, type) => {
+      const cases = sizes.map(([w, h]): Case => [
+        `${w}x${h}`,
+        pngOf({ type, depth: 8, w, h, interlace: true, sample: withZero }),
+      ]);
+      expect(await wrong(cases)).toEqual([]);
+    });
+  });
+
+  // The tRNS value is the sample, or the colour, of pixel (2, 1). Pixel (3, 1)
+  // differs from it in the lowest bit of its last sample and stays opaque.
+  test.each([
+    ["gray 8", GRAY, 8],
+    ["gray 16", GRAY, 16],
+    ["RGB 8", RGB, 8],
+    ["RGB 16", RGB, 16],
+  ])("%s with a tRNS value", async (_name, type, depth) => {
+    const channels = channelsOf[type];
+    const key = Array.from({ length: channels }, (_, c) => sampleAt(2, 1, c, depth));
+    const sample = (x: number, y: number, c: number) =>
+      x === 3 && y === 1 ? key[c] ^ (c === channels - 1 ? 1 : 0) : sampleAt(x, y, c, depth);
+    expect(
+      await wrong([
+        ["plain", pngOf({ type, depth, w: 13, h: 4, trns: key, sample })],
+        ["Adam7", pngOf({ type, depth, w: 13, h: 9, trns: key, sample, interlace: true })],
+      ]),
+    ).toEqual([]);
+  });
+
+  // The layouts that keep their own path in libspng: the limits of the row routines above.
+  test.each([
+    ["palette 8", PALETTE, 8],
+    ["RGB 8", RGB, 8],
+    ["RGBA 8", RGBA, 8],
+    ["gray 16", GRAY, 16],
+    ["gray+alpha 16", GRAY_ALPHA, 16],
+    ["RGB 16", RGB, 16],
+    ["RGBA 16", RGBA, 16],
+  ])("%s", async (_name, type, depth) => {
+    const palette = type === PALETTE ? { plte: [fullPalette(8)], trns: fullPalette(8).map(rgb => rgb[0]) } : {};
+    const cases = [
+      ...[1, 2, 7, 8, 9, 17, 33].map((w): Case => [`${w}x3`, pngOf({ type, depth, w, h: 3, ...palette })]),
+      ...sizes.map(([w, h]): Case => [`Adam7 ${w}x${h}`, pngOf({ type, depth, w, h, interlace: true, ...palette })]),
+    ];
+    expect(await wrong(cases)).toEqual([]);
+  });
+
+  // What libspng 0.7.4 gives for the next files is not a rule of PNG. A row
+  // routine must give the pixels that libspng's per-pixel loop gives.
+  describe("libspng 0.7.4", () => {
+    // The PNG specification says that a decoder must mask a gray tRNS value to
+    // the bit depth, and libpng does. libspng compares the whole 16-bit value
+    // for RGBA8 output, so a value above the largest sample matches no pixel.
+    // If Bun masks the value later, the masked value is the transparent sample.
+    test.each([1, 2, 4, 8])(
+      "gray %d with a tRNS value above the largest sample: no pixel is transparent",
+      async depth => {
+        const keys = depth === 8 ? [256 + sampleAt(2, 1, 0, 8), 65535] : [1 << depth, 255, 256, 65535];
+        const cases = keys.map((key): Case => [`tRNS ${key}`, pngOf({ type: GRAY, depth, w: 13, h: 4, trns: key })]);
+        expect(await wrong(cases)).toEqual([]);
+      },
+    );
+
+    // PNG allows one PLTE chunk. libspng takes each one.
+    test("two PLTE chunks: the second replaces the first entries of the first", async () => {
+      const first = fullPalette(2);
+      const second: Rgb[] = [
+        [1, 2, 3],
+        [250, 251, 252],
+      ];
+      const file = pngOf({ type: PALETTE, depth: 2, w: 13, h: 4, plte: [first, second], trns: [9, 200] });
+      // Samples 2 and 3 are past the second chunk. They keep the first chunk's colours, opaque.
+      expect(await pixelsOf(file)).toEqual(file.rgba);
+    });
+
+    // PNG says that an index past the palette is an error.
+    test("an index past the palette is opaque black", async () => {
+      const cases = [2, 4].map((depth): Case => [
+        `depth ${depth}`,
+        pngOf({ type: PALETTE, depth, w: 13, h: 4, plte: [[entry(0), entry(1)]] }),
+      ]);
+      expect(await wrong(cases)).toEqual([]);
+    });
+  });
+
+  // The one test here that fails without the row routines: their pixels are
+  // those of the per-pixel loop, their speed is not. Gray 16 stays in that
+  // loop, so it is the yardstick. Without a routine a 1-bit gray row costs
+  // about 6 times a 16-bit row. With it the cost is about 0.2 times, and 0.6
+  // times on a debug build. The rows are stored, not deflated, so the ratio
+  // is that of the row conversions.
+  test("a 1-bit gray image decodes in less than twice the time of a 16-bit one", async () => {
+    const [w, h] = [512, 512];
+    const flatGray = (depth: number) => {
+      const stride = 1 + (w * depth) / 8;
+      const rows = new Uint8Array(h * stride).fill(0x5a);
+      for (let y = 0; y < h; y++) rows[y * stride] = 0;
+      const ihdr = new Uint8Array(13);
+      const dv = new DataView(ihdr.buffer);
+      dv.setUint32(0, w);
+      dv.setUint32(4, h);
+      ihdr[8] = depth;
+      return Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        pngChunk("IHDR", ihdr),
+        pngChunk("IDAT", zlib.deflateSync(rows, { level: 0 })),
+        pngChunk("IEND", new Uint8Array(0)),
+      ]);
+    };
+    const time = async (png: Uint8Array) => {
+      const start = performance.now();
+      await new Bun.Image(png).resize(8, 8, { filter: "nearest" }).png().bytes();
+      return performance.now() - start;
+    };
+    const [gray1, gray16] = [flatGray(1), flatGray(16)];
+    await time(gray1);
+    await time(gray16);
+    // Each time is the best of 9 rounds. A busy machine can delay all 9 of the
+    // short 1-bit decodes, so more rounds follow until one of them is not delayed.
+    let [best1, best16] = [Infinity, Infinity];
+    for (let round = 0; round < 25 && (round < 9 || best1 >= best16 * 2); round++) {
+      best1 = Math.min(best1, await time(gray1));
+      best16 = Math.min(best16, await time(gray16));
+    }
+    expect(best1 / best16).toBeLessThan(2);
+  });
+});
+
 describe("decode-only formats (BMP / TIFF / GIF)", () => {
   // Several tests here flip the process-global backend; restore after the
   // describe so leaks can't reach the suites below regardless of throw paths.

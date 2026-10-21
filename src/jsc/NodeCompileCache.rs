@@ -400,6 +400,11 @@ fn platform_tmp_dir() -> &'static [u8] {
 
 fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
     let tag = version_tag();
+    let path_too_long = || EnableResult {
+        status: STATUS_FAILED,
+        directory: None,
+        message: Some("Cannot create cache directory: path too long".to_string()),
+    };
 
     // Resolve `dir` to an absolute path against the process cwd.
     let mut abs_buf = bun_paths::path_buffer_pool::get();
@@ -420,19 +425,16 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
                 };
             }
         };
-        bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::resolve_path::platform::Auto>(
-            &cwd_buf[..cwd_len],
-            &mut abs_buf[..],
-            &[dir],
-        )
-        .as_bytes()
+        match bun_paths::resolve_path::join_abs_string_buf_checked::<
+            bun_paths::resolve_path::platform::Auto,
+        >(&cwd_buf[..cwd_len], &mut abs_buf[..], &[dir])
+        {
+            Some(abs) => abs,
+            None => return path_too_long(),
+        }
     };
     if abs.len() + 1 + tag.len() + 2 > MAX_PATH_BYTES {
-        return EnableResult {
-            status: STATUS_FAILED,
-            directory: None,
-            message: Some("Cannot create cache directory: path too long".to_string()),
-        };
+        return path_too_long();
     }
 
     let mut tagged: Vec<u8> = Vec::with_capacity(abs.len() + 1 + tag.len());

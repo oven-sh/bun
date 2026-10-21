@@ -179,3 +179,203 @@ test.concurrent("Bun.serve({ app }) reports a route with more than 64 params", a
   expect(stdout).toBe("started\n");
   expect(exitCode).toBe(0);
 });
+
+test.concurrent("Bun.serve({ app }) serves routes when root is a relative path", async () => {
+  using dir = tempDir("bake-app-relative-root", {
+    "server.ts": `export function render(req, meta) { return meta.pageModule.default(); }`,
+    "routes/index.ts": `export default () => new Response("index route");`,
+    "fixture.ts": `
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+      const server = Bun.serve({
+        port: 0,
+        development: true,
+        app: { framework: { fileSystemRouterTypes: [fsr] }, root: "./" },
+        fetch: () => new Response("fallback"),
+      });
+      const res = await fetch(server.url);
+      console.log(res.status + " " + (await res.text()));
+      await server.stop(true);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  // The dev server also prints a "Bundled page" line.
+  expect(stdout.split("\n")).toContain("200 index route");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("Bun.serve({ app }) rejects a root longer than the path buffer", async () => {
+  using dir = tempDir("bake-app-long-root", {
+    "server.ts": `export function render() { return new Response("ok"); }`,
+    "fixture.ts": `
+      const long = Buffer.alloc(100_000, "a").toString();
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+      const cases = {
+        "root": { root: long, framework: { fileSystemRouterTypes: [fsr] } },
+        "fileSystemRouterTypes[0].root": { framework: { fileSystemRouterTypes: [{ ...fsr, root: long }] } },
+      };
+      for (const [name, app] of Object.entries(cases)) {
+        try {
+          Bun.serve({ port: 0, development: true, app, fetch: () => new Response() }).stop(true);
+          console.log(name + " -> no error");
+        } catch (e) {
+          console.log(name + " -> " + e.message);
+        }
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("ENAMETOOLONG: Failed to resolve 'fileSystemRouterTypes[0].root' for framework\n");
+  expect(stdout).toBe(
+    "root -> 'app.root' is too long\nfileSystemRouterTypes[0].root -> Framework is missing required files!\n",
+  );
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("Bun.serve({ app }) routes on the request target's pathname", async () => {
+  using dir = tempDir("bake-app-request-target", {
+    "server.ts": `export function render(req, meta) { return meta.pageModule.default(req, meta); }`,
+    "routes/index.ts": `export default () => new Response("index route");`,
+    "routes/echo/[...rest].ts": `export default (req, meta) => new Response("rest=" + meta.params.rest.join());`,
+    "fixture.ts": `
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+      const server = Bun.serve({ port: 0, development: true, app: { framework: { fileSystemRouterTypes: [fsr] } } });
+      const origin = "http://127.0.0.1:" + server.port;
+      for (const requestLine of [
+        "GET /?a=b",
+        "GET /echo/https://example.com/a?q=1#hash",
+        "GET " + origin + "/echo/a/b?q=1",
+        "GET " + origin,
+        "GET " + origin + "?next=/echo/a",
+        "CONNECT 127.0.0.1:" + server.port,
+      ]) {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        let response = "";
+        await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: {
+            open: socket => void socket.write(requestLine + " HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n"),
+            data: (socket, chunk) => void (response += chunk),
+            close: resolve,
+            error: (socket, error) => reject(error),
+          },
+        });
+        await promise;
+        console.log(response.slice(9, 12), response.split("\\r\\n\\r\\n")[1]);
+      }
+      await server.stop(true);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout.split("\n")).toEqual([
+    "200 index route",
+    "200 rest=https:,example.com,a",
+    "200 rest=a,b",
+    "200 index route",
+    "200 index route",
+    "404 404 Not Found",
+    "",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
+// The project root is apps/api.
+test.concurrent.each([
+  ["inside the project root", "pages", "apps/api/pages"],
+  ["a sibling directory", "../web/pages", "apps/web/pages"],
+  ["an ancestor directory", "..", "apps"],
+  ["a directory next to an ancestor", "../../routes", "routes"],
+])("Bun.serve({ app }) serves routes from a router root that is %s", async (_, root, pages) => {
+  // An ancestor directory also contains the project's own files, which become routes.
+  const withSyntaxError = root !== "..";
+  using dir = tempDir("bake-app-router-root", {
+    "apps/api/server.ts": `export function render(req, meta) { return meta.pageModule.default(req, meta); }`,
+    "apps/api/fixture.ts": `
+      const fsr = { root: ${JSON.stringify(root)}, style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+      const server = Bun.serve({ port: 0, development: true, app: { framework: { fileSystemRouterTypes: [fsr] } } });
+      for (const pathname of ["/", "/blog/hello"]) {
+        const res = await fetch(new URL(pathname, server.url));
+        console.log(pathname, res.status, await res.text());
+      }
+      await server.stop(true);
+    `,
+    [`${pages}/index.ts`]: `export default () => new Response("index");`,
+    [`${pages}/blog/[slug].ts`]: `export default (req, meta) => new Response(meta.params.slug);`,
+    ...(withSyntaxError && { [`${pages}/blog/[oops.ts`]: `export default () => new Response("");` }),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir) + "/apps/api",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout, stderr).toBe("/ 200 index\n/blog/hello 200 hello\n");
+  if (withSyntaxError) {
+    // The message is indented to the column of the offending character.
+    const label = `${root}/blog/[oops.ts`;
+    const indent = Buffer.alloc(`error: "`.length + label.indexOf("["), " ").toString();
+    expect(stderr).toContain(`error: "${label}" is not a valid route\n`);
+    expect(stderr).toContain(`\n${indent}Missing "]" to match this route parameter\n`);
+  }
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("Bun.serve({ app }) reports an unsupported app router file", async () => {
+  using dir = tempDir("bake-app-extra-file", {
+    "server.ts": `export function render(req, meta) { return meta.pageModule.default(); }`,
+    "app/page.ts": `export default () => new Response("page");`,
+    "app/loading.ts": `export default () => new Response("loading");`,
+    "fixture.ts": `
+      const fsr = { root: "app", style: "nextjs-app-ui", serverEntryPoint: "./server.ts" };
+      const server = Bun.serve({ port: 0, development: true, app: { framework: { fileSystemRouterTypes: [fsr] } } });
+      const res = await fetch(server.url);
+      console.log(res.status, await res.text());
+      await server.stop(true);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain('error: "app/loading.ts" is not a valid route\n');
+  expect(stderr).toContain('Bun Bake currently does not support "loading" files\n');
+  expect(stdout).toBe("200 page\n");
+  expect(exitCode).toBe(0);
+});

@@ -18,7 +18,7 @@ const NO_USE_BEFORE_DEFINE: Message = Message::new(
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// Whether the file has an `export { a }`.
+    /// True if the file has an `export { a }`.
     has_export_specs: bool,
     initializers: Initializers<'a>,
 }
@@ -38,9 +38,9 @@ fn report<'a>(reference: Reference<'a>, at: Span, cx: &mut Cx<'a, NoUseBeforeDef
     });
 }
 
-/// For oxlint the computed key of a member that is only a type is a reference in a type: `{ [a]: 1 }` as a type or in
-/// an interface, `declare [a]: 1` and `abstract [a]: 1` in a class.
-fn oxlint_is_in_key_of_type(reference: Reference) -> bool {
+/// For oxlint the computed key of a type-only member is a type reference: `{ [a]: 1 }` as a type or in an interface,
+/// `declare [a]: 1` and `abstract [a]: 1` in a class.
+fn oxlint_is_in_type_member_key(reference: Reference) -> bool {
     let Some(mut e) = reference.expr() else {
         return false;
     };
@@ -58,7 +58,8 @@ fn oxlint_is_in_key_of_type(reference: Reference) -> bool {
     }
 }
 
-/// Of a reference that is the name in the opening tag of a JSX element, or the first part of it: the same in the closing tag.
+/// For a reference that's the name in a JSX opening tag, or the first part of it, returns the same name in the closing
+/// tag.
 fn name_in_closing_tag(reference: Reference) -> Option<Span> {
     let mut tag = reference.expr()?;
     while let Node::Expr(parent) = tag.parent()
@@ -76,12 +77,13 @@ fn name_in_closing_tag(reference: Reference) -> Option<Span> {
     while let ExprKind::Dot { obj, .. } = first.kind() {
         first = obj;
     }
-    // With the parser of typescript-eslint it is a reference of its own already.
+    // With typescript-eslint's parser it's already a separate reference.
     first.reference().is_none().then(|| first.span())
 }
 
-/// The `a` of `export default a` and of `export = a`, which can be a type: for oxc it is a value, as is what it finds under the name.
-fn oxlint_takes_for_a_value(variable: Symbol, reference: Reference) -> bool {
+/// True for the `a` in `export default a` and `export = a`, which can be a type. oxc treats it as a value, along with
+/// whatever the name resolves to.
+fn oxlint_treats_as_value(variable: Symbol, reference: Reference) -> bool {
     variable.file().language().is_oxlint
         && matches!(reference.expr().map(Expr::parent), Some(Node::Stmt(it))
             if matches!(it.tag(), StmtTag::ExportDefault | StmtTag::ExportAssign))
@@ -99,9 +101,9 @@ impl NoUseBeforeDefine {
     ) -> bool {
         let config = &self.config;
         if config.ignore_type_references
-            && (reference.is_type() && !oxlint_takes_for_a_value(variable, reference)
+            && (reference.is_type() && !oxlint_treats_as_value(variable, reference)
                 || reference_contains_type_query(reference)
-                || variable.file().language().is_oxlint && oxlint_is_in_key_of_type(reference))
+                || variable.file().language().is_oxlint && oxlint_is_in_type_member_key(reference))
         {
             return false;
         }
@@ -135,7 +137,7 @@ impl NoUseBeforeDefine {
         else {
             return;
         };
-        // Only of a value is it asked whether it is in an initializer.
+        // Only a value reference is checked for being inside an initializer.
         let (end, is_type) = match definition {
             Declaration::TypeParam(it) => (Some(it.name().start()), true),
             _ => (end_of_definition(definition), false),
@@ -150,7 +152,7 @@ impl NoUseBeforeDefine {
         }
     }
 
-    /// `is_defined`: whether it is plain that a reference is after the definition.
+    /// `is_defined` returns true if a reference is obviously after the definition.
     #[inline(never)]
     fn check_references<'a>(
         &self,
@@ -167,7 +169,7 @@ impl NoUseBeforeDefine {
         };
         let declared = cx.state.initializers.declared(definition);
         for reference in references {
-            // What JSX makes of `React` is a reference whose identifier is the declaration.
+            // The `React` reference that JSX implies has the declaration as its identifier.
             if is_defined(reference) {
                 continue;
             }
@@ -181,7 +183,7 @@ impl NoUseBeforeDefine {
             if is_defined_before_use {
                 continue;
             }
-            // For oxlint nothing more is asked about an `export { a }` that is allowed.
+            // oxlint makes no further checks on an allowed `export { a }`.
             if cx.language().is_oxlint
                 && self.config.allow_named_exports
                 && is_named_export(reference)
@@ -194,7 +196,7 @@ impl NoUseBeforeDefine {
                     && reference.scope().kind() != ScopeKind::FunctionType
             {
                 report(reference, reference.span(), cx);
-                // For oxlint that is a reference too.
+                // For oxlint the closing tag's name is a reference too.
                 if cx.language().is_oxlint
                     && let Some(closing) =
                         name_in_closing_tag(reference).filter(|it| it.end < definition_end)
@@ -205,7 +207,7 @@ impl NoUseBeforeDefine {
         }
     }
 
-    /// `export { a }` where nothing declares `a`.
+    /// Checks `export { a }` where nothing declares `a`.
     fn check_unresolved_exports<'a>(&self, cx: &mut Cx<'a, Self>) {
         if !cx.state.has_export_specs {
             return;

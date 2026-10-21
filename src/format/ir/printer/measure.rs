@@ -1,4 +1,4 @@
-//! Running ahead of the printer to find out whether something fits on the line.
+//! Looks ahead of the printer to check whether content fits on the line.
 
 use super::{
     Elements, FlatFlags, FormatElement, Frame, FrameKind, Group, Interned, LineMode, PrintError,
@@ -15,35 +15,33 @@ enum Fits {
     Maybe,
 }
 
-/// Where a measurement is. The queue and the frames of the printer stay as they are: this has how
-/// many of them are left, and what it adds is in `measure_queue` and `measure_frames`. So there
-/// is one measurement at a time.
+/// The state of a measurement. It doesn't modify the printer's queue and frames. It only tracks how many of them are
+/// left, and puts what it adds in `measure_queue` and `measure_frames`. So only one measurement can run at a time.
 pub(super) struct Measure<'d> {
     line_width: usize,
-    /// The width of the indentation that is due before the next text.
+    /// Width of the indentation pending before the next text.
     pending_indent: usize,
     pending_space: bool,
-    /// It is pending because of a [`FormatElement::Space`], which is a text to Prettier: it counts
-    /// even if no text follows it on the line.
+    /// The space is pending because of a [`FormatElement::Space`]. That's a text to Prettier, so it counts even if no
+    /// text follows it on the line.
     is_space_element_pending: bool,
     has_line_suffix: bool,
     pub(super) must_be_flat: bool,
-    /// Groups that are measured are passed over.
+    /// If true, measured groups are skipped using their [`Flat`].
     uses_flat: bool,
-    /// Something with a group that has an id in it has been passed over, so the mode of that group
-    /// has not been noted.
-    has_passed_group_ids: bool,
+    /// Content that contains a group with an id has been skipped, so that group's mode hasn't been recorded.
+    has_skipped_group_ids: bool,
     elements: Elements<'d>,
-    /// The number of runs that are left of the queue of the printer. One more than there are: the
-    /// run that the printer is at comes first.
+    /// Number of runs left in the printer's queue. If it's one more than the queue's length, the extra one is the
+    /// printer's current run, which comes first.
     queue_len: usize,
-    /// The number of frames that are left of those of the printer.
+    /// Number of the printer's frames that are left.
     frames_len: usize,
     mode: PrintMode,
 }
 
 impl<'d> Measure<'d> {
-    /// Starts where the printer is.
+    /// Starts at the printer's current position.
     pub(super) fn new(printer: &mut Printer<'d>, uses_flat: bool) -> Measure<'d> {
         printer.buffers.measure_queue.clear();
         printer.buffers.measure_frames.clear();
@@ -57,7 +55,7 @@ impl<'d> Measure<'d> {
             has_line_suffix: !printer.buffers.line_suffixes.is_empty(),
             must_be_flat: false,
             uses_flat,
-            has_passed_group_ids: false,
+            has_skipped_group_ids: false,
             elements: printer.elements.clone(),
             queue_len: printer.buffers.queue.len(),
             frames_len: printer.buffers.frames.len(),
@@ -65,7 +63,7 @@ impl<'d> Measure<'d> {
         }
     }
 
-    /// Whether the line is wider than `print_width` already.
+    /// True if the line is already wider than `print_width`.
     pub(super) fn is_past(&self, print_width: usize) -> bool {
         self.line_width + self.pending_indent + usize::from(self.pending_space) > print_width
     }
@@ -76,7 +74,7 @@ trait FitsEndPredicate {
     fn is_end(&mut self, element: &FormatElement) -> PrintResult<bool>;
 }
 
-/// Measures to the end of the document, or rather to the first line break.
+/// Measures to the end of the document, which in practice means to the first line break.
 struct AllPredicate;
 
 impl FitsEndPredicate for AllPredicate {
@@ -119,8 +117,8 @@ impl FitsEndPredicate for SingleEntryPredicate {
 }
 
 impl<'d> Printer<'d> {
-    /// Whether `group`, whose start tag has just been taken from the queue, fits on the line with
-    /// what follows it up to the next possible line break.
+    /// True if `group`, whose start tag has just been taken from the queue, fits on the line together with what follows
+    /// it up to the next possible line break.
     pub(super) fn group_fits(&mut self, group: &Group) -> PrintResult<bool> {
         let flat = group.flat();
         if flat.flags.has(FlatFlags::MEASURED) && group.end() < self.elements.end {
@@ -141,7 +139,7 @@ impl<'d> Printer<'d> {
         }
     }
 
-    /// The same for a [`FormatElement::IndentedLineGroup`].
+    /// Same, for a [`FormatElement::IndentedLineGroup`].
     pub(super) fn indented_line_group_fits(&mut self) -> PrintResult<bool> {
         let mut measure = Measure::new(self, true);
         measure.pending_space = true;
@@ -160,7 +158,7 @@ impl<'d> Printer<'d> {
         self.fits(&mut measure, &mut AllPredicate)
     }
 
-    /// Whether `variant` of a [`FormatElement::BestFitting`] fits in place of it.
+    /// True if `variant` of a [`FormatElement::BestFitting`] fits in its place.
     pub(super) fn variant_fits(&mut self, variant: Interned) -> PrintResult<bool> {
         let flat = self.flat_of(variant);
         if flat.flags.has(FlatFlags::MEASURED) {
@@ -187,14 +185,14 @@ impl<'d> Printer<'d> {
     ) -> PrintResult<bool> {
         let mut measure = Measure::new(self, uses_flat);
         measure.queue_len += 1;
-        // Without the start tag: the frame for it has the mode.
+        // Skip the start tag, since the frame pushed below already sets its mode.
         measure.elements = Elements::new(Run::of(variant), self.pool);
         measure.elements.skip(1);
         self.measure_push(&mut measure, FrameKind::Entry, PrintMode::Flat);
         self.fits(&mut measure, &mut AllPredicate)
     }
 
-    /// Whether the item or the separator of a fill that is next fits on the line.
+    /// True if the next fill item or separator fits on the line.
     pub(super) fn fill_entry_fits(&mut self, measure: &mut Measure<'d>) -> PrintResult<bool> {
         if !self.is_measure_at_start_entry(measure) {
             return Err(PrintError::InvalidDocument);
@@ -212,14 +210,14 @@ impl<'d> Printer<'d> {
         let queue = &self.buffers.queue;
         let own = std::iter::once(measure.elements.run())
             .chain(self.buffers.measure_queue.iter().rev().copied());
-        let of_printer = (0..measure.queue_len).rev().map(|at| {
+        let printer_runs = (0..measure.queue_len).rev().map(|at| {
             queue
                 .get(at)
                 .copied()
                 .unwrap_or_else(|| self.elements.run())
         });
         let first = own
-            .chain(of_printer)
+            .chain(printer_runs)
             .find_map(|run| first_of(run, self.pool));
         matches!(first, Some(FormatElement::Tag(Tag::StartEntry)))
     }
@@ -259,16 +257,16 @@ impl<'d> Printer<'d> {
         measure.mode = mode;
     }
 
-    /// Fails, and changes nothing, unless the innermost frame is of `kind`.
+    /// Fails without changing anything unless the innermost frame's kind is `kind`.
     #[inline]
     fn measure_pop(&mut self, measure: &mut Measure<'d>, kind: FrameKind) -> PrintResult<()> {
-        let (own, of_printer) = (&mut self.buffers.measure_frames, &self.buffers.frames);
+        let (own, printer_frames) = (&mut self.buffers.measure_frames, &self.buffers.frames);
         match own.last() {
             Some(top) if top.kind == kind => {
                 own.pop();
             }
             None if measure.frames_len > 1
-                && of_printer
+                && printer_frames
                     .get(measure.frames_len - 1)
                     .is_some_and(|top| top.kind == kind) =>
             {
@@ -278,13 +276,13 @@ impl<'d> Printer<'d> {
         }
         let top = own
             .last()
-            .or_else(|| of_printer.get(measure.frames_len - 1));
+            .or_else(|| printer_frames.get(measure.frames_len - 1));
         measure.mode = top.map_or(PrintMode::Expanded, |top| top.mode);
         Ok(())
     }
 
-    /// Whether what comes next fits on the line, up to the first line break, the end of the
-    /// document, or where `predicate` says.
+    /// True if what comes next fits on the line, up to the first line break, the end of the document, or where
+    /// `predicate` stops.
     fn fits(
         &mut self,
         measure: &mut Measure<'d>,
@@ -330,14 +328,13 @@ impl<'d> Printer<'d> {
                             measure.pending_space = true
                         }
                         LineMode::Soft | LineMode::SoftEmpty => {}
-                        // The break is there in any mode, and everything up to it fits. In a
-                        // fill, an item that has a comment on a line of its own before it does
-                        // not have to be alone on its line because of that. If the content is
-                        // in a group, the group is known to break and this is not asked.
+                        // The break happens in any mode, and everything up to it fits. So in a fill, an item preceded
+                        // by a comment on its own line doesn't have to get a line to itself. If the content is in a
+                        // group, that group is already known to break, so this isn't reached.
                         LineMode::Hard | LineMode::Empty => return Ok(Fits::Yes),
                     }
                 } else {
-                    // This is past the end of what is measured, in content that is expanded.
+                    // This is past the end of the measured content, in content that's expanded.
                     let width = measure.line_width + usize::from(measure.is_space_element_pending);
                     return Ok(if width > self.options.print_width {
                         Fits::No
@@ -412,11 +409,11 @@ impl<'d> Printer<'d> {
                 Tag::StartConditionalContent(condition) => {
                     let group_mode = match condition.group_id {
                         None => mode,
-                        Some(_) if measure.has_passed_group_ids => {
+                        Some(_) if measure.has_skipped_group_ids => {
                             return Err(PrintError::MeasureAgain);
                         }
-                        // As in Prettier, it is the mode that the group has been printed in. One that has only been measured
-                        // counts as being on one line.
+                        // As in Prettier, this is the mode the group was printed in. A group that has only been
+                        // measured counts as flat.
                         Some(id) => self.group_mode(id).unwrap_or(PrintMode::Flat),
                     };
                     if group_mode != condition.mode {
@@ -427,11 +424,11 @@ impl<'d> Printer<'d> {
                     take_line_suffix(&mut measure.elements)?;
                     measure.has_line_suffix = true;
                 }
-                // Of a line suffix that is being printed.
+                // The end of a line suffix that's being printed.
                 Tag::EndLineSuffix => self.measure_pop(measure, FrameKind::LineSuffix)?,
                 Tag::StartFill => self.measure_push(measure, FrameKind::Fill, mode),
                 Tag::StartEntry => {
-                    // After an item that is being printed, `mode` is that of the separator.
+                    // After an item that's being printed, `mode` is the separator's mode.
                     let _ = self.measure_pop(measure, FrameKind::FillSeparator);
                     self.measure_push(measure, FrameKind::Entry, mode);
                 }
@@ -440,7 +437,7 @@ impl<'d> Printer<'d> {
                     let _ = self.measure_pop(measure, FrameKind::FillSeparator);
                     self.measure_pop(measure, FrameKind::Fill)?;
                 }
-                // Where the next line starts does not matter: measuring ends there.
+                // Indentation doesn't matter, because measuring stops at the next line.
                 Tag::StartIndent
                 | Tag::EndIndent
                 | Tag::StartIndentWithLine(_)
@@ -461,7 +458,7 @@ impl<'d> Printer<'d> {
 
     #[inline]
     fn fits_text(&self, measure: &mut Measure<'d>, width: TextWidth) -> Fits {
-        // To Prettier, a text that is empty is not there.
+        // Prettier ignores an empty text.
         if width == TextWidth::single(0) {
             return Fits::Maybe;
         }
@@ -469,7 +466,7 @@ impl<'d> Printer<'d> {
         measure.line_width +=
             measure.pending_indent + usize::from(measure.pending_space) + width.value() as usize;
         measure.pending_indent = 0;
-        // The line break is there in any mode. What counts is what is before it.
+        // The line break happens in any mode, so only the text before it counts.
         if width.is_multiline() && !width.is_one_string() {
             return if measure.line_width > print_width {
                 Fits::No
@@ -485,14 +482,14 @@ impl<'d> Printer<'d> {
         Fits::Maybe
     }
 
-    /// The same for content that is measured, in flat mode.
+    /// Same, for measured content in flat mode.
     #[inline]
     fn flat_fits(&self, measure: &mut Measure<'d>, flat: Flat) -> Fits {
         let flags = flat.flags;
         if flags.has(FlatFlags::HAS_LINE_SUFFIX_BOUNDARY) && measure.has_line_suffix {
             return Fits::No;
         }
-        measure.has_passed_group_ids |= flags.has(FlatFlags::HAS_GROUP_IDS);
+        measure.has_skipped_group_ids |= flags.has(FlatFlags::HAS_GROUP_IDS);
         let starts_with_space = flags.has(FlatFlags::STARTS_WITH_SPACE) && measure.line_width > 0;
         measure.pending_space |= starts_with_space || flags.has(FlatFlags::STARTS_WITH_LINE);
         measure.is_space_element_pending |= starts_with_space;

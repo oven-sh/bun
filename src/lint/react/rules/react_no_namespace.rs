@@ -19,7 +19,7 @@ const OXLINT: Message =
 impl Rule for NoNamespace {
     const META: Meta = Meta::plugin(Plugin::React, "no-namespace", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
-    /// The pragma. oxlint knows none.
+    /// The pragma. Unused for oxlint, which has no pragma setting.
     type State<'a> = OnceCell<&'a [u8]>;
 
     fn new(_: &Options) -> Self {
@@ -28,7 +28,7 @@ impl Rule for NoNamespace {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let on = On::new().exprs(&[ExprTag::Jsx]);
-        // Upstream takes `React.#createElement` for `React.createElement`.
+        // Upstream treats `React.#createElement` as `React.createElement`.
         if !file.mentions("createElement") && (file.language().is_oxlint || !file.mentions("#createElement")) {
             return on;
         }
@@ -42,9 +42,9 @@ impl Rule for NoNamespace {
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let is_oxlint = cx.language().is_oxlint;
         let call = e.as_call();
-        // In a tag, where a name with a hyphen or a colon is a string, or the first argument of `createElement`.
+        // The tag name, which is a string if it has a hyphen or a colon, or the first argument of `createElement`.
         let name = match call {
-            // oxlint has a node for parentheses.
+            // oxlint's AST has a node for parentheses.
             Some(call) => call.args().first().filter(|it| !is_oxlint || !it.is_parenthesized()),
             None => match e.kind() {
                 ExprKind::Jsx(jsx) => jsx.tag(),
@@ -57,7 +57,7 @@ impl Rule for NoNamespace {
         let Some(component_name) = name.as_string().filter(|it| strings::contains_char(it.bytes(), b':')) else {
             return;
         };
-        // oxlint takes the `createElement` of everything but `document`.
+        // oxlint accepts any `createElement` except `document.createElement`.
         let is_element = call.is_none_or(|call| match is_oxlint {
             true => is_create_element_call(call),
             false => is_create_element(e, cx.state.get_or_init(|| get_from_context(cx.file()))),
@@ -66,7 +66,7 @@ impl Rule for NoNamespace {
             return;
         }
         if is_oxlint {
-            // oxlint points at the name.
+            // oxlint reports the name.
             cx.report(name, OXLINT).data("component_name", component_name);
             return;
         }

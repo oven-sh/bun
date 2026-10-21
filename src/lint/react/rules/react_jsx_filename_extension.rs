@@ -5,9 +5,9 @@ use bun_lint_oxlint::text::file_extension;
 
 /// Disallow file extensions that may contain JSX
 pub struct JsxFilenameExtension {
-    /// `"as-needed"`, not `"always"`
+    /// True for `"as-needed"`, false for `"always"`.
     allow_as_needed: bool,
-    /// As they are written.
+    /// As written in the options.
     extensions: Vec<Box<[u8]>>,
     ignore_files_without_code: bool,
 }
@@ -27,7 +27,7 @@ fn without_dot(extension: &[u8]) -> &[u8] {
 impl Rule for JsxFilenameExtension {
     const META: Meta = Meta::plugin(Plugin::React, "jsx-filename-extension", Kind::None);
     const ON: On = On::new().finish();
-    /// Whether the file has JSX.
+    /// True if the file has JSX.
     type State<'a> = bool;
 
     fn new(options: &Options) -> Self {
@@ -45,11 +45,11 @@ impl Rule for JsxFilenameExtension {
     fn start<'a>(&self, file: &'a File<'a>) -> Option<bool> {
         let path = file.path();
         let has_ext_allowed = if file.language().is_oxlint {
-            // oxlint compares what is after the last dot, and takes an extension with its dot or without.
+            // oxlint compares the part after the last dot, and accepts an extension with or without its dot.
             let ext = file_extension(path).unwrap_or_default();
             self.extensions.iter().any(|it| without_dot(it) == ext)
         } else if basename(path) == b"<text>" {
-            // ESLint leaves out the directories before a `<text>`.
+            // ESLint drops the directories in front of `<text>`.
             return None;
         } else {
             self.extensions.iter().any(|it| !it.is_empty() && path.ends_with(it))
@@ -70,7 +70,7 @@ impl Rule for JsxFilenameExtension {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let (file, is_oxlint) = (cx.file(), cx.language().is_oxlint);
-        // oxlint's is without the dot.
+        // oxlint's extension has no dot.
         let ext = if is_oxlint { file_extension(file.path()).unwrap_or_default() } else { extname(file.path()) };
         if cx.state {
             let Some(jsx_node) = file.exprs_of_kind(ExprTag::Jsx).min_by_key(|it| it.span().start) else {
@@ -81,7 +81,7 @@ impl Rule for JsxFilenameExtension {
                 return;
             }
             cx.report(jsx_node, OXLINT_NO_JSX_WITH_EXTENSION).data("ext", ext).help_with(|| {
-                // oxlint keeps the first of each.
+                // oxlint removes duplicates, keeping the first.
                 let mut allowed_extensions: Vec<&[u8]> = Vec::new();
                 for it in self.extensions.iter().map(|it| without_dot(it)) {
                     if !allowed_extensions.contains(&it) {
@@ -93,10 +93,10 @@ impl Rule for JsxFilenameExtension {
                 format!("Rename the file to use an allowed extension: .{allowed_extensions}")
             });
         } else if is_oxlint {
-            // oxlint points at the start of the file.
+            // oxlint reports the start of the file.
             cx.report(Span::new(0, 0), OXLINT_EXTENSION_ONLY_FOR_JSX).data("ext", ext);
         } else {
-            // espree's `Program` is the whole text.
+            // espree's `Program` spans the whole text.
             let node = if file.uses_typescript_parser() { file.program_span() } else { file.span() };
             cx.report(node, EXTENSION_ONLY_FOR_JSX).data("ext", ext).at_the_end();
         }

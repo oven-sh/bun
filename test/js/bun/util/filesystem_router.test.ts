@@ -1,4 +1,5 @@
 import { FileSystemRouter } from "bun";
+import { heapStats } from "bun:jsc";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
@@ -229,6 +230,15 @@ it("should support catch-all routes", () => {
     expect(filePath).toBe(`${dir}/posts/[...id].tsx`);
     expect(params.id).toBe(fixture.split("/").slice(2).join("/"));
   }
+});
+
+it.each([
+  [["[team]/settings.tsx", "[team]/[section]/[item].tsx"], { team: "bob", section: "settings", item: "profile" }],
+  [["[a]/settings.tsx", "[z]/[b]/[c].tsx"], { z: "bob", b: "settings", c: "profile" }],
+])("params from a route that didn't match aren't included in the result: %j", (files, params) => {
+  const { dir } = make(files);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+  expect(router.match("/bob/settings/profile")!.params).toEqual(params);
 });
 
 it("should support index routes", () => {
@@ -479,6 +489,27 @@ it("reload() works with new dirs/files", () => {
   expect(router.match("/test/test2")!.name).toBe("/test/test2");
 });
 
+it("the constructor and reload() don't create allocator heaps", () => {
+  const { dir } = make(["index.tsx", "posts/[id].tsx"]);
+  const heapsCreatedBy = (fn: () => void) => {
+    const before = heapStats().mimalloc.heaps.total;
+    for (let i = 0; i < 50; i++) fn();
+    return heapStats().mimalloc.heaps.total - before;
+  };
+
+  for (const fileExtensions of [undefined, [".tsx", ".ts"]]) {
+    const create = () => new FileSystemRouter({ dir, style: "nextjs", fileExtensions });
+    // The first router warms the resolver's directory cache.
+    const router = create();
+    router.reload();
+
+    // The allocator counts another thread's heaps late, so a few can show up here.
+    expect(heapsCreatedBy(create)).toBeLessThan(10);
+    expect(heapsCreatedBy(() => router.reload())).toBeLessThan(10);
+    expect(Object.keys(router.routes).sort()).toEqual(["/", "/posts/[id]"]);
+  }
+});
+
 it(".query works with dynamic routes, including params", () => {
   // set up the test
   const { dir } = make(["posts/[id].tsx"]);
@@ -540,6 +571,13 @@ it("dir should be validated", async () => {
       style: "nextjs",
     });
   }).toThrow("FileSystemRouterOptions.dir must be a string");
+});
+
+it("rejects a dir with a null byte", () => {
+  const { dir } = make(["index.tsx"]);
+  expect(() => new FileSystemRouter({ style: "nextjs", dir: `${dir}\0suffix` })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+  );
 });
 
 it("origin should be validated", async () => {
@@ -1218,4 +1256,59 @@ it("an absolute dir with '..' in it names routes like its normalized spelling", 
     stderr: "",
     exitCode: 0,
   });
+});
+
+it("throws ERR_STRING_TOO_LONG for an origin or assetPrefix over the string limit", async () => {
+  using dir = tempDir("fsr-string-limit", { "index.tsx": "export default 1;" });
+  const code = /* js */ `
+    const dir = process.argv[1];
+    const LIMIT = 64 * 1024;
+    const pad = (prefix, len) => prefix + Buffer.alloc(len - prefix.length, "x").toString();
+    const attempt = (key, value) => {
+      try {
+        new Bun.FileSystemRouter({ dir, style: "nextjs", [key]: value });
+        return "ok";
+      } catch (e) {
+        return e?.code ?? e?.name;
+      }
+    };
+    console.log(
+      JSON.stringify({
+        originAtLimit: attempt("origin", pad("https://a.example/", LIMIT)),
+        originPastLimit: attempt("origin", pad("https://b.example/", LIMIT + 1)),
+        originPastLimitAgain: attempt("origin", pad("https://b.example/", LIMIT + 1)),
+        assetPrefixPastLimit: attempt("assetPrefix", pad("/static/", LIMIT + 1)),
+      }),
+    );
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code, String(dir)],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+    stdout: {
+      originAtLimit: "ok",
+      originPastLimit: "ERR_STRING_TOO_LONG",
+      originPastLimitAgain: "ERR_STRING_TOO_LONG",
+      assetPrefixPastLimit: "ERR_STRING_TOO_LONG",
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it(".query and .params support names that look like array indices", () => {
+  const { dir } = make(["posts.tsx", "[0].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  const query = router.match("/posts?0=a&0=b&1=c&x=y")!.query;
+  expect(query).toEqual({ 0: ["a", "b"], 1: "c", x: "y" });
+  expect(query[0]).toEqual(["a", "b"]);
+
+  const params = router.match("/hello")!.params;
+  expect(params).toEqual({ 0: "hello" });
+  expect(params[0]).toBe("hello");
 });

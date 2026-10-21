@@ -505,13 +505,13 @@ pub(crate) fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
         }
         Encoding::Utf8 => {
             let r = strings::copy_latin1_into_utf8(to, input);
-            let mut written = r.written as usize;
+            let mut written = r.written;
             // `copy_latin1_into_utf8` stops at whole code points. Under
             // byte-level truncation, a Latin-1 char >= 0x80 whose 2-byte
             // sequence straddles the end still gets its lead byte.
-            if ALLOW_PARTIAL_WRITE && written < to.len() && (r.read as usize) < input.len() {
-                debug_assert!(input[r.read as usize] >= 0x80);
-                to[written] = 0xC0 | (input[r.read as usize] >> 6);
+            if ALLOW_PARTIAL_WRITE && written < to.len() && r.read < input.len() {
+                debug_assert!(input[r.read] >= 0x80);
+                to[written] = 0xC0 | (input[r.read] >> 6);
                 written += 1;
             }
             Ok(written)
@@ -526,7 +526,7 @@ pub(crate) fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
                 0
             } else if (to.as_ptr() as usize).is_multiple_of(core::mem::align_of::<u16>()) {
                 let output: &mut [u16] = bytemuck::cast_slice_mut(&mut to[..out_units * 2]);
-                strings::copy_latin1_into_utf16(output, buf).written as usize * 2
+                strings::copy_latin1_into_utf16(output, buf).written * 2
             } else {
                 // Rust `&mut [u16]` requires natural alignment, so inline the
                 // (trivial) widen loop for the misaligned-dest case
@@ -610,7 +610,7 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
             };
             Ok(
                 strings::copy_utf16_into_utf8_impl::<ALLOW_PARTIAL_WRITE>(to_slice, input_slice)
-                    .written as usize,
+                    .written,
             )
         }
         Encoding::Latin1 | Encoding::Ascii | Encoding::Buffer => {

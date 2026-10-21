@@ -776,8 +776,10 @@ impl FileSink {
                         return sys::Result::Err(err);
                     }
                     sys::Result::Ok(()) => {
-                        self.writer
-                            .with_mut(|w| w.update_ref(self.io_evtloop(), false));
+                        self.writer.with_mut(|w| {
+                            w.owns_fd = true;
+                            w.update_ref(self.io_evtloop(), false);
+                        });
                     }
                 }
                 return sys::Result::Ok(());
@@ -791,6 +793,9 @@ impl FileSink {
                 return sys::Result::Err(err);
             }
             sys::Result::Ok(()) => {
+                // `open_for_writing` opened or dup'd `fd` for this sink, so `end()` must close it.
+                #[cfg(windows)]
+                self.writer.with_mut(|w| w.owns_fd = true);
                 // Only keep the event loop ref'd while there's a pending write in progress.
                 // If there's no pending write, no need to keep the event loop ref'd.
                 self.writer
@@ -1068,9 +1073,7 @@ impl FileSink {
         // Per-wrapper accounting is on `ref_count` directly: each path that
         // hands `self` to C++ (`to_js` / `to_js_with_destructor`) takes a +1
         // via `self.ref_()`, and `finalize`'s `deref()` below releases it.
-        // `JsSinkType::construct` allocates with `ref_count=1` and that +1
-        // belongs to the wrapper it's about to be stored in, so no extra
-        // `ref_()` there. Callers that allocate via `init`/`create` and then
+        // Callers that allocate via `init`/`create` and then
         // `to_js()` must `deref()` once to release init's +1 (see
         // `Blob::get_writer`). `pending`/`pipe` are left for
         // `deinit` (Box drop) since in-flight IO may still need them.
@@ -1145,23 +1148,6 @@ impl FileSink {
         // SAFETY: `this` was just allocated above and is the sole reference.
         unsafe { (*this.as_ptr()).writer.get_mut().set_parent(this.as_ptr()) };
         this
-    }
-
-    // Called by JSSink codegen on a pre-allocated `m_ctx` slot via
-    // `JsSinkType::construct(&mut MaybeUninit<Self>)`, which `write`s this
-    // by-value result into the slot.
-    pub(crate) fn construct() -> FileSink {
-        // `construct` is only called from JSSink codegen on a thread that
-        // already has a Bun VM (`get()` panics otherwise); `event_loop()` is
-        // the live per-thread `jsc::EventLoop`.
-        FileSink::new(
-            EventLoopHandle::init(
-                (*bun_jsc::VirtualMachineRef::get())
-                    .event_loop()
-                    .cast::<()>(),
-            ),
-            Fd::INVALID,
-        )
     }
 
     pub fn write(&self, data: &streams::Result) -> streams::Writable {
@@ -1476,7 +1462,6 @@ crate::impl_js_sink_abi!(FileSink, "FileSink");
 // `Sink.JSSink(@This(), "FileSink")`.
 impl crate::webcore::sink::JsSinkType for FileSink {
     const NAME: &'static str = "FileSink";
-    const HAS_CONSTRUCT: bool = true;
     const HAS_FLUSH_FROM_JS: bool = true;
     const HAS_PROTECT_JS_WRAPPER: bool = true;
     const HAS_UPDATE_REF: bool = true;
@@ -1492,11 +1477,6 @@ impl crate::webcore::sink::JsSinkType for FileSink {
     unsafe fn controller_finalize(this: *mut Self) {
         // SAFETY: same contract, forwarded.
         unsafe { Self::controller_finalize(this) }
-    }
-    fn construct(this: &mut core::mem::MaybeUninit<Self>) {
-        // `Self::construct()` allocates with `ref_count=1`; that +1 belongs to
-        // the C++ `JSFileSink` wrapper `js_construct` is about to create.
-        this.write(Self::construct());
     }
     fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> sys::Result<JSValue> {
         Self::end_from_js(self, cx)

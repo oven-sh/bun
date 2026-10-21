@@ -8,7 +8,7 @@ use crate::js::utils::string::{
 use crate::prelude::*;
 use crate::{format_args, write};
 
-/// A string literal that is not an expression here: a module specifier.
+/// A module specifier: a string literal that isn't an expression.
 pub(crate) struct FormatStringLiteral {
     pub(crate) span: Span,
 }
@@ -33,7 +33,7 @@ pub(crate) fn module_export_name<'a>(name: Ident<'a>) -> impl Format<'a> {
     })
 }
 
-/// `"source" with { type: "json" }` of the import or export `statement`.
+/// The `"source" with { type: "json" }` part of the import or export `statement`.
 pub(crate) fn format_import_and_export_source_with_clause<'a>(
     statement: Stmt<'a>,
     f: &mut Formatter<'a>,
@@ -71,7 +71,7 @@ pub(crate) fn write_import_declaration<'a>(
 /// `a, * as b`, `a, { b, c }`
 fn write_import_specifiers<'a>(import: Import<'a>, f: &mut Formatter<'a>) {
     let named = import.named();
-    // `import a, {} from "a"` is `import a from "a"`.
+    // `import a, {} from "a"` prints as `import a from "a"`.
     let has_braces = import.has_named_imports()
         && !(named.is_empty() && (import.default().is_some() || import.namespace().is_some()));
 
@@ -121,12 +121,12 @@ fn write_import_specifiers<'a>(import: Import<'a>, f: &mut Formatter<'a>) {
     }
 }
 
-/// `import {⏎⏎// comment⏎a } from "b"`: oxfmt keeps the empty line, also behind the `{`.
-fn empty_line_before_comments_of_specifier_stays(f: &Formatter<'_>) -> bool {
+/// `import {⏎⏎// comment⏎a } from "b"`: oxfmt keeps the empty line, even right after the `{`.
+fn keeps_empty_line_before_specifier_comments(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// A specifier of an import or an export.
+/// An import or export specifier.
 struct FormatSpecifier<'a, T> {
     specifier: T,
     node: AstNodes<'a>,
@@ -141,7 +141,7 @@ impl<T: Spanned> Spanned for FormatSpecifier<'_, T> {
 impl<'a, T: Format<'a>> Format<'a> for FormatSpecifier<'a, T> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         if !f.is_quiet()
-            && empty_line_before_comments_of_specifier_stays(f)
+            && keeps_empty_line_before_specifier_comments(f)
             && let Some(first) = f.comments().of_node(self.node).leading.first()
             && first.span().start < self.node.span().start
             && crate::text::is_previous_line_empty(
@@ -155,7 +155,7 @@ impl<'a, T: Format<'a>> Format<'a> for FormatSpecifier<'a, T> {
     }
 }
 
-/// The specifiers between the braces of an import or an export, and the variant of [`AstNodes`] that they are.
+/// The specifiers between an import's or export's braces, and the [`AstNodes`] variant that wraps each one.
 pub(crate) struct FormatSpecifiers<'a, T>(pub(crate) List<'a, T>, pub(crate) fn(T) -> AstNodes<'a>);
 
 impl<'a, T: Handle<'a> + Format<'a> + Spanned> Format<'a> for FormatSpecifiers<'a, T> {
@@ -233,7 +233,7 @@ fn write_with_clause<'a>(with_clause: ImportAttributes<'a>, f: &mut Formatter<'a
     }
 }
 
-/// Prettier's `printObject` for import attributes. `braces`: the `{ .. }`.
+/// Prettier's `printObject` for import attributes. `braces` is the span of the `{ .. }`.
 fn write_import_attributes<'a>(entries: List<'a, Prop<'a>>, braces: Span, f: &mut Formatter<'a>) {
     let Some(first) = entries.first() else {
         return write!(f, "{}");

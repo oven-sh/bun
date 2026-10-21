@@ -40,7 +40,6 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForNapiExternal { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForBundlerPlugin { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNodeVMGlobalObject { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForNodeVMSpecialSandbox { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNodeVMScript { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNodeVMSourceTextModule { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNodeVMSyntheticModule { nullptr };
@@ -62,7 +61,7 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForJSDiffieHellmanGroup { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSECDH { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForTTYWrapObject { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForNapiHandleScopeImpl { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForHandleScopeImpl { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForStrongRootBlock { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNapiTypeTag { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNativePromiseContext { nullptr };
@@ -71,7 +70,6 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForJSMIMEType { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSMIMEParams { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForV8GlobalInternals { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForHandleScopeBuffer { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForFunctionTemplate { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForV8Function { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSNodeHTTPServerSocket { nullptr };

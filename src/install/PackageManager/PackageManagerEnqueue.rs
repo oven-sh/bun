@@ -1305,7 +1305,9 @@ fn look_ahead_from_project_folder(this: &mut PackageManager, id: DependencyID, a
     };
     let path = this.lockfile.str_detached(&path);
     let mut buf = bun_paths::path_buffer_pool::get();
-    let abs = project_path(path, &mut buf[..]);
+    let Some(abs) = project_path(path, &mut buf[..]) else {
+        return;
+    };
     if let Some(listed) = FolderResolution::listed_dependencies(asked.version.tag, abs, this) {
         let locked = names_locked_for_folder(this, &listed);
         look_ahead_from(this, &listed, &locked);
@@ -2878,16 +2880,14 @@ fn enqueue_local_tarball(
     // can be reallocated concurrently by the main thread while processing
     // other dependencies (e.g. `appendPackage` / `StringBuilder.allocate`
     // in `Package.fromNPM`).
-    let mut abs_buf = bun_paths::path_buffer_pool::get();
-    let (tarball_path, normalize): (&[u8], bool) =
+    let (tarball_path, normalize) =
         match local_tarball_base_dir(&this.lockfile, dependency_id, path) {
-            None => (path, true),
+            None => (stored_string(path), true),
             Some(base_dir) => (
-                Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
+                stored_string(Path::resolve_path::join_abs_string::<Path::platform::Auto>(
                     FileSystem::instance().top_level_dir(),
-                    &mut abs_buf,
                     &[base_dir, path],
-                ),
+                )),
                 false,
             ),
         };
@@ -2912,7 +2912,7 @@ fn enqueue_local_tarball(
                     in_trusted_dependencies: false,
                     github_resolved: StringOrTinyString::init(b""),
                 },
-                tarball_path: stored_string(tarball_path),
+                tarball_path,
                 normalize,
             }),
         },
@@ -3917,16 +3917,19 @@ fn resolve_project_folder(
     // `get_or_put` copies the path into the lockfile string buffer before any other mutation.
     let path = this.lockfile.str_detached(&path);
     let mut buf = bun_paths::path_buffer_pool::get();
-    let abs = project_path(path, &mut buf[..]);
+    let Some(abs) = project_path(path, &mut buf[..]) else {
+        return FolderResolutionValue::Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+    };
     FolderResolution::get_or_put(GlobalOrRelative::Relative(version.tag), version, abs, this)
 }
 
-/// Returns `path` as an absolute path. A relative path is relative to the project.
-fn project_path<'a>(path: &'a [u8], buf: &'a mut [u8]) -> &'a [u8] {
+/// Returns `path` as an absolute path, or `None` if it's too long for `buf`. Relative paths are
+/// resolved against the project root.
+fn project_path<'a>(path: &'a [u8], buf: &'a mut [u8]) -> Option<&'a [u8]> {
     if bun_paths::is_absolute(path) {
-        return path;
+        return (path.len() < buf.len()).then_some(path);
     }
-    Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
+    Path::resolve_path::join_abs_string_buf_checked::<Path::platform::Auto>(
         FileSystem::instance().top_level_dir(),
         buf,
         &[path],

@@ -1,4 +1,4 @@
-//! `eslint-formatter-unix`, and what oxlint calls `unix`.
+//! `eslint-formatter-unix`, and oxlint's `unix`.
 
 use super::Meta;
 use super::info::Source;
@@ -11,7 +11,7 @@ use bun_sema::util::FxHashMap;
 use std::io::Write;
 
 /// `:1:2: `
-fn write_place(out: &mut Vec<u8>, line: i64, column: i64) {
+fn write_position(out: &mut Vec<u8>, line: i64, column: i64) {
     out.push(b':');
     out.extend_from_slice(itoa(&mut ItoaBuf::new(), line));
     out.push(b':');
@@ -26,7 +26,7 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult]) {
         for message in &result.messages {
             out.extend_from_slice(&result.path);
             let (line, column) = (message.line as i32, message.column as i32);
-            write_place(out, line.into(), column.into());
+            write_position(out, line.into(), column.into());
             out.extend_from_slice(&message.message);
             let is_error = message.is_fatal || message.severity == Severity::Error;
             match is_error {
@@ -49,7 +49,7 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult]) {
     }
 }
 
-/// ` [Warning/eslint(no-debugger)]` and the end of the line
+/// Writes ` [Warning/eslint(no-debugger)]` and the newline.
 fn write_end(out: &mut Vec<u8>, message: &LintMessage) {
     out.extend_from_slice(match is_error(message) {
         true => b" [Error",
@@ -62,13 +62,14 @@ fn write_end(out: &mut Vec<u8>, message: &LintMessage) {
     out.extend_from_slice(b"]\n");
 }
 
-/// [`write_end`], made once for each rule that is built in and for errors and warnings.
+/// Caches [`write_end`]'s output per built-in rule and severity.
 #[derive(Default)]
 struct Ends {
-    /// One after the other.
+    /// All the cached outputs, concatenated.
     text: Vec<u8>,
-    /// By where the rule is, plus 1 for an error: from where to where its end is in `text`.
-    places: FxHashMap<usize, (u32, u32)>,
+    /// Keyed by the address of the rule's `Meta`, plus 1 for an error. The value is the output's start and end in
+    /// `text`.
+    ranges: FxHashMap<usize, (u32, u32)>,
 }
 
 impl Ends {
@@ -77,14 +78,14 @@ impl Ends {
             return write_end(out, message);
         };
         let key = std::ptr::from_ref(*meta).addr() + usize::from(is_error(message));
-        let (start, end) = match self.places.get(&key) {
-            Some(place) => *place,
+        let (start, end) = match self.ranges.get(&key) {
+            Some(range) => *range,
             None => {
                 let start = self.text.len() as u32;
                 write_end(&mut self.text, message);
-                let place = (start, self.text.len() as u32);
-                self.places.insert(key, place);
-                place
+                let range = (start, self.text.len() as u32);
+                self.ranges.insert(key, range);
+                range
             }
         };
         out.extend_from_slice(
@@ -95,7 +96,7 @@ impl Ends {
     }
 }
 
-/// With the end of the last line.
+/// Includes the final newline.
 pub(super) fn write_as_oxlint(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     let (mut total, mut ends) = (0, Ends::default());
     for result in results.iter().filter(|it| !it.messages.is_empty()) {
@@ -104,7 +105,7 @@ pub(super) fn write_as_oxlint(out: &mut Vec<u8>, results: &[FileResult], meta: &
         for message in &result.messages {
             let start = source.start(message);
             out.extend_from_slice(&source.name);
-            write_place(out, start.line as i64, start.column as i64);
+            write_position(out, start.line as i64, start.column as i64);
             out.extend_from_slice(&message.message);
             ends.write(out, message);
         }

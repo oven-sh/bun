@@ -17,7 +17,7 @@ struct Operands<'a> {
     right: Expr<'a>,
 }
 
-/// ESLint's `isConcatenation`: the operands of a `+`.
+/// ESLint's `isConcatenation`: returns the operands of a `+`.
 fn as_concatenation(e: Expr<'_>) -> Option<Operands<'_>> {
     match (e.binary_op(), e.left(), e.right()) {
         (Some(BinOp::Add), Some(left), Some(right)) => Some(Operands { left, right }),
@@ -25,9 +25,9 @@ fn as_concatenation(e: Expr<'_>) -> Option<Operands<'_>> {
     }
 }
 
-/// Whether `test` holds for one of the things that `e` concatenates.
+/// True if `test` is true for one of the operands that `e` concatenates.
 fn any_operand<'a>(e: Expr<'a>, test: fn(Expr<'a>) -> bool) -> bool {
-    // The left operands of the concatenations that are a right operand.
+    // The left operands still to visit. The walk goes down the right operands first.
     let mut pending: SmallVec<[Expr<'a>; 8]> = SmallVec::new();
     let mut at = e;
     loop {
@@ -58,7 +58,7 @@ fn has_octal_or_non_octal_decimal_escape_sequence(e: Expr<'_>) -> bool {
     })
 }
 
-/// The operands of ESLint's `BinaryExpression`.
+/// Returns the operands of ESLint's `BinaryExpression`.
 fn as_binary_expression(e: Expr<'_>) -> Option<Operands<'_>> {
     match e.kind() {
         ExprKind::Binary { op, left, right }
@@ -70,8 +70,8 @@ fn as_binary_expression(e: Expr<'_>) -> Option<Operands<'_>> {
     }
 }
 
-/// Whether `e` starts with `${` once it is a template. Upstream asks of a template whether the range
-/// of its first `TemplateElement` is empty, which it never is: it includes the delimiters.
+/// True if `e` starts with `${` once it's a template. For a template, upstream checks whether the range of its first
+/// `TemplateElement` is empty, which it never is, because it includes the delimiters.
 fn starts_with_template_curly(mut e: Expr<'_>) -> bool {
     while let Some(Operands { left, .. }) = as_binary_expression(e) {
         e = left;
@@ -86,8 +86,8 @@ fn ends_with_template_curly(e: Expr<'_>) -> bool {
     }
 }
 
-/// For an `e` that is no `BinaryExpression`. In oxlint the range of a `TemplateElement` is that of its text: `quasi`
-/// says which one is asked for.
+/// For an `e` that isn't a `BinaryExpression`. In oxlint a `TemplateElement`'s range only covers its text. `quasi`
+/// returns the index of the element to check.
 fn has_curly_at<'a>(e: Expr<'a>, quasi: fn(Template<'a>) -> usize) -> bool {
     match e.kind() {
         ExprKind::Template(template) if e.file().language().is_oxlint => {
@@ -97,8 +97,8 @@ fn has_curly_at<'a>(e: Expr<'a>, quasi: fn(Template<'a>) -> usize) -> bool {
     }
 }
 
-/// ESLint remembers which concatenations it has checked by where they start, and comes to the
-/// literals in source order. So in `'a' + b - c + 'd'` the inner one hides the outer one.
+/// ESLint remembers the concatenations it has checked by their start offset, and visits the literals in source order.
+/// So in `'a' + b - c + 'd'` the inner one hides the outer one.
 fn starts_with_checked_concatenation(top: Expr<'_>) -> bool {
     let start = top.span().start;
     let mut at = top;
@@ -122,9 +122,9 @@ fn starts_with_checked_concatenation(top: Expr<'_>) -> bool {
     }
 }
 
-/// The text between `a` and `b` that is not in a token: whitespace and comments.
+/// Returns the text between `a` and `b` that isn't in a token: whitespace and comments.
 fn get_text_between<'a>(file: &'a File<'a>, a: Span, b: Span) -> Cow<'a, [u8]> {
-    // Nearly always there is nothing but spaces, line breaks and parentheses.
+    // Fast path: there's nearly always nothing but spaces, line breaks and parentheses.
     let between = file.slice(a.between(b));
     let is_parenthesis = |it: &u8| matches!(it, b'(' | b')');
     if between.iter().all(|it| matches!(it, b' ' | b'\t' | b'\n' | b'\r') || is_parenthesis(it)) {
@@ -147,12 +147,12 @@ fn get_text_between<'a>(file: &'a File<'a>, a: Span, b: Span) -> Cow<'a, [u8]> {
     Cow::Owned(text)
 }
 
-/// The string literal `raw` as a template.
+/// Converts the string literal `raw` to a template.
 fn string_literal_to_template(raw: &[u8]) -> Vec<u8> {
     let [quote, content @ .., _] = raw else {
         return raw.to_vec();
     };
-    // A `${` or a backtick needs a backslash, unless it is escaped for some reason.
+    // A `${` or a backtick needs a backslash, unless it's already escaped.
     let mut escaped = Vec::with_capacity(content.len() + 2);
     let mut backslashes = 0;
     for (i, &byte) in content.iter().enumerate() {
@@ -163,7 +163,7 @@ fn string_literal_to_template(raw: &[u8]) -> Vec<u8> {
         backslashes = if byte == b'\\' { backslashes + 1 } else { 0 };
         escaped.push(byte);
     }
-    // The quotes no longer need one.
+    // The quotes no longer need a backslash.
     let mut template = Vec::with_capacity(escaped.len() + 2);
     template.push(b'`');
     let mut at = 0;
@@ -179,13 +179,13 @@ fn string_literal_to_template(raw: &[u8]) -> Vec<u8> {
     template
 }
 
-/// How the operands of a concatenation become one text.
+/// How a concatenation's operands are joined into one text.
 enum Join {
     /// `foo${bar}` /* comment */ + 'baz' --> `foo${bar /* comment */  }${baz}`
     AfterLeft,
     /// 'foo' /* comment */ + `${bar}baz` --> `foo${ /* comment */  bar}baz`
     BeforeRight,
-    /// There is nowhere to put the text between them.
+    /// There's nowhere to put the text between them.
     Sum,
 }
 
@@ -202,7 +202,7 @@ impl Concatenation<'_> {
         [&self.text_before_plus[..], &self.text_after_plus[..]].concat()
     }
 
-    /// What goes into the braces at the end of the left operand.
+    /// Returns the text to put in the braces at the end of the left operand.
     fn text_after_left(&self) -> Vec<u8> {
         match self.join {
             Join::AfterLeft => self.text_around_plus(),
@@ -211,10 +211,10 @@ impl Concatenation<'_> {
     }
 }
 
-/// ESLint's `getTemplateLiteral`, in time proportional to the text.
+/// ESLint's `getTemplateLiteral`, in time linear in the text.
 struct TemplateWriter<'a> {
     file: &'a File<'a>,
-    /// Where the string literals start that the reported expression concatenates, in ascending order.
+    /// The start offsets of the string literals that the reported expression concatenates, in ascending order.
     string_literals: Vec<u32>,
     stack: bun_core::StackCheck,
     text: Vec<u8>,
@@ -260,7 +260,7 @@ impl<'a> TemplateWriter<'a> {
         } else {
             Join::Sum
         };
-        // For oxlint an operand is as long as its parentheses.
+        // For oxlint an operand includes its parentheses.
         let (before, after) = match self.file.language().is_oxlint {
             true => (left.outer_span(), right.outer_span()),
             false => (left.span(), right.span()),
@@ -274,14 +274,14 @@ impl<'a> TemplateWriter<'a> {
         Some((left, concatenation))
     }
 
-    /// Appends `e` as a template, or as a sum of templates. `text_before` and `text_after` go into
-    /// the braces with it. The template is left without its first backtick if it `continues` one.
-    /// `None`: the parentheses nest too deep.
+    /// Appends `e` as a template, or as a sum of templates. `text_before` and `text_after` go into the braces with it.
+    /// If `continues` is true, this continues an open template, so the first backtick is dropped. Returns `None` if the
+    /// parentheses nest too deep.
     fn write(&mut self, e: Expr<'a>, text_before: &[u8], text_after: &[u8], continues: bool) -> Option<()> {
         if !self.stack.is_safe_to_recurse() {
             return None;
         }
-        // From `e` along the left operands.
+        // Walk down from `e` along the left operands.
         let mut concatenations = Vec::new();
         let mut first = e;
         while let Some((left, concatenation)) = self.as_concatenation(first) {
@@ -323,7 +323,7 @@ impl<'a> TemplateWriter<'a> {
                     self.text.extend_from_slice(&concatenation.text_before_plus);
                     self.text.push(b'+');
                     self.text.extend_from_slice(&concatenation.text_after_plus);
-                    // As upstream: what is to follow the sum is put before its right operand.
+                    // Like upstream, this puts the text that should follow the sum before its right operand.
                     let text_before_right = text_after;
                     self.write(right, text_before_right, b"", false)?;
                 }
@@ -336,7 +336,7 @@ impl<'a> TemplateWriter<'a> {
 impl Rule for PreferTemplate {
     const META: Meta = Meta::eslint("prefer-template", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().binaries(&[BinOp::Add]);
-    /// That a node is in a concatenation.
+    /// Remembers which nodes are inside a concatenation.
     type State<'a> = AncestorMemo<'a, ()>;
 
     fn new(_: &Options) -> Self {
@@ -356,7 +356,7 @@ impl Rule for PreferTemplate {
         {
             return;
         }
-        // oxlint says nothing about what is anywhere in another concatenation: `a + f("b" + c)`
+        // oxlint doesn't report a concatenation nested anywhere in another one: `a + f("b" + c)`
         let is_concatenation = |_, it: Node<'a>| it.as_expr().and_then(as_concatenation).map(|_| ());
         if cx.language().is_oxlint && cx.state.find(e.into(), is_concatenation).is_some() {
             return;

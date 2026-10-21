@@ -134,6 +134,9 @@ export const lsquic: Dependency = {
     // H3_CLOSED_CRITICAL_STREAM and closes the connection, which kills the
     // requests the graceful stop was draining. Reject only request streams.
     "patches/lsquic/goaway-accept-uni-streams.patch",
+    // lsquic_prq_destroy() only frees the free list. A stateless reset whose
+    // send failed is on the returned list, so destroying the engine leaks it.
+    "patches/lsquic/prq-free-returned-conns.patch",
     // A server handshake runs in a mini conn, which had no context, so
     // node:quic found the session of a handshake again by peer address or by
     // SSL address. on_new_mini_conn gives the mini conn its context before

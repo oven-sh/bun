@@ -13,7 +13,7 @@ use bun_jsc::{
     JsThread, Protected, Strong,
 };
 
-use crate::node::{Flavor, StringObjects, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg};
+use crate::node::{Flavor, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg};
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer; remaining params
 // are by-value `JSValue`, so no caller-side preconditions remain.
@@ -821,11 +821,6 @@ mod _impl {
             ] = call_frame.arguments_as_array::<5>();
             let mut maybe_options_value: Option<JSValue> = Some(options_arg);
             let mut callback = callback_arg;
-            let flavor = if IS_ASYNC {
-                Flavor::Async
-            } else {
-                Flavor::Sync
-            };
 
             if IS_ASYNC {
                 if callback.is_undefined() {
@@ -834,13 +829,7 @@ mod _impl {
                 }
             }
 
-            let Some(password) = StringOrBuffer::from_js_maybe_async(
-                global,
-                password_value,
-                flavor,
-                StringObjects::Allow,
-            )?
-            else {
+            let Some(password) = StringOrBuffer::from_js(global, password_value)? else {
                 return Err(global.throw_invalid_argument_type_value(
                     b"password",
                     b"string, ArrayBuffer, Buffer, TypedArray, or DataView",
@@ -848,13 +837,7 @@ mod _impl {
                 ));
             };
 
-            let Some(salt) = StringOrBuffer::from_js_maybe_async(
-                global,
-                salt_value,
-                flavor,
-                StringObjects::Allow,
-            )?
-            else {
+            let Some(salt) = StringOrBuffer::from_js(global, salt_value)? else {
                 return Err(global.throw_invalid_argument_type_value(
                     b"salt",
                     b"string, ArrayBuffer, Buffer, TypedArray, or DataView",
@@ -992,16 +975,18 @@ mod _impl {
 
             ctx.check_scrypt_params(global)?;
 
-            if IS_ASYNC {
-                return Ok((ctx, callback));
-            }
-
+            // An option getter can detach or resize the buffers, so read them again.
             for input in [&mut ctx.password, &mut ctx.salt] {
-                if let StringOrBuffer::Buffer(buffer) = input {
+                if IS_ASYNC {
+                    input.make_thread_isolated_copy(global)?;
+                } else if let StringOrBuffer::Buffer(buffer) = input {
                     buffer.buffer = ArrayBuffer::from_typed_array(global, buffer.buffer.value);
                 }
             }
 
+            if IS_ASYNC {
+                return Ok((ctx, callback));
+            }
             Ok((ctx, JSValue::UNDEFINED))
         }
 
@@ -1011,7 +996,7 @@ mod _impl {
             call_frame: &CallFrame,
         ) -> JsResult<(ThreadIsolated<Self>, JSValue)> {
             let (ctx, callback) = Self::from_js::<true>(global, call_frame)?;
-            // SAFETY: parsed with the async flavor (`from_js::<true>`).
+            // SAFETY: `from_js::<true>` copied the buffers and thread-isolated the strings.
             Ok((unsafe { ThreadIsolated::new(ctx) }, callback))
         }
 
@@ -1370,11 +1355,8 @@ mod _impl {
                 }
             };
 
-            // The validators admit sizes rust-argon2 would abort on
-            // (`vec![Block::zero(); mem_cost]` and the output Vec allocate
-            // infallibly). Pre-fail the job instead, so both paths deliver
-            // the same catchable error node produces when OpenSSL's argon2
-            // allocation fails.
+            // rust-argon2 ignores the synthetic allocation limit, so check it
+            // here. `hash_raw` reports real allocation failures.
             let limit = jsc::virtual_machine::synthetic_allocation_limit();
             let failed =
                 (memory as usize).saturating_mul(1024) > limit || tag_length as usize > limit;
@@ -1415,8 +1397,8 @@ mod _impl {
             };
             match rust_argon2::hash_raw(&self.message, &self.nonce, &config) {
                 Ok(hash) => self.output = hash,
-                // Unreachable via `node:crypto`: `checkArgon2()` bounds are a
-                // superset of rust-argon2's constraints.
+                // `checkArgon2()` already rejected every parameter rust-argon2
+                // rejects, so this is an allocation failure.
                 Err(_) => self.failed = true,
             }
         }

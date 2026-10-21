@@ -16,13 +16,13 @@ use std::cell::Cell;
 
 /// Disallow Promises in places not designed to handle them.
 pub struct NoMisusedPromises {
-    /// `None`: conditionals are not checked.
+    /// `None` if conditionals aren't checked.
     checks_conditionals: Option<FlagUnions>,
     checks_spreads: bool,
     checks_void_return: ChecksVoidReturn,
 }
 
-/// How a union that has a Promise among its constituents is treated in a conditional.
+/// How a conditional treats a union that has a Promise among its constituents.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum FlagUnions {
     /// `Promise` and `Promise | ..` are reported.
@@ -77,7 +77,7 @@ fn is_logical_operator(op: BinOp) -> bool {
     matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish)
 }
 
-/// Whether `node` is the `test` of a statement or of a conditional expression, or the operand of a `!`.
+/// True if `node` is the `test` of a statement or conditional expression, or the operand of a `!`.
 fn is_test(node: Expr) -> bool {
     match node.parent() {
         Node::Stmt(parent) => match parent.kind() {
@@ -94,7 +94,7 @@ fn is_test(node: Expr) -> bool {
     }
 }
 
-/// Whether `node` is an operand, at any depth, of logical operators that make up a [test](is_test).
+/// True if `node` is an operand, at any depth, of logical operators that make up a [test](is_test).
 fn is_in_test<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
     let decide = |at: Node<'a>, parent: Node<'a>| match (at, parent) {
         (Node::Expr(at), _) if at.with_jsdoc_cast() != at => Some(false),
@@ -105,23 +105,23 @@ fn is_in_test<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
     known.find(Node::Expr(node), decide).unwrap_or(false)
 }
 
-/// Whether the primitive values of each sort have a `then`: that of `Boolean`, `Number`, `BigInt`
-/// and `String`, which a program can add to. `None`: not asked yet.
+/// Caches whether each kind of primitive value has a `then`, which would come from `Boolean`, `Number`, `BigInt` or
+/// `String`. A program can add to those interfaces. `None` until first use.
 #[derive(Default)]
 struct ThenablePrimitives([Cell<Option<bool>>; 4]);
 
-/// Whether the type of `node` can have a `then`. All primitive values of a sort have the same.
+/// True if `node`'s type can have a `then`. All primitive values of one kind give the same answer.
 fn can_be_thenable(node: Expr, known: &ThenablePrimitives) -> bool {
     if node.has_jsdoc_cast() {
         return true;
     }
-    let sort = match node.kind() {
+    let kind_index = match node.kind() {
         ExprKind::Null | ExprKind::Unary { op: UnOp::Void, .. } => return false,
         ExprKind::True | ExprKind::False | ExprKind::Unary { op: UnOp::Not | UnOp::Delete, .. } => 0,
         ExprKind::Number(_) => 1,
         ExprKind::BigInt(_) => 2,
         ExprKind::String(_) | ExprKind::Template(_) | ExprKind::Unary { op: UnOp::Typeof, .. } => 3,
-        // A number, a bigint or a string. tsgolint asks for the type of these as of any test.
+        // A number, a bigint or a string. tsgolint gets the type of these as it does for any test.
         ExprKind::Unary { .. } => return node.file().language().is_oxlint,
         ExprKind::Binary { op, .. } => match op {
             BinOp::Lt
@@ -139,7 +139,7 @@ fn can_be_thenable(node: Expr, known: &ThenablePrimitives) -> bool {
         },
         _ => return true,
     };
-    let Some(known) = known.0.get(sort) else {
+    let Some(known) = known.0.get(kind_index) else {
         return true;
     };
     known.get().unwrap_or_else(|| {
@@ -150,19 +150,19 @@ fn can_be_thenable(node: Expr, known: &ThenablePrimitives) -> bool {
     })
 }
 
-/// Whether the literals of each sort have call signatures: those of `Boolean`, `Number`, `BigInt`,
-/// `String` and `Array`, which a program can add to. `None`: not asked yet.
+/// Caches whether each kind of literal has call signatures, which would come from `Boolean`, `Number`, `BigInt`,
+/// `String` or `Array`. A program can add to those interfaces. `None` until first use.
 #[derive(Default)]
 struct CallableLiterals([Cell<Option<bool>>; 5]);
 
-/// Whether the type of `node` can have call signatures. All literals of a sort have the same.
+/// True if `node`'s type can have call signatures. All literals of one kind give the same answer.
 fn can_be_function(node: Expr, known: &CallableLiterals) -> bool {
     if node.has_jsdoc_cast() {
         return true;
     }
-    let sort = match node.kind() {
+    let kind_index = match node.kind() {
         ExprKind::Missing | ExprKind::Null => return false,
-        // `{ ...t }` has the type of `t` if that is a type parameter.
+        // `{ ...t }` has `t`'s type if that's a type parameter.
         ExprKind::Object(properties) => return properties.iter().any(|it| it.kind() == PropKind::Spread),
         ExprKind::True | ExprKind::False => 0,
         ExprKind::Number(_) => 1,
@@ -171,7 +171,7 @@ fn can_be_function(node: Expr, known: &CallableLiterals) -> bool {
         ExprKind::Array(_) => 4,
         _ => return true,
     };
-    let Some(known) = known.0.get(sort) else {
+    let Some(known) = known.0.get(kind_index) else {
         return true;
     };
     known.get().unwrap_or_else(|| {
@@ -184,15 +184,15 @@ fn can_be_function(node: Expr, known: &CallableLiterals) -> bool {
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// Whether what has been passed on the way up from an operand is in a test.
+    /// Caches, for the nodes passed on the way up from an operand, whether they're in a test.
     tests: AncestorMemo<'a, bool>,
     callable_literals: CallableLiterals,
     thenable_primitives: ThenablePrimitives,
 }
 
-/// Whether an annotated type is maybe a function type, as far as the syntax tells.
+/// True if an annotated type might be a function type, judging by the syntax.
 fn is_possibly_function_type(node: TypeNode, is_oxlint: bool) -> bool {
-    // For tsgolint a type in parentheses is a `ParenthesizedType`, which is none of these.
+    // For tsgolint a parenthesized type is a `ParenthesizedType`, which isn't one of these.
     if is_oxlint && node.is_parenthesized() {
         return false;
     }
@@ -224,8 +224,8 @@ fn is_sometimes_thenable(node: TsNode) -> bool {
     union_constituents(ty.get_apparent_type()).iter().any(|sub_type| is_thenable_type(node, sub_type))
 }
 
-/// A variation on the thenable check which requires all constituents of a union to be thenable.
-/// Otherwise `promise | undefined` would be caught where it is tested for `undefined`.
+/// A variation on the thenable check that requires every constituent of a union to be thenable. Otherwise
+/// `promise | undefined` would be reported where it's tested for `undefined`.
 fn is_always_thenable(node: TsNode) -> bool {
     let ty = node.get_type_at_location();
     union_constituents(ty.get_apparent_type()).iter().all(|sub_type| {
@@ -245,23 +245,23 @@ fn is_function_param<'a>(param: TsSymbol<'a>, node: TsNode<'a>) -> bool {
     union_constituents(ty).iter().any(|sub_type| !sub_type.get_call_signatures().is_empty())
 }
 
-/// Whether any call signature of the type has a thenable return type.
+/// True if any call signature of the type has a thenable return type.
 fn any_signature_is_thenable_type<'a>(node: TsNode<'a>, ty: Type<'a>) -> bool {
     ty.get_call_signatures().iter().any(|signature| is_thenable_type(node, signature.get_return_type()))
 }
 
-/// Whether the type is a thenable-returning function.
+/// True if the type is a thenable-returning function.
 fn is_thenable_returning_function_type<'a>(node: TsNode<'a>, ty: Type<'a>) -> bool {
     union_constituents(ty).iter().any(|sub_type| any_signature_is_thenable_type(node, sub_type))
 }
 
-/// Whether the type is a void-returning function.
+/// True if the type is a void-returning function.
 fn is_void_returning_function_type<'a>(node: TsNode<'a>, ty: Type<'a>) -> bool {
     let mut had_void_return = false;
     for sub_type in union_constituents(ty) {
         for signature in sub_type.get_call_signatures() {
             let return_type = signature.get_return_type();
-            // Where both thenable and void returns are accepted, a promise-returning function is valid.
+            // If both thenable and void returns are accepted, a promise-returning function is valid.
             if is_thenable_type(node, return_type) {
                 return false;
             }
@@ -271,13 +271,13 @@ fn is_void_returning_function_type<'a>(node: TsNode<'a>, ty: Type<'a>) -> bool {
     had_void_return
 }
 
-/// Whether the expression or the declaration is a function that returns a thenable.
+/// True if the expression or declaration is a function that returns a thenable.
 fn returns_thenable(node: TsNode) -> bool {
     let ty = node.get_type_at_location().get_apparent_type();
     union_constituents(ty).iter().any(|t| any_signature_is_thenable_type(node, t))
 }
 
-/// Whether `predicate` holds for the type of the `[Symbol.dispose]` of a constituent of `ty`.
+/// True if `predicate` accepts the type of a `ty` constituent's `[Symbol.dispose]`.
 fn has_dispose_method<'a>(
     node: TsNode<'a>,
     ty: Type<'a>,
@@ -293,7 +293,7 @@ fn are_equivalent<'a>(left: Type<'a>, right: Type<'a>) -> bool {
     left.is_assignable_to(right) && right.is_assignable_to(left)
 }
 
-/// Whether what the Promises in a union resolve to is the same as the rest of the union.
+/// True if the Promises in a union resolve to the same types as the rest of the union.
 fn has_matching_promise_type_argument(node: TsNode) -> bool {
     let constituents = union_constituents(node.get_type_at_location().get_apparent_type());
     let (promise_types, non_promise_types): (SmallVec<[Type; 4]>, SmallVec<[Type; 4]>) =
@@ -312,10 +312,10 @@ fn has_matching_promise_type_argument(node: TsNode) -> bool {
         && awaited_types.iter().all(|&awaited| non_promise_types.iter().any(|&ty| are_equivalent(ty, awaited)))
 }
 
-/// A type that a class or an interface extends or implements.
+/// A type that a class or interface extends or implements.
 struct HeritageType<'a> {
     ty: Type<'a>,
-    /// `type.getSymbol()?.members`: the first of each name.
+    /// `type.getSymbol()?.members`: the first member with each name.
     members: FxHashMap<&'a [u8], TsSymbol<'a>>,
 }
 
@@ -328,7 +328,7 @@ impl<'a> HeritageType<'a> {
         HeritageType { ty, members }
     }
 
-    /// The member with the given name, if it exists.
+    /// Returns the member with the given name, if it exists.
     fn get_member_if_exists(&self, member_name: &[u8]) -> Option<TsSymbol<'a>> {
         self.members.get(member_name).copied().or_else(|| self.ty.get_property(member_name))
     }
@@ -347,7 +347,7 @@ fn is_promise_finally_method(node: Expr) -> bool {
     parse_finally_call(node).is_some_and(|call| is_promise_like(get_constrained_type_at_location(call.object)))
 }
 
-/// Whether functions that return a thenable, and functions that return nothing, are accepted somewhere.
+/// Records whether a position accepts functions that return a thenable, and functions that return nothing.
 #[derive(Copy, Clone, Default)]
 struct Accepted {
     thenable_return: bool,
@@ -369,7 +369,7 @@ struct Argument<'a> {
     index: usize,
     node: Expr<'a>,
     accepted: Accepted,
-    /// The type of a parameter at its position: the last that was looked at.
+    /// The type of a parameter at its position: the last one visited.
     parameter_type: Option<Type<'a>>,
 }
 
@@ -398,9 +398,9 @@ fn add_rest_parameter_type<'a>(expression: TsNode<'a>, index: usize, ty: Type<'a
     }
 }
 
-/// Finds out which of `arguments` are passed for void functions, and not also for thenable
-/// functions. All signatures are looked at: the resolved one would be an early `() => void` where a
-/// later `() => Promise<void>` applies as well.
+/// Works out which of `arguments` are passed for void functions and not also for thenable functions. It looks at all
+/// signatures, because the resolved one could be an early `() => void` where a later `() => Promise<void>` applies as
+/// well.
 fn void_function_arguments<'a>(
     node: Expr<'a>,
     call: Call<'a>,
@@ -419,7 +419,7 @@ fn void_function_arguments<'a>(
                     add_rest_parameter_type(expression, index, parameter.get_type_at_location(expression), arguments);
                     continue;
                 }
-                // They are in the order of their indices.
+                // They're sorted by index.
                 if let Ok(at) = arguments.binary_search_by_key(&index, |it| it.index)
                     && let Some(argument) = arguments.get_mut(at)
                 {
@@ -428,7 +428,7 @@ fn void_function_arguments<'a>(
             }
         }
     }
-    // Upstream looks at the contextual type beside each of the types of the parameters. It is the same for all of them.
+    // Upstream checks the contextual type next to each parameter type. It's the same for all of them.
     for argument in arguments {
         if let Some(parameter_type) = argument.parameter_type
             && let Some(contextual_type) = node.get_contextual_type_for_argument_at_index(argument.index)
@@ -448,8 +448,8 @@ fn tsgolint_promise_range(func: Func) -> Span {
     }
 }
 
-/// Where a value is reported. oxlint points into a function.
-fn place(value: Expr) -> Span {
+/// Returns where a value is reported. For a function, oxlint points at a part of it.
+fn report_span(value: Expr) -> Span {
     let value = value.with_jsdoc_cast();
     match value.as_fn().filter(|_| value.file().language().is_oxlint) {
         Some(func) => tsgolint_promise_range(func),
@@ -457,30 +457,31 @@ fn place(value: Expr) -> Span {
     }
 }
 
-/// Where in this file a function that returns nothing is asked for, and as what type.
+/// Where in this file a void-returning function is expected, and through which type.
 type Expectation<'a> = Option<(Span, Type<'a>)>;
 
-/// tsgolint's `expectationRange`: the type annotation of a declaration, or its name, or all of it.
+/// tsgolint's `expectationRange`: a declaration's type annotation, or its name, or the whole declaration.
 fn tsgolint_expectation_range(declaration: TsNode) -> Span {
     declaration.type_node().or_else(|| declaration.name()).unwrap_or(declaration).span()
 }
 
-/// tsgolint's `localExpectationForSymbol`: for the first declaration that is in this file.
+/// tsgolint's `localExpectationForSymbol`: uses the first declaration that's in this file.
 fn tsgolint_expectation_for_symbol<'a>(symbol: Option<TsSymbol<'a>>, ty: Type<'a>) -> Expectation<'a> {
     let symbol = symbol?;
     let mut declarations = symbol.value_declaration().into_iter().chain(symbol.declarations());
     Some((tsgolint_expectation_range(declarations.find(|it| it.is_in_linted_file())?), ty))
 }
 
-/// What tsgolint's `voidFunctionArguments` keeps for the argument at `index`: the last parameter in this file whose
-/// type is that of a function that returns nothing, or else the first of which the contextual type of the argument is.
+/// Returns what tsgolint's `voidFunctionArguments` records for the argument at `index`: the last parameter in this file
+/// whose type is a void-returning function, or else the first parameter for which the argument's contextual type is
+/// one.
 fn tsgolint_expectation_for_argument<'a>(node: Expr<'a>, call: Call<'a>, index: usize) -> Expectation<'a> {
     let expression = call.callee().ts_node_with_parentheses();
     let contextual_type = node.ts_node().get_contextual_type_for_argument_at_index(index);
     let accepts_void = |ty: Type<'a>| {
         !is_thenable_returning_function_type(expression, ty) && is_void_returning_function_type(expression, ty)
     };
-    let (mut of_parameter, mut of_context) = (None, None);
+    let (mut parameter_expectation, mut context_expectation) = (None, None);
     for sub_type in union_constituents(expression.get_type_at_location()) {
         let signatures = match node.tag() == ExprTag::New {
             true => sub_type.get_construct_signatures(),
@@ -503,19 +504,19 @@ fn tsgolint_expectation_for_argument<'a>(node: Expr<'a>, call: Call<'a>, index: 
                     continue;
                 };
                 if accepts_void(ty) {
-                    of_parameter = Some((tsgolint_expectation_range(declaration), ty));
+                    parameter_expectation = Some((tsgolint_expectation_range(declaration), ty));
                 }
                 if let Some(contextual_type) = contextual_type.filter(|it| *it != ty && accepts_void(*it)) {
                     let at = tsgolint_expectation_range(declaration);
-                    of_context = of_context.or(Some((at, contextual_type)));
+                    context_expectation = context_expectation.or(Some((at, contextual_type)));
                 }
             }
         }
     }
-    of_parameter.or(of_context)
+    parameter_expectation.or(context_expectation)
 }
 
-/// What tsgolint says: the type of what is reported, what is expected, and the place of the diagnostic.
+/// tsgolint's labels: the type of the reported value, what's expected, and the diagnostic's location.
 fn tsgolint_labels<'a>(
     labels: &mut Details,
     ty: Type<'a>,
@@ -536,13 +537,13 @@ fn tsgolint_labels<'a>(
 
 fn tsgolint_labels_of_value<'a>(labels: &mut Details, value: Expr<'a>, expectation: Expectation<'a>) {
     let value = value.with_jsdoc_cast();
-    tsgolint_labels(labels, value.ty(), value.as_fn().is_some(), place(value), expectation);
+    tsgolint_labels(labels, value.ty(), value.as_fn().is_some(), report_span(value), expectation);
 }
 
 impl NoMisusedPromises {
     // ───────────────────────────── conditionals ─────────────────────────────
 
-    /// Checks an operand that is not a logical expression itself.
+    /// Checks an operand that isn't a logical expression itself.
     fn check_conditional_operand<'a>(&self, node: Expr<'a>, cx: &Cx<'a, Self>) {
         if !can_be_thenable(node, &cx.state.thenable_primitives) {
             return;
@@ -559,7 +560,7 @@ impl NoMisusedPromises {
         }
     }
 
-    /// Checks a test, and all the operands of the logical operators that it consists of.
+    /// Checks a test, including all the operands of the logical operators it consists of.
     fn check_test<'a>(&self, test: Expr<'a>, cx: &Cx<'a, Self>) {
         let mut rest: SmallVec<[Expr; 8]> = smallvec![test];
         while let Some(node) = rest.pop() {
@@ -577,7 +578,7 @@ impl NoMisusedPromises {
             | StmtKind::While { test, .. }
             | StmtKind::DoWhile { test, .. }
             | StmtKind::For { test: Some(test), .. } => {
-                // tsgolint does not check a test that is an assignment, unless it is in parentheses.
+                // tsgolint doesn't check a test that's an assignment, unless it's parenthesized.
                 if !(cx.language().is_oxlint && test.tag() == ExprTag::Assign && !test.is_parenthesized()) {
                     self.check_test(test, cx);
                 }
@@ -593,8 +594,8 @@ impl NoMisusedPromises {
         }
     }
 
-    /// Outside of a test only the left operand is converted to a boolean, and not that of `??`. One
-    /// that is a logical expression comes here itself.
+    /// Outside a test only the left operand is converted to a boolean, and not for `??`. A left operand that's a
+    /// logical expression gets its own call.
     fn check_logical_expression<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Binary { op: BinOp::And | BinOp::Or, left, .. } = node.kind() else {
             return;
@@ -618,22 +619,21 @@ impl NoMisusedPromises {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
-        // For tsgolint `(a.filter)` is a `ParenthesizedExpression`, and the callee no access expression.
+        // For tsgolint `(a.filter)` is a `ParenthesizedExpression`, so the callee isn't an access expression.
         if (is_oxlint && call.callee().is_parenthesized())
             || !is_array_method_call_with_predicate(node)
             || !returns_thenable(callback.ts_node_for_type())
         {
             return;
         }
-        // Upstream listens for every `MemberExpression` directly in a call: the callee, and the
-        // arguments that are one. tsgolint has one where ESLint has a `ChainExpression`, and none
-        // in parentheses.
+        // Upstream listens for every `MemberExpression` directly in a call: the callee, and any arguments that are one.
+        // tsgolint has one where ESLint has a `ChainExpression`, and none in parentheses.
         let is_member_expression = |it: &Expr| {
             matches!(it.tag(), ExprTag::Dot | ExprTag::Index)
                 && if is_oxlint { !it.is_parenthesized() } else { !it.is_chain_root() }
         };
         for _ in 0..=call.args().iter().filter(is_member_expression).count() {
-            cx.report(place(callback), PREDICATE)
+            cx.report(report_span(callback), PREDICATE)
                 .labels_with(|labels| tsgolint_labels_of_value(labels, callback, None));
         }
     }
@@ -658,14 +658,14 @@ impl NoMisusedPromises {
                 parameter_type: None,
             })
             .collect();
-        // tsgolint reports it.
+        // tsgolint does report `finally`.
         if arguments.is_empty() || !cx.language().is_oxlint && is_promise_finally_method(node) {
             return;
         }
         void_function_arguments(node, call, &mut arguments);
         for argument in arguments {
             if argument.accepted.void_return && !argument.accepted.thenable_return {
-                cx.report(place(argument.node), VOID_RETURN_ARGUMENT).labels_with(|labels| {
+                cx.report(report_span(argument.node), VOID_RETURN_ARGUMENT).labels_with(|labels| {
                     let expectation = tsgolint_expectation_for_argument(node, call, argument.index);
                     tsgolint_labels_of_value(labels, argument.node, expectation);
                 });
@@ -677,8 +677,8 @@ impl NoMisusedPromises {
         let ExprKind::Assign { target, value, .. } = node.kind() else {
             return;
         };
-        // A default in a destructuring assignment is an `AssignmentPattern`. For tsgolint it is a
-        // `BinaryExpression` like any assignment, but not in `{ a = b }`.
+        // A default in a destructuring assignment is an `AssignmentPattern`. For tsgolint it's a `BinaryExpression`
+        // like any assignment, except in `{ a = b }`.
         let is_pattern = match cx.language().is_oxlint {
             true => matches!(node.parent(), Node::Prop(property) if property.kind() == PropKind::Shorthand),
             false => node.is_assignment_target(),
@@ -690,7 +690,7 @@ impl NoMisusedPromises {
         if returns_thenable(value.ts_node_with_parentheses())
             && is_void_returning_function_type(left, left.get_type_at_location())
         {
-            cx.report(place(value), VOID_RETURN_VARIABLE).labels_with(|labels| {
+            cx.report(report_span(value), VOID_RETURN_VARIABLE).labels_with(|labels| {
                 let expectation = tsgolint_expectation_for_symbol(target.ts_symbol(), left.get_type_at_location());
                 tsgolint_labels_of_value(labels, value, expectation);
             });
@@ -701,7 +701,7 @@ impl NoMisusedPromises {
         let Some(init) = node.init() else {
             return;
         };
-        // tsgolint has nothing about `using`.
+        // tsgolint doesn't handle `using`.
         let is_oxlint = cx.language().is_oxlint;
         let (annotation, is_using) = (node.ty(), !is_oxlint && node.var_kind() == VarKind::Using);
         if annotation.is_none() && !is_using {
@@ -712,13 +712,13 @@ impl NoMisusedPromises {
             has_dispose_method(initializer, initializer.get_type_at_location(), is_thenable_returning_function_type)
         };
         if is_using && disposes_asynchronously() {
-            cx.report(place(init), VOID_RETURN_VARIABLE)
+            cx.report(report_span(init), VOID_RETURN_VARIABLE)
                 .labels_with(|labels| tsgolint_labels_of_value(labels, init, None));
         }
         let Some(annotation) = annotation else {
             return;
         };
-        // Neither functions nor disposable.
+        // These are neither functions nor disposable.
         match annotation.kind() {
             TypeKind::Keyword(Keyword::This) => {}
             TypeKind::Keyword(_)
@@ -735,7 +735,7 @@ impl NoMisusedPromises {
             && has_dispose_method(name, variable_type, is_void_returning_function_type)
             && disposes_asynchronously()
         {
-            cx.report(place(init), VOID_RETURN_VARIABLE)
+            cx.report(report_span(init), VOID_RETURN_VARIABLE)
                 .labels_with(|labels| tsgolint_labels_of_value(labels, init, None));
         }
         if is_possibly_function_type(annotation, is_oxlint)
@@ -743,25 +743,25 @@ impl NoMisusedPromises {
             && is_void_returning_function_type(initializer, variable_type)
             && returns_thenable(initializer)
         {
-            cx.report(place(init), VOID_RETURN_VARIABLE).labels_with(|labels| {
+            cx.report(report_span(init), VOID_RETURN_VARIABLE).labels_with(|labels| {
                 tsgolint_labels_of_value(labels, init, Some((annotation.outer_span(), variable_type)));
             });
         }
     }
 
-    /// Reports a function that is the value of a property.
+    /// Reports a function that's a property's value.
     fn report_property_function<'a>(
         function_node: Func<'a>,
         expectation: impl FnOnce() -> Expectation<'a>,
         cx: &Cx<'a, Self>,
     ) {
-        let place = match function_node.return_type() {
+        let report_span = match function_node.return_type() {
             Some(return_type) => return_type.span(),
             None if cx.language().is_oxlint => tsgolint_promise_range(function_node),
             None => get_function_head_loc(function_node),
         };
-        cx.report(place, VOID_RETURN_PROPERTY).labels_with(|labels| {
-            tsgolint_labels(labels, function_node.type_at_location(), true, place, expectation());
+        cx.report(report_span, VOID_RETURN_PROPERTY).labels_with(|labels| {
+            tsgolint_labels(labels, function_node.type_at_location(), true, report_span, expectation());
         });
     }
 
@@ -810,8 +810,8 @@ impl NoMisusedPromises {
         let Some(obj_type) = obj.ts_node().get_contextual_type() else {
             return;
         };
-        // tsgolint asks the contextual type itself, by the name without its quotes: a union has only
-        // what all of its constituents have.
+        // tsgolint queries the contextual type itself, by the name without its quotes. A union only has the properties
+        // that all of its constituents have.
         let is_oxlint = cx.language().is_oxlint;
         let name_text = match key.name() {
             Some(name) if is_oxlint => name.bytes(),
@@ -846,7 +846,7 @@ impl NoMisusedPromises {
                 .get_contextual_type()
                 .is_some_and(|contextual_type| is_void_returning_function_type(expression, contextual_type))
         {
-            let at = if cx.language().is_oxlint { place(value) } else { expression_container };
+            let at = if cx.language().is_oxlint { report_span(value) } else { expression_container };
             cx.report(at, VOID_RETURN_ATTRIBUTE).labels_with(|labels| tsgolint_labels_of_value(labels, value, None));
         }
     }
@@ -858,7 +858,7 @@ impl NoMisusedPromises {
         if !can_be_function(argument, &cx.state.callable_literals) {
             return;
         }
-        // A `return` outside of a function is legal in a CommonJS module.
+        // A `return` outside a function is legal in a CommonJS module.
         let Some(function_node) = Node::Stmt(node).enclosing_function() else {
             return;
         };
@@ -872,15 +872,15 @@ impl NoMisusedPromises {
                 .get_contextual_type()
                 .is_some_and(|contextual_type| is_void_returning_function_type(expression, contextual_type))
         {
-            cx.report(place(argument), VOID_RETURN_RETURN_VALUE).labels_with(|labels| {
-                // Or that of the signature which a callback has its types from.
-                let of_context = || {
+            cx.report(report_span(argument), VOID_RETURN_RETURN_VALUE).labels_with(|labels| {
+                // Or the return type of the signature that a callback gets its types from.
+                let contextual_return_type = || {
                     let signatures = function_node.ts_node().get_contextual_type()?.get_call_signatures();
                     let mut declarations = signatures.into_iter().filter_map(|it| it.declaration());
                     let declaration = declarations.find(|it| it.is_in_linted_file())?;
                     Some(declaration.type_node()?.span())
                 };
-                let at = function_node.return_type().map(|it| it.outer_span()).or_else(of_context);
+                let at = function_node.return_type().map(|it| it.outer_span()).or_else(contextual_return_type);
                 tsgolint_labels_of_value(labels, argument, at.zip(expression.get_contextual_type()));
             });
         }
@@ -900,12 +900,12 @@ impl NoMisusedPromises {
         }
     }
 
-    /// Reports the members that return a Promise where a type that the class or the interface
-    /// `ts_node` extends or implements has a member of that name that returns void.
+    /// Reports the members that return a Promise where a type that the class or interface `ts_node` extends or
+    /// implements has a member with the same name that returns void.
     fn check_members<'a>(&self, ts_node: TsNode<'a>, members: List<'a, Member<'a>>, cx: &Cx<'a, Self>) {
         let mut heritage_types: Option<SmallVec<[HeritageType; 2]>> = None;
         for member in members {
-            // Call, construct and index signatures have no name. A private name is not inherited.
+            // Call, construct and index signatures have no name. A private name isn't inherited.
             let Some(key) = member.key().filter(|key| !key.is_private()) else {
                 continue;
             };
@@ -913,7 +913,7 @@ impl NoMisusedPromises {
             if member.is_static() || !returns_thenable(node_member) {
                 continue;
             }
-            // tsgolint takes the name without its quotes, and skips a computed one.
+            // tsgolint uses the name without its quotes, and skips a computed one.
             let member_name = match (cx.language().is_oxlint, key.name()) {
                 (false, _) => cx.slice(key.span(cx.file())),
                 (true, Some(name)) if !key.is_computed() => name.bytes(),
@@ -924,17 +924,17 @@ impl NoMisusedPromises {
                     continue;
                 };
                 if is_void_returning_function_type(node_member, heritage_member.get_type_at_location(node_member)) {
-                    let place = match member.func().filter(|_| cx.language().is_oxlint) {
+                    let report_span = match member.func().filter(|_| cx.language().is_oxlint) {
                         Some(func) => tsgolint_promise_range(func),
                         None => member.span(),
                     };
-                    cx.report(place, VOID_RETURN_INHERITED_METHOD)
+                    cx.report(report_span, VOID_RETURN_INHERITED_METHOD)
                         .data("heritageTypeName", heritage_type.ty.to_text())
                         .labels_with(|labels| {
                             let member_type = heritage_member.get_type_at_location(node_member);
                             let expectation = tsgolint_expectation_for_symbol(Some(heritage_member), member_type);
                             let ty = node_member.get_type_at_location();
-                            tsgolint_labels(labels, ty, member.func().is_some(), place, expectation);
+                            tsgolint_labels(labels, ty, member.func().is_some(), report_span, expectation);
                         });
                 }
             }
@@ -953,27 +953,27 @@ impl NoMisusedPromises {
         }
     }
 
-    /// `...argument` in an array literal or among the arguments of a call.
+    /// `...argument` in an array literal or in a call's arguments.
     fn check_spread_element<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let (ExprKind::Spread(argument), Node::Expr(parent)) = (node.kind(), node.parent()) else {
             return;
         };
         match parent.kind() {
             ExprKind::Call(_) | ExprKind::New(_) => {}
-            // In an `ArrayPattern` it is a `RestElement`, which is a `SpreadElement` for tsgolint.
+            // In an `ArrayPattern` it's a `RestElement`, which is a `SpreadElement` for tsgolint.
             ExprKind::Array(_) if cx.language().is_oxlint || !parent.is_assignment_target() => {}
             _ => return,
         }
         Self::check_spread_argument(argument, cx);
     }
 
-    /// The properties of object literals and the attributes of JSX elements.
+    /// Object literal properties and JSX attributes.
     fn check_prop<'a>(&self, node: Prop<'a>, cx: &mut Cx<'a, Self>) {
         let checks = &self.checks_void_return;
         match (node.kind(), node.is_jsx_attribute()) {
             (PropKind::Spread, true) => {}
             (PropKind::Spread, false) => {
-                // In an `ObjectPattern` it is a `RestElement`.
+                // In an `ObjectPattern` it's a `RestElement`.
                 if self.checks_spreads
                     && let (Some(argument), Node::Expr(parent)) = (node.value(), node.parent())
                     && (cx.language().is_oxlint || !parent.is_assignment_target())
@@ -1090,7 +1090,7 @@ impl Rule for NoMisusedPromises {
         match node.tag() {
             ExprTag::Cond | ExprTag::Unary => self.check_test_of_expression(node, cx),
             ExprTag::Binary => self.check_logical_expression(node, cx),
-            // Two options are about a call.
+            // Two options apply to a call.
             ExprTag::Call => {
                 if self.checks_conditionals.is_some() {
                     self.check_array_predicates(node, cx);

@@ -1,8 +1,12 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { writeSync } from "node:fs";
 import net from "node:net";
+import tls from "node:tls";
 
 // Windows uses the libuv eventing backend; bsd_recv/bsd_send are still the
 // chokepoints there but errno semantics differ. Land POSIX coverage first.
@@ -383,6 +387,276 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     const [err] = (await errP) as [NodeJS.ErrnoException];
     expect(firstChunk!.toString()).toBe("first");
     expect(err.code).toBe("ECONNRESET");
+  });
+});
+
+// A write the kernel takes only part of waits for the socket's writable event. Node keeps the async context with the
+// write request, so whatever completes the write (the drain, a flush that fails, the close), its callback and what
+// follows from it run where the write was issued. Each socket here is opened in a context of its own: a callback that
+// runs where its socket was opened sees "opened".
+describe.skipIf(skip)("a write that waited for the socket completes in the async context of the write", () => {
+  const storage = new AsyncLocalStorage<string>();
+  const fdOf = (socket: net.Socket) => (socket as any)._handle.fd as number;
+  // The next send on this socket takes one byte: the rest of the write waits.
+  const takeOneByte = (socket: net.Socket) =>
+    fault.set({ syscall: "send", action: "short", bytes: 1, repeat: 1, fd: fdOf(socket) });
+
+  // The lifecycle of `socket` after a write that waited fails: the write callback and 'error' with the store each ran
+  // in, and the store of 'close'. 'close' is the socket's own event, so it runs where the socket was opened.
+  function failedWrite(socket: net.Socket, fail: () => void) {
+    const events: string[] = [];
+    socket.on("error", (e: NodeJS.ErrnoException) => events.push(`error ${e.code} in ${storage.getStore()}`));
+    const { promise, resolve } = Promise.withResolvers<{ events: string[]; close: string | undefined }>();
+    socket.on("close", () => resolve({ events, close: storage.getStore() }));
+    takeOneByte(socket);
+    storage.run("write", () =>
+      socket.write(Buffer.alloc(200, "w"), err =>
+        events.push(`write ${(err as NodeJS.ErrnoException)?.code} in ${storage.getStore()}`),
+      ),
+    );
+    fail();
+    return promise;
+  }
+
+  describe.each(["client", "server"] as const)("%s", side => {
+    async function pair() {
+      const p = await storage.run("opened", connectedPair);
+      const [writer, reader] = side === "client" ? [p.client, p.serverSock] : [p.serverSock, p.client];
+      return { p, writer, reader };
+    }
+
+    test("the write callback, after the drain", async () => {
+      const { p, writer } = await pair();
+      using _ = p;
+      takeOneByte(writer);
+      const { promise, resolve } = Promise.withResolvers<{ error: Error | null; store: string | undefined }>();
+      storage.run("write", () =>
+        writer.write(Buffer.alloc(200, "w"), err => resolve({ error: err ?? null, store: storage.getStore() })),
+      );
+      expect(await promise).toEqual({ error: null, store: "write" });
+    });
+
+    test("'drain', after a write over the high water mark", async () => {
+      const { p, writer, reader } = await pair();
+      using _ = p;
+      reader.resume();
+      takeOneByte(writer);
+      const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
+      writer.once("error", reject);
+      writer.once("close", () => reject(new Error("the socket closed before 'drain'")));
+      writer.once("drain", () => resolve(storage.getStore()));
+      const flushed = storage.run("write", () => writer.write(Buffer.alloc(2 * writer.writableHighWaterMark, "w")));
+      expect({ flushed, drain: await promise }).toEqual({ flushed: false, drain: "write" });
+    });
+
+    test("the end(chunk) callback and 'finish'", async () => {
+      const { p, writer } = await pair();
+      using _ = p;
+      takeOneByte(writer);
+      const stores: Record<string, string | undefined> = {};
+      const { promise, resolve } = Promise.withResolvers<void>();
+      writer.once("finish", () => (stores.finish = storage.getStore()));
+      storage.run("end", () =>
+        writer.end(Buffer.alloc(200, "w"), () => {
+          stores.callback = storage.getStore();
+          resolve();
+        }),
+      );
+      await promise;
+      expect(stores).toEqual({ finish: "end", callback: "end" });
+    });
+
+    test("the write callback and 'error', when the flush from the writable event fails", async () => {
+      const { p, writer } = await pair();
+      using _ = p;
+      const failed = await failedWrite(writer, () =>
+        fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: 1, fd: fdOf(writer) }),
+      );
+      expect(failed).toEqual({ events: ["write EPIPE in write", "error EPIPE in write"], close: "opened" });
+    });
+
+    // This one needs no fault: the peer does not read, so the kernel takes only part of the write.
+    test("the write callback and 'close', when the peer's reset fails the write", async () => {
+      const { p, writer, reader } = await pair();
+      using _ = p;
+      const { promise, resolve } = Promise.withResolvers<{ callback: string | undefined; close: string | undefined }>();
+      let callback: string | undefined;
+      writer.once("close", () => resolve({ callback, close: storage.getStore() }));
+      storage.run("write", () =>
+        writer.write(Buffer.alloc(8 * 1024 * 1024), err => {
+          callback = `${err ? "failed" : "done"} in ${storage.getStore()}`;
+          // The callback handles the failure, so the socket has no 'error' to report.
+          writer.destroy();
+        }),
+      );
+      expect(writer.writableLength).toBeGreaterThan(0);
+      reader.resetAndDestroy();
+      expect(await promise).toEqual({ callback: "failed in write", close: "opened" });
+    });
+
+    test("the write callback, when destroy() closes the socket first", async () => {
+      const { p, writer } = await pair();
+      using _ = p;
+      const { events } = await failedWrite(writer, () => storage.run("destroy", () => writer.destroy()));
+      expect(events).toEqual(["write ERR_SOCKET_CLOSED in write"]);
+    });
+  });
+
+  // 'close' runs where destroy() was called. Only the socket whose own write is what destroys it goes back to the
+  // context of its events: another socket, and a destroy() after the write, do not.
+  test("'close' of another socket that the callback of a write that waited destroys", async () => {
+    using a = await storage.run("opened", connectedPair);
+    using b = await storage.run("opened elsewhere", connectedPair);
+    const { promise, resolve } = Promise.withResolvers<string | undefined>();
+    b.client.once("close", () => resolve(storage.getStore()));
+    takeOneByte(a.client);
+    storage.run("write", () => a.client.write(Buffer.alloc(200, "w"), () => b.client.destroy()));
+    expect(await promise).toBe("write");
+  });
+
+  test("'close' after a destroy() that comes later than the write that waited", async () => {
+    using p = await storage.run("opened", connectedPair);
+    const written = Promise.withResolvers<void>();
+    takeOneByte(p.client);
+    storage.run("write", () => p.client.write(Buffer.alloc(200, "w"), () => written.resolve()));
+    await written.promise;
+    const { promise, resolve } = Promise.withResolvers<string | undefined>();
+    p.client.once("close", () => resolve(storage.getStore()));
+    storage.run("later", () => p.client.destroy());
+    expect(await promise).toBe("later");
+  });
+
+  // The extra pipe of a child process is a socket over an fd it adopts, which has a handler table of its own.
+  describe("a socket over an adopted fd", () => {
+    async function childPipe() {
+      const child = storage.run("opened", () =>
+        spawn(bunExe(), ["-e", "setInterval(() => {}, 60_000)"], {
+          env: bunEnv,
+          stdio: ["ignore", "ignore", "inherit", "pipe"],
+        }),
+      );
+      return {
+        writer: child.stdio[3] as net.Socket,
+        async [Symbol.asyncDispose]() {
+          child.kill();
+          await once(child, "exit");
+        },
+      };
+    }
+
+    test("the write callback, after the drain", async () => {
+      await using pipe = await childPipe();
+      takeOneByte(pipe.writer);
+      const { promise, resolve } = Promise.withResolvers<{ error: Error | null; store: string | undefined }>();
+      storage.run("write", () =>
+        pipe.writer.write(Buffer.alloc(200, "w"), err => resolve({ error: err ?? null, store: storage.getStore() })),
+      );
+      expect(await promise).toEqual({ error: null, store: "write" });
+    });
+
+    test("the write callback and one 'error', when the flush from the writable event fails", async () => {
+      await using pipe = await childPipe();
+      const failed = await failedWrite(pipe.writer, () =>
+        fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: 1, fd: fdOf(pipe.writer) }),
+      );
+      expect(failed).toEqual({ events: ["write EPIPE in write", "error EPIPE in write"], close: "opened" });
+    });
+  });
+
+  async function connectedTLSPair() {
+    const server = tls.createServer({ key: certs.key, cert: certs.cert });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const accepted = once(server, "secureConnection") as Promise<[tls.TLSSocket]>;
+    const client = tls.connect({
+      port: (server.address() as net.AddressInfo).port,
+      host: "127.0.0.1",
+      rejectUnauthorized: false,
+    });
+    const [[serverSock]] = await Promise.all([accepted, once(client, "secureConnect")]);
+    return {
+      client,
+      serverSock,
+      [Symbol.dispose]() {
+        client.destroy();
+        serverSock.destroy();
+        server.close();
+      },
+    };
+  }
+
+  describe.each(["client", "server"] as const)("TLS %s", side => {
+    async function pair() {
+      const p = await storage.run("opened", connectedTLSPair);
+      const [writer, reader] = side === "client" ? [p.client, p.serverSock] : [p.serverSock, p.client];
+      reader.on("error", () => {});
+      return { p, writer, reader };
+    }
+
+    test("the write callback and 'drain', when the rest of the ciphertext leaves from the writable event", async () => {
+      const { p, writer, reader } = await pair();
+      using _ = p;
+      reader.resume();
+      const stores: Record<string, string | undefined> = {};
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      writer.once("error", reject);
+      writer.once("close", () => reject(new Error("the socket closed before 'drain'")));
+      writer.once("drain", () => {
+        stores.drain = storage.getStore();
+        resolve();
+      });
+      fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: 1, fd: fdOf(writer) });
+      storage.run("write", () =>
+        writer.write(Buffer.alloc(4 * writer.writableHighWaterMark, "w"), err => {
+          if (err) reject(err);
+          stores.callback = storage.getStore();
+        }),
+      );
+      await promise;
+      expect(stores).toEqual({ callback: "write", drain: "write" });
+    });
+
+    // The record fails the write, and the failed write is what reports the error and closes the socket. This one needs
+    // no fault: the peer does not read, so the kernel takes only part of the write.
+    test("the write callback and 'error', when a record that cannot be decrypted arrives under the write", async () => {
+      const { p, writer, reader } = await pair();
+      using _ = p;
+      const events: string[] = [];
+      writer.on("error", (e: NodeJS.ErrnoException) => events.push(`error ${e.code} in ${storage.getStore()}`));
+      const closed = new Promise<string | undefined>(resolve =>
+        writer.once("close", () => resolve(storage.getStore())),
+      );
+      storage.run("write", () =>
+        writer.write(Buffer.alloc(8 * 1024 * 1024), err =>
+          events.push(`write ${(err as NodeJS.ErrnoException)?.code} in ${storage.getStore()}`),
+        ),
+      );
+      expect(writer.writableLength).toBeGreaterThan(0);
+      // An application data record of 64 bytes that no key of this session wrote, straight into the peer's fd.
+      writeSync(fdOf(reader), Buffer.concat([Buffer.from([0x17, 0x03, 0x03, 0x00, 0x40]), Buffer.alloc(0x40, 0xab)]));
+      const code = "ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC";
+      expect({ close: await closed, events }).toEqual({
+        close: "opened",
+        events: [`write ${code} in write`, `error ${code} in write`],
+      });
+    });
+
+    // The engine holds a write whose ciphertext the kernel rejected until the close that fails it.
+    test("the write callback and 'error', when the kernel rejects the ciphertext at once", async () => {
+      const { p, writer } = await pair();
+      using _ = p;
+      const events: string[] = [];
+      writer.on("error", (e: NodeJS.ErrnoException) => events.push(`error ${e.code} in ${storage.getStore()}`));
+      const closed = new Promise<void>(resolve => writer.once("close", () => resolve()));
+      fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", repeat: -1, fd: fdOf(writer) });
+      storage.run("write", () =>
+        writer.write("hello", err =>
+          events.push(`write ${(err as NodeJS.ErrnoException)?.code} in ${storage.getStore()}`),
+        ),
+      );
+      await closed;
+      expect(events).toEqual(["write ECONNRESET in write", "error ECONNRESET in write"]);
+    });
   });
 });
 

@@ -193,12 +193,13 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     return length;
   }
 
-  // Runs `fn` once in the place of the waiting callback, in that callback's async context.
+  // Runs `fn` in the place of the waiting callback: in its async context if the socket is another Bun.ModuleGraph's.
   function settleWaiting(fn) {
     const frame = onwritableFrame;
     onwritable = null;
     onwritableFrame = undefined;
-    AsyncContextFrame.run(frame, fn);
+    if (AsyncContextFrame.isInAnotherGraph(frame)) AsyncContextFrame.run(frame, fn);
+    else fn();
   }
 
   // The bytes end() left in the socket are out, or the socket closed with them.
@@ -367,6 +368,7 @@ function connectionListenerHTTP1(server, socket, options) {
     maybePauseFallbackReads,
     resumeFallbackReadsOnDrain,
     finishDrainedResponse,
+    runWhereWriteWaited,
     kMustCloseConnection,
   } = http1ServerPipeline;
   const { allMethods } = process.binding("http_parser");
@@ -685,7 +687,11 @@ function connectionListenerHTTP1(server, socket, options) {
     const inflight = socket._httpMessage;
     // The write callbacks that still wait fail, before the response's 'close', as in Node.
     inflight?.[kHttp1ResponseHandle]?.socketEnded(() =>
-      failPendingWriteCallbacks(inflight, socket.errored ?? inflight.errored ?? $ERR_STREAM_DESTROYED("write")),
+      runWhereWriteWaited(
+        inflight,
+        failPendingWriteCallbacks,
+        socket.errored ?? inflight.errored ?? $ERR_STREAM_DESTROYED("write"),
+      ),
     );
     // Like the native socket's close path (Node's socketOnClose ->
     // abortIncoming): abort the in-flight request, then the responses (and

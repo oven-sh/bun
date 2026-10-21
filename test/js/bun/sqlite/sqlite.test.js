@@ -928,6 +928,33 @@ it("serialize(name) rejects a db closed during name toString()", async () => {
   });
 });
 
+it("Statement#run works before any Database has been opened", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Statement } = require("bun:sqlite");
+        let ran = 0;
+        const withoutParams = new Statement({ paramsCount: 0, run() { ran++; } });
+        const withParams = new Statement({ paramsCount: 1, run() { ran++; } });
+        console.log(JSON.stringify([Object.keys(withoutParams.run()), Object.keys(withParams.run(1)), ran]));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify([["changes", "lastInsertRowid"], ["changes", "lastInsertRowid"], 2]),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("Database.deserialize accepts an ArrayBuffer", () => {
   const db = Database.open(":memory:");
   db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
@@ -6316,6 +6343,149 @@ describe("db.onInsert, db.onUpdate and db.onDelete", () => {
       expect(globs() - globsBefore).toBeLessThan(9);
       // `db` and the hundred in `closed`
       expect(handles() - handlesBefore).toBeWithin(101, 110);
+    });
+  });
+
+  // The INSERT commits when its statement is reset or finalized. An FTS5 table writes to its shadow tables
+  // at commit, which calls onInsert.
+  describe("an INSERT that iterate() only stepped to its first row", () => {
+    const open = (calls, filename = ":memory:") => {
+      const db = new Database(filename);
+      db.run("CREATE VIRTUAL TABLE ft USING fts5(x)");
+      db.onInsert = (_, name) => void calls.push(name);
+      return db;
+    };
+    const abandonInsert = (db, calls) => {
+      db.prepare("INSERT INTO ft VALUES ('a') RETURNING 1").iterate().next();
+      calls.length = 0;
+    };
+
+    it("is finished by the next call on the connection after it's garbage collected", () => {
+      const calls = [];
+      using db = open(calls);
+      abandonInsert(db, calls);
+      Bun.gc(true);
+      expect(calls).toEqual([]);
+      expect(db.inTransaction).toBe(false);
+      expect(calls).toContain("ft_data");
+    });
+
+    it("doesn't call the hook when it's collected along with its Database", () => {
+      const calls = [];
+      (() => abandonInsert(open(calls), calls))();
+      Bun.gc(true);
+      expect(calls).toEqual([]);
+    });
+
+    it.each([
+      ["it's", false],
+      ["it and a SELECT that was still iterating are", true],
+    ])("releases the file when %s collected after close(), even if the Database isn't", (_, abandonSelect) => {
+      using dir = tempDir("sqlite-abandoned-insert", {});
+      const file = path.join(String(dir), "x.sqlite");
+      const calls = [];
+      using db = open(calls, file);
+      if (abandonSelect) (() => void db.prepare("SELECT 1").iterate().next())();
+      abandonInsert(db, calls);
+      db.close();
+      Bun.gc(true);
+      expect(calls).toEqual([]);
+      using other = new Database(file);
+      // Throws "database is locked" while the INSERT is still open.
+      other.run("CREATE TABLE t (a)");
+    });
+
+    it("doesn't interrupt a statement that's still iterating when it's collected after close()", () => {
+      const calls = [];
+      using db = open(calls);
+      db.run("CREATE TABLE n (a)");
+      db.run("INSERT INTO n VALUES (1), (2)");
+      const rows = db.prepare("SELECT a FROM n").iterate();
+      expect(rows.next().value).toEqual({ a: 1 });
+      abandonInsert(db, calls);
+      db.close();
+      Bun.gc(true);
+      expect(calls).toEqual([]);
+      expect(rows.next().value).toEqual({ a: 2 });
+      expect(calls).toContain("ft_data");
+    });
+
+    it("doesn't call the hook when the ModuleGraph that opened its Database is disposed", () => {
+      const calls = [];
+      const graph = new Bun.ModuleGraph();
+      const db = graph.run(() => open(calls));
+      abandonInsert(db, calls);
+      graph.dispose();
+      expect(calls).toEqual([]);
+      expect(() => db.run("SELECT 1")).toThrow("Database has closed");
+    });
+
+    it("is committed when it's collected along with a Database that has a user function", () => {
+      using dir = tempDir("sqlite-collected-insert", {});
+      const file = path.join(String(dir), "x.sqlite");
+      (() => {
+        const db = new Database(file);
+        db.run("CREATE VIRTUAL TABLE ft USING fts5(x)");
+        db.function("lower2", text => text.toLowerCase());
+        db.prepare("INSERT INTO ft VALUES ('a') RETURNING 1").iterate().next();
+      })();
+      Bun.gc(true);
+      using db = new Database(file);
+      expect(db.query("SELECT x FROM ft WHERE ft MATCH 'a'").all()).toEqual([{ x: "a" }]);
+    });
+
+    it.concurrent.each(["the process", "a Worker"])("is committed when %s exits", async who => {
+      using dir = tempDir("sqlite-exit-insert", {
+        "main.js": `
+          const { Database } = require("bun:sqlite");
+          const { Worker, isMainThread } = require("worker_threads");
+          if (isMainThread && process.argv[2] === "a Worker") {
+            new Worker(__filename);
+          } else {
+            const db = new Database("x.sqlite");
+            db.run("CREATE VIRTUAL TABLE ft USING fts5(x)");
+            db.onInsert = () => {};
+            db.prepare("INSERT INTO ft VALUES ('a'), ('b') RETURNING 1").iterate().next();
+            console.log(db.run("INSERT INTO ft VALUES ('c')").changes);
+          }`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.js", who],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1\n", stderr: "", exitCode: 0 });
+      using db = new Database(path.join(String(dir), "x.sqlite"));
+      expect(db.query("SELECT count(*) AS n FROM ft WHERE ft MATCH 'a OR b OR c'").get()).toEqual({ n: 3 });
+    });
+
+    it("is finished by close(), and the hook can collect other statements", async () => {
+      const src = /* js */ `
+        const { Database } = require("bun:sqlite");
+        for (const force of [true, false]) {
+          const db = new Database(":memory:");
+          db.run("CREATE VIRTUAL TABLE ft USING fts5(x)");
+          let others = Array.from({ length: 400 }, (_, i) => db.query("SELECT " + i));
+          db.query("INSERT INTO ft VALUES ('a') RETURNING 1").iterate().next();
+          let calls = 0;
+          db.onInsert = () => {
+            calls++;
+            others = null;
+            Bun.gc(true);
+          };
+          db.close(force);
+          console.log(calls);
+        }
+      `;
+      // Malloc=1 lets ASAN catch a use of freed WTF memory. On Windows, WebKit traps at startup when it's set.
+      const ASAN_OPTIONS = [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":");
+      const env = isWindows ? bunEnv : { ...bunEnv, Malloc: "1", ASAN_OPTIONS };
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "3\n3\n", stderr: "", exitCode: 0 });
     });
   });
 

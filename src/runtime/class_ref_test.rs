@@ -1,6 +1,6 @@
 //! The bodies of class_ref_test.bind.ts.
 
-use bun_jsc::bindgen::{self, JsLocal, JsScope};
+use bun_jsc::bindgen::{self, Callable, JsLocal, JsScope};
 
 use crate::generated_bindgen::class_ref_test::{AddressOrAnything, AddressOrList};
 use crate::socket::SocketAddress;
@@ -16,13 +16,8 @@ pub(crate) fn port_of_or_null(address: Option<&SocketAddress>) -> Option<u16> {
 pub(crate) fn port_after_callback<'a>(
     cx: &mut JsScope<'a>,
     address: &'a SocketAddress,
-    callback: JsLocal<'a>,
+    callback: JsLocal<'a, Callable>,
 ) -> bindgen::Result<'a, u16> {
-    let Some(callback) = callback.as_callable() else {
-        return Err(cx
-            .heap
-            .type_error(format_args!("callback must be a function")));
-    };
     callback.call(cx, JsLocal::UNDEFINED, &[])?;
     Ok(address.port())
 }

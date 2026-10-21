@@ -37,7 +37,7 @@ impl Rule for NoZeroFractions {
                 true => (b"(", b")"),
                 false => (b"", b""),
             };
-            // `case.0` is not `case0`.
+            // `case.0` must not become `case0`.
             let before = fixer.file().text().get(..number_literal.span().start as usize).unwrap_or_default();
             let follows_name = text::last_code_point(before)
                 .is_some_and(|c| bun_core::lexer::is_type_script_identifier_part(c as i32));
@@ -47,7 +47,8 @@ impl Rule for NoZeroFractions {
     }
 }
 
-/// The number as it should be written, and whether nothing follows its dot. `None` without a dot.
+/// Returns the number as it should be written, and whether nothing follows its dot. `None` if it
+/// has no dot.
 fn format_raw(raw: &[u8]) -> Option<(Vec<u8>, bool)> {
     let (base, exponent) = match strings::index_of_any(raw, b"eE") {
         Some(at) => (raw.get(..at)?, raw.get(at + 1..)),

@@ -1,23 +1,23 @@
-//! The text that the printer has written.
+//! The printer's output buffer.
 
 use crate::ir::element::Token;
 
-/// Appends to a vector. The vector is longer than what has been written, so that a short text can
-/// be copied as a block of a fixed size, with whatever is behind it.
+/// Appends to a vector. The vector is kept longer than what's been written, so a short text can be copied as a
+/// fixed-size block along with whatever bytes follow it.
 pub(super) struct Out<'o> {
     buffer: &'o mut Vec<u8>,
     len: usize,
-    /// `len` at first.
+    /// The initial `len`.
     start: usize,
-    /// See [`crate::is_too_long`]. What is written from there on is written over what has been written.
+    /// See [`crate::is_too_long`]. Once set, further output overwrites earlier output.
     is_too_long: bool,
 }
 
-/// A text of up to so many bytes is copied as a block.
+/// A text of up to this many bytes is copied as a block.
 const BLOCK: usize = 16;
 
 impl<'o> Out<'o> {
-    /// `expected`: about the number of bytes that are going to be written.
+    /// `expected` is a rough estimate of how many bytes will be written.
     pub(super) fn new(buffer: &'o mut Vec<u8>, expected: usize) -> Self {
         let len = buffer.len();
         buffer.resize(len + expected, 0);
@@ -38,17 +38,17 @@ impl<'o> Out<'o> {
         self.len
     }
 
-    /// Forgets what has been written from `len` on.
+    /// Discards everything written from `len` on.
     pub(super) fn truncate(&mut self, len: usize) {
         self.len = self.len.min(len);
     }
 
-    /// What has been written from `from` on.
+    /// Returns what's been written from `from` on.
     pub(super) fn since(&self, from: usize) -> &[u8] {
         self.buffer.get(from..self.len).unwrap_or_default()
     }
 
-    /// Leaves the vector with what has been written.
+    /// Truncates the vector to what's been written.
     pub(super) fn finish(&mut self) {
         self.buffer.truncate(self.len);
     }
@@ -66,7 +66,7 @@ impl<'o> Out<'o> {
         self.buffer.resize(len, 0);
     }
 
-    /// The next `len` bytes.
+    /// Returns the next `len` bytes, growing the vector if needed.
     #[inline]
     fn next(&mut self, len: usize) -> &mut [u8] {
         if self.buffer.len() - self.len < len {
@@ -75,7 +75,7 @@ impl<'o> Out<'o> {
         &mut self.buffer[self.len..self.len + len]
     }
 
-    /// Writes the first `len` bytes of `block`. What is behind them in the vector is overwritten.
+    /// Writes the first `len` bytes of `block`. The rest of `block` clobbers the unused bytes after them.
     #[inline(always)]
     fn block<const N: usize>(&mut self, block: &[u8; N], len: usize) {
         loop {
@@ -102,7 +102,7 @@ impl<'o> Out<'o> {
         self.block(&[byte], 1);
     }
 
-    /// Writes the part of `text` at `range`.
+    /// Writes `text[range]`.
     #[inline(always)]
     pub(super) fn part(&mut self, text: &[u8], range: std::ops::Range<usize>) {
         if range.len() <= BLOCK
@@ -137,7 +137,8 @@ impl<'o> Out<'o> {
         if count <= 2 * BLOCK {
             return self.block(&[byte; 2 * BLOCK], count);
         }
-        // It is the indentation that makes a text too long. Without it, what is left to print is soon printed.
+        // Indentation is what makes the output too long. Skipping it lets the rest of the document finish printing
+        // quickly.
         if self.is_too_long || crate::is_too_long(self.len + count) {
             self.is_too_long = true;
             return;

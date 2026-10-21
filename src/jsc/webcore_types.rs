@@ -187,7 +187,10 @@ const _: () = {
 
     impl JsClass for Blob {
         fn from_js(value: JSValue) -> Option<*mut Self> {
-            JSBlob::from_js(value).or_else(|| __bun_blob_from_build_artifact(value))
+            let blob = JSBlob::from_js(value).or_else(|| __bun_blob_from_build_artifact(value));
+            // C++ `mayHoldBlob` (blob.h) answers for a cell of any other type without this call.
+            debug_assert!(blob.is_none() || value.js_type() == crate::JSType::DOMWrapper);
+            blob
         }
         fn from_js_direct(value: JSValue) -> Option<*mut Self> {
             JSBlob::from_js_direct(value)

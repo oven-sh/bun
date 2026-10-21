@@ -13,7 +13,7 @@ pub struct NoSelfImport;
 const IMPORTS_ITSELF: Message = Message::new("", "Module imports itself.");
 const OXLINT: Message = Message::new("", "A module importing itself is not allowed");
 
-/// oxlint does not look at `require`.
+/// oxlint doesn't check `require`.
 fn visitor(is_oxlint: bool) -> Visitor {
     Visitor::of(Systems {
         esmodule: true,
@@ -35,7 +35,7 @@ impl Rule for NoSelfImport {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         let is_oxlint = file.language().is_oxlint;
-        // oxlint asks about modules that it has read.
+        // oxlint only knows about modules it has already read.
         if is_oxlint && is_waiting_for_modules(file) {
             return None;
         }
@@ -47,7 +47,7 @@ impl Rule for NoSelfImport {
         let file = cx.file();
         let is_oxlint = file.language().is_oxlint;
         if is_oxlint {
-            // oxlint knows the declarations at the top level, resolves in its own way, and points at the specifier.
+            // oxlint only has the top-level declarations, uses its own resolver, and reports the specifier.
             let Some(me) = file.modules().and_then(|it| it.find(file.path())) else {
                 return;
             };

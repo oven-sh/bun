@@ -21,7 +21,7 @@ const ZERO: Message = Message::new(
     "Use `.{{prop_name}} {{op_and_rhs}}` when checking {{prop_name}} is zero.",
 );
 
-/// Whether `comparison` tells that a length is zero (`true`) or that it is not (`false`): `a.length == 0`,
+/// Returns `true` if `comparison` checks that a length is zero and `false` if it checks that it isn't: `a.length == 0`,
 /// `1 <= a.length`.
 fn is_zero_length_check(comparison: Expr) -> Option<bool> {
     let ExprKind::Binary { op, left, right } = comparison.kind() else {
@@ -43,7 +43,7 @@ fn is_zero_length_check(comparison: Expr) -> Option<bool> {
 }
 
 impl ExplicitLengthCheck {
-    /// `node`: what is replaced by a comparison of `member`.
+    /// `node` is replaced with a comparison of `member`.
     fn report<'a>(
         &self,
         node: Expr<'a>,
@@ -69,7 +69,7 @@ impl ExplicitLengthCheck {
             .called_with(member)
             .data("prop_name", property)
             .data("op_and_rhs", check_code)
-            // Where there is a fix oxlint says what it says of any.
+            // With a fix, oxlint prints its generic help instead.
             .help_with(|| match (auto_fix, std::str::from_utf8(property.bytes())) {
                 (false, Ok(property)) => format!("Replace `.{property}` with `.{property} {check_code}`."),
                 _ => String::new(),
@@ -126,7 +126,7 @@ impl Rule for ExplicitLengthCheck {
         {
             return;
         }
-        // What `member` is directly in, if it is not in parentheses.
+        // `member`'s direct parent, unless `member` is parenthesized.
         let parent = member
             .parent()
             .as_expr()

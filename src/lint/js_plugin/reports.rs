@@ -1,7 +1,7 @@
 //! Reads the reports that src/jsc/bindings/LintReport.cpp writes.
 //!
-//! All numbers are little-endian. A number that a rule gave is an `f64`, and NaN if it gave something else. A string is its length
-//! in bytes as a `u32`, then UTF-8, in which an unpaired surrogate has three bytes.
+//! All numbers are little-endian. A number that comes from a rule is an `f64`, or NaN if the rule passed something
+//! else. A string is its byte length as a `u32`, then UTF-8 in which an unpaired surrogate takes three bytes.
 //!
 //! - A report: `u32` rule, `u32` flags, `f64` line, column, endLine and endColumn, `u32` number of suggestions, the message, the
 //!   `messageId` if [`HAS_ID`], the fix if [`HAS_FIX`], the suggestions.
@@ -17,7 +17,7 @@ const HAS_ID: u32 = 1;
 const HAS_FIX: u32 = 2;
 const HAS_DATA: u32 = 4;
 
-/// What is left to read.
+/// The bytes left to read.
 struct Reader<'a>(&'a [u8]);
 
 impl<'a> Reader<'a> {
@@ -40,18 +40,18 @@ impl<'a> Reader<'a> {
         self.take(len as usize)
     }
 
-    /// `None` in `Some`: it isn't valid UTF-8.
+    /// `Some(None)` means it isn't valid UTF-8.
     fn name(&mut self) -> Option<Option<Box<str>>> {
         Some(std::str::from_utf8(self.string()?).ok().map(Into::into))
     }
 
-    /// `None` in `Some`: its range isn't made of numbers.
+    /// `Some(None)` means its range isn't two numbers.
     fn fix(&mut self, offsets: &Utf16OffsetTable) -> Option<Option<Fix>> {
         let (start, end, text) = (self.number()?, self.number()?, self.string()?);
         // The byte order mark is at -1.
         let at = |it: f64| match it < 0.0 {
             true => Some(0),
-            false => Some(offsets.to_bytes(whole(it)?)),
+            false => Some(offsets.to_bytes(finite_index(it)?)),
         };
         Some(at(start).zip(at(end)).map(|(start, end)| Fix {
             span: Span::new(start, end),
@@ -59,7 +59,7 @@ impl<'a> Reader<'a> {
         }))
     }
 
-    /// `None` in `Some`: its fix is none.
+    /// `Some(None)` means it has no valid fix.
     fn suggestion(&mut self, offsets: &Utf16OffsetTable) -> Option<Option<Suggested>> {
         let flags = self.word()?;
         let message = self.string()?.to_vec();
@@ -101,23 +101,23 @@ impl<'a> Reader<'a> {
             rule,
             message,
             message_id,
-            line: place(line),
-            column: place(column),
-            end: place(end.0).zip(place(end.1)),
+            line: line_or_column(line),
+            column: line_or_column(column),
+            end: line_or_column(end.0).zip(line_or_column(end.1)),
             fix,
             suggestions: suggested,
         })
     }
 }
 
-/// An index. `None`: NaN or infinite, which JSON doesn't have either.
-fn whole(number: f64) -> Option<u32> {
+/// An index. `None` for NaN and infinities, which JSON can't represent either.
+fn finite_index(number: f64) -> Option<u32> {
     number.is_finite().then_some(number as u32)
 }
 
-/// A line or a column. ESLint passes on one below 0, which is kept as an `i32`: see
+/// A line or a column. ESLint passes negative ones through, so they're stored as an `i32` in the `u32`. See
 /// [`LintMessage::line`](crate::linter::LintMessage::line).
-fn place(number: f64) -> Option<u32> {
+fn line_or_column(number: f64) -> Option<u32> {
     number.is_finite().then_some(number as i32 as u32)
 }
 

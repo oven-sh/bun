@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Warn when `matchAll`, or `replaceAll`, is called with a non-global regular expression.
 pub struct BadAllArg<const REPLACE: bool = false>;
 
-/// The rule, the method, the label.
+/// [rule name, method, label]
 const TEXTS: [[&str; 3]; 2] = [
     ["bad-match-all-arg", "matchAll", "`matchAll` called here"],
     ["bad-replace-all-arg", "replaceAll", "`replaceAll` called here"],

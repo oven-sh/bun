@@ -348,7 +348,7 @@ impl UpdateInteractiveCommand {
         let bump = crate::cli::cli_arena();
 
         for (workspace_path, workspace_update_idxs) in workspace_groups.iter() {
-            let root_dir = FileSystem::get().top_level_dir;
+            let root_dir = FileSystem::get().top_level_dir();
             let mut path_buf = bun_paths::path_buffer_pool::get();
             let package_json_path =
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
@@ -408,7 +408,7 @@ impl UpdateInteractiveCommand {
         manager: &mut PackageManager,
         catalog_updates: &StringHashMap<(Box<[u8]>, bool)>,
     ) -> crate::Result<()> {
-        let root_dir = FileSystem::get().top_level_dir;
+        let root_dir = FileSystem::get().top_level_dir();
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let package_json_path = Self::build_package_json_path(root_dir, b"", &mut path_buf);
 

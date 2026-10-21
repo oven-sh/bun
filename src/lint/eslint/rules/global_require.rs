@@ -32,7 +32,7 @@ fn is_shadowed(callee: Expr<'_>) -> bool {
 impl Rule for GlobalRequire {
     const META: Meta = Meta::eslint("global-require", Kind::Suggestion).deprecated();
     const ON: On = On::new().function_calls(&["require"]);
-    /// What has an ancestor that is not acceptable.
+    /// Caches the nodes that have an unacceptable ancestor.
     type State<'a> = AncestorMemo<'a, ()>;
 
     fn new(_: &Options) -> Self {

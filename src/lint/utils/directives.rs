@@ -2,7 +2,7 @@
 
 use bun_core::lexer::char_and_size;
 
-/// Longer ones before their prefixes.
+/// Longer names come before their prefixes.
 const DIRECTIVES: [&str; 9] = [
     "eslint-disable-next-line",
     "eslint-disable-line",
@@ -15,8 +15,8 @@ const DIRECTIVES: [&str; 9] = [
     "global",
 ];
 
-/// ESLint's `directivesPattern`. The first group of `directivesPattern.exec(text)`: the directive
-/// that `text`, the trimmed value of a comment, starts with. `directivesPattern.test(text)` is
+/// ESLint's `directivesPattern`. Returns the first group of `directivesPattern.exec(text)`: the
+/// directive that `text`, a comment's trimmed value, starts with. `directivesPattern.test(text)` is
 /// `.is_some()`.
 pub fn match_directives_pattern(text: &[u8]) -> Option<&'static str> {
     if !matches!(text.first(), Some(b'e' | b'g')) {

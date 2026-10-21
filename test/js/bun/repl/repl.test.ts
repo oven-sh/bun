@@ -395,7 +395,8 @@ describe.concurrent("Bun REPL", () => {
       expect({ transcript: afterWelcome(stdout), stderr, exitCode }).toEqual({ transcript, stderr: "", exitCode: 0 });
     });
 
-    test("evaluates the last line at the end of the input, but not after a read that failed", async () => {
+    // Not on Windows: fs.closeSync(0) does nothing there (libuv keeps fds 0 to 2 open), so no read fails.
+    test.skipIf(isWindows)("evaluates the last line at a clean end of input, not after a failed read", async () => {
       using dir = tempDir("repl-failed-read", {});
       const ran = path.join(String(dir), "ran");
       const failed = path.join(String(dir), "failed");

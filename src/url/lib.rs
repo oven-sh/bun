@@ -390,7 +390,8 @@ impl<'a> URL<'a> {
         let Some(url) = normalized else {
             // `path` collapses a one-byte prefix such as `/a` to `/`, so read the prefix from `pathname`.
             let pathname = as_written.pathname;
-            let prefix = &pathname[..strings::index_of_char_usize(pathname, b'?').unwrap_or(pathname.len())];
+            let prefix =
+                &pathname[..strings::index_of_char_usize(pathname, b'?').unwrap_or(pathname.len())];
             let prefix = strings::trim_right(prefix, b"/");
             return Some(S3Endpoint {
                 host_with_path: [as_written.host, prefix].concat().into_boxed_slice(),

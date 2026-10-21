@@ -365,6 +365,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "resolve_message.bind.ts": "{ ResolveMessage: Class<ResolveMessage>; BuildMessage: Class<BuildMessage> }",
   "socket_body.bind.ts": null,
   "udp_socket.bind.ts": null,
+  "valkey.bind.ts": "typeof Bun",
 };
 
 /**
@@ -529,6 +530,11 @@ describe("@types/bun integration test", () => {
     ).toEqual([
       // Published, and nothing has ever read it.
       "Transpiler.bind.ts: new Transpiler(options?: TranspilerOptions | undefined): Transpiler: options has no jsxOptimizationInline",
+      // `pendingDeclarations` in test/internal/source-lints/redis-client-types.test.ts.
+      "valkey.bind.ts: new RedisClient().psubscribe is not published",
+      "valkey.bind.ts: new RedisClient().pubsub is not published",
+      "valkey.bind.ts: new RedisClient().punsubscribe is not published",
+      "valkey.bind.ts: new RedisClient().select is not published",
     ]);
   });
 

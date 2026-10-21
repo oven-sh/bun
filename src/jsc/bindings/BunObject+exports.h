@@ -10,7 +10,6 @@
     macro(markdown) \
     macro(S3Client) \
     macro(Terminal) \
-    macro(ValkeyClient) \
     macro(argv) \
     macro(cron) \
     macro(cwd) \

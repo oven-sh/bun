@@ -81,7 +81,7 @@ use bun_zlib as zlib;
 
 use crate::node;
 use crate::test_runner::jest::Jest;
-use crate::valkey_jsc::js_valkey::SubscriptionCtx;
+use crate::valkey_jsc::js_valkey::{Js as js_RedisClient, SubscriptionCtx};
 use bun_collections::index_sort;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::call_frame::ArgumentsSlice;
@@ -278,7 +278,6 @@ pub(crate) mod bun_object {
         BunObject_lazyPropCb_origin => super::get_origin,
         BunObject_lazyPropCb_S3Client => super::get_s3_client_constructor,
         BunObject_lazyPropCb_s3 => super::get_s3_default_client,
-        BunObject_lazyPropCb_ValkeyClient => super::get_valkey_client_constructor,
         BunObject_lazyPropCb_valkey => super::get_valkey_default_client,
         BunObject_lazyPropCb_Terminal => super::get_terminal_constructor,
     }
@@ -1598,7 +1597,7 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
         }
     };
 
-    let as_js = JSValkeyClient::ptr_to_js(valkey, global_this);
+    let as_js = js_RedisClient::to_js(valkey, global_this);
 
     // SAFETY: `valkey` is a fresh heap allocation owned by the JS wrapper; we
     // hold the only reference for field init below.
@@ -1615,10 +1614,6 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     }
 
     as_js
-}
-
-fn get_valkey_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::valkey_jsc::JSValkeyClient>(global_this)
 }
 
 fn get_terminal_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

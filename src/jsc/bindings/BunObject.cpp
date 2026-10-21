@@ -53,6 +53,7 @@
 #include "GeneratedTOMLObject.h"
 #include "GeneratedTranspiler.h"
 #include "GeneratedUnsafeObject.h"
+#include "GeneratedValkey.h"
 #include "GeneratedXMLObject.h"
 #include "GeneratedYAMLObject.h"
 #include "JavaScriptCore/BunV8HeapSnapshotBuilder.h"
@@ -1051,7 +1052,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     WebView                                        constructWebViewObject                                              ReadOnly|DontDelete|PropertyCallback
     which                                          Bun::Bindgen::Generated::BunObject::jsWhich                         DontDelete|Function 1
-    RedisClient                                    BunObject_lazyPropCb_wrap_ValkeyClient                              DontDelete|PropertyCallback
+    RedisClient                                    Bun::Bindgen::Generated::Valkey::getRedisClientConstructor          DontDelete|PropertyCallback
     redis                                          BunObject_lazyPropCb_wrap_valkey                                    DontDelete|PropertyCallback
     secrets                                        constructSecretsObject                                              DontDelete|PropertyCallback
     write                                          BunObject_callback_write                                            DontDelete|Function 1

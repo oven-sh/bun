@@ -1,12 +1,10 @@
 //! Valkey/Redis client — JSC bindings.
 //!
 //! Module layout: the protocol
-//! state machine lives in [`valkey`] (`ValkeyClient`), the `.classes.ts`
+//! state machine lives in [`valkey`] (`ValkeyClient`), the `valkey.bind.ts`
 //! wrapper in [`js_valkey`] (`JSValkeyClient`), and the ~200 prototype
 //! methods in [`js_valkey_functions`]. RESP wire-format parsing is in the
 //! lower `bun_valkey` crate; this module owns the JSC-touching half.
-
-use crate::jsc::{JSGlobalObject, JSValue};
 
 // ─── submodules ──────────────────────────────────────────────────────────────
 
@@ -36,27 +34,3 @@ pub(crate) use js_valkey::JSValkeyClient;
 pub(crate) mod valkey_command {
     pub(crate) use super::valkey_command_body::{Entry, PromisePair};
 }
-
-// ── JsClass wiring (codegen name = "RedisClient", see valkey.classes.ts) ────
-// `generate-classes.ts` emits the `RedisClient__{fromJS,fromJSDirect,create,
-// getConstructor}` externs plus safe wrappers as **free functions** in
-// `crate::generated_classes::js_RedisClient` (one `js_<Name>` submodule per
-// class). The codegen's `RedisClient` *type* re-export resolves back to
-// `JSValkeyClient` itself (via `valkey::RedisClient`), so the wrapper pointee
-// is already `*mut JSValkeyClient` — no cast required. Route through the
-// submodule instead of redeclaring the externs here; a second `extern "C"`
-// block would trip `clashing_extern_declarations`.
-use crate::generated_classes::js_RedisClient;
-
-impl JSValkeyClient {
-    /// Wrap an already-heap-allocated client pointer in its JS object.
-    /// Ownership transfers to the C++ wrapper (freed via `finalize`).
-    #[inline]
-    pub(crate) fn ptr_to_js(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
-        // `ptr` was produced by `JSValkeyClient::new` (heap-allocated) and is
-        // hereby owned by the JS wrapper.
-        js_RedisClient::to_js(ptr, global)
-    }
-}
-
-bun_jsc::impl_js_class_via_generated!(JSValkeyClient => crate::generated_classes::js_RedisClient);

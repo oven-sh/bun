@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import valkeyClasses from "../../../src/runtime/valkey_jsc/valkey.classes.ts";
+import { RedisClient } from "../../../src/runtime/valkey_jsc/valkey.bind.ts";
 
 // `class RedisClient` in packages/bun-types/redis.d.ts is a hand-written mirror
-// of the `proto` table in src/runtime/valkey_jsc/valkey.classes.ts, which is
-// what the class codegen installs on RedisClient.prototype. Nothing else
+// of the `proto` table in src/runtime/valkey_jsc/valkey.bind.ts, which is
+// what bindgen installs on RedisClient.prototype. Nothing else
 // compares the two: five commands registered by the first Bun.redis commit were
 // still undeclared fourteen redis.d.ts commits later, so calling them works at
 // runtime and fails to type-check. This lint loads the same module the codegen
@@ -24,29 +24,25 @@ const pendingDeclarations: Record<string, string> = {
   punsubscribe: "#35521",
 };
 
-const classesFile = "src/runtime/valkey_jsc/valkey.classes.ts";
+const classesFile = "src/runtime/valkey_jsc/valkey.bind.ts";
 const dtsFile = "packages/bun-types/redis.d.ts";
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 
-const definition = valkeyClasses.find(c => c.name === "RedisClient");
-if (definition === undefined) throw new Error(`${classesFile} no longer defines RedisClient`);
-
-// Every member the codegen installs: prototype members by name, `klass` (static)
+// Every member the codegen installs: prototype members by name, static
 // members as "static name". A well-known symbol stays in the table's `@@x`
 // spelling; parseClassBody maps the class body's `[Symbol.x]` onto it.
 const registered = new Set<string>();
-for (const [table, prefix] of [
-  [definition.proto, ""],
-  [definition.klass, "static "],
+for (const [members, prefix] of [
+  [RedisClient.protoMembers, ""],
+  [RedisClient.staticMembers, "static "],
 ] as const) {
-  for (const [name, field] of Object.entries(table)) {
-    // Installed under a private name or a Symbol.for() symbol, or (internal)
-    // not installed at all; none of these has a declaration to mirror.
-    if ("internal" in field || "privateSymbol" in field || "publicSymbol" in field) continue;
-    registered.add(prefix + name);
+  for (const member of members) {
+    // Installed under a private name: it has no declaration to mirror.
+    if ("privateSymbol" in member && member.privateSymbol) continue;
+    registered.add(prefix + member.name);
   }
 }
-if (definition.construct) registered.add("constructor");
+if (RedisClient.construct) registered.add("constructor");
 
 const { declared, unrecognized } = parseClassBody(readFileSync(path.join(root, dtsFile), "utf8"));
 

@@ -142,6 +142,39 @@ describe("TypeScript 'declare' statements discard scopes of dropped statements",
   });
 });
 
+describe("reports a syntax error for a misplaced decorator", () => {
+  const cases: [source: string, messages: string[]][] = [
+    ["class A { @dec(() => 0) static {} }", ["Decorators are not valid here"]],
+    ["class A { @dec static {} }", ["Decorators are not valid here"]],
+    ["@dec(() => 0) declare global { declare const c: any }", ['Expected "class" but found "global"']],
+    ["@dec(0) declare global { declare const c: any }", ['Expected "class" but found "global"']],
+    ["declare module 'm' { @dec(() => 0) global { declare const c: any } }", ['Expected "class" but found "global"']],
+  ];
+
+  test.concurrent.each(cases)("%s", async (source, messages) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try {
+          new Bun.Transpiler({ loader: "ts" }).transformSync(${JSON.stringify(source)});
+        } catch (e) {
+          console.log(JSON.stringify((e.errors ?? [e]).map(e => e.message)));
+        }`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe(JSON.stringify(messages) + "\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("macro tagged templates visit their interpolations", () => {
   // When a tagged template's tag resolves to a macro import, the macro dispatch
   // replaces the whole expression (dead code, macros disabled, or the macro call

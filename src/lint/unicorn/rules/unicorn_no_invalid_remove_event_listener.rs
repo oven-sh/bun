@@ -7,7 +7,7 @@ pub struct NoInvalidRemoveEventListener;
 
 const INVALID_CALL: Message = Message::new("", "Invalid `removeEventListener` call.");
 
-/// The name of `a.name`, where it is written. Not of `a.#name`.
+/// The name token in `a.name`, but not in `a.#name`.
 fn static_member_name(callee: Expr<'_>) -> Option<Ident<'_>> {
     get_member_expr(callee).filter(|it| !it.is_private_member())?.member_name()
 }
@@ -51,7 +51,7 @@ impl Rule for NoInvalidRemoveEventListener {
             && name.name().is("removeEventListener")
             && call.args().first().is_some_and(|it| it.tag() != ExprTag::Spread)
         {
-            // Of a long function only its head.
+            // For a long function, only its head.
             let listener_span = match listener.kind() {
                 ExprKind::Fn(func) if listener.span().len() > 20 => {
                     let end = match func.body() {

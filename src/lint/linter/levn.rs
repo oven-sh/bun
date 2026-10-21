@@ -1,7 +1,7 @@
-//! `levn.parse("Object", text)`: the liberal notation that ESLint reads an `/* eslint .. */`
-//! comment in before it tries JSON.
+//! `levn.parse("Object", text)`: the lenient notation that ESLint tries on an `/* eslint .. */` comment before it tries
+//! JSON.
 
-use crate::json::RoomToNest;
+use crate::json::NestingLimit;
 use crate::options::Json;
 
 fn is_special(byte: u8) -> bool {
@@ -40,8 +40,8 @@ fn date_end(text: &[u8]) -> Option<usize> {
     bun_core::strings::last_index_of_char(&text[1..end], b'#').map(|i| i + 2)
 }
 
-/// `[^\s<special>](?:\s*[^\s<special>]+)*`. The colon of `bun:test/no-focused-tests` is part of the word: levn makes nothing of
-/// that text, and no rule is called `bun`.
+/// `[^\s<special>](?:\s*[^\s<special>]+)*`. The colon in `bun:test/no-focused-tests` is part of the word: levn can't
+/// parse that text anyway, and no rule is named `bun`.
 fn word_end(text: &[u8]) -> usize {
     let (mut at, mut end) = (0, 0);
     let colon_of_name = if text.starts_with(b"bun:test/") {
@@ -89,7 +89,7 @@ fn tokenize(text: &[u8]) -> Vec<&[u8]> {
     tokens
 }
 
-/// What `parse-string.js` makes of the tokens.
+/// The tree that `parse-string.js` builds from the tokens.
 enum Node {
     Value(Vec<u8>),
     List(Vec<Node>),
@@ -99,7 +99,7 @@ enum Node {
 struct Tokens<'t> {
     tokens: Vec<&'t [u8]>,
     at: usize,
-    room: RoomToNest,
+    room: NestingLimit,
 }
 
 impl<'t> Tokens<'t> {
@@ -181,7 +181,7 @@ impl<'t> Tokens<'t> {
     }
 }
 
-/// The `String` cast: without its quotes, and with its escapes replaced.
+/// The `String` cast: strips the quotes and resolves the escapes.
 fn unquote(text: &[u8]) -> Vec<u8> {
     let (quote, inner) = match text {
         [b'\'', inner @ .., b'\''] => (b'\'', inner),
@@ -224,9 +224,9 @@ fn unquote(text: &[u8]) -> Vec<u8> {
     out
 }
 
-/// The `*` cast. `None` where levn throws, and for a regular expression, which JSON cannot
-/// express. A date stays a string.
-fn cast(node: &Node, room: RoomToNest) -> Option<Json> {
+/// The `*` cast. `None` where levn throws, and for a regular expression, which JSON can't represent. A date stays a
+/// string.
+fn cast(node: &Node, room: NestingLimit) -> Option<Json> {
     if !room.has_more() {
         return None;
     }
@@ -261,11 +261,11 @@ fn cast(node: &Node, room: RoomToNest) -> Option<Json> {
     })
 }
 
-fn cast_fields(fields: &[(Vec<u8>, Node)], room: RoomToNest) -> Option<Vec<(Vec<u8>, Json)>> {
+fn cast_fields(fields: &[(Vec<u8>, Node)], room: NestingLimit) -> Option<Vec<(Vec<u8>, Json)>> {
     let mut out = Vec::with_capacity(fields.len());
     for (key, value) in fields {
         let (key, value) = (unquote(key), cast(value, room)?);
-        // levn assigns each to an object, which makes no property of this one.
+        // levn assigns each key to an object, and assigning `__proto__` doesn't create a property.
         if key != b"__proto__" {
             out.push((key, value));
         }
@@ -273,20 +273,37 @@ fn cast_fields(fields: &[(Vec<u8>, Node)], room: RoomToNest) -> Option<Vec<(Vec<
     Json::object(out).into_object()
 }
 
-/// `levn.parse("Object", text)`, which also reads `--rule` and `--parser-options` on the command line of
-/// ESLint. `None` where levn throws.
-pub fn parse_object(text: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
+fn parse_fields(text: &[u8]) -> Option<(Vec<(Vec<u8>, Node)>, NestingLimit)> {
     let mut tokens = Tokens {
         tokens: tokenize(text),
         at: 0,
-        room: RoomToNest::new(),
+        room: NestingLimit::new(),
     };
     let has_delimiters = tokens.peek() == Some(b"{");
     let Node::Fields(fields) = tokens.fields(has_delimiters)? else {
         return None;
     };
-    // levn reads what has tokens left over as a tuple, which is no object.
-    (tokens.at == tokens.tokens.len())
-        .then(|| cast_fields(&fields, tokens.room))
+    // If tokens are left over, levn reads the text as a tuple, which isn't an object.
+    (tokens.at == tokens.tokens.len()).then_some((fields, tokens.room))
+}
+
+/// Port of `levn.parse("Object", text)`, which ESLint also uses for `--parser-options` on the
+/// command line. Returns `None` where levn throws.
+pub fn parse_object(text: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
+    let (fields, room) = parse_fields(text)?;
+    cast_fields(&fields, room)
+}
+
+/// Runs [`parse_object`] for `--rule`. levn reads `no-console:` as `no-console: 0`, which turns the
+/// rule off. This returns `None` for that, and for text without any rule.
+pub fn parse_rules(text: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
+    let (fields, room) = parse_fields(text)?;
+    let is_missing = |it: &Node| matches!(it, Node::Value(text) if text.is_empty());
+    let lacks_severity = |it: &(Vec<u8>, Node)| match &it.1 {
+        Node::List(items) => items.first().is_some_and(is_missing),
+        setting => is_missing(setting),
+    };
+    (!fields.is_empty() && !fields.iter().any(lacks_severity))
+        .then(|| cast_fields(&fields, room))
         .flatten()
 }

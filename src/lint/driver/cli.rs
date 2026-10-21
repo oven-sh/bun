@@ -1,10 +1,10 @@
-//! The command line of `bun lint`: that of ESLint, what `bun check` has (`--threads`, `--timing`,
-//! `--cwd`), and the flags of oxlint that its users have in their scripts.
+//! `bun lint`'s command line: ESLint's flags, the ones shared with `bun check` (`--threads`, `--timing`, `--cwd`), and
+//! the oxlint flags that its users have in their scripts.
 
 use crate::args::{Argument, Group, Param, error};
 pub use crate::args::{Help, UsageError};
 use crate::configs::{Flavor, is_category, plugin_shorthand};
-use crate::paths;
+use crate::{fs, paths};
 use bun_clap as clap;
 use bun_core::strings;
 use bun_lint::context::Severity;
@@ -117,7 +117,7 @@ const OTHER: &[Param] = &[
     clap::param!("--help-all                      The same as <b>--help --all<r>"),
 ];
 
-const OF_ESLINT: &[Param] = &[
+const ESLINT_COMPAT: &[Param] = &[
     clap::param!(
         "--flavor <tool>                 Use the <b>eslint<r> or the <b>oxlint<r> config in a project that has both"
     ),
@@ -180,7 +180,7 @@ const OF_ESLINT: &[Param] = &[
     ),
 ];
 
-const OF_OXLINT: &[Param] = &[
+const OXLINT_COMPAT: &[Param] = &[
     clap::param!("-A, --allow <rule>...           Turn off a rule or a category"),
     clap::param!("-W, --warn <rule>...            Make a rule or a category a warning"),
     clap::param!("-D, --deny <rule>...            Make a rule or a category an error"),
@@ -245,11 +245,11 @@ pub const HELP: Help = Help {
         },
         Group {
             title: "Compatibility with ESLint",
-            params: OF_ESLINT,
+            params: ESLINT_COMPAT,
         },
         Group {
             title: "Compatibility with oxlint",
-            params: OF_OXLINT,
+            params: OXLINT_COMPAT,
         },
     ],
     common: &[
@@ -270,15 +270,24 @@ pub const HELP: Help = Help {
 
 const _: () = assert!(
     HELP.describes_every_flag(),
-    "A flag of `bun lint` has no description, so `--help --all` leaves it out."
+    "A `bun lint` flag has no description, so `--help --all` would skip it."
 );
 
 pub(crate) const PARAMS: &[Param] = clap::concat_params!(
-    RULES, FILES, OUTPUT, FIXING, TYPES, OTHER, OF_ESLINT, OF_OXLINT, OPPOSITES
+    RULES,
+    FILES,
+    OUTPUT,
+    FIXING,
+    TYPES,
+    OTHER,
+    ESLINT_COMPAT,
+    OXLINT_COMPAT,
+    OPPOSITES
 );
 
-/// Flags only ESLint has. A flag never picks the tool. These lists only let a run reject flags that can't work with its config.
-const ONLY_OF_ESLINT: [&[u8]; 35] = [
+/// Flags only ESLint has. A flag never picks the tool. These lists only let a run reject flags that can't work with its
+/// config.
+const ESLINT_ONLY: [&[u8]; 35] = [
     b"config-lookup",
     b"rule",
     b"global",
@@ -316,8 +325,9 @@ const ONLY_OF_ESLINT: [&[u8]; 35] = [
     b"resolve-plugins-relative-to",
 ];
 
-/// Flags only oxlint has, besides `--import-plugin` and friends. Flags that `--help` lists as Bun's own don't belong here.
-const ONLY_OF_OXLINT: [&[u8]; 8] = [
+/// Flags only oxlint has, besides `--import-plugin` and friends. Flags that `--help` lists as Bun's own don't belong
+/// here.
+const OXLINT_ONLY: [&[u8]; 8] = [
     b"allow",
     b"warn",
     b"deny",
@@ -328,37 +338,37 @@ const ONLY_OF_OXLINT: [&[u8]; 8] = [
     b"lsp",
 ];
 
-/// Those of [`ONLY_OF_ESLINT`] that nothing can be done about with a configuration of oxlint.
-const NOTHING_TO_OXLINT: [&[u8]; 3] = [b"ext", b"parser", b"report-unused-inline-configs"];
+/// The [`ESLINT_ONLY`] flags that can't be honored with an oxlint config.
+const UNSUPPORTED_WITH_OXLINT: [&[u8]; 3] = [b"ext", b"parser", b"report-unused-inline-configs"];
 
-/// Those that ESLint 8 has and ESLint 9 has not.
-const ONLY_OF_ESLINT_8: [&[u8]; 4] = [
+/// Flags that ESLint 8 has and ESLint 9 doesn't.
+const ESLINT_8_ONLY: [&[u8]; 4] = [
     b"eslintrc",
     b"env",
     b"rulesdir",
     b"resolve-plugins-relative-to",
 ];
 
-/// A flag of the command line that only one of the two tools has.
+/// A flag on the command line that only one of the two tools has.
 #[derive(Clone, Debug)]
-pub struct OfOneTool {
+pub struct ToolSpecificFlag {
     tool: Tool,
     name: &'static [u8],
     value: Vec<u8>,
     is_on: bool,
 }
 
-impl OfOneTool {
-    /// Whether the flag can't work in a run that uses a `flavor` config.
-    fn means_nothing_to(&self, flavor: Flavor) -> bool {
-        let is_of_eslint_8 = ONLY_OF_ESLINT_8.contains(&self.name);
+impl ToolSpecificFlag {
+    /// True if the flag can't work in a run that uses a `flavor` config.
+    fn is_unsupported_with(&self, flavor: Flavor) -> bool {
+        let is_eslint_8_only = ESLINT_8_ONLY.contains(&self.name);
         match (self.tool, flavor) {
-            // The opposite of `--no-eslintrc` asks for nothing.
+            // `--eslintrc`, the opposite of `--no-eslintrc`, is a no-op.
             _ if self.name == b"eslintrc" && self.is_on => false,
             (Tool::Eslint, Flavor::Oxlint) => {
-                is_of_eslint_8 || NOTHING_TO_OXLINT.contains(&self.name)
+                is_eslint_8_only || UNSUPPORTED_WITH_OXLINT.contains(&self.name)
             }
-            (Tool::Eslint, Flavor::Eslint) => is_of_eslint_8,
+            (Tool::Eslint, Flavor::Eslint) => is_eslint_8_only,
             (Tool::Eslint, Flavor::EslintRc | Flavor::BuiltIn) | (Tool::Oxlint, Flavor::Oxlint) => {
                 false
             }
@@ -371,8 +381,8 @@ impl OfOneTool {
         }
     }
 
-    /// As it is written, and whose it is.
-    fn written(&self) -> (Vec<u8>, &'static [u8]) {
+    /// The flag as written, and the tool it belongs to.
+    fn spelling_and_tool(&self) -> (Vec<u8>, &'static [u8]) {
         let flag: Vec<u8> = match self.name {
             b"allow" => b"-A".to_vec(),
             b"warn" => b"-W".to_vec(),
@@ -381,12 +391,12 @@ impl OfOneTool {
             name => [b"--no-", name].concat(),
         };
         let space: &[u8] = if self.value.is_empty() { b"" } else { b" " };
-        let whose: &[u8] = match self.tool {
+        let tool_name: &[u8] = match self.tool {
             Tool::Oxlint => b"oxlint",
-            Tool::Eslint if ONLY_OF_ESLINT_8.contains(&self.name) => b"ESLint 8",
+            Tool::Eslint if ESLINT_8_ONLY.contains(&self.name) => b"ESLint 8",
             Tool::Eslint => b"ESLint",
         };
-        ([&flag[..], space, &self.value].concat(), whose)
+        ([&flag[..], space, &self.value].concat(), tool_name)
     }
 }
 
@@ -408,8 +418,8 @@ pub enum FixType {
     Layout,
 }
 
-/// A wildcard like `"unicorn/*" = "off"`, which turns off every rule of a plugin. Wildcards are stored apart from single
-/// rules because only native mode supports them: see [`crate::native::expand_wildcards`].
+/// A wildcard like `"unicorn/*" = "off"`, which turns off every rule of a plugin. Wildcards are stored apart from
+/// single rules because only native mode supports them: see [`crate::native::expand_wildcards`].
 #[derive(Clone, Debug)]
 pub struct Wildcard {
     /// As written: `unicorn/*`.
@@ -443,13 +453,13 @@ pub struct Override {
     pub excluded: Vec<Vec<u8>>,
     pub rules: Vec<(Vec<u8>, Json)>,
     /// bunfig.toml location of each entry in `rules`.
-    pub places: Vec<crate::bunfig::RuleOfBunfig>,
+    pub rule_locations: Vec<crate::bunfig::BunfigRule>,
     pub wildcards: Vec<Wildcard>,
     pub globals: Vec<(Vec<u8>, Json)>,
     pub settings: Vec<(Vec<u8>, Json)>,
 }
 
-/// What the command line says. The fields are ESLint's `ParsedCLIOptions`, by their names.
+/// The parsed command line. The fields are named after ESLint's `ParsedCLIOptions`.
 #[derive(Clone, Debug)]
 pub struct Options {
     /// ESLint's `_`: files, directories and patterns.
@@ -457,8 +467,8 @@ pub struct Options {
     pub config: Option<Vec<u8>>,
     pub config_lookup: bool,
     pub flavor: Option<Tool>,
-    /// In the order of the command line.
-    pub of_one_tool: Vec<OfOneTool>,
+    /// In command-line order.
+    pub tool_specific_flags: Vec<ToolSpecificFlag>,
     pub ext: Option<Vec<Vec<u8>>>,
     pub global: Vec<Vec<u8>>,
     /// `[lint.globals]` from bunfig.toml. `--global` is applied after it.
@@ -468,41 +478,41 @@ pub struct Options {
     /// `[lint.settings]` from bunfig.toml. Same as `settings` in an ESLint or oxlint config. There's no flag for it.
     pub settings: Vec<(Vec<u8>, Json)>,
     pub plugin: Vec<Vec<u8>>,
-    /// About the first entries of `plugin`, which came from `plugins` in `[lint]`.
-    pub plugins_of_bunfig: Vec<crate::bunfig::PluginOfBunfig>,
+    /// Details for the first entries of `plugin`, which came from `plugins` in `[lint]`.
+    pub bunfig_plugins: Vec<crate::bunfig::BunfigPlugin>,
     pub rule: Vec<(Vec<u8>, Json)>,
     /// bunfig.toml locations for the first entries of `rule`, which came from `[lint.rules]`.
-    pub rules_of_bunfig: Vec<crate::bunfig::RuleOfBunfig>,
+    pub bunfig_rules: Vec<crate::bunfig::BunfigRule>,
     /// The bunfig that was read, as written: `bunfig.toml`, or the path from `bun --config=<path> lint`.
     pub bunfig: Vec<u8>,
-    /// It has a `[lint]` section, which was read.
-    pub has_section_of_bunfig: bool,
-    /// `bun --config=<path>` names it.
-    pub is_bunfig_named: bool,
-    /// [`Options::config`] is what bunfig.toml says.
-    pub is_config_of_bunfig: bool,
-    /// [`Options::suppressions_location`] is what the flag says.
-    pub is_suppressions_location_of_flag: bool,
+    /// True if it has a `[lint]` section, which was read.
+    pub has_bunfig_section: bool,
+    /// True if it was passed with `bun --config=<path>`.
+    pub is_bunfig_from_flag: bool,
+    /// True if [`Options::config`] came from bunfig.toml.
+    pub config_is_from_bunfig: bool,
+    /// True if [`Options::suppressions_location`] came from the flag.
+    pub suppressions_location_is_from_flag: bool,
     /// Wildcards from `[lint.rules]`, then from `--rule` and `-A`.
     pub wildcards: Vec<Wildcard>,
     /// `[[lint.overrides]]` from bunfig.toml. There's no flag for it.
     pub overrides: Vec<Override>,
-    /// Only set if there are `overrides`, or if a flag has a wildcard. The command line's options on their own, because its
-    /// rules and globals apply after the overrides, and its wildcards after the single rules of bunfig.toml.
-    pub of_command_line: Option<Box<Options>>,
+    /// Only set if there are `overrides`, or if a flag has a wildcard. The command line's options on their own, because
+    /// its rules and globals apply after the overrides, and its wildcards after bunfig.toml's single rules.
+    pub command_line_options: Option<Box<Options>>,
     pub fix: bool,
     pub fix_dry_run: bool,
     pub fix_type: Option<Vec<FixType>>,
     pub ignore: bool,
     pub ignore_pattern: Vec<Vec<u8>>,
-    /// How many of them, the first, are of bunfig.toml: those start where that file is.
-    pub ignore_patterns_of_bunfig: usize,
+    /// The number of leading entries that came from bunfig.toml. Those are relative to that file's directory.
+    pub bunfig_ignore_pattern_count: usize,
     /// `--staged`, `--changed`
     pub only: Option<crate::git::Only>,
     pub stdin: bool,
     pub stdin_filename: Option<Vec<u8>>,
     pub quiet: bool,
-    /// `-1`: any number.
+    /// `-1` means no limit.
     pub max_warnings: i64,
     pub output_file: Option<Vec<u8>>,
     pub format: Option<Vec<u8>>,
@@ -515,7 +525,7 @@ pub struct Options {
     pub exit_on_fatal_error: bool,
     pub warn_ignored: bool,
     pub pass_on_no_patterns: bool,
-    /// Empty: no file is named, as for oxlint.
+    /// Empty if no file was given, which oxlint allows.
     pub print_config: Option<Vec<u8>>,
     /// Report what a run would do with this config, without linting.
     pub doctor: bool,
@@ -528,39 +538,39 @@ pub struct Options {
     pub env_info: bool,
     pub version: bool,
     pub help: bool,
-    /// Flags of ESLint that are accepted and have no effect, as they were written.
-    pub without_effect: Vec<&'static [u8]>,
-    /// oxlint's `--fix-suggestions`: the first suggestion of a problem is applied like a fix.
+    /// ESLint flags that are accepted but have no effect, as written.
+    pub ignored_flags: Vec<&'static [u8]>,
+    /// oxlint's `--fix-suggestions`: applies a problem's first suggestion like a fix.
     pub fix_suggestions: bool,
     /// oxlint's `--fix-dangerously`.
     pub fix_dangerously: bool,
-    /// `--fix` itself, and not another flag that sets [`Options::fix`].
+    /// True for `--fix` itself, not for another flag that sets [`Options::fix`].
     pub fix_safely: bool,
-    /// oxlint's `--rules`: lists the rules, and lints nothing.
+    /// oxlint's `--rules`: lists the rules without linting.
     pub rules: bool,
     /// Print this rule's docs page, without linting.
     pub explain: Option<Vec<u8>>,
-    /// oxlint's `--import-plugin` and `--disable-oxc-plugin`, ..: a plugin by the name that it has
-    /// in `plugins`, and whether it is on.
+    /// oxlint's `--import-plugin`, `--disable-oxc-plugin` and so on: each plugin's name as in `plugins`, and whether
+    /// it's on.
     pub plugins: Vec<(&'static [u8], bool)>,
-    /// `--type-aware`, `--no-type-aware`. `None`: as the configuration says.
+    /// `--type-aware`, `--no-type-aware`. `None` means whatever the configuration says.
     pub type_aware: Option<bool>,
-    /// `--infer-globals`, `--no-infer-globals`. `None`: only without a configuration file.
+    /// `--infer-globals`, `--no-infer-globals`. `None` means it's on only without a configuration file.
     pub infer_globals: Option<bool>,
-    /// `--infer-globals=fast`: `InferGlobals::ByOptions` without a configuration file. It is to become what is done there
-    /// without a flag, once it costs a project that reports no name next to nothing.
+    /// `--infer-globals=fast`: uses `InferGlobals::ByOptions` when there's no configuration file. It's meant to become
+    /// the default there, once it's nearly free for a project where no name is reported.
     pub infers_globals_by_options: bool,
     pub tsconfig: Option<Vec<u8>>,
-    /// `0`: the number of cores.
+    /// `0` means one per core.
     pub threads: usize,
     pub timing: bool,
-    /// Identical problems are not grouped.
+    /// Don't group identical problems.
     pub all: bool,
-    /// Print the files that would be linted, and lint nothing.
+    /// Print the files that would be linted, without linting.
     pub list_files: bool,
     /// Add `[lint]` to bunfig.toml.
     pub init: bool,
-    /// oxlint's `--type-check`: report what the type checker reports too.
+    /// oxlint's `--type-check`: also report type errors.
     pub type_check: bool,
     pub cwd: Option<Vec<u8>>,
     /// oxlint's `-A`, `-W`, `-D`, in order: a rule or a category.
@@ -568,15 +578,17 @@ pub struct Options {
     pub deny_warnings: bool,
     pub silent: bool,
     pub ignore_path: Option<Vec<u8>>,
-    /// `ignorePath` of bunfig.toml as it is written there: to oxlint it is a name, for every directory.
-    pub ignore_file_name_of_bunfig: Option<Vec<u8>>,
+    /// bunfig.toml's `ignorePath` as written. oxlint treats it as a file name to look for in every directory.
+    pub bunfig_ignore_file_name: Option<Vec<u8>>,
+    /// Filled by [`Options::load_pipes`].
+    pub(crate) pipes: fs::NamedPipes,
     pub disable_nested_config: bool,
-    /// What the configuration asks for and cannot be done is a warning, and not an error at the end.
+    /// Unsupported things in the configuration are warnings instead of an error at the end.
     pub allow_unsupported: bool,
     pub native_plugin_rules: NativePlugins,
-    /// The defaults of the flags of `bun fmt`, for the rule `bun/format`. No flag sets them.
-    pub of_bun_format: Option<Box<crate::fmt::cli::Options>>,
-    /// Not ESLint 8's `--no-eslintrc`: its configuration files are looked for.
+    /// The defaults for `bun fmt`'s flags, for the rule `bun/format`. No flag sets them.
+    pub bun_format_defaults: Option<Box<crate::fmt::cli::Options>>,
+    /// False for ESLint 8's `--no-eslintrc`. True means `.eslintrc` files are looked up.
     pub eslintrc: bool,
     /// ESLint 8's `--env`.
     pub env: Vec<Vec<u8>>,
@@ -593,7 +605,7 @@ impl Default for Options {
             config: None,
             config_lookup: true,
             flavor: None,
-            of_one_tool: Vec::new(),
+            tool_specific_flags: Vec::new(),
             ext: None,
             global: Vec::new(),
             globals: Vec::new(),
@@ -601,23 +613,23 @@ impl Default for Options {
             parser_options: Vec::new(),
             settings: Vec::new(),
             plugin: Vec::new(),
-            plugins_of_bunfig: Vec::new(),
+            bunfig_plugins: Vec::new(),
             rule: Vec::new(),
-            rules_of_bunfig: Vec::new(),
+            bunfig_rules: Vec::new(),
             bunfig: b"bunfig.toml".to_vec(),
-            has_section_of_bunfig: false,
-            is_bunfig_named: false,
-            is_config_of_bunfig: false,
-            is_suppressions_location_of_flag: false,
+            has_bunfig_section: false,
+            is_bunfig_from_flag: false,
+            config_is_from_bunfig: false,
+            suppressions_location_is_from_flag: false,
             overrides: Vec::new(),
-            of_command_line: None,
+            command_line_options: None,
             wildcards: Vec::new(),
             fix: false,
             fix_dry_run: false,
             fix_type: None,
             ignore: true,
             ignore_pattern: Vec::new(),
-            ignore_patterns_of_bunfig: 0,
+            bunfig_ignore_pattern_count: 0,
             only: None,
             stdin: false,
             stdin_filename: None,
@@ -645,7 +657,7 @@ impl Default for Options {
             env_info: false,
             version: false,
             help: false,
-            without_effect: Vec::new(),
+            ignored_flags: Vec::new(),
             fix_suggestions: false,
             fix_dangerously: false,
             fix_safely: false,
@@ -667,11 +679,12 @@ impl Default for Options {
             deny_warnings: false,
             silent: false,
             ignore_path: None,
-            ignore_file_name_of_bunfig: None,
+            bunfig_ignore_file_name: None,
+            pipes: fs::NamedPipes::default(),
             disable_nested_config: false,
             allow_unsupported: false,
             native_plugin_rules: NativePlugins::All,
-            of_bun_format: None,
+            bun_format_defaults: None,
             eslintrc: true,
             env: Vec::new(),
             rulesdir: Vec::new(),
@@ -706,7 +719,11 @@ pub(crate) fn severity(name: &[u8], value: &[u8]) -> Result<Severity, UsageError
 }
 
 fn object(name: &[u8], value: &[u8], into: &mut Vec<(Vec<u8>, Json)>) -> Result<(), UsageError> {
-    let Some(entries) = bun_lint::linter::parse_levn_object(value) else {
+    let entries = match name {
+        b"rule" => bun_lint::linter::parse_levn_rules(value),
+        _ => bun_lint::linter::parse_levn_object(value),
+    };
+    let Some(entries) = entries else {
         return error(&[
             b"Invalid value for option '",
             name,
@@ -719,19 +736,20 @@ fn object(name: &[u8], value: &[u8], into: &mut Vec<(Vec<u8>, Json)>) -> Result<
     Ok(())
 }
 
-/// `value`: a path or a pattern, or a list of them, which are written from `directory`. `always`: also what starts with `**/`.
-fn start_at(directory: &[u8], value: &mut Json, always: bool) {
+/// Prepends `directory` to `value`, which is a relative path or pattern, or a list of them. With `always`, also to
+/// patterns that start with `**/`.
+fn prepend_directory(directory: &[u8], value: &mut Json, always: bool) {
     match value {
         Json::Array(all) => all
             .iter_mut()
-            .for_each(|it| start_at(directory, it, always)),
+            .for_each(|it| prepend_directory(directory, it, always)),
         Json::String(it) if !it.is_empty() => {
-            let (not, written) = match it.strip_prefix(b"!") {
+            let (negation, portable) = match it.strip_prefix(b"!") {
                 Some(rest) => (&b"!"[..], paths::from_native(rest)),
                 None => (&b""[..], paths::from_native(it)),
             };
-            if !paths::is_absolute(&written) && (always || !written.starts_with(b"**/")) {
-                *it = [not, &paths::join_normalized(directory, &written)].concat();
+            if !paths::is_absolute(&portable) && (always || !portable.starts_with(b"**/")) {
+                *it = [negation, &paths::join_normalized(directory, &portable)].concat();
             }
         }
         _ => {}
@@ -749,8 +767,8 @@ pub(crate) fn merge(into: &mut Vec<(Vec<u8>, Json)>, entries: Vec<(Vec<u8>, Json
 }
 
 impl Options {
-    /// Takes in the flag that is called `name`. `value`: `None` for a flag that takes none.
-    /// `is_on`: it is not written `--no-..`.
+    /// Applies the flag `name`. `value` is `None` for a flag that doesn't take one. `is_on` is false if it's written
+    /// `--no-..`.
     pub(crate) fn set(
         &mut self,
         name: &'static [u8],
@@ -759,11 +777,11 @@ impl Options {
     ) -> Result<(), UsageError> {
         let text = value.unwrap_or_default();
         let owned = || Some(text.to_vec());
-        let is_of_oxlint = ONLY_OF_OXLINT.contains(&name) || name.ends_with(b"-plugin");
-        let is_of_eslint = ONLY_OF_ESLINT.contains(&name);
-        if is_of_oxlint || is_of_eslint {
-            self.of_one_tool.push(OfOneTool {
-                tool: if is_of_oxlint {
+        let is_oxlint_only = OXLINT_ONLY.contains(&name) || name.ends_with(b"-plugin");
+        let is_eslint_only = ESLINT_ONLY.contains(&name);
+        if is_oxlint_only || is_eslint_only {
+            self.tool_specific_flags.push(ToolSpecificFlag {
+                tool: if is_oxlint_only {
                     Tool::Oxlint
                 } else {
                     Tool::Eslint
@@ -774,7 +792,7 @@ impl Options {
             });
         }
         match name {
-            b"config" => (self.config, self.is_config_of_bunfig) = (owned(), false),
+            b"config" => (self.config, self.config_is_from_bunfig) = (owned(), false),
             b"config-lookup" => self.config_lookup = is_on,
             b"flavor" => {
                 self.flavor = Some(match text {
@@ -786,10 +804,10 @@ impl Options {
                 })
             }
             b"rule" => {
-                let mut said = Vec::new();
-                object(name, text, &mut said)?;
-                let (wildcards, said): (Vec<_>, Vec<_>) =
-                    (said.into_iter()).partition(|it| Wildcard::plugin_of(&it.0).is_some());
+                let mut parsed = Vec::new();
+                object(name, text, &mut parsed)?;
+                let (wildcards, parsed): (Vec<_>, Vec<_>) =
+                    (parsed.into_iter()).partition(|it| Wildcard::plugin_of(&it.0).is_some());
                 for (id, setting) in wildcards {
                     let severity = setting.as_array().and_then(|it| it.first());
                     let severity = severity.unwrap_or(&setting);
@@ -798,14 +816,15 @@ impl Options {
                     }
                     self.wildcards.push(Wildcard { id, key_at: None });
                 }
-                // What bunfig.toml has about them is no longer what counts.
-                for (at, place) in self.rules_of_bunfig.iter_mut().enumerate() {
-                    if (self.rule.get(at)).is_some_and(|it| said.iter().any(|said| said.0 == it.0))
+                // The flag overrides bunfig.toml's entries for these rules.
+                for (at, bunfig_rule) in self.bunfig_rules.iter_mut().enumerate() {
+                    if (self.rule.get(at))
+                        .is_some_and(|it| parsed.iter().any(|parsed| parsed.0 == it.0))
                     {
-                        place.setting = Json::Null;
+                        bunfig_rule.setting = None;
                     }
                 }
-                merge(&mut self.rule, said);
+                merge(&mut self.rule, parsed);
             }
             b"global" => self.global.extend(list(text)),
             b"parser-options" => object(name, text, &mut self.parser_options)?,
@@ -867,7 +886,7 @@ impl Options {
             b"threads" | b"concurrency" => match (name, text) {
                 (b"concurrency", b"auto" | b"off") => {}
                 _ => match bun_core::fmt::parse_decimal::<usize>(text) {
-                    // For oxlint 0 is as many as there are cores.
+                    // For oxlint, 0 means one thread per core.
                     Some(count) if count > 0 || name == b"threads" => self.threads = count,
                     _ if name == b"concurrency" => {
                         return error(&[
@@ -896,7 +915,7 @@ impl Options {
                 .extend(list(text)),
             b"suppressions-location" => {
                 self.suppressions_location = owned();
-                self.is_suppressions_location_of_flag = true;
+                self.suppressions_location_is_from_flag = true;
             }
             b"prune-suppressions" => self.prune_suppressions = is_on,
             b"pass-on-unpruned-suppressions" => self.pass_on_unpruned_suppressions = is_on,
@@ -923,7 +942,7 @@ impl Options {
             b"silent" => self.silent = is_on,
             b"ignore-path" => {
                 self.ignore_path = owned();
-                self.ignore_file_name_of_bunfig = None;
+                self.bunfig_ignore_file_name = None;
             }
             b"disable-nested-config" => self.disable_nested_config = is_on,
             b"allow-unsupported" => self.allow_unsupported = is_on,
@@ -967,49 +986,52 @@ impl Options {
             }
             b"debug" | b"flag" | b"cache-file" | b"cache-location" | b"cache-strategy" => {}
             _ => {
-                if is_on && !self.without_effect.contains(&name) {
-                    self.without_effect.push(name);
+                if is_on && !self.ignored_flags.contains(&name) {
+                    self.ignored_flags.push(name);
                 }
             }
         }
         Ok(())
     }
 
-    /// As `--parser-options` with what `options` is.
+    /// Same as passing `options` with `--parser-options`.
     pub(crate) fn add_parser_options(&mut self, options: Vec<(Vec<u8>, Json)>) {
         merge(&mut self.parser_options, options);
     }
 
     /// Call after reading bunfig.toml. A key is never rejected as another tool's flag.
-    pub(crate) fn forget_whose_flags_it_has(&mut self) {
-        self.of_one_tool.clear();
+    pub(crate) fn clear_tool_specific_flags(&mut self) {
+        self.tool_specific_flags.clear();
     }
 
     /// Returns the first flag that can't work with a `flavor` config, as written, and the tool it belongs to.
-    pub(crate) fn flag_that_means_nothing_to(
+    pub(crate) fn first_unsupported_flag(
         &self,
         flavor: Flavor,
     ) -> Option<(Vec<u8>, &'static [u8])> {
-        let mut flags = self.of_one_tool.iter();
-        Some(flags.find(|it| it.means_nothing_to(flavor))?.written())
+        let mut flags = self.tool_specific_flags.iter();
+        Some(
+            flags
+                .find(|it| it.is_unsupported_with(flavor))?
+                .spelling_and_tool(),
+        )
     }
 
-    /// `args`: what follows `lint` on the command line.
+    /// `args` is everything after `lint` on the command line.
     pub fn parse(args: &[&[u8]]) -> Result<Options, UsageError> {
         Options::default().with(args)
     }
 
-    /// `self`: what the bunfig at `path` says, which is a path from the working directory. What is a path in it starts at
-    /// [`Options::start_of_bunfig`]. `is_named`: [`Options::is_bunfig_named`].
-    pub fn of_bunfig_at(mut self, path: &[u8], is_named: bool, cwd: &[u8]) -> Options {
+    /// `self` has the options parsed from the bunfig at `path`, which is relative to the working directory. Paths in it
+    /// are relative to [`Options::bunfig_base_directory`]. `is_named` becomes [`Options::is_bunfig_from_flag`].
+    pub fn from_bunfig_at(mut self, path: &[u8], is_named: bool, cwd: &[u8]) -> Options {
         self.bunfig = paths::from_native(path);
-        self.has_section_of_bunfig = true;
-        self.is_bunfig_named = is_named;
-        self.is_config_of_bunfig = self.config.is_some();
-        self.is_suppressions_location_of_flag = false;
-        self.ignore_patterns_of_bunfig = self.ignore_pattern.len();
-        self.ignore_file_name_of_bunfig
-            .clone_from(&self.ignore_path);
+        self.has_bunfig_section = true;
+        self.is_bunfig_from_flag = is_named;
+        self.config_is_from_bunfig = self.config.is_some();
+        self.suppressions_location_is_from_flag = false;
+        self.bunfig_ignore_pattern_count = self.ignore_pattern.len();
+        self.bunfig_ignore_file_name.clone_from(&self.ignore_path);
         let directory = paths::dirname(&self.bunfig).to_vec();
         if directory != b"." && !is_named {
             let all = [
@@ -1019,43 +1041,57 @@ impl Options {
                 &mut self.tsconfig,
             ];
             for it in all.into_iter().flatten() {
-                let written = paths::from_native(it);
-                if !paths::is_absolute(&written) {
-                    *it = paths::join_normalized(&directory, &written);
+                let portable = paths::from_native(it);
+                if !paths::is_absolute(&portable) {
+                    *it = paths::join_normalized(&directory, &portable);
                 }
             }
         }
-        self.start_settings_at_bunfig(cwd);
+        self.rebase_settings_paths(cwd);
         self
     }
 
-    /// `rules`, with where bunfig.toml has them: `places`. The rules read the paths and the patterns in their options from the
-    /// working directory. In what the file has they are written from where the file is.
-    pub(crate) fn from_the_working_directory(
+    /// Reads any named pipes passed to `--config` and `--ignore-path`. See [`fs::NamedPipes::load`].
+    pub(crate) fn load_pipes(&mut self, cwd: &[u8]) -> Result<(), Vec<u8>> {
+        let mut named = Vec::new();
+        if !self.config_is_from_bunfig {
+            named.extend(self.config.clone());
+        }
+        if self.bunfig_ignore_file_name.is_none() {
+            named.extend(self.ignore_path.clone());
+        }
+        self.pipes.load(cwd, &named)
+    }
+
+    /// Returns `rules` with the paths and patterns in their options rebased. `rule_locations` has each rule's location
+    /// in bunfig.toml. Rules resolve those paths from the working directory, but in bunfig.toml they're written
+    /// relative to the file.
+    pub(crate) fn rebase_rule_paths(
         &self,
         rules: &[(Vec<u8>, Json)],
-        places: &[crate::bunfig::RuleOfBunfig],
+        rule_locations: &[crate::bunfig::BunfigRule],
         is_oxlint: bool,
         cwd: &[u8],
     ) -> Vec<(Vec<u8>, Json)> {
         let mut rules = rules.to_vec();
-        let Some(directory) = self.way_to_bunfig() else {
+        let Some(directory) = self.relative_bunfig_directory() else {
             return rules;
         };
         for (at, (id, setting)) in rules.iter_mut().enumerate() {
             // `--rule` may have replaced this entry.
-            if places.get(at).is_none_or(|it| it.setting != *setting) {
+            let bunfig_setting = rule_locations.get(at).and_then(|it| it.setting.as_ref());
+            if bunfig_setting != Some(&*setting) {
                 continue;
             }
             let (prefix, name) = parse_rule_id(id);
             if !Plugin::spelled(&plugin_shorthand(prefix)).any(|it| it == Plugin::Import) {
                 continue;
             }
-            // What is held against the whole path of a file is the same from everywhere if it starts with `**/`. With what files
-            // are looked for it is not.
+            // A pattern matched against a file's full path means the same from any directory if it starts with `**/`. A
+            // pattern used to find files doesn't.
             let (keys, finds_files): (&[&[u8]], bool) = match name {
                 b"no-restricted-paths" => (&[b"basePath"], false),
-                // oxlint holds them against what is written in the import.
+                // oxlint matches them against the import specifier as written.
                 b"no-unassigned-import" if !is_oxlint => (&[b"allow"], false),
                 b"no-unused-modules" => (&[b"src", b"ignoreExports"], true),
                 b"no-extraneous-dependencies" => (
@@ -1076,21 +1112,23 @@ impl Options {
             let Some(Json::Object(options)) = parts.get_mut(1) else {
                 continue;
             };
-            // What is the working directory if nothing is said.
-            let usual = match name {
+            // Options that default to the working directory.
+            let default_option = match name {
                 b"no-restricted-paths" => Some((&b"basePath"[..], Json::String(b".".to_vec()))),
                 b"no-unused-modules" => {
                     Some((&b"src"[..], Json::Array(vec![Json::String(b".".to_vec())])))
                 }
                 _ => None,
             };
-            if let Some((key, value)) = usual.filter(|it| !options.iter().any(|at| at.0 == it.0)) {
+            if let Some((key, value)) =
+                default_option.filter(|it| !options.iter().any(|at| at.0 == it.0))
+            {
                 options.push((key.to_vec(), value));
             }
             for (key, value) in options.iter_mut().filter(|it| keys.contains(&&it.0[..])) {
                 match (name, &key[..], &mut *value) {
-                    // The name of a package is held against them too, as it is written: `dotenv/config`. It is one if there is
-                    // nothing of that name beside bunfig.toml.
+                    // They're also matched against package names as written, like `dotenv/config`. An entry is treated
+                    // as a package name if nothing with that name exists next to bunfig.toml.
                     (b"no-unassigned-import", _, Json::Array(all)) => {
                         let is_path = |it: &[u8]| {
                             let first = it.strip_prefix(b"!").unwrap_or(it);
@@ -1098,12 +1136,12 @@ impl Options {
                             strings::contains_any(first, b"*?[{(")
                                 || matches!(first, b"." | b"..")
                                 || {
-                                    let beside = paths::join_normalized(directory, first);
-                                    bun_sys::exists(&paths::resolve(cwd, &beside))
+                                    let sibling = paths::join_normalized(directory, first);
+                                    bun_sys::exists(&paths::resolve(cwd, &sibling))
                                 }
                         };
                         let paths = all.iter_mut().filter(|it| it.as_str().is_some_and(is_path));
-                        paths.for_each(|it| start_at(directory, it, finds_files));
+                        paths.for_each(|it| prepend_directory(directory, it, finds_files));
                     }
                     // `path.resolve(cwd, "")`
                     (_, b"basePath", Json::String(it)) if it.is_empty() => *it = directory.to_vec(),
@@ -1111,31 +1149,33 @@ impl Options {
                         for it in all {
                             match it {
                                 Json::String(it) if it.is_empty() => *it = directory.to_vec(),
-                                it => start_at(directory, it, finds_files),
+                                it => prepend_directory(directory, it, finds_files),
                             }
                         }
                     }
-                    _ => start_at(directory, value, finds_files),
+                    _ => prepend_directory(directory, value, finds_files),
                 }
             }
         }
         rules
     }
 
-    /// The bunfig.toml above the working directory whose `[lint]` was found.
+    /// The bunfig.toml in a parent of the working directory, if its `[lint]` section was read.
     pub(crate) fn bunfig_above(&self) -> Option<&[u8]> {
-        (self.way_to_bunfig().is_some() && self.has_section_of_bunfig).then_some(&self.bunfig)
+        (self.relative_bunfig_directory().is_some() && self.has_bunfig_section)
+            .then_some(&self.bunfig)
     }
 
-    /// From the working directory to the directory above it that has bunfig.toml.
-    fn way_to_bunfig(&self) -> Option<&[u8]> {
+    /// The relative path from the working directory to the parent directory that has bunfig.toml.
+    fn relative_bunfig_directory(&self) -> Option<&[u8]> {
         let directory = paths::dirname(&self.bunfig);
-        (directory != b"." && !self.is_bunfig_named).then_some(directory)
+        (directory != b"." && !self.is_bunfig_from_flag).then_some(directory)
     }
 
-    /// `settings` and `parserOptions`, which only bunfig.toml has so far: see [`Options::from_the_working_directory`].
-    fn start_settings_at_bunfig(&mut self, cwd: &[u8]) {
-        let Some(directory) = self.way_to_bunfig().map(<[u8]>::to_vec) else {
+    /// Rebases the paths in `settings` and `parserOptions`, which at this point only came from bunfig.toml. See
+    /// [`Options::rebase_rule_paths`].
+    fn rebase_settings_paths(&mut self, cwd: &[u8]) {
+        let Some(directory) = self.relative_bunfig_directory().map(<[u8]>::to_vec) else {
             return;
         };
         fn options_of<'a>(json: &'a mut Json, key: &[u8]) -> Option<&'a mut Json> {
@@ -1144,52 +1184,52 @@ impl Options {
             };
             Some(&mut entries.iter_mut().find(|it| it.0 == key)?.1)
         }
-        // All that `require_resolver` of the rules reads and that is a path.
-        fn start_options_at(directory: &[u8], cwd: &[u8], name: &[u8], options: &mut Json) {
-            // By its short name, by the name of its package, or by a path into that.
+        // Every path option that the rules' `require_resolver` reads.
+        fn rebase_resolver_options(directory: &[u8], cwd: &[u8], name: &[u8], options: &mut Json) {
+            // Matches its short name, its package name, or a path into the package.
             let is =
                 |it: &[u8]| name == it || strings::contains(name, &[b"-resolver-", it].concat());
             if is(b"node") {
-                // Whole: `resolve` goes about one that is relative in a way of its own.
+                // Made absolute, because `resolve` has its own handling of relative paths.
                 if let Some(value) = options_of(options, b"paths") {
-                    start_at(&paths::resolve(cwd, directory), value, true);
+                    prepend_directory(&paths::resolve(cwd, directory), value, true);
                 }
             } else if is(b"typescript") {
                 if let Some(value) = options_of(options, b"project") {
-                    start_at(directory, value, true);
+                    prepend_directory(directory, value, true);
                 }
                 let file =
                     options_of(options, b"tsconfig").and_then(|it| options_of(it, b"configFile"));
                 if let Some(value) = file {
-                    start_at(directory, value, true);
+                    prepend_directory(directory, value, true);
                 }
             }
         }
-        fn start_resolver_at(directory: &[u8], cwd: &[u8], resolver: &mut Json) {
+        fn rebase_resolver(directory: &[u8], cwd: &[u8], resolver: &mut Json) {
             match resolver {
                 Json::Array(all) => all
                     .iter_mut()
-                    .for_each(|it| start_resolver_at(directory, cwd, it)),
+                    .for_each(|it| rebase_resolver(directory, cwd, it)),
                 Json::Object(all) => (all.iter_mut())
-                    .for_each(|it| start_options_at(directory, cwd, &it.0, &mut it.1)),
+                    .for_each(|it| rebase_resolver_options(directory, cwd, &it.0, &mut it.1)),
                 _ => {}
             }
         }
-        let of_overrides = self.overrides.iter_mut().map(|it| &mut it.settings);
+        let override_settings = self.overrides.iter_mut().map(|it| &mut it.settings);
         for (key, value) in std::iter::once(&mut self.settings)
-            .chain(of_overrides)
+            .chain(override_settings)
             .flatten()
         {
             match &key[..] {
                 b"import/resolver" | b"import-x/resolver" => {
-                    start_resolver_at(&directory, cwd, value);
+                    rebase_resolver(&directory, cwd, value);
                 }
                 // "backward compatibility"
-                b"import/resolve" => start_options_at(&directory, cwd, b"node", value),
+                b"import/resolve" => rebase_resolver_options(&directory, cwd, b"node", value),
                 _ => {}
             }
         }
-        // `project` starts at `tsconfigRootDir`.
+        // `project` is relative to `tsconfigRootDir`.
         let has_root = self
             .parser_options
             .iter()
@@ -1200,68 +1240,73 @@ impl Options {
             b"project"
         };
         for (_, value) in self.parser_options.iter_mut().filter(|it| it.0 == key) {
-            start_at(&directory, value, true);
+            prepend_directory(&directory, value, true);
         }
     }
 
-    /// Whether a rule is named that holds a file against what `bun fmt` prints, and so needs `[fmt]`.
-    pub fn names_a_format_rule(&self) -> bool {
-        let of_overrides = self.overrides.iter().flat_map(|it| &it.rules);
-        let of_filters = self.filters.iter().map(|it| &it.1[..]);
-        let names = self.rule.iter().chain(of_overrides).map(|it| &it.0[..]);
-        let mut names = names.chain(of_filters);
+    /// True if the options mention a rule that compares a file with `bun fmt`'s output, and so needs `[fmt]`.
+    pub fn mentions_format_rule(&self) -> bool {
+        let override_rules = self.overrides.iter().flat_map(|it| &it.rules);
+        let filter_names = self.filters.iter().map(|it| &it.1[..]);
+        let names = self.rule.iter().chain(override_rules).map(|it| &it.0[..]);
+        let mut names = names.chain(filter_names);
         names.any(|it| matches!(it, b"bun/format" | b"prettier/prettier"))
     }
 
-    /// Where the paths and the patterns in bunfig.toml start: where the file is, which is the project to a run from any
-    /// directory of it. `--config` can name a file that is kept anywhere, and then it is the working directory.
-    pub(crate) fn start_of_bunfig(&self, cwd: &[u8]) -> Vec<u8> {
-        match self.is_bunfig_named {
+    /// The directory that paths and patterns in bunfig.toml are relative to. It's the file's directory, so a run from
+    /// any directory in the project gets the same result. A file passed with `--config` can live anywhere, so then it's
+    /// the working directory.
+    pub(crate) fn bunfig_base_directory(&self, cwd: &[u8]) -> Vec<u8> {
+        match self.is_bunfig_from_flag {
             true => cwd.to_vec(),
             false => paths::dirname(&paths::resolve(cwd, &self.bunfig)).to_vec(),
         }
     }
 
-    /// The same, where a flag that is not there is as `defaults` says: [`crate::bunfig::lint`].
-    pub fn parse_over(mut defaults: Options, args: &[&[u8]]) -> Result<Options, UsageError> {
-        let alone = Options::parse(args)?;
+    /// Like [`Options::parse`], but flags that aren't passed keep their value from `defaults`, which come from
+    /// [`crate::bunfig::lint`].
+    pub fn parse_with_defaults(
+        mut defaults: Options,
+        args: &[&[u8]],
+    ) -> Result<Options, UsageError> {
+        let from_args = Options::parse(args)?;
         let names = |flag: &[u8]| {
             args.iter().any(|arg| {
                 let name = arg.strip_prefix(b"--").unwrap_or_default();
                 name.strip_prefix(b"no-").unwrap_or(name).starts_with(flag)
             })
         };
-        // ESLint refuses the flag and `..-severity` together. Either takes the place of what is there.
+        // ESLint rejects the flag together with `..-severity`. Either one replaces the default.
         if names(b"report-unused-disable-directives") {
             defaults.report_unused_disable_directives = false;
             defaults.report_unused_disable_directives_severity = None;
         }
-        // ESLint refuses `--fix-type` in a run that fixes nothing. As a default it waits for one that does.
-        if !alone.fix && !alone.fix_dry_run {
+        // ESLint rejects `--fix-type` in a run that doesn't fix. As a default, it only applies to runs that do.
+        if !from_args.fix && !from_args.fix_dry_run {
             defaults.fix_type = None;
         }
-        if !defaults.overrides.is_empty() || !alone.wildcards.is_empty() {
-            defaults.of_command_line = Some(Box::new(alone));
+        if !defaults.overrides.is_empty() || !from_args.wildcards.is_empty() {
+            defaults.command_line_options = Some(Box::new(from_args));
         }
         defaults.with(args)
     }
 
     fn with(self, args: &[&[u8]]) -> Result<Options, UsageError> {
         let mut options = self;
-        // What oxlint writes differently.
+        // Flags that oxlint spells differently.
         let (mut rewritten, count): (Vec<&[u8]>, usize) = (Vec::new(), args.len());
         for (at, arg) in args.iter().copied().enumerate() {
             match arg {
                 b"-V" => rewritten.push(b"--version"),
                 b"--infer-globals=fast" => options.infers_globals_by_options = true,
-                // The opposite of a flag that takes a value.
+                // Negates a flag that takes a value.
                 b"--no-native-plugin-rules" => rewritten.push(b"--native-plugin-rules=false"),
                 _ if arg.starts_with(b"--debug=") => {
-                    let written = &arg[b"--debug=".len()..];
-                    let cannot_parse = [b"couldn't parse `", written, b"`: "].concat();
-                    for option in strings::split(written, b",") {
+                    let debug_options = &arg[b"--debug=".len()..];
+                    let cannot_parse = [b"couldn't parse `", debug_options, b"`: "].concat();
+                    for option in strings::split(debug_options, b",") {
                         rewritten.push(match option {
-                            b"files" if written == b"files" => b"--list-files",
+                            b"files" if debug_options == b"files" => b"--list-files",
                             b"files" => {
                                 return error(&[
                                     &cannot_parse[..],
@@ -1280,7 +1325,7 @@ impl Options {
                         });
                     }
                 }
-                // It takes no file.
+                // Used without a file, as with oxlint.
                 b"--print-config"
                     if args.get(at + 1).is_none_or(|next| next.starts_with(b"-"))
                         || at + 1 == count =>

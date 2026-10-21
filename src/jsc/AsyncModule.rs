@@ -1148,24 +1148,6 @@ impl AsyncModule {
         // the enqueue, and the fd the parse opened may have been closed (and
         // the number recycled) by the transpile frame's fd guard.
 
-        // SAFETY: per-thread VM.
-        if unsafe { (*jsc_vm).is_watcher_enabled() } {
-            // SAFETY: per-thread VM.
-            let mut resolved_source = unsafe {
-                (*jsc_vm).ref_counted_resolved_source(
-                    printer.ctx.get_written(),
-                    &BunString::from_bytes(specifier),
-                    path.text,
-                    None,
-                )
-            };
-
-            resolved_source.is_commonjs_module = is_commonjs_module;
-            resolved_source.is_static = self.is_static;
-
-            return Ok(resolved_source);
-        }
-
         Ok(ResolvedSource {
             source_code: BunString::clone_latin1(printer.ctx.get_written()),
             source_url: BunString::from_bytes(path.text),

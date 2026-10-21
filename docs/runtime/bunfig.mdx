@@ -20,7 +20,7 @@ When `XDG_CONFIG_HOME` is set to an absolute path, Bun reads the file there and 
 
 Only package manager commands (`bun install`, `bun add`, `bun remove`, `bun update`, `bun pm`, `bunx`, and so on) read the global file. If Bun finds both a global and a local `bunfig`, it loads both; keys set in the local file override the same keys in the global file. CLI flags override `bunfig` settings where applicable.
 
-Bun warns when one of these files exists but cannot be read. A command that installs or publishes packages then stops with an error. Other commands continue without its settings. A directory in the file's place gets the warning only.
+Like npm, Bun skips any of these files that it can't read.
 
 ## Runtime
 
@@ -528,6 +528,8 @@ Skip the files that match. `bun lint` already skips `node_modules` and everythin
 [lint]
 ignorePatterns = ["vendor/", "**/*.gen.ts"]
 ```
+
+Each pattern is a line of a `.gitignore` next to `bunfig.toml`, like [`format.ignorePatterns`](#format-ignorepatterns): `vendor/` skips every directory with that name, `/vendor/` only the one next to `bunfig.toml`, and `!` keeps what an earlier pattern skips. The exception is a project with an `eslint.config.*` file, where they're added to its [`ignores`](https://eslint.org/docs/latest/use/configure/ignore), which are globs: there `vendor/` only matches next to `bunfig.toml`, and a pattern that starts with `/` matches nothing.
 
 ### `lint.settings`
 

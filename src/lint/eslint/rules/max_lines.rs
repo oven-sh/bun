@@ -14,8 +14,8 @@ const EXCEED: Message = Message::new(
     "File has too many lines ({{actual}}). Maximum allowed is {{max}}.",
 );
 
-/// ESLint's `getLinesWithoutCode`: the first and the last of the lines of `comment` that have no
-/// code on them. The `#!` line counts as code there, but no comment shares a line with it.
+/// ESLint's `getLinesWithoutCode`: the first and last of `comment`'s lines that have no code on them. The `#!` line
+/// counts as code there, but no comment shares a line with it.
 fn lines_without_code<'a>(file: &'a File<'a>, comment: Token<'a>) -> (u32, u32) {
     let mut start = file.line_of(comment.start());
     let mut end = file.line_of(comment.end());
@@ -47,15 +47,15 @@ impl Rule for MaxLines {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         let mut count = file.line_count();
-        // After a line break at the end of the file there is no line.
+        // A line break at the end of the file doesn't start another line.
         if count > 1 && file.line_span(count).is_empty() {
             count -= 1;
         }
         if count as usize <= self.max {
             return;
         }
-        // oxlint takes the lines of the comments from the lines that are not blank: a blank line in a comment is taken
-        // twice. It points at the last byte of the file.
+        // oxlint subtracts the comment lines from the non-blank lines, so a blank line inside a comment is subtracted
+        // twice. It reports at the last byte of the file.
         if cx.language().is_oxlint {
             let lines = match self.skip_blank_lines {
                 true => (1..=count).filter(|line| !strings::is_all_js_whitespace(file.line_text(*line))).count(),

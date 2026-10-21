@@ -1,5 +1,6 @@
 #include "root.h"
 #include "wtf-bindings.h"
+#include "helpers.h"
 #include "BunTTYState.h"
 #include <wtf/StackBounds.h>
 #include <wtf/StackCheck.h>
@@ -246,11 +247,15 @@ extern "C" double Bun__parseDateTimeString(const Latin1Character* string, size_t
 }
 
 namespace Bun {
-String base64URLEncodeToString(Vector<uint8_t> data)
+String base64URLEncodeToString(const Vector<uint8_t>& data)
 {
     auto size = data.size();
     size_t encodedLength = ((size * 4) + 2) / 3;
     if (!encodedLength)
+        return String();
+
+    // String::createUninitialized CRASH()es above String::MaxLength.
+    if (encodedLength > std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(String::MaxLength))) [[unlikely]]
         return String();
 
     std::span<Latin1Character> ptr;

@@ -910,11 +910,11 @@ pub struct NewSource<C: SourceContext> {
     /// `Finalized` so [`Self::on_close`] reads `None` instead of a
     /// dead-but-unswept cell.
     pub this_jsvalue: jsc::JsRef,
-    /// The producer's native ref does not root the wrapper ([`Self::unroot_wrapper`]).
-    pub wrapper_unrooted: Cell<bool>,
     /// The wrapper, as a GC root, from [`Self::hold_waiting_read`] until the read is taken to be
     /// settled, if [`SourceContext::roots_waiting_read`] says so.
     pub(crate) waiting_read_root: jsc::JsCell<jsc::strong::Optional>,
+    /// The producer's native ref does not root the wrapper ([`Self::unroot_wrapper`]).
+    pub wrapper_unrooted: Cell<bool>,
     /// R-2: written by context methods (`ByteStream::to_any_blob`,
     /// `ByteBlobLoader::to_any_blob`) through their parent accessor, so
     /// interior-mutable.
@@ -958,8 +958,8 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             producer: Cell::new(streams::SourceHandle::None),
             global_this: None,
             this_jsvalue: jsc::JsRef::empty(),
-            wrapper_unrooted: Cell::new(false),
             waiting_read_root: jsc::JsCell::new(jsc::strong::Optional::empty()),
+            wrapper_unrooted: Cell::new(false),
             is_closed: Cell::new(false),
             reader_context: Cell::new(None),
             abort_handle: jsc::AbortHandle::for_owner::<Self>(),

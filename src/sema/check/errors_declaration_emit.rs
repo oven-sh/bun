@@ -45,6 +45,24 @@ pub(super) enum EndOfChain {
     Yes,
 }
 
+/// The last two parameters of `IsAnySymbolAccessible`.
+#[derive(Copy, Clone)]
+struct Lookup {
+    /// `shouldComputeAliasesToMakeVisible`
+    paints: bool,
+    /// `allowModules`
+    allows_modules: bool,
+}
+
+impl Default for Lookup {
+    fn default() -> Self {
+        Lookup {
+            paints: false,
+            allows_modules: true,
+        }
+    }
+}
+
 /// The meaning a name is resolved with.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub(super) enum Meaning {
@@ -1010,7 +1028,22 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `IsTypeSymbolAccessible`
     pub(super) fn is_type_symbol_accessible_at(&mut self, symbol: Sym, at: Enclosing) -> bool {
-        self.is_any_symbol_accessible(&[symbol], at, symbol, Meaning::Type, false)
+        let how = Lookup::default();
+        self.is_any_symbol_accessible(&[symbol], at, symbol, Meaning::Type, how)
+            .is_some_and(|access| access.is_accessible())
+    }
+
+    /// `IsSymbolAccessibleByFlags(symbol, enclosingDeclaration, SymbolFlagsValue)`
+    pub(super) fn is_value_symbol_accessible_without_import_type(
+        &mut self,
+        symbol: Sym,
+        at: Enclosing,
+    ) -> bool {
+        let how = Lookup {
+            allows_modules: false,
+            ..Lookup::default()
+        };
+        self.is_any_symbol_accessible(&[symbol], at, symbol, Meaning::Value, how)
             .is_some_and(|access| access.is_accessible())
     }
 }
@@ -2477,11 +2510,12 @@ impl<'p, 's> Checker<'p, 's> {
         at: Enclosing,
         initial: Sym,
         meaning: Meaning,
-        paints: bool,
+        how: Lookup,
     ) -> Option<Access> {
         if self.is_stack_low() {
             return None;
         }
+        let paints = how.paints;
         let mut had_accessible_chain = None;
         let mut early_module_bail = false;
         for &symbol in symbols {
@@ -2493,7 +2527,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             // A module symbol, under any meaning, can be emitted as an `import` type.
-            if self.is_external_module_symbol(symbol) {
+            if how.allows_modules && self.is_external_module_symbol(symbol) {
                 if paints {
                     early_module_bail = true;
                     continue;
@@ -2506,8 +2540,7 @@ impl<'p, 's> Checker<'p, 's> {
             } else {
                 meaning
             };
-            let parent_access =
-                self.is_any_symbol_accessible(&containers, at, initial, next, paints);
+            let parent_access = self.is_any_symbol_accessible(&containers, at, initial, next, how);
             if parent_access.is_some() {
                 return parent_access;
             }
@@ -2537,8 +2570,11 @@ impl<'p, 's> Checker<'p, 's> {
         meaning: Meaning,
         paints: bool,
     ) -> Access {
-        if let Some(result) = self.is_any_symbol_accessible(&[symbol], at, symbol, meaning, paints)
-        {
+        let how = Lookup {
+            paints,
+            ..Lookup::default()
+        };
+        if let Some(result) = self.is_any_symbol_accessible(&[symbol], at, symbol, meaning, how) {
             return result;
         }
         self.inaccessible(symbol, at, meaning)

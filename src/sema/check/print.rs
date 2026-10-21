@@ -2287,7 +2287,16 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         yield_module_symbol: YieldModuleSymbol,
     ) -> Vec<Sym> {
         self.track_symbol(symbol, meaning);
-        // `lookupSymbolChainWorker`
+        self.lookup_symbol_chain_worker(symbol, meaning, yield_module_symbol)
+    }
+
+    /// `lookupSymbolChainWorker`
+    fn lookup_symbol_chain_worker(
+        &mut self,
+        symbol: Sym,
+        meaning: SymFlags,
+        yield_module_symbol: YieldModuleSymbol,
+    ) -> Vec<Sym> {
         let flags = self.c.files().flags(symbol);
         if flags.contains(SymFlags::TYPE_PARAMETER)
             || self.enclosing_declaration.is_none() && self.flags & USE_FULLY_QUALIFIED_TYPE == 0
@@ -2427,7 +2436,13 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `symbolToExpression(symbol, SymbolFlagsValue)`
     fn symbol_to_expression(&mut self, symbol: Sym) -> Vec<u8> {
-        let chain = self.lookup_symbol_chain(symbol, SymFlags::VALUE, YieldModuleSymbol::No);
+        self.track_symbol(symbol, SymFlags::VALUE);
+        self.symbol_to_expression_worker(symbol)
+    }
+
+    /// `symbolToExpressionWorker(symbol, SymbolFlagsValue)`
+    fn symbol_to_expression_worker(&mut self, symbol: Sym) -> Vec<u8> {
+        let chain = self.lookup_symbol_chain_worker(symbol, SymFlags::VALUE, YieldModuleSymbol::No);
         self.create_expression_from_symbol_chain(&chain, chain.len() - 1)
     }
 
@@ -4479,11 +4494,24 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 self.enclosing_declaration = Some(own);
             }
             let expression = match self.symbol_of_name_type(prop.name) {
-                Ok(symbol) => self.symbol_to_expression(symbol),
+                // `trackComputedName` has tracked the name where the type is printed.
+                Ok(symbol) => self.symbol_to_expression_worker(symbol),
                 Err(description) => self.text(description),
             };
             self.enclosing_declaration = outer;
             return cat!(b"[", expression, b"]");
+        }
+        // The `nameType` is an enum member.
+        if let Some(at) = self.enclosing_declaration
+            && let name_type = self.c.name_type_of_copy(TypeId::UNRESOLVED, prop)
+            && let TypeData::EnumLit { member, .. } | TypeData::Enum { symbol: member, .. } =
+                *self.c.data(name_type)
+        {
+            let parent = self.c.files().parent_of_symbol(member);
+            if (self.c).is_value_symbol_accessible_without_import_type(parent.unwrap_or(member), at)
+            {
+                return cat!(b"[", self.symbol_to_expression(member), b"]");
+            }
         }
         let name = self.text(prop.name);
         let mut name_syntaxes = Vec::new();

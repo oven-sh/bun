@@ -121,6 +121,8 @@ pub(super) struct CallState<'a> {
     /// so an argument that tsgo checks uncached (`checkExpression`) and again in the deferred check
     /// is checked once.
     pub(super) checks_arguments_once: bool,
+    /// `recursiveResolution`
+    is_recursive_resolution: bool,
     pub(super) candidates_for_argument_error: Sigs,
     pub(super) candidate_for_argument_arity_error: Option<SigId>,
     pub(super) candidate_for_type_argument_error: Option<SigId>,
@@ -1247,6 +1249,7 @@ impl<'p, 's> Checker<'p, 's> {
             arg_check_mode: CheckMode::empty(),
             is_single_non_generic_candidate: false,
             checks_arguments_once: false,
+            is_recursive_resolution: false,
             candidates_for_argument_error: Sigs::new(),
             candidate_for_argument_arity_error: None,
             candidate_for_type_argument_error: None,
@@ -1269,12 +1272,15 @@ impl<'p, 's> Checker<'p, 's> {
             s.arg_check_mode = CheckMode::SKIP_CONTEXT_SENSITIVE;
         }
         let mut result = None;
+        s.is_recursive_resolution = self.call_resolution_stack.contains(&(file, call));
+        self.call_resolution_stack.push((file, call));
         if s.candidates.len() > 1 {
             result = self.choose_overload(&mut s, Relation::Subtype);
         }
         if result.is_none() {
             result = self.choose_overload(&mut s, Relation::Assignable);
         }
+        self.call_resolution_stack.pop();
         let is_chosen = result.is_some();
         let sig = match result {
             Some(sig) => sig,
@@ -1370,6 +1376,10 @@ impl<'p, 's> Checker<'p, 's> {
                     let mut context =
                         Box::new(Inference::for_params(&type_params, Some(candidate)));
                     context.any_default = self.hir(s.file).is_js;
+                    // A recursive resolution of a call with one candidate skips the constraints, which could
+                    // otherwise be circular.
+                    context.no_constraint_checks =
+                        s.is_recursive_resolution && s.candidates.len() == 1;
                     let check_mode = s.arg_check_mode | CheckMode::SKIP_GENERIC_FUNCTIONS;
                     let mapper = self.infer_type_arguments(s, candidate, check_mode, &mut context);
                     if context.skipped_generic_function {
@@ -1495,6 +1505,7 @@ impl<'p, 's> Checker<'p, 's> {
                     let mut return_context =
                         Inference::for_params(&context.params, Some(signature));
                     return_context.any_default = context.any_default;
+                    return_context.no_constraint_checks = context.no_constraint_checks;
                     let return_source_type = match outer_context {
                         Some(level) => {
                             self.instantiate_with_outer_return_mapper(level, contextual_type)
@@ -1736,6 +1747,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut clone = Inference::for_params(&n.params, n.sig);
         clone.candidates.clone_from(&n.candidates);
         clone.any_default = n.any_default;
+        clone.no_constraint_checks = n.no_constraint_checks;
         clone.no_default = n.no_default || no_default;
         clone
     }
@@ -1752,6 +1764,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut part = Inference::for_params(&params, n.sig);
         part.candidates = inferences.map(|(_, c)| c.clone()).collect();
         part.any_default = n.any_default;
+        part.no_constraint_checks = n.no_constraint_checks;
         part.no_default = n.no_default;
         Some(Box::new(part))
     }

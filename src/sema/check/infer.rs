@@ -158,6 +158,8 @@ pub(super) struct Inference {
     pub(super) no_default: bool,
     /// `InferenceFlagsSkippedGenericFunction`
     pub(super) skipped_generic_function: bool,
+    /// `InferenceFlagsNoConstraintChecks`
+    pub(super) no_constraint_checks: bool,
     /// `inferredTypeParameters`
     pub(super) inferred_type_params: Vec<TypeId>,
     /// `intraExpressionInferenceSites`
@@ -193,6 +195,7 @@ impl Inference {
             outer_return_context: None,
             no_default: false,
             skipped_generic_function: false,
+            no_constraint_checks: false,
             inferred_type_params: Vec::new(),
             intra_expression_inference_sites: Vec::new(),
         };
@@ -235,6 +238,7 @@ impl Inference {
             outer_return_context,
             no_default,
             skipped_generic_function,
+            no_constraint_checks,
             inferred_type_params,
             intra_expression_inference_sites,
         } = self;
@@ -251,6 +255,7 @@ impl Inference {
         (*sig, *propagated, *return_context, *outer_return_context) = (None, None, None, None);
         (*contra, *bivariant, *has_reached_contextual_function) = (false, false, false);
         (*any_default, *no_default, *skipped_generic_function) = (false, false, false);
+        *no_constraint_checks = false;
         (*priority, *inference_priority) = (0, PRIORITY_MAX);
         (*expanding, *depth, *calls) = (0, 0, 0);
         *original_target = TypeId::NEVER;
@@ -3091,7 +3096,11 @@ impl<'p, 's> Checker<'p, 's> {
         c.inferred.set(Some(provisional));
         let so_far = self.non_fixing_mapper_comparing(n, constraint, compare);
         let constraint = self.instantiate(constraint, so_far);
-        if let Some(inference) = inferred {
+        // An inference from only the contextual return type is still filtered in a recursive resolution of a call,
+        // whose result can become the type of the enclosing declaration.
+        if let Some(inference) = inferred
+            && (!n.no_constraint_checks || c.priority == PRIORITY_RETURN)
+        {
             let constraint_with_this = self.type_with_this_argument(constraint, inference);
             if !compare(self, inference, constraint_with_this)
                 && !self.satisfies_constraint_in_outer_context(n, inference, constraint, compare)

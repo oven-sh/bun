@@ -1014,6 +1014,7 @@ impl<'s> Program<'s> {
             context_checked_here: Default::default(),
             in_check_identifier: Vec::new(),
             resolved_meanwhile: Vec::new(),
+            call_resolution_stack: Vec::new(),
             signatures_resolved_within: Vec::new(),
             restrictive_instantiations: Default::default(),
             unresolved_renamed_params: Default::default(),
@@ -1996,6 +1997,8 @@ pub struct Checker<'p, 's> {
     /// `resolvedSignature = result`, while `resolveCall` reports the errors of a call that no
     /// candidate accepts.
     resolved_meanwhile: Vec<(FileId, ExprId, call::ResolvedCall)>,
+    /// `callResolutionStack`
+    call_resolution_stack: Vec<(FileId, ExprId)>,
     /// `links.resolvedSignature` of a call that's being resolved, assigned by the first resolution
     /// nested in the outermost one that returns, if `Program::calls` doesn't accept that result.
     /// `getResolvedSignature` returns it instead of the result of each enclosing resolution.

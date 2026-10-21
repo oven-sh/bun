@@ -2819,7 +2819,7 @@ describe("compiled binary in a deleted cwd", () => {
 
 // The executable is staged in a temp file and renamed over the outfile. A rename leaves a regular
 // file under the name, whatever was there: as root, `--outfile=/dev/null` replaced the null device.
-// A character device or a FIFO has the executable written into it instead, like every other output
+// The null device or a FIFO has the executable written into it instead, like every other output
 // of `bun build`. Every node here is a scratch one in a temp directory, never an entry of /dev.
 // Serial: each build stages a copy of the whole bun executable, about 1 GB in a debug build.
 describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
@@ -2961,8 +2961,9 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
       });
     });
 
+    // A raw disk and the memory of the machine are character devices too.
     test.skipIf(!scratchDevice.whiteout)(
-      "fails on a character device that cannot be opened, and leaves it in place",
+      "refuses a character device that is not the null device, and leaves it in place",
       async () => {
         using dir = tempDir("compile-outfile-whiteout", files);
         const cwd = String(dir);
@@ -2973,14 +2974,13 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
 
         const result = await build(cwd, "out");
 
-        // EACCES when the temp directory is on a `nodev` mount.
+        const refused = `failed to write executable to "out": it is a character device other than the null device`;
         expect({ result, out: node(out), entries: readdirSync(cwd).sort() }).toEqual({
-          result: { ok: false, output: expect.stringMatching(/^failed to write executable to "out": (ENXIO|EACCES)$/) },
+          result: { ok: false, output: refused },
           out: before,
           entries: ["app.js", "build.ts", "out"],
         });
       },
-      60_000,
     );
 
     test.skipIf(!scratchDevice.nullDevice)(
@@ -3151,6 +3151,25 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
     });
   });
 
+  // Such a descriptor is how the program reads the FIFO. A write into it would wait for the program.
+  test.skipIf(!isLinux && !isMacOS)("Bun.build refuses a descriptor path that is open only for reading", async () => {
+    using dir = tempDir("compile-outfile-fifo-inlet", files);
+    const cwd = String(dir);
+    const fifo = join(cwd, "fifo");
+    mkfifo(fifo);
+    const before = node(fifo);
+    using readEnd = hold(fifo);
+
+    const result = await surfaces["Bun.build"](cwd, descriptor3, undefined, [readEnd.fd]);
+
+    const refused = `failed to write executable to "3": it is a FIFO, which only "bun build --compile" writes to`;
+    expect({ result, fifo: node(fifo), entries: readdirSync(cwd).sort() }).toEqual({
+      result: { ok: false, output: refused },
+      fifo: before,
+      entries: ["app.js", "build.ts", "fifo"],
+    });
+  });
+
   // Another user can put a FIFO under a name in a directory like /tmp, and read what is written
   // to it. A link leads the write to a node that its owner chose.
   describe.skipIf(!isRoot)("a name or a node of another user", () => {
@@ -3183,6 +3202,30 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
 
       expect({ result, out: node(out) }).toEqual({
         result: { ok: false, output: `failed to write executable to "shared/out": it belongs to another user` },
+        out: before,
+      });
+    });
+
+    // `mkdir -p /tmp/build` does not fail when another user made that directory first.
+    test("does not write into a FIFO of another user in a directory of that user", async () => {
+      using dir = tempDir("compile-outfile-theirs", files);
+      const cwd = String(dir);
+      using unprivileged = unprivilegedSpawnOptions(cwd);
+      const theirs = join(cwd, "theirs");
+      const out = join(theirs, "out");
+      mkdirSync(theirs);
+      chmodSync(theirs, 0o755);
+      mkfifo(out);
+      chmodSync(out, 0o666);
+      chownSync(out, 1, 1);
+      chownSync(theirs, 1, 1);
+      const before = node(out);
+
+      await using reader = readerOf(out);
+      const result = await surfaces["bun build --compile"](cwd, "theirs/out", unprivileged);
+
+      expect({ result, out: node(out) }).toEqual({
+        result: { ok: false, output: `failed to write executable to "theirs/out": it belongs to another user` },
         out: before,
       });
     });

@@ -3114,12 +3114,20 @@ impl Delivery {
         let mut basename_buf = bun_paths::path_buffer_pool::get();
         let basename = path::resolve_path::z(bun_paths::basename(outfile), &mut basename_buf);
         let kind_of = |stat: &Stat| bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode);
+        let is_special = |kind: FileKind| {
+            matches!(
+                kind,
+                FileKind::CharacterDevice
+                    | FileKind::NamedPipe
+                    | FileKind::UnixDomainSocket
+                    | FileKind::BlockDevice
+            )
+        };
 
         let Ok(entry) = bun_sys::lstatat(root_dir, basename) else {
             return Ok(Delivery::Replace);
         };
-        let is_link = kind_of(&entry) == FileKind::SymLink;
-        let node = if is_link {
+        let named = if kind_of(&entry) == FileKind::SymLink {
             let Ok(target) = bun_sys::fstatat(root_dir, basename) else {
                 return Ok(Delivery::Replace);
             };
@@ -3127,25 +3135,35 @@ impl Delivery {
         } else {
             entry
         };
-        let kind = kind_of(&node);
-        if !matches!(
-            kind,
-            FileKind::CharacterDevice
-                | FileKind::NamedPipe
-                | FileKind::UnixDomainSocket
-                | FileKind::BlockDevice
-        ) {
+        if !is_special(kind_of(&named)) {
             return Ok(Delivery::Replace);
         }
-
         let Ok(dir) = bun_sys::fstatat(root_dir, bun_core::zstr!(".")) else {
             return Ok(Delivery::Replace);
         };
+
+        // On macOS, the name of a descriptor has the identity of a node of `/dev`, not of its file.
+        let descriptor = named_descriptor(&dir, basename);
+        let node = descriptor.unwrap_or(named);
+        let kind = kind_of(&node);
+        if !is_special(kind) {
+            return Ok(Delivery::Replace);
+        }
+
         let dir_mode = dir.st_mode as bun_sys::Mode;
+        let shared = dir_mode & (S::IWGRP | S::IWOTH) != 0;
         let euid = bun_sys::c::geteuid();
-        // In a directory like `/tmp`, a write into another user's name hands them the executable.
-        if dir_mode & (S::IWGRP | S::IWOTH) != 0 && entry.st_uid != euid {
-            let can_replace = dir_mode & S::ISVTX == 0 || euid == 0 || dir.st_uid == euid;
+        let trusted = |stat: &Stat| stat.st_uid == euid || stat.st_uid == 0;
+        // In a directory like `/tmp`, root's name is also a name that another user can read from.
+        let own_name = if shared {
+            entry.st_uid == euid
+        } else {
+            trusted(&entry)
+        };
+        // A write into a name or a node of another user hands them the executable.
+        if descriptor.is_none() && !(own_name && trusted(&node)) {
+            let can_replace =
+                euid == 0 || dir.st_uid == euid || (shared && dir_mode & S::ISVTX == 0);
             if can_replace {
                 return Ok(Delivery::Replace);
             }
@@ -3153,19 +3171,18 @@ impl Delivery {
             return Err(write_failed(outfile, "it belongs to another user"));
         }
 
-        let own = || is_own_descriptor(&node, basename);
-        // A link leads the write to a node that the owner of the link chose.
-        let trusted = |stat: &Stat| stat.st_uid == euid || stat.st_uid == 0;
-        let follows = trusted(&entry) && (trusted(&node) || own());
-        if is_link && !follows {
-            return Ok(Delivery::Replace);
-        }
-
-        // A path to a descriptor (`/dev/stdout`): the node is not on the device of the directory.
-        let by_descriptor = || node.st_dev != dir.st_dev && own();
         match kind {
-            FileKind::CharacterDevice => Ok(Delivery::InPlace(Node::of(&node))),
-            FileKind::NamedPipe if wait_for_reader == WaitForReader::Yes || by_descriptor() => {
+            FileKind::CharacterDevice if is_null_device(&node) => {
+                Ok(Delivery::InPlace(Node::of(&node)))
+            }
+            // A raw disk, the memory of the machine and a terminal are character devices too.
+            FileKind::CharacterDevice => Err(write_failed(
+                outfile,
+                "it is a character device other than the null device",
+            )),
+            FileKind::NamedPipe
+                if wait_for_reader == WaitForReader::Yes || descriptor.is_some() =>
+            {
                 Ok(Delivery::InPlace(Node::of(&node)))
             }
             // A reader in this process needs the JS thread, which the write would hold.
@@ -3180,17 +3197,40 @@ impl Delivery {
     }
 }
 
-/// Whether descriptor 1, 2 or the one that `name` numbers (`/proc/self/fd/3`) is open on `node`.
+/// What `/dev/stdout`, `/dev/stderr` or a name in `/dev/fd` is open on, when that is writable.
 #[cfg(not(windows))]
-fn is_own_descriptor(node: &Stat, name: &ZStr) -> bool {
-    let is_node = |fd: Fd| {
-        bun_sys::fstat(fd)
-            .is_ok_and(|open| open.st_dev == node.st_dev && open.st_ino == node.st_ino)
+fn named_descriptor(dir: &Stat, name: &ZStr) -> Option<Stat> {
+    let dir_is = |path: &ZStr| {
+        bun_sys::stat(path).is_ok_and(|at| at.st_dev == dir.st_dev && at.st_ino == dir.st_ino)
     };
-    is_node(Fd::stdout())
-        || is_node(Fd::stderr())
-        || bun_core::fmt::parse_unsigned::<i32>(name.as_bytes(), 10)
-            .is_ok_and(|number| is_node(Fd::from_native(number)))
+    let number = match name.as_bytes() {
+        b"stdout" if dir_is(bun_core::zstr!("/dev")) => 1,
+        b"stderr" if dir_is(bun_core::zstr!("/dev")) => 2,
+        digits => {
+            let number = bun_core::fmt::parse_unsigned::<i32>(digits, 10).ok()?;
+            let in_fd_dir =
+                dir_is(bun_core::zstr!("/dev/fd")) || dir_is(bun_core::zstr!("/proc/self/fd"));
+            if !in_fd_dir {
+                return None;
+            }
+            number
+        }
+    };
+    let fd = Fd::from_native(number);
+    // A descriptor that is open only for reading is an inlet of the process, not an outlet.
+    let access = bun_sys::get_fcntl_flags(fd).ok()? as i32 & libc::O_ACCMODE;
+    if access == libc::O_RDONLY {
+        return None;
+    }
+    bun_sys::fstat(fd).ok()
+}
+
+#[cfg(not(windows))]
+fn is_null_device(node: &Stat) -> bool {
+    bun_sys::stat(bun_core::zstr!("/dev/null")).is_ok_and(|null| {
+        bun_sys::kind_from_mode(null.st_mode as bun_sys::Mode) == bun_sys::FileKind::CharacterDevice
+            && null.st_rdev == node.st_rdev
+    })
 }
 
 #[cfg(not(windows))]

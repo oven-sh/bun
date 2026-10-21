@@ -1,6 +1,5 @@
 // Tests how a `ws` client handles the frames it receives from a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir, tls } from "harness";
 import { on, once } from "node:events";
 import zlib from "node:zlib";
 import {
@@ -347,86 +346,6 @@ describe.each(implementations)("ws client receive ($name)", ({ ws: implementatio
         conn.end();
         const { lines, exitCode } = await script;
         expect(lines).toEqual(["message 1", 'uncaught Error "boom in listener"', "message 2", "close 1000"]);
-        expect(exitCode).toBe(0);
-      },
-      scriptTimeout,
-    );
-
-    // expect(promise).resolves runs the event loop inside the call. Here two clients each read a frame in one turn of
-    // that loop, beneath a node:vm run, and the stop lands in the 'message' listener that runs first. The stop is
-    // still pending when the other client reads its frame, so no listener can get that frame. That client then
-    // delivers no more frames, like the client whose listener was stopped (ws-stream-transport.test.ts): to skip the
-    // frame and deliver what comes later would leave a hole in the stream. Both clients still send.
-    test.concurrent.skipIf(!builtin || isWindows)(
-      "a client that reads a frame while a node:vm stop is pending delivers no more frames and still sends",
-      async () => {
-        using dir = tempDir("ws", {});
-        const { lines, exitCode } = await runScript(
-          { specifier },
-          `
-          const { expect } = require("bun:test");
-          const path = require("node:path");
-          const vm = require("node:vm");
-          // The servers are in this process and on unix sockets, so both frames are there to read in the same turn.
-          async function connect(scheme, name) {
-            const server =
-              scheme === "wss"
-                ? require("node:https").createServer({ cert: process.env.TLS_CERT, key: process.env.TLS_KEY })
-                : require("node:http").createServer();
-            const wss = new WebSocketServer({ server });
-            const file = path.join(process.env.SOCKET_DIR, scheme + "-" + name);
-            await new Promise(resolve => server.listen(file, resolve));
-            const accepted = new Promise(resolve => wss.on("connection", resolve));
-            const client = new WebSocket(scheme + "+unix:" + file, { rejectUnauthorized: false });
-            await new Promise(resolve => client.on("open", resolve));
-            return [client, await accepted];
-          }
-          (async () => {
-            for (const scheme of ["ws", "wss"]) {
-              const sockets = [await connect(scheme, "a"), await connect(scheme, "b")];
-              const seen = [];
-              const { promise, resolve } = Promise.withResolvers();
-              let wake = () => {};
-              const saw = async (what, count) => {
-                while (seen.filter(line => line.startsWith(what)).length < count) await new Promise(resolve => (wake = resolve));
-              };
-              for (const [client, server] of sockets) {
-                client.on("message", data => {
-                  seen.push("client got " + data);
-                  if (seen.length === 1) {
-                    process.kill(process.pid, "SIGINT");
-                    for (;;) {}
-                  }
-                  resolve();
-                });
-                client.on("close", code => (seen.push("close " + code), wake()));
-                server.on("message", data => (seen.push("server got " + data), wake()));
-              }
-              const send = data => sockets.forEach(([, server]) => server.send(data));
-              try {
-                vm.runInNewContext("send('a'); expect(promise).resolves.toBe(undefined);", { send, expect, promise }, { breakOnSigint: true });
-              } catch (error) {
-                seen.push("threw " + error.code);
-              }
-              send("b");
-              sockets.forEach(([client]) => client.send("c"));
-              await saw("server got", 2);
-              // A client that still reads gets "b" before it sees the end of its connection.
-              sockets.forEach(([, server]) => server.terminate());
-              await saw("close", 2);
-              console.log(scheme + ": " + seen.join(", "));
-            }
-            process.exit(0);
-          })();
-        `,
-          { SOCKET_DIR: String(dir), TLS_CERT: tls.cert, TLS_KEY: tls.key },
-        );
-        expect(lines).toEqual(
-          ["ws", "wss"].map(
-            scheme =>
-              `${scheme}: client got a, threw ERR_SCRIPT_EXECUTION_INTERRUPTED, server got c, server got c, close 1006, close 1006`,
-          ),
-        );
         expect(exitCode).toBe(0);
       },
       scriptTimeout,

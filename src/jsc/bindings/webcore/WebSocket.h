@@ -374,12 +374,10 @@ private:
     void reportFailure(const Failure&);
     void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData);
 
-    // handlers[name].call(owner, ...arguments). An error it throws is reported as an uncaught exception, the VM's stop is not.
+    // handlers[name].call(owner, ...arguments). An error it throws is reported as an uncaught exception.
     // Returns the handler's return value, or an empty JSValue if it threw or wasn't called.
     JSC::JSValue callHandler(const JSC::Identifier& name, const JSC::ArgList&);
     void callHandlerWithBuffer(const JSC::Identifier& name, std::span<const uint8_t>, JSC::JSValue secondArgument = {});
-    // Only a frame's handler stops the reads: a node:vm run in a listener can end in the socket's own `write`, and that listener goes on.
-    void handlerStopped(const JSC::Identifier& name);
     // After close(), a WHATWG socket drops incoming frames. The `ws` module keeps receiving them until the peer's Close frame.
     bool shouldDispatchFrames() const { return m_state == OPEN || (m_state == CLOSING && isWsMode()); }
     bool canPause() const { return m_state == CONNECTING || shouldDispatchFrames(); }

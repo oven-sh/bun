@@ -376,7 +376,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    /// Ignore everything received after a Close frame (RFC 6455 §5.5.1), a failure, or the VM's stop in a frame's handler.
+    /// Ignore everything received after a Close frame (RFC 6455 §5.5.1) or after a failure.
     fn stop_reading(&self) {
         self.receive_state.set(ReceiveState::Closed);
         self.clear_receive_buffers(true);
@@ -1995,10 +1995,6 @@ pub fn bun__websocketclient__stream_closed(
 ) {
     WebSocketClient::stream_closed(this)
 }
-// HOST_EXPORT(Bun__WebSocketClient__stopReading, c)
-pub fn bun__websocketclient__stop_reading(this: &crate::websocket_client::WebSocketClient) {
-    this.stop_reading()
-}
 // HOST_EXPORT(Bun__WebSocketClient__memoryCost, c)
 pub fn bun__websocketclient__memory_cost(this: &crate::websocket_client::WebSocketClient) -> usize {
     this.memory_cost()
@@ -2103,10 +2099,6 @@ pub fn bun__websocketclienttls__deliver_initial_data(
     this: ThisPtr<crate::websocket_client::WebSocketClientTLS>,
 ) {
     WebSocketClientTLS::deliver_initial_data(this)
-}
-// HOST_EXPORT(Bun__WebSocketClientTLS__stopReading, c)
-pub fn bun__websocketclienttls__stop_reading(this: &crate::websocket_client::WebSocketClientTLS) {
-    this.stop_reading()
 }
 // HOST_EXPORT(Bun__WebSocketClientTLS__memoryCost, c)
 pub fn bun__websocketclienttls__memory_cost(

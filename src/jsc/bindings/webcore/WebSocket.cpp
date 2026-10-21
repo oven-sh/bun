@@ -848,7 +848,7 @@ JSC::JSValue WebSocket::callHandler(const JSC::Identifier& name, const JSC::ArgL
         return {};
 
     auto& vm = context->vm();
-    // A node:vm timeout leaves the gate above open, and a termination pending beneath the script it cut short.
+    // A node:vm timeout doesn't forbid script, so the check above passes while its termination unwinds.
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return {};
     JSC::JSLockHolder lock(vm);
@@ -865,23 +865,13 @@ JSC::JSValue WebSocket::callHandler(const JSC::Identifier& name, const JSC::ArgL
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSValue result = JSC::profiledCall(globalObject, JSC::ProfilingReason::Other, function, callData, wrapper->m_owner.get(), arguments);
     if (auto* exception = scope.exception()) [[unlikely]] {
-        // The report of the handler's error calls script too (the uncaught exception capture callback), and the VM's stop can land there.
-        if (scope.tryClearException())
+        if (scope.clearExceptionExceptTermination())
             reportException(globalObject, exception);
-        // The VM's stop is not the handler's error: it stays pending for the script beneath, and is taken here when there is none.
-        if (Bun::takeTerminationOutsideScript(vm, scope) || vm.hasPendingTerminationException())
-            handlerStopped(name);
+        // Beneath script (send() calls the stream's `write` handler), a termination stays pending and ends that script too.
+        Bun::takeTerminationOutsideScript(vm, scope);
         return {};
     }
     return result;
-}
-
-NEVER_INLINE void WebSocket::handlerStopped(const JSC::Identifier& name)
-{
-    auto& names = eventNames();
-    auto* handler = name.impl();
-    if (handler == names.messageEvent.impl() || handler == names.pingEvent.impl() || handler == names.pongEvent.impl())
-        callClient<Bun__WebSocketClient__stopReading, Bun__WebSocketClientTLS__stopReading>();
 }
 
 void WebSocket::callHandlerWithBuffer(const JSC::Identifier& name, std::span<const uint8_t> bytes, JSC::JSValue secondArgument)
@@ -890,11 +880,8 @@ void WebSocket::callHandlerWithBuffer(const JSC::Identifier& name, std::span<con
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     JSC::JSUint8Array* buffer = createBuffer(globalObject, bytes);
     if (!buffer || scope.exception()) [[unlikely]] {
-        // The VM's stop is not an allocation failure.
         if (scope.clearExceptionExceptTermination())
             reportFailure({ "Failed to allocate memory"_s, {}, {} });
-        else
-            handlerStopped(name);
         return;
     }
 
@@ -1038,9 +1025,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
             JSUint8Array* buffer = createBuffer(scriptExecutionContext()->jsGlobalObject(), binaryData);
 
             if (!buffer || scope.exception()) [[unlikely]] {
-                // The VM's stop is not an allocation failure.
-                if (!scope.clearExceptionExceptTermination())
-                    return;
+                scope.clearExceptionExceptTermination();
 
                 ErrorEvent::Init errorInit;
                 errorInit.message = "Failed to allocate memory for binary data"_s;

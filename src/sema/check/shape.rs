@@ -1966,7 +1966,6 @@ impl<'p, 's> Checker<'p, 's> {
             .is_some_and(|m| self.is_declared_outside_classes(file, m));
         // Declarations with the same name form one property.
         let mut groups: Vec<(Atom, SmallVec<[MemberId; 4]>)> = Vec::new();
-        let (bound, mut has_computed_name) = (self.bound(file), false);
         for m in members.iter() {
             let member = &hir[m];
             if (has_static_side && member.flags.contains(Flags::STATIC)) != want_static {
@@ -2006,18 +2005,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if is_dynamic && self.is_late_bound_by_another_call(file, m) {
                         continue;
                     }
-                    // The binder gives the declarations with one written name one symbol, so the only declaration of
-                    // a symbol starts a group. Only a computed name can be the same as another symbol's.
-                    has_computed_name |= matches!(member.key, PropKey::Computed(_));
-                    let symbol = bound.symbols.get(bound.member_symbol[m.idx()].idx());
-                    let is_alone =
-                        !has_computed_name && symbol.is_some_and(|it| it.decls.len() == 1);
-                    // Overloads and the two accessors of a property follow each other.
-                    let group = match is_alone {
-                        true => None,
-                        false => groups.iter_mut().rev().find(|g| g.0 == name),
-                    };
-                    match group {
+                    match groups.iter_mut().find(|g| g.0 == name) {
                         Some(group) => group.1.push(m),
                         None => groups.push((name, smallvec![m])),
                     }

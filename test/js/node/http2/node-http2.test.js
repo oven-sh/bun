@@ -1,5 +1,5 @@
 import { jscDescribe } from "bun:jsc";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, isLinux, nodeExe, tempDir } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
@@ -5297,6 +5297,46 @@ it("http2 native setNextStreamID, pushPromise and altsvc throw for bad arguments
   ]);
   expect(exitCode).toBe(0);
 });
+
+it("http2 respondWithFD does not respond on a stream that was destroyed before fstat reports an error", async () => {
+  const fixture = `
+    import fs from "node:fs";
+    import http2 from "node:http2";
+    const closedFd = fs.openSync(process.execPath, "r");
+    fs.closeSync(closedFd);
+    const fds = [closedFd];
+    // Windows cannot open a directory.
+    if (process.platform !== "win32") fds.push(fs.openSync(process.cwd(), "r"));
+    const requests = fds.length;
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.on("error", err => console.log("error", err.code));
+      stream.respondWithFD(fds.shift());
+      stream.destroy();
+    });
+    server.listen(0, "127.0.0.1", async () => {
+      const client = http2.connect("http://127.0.0.1:" + server.address().port);
+      for (let i = 0; i < requests; i++) {
+        const req = client.request({ ":path": "/" });
+        req.on("error", () => {});
+        await new Promise(resolve => req.on("close", resolve));
+      }
+      client.close();
+      server.close();
+      console.log("done");
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("done\n");
+  expect(exitCode).toBe(0);
+});
 it("http2 client.request() on a destroyed or closed session uses the right error codes", async () => {
   // Node: destroyed session -> ERR_HTTP2_INVALID_SESSION,
   // closed (GOAWAY-pending) session -> ERR_HTTP2_GOAWAY_SESSION.
@@ -6374,6 +6414,308 @@ it("sendTrailers({}) ends the stream without a trailer block", async () => {
     req.end();
     expect(await Promise.all([body, serverClose.promise])).toEqual(["OK", 0]);
     expect(trailerEvents).toEqual([]);
+  } finally {
+    client?.close();
+    server.close();
+  }
+});
+
+it("additionalHeaders() sends a 1xx block on a HEAD request", async () => {
+  // With no 'checkContinue' listener the compat layer calls writeContinue(), which calls additionalHeaders().
+  const server = http2.createServer((req, res) => {
+    res.stream.additionalHeaders({ ":status": 103, link: "</style.css>; rel=preload" });
+    res.end();
+  });
+  let client;
+  try {
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    client = http2.connect(`http://127.0.0.1:${port}`);
+    const req = client.request({ ":method": "HEAD", ":path": "/", expect: "100-continue" });
+    const events = [];
+    req.on("continue", () => events.push(["continue"]));
+    req.on("headers", headers => events.push(["headers", headers[":status"], headers.link]));
+    req.on("response", headers => events.push(["response", headers[":status"]]));
+    await new Promise((resolve, reject) => {
+      client.on("error", reject);
+      req.on("error", reject);
+      req.on("close", resolve);
+      req.resume();
+      req.end();
+    });
+    expect(events).toEqual([
+      ["continue"],
+      ["headers", 100, undefined],
+      ["headers", 103, "</style.css>; rel=preload"],
+      ["response", 200],
+    ]);
+  } finally {
+    client?.close();
+    server.close();
+  }
+});
+
+// Linux only. The kernel has to deliver the bytes queued ahead of the reset before it reports the close.
+it.skipIf(!isLinux)("a frame written after the transport closed counts as sent", async () => {
+  // :method GET, :scheme http and :path / from the static table, then a literal :authority.
+  const requestBlock = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
+  for (const allowHalfOpen of [false, true]) {
+    const events = [];
+    const server = http2.createServer({ allowHalfOpen });
+    server.on("sessionError", err => events.push(`sessionError:${err.code}`));
+    const streamClosed = Promise.withResolvers();
+    server.on("stream", stream => {
+      stream.on("error", err => events.push(`error:${err.code}`));
+      stream.on("finish", () => events.push("finish"));
+      stream.on("close", () => {
+        events.push(`close:${stream.rstCode}`);
+        streamClosed.resolve();
+      });
+      stream.respond({ ":status": 200 });
+      stream.end("hello");
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const socket = net.connect(server.address().port, "127.0.0.1", () => {
+      socket.write(
+        Buffer.concat([
+          http2utils.kClientMagic,
+          new http2utils.SettingsFrame().data,
+          new http2utils.HeadersFrame(1, requestBlock, 0, true, true).data,
+        ]),
+      );
+      socket.resetAndDestroy();
+    });
+    socket.on("error", () => {});
+    await streamClosed.promise;
+    // Calls back only once the server has released the session and its socket.
+    await new Promise(resolve => server.close(resolve));
+    expect(events).toEqual(["finish", "close:0"]);
+  }
+});
+
+it.skipIf(!isLinux)("a stream closes without an error when its write finds the connection reset", async () => {
+  // :method POST, :scheme http and :path / from the static table, then a literal :authority.
+  const requestBlock = Buffer.concat([Buffer.from([0x83, 0x86, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
+  const events = [];
+  const server = http2.createServer();
+  server.on("sessionError", err => events.push(`sessionError:${err.code}`));
+  const streamClosed = Promise.withResolvers();
+  let socket;
+  server.on("stream", stream => {
+    stream.on("error", err => events.push(`error:${err.code}`));
+    stream.on("aborted", () => events.push("aborted"));
+    stream.on("close", () => {
+      events.push(`close:${stream.rstCode}`);
+      streamClosed.resolve();
+    });
+    stream.once("data", () => {
+      socket.resetAndDestroy();
+      stream.respond({ ":status": 200 });
+      stream.write("x");
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  socket = net.connect(server.address().port, "127.0.0.1", () => {
+    socket.write(
+      Buffer.concat([
+        http2utils.kClientMagic,
+        new http2utils.SettingsFrame().data,
+        new http2utils.HeadersFrame(1, requestBlock, 0, true, false).data,
+        new http2utils.DataFrame(1, Buffer.from("hello"), 0, false).data,
+      ]),
+    );
+  });
+  socket.on("error", () => {});
+  await streamClosed.promise;
+  await new Promise(resolve => server.close(resolve));
+  expect(events).toEqual(["aborted", "close:8"]);
+});
+
+it.skipIf(!isLinux)("a TLS session closes without an error when its write finds the connection reset", async () => {
+  // :method GET, :scheme https and :path / from the static table, then a literal :authority.
+  const requestBlock = Buffer.concat([Buffer.from([0x82, 0x87, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
+  for (const endStream of [true, false]) {
+    const errors = [];
+    const server = http2.createSecureServer(TLS_CERT);
+    server.on("sessionError", err => errors.push(`sessionError:${err.code}`));
+    const streamClosed = Promise.withResolvers();
+    let socket;
+    server.on("stream", stream => {
+      stream.on("error", err => errors.push(`error:${err.code}`));
+      stream.on("close", streamClosed.resolve);
+      socket.resetAndDestroy();
+      stream.respond({ ":status": 200 });
+      stream.end("hello");
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    socket = net.connect(server.address().port, "127.0.0.1");
+    socket.on("error", () => {});
+    const peer = tls.connect({ socket, ALPNProtocols: ["h2"], ...TLS_OPTIONS, servername: "localhost" }, () => {
+      peer.write(
+        Buffer.concat([
+          http2utils.kClientMagic,
+          new http2utils.SettingsFrame().data,
+          new http2utils.HeadersFrame(1, requestBlock, 0, true, endStream).data,
+        ]),
+      );
+    });
+    peer.on("error", () => {});
+    await streamClosed.promise;
+    await new Promise(resolve => server.close(resolve));
+    expect(errors).toEqual([]);
+  }
+});
+
+it.skipIf(!isLinux)("streams build no frames for what they have buffered when the transport closes", async () => {
+  // :method GET, :scheme https and :path / from the static table, then a literal :authority.
+  const requestBlock = Buffer.concat([Buffer.from([0x82, 0x87, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
+  const chunk = Buffer.alloc(1000, "x");
+  const errors = [];
+  let streams = 0;
+  let completed = 0;
+  let batches = 0;
+  const server = http2.createSecureServer(TLS_CERT);
+  server.on("sessionError", err => errors.push(`sessionError:${err.code}`));
+  const sessionClosed = Promise.withResolvers();
+  server.on("session", session => session.on("close", sessionClosed.resolve));
+  let socket;
+  server.on("stream", stream => {
+    streams++;
+    stream.on("error", err => errors.push(`error:${err.code}`));
+    socket.resetAndDestroy();
+    stream.respond({ ":status": 200 });
+    for (let i = 0; i < 4000; i++) {
+      stream.write(chunk, err => (err ? errors.push(`write:${err.code}`) : completed++));
+    }
+    stream.end();
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  socket = net.connect(server.address().port, "127.0.0.1");
+  socket.on("error", () => {});
+  const peer = tls.connect({ socket, ALPNProtocols: ["h2"], ...TLS_OPTIONS, servername: "localhost" });
+  peer.on("error", () => {});
+  await once(peer, "secureConnect");
+  // A stream joins its buffered chunks before it frames them.
+  const concat = Buffer.concat;
+  Buffer.concat = function (list, ...rest) {
+    if (list.length > 1000) batches++;
+    return concat.call(this, list, ...rest);
+  };
+  try {
+    peer.write(
+      concat([
+        http2utils.kClientMagic,
+        new http2utils.SettingsFrame().data,
+        ...[1, 3, 5, 7, 9].map(id => new http2utils.HeadersFrame(id, requestBlock, 0, true, true).data),
+      ]),
+    );
+    await sessionClosed.promise;
+  } finally {
+    Buffer.concat = concat;
+  }
+  await new Promise(resolve => server.close(resolve));
+  // Only the first stream's write completed while the transport was open.
+  expect({ errors, streams, completed, batches }).toEqual({ errors: [], streams: 5, completed: 20000, batches: 1 });
+});
+
+it("res.end() calls its callback once when the client leaves before the response is sent", async () => {
+  const chunk = Buffer.alloc(65536, "x");
+  for (const requests of [1, 5]) {
+    const callbacks = [];
+    const server = http2.createServer((req, res) => {
+      let calls = 0;
+      for (let i = 0; i < 64; i++) res.write(chunk);
+      res.end(() => calls++);
+      res.on("close", () => callbacks.push(calls));
+    });
+    const sessionClosed = Promise.withResolvers();
+    server.on("session", session => session.on("close", sessionClosed.resolve));
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", () => {});
+    for (let i = 0; i < requests; i++) {
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.once("data", () => client.destroy());
+    }
+    await sessionClosed.promise;
+    await new Promise(resolve => server.close(resolve));
+    expect(callbacks).toEqual(Array(requests).fill(1));
+  }
+});
+
+it.skipIf(!isLinux)("a session reports ECONNRESET when its read finds the connection reset", async () => {
+  for (const secure of [false, true]) {
+    const server = secure ? http2.createSecureServer(TLS_CERT) : http2.createServer();
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end("hello");
+    });
+    const sessionError = once(server, "sessionError");
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const socket = net.connect(server.address().port, "127.0.0.1");
+    socket.on("error", () => {});
+    const client = http2.connect(`${secure ? "https" : "http"}://localhost`, {
+      createConnection: () =>
+        secure ? tls.connect({ socket, ALPNProtocols: ["h2"], ...TLS_OPTIONS, servername: "localhost" }) : socket,
+    });
+    client.on("error", () => {});
+    const req = client.request({ ":path": "/" });
+    req.resume();
+    await once(req, "close");
+    // After this round trip the server has nothing left to write.
+    await new Promise(resolve => client.ping(resolve));
+    socket.resetAndDestroy();
+    const [err] = await sessionError;
+    await new Promise(resolve => server.close(resolve));
+    expect(err.code).toBe("ECONNRESET");
+  }
+});
+
+it("pushStream() reports ERR_HTTP2_OUT_OF_STREAMS through its callback", async () => {
+  const server = http2.createServer();
+  const pushed = Promise.withResolvers();
+  server.on("stream", stream => {
+    stream.pushStream({ ":path": "/pushed" }, err => pushed.resolve(err?.code));
+    stream.respond({ ":status": 200 });
+    stream.end();
+  });
+  let client;
+  try {
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    await once(client, "connect");
+    client.setNextStreamID(2 ** 31 - 1);
+    const req = client.request({ ":path": "/" });
+    const [headers] = await once(req, "response");
+    req.resume();
+    expect(headers[":status"]).toBe(200);
+    expect(await pushed.promise).toBe("ERR_HTTP2_OUT_OF_STREAMS");
+  } finally {
+    client?.close();
+    server.close();
+  }
+});
+
+it("a server push stream closes once its response ends", async () => {
+  const server = http2.createServer();
+  const closed = Promise.withResolvers();
+  server.on("stream", stream => {
+    stream.pushStream({ ":path": "/pushed" }, (err, push) => {
+      if (err) return closed.reject(err);
+      push.on("close", () => closed.resolve(push.rstCode));
+      push.respond({ ":status": 200 });
+      push.end("pushed");
+    });
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+  let client;
+  try {
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("stream", pushed => pushed.resume());
+    client.request({ ":path": "/" }).resume();
+    expect(await closed.promise).toBe(0);
   } finally {
     client?.close();
     server.close();

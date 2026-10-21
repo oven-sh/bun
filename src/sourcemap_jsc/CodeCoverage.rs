@@ -7,7 +7,7 @@ use bun_collections::VecExt;
 use bun_collections::bit_set::DynamicBitSet;
 use bun_core::{self, Utf8Bytes};
 use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
-use bun_sourcemap::{Ordinal, ParsedSourceMap};
+use bun_sourcemap::{InternalSourceMap, Ordinal, ParsedSourceMap};
 
 type LinesHits = Vec<u32>;
 type Bitset = DynamicBitSet;
@@ -608,7 +608,8 @@ pub struct BasicBlockRange {
 pub struct ByteRangeMapping {
     /// A bit for each code unit of the text JSC compiled, which is what JSC's offsets and the
     /// source map's generated columns count. Set if the unit can make its line executable:
-    /// not white space, `{` or `}`. The text itself is only borrowed while this is made.
+    /// not white space, `{` or `}`, or marked as a brace of an object literal. The text itself is
+    /// only borrowed while this is made.
     executable_units: Bitset,
     /// Code unit offset of the first unit of each line of the text.
     line_starts: Vec<u32>,
@@ -772,7 +773,7 @@ impl ByteRangeMapping {
         })
     }
 
-    /// `line` ran as often as the code at `offset` did, if that is code. A brace is not: the `{`
+    /// `line` ran as often as the code at `offset`, if it is code. A block's brace is not: the `{`
     /// of a loop body shares a line with a header that runs once, and after a `return` JSC has
     /// the `}` in a block of its own that never runs.
     fn count_line(
@@ -789,9 +790,9 @@ impl ByteRangeMapping {
         }
     }
 
-    fn offset_of(&self, generated: bun_sourcemap::LineColumnOffset) -> Option<u32> {
-        let line = usize::try_from(generated.lines.zero_based()).ok()?;
-        let column = u32::try_from(generated.columns.zero_based()).ok()?;
+    fn offset_of(&self, position: bun_sourcemap::LineColumnOffset) -> Option<u32> {
+        let line = usize::try_from(position.lines.zero_based()).ok()?;
+        let column = u32::try_from(position.columns.zero_based()).ok()?;
         let offset = self.line_starts.get(line)?.checked_add(column)?;
         ((offset as usize) < self.executable_units.bit_length()).then_some(offset)
     }
@@ -825,10 +826,77 @@ impl ByteRangeMapping {
             source_url,
         }
     }
+
+    /// `scan` sets no brace. Those of an object literal are code, and the printer marks them.
+    fn set_object_braces_executable(&mut self, text: &[u8], already_bundled: bool) {
+        if already_bundled {
+            // JSC compiles a `// @bun` file as written, so the original positions are in `text`.
+            if let Some(blob) = print_for_coverage(self.source_url.slice(), text) {
+                InternalSourceMap {
+                    data: blob.list.as_ptr(),
+                }
+                .for_each_object_brace(|brace| self.set_executable(brace.original));
+            }
+        } else if let Some(source_map) = bun_jsc::VirtualMachine::VirtualMachine::get()
+            .as_mut()
+            .source_mappings()
+            .get(self.source_url.slice())
+        {
+            source_map.for_each_object_brace(|brace| self.set_executable(brace.generated));
+        }
+    }
+
+    fn set_executable(&mut self, position: bun_sourcemap::LineColumnOffset) {
+        if let Some(offset) = self.offset_of(position) {
+            self.executable_units.set(offset as usize);
+        }
+    }
+}
+
+/// The `InternalSourceMap` from parsing and printing `text`, if both succeed.
+fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<bun_core::MutableString> {
+    let arena = bun_alloc::Arena::new();
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _ast_scope = ast_memory_allocator.enter();
+
+    let source = bun_ast::Source::init_path_string(path, text);
+    let mut options = bun_js_parser::ParserOptions::init(Default::default(), bun_ast::Loader::Js);
+    options.features.dead_code_elimination = false;
+    options.features.no_macros = true;
+    options.features.top_level_await = true;
+    let define = bun_js_parser::Define::default();
+    let mut log = bun_ast::Log::init();
+    let parser = bun_js_parser::Parser::init(options, &mut log, &source, &define, &arena).ok()?;
+    let bun_js_parser::Result::Ast(mut ast) = parser.parse().ok()? else {
+        return None;
+    };
+
+    let symbols_arena = *ast.symbols.allocator();
+    let symbols = bun_ast::symbol::Map::init_with_one_list(
+        core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(symbols_arena))
+            .into_iter()
+            .collect(),
+    );
+    let mut chunk = None;
+    // ASCII_ONLY = true: the chunk is an `InternalSourceMap`, not VLQ text.
+    bun_js_printer::print_ast::<_, true, true>(
+        &mut bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
+        &arena,
+        &ast,
+        symbols,
+        &source,
+        bun_js_printer::Options {
+            code_coverage: true,
+            source_map_handler: Some(bun_js_printer::SourceMapHandler::for_(&mut chunk)),
+            ..Default::default()
+        },
+    )
+    .ok()?;
+    Some(chunk?.buffer)
 }
 
 /// `ByteRangeMapping::line_starts` and `executable_units`. Lines end where
-/// `bun_sourcemap::Chunk`'s builder ends a generated line.
+/// `bun_sourcemap` ends them, in a generated text and in an original.
 fn scan(units: impl ExactSizeIterator<Item = u16>) -> (Vec<u32>, Bitset) {
     let mut starts = vec![0u32];
     let mut executable = bun_core::handle_oom(Bitset::init_empty(units.len()));
@@ -958,6 +1026,7 @@ extern "C" fn ByteRangeMapping__generate(
     str_: &bun_core::String,
     source_contents_str: &bun_core::String,
     source_id: i32,
+    already_bundled: bool,
 ) {
     // SAFETY: thread_map() returns a pointer into this thread's owned Box<HashMap>;
     // valid for the lifetime of the thread, and we are the only mutable accessor on
@@ -977,8 +1046,17 @@ extern "C" fn ByteRangeMapping__generate(
         return;
     }
 
-    let new_value =
+    let mut new_value =
         ByteRangeMapping::compute(source_contents_str, source_hash, source_id, source_url);
+    // `node:inspector` turns the profiler on too. Nothing is marked for it.
+    if bun_jsc::VirtualMachine::VirtualMachine::get()
+        .as_mut()
+        .transpiler
+        .options
+        .code_coverage
+    {
+        new_value.set_object_braces_executable(source_contents.slice(), already_bundled);
+    }
     map.insert(hash, new_value);
 }
 

@@ -152,7 +152,7 @@ type Record_ = {
 type Lane = { failed: Record<string, string> } & Record<number, Record_>;
 
 const lanes: Record<string, Lane> = {};
-const outputs: Record<string, { path: string; code: string; map: any }[]> = {};
+const outputs: Record<string, { path: string; code: string; map: any; mappings: number[][] }[]> = {};
 
 // The tests of the JUnit report. What is before `test` moves it the way the variants move the programs.
 const testFile = [
@@ -213,11 +213,10 @@ async function bundle(name: string) {
     if (artifact.kind === "sourcemap") continue;
     const code = await artifact.text();
     const inline = code.match(/\/\/# sourceMappingURL=data:application\/json;base64,(\S+)/)?.[1];
-    outputs[name].push({
-      path: artifact.path,
-      code,
-      map: JSON.parse(inline ? Buffer.from(inline, "base64").toString() : readFileSync(artifact.path + ".map", "utf8")),
-    });
+    const map = JSON.parse(
+      inline ? Buffer.from(inline, "base64").toString() : readFileSync(artifact.path + ".map", "utf8"),
+    );
+    outputs[name].push({ path: artifact.path, code, map, mappings: decode(map.mappings) });
   }
   if (bundles.includes(name)) await run(name, [bunExe(), "--preload=./probe.cjs", `./out/${name}/entry.js`]);
 }
@@ -459,17 +458,17 @@ describe.each(Object.keys(builds))("the source map of %s", name => {
   test("maps a word to the same word", () => {
     const wrong: string[] = [];
     let checked = 0;
-    for (const { code, map } of outputs[name]) {
+    for (const { code, map, mappings } of outputs[name]) {
       const generated = code.split("\n");
       const originals = (map.sourcesContent as string[]).map(content => content.split(/\r?\n/));
       let previous = "";
-      for (const [generatedLine, generatedColumn, source, originalLine, originalColumn] of decode(map.mappings)) {
+      for (const [generatedLine, generatedColumn, source, originalLine, originalColumn] of mappings) {
         // Each line of a token that is on several starts with the mapping before it, again.
         const repeated = previous === (previous = `${source}:${originalLine}:${originalColumn}`);
         const word = wordAt(generated[generatedLine], generatedColumn);
         // A word that Bun made up, or renamed, is not in the source. The output of each member of an enum or of a
-        // namespace starts with the name of the enum or of the namespace. `else` has the position of what follows it.
-        if (repeated || !word || word === "else" || !map.sourcesContent[source].includes(word)) continue;
+        // namespace starts with the name of the enum or of the namespace.
+        if (repeated || !word || !map.sourcesContent[source].includes(word)) continue;
         if (map.sources[source].endsWith("lowered.ts")) continue;
         checked++;
         const original = originals[source][originalLine]?.slice(originalColumn, originalColumn + word.length);
@@ -487,22 +486,19 @@ describe.each(Object.keys(builds))("the source map of %s", name => {
   test("maps finally and the { after it to the same", () => {
     const wrong: string[] = [];
     let checked = 0;
-    for (const { path, code, map } of outputs[name]) {
+    for (const { path, code, map, mappings } of outputs[name]) {
       const originals = (map.sourcesContent as string[]).map(content => content.split(/\r?\n/));
-      const originalOf = new Map(
-        decode(map.mappings).map(([line, column, ...original]) => [`${line}:${column}`, original]),
-      );
+      const originalOf = new Map(mappings.map(([line, column, ...original]) => [`${line}:${column}`, original]));
+      const sourceFrom = (generatedLine: number, generatedColumn: number) => {
+        const [source, line, column] = originalOf.get(`${generatedLine}:${generatedColumn}`) ?? [];
+        return originals[source!]?.slice(line).join("\n").slice(column);
+      };
       code.split("\n").forEach((line, generatedLine) => {
         for (const { 0: keyword, index } of line.matchAll(/\bfinally ?(?=\{)/g)) {
           checked++;
-          for (const [column, text] of [
-            [index, "finally"],
-            [index + keyword.length, "{"],
-          ] as const) {
-            const [source, originalLine, originalColumn] = originalOf.get(`${generatedLine}:${column}`) ?? [];
-            if (!originals[source!]?.[originalLine!]?.startsWith(text, originalColumn))
-              wrong.push(`${path}:${generatedLine + 1}:${column + 1}`);
-          }
+          const fromBrace = sourceFrom(generatedLine, index)?.match(/^finally\s*(\{[^]*)/)?.[1];
+          if (!fromBrace || fromBrace !== sourceFrom(generatedLine, index + keyword.length))
+            wrong.push(`${path}:${generatedLine + 1}:${index + 1}`);
         }
       });
     }

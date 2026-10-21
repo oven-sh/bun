@@ -589,7 +589,8 @@ it("dir should be validated", async () => {
 });
 
 it.each([".", ""])("dir %j is the current directory", async dir => {
-  const cwd = make(["index.tsx", "posts/hey.tsx"]).dir;
+  using tmp = tempDir("filesystem-router-cwd", { "index.tsx": "", "posts/hey.tsx": "" });
+  const cwd = String(tmp);
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

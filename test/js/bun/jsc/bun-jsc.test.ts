@@ -657,6 +657,82 @@ it("deserialize rejects a CryptoKey record with no key bytes", async () => {
   expect({ stdout, exitCode }).toEqual({ stdout: "rejected\ntrue Ed25519\n", exitCode: 0 });
 });
 
+describe("deserialize rejects a CryptoKey whose hash tag is not a digest", () => {
+  const digests = {
+    14: "SHA-1",
+    15: "SHA-224",
+    16: "SHA-256",
+    17: "SHA-384",
+    18: "SHA-512",
+    24: "SHA3-256",
+    25: "SHA3-384",
+    26: "SHA3-512",
+  };
+
+  function acceptedHashes(bytes: Uint8Array, offset: number) {
+    expect(bytes[offset]).toBe(16);
+    const accepted: Record<number, string> = {};
+    for (let tag = 0; tag < 256; tag++) {
+      bytes[offset] = tag;
+      let key: CryptoKey;
+      try {
+        key = deserialize(bytes);
+      } catch {
+        continue;
+      }
+      accepted[tag] = (key.algorithm as HmacKeyAlgorithm).hash.name;
+    }
+    return accepted;
+  }
+
+  it("HMAC", async () => {
+    const key = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+    const bytes = new Uint8Array(serialize(key));
+    // The hash tag is the last byte of an HMAC record.
+    expect(acceptedHashes(bytes, bytes.length - 1)).toEqual(digests);
+  });
+
+  it("RSA", async () => {
+    const { publicKey } = await crypto.subtle.generateKey(
+      { name: "RSA-OAEP", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      true,
+      ["encrypt", "decrypt"],
+    );
+    const bytes = new Uint8Array(serialize(publicKey));
+    // key class, algorithm tag, isRestrictedToHash, hash tag
+    const offset = Buffer.from(bytes).indexOf(Buffer.from([2, 3, 1, 0, 0, 0, 16]));
+    expect(offset).toBeGreaterThan(0);
+    expect(acceptedHashes(bytes, offset + 6)).toEqual(digests);
+  });
+
+  // Cloning a key whose hash is no algorithm aborts, so this one runs in its own process.
+  it("HMAC with a tag that names no algorithm", async () => {
+    const script = `
+      import { deserialize } from "bun:jsc";
+      const record = Uint8Array.fromHex("0e00000021570000000e00000002000000017f000001000000020040000000af585e45c2b062325fdd84c81a0febee9000000000000020008c8e3e4aff4f4f4081b6f22e031d9b1b3883a0a7d6bee7a7a5d870f9100de4aafd5cd0209bfd9008");
+      for (const tag of [8, 13, 19, 16]) {
+        record[95] = tag;
+        let key;
+        try {
+          key = deserialize(record);
+        } catch {
+          console.log(tag, "rejected");
+          continue;
+        }
+        console.log(tag, structuredClone(key).algorithm.hash.name);
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "8 rejected\n13 rejected\n19 rejected\n16 SHA-256\n", exitCode: 0 });
+  });
+});
+
 it("deserialize applies the same nesting depth limit to arrays as to objects", async () => {
   const script = `
     import { serialize, deserialize } from "bun:jsc";

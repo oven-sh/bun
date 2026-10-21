@@ -62,7 +62,7 @@ fn write(out: &mut Vec<u8>, rule: &Deprecated) {
     out.extend_from_slice(&[b"{\"ruleId\":\"", id, b"\",", rest, b"}"].concat());
 }
 
-/// `JSON.stringify(result.usedDeprecatedRules)` for a file that has `config`.
+/// `JSON.stringify(result.usedDeprecatedRules)` for a file that uses `config`.
 pub(crate) fn write_used(out: &mut Vec<u8>, config: Option<&ResolvedConfig>) {
     out.push(b'[');
     let start = out.len();

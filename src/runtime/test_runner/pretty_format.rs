@@ -389,10 +389,7 @@ impl<'a> Formatter<'a> {
 /// Bun gives these classes a `toJSON()`. Node does not, so under Jest
 /// pretty-format prints them as `Headers {}` and so on.
 fn has_bun_only_to_json(value: JSValue) -> bool {
-    matches!(
-        value.get_class_info_name(),
-        Some(name) if name == b"Headers" || name == b"FormData" || name == b"URLSearchParams"
-    )
+    matches!(value.get_class_info_name(), Some(b"Headers" | b"FormData" | b"URLSearchParams"))
 }
 
 // The node is acquired lazily inside `print_as` via `visited::Pool::get_node()`;

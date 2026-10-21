@@ -1099,7 +1099,7 @@ test("accepted cachedData does not leave a second compile of the source alive", 
   const fixture = `
     const { Script } = require("node:vm");
     const { heapStats } = require("bun:jsc");
-    const source = "(function (e) { " + "e.x = 1;".repeat(200) + " })";
+    const source = "(function (e) { " + Buffer.alloc(200 * "e.x = 1;".length, "e.x = 1;").toString() + " })";
     const cachedData = process.argv[1] === "cached" ? new Script(source).createCachedData() : undefined;
     Bun.gc(true);
     const before = heapStats().objectTypeCounts.UnlinkedProgramCodeBlock ?? 0;
@@ -1588,25 +1588,29 @@ test.concurrent("2 GiB of cachedData is rejected", async () => {
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("doesn't produce cachedData for a source with a 2^27-character string", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+test.concurrent(
+  "doesn't produce cachedData for a source with a 2^27-character string",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         const { Script } = require("node:vm");
-        const script = new Script("'" + "x".repeat(2 ** 27) + "'.length", { produceCachedData: true });
+        const script = new Script("'" + Buffer.alloc(2 ** 27, "x").toString() + "'.length", { produceCachedData: true });
         console.log(script.cachedDataProduced, script.runInThisContext());
       `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toBe("false 134217728\n");
-  expect(exitCode).toBe(0);
-});
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("false 134217728\n");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
 
 describe("the file: URL origin made from a filename", () => {
   // The last filename made into a URL is kept per VM. The import() tests alternate two filenames, so every

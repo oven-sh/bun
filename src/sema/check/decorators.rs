@@ -361,6 +361,7 @@ impl<'p, 's> Checker<'p, 's> {
         });
         self.synth(Shape {
             props: vec_from_iter_in(members, self.arena),
+            has_no_instantiable_symbol: true,
             ..Shape::new_in(self.arena)
         })
     }

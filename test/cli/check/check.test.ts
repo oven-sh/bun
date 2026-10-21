@@ -19652,6 +19652,28 @@ export function d18(v: O & { r: 1 } | void) { delete v.p; }
       expect(exitCode).toBe(1);
     });
 
+    test("prints `{ ...; }` for an object type without a symbol once the length limit is reached", async () => {
+      using dir = project({
+        "a.ts": `declare function dec(target: unknown, key: string): void;
+interface Reference<T> { unwrap(): T }
+interface HouseDecorationSlotWithALongName { id: number }
+class Item {
+  @dec slot?: { id: number; } & Reference<HouseDecorationSlotWithALongName & object> & Reference<HouseDecorationSlotWithALongName & { a: 1 }>;
+  @dec short?: number;
+}
+export {};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(5,4): error TS1240: Unable to resolve signature of property decorator when called as an expression.
+          Argument of type 'ClassFieldDecoratorContext<Item, ({ id: number; } & Reference<HouseDecorationSlotWithALongName & object> & Reference<HouseDecorationSlotWithALongName & ...>) | undefined> & { ...; }' is not assignable to parameter of type 'string'.
+        a.ts(6,4): error TS1240: Unable to resolve signature of property decorator when called as an expression.
+          Argument of type 'ClassFieldDecoratorContext<Item, number | undefined> & { name: "short"; private: false; static: false; }' is not assignable to parameter of type 'string'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("truncates two `NoInfer<..>` in one type argument list at half the length", async () => {
       using dir = project({
         "a.ts": `import type { Far, Near } from "./m";

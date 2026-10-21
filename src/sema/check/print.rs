@@ -3937,6 +3937,14 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 }
                 Identity::Instance(target)
             }
+            // "Anonymous types without a symbol are never circular." So `visitAndTransformType` doesn't elide one.
+            TypeData::Synth(shape)
+                if shape.has_no_instantiable_symbol
+                    && shape.call.is_empty()
+                    && shape.construct.is_empty() =>
+            {
+                return self.object_type_to_node(ty);
+            }
             TypeData::Synth(shape) => {
                 if let Some(symbol) = shape.symbol
                     && self.should_emit_type_of_symbol(symbol, SymFlags::VALUE)

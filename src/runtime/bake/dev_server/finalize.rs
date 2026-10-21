@@ -733,7 +733,7 @@ pub(super) fn finalize_bundle(
         } else {
             match server_hmr_ffi::bake_load_server_hmr_patch(
                 global,
-                BunString::clone_latin1(&server_bundle),
+                BunString::clone_utf8(&server_bundle),
             ) {
                 Ok(v) => v,
                 Err(err) => {

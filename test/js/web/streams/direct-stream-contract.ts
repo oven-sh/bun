@@ -232,8 +232,7 @@ export const shapes: Record<string, Shape> = {
         c.close(new Error("source failed"));
       }),
   },
-  // The consumer rejects once, and nothing else reports the error (no unhandled rejection from a promise the
-  // consumer never saw).
+  // The consumer's rejection is the only report: a stray unhandled rejection fails the test run.
   "sync pull: close(error), then throws it": {
     expect: { error: "source failed" },
     make: t =>

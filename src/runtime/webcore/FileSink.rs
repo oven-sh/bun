@@ -1784,7 +1784,8 @@ impl FileSink {
         let _guard = unsafe { RefPtr::init_ref(std::ptr::from_mut::<FileSink>(self)) };
 
         self.stream_bytes.set(Some(0));
-        let promise = bun_jsc::JSPromise::create(global_this).to_js();
+        let done_promise = bun_jsc::JSPromise::create(global_this);
+        let promise = done_promise.to_js();
         let controller =
             JSSink::create_controller(global_this, core::ptr::NonNull::from(&mut *self));
         self.pipe.set(streams::PipeCell::create(
@@ -1823,10 +1824,8 @@ impl FileSink {
                     .assign_to_js_stream(stream, controller, global_this)
                     .inspect_err(|_| {
                         self.stream_bytes.set(None);
-                        // The caller reports the throw; a close(error) inside pull() may already have rejected the done-promise nobody gets.
-                        if let Some(done) = promise.as_any_promise() {
-                            done.set_handled(global_this.vm());
-                        }
+                        // The caller gets the throw, not the done-promise that a close(error) inside pull() rejected.
+                        done_promise.set_handled();
                     })?;
                 // A pump that already failed reports through the done-promise.
                 if let Some(pump) = result.as_any_promise() {

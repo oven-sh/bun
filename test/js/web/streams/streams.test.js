@@ -5091,6 +5091,41 @@ describe("direct stream edge cases", () => {
       expect(exitCode).toBe(0);
     });
 
+    // Bun.write() rejects with the throw, so a caller that ignores the rejection gets that one report.
+    test.concurrent(
+      "Bun.write: close(error) from a sync pull() that then throws is reported once when the caller ignores the rejection",
+      async () => {
+        using dir = tempDir("direct-close-error-ignored", {});
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+          const unhandled = [];
+          process.on("unhandledRejection", e => unhandled.push(e?.message));
+          process.on("exit", () => console.log(JSON.stringify(unhandled)));
+          const s = new ReadableStream({
+            type: "direct",
+            pull(c) {
+              c.write("partial");
+              c.close(new Error("source failed"));
+              throw new Error("thrown after close(error)");
+            },
+          });
+          Bun.write(${JSON.stringify(join(String(dir), "out.txt"))}, new Response(s));
+          `,
+          ],
+          env: bunEnv,
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect({ unhandled: JSON.parse(stdout), exitCode }).toEqual({
+          unhandled: ["thrown after close(error)"],
+          exitCode: 0,
+        });
+      },
+    );
+
     // close(error) rejects the promise the caller holds, so the caller decides whether the rejection is handled.
     test.concurrent(
       "close(error) is reported as unhandled only when the caller ignores the rejection, and then once",

@@ -2733,6 +2733,7 @@ describe("backpressure", () => {
       reset?(client: Duplex): void;
       close(): void;
     };
+    type EntryPoint = (listener: http.RequestListener) => Promise<Connection>;
 
     function ping(module: typeof http | typeof https, port: number) {
       const { promise, resolve, reject } = Promise.withResolvers<void>();
@@ -2752,7 +2753,17 @@ describe("backpressure", () => {
     // The TCP socket under a TLS client.
     const rawSockets = new WeakMap<Duplex, net.Socket>();
 
-    const entryPoints: Record<string, (listener: http.RequestListener) => Promise<Connection>> = {
+    async function connectTls(port: number) {
+      const raw = net.connect(port, "127.0.0.1");
+      await once(raw, "connect");
+      const socket = nodeTls.connect({ socket: raw, rejectUnauthorized: false });
+      socket.pause();
+      await once(socket, "secureConnect");
+      rawSockets.set(socket, raw);
+      return socket;
+    }
+
+    const entryPoints: Record<string, EntryPoint> = {
       "server.emit('connection', socket) with a net.Socket": async listener => {
         const server = http.createServer(answerPing(listener));
         const acceptor = net.createServer(socket => server.emit("connection", socket));
@@ -2822,15 +2833,7 @@ describe("backpressure", () => {
         await once(server.listen(0, "127.0.0.1"), "listening");
         const port = (server.address() as AddressInfo).port;
         return {
-          async connect() {
-            const raw = net.connect(port, "127.0.0.1");
-            await once(raw, "connect");
-            const socket = nodeTls.connect({ socket: raw, rejectUnauthorized: false });
-            socket.pause();
-            await once(socket, "secureConnect");
-            rawSockets.set(socket, raw);
-            return socket;
-          },
+          connect: () => connectTls(port),
           turn: () => ping(https, port),
           reset: client => void rawSockets.get(client)!.resetAndDestroy(),
           close: () => void server.close(),
@@ -2890,6 +2893,61 @@ describe("backpressure", () => {
         before = progress.written;
         await connection.turn();
       } while (!progress.finished && progress.written !== before);
+    }
+
+    function clientGoesAway(entry: EntryPoint) {
+      // The client reads nothing, so the socket holds chunks of the response when the client goes away. The socket
+      // fails their writes. Bun's node:net forgets the callbacks of such writes at a reset, so the server keeps them.
+      const departures: Record<string, (client: Duplex, connection: Connection, ended: Promise<void>) => unknown> = {
+        "destroy()": client => client.destroy(),
+        "a TCP reset": (client, connection) => connection.reset!(client),
+        "end() and then destroy()": async (client, connection, ended) => {
+          client.end();
+          // The server ends its side at the FIN, with the chunks still in its socket.
+          await ended;
+          client.destroy();
+        },
+      };
+
+      it.each(Object.keys(departures))(
+        "every write() callback has run once by the 'close' of the response, when the client goes away with %s",
+        async departure => {
+          const count = TOTAL / CHUNK.length;
+          const calls: { index: number; failed: boolean }[] = [];
+          const wrote = Promise.withResolvers<void>();
+          const ended = Promise.withResolvers<void>();
+          const closed = Promise.withResolvers<number>();
+          const connection = await entry((req, res) => {
+            req.socket.once("end", ended.resolve);
+            res.setHeader("Content-Length", TOTAL);
+            res.on("close", () => closed.resolve(calls.length));
+            for (let index = 0; index < count; index++) res.write(CHUNK, err => calls.push({ index, failed: !!err }));
+            wrote.resolve();
+          });
+          const client = await connection.connect();
+          client.on("error", () => {});
+          try {
+            client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+            await wrote.promise;
+            // The socket takes what the kernel has room for.
+            await connection.turn();
+            await departures[departure](client, connection, ended.promise);
+            const atClose = await closed.promise;
+            // A callback that runs twice does so by now.
+            await connection.turn();
+            const order = calls.map(call => call.index).join(" ");
+            expect({ atClose, order, lastFailed: calls.at(-1)?.failed }).toEqual({
+              atClose: count,
+              order: Array.from({ length: count }, (_, index) => index).join(" "),
+              // A kernel that takes the whole body from a client that reads nothing (Windows) leaves nothing to fail.
+              lastFailed: process.platform === "win32" ? expect.any(Boolean) : true,
+            });
+          } finally {
+            client.destroy();
+            connection.close();
+          }
+        },
+      );
     }
 
     describe.each(Object.keys(entryPoints))("%s", name => {
@@ -3023,59 +3081,24 @@ describe("backpressure", () => {
       // A duplexPair() side that is destroyed leaves the write that the other side holds as it is, in Node.js too.
       if (name.includes("duplexPair")) return;
 
-      // The client reads nothing, so the socket holds chunks of the response when the client goes away. The socket
-      // fails their writes. Bun's node:net forgets the callbacks of such writes at a reset, so the server keeps them.
-      const departures: Record<string, (client: Duplex, connection: Connection, ended: Promise<void>) => unknown> = {
-        "destroy()": client => client.destroy(),
-        "a TCP reset": (client, connection) => connection.reset!(client),
-        "end() and then destroy()": async (client, connection, ended) => {
-          client.end();
-          // The server ends its side at the FIN, with the chunks still in its socket.
-          await ended;
-          client.destroy();
-        },
-      };
-
-      it.each(Object.keys(departures))(
-        "every write() callback has run once by the 'close' of the response, when the client goes away with %s",
-        async departure => {
-          const count = TOTAL / CHUNK.length;
-          const calls: { index: number; failed: boolean }[] = [];
-          const wrote = Promise.withResolvers<void>();
-          const ended = Promise.withResolvers<void>();
-          const closed = Promise.withResolvers<number>();
-          const connection = await entryPoints[name]((req, res) => {
-            req.socket.once("end", ended.resolve);
-            res.setHeader("Content-Length", TOTAL);
-            res.on("close", () => closed.resolve(calls.length));
-            for (let index = 0; index < count; index++) res.write(CHUNK, err => calls.push({ index, failed: !!err }));
-            wrote.resolve();
-          });
-          const client = await connection.connect();
-          client.on("error", () => {});
-          try {
-            client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
-            await wrote.promise;
-            // The socket takes what the kernel has room for.
-            await connection.turn();
-            await departures[departure](client, connection, ended.promise);
-            const atClose = await closed.promise;
-            // A callback that runs twice does so by now.
-            await connection.turn();
-            const order = calls.map(call => call.index).join(" ");
-            expect({ atClose, order, lastFailed: calls.at(-1)?.failed }).toEqual({
-              atClose: count,
-              order: Array.from({ length: count }, (_, index) => index).join(" "),
-              // A kernel that takes the whole body from a client that reads nothing (Windows) leaves nothing to fail.
-              lastFailed: process.platform === "win32" ? expect.any(Boolean) : true,
-            });
-          } finally {
-            client.destroy();
-            connection.close();
-          }
-        },
-      );
+      clientGoesAway(entryPoints[name]);
     });
+
+    // http2's allowHTTP1 runs the other tests on a TLS socket.
+    const tlsServerSocket: EntryPoint = async listener => {
+      const server = http.createServer(answerPing(listener));
+      const acceptor = nodeTls.createServer(tlsOptions, socket => server.emit("connection", socket));
+      await once(acceptor.listen(0, "127.0.0.1"), "listening");
+      const port = (acceptor.address() as AddressInfo).port;
+      return {
+        connect: () => connectTls(port),
+        turn: () => ping(https, port),
+        reset: client => void rawSockets.get(client)!.resetAndDestroy(),
+        close: () => void acceptor.close(),
+      };
+    };
+
+    describe("server.emit('connection', socket) with a socket of a tls.Server", () => clientGoesAway(tlsServerSocket));
 
     // This needs a socket whose writes Node completes through an async
     // resource of the write (a duplexPair() side completes them from the

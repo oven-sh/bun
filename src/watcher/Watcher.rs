@@ -55,16 +55,6 @@ const NO_WATCH_ITEM: WatchItemIndex = WatchItemIndex::MAX;
 
 // ─── erased upward types (CYCLEBREAK) ─────────────────────────────────────
 
-/// Opaque forward-decl of `bun_resolver::package_json::PackageJSON` (T5).
-/// Watcher only stores `Option<&PackageJSON>` and passes it through; never
-/// dereferenced here. Real layout lives in `bun_resolver`.
-// SAFETY: erased PackageJSON — only ever held by reference / raw ptr.
-#[repr(C)]
-pub struct PackageJSON {
-    _opaque: [u8; 0],
-    _pinned: core::marker::PhantomPinned,
-}
-
 /// Manual vtable for resolver→watcher directory-watch callbacks.
 /// Was `bun_resolver::AnyResolveWatcher` (T5); defined here so the low-tier
 /// crate owns the shape and `bun_resolver` re-imports it (move-in pass).
@@ -107,8 +97,8 @@ pub struct Watcher {
     /// The platform-specific implementation of the watcher
     pub(crate) platform: Platform,
 
-    pub watchlist: WatchList,
-    pub mutex: Mutex,
+    pub(crate) watchlist: WatchList,
+    pub(crate) mutex: Mutex,
 
     // Storing the `top_level_dir` slice directly avoids a forward-decl
     // dependency on the higher-tier `bun_resolver::fs::FileSystem` type.
@@ -393,12 +383,8 @@ impl Watcher {
         if self.evict_list_i == 0 {
             return;
         }
-        // The close+swap_remove below must be serialized against the JS
-        // thread's watchlist lookups (`ImportWatcher::snapshot_package_json`)
-        // and `append_file_maybe_lock<true>` re-adds — both take `self.mutex`.
-        // The close in pass 1 is also why the watchlist's stored fd is never
-        // handed out for reads: a reader that copied the number before this
-        // ran would hit `EBADF`/`EISDIR` after (see `snapshot_package_json`).
+        // The close+swap_remove below must be serialized against `watch_file`
+        // re-adds from other threads, which take `self.mutex`.
         //
         // We do NOT lock here: the only callers are deferred from
         // `WatcherContext::on_file_update`, which is itself invoked from
@@ -524,14 +510,14 @@ impl Watcher {
         let _ = bun_sys::kevent(self.platform.fd, &[event], &mut [], None);
     }
 
+    /// Returns false if the platform cannot watch `file_path` (Windows, outside the project root).
     fn append_file_assume_capacity<const CLONE_FILE_PATH: bool>(
         &mut self,
         fd: Fd,
         file_path: &[u8],
         hash: HashType,
         parent_hash: HashType,
-        package_json: Option<&'static PackageJSON>,
-    ) -> sys::Result<FdOwnership> {
+    ) -> sys::Result<bool> {
         #[cfg(windows)]
         {
             // on windows we can only watch items that are in the directory tree of the top level dir
@@ -541,7 +527,7 @@ impl Watcher {
                     "File {} is not in the project directory and will not be watched\n",
                     bstr::BStr::new(file_path)
                 );
-                return Ok(FdOwnership::Caller);
+                return Ok(false);
             }
         }
 
@@ -591,12 +577,11 @@ impl Watcher {
             hash,
             count: 0,
             parent_hash,
-            package_json,
             kind: WatchItemKind::File,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index,
         });
-        Ok(FdOwnership::Watcher)
+        Ok(true)
     }
 
     fn append_directory_assume_capacity<const CLONE_FILE_PATH: bool>(
@@ -622,6 +607,12 @@ impl Watcher {
         } else {
             bun_sys::open_a(file_path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?
         };
+        // Closes the descriptor opened above if the directory is not appended.
+        let opened_fd = scopeguard::guard(fd, |fd| {
+            if !stored_fd.is_valid() {
+                let _ = bun_sys::close(fd);
+            }
+        });
 
         // `WatchItem.file_path` is an owning `Cow<'static, [u8]>` column so the
         // CLONE_FILE_PATH=true arm heap-dups instead of
@@ -674,12 +665,11 @@ impl Watcher {
 
         self.watchlist.append_assume_capacity(WatchItem {
             file_path: file_path_,
-            fd,
+            fd: scopeguard::ScopeGuard::into_inner(opened_fd),
             hash,
             count: 0,
             parent_hash,
             kind: WatchItemKind::Directory,
-            package_json: None,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index,
         });
@@ -688,84 +678,44 @@ impl Watcher {
 
     // Below is platform-independent
 
-    pub(crate) fn append_file_maybe_lock<const CLONE_FILE_PATH: bool, const LOCK: bool>(
+    /// Appends `file_path` and, when it is eligible, its directory. The caller holds `self.mutex`.
+    fn append_file<const CLONE_FILE_PATH: bool>(
         &mut self,
         fd: Fd,
         file_path: &[u8],
         hash: HashType,
-        dir_fd: Fd,
-        package_json: Option<&'static PackageJSON>,
-    ) -> sys::Result<FdOwnership> {
-        // RAII guard: `lock_guard()` holds the
-        // mutex by `BackRef`, not a borrow of `self`, so the `&mut self` calls
-        // below are fine and every return path unlocks.
-        let _guard = LOCK.then(|| self.mutex.lock_guard());
-
+    ) -> sys::Result<()> {
         debug_assert!(file_path.len() > 1);
         let pathname = bun_paths::fs::PathName::init(file_path);
 
         let parent_dir = pathname.dir_with_trailing_slash();
         let parent_dir_hash: HashType = Self::get_hash(parent_dir);
 
-        let mut parent_watch_item: Option<WatchItemIndex> = None;
-        let autowatch_parent_dir =
-            feature_flags::WATCH_DIRECTORIES && self.is_eligible_directory(parent_dir);
-        if autowatch_parent_dir {
-            let watchlist_slice = self.watchlist.slice();
-
-            if dir_fd.is_valid() {
-                let fds = watchlist_slice.items_fd();
-                if let Some(i) = fds.iter().position(|f| *f == dir_fd) {
-                    parent_watch_item = Some(i as WatchItemIndex);
-                }
-            }
-
-            if parent_watch_item.is_none() {
-                let hashes = watchlist_slice.items_hash();
-                if let Some(i) = hashes.iter().position(|h| *h == parent_dir_hash) {
-                    parent_watch_item = Some(i as WatchItemIndex);
-                }
-            }
-        }
+        let append_parent_dir = feature_flags::WATCH_DIRECTORIES
+            && self.is_eligible_directory(parent_dir)
+            && self.index_of(parent_dir_hash).is_none();
         // Abort on OOM:
         // `MultiArrayList::ensure_unused_capacity` returns `Err(AllocError)` on
         // allocation failure (does NOT abort), so discarding it would let the
         // following `append_assume_capacity` write past capacity.
         self.watchlist
-            .ensure_unused_capacity(1 + usize::from(parent_watch_item.is_none()))
+            .ensure_unused_capacity(1 + usize::from(append_parent_dir))
             .unwrap_or_else(|_| bun_core::out_of_memory());
 
-        if autowatch_parent_dir {
-            parent_watch_item = Some(match parent_watch_item {
-                Some(v) => v,
-                None => match self.append_directory_assume_capacity::<CLONE_FILE_PATH>(
-                    dir_fd,
-                    parent_dir,
-                    parent_dir_hash,
-                ) {
-                    Err(err) => {
-                        return Err(err.with_path(parent_dir));
-                    }
-                    Ok(r) => r,
-                },
-            });
+        if append_parent_dir {
+            self.append_directory_assume_capacity::<CLONE_FILE_PATH>(
+                Fd::INVALID,
+                parent_dir,
+                parent_dir_hash,
+            )
+            .map_err(|err| err.with_path(parent_dir))?;
         }
-        let _ = parent_watch_item;
 
-        match self.append_file_assume_capacity::<CLONE_FILE_PATH>(
-            fd,
-            file_path,
-            hash,
-            parent_dir_hash,
-            package_json,
-        ) {
-            Err(err) => {
-                return Err(err.with_path(file_path));
-            }
-            // Not appended (e.g. outside the project root on Windows); the
-            // caller keeps the descriptor.
-            Ok(FdOwnership::Caller) => return Ok(FdOwnership::Caller),
-            Ok(FdOwnership::Watcher) => {}
+        let appended = self
+            .append_file_assume_capacity::<CLONE_FILE_PATH>(fd, file_path, hash, parent_dir_hash)
+            .map_err(|err| err.with_path(file_path))?;
+        if !appended {
+            return Ok(());
         }
 
         let cwd_len_with_slash = if self.cwd[self.cwd.len() - 1] == b'/' {
@@ -784,7 +734,7 @@ impl Watcher {
             bstr::BStr::new(display_path)
         );
 
-        Ok(FdOwnership::Watcher)
+        Ok(())
     }
 
     #[inline]
@@ -803,7 +753,6 @@ impl Watcher {
         file_path: &[u8],
         hash: HashType,
     ) -> sys::Result<WatchItemIndex> {
-        // RAII guard; see append_file_maybe_lock.
         let _guard = self.mutex.lock_guard();
         if let Some(idx) = self.index_of(hash) {
             return Ok(idx as WatchItemIndex);
@@ -814,151 +763,54 @@ impl Watcher {
         self.append_directory_assume_capacity::<CLONE_FILE_PATH>(fd, file_path, hash)
     }
 
-    /// Lazily watch a file by path (slow path).
-    ///
-    /// This function is used when a file needs to be watched but was not
-    /// encountered during the normal import graph traversal. On macOS, it
-    /// opens a file descriptor with O_EVTONLY to obtain an inode reference.
-    ///
-    /// Thread-safe: uses internal locking to prevent race conditions.
-    ///
-    /// Returns:
-    /// - true if the file is successfully added to the watchlist or already watched
-    /// - false if the file cannot be opened or added to the watchlist
-    pub fn add_file_by_path_slow(&mut self, file_path: &[u8]) -> bool {
-        if file_path.is_empty() {
-            return false;
-        }
-        let hash = Self::get_hash(file_path);
-
-        // Check if already watched (with lock to avoid race with removal)
-        {
-            self.mutex.lock();
-            let already_watched = self.index_of(hash).is_some();
-            self.mutex.unlock();
-
-            if already_watched {
-                return true;
-            }
-        }
-
-        // Only open fd if we might need it
-        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        let fd: Fd = {
-            let mut path_z = bun_paths::path_buffer_pool::get();
-            if file_path.len() >= path_z.len() {
-                return false;
-            }
-            path_z[..file_path.len()].copy_from_slice(file_path);
-            path_z[file_path.len()] = 0;
-            // `path_z[file_path.len()] == 0` written above; `from_buf` borrows
-            // `path_z[..len]` as a `&ZStr` with the NUL debug-asserted in-bounds.
-            let z = ZStr::from_buf(&path_z[..], file_path.len());
-            match bun_sys::open(z, WATCH_OPEN_FLAGS, 0) {
-                Ok(opened) => opened,
-                Err(_) => return false,
-            }
-        };
-        #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-        let fd: Fd = Fd::INVALID;
-
-        let res = self.add_file::<true>(fd, file_path, hash, Fd::INVALID, None);
-        match res {
-            Ok(ownership) => {
-                // Not adopted (another thread won the add race); close the
-                // fd opened above.
-                if ownership == FdOwnership::Caller && fd.is_valid() {
-                    let _ = bun_sys::close(fd);
-                }
-                true
-            }
-            Err(_) => {
-                if fd.is_valid() {
-                    let _ = bun_sys::close(fd);
-                }
-                false
-            }
-        }
-    }
-
-    /// Watch `file_path` before its caller reads it. The `add_file` after the parse then only settles who owns the read fd.
-    pub fn add_file_before_read(&mut self, file_path: &[u8]) -> bool {
-        // The `add_file` after the read prints the out-of-root warning, once.
-        #[cfg(windows)]
-        if bun_paths::resolve_path::is_parent_or_equal(self.top_level_dir(), file_path)
-            == bun_paths::resolve_path::ParentEqual::Unrelated
-        {
-            return false;
-        }
-        self.add_file_by_path_slow(file_path)
-    }
-
-    pub fn add_file<const CLONE_FILE_PATH: bool>(
+    /// Watches `file_path` if it is not watched yet. Call this before the file is read, so that
+    /// a change the read does not contain still raises an event. With `CLONE_FILE_PATH` false,
+    /// `file_path` has to be interned for the life of the process.
+    pub fn watch_file<const CLONE_FILE_PATH: bool>(
         &mut self,
-        fd: Fd,
         file_path: &[u8],
         hash: HashType,
-        dir_fd: Fd,
-        package_json: Option<&'static PackageJSON>,
-    ) -> sys::Result<FdOwnership> {
-        // This must lock due to concurrent transpiler
-        self.mutex.lock();
+    ) -> sys::Result<()> {
+        if file_path.is_empty() {
+            return Err(sys::Error::new(sys::E::ENOENT, sys::Tag::watch));
+        }
+        if file_path.len() >= bun_paths::MAX_PATH_BYTES {
+            return Err(sys::Error::new(sys::E::ENAMETOOLONG, sys::Tag::watch).with_path(file_path));
+        }
 
-        if let Some(index) = self.index_of(hash) {
-            let mut ownership = FdOwnership::Caller;
-            if feature_flags::ATOMIC_FILE_WATCHER && fd.is_valid() {
-                // Upgrade a path-only entry (`add_file_by_path_slow` inserts
-                // fd-less, e.g. the `--hot` entrypoint) so `hot_reloader`'s
-                // directory-event recovery sees a valid fd. A valid stored fd
-                // is never replaced: the watchlist owns it until eviction,
-                // and the old overwrite leaked it.
-                // An fd to a file that a rename has since replaced would pin the inode inotify waits on.
-                let fds = self.watchlist.items_fd_mut();
-                if !fds[index as usize].is_valid() && Self::is_file_at_path(fd, file_path) {
-                    fds[index as usize] = fd;
-                    ownership = FdOwnership::Watcher;
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        let fd = {
+            {
+                let _guard = self.mutex.lock_guard();
+                if self.index_of(hash).is_some() {
+                    return Ok(());
                 }
             }
-            self.mutex.unlock();
-            return Ok(ownership);
-        }
+            // kqueue watches through a descriptor of its own, opened with the mutex released.
+            let mut buf = bun_paths::path_buffer_pool::get();
+            buf[..file_path.len()].copy_from_slice(file_path);
+            buf[file_path.len()] = 0;
+            let path = ZStr::from_buf(&buf[..], file_path.len());
+            scopeguard::guard(bun_sys::open(path, WATCH_OPEN_FLAGS, 0)?, |fd| {
+                let _ = bun_sys::close(fd);
+            })
+        };
 
-        let r = self.append_file_maybe_lock::<CLONE_FILE_PATH, false>(
-            fd,
-            file_path,
-            hash,
-            dir_fd,
-            package_json,
-        );
-        self.mutex.unlock();
-        r
+        let _guard = self.mutex.lock_guard();
+        if self.index_of(hash).is_some() {
+            return Ok(());
+        }
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        {
+            self.append_file::<CLONE_FILE_PATH>(*fd, file_path, hash)?;
+            scopeguard::ScopeGuard::into_inner(fd);
+            Ok(())
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+        self.append_file::<CLONE_FILE_PATH>(Fd::INVALID, file_path, hash)
     }
 
-    /// Whether `fd` is still the file that `file_path` names.
-    #[cfg(not(windows))]
-    fn is_file_at_path(fd: Fd, file_path: &[u8]) -> bool {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        if file_path.len() >= buf.len() {
-            return false;
-        }
-        buf[..file_path.len()].copy_from_slice(file_path);
-        buf[file_path.len()] = 0;
-        let path = ZStr::from_buf(&buf[..], file_path.len());
-        match (sys::fstat(fd), sys::stat(path)) {
-            (Ok(opened), Ok(named)) => {
-                opened.st_ino == named.st_ino && opened.st_dev == named.st_dev
-            }
-            _ => false,
-        }
-    }
-
-    /// Windows never stores the descriptor of an existing entry.
-    #[cfg(windows)]
-    fn is_file_at_path(_: Fd, _: &[u8]) -> bool {
-        true
-    }
-
-    pub fn index_of(&self, hash: HashType) -> Option<u32> {
+    fn index_of(&self, hash: HashType) -> Option<u32> {
         for (i, other) in self.watchlist.items_hash().iter().enumerate() {
             if hash == *other {
                 return Some(i as u32);
@@ -1102,11 +954,11 @@ pub struct WatchItem {
     pub file_path: Cow<'static, [u8]>,
     // filepath hash for quick comparison
     pub hash: u32,
+    /// A directory always has one. A file has one only with [`REQUIRES_FILE_DESCRIPTORS`].
     pub fd: Fd,
     pub count: u32,
     pub parent_hash: u32,
     pub kind: WatchItemKind,
-    pub package_json: Option<&'static PackageJSON>,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub eventlist_index: platform::EventListIndex,
 }
@@ -1117,19 +969,6 @@ pub enum WatchItemKind {
     Directory,
 }
 
-/// Who owns the `fd` passed to [`Watcher::add_file`] after it returns.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum FdOwnership {
-    /// The watchlist stored the descriptor; `flush_evictions`/shutdown will
-    /// close it. The caller must not use or close it afterwards.
-    Watcher,
-    /// The watchlist did not take the descriptor: the file was already
-    /// watched with a valid stored one, or the path is not watchable (e.g.
-    /// outside the project root on Windows). The caller still owns `fd` and
-    /// must close it (or keep using it).
-    Caller,
-}
-
 /// Typed SoA column accessors — thin safe wrappers over the reflection-backed
 /// `MultiArrayList::items::<"name", T>()` so callers don't repeat the type.
 /// Implemented locally so callers can write `watchlist.items_fd()` instead of
@@ -1138,7 +977,6 @@ pub trait WatchItemColumns {
     fn items_file_path(&self) -> &[Cow<'static, [u8]>];
     fn items_hash(&self) -> &[u32];
     fn items_fd(&self) -> &[Fd];
-    fn items_fd_mut(&mut self) -> &mut [Fd];
     fn items_parent_hash(&self) -> &[u32];
     fn items_kind(&self) -> &[WatchItemKind];
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1154,9 +992,6 @@ impl WatchItemColumns for WatchList {
     }
     fn items_fd(&self) -> &[Fd] {
         self.items::<"fd", Fd>()
-    }
-    fn items_fd_mut(&mut self) -> &mut [Fd] {
-        self.items_mut::<"fd", Fd>()
     }
     fn items_parent_hash(&self) -> &[u32] {
         self.items::<"parent_hash", u32>()
@@ -1179,9 +1014,6 @@ impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
     }
     fn items_fd(&self) -> &[Fd] {
         self.items::<"fd", Fd>()
-    }
-    fn items_fd_mut(&mut self) -> &mut [Fd] {
-        self.items_mut::<"fd", Fd>()
     }
     fn items_parent_hash(&self) -> &[u32] {
         self.items::<"parent_hash", u32>()

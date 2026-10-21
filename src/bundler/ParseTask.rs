@@ -91,8 +91,6 @@ pub struct ParseTask {
     pub(crate) path: Fs::Path<'static>,
     pub(crate) secondary_path_for_commonjs_interop: Option<Fs::Path<'static>>,
     pub(crate) contents_or_fd: ContentsOrFd,
-    /// True if this task opened `contents_or_fd`'s file. False if the resolver's entry cache owns it.
-    pub(crate) opened_own_fd: bool,
     pub(crate) external_free_function: ExternalFreeFunction,
     pub(crate) side_effects: bun_ast::SideEffects,
     pub(crate) loader: Option<Loader>,
@@ -134,7 +132,6 @@ pub struct Result {
     pub(crate) task: EventLoop::Task,
     pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>,
     pub(crate) value: ResultValue,
-    pub(crate) watcher_data: WatcherData,
     /// This is used for native onBeforeParsePlugins to store
     /// a function pointer and context pointer to free the
     /// returned source code by the plugin.
@@ -175,22 +172,6 @@ impl ResultValue {
             ResultValue::Success(val) => val.source.index.0,
         }
     }
-}
-
-pub(crate) struct WatcherData {
-    pub(crate) fd: Fd,
-    pub(crate) dir_fd: Fd,
-    /// True if the receiver must close `fd` when the watcher doesn't take it.
-    pub(crate) owns_fd: bool,
-}
-
-impl WatcherData {
-    /// When no files to watch, this encoding is used.
-    pub(crate) const NONE: WatcherData = WatcherData {
-        fd: Fd::INVALID,
-        dir_fd: Fd::INVALID,
-        owns_fd: false,
-    };
 }
 
 pub(crate) struct Success {
@@ -300,7 +281,6 @@ impl ParseTask {
             known_target,
             // defaults:
             secondary_path_for_commonjs_interop: None,
-            opened_own_fd: false,
             external_free_function: ExternalFreeFunction::NONE,
             loader: None,
             task: ThreadPoolLib::Task {
@@ -331,7 +311,6 @@ impl Default for ParseTask {
             path: Fs::Path::init(b""),
             secondary_path_for_commonjs_interop: None,
             contents_or_fd: ContentsOrFd::Contents(b""),
-            opened_own_fd: false,
             external_free_function: ExternalFreeFunction::NONE,
             side_effects: bun_ast::SideEffects::HasSideEffects,
             loader: None,
@@ -622,7 +601,6 @@ pub mod parse_worker {
             known_target: target,
             // defaults:
             secondary_path_for_commonjs_interop: None,
-            opened_own_fd: false,
             external_free_function: ExternalFreeFunction::NONE,
             task: ThreadPoolLib::Task {
                 node: ThreadPoolLib::Node::default(),
@@ -1523,8 +1501,6 @@ pub mod parse_worker {
                     }
                 }
 
-                ctx.watch_file_before_read(file_path);
-
                 // Always read into the worker arena: it is pinned for the
                 // entire bundle pass (freed only via `pool.deinit()` inside
                 // `deinit_without_freeing_arena`, after `process_files_to_copy`
@@ -2381,22 +2357,8 @@ pub mod parse_worker {
         // there); closing it leaves a stale fd for the next in-process build.
         let opened_own_fd =
             matches!(task.contents_or_fd, ContentsOrFd::Fd { file, .. } if !file.is_valid());
-        let will_close_file_descriptor = opened_own_fd
-            && entry.fd.is_valid()
-            && entry.fd.stdio_tag().is_none()
-            && worker_ctx.bun_watcher.is_none();
-        if will_close_file_descriptor {
+        if opened_own_fd && entry.fd.is_valid() && entry.fd.stdio_tag().is_none() {
             let _ = entry.close_fd();
-            task.contents_or_fd = ContentsOrFd::Fd {
-                file: Fd::INVALID,
-                dir: Fd::INVALID,
-            };
-        } else if matches!(task.contents_or_fd, ContentsOrFd::Fd { .. }) {
-            task.contents_or_fd = ContentsOrFd::Fd {
-                file: entry.fd,
-                dir: Fd::INVALID,
-            };
-            task.opened_own_fd = opened_own_fd && entry.fd.stdio_tag().is_none();
         }
         *step = Step::Parse;
 
@@ -2916,14 +2878,6 @@ pub mod parse_worker {
             // `ExternalFreeFunction`
             // doesn't derive `Copy`, so move it out (task is consumed here).
             external: core::mem::take(&mut this.external_free_function),
-            watcher_data: match this.contents_or_fd {
-                ContentsOrFd::Fd { file, dir } => WatcherData {
-                    fd: file,
-                    dir_fd: dir,
-                    owns_fd: this.opened_own_fd,
-                },
-                ContentsOrFd::Contents(_) => WatcherData::NONE,
-            },
         });
         let result = bun_core::heap::into_raw(result);
 

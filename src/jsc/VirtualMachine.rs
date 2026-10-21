@@ -4622,10 +4622,10 @@ impl VirtualMachine {
             // `enable_hot_module_reloading`. The pointee is shared with the
             // file-watcher thread (see `bun_watcher_ptr` doc) — the enum
             // discriminant is write-once at install and read-only thereafter,
-            // and `add_file_by_path_slow` serializes the inner watchlist write
+            // and `watch_file` serializes the inner watchlist write
             // via `Watcher.mutex`. Borrow is scoped to this single
             // mutex-guarded call.
-            let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
+            unsafe { (*watcher).watch_file(path, bun_watcher::Watcher::get_hash(path)) };
         }
     }
 
@@ -4651,7 +4651,7 @@ impl VirtualMachine {
             let shared = shared.lock();
             let watcher = shared.watcher;
             // SAFETY: as in `add_to_watcher_if_needed`.
-            let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
+            unsafe { (*watcher).watch_file(path, bun_watcher::Watcher::get_hash(path)) };
         })
     }
 

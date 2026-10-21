@@ -3,7 +3,9 @@ import { spawn } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import {
+  closeSync,
   copyFileSync,
+  openSync,
   readdirSync,
   readFileSync,
   readlinkSync,
@@ -11,6 +13,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  writeSync,
 } from "node:fs";
 import { basename, join } from "node:path";
 
@@ -299,6 +302,45 @@ int inotify_init1(int flags) {
     stdout: "",
     stderr: "error: Failed to enable File Watcher: EMFILE\n",
     exitCode: 1,
+    signalCode: null,
+  });
+});
+
+// ENOSPC is what inotify answers once fs.inotify.max_user_watches is used up. The directory of a
+// module is then asked for again by every module in it.
+it.skipIf(!isLinux || !cc)("does not leak a directory fd when inotify refuses to watch the directory", async () => {
+  const modules = Array.from({ length: 3 }, (_, i) => `m${i}.js`);
+  using dir = tempDir("watch-dir-refused", {
+    "shim.c": /* c */ `
+#include <errno.h>
+${NO_CORE_C}
+int inotify_add_watch(int fd, const char *path, unsigned int mask) {
+  (void)fd; (void)path; (void)mask;
+  errno = ENOSPC;
+  return -1;
+}
+`,
+    ...Object.fromEntries(modules.map(name => [`lib/${name}`, `export default 1;\n`])),
+    "watchee.js": `
+${modules.map(name => `import "./lib/${name}";`).join("\n")}
+import { readdirSync, readlinkSync, realpathSync } from "node:fs";
+const lib = realpathSync(import.meta.dir + "/lib");
+const held = readdirSync("/proc/self/fd").filter(fd => {
+  try {
+    return readlinkSync("/proc/self/fd/" + fd) === lib;
+  } catch {
+    return false;
+  }
+});
+console.log(held.length);
+process.exit(0);
+`,
+  });
+  const shimPath = await compileShim(String(dir));
+  expect(await runWatcheeWithShim(String(dir), shimPath, ["--watch", "watchee.js"])).toEqual({
+    stdout: "0\n",
+    stderr: "",
+    exitCode: 0,
     signalCode: null,
   });
 });
@@ -679,9 +721,11 @@ const watchCloexecFiles = {
 };
 
 // The numbered fds of `pid` under `cwd`, keyed by the path relative to it
-// ("/" is the directory itself). The watcher thread registers the entrypoint,
-// its import and their directory after the script starts, so this polls until
-// all three are open.
+// ("/" is the directory itself). The watcher holds one for the directory.
+// kqueue watches a file through a descriptor, so macOS also holds one for the
+// entrypoint and one for its import. inotify watches a file by path, so Linux
+// holds none for them. This polls until that many paths are open.
+const watchedFdPaths = isLinux ? 1 : 3;
 async function watchedFds(pid: number, cwd: string): Promise<Map<string, string[]>> {
   for (;;) {
     const watched = new Map<string, string[]>();
@@ -691,7 +735,7 @@ async function watchedFds(pid: number, cwd: string): Promise<Map<string, string[
       const rel = path.slice(cwd.length) || "/";
       watched.set(rel, [...(watched.get(rel) ?? []), fd]);
     }
-    if (watched.size >= 3) return watched;
+    if (watched.size >= watchedFdPaths) return watched;
     await Bun.sleep(10);
   }
 }
@@ -729,8 +773,9 @@ it.skipIf(isWindows || (isMacOS && !Bun.which("lsof")))(
 
 // The flag itself. Linux hides the leak behind its close_range() sweep, so
 // this reads O_CLOEXEC from /proc for every fd the watcher holds instead of
-// counting fds across reloads.
-it.skipIf(!isLinux)("watcher opens the watched directory and files with O_CLOEXEC", async () => {
+// counting fds across reloads. Both files are loaded when the script prints,
+// and the watcher holds no descriptor for either.
+it.skipIf(!isLinux)("watcher opens the watched directory with O_CLOEXEC and holds no fd for a file", async () => {
   using dir = tempDir("watch-cloexec", watchCloexecFiles);
   const cwd = realpathSync(String(dir));
   watchee = spawn({
@@ -754,8 +799,6 @@ it.skipIf(!isLinux)("watcher opens the watched directory and files with O_CLOEXE
     });
   expect(Object.fromEntries([...watched].sort().map(([rel, fds]) => [rel, flagsOf(fds)]))).toEqual({
     "/": [O_CLOEXEC],
-    "/dep.ts": [O_CLOEXEC],
-    "/main.ts": [O_CLOEXEC],
   });
 });
 
@@ -765,15 +808,18 @@ it.skipIf(!isLinux)("watcher opens the watched directory and files with O_CLOEXE
 // puts the save in that window itself: `mod.js` calls a macro, a macro runs
 // while its caller is parsed, and this one saves `mod.js`. It then holds the
 // parse until the watcher has handled the save (BUN_WATCHER_TRACE), so a
-// watch that is added after the parse is always too late.
+// watch that is added after the parse is always too late. If the watcher
+// never handles the save, the macro ends the child after 30 s.
 describe("a save that lands while the module is parsed is picked up", () => {
   // `save(how, from)` changes "value = <from>" in `mod.js` to the next number,
   // once. "write" saves in place with one write(2), so the file is never
   // partial. "rename" writes a second file and renames it over `mod.js`.
+  // "linked" does the same after it made a hard link to `mod.js`, so the file
+  // that the rename replaces stays alive.
   // The trace names `mod.js` as a watched file, or as a name in its directory.
-  const files = (how: "write" | "rename", from: number) => ({
+  const files = (how: "write" | "rename" | "linked", from: number) => ({
     "save.js": `
-import { closeSync, openSync, readFileSync, renameSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, linkSync, openSync, readFileSync, renameSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 const trace = () => readFileSync(process.env.BUN_WATCHER_TRACE, "utf8");
 export function save(how, from) {
@@ -782,7 +828,8 @@ export function save(how, from) {
   const at = text.indexOf("value = " + from);
   if (at === -1) return "kept";
   const before = trace().length;
-  if (how === "rename") {
+  if (how !== "write") {
+    if (how === "linked") linkSync(path, join(import.meta.dir, "mod.held"));
     const next = join(import.meta.dir, "next.js");
     writeFileSync(next, text.replace("value = " + from, "value = " + (from + 1)));
     renameSync(next, path);
@@ -791,10 +838,12 @@ export function save(how, from) {
     writeSync(fd, String(from + 1), at + "value = ".length);
     closeSync(fd);
   }
-  for (;;) {
+  for (const end = Date.now() + 30_000; Date.now() < end; Bun.sleepSync(1)) {
     const handled = trace().slice(before);
     if (handled.includes('mod.js":') || handled.includes('"mod.js"')) return "saved";
   }
+  console.error("the watcher did not handle the save of mod.js");
+  process.exit(1);
 }
 `,
     "mod.js": `import { save } from "./save.js" with { type: "macro" };
@@ -823,8 +872,15 @@ test("logs", () => console.log("value " + value + " " + macro));
   });
 
   // A lost save leaves the child on the module it parsed, and `waitFor` never
-  // returns.
-  async function expectOutput(cmd: string[], how: "write" | "rename", from: number, needle: string) {
+  // returns, or the macro ends the child and `waitFor` rejects. `resaved` is
+  // what a save of `mod.js` after the reload has to print.
+  async function expectOutput(
+    cmd: string[],
+    how: "write" | "rename" | "linked",
+    from: number,
+    needle: string,
+    resaved?: string,
+  ) {
     using dir = tempDir("watch-save-during-parse", files(how, from));
     // Not in the watched directory: a trace line must not raise an event.
     using traceDir = tempDir("watch-save-during-parse-trace", {});
@@ -839,6 +895,13 @@ test("logs", () => console.log("value " + value + " " + macro));
     });
     const { waitFor, release } = stdoutWaiter(watchee);
     await waitFor(needle);
+    if (resaved) {
+      const path = join(String(dir), "mod.js");
+      const fd = openSync(path, "r+");
+      writeSync(fd, "2", readFileSync(path, "utf8").indexOf("value = 1") + "value = ".length);
+      closeSync(fd);
+      await waitFor(resaved);
+    }
     release();
     watchee.kill("SIGKILL");
     await watchee.exited;
@@ -847,9 +910,15 @@ test("logs", () => console.log("value " + value + " " + macro));
   it("--watch, import", () => expectOutput(["--watch", "entry.js"], "write", 0, "value 1 kept"));
   it("--watch, require", () => expectOutput(["--watch", "entry-require.js"], "write", 0, "value 1 kept"));
   it("--hot, import", () => expectOutput(["--hot", "entry.js"], "write", 0, "value 1 kept"));
-  // Windows refuses to rename over a file that is open for the parse.
+  // Windows refuses to rename over a file that is open for the parse. The
+  // watch has to be on the new file afterwards.
   it.skipIf(isWindows)("--hot, saved with a rename", () =>
-    expectOutput(["--hot", "entry.js"], "rename", 0, "value 1 kept"),
+    expectOutput(["--hot", "entry.js"], "rename", 0, "value 1 kept", "value 2 kept"),
+  );
+  // inotify reports the end of a file only when its last link is gone. With a
+  // second link, only the event of the directory reports this save.
+  it.skipIf(!isLinux)("--hot, saved with a rename while a hard link holds the file", () =>
+    expectOutput(["--hot", "entry.js"], "linked", 0, "value 1 kept", "value 2 kept"),
   );
   // On Linux a save in place takes the file off the watchlist until the reload
   // reads it again. Here the macro saves while that reload parses the file.
@@ -858,4 +927,81 @@ test("logs", () => console.log("value " + value + " " + macro));
   it("bun test --watch", () => expectOutput(["test", "--watch", "./entry.test.js"], "write", 0, "value 1 kept"));
   // Without --outdir the bundle goes to stdout, once per build.
   it("bun build --watch", () => expectOutput(["build", "--watch", "entry.js"], "write", 0, "var value = 1;"));
+});
+
+// The reader closes a source file right after the read when the open-file
+// limit is 254 or less, or once it has seen a descriptor number at half of the
+// limit. The watch used to be added through that descriptor after the parse,
+// so such a file was not watched at all. inotify watches by path and needs no
+// descriptor. kqueue needs one for each watch, so there such a file stays
+// unwatched. Windows never closes a source file early.
+describe.skipIf(isWindows)("a file that was read at an open-file limit of 200", () => {
+  // `sh` sets the soft and the hard limit, so bun cannot raise it again.
+  function run(cwd: string, args: string[]) {
+    watchee = spawn({
+      cmd: ["sh", "-c", 'ulimit -n 200 && exec "$0" "$@"', bunExe(), ...args],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    return stdoutWaiter(watchee);
+  }
+
+  // One write of the same length, without a truncate: one watcher event, and
+  // a reload never reads a partial file.
+  function overwrite(path: string, contents: string) {
+    const fd = openSync(path, "r+");
+    try {
+      writeSync(fd, contents, 0);
+    } finally {
+      closeSync(fd);
+    }
+  }
+
+  it("--hot reloads import, import() and require()", async () => {
+    using dir = tempDir("hot-low-limit", {
+      "static.js": `export const a = 1;`,
+      "dynamic.js": `export const b = 1;`,
+      "required.cjs": `exports.c = 1;`,
+      "entry.js": `
+import { a } from "./static.js";
+const { b } = await import("./dynamic.js");
+const { c } = require("./required.cjs");
+console.log("values", a, b, c);
+setInterval(() => {}, 1 << 30);
+`,
+    });
+    const cwd = String(dir);
+    const { waitFor, release } = run(cwd, ["--hot", "--no-clear-screen", "entry.js"]);
+    await waitFor("values 1 1 1\n");
+    // On kqueue the three modules stay unwatched. They still have to load.
+    if (isLinux) {
+      // The second round saves each module again after its first reload.
+      for (const round of [2, 3]) {
+        overwrite(join(cwd, "static.js"), `export const a = ${round};`);
+        await waitFor(`values ${round} ${round - 1} ${round - 1}\n`);
+        overwrite(join(cwd, "dynamic.js"), `export const b = ${round};`);
+        await waitFor(`values ${round} ${round} ${round - 1}\n`);
+        overwrite(join(cwd, "required.cjs"), `exports.c = ${round};`);
+        await waitFor(`values ${round} ${round} ${round}\n`);
+      }
+    }
+    release();
+  });
+
+  // Without --outdir the bundle goes to stdout, once per build.
+  it.skipIf(!isLinux)("bun build --watch builds again", async () => {
+    using dir = tempDir("build-watch-low-limit", {
+      "dep.js": `export const value = "dep-1";`,
+      "entry.js": `import { value } from "./dep.js";\nconsole.log(value, "entry-1");\n`,
+    });
+    const cwd = String(dir);
+    const { waitFor, release } = run(cwd, ["build", "--watch", "--no-clear-screen", "entry.js"]);
+    await waitFor('"dep-1"');
+    overwrite(join(cwd, "dep.js"), `export const value = "dep-2";`);
+    await waitFor('"dep-2"');
+    release();
+  });
 });

@@ -38,7 +38,7 @@ In `--watch` mode, Bun keeps track of all imported files and watches them for ch
 
 **⚡️ Reloads are fast.** The filesystem watchers you're probably used to have several layers of libraries wrapping the native APIs or, worse, rely on polling.
 
-Instead, Bun uses the operating system's native filesystem watcher APIs, like kqueue or inotify, to detect file changes. Bun also applies several optimizations to scale to larger projects, such as setting a high rlimit for file descriptors, statically allocating file path buffers, and reusing file descriptors when possible.
+Instead, Bun uses the operating system's native filesystem watcher APIs, like kqueue or inotify, to detect file changes. Bun also applies several optimizations to scale to larger projects, such as setting a high rlimit for file descriptors and statically allocating file path buffers.
 
 </Note>
 

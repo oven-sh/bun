@@ -388,13 +388,13 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     // The snapshot is taken locked. `on_file_update` may evict watchlist entries via
     // `remove_at_index` + `flush_evictions` (the dir-event path appends *and*
     // evicts the matched file watch). The enqueued reload then re-imports the
-    // module on the JS thread, whose `add_file` re-appends the entry under
+    // module on the JS thread, whose `watch_file` re-appends the entry under
     // `this.mutex`, potentially reallocating the MultiArrayList backing while
     // this thread is mid-`items_eventlist_index()` on the next cycle. Under
     // load (`watch-many-dirs.test.ts` writes 129 files concurrently, > the
     // 128 `max_count` batch size, so the dir-event-only batch is common) the
     // unlocked read raced the realloc and the process occasionally died with
-    // a non-zero exit code. Snapshot under the same mutex `add_file` takes.
+    // a non-zero exit code. Snapshot under the same mutex `watch_file` takes.
     {
         let _guard = this.mutex.lock_guard();
         this.eventlist_index_scratch.clear();

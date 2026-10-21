@@ -1144,9 +1144,8 @@ impl AsyncModule {
             );
         }
 
-        // No watcher registration here: `maybe_watch_file` already ran before
-        // the enqueue, and the fd the parse opened may have been closed (and
-        // the number recycled) by the transpile frame's fd guard.
+        // No watcher registration here: the file was watched before the parse
+        // read it.
 
         Ok(ResolvedSource {
             source_code: BunString::clone_latin1(printer.ctx.get_written()),

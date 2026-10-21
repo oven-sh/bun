@@ -22,7 +22,7 @@ use crate::Worker;
 use crate::bundle_v2::BundleV2;
 use crate::cache::ExternalFreeFunction;
 use crate::options::{Loader, Target};
-use crate::parse_task::{self, ResultValue, Success, WatcherData, on_complete};
+use crate::parse_task::{self, ResultValue, Success, on_complete};
 
 pub(crate) struct ServerComponentParseTask {
     pub task: ThreadPoolTask,
@@ -98,7 +98,6 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         task: Default::default(),
         value,
         external: ExternalFreeFunction::NONE,
-        watcher_data: WatcherData::NONE,
     });
     let result = bun_core::heap::into_raw(result);
 

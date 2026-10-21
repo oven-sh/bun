@@ -557,4 +557,58 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
     proc.kill();
     reader.releaseLock();
   }, 60_000);
+
+  // The module loader does not load a file that only a filtered-out test
+  // imports, so the watcher gets such a file from the module graph. It has to
+  // get it before the run: here the file is saved while the run goes on.
+  test("restarts for a save, during the run, of a file that only a filtered-out test imports", async () => {
+    using dir = tempDir("test-changed-watch-seed", {
+      "package.json": JSON.stringify({ name: "watch", type: "module" }),
+      "dep-a.ts": `export const A = 1;\n`,
+      "dep-b.ts": `export const B = 2;\n`,
+      // Saves dep-b.ts once, in its own run.
+      "wa.test.ts": `import { test, expect } from "bun:test";
+import { appendFileSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { A } from "./dep-a";
+test("wa", () => {
+  const depB = join(import.meta.dir, "dep-b.ts");
+  if (!readFileSync(depB, "utf8").includes("touched")) appendFileSync(depB, "// touched\\n");
+  expect(A).toBe(1);
+});
+`,
+      "wb.test.ts": `import { test, expect } from "bun:test";\nimport { B } from "./dep-b";\ntest("wb", () => expect(B).toBe(2));\n`,
+    });
+    initRepo(String(dir));
+    // dep-a.ts is dirty, so the first run is wa.test.ts alone.
+    appendFileSync(join(String(dir), "dep-a.ts"), "// touched\n");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--changed", "--watch", "--no-clear-screen"],
+      cwd: String(dir),
+      env: gitEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const reader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    async function waitFor(needle: string): Promise<void> {
+      while (!buf.includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`stream closed before seeing ${JSON.stringify(needle)}\n${buf}`);
+        buf += decoder.decode(value, { stream: true });
+      }
+    }
+
+    await waitFor("wa.test.ts:");
+    // The restart has only dep-b.ts as its changed file.
+    await waitFor("wb.test.ts:");
+
+    proc.kill();
+    reader.releaseLock();
+  });
 });

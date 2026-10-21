@@ -217,16 +217,14 @@ impl<'a> BundleV2<'a> {
         self.plugins.map(|mut p| unsafe { p.as_mut() })
     }
 
-    /// Mutable projection of the `bun_watcher` backref for `Watcher::add_file`.
-    /// Centralises the two open-coded `unsafe { ptr.as_mut() }` sites so the
-    /// liveness/exclusivity argument lives in one place.
+    /// Mutable projection of the `bun_watcher` backref for `Watcher::watch_file`.
     #[inline]
     pub(crate) fn bun_watcher_mut(&mut self) -> Option<&mut bun_watcher::Watcher> {
         // SAFETY: BACKREF — heap-owned by hot_reloader / DevServer (set via
         // `install_bun_watcher`), live for the process under `--watch`. The
         // watcher storage is disjoint from `self`; `&mut self` excludes any
-        // other safe projection from this `BundleV2`, and this projection is
-        // only used on the single bundle thread (`thread_lock`-asserted).
+        // other safe projection from this `BundleV2`, and `watch_file` is only
+        // ever driven from the single bundle thread (`thread_lock`-asserted).
         self.bun_watcher.map(|mut p| unsafe { p.as_mut() })
     }
 
@@ -5047,8 +5045,6 @@ pub mod bv2_impl {
             // below type-check without per-use-site `unsafe { &mut *log }`.
             let log = this.transpiler.log_mut();
 
-            // TODO: watcher
-
             match load.value.consume() {
                 jsc_api::JSBundler::LoadValue::NoMatch => {
                     let source =
@@ -5118,49 +5114,6 @@ pub mod bv2_impl {
                     parse_task.loader = Some(code.loader);
                     parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
                     this.graph.pool().schedule(parse_task);
-
-                    if this.bun_watcher.is_some() {
-                        'add_watchers: {
-                            if !this.should_add_watcher_plugin(&load.namespace, &load.path) {
-                                break 'add_watchers;
-                            }
-
-                            // TODO: support explicit watchFiles array. this is not done
-                            // right now because DevServer requires a table to map
-                            // watched files and dirs to their respective dependants.
-                            let fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
-                                let mut buf = bun_paths::path_buffer_pool::get();
-                                // On kqueue platforms paths are already
-                                // posix-separated so `z()` alone suffices.
-                                match bun_sys::open(
-                                    bun_paths::resolve_path::z(load.path.as_ref(), &mut *buf),
-                                    bun_watcher::WATCH_OPEN_FLAGS,
-                                    0,
-                                ) {
-                                    bun_sys::Result::Ok(fd) => fd,
-                                    bun_sys::Result::Err(_) => break 'add_watchers,
-                                }
-                            } else {
-                                bun_sys::Fd::INVALID
-                            };
-
-                            // Failures to watch are intentionally ignored.
-                            if !matches!(
-                                this.bun_watcher_mut().unwrap().add_file::<true>(
-                                    fd,
-                                    &load.path,
-                                    bun_wyhash::hash(load.path.as_ref()) as u32,
-                                    bun_sys::Fd::INVALID,
-                                    None,
-                                ),
-                                Ok(bun_watcher::FdOwnership::Watcher)
-                            ) && fd.is_valid()
-                            {
-                                // Not adopted; close the fd opened above.
-                                let _ = bun_sys::close(fd);
-                            }
-                        }
-                    }
                 }
                 jsc_api::JSBundler::LoadValue::Err(msg) => {
                     if let Some(dev) = this.dev_server {
@@ -5899,18 +5852,36 @@ pub mod bv2_impl {
             }
         }
 
-        /// See `Watcher::add_file_before_read`. Runs on parse worker threads.
-        pub(crate) fn watch_file_before_read(&self, path: &Fs::Path) {
-            let Some(mut bun_watcher) = self.bun_watcher else {
-                return;
-            };
-            if !self.should_add_watcher_plugin(path.namespace, path.text) {
+        /// Watches the file of `parse` before a parse worker or an onLoad plugin reads it.
+        fn watch_file_before_read(&mut self, parse: &ParseTask) {
+            if self.bun_watcher.is_none()
+                || !matches!(parse.contents_or_fd, parse_task::ContentsOrFd::Fd { .. })
+            {
                 return;
             }
-            // SAFETY: BACKREF — see `bun_watcher_mut`. This runs on parse
-            // worker threads; `Watcher` serializes watchlist writes with its
-            // own mutex, as it does for the runtime transpiler's workers.
-            let _ = unsafe { bun_watcher.as_mut() }.add_file_before_read(path.text);
+            let path: &[u8] = parse.path.text;
+            if !self.should_add_watcher_plugin(parse.path.namespace, path)
+                || self.file_map.is_some_and(|files| files.get(path).is_some())
+            {
+                return;
+            }
+            // On kqueue a watch costs a descriptor, so past the descriptor budget the file stays unwatched.
+            if bun_watcher::REQUIRES_FILE_DESCRIPTORS
+                && Fs::FileSystem::get().fs.need_to_close_files()
+            {
+                return;
+            }
+            let hash = bun_wyhash::hash(path) as u32;
+            let bun_watcher = self.bun_watcher_mut().unwrap();
+            // The watcher keeps the path past this bundle; borrow it only when
+            // it is interned for the process lifetime (`dupe_alloc` leaves
+            // other paths in the bundle arena). Failures to watch are
+            // intentionally ignored.
+            let _ = if Fs::as_interned_path(path).is_some() {
+                bun_watcher.watch_file::<{ cfg!(windows) }>(path, hash)
+            } else {
+                bun_watcher.watch_file::<true>(path, hash)
+            };
         }
 
         /// Dev Server uses this instead to run a subset of the transpiler, and to run it asynchronously.
@@ -6400,6 +6371,7 @@ pub mod bv2_impl {
         }
 
         pub(crate) fn enqueue_on_load_plugin_if_needed(&mut self, parse: &mut ParseTask) -> bool {
+            self.watch_file_before_read(parse);
             let had_matches = self.enqueue_on_load_plugin_if_needed_impl(parse);
             if had_matches {
                 return true;
@@ -7730,44 +7702,6 @@ pub mod bv2_impl {
                 resolve_queue = Self::run_resolution_for_parse_task(parse_result, this);
                 if matches!(parse_result.value, parse_task::ResultValue::Err(_)) {
                     process_log = false;
-                }
-            }
-
-            // The parse worker already watches the file (`watch_file_before_read`); settle who owns the read fd.
-            if this.bun_watcher.is_some() {
-                if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
-                    let source_index = parse_result.value.source_index();
-                    // borrowck — read the source path before
-                    // `should_add_watcher(&self)` so the column borrow is released.
-                    let source_path = this.graph.input_files.items_source()[source_index as usize]
-                        .path
-                        .text;
-                    let fd = parse_result.watcher_data.fd;
-                    let mut adopted = false;
-                    if this.should_add_watcher(source_path) {
-                        let dir_fd = parse_result.watcher_data.dir_fd;
-                        let hash = bun_wyhash::hash(source_path) as u32;
-                        let bun_watcher = this.bun_watcher_mut().unwrap();
-                        // The watcher keeps the path past this bundle; borrow it
-                        // only when it is interned for the process lifetime
-                        // (`dupe_alloc` leaves other paths in the bundle arena).
-                        let added = if Fs::as_interned_path(source_path).is_some() {
-                            bun_watcher.add_file::<{ cfg!(windows) }>(
-                                fd,
-                                source_path,
-                                hash,
-                                dir_fd,
-                                None,
-                            )
-                        } else {
-                            bun_watcher.add_file::<true>(fd, source_path, hash, dir_fd, None)
-                        };
-                        adopted = matches!(added, Ok(bun_watcher::FdOwnership::Watcher));
-                    }
-                    // A file that's already watched keeps its first descriptor.
-                    if !adopted && parse_result.watcher_data.owns_fd {
-                        let _ = bun_sys::close(fd);
-                    }
                 }
             }
 

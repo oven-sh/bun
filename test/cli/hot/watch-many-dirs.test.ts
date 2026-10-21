@@ -99,13 +99,12 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     30000,
   ); // 30 second timeout
 
-  // The watchlist owns one descriptor per watched file, closed only when the
-  // entry is evicted or the watcher shuts down. Re-transpiles during a reload
-  // open the file by path and must not stack additional descriptors on top of
-  // the stored one (previously the entrypoint gained one open fd per reload).
-  // /proc/<pid>/fd is Linux-only.
+  // On Linux the watcher keeps a descriptor for a watched directory and none
+  // for a watched file: inotify watches a file by path. A reload reads each
+  // file through a descriptor of its own and has to close it (previously the
+  // entrypoint gained one open fd per reload). /proc/<pid>/fd is Linux-only.
   test.skipIf(!isLinux)(
-    "keeps a stable number of file descriptors across reloads",
+    "keeps no file descriptor for a watched file across reloads",
     async () => {
       await using dir = tempDir("hot-fd-stable", {
         "entry.js": `import { value } from "./lib/dep.js";\nconsole.log("RELOAD", value);`,
@@ -121,8 +120,8 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
         stderr: "inherit",
       });
 
-      const countFileFds = () => {
-        const counts = { entry: 0, dep: 0 };
+      const countFds = () => {
+        const counts = { entry: 0, dep: 0, dir: 0, lib: 0 };
         for (const fd of readdirSync(`/proc/${proc.pid}/fd`)) {
           let target: string;
           try {
@@ -132,8 +131,21 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
           }
           if (target === join(dirReal, "entry.js")) counts.entry++;
           else if (target === join(dirReal, "lib", "dep.js")) counts.dep++;
+          else if (target === dirReal) counts.dir++;
+          else if (target === join(dirReal, "lib")) counts.lib++;
         }
         return counts;
+      };
+      // One save can reload twice, so a reload can be reading a file when the
+      // line of the one before it prints. A descriptor that is only open for a
+      // read goes away; one that the watcher keeps or a reload leaks does not.
+      const fdsAfterReads = async () => {
+        const deadline = Date.now() + 10_000;
+        for (;;) {
+          const counts = countFds();
+          if ((counts.entry === 0 && counts.dep === 0) || Date.now() > deadline) return counts;
+          await Bun.sleep(10);
+        }
       };
 
       const iter = forEachLine(proc.stdout);
@@ -146,39 +158,16 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
       };
 
       await waitForReload(0);
-      // Warm up so both files reach their steady state in the watchlist (the
-      // entrypoint is added fd-less before its first transpile; dep's stored
-      // fd settles on its first edited reload).
-      for (let i = 1; i <= 2; i++) {
-        writeFileSync(join(dir, "lib", "dep.js"), `export const value = ${i};`);
-        await waitForReload(i);
-      }
-      const before = countFileFds();
-      // Guard against a vacuous pass: the entrypoint's stored descriptor must
-      // be visible in the baseline. (dep's can be transiently closed by a
-      // directory-event eviction, so it gets no such guard.)
-      expect(before.entry).toBeGreaterThan(0);
+      // The directory counts guard against a vacuous pass: /proc is readable
+      // and the paths match.
+      expect(await fdsAfterReads()).toEqual({ entry: 0, dep: 0, dir: 1, lib: 1 });
 
       const reloads = 15;
-      for (let i = 3; i <= reloads + 2; i++) {
+      for (let i = 1; i <= reloads; i++) {
         writeFileSync(join(dir, "lib", "dep.js"), `export const value = ${i};`);
         await waitForReload(i);
       }
-      const after = countFileFds();
-
-      // One handle's transient presence between samples is not a leak; a
-      // per-reload leak shows up as +reloads.
-      expect({
-        before,
-        after,
-        entryDelta: Math.min(after.entry - before.entry, 1),
-        depDelta: Math.min(after.dep - before.dep, 1),
-      }).toEqual({
-        before,
-        after,
-        entryDelta: after.entry - before.entry,
-        depDelta: after.dep - before.dep,
-      });
+      expect(await fdsAfterReads()).toEqual({ entry: 0, dep: 0, dir: 1, lib: 1 });
     },
     60000,
   );

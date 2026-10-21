@@ -12,7 +12,8 @@ use bun_paths::strings;
 #[cfg(not(windows))]
 use bun_resolver::fs::PathName;
 use bun_resolver::fs::{self as Fs, FileSystem};
-use bun_sys::{self, Fd};
+#[cfg(not(windows))]
+use bun_sys::Fd;
 use bun_watcher::WatchItemColumns as _;
 use bun_watcher::{ChangedFilePath, Op as WatchOp, Watcher};
 
@@ -32,62 +33,19 @@ pub enum ImportWatcher {
 }
 
 impl ImportWatcher {
-    /// Look up the `package_json` column for `hash` under the watcher's
-    /// mutex.
-    ///
-    /// Deliberately does NOT hand out the stored fd: the watchlist owns it
-    /// and `flush_evictions` closes it concurrently, so a reader would hit
-    /// `EBADF`/`EISDIR` after the mutex is released (watch-many-dirs.test.ts)
-    /// or read the stale pre-rename inode after an atomic save. Reloads open
-    /// the file by path; `Watcher::add_file` adopts the fresh descriptor.
-    pub fn snapshot_package_json(
-        &self,
-        hash: bun_watcher::HashType,
-    ) -> Option<&'static bun_watcher::PackageJSON> {
-        let w = match self {
-            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w,
-            ImportWatcher::None => return None,
-        };
-        let _guard = w.mutex.lock_guard();
-        let index = w.index_of(hash)?;
-        w.watchlist
-            .items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize]
-    }
-
-    #[inline]
-    pub fn add_file_by_path_slow(&mut self, file_path: &[u8]) -> bool {
-        match self {
-            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w.add_file_by_path_slow(file_path),
-            ImportWatcher::None => true,
+    /// Watches `file_path`. See [`Watcher::watch_file`]. Failures to watch are ignored.
+    pub fn watch_file(&mut self, file_path: &[u8], hash: bun_watcher::HashType) {
+        if let ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) = self {
+            let _ = watcher.watch_file::<true>(file_path, hash);
         }
     }
 
-    /// See [`Watcher::add_file_before_read`].
-    #[inline]
-    pub fn add_file_before_read(&mut self, file_path: &[u8]) -> bool {
-        match self {
-            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w.add_file_before_read(file_path),
-            ImportWatcher::None => false,
+    /// [`Self::watch_file`] for a module. On kqueue a watch costs a descriptor, so past the descriptor budget the module stays unwatched.
+    pub fn watch_module(&mut self, file_path: &[u8], hash: bun_watcher::HashType) {
+        if bun_watcher::REQUIRES_FILE_DESCRIPTORS && FileSystem::get().fs.need_to_close_files() {
+            return;
         }
-    }
-
-    #[inline]
-    pub fn add_file<const COPY_FILE_PATH: bool>(
-        &mut self,
-        fd: Fd,
-        file_path: &[u8],
-        hash: bun_watcher::HashType,
-        dir_fd: Fd,
-        // Note: bun_watcher::PackageJSON is an opaque forward-decl;
-        // callers cast from `&bun_resolver::PackageJSON`.
-        package_json: Option<&'static bun_watcher::PackageJSON>,
-    ) -> bun_sys::Result<bun_watcher::FdOwnership> {
-        match self {
-            ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => {
-                watcher.add_file::<COPY_FILE_PATH>(fd, file_path, hash, dir_fd, package_json)
-            }
-            ImportWatcher::None => Ok(bun_watcher::FdOwnership::Caller),
-        }
+        self.watch_file(file_path, hash);
     }
 }
 
@@ -1183,7 +1141,7 @@ where
                                             file_hash = Watcher::get_hash(path_string.as_bytes());
                                             for (entry_id, hash) in hashes.iter().enumerate() {
                                                 if *hash == file_hash {
-                                                    if file_descriptors[entry_id].is_valid() {
+                                                    if kinds[entry_id] == bun_watcher::Kind::File {
                                                         if prev_entry_id != entry_id {
                                                             record_changed_path(
                                                                 path_string.as_bytes(),

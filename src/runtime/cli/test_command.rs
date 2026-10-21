@@ -2328,9 +2328,7 @@ impl TestCommand {
 
             // Install the --changed trigger collector BEFORE the watcher
             // thread starts so a file edit during runAllTests is still
-            // recorded. The addFileByPathSlow seeding stays after
-            // runAllTests (separate concern; see O_EVTONLY comment
-            // below).
+            // recorded.
             if ctx.test_options.changed.is_some()
                 && vm.hot_reload == jsc::virtual_machine::HotReload::Watch
             {
@@ -2359,6 +2357,23 @@ impl TestCommand {
                     }
                 }
                 _ => {}
+            }
+        }
+
+        // With --changed, only a subset of test files (possibly none) runs,
+        // so the module loader won't naturally add every source file to the
+        // watcher. Seed it from the module graph so editing any local source
+        // file — including files only reachable from tests that were
+        // filtered out — still triggers a restart under --watch. The seeds
+        // are watched before the run, so a save during the run restarts too.
+        if ctx.test_options.changed.is_some() && vm.is_watcher_enabled() {
+            // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
+            // `enable_hot_module_reloading`; non-null because
+            // `is_watcher_enabled()` checked it.
+            let watcher =
+                unsafe { &mut *vm.bun_watcher.cast::<jsc::hot_reloader::ImportWatcher>() };
+            for path in &changed_module_graph_files {
+                watcher.watch_file(path, bun_watcher::Watcher::get_hash(path));
             }
         }
 
@@ -2409,33 +2424,6 @@ impl TestCommand {
                 )?;
             } else {
                 Self::run_all_tests(&mut reporter, vm, test_files);
-            }
-        }
-
-        // With --changed, only a subset of test files (possibly none) runs,
-        // so the module loader won't naturally add every source file to the
-        // watcher. Seed it from the module graph so editing any local source
-        // file — including files only reachable from tests that were
-        // filtered out — still triggers a restart under --watch.
-        //
-        // This must happen AFTER runAllTests: during the run the module
-        // loader registers loaded files with a readable fd, which
-        // RuntimeTranspilerStore reuses on the next load. On macOS
-        // addFileByPathSlow opens with O_EVTONLY (not readable); seeding
-        // first would hand that fd to the transpiler. Seeding after means
-        // loaded files are already present (indexOf early-returns) and only
-        // the never-loaded filtered-out subgraph gets an O_EVTONLY entry,
-        // which the transpiler never touches. The test harness syncs on the
-        // "Ran N tests" summary (printed after this), so seeding completes
-        // before the next file edit.
-        if ctx.test_options.changed.is_some() && vm.is_watcher_enabled() {
-            // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
-            // `enable_hot_module_reloading`; non-null because
-            // `is_watcher_enabled()` checked it.
-            let watcher =
-                unsafe { &mut *vm.bun_watcher.cast::<jsc::hot_reloader::ImportWatcher>() };
-            for path in &changed_module_graph_files {
-                let _ = watcher.add_file_by_path_slow(path);
             }
         }
 

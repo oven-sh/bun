@@ -127,7 +127,7 @@ use task::{Open, OrderDependent, Stored, Task};
 
 pub use call::ResolvedCall;
 pub use shape::Members;
-pub use spans::compute_ecma_line_starts;
+pub use spans::{compute_ecma_line_starts, normalize_jsdoc_type_source_text};
 
 const RECENT_SIGS: usize = 256;
 const RECENT_TYPE_PARAMS: usize = 64;

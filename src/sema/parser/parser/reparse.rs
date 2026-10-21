@@ -7,6 +7,7 @@ use bun_sema::check::jsdoc::syntax::{
     ClassName, DeclaredName, JsDoc, Name, Property, Signature, Tag, TagKind, TagType, TypeExpr,
     TypeShape,
 };
+use bun_sema::check::normalize_jsdoc_type_source_text;
 use bun_sema::hir::*;
 use smallvec::SmallVec;
 
@@ -619,9 +620,13 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             let property = match &param.kind {
                 TagKind::This(ty) => {
                     if this_param.is_none() {
-                        // `thisIdent.Loc = thisTag.Loc`
+                        // `thisIdent.Loc = thisTag.Loc`. `GetTextOfNode` normalizes it in a type, which a `@callback` is.
                         let text = source.get(param.pos as usize..param.end as usize);
-                        let name = self.atom(text.unwrap_or_default());
+                        let text = text.unwrap_or_default();
+                        let name = match like {
+                            Some(_) => self.atom(text),
+                            None => self.atom(&normalize_jsdoc_type_source_text(text)),
+                        };
                         let this = Param {
                             pat: self.f.pat(PatKind::Ident(name), param.pos, param.end),
                             ty: self.reparse_type(*ty),

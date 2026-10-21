@@ -86,14 +86,17 @@ fn strip_leading_jsdoc_comment(line: &[u8]) -> &[u8] {
     trim_white_space_left(line.strip_prefix(b"*").unwrap_or(line))
 }
 
-/// `GetTextOfNode` for the node of `hir` whose text without trivia is `start..end`. In a JSDoc type it's
-/// `normalizeJSDocTypeSourceText`: no line keeps its indentation or its `*`.
+/// `GetTextOfNode` for the node of `hir` whose text without trivia is `start..end`.
 pub(super) fn text_of_node_at<'h>(hir: &'h File, start: u32, end: u32) -> Cow<'h, [u8]> {
     let text = hir.text.get(start as usize..end as usize);
-    let text = text.unwrap_or_default();
-    if !hir.is_in_jsdoc(start) {
-        return Cow::Borrowed(text);
+    match hir.is_in_jsdoc(start) {
+        true => normalize_jsdoc_type_source_text(text.unwrap_or_default()),
+        false => Cow::Borrowed(text.unwrap_or_default()),
     }
+}
+
+/// `normalizeJSDocTypeSourceText`: the text of a node in a JSDoc type. No line keeps its indentation or its `*`.
+pub fn normalize_jsdoc_type_source_text(text: &[u8]) -> Cow<'_, [u8]> {
     let starts = compute_ecma_line_starts(text);
     if starts.len() == 1 {
         return Cow::Borrowed(strip_leading_jsdoc_comment(text));

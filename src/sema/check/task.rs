@@ -27,6 +27,10 @@ use std::cell::{Cell, RefCell, UnsafeCell};
 pub struct Stored(u64);
 
 impl Stored {
+    /// Set if the result waits for the next commit, whatever happened during its computation. `Task::held_back` never
+    /// reaches this.
+    const WAITS: u64 = 1 << 63;
+
     /// For a result whose computation has no known start. `Task::held_back` never reaches `u64::MAX`, so the result
     /// always counts as deferred.
     #[inline]
@@ -44,7 +48,7 @@ impl Stored {
     /// replace it.
     #[inline]
     pub(super) fn held_back(self) -> Stored {
-        Stored::new()
+        Stored(self.0 | Stored::WAITS)
     }
 }
 
@@ -68,6 +72,8 @@ pub struct Task<'s> {
     pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
     /// See `hold_back`.
     held_back: Cell<u64>,
+    /// `held_back` after the last `note_assumption`. 0 if there was none.
+    assumed_at: Cell<u64>,
     /// `Some`: the task commits while it runs and sees other tasks' commits. See `super::commit`.
     view: Option<View<'s>>,
     /// See `discard`. Set under `&Checker`.
@@ -114,6 +120,7 @@ impl<'s> Task<'s> {
             closed_a_cycle: false,
             order_dependent_variances: Vec::new(),
             held_back: Cell::new(0),
+            assumed_at: Cell::new(0),
             view: None,
             was_discarded: Cell::new(false),
             is_trusted: false,
@@ -376,6 +383,20 @@ impl<'s> Task<'s> {
         stored.0 != self.held_back.get()
     }
 
+    /// `hold_back` for the computations in progress that have used a result that's only valid in this task
+    /// (`Checker::relations_of_this_task`). Their results under records stay in the task too.
+    #[inline]
+    pub(crate) fn note_assumption(&self) {
+        self.hold_back();
+        self.assumed_at.set(self.held_back.get());
+    }
+
+    /// True if `note_assumption` was called since the computation behind `stored` began. False if its start is unknown.
+    #[inline]
+    pub(crate) fn depends_on_an_assumption(&self, stored: Stored) -> bool {
+        stored.0 & !Stored::WAITS < self.assumed_at.get()
+    }
+
     /// Starts the visit of `file`. Entries keyed by its nodes are stored densely from now on. Drops the entries of the
     /// `FileLocal` tables and keeps those of the `Buffered` tables. A task can visit any number of files.
     /// `is_imported`: true if another file can refer to `file`. If not, anything that mentions `file` is bound and is
@@ -406,6 +427,7 @@ impl<'s> Task<'s> {
             closed_a_cycle,
             order_dependent_variances,
             held_back,
+            assumed_at,
             view,
             was_discarded,
             is_trusted,
@@ -429,6 +451,7 @@ impl<'s> Task<'s> {
         (*closed_a_cycle, *is_trusted) = (false, false);
         order_dependent_variances.clear();
         held_back.set(0);
+        assumed_at.set(0);
         was_discarded.set(false);
         can_recheck_early.set(false);
         is_first_in_order.set(false);

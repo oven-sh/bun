@@ -2082,8 +2082,7 @@ pub mod bv2_impl {
         pub(crate) scb_bitset: Option<DynamicBitSetUnmanaged>,
         pub(crate) scb_list: server_component_boundary::Slice<'a>,
 
-        /// Assets inlined in CSS that a JS or HTML importer, or their own entry-point chunk,
-        /// still needs the output path of.
+        /// Assets whose output path something other than a stylesheet prints.
         pub(crate) asset_path_needed_outside_css: &'a mut DynamicBitSetUnmanaged,
         /// Assets that a stylesheet imports and inlines.
         pub(crate) asset_inlined_by_css: &'a mut DynamicBitSetUnmanaged,
@@ -2440,8 +2439,7 @@ pub mod bv2_impl {
             let content_hashes: &mut [u64] = input_files_cols.content_hash_for_additional_file;
             for (index, url_for_css) in all_urls_for_css.iter().enumerate() {
                 if !url_for_css.is_empty() {
-                    // An asset that only a stylesheet uses, and that the stylesheet inlines,
-                    // is not copied to the output directory.
+                    // Nothing prints the path of an asset that only a stylesheet inlines.
                     if asset_inlined_by_css.is_set(index)
                         && !asset_path_needed_outside_css.is_set(index)
                     {
@@ -4671,182 +4669,177 @@ pub mod bv2_impl {
             &mut self,
             reachable_files: &[Index],
         ) -> Result<(), Error> {
-            if self.graph.asset_file_count > 0 {
-                // SAFETY: MultiArrayList columns are disjoint backing storage; raw-ptr
-                // sidestep so we can hold several read-only column slices, one mutable
-                // column slice (`asset_output_file`), and call `transpiler_for_target`
-                // (which needs `&mut self`) inside the loop.
-                let self_ptr: *mut Self = self;
-                // SAFETY: see note above — disjoint MultiArrayList columns,
-                // raw-ptr sidestep for split-borrow against `transpiler_for_target`
-                // inside the loop. All six column derefs share the same invariant.
-                let (
-                    unique_key_for_additional_files,
-                    content_hashes_for_additional_files,
-                    sources,
-                    targets,
-                    asset_output_files,
-                    loaders,
-                ) = unsafe {
-                    (
-                        (*self_ptr)
-                            .graph
-                            .input_files
-                            .items_unique_key_for_additional_file(),
-                        (*self_ptr)
-                            .graph
-                            .input_files
-                            .items_content_hash_for_additional_file(),
-                        (*self_ptr).graph.input_files.items_source_mut(),
-                        (*self_ptr).graph.ast.items_target(),
-                        (*self_ptr).graph.input_files.items_asset_output_file_mut(),
-                        (*self_ptr).graph.input_files.items_loader(),
-                    )
-                };
-                let mut additional_output_files: Vec<options::OutputFile> = Vec::new();
-                let mut templates: Vec<(usize, options::PathTemplate)> = Vec::new();
+            // SAFETY: MultiArrayList columns are disjoint backing storage; raw-ptr
+            // sidestep so we can hold several read-only column slices, one mutable
+            // column slice (`asset_output_file`), and call `transpiler_for_target`
+            // (which needs `&mut self`) inside the loop.
+            let self_ptr: *mut Self = self;
+            // SAFETY: see note above — disjoint MultiArrayList columns,
+            // raw-ptr sidestep for split-borrow against `transpiler_for_target`
+            // inside the loop. All six column derefs share the same invariant.
+            let (
+                unique_key_for_additional_files,
+                content_hashes_for_additional_files,
+                sources,
+                targets,
+                asset_output_files,
+                loaders,
+            ) = unsafe {
+                (
+                    (*self_ptr)
+                        .graph
+                        .input_files
+                        .items_unique_key_for_additional_file(),
+                    (*self_ptr)
+                        .graph
+                        .input_files
+                        .items_content_hash_for_additional_file(),
+                    (*self_ptr).graph.input_files.items_source_mut(),
+                    (*self_ptr).graph.ast.items_target(),
+                    (*self_ptr).graph.input_files.items_asset_output_file_mut(),
+                    (*self_ptr).graph.input_files.items_loader(),
+                )
+            };
+            let mut additional_output_files: Vec<options::OutputFile> = Vec::new();
+            let mut templates: Vec<(usize, options::PathTemplate)> = Vec::new();
 
-                for reachable_source in reachable_files {
-                    let index = reachable_source.get() as usize;
-                    let key: &[u8] = &unique_key_for_additional_files[index];
-                    if !key.is_empty() {
-                        let loader = loaders[index];
-                        let target = targets[index];
-                        let mut template: options::PathTemplate = if loader == Loader::Text {
-                            // Text modules ignore `--asset-naming`: without `[hash]`
-                            // two same-named files would share one path.
-                            options::PathTemplate::ASSET.into()
-                        } else {
-                            let mut template: options::PathTemplate =
-                                if self.graph.html_imports.server_source_indices.len() != 0
-                                    && self.transpiler.options.asset_naming.is_empty()
-                                {
-                                    options::PathTemplate::ASSET_WITH_TARGET.into()
-                                } else {
-                                    options::PathTemplate::ASSET.into()
-                                };
-
-                            // SAFETY: see `self_ptr` note above — `transpiler_for_target` needs
-                            // `&mut self` only to pick between two stored `*mut Transpiler`s; it
-                            // never touches `graph.input_files`.
-                            let asset_naming = unsafe {
-                                &(*self_ptr)
-                                    .transpiler_for_target(target)
-                                    .options
-                                    .asset_naming
-                            };
-                            if !asset_naming.is_empty() {
-                                template.data.clone_from(asset_naming);
-                            }
-                            template
-                        };
-
-                        {
-                            let source = &sources[index];
-                            // TODO: outbase
-                            let pathname =
-                                Fs::PathName::init(bun_paths::resolve_path::relative_platform::<
-                                    bun_paths::resolve_path::platform::Auto,
-                                    false,
-                                >(
-                                    &self.transpiler.options.root_dir,
-                                    source.path.text,
-                                ));
-
-                            template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
-                            template.placeholder.dir = pathname.dir.to_vec().into_boxed_slice();
-                            let mut ext: &[u8] = pathname.ext;
-                            if !ext.is_empty() && ext[0] == b'.' {
-                                ext = &ext[1..];
-                            }
-                            template.placeholder.ext = ext.to_vec().into_boxed_slice();
-
-                            if template.needs(options::PlaceholderField::Hash) {
-                                template.placeholder.hash = Some(
-                                    template
-                                        .content_hash(content_hashes_for_additional_files[index]),
-                                );
-                            }
-
-                            if template.needs(options::PlaceholderField::Target) {
-                                template.placeholder.target = target.naming_placeholder().into();
-                            }
-                        }
-                        templates.push((index, template));
-                    }
-                }
-
-                // Two assets whose hashes differ only past `[hash]`'s width get wider names.
-                {
-                    let hashed: Vec<usize> = (0..templates.len())
-                        .filter(|&i| templates[i].1.placeholder.hash.is_some())
-                        .collect();
-                    let mut names: Vec<bun_core::fmt::ContentHash> = hashed
-                        .iter()
-                        .map(|&i| templates[i].1.placeholder.hash.unwrap())
-                        .collect();
-                    while bun_core::fmt::ContentHash::widen_to_distinguish(&mut names) {}
-                    for (&i, name) in hashed.iter().zip(names) {
-                        templates[i].1.placeholder.hash = Some(name);
-                    }
-                }
-
-                for (index, template) in templates {
+            for reachable_source in reachable_files {
+                let index = reachable_source.get() as usize;
+                let key: &[u8] = &unique_key_for_additional_files[index];
+                if !key.is_empty() {
                     let loader = loaders[index];
+                    let target = targets[index];
+                    let mut template: options::PathTemplate = if loader == Loader::Text {
+                        // Text modules ignore `--asset-naming`: without `[hash]`
+                        // two same-named files would share one path.
+                        options::PathTemplate::ASSET.into()
+                    } else {
+                        let mut template: options::PathTemplate =
+                            if self.graph.html_imports.server_source_indices.len() != 0
+                                && self.transpiler.options.asset_naming.is_empty()
+                            {
+                                options::PathTemplate::ASSET_WITH_TARGET.into()
+                            } else {
+                                options::PathTemplate::ASSET.into()
+                            };
+
+                        // SAFETY: see `self_ptr` note above — `transpiler_for_target` needs
+                        // `&mut self` only to pick between two stored `*mut Transpiler`s; it
+                        // never touches `graph.input_files`.
+                        let asset_naming = unsafe {
+                            &(*self_ptr)
+                                .transpiler_for_target(target)
+                                .options
+                                .asset_naming
+                        };
+                        if !asset_naming.is_empty() {
+                            template.data.clone_from(asset_naming);
+                        }
+                        template
+                    };
+
                     {
-                        let source = &mut sources[index];
+                        let source = &sources[index];
+                        // TODO: outbase
+                        let pathname =
+                            Fs::PathName::init(bun_paths::resolve_path::relative_platform::<
+                                bun_paths::resolve_path::platform::Auto,
+                                false,
+                            >(
+                                &self.transpiler.options.root_dir,
+                                source.path.text,
+                            ));
 
-                        let output_path: Box<[u8]> = {
-                            let mut v = Vec::new();
-                            template
-                                .print(
-                                    &mut v,
-                                    !self.transpiler.options.compile_mode.is_executable(),
-                                )
-                                .expect("oom");
-                            // Like a chunk's `final_rel_path`: `/`-separated on every platform.
-                            bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut v);
-                            v.into_boxed_slice()
-                        };
+                        template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
+                        template.placeholder.dir = pathname.dir.to_vec().into_boxed_slice();
+                        let mut ext: &[u8] = pathname.ext;
+                        if !ext.is_empty() && ext[0] == b'.' {
+                            ext = &ext[1..];
+                        }
+                        template.placeholder.ext = ext.to_vec().into_boxed_slice();
 
-                        // Hand the existing `source.contents` buffer to the
-                        // OutputFile — no copy: move the contents
-                        // out instead of `to_vec()`-cloning,
-                        // which is prohibitively expensive for large assets.
-                        let contents_len = source.contents.len();
-                        let contents = match core::mem::take(&mut source.contents) {
-                            std::borrow::Cow::Owned(v) => v.into_boxed_slice(),
-                            std::borrow::Cow::Borrowed(b) => Box::<[u8]>::from(b),
-                        };
+                        if template.needs(options::PlaceholderField::Hash) {
+                            template.placeholder.hash = Some(
+                                template.content_hash(content_hashes_for_additional_files[index]),
+                            );
+                        }
 
-                        additional_output_files.push(options::OutputFile::init(
-                            crate::output_file::Options {
-                                source_index: crate::output_file::Index::init(index as u32)
-                                    .to_optional(),
-                                data: crate::output_file::OptionsData::Buffer { data: contents },
-                                size: Some(contents_len),
-                                output_path,
-                                input_path: source.path.text.to_vec().into_boxed_slice(),
-                                input_loader: Loader::File,
-                                output_kind: crate::options::OutputKind::Asset,
-                                loader,
-                                hash: Some(
-                                    template
-                                        .content_hash(content_hashes_for_additional_files[index]),
-                                ),
-                                side: Some(crate::options::Side::Client),
-                                entry_point_index: None,
-                                is_executable: false,
-                                ..Default::default()
-                            },
-                        ));
-                        asset_output_files[index] =
-                            Some((additional_output_files.len() - 1) as u32);
+                        if template.needs(options::PlaceholderField::Target) {
+                            template.placeholder.target = target.naming_placeholder().into();
+                        }
                     }
+                    templates.push((index, template));
                 }
-
-                self.graph.additional_output_files = additional_output_files;
             }
+
+            // Two assets whose hashes differ only past `[hash]`'s width get wider names.
+            {
+                let hashed: Vec<usize> = (0..templates.len())
+                    .filter(|&i| templates[i].1.placeholder.hash.is_some())
+                    .collect();
+                let mut names: Vec<bun_core::fmt::ContentHash> = hashed
+                    .iter()
+                    .map(|&i| templates[i].1.placeholder.hash.unwrap())
+                    .collect();
+                while bun_core::fmt::ContentHash::widen_to_distinguish(&mut names) {}
+                for (&i, name) in hashed.iter().zip(names) {
+                    templates[i].1.placeholder.hash = Some(name);
+                }
+            }
+
+            for (index, template) in templates {
+                let loader = loaders[index];
+                {
+                    let source = &mut sources[index];
+
+                    let output_path: Box<[u8]> = {
+                        let mut v = Vec::new();
+                        template
+                            .print(
+                                &mut v,
+                                !self.transpiler.options.compile_mode.is_executable(),
+                            )
+                            .expect("oom");
+                        // Like a chunk's `final_rel_path`: `/`-separated on every platform.
+                        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut v);
+                        v.into_boxed_slice()
+                    };
+
+                    // Hand the existing `source.contents` buffer to the
+                    // OutputFile — no copy: move the contents
+                    // out instead of `to_vec()`-cloning,
+                    // which is prohibitively expensive for large assets.
+                    let contents_len = source.contents.len();
+                    let contents = match core::mem::take(&mut source.contents) {
+                        std::borrow::Cow::Owned(v) => v.into_boxed_slice(),
+                        std::borrow::Cow::Borrowed(b) => Box::<[u8]>::from(b),
+                    };
+
+                    additional_output_files.push(options::OutputFile::init(
+                        crate::output_file::Options {
+                            source_index: crate::output_file::Index::init(index as u32)
+                                .to_optional(),
+                            data: crate::output_file::OptionsData::Buffer { data: contents },
+                            size: Some(contents_len),
+                            output_path,
+                            input_path: source.path.text.to_vec().into_boxed_slice(),
+                            input_loader: Loader::File,
+                            output_kind: crate::options::OutputKind::Asset,
+                            loader,
+                            hash: Some(
+                                template.content_hash(content_hashes_for_additional_files[index]),
+                            ),
+                            side: Some(crate::options::Side::Client),
+                            entry_point_index: None,
+                            is_executable: false,
+                            ..Default::default()
+                        },
+                    ));
+                    asset_output_files[index] = Some((additional_output_files.len() - 1) as u32);
+                }
+            }
+
+            self.graph.additional_output_files = additional_output_files;
             Ok(())
         }
 
@@ -7651,14 +7644,12 @@ pub mod bv2_impl {
                         .input_files
                         .items_content_hash_for_additional_file_mut()[result_source_index] =
                         result.content_hash_for_additional_file;
-                    let has_asset = !result.unique_key_for_additional_file.is_empty();
-                    if has_asset {
-                        this.graph.asset_file_count += 1;
-                    }
                     if result.loader.should_copy_for_bundling() {
                         this.graph.input_files.items_side_effects_mut()[result_source_index] =
                             bun_ast::SideEffects::NoSideEffectsPureData;
-                        if has_asset && let Some(dev) = this.dev_server {
+                        if !result.unique_key_for_additional_file.is_empty()
+                            && let Some(dev) = this.dev_server
+                        {
                             let source =
                                 &this.graph.input_files.items_source()[result_source_index];
                             dev.put_or_overwrite_asset_erased(

@@ -458,7 +458,7 @@ describe("bundler", () => {
 // change when that path does. A stylesheet inlines an asset under 128 KB instead
 // of printing its path. The asset is still copied when anything else prints it.
 describe("bundler", () => {
-  // `chunks` must print the asset path. Their names are given without the [hash].
+  // `chunks` are the chunks that print the asset path. Their names are given without the [hash].
   for (const { asset, entrypoints, fromPlugin, chunks } of [
     { asset: "imported", entrypoints: ["entry.js"], fromPlugin: false, chunks: ["entry.js"] },
     { asset: "the result of an onLoad plugin", entrypoints: ["entry.js"], fromPlugin: true, chunks: ["entry.js"] },
@@ -478,13 +478,13 @@ describe("bundler", () => {
       asset: "an entry point, and the src of an HTML page",
       entrypoints: ["logo.png", "index.html"],
       fromPlugin: false,
-      chunks: ["index.html", "logo.js"],
+      chunks: ["chunk.css", "chunk.js", "index.html", "logo.js"],
     },
     {
       asset: "the src of an HTML page, and the url() of its stylesheet",
       entrypoints: ["index.html"],
       fromPlugin: false,
-      chunks: ["index.html", "chunk.css"],
+      chunks: ["chunk.css", "index.html"],
     },
   ]) {
     for (const kilobytes of [1, 200]) {
@@ -524,9 +524,7 @@ describe("bundler", () => {
 
         const first = await build("A");
         const second = await build("B");
-        expect(Object.keys(first)).toEqual(
-          expect.arrayContaining(inlined ? chunks.filter(chunk => !chunk.endsWith(".css")) : chunks),
-        );
+        expect(Object.keys(first).sort()).toEqual(inlined ? chunks.filter(chunk => !chunk.endsWith(".css")) : chunks);
         expect(Object.keys(second).sort()).toEqual(Object.keys(first).sort());
         // No chunk that prints the asset path keeps its name.
         expect(Object.keys(first).filter(chunk => first[chunk] === second[chunk])).toEqual([]);

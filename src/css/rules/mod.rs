@@ -1269,9 +1269,6 @@ pub struct MinifyContext<'a, 'bump> {
     /// Running total of selectors that compiling nested rules for the targets
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
     pub(crate) selector_expansion_total: u32,
-    /// Set while minifying the rules nested inside a style rule. A `@layer`
-    /// statement is not a nested group rule (browsers ignore one nested in a
-    /// style rule, see WPT css/css-nesting/nesting-layer.html), so an empty
-    /// `@layer` block must stay a block there instead of becoming a statement.
+    /// Set inside a style rule, where browsers ignore an `@layer` statement, so an empty `@layer` block stays a block.
     pub(crate) in_style_rule: bool,
 }

@@ -204,9 +204,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     kind: CssImportOrderKind::Layers(Layers::pre_import(core::ptr::NonNull::from(
                         &repr.layers_pre_import,
                     ))),
-                    // SAFETY: arena-backed `Vec` header; `CssImportOrder`
-                    // suppresses `Drop` on it (see the note at `bitwise_copy`),
-                    // so the aliased buffer is freed once with the arena.
+                    // SAFETY: arena-backed `Vec` header; see the same copy for the file's own entry below.
                     conditions: unsafe { bitwise_copy(wrapping_conditions) },
                     condition_import_records: Vec::new(),
                 });
@@ -557,9 +555,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 });
                 if !is_repeat {
                     gop.value_ptr.push(wip_order.len() as u32);
-                    // SAFETY: `entry` is moved back into `order` via `memcpy_and_reset`
-                    // below (which `set_len(0)`s without dropping), so each value is
-                    // dropped at most once.
+                    // SAFETY: `memcpy_and_reset` below moves the entry back without a drop, as for the other copies.
                     wip_order.push(unsafe { bitwise_copy(entry) });
                 }
                 continue 'next_forward;

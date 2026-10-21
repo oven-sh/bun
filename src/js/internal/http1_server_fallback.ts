@@ -1,14 +1,20 @@
 // JS HTTP/1 server path over an arbitrary Duplex with a JS stand-in for NodeHTTPResponse.
 // Used by http2's `allowHTTP1` ALPN fallback and http's `server.emit("connection", socket)`.
 // See https://github.com/nodejs/node/blob/main/lib/_http_server.js connectionListener.
-const { STATUS_CODES, kPendingCallbacks } = require("internal/http");
+const { STATUS_CODES, kPendingCallbacks, http1ServerPipeline } = require("internal/http");
 const { SafeSet } = require("internal/primordials");
 const AsyncContextFrame = require("internal/async_context_frame");
 
 const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
-// Node's last_message_start_: from the first byte of a request to its end, closeIdleConnections() leaves the connection alone.
+// Node's last_message_start_. null: no request yet. true: from the first byte of a request to its end, and closeIdleConnections() leaves the connection alone. false: between two requests.
+// kMessageTimedOut: true, and the request-timeout sweep has reported the request. Like Node's ConnectionsList::Expired, it reports a message once.
 const kHttp1MessageOpen = Symbol("http1MessageOpen");
+const kMessageTimedOut = 2;
+// On a socket that the request-timeout sweep times: the parser, which keeps the clock of each message (socket.parser belongs to user code), and the clock of the time before the first one.
+const kHttp1Parser = Symbol("http1Parser");
+const kHttp1AttachedAt = Symbol("http1AttachedAt");
+const monotonicNowMs = $bindgen("Timer.bind.ts", "monotonicNowMs");
 const reportError = globalThis.reportError;
 
 function rethrowUncaught(err) {
@@ -396,7 +402,7 @@ function connectionListenerHTTP1(server, socket, options) {
   } = require("node:_http_common");
   const { readStart, readStop } = require("node:_http_incoming");
   const { ConnResetException } = require("internal/shared");
-  const { kHandle: kHttp1ResponseHandle, kHeaderSource, http1ServerPipeline } = require("internal/http");
+  const { kHandle: kHttp1ResponseHandle, kHeaderSource } = require("internal/http");
   // Populated by node:_http_server, which the require("node:http") above loads.
   const {
     queuePipelinedResponse,
@@ -409,6 +415,8 @@ function connectionListenerHTTP1(server, socket, options) {
     onResponseFinishHandleSocket,
     kMustCloseConnection,
     kKeepAliveTimeoutSet,
+    socketOnError,
+    kConnectionsCheckingInterval,
   } = http1ServerPipeline;
   const { allMethods } = process.binding("http_parser");
 
@@ -425,7 +433,7 @@ function connectionListenerHTTP1(server, socket, options) {
   const connections = (server[kHttp1Connections] ??= new SafeSet());
   connections.add(socket);
   socket[kHttp1ActiveRequests] = 0;
-  socket[kHttp1MessageOpen] = false;
+  socket[kHttp1MessageOpen] = null;
   // Node's connectionListenerInternal: a read-gate mark that an earlier connection left on the socket would keep readStart() off it.
   socket._paused = false;
   // Node's parser is an async resource made here. Else a reader whose _read() restarts the socket lends its context to the next request.
@@ -449,6 +457,11 @@ function connectionListenerHTTP1(server, socket, options) {
   parser.initialize(HTTPParser.REQUEST, {}, server.maxHeaderSize || 0, lenientFlags);
   parser.socket = socket;
   socket.parser = parser;
+  // Node times the connections on the server's list, which exists from the first 'listening' on: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L611-L613
+  if (server[kConnectionsCheckingInterval] !== undefined) {
+    socket[kHttp1Parser] = parser;
+    socket[kHttp1AttachedAt] = monotonicNowMs();
+  }
   // Node takes its parser from the node:_http_common freelist, which seeds MAX_HEADER_PAIRS.
   const { maxHeadersCount } = server;
   parser.maxHeaderPairs = typeof maxHeadersCount === "number" ? maxHeadersCount << 1 : MAX_HEADER_PAIRS;
@@ -668,26 +681,6 @@ function connectionListenerHTTP1(server, socket, options) {
     if (!socket.readableFlowing) readStart(socket);
   };
 
-  function onHttp1SocketError(err, rawPacket) {
-    // Match Node's http _connectionListener: attach err.rawPacket and, when no
-    // 'clientError' listener is present, write the same raw error response
-    // Node's socketOnError does before destroying.
-    prepareError(err, parser, rawPacket);
-    if (!server.emit("clientError", err, socket)) {
-      if (socket.writable && !socket.destroyed) {
-        const code = err?.code;
-        socket.write(
-          code === "HPE_HEADER_OVERFLOW"
-            ? "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n"
-            : code === "HPE_CHUNK_EXTENSIONS_OVERFLOW"
-              ? "HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\n\r\n"
-              : "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
-          "latin1",
-        );
-      }
-      socket.destroy(err);
-    }
-  }
   function onHttp1SocketData(data) {
     const frame = AsyncContextFrame.exchange(connectionFrame);
     try {
@@ -695,7 +688,9 @@ function connectionListenerHTTP1(server, socket, options) {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L941-L947 (socketOnData)
       if (!consumesHandle) AsyncContextFrame.exchange(frame);
       if (ret instanceof Error) {
-        onHttp1SocketError(ret, data);
+        // Node's onParserExecuteCommon: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L1099-L1102
+        prepareError(ret, parser, data);
+        socketOnError.$call(socket, ret);
         return;
       }
       if (pendingUpgrade) {
@@ -705,7 +700,7 @@ function connectionListenerHTTP1(server, socket, options) {
         const upgradeReq = pendingUpgrade;
         pendingUpgrade = null;
         socket.removeListener("data", onHttp1SocketData);
-        socket.removeListener("error", onHttp1SocketErrorListener);
+        socket.removeListener("error", socketOnError);
         socket.removeListener("end", onHttp1SocketEnd);
         socket.removeListener("drain", onHttp1SocketDrain);
         connections.delete(socket);
@@ -713,6 +708,8 @@ function connectionListenerHTTP1(server, socket, options) {
           parser.close();
         } catch {}
         socket.parser = null;
+        // The server that gets this socket next decides for itself whether it times the connection.
+        if (socket[kHttp1Parser] !== undefined) socket[kHttp1Parser] = undefined;
         const eventName = upgradeReq.method === "CONNECT" ? "connect" : "upgrade";
         const bodyHead = typeof ret === "number" ? data.slice(ret) : Buffer.alloc(0);
         if (server.listenerCount(eventName) > 0) {
@@ -726,9 +723,6 @@ function connectionListenerHTTP1(server, socket, options) {
       AsyncContextFrame.exchange(frame);
     }
   }
-  function onHttp1SocketErrorListener(err) {
-    onHttp1SocketError(err, undefined);
-  }
   // Node's socketOnEnd: let llhttp detect a message cut short by EOF, then end
   // the connection the way Node does (httpAllowHalfOpen / _last / idle end).
   function onHttp1SocketEnd() {
@@ -737,7 +731,7 @@ function connectionListenerHTTP1(server, socket, options) {
     try {
       const ret = parser.finish();
       if (ret instanceof Error) {
-        onHttp1SocketError(ret, undefined);
+        socketOnError.$call(socket, ret);
         return;
       }
       if (!server.httpAllowHalfOpen) {
@@ -763,7 +757,7 @@ function connectionListenerHTTP1(server, socket, options) {
     socket._httpMessage?.[kHttp1ResponseHandle]?.socketDrained();
   }
   socket.on("data", onHttp1SocketData);
-  socket.on("error", onHttp1SocketErrorListener);
+  socket.on("error", socketOnError);
   socket.once("end", onHttp1SocketEnd);
   socket.on("drain", onHttp1SocketDrain);
   socket.once("finish", () => {
@@ -801,6 +795,35 @@ function connectionListenerHTTP1(server, socket, options) {
     } catch {}
   });
 }
+
+// Node's ConnectionsList::Expired for JS-served connections: https://github.com/nodejs/node/blob/v26.3.0/src/node_http_parser.cc#L1179-L1240
+function expiredHttp1Connections(server, headersTimeout, requestTimeout) {
+  const connections = server[kHttp1Connections];
+  if (!connections || connections.size === 0) return;
+  let expired;
+  let now = 0;
+  // Not for-of: the iterator of a SafeSet makes two objects for each element.
+  connections.forEach(socket => {
+    const parser = socket[kHttp1Parser];
+    if (parser === undefined) return;
+    const open = socket[kHttp1MessageOpen];
+    let age;
+    if (open === true) age = parser.duration();
+    // Node's parser starts its clock when the server gets the connection, so one that sends nothing times out too: https://github.com/nodejs/node/blob/v26.3.0/src/node_http_parser.cc#L726-L736
+    else if (open === null) age = (now ||= monotonicNowMs()) - socket[kHttp1AttachedAt];
+    // Between two requests, or reported.
+    else return;
+    if (
+      (requestTimeout > 0 && age > requestTimeout) ||
+      (headersTimeout > 0 && age > headersTimeout && (open === null || !parser.headersCompleted()))
+    ) {
+      socket[kHttp1MessageOpen] = open === null ? false : kMessageTimedOut;
+      (expired ??= []).push(socket);
+    }
+  });
+  return expired;
+}
+http1ServerPipeline.expiredHttp1Connections = expiredHttp1Connections;
 
 function closeIdleHttp1Connections(server) {
   const connections = server[kHttp1Connections];

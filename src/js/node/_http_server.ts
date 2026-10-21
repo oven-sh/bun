@@ -68,6 +68,7 @@ const {
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
+const NumberIsFinite = Number.isFinite;
 
 const { IncomingMessage, kReqShouldKeepAlive } = require("node:_http_incoming");
 const {
@@ -478,13 +479,28 @@ function setupConnectionsTracking(this: any) {
 
 // Node.js's checkConnections sweep: every connectionsCheckingInterval, expire
 // connections whose in-flight request exceeded headersTimeout/requestTimeout.
-// The per-connection timing lives on the native socket handle (the parser is
-// native), so each tracked connection is asked whether it expired.
+// A connection that the native listener parses keeps its timing on the socket
+// handle. A connection that is served from JS keeps it in its parser.
 function checkConnections(this: Server) {
-  const headersTimeout = this.headersTimeout;
-  const requestTimeout = this.requestTimeout;
+  // As in Node, a value that is not a finite number at or above 0 turns its timeout off, and the two values are
+  // swapped when headersTimeout is the larger: https://github.com/nodejs/node/blob/v26.3.0/src/node_http_parser.cc#L1187-L1196
+  let headersTimeout = this.headersTimeout;
+  let requestTimeout = this.requestTimeout;
+  if (!NumberIsFinite(headersTimeout) || headersTimeout < 0) headersTimeout = 0;
+  if (!NumberIsFinite(requestTimeout) || requestTimeout < 0) requestTimeout = 0;
   if (headersTimeout === 0 && requestTimeout === 0) {
     return;
+  }
+  if (requestTimeout > 0 && headersTimeout > requestTimeout) {
+    const swapped = headersTimeout;
+    headersTimeout = requestTimeout;
+    requestTimeout = swapped;
+  }
+
+  // internal/http1_server_fallback registers this when it loads.
+  const expired = http1ServerPipeline.expiredHttp1Connections?.(this, headersTimeout, requestTimeout);
+  if (expired !== undefined) {
+    for (let i = 0; i < expired.length; i++) onRequestTimeout(expired[i]);
   }
 
   const connections = this[kTrackedConnections];
@@ -1546,7 +1562,7 @@ const requestChunkExtensionsTooLargeResponse = Buffer.from(
 function socketOnError(this: any, err) {
   // Ignore further errors
   this.removeListener("error", socketOnError);
-  this.on("error", noopOnError);
+  if (this.listenerCount("error", noopOnError) === 0) this.on("error", noopOnError);
 
   const server = this.server;
   if (!server || !server.emit("clientError", err, this)) {
@@ -4317,6 +4333,10 @@ http1ServerPipeline.finishDrainedResponse = finishDrainedResponse;
 http1ServerPipeline.onResponseFinishHandleSocket = onResponseFinishHandleSocket;
 http1ServerPipeline.kMustCloseConnection = kMustCloseConnection;
 http1ServerPipeline.kKeepAliveTimeoutSet = kKeepAliveTimeoutSet;
+http1ServerPipeline.socketOnError = socketOnError;
+http1ServerPipeline.storeHTTPOptions = storeHTTPOptions;
+http1ServerPipeline.setupConnectionsTracking = setupConnectionsTracking;
+http1ServerPipeline.kConnectionsCheckingInterval = kConnectionsCheckingInterval;
 
 export default {
   Server,

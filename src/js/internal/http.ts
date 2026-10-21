@@ -58,6 +58,9 @@ const kCloseCallback = Symbol("closeCallback");
 // initialization, letting internal/http1_server_fallback drive the same
 // per-connection queue without widening node:_http_server's exports. The
 // fallback loads node:http (and with it _http_server) before reading these.
+// The same goes for what a server does with each of its connections (the
+// option store, the request-timeout sweep and the 'error' listener), which
+// node:http2 uses too for a server with allowHTTP1.
 const http1ServerPipeline: {
   queuePipelinedResponse?: (socket: unknown, res: unknown, isAncient: boolean) => void;
   advanceResponsePipeline?: (server: unknown, socket: unknown) => void;
@@ -69,6 +72,12 @@ const http1ServerPipeline: {
   onResponseFinishHandleSocket?: (server: unknown, socket: unknown, res: unknown) => void;
   kMustCloseConnection?: symbol;
   kKeepAliveTimeoutSet?: symbol;
+  socketOnError?: (this: unknown, err: Error) => void;
+  storeHTTPOptions?: (this: unknown, options: object) => void;
+  setupConnectionsTracking?: (this: unknown) => void;
+  kConnectionsCheckingInterval?: symbol;
+  // Registered by internal/http1_server_fallback when it loads: the connections it serves whose request has timed out.
+  expiredHttp1Connections?: (server: unknown, headersTimeout: number, requestTimeout: number) => unknown[] | undefined;
 } = {};
 
 export const enum NodeHTTPResponseAbortEvent {

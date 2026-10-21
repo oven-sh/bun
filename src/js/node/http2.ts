@@ -28,7 +28,7 @@
  */
 const { isTypedArray } = require("node:util/types");
 const { hideFromStack, hasObserver, enqueueNodeEntry, PerformanceNodeEntry } = require("internal/shared");
-const { STATUS_CODES, utcDate } = require("internal/http");
+const { STATUS_CODES, utcDate, http1ServerPipeline } = require("internal/http");
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const tls = require("node:tls");
 const net = require("node:net");
@@ -6639,12 +6639,17 @@ function onErrorSecureServerSession(err, socket) {
 function emitFrameErrorEventNT(stream, frameType, errorCode) {
   stream.emit("frameError", frameType, errorCode);
 }
+function shouldUpgradeHttp1Request(this: Http2SecureServer) {
+  return this.listenerCount("upgrade") > 0;
+}
 interface Http2SecureServer extends UpgradableSecureServer {}
 class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase) {
   declare keepAliveTimeout: number | undefined;
   declare keepAliveTimeoutBuffer: number | undefined;
   declare headersTimeout: number | undefined;
   declare requestTimeout: number | undefined;
+  declare connectionsCheckingInterval: number | undefined;
+  declare shouldUpgradeCallback: ((this: Http2SecureServer) => boolean) | undefined;
   declare maxHeadersCount: number | null;
   declare maxRequestsPerSocket: number | undefined;
   declare maxHeaderSize: number | undefined;
@@ -6667,20 +6672,15 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
     if (options.allowHTTP1 === true) {
       this[kHttp1Connections] = new SafeSet();
       const http1Options = { ...options, ...options.http1Options };
-      this.keepAliveTimeout = http1Options.keepAliveTimeout ?? 5000;
-      this.keepAliveTimeoutBuffer = http1Options.keepAliveTimeoutBuffer ?? 1000;
-      this.headersTimeout = http1Options.headersTimeout ?? 60000;
-      this.requestTimeout = http1Options.requestTimeout ?? 300000;
+      // Like Node, the HTTP/1 side takes its options and its request-timeout sweep from the http server:
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3448-L3454
+      // node:_http_server registers both functions when it loads.
+      require("node:_http_server");
+      http1ServerPipeline.storeHTTPOptions.$call(this, http1Options);
+      this.shouldUpgradeCallback = shouldUpgradeHttp1Request;
+      this.on("listening", http1ServerPipeline.setupConnectionsTracking);
       this.maxHeadersCount = http1Options.maxHeadersCount ?? null;
       this.maxRequestsPerSocket = http1Options.maxRequestsPerSocket ?? 0;
-      const joinDuplicateHeaders = http1Options.joinDuplicateHeaders;
-      if (joinDuplicateHeaders !== undefined) validateBoolean(joinDuplicateHeaders, "options.joinDuplicateHeaders");
-      this.joinDuplicateHeaders = joinDuplicateHeaders;
-      // connectionListenerHTTP1 reads these off the server when initializing
-      // the per-connection parser, matching Node's storeHTTPOptions.
-      this.maxHeaderSize = http1Options.maxHeaderSize;
-      this.insecureHTTPParser = http1Options.insecureHTTPParser;
-      this.httpValidation = http1Options.httpValidation;
     }
     if (typeof onRequestHandler === "function") {
       this.on("request", onRequestHandler);
@@ -6717,7 +6717,10 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3475-L3487
   close(callback?: (err?: Error) => void) {
     super.close(callback);
-    if (this[bunSocketServerOptions]?.allowHTTP1 === true) this.closeIdleConnections();
+    if (this[bunSocketServerOptions]?.allowHTTP1 === true) {
+      this.closeIdleConnections();
+      clearInterval(this[http1ServerPipeline.kConnectionsCheckingInterval]);
+    }
     closeAllSessions(this);
   }
   closeIdleConnections() {

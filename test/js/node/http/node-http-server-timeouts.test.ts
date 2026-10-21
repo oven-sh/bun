@@ -656,36 +656,40 @@ describe("node:http server timeout enforcement", () => {
     }
   });
 
-  test("a 'timeout' listener that arms its own timeout gets the next 'timeout' a full period after the last body byte", async () => {
-    const { promise: done, resolve: onDone } = Promise.withResolvers<void>();
-    const gaps: number[] = [];
-    let timeouts = 0;
-    let lastWrite = 0;
+  test("the keep-alive timeout fires behind a response that follows a server.timeout of the same duration", async () => {
+    // The first 'timeout' is server.timeout with the response pending, and
+    // the listener answers. The timer that fired must not pass for the
+    // keep-alive timer of the same duration.
+    const events: string[] = [];
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+    let response: http.ServerResponse | undefined;
     const server = http.createServer((req, res) => {
-      const socket = req.socket;
-      req.on("timeout", () => {
-        timeouts++;
-        if (timeouts === 1) socket.setTimeout(200);
-        else gaps.push(performance.now() - lastWrite);
-        if (timeouts === 3) return void onDone();
-        lastWrite = performance.now();
-        client.write("z");
-      });
-      req.resume();
-      res.end("early");
+      response = res;
     });
+    server.timeout = 200;
     server.keepAliveTimeout = 200;
     server.keepAliveTimeoutBuffer = 0;
+    server.on("timeout", socket => {
+      events.push(`server 'timeout' finished=${response!.finished}`);
+      if (response!.finished) socket.destroy();
+      else response!.end("late");
+    });
     const port = await listen(server);
     const client = net.connect(port, "127.0.0.1");
     try {
       client.on("error", () => {});
-      client.on("connect", () => client.write(stalledPost));
-      client.on("close", onDone);
+      client.on("connect", () => client.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n"));
+      client.on("close", () => {
+        events.push("closed by the server");
+        onClosed();
+      });
       client.resume();
-      await done;
-      // A timer never fires early. 1 ms for the rounding of the timer's start.
-      expect(gaps.map(gap => gap >= 199)).toEqual([true, true]);
+      await closed;
+      expect(events).toEqual([
+        "server 'timeout' finished=false",
+        "server 'timeout' finished=true",
+        "closed by the server",
+      ]);
     } finally {
       client.destroy();
       server.closeAllConnections();

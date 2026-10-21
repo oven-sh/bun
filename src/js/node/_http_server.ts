@@ -1492,8 +1492,7 @@ function detachSocketListenersForHandoff(socket) {
 function resolveHandoffPromise(promise) {
   $resolvePromise(promise, undefined);
 }
-// The socket's inactivity Timeout. After a keep-alive idle timer fired and a 'timeout' listener kept the socket, a
-// stand-in with only refresh(), which arms a new timer (rearmFiredKeepAliveTimer).
+// The socket's inactivity Timeout. Once it has fired, a stand-in with only refresh() (rearmFiredSocketTimer).
 const kSocketTimeoutTimer = Symbol("socketTimeoutTimer");
 const kStreamingEnabled = Symbol("kStreamingEnabled");
 // destroySoon() was called: native lets the read that is being parsed reach the request, then closes right behind the FIN.
@@ -1619,33 +1618,18 @@ function onSocketTimeoutTimerExpired(socket) {
       return;
     }
   }
-  // A fired keep-alive idle timer is dead; drop the reference so the next
-  // response-finish re-arms via setTimeout instead of trusting a fired
-  // timer whose _idleTimeout still matches (a 'timeout' listener may keep
-  // the socket alive). Only for the keep-alive case: the server.timeout
-  // path relies on _unrefTimer() refreshing the fired timer in the slot,
-  // like net.Socket.
-  if (socket[kKeepAliveTimeoutSet]) {
-    socket[kSocketTimeoutTimer] = undefined;
-    const msecs = socket.timeout;
-    try {
-      socket._onTimeout();
-    } finally {
-      // A 'timeout' listener kept the socket and its timeout. _unrefTimer() finds this in place of the fired timer.
-      if (!socket.destroyed && socket[kSocketTimeoutTimer] === undefined && socket.timeout === msecs) {
-        socket[kSocketTimeoutTimer] = { refresh: rearmFiredKeepAliveTimer, socket, msecs };
-      }
-    }
-    return;
-  }
+  // The fired timer is dead, and a 'timeout' listener can keep the socket. A stand-in takes the slot: the
+  // response-finish fast path must not take a dead timer whose _idleTimeout still matches for an armed one, and
+  // _unrefTimer() arms a new timer through it, as Timeout#refresh() arms the fired one in Node.js.
+  socket[kSocketTimeoutTimer] = { refresh: rearmFiredSocketTimer, socket, msecs: socket.timeout };
   socket._onTimeout();
 }
 
-// Node's refresh() arms a fired timer again. A request that came since has ended that idle period.
-function rearmFiredKeepAliveTimer(this: { socket: NodeHTTPServerSocket; msecs: number }) {
+// A request that came since has given the socket another timeout.
+function rearmFiredSocketTimer(this: { socket: NodeHTTPServerSocket; msecs: number }) {
   const socket = this.socket;
   socket[kSocketTimeoutTimer] = undefined;
-  if (socket[kKeepAliveTimeoutSet]) socket.setTimeout(this.msecs);
+  if (socket.timeout === this.msecs) socket.setTimeout(this.msecs);
 }
 
 // Extends net.Socket so server connection sockets satisfy Node's class

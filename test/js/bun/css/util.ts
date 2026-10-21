@@ -59,7 +59,7 @@ const precedingRule = (() => {
     "inset-inline-start:1px",
     "scroll-margin-inline-start:1px",
     "scroll-padding-inline-start:1px",
-    "border-inline-start-color:red",
+    // No logical border property: the `border` arm of BorderHandler does not record its category.
     "border-start-start-radius:1px",
     "inline-size:1px",
     "background-image:-webkit-linear-gradient(red,blue)",

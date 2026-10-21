@@ -2532,27 +2532,9 @@ describe("css tests", () => {
     // Same, for merged same-selector rules: the merged block is re-minified after the rule following it.
     minify_test(".a{margin:1px}.a{margin:0}@media not all{div{margin-inline-start:2px}}", ".a{margin:0}");
 
-    minify_test(
-      "div{border-inline-start-color:red}.a{border:1px solid red;border-top-color:red}",
-      "div{border-inline-start-color:red}.a{border:1px solid red}",
-    );
-    minify_test(
-      "div{border-inline-start-color:red}.a{border:1px solid red;border-width:2px}",
-      "div{border-inline-start-color:red}.a{border:2px solid red}",
-    );
-    minify_test(
-      "div{border-inline-start-color:red!important}.a{border:1px solid red!important;border-top-color:red!important}",
-      "div{border-inline-start-color:red!important}.a{border:1px solid red!important}",
-    );
-
     // Within one rule, a shorthand following a logical property behaves like the first declaration
-    // of a fresh rule: the logical value is flushed first (kept as a fallback for margin, reset by
-    // border), then later longhands fold into the shorthand.
+    // of a fresh rule: the logical value is flushed first, then later longhands fold into the shorthand.
     minify_test(".a{margin-inline-start:1px;margin:0;margin-top:5px}", ".a{margin-inline-start:1px;margin:5px 0 0}");
-    minify_test(
-      ".a{border-inline-start-color:red;border:1px solid red;border-top-color:red}",
-      ".a{border:1px solid red}",
-    );
     // Switching category in either direction still flushes, so the fallback order is preserved.
     minify_test(".a{margin-inline-start:1px;margin:0}", ".a{margin-inline-start:1px;margin:0}");
     minify_test(

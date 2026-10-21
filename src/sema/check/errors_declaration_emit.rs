@@ -2013,7 +2013,23 @@ impl<'p, 's> Checker<'p, 's> {
         visited: &mut Vec<(Sym, Table)>,
     ) -> bool {
         let merged = self.files().canonical(from_table);
-        if symbol != merged && Some(symbol) != resolved {
+        let mut is_like = symbol == merged || Some(symbol) == resolved;
+        // An `export =` that has type exports is an alias and a namespace, so `resolveAlias` stops there.
+        let mut seen_aliases: SmallVec<[Sym; 4]> = SmallVec::new();
+        let mut alias = resolved.filter(|_| !is_like);
+        while let Some(next) = alias
+            && self.flags_of(next).contains(SymFlags::ALIAS)
+            && !seen_aliases.contains(&next)
+        {
+            seen_aliases.push(next);
+            alias = self.resolve_alias_or_unknown(next);
+            alias = alias.map(|target| self.files().canonical(target));
+            if alias == Some(symbol) {
+                is_like = true;
+                break;
+            }
+        }
+        if !is_like {
             return false;
         }
         !self.is_external_module_symbol(from_table)

@@ -6304,6 +6304,58 @@ it("end(chunk) on a HALF_CLOSED_REMOTE stream still emits 'finish'", async () =>
   }
 });
 
+it("write() and end() accept every spelling of the utf-16le encoding name", async () => {
+  const text = "a\u00a1\u0100\u{1f600}";
+  const expected = Buffer.from(text, "utf16le").toString("hex");
+  const encodings = ["utf16le", "UTF16LE", "utf-16le", "UTF-16LE", "Utf-16Le", "ucs2", "UCS2", "ucs-2", "UCS-2"];
+  const methods = {
+    write: (stream, encoding) => {
+      stream.write(text, encoding);
+      stream.end();
+    },
+    end: (stream, encoding) => stream.end(text, encoding),
+    // Two corked writes reach the stream as one _writev.
+    writev: (stream, encoding) => {
+      stream.cork();
+      stream.write(text.slice(0, 2), encoding);
+      stream.write(text.slice(2), encoding);
+      stream.uncork();
+      stream.end();
+    },
+  };
+
+  const server = http2.createServer();
+  // Reports the bytes of the request body in a header, then sends the text back the same way.
+  server.on("stream", (stream, headers) => {
+    const chunks = [];
+    stream.on("data", chunk => chunks.push(chunk));
+    stream.on("end", () => {
+      stream.respond({ ":status": 200, "x-request-body": Buffer.concat(chunks).toString("hex") });
+      methods[headers["x-method"]](stream, headers["x-encoding"]);
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    const results = {};
+    const want = {};
+    for (const encoding of encodings) {
+      for (const method of Object.keys(methods)) {
+        want[`${method} ${encoding}`] = { request: expected, response: expected };
+        const req = client.request({ ":method": "POST", ":path": "/", "x-method": method, "x-encoding": encoding });
+        methods[method](req, encoding);
+        const [headers] = await once(req, "response");
+        const body = Buffer.concat(await req.toArray()).toString("hex");
+        results[`${method} ${encoding}`] = { request: headers["x-request-body"], response: body };
+      }
+    }
+    expect(results).toEqual(want);
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
 it("write() completes its callback on a later turn, not inside write()", async () => {
   // _write hands the chunk to the native session with the write callback deferred, so the
   // chunk is still counted in writableLength when write() returns and the Writable settles it

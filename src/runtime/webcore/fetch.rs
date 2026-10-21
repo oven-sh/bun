@@ -1833,7 +1833,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // `dupe()` heap-allocates a fresh intrusive-refcounted copy.
             // `upload_stream` adopts the ref by value (no extra bump) and the
             // MultiPartUpload derefs on completion.
-            let s3_stream = bun_core::heap::into_raw(s3_stream);
             // The upload's own promise settles the same way as `promise`: nobody awaits it.
             let upload = s3::upload_stream(
                 credentials_with_options.credentials.dupe(),
@@ -1850,17 +1849,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 credentials_with_options.request_payer,
                 signal,
                 Some(s3_stream_wrapper_resolve),
-                s3_stream.cast::<libc::c_void>(),
+                bun_core::heap::into_raw(s3_stream).cast::<libc::c_void>(),
             )?;
             if let Some(upload) = upload.as_any_promise() {
                 upload.set_handled(global_this.vm());
-                if upload.status() == jsc::js_promise::Status::Rejected {
-                    // Refused before an upload existed: nothing will call the wrapper.
-                    // SAFETY: `s3_stream` is the live box from above; no task holds it.
-                    let mut s3_stream = unsafe { bun_core::heap::take(s3_stream) };
-                    let reason = upload.result(global_this.vm());
-                    s3_stream.promise.reject(global_this, Ok(reason))?;
-                }
             }
             return Ok(promise_value);
         }

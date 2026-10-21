@@ -2168,6 +2168,16 @@ declare module "bun" {
   ): Promise<number>;
 
   /**
+   * Write to an {@link S3File} with the options of `S3File.write()`: the S3 options,
+   * a `timeout`, and a `signal`.
+   */
+  function write(
+    destination: S3File,
+    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | Archive | ReadableStream,
+    options?: S3RequestOptions,
+  ): Promise<number>;
+
+  /**
    * Persist a {@link Response} or {@link Request} body to disk. The body is
    * streamed into the file as it arrives.
    *

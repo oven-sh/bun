@@ -142,16 +142,18 @@ pub(crate) struct S3HttpSimpleTask {
     pub(crate) signal_object: bun_jsc::StrongOptional,
     /// See [`S3SimpleRequestOptions::late_abort_fails`].
     pub(crate) late_abort_fails: bool,
+    /// Captured before the request is queued: the abort path asks the HTTP thread by id, while
+    /// that thread may be overwriting `http`.
+    pub(crate) async_http_id: u32,
     /// The context of the script that asked (the handle forgets it when the context stops).
     pub(crate) context: bun_jsc::ContextId,
 }
 
 bun_jsc::impl_abort_handle_owner!(S3HttpSimpleTask, abort_handle, |this, _cause| {
-    // SAFETY: trait contract — `this` is live (armed ⇒ its response has not
-    // run); `http` is initialised before the task is armed.
+    // SAFETY: trait contract — `this` is live (armed ⇒ its response has not run).
     unsafe {
         (*this).signal_store.aborted.store(true, Ordering::Relaxed);
-        bun_http::http_thread().schedule_shutdown((*this).http.assume_init_ref());
+        bun_http::http_thread().schedule_shutdown_by_id((*this).async_http_id);
     }
 });
 
@@ -744,6 +746,7 @@ pub(crate) fn execute_simple_s3_request(
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
         signal_object: bun_jsc::StrongOptional::empty(),
         late_abort_fails: options.late_abort_fails,
+        async_http_id: 0,
         context: Default::default(),
     });
     // SAFETY: `task_ptr` is a freshly heap-allocated pointer; shared reads only until
@@ -796,7 +799,10 @@ pub(crate) fn execute_simple_s3_request(
     );
     // SAFETY: `task_ptr` is still the sole pointer (the HTTP thread only sees it after
     // `schedule` below); scoped exclusive write of the `http` field.
-    unsafe { (*task_ptr).http.write(async_http) };
+    unsafe {
+        (*task_ptr).async_http_id = async_http.async_http_id;
+        (*task_ptr).http.write(async_http);
+    }
     // queue http request
     bun_http::http_thread::init(&Default::default());
     let mut batch = thread_pool::Batch::default();

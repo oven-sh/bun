@@ -44,6 +44,7 @@ async function timeoutAndSignal(client: Bun.S3Client, signal: AbortSignal) {
   await client.unlink("key", { signal });
   await client.write("key", "hello", { signal, timeout: 1_000 });
   await client.list({ prefix: "k" }, { signal, timeout: 1_000 });
+  await Bun.write(file, "hello", { signal, timeout: 1_000 });
 
   // @ts-expect-error a signal is one operation's, not the handle's
   client.file("key", { signal });

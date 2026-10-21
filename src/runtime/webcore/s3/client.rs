@@ -289,6 +289,7 @@ pub(crate) fn list_objects(
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
         signal_object: bun_jsc::StrongOptional::empty(),
         late_abort_fails: true,
+        async_http_id: 0,
         context: Default::default(),
     }));
     // SAFETY: just allocated, non-null
@@ -341,6 +342,8 @@ pub(crate) fn list_objects(
         },
     ));
 
+    // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
+    task.async_http_id = unsafe { task.http.assume_init_ref() }.async_http_id;
     // queue http request
     bun_http::http_thread::init(&Default::default());
     let mut batch = bun_threading::thread_pool::Batch::default();
@@ -820,23 +823,35 @@ pub(crate) fn upload_stream(
     callback: Option<fn(S3UploadResult, *mut c_void)>,
     callback_context: *mut c_void,
 ) -> JsResult<JSValue> {
+    // Refused before an upload exists: the completion, which owns `callback_context`, is
+    // told here, since no upload will tell it.
+    let refuse = |message: &'static str, js_err: JSValue| -> JSValue {
+        if let Some(callback) = callback {
+            callback(
+                S3UploadResult::Failure(Error::S3Error {
+                    code: b"UnknownError",
+                    message: message.as_bytes(),
+                }),
+                callback_context,
+            );
+        }
+        bun_jsc::JSPromise::rejected_promise(cx.global(), js_err).to_js()
+    };
     if readable_stream.is_disturbed(cx.global()) {
-        return Ok(bun_jsc::JSPromise::rejected_promise(
-            cx.global(),
-            cx.global()
-                .create_error_instance(format_args!("ReadableStream is already disturbed")),
-        )
-        .to_js());
+        const MESSAGE: &str = "ReadableStream is already disturbed";
+        return Ok(refuse(
+            MESSAGE,
+            cx.global().create_error_instance(format_args!("{MESSAGE}")),
+        ));
     }
 
     match readable_stream.ptr {
         ReadableStreamPtr::Invalid => {
-            return Ok(bun_jsc::JSPromise::rejected_promise(
-                cx.global(),
-                cx.global()
-                    .create_error_instance(format_args!("ReadableStream is invalid")),
-            )
-            .to_js());
+            const MESSAGE: &str = "ReadableStream is invalid";
+            return Ok(refuse(
+                MESSAGE,
+                cx.global().create_error_instance(format_args!("{MESSAGE}")),
+            ));
         }
         // The File/Bytes payload types
         // differ (`*FileReader` vs `*ByteStream`), so the arms are
@@ -862,7 +877,7 @@ pub(crate) fn upload_stream(
                 });
                 let js_err = err.to_js(cx.global());
                 js_err.ensure_still_alive();
-                return Ok(bun_jsc::JSPromise::rejected_promise(cx.global(), js_err).to_js());
+                return Ok(refuse("ReadableStream ended with an error", js_err));
             }
         }
         ReadableStreamPtr::File(_) => {
@@ -886,7 +901,7 @@ pub(crate) fn upload_stream(
                 });
                 let js_err = err.to_js(cx.global());
                 js_err.ensure_still_alive();
-                return Ok(bun_jsc::JSPromise::rejected_promise(cx.global(), js_err).to_js());
+                return Ok(refuse("ReadableStream ended with an error", js_err));
             }
         }
         _ => {}

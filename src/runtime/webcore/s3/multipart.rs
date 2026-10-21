@@ -806,7 +806,11 @@ impl MultiPartUpload {
                 let mut options = self_.options.get();
                 // (Retried in the context of the script that uploads: once that has stopped, or
                 // the signal fired, the request would only be aborted again.)
-                if options.retry > 0 && !self_.context().is_stopped() && !self_.signal_aborted() {
+                if options.retry > 0
+                    && !self_.context().is_stopped()
+                    && !self_.signal_aborted()
+                    && !matches!(err.code, b"Timeout" | b"Aborted")
+                {
                     options.retry -= 1;
                     self_.options.set(options);
                     // retry commit

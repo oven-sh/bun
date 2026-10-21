@@ -131,7 +131,8 @@ fn parse_s3_path_or_blob(
 
 /// Turns a parsed argument into an S3 blob: eats the options argument,
 /// rejects file-descriptor paths, and constructs the env-credentialed store
-/// for path arguments. Returns the blob together with the options it consumed.
+/// for path arguments. An S3 blob argument gets a copy with the options applied.
+/// Returns the blob together with the options it consumed.
 fn resolve_s3_blob(
     global: &JSGlobalObject,
     args: &mut bun_jsc::call_frame::ArgumentsSlice,
@@ -148,7 +149,23 @@ fn resolve_s3_blob(
             let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
             Ok((Box::new(blob), options))
         }
-        PathOrBlob::Blob(blob) => Ok((blob, options)),
+        PathOrBlob::Blob(blob) => match options {
+            Some(opts) if opts.is_object() => {
+                let s3 = blob.store.get().as_ref().unwrap().data.as_s3();
+                let merged = construct_s3_file_with_s3_credentials_and_options(
+                    global,
+                    s3.pathlike.clone(),
+                    options,
+                    s3.get_credentials(),
+                    s3.options,
+                    s3.acl,
+                    s3.storage_class,
+                    s3.request_payer,
+                )?;
+                Ok((Box::new(merged), options))
+            }
+            _ => Ok((blob, options)),
+        },
     }
 }
 
@@ -240,10 +257,8 @@ pub(crate) fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
         bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
 
     let error_message = "Expected a S3 or path to check if it exists";
-    let (blob, options) = match parse_s3_path_or_blob(global, &mut args, error_message)? {
-        PathOrBlob::Blob(blob) => (blob, args.next_eat()),
-        path => resolve_s3_blob(global, &mut args, path, error_message)?,
-    };
+    let path_or_blob = parse_s3_path_or_blob(global, &mut args, error_message)?;
+    let (blob, options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
     S3BlobStatTask::exists(
         &global.js_thread_of_caller(callframe),
         &blob,

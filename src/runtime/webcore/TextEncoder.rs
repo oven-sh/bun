@@ -260,7 +260,8 @@ extern "C" fn TextEncoder__encodeRopeString(
 
 /// # Safety
 /// `input_ptr` must be valid for reading `input_len` UTF-16 code units and
-/// `buf_ptr` must be valid for writing `buf_len` bytes.
+/// `buf_ptr` must be valid for writing `buf_len` bytes. A null `WTF::String` and a
+/// detached view are both `(null, 0)`.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn TextEncoder__encodeInto16(
     input_ptr: *const u16,
@@ -269,15 +270,16 @@ unsafe extern "C" fn TextEncoder__encodeInto16(
     buf_len: usize,
 ) -> strings::EncodeIntoResult {
     // SAFETY: caller guarantees buf_ptr[0..buf_len] is a valid mutable buffer
-    let output = unsafe { core::slice::from_raw_parts_mut(buf_ptr, buf_len) };
+    let output = unsafe { bun_core::ffi::slice_mut(buf_ptr, buf_len) };
     // SAFETY: caller guarantees input_ptr[0..input_len] is valid UTF-16 data
-    let input = unsafe { core::slice::from_raw_parts(input_ptr, input_len) };
+    let input = unsafe { bun_core::ffi::slice(input_ptr, input_len) };
     strings::copy_utf16_into_utf8(output, input)
 }
 
 /// # Safety
 /// `input_ptr` must be valid for reading `input_len` bytes of Latin-1 data and
-/// `buf_ptr` must be valid for writing `buf_len` bytes.
+/// `buf_ptr` must be valid for writing `buf_len` bytes. A null `WTF::String` and a
+/// detached view are both `(null, 0)`.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn TextEncoder__encodeInto8(
     input_ptr: *const u8,
@@ -286,8 +288,8 @@ unsafe extern "C" fn TextEncoder__encodeInto8(
     buf_len: usize,
 ) -> strings::EncodeIntoResult {
     // SAFETY: caller guarantees buf_ptr[0..buf_len] is a valid mutable buffer
-    let output = unsafe { core::slice::from_raw_parts_mut(buf_ptr, buf_len) };
+    let output = unsafe { bun_core::ffi::slice_mut(buf_ptr, buf_len) };
     // SAFETY: caller guarantees input_ptr[0..input_len] is valid Latin-1 data
-    let input = unsafe { core::slice::from_raw_parts(input_ptr, input_len) };
+    let input = unsafe { bun_core::ffi::slice(input_ptr, input_len) };
     strings::copy_latin1_into_utf8(output, input)
 }

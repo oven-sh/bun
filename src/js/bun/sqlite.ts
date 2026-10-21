@@ -397,7 +397,7 @@ class Database implements SqliteTypes.Database {
           }
         }
 
-        this.#handle = Database.#deserialize(filenameGiven, deserializeFlags);
+        this.#handle = SQL.deserialize(filenameGiven, deserializeFlags);
         this.filename = ":memory:";
 
         return;
@@ -466,10 +466,6 @@ class Database implements SqliteTypes.Database {
 
   serialize(optionalName?: string) {
     return SQL.serialize(this.#handle, optionalName || "main");
-  }
-
-  static #deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, deserializeFlags: number) {
-    return SQL.deserialize(serialized, deserializeFlags);
   }
 
   static deserialize(

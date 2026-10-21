@@ -127,6 +127,67 @@ pub fn number_repeated<K: Copy + Eq + std::hash::Hash>(keys: &[K]) -> FxHashMap<
     numbers
 }
 
+/// `orderedSet`: a set that keeps its keys in the order they were added. Up to `FEW` keys are searched one by one. Beyond
+/// that a hash map finds them, so adding `n` keys is never `n * n` steps. tsgo builds an intersection in one. Here it also
+/// replaces the symbol table that makes type parameters with the same name one symbol.
+pub(crate) struct OrderedSet<K> {
+    /// `values`
+    keys: SmallVec<[K; OrderedSet::<()>::FEW]>,
+    /// `valuesByKey`, with the index of each key in `keys`. Empty while there are at most `FEW` keys.
+    indexes: FxHashMap<K, u32>,
+}
+
+impl<K> OrderedSet<K> {
+    /// `orderedSetMapThreshold`
+    const FEW: usize = 16;
+
+    pub(crate) fn into_keys(self) -> SmallVec<[K; OrderedSet::<()>::FEW]> {
+        self.keys
+    }
+}
+
+impl<K> Default for OrderedSet<K> {
+    fn default() -> Self {
+        OrderedSet {
+            keys: SmallVec::new(),
+            indexes: FxHashMap::default(),
+        }
+    }
+}
+
+impl<K: Copy + Eq + std::hash::Hash> OrderedSet<K> {
+    /// Returns how many keys were added before `key`, or `None` if it isn't in the set.
+    #[inline]
+    pub(crate) fn index_of(&self, key: K) -> Option<usize> {
+        match self.indexes.is_empty() {
+            true => self.keys.iter().position(|&known| known == key),
+            false => self.indexes.get(&key).map(|&index| index as usize),
+        }
+    }
+
+    /// Returns `index_of(key)`, and true if this call added the key.
+    #[inline]
+    pub(crate) fn insert_full(&mut self, key: K) -> (usize, bool) {
+        if let Some(index) = self.index_of(key) {
+            return (index, false);
+        }
+        let index = self.keys.len();
+        self.keys.push(key);
+        if index == Self::FEW {
+            self.indexes.extend(self.keys.iter().copied().zip(0..));
+        } else if index > Self::FEW {
+            self.indexes.insert(key, index as u32);
+        }
+        (index, true)
+    }
+
+    /// Returns true if this call added the key.
+    #[inline]
+    pub(crate) fn insert(&mut self, key: K) -> bool {
+        self.insert_full(key).1
+    }
+}
+
 /// A bit set of positions in a list. Methods that combine two sets expect both to be for lists of the same length. Sets
 /// of up to 128 positions are stored inline.
 #[derive(Clone, Default)]
@@ -823,7 +884,7 @@ impl<K: Eq, V, A: Allocator + Clone> WindowedMap<K, V, A> {
 
 #[cfg(test)]
 mod tests {
-    use super::in_order_of_decimal_text;
+    use super::{OrderedSet, in_order_of_decimal_text};
 
     #[test]
     fn decimal_text_order_matches_a_sort_of_the_strings() {
@@ -832,5 +893,23 @@ mod tests {
             sorted.sort_by_key(usize::to_string);
             assert_eq!(in_order_of_decimal_text(count).collect::<Vec<_>>(), sorted);
         }
+    }
+
+    #[test]
+    fn an_ordered_set_keeps_insertion_order_at_any_length() {
+        let mut keys = OrderedSet::default();
+        assert_eq!(keys.index_of(0u32), None);
+        for round in 0..2 {
+            for key in 0..40u32 {
+                assert_eq!(keys.insert_full(key * 7), (key as usize, round == 0));
+            }
+        }
+        assert_eq!(keys.index_of(39 * 7), Some(39));
+        assert!(keys.index_of(1).is_none() && keys.insert(1) && !keys.insert(1));
+        assert!(
+            keys.into_keys()
+                .into_iter()
+                .eq((0..40).map(|key| key * 7).chain([1]))
+        );
     }
 }

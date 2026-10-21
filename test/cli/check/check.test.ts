@@ -26243,6 +26243,8 @@ describe.concurrent("--check", () => {
     const size = isDebug || isASAN ? 50 : 400;
     // Lines, not depth: nothing here nests.
     const long = isDebug || isASAN ? 3000 : 40000;
+    // Members of one list. A search through the list for each member makes these take 7 to 15 s in a release build.
+    const wide = isDebug || isASAN ? 256 : 4096;
     const templates: [name: string, n: number, source: (n: number) => string][] = [
       [
         "a sequence of `if` statements in a `finally` block",
@@ -26414,6 +26416,38 @@ describe.concurrent("--check", () => {
           )
             .map(i => `export const t${i} = \`a\${n}b\${s}c\${u}d\${${i}}\` + \`\${o}\`;`)
             .join("\n")}`,
+      ],
+      [
+        "a call of a union of functions, whose parameter is an intersection",
+        wide,
+        n =>
+          `${range(n)
+            .map(i => `interface A${i} { v${i}: number }`)
+            .join("\n")}\ndeclare const f: ${range(n)
+            .map(i => `((x: A${i}) => ${i})`)
+            .join(" | ")};\ndeclare const arg: ${range(n)
+            .map(i => `A${i}`)
+            .join(" & ")};\nexport const r = f(arg);`,
+      ],
+      [
+        "a chain of calls on a builder that adds a member to an intersection",
+        wide,
+        n =>
+          `interface B<T> { add<K extends string, V>(k: K, v: V): B<T & { [P in K]: V }>; build(): T }\ndeclare const b: B<{}>;\nconst r = b${range(
+            n,
+          )
+            .map(i => `\n  .add("a${i}", ${i})`)
+            .join("")}.build();\nr.a0; r.a${n - 1};\nexport {};`,
+      ],
+      [
+        "type parameters that each default to the one before",
+        wide / 2,
+        n =>
+          `interface G<T0 = 0, ${range(n - 1)
+            .map(i => `T${i + 1} = T${i}`)
+            .join(", ")}> { v: T${n - 1} }\n${range(n)
+            .map(i => `declare let g${i}: G<${i}>;\ng${i}.v;`)
+            .join("\n")}\nexport {};`,
       ],
       [
         // Each call's type mentions the type before it several times. Inference between the type arguments walked every

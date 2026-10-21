@@ -26,8 +26,11 @@
 #include "root.h"
 #include "JSFFIFunction.h"
 
+#include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
+#include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/VM.h>
+#include "ZigGeneratedClasses.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/CallData.h>
@@ -74,12 +77,49 @@ extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Zig::GlobalObject* gl
         // We should only expose the "ptr" field when it's a JSCallback for bun:ffi.
         // Not for internal usages of this function type.
         // We should also consider a separate JSFunction type for our usage to not have this branch in the first place...
-        function->putDirect(vm, JSC::Identifier::fromString(vm, String("ptr"_s)), JSC::jsNumber(std::bit_cast<double>(functionPointer)), JSC::PropertyAttribute::ReadOnly | 0);
+        // `functionPointer` is the wrapper with the JSC host function ABI. "ptr" is the C function that it calls.
+        function->putDirect(vm, JSC::Identifier::fromString(vm, String("ptr"_s)), JSC::jsNumber(static_cast<double>(reinterpret_cast<uintptr_t>(symbolFromDynamicLibrary))), JSC::PropertyAttribute::ReadOnly | 0);
         function->symbolFromDynamicLibrary = symbolFromDynamicLibrary;
         return JSC::JSValue::encode(function);
     }
 
     return Bun__CreateFFIFunctionWithDataValue(globalObject, symbolName, argCount, functionPointer, nullptr);
+}
+
+// Returns true if one of the functions is still on the stack, in which case the caller must not free the compiled code.
+extern "C" bool Bun__FFI__closeFunctions(Zig::GlobalObject* globalObject, JSC::EncodedJSValue libraryValue)
+{
+    auto* library = dynamicDowncast<WebCore::JSFFI>(JSC::JSValue::decode(libraryValue));
+    if (!library)
+        return false;
+    JSC::JSValue functionsValue = library->m_functionsValue.get();
+    auto* functions = functionsValue ? dynamicDowncast<JSC::JSArray>(functionsValue) : nullptr;
+    if (!functions)
+        return false;
+    const unsigned length = functions->length();
+    for (unsigned i = 0; i < length; ++i) {
+        if (auto* function = dynamicDowncast<Zig::JSFFIFunction>(functions->getIndexQuickly(i)))
+            function->close();
+    }
+
+    auto& vm = JSC::getVM(globalObject);
+    bool isRunning = false;
+    JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+        JSC::CalleeBits callee = visitor->callee();
+        if (!callee.isCell() || !callee.asCell())
+            return WTF::IterationStatus::Continue;
+        JSC::JSValue calleeValue = callee.asCell();
+        for (unsigned i = 0; i < length; ++i) {
+            if (functions->getIndexQuickly(i) == calleeValue) {
+                isRunning = true;
+                return WTF::IterationStatus::Done;
+            }
+        }
+        return WTF::IterationStatus::Continue;
+    });
+
+    library->m_functionsValue.clear();
+    return isRunning;
 }
 
 namespace Zig {
@@ -107,30 +147,37 @@ DEFINE_VISIT_CHILDREN(JSFFIFunction);
 
 JSFFIFunction* JSFFIFunction::create(VM& vm, Zig::GlobalObject* globalObject, unsigned length, const String& name, FFIFunction FFIFunction, Intrinsic intrinsic, NativeFunction nativeConstructor)
 {
-    NativeExecutable* executable = vm.getHostFunction(FFIFunction, ImplementationVisibility::Public, intrinsic, FFIFunction, nullptr, length, name);
+    NativeExecutable* executable = vm.getHostFunction(FFIFunction, ImplementationVisibility::Public, intrinsic, nativeConstructor, nullptr, length, name);
     Structure* structure = globalObject->FFIFunctionStructure();
     JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, reinterpret_cast<CFFIFunction>(WTF::move(FFIFunction)));
     function->finishCreation(vm);
     return function;
 }
 
-#if OS(WINDOWS)
-
+// Reads m_function on every call, so close() affects all callers. On Windows x64 this also bridges SYSV_ABI to the MS ABI.
 JSC_DEFINE_HOST_FUNCTION(JSFFIFunction::trampoline, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     const auto* function = uncheckedDowncast<JSFFIFunction>(callFrame->jsCallee());
     return function->function()(globalObject, callFrame);
 }
 
-#endif
+// Replaces the compiled code after close(), so it uses CFFIFunction's ABI, not a host function's.
+static JSC::EncodedJSValue closedLibraryFunction(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* function = uncheckedDowncast<JSFFIFunction>(callFrame->jsCallee());
+    return JSC::throwVMTypeError(globalObject, scope, makeString("bun:ffi: cannot call '"_s, function->name(vm), "' because its library was closed"_s));
+}
+
+void JSFFIFunction::close()
+{
+    m_function = closedLibraryFunction;
+}
 
 JSFFIFunction* JSFFIFunction::createForFFI(VM& vm, Zig::GlobalObject* globalObject, unsigned length, const String& name, CFFIFunction FFIFunction)
 {
-#if OS(WINDOWS)
-    NativeExecutable* executable = vm.getHostFunction(trampoline, ImplementationVisibility::Public, NoIntrinsic, trampoline, nullptr, length, name);
-#else
-    NativeExecutable* executable = vm.getHostFunction(FFIFunction, ImplementationVisibility::Public, NoIntrinsic, FFIFunction, nullptr, length, name);
-#endif
+    NativeExecutable* executable = vm.getHostFunction(trampoline, ImplementationVisibility::Public, NoIntrinsic, callHostFunctionAsConstructor, nullptr, length, name);
     Structure* structure = globalObject->FFIFunctionStructure();
     JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, reinterpret_cast<CFFIFunction>(WTF::move(FFIFunction)));
     function->finishCreation(vm);

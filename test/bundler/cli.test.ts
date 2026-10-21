@@ -466,6 +466,25 @@ test("multi-entry build writes each entry point into the output directory", asyn
   expect(b).toContain('"B"');
 });
 
+// macOS and Windows read files on the IO pool by default.
+test("exits with the build error when a build fails while the IO pool is still reading entry points", async () => {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < 50; i++) {
+    files[`f${i}.ts`] = `export const v${i} = ${i};\n`;
+  }
+  using dir = tempDir("build-missing-entry-io-pool", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "./missing.ts", ...Object.keys(files).map(name => `./${name}`), "--outdir", "out"],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" },
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(normalizeBunSnapshot(stderr, dir)).toBe('error: ModuleNotFound resolving "./missing.ts" (entry point)');
+  expect(exitCode).toBe(1);
+});
+
 // https://github.com/oven-sh/bun/issues/9859
 describe.concurrent("--no-bundle with --outdir", () => {
   test("writes a single entry point", async () => {
@@ -771,6 +790,21 @@ describe.concurrent("--no-bundle with --outdir", () => {
     expect(stdout).not.toMatch(/\.css\s+0 /);
   });
 
+  test.each(["base64", "dataurl"])("the %s loader is an error", async loader => {
+    using dir = tempDir("no-bundle-" + loader, { "entry.bin": "ABC" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "--loader", ".bin:" + loader, "./entry.bin"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`error: loader "${loader}" is not supported with --no-bundle`);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
   test("does not escape --outdir when an entry point is outside --root", async () => {
     using dir = tempDir("no-bundle-outdir-escape", {
       "src/a.ts": `export const a = 1;\n`,
@@ -885,6 +919,31 @@ test.concurrent("bun build widens [hash] names that would otherwise collide", as
   expect(names.every(n => /^c?[0-9a-z]{1,13}\.js$/.test(n))).toBe(true);
   expect(entryNames.some(n => n.length > "x.js".length)).toBe(true);
   expect(exitCode).toBe(0);
+});
+
+test("reports an empty entry point the same way with more than 8 entry points", async () => {
+  // The message differs by platform, so compare with the output of a run with 2 entry points.
+  const entries = Array.from({ length: 8 }, (_, i) => `e${i}.ts`);
+  using dir = tempDir(
+    "build-many-entries-empty-entry",
+    Object.fromEntries(entries.map((name, i) => [name, `console.log(${i});`])),
+  );
+
+  async function build(entryPoints: string[], outdir: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", `--outdir=${outdir}`, ...entryPoints, ""],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { firstStderrLine: stderr.split("\n")[0], exitCode };
+  }
+
+  const [two, nine] = await Promise.all([build(entries.slice(0, 1), "dist-2"), build(entries, "dist-9")]);
+  expect(two.firstStderrLine).not.toBe("");
+  expect(nine).toEqual(two);
 });
 
 describe("CLI argument error messages", () => {

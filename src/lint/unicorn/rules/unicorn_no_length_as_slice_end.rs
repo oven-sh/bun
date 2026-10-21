@@ -33,7 +33,7 @@ impl Rule for NoLengthAsSliceEnd {
             && let Some(second_argument) = get_member_expr(second)
             && let Some((object_of_length, name, _)) = second_argument.as_dot()
             && name.name().is("length")
-            // oxlint panics if the callee is in parentheses.
+            // oxlint panics if the callee is parenthesized.
             && let Some(callee) = as_member_expression(call_expr.callee())
             && let Some((call_span, method)) = static_property_info(callee)
             && method.is("slice")

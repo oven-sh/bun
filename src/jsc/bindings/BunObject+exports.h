@@ -5,7 +5,6 @@
 #define FOR_EACH_GETTER(macro) \
     macro(FFI) \
     macro(markdown) \
-    macro(Terminal) \
     macro(argv) \
     macro(cron) \
     macro(cwd) \

@@ -56,6 +56,7 @@
 #include "GeneratedS3Client.h"
 #include "GeneratedSemverObject.h"
 #include "GeneratedTOMLObject.h"
+#include "GeneratedTerminal.h"
 #include "GeneratedTranspiler.h"
 #include "GeneratedUnsafeObject.h"
 #include "GeneratedValkey.h"
@@ -1052,7 +1053,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     stringWidth                                    jsFunctionBunStringWidth                                            DontDelete|Function 2
     stripANSI                                      jsFunctionBunStripANSI                                              DontDelete|Function 1
     wrapAnsi                                       jsFunctionBunWrapAnsi                                               DontDelete|Function 3
-    Terminal                                       BunObject_lazyPropCb_wrap_Terminal                                  DontDelete|PropertyCallback
+    Terminal                                       Bun::Bindgen::Generated::Terminal::getTerminalConstructor           DontDelete|PropertyCallback
     unsafe                                         Bun::Bindgen::Generated::UnsafeObject::createUnsafe                 DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     WebView                                        constructWebViewObject                                              ReadOnly|DontDelete|PropertyCallback

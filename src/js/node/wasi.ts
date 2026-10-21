@@ -709,7 +709,8 @@ class WASI {
     };
     const CHECK_FD = (fd: number, rights: bigint) => {
       const stats = stat(this, fd);
-      if ((stats.rights.base & rights) !== rights) {
+      // A call that names no right does not read the rights: an entry that the host put into FD_MAP can lack them.
+      if (rights !== BigInt(0) && (stats.rights.base & rights) !== rights) {
         // uvwasi refuses with ENOTCAPABLE, the one value that wasi-libc maps to the errno of the call: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/fd_table.c#L370-L374
         throw new WASIError(WASI_ENOTCAPABLE);
       }

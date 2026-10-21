@@ -3337,12 +3337,22 @@ impl File<'_> {
                         return Ok(false);
                     }
                 }
-                // The part of an exported class after its type parameters.
+                // The part of an exported class after its type parameters, unless the class is in a block.
                 Kind::ClassDeclaration | Kind::ClassExpression
                     if is_await
                         && self.flags(above).contains(Flags::EXPORT)
                         && (matches!(self.data(below), NodeData::Member(_))
-                            || matches!(below.part(), Some(Part::Extends | Part::Implements))) =>
+                            || matches!(below.part(), Some(Part::Extends | Part::Implements)))
+                        && (self.find_ancestor(above, |n| {
+                            matches!(
+                                self.kind(n),
+                                Kind::Block
+                                    | Kind::ModuleBlock
+                                    | Kind::CaseClause
+                                    | Kind::DefaultClause
+                            )
+                        }))
+                        .is_none() =>
                 {
                     return Ok(true);
                 }

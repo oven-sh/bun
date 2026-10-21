@@ -358,10 +358,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         let empty_list = less_than.filter(|_| type_params.is_empty());
         let empty_list = empty_list.map(|less_than| (less_than, self.prev_end()));
-        // TypeScript parses the rest of an exported class in the await context even on the first parse.
+        // TypeScript parses the rest of an exported class that isn't in a block in the await context even on the first
+        // parse.
         let saved_names_context = self.names_are_in_await_context;
+        let blocks =
+            1 << ListKind::BlockStatements as u32 | 1 << ListKind::SwitchClauseStatements as u32;
         self.names_are_in_await_context |=
-            flags.contains(Flags::EXPORT) && !self.options.dialect.oxc;
+            flags.contains(Flags::EXPORT) && self.lists & blocks == 0 && !self.options.dialect.oxc;
         let heritage = self.class_heritage();
         // `checkGrammarClassLikeDeclaration`, which checks the heritage clauses first. For every other kind of
         // declaration, the checker finds an empty type parameter list in the text.

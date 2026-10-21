@@ -21,6 +21,12 @@ pub(crate) fn is_blank(c: u8) -> bool {
     c == b' ' || c == b'\t'
 }
 
+/// Check if a byte can separate the parts of an HTML tag (space, tab or line break).
+#[inline]
+pub(crate) fn is_blank_or_newline(c: u8) -> bool {
+    matches!(c, b' ' | b'\t' | b'\n' | b'\r')
+}
+
 /// Check if a byte is a newline (CR or LF).
 #[inline]
 pub(crate) fn is_newline(c: u8) -> bool {

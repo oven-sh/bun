@@ -218,7 +218,7 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
   );
 });
 
-// What the kernel does for a filesystem without symlinks: the path is looked up first.
+// This is what the kernel does for a file system without symlinks: the path is looked up first.
 const symlinkShimC = (errno: string) => /* c */ `
 #define _GNU_SOURCE
 #include <errno.h>
@@ -280,7 +280,7 @@ describe.skipIf(!isLinux || isMusl || !cc)("bin links are skipped where symlinks
       }
 
       const binDir = join(String(dir), "node_modules", ".bin");
-      const warning = `warn: ${errno}: symlinks cannot be created in ${binDir}, skipping the links to package binaries\n`;
+      const warning = `warn: ${errno}: cannot create symlinks in ${binDir}, skipping bin links\n`;
       // The second run finds `.bin` in place.
       for (const run of ["fresh", "again"]) {
         await using proc = Bun.spawn({
@@ -297,7 +297,7 @@ describe.skipIf(!isLinux || isMusl || !cc)("bin links are skipped where symlinks
         const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         // Once, not once per bin.
         expect({ run, warnings: stderr.split(warning).length - 1, stderr }).toEqual({ run, warnings: 1, stderr });
-        expect(stderr).not.toContain("Failed to link");
+        expect(stderr).not.toContain("failed to link");
         expect(readdirSync(binDir)).toEqual([]);
         expect(await Bun.file(join(String(dir), "node_modules", "dep2", "package.json")).json()).toMatchObject({
           name: "dep2",

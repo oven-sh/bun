@@ -58,7 +58,7 @@ impl Rule for PreferAddEventListener {
             event = rest;
         }
         let is_event = DOM_EVENT_TYPE_NAMES.binary_search_by(|it| it.as_bytes().cmp(event)).is_ok();
-        // Not the default value in a pattern.
+        // A default value in a pattern isn't an assignment.
         if is_event && !e.is_assignment_target() {
             cx.report(name, PREFER_ADD_EVENT_LISTENER);
         }

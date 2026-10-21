@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, tempDir } from "harness";
 import { join } from "path";
 
 async function runPmPkg(args: string[], cwd: string, expectSuccess = true) {
@@ -418,6 +418,10 @@ describe.concurrent("bun pm pkg", () => {
           'd="str \\u00e9\\n"',
           'e={"k":[1,{"m":null}],"":""}',
           "f= [ true ,\tfalse ]\n",
+          "g=0.5",
+          "h= 100\n",
+          "i=0e1",
+          'j=[0,-0.5 , 1e3,{"a":10,"b": [ 100 ]}]',
           "--json",
         ],
         dir,
@@ -432,6 +436,10 @@ describe.concurrent("bun pm pkg", () => {
         d: "str \u00e9\n",
         e: { k: [1, { m: null }], "": "" },
         f: [true, false],
+        g: 0.5,
+        h: 100,
+        i: 0,
+        j: [0, -0.5, 1000, { a: 10, b: [100] }],
       });
       expect(code).toBe(0);
     });
@@ -452,6 +460,21 @@ describe.concurrent("bun pm pkg", () => {
       ["//c 1", "JSON does not support comments"],
       ["1 2", "Unexpected 2"],
       ["[1] {}", "Unexpected {"],
+      // JavaScript literals that are not JSON
+      ["010", "Syntax Error"],
+      ["-010", "Syntax Error"],
+      ["0x10", "Syntax Error"],
+      ["0b11", "Syntax Error"],
+      ["1_000", "Syntax Error"],
+      [".5", "Syntax Error"],
+      ["5.", "Syntax Error"],
+      ["'text'", "Syntax Error"],
+      ["[010]", "Syntax Error"],
+      ['{"a": 010}', "Syntax Error"],
+      ['{"a":[1,{"b":0x10}]}', "Syntax Error"],
+      ['[1, "a", .5]', "Syntax Error"],
+      ["['text']", "Syntax Error"],
+      ["{'a':1}", "Syntax Error"],
     ])("should reject the invalid JSON value %s with --json flag", async (value, message) => {
       using dir = makeTestDir();
       const before = await readRaw(dir);
@@ -463,6 +486,22 @@ describe.concurrent("bun pm pkg", () => {
       );
       expect(await readRaw(dir)).toBe(before);
       expect(code).toBe(1);
+    });
+
+    it("should write every character of a key or a string as valid JSON", async () => {
+      const all = Array.from({ length: 0x10000 }, (_, i) => String.fromCharCode(i)).join("") + "\u{1f600}";
+      const original = { name: "n", version: "1.0.0", description: "a\u001b[1mb\v", [all]: all };
+      using dir = tempDir("pm-pkg-escapes", { "package.json": JSON.stringify(original, null, 2) });
+
+      const { error, code } = await runPmPkg(["set", "x=1"], String(dir));
+      expect(error).toBe("");
+      const raw = await readRaw(String(dir));
+      expect(raw).toContain('"description": "a\\u001B[1mb\\u000B"');
+      expect(JSON.parse(raw)).toEqual({ ...original, x: "1" });
+      expect(code).toBe(0);
+
+      const { output } = await runPmPkg(["get", "description"], String(dir));
+      expect(output).toBe('"a\\u001B[1mb\\u000B"\n');
     });
 
     it("should treat values as strings without --json flag", async () => {
@@ -533,7 +572,7 @@ describe.concurrent("bun pm pkg", () => {
 
       expect(await runPmPkg(["get", "config.max"], String(dir))).toEqual({ output: "null\n", error: "", code: 0 });
 
-      // values that overflow, and a rewrite of the literals that are there
+      // Values that overflow, and a rewrite of the existing literals.
       expect(await runPmPkg(["set", "limit=1e400", "low=-1e400", "--json"], String(dir))).toEqual({
         output: "",
         error: "",
@@ -547,7 +586,7 @@ describe.concurrent("bun pm pkg", () => {
         low: null,
       });
 
-      // bun can read what it wrote
+      // Bun can read what it wrote.
       const after = await runPmPkg(["get", "config"], String(dir));
       expect(JSON.parse(after.output)).toEqual({ max: null, min: null, tiny: 0, ok: 1.5 });
       expect(after.error).toBe("");
@@ -829,7 +868,7 @@ describe.concurrent("bun pm pkg", () => {
       });
     });
 
-    it("should leave package.json alone when the path does not lead anywhere", async () => {
+    it("should not change package.json when the path doesn't lead anywhere", async () => {
       using dir = makeTestDir();
       const before = await readRaw(dir);
       const { error, code } = await runPmPkg(
@@ -1235,7 +1274,7 @@ describe.concurrent("bun pm pkg", () => {
         error: "",
         code: 0,
       });
-      // Only one element has it: one value, printed bare.
+      // Only one element has it, so a single value is printed bare.
       expect(await runPmPkg(["get", "contributors.email"], readonlyDir)).toEqual({
         output: '"john@example.com"\n',
         error: "",
@@ -1416,6 +1455,23 @@ describe.concurrent("bun pm pkg", () => {
       expect(error).toContain("No bin file found at ./nonexistent2.js");
       expect(code).toBe(0);
       expect((await readPkg(multiIssueDir)).name).toBe("multiple-issues-package");
+    });
+
+    it("should warn about a bin path longer than the path buffer", async () => {
+      const binPath =
+        "./" +
+        Array(Math.ceil(MAX_PATH_BYTES / 200) + 1)
+          .fill(Buffer.alloc(200, "a").toString())
+          .join("/") +
+        ".js";
+      using longBinDir = tempDir("pm-pkg-long-bin", {
+        "package.json": JSON.stringify({ name: "LONG-BIN-PACKAGE", version: "1.0.0", bin: { b: binPath } }, null, 2),
+      });
+
+      const { error, code } = await runPmPkg(["fix"], longBinDir);
+      expect(error).toContain(`No bin file found at ${binPath}`);
+      expect((await readPkg(longBinDir)).name).toBe("long-bin-package");
+      expect(code).toBe(0);
     });
 
     it("should not crash on empty bin object", async () => {

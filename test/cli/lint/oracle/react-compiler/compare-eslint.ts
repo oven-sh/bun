@@ -1,22 +1,24 @@
-// What eslint-plugin-react-hooks reports with its rules of the React Compiler against what another tool reports for the same files.
+// Compares what eslint-plugin-react-hooks's React Compiler rules report with what another tool reports for the same
+// files.
 //
 //   bun compare-eslint.ts <theirs.jsonl> <ours> --sources=<directory> [--name=..] [--rule=react-hooks/refs] [--examples=40]
 //                         [--strip=<prefix>]
 //
-// <theirs> has the lines of eslint.ts. <ours> is one of (told apart by what is in it):
-//   - the lines of eslint.ts                                     {"path", "messages": [..]}
-//   - reports of ESLint's `-f json`                              [{"filePath", "messages": [..]}]
-//   - the compiler's findings as they are, a line for each file  {"path", "findings": [{"category", "reason", ..}]}
+// <theirs> is the output of eslint.ts. <ours> is one of these formats, detected from its contents:
+//   - the output of eslint.ts                                    {"path", "messages": [..]}
+//   - ESLint `-f json` reports                                   [{"filePath", "messages": [..]}]
+//   - the compiler's raw findings, one line per file             {"path", "findings": [{"category", "reason", ..}]}
 //
-// Messages: the same if ruleId, severity, message, line, column, endLine, endColumn and the suggestions (desc, range, text) are,
-// and both or neither are suppressed by a comment.
+// Two messages match if ruleId, severity, message, line, column, endLine, endColumn and the suggestions (desc, range,
+// text) are the same, and both or neither are suppressed by a comment.
 //
-// Findings: the plugin's message is read back into what it was printed from, the heading, the reason, the description, the places
-// of the code frames with their texts, and the hints, and that is compared with the finding, so that what is found can be judged
-// before anything prints it. The same if the rule (of the category), the reason, the description, the places (start, end, text,
-// order), the hints and the suggestions are, and the place of the message is the first place. A finding without a place is left
-// out, as the plugin leaves it out. One `^` in a code frame stands for a place of no or one unit: both are taken. The text of a
-// single place that is the reason stands for no text too.
+// For findings, the plugin's message is parsed back into the parts it was printed from (the heading, the reason, the
+// description, the code frames' locations with their text, and the hints), and those are compared with the finding.
+// That way the findings can be checked before there's any code to print them. A message and a finding match if the rule
+// (from the category), the reason, the description, the locations (start, end, text, order), the hints and the
+// suggestions are the same, and the message is reported at the first location. A finding without a location is skipped,
+// as in the plugin. A single `^` in a code frame can mean a span of zero or one code units, so both are accepted. If a
+// diagnostic's only location has the reason as its text, that also matches a location without text.
 
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -35,7 +37,7 @@ type Finding = {
   suggestions?: { op: string; start: number; end: number; description: string; text?: string | null }[];
 };
 
-/** What is compared. `fields` are the names of the parts, each with its value as text. */
+/** One thing to compare. `fields` maps each part's name to its value as text. */
 type Item = { rule: string; place: string; firstLine: string; fields: Map<string, string>; shown: string };
 
 const { flags, rest } = options(process.argv.slice(2));
@@ -55,7 +57,7 @@ const ruleOfCategory = new Map([
 
 const short = (text: string, length = 110) => JSON.stringify(text.length > length ? text.slice(0, length) + "…" : text);
 
-function ofMessage(message: Message, isSuppressed: boolean): Item {
+function itemFromMessage(message: Message, isSuppressed: boolean): Item {
   const place = `${message.line}:${message.column}-${message.endLine}:${message.endColumn}`;
   const firstLine = message.message.split("\n")[0];
   return {
@@ -83,7 +85,7 @@ type Parts = {
   place: string;
 };
 
-function ofParts(parts: Parts): Item {
+function itemFromParts(parts: Parts): Item {
   const places = parts.places.map(place => `${place.start}..${place.end}`);
   return {
     rule: parts.rule,
@@ -107,7 +109,7 @@ function ofParts(parts: Parts): Item {
 
 let unread = 0;
 
-/** The message of the plugin, read back. Null: it is not what the compiler prints. */
+/** Parses the plugin's message back into its parts. Returns null if it isn't in the compiler's print format. */
 function partsOfMessage(path: string, source: Source, message: Message): Parts | null {
   const before = problems.length;
   const errors: ExpectedError[] = printed(path, source, message.message, 1);
@@ -170,7 +172,7 @@ const ourSuppressed = new Map<string, Message[]>();
 const ourFindings = new Map<string, Finding[]>();
 const ourText = readFileSync(rest[1], "utf8");
 if (ourText.startsWith("[")) {
-  // One report on each line that starts with `[`.
+  // Each line that starts with `[` is one report.
   for (const line of ourText.split("\n")) {
     if (!line.startsWith("[")) continue;
     type Result = { filePath: string; messages: Message[]; suppressedMessages?: Message[] };
@@ -193,8 +195,8 @@ const raw = ourFindings.size > 0;
 const oracle = flags.get("name") ?? "eslint-plugin-react-hooks";
 
 /**
- * What a message cannot say. Where theirs has one `^`, an end that is the start counts as the same. A diagnostic of the older kind,
- * which has one place and no text for it, is printed with the reason as the text.
+ * Evens out differences that a printed message can't express. Where theirs has a single `^`, an empty span in ours
+ * matches. An old-style diagnostic, which has one location without text, is printed with the reason as the text.
  */
 function reconcile(a: Parts, b: Parts) {
   if (a.places.length !== b.places.length) return;
@@ -225,26 +227,26 @@ let differing = 0;
 for (const path of [...new Set([...theirs.keys(), ...ourMessages.keys(), ...ourFindings.keys()])].sort()) {
   const record = theirs.get(path);
   if (record !== undefined && !ourMessages.has(path) && !ourFindings.has(path)) files.missing++;
-  // Not what ESLint itself says: that the file does not parse, that a comment names a rule that does not exist.
-  const ofThePlugin = (message: Message) => message.ruleId?.startsWith("react-hooks/") === true;
-  const theirMessages = (record?.messages ?? []).filter(ofThePlugin);
-  const theirSuppressed = (record?.suppressed ?? []).filter(ofThePlugin);
+  // Skip ESLint's own messages, such as a parse error or a comment that mentions an unknown rule.
+  const isFromPlugin = (message: Message) => message.ruleId?.startsWith("react-hooks/") === true;
+  const theirMessages = (record?.messages ?? []).filter(isFromPlugin);
+  const theirSuppressed = (record?.suppressed ?? []).filter(isFromPlugin);
   let left: Item[];
   let right: Item[];
   if (raw) {
     const source = new Source(readFileSync(join(sources, path), "utf8"));
-    // A finding knows nothing of comments.
+    // Findings don't take suppression comments into account.
     const a = [...theirMessages, ...theirSuppressed].flatMap(message => partsOfMessage(path, source, message) ?? []);
     const b = (ourFindings.get(path) ?? []).flatMap(finding => partsOfFinding(source, finding) ?? []);
     for (const parts of a) {
       const twin = b.find(other => other.rule === parts.rule && other.places[0].start === parts.places[0]?.start);
       if (twin !== undefined) reconcile(parts, twin);
     }
-    [left, right] = [a.map(ofParts), b.map(ofParts)];
+    [left, right] = [a.map(itemFromParts), b.map(itemFromParts)];
   } else {
     const items = (messages: Message[], suppressed: Message[]) => [
-      ...messages.filter(ofThePlugin).map(message => ofMessage(message, false)),
-      ...suppressed.filter(ofThePlugin).map(message => ofMessage(message, true)),
+      ...messages.filter(isFromPlugin).map(message => itemFromMessage(message, false)),
+      ...suppressed.filter(isFromPlugin).map(message => itemFromMessage(message, true)),
     ];
     left = items(theirMessages, theirSuppressed);
     right = items(ourMessages.get(path) ?? [], ourSuppressed.get(path) ?? []);

@@ -136,7 +136,7 @@ pub fn update_package_json_and_install_with_manager(
         original_cwd,
     )?;
 
-    // `bun patch` prepares the patch first; its caller exits.
+    // `bun patch` prepares the patch first, and its caller exits.
     if manager.any_failed_to_install
         && !matches!(manager.options.patch_features, PatchFeatures::Patch)
     {
@@ -227,13 +227,15 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     add_catalog::prepare(manager, &updates);
 
-    // Not `bun update <path>`: its rejection hints at a `bun add <path>` run from the cwd.
+    // `bun update <path>` is excluded, because its error message suggests running `bun add <path>`
+    // from the cwd.
     if subcommand == Subcommand::Add {
         updates =
             super::add_remove_with_filter::respell_local_paths(manager, original_cwd, updates);
     }
 
-    // Before the entry is read: migrating a lockfile rewrites the cached root package.json.
+    // This has to come before the entry is read, because migrating a lockfile rewrites the cached
+    // root package.json.
     let patch_commit: Option<PatchCommitResult> =
         if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
             patch_package::do_patch_commit(manager, log_level)?
@@ -298,7 +300,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     let dependency_list: &'static [u8] = manager.options.update.prop;
     let mut any_changes = false;
 
-    let mut not_in_workspace_root: Option<PatchCommitResult> = None;
+    let mut not_in_workspace_root: Option<&PatchCommitResult> = None;
     match subcommand {
         Subcommand::Remove => {
             any_changes =
@@ -342,17 +344,12 @@ fn update_package_json_and_install_with_manager_with_updates(
             }
         }
         _ => {
-            if let Some(stuff) = patch_commit {
+            if let Some(stuff) = &patch_commit {
                 // Inside a workspace package the root package.json is edited below.
                 if stuff.not_in_workspace_root {
                     not_in_workspace_root = Some(stuff);
                 } else {
-                    PackageJSONEditor::edit_patched_dependencies(
-                        manager,
-                        &mut current_package_json_root,
-                        &stuff.patch_key,
-                        &stuff.patchfile_path,
-                    )?;
+                    stuff.edit_package_json(manager, &mut current_package_json_root)?;
                     any_changes = true;
                 }
             }
@@ -421,15 +418,10 @@ fn update_package_json_and_install_with_manager_with_updates(
         let root_package_json_ptr: *mut MapEntry =
             package_json_entry_or_crash(manager, root_package_json_path);
 
-        if let Some(stuff) = &not_in_workspace_root {
+        if let Some(stuff) = not_in_workspace_root {
             let root_target = WorkspaceTarget::root();
             let mut root_package_json_root = fetch_entry_root(manager, &root_target);
-            PackageJSONEditor::edit_patched_dependencies(
-                manager,
-                &mut root_package_json_root,
-                &stuff.patch_key,
-                &stuff.patchfile_path,
-            )?;
+            stuff.edit_package_json(manager, &mut root_package_json_root)?;
             store_entry(manager, &root_target, root_package_json_root);
             super::package_json_write_back::record(manager, root_target, false);
         }
@@ -468,6 +460,9 @@ fn update_package_json_and_install_with_manager_with_updates(
         Global::exit(1);
     }
     super::package_json_write_back::flush(manager)?;
+    if let Some(stuff) = &patch_commit {
+        stuff.delete_removed_patch(manager);
+    }
 
     if subcommand == Subcommand::Remove
         && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
@@ -480,7 +475,8 @@ fn update_package_json_and_install_with_manager_with_updates(
     Ok(())
 }
 
-/// After the install: what the root `node_modules` still holds of what the command took out.
+/// Runs after the install. Removes what's left in the root `node_modules` of the packages that the
+/// command removed.
 pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
     if !manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
         return;
@@ -488,7 +484,7 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
     let subcommand = manager.subcommand;
     let placed: Option<Vec<Box<[u8]>>> = match subcommand {
         Subcommand::Remove => None,
-        // `-d` with `--production`: the install skips the group the entry is in now.
+        // `-d` with `--production`: the install skips the group that the entry is in now.
         Subcommand::Add
             if manager.options.do_.contains(Do::INSTALL_PACKAGES)
                 && !manager
@@ -513,7 +509,7 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
         if request.name.is_empty() {
             continue;
         }
-        // Only top-level folders are removed; nested copies are left alone.
+        // Only top-level folders are removed. Nested copies are left alone.
         let left = match &placed {
             Some(placed) => placed
                 .binary_search_by(|name| name.as_ref().cmp(request.name))
@@ -528,7 +524,7 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
         if !left {
             continue;
         }
-        // Not through a link at `@scope`.
+        // Don't go through a symlink at `@scope`.
         if let Some((scope, _)) = strings::split_once_char(request.name, b'/')
             && crate::prune::remove_planted_link(
                 &bun_sys::Dir::cwd(),
@@ -548,6 +544,8 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
         global_node_modules.push(bun_paths::SEP);
         global_node_modules.extend_from_slice(b"node_modules");
         crate::prune::prune_global_bins(manager.options.bin_path.as_bytes(), &global_node_modules);
+        // A removed package may have owned a bin name that a remaining package also provides.
+        crate::bin_real::link_free_global_bins(&manager.lockfile, manager.options.bin_path);
     }
 }
 
@@ -691,7 +689,8 @@ pub fn update_package_json_and_install_and_cli(
     Ok(())
 }
 
-// The folder as it reads inside double quotes: a space stays, a POSIX shell wants `\` doubled.
+// Formats the folder for use inside double quotes: a space is kept as it is, and a `\` is doubled
+// for a POSIX shell.
 struct ShellPathFormatter<'a> {
     folder: &'a [u8],
 }

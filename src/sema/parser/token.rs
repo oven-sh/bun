@@ -1,16 +1,15 @@
-//! The kinds of tokens, in the order of TypeScript's `SyntaxKind`: the parser classifies a token by
-//! comparing its kind with the first and the last of a group.
+//! Token kinds, in the order of TypeScript's `SyntaxKind`. The parser classifies a token by
+//! comparing its kind with the first and last kind of a group.
 
-/// The kind of a token.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[repr(u8)]
 pub(crate) enum T {
     Eof,
-    /// `KindUnknown`: a character that starts no token. Only with `recovers`, as the next two.
+    /// `KindUnknown`: a character that can't start a token. Like the next two, only with `recovers`.
     Invalid,
     /// `KindConflictMarkerTrivia`: JSX text and the conflict marker that ends it.
     ConflictMarker,
-    /// `KindNonTextFileMarkerTrivia`: the rest of a text that is binary.
+    /// `KindNonTextFileMarkerTrivia`: the rest of a binary file.
     NotText,
     Number,
     BigInt,
@@ -122,11 +121,10 @@ pub(crate) enum T {
     Var,
     Void,
     While,
-    /// A reserved word that is written with an escape: a name where any word is one, and nothing
-    /// else.
+    /// A reserved word written with an escape. It's only valid as a name, and only where any word can be a name.
     EscapedReservedWord,
     With,
-    // The words that are reserved in strict mode, from here to `Yield`.
+    // The strict-mode reserved words, from here to `Yield`.
     Implements,
     Interface,
     Let,
@@ -179,7 +177,7 @@ pub(crate) enum T {
 }
 
 impl T {
-    /// `TokenToString`, of a keyword or a punctuator.
+    /// `TokenToString`, for a keyword or a punctuator.
     pub(crate) fn text(self) -> &'static [u8] {
         match self {
             T::OpenBrace => b"{",
@@ -201,8 +199,8 @@ impl T {
             T::At => b"@",
             T::Equals => b"=",
             _ => {
-                let is_it = |it: &&(&'static [u8], T)| it.1 == self;
-                KEYWORDS.iter().find(is_it).map_or(b"", |it| it.0)
+                let is_match = |it: &&(&'static [u8], T)| it.1 == self;
+                KEYWORDS.iter().find(is_match).map_or(b"", |it| it.0)
             }
         }
     }
@@ -213,13 +211,13 @@ impl T {
         self >= T::Break && self <= T::With
     }
 
-    /// `TokenIsIdentifierOrKeyword`, which is true of a private name too.
+    /// `TokenIsIdentifierOrKeyword`, which is also true for a private name.
     #[inline(always)]
     pub(crate) fn is_identifier_or_keyword(self) -> bool {
         self >= T::Identifier
     }
 
-    /// Whether no expression goes on with it.
+    /// True if no expression can continue with this token.
     #[inline(always)]
     pub(crate) fn ends_expression(self) -> bool {
         matches!(
@@ -234,8 +232,8 @@ impl T {
         )
     }
 
-    /// Whether a member access, a call, a `!`, type arguments or a template can start with it, or
-    /// the braces of Flow's `match (a) { }` and `R { a: 1 }`.
+    /// True if this token can start a member access, a call, a `!`, type arguments or a template,
+    /// or the braces of Flow's `match (a) { }` and `R { a: 1 }`.
     #[inline(always)]
     pub(crate) fn can_follow_member_expression(self) -> bool {
         matches!(
@@ -282,8 +280,8 @@ impl T {
         )
     }
 
-    /// `GetBinaryOperatorPrecedence`, 0 for a token that is not a binary operator. The comma and the
-    /// assignment operators are not among them: the parser handles those where it parses them.
+    /// `GetBinaryOperatorPrecedence`, or 0 for a token that isn't a binary operator. The comma and
+    /// the assignment operators get 0 too, because the parser handles them where it parses them.
     #[inline(always)]
     pub(crate) fn binary_precedence(self) -> u8 {
         PRECEDENCE[self as usize]
@@ -326,7 +324,7 @@ const PRECEDENCE: [u8; COUNT] = {
 
 macro_rules! keywords {
     ($($text:literal => $kind:ident,)*) => {
-        /// The keyword that is spelled `text`, or `Identifier`.
+        /// The keyword spelled `text`, or `Identifier`.
         pub(crate) fn keyword(text: &[u8]) -> T {
             match text {
                 $($text => T::$kind,)*

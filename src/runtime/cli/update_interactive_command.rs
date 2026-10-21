@@ -1,12 +1,10 @@
 use core::fmt;
 use std::borrow::Cow;
-use std::io::Write as _;
 
 use bstr::BStr;
 
-use bun_alloc::Arena as Bump;
 use bun_ast::Loc;
-use bun_ast::{self, E, Expr, expr as js_expr};
+use bun_ast::{E, Expr};
 use bun_collections::{StringHashMap, index_sort};
 use bun_core::fmt::TerminalHyperlink;
 use bun_core::strings;
@@ -14,12 +12,17 @@ use bun_core::{Global, Output};
 use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::package_manager::options::Do;
-use bun_install::package_manager::workspace_manifests::{BrokenMember, DeclaredDependencies};
+use bun_install::package_manager::workspace_manifests::{
+    BrokenMember, DeclaredDependencies, is_outdated,
+};
 use bun_install::package_manager::{
     LogLevel, Subcommand, WorkspaceFilter, populate_manifest_cache,
     update_package_json_and_install_with_manager,
 };
 use bun_install::package_manager_real::command_line_arguments::UpdateGroups;
+use bun_install::package_manager_real::package_json_editor::{
+    catalog_object_of, updated_version_literal,
+};
 use bun_install::update_scope::selects;
 use bun_install::{
     CommandLineArguments, GetJsonOptions, GetJsonResult, INVALID_PACKAGE_ID, PackageID,
@@ -42,11 +45,17 @@ struct OutdatedPackage {
     current_version: Box<[u8]>,
     latest_version: Box<[u8]>,
     update_version: Box<[u8]>,
+    /// True if `update_version` is in the range that package.json declares. If no version is in
+    /// that range, this is false and `update_version` is the latest version.
+    update_in_range: bool,
     workspace_pkg_id: PackageID,
     dependency_type: &'static [u8],
     workspace_name: Box<[u8]>,
     behavior: Behavior,
     use_latest: bool,
+    /// A `latest` that is older than the installed version is shown, but no key or flag can select
+    /// it, because `bun update` does not downgrade.
+    latest_is_newer: bool,
     /// Both the default scope and the scope of `name` are the npm registry, so the name links to npmjs.org.
     uses_default_registry: bool,
     is_catalog: bool,
@@ -54,12 +63,21 @@ struct OutdatedPackage {
 }
 
 impl OutdatedPackage {
+    fn picks_latest(&self) -> bool {
+        self.use_latest && self.latest_is_newer
+    }
+
     fn target_version(&self) -> &[u8] {
-        if self.use_latest {
+        if self.picks_latest() {
             &self.latest_version
         } else {
             &self.update_version
         }
+    }
+
+    /// True if an install would pick the chosen version from the range package.json declares now.
+    fn target_in_range(&self) -> bool {
+        self.update_in_range && strings::eql(self.target_version(), &self.update_version)
     }
 
     fn checkbox_color(&self) -> CheckboxColor {
@@ -112,6 +130,7 @@ impl OutdatedPackage {
 struct PackageUpdate {
     name: Box<[u8]>,
     target_version: Box<[u8]>,
+    in_range: bool,
     dep_type: Box<[u8]>, // "dependencies", "devDependencies", etc.
     workspace_path: Box<[u8]>,
 }
@@ -281,7 +300,7 @@ impl UpdateInteractiveCommand {
         Self::update_interactive(ctx, &original_cwd, manager, cli.update_groups)
     }
 
-    /// `None`: it cannot be read or parsed, which was reported.
+    /// Returns `None` if the file can't be read or parsed. The error was already reported.
     fn load_package_json<'a>(
         manager: &'a mut PackageManager,
         package_json_path: &[u8],
@@ -326,10 +345,10 @@ impl UpdateInteractiveCommand {
                 .push(i);
         }
 
-        let bump = Bump::new();
+        let bump = crate::cli::cli_arena();
 
         for (workspace_path, workspace_update_idxs) in workspace_groups.iter() {
-            let root_dir = FileSystem::get().top_level_dir;
+            let root_dir = FileSystem::get().top_level_dir();
             let mut path_buf = bun_paths::path_buffer_pool::get();
             let package_json_path =
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
@@ -357,16 +376,22 @@ impl UpdateInteractiveCommand {
                 let Some(e_str) = version_query.expr.data.e_string() else {
                     continue;
                 };
-                let version_with_prefix =
-                    preserve_version_prefix(e_str.data.slice(), &update.target_version);
+                let Some(version_with_prefix) = chosen_version_literal(
+                    e_str.data.slice(),
+                    &update.target_version,
+                    update.in_range,
+                ) else {
+                    continue;
+                };
 
-                // Not `Expr::init`: install resets the Store before it reads this cached `root` again.
+                // Don't use `Expr::init` here, because the install resets the Store before it reads
+                // this cached `root` again.
                 let new_expr = Expr::allocate(
-                    crate::cli::cli_arena(),
+                    bump,
                     E::EString::init(cli_dupe(&version_with_prefix)),
                     version_query.expr.loc,
                 );
-                dep_obj.put(&bump, &update.name, new_expr)?;
+                dep_obj.put(bump, &update.name, new_expr)?;
                 modified = true;
             }
 
@@ -377,12 +402,13 @@ impl UpdateInteractiveCommand {
         Ok(())
     }
 
-    /// `catalog_updates`: `name` or `name:catalog` -> the new version. Catalogs are defined in the root package.json.
+    /// `catalog_updates` maps `name` or `name:catalog` to the new version and `target_in_range`.
+    /// Catalogs are defined in the root package.json.
     fn update_catalog_definitions(
         manager: &mut PackageManager,
-        catalog_updates: &StringHashMap<Box<[u8]>>,
+        catalog_updates: &StringHashMap<(Box<[u8]>, bool)>,
     ) -> crate::Result<()> {
-        let root_dir = FileSystem::get().top_level_dir;
+        let root_dir = FileSystem::get().top_level_dir();
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let package_json_path = Self::build_package_json_path(root_dir, b"", &mut path_buf);
 
@@ -390,16 +416,17 @@ impl UpdateInteractiveCommand {
             return Ok(());
         };
 
-        for (catalog_key, new_version) in catalog_updates.iter() {
+        for (catalog_key, (new_version, in_range)) in catalog_updates.iter() {
             let (package_name, catalog_name) = match bun_core::index_of(catalog_key, b":") {
-                Some(colon) => (&catalog_key[..colon], Some(&catalog_key[colon + 1..])),
-                None => (&catalog_key[..], None),
+                Some(colon) => (&catalog_key[..colon], &catalog_key[colon + 1..]),
+                None => (&catalog_key[..], &b""[..]),
             };
             update_catalog(
-                &mut package_json.root,
+                &package_json.root,
                 catalog_name,
                 package_name,
                 new_version,
+                *in_range,
             )?;
         }
 
@@ -467,8 +494,8 @@ impl UpdateInteractiveCommand {
 
         let selected = Self::prompt_for_updates(&mut outdated_packages);
 
-        // `OutdatedPackage::catalog_key` -> the new version
-        let mut catalog_updates: StringHashMap<Box<[u8]>> = StringHashMap::default();
+        // Maps `OutdatedPackage::catalog_key` to the new version and its `target_in_range`.
+        let mut catalog_updates: StringHashMap<(Box<[u8]>, bool)> = StringHashMap::default();
         let mut package_updates: Vec<PackageUpdate> = Vec::new();
 
         // Becomes `options.positionals` so the install runs as `bun update <selected...>`.
@@ -503,7 +530,10 @@ impl UpdateInteractiveCommand {
             }
 
             if pkg.is_catalog {
-                catalog_updates.put_assume_capacity(&pkg.catalog_key(), Box::from(target_version));
+                catalog_updates.put_assume_capacity(
+                    &pkg.catalog_key(),
+                    (Box::from(target_version), pkg.target_in_range()),
+                );
                 continue;
             }
 
@@ -519,6 +549,7 @@ impl UpdateInteractiveCommand {
             package_updates.push(PackageUpdate {
                 name: pkg.name.clone(),
                 target_version: Box::from(target_version),
+                in_range: pkg.target_in_range(),
                 dep_type: Box::from(pkg.dependency_type),
                 workspace_path: Box::from(workspace_path),
             });
@@ -549,7 +580,8 @@ impl UpdateInteractiveCommand {
         // Show the install time instead of the total command time
         ctx.start_time = bun_core::time::nano_timestamp();
 
-        // The chosen versions are already in package.json; the flag would re-pin every selection to `latest`, ignoring per-package `l` toggles.
+        // package.json already resolves to the chosen versions. With `--latest` still set, the
+        // install would re-pin every selection to `latest` and ignore the per-package `l` toggles.
         manager.options.do_.remove(Do::UPDATE_TO_LATEST);
         manager.options.positionals = crate::cli::cli_arena().alloc_slice_copy(&positionals);
         update_package_json_and_install_with_manager(manager, &mut *ctx, original_cwd)?;
@@ -653,14 +685,14 @@ impl UpdateInteractiveCommand {
             };
 
             // "Target" is the newest version in range.
-            let update_version = declared
+            let in_range = declared
                 .find_update(row, manifest, min_age_ms, excludes)
-                .unwrap()
-                .unwrap_or(latest);
+                .unwrap();
+            let update_version = in_range.unwrap_or(latest);
 
             // A package whose range is exhausted is still listed when `latest` is newer.
             let current_ver = resolution.npm().version;
-            if update_version.version.eql(current_ver) && latest.version.eql(current_ver) {
+            if !is_outdated(current_ver, string_buf, in_range, latest, manifest) {
                 continue;
             }
 
@@ -688,6 +720,7 @@ impl UpdateInteractiveCommand {
                 current_version: boxed(current_ver, string_buf),
                 latest_version: boxed(latest.version, &manifest.string_buf),
                 update_version: boxed(update_version.version, &manifest.string_buf),
+                update_in_range: in_range.is_some(),
                 workspace_pkg_id,
                 dependency_type: DependencyGroup::prop_for_behavior(dep.behavior),
                 workspace_name: Box::from(workspace_name),
@@ -696,6 +729,7 @@ impl UpdateInteractiveCommand {
                 is_catalog,
                 catalog_name,
                 use_latest: update_to_latest, // default to --latest flag value
+                latest_is_newer: latest.is_newer_than(manifest, current_ver, string_buf),
             });
         }
 
@@ -756,7 +790,8 @@ impl UpdateInteractiveCommand {
         widths
     }
 
-    /// The whole terminal; `viewport_height` says how many package rows fit in it.
+    /// Returns the size of the whole terminal. `viewport_height` says how many package rows fit in
+    /// it.
     fn get_terminal_size() -> TerminalSize {
         #[cfg(unix)]
         {
@@ -797,7 +832,8 @@ impl UpdateInteractiveCommand {
         } // Default fallback
     }
 
-    /// A frame taller than the screen cannot be redrawn in place: cursor-up stops at the top.
+    /// A frame that's taller than the screen can't be redrawn in place, because cursor-up stops at
+    /// the top.
     fn viewport_height(terminal_rows: usize, packages: &[OutdatedPackage]) -> usize {
         let groups = packages
             .chunk_by(|a, b| a.dependency_type == b.dependency_type)
@@ -904,7 +940,8 @@ impl UpdateInteractiveCommand {
         }
     }
 
-    /// After the cursor moved: keeps it visible, with 2 rows below it and 1 above where they fit.
+    /// Call after the cursor moves. Keeps it visible, with 2 rows below it and 1 above it where
+    /// they fit.
     fn update_viewport(state: &mut MultiSelectState<'_>) {
         let context_below: usize = 2;
         // A 1-row viewport has no room above the cursor.
@@ -919,7 +956,8 @@ impl UpdateInteractiveCommand {
             {
                 state.cursor - (state.viewport_height - context_below)
             } else {
-                // Viewport shorter than the context: cursor on the last visible row.
+                // The viewport is shorter than the context, so put the cursor on the last visible
+                // row.
                 state.cursor.saturating_sub(state.viewport_height - 1)
             };
 
@@ -935,7 +973,7 @@ impl UpdateInteractiveCommand {
         }
     }
 
-    /// `false`: cancelled.
+    /// Returns false if the user cancelled.
     fn process_multi_select(
         state: &mut MultiSelectState<'_>,
         initial_terminal_size: TerminalSize,
@@ -962,7 +1000,7 @@ impl UpdateInteractiveCommand {
                 state.columns.show_workspace &= current_size.width > 100;
                 last_terminal_size = current_size;
                 Self::update_viewport(state);
-                // In place: a fresh frame below the old one would duplicate it.
+                // Redraw in place, because a new frame below the old one would duplicate it.
                 needs_redraw = true;
             }
 
@@ -1036,7 +1074,8 @@ impl UpdateInteractiveCommand {
                             pkg.dependency_type.len()
                         };
 
-                        // Names start after "    " and "□ ", and 2 spaces follow them; the header after "  ".
+                        // Names start after "    " and "□ " and are followed by 2 spaces. The
+                        // header starts after "  ".
                         let total_offset = 6 + columns.name + 2;
                         let header_start = 2 + dep_type_text_len;
                         print_spaces(total_offset.saturating_sub(header_start).max(1));
@@ -1140,7 +1179,7 @@ impl UpdateInteractiveCommand {
                         &pkg.update_version,
                         &pkg.current_version,
                         columns.target,
-                        selected && !pkg.use_latest,
+                        selected && !pkg.picks_latest(),
                     );
                     print_spaces(columns.target.saturating_sub(target_width) + 2);
 
@@ -1152,7 +1191,7 @@ impl UpdateInteractiveCommand {
                         &pkg.latest_version,
                         &pkg.current_version,
                         columns.latest,
-                        selected && pkg.use_latest,
+                        selected && pkg.picks_latest(),
                     );
                     if is_same_as_target {
                         Output::print(format_args!("\x1B[22m")); // Reset dim
@@ -1198,7 +1237,7 @@ impl UpdateInteractiveCommand {
             let last = state.packages.len() - 1;
 
             match byte {
-                // Enter; ctrl+c and ctrl+d cancel
+                // Enter confirms. Ctrl+C and Ctrl+D cancel.
                 b'\n' | b'\r' | 3 | 4 => {
                     Output::up(total_lines);
                     Output::print(format_args!("\x1B[1G"));
@@ -1216,7 +1255,7 @@ impl UpdateInteractiveCommand {
                 }
                 b' ' => {
                     state.selected[state.cursor] = !state.selected[state.cursor];
-                    // Nothing newer in range: the selection means `latest`.
+                    // Nothing newer is in range, so selecting it means `latest`.
                     let pkg = &mut state.packages[state.cursor];
                     if pkg.current_version == pkg.update_version {
                         pkg.use_latest = true;
@@ -1225,7 +1264,7 @@ impl UpdateInteractiveCommand {
                 }
                 b'a' | b'A' => {
                     state.selected.fill(true);
-                    // As for the space bar.
+                    // Same as for the space bar.
                     for pkg in state.packages.iter_mut() {
                         if pkg.current_version == pkg.update_version {
                             pkg.use_latest = true;
@@ -1288,7 +1327,7 @@ impl UpdateInteractiveCommand {
                                 state.cursor = (state.cursor + 1) % state.packages.len();
                                 Self::update_viewport(state);
                             }
-                            // right arrow: Latest; left arrow: Target
+                            // The right arrow selects Latest, and the left arrow selects Target.
                             b'C' | b'D' => {
                                 state.packages[state.cursor].use_latest = arrow == b'C';
                                 state.selected[state.cursor] = true;
@@ -1433,139 +1472,33 @@ fn dep_type_priority(dep_type: &[u8]) -> u8 {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CatalogSource {
-    Workspaces,
-    Root,
-    Missing,
-}
-
-/// The object at `package_json.workspaces.<key>`, else the one at `package_json.<key>`.
-fn find_catalog_object(
-    package_json: &Expr,
-    key: &[u8],
-) -> (Option<bun_ast::StoreRef<E::Object>>, CatalogSource) {
-    if let Some(workspaces_query) = package_json.as_property(b"workspaces")
-        && workspaces_query.expr.is_object()
-        && let Some(q) = workspaces_query.expr.as_property(key)
-        && let Some(o) = q.expr.data.e_object()
-    {
-        return (Some(o), CatalogSource::Workspaces);
-    }
-    if let Some(q) = package_json.as_property(key)
-        && let Some(o) = q.expr.data.e_object()
-    {
-        return (Some(o), CatalogSource::Root);
-    }
-    (None, CatalogSource::Missing)
-}
-
-/// Sets `package_name` in `catalog`, with the range prefix of the version it replaces.
-fn put_catalog_version(
-    catalog: &mut E::Object,
-    package_name: &[u8],
-    new_version: &[u8],
-) -> crate::Result<()> {
-    let bump = crate::cli::cli_arena();
-    let existing = catalog.get(package_name).and_then(|e| e.data.e_string());
-    let version_with_prefix = match existing {
-        Some(e_str) => cli_dupe(&preserve_version_prefix(e_str.data.slice(), new_version)),
-        None => cli_dupe(new_version),
-    };
-    let new_expr = Expr::allocate(bump, E::EString::init(version_with_prefix), Loc::EMPTY);
-    catalog.put(bump, cli_dupe(package_name), new_expr)?;
-    Ok(())
-}
-
-/// New nodes come from the CLI arena: they must outlive install's `initialize_store()` reset.
+/// Rewrites the catalog entry that the row was read from. The new node is allocated in the CLI
+/// arena, because it must outlive the `initialize_store()` reset that the install does.
 fn update_catalog(
-    package_json: &mut Expr,
-    catalog_name: Option<&[u8]>,
+    package_json: &Expr,
+    catalog_name: &[u8],
     package_name: &[u8],
     new_version: &[u8],
+    in_range: bool,
 ) -> crate::Result<()> {
-    let bump = crate::cli::cli_arena();
-    // The default catalog, or the object that holds the named ones.
-    let key: &'static [u8] = if catalog_name.is_some() {
-        b"catalogs"
-    } else {
-        b"catalog"
-    };
-    let mut fresh = E::Object::default();
-    let (mut existing, source) = find_catalog_object(package_json, key);
-    let outer: &mut E::Object = match &mut existing {
-        Some(object) => &mut **object,
-        None => &mut fresh,
-    };
-
-    match catalog_name {
-        None => put_catalog_version(outer, package_name, new_version)?,
-        Some(catalog_name) => match outer.get(catalog_name).and_then(|e| e.data.e_object()) {
-            Some(mut catalog) => put_catalog_version(&mut catalog, package_name, new_version)?,
-            None => {
-                let mut catalog = E::Object::default();
-                put_catalog_version(&mut catalog, package_name, new_version)?;
-                let catalog = Expr::allocate(bump, catalog, Loc::EMPTY);
-                outer.put(bump, cli_dupe(catalog_name), catalog)?;
-            }
-        },
-    }
-
-    // `workspaces.<key>` takes the object whenever that key exists, of any type, even if the one at the root was found.
-    if let Some(workspaces_query) = package_json.as_property(b"workspaces")
-        && let Some(mut ws_obj) = workspaces_query.expr.data.e_object()
-        && workspaces_query.expr.as_property(key).is_some()
-    {
-        if source != CatalogSource::Workspaces {
-            let expr = match existing {
-                Some(object) => Expr {
-                    loc: Loc::EMPTY,
-                    data: js_expr::Data::EObject(object),
-                },
-                None => Expr::allocate(bump, fresh, Loc::EMPTY),
-            };
-            ws_obj.put(bump, key, expr)?;
-        }
+    let Some(mut catalog) = catalog_object_of(package_json, catalog_name, package_name) else {
         return Ok(());
-    }
-
-    // An object found at the root was edited in place.
-    if source != CatalogSource::Root
-        && let Some(root_obj) = package_json.data.e_object_mut()
-    {
-        root_obj.put(bump, key, Expr::allocate(bump, fresh, Loc::EMPTY))?;
-    }
+    };
+    let Some(literal) = (*catalog)
+        .get(package_name)
+        .and_then(|declared| declared.data.e_string())
+        .and_then(|declared| chosen_version_literal(declared.data.slice(), new_version, in_range))
+    else {
+        return Ok(());
+    };
+    let bump = crate::cli::cli_arena();
+    let literal = Expr::allocate(bump, E::EString::init(cli_dupe(&literal)), Loc::EMPTY);
+    catalog.put(bump, package_name, literal)?;
     Ok(())
 }
 
-/// `new_version` after the `npm:alias@` and the range operator of `original_version`.
-fn preserve_version_prefix(original_version: &[u8], new_version: &[u8]) -> Vec<u8> {
-    let original_version = dependency::trim_literal(original_version);
-    let mut result: Vec<u8> = Vec::new();
-    if original_version.len() > 1 {
-        let mut orig_version: &[u8] = original_version;
-
-        if let Some(after_npm) =
-            strings::without_prefix_if_possible_comptime(original_version, b"npm:")
-        {
-            let mut alias = after_npm;
-            if let Some(i) = strings::last_index_of_char(after_npm, b'@') {
-                alias = &after_npm[0..i];
-                if i + 2 < after_npm.len() {
-                    orig_version = &after_npm[i + 1..];
-                }
-            }
-            let _ = write!(&mut result, "npm:{}@", BStr::new(alias));
-        }
-
-        let first_char = orig_version[0];
-        if matches!(first_char, b'^' | b'~' | b'>' | b'<' | b'=') {
-            result.push(first_char);
-            if matches!(first_char, b'>' | b'<') && orig_version[1] == b'=' {
-                result.push(b'=');
-            }
-        }
-    }
-    result.extend_from_slice(new_version);
-    result
+/// Returns what `bun update` would write in place of `declared`, or what `bun update --latest`
+/// would write if `chosen` is not `in_range`. `None` means `declared` is kept as written.
+fn chosen_version_literal(declared: &[u8], chosen: &[u8], in_range: bool) -> Option<Vec<u8>> {
+    updated_version_literal(declared, min_of_valid(chosen)?, chosen, false, !in_range)
 }

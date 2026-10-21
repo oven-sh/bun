@@ -326,7 +326,7 @@ pub(crate) fn local_relative_path(request: &UpdateRequest) -> Option<(&'static [
     } else {
         b""
     };
-    // The parsed path, not the literal: `file:/../lib` and `file://../lib` name `../lib`.
+    // Use the parsed path, not the literal: `file:/../lib` and `file://../lib` both mean `../lib`.
     let (prefix, path): (&'static [u8], &[u8]) = match request.version.tag {
         dependency::Tag::Folder => (file_prefix, request.version.folder().slice(buf)),
         dependency::Tag::Tarball => match &request.version.tarball().uri {
@@ -366,7 +366,7 @@ fn resolve_from_cwd<'a>(
         .unwrap_or_else(|| local_path_too_long(request))
 }
 
-/// `None` is the global package.json: it stores `abs` itself, as `-g /abs/path` does.
+/// `None` means the global package.json, which stores `abs` itself, like `-g /abs/path` does.
 fn spell_relative_to(
     package_json_path: Option<&[u8]>,
     request: &UpdateRequest,
@@ -412,7 +412,8 @@ fn spell_relative_to(
     positional
 }
 
-/// Without --filter: a local path typed in another directory is re-spelled for the one target.
+/// Without `--filter`: a local path that was typed in a different directory is rewritten relative
+/// to the one target.
 pub(super) fn respell_local_paths(
     manager: &mut PackageManager,
     original_cwd: &[u8],
@@ -420,7 +421,7 @@ pub(super) fn respell_local_paths(
 ) -> Vec<UpdateRequest> {
     let package_json_path: Box<[u8]> = manager.original_package_json_path.as_bytes().into();
     let (cwd, target): (&[u8], Option<&[u8]>) = if manager.options.global {
-        // `original_cwd` is the global directory: `init` enters it first.
+        // `original_cwd` is the global directory here, because `init` changes to it first.
         (
             bun_paths::fs::FileSystem::instance().initial_top_level_dir(),
             None,

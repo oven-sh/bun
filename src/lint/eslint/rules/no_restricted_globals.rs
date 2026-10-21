@@ -5,7 +5,7 @@ use rustc_hash::FxHashMap;
 
 /// Disallow specified global variables.
 pub struct NoRestrictedGlobals {
-    /// The custom message of each restricted name.
+    /// Maps each restricted name to its custom message.
     restricted: FxHashMap<Box<[u8]>, Option<Box<[u8]>>>,
     checks_global_object: bool,
     global_objects: Vec<Box<[u8]>>,
@@ -17,10 +17,10 @@ const CUSTOM_MESSAGE: Message = Message::new(
     "Unexpected use of '{{name}}'. {{customMessage}}",
 );
 
-/// Whether the parent of the identifier is a `TSTypeReference`, a `TSInterfaceHeritage`, a
-/// `TSClassImplements`, a `TSTypeQuery` or a `TSQualifiedName`.
+/// True if the identifier's parent is a `TSTypeReference`, a `TSInterfaceHeritage`, a `TSClassImplements`, a
+/// `TSTypeQuery` or a `TSQualifiedName`.
 fn is_in_type_context(reference: Reference<'_>, is_oxlint: bool) -> bool {
-    // For oxc the operand of a `typeof` type is a value, and what `export default` exports can be a type.
+    // In oxc, a `typeof` type's operand is a value, and the operand of `export default` can be a type.
     if is_oxlint {
         let is_exported = |it: &Expr| matches!(it.parent(), Node::Stmt(it) if it.tag() == StmtTag::ExportDefault);
         return match reference.expr().filter(is_exported) {
@@ -77,7 +77,7 @@ impl NoRestrictedGlobals {
             let Some(name) = get_static_property_name(access) else {
                 return;
             };
-            // oxlint goes no further than the first property.
+            // oxlint stops at the first property.
             if *name != *reference.name().bytes() || cx.language().is_oxlint {
                 break (access, name);
             }
@@ -105,7 +105,7 @@ impl NoRestrictedGlobals {
             }
             if self.checks_global_object
                 && self.global_objects.iter().any(|it| **it == *name.bytes())
-                // For oxlint nothing has to define it.
+                // oxlint doesn't require the global object to be defined.
                 && (file.language().is_oxlint || file.global(name.bytes()).is_some_and(|it| it.accepts(false)))
             {
                 self.check_property_of_global_object(reference, cx);
@@ -114,7 +114,7 @@ impl NoRestrictedGlobals {
         if !self.checks_global_object {
             return;
         }
-        // What a script declares at its top level is a variable of the global scope too.
+        // A script's top-level declarations are global variables too.
         for name in &self.global_objects {
             let Some(symbol) = file.scope().get_bytes(name) else {
                 continue;

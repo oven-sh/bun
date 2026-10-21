@@ -1,7 +1,7 @@
 use bun_core::strings;
 use crate::a11y::{LabelSearch, search_for_accessible_label};
 use crate::jsx::{
-    AttributeValue, Child, as_jsx_element, children, get_attribute_names_of_settings, get_element_type, get_jsx_attribute_name,
+    AttributeValue, Child, as_jsx_element, children, get_attribute_names_from_settings, get_element_type, get_jsx_attribute_name,
     get_prop_value, has_jsx_prop, is_zero_bigint,
 };
 use bun_lint::prelude::*;
@@ -17,7 +17,7 @@ pub struct LabelHasAssociatedControl {
     assert: Assert,
     label_components: Vec<String>,
     label_attributes: Vec<String>,
-    /// Globs. Besides `input`, `meter`, `output`, `progress`, `select` and `textarea`.
+    /// Globs, in addition to `input`, `meter`, `output`, `progress`, `select` and `textarea`.
     control_components: Vec<String>,
 }
 
@@ -39,7 +39,7 @@ impl Rule for LabelHasAssociatedControl {
 
     fn new(options: &Options) -> Self {
         let config = options.object(0);
-        // What is configured is added, unless something in it is not a string.
+        // The configured names are added to the fixed ones, unless one of them isn't a string.
         let with = |key: &str, fixed: &[&str]| -> Vec<String> {
             let added = Some(config.strings(key)).filter(|it| it.len() == config.array(key).len()).unwrap_or_default();
             fixed.iter().chain(&added).map(|it| (*it).to_owned()).collect()
@@ -70,9 +70,9 @@ impl Rule for LabelHasAssociatedControl {
             cx.report(element.opening_span(), LABEL_HAS_ASSOCIATED_CONTROL_NO_LABEL);
             return;
         }
-        // The first of the names that the element has decides.
+        // The first of these names that the element has decides.
         let has_html_for = || {
-            let html_for_attribute = match get_attribute_names_of_settings(cx.file(), "for") {
+            let html_for_attribute = match get_attribute_names_from_settings(cx.file(), "for") {
                 Some(attributes) => (attributes.iter().filter_map(|it| std::str::from_utf8(it.as_str()?).ok()))
                     .find_map(|attr| has_jsx_prop(element, attr)),
                 None => has_jsx_prop(element, "htmlFor"),
@@ -105,7 +105,7 @@ impl LabelHasAssociatedControl {
     fn has_labelling_prop(&self, element: Jsx) -> bool {
         element.attrs().iter().any(|attribute| match get_jsx_attribute_name(attribute) {
             Some(name) => self.is_label_attribute(name) && has_attribute_value(attribute, true),
-            // A spread may have one.
+            // A spread may contain one.
             None => true,
         })
     }
@@ -136,8 +136,8 @@ impl LabelHasAssociatedControl {
     }
 }
 
-/// Whether the value of an attribute may be something: it is not known to be falsy, as `jsx-ast-utils` reads it. An attribute
-/// without a value may be. `trim_strings`: whitespace is nothing.
+/// True if an attribute's value may be non-empty, meaning it isn't known to be falsy as `jsx-ast-utils` evaluates it.
+/// An attribute without a value counts. `trim_strings`: a whitespace-only string counts as empty.
 fn has_attribute_value(attribute: Prop, trim_strings: bool) -> bool {
     match get_prop_value(attribute) {
         Some(AttributeValue::StringLiteral(literal)) => Value::from_literal(literal.value).has_value(trim_strings),
@@ -153,7 +153,7 @@ fn has_attribute_value(attribute: Prop, trim_strings: bool) -> bool {
 enum Value<'a> {
     String(&'a [u8]),
     Number(f64),
-    /// Whether it is not zero.
+    /// True if it's nonzero.
     BigInt(bool),
 }
 
@@ -187,7 +187,7 @@ impl<'a> Value<'a> {
 }
 
 fn get_attribute_expression_value(expression: Expr<'_>) -> Option<Value<'_>> {
-    // The `-`, `+`, `!` and `~` before it, from the outside.
+    // The `-`, `+`, `!` and `~` in front of it, outermost first.
     let mut operators = SmallVec::<[UnOp; 4]>::new();
     let mut at = get_inner_expression(expression);
     while let ExprKind::Unary { op: op @ (UnOp::Minus | UnOp::Plus | UnOp::Not | UnOp::BitNot), operand } = at.kind() {
@@ -196,7 +196,7 @@ fn get_attribute_expression_value(expression: Expr<'_>) -> Option<Value<'_>> {
     }
     let mut value = match at.kind() {
         ExprKind::String(literal) => Value::from_literal(literal.bytes()),
-        // As it is written, with its escapes.
+        // As written, with its escapes.
         ExprKind::Template(template) if template.exprs().is_empty() => Value::String(template.raw(0)),
         ExprKind::Null | ExprKind::False => Value::Number(0.0),
         ExprKind::True => Value::Number(1.0),
@@ -205,7 +205,7 @@ fn get_attribute_expression_value(expression: Expr<'_>) -> Option<Value<'_>> {
         ExprKind::Ident(name) => match name.bytes() {
             b"undefined" => Value::Number(f64::NAN),
             b"Infinity" => Value::Number(f64::INFINITY),
-            // What is not known stands for its name.
+            // `jsx-ast-utils` evaluates an unknown identifier to its name.
             name => Value::String(name),
         },
         ExprKind::Unary { op: UnOp::Void | UnOp::Typeof, .. } => Value::Number(f64::NAN),

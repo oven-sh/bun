@@ -165,6 +165,7 @@ When implementing JavaScript classes in C++:
 
 Code generation happens automatically as part of the build process. The main scripts are:
 
+- `src/codegen/bindgen.ts` - Generates Rust, C++ & TypeScript bindings from `*.bind.ts` files (`docs/project/bindgen.mdx`)
 - `src/codegen/generate-classes.ts` - Generates Rust & C++ bindings from `*.classes.ts` files
 - `src/codegen/generate-jssink.ts` - Generates stream-related classes
 - `src/codegen/bundle-modules.ts` - Bundles built-in modules like `node:fs`

@@ -225,10 +225,10 @@ describe("bun install --cpu and --os flags", () => {
 
   // A negated unknown name is just as much of a typo as a plain one.
   it.each([
-    ["--cpu", "invalid-cpu", "Invalid CPU architecture: 'invalid-cpu'"],
-    ["--cpu", "!invalid-cpu", "Invalid CPU architecture: '!invalid-cpu'"],
-    ["--os", "invalid-os", "Invalid operating system: 'invalid-os'"],
-    ["--os", "!invalid-os", "Invalid operating system: '!invalid-os'"],
+    ["--cpu", "invalid-cpu", "invalid CPU architecture: 'invalid-cpu'"],
+    ["--cpu", "!invalid-cpu", "invalid CPU architecture: '!invalid-cpu'"],
+    ["--os", "invalid-os", "invalid operating system: 'invalid-os'"],
+    ["--os", "!invalid-os", "invalid operating system: '!invalid-os'"],
   ])("should error on %s %s", async (flag, value, message) => {
     await writeFile(
       join(package_dir, "package.json"),
@@ -597,8 +597,8 @@ describe("bun install --cpu and --os flags", () => {
   const installedNames = async () =>
     (await readdirSorted(join(package_dir, "node_modules"))).filter(name => !name.startsWith("."));
 
-  // A dependency the project requires does not go missing without a word. Optional ones stay quiet, and so do the
-  // dependencies of dependencies, which the project cannot do anything about (--verbose lists them).
+  // A dependency that the project requires isn't skipped silently. Optional ones are, and so are the dependencies of
+  // dependencies, which the project can't do anything about (run with --verbose to list them).
   it.each(["hoisted", "isolated"])(
     "warns about each direct required dependency left out for the target platform (%s linker)",
     async linker => {
@@ -616,7 +616,7 @@ describe("bun install --cpu and --os flags", () => {
       );
       await Bun.write(
         join(package_dir, "packages", "member", "package.json"),
-        // one that the root names too, and one of its own
+        // One that the root also depends on, and one of its own.
         JSON.stringify({ name: "member", dependencies: { "dep-win32-only": "1.0.0", "member-s390x-only": "4.0.0" } }),
       );
       const install = async (...flags: string[]) => {
@@ -633,9 +633,9 @@ describe("bun install --cpu and --os flags", () => {
         expect(exitCode).toBe(0);
         return warningLines(stderr).sort();
       };
-      const win32 = `warn: dep-win32-only@1.0.0 was not installed: unsupported platform (wants os "win32")`;
-      const notLinux = `warn: dep-not-linux@2.0.0 was not installed: unsupported platform (wants os "!linux", cpu [ "arm64", "ppc64", ])`;
-      const s390x = `warn: member-s390x-only@4.0.0 was not installed: unsupported platform (wants cpu "s390x")`;
+      const win32 = `warn: skipping dep-win32-only@1.0.0: unsupported platform (wants os "win32")`;
+      const notLinux = `warn: skipping dep-not-linux@2.0.0: unsupported platform (wants os "!linux", cpu [ "arm64", "ppc64", ])`;
+      const s390x = `warn: skipping member-s390x-only@4.0.0: unsupported platform (wants cpu "s390x")`;
 
       expect(await install()).toEqual([notLinux, win32, s390x]);
       expect(await installedNames()).toEqual(linker === "hoisted" ? ["dep-universal", "member"] : ["dep-universal"]);
@@ -643,7 +643,7 @@ describe("bun install --cpu and --os flags", () => {
       expect(await install()).toEqual([]);
 
       const removeNodeModules = () => rm(join(package_dir, "node_modules"), { recursive: true, force: true });
-      // one that installs from the lockfile does; what is not asked for is not missed
+      // An install from the lockfile does. A package that isn't requested isn't reported as missing.
       await removeNodeModules();
       expect(await install("--production")).toEqual([win32, s390x]);
       await removeNodeModules();
@@ -675,9 +675,7 @@ describe("bun install --cpu and --os flags", () => {
 
     expect(stderr).not.toContain("error:");
     expect(warningLines(stderr)).toEqual(
-      field === "dependencies"
-        ? [`warn: dep-win32-only@1.0.0 was not installed: unsupported platform (wants os "win32")`]
-        : [],
+      field === "dependencies" ? [`warn: skipping dep-win32-only@1.0.0: unsupported platform (wants os "win32")`] : [],
     );
     expect(stdout).not.toContain("installed dep-win32-only");
     expect(stdout).toContain("skipped dep-win32-only@1.0.0 (unsupported platform)\n");
@@ -816,7 +814,7 @@ describe("bun install --libc flag and the libc field", () => {
     expect(await lockfileEntry("dep-musl")).toContain(`{ "libc": "musl" }`);
     expect(await lockfileEntry("dep-universal")).toContain(", {}");
 
-    // The lockfile alone decides what a frozen install for the other libc gets: no manifest is fetched.
+    // The lockfile alone decides what a frozen install for the other libc gets, so no manifest is fetched.
     await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
     clear(accepts, urls);
     await install("--libc", "musl", "--frozen-lockfile");
@@ -1081,7 +1079,7 @@ describe("bun install --libc flag and the libc field", () => {
     });
 
     const [stderrText, exitCode] = await Promise.all([stderr.text(), exited]);
-    expect(stderrText).toContain(`Invalid libc: '${value}'. Valid values are: *, any, glibc, musl.`);
+    expect(stderrText).toContain(`invalid libc: '${value}'. valid values: *, any, glibc, musl.`);
     expect(exitCode).toBe(1);
   });
 });

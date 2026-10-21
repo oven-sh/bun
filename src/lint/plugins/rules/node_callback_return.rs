@@ -6,16 +6,16 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 /// Require `return` statements after callbacks.
 pub struct CallbackReturn {
     callbacks: Vec<Box<str>>,
-    /// The calls whose callee can be written as one of them.
+    /// Listens for the calls whose callee can be written as one of `callbacks`.
     on: On,
 }
 
 const CALLBACK_RETURN: Message = Message::new("", "Expected return with your callback function.");
 
-/// What `find_closest_block_parent` finds.
+/// The result of `find_closest_block_parent`.
 #[derive(Copy, Clone)]
 enum ClosestBlock<'a> {
-    /// A `return`, or an arrow function that something is a parameter or the whole body of.
+    /// A `return`, or an arrow function that has the node as a parameter or as its whole body.
     ReturnOrArrow,
     Block(Stmt<'a>),
     FunctionBody(Func<'a>),
@@ -90,7 +90,7 @@ impl Rule for CallbackReturn {
     }
 }
 
-/// The `a` of `a.b` and of `a .b`.
+/// Returns the `a` in `a.b` or `a .b`.
 fn first_name(callback: &str) -> &str {
     let end = strings::index_of_any(callback.as_bytes(), b".[ \t\r\n/");
     callback.get(..end.unwrap_or(callback.len())).unwrap_or(callback)
@@ -135,7 +135,7 @@ fn find_closest_block_parent<'a>(child: Node<'a>, parent: Node<'a>) -> Option<Cl
     }
 }
 
-/// `statement` is `call;`, `a + call;` or `a && call;`.
+/// True if `statement` is `call;`, `a + call;` or `a && call;`.
 fn is_callback_expression<'a>(call: Expr<'a>, statement: Stmt<'a>) -> bool {
     let Some(e) = statement.as_expr() else {
         return false;

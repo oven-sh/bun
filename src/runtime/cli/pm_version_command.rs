@@ -52,6 +52,137 @@ impl VersionType {
     }
 }
 
+/// A version as node-semver stores it: the prerelease is split at its dots, and the build metadata
+/// is dropped.
+struct Version {
+    major: u64,
+    minor: u64,
+    patch: u64,
+    prerelease: Vec<Vec<u8>>,
+}
+
+impl Version {
+    /// The largest major, minor, or patch number that node-semver accepts:
+    /// https://github.com/npm/node-semver/blob/v7.7.2/classes/semver.js#L50-L60
+    const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+
+    /// Does what node-semver's `semver.parse(semver.clean(text), { loose: true })` does.
+    fn parse(text: &[u8]) -> Option<Version> {
+        let version = Semver::Version::parse_exact(Semver::SlicedString::init(text, text))?;
+        if version.major.max(version.minor).max(version.patch) > Self::MAX_SAFE_INTEGER {
+            return None;
+        }
+        Some(Version {
+            major: version.major,
+            minor: version.minor,
+            patch: version.patch,
+            prerelease: match version.tag.pre.slice(text) {
+                b"" => Vec::new(),
+                prerelease => Self::identifiers(prerelease)?,
+            },
+        })
+    }
+
+    /// Splits a prerelease into its dot-separated identifiers. Returns `None` if one of them is
+    /// empty or has a character that semver does not allow.
+    fn identifiers(prerelease: &[u8]) -> Option<Vec<Vec<u8>>> {
+        strings::split(prerelease, b".")
+            .map(|identifier| {
+                let is_valid = !identifier.is_empty()
+                    && (identifier.iter())
+                        .all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'-'));
+                is_valid.then(|| match Self::number(identifier) {
+                    Some(number) => number.to_string().into_bytes(),
+                    None => identifier.to_vec(),
+                })
+            })
+            .collect()
+    }
+
+    /// Like node-semver, treats an identifier made of digits as a number only if it is below
+    /// `Number.MAX_SAFE_INTEGER`. A larger one is treated as a string.
+    fn number(identifier: &[u8]) -> Option<u64> {
+        bun_core::parse_unsigned::<u64>(identifier, 10)
+            .ok()
+            .filter(|number| *number < Self::MAX_SAFE_INTEGER)
+    }
+
+    /// Does what node-semver's `semver.inc(self, release, preid)` does. Returns `None` if `preid`
+    /// is not a valid prerelease.
+    fn increment(mut self, release: VersionType, preid: &[u8]) -> Option<Version> {
+        // Bumping a prerelease of x.0.0, x.y.0, or x.y.z gives that release, not the one after it.
+        let is_release = self.prerelease.is_empty();
+        match release {
+            VersionType::Major | VersionType::Premajor => {
+                if release == VersionType::Premajor
+                    || is_release
+                    || self.minor != 0
+                    || self.patch != 0
+                {
+                    self.major += 1;
+                }
+                (self.minor, self.patch) = (0, 0);
+            }
+            VersionType::Minor | VersionType::Preminor => {
+                if release == VersionType::Preminor || is_release || self.patch != 0 {
+                    self.minor += 1;
+                }
+                self.patch = 0;
+            }
+            VersionType::Patch | VersionType::Prerelease if !is_release => {}
+            VersionType::Patch | VersionType::Prerelease | VersionType::Prepatch => {
+                self.patch += 1;
+            }
+            VersionType::Specific | VersionType::FromGit => return Some(self),
+        }
+        if release != VersionType::Prerelease {
+            self.prerelease.clear();
+        }
+        if matches!(
+            release,
+            VersionType::Major | VersionType::Minor | VersionType::Patch
+        ) {
+            return Some(self);
+        }
+
+        let last_number = (self.prerelease.iter_mut().rev())
+            .find_map(|identifier| Some((Self::number(identifier)?, identifier)));
+        match last_number {
+            Some((number, identifier)) => *identifier = (number + 1).to_string().into_bytes(),
+            None => self.prerelease.push(b"0".to_vec()),
+        }
+        if !preid.is_empty() {
+            Self::identifiers(preid)?;
+            // `preid` is parsed strictly, so `01` is invalid. Only the current version is parsed
+            // loosely, where `01` means 1.
+            if strings::split(preid, b".")
+                .any(|it| it.len() > 1 && it[0] == b'0' && it.iter().all(u8::is_ascii_digit))
+            {
+                return None;
+            }
+            let first = self.prerelease[0].as_slice();
+            let is_same_name = match (Self::number(first), Self::number(preid)) {
+                (Some(first), Some(preid)) => first == preid,
+                _ => first == preid,
+            };
+            let second = self.prerelease.get(1);
+            if !is_same_name || !second.is_some_and(|it| it.iter().all(u8::is_ascii_digit)) {
+                self.prerelease = vec![preid.to_vec(), b"0".to_vec()];
+            }
+        }
+        Some(self)
+    }
+
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = fmt_bytes(format_args!("{}.{}.{}", self.major, self.minor, self.patch));
+        if !self.prerelease.is_empty() {
+            bytes.push(b'-');
+            bytes.extend_from_slice(&self.prerelease.join(&b'.'));
+        }
+        bytes
+    }
+}
+
 impl PmVersionCommand {
     pub(crate) fn exec(
         ctx: command::Context<'_>,
@@ -67,6 +198,10 @@ impl PmVersionCommand {
         }
 
         let (version_type, new_version) = Self::parse_version_argument(positionals[1]);
+
+        // Bun's shell runs the scripts with the global `MiniEventLoop`'s environment, which only
+        // the first `init_global` call sets. On Windows, spawning git would otherwise be that call.
+        bun_event_loop::MiniEventLoop::init_global(Some(pm.env_mut()), Some(&package_json_dir));
 
         Self::verify_git(&package_json_dir, pm);
 
@@ -122,7 +257,6 @@ impl PmVersionCommand {
             .filter(|scripts| matches!(scripts.data, ExprData::EObject(_)));
 
         let silent = pm.options.log_level == LogLevel::Silent;
-        let use_system_shell = ctx.debug.use_system_shell;
 
         let mut run_script = |name: &[u8]| -> Result<(), crate::Error> {
             let script = scripts_obj.and_then(|scripts| scripts.get(name));
@@ -130,19 +264,15 @@ impl PmVersionCommand {
             else {
                 return Ok(());
             };
-            RunCommand::run_package_script_foreground(
+            RunCommand::run_lifecycle_script_foreground(
                 &mut *ctx,
                 script_command,
                 name,
                 &package_json_dir,
                 pm.env_mut(),
-                &[],
                 silent,
-                use_system_shell,
             )
         };
-
-        run_script(b"preversion")?;
 
         let current_version: Option<&[u8]> = match json.get(b"version").map(|v| v.data) {
             Some(ExprData::EString(s)) => Some(s.data.slice()),
@@ -152,7 +282,7 @@ impl PmVersionCommand {
         let new_version_str = Self::calculate_new_version(
             current_version.unwrap_or(b"0.0.0"),
             version_type,
-            new_version,
+            new_version.as_deref(),
             pm.options.preid,
             &package_json_dir,
         );
@@ -169,6 +299,29 @@ impl PmVersionCommand {
             Output::flush();
             return Ok(());
         }
+
+        // `npm version` sets these variables for `preversion`, `version`, and `postversion`.
+        let name = json
+            .get(b"name")
+            .and_then(|name| name.as_string(&json_bump));
+        let variables: [(&[u8], Option<&[u8]>); 6] = [
+            (b"npm_command", Some(b"version".as_slice())),
+            (b"npm_package_json", Some(package_json_path.as_bytes())),
+            (b"npm_package_name", name),
+            (b"npm_package_version", current_version),
+            (
+                b"npm_old_version",
+                Some(current_version.unwrap_or(b"0.0.0")),
+            ),
+            (b"npm_new_version", Some(new_version_str.as_slice())),
+        ];
+        for (key, value) in variables {
+            if let Some(value) = value {
+                pm.env_mut().map.put(key, value)?;
+            }
+        }
+
+        run_script(b"preversion")?;
 
         json.data
             .e_object_mut()
@@ -202,6 +355,9 @@ impl PmVersionCommand {
             Global::exit(1);
         }
 
+        pm.env_mut()
+            .map
+            .put(b"npm_package_version", &new_version_str)?;
         run_script(b"version")?;
 
         if pm.options.git_tag_version {
@@ -254,21 +410,13 @@ impl PmVersionCommand {
         }
     }
 
-    /// node-semver's limit: https://github.com/npm/node-semver/blob/v7.7.2/classes/semver.js#L50-L60
-    fn is_valid_version(result: &Semver::version::ParseResult<u64>) -> bool {
-        const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
-        let version = result.version.min();
-        result.valid && version.major.max(version.minor).max(version.patch) <= MAX_SAFE_INTEGER
-    }
-
-    fn parse_version_argument(arg: &[u8]) -> (VersionType, Option<&[u8]>) {
+    fn parse_version_argument(arg: &[u8]) -> (VersionType, Option<Vec<u8>>) {
         if let Some(vtype) = VersionType::from_string(arg) {
             return (vtype, None);
         }
 
-        let version = Semver::Version::parse(Semver::SlicedString::init(arg, arg));
-        if Self::is_valid_version(&version) {
-            return (VersionType::Specific, Some(arg));
+        if let Some(version) = Version::parse(arg) {
+            return (VersionType::Specific, Some(version.to_bytes()));
         }
 
         Output::err_generic("Invalid version argument: \"{}\"", (BStr::new(arg),));
@@ -316,7 +464,10 @@ impl PmVersionCommand {
             Global::package_json_version_with_sha
         );
         if let Some(version) = &_current_version {
-            bun_core::prettyln!("Current package version: <green>v{}<r>", BStr::new(version));
+            bun_core::prettyln!(
+                "Current package version: <green>v{}<r>",
+                bun_core::fmt::escape_control_chars(version)
+            );
         }
 
         let preid = pm.options.preid;
@@ -326,7 +477,7 @@ impl PmVersionCommand {
 
         bun_core::pretty!(
             "\n<b>Increment<r>:\n  <cyan>patch<r>      <d>{0} → {1}<r>\n  <cyan>minor<r>      <d>{0} → {2}<r>\n  <cyan>major<r>      <d>{0} → {3}<r>\n  <cyan>prerelease<r> <d>{0} → {4}<r>\n",
-            BStr::new(current_version),
+            bun_core::fmt::escape_control_chars(current_version),
             BStr::new(&next(VersionType::Patch, preid)),
             BStr::new(&next(VersionType::Minor, preid)),
             BStr::new(&next(VersionType::Major, preid)),
@@ -336,7 +487,7 @@ impl PmVersionCommand {
         if strings::index_of_char(current_version, b'-').is_some() || !preid.is_empty() {
             bun_core::pretty!(
                 "  <cyan>prepatch<r>   <d>{0} → {1}<r>\n  <cyan>preminor<r>   <d>{0} → {2}<r>\n  <cyan>premajor<r>   <d>{0} → {3}<r>\n",
-                BStr::new(current_version),
+                bun_core::fmt::escape_control_chars(current_version),
                 BStr::new(&next(VersionType::Prepatch, preid)),
                 BStr::new(&next(VersionType::Preminor, preid)),
                 BStr::new(&next(VersionType::Premajor, preid)),
@@ -383,87 +534,19 @@ impl PmVersionCommand {
             return Self::get_version_from_git(cwd);
         }
 
-        let current = Semver::Version::parse(Semver::SlicedString::init(current_str, current_str));
-        if !Self::is_valid_version(&current) {
+        let Some(current) = Version::parse(current_str) else {
             Output::err_generic(
                 "Current version \"{}\" is not a valid semver",
-                (BStr::new(current_str),),
+                (bun_core::fmt::escape_control_chars(current_str),),
             );
             Global::exit(1);
-        }
-
-        let current_prerelease = current.version.tag.pre.slice(current_str);
-        let prerelease_id: &[u8] = if !preid.is_empty() {
-            preid
-        } else if !current.version.tag.has_pre() {
-            b""
-        } else if let Some(dot_index) = strings::index_of_char(current_prerelease, b'.') {
-            &current_prerelease[..dot_index as usize]
-        } else if Self::next_prerelease_number(current_prerelease).is_some() {
-            b""
-        } else {
-            current_prerelease
         };
 
-        Self::increment_version(current_str, &current, version_type, prerelease_id)
-    }
-
-    /// `None` for a name, and for a number with no successor in the u64 `Tag::order_pre` compares in.
-    fn next_prerelease_number(identifier: &[u8]) -> Option<u64> {
-        bun_core::fmt::parse_decimal::<u64>(identifier)?.checked_add(1)
-    }
-
-    fn increment_version(
-        current_str: &[u8],
-        current: &Semver::version::ParseResult<u64>,
-        version_type: VersionType,
-        preid: &[u8],
-    ) -> Vec<u8> {
-        let v = current.version.min();
-        // The first prerelease of a version.
-        let first = if preid.is_empty() {
-            "0".to_owned()
-        } else {
-            format!("{}.0", BStr::new(preid))
+        let Some(next) = current.increment(version_type, preid) else {
+            Output::err_generic("Invalid --preid: \"{}\"", (BStr::new(preid),));
+            Global::exit(1);
         };
-
-        let (major, minor, patch, pre) = match version_type {
-            VersionType::Patch => (v.major, v.minor, v.patch + 1, None),
-            VersionType::Minor => (v.major, v.minor + 1, 0, None),
-            VersionType::Major => (v.major + 1, 0, 0, None),
-            VersionType::Prepatch => (v.major, v.minor, v.patch + 1, Some(first)),
-            VersionType::Preminor => (v.major, v.minor + 1, 0, Some(first)),
-            VersionType::Premajor => (v.major + 1, 0, 0, Some(first)),
-            VersionType::Prerelease if !current.version.tag.has_pre() => {
-                (v.major, v.minor, v.patch + 1, Some(first))
-            }
-            VersionType::Prerelease => {
-                let current_prerelease = current.version.tag.pre.slice(current_str);
-                let identifier = BStr::new(if !preid.is_empty() {
-                    preid
-                } else {
-                    current_prerelease
-                });
-                let pre = match strings::last_index_of_char(current_prerelease, b'.') {
-                    Some(dot_index) => {
-                        let number_str = &current_prerelease[dot_index + 1..];
-                        let next_num = Self::next_prerelease_number(number_str).unwrap_or(1);
-                        format!("{identifier}.{next_num}")
-                    }
-                    None => match Self::next_prerelease_number(current_prerelease) {
-                        Some(next_num) if preid.is_empty() => next_num.to_string(),
-                        next_num => format!("{identifier}.{}", next_num.unwrap_or(1)),
-                    },
-                };
-                (v.major, v.minor, v.patch, Some(pre))
-            }
-            VersionType::Specific | VersionType::FromGit => (v.major, v.minor, v.patch, None),
-        };
-
-        match pre {
-            Some(pre) => fmt_bytes(format_args!("{major}.{minor}.{patch}-{pre}")),
-            None => fmt_bytes(format_args!("{major}.{minor}.{patch}")),
-        }
+        next.to_bytes()
     }
 
     fn find_git<'a>(
@@ -522,7 +605,14 @@ impl PmVersionCommand {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let git_path = Self::find_git(&mut path_buf, cwd, "from-git");
 
-        let argv: [&[u8]; 4] = [git_path, b"describe", b"--tags", b"--abbrev=0"];
+        // Like `npm version from-git`, `--match` skips tags that are not versions, like `nightly`.
+        let argv: [&[u8]; 5] = [
+            git_path,
+            b"describe",
+            b"--tags",
+            b"--abbrev=0",
+            b"--match=*.*.*",
+        ];
         let result = match Self::spawn_git(&argv, cwd, Stdio::Buffer) {
             Ok(Ok(result)) => result,
             Ok(Err(err)) => {
@@ -547,11 +637,17 @@ impl PmVersionCommand {
             Global::exit(1);
         }
 
-        let version_str = strings::trim(&result.stdout, b" \n\r\t");
-        version_str
-            .strip_prefix(b"v")
-            .unwrap_or(version_str)
-            .to_vec()
+        // The version can follow a prefix, as in `v1.2.3` or `name@1.2.3`.
+        let tag = strings::trim(&result.stdout, b" \n\r\t");
+        let prefix = tag.iter().take_while(|c| !c.is_ascii_digit()).count();
+        let Some(version) = Version::parse(&tag[prefix..]) else {
+            Output::err_generic(
+                "Tag is not a valid version: \"{}\"",
+                (bun_core::fmt::escape_control_chars(tag),),
+            );
+            Global::exit(1);
+        };
+        version.to_bytes()
     }
 
     /// `git <what>`, which may have exited with a failure.

@@ -803,7 +803,8 @@ describe("a bun.lock written by Bun 1.4", () => {
     }
   });
 
-  describe.each<Saved & { held: string }>([
+  // `folder` is where the entry is in node_modules. It defaults to the name of the package that `held` names.
+  describe.each<Saved & { held: string; folder?: string }>([
     {
       title: "a merge took the rule of one branch and the entry of the other",
       pkg: () => ({ dependencies: { "one-range-dep": "1.0.0" }, overrides: { "no-deps": "1.0.0" } }),
@@ -812,6 +813,34 @@ describe("a bun.lock written by Bun 1.4", () => {
         ["one-range-dep", "one-range-dep@1.0.0"],
       ],
       held: "no-deps@1.1.0",
+    },
+    {
+      title: "the rule is catalog:, and the catalog does not allow the entry",
+      pkg: () => ({
+        workspaces: { packages: [], catalog: { "no-deps": "1.0.0" } },
+        dependencies: { "one-range-dep": "1.0.0" },
+        overrides: { "no-deps": "catalog:" },
+      }),
+      catalogs: { catalog: { "no-deps": "1.0.0" } },
+      packages: () => [
+        ["no-deps", "no-deps@1.1.0"],
+        ["one-range-dep", "one-range-dep@1.0.0"],
+      ],
+      held: "no-deps@1.1.0",
+    },
+    {
+      title: "the rule is catalog: for an npm: alias, and the entry is what the catalog has for the alias target",
+      pkg: () => ({
+        workspaces: { packages: [], catalog: { "my-alias": "npm:no-deps@1.0.0", "no-deps": "1.0.1" } },
+        dependencies: { "my-alias": "npm:no-deps@^1.0.0" },
+        overrides: { "my-alias@npm:no-deps@^1.0.0": "catalog:" },
+      }),
+      rules: { "my-alias@npm:no-deps@^1.0.0": { ".": "catalog:" } },
+      version: 3,
+      catalogs: { catalog: { "my-alias": "npm:no-deps@1.0.0", "no-deps": "1.0.1" } },
+      packages: () => [["my-alias", "no-deps@1.0.1"]],
+      held: "no-deps@1.0.1",
+      folder: "my-alias",
     },
     {
       title: "the rule came after the install, for a package that only a peer holds",
@@ -862,7 +891,7 @@ describe("a bun.lock written by Bun 1.4", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
       const name = saved.held.slice(0, saved.held.indexOf("@"));
-      expect(nodeModulesPackages(dir)).toContain(`node_modules/${name}/${saved.held}`);
+      expect(nodeModulesPackages(dir)).toContain(`node_modules/${saved.folder ?? name}/${saved.held}`);
       expect(await lockfile(dir)).toBe(lock);
     });
 
@@ -872,7 +901,7 @@ describe("a bun.lock written by Bun 1.4", () => {
       expect(stderr).toBe("Saved lockfile");
       expect(exitCode).toBe(0);
       const name = saved.held.slice(0, saved.held.indexOf("@"));
-      expect(nodeModulesPackages(dir)).toContain(`node_modules/${name}/${name}@1.0.0`);
+      expect(nodeModulesPackages(dir)).toContain(`node_modules/${saved.folder ?? name}/${name}@1.0.0`);
       const repaired = await lockfile(dir);
       expect(repaired).not.toContain(saved.held);
       await expectLockfileStable(dir, repaired);

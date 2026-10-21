@@ -1739,37 +1739,38 @@ fn asked_version<'a>(
             } else {
                 name_hash
             };
-            let overridden = (this.lockfile.overrides)
+            let rule = (this.lockfile.overrides)
                 .lookup_declared(&this.lockfile, id, rule_name_hash, &dependency.version)
-                .map(|rule| rule.version().clone())
+                .map(|rule| rule.dep())
                 // Auto-install only follows an override that points to the registry. Others, such
                 // as `file:`, are ignored.
-                .filter(|new| {
+                .filter(|rule| {
                     !this.options.runtime_auto_install
                         || matches!(
-                            new.tag,
+                            rule.version.tag,
                             dependency::version::Tag::Npm
                                 | dependency::version::Tag::DistTag
                                 | dependency::version::Tag::Catalog
                         )
                 });
-            if let Some(new) = &overridden {
+            if let Some(rule) = rule {
                 bun_output::scoped_log!(
                     PackageManager,
                     "override: {} -> {}",
                     bstr::BStr::new(this.lockfile.str(&dependency.version.literal)),
-                    bstr::BStr::new(this.lockfile.str(&new.literal))
+                    bstr::BStr::new(this.lockfile.str(&rule.version.literal))
                 );
 
+                // The value is read under the name in the key, like a dependency of that name.
                 (name, name_hash) = update_name_and_name_hash_from_version_replacement(
                     &this.lockfile,
-                    name,
-                    name_hash,
-                    new,
+                    rule.name,
+                    rule.name_hash,
+                    &rule.version,
                 );
             }
 
-            let declared = overridden.as_ref().unwrap_or(&dependency.version);
+            let declared = rule.map_or(&dependency.version, |rule| &rule.version);
             if declared.tag == dependency::version::Tag::Catalog {
                 if let Some(catalog_dep) =
                     this.lockfile
@@ -1788,8 +1789,8 @@ fn asked_version<'a>(
                 }
             }
 
-            if overridden.is_some() {
-                *replacement = overridden;
+            if let Some(rule) = rule {
+                *replacement = Some(rule.version.clone());
             }
         }
     }

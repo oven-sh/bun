@@ -266,6 +266,19 @@ describe("udpSocket()", () => {
     expect(() => udpSocket({ port })).toThrow('Expected "port" to be an integer between 0 and 65535');
   });
 
+  test.each([
+    ["nodebuffer", "buffer"],
+    ["uint16array", "uint16array"],
+    ["Float32Array", "float32array"],
+  ] as const)("binaryType %p reads back as %p", async (binaryType, reported) => {
+    const socket = await udpSocket({ binaryType: binaryType as any, socket: {} });
+    try {
+      expect(socket.binaryType).toBe(reported);
+    } finally {
+      socket.close();
+    }
+  });
+
   test("send/sendMany reject out-of-range ports", async () => {
     const server = await udpSocket({ port: 0, hostname: "127.0.0.1" });
     try {
@@ -445,8 +458,9 @@ describe("udpSocket()", () => {
     expect(res).toBeLessThanOrEqual(count);
   };
 
-  for (const { binaryType, type } of dataTypes) {
-    for (let { label, data, bytes } of dataCases) {
+  type Data = (typeof dataCases)[number]["data"];
+  for (const { binaryType, type } of dataTypes as { binaryType?: Bun.BinaryType; type: Function }[]) {
+    for (let { label, data, bytes } of dataCases as { label: string; data: Data; bytes: Buffer | ArrayBuffer }[]) {
       if (type === ArrayBuffer) {
         bytes = new Uint8Array(bytes).buffer;
       }

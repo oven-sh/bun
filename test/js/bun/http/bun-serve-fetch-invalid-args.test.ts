@@ -60,7 +60,7 @@ test("server.fetch rejects instead of throwing when the body cannot be converted
       throw error;
     },
   });
-  await expect(server.fetch("/", { body: body as any })).rejects.toBe(error);
+  await expect((server as any).fetch("/", { body: body as any })).rejects.toBe(error);
 });
 
 // server.fetch() returns an already-rejected promise for all of these. Like any

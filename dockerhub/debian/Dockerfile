@@ -3,13 +3,15 @@ FROM debian:trixie-slim AS build
 # https://github.com/oven-sh/bun/releases
 ARG BUN_VERSION=latest
 
+# The signing key is inlined so that a keyserver outage cannot fail the build.
+# --assert-signer fails if --output is the signature's name without ".asc", hence ".verified.txt".
+
 # Node.js includes python3 for node-gyp, see https://github.com/oven-sh/bun/issues/9807
 # Though, not on slim and alpine images.
 RUN apt-get update -qq \
     && apt-get install -qq --no-install-recommends \
       ca-certificates \
       curl \
-      dirmngr \
       gpg \
       gpg-agent \
       unzip \
@@ -37,23 +39,33 @@ RUN apt-get update -qq \
       --compressed \
       --retry 5 \
       || (echo "error: failed to download: $tag" && exit 1) \
-    && for key in \
-      "F3DCC08A8572C0749B3E18888EAB4D40A7B22B59" \
-    ; do \
-      gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "$key" \
-      || gpg --batch --keyserver keyserver.ubuntu.com --recv-keys "$key" ; \
-    done \
+    && printf '%s\n' \
+      '-----BEGIN PGP PUBLIC KEY BLOCK-----' \
+      '' \
+      'mDMEY9GQFhYJKwYBBAHaRw8BAQdAkppAqaXl0RkROz6NfdvlwYd2UuUVfHLk2NNY' \
+      'IzEdnT+0GVJvYm9idW4gPHJvYm9idW5Ab3Zlbi5zaD6IkwQTFgoAOxYhBPPcwIqF' \
+      'csB0mz4YiI6rTUCnsitZBQJj0ZAWAhsDBQsJCAcCAiICBhUKCQgLAgQWAgMBAh4H' \
+      'AheAAAoJEI6rTUCnsitZ96UBAMvwCLD6Ud1RZkpvvnGUU+idHt2hcNmYU2d0XxDI' \
+      'HQ0rAQCA9VFOtjZefQkfhDzgIgnEEdSFXaMiyY+D+LP8awNMCrg4BGPRkBYSCisG' \
+      'AQQBl1UBBQEBB0BpfePYSOEx8PihYkNXjlK5YT89CGHjEK5etleaB9i6OwMBCAeI' \
+      'eAQYFgoAIBYhBPPcwIqFcsB0mz4YiI6rTUCnsitZBQJj0ZAWAhsMAAoJEI6rTUCn' \
+      'sitZvhAA/j4SQxOCLheRG86A2181WAP4qLS1qxSw+fCf28DgiPfbAQCL0kcel+M9' \
+      'qbRIlMnwn6TwlQgN9w1qqlSnA9CbKXT9Aw==' \
+      '=dGV6' \
+      '-----END PGP PUBLIC KEY BLOCK-----' \
+      | gpg --batch --import \
     && curl "https://github.com/oven-sh/bun/releases/$release/SHASUMS256.txt.asc" \
       -fsSLO \
       --compressed \
       --retry 5 \
-    && gpg --batch --verify --output SHASUMS256.txt SHASUMS256.txt.asc \
+    && gpg --batch --assert-signer F3DCC08A8572C0749B3E18888EAB4D40A7B22B59 \
+      --verify --output SHASUMS256.verified.txt SHASUMS256.txt.asc \
       || (echo "error: failed to verify: $tag" && exit 1) \
-    && grep " bun-linux-$build.zip\$" SHASUMS256.txt | sha256sum -c - \
+    && grep " bun-linux-$build.zip\$" SHASUMS256.verified.txt | sha256sum -c - \
       || (echo "error: failed to verify: $tag" && exit 1) \
     && unzip "bun-linux-$build.zip" \
     && mv "bun-linux-$build/bun" /usr/local/bin/bun \
-    && rm -f "bun-linux-$build.zip" SHASUMS256.txt.asc SHASUMS256.txt \
+    && rm -f "bun-linux-$build.zip" SHASUMS256.txt.asc SHASUMS256.verified.txt \
     && chmod +x /usr/local/bin/bun
 
 FROM debian:trixie

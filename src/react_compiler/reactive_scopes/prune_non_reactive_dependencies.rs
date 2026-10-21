@@ -8,7 +8,7 @@
 //! Corresponds to `src/ReactiveScopes/PruneNonReactiveDependencies.ts`
 //! and `src/ReactiveScopes/CollectReactiveIdentifiers.ts`.
 
-use std::collections::HashSet;
+use crate::collections::IdBitSet;
 
 use crate::hir::{
     EvaluationOrder, IdentifierId, InstructionValue, Place, PrunedReactiveScopeBlock,
@@ -28,9 +28,9 @@ use crate::reactive_scopes::visitors::{self, ReactiveFunctionTransform, Reactive
 pub fn collect_reactive_identifiers(
     func: &ReactiveFunction,
     env: &Environment,
-) -> HashSet<IdentifierId> {
+) -> IdBitSet<IdentifierId> {
     let visitor = CollectVisitor { env };
-    let mut state = HashSet::new();
+    let mut state = IdBitSet::new();
     crate::reactive_scopes::visitors::visit_reactive_function(func, &visitor, &mut state);
     state
 }
@@ -40,7 +40,7 @@ struct CollectVisitor<'a> {
 }
 
 impl<'a> ReactiveFunctionVisitor for CollectVisitor<'a> {
-    type State = HashSet<IdentifierId>;
+    type State = IdBitSet<IdentifierId>;
 
     fn env(&self) -> &Environment {
         self.env
@@ -66,7 +66,7 @@ impl<'a> ReactiveFunctionVisitor for CollectVisitor<'a> {
             let ty = &self.env.types[identifier.type_.0 as usize];
             // Upstream `isStableRefType`: a useRef result is stable only if it
             // hasn't already been observed as reactive.
-            let is_stable_ref = is_use_ref_type(ty) && !state.contains(id);
+            let is_stable_ref = is_use_ref_type(ty) && !state.contains(*id);
             if !is_primitive_type(ty) && !is_stable_ref {
                 state.insert(*id);
             }
@@ -114,12 +114,14 @@ fn is_set_optimistic_type(ty: &crate::hir::Type) -> bool {
 
 /// Prunes dependencies that are guaranteed to be non-reactive.
 /// TS: `pruneNonReactiveDependencies`
-pub(crate) fn prune_non_reactive_dependencies(func: &mut ReactiveFunction, env: &mut Environment) {
+pub(crate) fn prune_non_reactive_dependencies(
+    func: &mut ReactiveFunction,
+    env: &mut Environment,
+) -> Result<(), crate::diagnostics::CompilerError> {
     let reactive_ids = collect_reactive_identifiers(func, env);
     let mut visitor = PruneVisitor { env };
     let mut state = reactive_ids;
     visitors::transform_reactive_function(func, &mut visitor, &mut state)
-        .expect("PruneNonReactiveDependencies should not fail");
 }
 
 struct PruneVisitor<'a> {
@@ -127,7 +129,7 @@ struct PruneVisitor<'a> {
 }
 
 impl<'a> ReactiveFunctionTransform for PruneVisitor<'a> {
-    type State = HashSet<IdentifierId>;
+    type State = IdBitSet<IdentifierId>;
 
     fn env(&self) -> &Environment {
         self.env
@@ -144,7 +146,7 @@ impl<'a> ReactiveFunctionTransform for PruneVisitor<'a> {
         match &instruction.value {
             ReactiveValue::Instruction(InstructionValue::LoadLocal { place, .. }) => {
                 if let Some(lv) = lvalue {
-                    if state.contains(&place.identifier) {
+                    if state.contains(place.identifier) {
                         state.insert(lv.identifier);
                     }
                 }
@@ -154,7 +156,7 @@ impl<'a> ReactiveFunctionTransform for PruneVisitor<'a> {
                 lvalue: store_lvalue,
                 ..
             }) => {
-                if state.contains(&store_value.identifier) {
+                if state.contains(store_value.identifier) {
                     state.insert(store_lvalue.place.identifier);
                     if let Some(lv) = lvalue {
                         state.insert(lv.identifier);
@@ -166,8 +168,8 @@ impl<'a> ReactiveFunctionTransform for PruneVisitor<'a> {
                 lvalue: destr_lvalue,
                 ..
             }) => {
-                if state.contains(&destr_value.identifier) {
-                    for operand in hir_visitors::each_pattern_operand(&destr_lvalue.pattern) {
+                if state.contains(destr_value.identifier) {
+                    for operand in hir_visitors::pattern_operands(&destr_lvalue.pattern) {
                         let ident = &self.env.identifiers[operand.identifier.0 as usize];
                         let ty = &self.env.types[ident.type_.0 as usize];
                         if is_stable_type(ty) {
@@ -184,7 +186,7 @@ impl<'a> ReactiveFunctionTransform for PruneVisitor<'a> {
                 if let Some(lv) = lvalue {
                     let ident = &self.env.identifiers[lv.identifier.0 as usize];
                     let ty = &self.env.types[ident.type_.0 as usize];
-                    if state.contains(&object.identifier) && !is_stable_type(ty) {
+                    if state.contains(object.identifier) && !is_stable_type(ty) {
                         state.insert(lv.identifier);
                     }
                 }
@@ -193,7 +195,7 @@ impl<'a> ReactiveFunctionTransform for PruneVisitor<'a> {
                 object, property, ..
             }) => {
                 if let Some(lv) = lvalue {
-                    if state.contains(&object.identifier) || state.contains(&property.identifier) {
+                    if state.contains(object.identifier) || state.contains(property.identifier) {
                         state.insert(lv.identifier);
                     }
                 }
@@ -216,7 +218,7 @@ impl<'a> ReactiveFunctionTransform for PruneVisitor<'a> {
         // Remove non-reactive dependencies
         scope_data
             .dependencies
-            .retain(|dep| state.contains(&dep.identifier));
+            .retain(|dep| state.contains(dep.identifier));
 
         // If any deps remain, mark all declarations and reassignments as reactive
         if !scope_data.dependencies.is_empty() {

@@ -510,8 +510,7 @@ impl Archive {
         let path_slice = path_arg.to_utf8(global)?;
 
         // Parse options
-        let mut glob_patterns: Option<Vec<Box<[u8]>>> = None;
-        // errdefer freePatterns — handled by Drop on Vec<Box<[u8]>>
+        let mut glob_patterns: Option<Vec<GlobPattern>> = None;
 
         if !options_arg.is_undefined_or_null() {
             if !options_arg.is_object() {
@@ -537,7 +536,7 @@ fn parse_pattern_arg(
     arg: JSValue,
     api_name: &[u8],
     name: &[u8],
-) -> JsResult<Option<Vec<Box<[u8]>>>> {
+) -> JsResult<Option<Vec<GlobPattern>>> {
     // Single string
     if arg.is_string() {
         let str_slice = arg.to_utf8(global)?;
@@ -545,8 +544,7 @@ fn parse_pattern_arg(
         if str_slice.slice().is_empty() {
             return Ok(None);
         }
-        let pattern: Box<[u8]> = Box::from(str_slice.slice());
-        let patterns = vec![pattern];
+        let patterns = vec![GlobPattern::new(str_slice.slice())];
         return Ok(Some(patterns));
     }
 
@@ -558,9 +556,8 @@ fn parse_pattern_arg(
             return Ok(None);
         }
 
-        let mut patterns: Vec<Box<[u8]>> =
+        let mut patterns: Vec<GlobPattern> =
             Vec::with_capacity(usize::try_from(len).expect("int cast"));
-        // errdefer { for p free; deinit } — handled by Drop on Vec<Box<[u8]>>
 
         // Use index-based iteration for safety (avoids issues if array mutates)
         let mut i: u32 = 0;
@@ -579,8 +576,7 @@ fn parse_pattern_arg(
                 i += 1;
                 continue;
             }
-            let pattern: Box<[u8]> = Box::from(str_slice.slice());
-            patterns.push(pattern);
+            patterns.push(GlobPattern::new(str_slice.slice()));
             i += 1;
         }
 
@@ -598,8 +594,6 @@ fn parse_pattern_arg(
         bstr::BStr::new(name),
     )))
 }
-
-// freePatterns deleted — Vec<Box<[u8]>> drops elements then itself.
 
 impl Archive {
     /// Instance method: archive.blob()
@@ -629,7 +623,7 @@ impl Archive {
         let cx = global.js_thread_of_caller(callframe);
         let glob_arg = callframe.argument(0);
 
-        let mut glob_patterns: Option<Vec<Box<[u8]>>> = None;
+        let mut glob_patterns: Option<Vec<GlobPattern>> = None;
         // errdefer freePatterns — handled by Drop
 
         if !glob_arg.is_undefined_or_null() {
@@ -719,7 +713,7 @@ pub(crate) enum ExtractResult {
 pub(crate) struct ExtractContext {
     store: RefPtr<Store>,
     path: Box<[u8]>,
-    glob_patterns: Option<Vec<Box<[u8]>>>,
+    glob_patterns: Option<Vec<GlobPattern>>,
     result: ExtractResult,
 }
 
@@ -766,6 +760,7 @@ impl ExtractContext {
                 close_handles: true,
                 log: false,
                 npm: false,
+                skip_symlinks: false,
             },
         ) {
             Ok(c) => c,
@@ -781,7 +776,7 @@ fn start_extract_task(
     cx: &bun_jsc::JsThread<'_>,
     store: &RefPtr<Store>,
     path: &[u8],
-    glob_patterns: Option<Vec<Box<[u8]>>>,
+    glob_patterns: Option<Vec<GlobPattern>>,
 ) -> JsResult<JSValue> {
     let path_copy: Box<[u8]> = Box::from(path);
     // errdefer free(path_copy) — Drop handles it
@@ -1015,17 +1010,17 @@ enum FilesResult {
 
 pub(crate) struct FilesContext {
     store: RefPtr<Store>,
-    glob_patterns: Option<Vec<Box<[u8]>>>,
+    glob_patterns: Option<Vec<GlobPattern>>,
     result: FilesResult,
 }
 
 impl FilesContext {
-    fn clone_error_string(archive: &libarchive::lib::Archive) -> Option<CString> {
+    fn read_error(archive: &libarchive::lib::Archive) -> FilesResult {
         let err_str = archive.error_string();
-        if err_str.is_empty() {
-            return None;
+        match CString::new(err_str) {
+            Ok(err) if !err_str.is_empty() => FilesResult::LibarchiveErr(err),
+            _ => FilesResult::Err(FilesError::ReadError),
         }
-        CString::new(err_str).ok()
     }
 
     fn do_run(&mut self) -> Result<FilesResult, bun_alloc::AllocError> {
@@ -1034,19 +1029,20 @@ impl FilesContext {
         configure_archive_reader(&archive);
 
         if archive.read_open_memory(self.store.shared_view()) != lib::Result::Ok {
-            // SAFETY: `archive` is the live `read_new()` handle opened above.
-            return Ok(if let Some(err) = Self::clone_error_string(&archive) {
-                FilesResult::LibarchiveErr(err)
-            } else {
-                FilesResult::Err(FilesError::ReadError)
-            });
+            return Ok(Self::read_error(&archive));
         }
 
         let mut entries: FileEntryList = Vec::new();
         // errdefer freeEntries(&entries) — handled by Drop on `entries`
 
         let mut entry: *mut lib::Entry = core::ptr::null_mut();
-        while archive.read_next_header(&mut entry).succeeded() {
+        loop {
+            match archive.read_next_header(&mut entry) {
+                lib::Result::Eof => break,
+                lib::Result::Retry => continue,
+                lib::Result::Failed | lib::Result::Fatal => return Ok(Self::read_error(&archive)),
+                lib::Result::Ok | lib::Result::Warn => {}
+            }
             let entry_ref = lib::Entry::opaque_ref(entry);
             if entry_ref.filetype() != FILETYPE_REGULAR {
                 continue;
@@ -1071,33 +1067,10 @@ impl FilesContext {
             let size: usize = usize::try_from(entry_ref.size().max(0)).expect("int cast");
             let mtime: i64 = entry_ref.mtime();
 
-            // Read data incrementally so untrusted entry sizes don't drive allocation.
             let mut data: Vec<u8> = Vec::new();
-            while data.len() < size {
-                let to_read = (size - data.len()).min(64 * 1024);
-                data.try_reserve(to_read)
-                    .map_err(|_| bun_alloc::AllocError)?;
-                // SAFETY: `archive_read_data` only stores into the slice; the written prefix is committed below.
-                let dest = unsafe { &mut bun_core::vec::spare_bytes_mut(&mut data)[..to_read] };
-                let read = archive.read_data(dest);
-                if read < 0 {
-                    // Read error.
-                    // NOTE: both `data` and `entries` drop automatically here.
-                    // SAFETY: `archive` is the live `read_new()` handle opened above.
-                    return Ok(if let Some(err) = Self::clone_error_string(&archive) {
-                        FilesResult::LibarchiveErr(err)
-                    } else {
-                        FilesResult::Err(FilesError::ReadError)
-                    });
-                }
-                if read == 0 {
-                    break;
-                }
-                let bytes_read = usize::try_from(read).expect("int cast");
-                // SAFETY: `archive_read_data` returns exactly the byte count it wrote (`<= to_read`).
-                unsafe { bun_core::vec::commit_spare(&mut data, bytes_read) };
+            if !archive.read_data_to_vec(size, &mut data)? {
+                return Ok(Self::read_error(&archive));
             }
-            // errdefer free(data) — handled by Drop
 
             let path_copy: Box<[u8]> = Box::from(pathname);
             // errdefer free(path_copy) — handled by Drop
@@ -1164,7 +1137,7 @@ pub(crate) type FilesTask = AsyncTask<FilesContext>;
 fn start_files_task(
     cx: &bun_jsc::JsThread<'_>,
     store: &RefPtr<Store>,
-    glob_patterns: Option<Vec<Box<[u8]>>>,
+    glob_patterns: Option<Vec<GlobPattern>>,
 ) -> JsResult<JSValue> {
     let store = store.clone();
     // errdefer store.deref() — Drop handles it
@@ -1255,26 +1228,41 @@ pub(crate) fn is_safe_path(pathname: &[u8]) -> bool {
     true
 }
 
+/// One pattern of the `glob` option.
+pub(crate) struct GlobPattern {
+    /// It started with `!`, which isn't part of `glob`.
+    is_negative: bool,
+    glob: glob::Prepared<Box<[u8]>>,
+}
+
+impl GlobPattern {
+    fn new(pattern: &[u8]) -> GlobPattern {
+        let positive = pattern.strip_prefix(b"!");
+        GlobPattern {
+            is_negative: positive.is_some(),
+            glob: glob::Prepared::new(positive.unwrap_or(pattern).into()),
+        }
+    }
+}
+
 /// Match a path against multiple glob patterns with support for negative patterns.
 /// Positive patterns: at least one must match for the path to be included.
 /// Negative patterns (starting with "!"): if any matches, the path is excluded.
 /// Returns true if the path should be included, false if excluded.
-pub(crate) fn match_glob_patterns(patterns: &[Box<[u8]>], pathname: &[u8]) -> bool {
+pub(crate) fn match_glob_patterns(patterns: &[GlobPattern], pathname: &[u8]) -> bool {
     let mut has_positive_patterns = false;
     let mut matches_positive = false;
 
     for pattern in patterns {
-        // Check if it's a negative pattern
-        if !pattern.is_empty() && pattern[0] == b'!' {
+        if pattern.is_negative {
             // Negative pattern - if it matches, exclude the file
-            let neg_pattern = &pattern[1..];
-            if !neg_pattern.is_empty() && glob::r#match(neg_pattern, pathname).matches() {
+            if !pattern.glob.pattern().is_empty() && pattern.glob.r#match(pathname).matches() {
                 return false;
             }
         } else {
             // Positive pattern - at least one must match
             has_positive_patterns = true;
-            if glob::r#match(pattern, pathname).matches() {
+            if pattern.glob.r#match(pathname).matches() {
                 matches_positive = true;
             }
         }
@@ -1290,7 +1278,7 @@ pub(crate) fn match_glob_patterns(patterns: &[Box<[u8]>], pathname: &[u8]) -> bo
 fn extract_to_disk_filtered(
     file_buffer: &[u8],
     root: &[u8],
-    glob_patterns: Option<&[Box<[u8]>]>,
+    glob_patterns: Option<&[GlobPattern]>,
 ) -> crate::Result<u32> {
     use libarchive::lib;
     let archive = lib::ReadArchive::new();
@@ -1325,11 +1313,15 @@ fn extract_to_disk_filtered(
 
     let mut count: u32 = 0;
     let mut entry: *mut lib::Entry = core::ptr::null_mut();
-    let mut stack_buf = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
-    // SAFETY: `archive_read_data` is the only writer of `buf`; each chunk reads back only `buf[..bytes_read]`.
-    let buf = unsafe { stack_buf.as_bytes_mut() };
+    let mut write_strategy = lib::WriteStrategy::default();
 
-    while archive.read_next_header(&mut entry).succeeded() {
+    loop {
+        match archive.read_next_header(&mut entry) {
+            lib::Result::Eof => break,
+            lib::Result::Retry => continue,
+            lib::Result::Failed | lib::Result::Fatal => return Err(crate::Error::ReadError),
+            lib::Result::Ok | lib::Result::Warn => {}
+        }
         let entry_ref = lib::Entry::opaque_ref(entry);
         // Same platform split as `FilesContext::do_run`; see `entry_pathname_utf8`.
         #[cfg(not(windows))]
@@ -1413,48 +1405,16 @@ fn extract_to_disk_filtered(
                     Err(_) => continue,
                 };
 
-                let mut write_success = true;
-                if size > 0 {
-                    // Read archive data and write to file
-                    let mut remaining = size;
-                    while remaining > 0 {
-                        let to_read = remaining.min(buf.len());
-                        let read = archive.read_data(&mut buf[..to_read]);
-                        if read <= 0 {
-                            write_success = false;
-                            break;
-                        }
-                        let bytes_read: usize = usize::try_from(read).expect("int cast");
-                        // Write all bytes, handling partial writes
-                        let mut written: usize = 0;
-                        while written < bytes_read {
-                            let w = match bun_sys::write(file_fd, &buf[written..bytes_read]) {
-                                Ok(w) => w,
-                                Err(_) => {
-                                    write_success = false;
-                                    break;
-                                }
-                            };
-                            if w == 0 {
-                                write_success = false;
-                                break;
-                            }
-                            written += w;
-                        }
-                        if !write_success {
-                            break;
-                        }
-                        remaining -= bytes_read;
-                    }
-                }
+                let write_success = size == 0
+                    || archive.read_data_into_fd(file_fd, &mut write_strategy) == lib::Result::Ok;
                 let _ = file_fd.close();
 
-                if write_success {
-                    count += 1;
-                } else {
+                if !write_success {
                     // Remove partial file on failure
                     let _ = bun_sys::unlinkat(dir_fd, pathname_z);
+                    return Err(crate::Error::ReadError);
                 }
+                count += 1;
             }
             bun_sys::FileKind::SymLink => {
                 let link_target_z = entry_ref.symlink();

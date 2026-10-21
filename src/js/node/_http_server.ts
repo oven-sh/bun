@@ -1,6 +1,7 @@
 // Hardcoded module "node:_http_server"
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { Stream } = require("node:stream");
+const { isIP } = require("internal/net/isIP");
 const {
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
   chunkExpression,
@@ -36,14 +37,17 @@ const {
   kHandle,
   kOnReadParsed,
   kHandoffResponse,
+  kHasQueuedReads,
   kRealListen,
   tlsSymbol,
   optionsSymbol,
   headerStateSymbol,
   NodeHTTPHeaderState,
   kPendingCallbacks,
+  kRememberPeer,
   kRequest,
   kCloseCallback,
+  kClosedWithUnsentData,
   NodeHTTPResponseFlags,
   callCloseCallback,
   emitCloseNT,
@@ -85,16 +89,18 @@ const kPendingCloseGenerations = Symbol("http.server.pendingCloseGenerations");
 const kListenerGeneration = Symbol("http.server.listenerGeneration");
 // Set on the 'connect'/'upgrade' handoff; closeAll/closeIdleConnections() skip these, as in Node.
 const kHandedOff = Symbol("http.server.socketHandedOff");
+function closeHandle(handle) {
+  if (!handle.closed) handle.close();
+}
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 const kMaxHeadersCount = Symbol("http.server.maxHeadersCount");
 
 // node.http trace events ('http.server.request' b/e). The agent module is
-// only created on the first request, and emission is gated per-request on the
+// created when a server listens, and emission is gated per-request on the
 // category, so this is near-zero cost when tracing is off.
 const kHttpTraceCat = "node,node.http";
 let traceEvents: typeof import("internal/trace_events").default;
 function traceServerRequestStart(http_res) {
-  traceEvents ??= require("internal/trace_events");
   if (!traceEvents.isCategoryGroupEnabled(kHttpTraceCat)) return;
   traceEvents.emitEvent("b", kHttpTraceCat, "http.server.request");
   http_res.once("finish", traceServerRequestEnd);
@@ -104,7 +110,7 @@ function traceServerRequestEnd() {
 }
 
 const getBunServerAllClosedPromise = $newRustFunction("node_http_binding.rs", "getBunServerAllClosedPromise", 1);
-const getBunServerOpenCount = $newRustFunction("node_http_binding.rs", "getBunServerOpenCount", 1);
+const getBunServerOpenCount = $bindgen("node_http_binding.bind.ts", "getBunServerOpenCount");
 
 const kServerResponse = Symbol("ServerResponse");
 const kChunkedEncoding = Symbol("kChunkedEncoding");
@@ -266,16 +272,10 @@ function emitListenErrorNextTick(self, err) {
   self.emit("error", err);
 }
 
-// Node.js only requests a client certificate when `requestCert: true`.
-// The uSockets SSL context treats `ca` alone as "verify peer", so without
-// these two flags an `https.Server({ ca })` would reject every client that
-// doesn't present a cert. Mirror tls.Server (net.ts): default `requestCert`
-// to false and, when not requesting, force `rejectUnauthorized` to false so
-// the CA is loaded into the trust store without requiring a client cert.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1367-L1368
 function normalizeServerTls(tls) {
-  const requestCert = !!tls.requestCert;
-  tls.requestCert = requestCert;
-  tls.rejectUnauthorized = requestCert ? tls.rejectUnauthorized !== false : false;
+  tls.requestCert = tls.requestCert === true;
+  tls.rejectUnauthorized = tls.rejectUnauthorized !== false;
   return tls;
 }
 
@@ -300,6 +300,7 @@ interface Server extends NodeHTTPServer {
   httpValidation?: "strict" | "relaxed" | "insecure";
   requireHostHeader: boolean;
   httpAllowHalfOpen: boolean;
+  blockList?: import("node:net").BlockList;
 }
 function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
@@ -331,26 +332,26 @@ function Server(options, callback): void {
   } else {
     validateObject(options, "options");
     options = { ...options };
-    const tlsHelpers = options.pfx || options.cert || options.key || options.ca ? require("internal/tls") : undefined;
+    const tlsHelpers =
+      this[isTlsSymbol] || options.pfx || options.cert || options.key || options.ca
+        ? require("internal/tls")
+        : undefined;
 
     // Node's https.Server accepts PKCS#12 bundles (pfx [+ passphrase]); fold
     // them into plain key/cert/ca so the native TLS config sees PEM material.
     let tlsOptions = options;
     if (options.pfx) {
       tlsOptions = tlsHelpers.processPfxOptions(options);
-      this[isTlsSymbol] = true;
     }
 
     let cert = tlsOptions.cert;
     if (cert) {
       tlsHelpers.throwOnInvalidTLSArray("options.cert", cert);
-      this[isTlsSymbol] = true;
     }
 
     let key = tlsOptions.key;
     if (key) {
       tlsHelpers.throwOnInvalidTLSArray("options.key", key);
-      this[isTlsSymbol] = true;
     }
 
     let ca = tlsOptions.ca;
@@ -363,10 +364,9 @@ function Server(options, callback): void {
     }
     if (ca) {
       tlsHelpers.throwOnInvalidTLSArray("options.ca", ca);
-      this[isTlsSymbol] = true;
     }
 
-    let passphrase = options.passphrase;
+    let passphrase = options.passphrase || undefined;
     if (passphrase && typeof passphrase !== "string") {
       throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
     }
@@ -381,36 +381,59 @@ function Server(options, callback): void {
       throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
     }
 
-    if (this[isTlsSymbol]) {
-      const { validateSecureProtocol, secureProtocolToVersionRange, tlsStringToProtocolVersion } = tlsHelpers;
-      // Translate minVersion/maxVersion/secureProtocol into the integer
-      // protocol range the native layer applies (secureProtocol wins, like
-      // Node's SecureContext::Init); 0 keeps the native defaults.
-      validateSecureProtocol(options.secureProtocol);
+    if (tlsHelpers) {
+      const { secureProtocolToVersionRange, tlsStringToProtocolVersion } = tlsHelpers;
+      // A falsy value counts as absent: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1423-L1518
+      const secureProtocol = options.secureProtocol || undefined;
+      const minVersionOption = options.minVersion || undefined;
+      const maxVersionOption = options.maxVersion || undefined;
+      const sessionTimeout = options.sessionTimeout || undefined;
+      tlsHelpers.validateSecureContextOptions({
+        ...options,
+        secureProtocol,
+        minVersion: minVersionOption,
+        maxVersion: maxVersionOption,
+        sessionTimeout,
+        passphrase,
+        ciphers: options.ciphers || undefined,
+        clientCertEngine: options.clientCertEngine || undefined,
+        ticketKeys: options.ticketKeys || undefined,
+        // BoringSSL has no DHE suites to apply it to.
+        dhparam: undefined,
+      });
+      const crl = options.crl || undefined;
+      if (crl) {
+        tlsHelpers.throwOnInvalidTLSArray("options.crl", crl);
+      }
+      if (options.honorCipherOrder !== false) secureOptions |= tlsHelpers.SSL_OP_CIPHER_SERVER_PREFERENCE;
+      // secureProtocol, or else minVersion/maxVersion, as the integer range the native layer applies; 0 keeps its defaults.
       let minVersion, maxVersion;
-      const range = secureProtocolToVersionRange(options.secureProtocol);
+      const ciphers = options.ciphers ? tlsHelpers.stripTls13CipherNames(options.ciphers) : undefined;
+      const range = secureProtocolToVersionRange(secureProtocol);
       if (range) {
         minVersion = range[0];
         maxVersion = range[1];
       } else {
-        minVersion = tlsStringToProtocolVersion(options.minVersion);
-        maxVersion = tlsStringToProtocolVersion(options.maxVersion);
+        minVersion = tlsStringToProtocolVersion(ciphers?.tls13Only ? "TLSv1.3" : minVersionOption);
+        maxVersion = tlsStringToProtocolVersion(maxVersionOption);
       }
       this[tlsSymbol] = normalizeServerTls({
         serverName,
-        key,
+        key: tlsHelpers.normalizePemKeyOption(key, passphrase),
         cert,
         ca,
+        crl,
+        sessionTimeout: sessionTimeout ?? 0,
+        sigalgs: options.sigalgs,
+        ecdhCurve: options.ecdhCurve ?? require("node:tls").DEFAULT_ECDH_CURVE,
         passphrase,
         secureOptions,
         minVersion,
         maxVersion,
-        ciphers: typeof options.ciphers === "string" && options.ciphers ? options.ciphers : undefined,
+        ciphers: ciphers?.cipherList || undefined,
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
       });
-    } else {
-      this[tlsSymbol] = null;
     }
   }
 
@@ -500,7 +523,7 @@ Server.prototype.closeAllConnections = function () {
   const tracked = this[kTrackedConnections];
   if (tracked && tracked.size > 0) {
     for (const socket of $Array.from(tracked) as NodeHTTPServerSocket[]) {
-      if (!socket[kHandedOff]) socket.destroy();
+      if (!socket[kHandedOff]) socket.destroyNow();
     }
   }
 };
@@ -615,7 +638,7 @@ Server.prototype.listen = function () {
 
       const otherTLS = arg0.tls;
       if (otherTLS && $isObject(otherTLS)) {
-        tls = normalizeServerTls({ ...otherTLS });
+        tls = normalizeServerTls({ __proto__: null, ...otherTLS });
       }
     } else if (typeof arg0 === "string" && !(Number(arg0) >= 0)) {
       // (path[...][, cb])
@@ -686,6 +709,10 @@ Server.prototype.listen = function () {
 
 Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort) {
   {
+    // What the first connection and the first request need, so that neither waits for it.
+    getNodeHTTPServerSocket();
+    traceEvents ??= require("internal/trace_events");
+
     const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
     const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
     const canUseInternalAssignSocket = ResponseClass?.prototype.assignSocket === ServerResponse.prototype.assignSocket;
@@ -702,27 +729,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       hostname: host,
       unix: socketPath,
       reusePort,
-      // Bindings to be used for WS Server
-      websocket: {
-        open(ws) {
-          ws.data.open(ws);
-        },
-        message(ws, message) {
-          ws.data.message(ws, message);
-        },
-        close(ws, code, reason) {
-          ws.data.close(ws, code, reason);
-        },
-        drain(ws) {
-          ws.data.drain(ws);
-        },
-        ping(ws, data) {
-          ws.data.ping(ws, data);
-        },
-        pong(ws, data) {
-          ws.data.pong(ws, data);
-        },
-      },
       maxRequestBodySize: Number.MAX_SAFE_INTEGER,
 
       onNodeHTTPRequest(
@@ -816,6 +822,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             detachSocketListenersForHandoff(socket);
             // Pass the pipelined data (head buffer) if any was received with the CONNECT request
             const head = connectHead ? connectHead : kEmptyBuffer;
+            socket.bytesRead += head.length;
             // Node.js's parserOnIncoming: req.upgrade is true for CONNECT
             // regardless of shouldUpgradeCallback.
             http_req.upgrade = true;
@@ -927,7 +934,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // token; the server then consults shouldUpgradeCallback (default: an
         // 'upgrade' listener is installed) and otherwise dispatches the
         // request normally.
-        // Not when pipelined: the builtin ws answers through the socket's current response, the one in flight.
+        // Pipelined requests never upgrade, because a queued native response can't.
         let is_upgrade = false;
         if (
           !isPipelined &&
@@ -1055,6 +1062,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             http_req.complete = true;
           }
           const upgradeHead = !hasBody && connectHead ? connectHead : kEmptyBuffer;
+          socket.bytesRead += upgradeHead.length;
           let upgradeHandled;
           try {
             upgradeHandled = server.emit("upgrade", http_req, socket, upgradeHead);
@@ -1118,7 +1126,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // Set in time only because end() defers the 'finish' emit to a
           // process.nextTick (see ServerResponse.prototype.end) and nothing
           // between the 'request' emit and here drains the tick queue.
-          http_res[kDispatcherDetached] = true;
+          http_res[kDetachedFrom] = socket;
           http_res.detachSocket(socket);
           if (socket[kPipelinedResponses] !== undefined) {
             advanceResponsePipeline(server, socket);
@@ -1261,6 +1269,25 @@ function onServerConnection(this: Server, listenerGeneration, socketHandle) {
     socket.destroy();
     this.emit("drop", data);
     return;
+  }
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2338-L2346
+  const blockList = this.blockList;
+  if (blockList) {
+    const remoteAddress = socket.remoteAddress;
+    const addressType = isIP(remoteAddress);
+    if (addressType) {
+      let blocked = true;
+      try {
+        blocked = !!blockList.check(remoteAddress, `ipv${addressType}`);
+      } finally {
+        if (blocked) {
+          tracked?.delete(socket);
+          socket.destroy();
+        }
+      }
+      if (blocked) return;
+    }
   }
 
   // Node's connectionListener attaches the HTTPParser (socket.parser) before
@@ -1418,7 +1445,12 @@ function replyMissingHostHeader(socket) {
   socket.destroySoon();
 }
 
+// Snapshot of bytesWritten, taken when the socket releases its native handle.
 const kBytesWritten = Symbol("kBytesWritten");
+// Raw socket.write() bytes plus the bytes the current response wrote (its body, or a WebSocket's 101).
+function handleBytesWritten(handle) {
+  return handle.bytesWritten + (handle.response?.getBytesWritten() ?? 0);
+}
 const kEnableStreaming = Symbol("kEnableStreaming");
 // Upgrade request whose body is still being parsed: reading the raw socket also
 // resumes this request, like Node.js's UpgradeStream._read, so an unread body
@@ -1490,9 +1522,9 @@ const kPipelinedQueuedState = Symbol("kPipelinedQueuedState");
 const kOutgoingData = Symbol("kOutgoingData");
 const kReplayingPipelinedOps = Symbol("kReplayingPipelinedOps");
 const kStopParsingOnCloseListener = Symbol("kStopParsingOnCloseListener");
-// Set when the dispatcher already detached a synchronously-finished response,
+// The socket the dispatcher already detached a synchronously-finished response from,
 // so the 'finish' listener does not detach/advance the pipeline a second time.
-const kDispatcherDetached = Symbol("kDispatcherDetached");
+const kDetachedFrom = Symbol("kDetachedFrom");
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js (socketOnError)
 const badRequestResponse = Buffer.from(`HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n`, "latin1");
@@ -1632,6 +1664,7 @@ function getNodeHTTPServerSocket() {
     [kBoundOnAbort] = null;
     [kKeepAliveIdleStart] = undefined;
     [kBytesWritten] = 0;
+    [kClosedWithUnsentData] = undefined;
     [kHandle];
     [kUpgradeIncoming]: import("node:http").IncomingMessage | undefined = undefined;
     [kOnReadParsed] = undefined;
@@ -1647,12 +1680,15 @@ function getNodeHTTPServerSocket() {
     #pendingCallback = null;
     #pendingAbortMessage;
     #closeHandled = false;
+    #peer;
+    #closingHandle;
     #resetSupported;
     #closeError: Error | undefined = undefined;
     declare encrypted: boolean;
     declare resetAndClosing: boolean;
     declare _writableState: { emitClose: boolean; decodeStrings: boolean };
     declare _readableState: { emitClose: boolean };
+    declare writableBuffer: { chunk: Buffer }[];
     constructor(server: Server, handle, encrypted, listenerGeneration) {
       // allowHalfOpen: node's connectionListener sockets never auto-end the
       // writable side on the peer's FIN (CONNECT/Upgrade tunnels stay writable);
@@ -1694,12 +1730,28 @@ function getNodeHTTPServerSocket() {
 
     get bytesWritten() {
       const handle = this[kHandle];
-      return handle
-        ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? this[kBytesWritten] ?? 0)
-        : (this[kBytesWritten] ?? 0);
+      let bytes = handle ? handleBytesWritten(handle) : this[kBytesWritten];
+      // Like net.Socket, include writes still queued in the Writable.
+      const queued = this.writableBuffer;
+      for (let i = 0; i < queued.length; i++) bytes += queued[i].chunk.length;
+      return bytes;
     }
     set bytesWritten(value) {
       this[kBytesWritten] = value;
+    }
+
+    // Called when an 'upgrade' or 'connect' listener, or `ws` from a 'request' listener, takes the connection over. Its
+    // 'close' listeners run after the handle is gone and still ask who the peer was, and the handle can't answer once the
+    // connection has closed.
+    [kRememberPeer]() {
+      const handle = this[kHandle];
+      if (!handle) return;
+      this.#peer = {
+        remoteAddress: handle.remoteAddress,
+        servername: handle.servername,
+        peerCertVerified: handle.peerCertVerified,
+        authorizationError: handle.authorizationError,
+      };
     }
 
     [kEnableStreaming](enable: boolean) {
@@ -1715,6 +1767,7 @@ function getNodeHTTPServerSocket() {
         if (enable) {
           handle.ondata = this.#onData.bind(this);
           handle.ondrain = this.#onDrain.bind(this);
+          this[kRememberPeer]();
         } else {
           handle.ondata = undefined;
           handle.ondrain = undefined;
@@ -1722,8 +1775,6 @@ function getNodeHTTPServerSocket() {
       }
     }
     #onDrain() {
-      const handle = this[kHandle];
-      this[kBytesWritten] = handle ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? 0) : 0;
       const callback = this.#pendingCallback;
       if (callback) {
         this.#pendingCallback = null;
@@ -1733,9 +1784,12 @@ function getNodeHTTPServerSocket() {
     }
     #onData(chunk, last) {
       this._unrefTimer();
-      // A full buffer stops the reads: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198
-      if (chunk && this.push(chunk) === false && !last) {
-        this[kHandle]?.readStop();
+      if (chunk) {
+        this.bytesRead += chunk.length;
+        // A full buffer stops the reads: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198
+        if (this.push(chunk) === false && !last) {
+          this[kHandle]?.readStop();
+        }
       }
       if (last) {
         const handle = this[kHandle];
@@ -1760,6 +1814,7 @@ function getNodeHTTPServerSocket() {
       }
     }
     #closeHandle(handle, callback, err?: Error) {
+      this[kBytesWritten] = handleBytesWritten(handle);
       this[kHandle] = undefined;
       // Capture the in-flight response before detachSocket() can clear it: a
       // synchronous res.destroy() inside the request handler runs detachSocket()
@@ -1767,6 +1822,7 @@ function getNodeHTTPServerSocket() {
       // is deferred to #onClose so the dispatch promise resolves only after the
       // native on_abort has released the pending-request ref.
       this.#pendingAbortMessage = this._httpMessage;
+      this.#closingHandle = handle;
       handle.onclose = this.#onCloseForDestroy.bind(this, callback, err, handle);
       if (this.resetAndClosing) {
         this.resetAndClosing = false;
@@ -1785,6 +1841,8 @@ function getNodeHTTPServerSocket() {
       releaseServerParserShim(this);
       this[kHandle] = null;
       if (closedHandle) {
+        this[kBytesWritten] = handleBytesWritten(closedHandle);
+        this[kClosedWithUnsentData] = closedHandle.closedWithUnsentData;
         // Peer FIN: 'end' before 'close', like Node's net.Socket. read(0) emits it when nothing reads the socket.
         if (closedHandle.peerEnded) {
           this.push(null);
@@ -1884,7 +1942,17 @@ function getNodeHTTPServerSocket() {
         (pendingCallback as Function)(writeFailure);
       }
     }
+    // The close of a TLS handle waits for ciphertext that write() reported and a stalled peer does not take, but only once.
+    destroyNow() {
+      this.destroy();
+      const handle = this.#closingHandle;
+      if (!handle || handle.closed) return;
+      handle.close();
+      // In the middle of its own request a handle only takes note, and closes behind it, for the first time.
+      if (!handle.closed) setImmediate(closeHandle, handle);
+    }
     #onCloseForDestroy(closeCallback, err: Error | undefined, handle) {
+      this.#closingHandle = undefined;
       this.#onClose(handle);
       // Thread the destroy error through to the streams machinery (like
       // Node.js's net.Socket._destroy passing the exception to its callback),
@@ -1912,7 +1980,7 @@ function getNodeHTTPServerSocket() {
     }
 
     address() {
-      return this[kHandle]?.remoteAddress || null;
+      return (this[kHandle] ?? this.#peer)?.remoteAddress || null;
     }
 
     get bufferSize() {
@@ -2027,7 +2095,7 @@ function getNodeHTTPServerSocket() {
     // client sent none (matches Node's server-side TLSSocket.servername).
     get servername() {
       if (!this.encrypted) return undefined;
-      const name = this[kHandle]?.servername;
+      const name = (this[kHandle] ?? this.#peer)?.servername;
       return typeof name === "string" && name.length > 0 ? name : false;
     }
 
@@ -2037,13 +2105,13 @@ function getNodeHTTPServerSocket() {
     get authorized() {
       if (!this.encrypted) return undefined;
       if (!this.server?.[tlsSymbol]?.requestCert) return false;
-      return this[kHandle]?.peerCertVerified === true;
+      return (this[kHandle] ?? this.#peer)?.peerCertVerified === true;
     }
 
     get authorizationError() {
       if (!this.encrypted) return undefined;
       if (!this.server?.[tlsSymbol]?.requestCert) return null;
-      return this[kHandle]?.authorizationError ?? null;
+      return (this[kHandle] ?? this.#peer)?.authorizationError ?? null;
     }
 
     ref() {
@@ -2191,6 +2259,10 @@ function getNodeHTTPServerSocket() {
     get [kInternalSocketData]() {
       return this[kHandle]?.response;
     }
+
+    get [kHasQueuedReads]() {
+      return this[kHandle]?.hasQueuedTunnelReads === true;
+    }
   } as unknown as typeof import("node:net").Socket;
   Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
   return NodeHTTPServerSocket;
@@ -2223,12 +2295,17 @@ function hasInvalidTrailer(response) {
   return outHeaders !== null && outHeaders["trailer"] !== undefined;
 }
 
-function _writeHead(statusCode, reason, obj, response) {
+function validateStatusCode(statusCode) {
   const originalStatusCode = statusCode;
   statusCode |= 0;
   if (statusCode < 100 || statusCode > 999) {
     throw $ERR_HTTP_INVALID_STATUS_CODE(require("internal/util/inspect").format("%s", originalStatusCode));
   }
+  return statusCode;
+}
+
+function _writeHead(statusCode, reason, obj, response) {
+  statusCode = validateStatusCode(statusCode);
 
   if (typeof reason === "string") {
     // writeHead(statusCode, reasonPhrase[, headers])
@@ -2348,6 +2425,8 @@ function ServerResponse(req, options): void {
   this.chunkedEncoding = false;
 }
 $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
+// A response whose own statusCode was deleted sends 200, as in Node.js.
+ServerResponse.prototype.statusCode = 200;
 
 // ServerResponse stores its outgoing headers the same way Node.js does (the
 // kOutHeaders map inherited from OutgoingMessage). Right before the headers
@@ -2614,14 +2693,15 @@ function emitResponseFinish() {
   // req.socket is nulled by the stream destroyer (pipeline/compose cleanup);
   // the response's own socket (set by assignSocket, cleared only by
   // detachSocket) still references the connection then.
-  const socket = this.req?.socket ?? this.socket;
+  const detachedFrom = this[kDetachedFrom];
+  const socket = detachedFrom ?? this.req?.socket ?? this.socket;
   // Node's clearIncoming: a request that ended before its response did. Any other one is cleared at its EOF.
   const parser = socket?.parser;
   if (parser != null && parser.incoming === req && req.readableEnded) parser.incoming = null;
   onResponseFinishHandleSocket(socket?.server, socket, this);
   // The dispatcher detached a synchronously-finished response itself;
   // advancing the pipeline again here would skip a queued response.
-  if (this[kDispatcherDetached]) return;
+  if (detachedFrom !== undefined) return;
   if (socket != null) this.detachSocket(socket);
   advanceResponsePipeline(socket?.server, socket);
 }
@@ -3028,7 +3108,7 @@ function accountQueuedHeaderBytes(res, queued) {
 function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
   callWriteHeadIfObservable(res, res[headerStateSymbol]);
   if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
-    updateHasBody(res, res.statusCode);
+    updateHasBody(res, (res.statusCode = validateStatusCode(res.statusCode)));
   }
   accountQueuedHeaderBytes(res, queued);
   if (!res._hasBody) {
@@ -3059,7 +3139,7 @@ function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
 function bufferPipelinedEnd(res, queued, chunk, encoding, callback) {
   callWriteHeadIfObservable(res, res[headerStateSymbol], true);
   if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
-    updateHasBody(res, res.statusCode);
+    updateHasBody(res, (res.statusCode = validateStatusCode(res.statusCode)));
   }
   accountQueuedHeaderBytes(res, queued);
   if (chunk && !res._hasBody) {
@@ -3431,8 +3511,9 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     callback = undefined;
   }
 
-  // Node's write_() drops the chunk of a destroyed response, and end() goes on: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L951-L964
-  if (chunk && this.destroyed && !this.finished) chunk = undefined;
+  // Node's write_() drops the chunk of a destroyed response before _implicitHeader(), and end() goes on: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L951-L964
+  const droppedChunk = !!chunk && this.destroyed && !this.finished;
+  if (droppedChunk) chunk = undefined;
 
   if (hasServerResponseFinished(this, chunk, callback, true)) {
     return this;
@@ -3458,7 +3539,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // the header state without deriving _hasBody and a later body write to
     // a 204/304 would reach the wire chunk-framed with no terminator.
     // updateHasBody only ever clears _hasBody, so this is idempotent.
-    updateHasBody(this, this.statusCode);
+    updateHasBody(this, (this.statusCode = validateStatusCode(this.statusCode)));
   }
   if (chunk && !this._hasBody) {
     if (this[kRejectNonStandardBodyWrites]) {
@@ -3486,12 +3567,16 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   }
 
   const headerState = this[headerStateSymbol];
-  callWriteHeadIfObservable(this, headerState, true);
+  if (!droppedChunk) callWriteHeadIfObservable(this, headerState, true);
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
     // Socket already gone: like Node, 'prefinish' fires but 'finish' never does, and the close of the socket aborts the request.
-    this._header = " ";
+    // Node's _implicitHeader() ran unless the chunk was dropped above, so the head counts as sent like on the normal path below.
+    if (!droppedChunk || headerState !== NodeHTTPHeaderState.none) {
+      this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+      this._header = " ";
+    }
     this.finished = true;
     process.nextTick(markResponseEndedNT, this);
     this.emit("prefinish");
@@ -3520,7 +3605,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
       } catch (e) {
         releaseRenderedHeaders(renderedHeaders);
         // Mirror the old two-call flow's headersSent semantics: errors from
-        // the write-head phase (the batch's upfront gate, status validation,
+        // the write-head phase (the batch's upfront gate, argument validation,
         // headers-already-sent) leave the state unset; anything after that
         // point threw with headers already on the wire, exactly like
         // handle.end throwing after handle.writeHead succeeded.
@@ -3529,6 +3614,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
           code !== "ERR_STREAM_ALREADY_FINISHED" &&
           code !== "ERR_HTTP_HEADERS_SENT" &&
           code !== "ERR_INVALID_CHAR" &&
+          code !== "ERR_INVALID_ARG_TYPE" &&
           !(e instanceof RangeError)
         ) {
           this[headerStateSymbol] = sentState;
@@ -3572,7 +3658,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   return this;
 };
 
-// 'finish' waits a tick: the dispatcher sets kDispatcherDetached after a sync handler returns, and 'finish' reads it.
+// 'finish' waits a tick: the dispatcher sets kDetachedFrom after a sync handler returns, and 'finish' reads it.
 function queueResponseFinished(res, callback) {
   res._callPendingCallbacks();
   process.nextTick(emitResponseFinished, res, callback);
@@ -3668,7 +3754,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     // the header state without deriving _hasBody and a later body write to
     // a 204/304 would reach the wire chunk-framed with no terminator.
     // updateHasBody only ever clears _hasBody, so this is idempotent.
-    updateHasBody(this, this.statusCode);
+    updateHasBody(this, (this.statusCode = validateStatusCode(this.statusCode)));
   }
   if (chunk && !this._hasBody) {
     if (this[kRejectNonStandardBodyWrites]) {

@@ -5,10 +5,10 @@ use core::cell::Cell;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_io::KeepAlive;
-use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsCell, JsResult};
+use bun_jsc::bindgen::JsScope;
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsResult};
 use bun_uws as uws;
 
-use crate::node::util::validators;
 use crate::socket::{Listener, NativeCallbacks, NewSocket, SocketFlags, TCPSocket, TLSSocket};
 
 static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true);
@@ -27,85 +27,23 @@ thread_local! {
     pub(crate) static AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_DEFAULT: Cell<u32> = const { Cell::new(500) };
 }
 
-pub(crate) fn get_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
-    #[bun_jsc::host_fn(export = "Bun__NodeNet__getDefaultAutoSelectFamily")]
-    fn getter(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        Ok(JSValue::from(
-            AUTO_SELECT_FAMILY_DEFAULT.load(Ordering::Relaxed),
-        ))
-    }
-    // `#[bun_jsc::host_fn]` emits a `__jsc_host_<name>` shim with the raw `JSHostFn` ABI.
-    JSFunction::create(
-        global,
-        "getDefaultAutoSelectFamily",
-        __jsc_host_getter,
-        0,
-        Default::default(),
-    )
+pub(crate) fn get_default_auto_select_family() -> bool {
+    AUTO_SELECT_FAMILY_DEFAULT.load(Ordering::Relaxed)
 }
 
-pub(crate) fn set_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
-    #[bun_jsc::host_fn(export = "Bun__NodeNet__setDefaultAutoSelectFamily")]
-    fn setter(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let [arg] = frame.arguments_as_array::<1>();
-        if frame.arguments_count() < 1 {
-            return Err(global.throw(format_args!("missing argument")));
-        }
-        if !arg.is_boolean() {
-            return Err(global.throw_invalid_arguments(format_args!("autoSelectFamilyDefault")));
-        }
-        let value = arg.to_boolean();
-        AUTO_SELECT_FAMILY_DEFAULT.store(value, Ordering::Relaxed);
-        Ok(JSValue::from(value))
-    }
-    JSFunction::create(
-        global,
-        "setDefaultAutoSelectFamily",
-        __jsc_host_setter,
-        1,
-        Default::default(),
-    )
+pub(crate) fn set_default_auto_select_family(value: bool) -> bool {
+    AUTO_SELECT_FAMILY_DEFAULT.store(value, Ordering::Relaxed);
+    value
 }
 
-pub(crate) fn get_default_auto_select_family_attempt_timeout(global: &JSGlobalObject) -> JSValue {
-    #[bun_jsc::host_fn(export = "Bun__NodeNet__getDefaultAutoSelectFamilyAttemptTimeout")]
-    fn getter(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        Ok(JSValue::js_number(f64::from(
-            AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_DEFAULT.with(|v| v.get()),
-        )))
-    }
-    JSFunction::create(
-        global,
-        "getDefaultAutoSelectFamilyAttemptTimeout",
-        __jsc_host_getter,
-        0,
-        Default::default(),
-    )
+pub(crate) fn get_default_auto_select_family_attempt_timeout() -> u32 {
+    AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_DEFAULT.get()
 }
 
-pub(crate) fn set_default_auto_select_family_attempt_timeout(global: &JSGlobalObject) -> JSValue {
-    #[bun_jsc::host_fn(export = "Bun__NodeNet__setDefaultAutoSelectFamilyAttemptTimeout")]
-    fn setter(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let [arg] = frame.arguments_as_array::<1>();
-        if frame.arguments_count() < 1 {
-            return Err(global.throw(format_args!("missing argument")));
-        }
-        let mut value =
-            validators::validate_int32(global, arg, format_args!("value"), Some(1), None)?;
-        if value < 10 {
-            value = 10;
-        }
-        AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_DEFAULT
-            .with(|v| v.set(u32::try_from(value).expect("int cast")));
-        Ok(JSValue::js_number(f64::from(value)))
-    }
-    JSFunction::create(
-        global,
-        "setDefaultAutoSelectFamilyAttemptTimeout",
-        __jsc_host_setter,
-        1,
-        Default::default(),
-    )
+pub(crate) fn set_default_auto_select_family_attempt_timeout(value: u32) -> u32 {
+    let value = value.max(10);
+    AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_DEFAULT.set(value);
+    value
 }
 
 // codegen (`generated_js2native.rs`) snake-cases the symbol; alias the
@@ -126,11 +64,7 @@ pub(crate) fn BlockList(global: &JSGlobalObject) -> JSValue {
     crate::generated_classes::js_BlockList::get_constructor(global)
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let args = frame.arguments_as_array::<1>();
-    let is_ssl = args[0].to_boolean();
-
+pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue {
     // Only `socket`, `ref_count`, `protos`, `handlers` are
     // specified; the rest take their struct defaults.
     fn make<const SSL: bool>(global: &JSGlobalObject) -> JSValue {
@@ -163,11 +97,11 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
         value
     }
 
-    Ok(if !is_ssl {
-        make::<false>(global)
+    if !is_ssl {
+        make::<false>(cx.global())
     } else {
-        make::<true>(global)
-    })
+        make::<true>(cx.global())
+    }
 }
 
 #[bun_jsc::host_fn]

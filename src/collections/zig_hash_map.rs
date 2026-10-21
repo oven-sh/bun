@@ -433,20 +433,6 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         })
     }
 
-    /// Alias of [`get_or_put`](Self::get_or_put) kept for call-site parity;
-    /// the context is already bound by the type parameter.
-    #[inline]
-    pub fn get_or_put_context<Ctx>(
-        &mut self,
-        key: K,
-        _ctx: Ctx,
-    ) -> Result<crate::hash_map::GetOrPutResult<'_, V>, bun_alloc::AllocError>
-    where
-        V: Default,
-    {
-        self.get_or_put(key)
-    }
-
     /// std `insert` — returns the previous value if any.
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
         let (idx, found_existing) = self.get_or_put_slot(&key);

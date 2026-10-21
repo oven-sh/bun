@@ -37,7 +37,7 @@ const writer = (async function () {
 const reader = (async function () {
   console.time("Read " + string.length + " bytes x 10");
 
-  const chunks = [];
+  const chunks: Uint8Array[] = [];
   for await (const chunk of proc.stdout) {
     chunks.push(chunk);
   }

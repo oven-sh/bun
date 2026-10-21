@@ -4,7 +4,7 @@ const { kHandle } = require("internal/shared");
 let net;
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
-const uvTranslateSysError = $newRustFunction("node_util_binding.rs", "uvTranslateSysError", 1);
+const uvTranslateSysError = $bindgen("node_util_binding.bind.ts", "uvTranslateSysError");
 const { UV_EINVAL } = process.binding("uv");
 
 const ArrayIsArray = Array.isArray;
@@ -108,6 +108,12 @@ export default class RoundRobinHandle {
 
   has(worker) {
     return this.all.has(worker.id);
+  }
+
+  // Returns the listener's file descriptor, or -1 if it isn't listening yet or remove() already closed it.
+  get fd() {
+    const fd = this.server?._handle?.fd;
+    return typeof fd === "number" ? fd : -1;
   }
 
   // With the channel still up the unacked newconn is settled by its ack; once it is gone, a crashed worker's goes to another worker and a disconnected worker's (already settled by it) is dropped.

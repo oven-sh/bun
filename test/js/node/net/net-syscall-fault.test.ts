@@ -75,7 +75,7 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     // and the application must still observe the full payload.
     fault.set({ syscall: "recv", action: "short", bytes: 1, repeat: -1 });
     const chunks: Buffer[] = [];
-    p.client.on("data", c => chunks.push(c));
+    p.client.on("data", (c: Buffer) => chunks.push(c));
     const payload = Buffer.from(Array.from({ length: 256 }, (_, i) => i & 0xff));
     p.serverSock.write(payload);
     p.serverSock.end();
@@ -86,7 +86,7 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
   test("send → EAGAIN forever: data is buffered, then flushed after disarm", async () => {
     let received = Buffer.alloc(0);
     using p = await connectedPair(s => {
-      s.on("data", c => (received = Buffer.concat([received, c])));
+      s.on("data", (c: Buffer) => (received = Buffer.concat([received, c])));
     });
     fault.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1 });
     p.client.write(Buffer.alloc(256, "x"));
@@ -99,7 +99,7 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
   test("send → short writes still deliver complete payload to peer", async () => {
     let received = Buffer.alloc(0);
     using p = await connectedPair(s => {
-      s.on("data", c => (received = Buffer.concat([received, c])));
+      s.on("data", (c: Buffer) => (received = Buffer.concat([received, c])));
     });
     fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
     const payload = Buffer.alloc(512, "b");
@@ -127,7 +127,7 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
         const writer = side === "client" ? p.client : p.serverSock;
         const reader = side === "client" ? p.serverSock : p.client;
         let received = Buffer.alloc(0);
-        reader.on("data", c => (received = Buffer.concat([received, c])));
+        reader.on("data", (c: Buffer) => (received = Buffer.concat([received, c])));
 
         const writerFd = (writer as any)._handle.fd as number;
         expect(writerFd).toBeGreaterThanOrEqual(0);
@@ -172,11 +172,11 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
   test("send → EPROTOTYPE burst: bytes are retried and delivered intact", async () => {
     let received = Buffer.alloc(0);
     using p = await connectedPair(s => {
-      s.on("data", c => (received = Buffer.concat([received, c])));
+      s.on("data", (c: Buffer) => (received = Buffer.concat([received, c])));
     });
     const fd = (p.client as any)._handle.fd as number;
     expect(fd).toBeGreaterThanOrEqual(0);
-    fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE", repeat: 8, fd });
+    fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE" as any, repeat: 8, fd });
     const payload = Buffer.alloc(256, "p");
     p.client.write(payload);
     p.client.end();
@@ -194,7 +194,7 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     using p = await connectedPair();
     const fd = (p.client as any)._handle.fd as number;
     expect(fd).toBeGreaterThanOrEqual(0);
-    fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE", repeat: -1, fd });
+    fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE" as any, repeat: -1, fd });
     const errP = once(p.client, "error") as Promise<[NodeJS.ErrnoException]>;
     // Not events.once(): that helper rejects its promise when 'error' fires
     // first, and 'error' arriving before 'close' is exactly this contract.
@@ -217,7 +217,7 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     using p = await connectedPair();
     const fd = (p.serverSock as any)._handle.fd as number;
     expect(fd).toBeGreaterThanOrEqual(0);
-    fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE", repeat: -1, fd });
+    fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE" as any, repeat: -1, fd });
     const errP = once(p.serverSock, "error") as Promise<[NodeJS.ErrnoException]>;
     const closeP = new Promise<void>(resolve => p.serverSock.once("close", () => resolve()));
     p.serverSock.write(Buffer.alloc(64, "s"));
@@ -341,7 +341,7 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
   test("two rules can be armed simultaneously (recv short + send short)", async () => {
     let received = Buffer.alloc(0);
     using p = await connectedPair(s => {
-      s.on("data", c => (received = Buffer.concat([received, c])));
+      s.on("data", (c: Buffer) => (received = Buffer.concat([received, c])));
     });
     fault.set({ syscall: "recv", action: "short", bytes: 3, repeat: -1 });
     fault.set({ syscall: "send", action: "short", bytes: 3, repeat: -1 });
@@ -355,7 +355,7 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
   test("send → short writes deliver a payload larger than the kernel send buffer", async () => {
     let received = Buffer.alloc(0);
     using p = await connectedPair(s => {
-      s.on("data", c => (received = Buffer.concat([received, c])));
+      s.on("data", (c: Buffer) => (received = Buffer.concat([received, c])));
     });
     fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: -1 });
     const payload = Buffer.alloc(128 * 1024, 0x41);
@@ -371,7 +371,7 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     // Skip the first recv (the readable notification arms one), fail the second.
     fault.set({ syscall: "recv", action: "errno", errno: "ECONNRESET", after: 1, repeat: 1 });
     let firstChunk: Buffer | null = null;
-    p.client.once("data", c => (firstChunk = c));
+    p.client.once("data", (c: Buffer) => (firstChunk = c));
     const errP = once(p.client, "error");
     p.serverSock.write("first");
     await new Promise<void>(r => p.client.once("data", () => r()));
@@ -391,7 +391,7 @@ describe.skipIf(skip)("node:net torture loop (exhaustive Nth-call failure)", () 
     for (let i = 0; i < 10; i++) {
       using p = await connectedPair(s => s.on("error", () => {}));
       let received = Buffer.alloc(0);
-      p.client.on("data", c => (received = Buffer.concat([received, c])));
+      p.client.on("data", (c: Buffer) => (received = Buffer.concat([received, c])));
       fault.set({ syscall: "recv", action: "short", bytes: 1, after: i, repeat: -1 });
       p.serverSock.write(payload);
       p.serverSock.end();
@@ -441,7 +441,7 @@ describe.skipIf(skip)("node:net seeded syscall fuzz", () => {
         s.on("error", () => {});
       });
       p.client.on("error", () => {});
-      p.client.on("data", c => (echoed = Buffer.concat([echoed, c])));
+      p.client.on("data", (c: Buffer) => (echoed = Buffer.concat([echoed, c])));
 
       fault.set({ ...plan, after, repeat: -1 } as any);
 

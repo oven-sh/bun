@@ -116,6 +116,7 @@ pub(crate) mod js_bundler {
         pub(crate) dir: OwnedString,
         pub(crate) outdir: OwnedString,
         pub(crate) rootdir: OwnedString,
+        pub(crate) tsconfig_override: OwnedString,
         pub(crate) jsx: api::Jsx,
         pub(crate) force_node_env: options::ForceNodeEnv,
         pub(crate) code_splitting: bool,
@@ -149,6 +150,8 @@ pub(crate) mod js_bundler {
         /// `foldChunksForTesting`, read only where `bun:internal-for-testing` resolves: see `BundleOptions::fold_chunks`.
         pub(crate) fold_chunks: bool,
         pub(crate) module_preload: bool,
+        /// `check`: see `BundleOptions::type_check`.
+        pub(crate) check: bool,
         pub(crate) drop: StringSet,
         pub(crate) features: StringSet,
         pub(crate) throw_on_error: bool,
@@ -180,6 +183,7 @@ pub(crate) mod js_bundler {
                 dir: OwnedString::default(),
                 outdir: OwnedString::default(),
                 rootdir: OwnedString::default(),
+                tsconfig_override: OwnedString::default(),
                 jsx: api::Jsx {
                     factory: Box::default(),
                     fragment: Box::default(),
@@ -216,6 +220,7 @@ pub(crate) mod js_bundler {
                 min_chunk_size: None,
                 fold_chunks: true,
                 module_preload: true,
+                check: false,
                 drop: StringSet::default(),
                 features: StringSet::default(),
                 throw_on_error: true,
@@ -682,7 +687,6 @@ pub(crate) mod js_bundler {
                         min: 0,
                         max: i128::from(u32::MAX),
                         field_name: b"bytecodeDepth",
-                        always_allow_zero: false,
                     },
                 )?;
             }
@@ -738,6 +742,11 @@ pub(crate) mod js_bundler {
             if let Some(slice) = config.get_optional_slice(global_this, b"outdir")? {
                 this.outdir.append_slice_exact(slice.slice())?;
                 has_out_dir = true;
+                drop(slice);
+            }
+
+            if let Some(slice) = config.get_optional_slice(global_this, b"tsconfig")? {
+                this.tsconfig_override.append_slice_exact(slice.slice())?;
                 drop(slice);
             }
 
@@ -886,6 +895,9 @@ pub(crate) mod js_bundler {
             }
             if let Some(module_preload) = config.get_boolean_loose(global_this, "modulePreload")? {
                 this.module_preload = module_preload;
+            }
+            if let Some(check) = config.get_boolean_loose(global_this, "check")? {
+                this.check = check;
             }
             if bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis()
                 && let Some(fold_chunks) =
@@ -1570,22 +1582,28 @@ pub(crate) mod js_bundler {
         {
             resolve.value = ResolveValue::NoMatch;
         } else {
-            let global = bv2_plugin(resolve.bv2).global_object();
-            let path = path_value
-                .to_bun_string(global)
-                .expect("Unexpected: path is not a string")
-                .to_owned_slice()
-                .into_boxed_slice();
-            let namespace = namespace_value
-                .to_bun_string(global)
-                .expect("Unexpected: namespace is not a string")
-                .to_owned_slice()
-                .into_boxed_slice();
-            resolve.value = ResolveValue::Success(ResolveSuccess {
-                path,
-                namespace,
-                external: external_value.to_boolean(),
+            let plugin = bv2_plugin(resolve.bv2);
+            let global = plugin.global_object();
+            let strings = path_value.to_bun_string(global).and_then(|path| {
+                let namespace = namespace_value.to_bun_string(global)?;
+                Ok((path, namespace))
             });
+            resolve.value = match strings {
+                Ok((path, namespace)) => ResolveValue::Success(ResolveSuccess {
+                    path: path.to_owned_slice().into_boxed_slice(),
+                    namespace: namespace.to_owned_slice().into_boxed_slice(),
+                    external: external_value.to_boolean(),
+                }),
+                // Flattening a `path` or `namespace` string can still throw.
+                Err(err) => {
+                    let exception = global.take_exception(err);
+                    ResolveValue::Err(plugin_msg_from_js(
+                        plugin,
+                        &resolve.import_record.source_file,
+                        exception,
+                    ))
+                }
+            };
         }
 
         bv2_mut(resolve.bv2).on_resolve_async(resolve);
@@ -1695,24 +1713,21 @@ pub(crate) mod js_bundler {
             this.value = LoadValue::NoMatch;
         } else {
             let loader = api::Loader::from_raw(loader_as_int.as_int32() as u8);
-            let global = bv2_plugin(this.bv2).global_object();
-            let source_code = match crate::node::StringOrBuffer::from_js_to_owned_slice(
-                global,
+            let plugin = bv2_plugin(this.bv2);
+            this.value = match crate::node::StringOrBuffer::from_js_to_owned_slice(
+                plugin.global_object(),
                 source_code_value,
             ) {
-                Ok(s) => s,
+                Ok(source_code) => LoadValue::Success(LoadSuccess {
+                    loader: bun_ast::Loader::from_api(loader),
+                    source_code: source_code.into(),
+                }),
+                // Flattening a `contents` string can still throw.
                 Err(err) => {
-                    match err {
-                        JsError::OutOfMemory => bun_core::out_of_memory(),
-                        JsError::Thrown | JsError::Terminated => {}
-                    }
-                    panic!("Unexpected: source_code is not a string");
+                    let exception = plugin.global_object().take_exception(err);
+                    LoadValue::Err(plugin_msg_from_js(plugin, &this.path, exception))
                 }
             };
-            this.value = LoadValue::Success(LoadSuccess {
-                loader: bun_ast::Loader::from_api(loader),
-                source_code: source_code.into(),
-            });
         }
 
         bv2_mut(this.bv2).on_load_async(this);

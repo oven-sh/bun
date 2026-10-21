@@ -624,7 +624,7 @@ describe.concurrent("bun test --isolate", () => {
       serve: (sock: net.Socket) => {
         sock.write(mysqlHandshakeV10());
         // Byte 3 of a packet is its sequence number.
-        sock.on("data", packet => !packet.includes("select 1") && sock.write(mysqlOkPacket(packet[3] + 1)));
+        sock.on("data", (packet: Buffer) => !packet.includes("select 1") && sock.write(mysqlOkPacket(packet[3] + 1)));
       },
       leak: redialWithSQL("mysql"),
     },
@@ -1771,6 +1771,17 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
         monitorEventLoopDelay({ resolution: 1 }).enable();
       `),
     );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  // The loader builds a module from only one of the two sources. The other source's value references its global.
+  test("two concurrent import() calls for the same data file", async () => {
+    using dir = tempDir("isolate-leak-data-import", {
+      ...makeLeakFixture(`
+        await Promise.all([import("./data.json"), import("./data.json")]);
+      `),
+      "data.json": `{ "value": 1 }`,
+    });
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
   });
 });

@@ -1,8 +1,61 @@
 import { Glob } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir, unprivilegedSpawnOptions } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, unprivilegedSpawnOptions } from "harness";
 import * as fs from "node:fs";
 import * as path from "node:path";
+
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+
+// usage: keep-open <fd> <cmd> [args...]. Runs the command under a seccomp filter that makes
+// close(<fd>) fail with EINTR. The descriptor stays open. Exits 77 where it cannot do that.
+const keepOpenSource = /* c */ `
+#define _GNU_SOURCE
+#include <errno.h>
+#include <linux/audit.h>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+#if defined(__x86_64__)
+#define MY_AUDIT_ARCH AUDIT_ARCH_X86_64
+#elif defined(__aarch64__)
+#define MY_AUDIT_ARCH AUDIT_ARCH_AARCH64
+#else
+#define MY_AUDIT_ARCH 0
+#endif
+
+int main(int argc, char **argv) {
+  if (argc < 3) return 2;
+  if (MY_AUDIT_ARCH == 0) return 77;
+  unsigned int fd = (unsigned int)atoi(argv[1]);
+  struct sock_filter filter[] = {
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, arch)),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, MY_AUDIT_ARCH, 1, 0),
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_close, 0, 3),
+    /* the low word of the first argument (little-endian) */
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[0])),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, fd, 0, 1),
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EINTR),
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+  };
+  struct sock_fprog prog = {
+    .len = (unsigned short)(sizeof(filter) / sizeof(filter[0])),
+    .filter = filter,
+  };
+  if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) return 77;
+  if (syscall(__NR_seccomp, SECCOMP_SET_MODE_FILTER, 0, &prog) != 0) return 77;
+  execvp(argv[2], &argv[2]);
+  perror("execvp");
+  return 127;
+}
+`;
 
 // The walker opens the directory that a followed symbolic link leads to. These tests are about a
 // link that does not open. POSIX only: Windows has no `ulimit` and no mode that forbids a
@@ -102,6 +155,81 @@ describe.skipIf(isWindows)("a followed link that does not open", () => {
         // The stat shows that only this link is broken.
         "* everything, throw on broken": { code: "ENOENT", syscall: "fstatat", path: "dangling" },
       },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // `l` is a link to the directory that holds it, so the walk lists `l` and does not list `l/l`
+  // again. `ulimit` alone cannot fail the open of `l/l` only: the walker closes the directory of
+  // `l` before that open. The helper installs a seccomp filter that fails `close` of the last
+  // descriptor without closing it. The directory of `l` stays open there, and the open of `l/l`
+  // gets EMFILE.
+  test.skipIf(!isLinux || !cc).each([
+    ["", {}],
+    [", also with throwErrorOnBrokenSymlink", { throwErrorOnBrokenSymlink: true }],
+  ])("no descriptor left: a link back to a followed directory does not fail the scan%s", async (_, options) => {
+    using dir = tempDir("glob-scan-symlink-cycle", {
+      "scan/plain.txt": "",
+      "keep-open.c": keepOpenSource,
+    });
+    fs.symlinkSync(".", path.join(String(dir), "scan", "l"));
+    const helper = path.join(String(dir), "keep-open");
+    await using compile = Bun.spawn({
+      cmd: [cc!, "-o", helper, path.join(String(dir), "keep-open.c")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [compileErrors, compiled] = await Promise.all([compile.stderr.text(), compile.exited]);
+    if (compiled !== 0) {
+      // No kernel headers on this machine.
+      if (/linux\/(seccomp|filter|audit)\.h|sys\/prctl\.h/.test(compileErrors)) return;
+      throw new Error(`the compiler failed on keep-open.c:\n${compileErrors}`);
+    }
+
+    const last = 63;
+    const fixture = /* js */ `
+        const fs = require("fs");
+        ${scanRows}
+        const rows = () => scan("scan", "**/*", { ...everything, ...${JSON.stringify(options)} });
+        const isOpen = fd => {
+          try {
+            fs.fstatSync(fd);
+            return true;
+          } catch {
+            return false;
+          }
+        };
+        const free = rows();
+        // Every descriptor below the last one, then one of them back for the directory that is scanned.
+        const held = [];
+        do held.push(fs.openSync("/dev/null", "r"));
+        while (held.at(-1) !== ${last} - 1);
+        fs.closeSync(held.pop());
+        const keptOpen = [isOpen(${last})];
+        const exhausted = rows();
+        keptOpen.push(isOpen(${last}));
+        for (const fd of held) fs.closeSync(fd);
+        console.log(JSON.stringify({ free, keptOpen, exhausted }));
+      `;
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `ulimit -n ${last + 1} && exec "$@"`, "sh", helper, String(last), bunExe(), "-e", fixture],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The kernel does not take the filter.
+    if (exitCode === 77) return;
+
+    const list = ["l", "l/l", "l/plain.txt", "plain.txt"];
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      free: list,
+      // The last descriptor is free before the scan, and holds the directory of `l` after it.
+      keptOpen: [false, true],
+      exhausted: list,
     });
     expect(exitCode).toBe(0);
   });

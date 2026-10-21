@@ -805,7 +805,7 @@ console.log("✓ Both import types work correctly");
     const lazyChunk = serverCode.match(/import\("(\.\/[^"]+)"\)/)![1];
     expect(readFileSync(join(dir, "out", lazyChunk), "utf8")).toStartWith("// @bun\n");
     // The chunk is JavaScript, and Bun.build reports it as such.
-    const lazyArtifact = result.outputs.find(output => output.path.endsWith(lazyChunk.slice(1)))!;
+    const lazyArtifact = result.outputs.find(output => basename(output.path) === basename(lazyChunk))!;
     expect([lazyArtifact.kind, lazyArtifact.loader]).toEqual(["chunk", "js"]);
 
     const { stdout, stderr, exitCode } = await bunRun(join(dir, "out", "server.js"));

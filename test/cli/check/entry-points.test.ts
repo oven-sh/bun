@@ -178,6 +178,21 @@ const entries: Entry[] = [
     }),
   })),
   {
+    // `""` is the extension of a name with no `.`, not a suffix of every name: `include` doesn't match `notes.txt`.
+    name: "--loader for files without an extension",
+    wrong: "imported",
+    isIncluded: true,
+    loader: ["", "ts"],
+    // `Bun.build` drops the `""` key.
+    commands: withLoader.filter(command => command !== "Bun.build"),
+    main: () => ["main.ts"],
+    files: (isCorrect, pathsImport) => ({
+      "main.ts": `${pathsImport}import { n } from "./imported";\nexport const m: number = n;\n${run}`,
+      "imported": `export const n: number = ${value(isCorrect)};\n`,
+      "notes.txt": `not a script\n`,
+    }),
+  },
+  {
     // Without `allowJs`.
     name: "a JavaScript file with its declaration file",
     wrong: "main.ts",

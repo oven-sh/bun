@@ -58,6 +58,9 @@ struct Http3ResponseData {
     /* Body bytes the QUIC stream couldn't accept yet. */
     BackPressure backpressure;
     bool endAfterDrain = false;
+    /* lsquic refused the header block in hdrBuf/hdrs because the 100 Continue
+     * block is still unsent. drain() sends it; body bytes wait behind it. */
+    bool headersDeferred = false;
 
     uint64_t offset = 0;
     uint8_t state = 0;
@@ -86,6 +89,7 @@ struct Http3ResponseData {
         hdrs.shrink(0);
         backpressure.clear();
         endAfterDrain = false;
+        headersDeferred = false;
         offset = 0;
         state = HTTP_RESPONSE_PENDING;
     }

@@ -23,12 +23,10 @@ use bun_core::strings;
 use bun_core::strings::CodepointIterator;
 use bun_options_types::bundle_enums as bundle_opts;
 
-/// Local stand-in for `bun_core::strings::Encoding` that derives `ConstParamTy` so it can
-/// be used as a const-generic parameter (`const ENCODING: Encoding`). The variant set is
-/// identical; convert at the boundary if a `strings::Encoding` is ever needed.
+/// The input encodings of the string escaper. Local stand-in for `bun_core::strings::Encoding`
+/// that derives `ConstParamTy`, so it can be a const-generic parameter (`const ENCODING: Encoding`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, core::marker::ConstParamTy)]
 pub enum Encoding {
-    Ascii,
     Utf8,
     Latin1,
     Utf16,
@@ -1094,7 +1092,7 @@ where
             _ => None,
         };
         let width: u8 = match ENCODING {
-            Encoding::Latin1 | Encoding::Ascii => 1,
+            Encoding::Latin1 => 1,
             Encoding::Utf8 => strings::wtf8_byte_sequence_length_with_invalid(text[i]),
             Encoding::Utf16 => 1 + u8::from(utf16_pair.is_some()),
         };
@@ -1110,10 +1108,6 @@ where
                 };
                 strings::decode_wtf8_rune_t::<i32>(bytes, width, 0)
             }
-            Encoding::Ascii => {
-                debug_assert!(text[i] <= 0x7F);
-                text[i] as i32
-            }
             Encoding::Latin1 => text[i] as i32,
             Encoding::Utf16 => match utf16_pair {
                 Some(cp) => cp as i32,
@@ -1123,7 +1117,7 @@ where
 
         if can_print_without_escape(c, ascii_only) {
             match ENCODING {
-                Encoding::Ascii | Encoding::Utf8 => {
+                Encoding::Utf8 => {
                     let remain = &text[i + clamped_width..];
                     if let Some(j) =
                         strings::index_of_needs_escape_for_java_script_string(remain, quote_char)

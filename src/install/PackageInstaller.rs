@@ -551,13 +551,17 @@ pub(crate) fn leave_out_placed_package(
 ) {
     let is_in =
         |folder: &[u8], path: &[u8]| is_parent_or_equal(folder, path) != ParentEqual::Unrelated;
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let node_modules = abs_node_modules_path(lockfile, string_buf, tree_id)
+        .and_then(|path| Dir::open(path.slice()).ok());
+    let package = (node_modules.as_ref()).and_then(|dir| crate::prune::descend(dir, alias));
     let mut folder = placed_package_path(lockfile, tree_id, alias);
     let mut folder_buf = bun_paths::path_buffer_pool::get();
     let mut row_buf = bun_paths::path_buffer_pool::get();
-    // Two links can lead to one folder, so the paths are also compared with their links resolved.
-    let folder_real = match &mut folder {
-        Some(folder) => bun_sys::realpath(folder.slice_z(), &mut folder_buf).ok(),
-        None => None,
+    // A folder goes for every path that leads to it, so links are resolved. A link is only unlinked.
+    let folder_real = match (&package, &mut folder) {
+        (Some(_), Some(folder)) => bun_sys::realpath(folder.slice_z(), &mut folder_buf).ok(),
+        _ => None,
     };
     let mut listed = unfinished.borrow_mut();
     let is_in_folder = |(row_tree, row_name): &(lockfile::tree::Id, Box<[u8]>)| {
@@ -575,10 +579,8 @@ pub(crate) fn leave_out_placed_package(
     };
     if listed.iter().any(is_in_folder) {
         // Their working directories are in its `node_modules`, so only the rest of the folder goes.
-        let string_buf = lockfile.buffers.string_bytes.as_slice();
-        let path = abs_node_modules_path(lockfile, string_buf, tree_id);
-        if let Some(Ok(node_modules)) = path.map(|path| Dir::open(path.slice())) {
-            remove_all_but_node_modules(&node_modules, alias);
+        if let (Some(node_modules), Some(package)) = (&node_modules, &package) {
+            remove_all_but_node_modules(node_modules, package, alias);
         }
         return;
     }
@@ -603,13 +605,10 @@ fn delete_what_verify_reads(package: &Dir) {
     let _ = package.delete_tree(package_install::BUN_TAG);
 }
 
-/// Empties the folder of a placed package, except for its `node_modules`. A link is not followed.
-fn remove_all_but_node_modules(node_modules: &Dir, alias: &[u8]) {
-    let Some(package) = crate::prune::descend(node_modules, alias) else {
-        return;
-    };
+/// Empties `package`, the folder `alias` in `node_modules`, except for its own `node_modules`.
+fn remove_all_but_node_modules(node_modules: &Dir, package: &Dir, alias: &[u8]) {
     // A delete can stop midway, so what `verify` reads goes first.
-    delete_what_verify_reads(&package);
+    delete_what_verify_reads(package);
     let mut names: Vec<Box<[u8]>> = Vec::new();
     let mut iter = bun_sys::iterate_dir(package.fd());
     while let Ok(Some(entry)) = iter.next() {

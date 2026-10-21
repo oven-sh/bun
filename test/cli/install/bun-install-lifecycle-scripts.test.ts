@@ -3975,7 +3975,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("failed script of an 
         cwd: ctx.packageDir,
         env: ctx.env,
         stdin: "ignore",
-        stdout: "pipe",
+        stdout: "ignore",
         stderr: "pipe",
       });
       cleanup.defer(async () => {
@@ -4158,6 +4158,41 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("failed script of an 
       },
       30_000,
     );
+
+    // The workspace `m` is in the folder of the workspace `z`, and has its own link in the root. What
+    // goes when the script of `z` fails is the link to `z`, and the script of `m` does not start from
+    // it. So the link goes at once: `m` lists nothing behind it.
+    test("none of them: the one with scripts left is in the folder of a workspace, by its own link", async () => {
+      using ctx = await setupScriptPackages(linker, {});
+      const workspace = (folder: string, fields: object) =>
+        write(
+          join(ctx.packageDir, "packages", folder, "package.json"),
+          JSON.stringify({ version: "1.0.0", ...fields }),
+        );
+      await Promise.all([
+        writeFile(
+          ctx.packageJson,
+          JSON.stringify({ name: "foo", workspaces: ["packages/z", "packages/z/m", "packages/b"] }),
+        ),
+        workspace("b", { name: "b", optionalDependencies: { z: "workspace:*" }, dependencies: { m: "workspace:*" } }),
+        workspace("z", { name: "z", scripts: failing("z", {}).scripts }),
+        workspace(join("z", "m"), {
+          name: "m",
+          scripts: { postinstall: `ls "$INIT_CWD/node_modules/z" > "$INIT_CWD/behind.txt"; ${records("m")}` },
+        }),
+      ]);
+      ctx.env.SCRIPT_RUNS = join(ctx.packageDir, "runs.txt");
+
+      const { err, exitCode } = await ctx.bun("install", "--filter", "b", "--concurrent-scripts=1");
+      const behind = readFileSync(join(ctx.packageDir, "behind.txt"), "utf8").split(/\s+/).filter(Boolean);
+      expect({
+        errors: errorsOf(err),
+        ran: inOrder(ran(ctx)),
+        // The isolated linker runs the script of `m` first.
+        behindTheLink: linker === "hoisted" ? behind : [],
+        exitCode,
+      }).toEqual({ errors: [], ran: inOrder(["z", "m"]), behindTheLink: [], exitCode: 0 });
+    });
 
     // bun is killed while `fails` waits for `inner`. The folder of `fails` is still there, but it does
     // not count as installed: the next install places it again and runs the scripts again. The

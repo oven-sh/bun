@@ -2892,7 +2892,7 @@ impl<'f, 's> Binder<'f, 's> {
         let is_global = is_in_file && !self.f.has_module_syntax;
         // `TryParsePattern`
         let is_pattern = matches!(decl.name, ModuleName::String(name) if name.is_some()
-            && self.atoms.bytes(name).iter().filter(|&&c| c == b'*').count() == 1);
+            && bun_core::strings::count_char(self.atoms.bytes(name), b'*') == 1);
         let symbol = match decl.name {
             // `getDeclarationName`: every pattern with import attributes has a name that nothing else has.
             // `mergePatternAmbientModules` merges those whose attributes are the same.

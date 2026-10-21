@@ -4260,7 +4260,7 @@ fn check_named_files(
         let starts = compute_ecma_line_starts(text);
         let counted = Counted::default();
         let mapped_file =
-            |file: FileId| MappedFile::new(&program.files, file, !request.uses_typescript_wording);
+            |file: FileId| MappedFile::new(program.files, file, !request.uses_typescript_wording);
         let mapped = mapped_file(file);
         let mut rendered: Vec<Diagnostic> = errors
             .into_iter()

@@ -54,7 +54,8 @@ enum Command {
 struct LoopToWake(*mut bun_uws::Loop);
 
 // SAFETY: the pointer is only used to wake the loop, under the lock of the `Inbox` that has it. The I/O thread removes
-// it from there before it ends.
+// it from there before it ends. The loop is that thread's own `MiniEventLoop`: `bun check` has no VM, so there's no VM
+// or JS state behind it.
 unsafe impl Send for LoopToWake {}
 
 #[derive(Default)]

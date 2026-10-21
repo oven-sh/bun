@@ -30,7 +30,7 @@ impl Rule for JsxPropsNoSpreadMulti {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        // oxlint goes by the name of the file.
+        // oxlint decides by the file name.
         (!file.language().is_oxlint || is_jsx(file)).then_some(())
     }
 
@@ -54,11 +54,11 @@ fn check<'a>(_: &JsxPropsNoSpreadMulti, e: Expr<'a>, cx: &mut Cx<'a, JsxPropsNoS
         return;
     }
     let mut identifiers: FxHashMap<Name<'a>, Vec<Span>> = FxHashMap::default();
-    // Those that are the same are in the same list.
+    // Keyed by hash, so equal member expressions are in the same list.
     let mut member_expressions: FxHashMap<u64, Vec<(Expr<'a>, Span)>> = FxHashMap::default();
     let is_oxlint = cx.language().is_oxlint;
     for &(argument, span) in &spread_attrs {
-        // oxlint looks through `a!`, `a as T` and the like, and compares member expressions as well.
+        // oxlint looks through `a!`, `a as T` and the like, and also compares member expressions.
         let seen = if is_oxlint {
             get_inner_expression(argument)
         } else {
@@ -76,12 +76,13 @@ fn check<'a>(_: &JsxPropsNoSpreadMulti, e: Expr<'a>, cx: &mut Cx<'a, JsxPropsNoS
                 .push((argument, span));
         }
     }
-    for (name, spans) in utils::sort::in_order_of(identifiers, |it| it.1.first().map(|it| it.start))
+    for (name, spans) in
+        utils::sort::collect_sorted_by_key(identifiers, |it| it.1.first().map(|it| it.start))
     {
         // oxlint reports the first one, once, and removes all but the last.
         if !is_oxlint {
             // The plugin has no fix, so only fix when there's no plugin to match.
-            let fixes = cx.language().stands_alone;
+            let fixes = cx.language().has_no_foreign_config;
             for (previous, span) in spans.iter().zip(spans.iter().skip(1)) {
                 cx.report(*span, NO_MULTI_SPREADING)
                     .listened_on(jsx.opening_span())
@@ -103,11 +104,11 @@ fn check<'a>(_: &JsxPropsNoSpreadMulti, e: Expr<'a>, cx: &mut Cx<'a, JsxPropsNoS
                 });
         }
     }
-    for alike in utils::sort::in_order_of(member_expressions.values(), |it| {
+    for same_hash_group in utils::sort::collect_sorted_by_key(member_expressions.values(), |it| {
         it.first().map(|it| it.1.start)
     }) {
-        for (i, &(left, left_span)) in alike.iter().enumerate() {
-            for &(right, right_span) in alike.iter().skip(i + 1) {
+        for (i, &(left, left_span)) in same_hash_group.iter().enumerate() {
+            for &(right, right_span) in same_hash_group.iter().skip(i + 1) {
                 if is_same_member_expression(left, right) {
                     cx.report(left_span, MULTIPLE_MEMBER_EXPRESSIONS)
                         .data("member_name", left.text())
@@ -119,8 +120,8 @@ fn check<'a>(_: &JsxPropsNoSpreadMulti, e: Expr<'a>, cx: &mut Cx<'a, JsxPropsNoS
     }
 }
 
-/// The same number for what [`is_same_member_expression`] takes for the same: of all that it compares, so that few
-/// others have the same number.
+/// Returns the same hash for member expressions that [`is_same_member_expression`] treats as equal. It hashes
+/// everything that function compares, so collisions are rare.
 fn hash_of_names(member: Expr) -> u64 {
     let mut hasher = FxHasher::default();
     let mut pending: SmallVec<[Expr; 8]> = smallvec![member];
@@ -137,7 +138,7 @@ fn hash_of_names(member: Expr) -> u64 {
                 pending.push(obj);
             }
             ExprKind::Ident(name) | ExprKind::String(name) => hasher.write(name.bytes()),
-            // `` `a` `` is `"a"`.
+            // `` `a` `` equals `"a"`.
             ExprKind::Template(template) => match template.as_static() {
                 Some(value) => hasher.write(value.bytes()),
                 None => pending.extend(template.exprs()),

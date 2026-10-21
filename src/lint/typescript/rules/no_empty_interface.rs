@@ -14,7 +14,7 @@ const NO_EMPTY_WITH_SUPER: Message = Message::new(
     "An interface declaring no members is equivalent to its supertype.",
 );
 
-/// `type I<T> = Super` in place of `interface I<T> extends Super {}`.
+/// Replaces `interface I<T> extends Super {}` with `type I<T> = Super`.
 fn fix<'a>(fixer: Fixer<'a>, interface: Interface<'a>, extended: TypeNode<'a>) -> Fix {
     let type_params = interface.type_params().angle_brackets_span();
     let text = [
@@ -38,12 +38,12 @@ impl NoEmptyInterface {
         }
         let extends = interface.extends();
         // oxlint points at the declaration.
-        let place = match cx.language().is_oxlint {
+        let report_span = match cx.language().is_oxlint {
             true => statement.span_without_export(),
             false => interface.name().span(),
         };
         let Some(extended) = extends.first() else {
-            cx.report(place, NO_EMPTY);
+            cx.report(report_span, NO_EMPTY);
             return;
         };
         if extends.len() != 1 || self.allow_single_extends {
@@ -57,7 +57,7 @@ impl NoEmptyInterface {
                     .any(|it| matches!(it, Declaration::Class(class) if matches!(class.owner(), Node::Stmt(_))))
             })
         });
-        let report = cx.report(place, NO_EMPTY_WITH_SUPER);
+        let report = cx.report(report_span, NO_EMPTY_WITH_SUPER);
         if is_merged_with_class_declaration {
             return;
         }
@@ -81,7 +81,7 @@ impl Rule for NoEmptyInterface {
         .has_suggestions()
         .deprecated();
     const ON: On = On::new().stmts(&[StmtTag::Interface]);
-    /// Whether one of the declarations of a name is a class declaration.
+    /// Caches whether one of a name's declarations is a class declaration.
     type State<'a> = IdMap<Symbol<'a>, bool>;
 
     fn new(options: &Options) -> Self {

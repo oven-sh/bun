@@ -943,7 +943,7 @@ impl Checker<'_, '_> {
                 sig,
                 relation,
                 check_mode,
-                s.checks_arguments_once,
+                s.checks_arguments_once && s.is_single_non_generic_candidate,
                 report,
             );
         }
@@ -996,7 +996,7 @@ impl Checker<'_, '_> {
                 continue;
             };
             let actual = match arg {
-                Arg::Expr(x) if s.checks_arguments_once => {
+                Arg::Expr(x) if s.checks_arguments_once && check_mode.is_empty() => {
                     self.cached_arg_type_for_param(file, x, expected)
                 }
                 _ => self.check_argument(file, arg, expected, None, check_mode),

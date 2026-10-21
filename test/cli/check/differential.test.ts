@@ -46,6 +46,48 @@ test.concurrent.skipIf(!tsc)("matches `tsc --singleThreaded` on one thread for m
   expect(ours).toEqual(theirs);
 });
 
+// The arguments keep the types they get in the last check against the one candidate, also if they don't fit it.
+test.concurrent.skipIf(!tsc)("matches tsc on calls of one generic signature that its arguments don't fit", async () => {
+  using dir = tempDir("bun-check-generic-calls", {
+    "tsconfig.json": tsconfig,
+    "a.ts": `
+      declare function f<T>(a: T, cb: (x: T) => T, b: { k: T }): void;
+      f(1, x => "s", { k: true });
+      declare function g<T extends string>(a: T, b: { v: T; w: (p: T) => void }): T;
+      g(1, { v: "a", w: p => p.length });
+      g("x", { v: 1, w: p => p.foo });
+      declare function h<T>(a: T[], b: [T, T]): void;
+      h([1, "a"], [true, { z: 1 }, 3]);
+      h([{ a: 1 }], [{ a: "s", b: 2 }, { a: 1 }]);
+      declare function k<T, U>(a: { [K in keyof T]: T[K] }, b: (t: T) => U, c: U extends string ? number : string): U;
+      k({ a: 1, b: "x" }, t => t.a, 1);
+      k({ a: 1, b: "x" }, t => t.c, "s");
+      declare function m<const T>(a: T, b: T): void;
+      m([1, 2], { q: [1, x => x] });
+      declare function n<T>(a: T, b: NoInfer<T>): void;
+      n({ a: 1, f: (x: number) => x }, { a: "s", f: y => y.foo });
+      declare function o<T>(this: void, a: () => T, b: T): void;
+      o(() => ({ a: 1 }), { a: "x", c: [undefinedName] });
+      o(() => 1, \`a\${1 as any as symbol}\`);
+      function p<T extends { a: number }>(x: T, y: Partial<T>) { return x; }
+      p({ a: "s" }, { a: 1, b: () => this });
+      p({ a: 1, b: 2 }, { c: 3, a: [1].map(v => v.foo) });
+      new Map<string, number>([["a", "b"], [1, 2]]);
+      new Set([1, "a"]).add({ a: (z) => z });
+      Promise.resolve({ a: 1 }).then(v => v.b, e => e.c).then<number>(q => q);
+      [1, 2].reduce((acc, v) => acc.concat(v), []);
+      [1, 2].map(v => ({ v, w: v.x }), { t: this });
+    `,
+  });
+  const root = String(dir);
+  const [theirs, ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+    linesOf([bunExe(), "check"], root, root),
+  ]);
+  expect(theirs.length).toBeGreaterThan(20);
+  expect(ours).toEqual(theirs);
+});
+
 // Which files share a task depends on their cost and on which thread is free. A task checks at least 1/128 of a program,
 // so in a small program no two files share one, and nothing shows what a file finds of an earlier file in the task's
 // checker. The runner forces the extremes: one task for all files, the last file first, every file checked twice.

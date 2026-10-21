@@ -116,10 +116,10 @@ pub(super) struct CallState<'a> {
     pub(super) candidates: Sigs,
     pub(super) arg_check_mode: CheckMode,
     pub(super) is_single_non_generic_candidate: bool,
-    /// FOR SPEED: there's one candidate, it isn't generic, and the call isn't being resolved again.
-    /// The contextual type pushed for an argument is the parameter type of the resolved signature,
+    /// FOR SPEED: there's one candidate, and the call isn't being resolved again. The contextual type
+    /// pushed for an argument in `CheckModeNormal` is the parameter type of the resolved signature,
     /// so an argument that tsgo checks uncached (`checkExpression`) and again in the deferred check
-    /// is checked once.
+    /// is checked once. Inferring the type arguments of a generic candidate still checks it uncached.
     pub(super) checks_arguments_once: bool,
     /// `recursiveResolution`
     is_recursive_resolution: bool,
@@ -1256,7 +1256,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         s.is_single_non_generic_candidate =
             s.candidates.len() == 1 && self.sig_type_params(s.candidates[0]).is_empty();
-        s.checks_arguments_once = s.is_single_non_generic_candidate
+        s.checks_arguments_once = s.candidates.len() == 1
             && matches!(node, CallLike::Call(_) | CallLike::Jsx(_))
             // `getResolvedSignature` resets `resolutionStart` only the first time.
             && self.resolution_start == self.stack.len()

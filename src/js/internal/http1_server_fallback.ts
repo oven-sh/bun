@@ -565,24 +565,22 @@ function connectionListenerHTTP1(server, socket, options) {
       const finishedReq = this.req;
       if (!finishedReq._consuming && !finishedReq._readableState.resumeScheduled) finishedReq._dump();
       this.detachSocket(socket);
+      const { complete } = finishedReq;
+      // A body that nothing reads keeps the socket stopped, and a stopped socket does not get to the client's FIN.
+      const unread = !complete && !hasReader(finishedReq);
       // `_last`: onHttp1SocketEnd saw the client's FIN while this response owned the socket.
-      if (
-        this[kMustCloseConnection] ||
-        this._last ||
-        // A body that nothing reads keeps the socket stopped, and a stopped socket does not get to the client's FIN.
-        (!shouldKeepAlive && !finishedReq.complete && !hasReader(finishedReq))
-      ) {
+      if (this[kMustCloseConnection] || this._last || (!shouldKeepAlive && unread)) {
         if (typeof socket.destroySoon === "function") {
           socket.destroySoon();
         } else {
           if (!socket.writableEnded) socket.end();
-          // Without destroySoon() the socket closes at the client's FIN, and a body that nothing reads keeps that FIN parked.
-          if (!finishedReq.complete && !hasReader(finishedReq)) destroyOnceFinished(socket);
+          // Without destroySoon() the socket closes at the client's FIN, which stays parked behind a body that nothing reads.
+          if (unread) destroyOnceFinished(socket);
         }
         return;
       }
       // Node's resOnFinish arms this behind every response. Here it ends a connection that an abandoned body keeps stopped.
-      if (!finishedReq.complete) {
+      if (!complete) {
         const timeout = socket.timeout;
         onResponseFinishHandleSocket(server, socket, this);
         if (socket[kKeepAliveTimeoutSet]) {

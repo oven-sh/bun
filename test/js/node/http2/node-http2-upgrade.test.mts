@@ -186,6 +186,50 @@ describe("HTTP/2 upgrade — session event", () => {
     client.close();
     srv.netServer.close();
   });
+
+  test("the injected socket reaches the session as the server's TLSSocket", async () => {
+    // tls.Server wraps the injected socket like any other plain one: its own
+    // 'connection' listeners see it, and the session gets a TLSSocket over it.
+    const seen = Promise.withResolvers<{ remotePort: number; shape: Record<string, unknown> }>();
+    let userConnection = 0;
+    const h2Server = http2.createSecureServer(TLS, (req, res) => {
+      const socket = req.socket as tls.TLSSocket;
+      seen.resolve({
+        remotePort: socket.remotePort!,
+        shape: {
+          userConnection,
+          isTLSSocket: socket instanceof tls.TLSSocket,
+          encrypted: socket.encrypted,
+          alpnProtocol: socket.alpnProtocol,
+          remoteAddress: socket.remoteAddress,
+          // The peer's origin: its address and port.
+          originSet: req.stream.session!.originSet,
+        },
+      });
+      res.end("ok");
+    });
+    h2Server.on("error", () => {});
+    h2Server.on("connection", () => userConnection++);
+    const netServer = net.createServer(socket => h2Server.emit("connection", socket));
+    await once(netServer.listen(0, "127.0.0.1"), "listening");
+    const port = (netServer.address() as net.AddressInfo).port;
+    const client = connectClient(port);
+    try {
+      await request(client, "GET", "/");
+      const { remotePort, shape } = await seen.promise;
+      assert.deepStrictEqual(shape, {
+        userConnection: 1,
+        isTLSSocket: true,
+        encrypted: true,
+        alpnProtocol: "h2",
+        remoteAddress: "127.0.0.1",
+        originSet: [`https://127.0.0.1:${remotePort}`],
+      });
+    } finally {
+      client.close();
+      netServer.close();
+    }
+  });
 });
 
 describe("HTTP/2 upgrade — concurrent clients", () => {

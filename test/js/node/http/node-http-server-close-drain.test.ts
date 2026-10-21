@@ -1048,7 +1048,7 @@ test("closeAllConnections() on a server that took the listener of a Bun.serve se
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toBe("0\n");

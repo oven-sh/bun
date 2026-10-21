@@ -2682,12 +2682,12 @@ describe("GC lifetime", () => {
 
     test.each([
       ["serialize", "database is not open"],
-      ["loadExtension", "database is not open"],
+      ...(sqliteHasLoadExtension ? [["loadExtension", "database is not open"]] : []),
       ["exec", "database is not open"],
       ["prepare", "database is not open"],
       ["all", "statement has been finalized"],
     ])("%s() throws if the authorizer closes the database", (method, message) => {
-      const db = open(":memory:", { allowExtension: true });
+      const db = open(":memory:", { allowExtension: sqliteHasLoadExtension });
       const target = method === "all" ? db.prepare("SELECT 1") : db;
       db.setAuthorizer(() => (db[Symbol.dispose](), constants.SQLITE_OK));
       Bun.gc(true);

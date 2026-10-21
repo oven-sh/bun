@@ -6588,8 +6588,8 @@ it.skipIf(!isLinux)("a session reports ECONNRESET when its read finds the connec
     await new Promise(resolve => client.ping(resolve));
     socket.resetAndDestroy();
     const [err] = await sessionError;
-    expect(err.code).toBe("ECONNRESET");
     await new Promise(resolve => server.close(resolve));
+    expect(err.code).toBe("ECONNRESET");
   }
 });
 

@@ -6,7 +6,7 @@ pub struct NoExtraBind;
 
 const UNEXPECTED: Message = Message::new("unexpected", "The function binding is unnecessary.");
 
-/// What a function would mean differently if it were an arrow function.
+/// The keywords that would change meaning if a function became an arrow function.
 #[derive(Default)]
 pub(crate) struct OwnKeywords {
     pub(crate) this: bool,
@@ -15,7 +15,7 @@ pub(crate) struct OwnKeywords {
 }
 
 impl OwnKeywords {
-    /// Whether `e` is one of them, which is then kept.
+    /// Records `e` if it's one of them. Returns whether it is.
     pub(crate) fn note(&mut self, e: Expr) -> bool {
         match e.tag() {
             ExprTag::This => self.this = true,
@@ -27,22 +27,21 @@ impl OwnKeywords {
     }
 }
 
-/// A field of a class, whose type and initializer ESLint has in a `PropertyDefinition`.
+/// True for a class field, whose type and initializer are in a `PropertyDefinition` in ESLint.
 fn is_property_definition(member: Member) -> bool {
     member.kind() == MemberKind::Property
         && !member.is_signature()
         && !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
 }
 
-/// The `this`, `super` and `new.target` in `func`, not those in the functions in it that are not
-/// arrow functions. `class_scopes`: nor those in the initializers of fields and in the static blocks
-/// of classes.
+/// Finds the `this`, `super` and `new.target` in `func`, skipping nested functions that aren't arrow functions. With
+/// `class_scopes`, also skips field initializers and static blocks of nested classes.
 pub(crate) fn own_keywords(func: Func, class_scopes: bool) -> OwnKeywords {
     let mut found = OwnKeywords::default();
     let mut pending = Node::Func(func).children();
     while let Some(node) = pending.pop() {
         match node {
-            // For ESLint the `this` of `<this.a />` is a name.
+            // In ESLint the `this` of `<this.a />` is a name.
             Node::Expr(e) if e.tag() == ExprTag::This && e.is_jsx_tag_name() => {}
             Node::Expr(e) if found.note(e) => {}
             Node::Func(inner) if inner.kind() == FnKind::StaticBlock && !class_scopes => {
@@ -62,8 +61,8 @@ pub(crate) fn own_keywords(func: Func, class_scopes: bool) -> OwnKeywords {
     found
 }
 
-/// oxlint's `function_body_contains_this`: in the body alone, also as the name of a JSX element and in the fields and
-/// the static blocks of classes, but not in a type.
+/// oxlint's `function_body_contains_this`: it only looks in the body. It counts a JSX element name and the fields and
+/// static blocks of classes, but not types.
 fn body_contains_this_for_oxlint(func: Func) -> bool {
     let mut pending: Vec<Node> = func.body_statements().into_iter().flatten().map(Node::Stmt).collect();
     while let Some(node) = pending.pop() {
@@ -129,7 +128,7 @@ impl Rule for NoExtraBind {
         let Some(function) = member.object() else {
             return;
         };
-        // oxlint sees through `as T` and the like.
+        // oxlint looks through `as T` and the like.
         let is_oxlint = cx.language().is_oxlint;
         let Some(func) = (if is_oxlint { get_inner_expression(function) } else { function }).as_fn() else {
             return;

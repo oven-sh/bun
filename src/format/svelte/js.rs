@@ -1,4 +1,4 @@
-//! [`Js`] on the parser of JavaScript: what acorn is to Svelte's own parser.
+//! Implements [`Js`] on top of the JavaScript parser. It plays the role that acorn plays for Svelte's own parser.
 
 use super::ast::{Expression, ExpressionKind, Span};
 use super::parser::{Js, ParsedExpression, Statement};
@@ -10,14 +10,14 @@ use bun_lint::ast::{BinOp, Expr, ExprKind, File, FnBody, Node, Stmt, StmtKind, V
 pub(crate) struct FromParser<'p> {
     /// Parses a program.
     pub(crate) parse: Parse<'p>,
-    /// Parses what the component has at some place.
+    /// Parses the code at a given offset in the component.
     pub(crate) parse_part: ParsePart<'p>,
     pub(crate) is_typescript: bool,
-    /// The stack has ended in a part.
+    /// Parsing a part ran out of stack.
     pub(crate) is_nested_too_deeply: bool,
-    /// Where the last error is, if it is that only TypeScript has what is there.
+    /// Offset of the last error, if that error is TypeScript-only syntax in JavaScript.
     pub(crate) typescript_at: Option<usize>,
-    /// Where the last expression has been ended before an `as`, a `satisfies` or a `!`.
+    /// Offset where the last expression was cut off before an `as`, a `satisfies` or a `!`.
     pub(crate) stopped_at: Option<usize>,
 }
 
@@ -40,10 +40,10 @@ fn kind_of(e: Expr<'_>) -> ExpressionKind {
     }
 }
 
-/// `e`, which is in a text that starts at `at`.
+/// Describes `e`, which was parsed from text that starts at offset `at` in the component.
 fn describe<'b>(file: &'b File<'b>, e: Expr<'b>, at: u32) -> Expression {
     let span = e.span();
-    // Svelte gives the comments before a parenthesis to the `ParenthesizedExpression`, which it drops.
+    // Svelte attaches the comments before a parenthesis to the `ParenthesizedExpression`, which it drops.
     let after = e.parens().next().map_or(0, |innermost| innermost.start + 1);
     let from = (file.comments().into_iter().map(|it| it.span()))
         .find(|it| it.start >= after && it.end <= span.start)
@@ -58,12 +58,12 @@ fn describe<'b>(file: &'b File<'b>, e: Expr<'b>, at: u32) -> Expression {
     }
 }
 
-/// The outermost `a as T` that ends where `e` ends: where `a` ends, and where `T` starts.
+/// Finds the outermost `a as T` that ends where `e` ends. Returns the end of `a` and the start of `T`.
 fn assertion_at_end(e: Expr<'_>) -> Option<(u32, u32)> {
     let end = e.span().end;
     let mut at = e;
     loop {
-        // What ends where this ends is the last thing in it.
+        // Only a node's last child can end where the node ends.
         at = match at.kind() {
             ExprKind::As { expr, .. } if at.is_angle_bracket_assertion() => expr,
             ExprKind::As { expr, ty } => return Some((expr.outer_span().end, ty.span().start)),
@@ -88,19 +88,19 @@ fn assertion_at_end(e: Expr<'_>) -> Option<(u32, u32)> {
     }
 }
 
-/// Finds what acorn refuses and the parser of TypeScript leaves to the checker.
-struct Early {
+/// Finds the errors that acorn reports and TypeScript's parser leaves to the checker.
+struct EarlyErrors {
     is_typescript: bool,
-    /// How many functions that are no arrow functions, and classes, are around what is visited.
+    /// Number of non-arrow functions and classes that enclose the current node.
     depth: u32,
     first_error: Option<u32>,
-    /// In JavaScript: where the first `as`, `satisfies` or `!` of TypeScript is. acorn stops before it.
-    first_of_typescript: Option<u32>,
-    /// In JavaScript: where the first `<T>a` is, about which the parser says nothing.
+    /// In JavaScript, the offset of the first TypeScript `as`, `satisfies` or `!`. acorn stops before it.
+    first_typescript_operator: Option<u32>,
+    /// In JavaScript, the offset of the first `<T>a`, which the parser doesn't report.
     first_assertion: Option<u32>,
 }
 
-/// 1 for a function that is no arrow function, and for a class.
+/// 1 for a non-arrow function or a class, otherwise 0.
 fn scopes_of(node: Node<'_>) -> u32 {
     match node {
         Node::Func(function) => u32::from(!function.is_arrow()),
@@ -109,7 +109,7 @@ fn scopes_of(node: Node<'_>) -> u32 {
     }
 }
 
-impl<'a> Visitor<'a> for Early {
+impl<'a> Visitor<'a> for EarlyErrors {
     fn enter(&mut self, node: Node<'a>) {
         self.depth += scopes_of(node);
         let Node::Expr(e) = node else {
@@ -152,8 +152,8 @@ impl<'a> Visitor<'a> for Early {
             | ExprKind::AsConst(expr)
             | ExprKind::NonNull(expr) => {
                 let end = expr.outer_span().end;
-                if !self.is_typescript && self.first_of_typescript.is_none_or(|it| end < it) {
-                    self.first_of_typescript = Some(end);
+                if !self.is_typescript && self.first_typescript_operator.is_none_or(|it| end < it) {
+                    self.first_typescript_operator = Some(end);
                 }
                 None
             }
@@ -177,8 +177,8 @@ impl FromParser<'_> {
         }
     }
 
-    /// What `read` makes of the only statement of what the component has at `at`, and of where that ends. `until`: where the
-    /// component ends for the parser.
+    /// Parses the code at `at` and calls `read` with its only statement and its end offset. `until` is where the
+    /// parser must treat the component as ending.
     fn part<R>(
         &mut self,
         (mut until, at): (usize, usize),
@@ -195,17 +195,17 @@ impl FromParser<'_> {
             };
             let (mut result, mut stops_at, mut typescript_at) = (Err(at), None, None);
             let parsed = (self.parse_part)(part, &mut |file, end| {
-                let mut early = Early {
+                let mut early = EarlyErrors {
                     is_typescript,
                     depth: 0,
                     first_error: None,
-                    first_of_typescript: None,
+                    first_typescript_operator: None,
                     first_assertion: None,
                 };
                 walk(file, &mut early);
-                stops_at = early.first_of_typescript;
-                // acorn knows none of it.
-                typescript_at = (file.first_of_typescript_in_javascript().into_iter())
+                stops_at = early.first_typescript_operator;
+                // acorn doesn't support any TypeScript syntax.
+                typescript_at = (file.first_typescript_syntax_in_javascript().into_iter())
                     .chain(early.first_assertion)
                     .min()
                     .filter(|it| {
@@ -222,7 +222,7 @@ impl FromParser<'_> {
                 self.is_nested_too_deeply |= error.is_nested_too_deeply;
                 return Err(error.at as usize);
             }
-            // Once more, with nothing to see of it.
+            // Retry with the text cut off before the TypeScript operator.
             match (stops_at, typescript_at) {
                 (Some(it), _) => {
                     until = at + it as usize;
@@ -237,8 +237,8 @@ impl FromParser<'_> {
         }
     }
 
-    /// What `read` makes of `program`.
-    /// `at`: where the second byte of `program` is in the component.
+    /// Parses `program` and calls `read` with its first statement. `at` is the offset in the component of `program`'s
+    /// second byte.
     fn program<R>(
         &mut self,
         (program, at): (&[u8], u32),
@@ -246,7 +246,7 @@ impl FromParser<'_> {
     ) -> Result<R, usize> {
         let (mut result, mut typescript_at) = (None, None);
         self.parse.call(self.path(), program, false, &mut |file| {
-            typescript_at = file.first_of_typescript_in_javascript();
+            typescript_at = file.first_typescript_syntax_in_javascript();
             if !file.has_parse_errors() && typescript_at.is_none() {
                 result = (file.body().iter().next()).and_then(|it| read(file, it.kind()));
             }
@@ -285,7 +285,8 @@ impl Js for FromParser<'_> {
     }
 
     fn ends_of_expressions(&mut self, text: &[u8], at: usize, until: usize) -> Vec<usize> {
-        // On the right of a `=`, where a `{` starts an object. What is missing at the end is made up.
+        // Parse it as the right side of a `=`, where a `{` starts an object. The parser recovers from whatever is
+        // missing at the end.
         const BEFORE: &[u8] = b"_=";
         let program = [BEFORE, text.get(at..until).unwrap_or_default()].concat();
         let mut ends = Vec::new();
@@ -334,7 +335,7 @@ impl Js for FromParser<'_> {
     }
 
     fn statement_at(&mut self, text: &[u8], at: usize) -> Result<Statement, usize> {
-        // `type` can be a name.
+        // `type` can be an identifier.
         if text.get(at..).is_some_and(|it| it.starts_with(b"type")) {
             return Ok(match self.expression_at(text, at) {
                 Ok(_) => Statement::Expression,

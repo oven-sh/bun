@@ -19,9 +19,10 @@ use bun_sys::EntryKind;
 
 pub(crate) struct IteratorResult {
     /// `RawSlice` invariant: borrows the iterator's `getdents` buffer
-    /// (streaming-iterator contract — invalidated on next `next()` call).
-    /// The kernel writes `d_name` NUL-terminated, so the backing has a NUL at
-    /// `[name.len()]` (see `name_assume_z`).
+    /// (streaming-iterator contract — invalidated on next `next()` call), or
+    /// `SortedEntries::names`. Both store a NUL at `[name.len()]`: the kernel
+    /// writes `d_name` NUL-terminated, `SortedEntries::read` pushes one after
+    /// each copied name (see `name_assume_z`).
     pub name: RawSlice<u8>,
     pub(crate) kind: EntryKind,
 }
@@ -32,8 +33,8 @@ impl IteratorResult {
     #[inline]
     pub(crate) fn name_assume_z(&self) -> &bun_core::ZStr {
         let s = self.name.slice();
-        // SAFETY: `d_name` is NUL-terminated by the kernel; `name` points at it
-        // with len excluding the NUL, so `[len] == 0`.
+        // SAFETY: every producer stores a NUL at `[len]`: the kernel for
+        // `d_name`, `SortedEntries::read` for its copy of each name.
         unsafe { bun_core::ZStr::from_raw(s.as_ptr(), s.len()) }
     }
 }

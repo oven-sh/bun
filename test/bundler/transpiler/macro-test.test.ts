@@ -777,3 +777,121 @@ describe("macro VM env loader", () => {
     expect(withMacro).toEqual(withoutMacro);
   });
 });
+
+// A macro remap (bunfig.toml, or the `macro` option of Bun.Transpiler) replaces the bindings that it names. The
+// namespace of the same statement is not one of them, so the statement stays for it.
+describe("a namespace import beside a default import that a macro remap replaces", () => {
+  const pkg = (name: string) => ({
+    [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "1.0.0", type: "module" }),
+    [`node_modules/${name}/index.js`]: [
+      `console.log("${name} loads");`,
+      `export function other() { return "other at runtime"; }`,
+      `export default function () { return "default at runtime"; }`,
+      ``,
+    ].join("\n"),
+  });
+  const files = {
+    "bunfig.toml": `[macros]\nfakepkg = { "default" = "./macro.ts" }\nmissing = { "default" = "./macro.ts" }\n`,
+    "macro.ts": `export default function () { return 7; }\n`,
+    ...pkg("fakepkg"),
+    "used.ts": `import d, * as ns from "fakepkg";\nconsole.log(d(), ns.other());\n`,
+    // Nothing reads the namespace. In JavaScript that is still an import of the package.
+    "unused.js": `import d, * as ns from "fakepkg";\nconsole.log(d());\n`,
+    // TypeScript removes an import that nothing reads.
+    "unused.ts": `import d, * as ns from "fakepkg";\nconsole.log(d());\n`,
+    // The package of these two is not installed.
+    "missing-namespace.js": `import d, * as ns from "missing";\nconsole.log(d());\n`,
+    "missing-named.js": `import d, { other } from "missing";\nconsole.log(d());\n`,
+  };
+
+  async function run(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A debug build also prints "[macro] call <name>" to stdout.
+    const lines = stdout
+      .trim()
+      .split("\n")
+      .filter(line => !line.startsWith("[macro]"));
+    return { lines, stderr, exitCode };
+  }
+
+  test.concurrent("the namespace is defined at runtime", async () => {
+    using dir = tempDir("macro-remap-namespace", files);
+    expect(await run(String(dir), "used.ts")).toEqual({
+      lines: ["fakepkg loads", "7 other at runtime"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Bun.build() does not read the remaps of bunfig.toml, so this is the command.
+  test.concurrent("the namespace is defined in a bundle", async () => {
+    using dir = tempDir("macro-remap-namespace", files);
+    const build = await run(String(dir), "build", "./used.ts", "--target=bun", "--outdir", "out");
+    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(await run(String(dir), "out/used.js")).toEqual({
+      lines: ["fakepkg loads", "7 other at runtime"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a namespace that nothing reads still imports the package", async () => {
+    using dir = tempDir("macro-remap-namespace", files);
+    const printed = await run(String(dir), "build", "--no-bundle", "./unused.js");
+    expect({ ...printed, lines: printed.lines.filter(line => line.startsWith("import")) }).toEqual({
+      lines: [`import * as ns from "fakepkg";`],
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(await run(String(dir), "unused.js")).toEqual({ lines: ["fakepkg loads", "7"], stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("TypeScript still removes a namespace that nothing reads", async () => {
+    using dir = tempDir("macro-remap-namespace", files);
+    const printed = await run(String(dir), "build", "--no-bundle", "./unused.ts");
+    expect({ ...printed, lines: printed.lines.filter(line => line.startsWith("import")) }).toEqual({
+      lines: [],
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(await run(String(dir), "unused.ts")).toEqual({ lines: ["7"], stderr: "", exitCode: 0 });
+  });
+
+  // A statement with a named binding beside the remapped one has always stayed. The namespace form is now the same.
+  test.concurrent("a package that is not installed is the same error as with a named import", async () => {
+    using dir = tempDir("macro-remap-namespace", files);
+    const [namespace, named] = await Promise.all([
+      run(String(dir), "missing-namespace.js"),
+      run(String(dir), "missing-named.js"),
+    ]);
+    // The message ends with the path of the file that has the import.
+    const firstError = (stderr: string) =>
+      stderr
+        .split("\n")
+        .find(line => line.startsWith("error:"))
+        ?.replace(/ from '.*'$/, "");
+    const expected = { error: "error: Cannot find package 'missing'", exitCode: 1 };
+    expect({
+      namespace: { error: firstError(namespace.stderr), exitCode: namespace.exitCode },
+      named: { error: firstError(named.stderr), exitCode: named.exitCode },
+    }).toEqual({ namespace: expected, named: expected });
+  });
+
+  test("scanImports() lists the package", () => {
+    const scan = (loader: "js" | "ts", body: string) =>
+      new Bun.Transpiler({ loader, macro: { fakepkg: { default: "./macro.ts" } } }).scanImports(
+        `import d, * as ns from "fakepkg";\n${body}\n`,
+      );
+    const read = `console.log(d(), ns.other());`;
+    const unread = `console.log(d());`;
+    // The import that the remap adds for the macro is not one of them. A scan does not trim what nothing reads.
+    const listed = [{ kind: "import-statement", path: "fakepkg" }];
+    expect({
+      js: scan("js", read),
+      ts: scan("ts", read),
+      unreadJs: scan("js", unread),
+      unreadTs: scan("ts", unread),
+    }).toEqual({ js: listed, ts: listed, unreadJs: listed, unreadTs: listed });
+  });
+});

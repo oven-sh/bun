@@ -1250,7 +1250,7 @@ impl All {
     pub(crate) unsafe fn cancel_timeout_objects(
         this: *mut Self,
         vm: *mut crate::jsc::virtual_machine::VirtualMachine,
-        hot_run: Option<HotRun>,
+        hot_run: Option<&HotRun>,
     ) {
         // SAFETY: `this` is the live per-thread `All` (JS thread only).
         let first_id = unsafe { (*this).first_id_of_hot_run };
@@ -1307,7 +1307,7 @@ impl All {
             // exactly the one keeping it pinned). `cancel()` may free the
             // parent on the final deref — never touched again.
             unsafe {
-                if hot_run.as_ref().is_none_or(|run| {
+                if hot_run.is_none_or(|run| {
                     (*internals).id >= first_id
                         && (!run.only_intervals
                             || (*internals).flags.get().kind() == Kind::SetInterval)
@@ -1330,7 +1330,6 @@ impl All {
             // `remove` through `timer_remove`). `t` is freed by the call.
             unsafe {
                 if hot_run
-                    .as_ref()
                     .is_none_or(|run| (*t).hot_reload_counter == run.counter && !run.only_intervals)
                 {
                     AbortSignalTimeout::discard(t);

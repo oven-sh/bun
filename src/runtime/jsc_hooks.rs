@@ -1711,7 +1711,7 @@ unsafe fn end_hot_run_timers(vm: *mut VirtualMachine, cancel: CancelHotRunTimers
                 counter: (*vm).hot_reload_counter,
                 only_intervals: cancel == CancelHotRunTimers::Intervals,
             };
-            crate::timer::All::cancel_timeout_objects(timer, vm, Some(hot_run));
+            crate::timer::All::cancel_timeout_objects(timer, vm, Some(&hot_run));
         }
         (*timer).first_id_of_hot_run = (*timer).last_id;
     }

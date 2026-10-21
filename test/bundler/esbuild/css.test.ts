@@ -503,6 +503,29 @@ describe("bundler", () => {
     });
   }
 
+  // The last "@import" of b.css sets its place, also when b.css imports a file that is not a stylesheet.
+  itBundled("css/CSSAtImportOrderAfterImportOfTextFile", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./b.css";
+        @import "./x.css";
+        @import "./b.css";
+        .e { color: red }
+      `,
+      "/b.css": /* css */ `
+        @import "./notes.txt";
+        .b { color: red }
+      `,
+      "/x.css": `.x { color: red }`,
+      "/notes.txt": `notes`,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toBe(".x{color:red}.b{color:red}.e{color:red}\n");
+    },
+  });
+
   // Without bundling nothing inlines the file, so the "@import" rule stays.
   test("css @import after an unknown at-rule prints with --no-bundle", async () => {
     using dir = tempDir("css-import-after-unknown-no-bundle", {

@@ -169,13 +169,13 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 }
             }
 
-            self.visited.push(source_index);
-
             let Some(repr): Option<&BundlerStyleSheet> =
                 self.css_asts[source_index.get() as usize].as_deref()
             else {
                 return; // Sanity check
             };
+
+            self.visited.push(source_index);
 
             // TODO: should we even do this? @import rules have to be the first rules in the stylesheet, why even allow pre-import layers?
             // Any pre-import layers come first

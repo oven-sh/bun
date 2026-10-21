@@ -442,7 +442,13 @@ impl<'p, 's> Checker<'p, 's> {
         let stored = match result {
             Ok(stored) if is_inner => stored.held_back(),
             Ok(stored) => stored,
-            Err(_) if replaces || self.is_resolving_base_types_of(ty) => Stored::new(),
+            Err(_)
+                if replaces
+                    || self.is_resolving_base_types_of(ty)
+                    || self.stack.contains(&Query::Shape(ty)) =>
+            {
+                Stored::new()
+            }
             Err(_) => return keys,
         };
         if replaces {

@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isBroken, isDebug, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import {
   copyFileSync,
   readdirSync,
@@ -763,41 +763,57 @@ it.skipIf(!isLinux)("watcher opens the watched directory and files with O_CLOEXE
 // watcher has to watch the file by then. If it does not, the save raises no
 // event and the stale module stays loaded until the next save. The fixture
 // puts the save in that window itself: `mod.js` calls a macro, a macro runs
-// while its caller is parsed, and this one rewrites `mod.js` on disk. The
-// statements after the call keep the parser busy, as a large module does.
-describe.concurrent("a save that lands while the module is parsed is picked up", () => {
-  const statement = `if (globalThis.never) globalThis.never(1, [2, 3], "four", { five: 5 });\n`;
-  const fillerBytes = (isDebug || isASAN ? 16 : 512) * 1024;
-  const filler = Buffer.alloc(statement.length * Math.ceil(fillerBytes / statement.length), statement).toString();
-
-  // "write" saves in place with one write(2), so the file is never partial.
-  // "rename" writes a second file and renames it over `mod.js`.
-  const files = (save: "write" | "rename") => ({
-    "save-macro.js": `
+// while its caller is parsed, and this one saves `mod.js`. It then holds the
+// parse until the watcher has handled the save (BUN_WATCHER_TRACE), so a
+// watch that is added after the parse is always too late.
+describe("a save that lands while the module is parsed is picked up", () => {
+  // `save(how, from)` changes "value = <from>" in `mod.js` to the next number,
+  // once. "write" saves in place with one write(2), so the file is never
+  // partial. "rename" writes a second file and renames it over `mod.js`.
+  // The trace names `mod.js` as a watched file, or as a name in its directory.
+  const files = (how: "write" | "rename", from: number) => ({
+    "save.js": `
 import { closeSync, openSync, readFileSync, renameSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
-export function save(how) {
+const trace = () => readFileSync(process.env.BUN_WATCHER_TRACE, "utf8");
+export function save(how, from) {
   const path = join(import.meta.dir, "mod.js");
   const text = readFileSync(path, "utf8");
-  const at = text.indexOf("value = 0");
+  const at = text.indexOf("value = " + from);
   if (at === -1) return "kept";
+  const before = trace().length;
   if (how === "rename") {
-    writeFileSync(path + ".tmp", text.replace("value = 0", "value = 1"));
-    renameSync(path + ".tmp", path);
+    const next = join(import.meta.dir, "next.js");
+    writeFileSync(next, text.replace("value = " + from, "value = " + (from + 1)));
+    renameSync(next, path);
   } else {
     const fd = openSync(path, "r+");
-    writeSync(fd, "1", at + "value = ".length);
+    writeSync(fd, String(from + 1), at + "value = ".length);
     closeSync(fd);
   }
-  return "saved";
+  for (;;) {
+    const handled = trace().slice(before);
+    if (handled.includes('mod.js":') || handled.includes('"mod.js"')) return "saved";
+  }
 }
 `,
-    "mod.js": `import { save } from "./save-macro.js" with { type: "macro" };
+    "mod.js": `import { save } from "./save.js" with { type: "macro" };
 export const value = 0;
-export const macro = save("${save}");
-${filler}`,
+export const macro = save("${how}", ${from});
+`,
     "entry.js": `import { value, macro } from "./mod.js";
 console.log("value " + value + " " + macro);
+setInterval(() => {}, 1000);
+`,
+    "entry-require.js": `const { value, macro } = require("./mod.js");
+console.log("value " + value + " " + macro);
+setInterval(() => {}, 1000);
+`,
+    // Saves `mod.js` once itself, after the first load.
+    "entry-saves.js": `import { value, macro } from "./mod.js";
+import { save } from "./save.js";
+console.log("value " + value + " " + macro);
+save("write", 0);
 setInterval(() => {}, 1000);
 `,
     "entry.test.js": `import { test } from "bun:test";
@@ -806,38 +822,40 @@ test("logs", () => console.log("value " + value + " " + macro));
 `,
   });
 
-  // A lost save leaves the child on the module it parsed ("value 0 saved")
-  // and `waitFor` never returns.
-  async function expectReload(cmd: string[], save: "write" | "rename", needle: string) {
-    using dir = tempDir("watch-save-during-parse", files(save));
-    const proc = spawn({
+  // A lost save leaves the child on the module it parsed, and `waitFor` never
+  // returns.
+  async function expectOutput(cmd: string[], how: "write" | "rename", from: number, needle: string) {
+    using dir = tempDir("watch-save-during-parse", files(how, from));
+    // Not in the watched directory: a trace line must not raise an event.
+    using traceDir = tempDir("watch-save-during-parse-trace", {});
+    watchee = spawn({
       cmd: [bunExe(), ...cmd],
       cwd: String(dir),
-      env: bunEnv,
+      env: { ...bunEnv, BUN_WATCHER_TRACE: join(String(traceDir), "trace.log") },
       stdout: "pipe",
-      stderr: "inherit",
+      // `bun test` reports on stderr, in the format of the report of this file.
+      stderr: cmd[0] === "test" ? "ignore" : "inherit",
       stdin: "ignore",
     });
-    try {
-      const { waitFor, release } = stdoutWaiter(proc);
-      await waitFor(needle);
-      release();
-    } finally {
-      proc.kill("SIGKILL");
-      await proc.exited;
-    }
+    const { waitFor, release } = stdoutWaiter(watchee);
+    await waitFor(needle);
+    release();
+    watchee.kill("SIGKILL");
+    await watchee.exited;
   }
 
-  for (const cmd of [["--watch"], ["--hot"]]) {
-    it(`${cmd[0]}, saved in place`, () => expectReload([...cmd, "entry.js"], "write", "value 1 kept"));
-    // Windows refuses to rename over a file that is open for the parse.
-    it.skipIf(isWindows)(`${cmd[0]}, saved with a rename`, () =>
-      expectReload([...cmd, "entry.js"], "rename", "value 1 kept"),
-    );
-  }
-
-  it("bun test --watch", () => expectReload(["test", "--watch", "./entry.test.js"], "write", "value 1 kept"));
-
+  it("--watch, import", () => expectOutput(["--watch", "entry.js"], "write", 0, "value 1 kept"));
+  it("--watch, require", () => expectOutput(["--watch", "entry-require.js"], "write", 0, "value 1 kept"));
+  it("--hot, import", () => expectOutput(["--hot", "entry.js"], "write", 0, "value 1 kept"));
+  // Windows refuses to rename over a file that is open for the parse.
+  it.skipIf(isWindows)("--hot, saved with a rename", () =>
+    expectOutput(["--hot", "entry.js"], "rename", 0, "value 1 kept"),
+  );
+  // On Linux a save in place takes the file off the watchlist until the reload
+  // reads it again. Here the macro saves while that reload parses the file.
+  it("--hot, during the reload of an earlier save", () =>
+    expectOutput(["--hot", "entry-saves.js"], "write", 1, "value 2 kept"));
+  it("bun test --watch", () => expectOutput(["test", "--watch", "./entry.test.js"], "write", 0, "value 1 kept"));
   // Without --outdir the bundle goes to stdout, once per build.
-  it("bun build --watch", () => expectReload(["build", "--watch", "entry.js"], "write", "var value = 1;"));
+  it("bun build --watch", () => expectOutput(["build", "--watch", "entry.js"], "write", 0, "var value = 1;"));
 });

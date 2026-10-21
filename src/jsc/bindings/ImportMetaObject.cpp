@@ -380,6 +380,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
 }
 
 extern "C" bool Bun__resolveWithOnResolve(ErrorableString* result, JSC::JSGlobalObject* global, const BunString* specifier, const BunString* from, BunString* query);
+extern "C" void Bun__importMetaResolve(ErrorableString* result, JSC::JSGlobalObject* global, const BunString* specifier, const BunString* from, BunString* query);
 
 JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -479,7 +480,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
         }
 
         // Run it through the module resolver, errors at this point are actual errors.
-        Zig__GlobalObject__resolve(&result, globalObject, &a, &b, &query);
+        Bun__importMetaResolve(&result, globalObject, &a, &b, &query);
         RETURN_IF_EXCEPTION(scope, {});
     }
 

@@ -1388,6 +1388,25 @@ extern "C" fn Zig__GlobalObject__resolve(
     }
 }
 
+bun_core::declare_scope!(importMetaResolve, visible);
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__importMetaResolve(
+    res: &mut ErrorableString,
+    global: &JSGlobalObject,
+    specifier: &BunString,
+    source: &BunString,
+    query: &mut BunString,
+) {
+    bun_core::scoped_log!(
+        importMetaResolve,
+        "source: {}, specifier: {}",
+        source,
+        specifier
+    );
+    Zig__GlobalObject__resolve(res, global, specifier, source, query)
+}
+
 /// `import.meta.resolve()` skips the resolver for a path or `file:` URL, so it runs `onResolve` plugins through this.
 /// Returns false when no plugin claims `specifier` or the plugin returns it unchanged.
 #[unsafe(no_mangle)]

@@ -1683,16 +1683,19 @@ describe("ansi renderer quote bars and list indent", () => {
   test("an image that Kitty draws leaves no quote bar behind, and text behind it gets one", () => {
     const image = `\x1b_Ga=T,t=d,f=100,q=2;${png}\x1b\\\n`;
     const kitty = (markdown: string) => Markdown.ansi(markdown, { columns: 80, kittyGraphics: true });
-    expect(kitty(`> ![a](data:image/png;base64,${png})\n`)).toBe(bar + image + "\x1b[0m");
     expect(kitty(`> ![a](data:image/png;base64,${png}) b\n`)).toBe(bar + image + bar + " b\x1b[0m\n");
+    // Without the escapes, because the reset that ends a paragraph comes behind the line break of the image.
+    const visible = (markdown: string) => Bun.stripANSI(kitty(markdown));
+    expect(visible(`> ![a](data:image/png;base64,${png})\n`)).toBe("│ \n");
+    expect(visible(`> ![a](data:image/png;base64,${png})\n>\n> b\n`)).toBe("│ \n│\n│ b\n");
   });
 
   test("an image file that Kitty draws leaves no quote bar behind", () => {
     using dir = tempDir("md-kitty", { "x.png": Buffer.from(png, "base64") });
     const path = join(String(dir), "x.png");
-    expect(Markdown.ansi(`> ![a](${path.replaceAll("\\", "/")})\n`, { columns: 80, kittyGraphics: true })).toBe(
-      `${bar}\x1b_Ga=T,t=f,f=100,q=2;${Buffer.from(path).toString("base64")}\x1b\\\n\x1b[0m`,
-    );
+    const drawn = Markdown.ansi(`> ![a](${path.replaceAll("\\", "/")})\n`, { columns: 80, kittyGraphics: true });
+    expect(drawn).toStartWith(`${bar}\x1b_Ga=T,t=f,f=100,q=2;${Buffer.from(path).toString("base64")}\x1b\\\n`);
+    expect(Bun.stripANSI(drawn)).toBe("│ \n");
   });
 });
 

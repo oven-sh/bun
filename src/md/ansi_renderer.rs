@@ -753,7 +753,7 @@ impl<'a> AnsiRenderer<'a> {
     /// Emit a chunk to output, wrapping at word boundaries when the column
     /// exceeds `theme.columns`.
     fn write_wrapped(&mut self, data: &[u8]) {
-        // Nothing to draw does not begin a line.
+        // `begin_line()` spelled out (cheaper than a call behind a test). Nothing to draw does not begin a line.
         if self.last_was_newline && !data.is_empty() {
             self.write_pending_indent();
         }
@@ -937,7 +937,7 @@ impl<'a> AnsiRenderer<'a> {
     fn write_styled(&mut self, prefix: &[u8], text_: &[u8]) {
         let in_main_flow = self.in_main_flow();
 
-        // An escape alone does not begin a line: nothing may follow it.
+        // `begin_line()` spelled out as in `write_wrapped`. An escape alone begins no line: nothing may follow it.
         if self.last_was_newline && !text_.is_empty() {
             self.write_pending_indent();
         }

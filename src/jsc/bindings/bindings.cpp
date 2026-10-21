@@ -4906,10 +4906,10 @@ JSC::EncodedJSValue JSC__JSValue__toError_(JSC::EncodedJSValue JSValue0)
 
 #pragma mark - JSC::VM
 
-// deleteAllUnlinkedCodeBlocks() iterates the heap. Stopping the allocators for that leaves free-list words (a cell's
-// address with the sentinel bit) on the stack below the caller, and the frames of the collection that follows, from
-// collectNow() down to where the collector calls sanitizeStackForVM(), are built over them. The conservative scan
-// reads what those frames do not write, so the most recently allocated cell of a size class survived the collection.
+// deleteAllUnlinkedCodeBlocks() stops the allocators to iterate the heap, and prologues under stopAllocating() spill a
+// register holding a free list's sentinel (the address of the first cell allocated from its last interval, plus 1). The
+// collection that follows scans the stack from callWithCurrentThreadState(), 0.6 KB below JSC__VM__runGC in a release
+// build and 1.8 KB under ASAN (x64), over frames that do not write every slot: that cell survived the collection.
 static NEVER_INLINE SUPPRESS_ASAN void clearStackBelowCaller()
 {
 #if ASAN_ENABLED || ASSERT_ENABLED

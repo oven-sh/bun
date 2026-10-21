@@ -35,6 +35,7 @@ const compressionStream = <Init extends object, Params extends object>(
 ) =>
   b.class({
     rustPath,
+    rustTraits: ["crate::node::node_zlib_binding::CompressionStreamImpl"],
     refCounted: true,
     configurable: false,
     estimatedSize: true,

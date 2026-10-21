@@ -671,10 +671,6 @@ impl ThrowFmtArgs for core::fmt::Arguments<'_> {
     }
 }
 
-/// Re-exported for `jsc_macros`-generated code (`to_js`/`to_js_boxed`), which
-/// must use absolute `::bun_jsc::` paths and cannot assume `::bun_core` is in
-/// the consumer crate's dep graph.
-pub use bun_core::heap;
 /// Debug-only binding-presence marker.
 /// MOVE_DOWN: the macro lives in `bun_core` (no jsc dep) so `bun_io` /
 /// `bun_http_jsc` / `bun_event_loop` can call it without a `bun_jsc` cycle.
@@ -682,59 +678,10 @@ pub use bun_core::heap;
 pub use bun_core::mark_binding;
 
 pub use self::host_fn::{
-    JSHostFn, JSHostFnZig, from_js_host_call, from_js_host_call_generic, host_fn_result,
-    to_js_host_call, to_js_host_fn_result,
+    JSHostFn, JSHostFnZig, from_js_host_call, from_js_host_call_generic, to_js_host_call,
+    to_js_host_fn_result,
 };
 pub use self::host_object::{HostFnEntry, create_host_function_object};
-
-// ──────────────────────────────────────────────────────────────────────────
-// `__macro_support`: what the expansion of `#[bun_jsc::host_fn]` calls.
-// ──────────────────────────────────────────────────────────────────────────
-#[doc(hidden)]
-pub mod __macro_support {
-    use super::{JSGlobalObject, JSValue, JsResult};
-
-    /// Normalizes a host-fn body's return type to `JsResult<JSValue>` so the
-    /// proc-macro can wrap bodies that return either `JSValue` or
-    /// `JsResult<JSValue>`.
-    pub trait IntoHostFnResult {
-        fn into_host_fn_result(self) -> JsResult<JSValue>;
-    }
-    impl IntoHostFnResult for JSValue {
-        #[inline]
-        fn into_host_fn_result(self) -> JsResult<JSValue> {
-            Ok(self)
-        }
-    }
-    impl IntoHostFnResult for JsResult<JSValue> {
-        #[inline]
-        fn into_host_fn_result(self) -> JsResult<JSValue> {
-            self
-        }
-    }
-
-    /// Map a `JsResult<JSValue>` from a Rust host fn to the raw `JSValue` the
-    /// JSC ABI expects (`.ZERO` when an exception is/was thrown).
-    /// Installs an `ExceptionValidationScope`
-    /// pinned at the macro caller's `Location` and asserts the empty/thrown
-    /// invariant.
-    ///
-    /// Takes a closure (not a value) so the user-fn body runs *inside*
-    /// `to_js_host_call`'s `catch_unwind` barrier — a `panic!` in the body
-    /// becomes a JS exception instead of unwinding out of the `extern "C"`
-    /// thunk (UB).
-    #[inline]
-    #[track_caller]
-    pub fn host_fn_result<R: IntoHostFnResult>(
-        global: &JSGlobalObject,
-        f: impl FnOnce() -> R,
-    ) -> JSValue {
-        // `to_js_host_call` is
-        // `#[track_caller]` so the caller's `Location` propagates through this
-        // `#[track_caller]` shim into `ExceptionValidationScope::init`.
-        super::host_fn::to_js_host_call(global, move || f().into_host_fn_result())
-    }
-}
 
 // Compile-time smoke test for the `host_fn` proc-macro (no runtime body —
 // just asserts the expansion type-checks against the real

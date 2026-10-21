@@ -191,10 +191,10 @@ pub(crate) fn run_task(
         };
     }
     /// `CompressionStream::<T>::run_from_js_thread` takes `*mut T` (full
-    /// allocation provenance — R-2) so its trailing `T::deref()` may free the box.
+    /// allocation provenance) so its trailing `T::deref()` may free the box.
     macro_rules! compression_arm {
         ($T:ty) => {{
-            // SAFETY: §Dispatch — tag identifies pointee; live m_ctx payload.
+            // SAFETY: §Dispatch — tag identifies pointee; live payload.
             unsafe {
                 node_zlib_binding::CompressionStream::<$T>::run_from_js_thread(cast_ptr!($T))
             };

@@ -1170,9 +1170,9 @@ impl QuicEndpoint {
             send_scope_depth: Cell::new(0),
             global: Cell::new(core::ptr::from_ref(cx.global())),
         };
-        let wrapper = structure.create(&cx.heap, this);
-        let this_value = wrapper.to_js();
-        let raw: *mut Self = wrapper.as_ptr().as_ptr();
+        let this_value = structure.create(&cx.heap, this);
+        let js_value = this_value.to_js();
+        let raw: *mut Self = this_value.as_ptr().as_ptr();
         let global = cx.global();
 
         let vt = Box::new(lsquic::NqVtable {
@@ -1202,7 +1202,7 @@ impl QuicEndpoint {
             packets_out,
             on_mini_conn_failed,
         });
-        // SAFETY: `raw` was just created and nothing else has the wrapper.
+        // SAFETY: `raw` was just created and nothing else has the object.
         unsafe {
             (*raw).vtable_ptr = &raw const *vt;
             (*raw).vtable.set(Some(vt));
@@ -1295,18 +1295,18 @@ impl QuicEndpoint {
 
         let state_ptr = alloc_exposed_array_buffer(
             global,
-            this_value,
+            js_value,
             b"state",
             core::mem::size_of::<EndpointState>(),
         )?;
         let stats_ptr = alloc_exposed_array_buffer(
             global,
-            this_value,
+            js_value,
             b"stats",
             ENDPOINT_STATS_FIELDS.len() * core::mem::size_of::<u64>(),
         )?;
-        this_value.put(global, b"stateByteOffset", JSValue::js_number(0.0));
-        this_value.put(global, b"statsByteOffset", JSValue::js_number(0.0));
+        js_value.put(global, b"stateByteOffset", JSValue::js_number(0.0));
+        js_value.put(global, b"statsByteOffset", JSValue::js_number(0.0));
         // SAFETY: `state`/`stats` are write-once before any other access.
         unsafe {
             (*raw).state = state_ptr.cast();
@@ -1314,7 +1314,7 @@ impl QuicEndpoint {
             (*raw).write_stat(IDX_STATS_CREATED_AT, now_ns());
         }
 
-        Ok(wrapper)
+        Ok(this_value)
     }
 
     fn state_mut(&self) -> *mut EndpointState {
@@ -2219,7 +2219,7 @@ impl QuicEndpoint {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         options: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let global = cx.global();
         if self.closed.get() || self.closing.get() {
             return Err(global
@@ -2230,7 +2230,7 @@ impl QuicEndpoint {
                 .throw());
         }
         if !self.ensure_bound(global, this_value.to_js())? {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
         if self.server_engine.get().is_null() {
             let options = options.to_js();
@@ -2279,7 +2279,7 @@ impl QuicEndpoint {
         // SAFETY: state buffer is live.
         self.with_state(|s| s.listening = 1);
         self.update_keepalive();
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
     pub(crate) fn connect(
@@ -2574,13 +2574,9 @@ impl QuicEndpoint {
         true
     }
 
-    pub(crate) fn close_gracefully(
-        &self,
-        this_value: JsWrapper<'_, Self>,
-        cx: &mut JsScope<'_>,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn close_gracefully(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) {
         if self.closed.get() || self.closing.get() {
-            return Ok(JSValue::UNDEFINED);
+            return;
         }
         self.closing.set(true);
         self.with_state(|s| {
@@ -2596,14 +2592,12 @@ impl QuicEndpoint {
         } else {
             self.schedule_process();
         }
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn release_socket(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub(crate) fn release_socket(&self, _: &mut JsScope<'_>) {
         self.pending_endpoint_close.set(false);
         self.teardown();
         self.poll_ref.with_mut(|p| p.disable());
-        Ok(JSValue::UNDEFINED)
     }
 
     pub(crate) fn address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -2653,7 +2647,7 @@ impl QuicEndpoint {
         cx: &mut JsScope<'_>,
         entries: JsLocal<'_>,
         replace: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let global = cx.global();
         if self.closed.get() {
             return Err(global
@@ -2690,7 +2684,7 @@ impl QuicEndpoint {
                 }
             }
         });
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
     /// Swaps in close callbacks that are safe to run during VM teardown.

@@ -3,7 +3,6 @@
 use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
-use core::ptr::NonNull;
 use std::rc::Rc;
 
 use bun_boringssl_sys as boring_sys;
@@ -28,6 +27,9 @@ use crate::socket::{SSLConfig, SSLConfigFromJs};
 
 #[cfg(windows)]
 use crate::socket::WindowsNamedPipeContext;
+
+#[cfg(windows)]
+use core::ptr::NonNull;
 
 #[cfg(windows)]
 use bun_boringssl as boringssl;
@@ -291,8 +293,9 @@ impl Listener {
                     abort_handle: bun_jsc::AbortHandle::for_owner::<Listener>(),
                     context: cx.context().id(),
                 }
-                .into_js_value(cx.global());
-                let this: *mut Listener = js_Listener::from_js(this_value).unwrap().as_ptr();
+                .into_js_wrapper(cx.global());
+                let js_value = this_value.to_js();
+                let this: *mut Listener = this_value.as_ptr().as_ptr();
                 // SAFETY: inside `this_value`; every field touched below
                 // is `Cell`/`JsCell` or `&self`, so a shared borrow suffices.
                 let this_ref = unsafe { &*this };
@@ -367,15 +370,15 @@ impl Listener {
                 }
                 // The listener holds the handlers cell in a visited slot; every
                 // accepted socket shares the same cell.
-                js_Listener::handlers_set_cached(this_value, cx.global(), this_ref.handlers.cell());
-                this_ref.handlers.set_listener(NonNull::new(this));
+                js_Listener::handlers_set_cached(js_value, cx.global(), this_ref.handlers.cell());
+                this_ref.handlers.set_listener(Some(this_value.as_ptr()));
                 this_ref
                     .this_value
-                    .with_mut(|r| r.set_strong(this_value, cx.global()));
+                    .with_mut(|r| r.set_strong(js_value, cx.global()));
                 this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
                 // SAFETY: its address does not change, and `Drop` leaves.
                 unsafe { bun_jsc::AbortHandle::arm_owner(this, cx.context()) };
-                return Ok(this_value);
+                return Ok(js_value);
             }
         }
 
@@ -415,8 +418,9 @@ impl Listener {
             abort_handle: bun_jsc::AbortHandle::for_owner::<Listener>(),
             context: cx.context().id(),
         }
-        .into_js_value(cx.global());
-        let this: *mut Listener = js_Listener::from_js(this_value).unwrap().as_ptr();
+        .into_js_wrapper(cx.global());
+        let js_value = this_value.to_js();
+        let this: *mut Listener = this_value.as_ptr().as_ptr();
         // SAFETY: inside `this_value`; every field touched through this
         // borrow is `Cell`/`JsCell` or `&self`. The one plain-field write
         // (`connection`, below) goes through the root pointer instead.
@@ -601,16 +605,16 @@ impl Listener {
 
         // The listener holds the handlers cell in a visited slot; every
         // accepted socket shares the same cell.
-        js_Listener::handlers_set_cached(this_value, cx.global(), this_ref.handlers.cell());
-        this_ref.handlers.set_listener(NonNull::new(this));
+        js_Listener::handlers_set_cached(js_value, cx.global(), this_ref.handlers.cell());
+        this_ref.handlers.set_listener(Some(this_value.as_ptr()));
         this_ref
             .this_value
-            .with_mut(|r| r.set_strong(this_value, cx.global()));
+            .with_mut(|r| r.set_strong(js_value, cx.global()));
         this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         // SAFETY: its address does not change, and `Drop` leaves.
         unsafe { bun_jsc::AbortHandle::arm_owner(this, cx.context()) };
 
-        Ok(this_value)
+        Ok(js_value)
     }
 
     // `OWNED_PROTOS` stays unset: accepted sockets clone the listener's `protos`.
@@ -1391,11 +1395,12 @@ impl Listener {
 
 impl Drop for Listener {
     fn drop(&mut self) {
+        let this = &*self;
         log!("finalize");
-        self.abort_handle.leave();
-        match self.listener.replace(ListenerType::None) {
+        this.abort_handle.leave();
+        match this.listener.replace(ListenerType::None) {
             ListenerType::Uws(socket) => {
-                Self::unlink_unix_socket_path(self);
+                Self::unlink_unix_socket_path(this);
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 bun_opaque::opaque_deref_mut(socket).close();
             }
@@ -1409,20 +1414,20 @@ impl Drop for Listener {
             }
             ListenerType::None => {}
         }
-        self.this_value.with_mut(|r| r.finalize());
-        self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        this.this_value.with_mut(|r| r.finalize());
+        this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
 
         // Before force-closing: an accepted socket's `on_close` must not release this listener's refs a second time.
-        self.handlers.set_listener(None);
-        if self.handlers.active_connections.get() > 0 {
-            self.group.with_mut(|g| g.close_all());
+        this.handlers.set_listener(None);
+        if this.handlers.active_connections.get() > 0 {
+            this.group.with_mut(|g| g.close_all());
         }
         bun_core::asan::unregister_root_region(
-            self.group.as_ptr().cast::<c_void>(),
+            this.group.as_ptr().cast::<c_void>(),
             size_of::<uws::SocketGroup>(),
         );
         // SAFETY: zeroed or init'd in listen(); not concurrently walked.
-        unsafe { uws::SocketGroup::destroy(self.group.as_ptr()) };
+        unsafe { uws::SocketGroup::destroy(this.group.as_ptr()) };
     }
 }
 

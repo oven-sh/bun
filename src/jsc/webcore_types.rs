@@ -108,7 +108,7 @@ impl From<MimeType> for BlobContentType {
 
 /// What a JS `Blob` wraps (`src/runtime/webcore/Blob.bind.ts`).
 ///
-/// R-2 (`sharedThis`): every JS-facing host-fn takes `&Blob` (not `&mut Blob`)
+/// Every JS-facing host-fn takes `&Blob` (not `&mut Blob`)
 /// so re-entrant JS calls cannot stack two `&mut` to the same instance. Fields
 /// mutated by host-fns are therefore wrapped in `Cell` (Copy scalars) or
 /// `JsCell` (the non-Copy `store`). `Cell<T>` and `JsCell<T>` are both

@@ -8,6 +8,7 @@ use bun_ptr::{ParentRef, RefPtr};
 use bun_event_loop::Taskable;
 use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -116,9 +117,6 @@ pub(crate) trait CompressionContext {
     fn update_write_result(&mut self, avail_in: &mut u32, avail_out: &mut u32);
 }
 
-// R-2 (host-fn re-entrancy): every JS-exposed mixin method takes `&T`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). Accessors return the
-// cell wrapper so the mixin can `.get()`/`.set()`/`.with_mut()` as needed.
 /// Stores a stream's copy of an input that `can_be_freed_while_pinned`.
 /// Empty when the stream has no copy.
 #[derive(Default)]
@@ -133,8 +131,7 @@ pub(crate) trait CompressionStreamImpl:
 {
     type Stream: CompressionContext;
 
-    // Field accessors (interior-mutability cells; all `&self`).
-    /// JSC_BORROW backref — the global outlives this m_ctx payload.
+    /// The global outlives this payload.
     /// Implementations store a `BackRef<JSGlobalObject>`; the single unsafe
     /// deref lives in `BackRef::get`, so callers and impls are safe.
     fn global_this(&self) -> &JSGlobalObject;
@@ -190,6 +187,92 @@ pub(crate) trait CompressionStreamImpl:
     fn pending_output_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue);
     fn pending_input_get_cached(this_value: JSValue) -> Option<JSValue>;
     fn pending_output_get_cached(this_value: JSValue) -> Option<JSValue>;
+
+    // The members that the classes of `node_zlib_binding.bind.ts` share.
+    #[inline]
+    fn write(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        flush: JsLocal<'_>,
+        input: JsLocal<'_>,
+        input_offset: JsLocal<'_>,
+        input_length: JsLocal<'_>,
+        output: JsLocal<'_>,
+        output_offset: JsLocal<'_>,
+        output_length: JsLocal<'_>,
+    ) -> JsResult<()> {
+        CompressionStream::<Self>::write(
+            self,
+            this_value.to_js(),
+            cx.global(),
+            &[
+                flush.to_js(),
+                input.to_js(),
+                input_offset.to_js(),
+                input_length.to_js(),
+                output.to_js(),
+                output_offset.to_js(),
+                output_length.to_js(),
+            ],
+        )
+    }
+    #[inline]
+    fn write_sync(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        flush: JsLocal<'_>,
+        input: JsLocal<'_>,
+        input_offset: JsLocal<'_>,
+        input_length: JsLocal<'_>,
+        output: JsLocal<'_>,
+        output_offset: JsLocal<'_>,
+        output_length: JsLocal<'_>,
+    ) -> JsResult<()> {
+        CompressionStream::<Self>::write_sync(
+            self,
+            this_value.to_js(),
+            cx.global(),
+            &[
+                flush.to_js(),
+                input.to_js(),
+                input_offset.to_js(),
+                input_length.to_js(),
+                output.to_js(),
+                output_offset.to_js(),
+                output_length.to_js(),
+            ],
+        )
+    }
+    #[inline]
+    fn reset(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<()> {
+        CompressionStream::<Self>::reset(self, this_value.to_js(), cx.global())
+    }
+    #[inline]
+    fn close(&self) {
+        CompressionStream::<Self>::close(self)
+    }
+    #[inline]
+    fn set_on_error(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
+    ) {
+        let (global, value) = (cx.global(), value.to_js());
+        if value.is_function() {
+            Self::error_callback_set_cached(
+                this_value.to_js(),
+                global,
+                value.with_async_context_if_needed(global),
+            );
+        }
+    }
+    #[inline]
+    fn get_on_error(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
+        Self::error_callback_get_cached(this_value.to_js()).unwrap_or(JSValue::UNDEFINED)
+    }
 }
 
 impl<T: CompressionStreamImpl> CompressionStream<T> {
@@ -415,9 +498,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     }
 
     fn async_job_run(this: *mut T) {
-        // BACKREF — `this` is the live heap m_ctx payload (kept alive by the
-        // `ref_()` in `write()`); bodies use the `&self` accessor surface
-        // (R-2). `ParentRef` Deref collapses the per-site raw deref.
+        // `this` is the live heap payload (kept alive by the `ref_()` in `write()`).
         let this_ref = ParentRef::from(NonNull::new(this).expect("async_job_run: this"));
 
         // The stream reads and writes JS ArrayBuffer backing stores, alive
@@ -509,11 +590,10 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     /// onerror / write callbacks is sound (no `noalias` to violate, no
     /// `black_box` launders needed).
     ///
-    /// SAFETY: `this_ptr` is the live heap m_ctx payload; the matching
+    /// SAFETY: `this_ptr` is the live heap payload; the matching
     /// `ref_()` in `write()` keeps it alive until the trailing `deref()`.
     pub(crate) unsafe fn run_from_js_thread(this_ptr: *mut T) {
-        // BACKREF — see fn-level contract; `ParentRef` Deref gives safe `&T`
-        // for the `&self` accessor surface (R-2).
+        // See the fn-level contract.
         let this = ParentRef::from(NonNull::new(this_ptr).expect("run_from_js_thread: this"));
         let global: &JSGlobalObject = this.global_this();
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
@@ -679,7 +759,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this.write_in_progress().set(true);
         // Can never hit zero while the JS wrapper's +1 is live (we are
         // synchronously inside a host-fn invoked through that wrapper).
-        // SAFETY: `this` is the live m_ctx payload.
+        // SAFETY: `this` is the live payload.
         let _guard = unsafe { RefPtr::init_ref(std::ptr::from_ref::<T>(this).cast_mut()) };
 
         this.stream().with_mut(|s| {
@@ -739,24 +819,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this.input_copy().set(InputCopy::default());
     }
 
-    pub(crate) fn set_on_error(
-        this_value: JSValue,
-        global_object: &JSGlobalObject,
-        value: JSValue,
-    ) {
-        if value.is_function() {
-            T::error_callback_set_cached(
-                this_value,
-                global_object,
-                value.with_async_context_if_needed(global_object),
-            );
-        }
-    }
-
-    pub(crate) fn get_on_error(this_value: JSValue) -> JSValue {
-        T::error_callback_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
-    }
-
     /// returns true if no error was detected/emitted
     fn check_error(this: &T, global_this: &JSGlobalObject, this_value: JSValue) -> bool {
         let err = this.stream().with_mut(|s| s.get_error_info());
@@ -773,9 +835,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this_value: JSValue,
         err_: Error,
     ) {
-        // R-2: `&T` over `Cell`/`JsCell`-backed fields — the onerror
+        // `&T` over `Cell`/`JsCell`-backed fields — the onerror
         // `run_callback` below runs user JS which can re-enter via a fresh
-        // `&T` from the wrapper's `m_ctx` (e.g. `write()` flips
+        // `&T` from the wrapper (e.g. `write()` flips
         // `write_in_progress` / `pending_*`). Interior mutability makes the
         // re-entry sound and the post-callback reads observe the updated
         // values without `noalias`-laundering.
@@ -832,110 +894,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             Self::close(this);
         }
     }
-}
-
-/// The members that the classes of `node_zlib_binding.bind.ts` share: the [`CompressionStream<T>`] mixin's.
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __compression_stream_mixin_reexports {
-    ($native:ty) => {
-        impl $native {
-            #[inline]
-            pub(crate) fn write(
-                &self,
-                this_value: ::bun_jsc::bindgen::JsWrapper<'_, Self>,
-                cx: &mut ::bun_jsc::bindgen::JsScope<'_>,
-                flush: ::bun_jsc::bindgen::JsLocal<'_>,
-                input: ::bun_jsc::bindgen::JsLocal<'_>,
-                input_offset: ::bun_jsc::bindgen::JsLocal<'_>,
-                input_length: ::bun_jsc::bindgen::JsLocal<'_>,
-                output: ::bun_jsc::bindgen::JsLocal<'_>,
-                output_offset: ::bun_jsc::bindgen::JsLocal<'_>,
-                output_length: ::bun_jsc::bindgen::JsLocal<'_>,
-            ) -> ::bun_jsc::JsResult<()> {
-                $crate::node::node_zlib_binding::CompressionStream::<Self>::write(
-                    self,
-                    this_value.to_js(),
-                    cx.global(),
-                    &[
-                        flush.to_js(),
-                        input.to_js(),
-                        input_offset.to_js(),
-                        input_length.to_js(),
-                        output.to_js(),
-                        output_offset.to_js(),
-                        output_length.to_js(),
-                    ],
-                )
-            }
-            #[inline]
-            pub(crate) fn write_sync(
-                &self,
-                this_value: ::bun_jsc::bindgen::JsWrapper<'_, Self>,
-                cx: &mut ::bun_jsc::bindgen::JsScope<'_>,
-                flush: ::bun_jsc::bindgen::JsLocal<'_>,
-                input: ::bun_jsc::bindgen::JsLocal<'_>,
-                input_offset: ::bun_jsc::bindgen::JsLocal<'_>,
-                input_length: ::bun_jsc::bindgen::JsLocal<'_>,
-                output: ::bun_jsc::bindgen::JsLocal<'_>,
-                output_offset: ::bun_jsc::bindgen::JsLocal<'_>,
-                output_length: ::bun_jsc::bindgen::JsLocal<'_>,
-            ) -> ::bun_jsc::JsResult<()> {
-                $crate::node::node_zlib_binding::CompressionStream::<Self>::write_sync(
-                    self,
-                    this_value.to_js(),
-                    cx.global(),
-                    &[
-                        flush.to_js(),
-                        input.to_js(),
-                        input_offset.to_js(),
-                        input_length.to_js(),
-                        output.to_js(),
-                        output_offset.to_js(),
-                        output_length.to_js(),
-                    ],
-                )
-            }
-            #[inline]
-            pub(crate) fn reset(
-                &self,
-                this_value: ::bun_jsc::bindgen::JsWrapper<'_, Self>,
-                cx: &mut ::bun_jsc::bindgen::JsScope<'_>,
-            ) -> ::bun_jsc::JsResult<()> {
-                $crate::node::node_zlib_binding::CompressionStream::<Self>::reset(
-                    self,
-                    this_value.to_js(),
-                    cx.global(),
-                )
-            }
-            #[inline]
-            pub(crate) fn close(&self) {
-                $crate::node::node_zlib_binding::CompressionStream::<Self>::close(self)
-            }
-            #[inline]
-            pub(crate) fn set_on_error(
-                &self,
-                this_value: ::bun_jsc::bindgen::JsWrapper<'_, Self>,
-                cx: &mut ::bun_jsc::bindgen::JsScope<'_>,
-                value: ::bun_jsc::bindgen::JsLocal<'_>,
-            ) {
-                $crate::node::node_zlib_binding::CompressionStream::<Self>::set_on_error(
-                    this_value.to_js(),
-                    cx.global(),
-                    value.to_js(),
-                )
-            }
-            #[inline]
-            pub(crate) fn get_on_error(
-                &self,
-                this_value: ::bun_jsc::bindgen::JsWrapper<'_, Self>,
-            ) -> ::bun_jsc::JSValue {
-                $crate::node::node_zlib_binding::CompressionStream::<Self>::get_on_error(
-                    this_value.to_js(),
-                )
-            }
-        }
-    };
 }
 
 /// Implements [`CompressionContext`] for a `Context` type and

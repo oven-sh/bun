@@ -112,10 +112,12 @@ where
 /// path or Blob and require Blob arguments to be S3-backed.
 fn parse_s3_path_or_blob(
     global: &JSGlobalObject,
-    args: &mut bun_jsc::call_frame::ArgumentsSlice,
+    path: JSValue,
     error_message: &str,
 ) -> JsResult<PathOrBlob> {
-    let path_or_blob = PathOrBlob::from_js_no_copy(global, args)?;
+    let mut args =
+        bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), core::slice::from_ref(&path));
+    let path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
     if let PathOrBlob::Blob(blob) = &path_or_blob {
         if blob.store.get().is_none()
             || !matches!(
@@ -129,16 +131,13 @@ fn parse_s3_path_or_blob(
     Ok(path_or_blob)
 }
 
-/// Turns a parsed argument into an S3 blob: eats the options argument,
-/// rejects file-descriptor paths, and constructs the env-credentialed store
-/// for path arguments. Returns the blob together with the options it consumed.
+/// Rejects file-descriptor paths, and constructs the env-credentialed store for path arguments.
 fn resolve_s3_blob(
     global: &JSGlobalObject,
-    args: &mut bun_jsc::call_frame::ArgumentsSlice,
+    options: Option<JSValue>,
     path_or_blob: PathOrBlob,
     error_message: &str,
-) -> JsResult<(Box<Blob>, Option<JSValue>)> {
-    let options = args.next_eat();
+) -> JsResult<Box<Blob>> {
     match path_or_blob {
         PathOrBlob::Path(path) => {
             if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
@@ -146,49 +145,56 @@ fn resolve_s3_blob(
             }
             // The clone owns a copy of a buffer's bytes; `path` unpins at scope exit.
             let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
-            Ok((Box::new(blob), options))
+            Ok(Box::new(blob))
         }
-        PathOrBlob::Blob(blob) => Ok((blob, options)),
+        PathOrBlob::Blob(blob) => Ok(blob),
     }
 }
 
-pub(crate) fn presign(global: &JSGlobalObject, args: &[JSValue]) -> JsResult<JSValue> {
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), args);
-
+pub(crate) fn presign(
+    global: &JSGlobalObject,
+    path: JSValue,
+    options: Option<JSValue>,
+) -> JsResult<JSValue> {
     let error_message = "Expected a S3 or path to presign";
-    let path_or_blob = parse_s3_path_or_blob(global, &mut args, error_message)?;
-    let (blob, options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
+    let path_or_blob = parse_s3_path_or_blob(global, path, error_message)?;
+    let blob = resolve_s3_blob(global, options, path_or_blob, error_message)?;
     get_presign_url_from(&blob, global, options)
 }
 
-pub(crate) fn unlink(cx: &JsThread<'_>, args: &[JSValue]) -> JsResult<JSValue> {
+pub(crate) fn unlink(
+    cx: &JsThread<'_>,
+    path: JSValue,
+    options: Option<JSValue>,
+) -> JsResult<JSValue> {
     let global = cx.global();
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), args);
-
     let error_message = "Expected a S3 or path to delete";
-    let path_or_blob = parse_s3_path_or_blob(global, &mut args, error_message)?;
-    let (blob, options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
+    let path_or_blob = parse_s3_path_or_blob(global, path, error_message)?;
+    let blob = resolve_s3_blob(global, options, path_or_blob, error_message)?;
     let store = blob.store.get().as_ref().unwrap().clone();
     store.data.as_s3().unlink(store.clone(), cx, options)
 }
 
-pub(crate) fn write(cx: &JsThread<'_>, args: &[JSValue]) -> JsResult<JSValue> {
+pub(crate) fn write(
+    cx: &JsThread<'_>,
+    path: JSValue,
+    data: JSValue,
+    options: Option<JSValue>,
+) -> JsResult<JSValue> {
     let global = cx.global();
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), args);
-
     let error_message = "Expected a S3 or path to upload";
-    let path_or_blob = parse_s3_path_or_blob(global, &mut args, error_message)?;
+    let path_or_blob = parse_s3_path_or_blob(global, path, error_message)?;
 
-    let Some(data) = args.next_eat() else {
+    if data.is_undefined() {
         return Err(global
             .err(
                 bun_jsc::ErrorCode::MISSING_ARGS,
                 format_args!("Expected a Blob-y thing to upload"),
             )
             .throw());
-    };
+    }
 
-    let (blob, options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
+    let blob = resolve_s3_blob(global, options, path_or_blob, error_message)?;
     // `write_file_internal` takes `&mut PathOrBlob`; rewrap the resolved blob.
     let mut blob_internal = PathOrBlob::Blob(blob);
     blob::write_file_internal(
@@ -203,25 +209,29 @@ pub(crate) fn write(cx: &JsThread<'_>, args: &[JSValue]) -> JsResult<JSValue> {
     )
 }
 
-pub(crate) fn size(cx: &JsThread<'_>, args: &[JSValue]) -> JsResult<JSValue> {
+pub(crate) fn size(
+    cx: &JsThread<'_>,
+    path: JSValue,
+    options: Option<JSValue>,
+) -> JsResult<JSValue> {
     let global = cx.global();
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), args);
-
     let error_message = "Expected a S3 or path to get size";
-    let mut blob = match parse_s3_path_or_blob(global, &mut args, error_message)? {
+    let mut blob = match parse_s3_path_or_blob(global, path, error_message)? {
         PathOrBlob::Blob(blob) => return Ok(JSValue::js_number(blob.get_size())),
-        path => resolve_s3_blob(global, &mut args, path, error_message)?.0,
+        path => resolve_s3_blob(global, options, path, error_message)?,
     };
     S3BlobStatTask::size(cx, &mut blob)
 }
 
-pub(crate) fn exists(cx: &JsThread<'_>, args: &[JSValue]) -> JsResult<JSValue> {
+pub(crate) fn exists(
+    cx: &JsThread<'_>,
+    path: JSValue,
+    options: Option<JSValue>,
+) -> JsResult<JSValue> {
     let global = cx.global();
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), args);
-
     let error_message = "Expected a S3 or path to check if it exists";
-    let path_or_blob = parse_s3_path_or_blob(global, &mut args, error_message)?;
-    let (blob, _) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
+    let path_or_blob = parse_s3_path_or_blob(global, path, error_message)?;
+    let blob = resolve_s3_blob(global, options, path_or_blob, error_message)?;
     S3BlobStatTask::exists(cx, &blob)
 }
 
@@ -629,13 +639,15 @@ fn get_presign_url(
     get_presign_url_from(this, global, callframe.arguments().first().copied())
 }
 
-pub(crate) fn stat(cx: &JsThread<'_>, args: &[JSValue]) -> JsResult<JSValue> {
+pub(crate) fn stat(
+    cx: &JsThread<'_>,
+    path: JSValue,
+    options: Option<JSValue>,
+) -> JsResult<JSValue> {
     let global = cx.global();
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), args);
-
     let error_message = "Expected a S3 or path to get size";
-    let path_or_blob = parse_s3_path_or_blob(global, &mut args, error_message)?;
-    let (blob, _options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
+    let path_or_blob = parse_s3_path_or_blob(global, path, error_message)?;
+    let blob = resolve_s3_blob(global, options, path_or_blob, error_message)?;
     S3BlobStatTask::stat(cx, &blob)
 }
 
@@ -645,16 +657,12 @@ pub(crate) fn construct_internal_js(
     options: Option<JSValue>,
 ) -> JsResult<JSValue> {
     let blob = construct_s3_file_internal(global, path, options)?;
-    // SAFETY: `blob` is a freshly heap-allocated `*mut Blob` from `Blob::new`.
-    // Call the `BlobExt::to_js` `&mut self` method (not the by-value
-    // `JsClass::to_js`), which hands the existing heap pointer to the C++
-    // wrapper.
+    // SAFETY: `blob` is a freshly heap-allocated `*mut Blob` from `Blob::new`; the wrapper adopts it.
     Ok(BlobExt::to_js(unsafe { &mut *blob }, global))
 }
 
 pub(crate) fn to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSValue {
-    // C++ adopts `this` opaquely (stored as `void* m_ctx` in the JS wrapper);
-    // ownership-transfer contract lives on `to_js_unchecked`'s callers.
+    // The JS wrapper adopts `this`.
     BUN__createJSS3FileUnsafely(global, this.cast::<core::ffi::c_void>())
 }
 
@@ -671,7 +679,7 @@ pub(crate) mod exports {
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
     fn JSS3File__bucket(this: *mut Blob, global: *mut JSGlobalObject) -> JSValue {
-        // SAFETY: C++ prototype getter passes the live `m_ctx` Blob and global.
+        // SAFETY: C++ prototype getter passes the wrapper's live Blob and global.
         let (this, global) = unsafe { (&*this, &*global) };
         bun_jsc::to_js_host_call(global, || super::get_bucket(this, global))
     }
@@ -684,7 +692,7 @@ pub(crate) mod exports {
         global: *mut JSGlobalObject,
         callframe: *mut CallFrame,
     ) -> JSValue {
-        // SAFETY: JSC method shim passes live `m_ctx`/global/callframe.
+        // SAFETY: JSC method shim passes the wrapper's live Blob, global and callframe.
         let (this, global, callframe) = unsafe { (&*this, &*global, &*callframe) };
         bun_jsc::to_js_host_call(global, || super::get_presign_url(this, global, callframe))
     }
@@ -696,7 +704,7 @@ pub(crate) mod exports {
         global: *mut JSGlobalObject,
         callframe: *mut CallFrame,
     ) -> JSValue {
-        // SAFETY: JSC method shim passes live `m_ctx`/global/callframe.
+        // SAFETY: JSC method shim passes the wrapper's live Blob, global and callframe.
         let (this, global, callframe) = unsafe { (&*this, &*global, &*callframe) };
         bun_jsc::to_js_host_call(global, || {
             S3BlobStatTask::stat(&global.js_thread_of_caller(callframe), this)
@@ -706,10 +714,7 @@ pub(crate) mod exports {
 
 // C++ side defines `SYSV_ABI EncodedJSValue` (JSS3File.cpp).
 bun_jsc::jsc_abi_extern! {
-    // `&JSGlobalObject` discharges the only deref'd-param precondition; `blob`
-    // is stored opaquely as `void* m_ctx` (module-private — sole caller is
-    // `to_js_unchecked`, whose own signature carries the ownership-transfer
-    // contract). Matches the `*__createObject` precedent.
+    // `safe`: C++ stores `blob` and does not read through it.
     safe fn BUN__createJSS3FileUnsafely(
         global: &JSGlobalObject,
         blob: *mut core::ffi::c_void,

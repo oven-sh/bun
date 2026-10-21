@@ -197,8 +197,7 @@ impl SessionHold {
                 "fetch: 'session' must be a Bun.FetchSession"
             )));
         };
-        // SAFETY: `from_js` returned the live `m_ctx` of the wrapper, which
-        // `value` keeps alive across this function.
+        // SAFETY: `value` holds a ref on it.
         let session = unsafe { RefPtr::init_ref(session) };
         session.used.set(true);
         if session.is_only_hold() {

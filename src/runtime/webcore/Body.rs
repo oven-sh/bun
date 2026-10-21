@@ -215,10 +215,7 @@ pub struct PendingValue {
     pub(crate) readable: webcore::readable_stream::Strong,
     // writable: webcore::Sink
 
-    // LIFETIMES.tsv JSC_BORROW → `&JSGlobalObject`, but `Value::Locked`
-    // is stored on heap (Body in Request/Response m_ctx). Dropped the `<'a>`
-    // lifetime per PORTING.md §Type map (no lifetime params on structs);
-    // raw ptr until we pick `&'static` vs a JSC handle.
+    // A raw pointer: `Value::Locked` lives in the heap payload of a Request/Response.
     pub global: *const JSGlobalObject,
     pub task: Option<NonNull<c_void>>,
 
@@ -910,7 +907,7 @@ impl Value {
         }
 
         // `new_mut` centralises the post-allocation deref; ownership of the
-        // heap `NewSource` transfers to the JS wrapper's `m_ctx` in
+        // heap `NewSource` transfers to the JS wrapper in
         // `to_readable_stream()` below (freed by the GC finalizer).
         let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
             webcore::readable_stream::NewSource {
@@ -1503,7 +1500,7 @@ impl Value {
         }
 
         // `new_mut` centralises the post-allocation deref; ownership of the
-        // heap `NewSource` transfers to the JS wrapper's `m_ctx` in
+        // heap `NewSource` transfers to the JS wrapper in
         // `to_readable_stream()` below (freed by the GC finalizer).
         let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
             webcore::readable_stream::NewSource {
@@ -1647,10 +1644,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>>;
 
     // ────────────────────────────────────────────────────────────────────
-    // Twin methods (identical for Request/Response). These were previously
-    // open-coded in both files against `js_gen::*` / `js::*` directly; the
-    // [`BodyOwnerJs`] forwarders erase the per-class codegen module so the
-    // bodies can live here once.
+    // Twin methods (identical for Request/Response); [`BodyOwnerJs`] reaches each class's generated module.
     // ────────────────────────────────────────────────────────────────────
 
     /// JS-side `js.gc.stream` cache is the

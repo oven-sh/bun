@@ -528,16 +528,15 @@ impl ServerWebSocket {
             flags: Cell::new(Flags::default()),
             signal: Cell::new(signal),
         }
-        .into_js_value(global_object);
-        let this = js::from_js(this_value).unwrap().as_ptr();
-        // Get a strong ref and downgrade when terminating/close and GC will be able to collect the newly created value
-        // SAFETY: stored in `this_value`. R-2: shared borrow + `JsCell::set` —
-        // no `&mut Self` formed.
+        .into_js_wrapper(global_object);
+        let js_value = this_value.to_js();
+        let this = this_value.as_ptr().as_ptr();
+        // SAFETY: `this_value` holds the object the struct is in.
         let this_ref = unsafe { &*this };
         this_ref
             .this_value
-            .set(JsRef::init_strong(this_value, global_object));
-        js::data_set_cached(this_value, global_object, data_value);
+            .set(JsRef::init_strong(js_value, global_object));
+        js::data_set_cached(js_value, global_object, data_value);
         // Both callers bail out when `handler.server.is_none()`,
         // so this is normally `Some`; keep the `and_then` as
         // defense-in-depth (option getters between that guard and here can
@@ -545,7 +544,7 @@ impl ServerWebSocket {
         // `None` once the wrapper is `Finalized` or the VM's script gate has
         // closed).
         if let Some(server_js) = handler.server.and_then(|s| s.js_value_for_dispatch()) {
-            js::server_set_cached(this_value, global_object, server_js);
+            js::server_set_cached(js_value, global_object, server_js);
         }
         this
     }

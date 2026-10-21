@@ -4,8 +4,6 @@
 //! cannot accept a macro in `extern "<abi>"` position, so the JSC calling
 //! convention (`"sysv64"` on Windows-x64, `"C"` elsewhere) is encoded by
 //! emitting two `#[cfg]`-gated shims from a proc-macro instead.
-//!
-//! See `docs/PORTING.md` §JSC types and §FFI.
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
@@ -108,7 +106,7 @@ fn expand_host_fn(args: &HostFnArgs, func: &ItemFn) -> TokenStream2 {
             // SAFETY: JSC guarantees both pointers are live for the call.
             let __g = unsafe { &*__global };
             let __f = unsafe { &*__frame };
-            ::bun_jsc::__macro_support::host_fn_result(__g, || #fn_name(__g, __f))
+            ::bun_jsc::host_fn::host_fn_result(__g, || #fn_name(__g, __f))
         },
     );
 

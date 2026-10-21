@@ -114,7 +114,7 @@ export const Expect = b.class({
     toBeInteger: matcher,
     toBeLessThan: matcherWithExpected,
     toBeLessThanOrEqual: matcherWithExpected,
-    toBeNaN: matcher,
+    toBeNaN: { ...matcher, rustName: "to_be_nan" },
     toBeNegative: matcher,
     toBeNil: matcher,
     toBeNull: matcher,

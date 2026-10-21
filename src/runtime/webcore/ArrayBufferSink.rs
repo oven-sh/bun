@@ -66,8 +66,7 @@ impl ArrayBufferSink {
         Ok(JSValue::js_number(0.0))
     }
 
-    // In-place init (JSSink m_ctx slot) — codegen calls this on a
-    // pre-allocated slot.
+    // In-place init: codegen calls this on a pre-allocated slot.
     pub(crate) fn construct(this: &mut core::mem::MaybeUninit<Self>) {
         this.write(ArrayBufferSink {
             bytes: Vec::<u8>::default(),

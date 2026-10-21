@@ -25,7 +25,7 @@ mod _impl {
     #[derive(bun_ptr::CellRefCounted)]
     pub(crate) struct NativeZlib {
         pub(crate) ref_count: Cell<u32>,
-        // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
+        // The global outlives this payload. `BackRef`
         // centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         /// How the pool thread delivers a finished write to the VM.
@@ -43,12 +43,7 @@ mod _impl {
         pub task: JsCell<WorkPoolTask>,
     }
 
-    // write / runFromJSThread / writeSync / reset / close / setOnError / getOnError /
-    // finalize are provided as inherent methods on
-    // `CompressionStream::<NativeZlib>` in node_zlib_binding.rs (a generic mixin
-    // struct, not a trait); `__compression_stream_mixin_reexports!` re-exports the
-    // same JS-exposed surface (write / writeSync / reset / close / setOnError /
-    // getOnError / finalize); runFromJSThread and emitError stay internal.
+    // `CompressionStreamImpl` (node_zlib_binding.rs) has write, writeSync, reset, close and onerror.
 
     impl NativeZlib {
         pub(crate) fn constructor(cx: &mut JsScope<'_>, mode: u8) -> *mut Self {
@@ -194,9 +189,9 @@ mod _impl {
 
             let err = self.stream.with_mut(|s| s.set_params(level, strategy));
             if err.is_error() {
-                // R-2: `&self` over `Cell`/`JsCell` fields — `emit_error` →
+                // `&self` over `Cell`/`JsCell` fields — `emit_error` →
                 // `run_callback` may re-enter `close()`/`reset()` via a fresh
-                // `&Self` from `m_ctx`; interior mutability makes that sound.
+                // `&Self`; interior mutability makes that sound.
                 CompressionStream::<Self>::emit_error(self, global, this_value.to_js(), err);
             }
             Ok(())
@@ -211,7 +206,6 @@ mod _impl {
     }
 
     crate::__impl_compression_stream!(NativeZlib, super::Context, js_NativeZlib);
-    crate::__compression_stream_mixin_reexports!(NativeZlib);
 } // mod _impl
 
 pub(crate) use _impl::NativeZlib;

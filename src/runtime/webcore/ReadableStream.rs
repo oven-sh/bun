@@ -744,12 +744,12 @@ pub enum Source {
 impl Source {
     /// Shared borrow of the `Bytes` payload as a [`BackRef`](bun_ptr::BackRef).
     ///
-    /// The pointer is the JS wrapper's `m_ctx` heap allocation returned by
+    /// The pointer is the JS wrapper's heap allocation returned by
     /// `ReadableStreamTag__tagged` and is non-null and live while the owning
     /// `ReadableStream` JSValue is rooted (caller's `Strong`/stack root) — the
-    /// BACKREF outlives-holder invariant. R-2: every `ByteStream` field touched
+    /// BACKREF outlives-holder invariant. Every `ByteStream` field touched
     /// through this borrow is `Cell`/`JsCell`-backed, so re-entrant JS that
-    /// re-derives a fresh `&ByteStream` from `m_ctx` aliases shared-only.
+    /// re-derives a fresh `&ByteStream` from the wrapper aliases shared-only.
     ///
     /// Centralises the per-site raw-pointer deref so call sites are
     /// unsafe-free; the one audited deref lives in [`bun_ptr::BackRef::get`].
@@ -765,11 +765,7 @@ impl Source {
 
     /// Shared borrow of the `File` payload as a [`BackRef`](bun_ptr::BackRef).
     ///
-    /// Same invariant as [`bytes`](Self::bytes): the pointer is the JS
-    /// wrapper's `m_ctx` heap allocation, non-null and live while the owning
-    /// `ReadableStream` JSValue is rooted. R-2: every `FileReader` field
-    /// touched through this borrow is `Cell`/`JsCell`-backed, so re-entrant JS
-    /// that re-derives a fresh `&FileReader` from `m_ctx` aliases shared-only.
+    /// Same invariant as [`bytes`](Self::bytes).
     #[inline]
     pub fn file(self) -> Option<bun_ptr::BackRef<FileReader>> {
         match self {
@@ -871,7 +867,7 @@ pub struct NewSource<C: SourceContext> {
     /// Upstream producer to notify on cancel/drain/consumer-attach. Replaces
     /// the per-signal fn-ptr + ctx-ptr pairs with one typed handle.
     pub producer: Cell<streams::SourceHandle>,
-    // JSC_BORROW: process-lifetime VM global. Heap m_ctx field reassigned in
+    // JSC_BORROW: process-lifetime VM global. Reassigned in
     // `start()` from a fresh `&JSGlobalObject`; `BackRef` gives a safe `Deref`
     // projection without propagating a lifetime parameter into FFI codegen.
     pub global_this: Cell<Option<bun_ptr::BackRef<JSGlobalObject>>>,
@@ -1095,7 +1091,7 @@ impl<C: SourceContext> NewSource<C> {
     /// Heap-allocate and hand back the raw pointer.
     ///
     /// Ownership is **not** retained by Rust: the returned pointer is intended to
-    /// be installed as the JS wrapper's `m_ctx` via [`Self::to_readable_stream`]
+    /// be handed to the JS wrapper via [`Self::to_readable_stream`]
     /// (or [`NewSourceCodegen::to_js`]), after which the GC finalizer drives
     /// teardown through [`Self::decrement_count`] → context `deinit_fn` →
     /// [`Self::deinit`]. Dropping a `Box` here would free the allocation while
@@ -1126,7 +1122,7 @@ impl<C: SourceContext> NewSource<C> {
     pub fn new_mut<'a>(init: Self) -> &'a mut Self {
         // SAFETY: `heap::into_raw(Box::new(..))` is non-null, aligned, and the
         // sole pointer to a fresh allocation; forming `&mut` is unique.
-        // Ownership transfers to the JS wrapper's `m_ctx`, so the unbounded
+        // Ownership transfers to the JS wrapper, so the unbounded
         // lifetime is correct (no Rust owner will drop underneath the borrow).
         unsafe { &mut *Self::new(init) }
     }

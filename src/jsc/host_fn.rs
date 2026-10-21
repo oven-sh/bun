@@ -22,9 +22,7 @@ use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 // before any unwind starts, so `catch_unwind` always returns `Ok` and there is
 // no payload to convert into a JS exception. JSC does not throw C++ exceptions
 // across its public API, so there is no foreign unwind to catch either. The
-// closure-taking helpers below (`to_js_host_call`, `host_setter_result`,
-// `host_construct_result`, `host_fn_finalize`) therefore call the user body
-// directly.
+// closure-taking helpers below therefore call the user body directly.
 
 // ───────────────────────────── type aliases ──────────────────────────────
 
@@ -199,7 +197,7 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
 
 // ──────────────────────── codegen-thunk dispatch helpers ────────────────────────
 //
-// The thunks of `generate-host-exports.ts`, `generate-js2native.ts` and `generate-jssink.ts` call these.
+// The thunks of `#[bun_jsc::host_fn]`, `generate-host-exports.ts`, `generate-js2native.ts` and `generate-jssink.ts` call these.
 
 /// Normalize a host-fn body's return type to `JsResult<JSValue>`.
 pub trait IntoHostFnReturn {

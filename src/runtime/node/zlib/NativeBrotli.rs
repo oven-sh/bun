@@ -73,7 +73,7 @@ mod _impl {
     #[derive(bun_ptr::CellRefCounted)]
     pub(crate) struct NativeBrotli {
         pub(crate) ref_count: Cell<u32>,
-        // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
+        // The global outlives this payload. `BackRef`
         // centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         /// How the pool thread delivers a finished write to the VM.
@@ -100,9 +100,7 @@ mod _impl {
         pub(crate) estimated_external_size: usize,
     }
 
-    // write / runFromJSThread / writeSync / reset / close / setOnError /
-    // getOnError / finalize / emitError are generic associated
-    // fns on `CompressionStream::<NativeBrotli>` (see node_zlib_binding.rs).
+    // `CompressionStreamImpl` (node_zlib_binding.rs) has write, writeSync, reset, close and onerror.
 
     impl NativeBrotli {
         pub(crate) fn constructor(cx: &mut JsScope<'_>, mode: u8) -> *mut Self {
@@ -639,10 +637,6 @@ mod _impl {
         }
     }
 
-    // ─── CompressionStream mixin glue ─────────────────────────────────────────
-    // Stamps `impl CompressionContext for Context`, `impl Taskable`/
-    // `CompressionStreamImpl for NativeBrotli`, and `pub mod js { … }` (the
-    // `NativeBrotliPrototype__*CachedValue` accessors).
     crate::__impl_compression_stream!(NativeBrotli, Context, js_NativeBrotli);
 
     fn code_for_error(err: c::BrotliDecoderErrorCode2) -> *const core::ffi::c_char {
@@ -692,8 +686,6 @@ mod _impl {
     /// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
     /// struct-init site; the body never dereferences the pointer.
     fn noop_task_callback(_task: *mut WorkPoolTask) {}
-
-    crate::__compression_stream_mixin_reexports!(NativeBrotli);
 } // mod _impl
 
 pub(crate) use _impl::NativeBrotli;

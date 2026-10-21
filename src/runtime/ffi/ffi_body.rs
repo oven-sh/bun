@@ -12,7 +12,7 @@ use crate::napi;
 use bun_collections::StringArrayHashMap;
 use bun_core::{EncodedSlice, ZStr};
 use bun_core::{ZBox, env_var, fmt as bun_fmt, zstr};
-use bun_jsc::bindgen::{JsScope, JsWrapper};
+use bun_jsc::bindgen::{JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, CallFrame, EncodedSliceJsc, ErrorCode, JSGlobalObject, JSObject,
@@ -1530,9 +1530,11 @@ impl FFI {
         let obj = JSValue::create_empty_object(global, size);
         let _obj_guard = obj.protected();
 
-        let js_object = FFI::default().to_js(global);
+        let this_value = FFI::default().into_js_wrapper(global);
+        let js_object = this_value.to_js();
         let _js_object_guard = js_object.protected();
-        let lib = js_object.as_class_ref::<FFI>().expect("made above");
+        // SAFETY: `this_value` holds the object the struct is in.
+        let lib = unsafe { this_value.as_ptr().as_ref() };
 
         for function in symbols.values_mut() {
             let function_name = ZBox::from_bytes(function.base_name.as_bytes());
@@ -1622,9 +1624,11 @@ impl FFI {
         obj.ensure_still_alive();
         let _keep = jsc::EnsureStillAlive(obj);
 
-        let js_object = FFI::default().to_js(global);
+        let this_value = FFI::default().into_js_wrapper(global);
+        let js_object = this_value.to_js();
         let _js_object_guard = js_object.protected();
-        let lib = js_object.as_class_ref::<FFI>().expect("made above");
+        // SAFETY: `this_value` holds the object the struct is in.
+        let lib = unsafe { this_value.as_ptr().as_ref() };
 
         for function in symbols.values_mut() {
             let function_name = ZBox::from_bytes(function.base_name.as_bytes());

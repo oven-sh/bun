@@ -81,10 +81,7 @@ impl S3CredentialsExt for S3Credentials {
     }
 }
 
-/// How [`S3Client::blob_and_options`] reports a missing or unparseable path
-/// argument. `presign`/`exists`/`size`/`stat` distinguish "no argument"
-/// (`MISSING_ARGS`) from "argument is not a path" (invalid arguments), while
-/// `unlink` reports `MISSING_ARGS` for both.
+/// `presign`/`exists`/`size`/`stat` report `undefined` as `MISSING_ARGS` and any other non-path as invalid; `unlink` reports both as `MISSING_ARGS`.
 #[derive(Clone, Copy)]
 enum MissingPathError {
     MissingOrInvalid,
@@ -98,6 +95,20 @@ fn opt_js(v: JSValue) -> Option<JSValue> {
     } else {
         Some(v)
     }
+}
+
+fn path_from_js(global: &JSGlobalObject, path: JSValue) -> JsResult<Option<PathLike<'static>>> {
+    let vm = global.bun_vm();
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, core::slice::from_ref(&path));
+    PathLike::from_js(global, &mut args)
+}
+
+/// `presign(path, undefined)` signs with the `acl` and `storageClass` of the store, `presign(path)` without.
+fn presign_args(args: &[JsLocal<'_>]) -> (JSValue, Option<JSValue>) {
+    (
+        args.first().map_or(JSValue::UNDEFINED, |path| path.to_js()),
+        args.get(1).map(|options| options.to_js()),
+    )
 }
 
 pub(crate) fn write_format_credentials<F, W, const ENABLE_ANSI_COLORS: bool>(
@@ -350,21 +361,18 @@ impl S3Client {
         )
     }
 
-    /// Shared prologue of the `(path, options?)` instance methods: parses the
-    /// path, eats the options argument, and constructs the blob. `verb`
-    /// completes the "Expected a path to {verb}" error message.
-    fn blob_and_options(
+    /// `verb` completes the "Expected a path to {verb}" error message.
+    fn blob_for_path(
         &self,
         global: &JSGlobalObject,
-        args: &[JsLocal<'_>],
+        path: JSValue,
+        options: Option<JSValue>,
         verb: &str,
         missing_path: MissingPathError,
-    ) -> JsResult<(crate::webcore::blob::Blob, Option<JSValue>)> {
-        let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, JsLocal::to_js_slice(args));
-        let Some(path) = PathLike::from_js(global, &mut args)? else {
+    ) -> JsResult<crate::webcore::blob::Blob> {
+        let Some(path) = path_from_js(global, path)? else {
             return Err(match missing_path {
-                MissingPathError::MissingOrInvalid if args.len() != 0 => {
+                MissingPathError::MissingOrInvalid if !path.is_undefined() => {
                     global.throw_invalid_arguments(format_args!("Expected a path to {verb}"))
                 }
                 _ => global
@@ -375,22 +383,20 @@ impl S3Client {
                     .throw(),
             });
         };
-        let options = args.next_eat();
-        Ok((self.construct_blob(global, path, options)?, options))
+        self.construct_blob(global, path, options)
     }
 
     pub(crate) fn file(
         ptr: &Self,
         cx: &mut JsScope<'_>,
-        args: &[JsLocal<'_>],
+        path: JsLocal<'_>,
+        options: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, JsLocal::to_js_slice(args));
-        let path: PathLike = match PathLike::from_js(global, &mut args)? {
+        let path: PathLike = match path_from_js(global, path.to_js())? {
             Some(p) => p,
             None => {
-                if args.len() == 0 {
+                if path.to_js().is_undefined() {
                     return Err(global
                         .err(ErrorCode::MISSING_ARGS, format_args!("Expected a path "))
                         .throw());
@@ -398,7 +404,7 @@ impl S3Client {
                 return Err(global.throw_invalid_arguments(format_args!("Expected a path")));
             }
         };
-        let options = args.next_eat();
+        let options = opt_js(options.to_js());
         // `Blob::new` heap-promotes and marks `ref_count = 1` so
         // the JSS3File wrapper's `finalize` knows to free the blob.
         let blob = crate::webcore::blob::Blob::new(ptr.construct_blob(global, path, options)?);
@@ -417,20 +423,28 @@ impl S3Client {
         args: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let (blob, options) =
-            ptr.blob_and_options(global, args, "presign", MissingPathError::MissingOrInvalid)?;
+        let (path, options) = presign_args(args);
+        let blob = ptr.blob_for_path(
+            global,
+            path,
+            options,
+            "presign",
+            MissingPathError::MissingOrInvalid,
+        )?;
         S3File::get_presign_url_from(&blob, global, options)
     }
 
     pub(crate) fn exists(
         ptr: &Self,
         cx: &mut JsScope<'_>,
-        args: &[JsLocal<'_>],
+        path: JsLocal<'_>,
+        options: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
-        let (blob, _) = ptr.blob_and_options(
+        let blob = ptr.blob_for_path(
             cx.global(),
-            args,
+            path.to_js(),
+            opt_js(options.to_js()),
             "check if it exists",
             MissingPathError::MissingOrInvalid,
         )?;
@@ -440,12 +454,14 @@ impl S3Client {
     pub(crate) fn size(
         ptr: &Self,
         cx: &mut JsScope<'_>,
-        args: &[JsLocal<'_>],
+        path: JsLocal<'_>,
+        options: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
-        let (mut blob, _) = ptr.blob_and_options(
+        let mut blob = ptr.blob_for_path(
             cx.global(),
-            args,
+            path.to_js(),
+            opt_js(options.to_js()),
             "check the size of",
             MissingPathError::MissingOrInvalid,
         )?;
@@ -455,12 +471,14 @@ impl S3Client {
     pub(crate) fn stat(
         ptr: &Self,
         cx: &mut JsScope<'_>,
-        args: &[JsLocal<'_>],
+        path: JsLocal<'_>,
+        options: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
-        let (blob, _) = ptr.blob_and_options(
+        let blob = ptr.blob_for_path(
             cx.global(),
-            args,
+            path.to_js(),
+            opt_js(options.to_js()),
             "check the stat of",
             MissingPathError::MissingOrInvalid,
         )?;
@@ -470,13 +488,13 @@ impl S3Client {
     pub(crate) fn write(
         ptr: &Self,
         cx: &mut JsScope<'_>,
-        args: &[JsLocal<'_>],
+        path: JsLocal<'_>,
+        data: JsLocal<'_>,
+        options: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
-        let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, JsLocal::to_js_slice(args));
-        let path: PathLike = match PathLike::from_js(global, &mut args)? {
+        let path: PathLike = match path_from_js(global, path.to_js())? {
             Some(p) => p,
             None => {
                 return Err(global
@@ -487,16 +505,17 @@ impl S3Client {
                     .throw());
             }
         };
-        let Some(data) = args.next_eat() else {
+        let data = data.to_js();
+        if data.is_undefined() {
             return Err(global
                 .err(
                     ErrorCode::MISSING_ARGS,
                     format_args!("Expected a Blob-y thing to write"),
                 )
                 .throw());
-        };
+        }
 
-        let options = args.next_eat();
+        let options = opt_js(options.to_js());
         let blob = ptr.construct_blob(global, path, options)?;
         // Move into `PathOrBlob` directly; cleanup of the moved-out value is
         // handled by `Drop`.
@@ -543,12 +562,15 @@ impl S3Client {
     pub(crate) fn unlink(
         ptr: &Self,
         cx: &mut JsScope<'_>,
-        args: &[JsLocal<'_>],
+        path: JsLocal<'_>,
+        options: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
-        let (blob, options) = ptr.blob_and_options(
+        let options = opt_js(options.to_js());
+        let blob = ptr.blob_for_path(
             cx.global(),
-            args,
+            path.to_js(),
+            options,
             "unlink",
             MissingPathError::AlwaysMissingArgs,
         )?;
@@ -558,40 +580,68 @@ impl S3Client {
 
     // ── Static methods ────────────────────────────────────────────────────
 
-    pub(crate) fn static_write(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
-        S3File::write(&cx.js_thread(), JsLocal::to_js_slice(args))
+    pub(crate) fn static_write(
+        cx: &mut JsScope<'_>,
+        path: JsLocal<'_>,
+        data: JsLocal<'_>,
+        options: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        S3File::write(
+            &cx.js_thread(),
+            path.to_js(),
+            data.to_js(),
+            opt_js(options.to_js()),
+        )
     }
 
     pub(crate) fn static_presign(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
-        S3File::presign(cx.global(), JsLocal::to_js_slice(args))
+        let (path, options) = presign_args(args);
+        S3File::presign(cx.global(), path, options)
     }
 
-    pub(crate) fn static_exists(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
-        S3File::exists(&cx.js_thread(), JsLocal::to_js_slice(args))
+    pub(crate) fn static_exists(
+        cx: &mut JsScope<'_>,
+        path: JsLocal<'_>,
+        options: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        S3File::exists(&cx.js_thread(), path.to_js(), opt_js(options.to_js()))
     }
 
-    pub(crate) fn static_size(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
-        S3File::size(&cx.js_thread(), JsLocal::to_js_slice(args))
+    pub(crate) fn static_size(
+        cx: &mut JsScope<'_>,
+        path: JsLocal<'_>,
+        options: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        S3File::size(&cx.js_thread(), path.to_js(), opt_js(options.to_js()))
     }
 
-    pub(crate) fn static_unlink(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
-        S3File::unlink(&cx.js_thread(), JsLocal::to_js_slice(args))
+    pub(crate) fn static_unlink(
+        cx: &mut JsScope<'_>,
+        path: JsLocal<'_>,
+        options: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        S3File::unlink(&cx.js_thread(), path.to_js(), opt_js(options.to_js()))
     }
 
-    pub(crate) fn static_file(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
+    pub(crate) fn static_file(
+        cx: &mut JsScope<'_>,
+        path: JsLocal<'_>,
+        options: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
         let global = cx.global();
-        let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, JsLocal::to_js_slice(args));
-
-        let Some(path) = PathLike::from_js(global, &mut args)? else {
+        let Some(path) = path_from_js(global, path.to_js())? else {
             return Err(global.throw_invalid_arguments(format_args!("Expected file path string")));
         };
 
-        S3File::construct_internal_js(global, path, args.next_eat())
+        S3File::construct_internal_js(global, path, opt_js(options.to_js()))
     }
 
-    pub(crate) fn static_stat(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
-        S3File::stat(&cx.js_thread(), JsLocal::to_js_slice(args))
+    pub(crate) fn static_stat(
+        cx: &mut JsScope<'_>,
+        path: JsLocal<'_>,
+        options: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        S3File::stat(&cx.js_thread(), path.to_js(), opt_js(options.to_js()))
     }
 
     pub(crate) fn static_list_objects(

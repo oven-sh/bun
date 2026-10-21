@@ -1129,24 +1129,21 @@ pub(super) fn renegotiate(this: &This, global: &JSGlobalObject) -> JsResult<JSVa
     Ok(JSValue::UNDEFINED)
 }
 
-pub(super) fn disable_renegotiation(this: &This, _global: &JSGlobalObject) -> JsResult<JSValue> {
+pub(super) fn disable_renegotiation(this: &This) {
     let Some(ssl_ptr) = this.socket.get().ssl() else {
-        return Ok(JSValue::UNDEFINED);
+        return;
     };
     ffi::SSL_set_renegotiate_mode(
         boringssl::SSL::opaque_ref(ssl_ptr),
         boringssl::ssl_renegotiate_never,
     );
-    Ok(JSValue::UNDEFINED)
 }
 
-pub(super) fn is_session_reused(this: &This, _global: &JSGlobalObject) -> JsResult<JSValue> {
+pub(super) fn is_session_reused(this: &This) -> bool {
     let Some(ssl_ptr) = this.socket.get().ssl() else {
-        return Ok(JSValue::FALSE);
+        return false;
     };
-    Ok(JSValue::from(
-        ffi::SSL_session_reused(boringssl::SSL::opaque_ref(ssl_ptr)) == 1,
-    ))
+    ffi::SSL_session_reused(boringssl::SSL::opaque_ref(ssl_ptr)) == 1
 }
 
 pub(super) fn set_verify_mode(

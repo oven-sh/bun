@@ -53,7 +53,7 @@ pub(crate) mod timer;
 // macro is invoked *from the child module* (`super::impl_timer_object!(…)`),
 // so `super` at the expansion site resolves back here to `timer/mod.rs`.
 macro_rules! impl_timer_object {
-    ($T:ident, $tag:ident, $js_name:literal) => {
+    ($T:ident, $tag:ident) => {
         #[derive(::bun_ptr::RefCounted)]
         pub(crate) struct $T {
             pub ref_count: ::bun_ptr::RefCount<Self>,
@@ -130,11 +130,6 @@ macro_rules! impl_timer_object {
                 // SAFETY: `payload` is a fresh heap allocation whose ownership
                 // transfers to the GC wrapper.
                 let js_value = unsafe { Self::to_js_ptr(payload, cx.global()) };
-                // Round-trip ABI check.
-                debug_assert!(
-                    <Self as ::bun_jsc::JsClass>::from_js(js_value) == Some(payload),
-                    concat!($js_name, "__create ABI mismatch"),
-                );
                 let _keep = ::bun_jsc::EnsureStillAlive(js_value);
                 // SAFETY: `payload` was just allocated above and is exclusively
                 // owned here; `internals.init()` writes every field.

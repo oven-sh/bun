@@ -330,12 +330,11 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   looseIntegerOrBigInt: $bindgen("bindgen_test.bind.ts", "looseIntegerOrBigInt"),
   looseDoubleOrBigInt: $bindgen("bindgen_test.bind.ts", "looseDoubleOrBigInt"),
   wideIntegerOrBigInt: $bindgen("bindgen_test.bind.ts", "wideIntegerOrBigInt"),
-  portOf: $bindgen("class_ref_test.bind.ts", "portOf"),
-  portOfOrNull: $bindgen("class_ref_test.bind.ts", "portOfOrNull"),
-  portAfterCallback: $bindgen("class_ref_test.bind.ts", "portAfterCallback"),
-  describeAddressOrList: $bindgen("class_ref_test.bind.ts", "describeAddressOrList"),
-  isAddress: $bindgen("class_ref_test.bind.ts", "isAddress"),
-  portPlus: $bindgen("class_ref_test.bind.ts", "portPlus"),
+  portOf: $bindgen("imported_class_test.bind.ts", "portOf"),
+  portOfOrNull: $bindgen("imported_class_test.bind.ts", "portOfOrNull"),
+  portAfterCallback: $bindgen("imported_class_test.bind.ts", "portAfterCallback"),
+  describeAddressOrList: $bindgen("imported_class_test.bind.ts", "describeAddressOrList"),
+  isAddress: $bindgen("imported_class_test.bind.ts", "isAddress"),
 };
 
 export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");

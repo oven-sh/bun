@@ -29,7 +29,7 @@ mod _impl {
     pub(crate) struct NativeZstd {
         // Intrusive single-thread refcount.
         pub(crate) ref_count: Cell<u32>,
-        // LIFETIMES.tsv: JSC_BORROW. The global outlives this m_ctx payload;
+        // The global outlives this payload;
         // `BackRef` centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         /// How the pool thread delivers a finished write to the VM.
@@ -55,9 +55,7 @@ mod _impl {
         pub(crate) estimated_external_size: usize,
     }
 
-    // `CompressionStream::<NativeZstd>` (via the `CompressionStreamImpl` trait below)
-    // supplies write / run_from_js_thread / write_sync / reset / close / set_on_error / get_on_error /
-    // finalize as the generic mixin.
+    // `CompressionStreamImpl` (node_zlib_binding.rs) has write, writeSync, reset, close and onerror.
 
     impl NativeZstd {
         pub(crate) fn constructor(cx: &mut JsScope<'_>, mode: u8) -> *mut Self {
@@ -614,11 +612,5 @@ mod _impl {
         }
     }
 
-    // ─── CompressionStream mixin wiring ───────────────────────────────────────
-    // Stamps `impl CompressionContext for Context`, `impl Taskable`/
-    // `CompressionStreamImpl for NativeZstd`, and `pub mod js { … }` so
-    // `CompressionStream::<NativeZstd>::*` (write/writeSync/reset/close/
-    // emit_error/…) can reach this struct's fields.
     crate::__impl_compression_stream!(NativeZstd, Context, js_NativeZstd);
-    crate::__compression_stream_mixin_reexports!(NativeZstd);
 } // mod _impl

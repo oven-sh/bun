@@ -587,10 +587,10 @@ impl UDPSocket {
             registered_fd: Cell::new(None),
             abort_handle: bun_jsc::AbortHandle::for_owner::<UDPSocket>(),
         }
-        .into_js_value(cx.global());
-        let this_ptr: *mut Self = js::from_js(this_value).unwrap().as_ptr();
-        // SAFETY: inside `this_value`. R-2: shared
-        // borrow — every mutated field is `Cell`/`JsCell`.
+        .into_js_wrapper(cx.global());
+        let js_value = this_value.to_js();
+        let this_ptr: *mut Self = this_value.as_ptr().as_ptr();
+        // SAFETY: inside `this_value`.
         let this = unsafe { &*this_ptr };
 
         // Error-path guard: { closed = true; close socket; downgrade this_value }
@@ -619,10 +619,10 @@ impl UDPSocket {
         });
 
         this.this_value
-            .with_mut(|r| r.set_strong(this_value, cx.global()));
+            .with_mut(|r| r.set_strong(js_value, cx.global()));
 
         this.config
-            .set(UDPSocketConfig::from_js(cx.global(), options, this_value)?);
+            .set(UDPSocketConfig::from_js(cx.global(), options, js_value)?);
 
         let mut err: c_int = 0;
 
@@ -790,7 +790,7 @@ impl UDPSocket {
         this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         Ok(bun_jsc::JSPromise::resolved_promise_value(
             cx.global(),
-            this_value,
+            js_value,
         ))
     }
 
@@ -1389,39 +1389,27 @@ impl UDPSocket {
         Ok(res)
     }
 
-    pub(crate) fn send(&self, cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<bool> {
+    pub(crate) fn send(
+        &self,
+        cx: &mut JsScope<'_>,
+        payload: JsLocal<'_>,
+        port: JsLocal<'_>,
+        address: JsLocal<'_>,
+    ) -> JsResult<bool> {
         let global_this = cx.global();
         if self.closed.get() {
             return Err(global_this.throw(format_args!("Socket is closed")));
         }
-        let arguments = JsLocal::to_js_slice(args);
-        let args_len = arguments.len();
-        let dst: Option<Destination> = 'brk: {
-            if self.connect_info.get().is_some() {
-                if args_len == 1 {
-                    break 'brk None;
-                }
-                if args_len >= 3 {
-                    return Err(global_this.throw_invalid_arguments(format_args!(
-                        "Cannot specify destination on connected socket"
-                    )));
-                }
+        let (port, address) = (port.to_js(), address.to_js());
+        let dst = if self.connect_info.get().is_some() {
+            if !port.is_undefined() || !address.is_undefined() {
                 return Err(global_this.throw_invalid_arguments(format_args!(
-                    "Expected 1 argument, got {}",
-                    args_len
+                    "Cannot specify destination on connected socket"
                 )));
-            } else {
-                if args_len < 3 {
-                    return Err(global_this.throw_invalid_arguments(format_args!(
-                        "Expected 3 arguments, got {}",
-                        args_len
-                    )));
-                }
-                break 'brk Some(Destination {
-                    port: arguments[1],
-                    address: arguments[2],
-                });
             }
+            None
+        } else {
+            Some(Destination { port, address })
         };
 
         // Resolve the destination before touching the payload. `parse_port` and
@@ -1446,7 +1434,7 @@ impl UDPSocket {
             }
         };
 
-        let payload_arg = arguments[0];
+        let payload_arg = payload.to_js();
         let payload_view;
         let mut payload_str = Utf8Bytes::EMPTY;
         // Hoisted so the `slice()` borrow outlives the `'brk` block; the
@@ -1736,19 +1724,20 @@ impl UDPSocket {
 
 impl Drop for UDPSocket {
     fn drop(&mut self) {
-        bun_output::scoped_log!(UdpSocket, "Finalize {:p}", &raw const *self);
-        self.this_value.with_mut(|r| r.finalize());
-        debug_assert!(self.closed.get() || VirtualMachine::get().is_shutting_down());
+        let this = &*self;
+        bun_output::scoped_log!(UdpSocket, "Finalize {:p}", &raw const *this);
+        this.this_value.with_mut(|r| r.finalize());
+        debug_assert!(this.closed.get() || VirtualMachine::get().is_shutting_down());
         // At VM shutdown the wrapper can die with the socket open: close it so that `drain_closed_sockets()` frees it.
-        if let Some(socket) = self.socket.take() {
-            self.closed.set(true);
+        if let Some(socket) = this.socket.take() {
+            this.closed.set(true);
             #[cfg(not(windows))]
-            if let Some(fd) = self.registered_fd.take() {
+            if let Some(fd) = this.registered_fd.take() {
                 dgram_remove_fd(fd, DgramFdState::Adopted);
             }
             uws::udp::Socket::opaque_mut(socket).close();
         }
-        self.poll_ref.with_mut(|p| p.disable());
+        this.poll_ref.with_mut(|p| p.disable());
     }
 }
 

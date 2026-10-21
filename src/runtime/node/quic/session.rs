@@ -16,7 +16,6 @@ use super::endpoint::{MS_PER_SEC, QuicEndpoint, alloc_exposed_array_buffer};
 use super::ffi::lsquic_callback;
 use super::now_ns;
 use super::tls;
-use crate::generated_bindgen::quic::js_QuicSession;
 
 bun_core::declare_scope!(quic_session, hidden);
 
@@ -475,8 +474,9 @@ impl QuicSession {
         is_server: bool,
         application: Application,
     ) -> JsResult<(*mut QuicSession, JSValue)> {
-        let handle = Self::new(global, vtable).into_js_value(global);
-        let raw = js_QuicSession::from_js(handle).unwrap().as_ptr();
+        let this_value = Self::new(global, vtable).into_js_wrapper(global);
+        let handle = this_value.to_js();
+        let raw = this_value.as_ptr().as_ptr();
 
         let state_ptr = alloc_exposed_array_buffer(
             global,
@@ -1987,7 +1987,7 @@ impl QuicSession {
         &self,
         cx: &mut JsScope<'_>,
         options: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let global = cx.global();
         if !self.destroyed.get() {
             // Parse before the latch: a throw here must leave the session
@@ -2014,12 +2014,12 @@ impl QuicSession {
                 self.schedule_process();
             }
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
-    pub(crate) fn destroy(&self, cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
+    pub(crate) fn destroy(&self, cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<()> {
         let global = cx.global();
         if self.destroyed.get() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
         let mut parse_error = None;
         if !self.close_reported.get() && !self.conn.get().is_null() {
@@ -2056,7 +2056,7 @@ impl QuicSession {
         if let Some(err) = parse_error {
             return Err(global.throw_value(err));
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
     pub(crate) fn open_stream(
         &self,

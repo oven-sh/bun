@@ -20,7 +20,7 @@ export const Listener = b.class({
     stop: { args: { closeActiveConnections: b.any }, capability: "js" },
     unix: { getter: b.string.utf8.optional, cache: true },
     unref: {},
-    "@@dispose": { capability: "js", length: 1 },
+    "@@dispose": { capability: "js" },
   },
 });
 

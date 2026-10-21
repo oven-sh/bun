@@ -52,7 +52,7 @@ function server(name: string) {
         throws: true,
         rustName: "do_publish",
       },
-      ref: { returns: b.any, passThis: true, rustName: "do_ref" },
+      ref: { returns: b.self, passThis: true, rustName: "do_ref" },
       reload: {
         args: { options: b.any },
         returns: b.any,
@@ -82,7 +82,7 @@ function server(name: string) {
         rustName: "do_subscriber_count",
       },
       timeout: { args: { request: b.any, seconds: b.any }, returns: b.any, capability: "heap", throws: true },
-      unref: { returns: b.any, passThis: true, rustName: "do_unref" },
+      unref: { returns: b.self, passThis: true, rustName: "do_unref" },
       upgrade: {
         args: { request: b.any, options: b.any },
         returns: b.bool,

@@ -1,8 +1,8 @@
-//! The bodies of class_ref_test.bind.ts.
+//! The bodies of imported_class_test.bind.ts.
 
 use bun_jsc::bindgen::{self, Callable, JsLocal, JsScope};
 
-use crate::generated_bindgen::class_ref_test::{AddressOrAnything, AddressOrList};
+use crate::generated_bindgen::imported_class_test::{AddressOrAnything, AddressOrList};
 use crate::socket::SocketAddress;
 
 pub(crate) fn port_of(address: &SocketAddress) -> u16 {
@@ -31,12 +31,4 @@ pub(crate) fn describe_address_or_list(value: AddressOrList<'_>) -> &'static str
 
 pub(crate) fn is_address(value: AddressOrAnything<'_>) -> bool {
     matches!(value, AddressOrAnything::Address(_))
-}
-
-pub(crate) fn port_plus_number(address: &SocketAddress, more: u16) -> u32 {
-    u32::from(address.port()) + u32::from(more)
-}
-
-pub(crate) fn port_plus_length(address: &SocketAddress, more: &[u8]) -> u32 {
-    u32::from(address.port()) + more.len() as u32
 }

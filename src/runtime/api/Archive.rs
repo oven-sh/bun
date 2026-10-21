@@ -242,9 +242,7 @@ fn create_archive(data: Vec<u8>, compress: Compression) -> Archive {
     Archive { store, compress }
 }
 
-/// `JSValue::as_::<Blob>()` shim — kept as a free fn. Returns a shared
-/// borrow (BACKREF: m_ctx payload kept live by the JSC cell rooted by `value`
-/// on the caller's stack) so callers don't open-code `unsafe { &*ptr }`.
+/// The caller's `value` keeps the `Blob` alive.
 #[inline]
 fn blob_from_js(value: JSValue) -> Option<&'static Blob> {
     value.as_class_ref::<Blob>()

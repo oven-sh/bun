@@ -7,12 +7,6 @@ import { describe, expect, test } from "bun:test";
 // The static methods accept a path or an S3 blob; everything else is rejected
 // up front with a per-method message. Numbers parse as file descriptor paths,
 // which S3 also rejects.
-test("an S3 file inherits what a Blob has", () => {
-  const prototype = Object.getPrototypeOf(Bun.s3.file("key"));
-  expect(Object.getPrototypeOf(prototype)).toBe(Blob.prototype);
-  expect(Object.getOwnPropertyNames(prototype).sort()).toEqual(["bucket", "presign", "stat"]);
-});
-
 describe("S3Client static method argument validation", () => {
   const staticCases = [
     ["presign", "Expected a S3 or path to presign", []],
@@ -41,6 +35,12 @@ describe("S3Client static method argument validation", () => {
       expect.objectContaining({ code: "ERR_MISSING_ARGS", message: "Expected a Blob-y thing to upload" }),
     );
   });
+});
+
+test("an S3 file inherits what a Blob has", () => {
+  const prototype = Object.getPrototypeOf(Bun.s3.file("key"));
+  expect(Object.getPrototypeOf(prototype)).toBe(Blob.prototype);
+  expect(Object.getOwnPropertyNames(prototype).sort()).toEqual(["bucket", "presign", "stat"]);
 });
 
 describe("S3Client instance method argument validation", () => {

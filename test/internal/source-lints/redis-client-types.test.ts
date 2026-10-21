@@ -24,7 +24,7 @@ const pendingDeclarations: Record<string, string> = {
   punsubscribe: "#35521",
 };
 
-const classesFile = "src/runtime/valkey_jsc/valkey.bind.ts";
+const schemaFile = "src/runtime/valkey_jsc/valkey.bind.ts";
 const dtsFile = "packages/bun-types/redis.d.ts";
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 
@@ -36,11 +36,7 @@ for (const [members, prefix] of [
   [RedisClient.protoMembers, ""],
   [RedisClient.staticMembers, "static "],
 ] as const) {
-  for (const member of members) {
-    // Installed under a private name: it has no declaration to mirror.
-    if ("privateSymbol" in member && member.privateSymbol) continue;
-    registered.add(prefix + member.name);
-  }
+  for (const member of members) registered.add(prefix + member.name);
 }
 if (RedisClient.construct) registered.add("constructor");
 
@@ -82,14 +78,14 @@ test(`every member of class RedisClient in ${dtsFile} has a shape this lint can 
   expect(unrecognized).toEqual([]);
 });
 
-test(`${dtsFile} declares every RedisClient member ${classesFile} installs`, () => {
+test(`${dtsFile} declares every RedisClient member ${schemaFile} installs`, () => {
   const undeclared = [...registered]
     .filter(name => !declared.has(name) && !Object.hasOwn(pendingDeclarations, name))
     .sort();
   expect(undeclared).toEqual([]);
 });
 
-test(`${dtsFile} declares no RedisClient member ${classesFile} does not install`, () => {
+test(`${dtsFile} declares no RedisClient member ${schemaFile} does not install`, () => {
   const phantom = [...declared].filter(name => !registered.has(name)).sort();
   expect(phantom).toEqual([]);
 });
@@ -97,7 +93,7 @@ test(`${dtsFile} declares no RedisClient member ${classesFile} does not install`
 test("pendingDeclarations lists only members that are still registered and still undeclared", () => {
   const stale = Object.entries(pendingDeclarations)
     .flatMap(([name, pr]) => {
-      if (!registered.has(name)) return [`${name} (${pr}) is no longer registered in ${classesFile}`];
+      if (!registered.has(name)) return [`${name} (${pr}) is no longer registered in ${schemaFile}`];
       if (declared.has(name)) return [`${name} (${pr}) is declared in ${dtsFile} now; delete its entry`];
       return [];
     })

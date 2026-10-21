@@ -10,7 +10,7 @@ use super::Kind;
 // `constructor`/`finalize`/`ref_`/`deref`/`deinit`/`init_with`) — see
 // `impl_timer_object!` in `super` (timer/mod.rs).
 // `Timeout`, declared in `Timer.bind.ts`.
-super::impl_timer_object!(TimeoutObject, TimeoutObject, "Timeout");
+super::impl_timer_object!(TimeoutObject, TimeoutObject);
 
 impl TimeoutObject {
     pub(crate) fn init(

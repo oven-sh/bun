@@ -12,7 +12,6 @@ use bun_lsquic_sys as lsquic;
 use super::endpoint::alloc_exposed_array_buffer;
 use super::ffi::lsquic_callback;
 use super::session::{QuicSession, SessionEvent};
-use crate::generated_bindgen::quic::js_QuicStream;
 
 const QUIC_STREAM_HEADERS_KIND_HINTS: u32 = 0;
 const QUIC_STREAM_HEADERS_KIND_INITIAL: u32 = 1;
@@ -180,8 +179,9 @@ impl QuicStream {
             close_reported: Cell::new(false),
             destroyed: Cell::new(false),
         };
-        let handle = stream.into_js_value(global);
-        let raw_ptr = js_QuicStream::from_js(handle).unwrap().as_ptr();
+        let this_value = stream.into_js_wrapper(global);
+        let handle = this_value.to_js();
+        let raw_ptr = this_value.as_ptr().as_ptr();
 
         let state_ptr = alloc_exposed_array_buffer(
             global,
@@ -644,11 +644,7 @@ impl QuicStream {
         this_value
     }
 
-    pub(crate) fn set_wakeup(
-        &self,
-        cx: &mut JsScope<'_>,
-        callback: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn set_wakeup(&self, cx: &mut JsScope<'_>, callback: JsLocal<'_>) {
         let global = cx.global();
         let cb = callback.to_js();
 
@@ -657,14 +653,13 @@ impl QuicStream {
         } else {
             self.wakeup.set(Some(Strong::create(cb, global)));
         }
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn pull(&self, cx: &mut JsScope<'_>, callback: JsLocal<'_>) -> JsResult<JSValue> {
+    pub(crate) fn pull(&self, cx: &mut JsScope<'_>, callback: JsLocal<'_>) -> JsResult<()> {
         let global = cx.global();
         let cb = callback.to_js();
         if !cb.is_callable() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
         let (status, buffer) = self.inbound.with_mut(|inbound| {
             if inbound.errored {
@@ -696,17 +691,13 @@ impl QuicStream {
             JSValue::UNDEFINED,
             &[JSValue::js_number(status), buffer_js],
         );
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
-    pub(crate) fn attach_source(
-        &self,
-        cx: &mut JsScope<'_>,
-        source: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn attach_source(&self, cx: &mut JsScope<'_>, source: JsLocal<'_>) -> JsResult<()> {
         let global = cx.global();
         if self.destroyed.get() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
         let source = source.to_js();
         let bytes = if source.is_empty_or_undefined_or_null() {
@@ -725,19 +716,18 @@ impl QuicStream {
         });
         self.with_state(|s| s.has_outbound = 1);
         self.kick_write();
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
-    pub(crate) fn init_streaming_source(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub(crate) fn init_streaming_source(&self) {
         if self.destroyed.get() {
-            return Ok(JSValue::UNDEFINED);
+            return;
         }
         self.outbound.with_mut(|o| o.started = true);
         self.with_state(|s| {
             s.has_outbound = 1;
             s.write_desired_size = s.high_water_mark;
         });
-        Ok(JSValue::UNDEFINED)
     }
 
     pub(crate) fn write(&self, cx: &mut JsScope<'_>, batch: JsLocal<'_>) -> JsResult<JSValue> {
@@ -772,9 +762,9 @@ impl QuicStream {
         Ok(JSValue::js_number(queued as f64))
     }
 
-    pub(crate) fn end_write(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub(crate) fn end_write(&self, _: &mut JsScope<'_>) {
         if self.destroyed.get() {
-            return Ok(JSValue::UNDEFINED);
+            return;
         }
         let wants_trailers = self.with_state(|s| s.wants_trailers != 0);
         self.outbound.with_mut(|o| {
@@ -789,13 +779,12 @@ impl QuicStream {
             session.note_stream_write();
         }
         self.kick_write();
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn destroy(&self, cx: &mut JsScope<'_>, error: JsLocal<'_>) -> JsResult<JSValue> {
+    pub(crate) fn destroy(&self, cx: &mut JsScope<'_>, error: JsLocal<'_>) -> JsResult<()> {
         let global = cx.global();
         if self.destroyed.get() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
         let arg = error.to_js();
         let cascading = arg.is_boolean() && arg.to_boolean();
@@ -840,12 +829,12 @@ impl QuicStream {
             // finalized between teardown and here.
             unsafe { (*session).schedule_process() };
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
-    pub(crate) fn reset_stream(&self, _: &mut JsScope<'_>, code: JsLocal<'_>) -> JsResult<JSValue> {
+    pub(crate) fn reset_stream(&self, _: &mut JsScope<'_>, code: JsLocal<'_>) {
         if self.destroyed.get() {
-            return Ok(JSValue::UNDEFINED);
+            return;
         }
         let code = error_code_arg(code.to_js());
         self.with_state(|s| {
@@ -861,12 +850,11 @@ impl QuicStream {
             s.reset(code);
         }
         self.kick_write();
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn stop_sending(&self, _: &mut JsScope<'_>, code: JsLocal<'_>) -> JsResult<JSValue> {
+    pub(crate) fn stop_sending(&self, _: &mut JsScope<'_>, code: JsLocal<'_>) {
         if self.destroyed.get() {
-            return Ok(JSValue::UNDEFINED);
+            return;
         }
         let code = error_code_arg(code.to_js());
         if let Some(s) = self.ls() {
@@ -881,7 +869,6 @@ impl QuicStream {
             }
         });
         self.kick_write();
-        Ok(JSValue::UNDEFINED)
     }
 
     /// Node parity for streams created and abandoned in one turn.
@@ -890,9 +877,9 @@ impl QuicStream {
         _: &mut JsScope<'_>,
         stop_arg: JsLocal<'_>,
         reset_arg: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) {
         if self.destroyed.get() {
-            return Ok(JSValue::UNDEFINED);
+            return;
         }
         let stop_arg = stop_arg.to_js();
         let reset_arg = reset_arg.to_js();
@@ -932,14 +919,9 @@ impl QuicStream {
             }
         }
         self.kick_write();
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn set_priority(
-        &self,
-        cx: &mut JsScope<'_>,
-        priority: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn set_priority(&self, cx: &mut JsScope<'_>, priority: JsLocal<'_>) -> JsResult<()> {
         let global = cx.global();
         let packed = priority.to_js().coerce_to_i32(global)? as u32;
         let (urgency, incremental) = ((packed >> 1) as u8, packed & 1 != 0);
@@ -952,7 +934,7 @@ impl QuicStream {
                 let _ = s.set_http_prio(urgency, incremental);
             }
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
     pub(crate) fn get_priority(&self) -> u32 {
         let (urgency, incremental) = self

@@ -644,11 +644,6 @@ describe("instances of a class of another schema", () => {
     expect(bindgen.isAddress(address)).toBe(true);
     for (const value of notInstances) expect(bindgen.isAddress(value)).toBe(false);
   });
-
-  it("is one kind of value however many times the schema names the class", () => {
-    expect(bindgen.portPlus(address, 2)).toBe(8082);
-    expect(bindgen.portPlus(address, "abc")).toBe(8083);
-  });
 });
 
 describe("b.any.variadic", () => {

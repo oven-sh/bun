@@ -44,7 +44,7 @@ export const UDPSocket = b.class({
     reload: { ...js, args: { options: b.any } },
     remoteAddress: { ...js, getter: b.any, cache: true },
     /** `(payload)` when connected, `(payload, port, address)` when not. */
-    send: { ...js, args: { args: b.any.variadic }, returns: b.bool, length: 3 },
+    send: { ...js, args: { payload: b.any, port: b.any, address: b.any }, returns: b.bool },
     sendMany: { ...js, args: { packets: b.any }, returns: b.i32, length: 3 },
     setBroadcast: { ...js, args: { enabled: b.any }, returns: b.any },
     setMulticastInterface: { ...js, args: { address: b.any }, returns: b.bool },
@@ -52,7 +52,7 @@ export const UDPSocket = b.class({
     setMulticastTTL: { ...js, args: { ttl: b.any }, returns: b.i32 },
     setTTL: { ...js, args: { ttl: b.any }, returns: b.i32 },
     unref: {},
-    "@@dispose": { rustName: "close", length: 1 },
+    "@@dispose": { rustName: "close" },
   },
 });
 

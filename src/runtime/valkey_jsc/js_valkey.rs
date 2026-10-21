@@ -465,22 +465,16 @@ impl JSValkeyClient {
         url: JsLocal<'a>,
         options: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
-        let new_client_ptr =
+        let new_client =
             Self::create_no_js_no_pubsub(&cx.js_thread(), &[url.to_js(), options.to_js()])?;
-        // SAFETY: the JS object takes over the ref the client was created with.
-        let this_value = structure.create(&cx.heap, unsafe { RefPtr::from_raw(new_client_ptr) });
-        // SAFETY: `this_value` keeps it alive.
-        let new_client = unsafe { &*new_client_ptr };
+        let this = new_client.this_ptr();
+        let this_value = structure.create(&cx.heap, new_client);
 
         // Initially, we only need to hold a weak reference to the JS object.
-        new_client
-            .this_value
-            .set(JsRef::init_weak(this_value.to_js()));
+        this.this_value.set(JsRef::init_weak(this_value.to_js()));
 
         // Need to associate the subscription context, after the JS ref has been populated.
-        new_client
-            ._subscription_ctx
-            .set(SubscriptionCtx::init(new_client)?);
+        this._subscription_ctx.set(SubscriptionCtx::init(&this)?);
 
         Ok(this_value)
     }
@@ -491,7 +485,7 @@ impl JSValkeyClient {
     pub(crate) fn create_no_js_no_pubsub(
         cx: &bun_jsc::JsThread<'_>,
         arguments: &[JSValue],
-    ) -> JsResult<*mut JSValkeyClient> {
+    ) -> JsResult<RefPtr<JSValkeyClient>> {
         let vm: &'static VirtualMachine = cx.global().bun_vm();
         let vm_ref = vm;
 
@@ -696,7 +690,7 @@ impl JSValkeyClient {
         bun_core::analytics::Features::VALKEY.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
         // `_subscription_ctx` is a placeholder here; properly initialized later by `create()`.
-        Ok(JSValkeyClient::new(JSValkeyClient {
+        Ok(RefPtr::new(JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
             _subscription_ctx: JsCell::new(SubscriptionCtx::default()),
             client: JsCell::new(valkey::ValkeyClient {

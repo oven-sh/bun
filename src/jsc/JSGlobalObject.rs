@@ -354,11 +354,9 @@ impl JSGlobalObject {
     /// `.code = "ERR_ILLEGAL_CONSTRUCTOR"`.
     #[cold]
     pub fn throw_illegal_constructor(&self) -> JsError {
-        self.throw_value(self.create_illegal_constructor_error())
-    }
-
-    pub fn create_illegal_constructor_error(&self) -> JSValue {
-        crate::ErrorCode::ILLEGAL_CONSTRUCTOR.fmt(self, format_args!("Illegal constructor"))
+        self.throw_value(
+            crate::ErrorCode::ILLEGAL_CONSTRUCTOR.fmt(self, format_args!("Illegal constructor")),
+        )
     }
 
     #[inline]

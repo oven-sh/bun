@@ -11,7 +11,7 @@ use crate::webcore::{DrainResult, SinkHandle, blob, readable_stream};
 
 bun_output::declare_scope!(ByteStream, visible);
 
-/// R-2 (`sharedThis`): every JS-reachable inherent method takes `&self` so a
+/// Every JS-reachable inherent method takes `&self` so a
 /// re-entrant JS call (e.g. `pending.run()` → JS → `onPull`) cannot stack two
 /// `&mut ByteStream`. Fields mutated on those paths are wrapped in `Cell`
 /// (Copy scalars / raw ptrs) or [`JsCell`] (non-Copy). `high_water_mark` /

@@ -299,14 +299,7 @@ pub(in crate::socket) fn install_sni_alpn_selector(ctx: *mut boringssl_sys::SSL_
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Generic socket wrapper. `SSL = false` → `TCPSocket`, `SSL = true` → `TLSSocket`.
-// Two classes, `TCPSocket` and `TLSSocket`: the `impl` below picks their accessors by `SSL`.
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). With every
-// mutated field behind `UnsafeCell`, `&NewSocket` carries no LLVM `noalias`
-// for those fields, so a re-entrant `socket.write()`/`socket.end()` (which
-// re-derives `&Self` from `m_ctx`) cannot be miscompiled by a stale cached
-// load — the systemic fix vs the per-method `black_box` launder previously
-// applied in `internal_flush`.
+// Methods take `&self` and mutated fields are `Cell`/`JsCell`: a handler can call `socket.write()` while a method runs.
 #[repr(C)]
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct NewSocket<const SSL: bool> {
@@ -3709,19 +3702,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         unsafe { &*std::ptr::from_ref::<Self>(this).cast::<TLSSocket>() }
     }
 
-    pub(crate) fn disable_renegotiation(this: &Self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub(crate) fn disable_renegotiation(this: &Self) {
         if SSL {
-            tls_socket_functions::disable_renegotiation(Self::as_tls(this), cx.global())
-        } else {
-            Ok(JSValue::UNDEFINED)
+            tls_socket_functions::disable_renegotiation(Self::as_tls(this));
         }
     }
-    pub(crate) fn is_session_reused(this: &Self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        if SSL {
-            tls_socket_functions::is_session_reused(Self::as_tls(this), cx.global())
-        } else {
-            Ok(JSValue::FALSE)
-        }
+    pub(crate) fn is_session_reused(this: &Self) -> bool {
+        SSL && tls_socket_functions::is_session_reused(Self::as_tls(this))
     }
     pub(crate) fn set_verify_mode(
         this: &Self,

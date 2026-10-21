@@ -6,6 +6,16 @@ import { renderToString } from "react-dom/server";
 
 const Markdown = Bun.markdown;
 
+/** The Markdown of every example in a spec file of this directory. */
+function specExamples(file: string): string[] {
+  const content = readFileSync(join(import.meta.dir, file), "utf8").replace(/\r\n?/g, "\n");
+  const examples: string[] = [];
+  for (const match of content.matchAll(/^`{32} example\n([\s\S]*?)^\.$/gm)) {
+    examples.push(match[1].replaceAll("\u2192", "\t") + "\n");
+  }
+  return examples;
+}
+
 // Runs `script` in a child that is killed after 30s, so a super-linear
 // regression fails fast instead of hanging the test runner.
 async function expectRendersQuickly(script: string) {
@@ -1225,15 +1235,6 @@ describe("render() agrees with a fold over the react() tree", () => {
     return meta === undefined ? cb(children) : cb(children, meta);
   }
 
-  function specExamples(file: string): string[] {
-    const content = readFileSync(join(import.meta.dir, file), "utf8").replace(/\r\n?/g, "\n");
-    const examples: string[] = [];
-    for (const match of content.matchAll(/^`{32} example\n([\s\S]*?)^\.$/gm)) {
-      examples.push(match[1].replaceAll("\u2192", "\t") + "\n");
-    }
-    return examples;
-  }
-
   const callbackSets = [
     names,
     [],
@@ -1468,6 +1469,123 @@ describe("ansi renderer line wrapping", () => {
     const [first, second] = out.split("\n");
     expect(first).toEndWith("some bold\x1b[39m\x1b[49m");
     expect(second).toContain("\x1b[1m");
+  });
+});
+
+// ============================================================================
+// A line ending in a code span is a space (CommonMark 6.1: "First, line
+// endings are converted to spaces."). html() writes the space. react() and
+// ansi() have to hand on the same text. render() does too: its output is
+// compared with a fold over the react() tree above.
+// ============================================================================
+
+describe("a code span over a line ending", () => {
+  /** The text of every code span of the tree. The code of a `pre` is not in a `code` element. */
+  function fromReact(markdown: string): string[] {
+    const found: string[] = [];
+    const walk = (node: any) => {
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (node == null || typeof node !== "object") return;
+      if (node.type === "code") found.push(node.props.children.join(""));
+      else walk(node.props.children);
+    };
+    walk(Markdown.react(markdown, undefined, { reactVersion: 18 }));
+    return found;
+  }
+
+  /** The same texts, as html() writes them. The `code` of a `pre` follows its tag. */
+  function fromHtml(markdown: string): string[] {
+    const characters: Record<string, string> = { "&lt;": "<", "&gt;": ">", "&amp;": "&", "&quot;": '"' };
+    return Array.from(Markdown.html(markdown).matchAll(/(?<!<pre>)<code>([^<]*)<\/code>/g), match =>
+      match[1].replace(/&(?:lt|gt|amp|quot);/g, reference => characters[reference]),
+    );
+  }
+
+  // md-spec.test.ts compares these examples of the spec with their white space collapsed.
+  test("html() writes a space", () => {
+    expect(Markdown.html("``\nfoo\nbar  \nbaz\n``\n")).toBe("<p><code>foo bar   baz</code></p>\n");
+    expect(Markdown.html("`foo   bar \nbaz`\n")).toBe("<p><code>foo   bar  baz</code></p>\n");
+    expect(Markdown.html("`code  \nspan`\n")).toBe("<p><code>code   span</code></p>\n");
+    expect(Markdown.html("`code\\\nspan`\n")).toBe("<p><code>code\\ span</code></p>\n");
+    // What is around the space is escaped, in the alt of an image too.
+    expect(Markdown.html("`a<\nb&`\n")).toBe("<p><code>a&lt; b&amp;</code></p>\n");
+    expect(Markdown.html("![`a<\nb`](/u)\n")).toBe('<p><img src="/u" alt="a&lt; b" /></p>\n');
+  });
+
+  test("react() has the text that html() writes for every code span of the spec", () => {
+    const mismatches: unknown[] = [];
+    let spans = 0;
+    for (const markdown of specExamples("spec.txt")) {
+      // Without a backtick there is no code span. html() copies raw HTML, which can have a `<code>` of its own.
+      if (!markdown.includes("`") || /<code/i.test(markdown)) continue;
+      const react = fromReact(markdown);
+      const html = fromHtml(markdown);
+      spans += html.length;
+      if (!Bun.deepEquals(react, html) && mismatches.length < 5) mismatches.push({ markdown, react, html });
+    }
+    expect(mismatches).toEqual([]);
+    expect(spans).toBeGreaterThan(0);
+  });
+
+  // [markdown, the same with each code span on one line]
+  const pairs = [
+    ["`a\nb`\n", "`a b`\n"],
+    ["`a  \nb` and ``c\r\nd\ne``\n", "`a   b` and ``c d e``\n"],
+    ["> x `a\n> b` y\n", "> x `a b` y\n"],
+    ["- x `a\n  b` y\n", "- x `a b` y\n"],
+    ["[`a\nb`](/u) ![`c\nd`](/v)\n", "[`a b`](/u) ![`c d`](/v)\n"],
+    ["`a\nb`\n===\n", "`a b`\n===\n"],
+    ["one two `three\nfour` five six\n", "one two `three four` five six\n"],
+    ["`*a*` x\n`b\nc` `d`\n", "`*a*` x\n`b c` `d`\n"],
+  ];
+
+  test.each([
+    { colors: false },
+    { colors: true },
+    { colors: true, hyperlinks: true },
+    { colors: false, columns: 10 },
+    { colors: true, columns: 10 },
+  ])("ansi() prints it like the span on one line: %j", theme => {
+    for (const [markdown, onOneLine] of pairs) {
+      expect(Markdown.ansi(markdown, theme)).toBe(Markdown.ansi(onOneLine, theme));
+    }
+  });
+
+  test("ansi() keeps it on its line and in its container", () => {
+    expect(Markdown.ansi("`a\nb`\n", { colors: false })).toBe("a b\n");
+    expect(Markdown.ansi("> x `a\n> b` y\n", { colors: false })).toBe("| x a b y\n");
+    expect(Markdown.ansi("![`a\nb`](/u)\n", { colors: false })).toBe("[img] a b\n");
+  });
+
+  // `bun lint` and `bun fmt` make the tree of mdast-util-from-markdown from what the same parser hands on. That
+  // tree keeps the line ending, in the alt of an image too. Only debug and canary builds print it.
+  const printsTrees =
+    isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
+  test.skipIf(!printsTrees)("bun lint keeps the line ending", async () => {
+    const text = "![`a\nb`](/u) `c\nd`\n";
+    const cases = JSON.stringify({ id: "id", text, language: "markdown/commonmark", languageOptions: {} });
+    using dir = tempDir("md-code-span", { "cases.jsonl": cases + "\n" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "lint", "--print-markdown-trees", "cases.jsonl"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({
+      stdout: [
+        "### id",
+        "root 0-19",
+        " paragraph 0-18",
+        '  image 0-12 url="/u" alt="a\\nb"',
+        '  text 12-13 value=" "',
+        '  inlineCode 13-18 value="c\\nd"',
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
 });
 

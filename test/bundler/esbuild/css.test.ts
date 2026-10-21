@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
@@ -2314,5 +2314,48 @@ c {
       "/across-files.css",
       "/across-files-url.css",
     ],
+  });
+
+  const insetFamily = {
+    "/entry.css": /* css */ `
+      .overlay { position: fixed; top: 0; right: 0; bottom: 0; left: 0; }
+      .author { position: absolute; inset: 0; }
+      .logical { inset-block: 0; }
+    `,
+  };
+  const insetFamilyKept = `
+    /* entry.css */
+    .overlay { position: fixed; inset: 0; }
+    .author { position: absolute; inset: 0; }
+    .logical { inset-block: 0; }
+  `;
+  const insetFamilyCompiled = `
+    /* entry.css */
+    .overlay { position: fixed; top: 0; bottom: 0; left: 0; right: 0; }
+    .author { position: absolute; top: 0; bottom: 0; left: 0; right: 0; }
+    .logical { top: 0; bottom: 0; }
+  `;
+
+  // `inset` and `inset-block` are the same compat feature. The default browser targets
+  // compile both to top/bottom/left/right, or keep both.
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`css/InsetFamilyDefaultTargets-${backend}`, {
+      backend,
+      files: insetFamily,
+      outfile: "/out.css",
+      onAfterBundle(api) {
+        const css = api.readFile("/out.css");
+        expect(css).toEqualIgnoringWhitespace(css.includes("inset-block") ? insetFamilyKept : insetFamilyCompiled);
+      },
+    });
+  }
+
+  itBundled("css/InsetFamilyTargetBun", {
+    target: "bun",
+    files: insetFamily,
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(insetFamilyKept);
+    },
   });
 });

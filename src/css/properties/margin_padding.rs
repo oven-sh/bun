@@ -322,9 +322,13 @@ pub struct SizeSpec {
     bottom_id: PropertyId,
     left_id: PropertyId,
     right_id: PropertyId,
-    shorthand_category: PropertyCategory,
-    /// Optional prefix feature for the shorthand.
+    /// The 4-side shorthand is only as old as `feature` (`inset`), so `flush`
+    /// emits it only when the targets support `feature`.
+    shorthand_needs_feature: bool,
+    /// Compat feature of the logical longhands. `flush` compiles them to
+    /// physical properties for targets without it.
     feature: Option<Feature>,
+    /// Compat feature of the `*-block` / `*-inline` pair shorthands.
     shorthand_feature: Option<Feature>,
 
     extract_top: Extract,
@@ -685,11 +689,13 @@ impl SizeHandlerImpl {
             );
         } else if tag == spec.shorthand {
             let val = (spec.extract_shorthand)(property);
+            // `Physical` for `inset` too: lightningcss passes `Logical` there, which
+            // flushes `top: 1px` and an earlier `inset` before `inset: 0` replaces them.
             self.flush_helper_physical(
                 spec,
                 PhysicalSlot::Top,
                 val[0],
-                spec.shorthand_category,
+                PropertyCategory::Physical,
                 dest,
                 context,
             );
@@ -697,7 +703,7 @@ impl SizeHandlerImpl {
                 spec,
                 PhysicalSlot::Right,
                 val[1],
-                spec.shorthand_category,
+                PropertyCategory::Physical,
                 dest,
                 context,
             );
@@ -705,7 +711,7 @@ impl SizeHandlerImpl {
                 spec,
                 PhysicalSlot::Bottom,
                 val[2],
-                spec.shorthand_category,
+                PropertyCategory::Physical,
                 dest,
                 context,
             );
@@ -713,7 +719,7 @@ impl SizeHandlerImpl {
                 spec,
                 PhysicalSlot::Left,
                 val[3],
-                spec.shorthand_category,
+                PropertyCategory::Physical,
                 dest,
                 context,
             );
@@ -840,7 +846,7 @@ impl SizeHandlerImpl {
 
         match (top, bottom, left, right) {
             (Some(top), Some(bottom), Some(left), Some(right))
-                if spec.shorthand_category != PropertyCategory::Logical || logical_supported =>
+                if !spec.shorthand_needs_feature || logical_supported =>
             {
                 dest.push((spec.make_shorthand)(top, bottom, left, right));
             }
@@ -1106,7 +1112,7 @@ macro_rules! size_handler_spec {
         $Top:ident, $Bottom:ident, $Left:ident, $Right:ident,
         $BlockStart:ident, $BlockEnd:ident, $InlineStart:ident, $InlineEnd:ident,
         $Shorthand:ident, $BlockShorthand:ident, $InlineShorthand:ident,
-        category: $category:expr, feature: $feature:expr, shorthand_feature: $shorthand_feature:expr
+        shorthand_needs_feature: $shorthand_needs_feature:expr, feature: $feature:expr, shorthand_feature: $shorthand_feature:expr
     ) => {
         const SPEC: &'static SizeSpec = &SizeSpec {
             top: PropertyIdTag::$Top,
@@ -1124,7 +1130,7 @@ macro_rules! size_handler_spec {
             bottom_id: PropertyId::$Bottom,
             left_id: PropertyId::$Left,
             right_id: PropertyId::$Right,
-            shorthand_category: $category,
+            shorthand_needs_feature: $shorthand_needs_feature,
             feature: $feature,
             shorthand_feature: $shorthand_feature,
             extract_top: |p| match p {
@@ -1209,7 +1215,7 @@ impl SizeHandlerSpec for MarginSpec {
         MarginTop, MarginBottom, MarginLeft, MarginRight,
         MarginBlockStart, MarginBlockEnd, MarginInlineStart, MarginInlineEnd,
         Margin, MarginBlock, MarginInline,
-        category: PropertyCategory::Physical, feature: Some(Feature::LogicalMargin), shorthand_feature: Some(Feature::LogicalMarginShorthand)
+        shorthand_needs_feature: false, feature: Some(Feature::LogicalMargin), shorthand_feature: Some(Feature::LogicalMarginShorthand)
     );
 }
 
@@ -1219,7 +1225,7 @@ impl SizeHandlerSpec for PaddingSpec {
         PaddingTop, PaddingBottom, PaddingLeft, PaddingRight,
         PaddingBlockStart, PaddingBlockEnd, PaddingInlineStart, PaddingInlineEnd,
         Padding, PaddingBlock, PaddingInline,
-        category: PropertyCategory::Physical, feature: Some(Feature::LogicalPadding), shorthand_feature: Some(Feature::LogicalPaddingShorthand)
+        shorthand_needs_feature: false, feature: Some(Feature::LogicalPadding), shorthand_feature: Some(Feature::LogicalPaddingShorthand)
     );
 }
 
@@ -1229,7 +1235,7 @@ impl SizeHandlerSpec for ScrollMarginSpec {
         ScrollMarginTop, ScrollMarginBottom, ScrollMarginLeft, ScrollMarginRight,
         ScrollMarginBlockStart, ScrollMarginBlockEnd, ScrollMarginInlineStart, ScrollMarginInlineEnd,
         ScrollMargin, ScrollMarginBlock, ScrollMarginInline,
-        category: PropertyCategory::Physical, feature: None, shorthand_feature: None
+        shorthand_needs_feature: false, feature: None, shorthand_feature: None
     );
 }
 
@@ -1239,7 +1245,7 @@ impl SizeHandlerSpec for InsetSpec {
         Top, Bottom, Left, Right,
         InsetBlockStart, InsetBlockEnd, InsetInlineStart, InsetInlineEnd,
         Inset, InsetBlock, InsetInline,
-        category: PropertyCategory::Physical, feature: Some(Feature::LogicalInset), shorthand_feature: Some(Feature::LogicalInset)
+        shorthand_needs_feature: true, feature: Some(Feature::LogicalInset), shorthand_feature: Some(Feature::LogicalInset)
     );
 }
 

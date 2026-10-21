@@ -10,6 +10,11 @@
 // written to the probe file for the parent to print. Then one node-addon-api call runs
 // refused: that escalates to napi_fatal_error unless the readers and napi_throw agree with
 // Node that the env is stopping and no exception is pending.
+// Defined here, not only in binding.gyp: a define the build drops turns every
+// refused node-addon-api call into napi_fatal_error, on Node as well.
+#ifndef NODE_API_SWALLOW_UNTHROWABLE_EXCEPTIONS
+#define NODE_API_SWALLOW_UNTHROWABLE_EXCEPTIONS
+#endif
 #include <napi.h>
 
 #include <chrono>
@@ -104,7 +109,18 @@ static void probe(napi_env env, const std::string &signal_path,
   // only napi_pending_exception there, so under NAPI_VERSION >= 10 (napi_cannot_run_js)
   // it is fatal on Node too. The same calls are made raw first, each status
   // recorded, so a fatal inside node-addon-api still names the call that differed.
-  line += "\nreplay:";
+  line += "\nreplay: swallow=";
+#ifdef NODE_API_SWALLOW_UNTHROWABLE_EXCEPTIONS
+  line += "1";
+#else
+  line += "0";
+#endif
+#ifdef NAPI_CPP_EXCEPTIONS
+  line += " cpp_exceptions=1";
+#else
+  line += " cpp_exceptions=0";
+#endif
+  line += " napi_version=" + std::to_string(NAPI_VERSION);
   auto record = [&](const char *name, napi_status status) {
     line += std::string(" ") + name + "=" + std::to_string(status);
   };

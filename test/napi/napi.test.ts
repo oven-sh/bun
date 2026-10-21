@@ -646,7 +646,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     }
     // node-addon-api's Error::New(env).ThrowAsJavaScriptException() sequence, made raw by the v9 fixture.
     const replayV9 =
-      "replay: last_error_info=0 is_pending=0 create_string=0 create_error=0 create_reference=0 open_handle_scope=0" +
+      "replay: swallow=1 cpp_exceptions=0 napi_version=9 last_error_info=0 is_pending=0 create_string=0 create_error=0 create_reference=0 open_handle_scope=0" +
       " get_reference_value=0 typeof=0 create_key=0 has_property=10 is_pending_again=0 pending=0,0 throw=10" +
       " close_handle_scope=0 delete_reference=0; node-addon-api returned";
     describe.each([

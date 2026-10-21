@@ -6,6 +6,7 @@
 #include "DOMIsoSubspaces.h"
 #include "ErrorCode.h"
 #include "helpers.h"
+#include "JSAsyncIteratorSourceOperation.h"
 #include "JSDOMBinding.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDirectStreamSource.h"
@@ -96,6 +97,15 @@ void JSDirectStreamSource::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Close), "close"_s);
 }
 
+// The async-iterable source (BunAsyncIterableSource.cpp) returns promises that Bun made: a
+// replaced Promise.prototype.then must not see them.
+JSPromise* JSDirectStreamSource::reactionPromiseSlow(JSGlobalObject* globalObject, JSPromise* returned) const
+{
+    if (thisValue().inherits<JSAsyncIteratorSourceOperation>())
+        return returned;
+    return promiseForReactionsSlow(globalObject, returned);
+}
+
 JSPromise* JSDirectStreamSource::cancel(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue reason)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
@@ -106,6 +116,27 @@ JSPromise* JSDirectStreamSource::cancel(JSGlobalObject* globalObject, JSReadable
     args.append(reason);
     StreamAsyncContextScope asyncContextScope(globalObject, stream);
     RELEASE_AND_RETURN(scope, invokeCallbackReturningPromise(globalObject, cancelMethod, thisValue(), args));
+}
+
+void JSDirectStreamSource::cancelFromSink(JSGlobalObject* globalObject, JSValue reason)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* cancelMethod = cancelFunction();
+    if (!cancelMethod)
+        return;
+    MarkedArgumentBuffer args;
+    args.append(reason);
+    JSValue result = JSC::call(globalObject, cancelMethod, JSC::getCallData(cancelMethod), thisValue(), args);
+    RETURN_IF_EXCEPTION(scope, );
+    auto* returned = dynamicDowncast<JSPromise>(result);
+    if (!returned)
+        return;
+    markPromiseAsHandled(vm, returned);
+    // Nothing waits on it, but a value that starts its work in then() still has to start.
+    auto* promise = reactionPromise(globalObject, returned);
+    RETURN_IF_EXCEPTION(scope, );
+    markPromiseAsHandled(vm, promise);
 }
 
 void JSDirectStreamSource::close(JSGlobalObject* globalObject, JSValue reason)
@@ -715,18 +746,18 @@ static JSValue callDirectPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirec
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
-    auto* source = controller->m_source.get();
-    JSObject* pullFunction = source ? source->pullFunction() : nullptr;
     controller->m_pullInFlight = true;
-    MarkedArgumentBuffer args;
-    args.append(controller);
-    JSValue result = JSC::call(globalObject, pullFunction ? JSValue(pullFunction) : jsUndefined(), source ? source->thisValue() : jsUndefined(), args, "underlyingSource.pull is not a function"_s);
+    JSPromise* pullPromise = nullptr;
+    if (auto* source = controller->m_source.get())
+        pullPromise = source->pull(globalObject, controller);
+    else
+        throwTypeError(globalObject, scope, "underlyingSource.pull is not a function"_s);
     if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
         controller->m_pullInFlight = false;
         TRY_CLEAR_EXCEPTION(scope, {});
         return exception->value();
     }
-    if (auto* pullPromise = dynamicDowncast<JSPromise>(result)) {
+    if (pullPromise) {
         auto* runtime = JSStreamsRuntime::from(globalObject);
         pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onDirectPullFulfilled(), runtime->onDirectPullRejected(), jsUndefined(), controller);
         if (scope.exception()) [[unlikely]]

@@ -1,4 +1,5 @@
 // The `type: "direct"` lifecycle contract: every consumer sees the bytes written before the end signal, the same error, and cancel() only on abort. One-shot consumers call pull() once; a reader calls it again on demand.
+import { lazy } from "./lazy-promise";
 
 export type Tally = { pulls: number; cancels: unknown[] };
 
@@ -74,6 +75,12 @@ export const shapes: Record<string, Shape> = {
           c.close();
         });
       }),
+  },
+  // Only a promise is waited for: any other object that pull() returns means "still open".
+  "sync pull returns an object that is not a promise: the Timeout of the timer that writes and closes": {
+    oneShotOnly: true,
+    expect: { body: "hello world" },
+    make: t => direct(t, c => (c.write("hello "), setTimeout(() => (c.write("world"), c.close()), 0) as any)),
   },
   "async pull with no await (already-resolved promise)": {
     oneShotOnly: true,
@@ -230,6 +237,67 @@ export const shapes: Record<string, Shape> = {
         c.write("hello ");
         await later();
         c.close(new Error("source failed"));
+      }),
+  },
+  // pull() hands back a promise that only starts its work in then(), like Bun.$ or a Bun.sql query: the consumer has to call then(), as `await` does.
+  "pull returns a promise that starts in then(): write, await, write, close()": {
+    expect: { body: "hello world" },
+    make: t =>
+      direct(t, c =>
+        lazy(async () => {
+          c.write("hello ");
+          await later();
+          c.write("world");
+          c.close();
+        }),
+      ),
+  },
+  "pull returns a promise that starts in then(): write, await, write, resolve without close()": {
+    oneShotOnly: true,
+    expect: { body: "hello world" },
+    make: t =>
+      direct(t, c =>
+        lazy(async () => {
+          c.write("hello ");
+          await later();
+          c.write("world");
+        }),
+      ),
+  },
+  "pull returns a promise that starts in then(): write, await, reject": {
+    expect: { error: "source failed" },
+    make: t =>
+      direct(t, c =>
+        lazy(async () => {
+          c.write("hello ");
+          await later();
+          throw new Error("source failed");
+        }),
+      ),
+  },
+  "pull returns a promise that starts in then(): rejects after close() already ran": {
+    expect: { body: "hello world" },
+    make: t =>
+      direct(t, c =>
+        lazy(async () => {
+          c.write("hello world");
+          c.close();
+          await later();
+          throw new Error("too late to matter");
+        }),
+      ),
+  },
+  "pull returns a rejected promise with its own then() after close() already ran": {
+    expect: { body: "hello world" },
+    make: t =>
+      direct(t, c => {
+        c.write("hello world");
+        c.close();
+        const rejected = Promise.reject(new Error("too late to matter"));
+        rejected.then = function (this: Promise<never>, onFulfilled: any, onRejected: any) {
+          return Promise.prototype.then.call(this, onFulfilled, onRejected);
+        } as any;
+        return rejected;
       }),
   },
 };

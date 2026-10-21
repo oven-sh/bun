@@ -590,7 +590,7 @@ impl NodeHTTPResponse {
         };
 
         let ws = ServerWebSocket::init_for_ws_package(handler.get(), websocket);
-        // SAFETY: `init` just allocated `ws`, and its JS wrapper owns it.
+        // SAFETY: `init` just made `ws` in its JS wrapper, which `ws` holds strongly.
         let ws_ref = unsafe { &*ws };
 
         let armed_reader = self.armed_this_value.get();

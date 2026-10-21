@@ -3487,7 +3487,7 @@ describe.concurrent("ServerWebSocket argument validation", () => {
   // The last column is what a closed socket does. undefined means it throws the same error, because publish() still
   // publishes and cork() still runs its callback there.
   const invalidCalls: [string, (ws: any) => unknown, string, string?][] = [
-    ["send()", ws => ws.send(), "send requires at least 1 argument", "returned 0"],
+    ["send()", ws => ws.send(), "send requires a non-empty message", "returned 0"],
     ["send(null)", ws => ws.send(null), "send requires a non-empty message", "returned 0"],
     ["send('x', 'y')", ws => ws.send("x", "y"), "send expects compress to be a boolean", "returned 0"],
     ["sendText(1)", ws => ws.sendText(1), "sendText expects a string", "returned 0"],
@@ -3513,11 +3513,11 @@ describe.concurrent("ServerWebSocket argument validation", () => {
     ["publish(1, 'x')", ws => ws.publish(1, "x"), 'The "topic" argument must be of type string'],
     ["publish('', 'x')", ws => ws.publish("", "x"), "publish requires a non-empty topic"],
     ["publish('t', null)", ws => ws.publish("t", null), "publish requires a non-empty message"],
-    ["publishText()", ws => ws.publishText(), "publishText requires at least 1 argument"],
+    ["publishText()", ws => ws.publishText(), 'The "topic" argument must be of type string'],
     ["publishText('t', 1)", ws => ws.publishText("t", 1), "publishText expects a string"],
     ["publishBinary('t', 'x')", ws => ws.publishBinary("t", "x"), "publishBinary expects a Blob or BufferSource"],
     ["close('x')", ws => ws.close("x"), "close requires a numeric code or undefined", "returned undefined"],
-    ["cork()", ws => ws.cork(), "Not enough arguments"],
+    ["cork()", ws => ws.cork(), 'The "callback" argument must be of type function'],
     ["cork(1)", ws => ws.cork(1), 'The "callback" argument must be of type function'],
   ];
 
@@ -3638,6 +3638,7 @@ describe.concurrent("ServerWebSocket argument validation", () => {
       [[[1, 2], "c"], 1, "c"],
       [[named, "d"], 1, "d"],
       [[{}, "e"], 1, "e"],
+      [["t"], 9, "undefined"],
       [["t", undefined], 9, "undefined"],
       [["t", null], 4, "null"],
       [["t", 7], 1, "7"],
@@ -3661,9 +3662,8 @@ describe.concurrent("ServerWebSocket argument validation", () => {
     expect(publish(10n, "no subscribers")).toBe(0);
 
     const thrown: [unknown[], string][] = [
-      [[], "Missing argument"],
-      [["t"], "Missing argument"],
-      [[""], "Missing argument"],
+      [[], "Expected string"],
+      [[""], "publish requires a topic string"],
       [[undefined], "Expected string"],
       [[undefined, "x"], "Expected string"],
       [[null, "x"], "Expected string"],
@@ -3678,9 +3678,8 @@ describe.concurrent("ServerWebSocket argument validation", () => {
   it("server.publish() without a websocket handler returns 0, even for an empty topic", () => {
     using server = serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("no") });
     const publish = server.publish.bind(server) as (...args: unknown[]) => number;
-    expect([publish("t", "x"), publish("", "x"), publish(42, undefined, 1)]).toEqual([0, 0, 0]);
+    expect([publish("t", "x"), publish("", "x"), publish(42, undefined, 1), publish("t")]).toEqual([0, 0, 0, 0]);
     expect(() => publish(null, "x")).toThrow("Expected string");
-    expect(() => publish("t")).toThrow("Missing argument");
   });
 });
 

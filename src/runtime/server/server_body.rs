@@ -7,6 +7,7 @@ use crate::api::js_bundler::PluginJscExt as _;
 use crate::api::{SocketAddress, js_bundler as JSBundler};
 use crate::bake::router as FrameworkRouter;
 use crate::bake::{self as bake};
+use crate::generated_bindgen::server::ServerProtocol;
 use crate::node::types::PathLikeExt as _;
 use crate::webcore::BlobExt;
 use crate::webcore::body::Value as BodyValue;
@@ -22,6 +23,7 @@ use bun_core::{Output, fmt as bun_fmt};
 use bun_http::header_has_token;
 use bun_http::{self as http, Method, MimeType};
 use bun_jsc::Debugger::DebuggerId;
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue,
@@ -1209,7 +1211,7 @@ struct UpgradeOptions {
 }
 
 impl UpgradeOptions {
-    fn from_js(global: &JSGlobalObject, options: Option<JSValue>) -> JsResult<Self> {
+    fn from_js(global: &JSGlobalObject, options: JSValue) -> JsResult<Self> {
         let mut this = Self {
             data: JSValue::ZERO,
             headers: None,
@@ -1217,10 +1219,9 @@ impl UpgradeOptions {
             _headers_object: jsc::EnsureStillAlive(JSValue::UNDEFINED),
             _headers_converted: None,
         };
-        let Some(options) = options.filter(|options| !options.is_empty_or_undefined_or_null())
-        else {
+        if options.is_undefined_or_null() {
             return Ok(this);
-        };
+        }
         if !options.is_object() {
             return Err(
                 global.throw_invalid_arguments(format_args!("upgrade options must be an object"))
@@ -1445,16 +1446,13 @@ where
         GetOrStartLoadResult::Ready(None)
     }
 
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn do_subscriber_count(
         &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [topic_value] = callframe.arguments_as_array::<1>();
-        if callframe.arguments_count() < 1 {
-            return Err(global.throw_not_enough_arguments("subscriberCount", 1, 0));
-        }
+        cx: &mut JsScope<'_>,
+        topic: JsLocal<'_>,
+    ) -> JsResult<u32> {
+        let global = cx.global();
+        let topic_value = topic.to_js();
 
         if topic_value.is_empty_or_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -1466,83 +1464,29 @@ where
         let topic = topic_view.to_utf8();
 
         if topic.slice().is_empty() {
-            return Ok(JSValue::js_number(0.0));
+            return Ok(0);
         }
 
-        Ok(JSValue::js_number(f64::from(
-            self.app_mut().num_subscribers(topic.slice()),
-        )))
+        Ok(self.app_mut().num_subscribers(topic.slice()))
     }
 
-    // ── host_fn.wrapInstanceMethod hand-expansions ───────────────────────
-    //
-    // NOTE: the `#[bun_jsc::host_fn(method)]` proc-macro that will eventually
-    // replace these hand-expansions hasn't landed, so the per-type decode arms
-    // used by the server (`EncodedSlice`, `JSValue`, `Option<JSValue>`, `&Request`)
-    // are open-coded here.
-
-    /// `pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false)`
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_stop(
-        &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
-        // ?jsc.JSValue
-        let abruptly = iter.next_eat();
-        Ok(self.stop_from_js(abruptly))
-    }
-
-    /// `pub const dispose = host_fn.wrapInstanceMethod(ThisServer, "disposeFromJS", false)`
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn dispose(
-        &self,
-        _global: &JSGlobalObject,
-        _callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Ok(self.dispose_from_js())
-    }
-
-    /// `pub const doUpgrade = host_fn.wrapInstanceMethod(ThisServer, "onUpgrade", false)`
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_upgrade(
-        &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
-        // jsc.JSValue
-        let object = iter
-            .next_eat()
-            .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
-        // ?jsc.JSValue
-        let optional = iter.next_eat();
-        self.on_upgrade(global, object, optional)
-    }
-
-    /// `pub const doPublish = host_fn.wrapInstanceMethod(ThisServer, "publish", false)`
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn do_publish(
         &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
+        cx: &mut JsScope<'_>,
+        topic: JsLocal<'_>,
+        message: JsLocal<'_>,
+        compress: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         use super::server_web_socket::{Accept, payload_from_js, send_status_to_js};
 
-        let [topic_value, message_value, compress_value] = callframe.arguments_as_array::<3>();
-        let argument_count = callframe.arguments_count();
-        if argument_count < 1 {
-            return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
-        }
+        let global = cx.global();
+        let (topic_value, message_value, compress_value) =
+            (topic.to_js(), message.to_js(), compress.to_js());
         if topic_value.is_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!("Expected string")));
         }
         let topic_view = topic_value.to_js_string_view(global)?;
         let topic = topic_view.to_utf8();
-        if argument_count < 2 {
-            return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
-        }
         let compress = compress_value.is_undefined() || compress_value.to_boolean();
         let payload = payload_from_js(global, "publish", message_value, Accept::AnyOrNullish)?;
         let bytes = payload.bytes();
@@ -1567,51 +1511,16 @@ where
         Ok(send_status_to_js(status, bytes.len(), "publish"))
     }
 
-    /// `pub const doRequestIP = host_fn.wrapInstanceMethod(ThisServer, "requestIP", false)`
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn do_request_ip(
         &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
+        cx: &mut JsScope<'_>,
+        request: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
-        let arg = iter.next_eat().ok_or_else(|| {
-            global.throw_invalid_arguments(format_args!("Missing Request object"))
-        })?;
-        let request = arg.as_class_ref::<Request>().ok_or_else(|| {
-            global.throw_invalid_arguments(format_args!("Expected Request object"))
+        let request = request.to_js().as_class_ref::<Request>().ok_or_else(|| {
+            cx.global()
+                .throw_invalid_arguments(format_args!("Expected Request object"))
         })?;
         self.request_ip(request)
-    }
-
-    /// `pub const doReload = onReload`
-    #[inline]
-    pub(crate) fn do_reload(
-        &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        self.on_reload(global, callframe)
-    }
-
-    /// `pub const doFetch = onFetch`
-    #[inline]
-    pub(crate) fn do_fetch(
-        &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        self.on_fetch(global, callframe)
-    }
-
-    /// `pub const doTimeout = timeout`
-    #[inline]
-    pub(crate) fn do_timeout(
-        &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        self.timeout(global, callframe)
     }
 
     pub(crate) fn request_ip(&self, request: &Request) -> JsResult<JSValue> {
@@ -1629,41 +1538,31 @@ where
         )
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn timeout(
+    pub(crate) fn timeout<'a>(
         &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
-        if arguments.len() < 2 || arguments[0].is_empty_or_undefined_or_null() {
-            return Err(global.throw_not_enough_arguments("timeout", 2, arguments.len()));
-        }
-
-        let seconds = arguments[1];
+        heap: &JsHeap<'a>,
+        request: JsLocal<'a>,
+        seconds: JsLocal<'a>,
+    ) -> bindgen::Result<'a, JSValue> {
+        let (request, seconds) = (request.to_js(), seconds.to_js());
 
         if self.config.get().address.is_unix() {
             return Ok(JSValue::NULL);
         }
 
         if !seconds.is_number() {
-            return Err(self
-                .global()
-                .throw(format_args!("timeout() requires a number")));
+            return Err(heap.error(format_args!("timeout() requires a number")));
         }
         let value = seconds.to_u32();
 
-        if let Some(request) = <Request as bun_jsc::JsClass>::from_js(arguments[0]) {
+        if let Some(request) = <Request as bun_jsc::JsClass>::from_js(request) {
             // SAFETY: from_js returns a live *mut Request; shared access only.
             let _ = unsafe { (*request).request_context.set_timeout(value) };
-        } else if let Some(response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(arguments[0])
-        {
+        } else if let Some(response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(request) {
             // SAFETY: from_js returns a live *mut NodeHTTPResponse
             unsafe { (*response).set_timeout((value % 255) as u8) };
         } else {
-            return Err(self
-                .global()
-                .throw_invalid_arguments(format_args!("timeout() requires a Request object")));
+            return Err(heap.invalid_arguments(format_args!("timeout() requires a Request object")));
         }
 
         Ok(JSValue::UNDEFINED)
@@ -1671,12 +1570,15 @@ where
 
     pub(crate) fn on_upgrade(
         &self,
-        global: &JSGlobalObject,
-        object: JSValue,
-        optional: Option<JSValue>,
-    ) -> JsResult<JSValue> {
+        cx: &mut JsScope<'_>,
+        request: JsLocal<'_>,
+        options: JsLocal<'_>,
+    ) -> JsResult<bool> {
         use bun_core::Utf8Bytes;
         use bun_jsc::HTTPHeaderName;
+
+        let global = cx.global();
+        let object = request.to_js();
 
         if self.config.get().websocket.is_none() {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -1685,7 +1587,7 @@ where
         }
 
         if self.flags.get().contains(ServerFlags::TERMINATED) {
-            return Ok(JSValue::FALSE);
+            return Ok(false);
         }
 
         // `deinit_if_we_can` only clears `handler.server` once every
@@ -1700,7 +1602,7 @@ where
             .as_ref()
             .is_some_and(|ws| ws.handler.server.is_none())
         {
-            return Ok(JSValue::FALSE);
+            return Ok(false);
         }
 
         let Some(request_ptr) = <Request as bun_jsc::JsClass>::from_js(object) else {
@@ -1727,21 +1629,21 @@ where
             .request_context
             .get::<ServerRequestContext<SSL, DEBUG>>()
         else {
-            return Ok(JSValue::FALSE);
+            return Ok(false);
         };
         // SAFETY: tagged pointer just matched this monomorphization.
         let upgrader = unsafe { &*upgrader_ptr };
 
         if upgrader.is_aborted_or_ended() {
-            return Ok(JSValue::FALSE);
+            return Ok(false);
         }
 
         let UpgradeState::Pending(upgrade_ctx) = upgrader.upgrade_context.get() else {
-            return Ok(JSValue::FALSE);
+            return Ok(false);
         };
 
         let Some(resp) = upgrader.resp.get() else {
-            return Ok(JSValue::FALSE);
+            return Ok(false);
         };
 
         // Keep the upgrader alive across option getters below, which run
@@ -1757,7 +1659,7 @@ where
         // Validate the handshake against `request.headers`, never the raw uWS request.
         // Copy the values, because the option getters below can modify the headers.
         let Some(head) = request.get_fetch_headers_unless_empty() else {
-            return Ok(JSValue::FALSE);
+            return Ok(false);
         };
         let mut header = |name: HTTPHeaderName| {
             head.fast_get(name)
@@ -1776,7 +1678,7 @@ where
         if !header_has_token(&upgrade_header, b"websocket")
             || !is_valid_sec_websocket_key(&sec_websocket_key)
         {
-            return Ok(JSValue::FALSE);
+            return Ok(false);
         }
         // RFC 6455 §4.4: an unsupported |Sec-WebSocket-Version| MUST be
         // answered with an HTTP error and a |Sec-WebSocket-Version| header
@@ -1786,10 +1688,10 @@ where
             resp.write_header(b"Sec-WebSocket-Version", b"13");
             upgrader.flags.set_has_written_status(true);
             upgrader.end_without_body(true);
-            return Ok(JSValue::FALSE);
+            return Ok(false);
         }
 
-        let options = UpgradeOptions::from_js(global, optional)?;
+        let options = UpgradeOptions::from_js(global, options.to_js())?;
         let sec_websocket_protocol = options.protocol.as_deref().unwrap_or(&offered_protocols);
 
         // The option getters may have already upgraded, responded to, or closed the request.
@@ -1797,7 +1699,7 @@ where
             || !matches!(upgrader.upgrade_context.get(), UpgradeState::Pending(_))
             || !resp.can_upgrade()
         {
-            return Ok(JSValue::FALSE);
+            return Ok(false);
         }
 
         // `CookieMapRef` releases the moved-out ref once `cookies_to_write` drops.
@@ -1879,14 +1781,14 @@ where
                 )
                 .is_null()
             {
-                // SAFETY: `init` just allocated `ws`. Its JS wrapper owns it, and uWS never stored it.
+                // SAFETY: `init` just made `ws` in its JS wrapper, which `ws` holds strongly. uWS never stored it.
                 unsafe { &*ws }.discard_unopened();
                 return;
             }
             upgraded = Ok(true);
         });
 
-        upgraded.map(JSValue::from)
+        upgraded
     }
 
     /// Swaps the live server's mutable
@@ -1913,8 +1815,8 @@ where
         // config omits them. The async-context re-wrap is unconditional:
         // `with_async_context_if_needed` is a no-op when no ALS frame is
         // active, so re-wrapping on every reload keeps the captured frame in
-        // sync with the call-time context. `on_reload` is a host_fn — the
-        // wrapper is `callframe.this()` on the JS stack, alive even if
+        // sync with the call-time context. `on_reload` is called by JS — the
+        // wrapper is its `this` on the JS stack, alive even if
         // `js_value` was downgraded after stop(). The slot writes must reach
         // it so the new handlers are GC-rooted.
         let server_js = self.js_value_assert_alive();
@@ -2032,19 +1934,16 @@ where
         Ok(true)
     }
 
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn on_reload(
         &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
+        cx: &mut JsScope<'_>,
+        options: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
-        if arguments.len() < 1 {
-            return Err(global.throw_not_enough_arguments("reload", 1, 0));
-        }
+        let global = cx.global();
+        let arguments = [options.to_js()];
 
         // SAFETY: bun_vm() returns the live per-thread VM singleton.
-        let mut args_slice = jsc::ArgumentsSlice::init(global.bun_vm(), arguments);
+        let mut args_slice = jsc::ArgumentsSlice::init(global.bun_vm(), &arguments);
 
         let mut new_config = ServerConfig::from_js(
             global,
@@ -2067,13 +1966,14 @@ where
         Ok(self.js_value.try_get().unwrap_or(JSValue::UNDEFINED))
     }
 
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn on_fetch(
         &self,
-        ctx: &JSGlobalObject,
-        callframe: &CallFrame,
+        cx: &mut JsScope<'_>,
+        input: JsLocal<'_>,
+        init: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
+        let ctx = cx.global();
 
         if self.config.get().on_request.is_empty() {
             return Ok(JSPromise::rejected_promise(
@@ -2085,29 +1985,16 @@ where
             .to_js());
         }
 
-        let arguments = callframe.arguments();
-        if arguments.is_empty() {
-            return Ok(JSPromise::rejected_promise(
-                ctx,
-                ctx.create_error_instance(format_args!(
-                    "fetch() expects a string but received no arguments."
-                )),
-            )
-            .to_js());
-        }
-
         let mut headers: Option<HeadersRef> = None;
         let mut method = Method::GET;
-        // SAFETY: bun_vm() returns the live per-thread VM singleton.
-        let mut args = jsc::ArgumentsSlice::init(ctx.bun_vm(), arguments);
 
-        let first_arg = args.next_eat().unwrap();
+        let first_arg = input.to_js();
         let mut body = BodyValue::Null;
         // TODO: set Host header
         // TODO: set User-Agent header
         // TODO: unify with fetch() implementation.
         let request: *mut Request = if first_arg.is_string() {
-            let url_utf8 = arguments[0].to_utf8(ctx)?;
+            let url_utf8 = first_arg.to_utf8(ctx)?;
             let temp_url_str = url_utf8.slice();
 
             if temp_url_str.is_empty() {
@@ -2135,8 +2022,8 @@ where
             };
             url = URL::parse(&owned_url_buf);
 
-            if arguments.len() >= 2 && arguments[1].is_object() {
-                let opts = arguments[1];
+            let opts = init.to_js();
+            if opts.is_object() {
                 if let Some(method_) = opts.fast_get(ctx, jsc::BuiltinName::Method)? {
                     let slice_ = method_.to_utf8(ctx)?;
                     method = Method::which(slice_.slice()).unwrap_or(method);
@@ -2183,7 +2070,7 @@ where
             // SAFETY: JsClass::from_js returns a live *mut Request.
             // NOTE: `Request::clone()` (Request.rs:1627) seeds a fully-initialized
             // sentinel and calls `clone_into(.., preserve_url=false)`.
-            unsafe { (*request_).clone(&ctx.js_thread_of_caller(callframe))? }
+            unsafe { (*request_).clone(&ctx.js_thread_of_caller_no_frame())? }
         } else {
             let fetch_error = Fetch::fetch_type_error_string(first_arg);
             let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(ctx, format_args!("{}", fetch_error));
@@ -2230,14 +2117,9 @@ where
         Ok(JSPromise::resolved_promise_value(ctx, response_value))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn close_idle_connections(
-        &self,
-        _global: &JSGlobalObject,
-        _callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn close_idle_connections(&self, _: &mut JsScope<'_>) -> usize {
         if self.app.get().is_none() || self.deinit_running.get() {
-            return Ok(JSValue::js_number(0.0));
+            return 0;
         }
         // Each close reaches `on_connection_filter(-2)` synchronously; hold
         // the guard so that does not run the idle pass before this frame runs
@@ -2247,13 +2129,14 @@ where
         let closed = self.app_mut().close_idle_connections(false);
         self.deinit_running.set(false);
         self.deinit_if_we_can();
-        Ok(JSValue::js_number(closed as f64))
+        closed
     }
 
-    pub(crate) fn stop_from_js(&self, abruptly: Option<JSValue>) -> JSValue {
+    pub(crate) fn stop_from_js(&self, _: &mut JsScope<'_>, abruptly: JsLocal<'_>) -> JSValue {
         let rc = self.get_all_closed_promise(&self.global());
 
-        let abrupt = matches!(abruptly, Some(v) if v.is_boolean() && v.to_boolean());
+        let abruptly = abruptly.to_js();
+        let abrupt = abruptly.is_boolean() && abruptly.to_boolean();
         // `!deinit_running`: a `server.stop()` reached from a close callback
         // that an outer `stop()`'s drain fired would re-enter `stop_listening`
         // under the outer frame.
@@ -2268,59 +2151,53 @@ where
         rc
     }
 
-    pub(crate) fn dispose_from_js(&self) -> JSValue {
+    pub(crate) fn dispose_from_js(&self, _: &mut JsScope<'_>) {
         if self.has_listener()
             || (!self.flags.get().contains(ServerFlags::TERMINATED) && !self.deinit_running.get())
         {
             self.stop(true);
         }
-        JSValue::UNDEFINED
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_port(&self, _: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_port(&self) -> Option<u16> {
         let config_port = match &self.config.get().address {
-            server_config::Address::Unix(_) => return JSValue::UNDEFINED,
+            server_config::Address::Unix(_) => return None,
             server_config::Address::Tcp { port, .. } => *port,
         };
 
         if let Some(listener) = self.listener.get() {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             if let Some(p) = bun_opaque::opaque_deref_mut(listener).get_local_port() {
-                return JSValue::js_number(p as f64);
+                return Some(p);
             }
         }
         if Self::HAS_H3 {
             if let Some(h3l) = self.h3_listener.get() {
                 // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 if let Some(p) = bun_opaque::opaque_deref_mut(h3l).get_local_port() {
-                    return JSValue::js_number(p as f64);
+                    return Some(p);
                 }
             }
         }
-        JSValue::js_number(config_port as f64)
+        Some(config_port)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_id(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::create_utf8_for_js(global, &self.config.get().id)
+    pub(crate) fn get_id(&self) -> &[u8] {
+        &self.config.get().id
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_pending_requests(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_number((self.pending_requests.get() as u32 & 0x7FFF_FFFF) as i32 as f64)
+    pub(crate) fn get_pending_requests(&self) -> i32 {
+        (self.pending_requests.get() as u32 & 0x7FFF_FFFF) as i32
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_pending_web_sockets(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_number((self.active_sockets_count() as u32 & 0x7FFF_FFFF) as i32 as f64)
+    pub(crate) fn get_pending_web_sockets(&self) -> i32 {
+        (self.active_sockets_count() as u32 & 0x7FFF_FFFF) as i32
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_address(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let mut port: u16 = match &self.config.get().address {
             server_config::Address::Unix(unix) => {
-                return bun_string_jsc::create_utf8_for_js(global, unix.as_bytes());
+                return bun_string_jsc::create_utf8_for_js(cx.global(), unix.as_bytes());
             }
             server_config::Address::Tcp { port, .. } => *port,
         };
@@ -2365,16 +2242,16 @@ where
         Ok(JSValue::NULL)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_url(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_url(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
         let url = self
             .get_url_as_string()
             .map_err(|_| global.throw_out_of_memory())?;
         bun_string_jsc::to_jsdomurl(&url, global)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_hostname(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_hostname(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
         let hostname = match &self.config.get().address {
             server_config::Address::Unix(_) => return Ok(JSValue::UNDEFINED),
             server_config::Address::Tcp { hostname, .. } => hostname,
@@ -2398,19 +2275,16 @@ where
         }
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_protocol(&self, global: &JSGlobalObject) -> JSValue {
-        let _ = self;
+    pub(crate) fn get_protocol(_: &Self) -> ServerProtocol {
         if SSL {
-            global.common_strings().https()
+            ServerProtocol::Https
         } else {
-            global.common_strings().http()
+            ServerProtocol::Http
         }
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_development(_this: &Self, _: &JSGlobalObject) -> JSValue {
-        JSValue::from(DEBUG)
+    pub(crate) fn get_development(_: &Self) -> bool {
+        DEBUG
     }
 
     pub(crate) fn finalize(&self) {
@@ -2460,18 +2334,14 @@ where
         resp.end_without_body(false);
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_ref(&self, _: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let this_value = callframe.this();
+    pub(crate) fn do_ref<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
         self.ref_();
-        Ok(this_value)
+        this_value
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_unref(&self, _: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let this_value = callframe.this();
+    pub(crate) fn do_unref<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
         self.unref();
-        Ok(this_value)
+        this_value
     }
 
     pub(crate) fn on_bun_info_request(
@@ -3298,22 +3168,6 @@ where
     // `js_gc_route_list_set` / `ptr_to_js` live on the unbounded
     // `impl NewServer` in mod.rs; do not redefine them here.
 }
-
-// JsClass impls for the four server monomorphizations. Forward into the
-// canonical `crate::generated_classes::js_$ty` wrappers (emitted by
-// `generate-classes.ts`) instead of redeclaring the `${T}__fromJS`/
-// `${T}__create` externs locally — the codegen module is the single owner of
-// those FFI signatures, so going through it avoids `clashing_extern_declarations`
-// and keeps the ABI definition in one place.
-//
-// `get_constructor` is intentionally omitted: `server.classes.ts` sets
-// `noConstructor: true` for all four variants, so no `${T}__getConstructor`
-// symbol is exported by C++ and the trait default (`JSValue::UNDEFINED`) is
-// the spec-correct answer.
-bun_jsc::impl_js_class_via_generated!(HTTPServer => crate::generated_classes::js_HTTPServer, no_constructor);
-bun_jsc::impl_js_class_via_generated!(HTTPSServer => crate::generated_classes::js_HTTPSServer, no_constructor);
-bun_jsc::impl_js_class_via_generated!(DebugHTTPServer => crate::generated_classes::js_DebugHTTPServer, no_constructor);
-bun_jsc::impl_js_class_via_generated!(DebugHTTPSServer => crate::generated_classes::js_DebugHTTPSServer, no_constructor);
 
 // ─── Exported fns ────────────────────────────────────────────────────────────
 fn server_set_on_client_error(

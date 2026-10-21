@@ -5,28 +5,6 @@ use bun_collections::VecExt;
 use core::ffi::{c_char, c_int, c_void};
 use core::sync::atomic::Ordering;
 
-/// Codegen `${ServerType}__create(global, ptr)` shim — one extern per
-/// `(SSL, DEBUG)` monomorphization. Routes through the
-/// `crate::generated_classes::js_*Server::to_js` wrappers (which own the
-/// canonical extern decl) instead of redeclaring the symbols here.
-fn server_js_create(
-    ptr: *mut c_void,
-    global: &jsc::JSGlobalObject,
-    ssl: bool,
-    debug: bool,
-) -> jsc::JSValue {
-    use crate::generated_classes as gc;
-    // `ptr` is a fresh `NewServer<SSL,DEBUG>` heap allocation; the C++
-    // wrapper takes the caller's ref. Cast through the concrete monomorphization
-    // each codegen module is typed against.
-    match (ssl, debug) {
-        (false, false) => gc::js_HTTPServer::to_js(ptr.cast(), global),
-        (true, false) => gc::js_HTTPSServer::to_js(ptr.cast(), global),
-        (false, true) => gc::js_DebugHTTPServer::to_js(ptr.cast(), global),
-        (true, true) => gc::js_DebugHTTPSServer::to_js(ptr.cast(), global),
-    }
-}
-
 use bun_io::KeepAlive;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
@@ -491,8 +469,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     // ─────────────────────────────────────────────────────────────────────────
 
     pub(crate) fn memory_cost(&self) -> usize {
-        core::mem::size_of::<Self>()
-            + self.base_url_string_for_joining.len()
+        self.base_url_string_for_joining.len()
             + self.config.get().memory_cost()
             + self
                 .dev_server
@@ -664,7 +641,7 @@ pub(crate) fn protect_handler_shadows(config: &ServerConfig) -> [bun_jsc::js_val
 /// normalize it to `ZERO` and clear the slot; otherwise apply the
 /// async-context wrap and write the wrapped fn into both the slot and
 /// `*shadow`. Every call site already holds a live wrapper (`ptr_to_js` on
-/// serve, `callframe.this()` on reload / setOnClientError), so `server_js`
+/// serve, `this` on reload / setOnClientError), so `server_js`
 /// is always valid. Keeping the is-empty check, the wrap step, and the
 /// shadow↔slot pairing in one helper is what stops the serve / reload / ws /
 /// clientError sites from drifting.
@@ -1562,12 +1539,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     // `js_gc_route_list_set` and the per-callback slot setters live with the
-    // `slot_setter!` invocations below (alongside `cached_values`).
+    // `slot_setter!` invocations below.
 
     /// Wrap an already-heap-allocated server pointer in its JS object.
     /// The caller's ref transfers to the C++ wrapper (dropped after `finalize`).
     pub(crate) fn ptr_to_js(this: *mut Self, global: &JSGlobalObject) -> JSValue {
-        server_js_create(this.cast(), global, SSL, DEBUG)
+        server_js_cached!(SSL, DEBUG, to_js(this.cast(), global))
     }
 
     // `on_reload_from_zig` body lives in `server_body.rs` (`impl NewServer { … }`);
@@ -3242,42 +3219,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 // them here instead of redeclaring with a divergent `req` pointer type.
 use server_body::{Bun__ServerRouteList__callRoute, Bun__ServerRouteList__create};
 
-/// Per-type cached-accessor shims for the server `WriteBarrier` value slots.
-/// `codegen_cached_accessors!` emits `${snake}_{get,set}_cached` wrapping
-/// `${T}Prototype__${prop}{Get,Set}CachedValue` (generate-classes.ts).
-mod cached_values {
-    macro_rules! per_type {
-        ($ty:literal) => {
-            bun_jsc::codegen_cached_accessors!(
-                $ty; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, onConnection,
-                wsOnOpen, wsOnMessage, wsOnClose, wsOnDrain, wsOnError, wsOnPing, wsOnPong,
-                wsPackageHandlers
-            );
-        };
-    }
-    pub(super) mod http {
-        per_type!("HTTPServer");
-    }
-    pub(super) mod https {
-        per_type!("HTTPSServer");
-    }
-    pub(super) mod debug_http {
-        per_type!("DebugHTTPServer");
-    }
-    pub(super) mod debug_https {
-        per_type!("DebugHTTPSServer");
-    }
-}
-
-/// `(SSL, DEBUG)` → per-type `cached_values` submodule dispatch for the
-/// codegen'd `${snake}_{get,set}_cached` accessors.
+/// `(SSL, DEBUG)` → the generated `js_*Server` module of that class.
 macro_rules! server_js_cached {
     ($ssl:expr, $debug:expr, $fn:ident($($arg:expr),* $(,)?)) => {
         match ($ssl, $debug) {
-            (false, false) => $crate::server::cached_values::http::$fn($($arg),*),
-            (true, false) => $crate::server::cached_values::https::$fn($($arg),*),
-            (false, true) => $crate::server::cached_values::debug_http::$fn($($arg),*),
-            (true, true) => $crate::server::cached_values::debug_https::$fn($($arg),*),
+            (false, false) => $crate::generated_bindgen::server::js_HTTPServer::$fn($($arg),*),
+            (true, false) => $crate::generated_bindgen::server::js_HTTPSServer::$fn($($arg),*),
+            (false, true) => $crate::generated_bindgen::server::js_DebugHTTPServer::$fn($($arg),*),
+            (true, true) => $crate::generated_bindgen::server::js_DebugHTTPSServer::$fn($($arg),*),
         }
     };
 }
@@ -3300,7 +3249,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     slot_setter!(js_gc_on_error_set, on_error_set_cached);
     slot_setter!(
         js_gc_on_node_http_request_set,
-        on_node_h_t_t_p_request_set_cached
+        on_node_http_request_set_cached
     );
     slot_setter!(js_gc_on_client_error_set, on_client_error_set_cached);
     slot_setter!(js_gc_on_connection_set, on_connection_set_cached);

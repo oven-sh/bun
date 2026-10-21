@@ -1218,6 +1218,37 @@ test.concurrent.each(["// @bun", "// @bun with a source map", "coverageIgnoreSou
   },
 );
 
+test("no brace of a block is listed when node:inspector turns the profiler on", async () => {
+  using dir = tempDir("cov-inspector", {
+    "lib.ts": `export function never()
+{
+  return 1;
+}
+`,
+    "main.ts": `
+import { codeCoverageForFile } from "bun:jsc";
+import inspector from "node:inspector";
+import { join } from "node:path";
+const session = new inspector.Session();
+session.connect();
+session.post("Profiler.enable");
+session.post("Profiler.startPreciseCoverage");
+await import("./lib.ts");
+console.log(codeCoverageForFile(join(import.meta.dir, "lib.ts"), false));
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toEndWith("| 1,3\n");
+  expect(exitCode).toBe(0);
+});
+
 test("reports an error for a coverage directory longer than the path buffer", async () => {
   // A bunfig value can be longer than the buffer on every platform.
   using dir = tempDir("coverage-dir-too-long", {

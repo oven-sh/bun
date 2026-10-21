@@ -819,6 +819,7 @@ impl ByteRangeMapping {
 
     /// `scan` sets no brace. For coverage the printer maps the braces of an object, not of a block.
     fn set_mapped_units_executable(&mut self, text: &[u8], already_bundled: bool) {
+        let vm = bun_jsc::VirtualMachine::VirtualMachine::get().as_mut();
         if already_bundled {
             // Bun runs a `// @bun` file as it is written, so it is the original of a map made here.
             if let Some(source_map) = print_for_coverage(self.source_url.slice(), text) {
@@ -828,11 +829,10 @@ impl ByteRangeMapping {
                     }
                 }
             }
-        } else if let Some(source_map) = bun_jsc::VirtualMachine::VirtualMachine::get()
-            .as_mut()
-            .source_mappings()
-            .get(self.source_url.slice())
+        } else if vm.transpiler.options.code_coverage
+            && let Some(source_map) = vm.source_mappings().get(self.source_url.slice())
         {
+            // Not when `node:inspector` turned the profiler on: the printer then maps every brace.
             for_each_distinct_mapping(&source_map, |mapping| {
                 if let Some(offset) = self.offset_of(mapping.generated) {
                     self.executable_units.set(offset as usize);

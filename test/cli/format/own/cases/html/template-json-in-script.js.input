@@ -1,0 +1,6 @@
+function page(data) {
+  return /* HTML */ `
+    <script type="application/json">{"a":1,"b":[1,2,{"c":${data}}]}</script>
+    <script type="importmap">{"imports":{"a":"./a.js"}}</script>
+  `;
+}

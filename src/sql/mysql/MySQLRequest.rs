@@ -34,3 +34,25 @@ pub fn prepare_request<Context: WriterContext>(
     packet.end()?;
     Ok(())
 }
+
+/// The server sends no reply.
+pub fn close_statement<Context: WriterContext>(
+    statement_id: u32,
+    writer: NewWriter<Context>,
+) -> crate::Result<()> {
+    bun_core::scoped_log!(MySQLRequest, "closeStatement {}", statement_id);
+    let mut packet = writer.start(0)?;
+    writer.int1(CommandType::COM_STMT_CLOSE as u8)?;
+    writer.int4(statement_id)?;
+
+    packet.end()?;
+    Ok(())
+}
+
+pub fn quit<Context: WriterContext>(writer: NewWriter<Context>) -> crate::Result<()> {
+    let mut packet = writer.start(0)?;
+    writer.int1(CommandType::COM_QUIT as u8)?;
+
+    packet.end()?;
+    Ok(())
+}

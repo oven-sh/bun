@@ -8,9 +8,15 @@ const batchSize = 40;
 // A leaked 512 KB body × totalCount would grow RSS by gigabytes; the assertions
 // below compare against O(100 MB), so the slower ASAN/debug lanes keep the same
 // margin with fewer iterations (each request is ~2-10× slower there).
-const totalCount = isASAN || isDebug ? 3_000 : 10_000;
+const baseCount = isASAN || isDebug ? 3_000 : 10_000;
+// The HTTP/2 pass repeats every scenario; 40% keeps the file inside its CI
+// budget while a leaked 512 KB body per request would still be gigabytes.
+let totalCount = baseCount;
 const zeroCopyPayload = new Blob([payload]);
 const zeroCopyJSONPayload = new Blob([JSON.stringify({ bun: payload })]);
+
+let fetchOptions: { protocol?: "http2"; tls?: { rejectUnauthorized: boolean } } = {};
+const fetch = (url: string | URL, init: RequestInit = {}) => globalThis.fetch(url, { ...fetchOptions, ...init });
 
 async function getMemoryUsage(url: URL): Promise<number> {
   return (await fetch(`${url.origin}/report`).then(res => res.json())) as number;
@@ -130,21 +136,26 @@ async function calculateMemoryLeak(fn: (url: URL) => Promise<void>, url: URL) {
 // test (and re-running the 10k-request warmup each time) was the dominant cost
 // on ASAN. Sequential reuse keeps the RSS assertions meaningful because a real
 // body leak compounds across scenarios instead of being hidden by a restart.
-describe("request body leak", () => {
+describe.each([false, true])("request body leak (http2: %p)", http2 => {
   let fixture: Subprocess;
   let url: URL;
 
   beforeAll(async () => {
+    fetchOptions = http2 ? { protocol: "http2", tls: { rejectUnauthorized: false } } : {};
+    totalCount = http2 ? baseCount * 0.4 : baseCount;
     const defer = Promise.withResolvers<string>();
-    fixture = Bun.spawn([bunExe(), "--smol", join(import.meta.dirname, "body-leak-test-fixture.ts")], {
-      env: bunEnv,
-      stdout: "inherit",
-      stderr: "inherit",
-      stdin: "ignore",
-      ipc(message) {
-        defer.resolve(message);
+    fixture = Bun.spawn(
+      [bunExe(), "--smol", join(import.meta.dirname, "body-leak-test-fixture.ts"), ...(http2 ? ["--http2"] : [])],
+      {
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "inherit",
+        stdin: "ignore",
+        ipc(message) {
+          defer.resolve(message);
+        },
       },
-    });
+    );
     fixture.exited.then(code => defer.reject(new Error(`body-leak fixture exited (${code}) before sending its URL`)));
     url = new URL(await defer.promise);
     await warmup(url);
@@ -179,8 +190,10 @@ describe("request body leak", () => {
         // acceptable memory leak
         expect(report.leak).toBeLessThanOrEqual(maxMemoryGrowth);
         // ASAN quarantine + debug-assertions instrumentation inflate RSS;
-        // give the asan lane more headroom than a plain release build.
-        expect(report.end_memory).toBeLessThanOrEqual((isASAN ? 768 : 512) * 1024 * 1024);
+        // give the asan lane more headroom than a plain release build. The
+        // http2 variant also runs TLS, which adds ~200 MB of baseline under ASAN.
+        const ceilingMB = (isASAN ? 768 : 512) + (http2 ? 256 : 0);
+        expect(report.end_memory).toBeLessThanOrEqual(ceilingMB * 1024 * 1024);
       },
       isDebug || isASAN ? 60_000 : 40_000,
     );

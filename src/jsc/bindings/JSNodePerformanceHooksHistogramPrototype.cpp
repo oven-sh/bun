@@ -44,8 +44,8 @@ const ClassInfo JSNodePerformanceHooksHistogramPrototype::s_info = { "Recordable
 void JSNodePerformanceHooksHistogramPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSNodePerformanceHooksHistogram::info(), JSNodePerformanceHooksHistogramPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSNodePerformanceHooksHistogram::info(), JSNodePerformanceHooksHistogramPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncRecord, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -424,25 +424,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject * globalObj
 }
 
 // Extern declarations for the native timer implementation
-extern "C" void Timer_enableEventLoopDelayMonitoring(void* vm, JSC::EncodedJSValue histogram, int32_t resolution);
-extern "C" void Timer_disableEventLoopDelayMonitoring(void* vm);
+extern "C" void Timer_enableEventLoopDelayMonitoring(void* vm, JSC::EncodedJSValue histogram, double resolution);
+extern "C" void Timer_disableEventLoopDelayMonitoring();
 
 // Create histogram for event loop delay monitoring
-JSC_DEFINE_HOST_FUNCTION(jsFunction_monitorEventLoopDelay, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsFunction_monitorEventLoopDelay, (JSGlobalObject * globalObject, CallFrame*))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    int32_t resolution = 10; // default 10ms
-    if (callFrame->argumentCount() > 0) {
-        resolution = callFrame->argument(0).toInt32(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        if (resolution < 1) {
-            throwRangeError(globalObject, scope, "Resolution must be >= 1"_s);
-            return JSValue::encode(jsUndefined());
-        }
-    }
 
     // Create histogram with range for event loop delays (1ns to 1 hour)
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
@@ -480,7 +469,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_enableEventLoopDelay, (JSGlobalObject * glob
         return JSValue::encode(jsUndefined());
     }
 
-    int32_t resolution = callFrame->argument(1).toInt32(globalObject);
+    double resolution = callFrame->argument(1).toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     // Reset histogram data on enable
@@ -512,7 +501,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_disableEventLoopDelay, (JSGlobalObject * glo
     }
 
     // Call into native code to disable monitoring
-    Timer_disableEventLoopDelayMonitoring(bunVM(globalObject));
+    Timer_disableEventLoopDelayMonitoring();
 
     return JSValue::encode(jsUndefined());
 }

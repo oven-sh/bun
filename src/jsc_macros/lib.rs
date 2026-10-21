@@ -402,11 +402,10 @@ pub fn codegen_cached_accessors(input: TokenStream) -> TokenStream {
         });
         out.extend(quote! {
             /// GC-cached value slots on the JS wrapper.
-            #[allow(non_camel_case_types, dead_code)]
+            #[allow(non_camel_case_types)]
             #[derive(Clone, Copy)]
             #[repr(u8)]
             pub(crate) enum Gc { #( #variants, )* }
-            #[allow(dead_code)]
             impl Gc {
                 #[inline] pub fn get(self, this_value: ::bun_jsc::JSValue) -> ::core::option::Option<::bun_jsc::JSValue> {
                     match self { #( #get_arms )* }
@@ -987,8 +986,8 @@ fn classify_uws_arg(ty: &syn::Type) -> UwsArg {
     UwsArg::PassThrough(ty.clone())
 }
 
-/// `#[derive(JsAffine)]` — the struct/enum may live in a job's JS-side
-/// partition (`bun_jsc::job::JsSide`): every field must itself be
+/// `#[derive(JsAffine)]` — the struct/enum may be (part of) a job's `Js`
+/// half (`bun_jsc::JobContext::Js`): every field must itself be
 /// `JsAffine`, which the expansion checks with one bound per field type, so
 /// a field that owns process memory (a `Vec`, a `Box`, a C library handle) is
 /// a compile error here rather than a leak-or-UAF decision at teardown.

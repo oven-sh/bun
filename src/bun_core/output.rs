@@ -62,29 +62,16 @@ impl QuietWriter {
         output_sink().quiet_writer_adapt(self, buf.as_mut_ptr(), buf.len())
     }
     #[inline]
-    pub fn flush(&mut self) {
-        output_sink().quiet_writer_flush(self)
-    }
-    #[inline]
     pub(crate) fn context_handle(&self) -> Fd {
         output_sink().quiet_writer_fd(self)
     }
-    /// Inherent forwarder so call sites don't need `use fmt::Write`.
+    /// One `write(2)` loop for all of `bytes`. Returns `false` when the fd
+    /// rejected them, so the caller can stop trying.
     #[inline]
-    pub(crate) fn write_fmt(&mut self, args: core::fmt::Arguments<'_>) -> core::fmt::Result {
-        <Self as core::fmt::Write>::write_fmt(self, args)
+    pub(crate) fn write_all(&mut self, bytes: &[u8]) -> bool {
+        output_sink().quiet_writer_write_all(self, bytes)
     }
 }
-impl core::fmt::Write for QuietWriter {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        if output_sink().quiet_writer_write_all(self, s.as_bytes()) {
-            Ok(())
-        } else {
-            Err(core::fmt::Error)
-        }
-    }
-}
-// `qw.write_fmt(args)` resolves through `fmt::Write`.
 
 /// Opaque adapter wrapping a QuietWriter and exposing `crate::io::Writer`.
 /// Layout contract: bun_sys's concrete `SysQuietWriterAdapter` must fit in
@@ -189,11 +176,12 @@ pub fn debug_warn(payload: impl PrettyFmtInput) {
     }
 }
 
-/// `bun.Output.warn` — yellow `warn:` prefix to stderr.
+/// `bun.Output.warn` — yellow `warn:` prefix to stderr, flushed.
 #[inline]
 pub fn warn(payload: impl PrettyFmtInput) {
     let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
     pretty_errorln!("<r><yellow>warn<r><d>:<r> {}", buf);
+    flush();
 }
 
 /// `Output.prettyErrorln` — function form. Performs `<tag>` → ANSI rewrite on
@@ -254,17 +242,6 @@ fn stdio_tty_flag(idx: usize) -> bool {
     bun_stdio_tty[idx].load(Ordering::Relaxed) != 0
 }
 
-// TYPE_ONLY: bun_sys::Winsize → bun_core (move-in pass).
-// `AtomicCell` because the SIGWINCH handler writes this from signal context
-// while any thread may read it. `Winsize` is 4×u16 = 8 bytes, padding-free.
-pub static TERMINAL_SIZE: crate::AtomicCell<crate::Winsize> =
-    crate::AtomicCell::new(crate::Winsize {
-        row: 0,
-        col: 0,
-        xpixel: 0,
-        ypixel: 0,
-    });
-
 // ──────────────────────────────────────────────────────────────────────────
 // Source
 // ──────────────────────────────────────────────────────────────────────────
@@ -280,17 +257,9 @@ pub struct Source {
     pub(crate) stderr_buffer: [u8; 4096],
     pub(crate) buffered_stream_backing: QuietWriterAdapter,
     pub(crate) buffered_error_stream_backing: QuietWriterAdapter,
-    // Self-referential: point into `*_backing.new_interface`. Use the accessor
-    // methods instead of these raw fields.
-    // (LIFETIMES.tsv: BORROW_FIELD — self-ref into buffered_*_backing)
-    buffered_stream: *mut io::Writer,
-    buffered_error_stream: *mut io::Writer,
 
     pub(crate) stream_backing: QuietWriterAdapter,
     pub(crate) error_stream_backing: QuietWriterAdapter,
-    // Self-referential (BORROW_FIELD)
-    stream: *mut io::Writer,
-    error_stream: *mut io::Writer,
 
     pub(crate) raw_stream: StreamType,
     pub(crate) raw_error_stream: StreamType,
@@ -319,12 +288,8 @@ impl Source {
         stderr_buffer: [0u8; 4096],
         buffered_stream_backing: QuietWriterAdapter::uninit(),
         buffered_error_stream_backing: QuietWriterAdapter::uninit(),
-        buffered_stream: core::ptr::null_mut(),
-        buffered_error_stream: core::ptr::null_mut(),
         stream_backing: QuietWriterAdapter::uninit(),
         error_stream_backing: QuietWriterAdapter::uninit(),
-        stream: core::ptr::null_mut(),
-        error_stream: core::ptr::null_mut(),
         raw_stream: Self::ZEROED_STREAM,
         raw_error_stream: Self::ZEROED_STREAM,
     };
@@ -371,17 +336,12 @@ impl Source {
             .raw_error_stream
             .quiet_writer()
             .adapt_to_new_api(&mut out.stderr_buffer);
-        out.buffered_stream = std::ptr::from_mut(out.buffered_stream_backing.new_interface());
-        out.buffered_error_stream =
-            std::ptr::from_mut(out.buffered_error_stream_backing.new_interface());
 
         out.stream_backing = out.raw_stream.quiet_writer().adapt_to_new_api(&mut []);
         out.error_stream_backing = out
             .raw_error_stream
             .quiet_writer()
             .adapt_to_new_api(&mut []);
-        out.stream = std::ptr::from_mut(out.stream_backing.new_interface());
-        out.error_stream = std::ptr::from_mut(out.error_stream_backing.new_interface());
     }
 
     pub fn configure_thread() {
@@ -412,7 +372,7 @@ impl Source {
     ///
     /// Threads that *may* run JS (web workers, debugger, the main VM thread)
     /// must keep using [`configure_thread`] / [`configure_named_thread`].
-    pub(crate) fn configure_thread_no_js() {
+    pub fn configure_thread_no_js() {
         if SOURCE_SET.get() {
             return;
         }
@@ -454,21 +414,6 @@ impl Source {
         Self::get_force_color_depth().unwrap_or(ColorDepth::None) != ColorDepth::None
     }
 
-    pub(crate) fn is_color_terminal() -> bool {
-        #[cfg(windows)]
-        {
-            // https://github.com/chalk/supports-color/blob/d4f413efaf8da045c5ab440ed418ef02dbb28bf1/index.js#L100C11-L112
-            // Windows 10 build 10586 is the first Windows release that supports 256 colors.
-            // Windows 10 build 14931 is the first release that supports 16m/TrueColor.
-            // Every other version supports 16 colors.
-            return true;
-        }
-        #[cfg(not(windows))]
-        {
-            Self::color_depth() != ColorDepth::None
-        }
-    }
-
     pub fn color_depth() -> ColorDepth {
         *LAZY_COLOR_DEPTH.get_or_init(compute_color_depth)
     }
@@ -491,13 +436,12 @@ impl Source {
                     let _ = STDERR_DESCRIPTOR_TYPE.set(OutputStreamDescriptor::Terminal);
                 }
 
+                // FORCE_COLOR and NO_COLOR override both streams; otherwise each stream uses its own isatty result.
                 let mut enable_color: Option<bool> = None;
                 if Self::is_force_color() {
                     enable_color = Some(true);
                 } else if Self::is_no_color() {
                     enable_color = Some(false);
-                } else if Self::is_color_terminal() && (is_stdout_tty || is_stderr_tty) {
-                    enable_color = Some(true);
                 }
 
                 ENABLE_ANSI_COLORS_STDOUT
@@ -680,7 +624,7 @@ pub mod stdio {
         /// No preconditions; one-shot stdio fixup at process startup.
         pub(crate) safe fn bun_initialize_process();
         /// No preconditions; restores TTY state on the standard streams.
-        #[allow(dead_code)]
+        #[cfg(not(windows))]
         pub(crate) safe fn bun_restore_stdio();
     }
 
@@ -894,6 +838,10 @@ pub fn is_stdout_tty() -> bool {
 pub fn is_stdin_tty() -> bool {
     stdio_tty_flag(0)
 }
+#[inline]
+pub fn is_stderr_tty() -> bool {
+    stdio_tty_flag(2)
+}
 
 pub fn is_github_action() -> bool {
     if env_var::GITHUB_ACTIONS.get().unwrap_or(false) {
@@ -1035,7 +983,6 @@ fn source_writer_escape(project: fn(&mut Source) -> &mut io::Writer) -> &'static
     unsafe { &mut *p }
 }
 
-#[allow(clippy::mut_from_ref)]
 pub fn error_writer() -> &'static mut io::Writer {
     source_writer_escape(Source::error_stream)
 }
@@ -1073,6 +1020,11 @@ pub fn reset_terminal() {
 }
 
 pub fn reset_terminal_all() {
+    // Reached from `reload_process`, which any thread may call. A thread that
+    // never ran `Source::configure_thread` has zeroed writers, not stdio.
+    if !SOURCE_SET.get() {
+        return;
+    }
     SOURCE.with_borrow_mut(|s| {
         if ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed) {
             let _ = s.error_stream().write_all(b"\x1B[2J\x1B[3J\x1B[H");
@@ -1086,6 +1038,7 @@ pub fn reset_terminal_all() {
 /// Write buffered stdout & stderr to the terminal.
 /// Must be called before the process exits or the buffered output will be lost.
 /// Bun automatically calls this function in Global.exit().
+#[inline(never)]
 pub fn flush() {
     if Environment::IS_NATIVE && SOURCE_SET.get() {
         // Same re-entrancy hazard as with_dest_writer: drop the RefCell borrow
@@ -1195,6 +1148,22 @@ impl fmt::Display for ElapsedFormatter {
 // either leaking raw escapes or stripping color, so callers must use
 // `print_elapsed` / `print_elapsed_stdout` (or `ElapsedFormatter` directly).
 
+/// What [`print_elapsed`] prints, for a caller that formats into a buffer.
+pub struct Elapsed {
+    pub colors: bool,
+    pub ms: f64,
+}
+
+impl fmt::Display for Elapsed {
+    fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (colors, ms) = (self.colors, self.ms);
+        match ms.round() as i64 {
+            0..=1500 => crate::write_pretty!(w, colors, "<r><d>[<b>{:>.2}ms<r><d>]<r>", ms),
+            _ => crate::write_pretty!(w, colors, "<r><d>[<b>{:>.2}s<r><d>]<r>", ms / 1000.0),
+        }
+    }
+}
+
 pub fn print_elapsed(elapsed: f64) {
     match elapsed.round() as i64 {
         0..=1500 => pretty_error!("<r><d>[<b>{:>.2}ms<r><d>]<r>", elapsed),
@@ -1273,9 +1242,8 @@ fn with_dest_writer<R>(dest: Destination, f: impl FnOnce(*mut io::Writer) -> R) 
     // SAFETY: `w` points into a `QuietWriterAdapter` field of the thread-local
     // `Source`, whose address is stable for the thread's lifetime once
     // `Source::init` has run (asserted via SOURCE_SET above). These same raw
-    // pointers are already cached on `Source.{stream,error_stream,...}` and
-    // handed out by `writer()`/`error_writer()` — this is the established
-    // self-referential pattern, not a lifetime extension of borrowed data.
+    // pointers are handed out by `writer()`/`error_writer()`. This is the
+    // established pattern, not a lifetime extension of borrowed data.
     // We pass the raw pointer through unchanged; `f` is responsible for not
     // forming a `&mut` that outlives a single non-reentrant vtable call.
     f(w)
@@ -1342,22 +1310,6 @@ pub fn print_to(dest: Destination, args: fmt::Arguments<'_>) {
     });
 }
 
-/// Print to stdout
-/// This will appear in the terminal, including in production.
-/// Text automatically buffers
-#[macro_export]
-macro_rules! println {
-    ($fmt:expr $(, $arg:expr)* $(,)?) => {{
-        // `:expr` (not `:literal`) so `concat!(..)` templates compile.
-        // `concat!` accepts a nested `concat!`, so the trailing-`{}` join works.
-        const __NL: &str = $crate::output::_needs_nl($fmt);
-        $crate::output::print_to(
-            $crate::output::Destination::Stdout,
-            ::core::format_args!(concat!($fmt, "{}"), $($arg,)* __NL),
-        )
-    }};
-}
-
 /// Print to stdout, but only in debug builds.
 /// Text automatically buffers
 #[macro_export]
@@ -1373,6 +1325,11 @@ macro_rules! debug {
 #[inline]
 pub fn print(args: fmt::Arguments<'_>) {
     print_to(Destination::Stdout, args);
+}
+
+/// Bytes to stdout exactly as given (no UTF-8 replacement), through the same writer `print` uses.
+pub fn print_bytes(bytes: &[u8]) {
+    write_bytes(Destination::Stdout, bytes);
 }
 
 /// `bun.Output.println(fmt, args)` — `print()` with a trailing newline.
@@ -1403,9 +1360,6 @@ pub struct ScopedLogger {
     pub tagname: &'static str,
     really_disable: AtomicBool,
     is_visible_once: std::sync::Once,
-    lock: Mutex<()>,
-    // There is no per-scope `[4096]u8` buffered writer; logs route
-    // through `scoped_writer()` directly (debug-logging perf only).
 }
 
 impl ScopedLogger {
@@ -1414,7 +1368,6 @@ impl ScopedLogger {
             tagname,
             really_disable: AtomicBool::new(matches!(visibility, Visibility::Hidden)),
             is_visible_once: std::sync::Once::new(),
-            lock: Mutex::new(()),
         }
     }
 
@@ -1472,6 +1425,8 @@ impl ScopedLogger {
     ///   BUN_DEBUG_foo=1
     /// To enable all logs, set the environment variable
     ///   BUN_DEBUG_ALL=1
+    // The line buffer is 4 KB of stack; keep that frame out of the callers.
+    #[inline(never)]
     pub fn log(&self, args: fmt::Arguments<'_>) {
         if !Environment::ENABLE_LOGS {
             return;
@@ -1493,20 +1448,19 @@ impl ScopedLogger {
             return;
         }
 
-        let _lock = self.lock.lock();
+        // Format the whole line first, then hand it to the fd in one write,
+        // so lines from other scopes and threads cannot land inside it.
+        // `LineBuffer` never fails; an `Err` here is a `Display` impl that
+        // gave up, and the line keeps what it produced.
+        let mut line = scoped_debug_writer::LineBuffer::new();
+        let _ = fmt::Write::write_fmt(&mut line, args);
 
         let mut out = scoped_writer();
-        // The colored/plain selection now happens at the `scoped_log!` call site
-        // (single arg evaluation) via `_scoped_use_ansi()`.
-        let result = out.write_fmt(args);
-        if result.is_err() {
-            // Write failure → disable scope and skip the flush.
+        let _lock = scoped_debug_writer::WRITE_LOCK.lock();
+        if !out.write_all(line.as_bytes()) {
+            // Write failure → disable scope.
             self.really_disable.store(true, Ordering::Relaxed);
-            return;
         }
-        // `QuietWriter::flush()` returns `()` through the OutputSink vtable,
-        // so flush errors are not observable here (debug logging only).
-        out.flush();
     }
 }
 
@@ -1797,7 +1751,7 @@ impl fmt::Display for PrettyBuf {
 /// Positional-argument bundle for runtime template substitution.
 pub trait FmtTuple {
     /// Write the `idx`-th positional into `f`. Returns `false` if `idx` is out
-    /// of range (caller emits the literal `{}` then).
+    /// of range.
     fn write_nth(&self, idx: usize, f: &mut dyn fmt::Write) -> Result<bool, fmt::Error>;
     fn len(&self) -> usize;
 }
@@ -1824,21 +1778,6 @@ impl FmtTuple for fmt::Arguments<'_> {
     #[inline]
     fn len(&self) -> usize {
         1
-    }
-}
-impl<T: fmt::Display> FmtTuple for &[T] {
-    fn write_nth(&self, idx: usize, f: &mut dyn fmt::Write) -> Result<bool, fmt::Error> {
-        match self.get(idx) {
-            Some(v) => {
-                write!(f, "{}", v)?;
-                Ok(true)
-            }
-            None => Ok(false),
-        }
-    }
-    #[inline]
-    fn len(&self) -> usize {
-        (*self).len()
     }
 }
 impl<T: fmt::Display, const N: usize> FmtTuple for &[T; N] {
@@ -1877,10 +1816,10 @@ impl_fmt_tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G, 7 H);
 
 /// Substitute `{}` / `{s}` / `{d}` / `{any}` / `{f}` placeholders in `template`
 /// with successive entries from `args`. `{{` / `}}` are emitted as literal
-/// braces. Unrecognised specs are passed through verbatim.
+/// braces. The spec inside any other `{...}` is ignored.
 fn substitute_template(
     template: &[u8],
-    args: &impl FmtTuple,
+    args: &dyn FmtTuple,
     f: &mut dyn fmt::Write,
 ) -> fmt::Result {
     let t = template;
@@ -1900,8 +1839,16 @@ fn substitute_template(
                 j += 1;
             }
             if j < t.len() {
-                // consume placeholder
-                if args.write_nth(argi, f)? {
+                // Only the template colors a message, so control characters in a value are escaped.
+                let mut value = crate::fmt::EscapeControlCharsWriter(&mut *f, true);
+                let filled = args.write_nth(argi, &mut value)?;
+                debug_assert!(
+                    filled,
+                    "template has more placeholders than the {} arg(s) passed with it (a format_args! counts as one; pass a tuple): {:?}",
+                    args.len(),
+                    bstr::BStr::new(t),
+                );
+                if filled {
                     argi += 1;
                 }
                 i = j + 1;
@@ -1932,29 +1879,29 @@ fn substitute_template(
 }
 
 /// `Display` adapter pairing a runtime template with a [`FmtTuple`].
-pub struct TemplateDisplay<'a, A: FmtTuple> {
-    template: std::borrow::Cow<'a, [u8]>,
-    args: A,
+pub struct TemplateDisplay<'a> {
+    template: Vec<u8>,
+    args: &'a dyn FmtTuple,
 }
-impl<A: FmtTuple> fmt::Display for TemplateDisplay<'_, A> {
+impl fmt::Display for TemplateDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        substitute_template(&self.template, &self.args, f)
+        substitute_template(&self.template, self.args, f)
     }
 }
 
 /// Runtime `<tag>` → ANSI rewrite *with* a positional-argument tuple
 /// substituted at each `{}` / `{s}` / `{d}` placeholder. Returns a `Display`
-/// impl so callers can `write!(w, "{}", pretty_fmt_args(fmt, true, (a, b)))`.
+/// impl so callers can `write!(w, "{}", pretty_fmt_args(fmt, true, &(a, b)))`.
 ///
 /// Port of `Output.prettyFmt` + `print` fused for the dynamic-template case
 /// (crash_handler builds the template at runtime).
-pub(crate) fn pretty_fmt_args<A: FmtTuple>(
+pub(crate) fn pretty_fmt_args<'a>(
     fmt: &str,
     is_enabled: bool,
-    args: A,
-) -> TemplateDisplay<'static, A> {
+    args: &'a dyn FmtTuple,
+) -> TemplateDisplay<'a> {
     TemplateDisplay {
-        template: std::borrow::Cow::Owned(pretty_fmt_runtime(fmt.as_bytes(), is_enabled)),
+        template: pretty_fmt_runtime(fmt.as_bytes(), is_enabled),
         args,
     }
 }
@@ -2254,6 +2201,7 @@ pub enum CommandArgv<'a> {
 }
 
 fn print_command(argv: CommandArgv<'_>, destination: Destination) {
+    use crate::fmt::escape_control_chars_multiline as shown;
     macro_rules! pretty_d {
         ($f:literal $(, $a:expr)*) => {
             match destination {
@@ -2267,16 +2215,16 @@ fn print_command(argv: CommandArgv<'_>, destination: Destination) {
     match argv {
         CommandArgv::List(argv) => {
             pretty_d!("<r><d><magenta>$<r> <d><b>");
-            printf(format_args!("{}", crate::fmt::s(argv[0])));
+            printf(format_args!("{}", shown(argv[0])));
             if argv.len() > 1 {
                 for arg in &argv[1..] {
-                    printf(format_args!(" {}", crate::fmt::s(arg)));
+                    printf(format_args!(" {}", shown(arg)));
                 }
             }
             pretty_d!("<r>\n");
         }
         CommandArgv::Single(argv) => {
-            pretty_d!("<r><d><magenta>$<r> <d><b>{}<r>\n", crate::fmt::s(argv));
+            pretty_d!("<r><d><magenta>$<r> <d><b>{}<r>\n", shown(argv));
         }
     }
     flush();
@@ -2376,12 +2324,13 @@ macro_rules! note {
     };
 }
 
-/// Print a yellow warning message to stderr
+/// Print a yellow warning message to stderr and flush it.
 #[macro_export]
 macro_rules! warn {
-    ($fmt:expr $(, $arg:expr)* $(,)?) => {
-        $crate::pretty_errorln!(concat!("<yellow>warn<r><d>:<r> ", $fmt) $(, $arg)*)
-    };
+    ($fmt:expr $(, $arg:expr)* $(,)?) => {{
+        $crate::pretty_errorln!(concat!("<yellow>warn<r><d>:<r> ", $fmt) $(, $arg)*);
+        $crate::output::flush();
+    }};
 }
 
 /// Print a yellow warning message, only in debug mode
@@ -2408,11 +2357,19 @@ macro_rules! debug_warn {
 // `bun_core::Error` (Copy) and `bun_sys::Error` (non-Copy, consumed). Taking
 // `&impl ErrName` would force `&"literal"` at every site.
 #[allow(clippy::needless_pass_by_value)] // by-value for call-site ergonomics; see above
+#[inline]
 pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
-    // `fmt` is rendered into a `{}` arg, so strip a trailing \n and let
-    // pretty_errorln! add exactly one.
+    err_erased(&error_name, fmt, &args);
+}
+
+/// The type-independent body of [`err`], so its several format sites are not
+/// re-instantiated for every `(ErrName, FmtTuple)` pair.
+#[inline(never)]
+fn err_erased(error_name: &dyn ErrName, fmt: &str, args: &dyn FmtTuple) {
+    // Rendered into a `{}` arg: strip a trailing \n, pretty_errorln! adds exactly one.
     let fmt = fmt.strip_suffix('\n').unwrap_or(fmt);
-    let body = pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args);
+    let body = &pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args);
+
     if let Some(e) = error_name.as_sys_err_info() {
         // MOVE_DOWN: bun_sys::coreutils_error_map → bun_core (move-in pass).
         if let Some(label) = crate::coreutils_error_map::get(e.errno) {
@@ -2452,8 +2409,14 @@ pub fn err_tag(tag: &str, body: core::fmt::Arguments<'_>) {
 
 /// `Output.errGeneric` — function form. `<red>error<r>:` prefix to stderr with
 /// a `<tag>`-rewritten template + positional args.
+#[allow(clippy::needless_pass_by_value)] // by-value for call-site ergonomics, as `err`
 #[inline]
 pub fn err_generic(fmt: &str, args: impl FmtTuple) {
+    err_generic_erased(fmt, &args);
+}
+
+#[inline(never)]
+fn err_generic_erased(fmt: &str, args: &dyn FmtTuple) {
     let fmt = fmt.strip_suffix('\n').unwrap_or(fmt);
     pretty_errorln!(
         "<r><red>error<r><d>:<r> {}",
@@ -2509,8 +2472,56 @@ pub mod scoped_debug_writer {
     pub(crate) static SCOPED_FILE_WRITER: crate::RacyCell<QuietWriter> =
         crate::RacyCell::new(QuietWriter::ZEROED);
 
+    /// Every scope writes to the same fd. Held across the `write(2)` loop of
+    /// one line so a short write cannot let another thread's line in.
+    pub(crate) static WRITE_LOCK: Mutex<()> = Mutex::new(());
+
     thread_local! {
         pub(crate) static DISABLE_INSIDE_LOG: Cell<isize> = const { Cell::new(0) };
+    }
+
+    /// One fully formatted log line. Fits most lines on the stack and spills
+    /// the whole line to the heap when it grows past that, so the caller can
+    /// always write it in one piece.
+    pub(crate) struct LineBuffer {
+        stack: [u8; 4096],
+        len: usize,
+        heap: Vec<u8>,
+    }
+
+    impl LineBuffer {
+        pub(crate) fn new() -> Self {
+            Self {
+                stack: [0; 4096],
+                len: 0,
+                heap: Vec::new(),
+            }
+        }
+
+        pub(crate) fn as_bytes(&self) -> &[u8] {
+            if self.heap.is_empty() {
+                &self.stack[..self.len]
+            } else {
+                &self.heap
+            }
+        }
+    }
+
+    impl fmt::Write for LineBuffer {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            let bytes = s.as_bytes();
+            if self.heap.is_empty() {
+                if let Some(dst) = self.stack.get_mut(self.len..self.len + bytes.len()) {
+                    dst.copy_from_slice(bytes);
+                    self.len += bytes.len();
+                    return Ok(());
+                }
+                self.heap.reserve(self.len + bytes.len());
+                self.heap.extend_from_slice(&self.stack[..self.len]);
+            }
+            self.heap.extend_from_slice(bytes);
+            Ok(())
+        }
     }
 
     /// RAII guard that suppresses scoped logging for the lifetime of the guard.
@@ -2648,12 +2659,6 @@ pub struct BufferedStdin {
 }
 
 impl BufferedStdin {
-    /// Hands back `&mut Self` (which already exposes `read`/`read_byte`).
-    #[inline]
-    pub fn reader(&mut self) -> &mut Self {
-        self
-    }
-
     /// Fill `dest` from the buffer, refilling from
     /// the underlying fd until `dest` is full or EOF. Returns `Ok(0)` on EOF.
     ///
@@ -2855,7 +2860,6 @@ mod output_macro_tests {
                 n += 1;
                 n
             });
-            let _ = n;
 
             let s = String::from("x");
             crate::pretty_errorln!("{} {}", s, s.len());
@@ -2952,12 +2956,12 @@ mod pretty_fmt_tests {
     fn pretty_fmt_args_preserves_multibyte_utf8() {
         let s = format!(
             "{}",
-            super::pretty_fmt_args("<r><cyan>↑<r> {s} →<r> {s}\n", false, ("a", "b"))
+            super::pretty_fmt_args("<r><cyan>↑<r> {s} →<r> {s}\n", false, &("a", "b"))
         );
         assert_eq!(s, "↑ a → b\n");
         let s = format!(
             "{}",
-            super::pretty_fmt_args("<cyan>↑<r> {s} →<r>", true, ("a",))
+            super::pretty_fmt_args("<cyan>↑<r> {s} →<r>", true, &("a",))
         );
         assert_eq!(s, "\x1b[36m↑\x1b[0m a →\x1b[0m");
     }

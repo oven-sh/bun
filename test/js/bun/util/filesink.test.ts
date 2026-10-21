@@ -465,6 +465,245 @@ if (isWindows) {
   });
 }
 
+// A FileSink that opened its file by path queued the close on libuv's thread
+// pool and told its owner "closed" in the same frame. With a write in flight it
+// settled the promise of end() before it even queued the close. So end()
+// returned, and the promises of end() and of Bun.write(path, stream) settled,
+// with the handle still open: the file could not be run, and its directory
+// could not be renamed.
+//
+// A row counts the rounds in which the file is still open where the API reports
+// done. An open that shares nothing fails with a sharing violation while any
+// other handle to the file is open.
+describe.concurrent.skipIf(!isWindows)("on Windows the file is closed when its FileSink reports done", () => {
+  async function rowsOf(script: string) {
+    using dir = tempDir("filesink-closed-windows", {});
+    const src = `
+      const fs = require("node:fs");
+      const { join } = require("node:path");
+      const { dlopen, ptr } = require("bun:ffi");
+      const dir = ${JSON.stringify(String(dir))};
+      const { CreateFileW, CloseHandle } = dlopen("kernel32.dll", {
+        CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "i64" },
+        CloseHandle: { args: ["i64"], returns: "i32" },
+      }).symbols;
+      const GENERIC_READ = 0x80000000;
+      const OPEN_EXISTING = 3;
+      function stillOpen(path) {
+        const wide = Buffer.from(path + "\\0", "utf16le");
+        const handle = CreateFileW(ptr(wide), GENERIC_READ, 0, null, OPEN_EXISTING, 0, null);
+        if (handle === -1n || handle === -1) return true;
+        CloseHandle(handle);
+        return false;
+      }
+      const turn = () => new Promise(resolve => setImmediate(resolve));
+      const chunk = Buffer.alloc(1024, "x");
+      const rounds = 50;
+      const rows = {};
+      {
+        const path = join(dir, "probe");
+        const fd = fs.openSync(path, "w");
+        const held = stillOpen(path);
+        fs.closeSync(fd);
+        rows["the probe"] = { held, released: stillOpen(path) };
+      }
+      ${script}
+      console.log(JSON.stringify(rows));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { rows: stdout && JSON.parse(stdout), stderr, exitCode };
+  }
+  const probe = { held: true, released: false };
+
+  it("writer.end() and writer.close()", async () => {
+    const result = await rowsOf(`
+      {
+        // The write is in flight when end() is called: end() returns a promise.
+        let open = 0;
+        const sizes = new Set();
+        for (let i = 0; i < rounds; i++) {
+          const path = join(dir, "await-end-" + i);
+          const writer = Bun.file(path).writer();
+          writer.write(chunk);
+          await writer.end();
+          if (stillOpen(path)) open++;
+          sizes.add(fs.statSync(path).size);
+        }
+        rows["write(); await end()"] = { open, sizes: [...sizes] };
+      }
+      {
+        // Seven chunks wait behind the one that is in flight.
+        let open = 0;
+        const sizes = new Set();
+        for (let i = 0; i < rounds; i++) {
+          const path = join(dir, "queued-" + i);
+          const writer = Bun.file(path).writer();
+          for (let n = 0; n < 8; n++) writer.write(chunk);
+          await writer.end();
+          if (stillOpen(path)) open++;
+          sizes.add(fs.statSync(path).size);
+        }
+        rows["write() of 8 chunks; await end()"] = { open, sizes: [...sizes] };
+      }
+      {
+        // Both writes have reported when end() is called: end() returns a number, which cannot wait.
+        let open = 0;
+        const returns = new Set();
+        const sizes = new Set();
+        for (let i = 0; i < rounds; i++) {
+          const path = join(dir, "end-" + i);
+          const writer = Bun.file(path).writer();
+          writer.write(chunk);
+          await writer.write(chunk);
+          const result = writer.end();
+          if (stillOpen(path)) open++;
+          returns.add(typeof result);
+          sizes.add(fs.statSync(path).size);
+          await result;
+        }
+        rows["write(); await write(); end()"] = { open, returns: [...returns], sizes: [...sizes] };
+      }
+      {
+        let open = 0;
+        for (let i = 0; i < rounds; i++) {
+          const path = join(dir, "empty-" + i);
+          const result = Bun.file(path).writer().end();
+          if (stillOpen(path)) open++;
+          await result;
+        }
+        rows["writer().end()"] = { open };
+      }
+      {
+        let open = 0;
+        const sizes = new Set();
+        for (let i = 0; i < rounds; i++) {
+          const path = join(dir, "close-" + i);
+          const writer = Bun.file(path).writer();
+          writer.write(chunk);
+          await writer.write(chunk);
+          writer.close();
+          if (stillOpen(path)) open++;
+          sizes.add(fs.statSync(path).size);
+        }
+        rows["write(); await write(); close()"] = { open, sizes: [...sizes] };
+      }
+    `);
+    expect(result).toEqual({
+      rows: {
+        "the probe": probe,
+        "write(); await end()": { open: 0, sizes: [1024] },
+        "write() of 8 chunks; await end()": { open: 0, sizes: [8192] },
+        "write(); await write(); end()": { open: 0, returns: ["number"], sizes: [2048] },
+        "writer().end()": { open: 0 },
+        "write(); await write(); close()": { open: 0, sizes: [2048] },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("Bun.write(path, stream)", async () => {
+    const result = await rowsOf(`
+      {
+        // The stream ends while the write of its chunk is in flight.
+        let open = 0;
+        const settled = new Set();
+        for (let i = 0; i < rounds; i++) {
+          // A file that is created, and a file whose contents are replaced.
+          for (const name of ["created-" + i, "replaced"]) {
+            const path = join(dir, name);
+            const stream = new ReadableStream({
+              start(controller) {
+                controller.enqueue(chunk);
+                controller.close();
+              },
+            });
+            settled.add("resolved: " + (await Bun.write(path, new Response(stream))));
+            if (stillOpen(path)) open++;
+          }
+        }
+        rows["a stream that ends at once"] = { open, settled: [...settled] };
+      }
+      for (const [row, name, finish] of [
+        ["a stream that ends after its chunk is on disk", "ends", controller => controller.close()],
+        ["a stream that fails after its chunk is on disk", "fails", controller => controller.error(new Error("boom"))],
+      ]) {
+        let open = 0;
+        const settled = new Set();
+        for (let i = 0; i < rounds; i++) {
+          const path = join(dir, name + "-" + i);
+          let sent = false;
+          const stream = new ReadableStream({
+            async pull(controller) {
+              if (!sent) {
+                sent = true;
+                controller.enqueue(chunk);
+                return;
+              }
+              // The write has reported one turn of the loop after its bytes are in the file.
+              while (fs.statSync(path).size < chunk.length) await turn();
+              await turn();
+              finish(controller);
+            },
+          });
+          await Bun.write(path, new Response(stream)).then(
+            written => settled.add("resolved: " + written),
+            e => settled.add("rejected: " + e.message),
+          );
+          if (stillOpen(path)) open++;
+        }
+        rows[row] = { open, settled: [...settled] };
+      }
+    `);
+    expect(result).toEqual({
+      rows: {
+        "the probe": probe,
+        "a stream that ends at once": { open: 0, settled: ["resolved: 1024"] },
+        "a stream that ends after its chunk is on disk": { open: 0, settled: ["resolved: 1024"] },
+        "a stream that fails after its chunk is on disk": { open: 0, settled: ["rejected: boom"] },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("Bun.write(path, stream) of a stream that fails while its chunk is being written", async () => {
+    const result = await rowsOf(`
+      let open = 0;
+      const settled = new Set();
+      for (let i = 0; i < rounds; i++) {
+        const path = join(dir, "fails-" + i);
+        let sent = false;
+        const stream = new ReadableStream({
+          pull(controller) {
+            if (!sent) {
+              sent = true;
+              controller.enqueue(chunk);
+              return;
+            }
+            controller.error(new Error("boom"));
+          },
+        });
+        await Bun.write(path, new Response(stream)).then(
+          written => settled.add("resolved: " + written),
+          e => settled.add("rejected: " + e.message),
+        );
+        if (stillOpen(path)) open++;
+      }
+      rows["a stream that fails while its chunk is being written"] = { open, settled: [...settled] };
+    `);
+    expect(result).toEqual({
+      rows: {
+        "the probe": probe,
+        "a stream that fails while its chunk is being written": { open: 0, settled: ["rejected: boom"] },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 // When a write to a pollable fd returns `.pending`, FileSink takes a
 // `must_be_kept_alive_until_eof` ref on itself so it survives until the
 // buffered data is drained. If the write later fails (e.g. EPIPE because the

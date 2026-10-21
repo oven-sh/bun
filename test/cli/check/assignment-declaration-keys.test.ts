@@ -179,7 +179,6 @@ export const staticMethod: never = Derived.method;
     ],
   },
   // `constructor`, a key that is no literal, a target that is in parentheses as a whole, and `??=` declare nothing.
-  // A key whose parenthesis is not closed declares `"a"`.
   "this[(key)] = value declares nothing unless the key is a literal": {
     args: ["-b"],
     files: referenced(
@@ -191,7 +190,6 @@ export class C {
     this[(k)] = 1;
     (this["whole"]) = 1;
     this[("compound")] ??= 1;
-    this[("a"] = 1;
   }
 }
 `,
@@ -201,18 +199,42 @@ const c = new C();
 export const named: never = c.named;
 export const whole: never = c.whole;
 export const compound: never = c.compound;
-export const a: never = c.a;
 `,
     ),
     lines: [
-      "pkg/index.js(8,14): error TS1005: ')' expected.",
+      "pkg/index.js(5,5): error TS7053: Element implicitly has an 'any' type because expression of type '\"named\"' can't be used to index type 'C'.",
+      "  Property 'named' does not exist on type 'C'.",
+      "pkg/index.js(6,6): error TS7053: Element implicitly has an 'any' type because expression of type '\"whole\"' can't be used to index type 'C'.",
+      "  Property 'whole' does not exist on type 'C'.",
+      "pkg/index.js(7,5): error TS7053: Element implicitly has an 'any' type because expression of type '\"compound\"' can't be used to index type 'C'.",
+      "  Property 'compound' does not exist on type 'C'.",
       "app/main.ts(3,14): error TS2322: Type 'any' is not assignable to type 'never'.",
       "app/main.ts(3,31): error TS2339: Property 'named' does not exist on type 'C'.",
       "app/main.ts(4,14): error TS2322: Type 'any' is not assignable to type 'never'.",
       "app/main.ts(4,31): error TS2339: Property 'whole' does not exist on type 'C'.",
       "app/main.ts(5,14): error TS2322: Type 'any' is not assignable to type 'never'.",
       "app/main.ts(5,34): error TS2339: Property 'compound' does not exist on type 'C'.",
-      "app/main.ts(6,14): error TS2322: Type 'number' is not assignable to type 'never'.",
+    ],
+  },
+  // In a program of its own: a syntax error keeps tsc from the other errors of the project.
+  "this[(key] = value, where the parenthesis is not closed, declares the property": {
+    args: ["-b"],
+    files: referenced(
+      {
+        "index.js": `export class C {
+  constructor() {
+    this[("a"] = 1;
+  }
+}
+`,
+      },
+      `import { C } from "../pkg/index.js";
+export const a: never = new C().a;
+`,
+    ),
+    lines: [
+      "pkg/index.js(3,14): error TS1005: ')' expected.",
+      "app/main.ts(2,14): error TS2322: Type 'number' is not assignable to type 'never'.",
     ],
   },
   // `Object.defineProperty(exports, ("defined"), d)` is no declaration: `IsBindableObjectDefinePropertyCall` does not
@@ -689,3 +711,22 @@ test.concurrent.each(Object.keys(cases))("%s", async title => {
   using dir = tempDir("bun-check-assignment-keys", files);
   expect(await linesOf([bunExe(), "check", ...args, "--threads=1"], String(dir), String(dir))).toEqual(lines);
 });
+
+// No line of tsc: typescript-go 7.0.2 has no name for `module.exports = value`, and panics when it formats this message
+// ("Invalid formatting placeholder"). `bun check` names the left operand.
+test.concurrent(
+  "module.exports = value, where the type of the value cannot be named, has the name `exports`",
+  async () => {
+    const files = alone(
+      { allowJs: true, checkJs: true },
+      {
+        "hidden.ts": hidden,
+        "index.cjs": `const { recursive } = require("./hidden.js");\nmodule.exports = recursive();\n`,
+      },
+    );
+    using dir = tempDir("bun-check-assignment-keys", files);
+    expect(await linesOf([bunExe(), "check", "--threads=1"], String(dir), String(dir))).toEqual([
+      "index.cjs(1,1): error TS4032: Property 'exports' of exported interface has or is using name 'Recursive' from private module '\"/hidden\"'.",
+    ]);
+  },
+);

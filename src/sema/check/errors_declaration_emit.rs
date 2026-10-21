@@ -2734,6 +2734,8 @@ impl SymbolTrackerImpl {
         let location = self.error_location();
         let name = match self.error_name_node.is_some() {
             true => location,
+            // `module.exports = value` has no name.
+            false if is_module_exports_assignment(hir, location) => Node::NONE,
             false => get_name_of_declaration(hir, location),
         };
         // `DeclarationNameToString`
@@ -7053,18 +7055,22 @@ fn can_produce_diagnostics(kind: Kind) -> bool {
     )
 }
 
+/// Whether `node` is `module.exports = value` in a CommonJS module.
+fn is_module_exports_assignment(hir: &hir::File, node: Node) -> bool {
+    use crate::bind::{JsDeclarationKind, assignment_declaration_kind};
+    match hir.data(node) {
+        NodeData::Expr(e) => {
+            assignment_declaration_kind(hir, e) == JsDeclarationKind::ModuleExports
+        }
+        _ => false,
+    }
+}
+
 /// `GetNameOfDeclaration`
 fn get_name_of_declaration(hir: &hir::File, node: Node) -> Node {
-    use crate::bind::{JsDeclarationKind, assignment_declaration_kind, define_property_call};
     match hir.data(node) {
         NodeData::Expr(e) => match hir[e].kind {
-            // `module.exports = value` has no name.
-            ExprKind::Assign { .. }
-                if assignment_declaration_kind(hir, e) == JsDeclarationKind::ModuleExports =>
-            {
-                Node::NONE
-            }
-            // `GetElementOrPropertyAccessName`, or else the left operand.
+            // `GetElementOrPropertyAccessName`, falling back to the left operand.
             ExprKind::Assign { target, .. } => match hir[target].kind {
                 ExprKind::Index { index, .. }
                     if is_string_or_numeric_literal_like_in_parentheses(hir, index) =>
@@ -7075,7 +7081,7 @@ fn get_name_of_declaration(hir: &hir::File, node: Node) -> Node {
                 _ => hir.name(hir.node(target)),
             },
             // The key of `Object.defineProperty(exports, "name", descriptor)`.
-            ExprKind::Call(_) => match define_property_call(hir, e) {
+            ExprKind::Call(_) => match crate::bind::define_property_call(hir, e) {
                 Some((_, key)) => hir.node(key),
                 None => hir.name(node),
             },

@@ -18742,10 +18742,22 @@
       "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./pkg\" }, { \"path\": \"./app\" }] }",
       "pkg/tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"composite\":true,\"allowJs\":true,\"checkJs\":true,\"outDir\":\"out\",\"rootDir\":\".\"}}",
       "pkg/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
-      "pkg/index.js": "const k = \"named\";\nexport class C {\n  constructor() {\n    this[(\"constructor\")] = 1;\n    this[(k)] = 1;\n    (this[\"whole\"]) = 1;\n    this[(\"compound\")] ??= 1;\n    this[(\"a\"] = 1;\n  }\n}\n",
+      "pkg/index.js": "const k = \"named\";\nexport class C {\n  constructor() {\n    this[(\"constructor\")] = 1;\n    this[(k)] = 1;\n    (this[\"whole\"]) = 1;\n    this[(\"compound\")] ??= 1;\n  }\n}\n",
       "app/tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"composite\":true,\"allowJs\":true,\"outDir\":\"out\",\"rootDir\":\".\"},\"references\":[{\"path\":\"../pkg\"}]}",
       "app/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
-      "app/main.ts": "import { C } from \"../pkg/index.js\";\nconst c = new C();\nexport const named: never = c.named;\nexport const whole: never = c.whole;\nexport const compound: never = c.compound;\nexport const a: never = c.a;\n"
+      "app/main.ts": "import { C } from \"../pkg/index.js\";\nconst c = new C();\nexport const named: never = c.named;\nexport const whole: never = c.whole;\nexport const compound: never = c.compound;\n"
+    },
+    "build": true
+  },
+  "this-key-value-where-the-parenthesis-is-not-closed-declares-the-property": {
+    "files": {
+      "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./pkg\" }, { \"path\": \"./app\" }] }",
+      "pkg/tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"composite\":true,\"allowJs\":true,\"checkJs\":true,\"outDir\":\"out\",\"rootDir\":\".\"}}",
+      "pkg/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
+      "pkg/index.js": "export class C {\n  constructor() {\n    this[(\"a\"] = 1;\n  }\n}\n",
+      "app/tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"composite\":true,\"allowJs\":true,\"outDir\":\"out\",\"rootDir\":\".\"},\"references\":[{\"path\":\"../pkg\"}]}",
+      "app/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
+      "app/main.ts": "import { C } from \"../pkg/index.js\";\nexport const a: never = new C().a;\n"
     },
     "build": true
   },

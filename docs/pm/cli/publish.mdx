@@ -59,6 +59,8 @@ bun publish --recursive
 bun publish --filter "@acme/*"
 ```
 
+Both flags must come after `publish`. `bun --filter "@acme/*" publish` means something else: it runs each matching package's `publish` script, like any other [`--filter`](/pm/filter) command.
+
 Packages that are `"private"` or whose version is already on the registry are skipped. Every package is packed before the first one is published, and the first failure ends the run; running the command again skips what was published.
 
 ### `--access`

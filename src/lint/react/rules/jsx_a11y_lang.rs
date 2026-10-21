@@ -56,23 +56,24 @@ fn is_valid_lang_prop(item: Prop) -> bool {
     }
 }
 
-/// What is read last.
+/// The kind of subtag parsed last.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum After {
-    /// A language of two or three letters, and its extended language.
+    /// A language of two or three letters, or its extended language.
     Language,
     /// A longer language.
     LongLanguage,
     Script,
-    /// Also a variant.
+    /// Or a variant.
     Region,
     Extension,
     PrivateUse,
 }
 
-/// `LanguageTag::parse(tag).is_ok_and(LanguageTag::is_valid)` of the crate `language-tags` 0.3.2: well-formed as RFC 5646 has it,
-/// every subtag registered, an extended language and a variant after what the registry says they go with, no more than one extended
-/// language, no variant and no extension twice. `tag`: in lower case.
+/// `LanguageTag::parse(tag).is_ok_and(LanguageTag::is_valid)` from the `language-tags` crate, version 0.3.2. The tag
+/// has to be well-formed per RFC 5646 with every subtag registered, an extended language or variant has to follow one
+/// of its registered prefixes, and there's at most one extended language and no repeated variant or extension. `tag`:
+/// lowercased.
 fn is_valid_language_tag(tag: &[u8]) -> bool {
     if strings::split(GRANDFATHERED.as_bytes(), b" ").any(|it| it == tag) {
         return true;
@@ -90,7 +91,7 @@ fn is_valid_language_tag(tag: &[u8]) -> bool {
         return false;
     }
     let mut after = if language.len() < 4 { After::Language } else { After::LongLanguage };
-    // Whether an extension or what is for private use has nothing yet.
+    // True while an extension or private-use singleton has no subtag after it yet.
     let mut is_empty = false;
     let (mut has_extended_language, mut variants, mut extensions) = (false, 0u128, 0u128);
     for subtag in subtags {
@@ -159,7 +160,8 @@ fn between(subtag: &[u8], first: &str, last: &str) -> bool {
     first.as_bytes() <= subtag && subtag <= last.as_bytes()
 }
 
-/// Where the bit for a code of two or three lower case letters is: those of three come after those of two.
+/// Returns the bit index for a code of two or three lowercase letters. Three-letter codes come after the two-letter
+/// ones.
 fn index_of_code(code: &[u8]) -> usize {
     code.iter().fold(0, |index, b| index * 26 + usize::from(b - b'a')) + if code.len() == 3 { 26 * 26 } else { 0 }
 }
@@ -169,9 +171,9 @@ fn has_code(codes: &[u64], code: &[u8]) -> bool {
     codes.get(index / 64).is_some_and(|word| word >> (index % 64) & 1 != 0)
 }
 
-// The IANA language subtag registry, with what was added to it until 2021-02-20.
+// The IANA language subtag registry as of 2021-02-20.
 
-/// A bit for each language, at [`index_of_code`]. Without those for private use.
+/// One bit per language, at [`index_of_code`]. Private-use languages aren't included.
 static LANGUAGES: [u64; 286] = [
     0x091019c747263433, 0x1c68108800045364, 0x4443028094090c84, 0x8004045c6559c690, 0xc00e1850d767f411, 0x61204489a16d0e6d,
     0x0010000003024040, 0x9b7447f7ddd141c0, 0x1001044202044053, 0x4100000020000400, 0xefdfdff040020400, 0xafefffbdbbfffeff,
@@ -223,7 +225,7 @@ static LANGUAGES: [u64; 286] = [
     0x3081676e140121c0, 0x0000001000000100, 0x080400a242200000, 0x0000000000000000,
 ];
 
-/// The same for the regions of two letters.
+/// The same for two-letter regions.
 static REGIONS: [u64; 11] = [
     0xdeddfdefeedf797d, 0x1e00d58015963f6f, 0x0015fb9fb2095c02, 0x0340400f781c068d, 0xfd4f8141f42b1d00, 0x0100086b25d7fffc,
     0x40000001538f3c40, 0xbfbb7be7fdf15100, 0x004085570430419a, 0x0018000000004002, 0x0000000908400418,
@@ -244,7 +246,7 @@ static SCRIPTS: &str = "\
     syrcsyresyrjsyrntagbtakrtaletalutamltangtavttelutengtfngtglgthaathaitibttirhtnsatotougarvaiivispvithwarawchowole\
     xpeoxsuxyeziyiiizanbzinhzmthzsyezsymzxxxzyyyzzzz";
 
-/// The language that an extended language follows, and after a colon those that follow it, three letters each.
+/// Each entry is a language, a colon, and the extended languages that can follow it, three letters each.
 static EXTENDED_LANGUAGES: &str = "\
     ar:aaoabhabvacmacqacwacxacyadfaebaecafbajpapcapdarbarqarsaryarzauzavlayhaylaynaypbbzpgashussh kok:gomknn lv:ltgl\
     vs ms:bjnbtjbvebvucoaduphjijakjaxkvbkvrkxdlcelcfliwmaxmeomfamfbminmqgmsimuiornorspelpsetmwurkvkkvktxmmzlmzmizsm \
@@ -254,7 +256,8 @@ static EXTENDED_LANGUAGES: &str = "\
     srmsrsirslrsmsdlsfbsfssggsgxslfslssqksqssqxsspssrsvkswlsyyszstsetsmtsqtsstsytzaugnugyukluksvgtvsivslvsvwbsxkixml\
     xmsydsygsyhsyslysmzibzsl sw:swcswh uz:uznuzs zh:cdocjycmncnpcpxcspczhczoganhakhsnlzhmnpnanwuuyue";
 
-/// Each variant, and after a colon what a tag with it has to start with: one of these.
+/// Each variant, optionally followed by a colon and the prefixes it's registered for. A tag with the variant has to
+/// start with one of them.
 static VARIANTS: &str = "\
     1606nict:frm 1694acad:fr 1901:de 1959acad:be 1994:sl-rozaj 1996:de abl1943:pt-br akuapem:tw alalc97 aluku:djk \
     ao1990:pt,gl aranes:oc arevela:hy arevmda:hy arkaika:eo asante:tw auvern:oc \

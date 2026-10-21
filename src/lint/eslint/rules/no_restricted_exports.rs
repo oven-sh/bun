@@ -23,7 +23,7 @@ const RESTRICTED_NAMED: Message = Message::new(
 );
 const RESTRICTED_DEFAULT: Message =
     Message::new("restrictedDefault", "Exporting 'default' is restricted.");
-/// What oxlint says instead where it is not `export default`.
+/// oxlint's messages for the forms other than `export default`.
 const RESTRICTED_NAMED_AS_DEFAULT: Message =
     Message::new("restrictedDefault", "Exporting named value as default is restricted.");
 const RESTRICTED_DEFAULT_FROM: Message =
@@ -40,28 +40,29 @@ impl NoRestrictedExports {
             || name != b"default" && self.restricted_name_pattern.as_ref().is_some_and(|it| it.test(name))
     }
 
-    /// `name`, which is written at `at`, is exported by `statement` and cannot be `default`. oxlint points at the statement.
+    /// Checks `name`, written at `at` and exported by `statement`. It can't be `default`. oxlint points at the
+    /// statement.
     fn check_declared_name<'a>(&self, name: Name<'a>, at: Span, statement: Stmt<'a>, cx: &Cx<'a, Self>) {
         if self.is_restricted_name(name) {
-            let place = if cx.language().is_oxlint { statement.span() } else { at };
-            cx.report(place, RESTRICTED_NAMED).data("name", name);
+            let location = if cx.language().is_oxlint { statement.span() } else { at };
+            cx.report(location, RESTRICTED_NAMED).data("name", name);
         }
     }
 
-    /// `restricts_default`: whether this way of exporting something as `default` is restricted. `said_by_oxlint`: what
-    /// oxlint says then.
+    /// `restricts_default` is true if this form of exporting as `default` is restricted. `oxlint_message` is oxlint's
+    /// message for that case.
     fn check_exported_name<'a>(
         &self,
         exported: Ident<'a>,
-        (restricts_default, said_by_oxlint): (bool, Message),
+        (restricts_default, oxlint_message): (bool, Message),
         statement: Stmt<'a>,
         cx: &Cx<'a, Self>,
     ) {
-        let place = if cx.language().is_oxlint { statement.span() } else { exported.span() };
+        let location = if cx.language().is_oxlint { statement.span() } else { exported.span() };
         if self.is_restricted_name(exported.name()) {
-            cx.report(place, RESTRICTED_NAMED).data("name", exported);
+            cx.report(location, RESTRICTED_NAMED).data("name", exported);
         } else if restricts_default && exported.name().is("default") {
-            cx.report(place, if cx.language().is_oxlint { said_by_oxlint } else { RESTRICTED_DEFAULT });
+            cx.report(location, if cx.language().is_oxlint { oxlint_message } else { RESTRICTED_DEFAULT });
         }
     }
 
@@ -104,7 +105,7 @@ impl NoRestrictedExports {
             return;
         }
         match kind {
-            // Without a body it is a `TSDeclareFunction`.
+            // Without a body it's a `TSDeclareFunction`.
             StmtKind::Fn(func) if func.has_body() => {
                 if let Some(name) = func.name() {
                     self.check_declared_name(name.name(), name.span(), statement, cx);
@@ -116,7 +117,7 @@ impl NoRestrictedExports {
                 }
             }
             StmtKind::Var(declarations) => {
-                // A name is reported where it is bound first.
+                // Report a name only at its first binding.
                 let mut reported: FxHashSet<Name<'a>> = FxHashSet::default();
                 for declaration in declarations {
                     declaration.pat().for_each_binding(&mut |binding| {
@@ -131,8 +132,8 @@ impl NoRestrictedExports {
                             true => declaration.binding_span(),
                             false => binding.span(),
                         };
-                        let place = if cx.language().is_oxlint { statement.span() } else { at };
-                        cx.report(place, RESTRICTED_NAMED).data("name", name);
+                        let location = if cx.language().is_oxlint { statement.span() } else { at };
+                        cx.report(location, RESTRICTED_NAMED).data("name", name);
                     });
                 }
             }

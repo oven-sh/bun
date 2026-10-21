@@ -7,10 +7,10 @@ use bun_lint::rule::Plugin;
 /// API.
 pub struct NoJasmineGlobals;
 
-/// oxlint has the quotes.
+/// The quotes are part of oxlint's message.
 const ILLEGAL_USAGE: Message = Message::new("", "\"Illegal usage of {{what}}\"");
 
-/// With what the message and the `help` say of each.
+/// (name, `{{what}}` in the message, `help` text)
 const NON_JASMINE_PROPERTY_NAMES: [(&str, &str, &str); 4] = [
     ("spyOn", "global spyOn", "\"prefer use Jest own API `jest.spyOn`\""),
     ("spyOnProperty", "global spyOnProperty", "\"prefer use Jest own API `jest.spyOn`\""),
@@ -63,7 +63,7 @@ impl NoJasmineGlobals {
             && !expr.is_assignment_target()
         {
             let report = cx.report(span, ILLEGAL_USAGE).data("what", "jasmine global").help(COMMON_HELP_TEXT);
-            // `jasmine.DEFAULT_TIMEOUT_INTERVAL = 5000` is `jest.setTimeout(5000)`.
+            // `jasmine.DEFAULT_TIMEOUT_INTERVAL = 5000` becomes `jest.setTimeout(5000)`.
             if property_name.is("DEFAULT_TIMEOUT_INTERVAL")
                 && let ExprKind::Number(number) = value.kind()
                 && !value.is_parenthesized()
@@ -80,7 +80,7 @@ impl NoJasmineGlobals {
         {
             let report = cx.report(span, ILLEGAL_USAGE);
             match property_name.bytes() {
-                // `expect` has them too.
+                // `expect` has the same methods.
                 b"any" | b"anything" | b"arrayContaining" | b"objectContaining" | b"stringMatching" => {
                     (report.data("what", [b"`".as_slice(), property_name.bytes(), b"`".as_slice()].concat()))
                         .data("api", [b"expect.".as_slice(), property_name.bytes()].concat())
@@ -97,7 +97,7 @@ impl NoJasmineGlobals {
     }
 }
 
-/// For `jasmine.a` and `jasmine["a"]`: where the `a` is written, and the `a`.
+/// For `jasmine.a` and `jasmine["a"]`, returns the span of `a` and its name.
 fn get_jasmine_property_name(member_expr: Expr<'_>) -> Option<(Span, Name<'_>)> {
     member_expr.object().filter(|it| it.is_ident("jasmine") && !it.is_parenthesized())?;
     static_property_info(member_expr)

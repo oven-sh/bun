@@ -958,6 +958,99 @@ describe("fs.watch", () => {
     ]);
     expect(exitCode).toBe(0);
   });
+
+  // The inotify reader thread walks a directory that's moved into a recursive watch.
+  test.concurrent.skipIf(!isLinux).each([
+    { title: "deeper than the open-file limit", limit: "ulimit -n 64; ", levels: 100 },
+    { title: "300 levels deep", limit: "", levels: 300 },
+  ])("recursive watch covers a moved-in tree that's $title", async ({ limit, levels }) => {
+    using dir = tempDir("fs-watch-deep-move", { "watched": {} });
+    const root = String(dir);
+    fs.mkdirSync(path.join(root, "src", ...Array(levels).fill("a")), { recursive: true });
+
+    // inotify delivers events in order, so an event for a later action means the earlier step is done.
+    const fixture = /* js */ `
+      const fs = require("fs"), path = require("path");
+      const root = process.env.WATCH_ROOT;
+      const watched = path.join(root, "watched");
+      const seen = new Set(), errors = [], dirs = [];
+      for (let dir = "moved"; dirs.length < ${levels}; ) dirs.push((dir = path.join(dir, "a")));
+      const bottomFile = path.join(dirs.at(-1), "f.txt");
+      const watcher = fs.watch(watched, { recursive: true }, (type, name) => {
+        seen.add(name);
+        if (type !== "rename") return;
+        if (name === "walked.txt") {
+          fs.writeFileSync(path.join(watched, bottomFile), "x");
+          fs.writeFileSync(path.join(watched, "last.txt"), "x");
+        } else if (name === "last.txt") {
+          watcher.close();
+          console.log(JSON.stringify({
+            unreported: dirs.flatMap((dir, i) => (seen.has(dir) ? [] : [i + 1])),
+            bottomFile: seen.has(bottomFile),
+            errors,
+          }));
+        }
+      });
+      watcher.on("error", error => errors.push(error.code));
+      fs.renameSync(path.join(root, "src"), path.join(watched, "moved"));
+      fs.writeFileSync(path.join(watched, "walked.txt"), "x");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", limit + 'exec "$0" "$@"', bunExe(), "-e", fixture],
+      env: { ...bunEnv, WATCH_ROOT: root },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ unreported: [], bottomFile: true, errors: [] }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent.skipIf(!isLinux)(
+    "recursive watch reports a moved-in tree's files and directories in walk order",
+    async () => {
+      using dir = tempDir("fs-watch-mixed-tree", { "watched": {} });
+      const root = String(dir);
+
+      // Creates three levels that each mix files and directories.
+      function makeTree(top: string, depth: number) {
+        fs.mkdirSync(top, { recursive: true });
+        for (const name of ["f0.txt", "f1.txt", "f2.txt"]) fs.writeFileSync(path.join(top, name), "");
+        fs.mkdirSync(path.join(top, "empty"));
+        if (depth < 2) for (const name of ["sub0", "sub1"]) makeTree(path.join(top, name), depth + 1);
+        for (const name of ["g0.txt", "g1.txt"]) fs.writeFileSync(path.join(top, name), "");
+      }
+      // Returns the entries under `top` in readdir order, each directory before its contents.
+      function listTree(top: string, rel: string): string[] {
+        return fs.readdirSync(top, { withFileTypes: true }).flatMap(entry => {
+          const name = path.join(rel, entry.name);
+          return entry.isDirectory() ? [name, ...listTree(path.join(top, entry.name), name)] : [name];
+        });
+      }
+      makeTree(path.join(root, "mixed"), 0);
+      const expected = ["mixed", ...listTree(path.join(root, "mixed"), "mixed")];
+
+      const events: string[] = [];
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const watcher = fs.watch(path.join(root, "watched"), { recursive: true }, (_type, name) => {
+        if (name === "last.txt") resolve();
+        else events.push(name!);
+      });
+      watcher.on("error", reject);
+      try {
+        fs.renameSync(path.join(root, "mixed"), path.join(root, "watched", "mixed"));
+        fs.writeFileSync(path.join(root, "watched", "last.txt"), "x");
+        await promise;
+      } finally {
+        watcher.close();
+      }
+      expect(events).toEqual(expected);
+    },
+  );
 });
 
 describe("fs.promises.watch", () => {

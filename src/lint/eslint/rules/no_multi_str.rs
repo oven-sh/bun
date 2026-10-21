@@ -9,8 +9,7 @@ const MULTILINE_STRING: Message = Message::new(
     "Multiline support is limited to browsers supporting ES5 only.",
 );
 
-/// Whether ESLint's parent of the string `e` is a node of JSX: an attribute, an expression
-/// container, a spread.
+/// True if the string `e` has a JSX node as its ESLint parent: an attribute, an expression container or a spread.
 fn is_in_jsx(e: Expr) -> bool {
     match e.parent() {
         Node::Prop(prop) => matches!(prop.parent(), Node::Expr(owner) if owner.tag() == ExprTag::Jsx),
@@ -23,8 +22,8 @@ fn is_in_jsx(e: Expr) -> bool {
     }
 }
 
-/// Where a string with a line break is reported. oxlint points at what is before the first line break.
-fn place(string: Span, file: &File) -> Span {
+/// Returns the span to report for a multiline string. oxlint points at the character before the first line break.
+fn report_span(string: Span, file: &File) -> Span {
     let text = file.slice(string);
     let is_linebreak = |at: &usize| matches!(text.get(*at..), Some([b'\n' | b'\r', ..] | [0xE2, 0x80, 0xA8 | 0xA9, ..]));
     match (1..text.len()).find(is_linebreak).filter(|_| file.language().is_oxlint) {
@@ -36,7 +35,7 @@ fn place(string: Span, file: &File) -> Span {
 impl Rule for NoMultiStr {
     const META: Meta = Meta::eslint("no-multi-str", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::String]).finish();
-    /// Where the strings with a line break start that are expressions.
+    /// Start offsets of the multiline strings that are expressions.
     type State<'a> = Vec<u32>;
 
     fn new(_: &Options) -> Self {
@@ -64,11 +63,11 @@ impl Rule for NoMultiStr {
         }
         cx.state.push(e.span().start);
         if !is_in_jsx(e) {
-            cx.report(place(e.span(), cx.file()), MULTILINE_STRING);
+            cx.report(report_span(e.span(), cx.file()), MULTILINE_STRING);
         }
     }
 
-    // The strings that are not expressions: keys, module specifiers, literal types.
+    // Checks the strings that aren't expressions: keys, module specifiers, literal types.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         cx.state.sort_unstable();
         for token in cx.file().tokens() {
@@ -76,7 +75,7 @@ impl Rule for NoMultiStr {
                 && strings::contains_js_line_break(token.text())
                 && cx.state.binary_search(&token.start()).is_err()
             {
-                cx.report(place(Span::new(token.start(), token.end()), cx.file()), MULTILINE_STRING);
+                cx.report(report_span(Span::new(token.start(), token.end()), cx.file()), MULTILINE_STRING);
             }
         }
     }

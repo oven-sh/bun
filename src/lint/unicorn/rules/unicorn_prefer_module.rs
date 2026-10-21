@@ -15,7 +15,7 @@ const COMMON_JS_GLOBAL: Message = Message::new("", "Do not use \"{{name}}\".");
 #[derive(Default)]
 pub struct State<'a> {
     common_js_globals: Option<[Name<'a>; 5]>,
-    /// What is in a function.
+    /// Caches which nodes are in a function.
     functions: AncestorMemo<'a, ()>,
 }
 
@@ -64,7 +64,7 @@ impl Rule for PreferModule {
         if let (Some(name), Some(names)) = (identifier.as_ident(), &cx.state.common_js_globals)
             && names.contains(&name)
             && is_reference_to_global_variable(identifier)
-            // `<module />` refers to nothing.
+            // `<module />` isn't a reference.
             && !(identifier.is_jsx_tag_name() && name.bytes().first().is_some_and(u8::is_ascii_lowercase))
         {
             cx.report(identifier, COMMON_JS_GLOBAL).data("name", name);

@@ -1,16 +1,20 @@
-//! Runs the tests of ESLint, of typescript-eslint and of the plugins on `bun lint`. The tests are
-//! in `test/cli/lint/conformance/bundle.zst`: for each rule a file `<plugin>/<rule>.json` with the
-//! cases of upstream's tests and what the real ESLint reports for each, and in `more/` the same for
-//! cases from elsewhere. See the README there.
+//! Runs the ESLint, typescript-eslint and plugin test suites against `bun lint`. The tests are in
+//! `test/cli/lint/conformance/bundle.zst`. Each rule has a file `<plugin>/<rule>.json` with upstream's test cases and
+//! what the real ESLint reports for each one, and `more/` has the same for cases from other sources. See the README
+//! there.
 //!
-//! It is compiled into debug and canary builds of Bun (`bun lint --run-eslint-tests`, for
+//! It's compiled into debug and canary builds of Bun (`bun lint --run-eslint-tests`, for
 //! `test/cli/lint/conformance.test.ts`).
 //!
-//! A case passes if the messages are the same (rule, id, text, place, fix, and for each suggestion
-//! id, text, fix and the code after it) and the code after one pass of fixes is.
+//! A case passes if the messages match (rule, id, text, position, fix, and for each suggestion its id, text, fix and
+//! resulting code) and the code after one pass of fixes matches too.
 //!
-//! `oxlint/` has the tests of the rules that are ports of oxlint's, with what the executable of oxlint reports. It does not print
-//! its fixes: there the code is compared after what `--fix` applies, then also `--fix-suggestions`, then also `--fix-dangerously`.
+//! Here `--fix` never applies a fix that can change what a program does, even if upstream's `--fix` does. Those fixes
+//! need `--fix-dangerously`. They're compared as regular fixes, and the cases that have one are counted.
+//!
+//! `oxlint/` has the tests for rules ported from oxlint, with what the oxlint executable reports. oxlint doesn't print
+//! its fixes, so those cases compare the code after `--fix`, then with `--fix-suggestions` added, then with
+//! `--fix-dangerously` added.
 
 #![forbid(unsafe_code)]
 
@@ -19,7 +23,7 @@ mod test_only_rules;
 
 use bun_format_conformance::write_file;
 pub use bun_format_conformance::{Bundle, read_file, write_line};
-use compare::problem_of_oxlint;
+use compare::oxlint_problem;
 pub use compare::{
     Counts, Edit, Outcome, Problem, Reported, Suggested, expected_messages, problem_of, string_of,
 };
@@ -40,72 +44,72 @@ use std::fmt::Write as _;
 use std::sync::OnceLock;
 use std::sync::atomic::Ordering;
 
-/// Where the code of a case is linted.
+/// The context a case's code is linted in.
 #[derive(Copy, Clone)]
-pub enum Place<'a> {
-    /// By itself.
-    Nowhere,
-    /// As a file of the project in this directory, for a rule that looks at other files.
+pub enum LintContext<'a> {
+    /// On its own.
+    Standalone,
+    /// As a file in the project in this directory, for a rule that looks at other files.
     Project(&'a [u8]),
-    /// As a file of the program of this `tsconfig.json`, with types.
+    /// As a file in this `tsconfig.json`'s program, with types.
     Program(&'a [u8]),
 }
 
-/// What there is to lint.
+/// One lint request.
 pub struct Case<'a> {
     pub code: &'a [u8],
-    /// Absolute unless the place is nowhere. The file need not exist, and if it does, `code`
-    /// replaces its text.
+    /// Absolute unless `lint_context` is `Standalone`. The file doesn't have to exist, and if it does, `code` overrides
+    /// its text.
     pub path: &'a [u8],
-    /// It enables one rule.
+    /// Enables exactly one rule.
     pub config: &'a ResolvedConfig,
-    pub place: Place<'a>,
-    /// To be called with the file before it is linted. Only where the place is nowhere.
+    pub lint_context: LintContext<'a>,
+    /// Called with the file before it's linted. Only used when `lint_context` is `Standalone`.
     pub prepare: Option<&'a dyn for<'f> Fn(&'f File<'f>)>,
 }
 
-/// What lints.
+/// The linter under test.
 pub trait Host: Sync {
-    /// That of its linter.
+    /// Its linter's registry.
     fn registry(&self) -> &Registry;
 
-    /// The messages about a case. `None`: it cannot be linted that way.
+    /// The messages for a case. `None` if it can't be linted that way.
     fn lint(&self, case: &Case<'_>) -> Option<Vec<LintMessage>>;
 
     /// Calls `work` with each number below `count`, on `threads` threads.
     fn for_each(&self, threads: usize, count: usize, work: &(dyn Fn(usize) + Sync));
 }
 
-/// What is on the command line after the path of the bundle.
+/// The command-line flags after the bundle's path.
 #[derive(Default)]
 pub struct Flags<'a> {
-    /// `--suite=upstream`, `--suite=more`, `--suite=reviews`: only the tests of upstream, only the
-    /// others, only those in this directory of `more`.
+    /// `--suite=upstream`, `--suite=more`, `--suite=reviews`: only upstream's tests, only the others, or only those in
+    /// that directory of `more`.
     pub suite: Option<&'a [u8]>,
     /// `--plugin=eslint`: only the rules in this directory.
     pub plugin: Option<&'a [u8]>,
     /// `--rule=no-undef`: only this rule.
     pub rule: Option<&'a [u8]>,
-    /// `--report=directory`: the failures of each rule are written to `<plugin>/<rule>.txt` there.
+    /// `--report=directory`: writes each rule's failures to `<plugin>/<rule>.txt` there.
     pub report: Option<&'a [u8]>,
-    /// `--verbose`: the failures are printed at length.
+    /// `--verbose`: prints the failures in full.
     pub verbose: bool,
-    /// `--table`: a line for each rule, and none for a case that fails.
+    /// `--table`: prints one line per rule instead of one per failing case.
     pub table: bool,
-    /// `--types`: also the cases that need types.
+    /// `--types`: also runs the cases that need types.
     pub types: bool,
-    /// `--every=n --first=i`: every n-th case that needs no types, from the i-th.
+    /// `--every=n --first=i`: runs every n-th case that doesn't need types, starting at the i-th.
     pub every: usize,
     pub first: usize,
-    /// `--every-typed=n`: every n-th case that needs types.
+    /// `--every-typed=n`: runs every n-th case that needs types.
     pub every_typed: usize,
     /// `--threads=n`
     pub threads: usize,
-    /// `--projects=directory`: where the projects are that some cases are files of. Absolute. With
-    /// `--extract`, they are written there first.
+    /// `--projects=directory`: the absolute path of the directory with the projects that some cases' files belong to.
+    /// With `--extract`, they're written there first.
     pub projects: Option<&'a [u8]>,
     pub extract: bool,
-    /// `--in-order`: a case fails whose messages are the recorded ones in another order.
+    /// `--in-order`: fails a case whose messages match the recorded ones but in a different order.
     pub in_order: bool,
 }
 
@@ -140,7 +144,7 @@ impl<'a> Flags<'a> {
     }
 }
 
-/// The directories of the bundle that have those of `PLUGINS`, by name.
+/// The bundle directories that contain the `PLUGINS` directories, by suite name.
 const SUITES: [(&str, &str); 5] = [
     ("upstream", ""),
     ("oxlint", "oxlint/"),
@@ -149,7 +153,7 @@ const SUITES: [(&str, &str); 5] = [
     ("typescript-parser", "more/typescript-parser/"),
 ];
 
-/// The directories of a suite that have the tests of rules.
+/// The directories in a suite that contain rule tests.
 const PLUGINS: [(&str, Plugin); 19] = [
     ("eslint", Plugin::Eslint),
     ("typescript-eslint", Plugin::TypeScript),
@@ -172,7 +176,7 @@ const PLUGINS: [(&str, Plugin); 19] = [
     ("markdown", Plugin::Markdown),
 ];
 
-/// The directories of the bundle that are written to the disk.
+/// The bundle directories that are written to disk.
 const PROJECTS: [&[u8]; 6] = [
     b"import-project/",
     b"oxlint-import-project/",
@@ -182,21 +186,21 @@ const PROJECTS: [&[u8]; 6] = [
     b"node_modules/",
 ];
 
-/// In a fixture it stands for the directory of its project, which is below `--projects`: in the names of files, in options,
-/// settings, messages and code.
+/// A placeholder in fixtures for the project's directory, which is under `--projects`. It appears in file names,
+/// options, settings, messages and code.
 const PROJECT: &[u8] = b"/__project__";
 
-/// The directory of `PROJECTS` that the cases of a rule of `plugin` are files of.
-fn project_of(plugin: Plugin, is_of_oxlint: bool) -> &'static [u8] {
+/// The `PROJECTS` directory that the cases for `plugin`'s rules belong to.
+fn project_of(plugin: Plugin, is_oxlint_suite: bool) -> &'static [u8] {
     match plugin {
-        _ if is_of_oxlint => b"oxlint-import-project",
+        _ if is_oxlint_suite => b"oxlint-import-project",
         Plugin::Node => b"n-project",
         Plugin::Prettier => b"prettier-project",
         _ => b"import-project",
     }
 }
 
-/// `a/b.symlink` in the bundle is the symbolic link `a/b`, and what it has is where the link leads.
+/// `a/b.symlink` in the bundle is the symbolic link `a/b`, and its contents are the link's target.
 const LINK: &[u8] = b".symlink";
 
 fn make_parent(path: &[u8]) {
@@ -213,14 +217,13 @@ fn write_link(path: &[u8], target: &[u8]) {
     );
 }
 
-/// The configuration that the `RuleTester` of the plugin lints a case with: only that rule, as an
-/// error.
+/// The configuration the plugin's `RuleTester` lints a case with: only that rule, as an error.
 pub fn config_of(registry: &Registry, entry: &'static RuleEntry, case: &Json) -> ResolvedConfig {
     let language_options = case.get(b"languageOptions").cloned().unwrap_or(Json::Null);
     // If the case is in one of the plugin's languages, `languageOptions` are that language's options.
     let language = string_of(case, b"language");
-    let dialect = language.and_then(|written| {
-        let name = &written[strings::last_index_of_char(written, b'/')? + 1..];
+    let dialect = language.and_then(|language_id| {
+        let name = &language_id[strings::last_index_of_char(language_id, b'/')? + 1..];
         let language = registry.language(entry.meta.plugin, name)?;
         let configured = language.configure(name, &language_options).ok()?;
         Some(Dialect {
@@ -242,14 +245,16 @@ pub fn config_of(registry: &Registry, entry: &'static RuleEntry, case: &Json) ->
         ),
     ]);
     let mut config = ResolvedConfig::from_json(registry, &config, &mut Vec::new());
-    // Not by its name: in a configuration that is the rule of the package, as long as the plugin is not whole here.
+    // The rule isn't enabled by name. In a configuration, the name means the npm package's rule as long as the plugin
+    // isn't fully implemented here.
     let options = case.get(b"options").and_then(Json::as_array);
-    // The first error is kept, and `null` in the recorded language options is one: what is to be seen is the refusal of the options.
+    // Only the first error is kept, and `null` in the recorded language options causes one. Clear it so that a
+    // rejection of the rule's options shows up.
     config.error = None;
     config.language_name = language.map(Into::into);
     config.dialect = dialect;
     config.configure(entry, Severity::Error, options.unwrap_or_default());
-    // The `RuleTester` of typescript-eslint sets it, that of ESLint does not.
+    // typescript-eslint's `RuleTester` sets it, ESLint's doesn't.
     config.linter.report_unused_disable_directives = match entry.meta.plugin {
         Plugin::TypeScript => Severity::Warn,
         _ => Severity::Off,
@@ -257,8 +262,8 @@ pub fn config_of(registry: &Registry, entry: &'static RuleEntry, case: &Json) ->
     config
 }
 
-/// The configuration that oxlint's `Tester` lints a case with: an `.oxlintrc.json` with only that rule, and with what the case
-/// has in `oxlintrc`. `directory`: of the rule in the bundle, which is what oxlint calls its plugin.
+/// The configuration oxlint's `Tester` lints a case with: an `.oxlintrc.json` with only that rule, plus whatever the
+/// case has in `oxlintrc`. `directory` is the rule's directory in the bundle, which is oxlint's name for the plugin.
 fn oxlint_config_of(
     registry: &Registry,
     directory: &str,
@@ -314,7 +319,7 @@ fn oxlint_config_of(
 /// How a case is run.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Kind {
-    /// It depends on code of upstream's tests that is not reproduced.
+    /// It depends on code in upstream's tests that isn't reproduced here.
     Skipped,
     Plain,
     WithTestOnlyRules,
@@ -322,7 +327,7 @@ enum Kind {
     Typed,
 }
 
-fn kind_of(entry: &RuleEntry, case: &Json, is_of_oxlint: bool) -> Kind {
+fn kind_of(entry: &RuleEntry, case: &Json, is_oxlint_suite: bool) -> Kind {
     let is_type_aware = case.get(b"typeAware").and_then(Json::as_bool) == Some(true);
     match string_of(case, b"skip") {
         Some(skip) if test_only_rules::is_known(skip) => Kind::WithTestOnlyRules,
@@ -332,8 +337,8 @@ fn kind_of(entry: &RuleEntry, case: &Json, is_of_oxlint: bool) -> Kind {
             if entry.meta.needs_modules
                 || entry.meta.plugin == Plugin::Prettier
                 || (entry.meta.plugin == Plugin::Node && !entry.meta.follows_oxlint)
-                // Some read the `package.json` files above the file.
-                || (entry.meta.plugin == Plugin::Import && !is_of_oxlint) =>
+                // Some rules read the `package.json` files in the file's parent directories.
+                || (entry.meta.plugin == Plugin::Import && !is_oxlint_suite) =>
         {
             Kind::InProject
         }
@@ -342,7 +347,7 @@ fn kind_of(entry: &RuleEntry, case: &Json, is_of_oxlint: bool) -> Kind {
     }
 }
 
-/// What JSON cannot say (`Infinity`, `undefined`, a function) is `null` in a recording.
+/// Values JSON can't represent (`Infinity`, `undefined`, a function) are recorded as `null`.
 fn has_null(options: Option<&Json>) -> bool {
     let mut left: Vec<&Json> = options.into_iter().collect();
     while let Some(it) = left.pop() {
@@ -356,8 +361,7 @@ fn has_null(options: Option<&Json>) -> bool {
     false
 }
 
-/// What is wrong with what is reported for `case`, a test of the rule `entry`. `Err`: it cannot be
-/// run here.
+/// Runs `case` and returns the problem with its output, if any. `Err` if it can't be run here.
 fn run_case(
     host: &dyn Host,
     flags: &Flags,
@@ -369,13 +373,13 @@ fn run_case(
     let entry = fixture.entry;
     let code = string_of(case, b"code").unwrap_or_default();
     let filename = string_of(case, b"filename").unwrap_or(b"file.js");
-    let config = match fixture.plugin_of_oxlint() {
+    let config = match fixture.oxlint_plugin_directory() {
         Some(directory) => {
             oxlint_config_of(host.registry(), directory, entry, case, filename).ok_or(())?
         }
         None => config_of(host.registry(), entry, case),
     };
-    // A configuration with these options would end the run.
+    // A real configuration with these options would abort the run.
     if let Some(error) = &config.error
         && !has_null(case.get(b"options"))
     {
@@ -388,32 +392,40 @@ fn run_case(
         Some(b'<' | b'/') => Some(filename.to_vec()),
         _ => Some([flags.projects?, b"/", directory, b"/", filename].concat()),
     };
-    let lint = |path: &[u8], place: Place, prepare: Option<&dyn for<'f> Fn(&'f File<'f>)>| {
-        host.lint(&Case {
-            code,
-            path,
-            config: &config,
-            place,
-            prepare,
-        })
-    };
+    let lint =
+        |path: &[u8], lint_context: LintContext, prepare: Option<&dyn for<'f> Fn(&'f File<'f>)>| {
+            host.lint(&Case {
+                code,
+                path,
+                config: &config,
+                lint_context,
+                prepare,
+            })
+        };
     let messages = match kind {
         Kind::Skipped => return Err(()),
-        // Some rules of oxlint go by the directories that the file is in.
-        Kind::Plain if fixture.plugin_of_oxlint().is_some() => {
+        // Some oxlint rules depend on the file's parent directories.
+        Kind::Plain if fixture.oxlint_plugin_directory().is_some() => {
             let absolute = [b"/", filename.strip_prefix(b"/").unwrap_or(filename)].concat();
-            lint(&absolute, Place::Nowhere, None).ok_or(())?
+            lint(&absolute, LintContext::Standalone, None).ok_or(())?
         }
-        Kind::Plain => lint(filename, Place::Nowhere, None).ok_or(())?,
+        Kind::Plain => lint(filename, LintContext::Standalone, None).ok_or(())?,
         Kind::WithTestOnlyRules => {
             let rules = test_only_rules::Enabled::in_code(code);
-            let messages =
-                lint(filename, Place::Nowhere, Some(&|file| rules.prepare(file))).ok_or(())?;
+            let messages = lint(
+                filename,
+                LintContext::Standalone,
+                Some(&|file| rules.prepare(file)),
+            )
+            .ok_or(())?;
             rules.finish(messages)
         }
         Kind::InProject => {
-            let directory = project_of(entry.meta.plugin, fixture.plugin_of_oxlint().is_some());
-            // A fixture that is not in the bundle yet has the names of the files as they were recorded.
+            let directory = project_of(
+                entry.meta.plugin,
+                fixture.oxlint_plugin_directory().is_some(),
+            );
+            // A fixture that isn't in the bundle yet still has the file names as recorded.
             let project = match fixture.json.get(b"root").and_then(Json::as_str) {
                 Some(root) => root.to_vec(),
                 None => [flags.projects.ok_or(())?, b"/", directory].concat(),
@@ -422,7 +434,7 @@ fn run_case(
                 Some(b'<' | b'/') => filename.to_vec(),
                 _ => [&project[..], b"/", filename].concat(),
             };
-            lint(&path, Place::Project(&project), None).ok_or(())?
+            lint(&path, LintContext::Project(&project), None).ok_or(())?
         }
         Kind::Typed => {
             let tsconfig = string_of(case, b"tsconfig").unwrap_or(b"tsconfig.json");
@@ -434,15 +446,15 @@ fn run_case(
             .concat();
             let path = in_directory(b"typescript-eslint-project").ok_or(())?;
             return Ok(problem_of(
-                lint(&path, Place::Program(&tsconfig), None)
+                lint(&path, LintContext::Program(&tsconfig), None)
                     .map(|it| Outcome::new(entry, code, &it)),
                 case,
                 counts,
             ));
         }
     };
-    if fixture.plugin_of_oxlint().is_some() {
-        return Ok(problem_of_oxlint(entry, code, &messages, case, counts));
+    if fixture.oxlint_plugin_directory().is_some() {
+        return Ok(oxlint_problem(entry, code, &messages, case, counts));
     }
     Ok(problem_of(
         Some(Outcome::new(entry, code, &messages)),
@@ -458,7 +470,7 @@ pub struct Tally {
     pub skipped: usize,
 }
 
-/// A failure at length.
+/// Writes a failure's full description.
 fn describe(index: usize, case: &Json, problem: &Problem, into: &mut String) {
     let mut options = Vec::new();
     case.get(b"options")
@@ -481,9 +493,9 @@ fn describe(index: usize, case: &Json, problem: &Problem, into: &mut String) {
     );
 }
 
-/// The tests of a rule.
+/// A rule's tests.
 struct Fixture {
-    /// `<plugin>/<rule>`, after the directory of the suite.
+    /// `<plugin>/<rule>`, prefixed with the suite's directory.
     id: String,
     entry: &'static RuleEntry,
     json: Json,
@@ -502,14 +514,14 @@ impl Fixture {
         cases_of(&self.json)
     }
 
-    /// The directory of the plugin, if oxlint is the judge.
-    fn plugin_of_oxlint(&self) -> Option<&str> {
+    /// The plugin's directory, if the fixture is compared against oxlint.
+    fn oxlint_plugin_directory(&self) -> Option<&str> {
         let rest = self.id.strip_prefix("oxlint/")?;
         rest.get(..rest.len().checked_sub(self.entry.meta.name.len() + 1)?)
     }
 }
 
-/// A case that is run.
+/// A case selected to run.
 #[derive(Copy, Clone)]
 struct Chosen {
     fixture: usize,
@@ -517,15 +529,14 @@ struct Chosen {
     kind: Kind,
 }
 
-/// The name of the rule whose tests are at `path` in the bundle, if it is a rule of the plugin in
-/// `directory`.
+/// The name of the rule whose tests are at `path` in the bundle, if it belongs to the plugin in `directory`.
 fn rule_at<'p>(path: &'p [u8], directory: &[u8]) -> Option<&'p [u8]> {
     path.strip_prefix(directory)?
         .strip_prefix(b"/")?
         .strip_suffix(b".json")
 }
 
-/// Runs the tests in `bundle` and prints the cases that fail, one per line, and the totals.
+/// Runs the tests in `bundle` and prints the failing cases, one per line, then the totals.
 pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
     if let (true, Some(projects)) = (flags.extract, flags.projects) {
         for path in bundle
@@ -568,16 +579,16 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
                 continue;
             }
             let id = format!("{directory}/{}", BStr::new(name));
-            // oxlint has `react-hooks/exhaustive-deps` as `react/exhaustive-deps`.
-            let is_of_oxlint = directory.starts_with("oxlint/");
+            // oxlint calls `react-hooks/exhaustive-deps` `react/exhaustive-deps`.
+            let is_oxlint_suite = directory.starts_with("oxlint/");
             let registry = host.registry();
-            let Some(entry) = registry.get_preferring(*plugin, name, is_of_oxlint) else {
+            let Some(entry) = registry.get_preferring(*plugin, name, is_oxlint_suite) else {
                 missing += 1;
                 continue;
             };
             let text = bundle.read(path).map(|text| match flags.projects {
                 Some(projects) if strings::contains(text, PROJECT) => {
-                    let project = [projects, b"/", project_of(*plugin, is_of_oxlint)].concat();
+                    let project = [projects, b"/", project_of(*plugin, is_oxlint_suite)].concat();
                     Cow::Owned(strings::replace_owned(text, PROJECT, &project))
                 }
                 _ => Cow::Borrowed(text),
@@ -594,16 +605,16 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
         }
     }
 
-    // How many cases have been counted for `--every`, without and with types.
+    // The number of cases counted so far for `--every`, without and with types.
     let (mut untyped, mut typed) = (0, 0);
     let mut chosen = Vec::new();
     for (fixture, it) in fixtures.iter_mut().enumerate() {
-        let is_of_oxlint = it.plugin_of_oxlint().is_some();
+        let is_oxlint_suite = it.oxlint_plugin_directory().is_some();
         let Fixture {
             entry, json, tally, ..
         } = it;
         for (index, case) in cases_of(json).iter().enumerate() {
-            let kind = kind_of(entry, case, is_of_oxlint);
+            let kind = kind_of(entry, case, is_oxlint_suite);
             if kind == Kind::Skipped || (kind == Kind::Typed && !flags.types) {
                 tally.skipped += 1;
                 continue;
@@ -622,7 +633,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
             *counter += 1;
         }
     }
-    // Those with types take a hundred times as long: they are begun first.
+    // Cases with types take a hundred times as long, so they start first.
     let mut order: Vec<usize> = (0..chosen.len()).collect();
     sort::sort_by_key(&mut order, |&at| chosen[at].kind != Kind::Typed);
     let results: Vec<OnceLock<Result<Option<Problem>, ()>>> =
@@ -660,13 +671,18 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
     for (fixture, failures) in fixtures.iter().zip(&failures) {
         let (id, tally) = (&fixture.id, fixture.tally);
         perfect += usize::from(tally.failed == 0);
-        let mut at_length = String::new();
+        let mut full_descriptions = String::new();
         for (index, problem) in failures {
             if !flags.table {
                 output_line!("FAIL {id}#{index} {}", problem.summary);
             }
             if flags.verbose || flags.report.is_some() {
-                describe(*index, &fixture.cases()[*index], problem, &mut at_length);
+                describe(
+                    *index,
+                    &fixture.cases()[*index],
+                    problem,
+                    &mut full_descriptions,
+                );
             }
         }
         if flags.table {
@@ -678,28 +694,35 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
                 tally.skipped
             );
         }
-        if flags.verbose && !at_length.is_empty() {
-            output_line!("{}", at_length.trim_end_matches('\n'));
+        if flags.verbose && !full_descriptions.is_empty() {
+            output_line!("{}", full_descriptions.trim_end_matches('\n'));
         }
         if let Some(report) = flags.report {
             write_file(
                 &[report, b"/", id.as_bytes(), b".txt"].concat(),
-                at_length.as_bytes(),
+                full_descriptions.as_bytes(),
             );
         }
         total.passed += tally.passed;
         total.failed += tally.failed;
         total.skipped += tally.skipped;
     }
-    if fixtures.iter().any(|it| it.plugin_of_oxlint().is_some()) {
+    if fixtures
+        .iter()
+        .any(|it| it.oxlint_plugin_directory().is_some())
+    {
         output_line!(
             "\n{} messages lack the help that oxlint has",
-            counts.lacking_help.load(Ordering::Relaxed)
+            counts.missing_help.load(Ordering::Relaxed)
         );
     }
     output_line!(
         "\n{} cases have their messages in another order",
-        counts.in_another_order.load(Ordering::Relaxed)
+        counts.reordered_cases.load(Ordering::Relaxed)
+    );
+    output_line!(
+        "\n{} cases have a fix that --fix holds back",
+        counts.cases_with_held_back_fix.load(Ordering::Relaxed)
     );
     output_line!(
         "\n{} rules, {perfect} without failures, {missing} not implemented\n{} cases passed, {} failed, {} skipped",
@@ -710,8 +733,8 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
     );
 }
 
-/// `--run-eslint-tests <bundle> ..`: `args` is what follows. Returns whether the tests could be
-/// run. The caller of the command compares what is printed.
+/// `--run-eslint-tests <bundle> ..`, where `args` is everything after the flag. Returns false if the tests couldn't be
+/// run. The caller compares the printed output.
 pub fn run_from_command_line(args: &[&[u8]], host: &dyn Host) -> bool {
     let Some(bytes) = args.first().and_then(|path| read_file(path)) else {
         output_line!("cannot read the bundle");

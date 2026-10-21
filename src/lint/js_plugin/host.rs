@@ -1,4 +1,4 @@
-//! What the linter talks to: loads plugins, and runs their rules on a file.
+//! The linter's interface to JavaScript plugins: loads them and runs their rules on a file.
 
 use super::engine::{Engine, Vm, Work};
 use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
@@ -25,13 +25,13 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 /// ESLint's `context.report()`.
 #[derive(Clone, Debug)]
 pub struct Report {
-    /// The index of the rule among those that were run.
+    /// The rule's index among the rules that were run.
     pub rule: u32,
     pub message: Vec<u8>,
     pub message_id: Option<Box<str>>,
-    /// From 1. `None`: the rule gave something that isn't a number.
+    /// 1-based. `None` if the rule passed something that isn't a number.
     pub line: Option<u32>,
-    /// From 1, in UTF-16 code units. `None`: as for `line`.
+    /// 1-based, in UTF-16 code units. `None` in the same case as `line`.
     pub column: Option<u32>,
     /// `endLine` and `endColumn`.
     pub end: Option<(u32, u32)>,
@@ -45,15 +45,15 @@ pub struct Suggested {
     pub message_id: Option<Box<str>>,
     /// `desc`
     pub message: Vec<u8>,
-    /// `data` as JSON, if the rule gave any.
+    /// `data` as JSON, if the rule passed any.
     pub data: Option<Vec<u8>>,
     pub fix: Fix,
 }
 
-/// Why there are no reports for a file.
+/// Why a file has no reports.
 #[derive(Clone, Debug)]
 pub struct Failure {
-    /// The index of the rule that threw, among those that were run.
+    /// The index of the rule that threw, among the rules that were run.
     pub rule: Option<u32>,
     pub at: ThrownAt,
     pub message: Vec<u8>,
@@ -80,43 +80,41 @@ impl From<Vec<u8>> for Failure {
     }
 }
 
-/// Parses the text of a file once more, on the thread that calls it, and hands over the result. It isn't called back if the text
-/// can't be parsed.
+/// Parses a file's text again on the calling thread and passes the result to the callback. The callback isn't called if
+/// the text can't be parsed.
 pub type ParseAgain<'p> = dyn Fn(&mut dyn for<'f> FnMut(&'f File<'f>)) + Sync + 'p;
 
-/// The JavaScript that a run has loaded, in all realms together.
+/// The JavaScript that a run has loaded, summed over all realms.
 #[derive(Clone, Default, Debug)]
 pub struct Loading {
     pub realms: u32,
-    /// Files. One that two realms load counts twice.
+    /// Files. A file that two realms load counts twice.
     pub modules: u64,
-    /// Their size.
+    /// Their total size.
     pub bytes: u64,
     /// The time it took to load plugins and processors.
     pub milliseconds: f64,
-    /// What only the configuration file has, so that a realm has to run all of that to get at it.
-    pub need_the_configuration: Vec<Box<[u8]>>,
-    /// How many texts ESLint's own `Linter` was given.
+    /// The things that only the config file has, so a realm has to run the whole file to get them.
+    pub need_config_file: Vec<Box<[u8]>>,
+    /// How many texts were passed to ESLint's own `Linter`.
     pub linted_by_eslint: u64,
     /// [`Engine::sizes`]
     pub sizes: (usize, usize),
 }
 
 impl Loading {
-    fn needs_the_configuration_for(&mut self, what: &[u8]) {
-        if !self.need_the_configuration.iter().any(|it| **it == *what) {
-            self.need_the_configuration.push(what.into());
+    fn needs_config_file_for(&mut self, what: &[u8]) {
+        if !self.need_config_file.iter().any(|it| **it == *what) {
+            self.need_config_file.push(what.into());
         }
     }
 }
 
-/// A plugin that is loaded.
 struct Loaded {
-    /// JSON: where it is.
+    /// JSON: its location.
     location: Vec<u8>,
-    /// Only the configuration file has it.
-    needs_the_configuration: bool,
-    /// The number of its first rule.
+    /// Only the config file has it.
+    needs_config_file: bool,
     first_rule: u32,
     plugin: Arc<Plugin>,
 }
@@ -125,49 +123,49 @@ struct Loaded {
 struct State {
     plugins: Vec<Loaded>,
     rules: u32,
-    /// The selectors that rules have listened for, by their numbers. `None`: it cannot be parsed.
+    /// The selectors that rules have listened for, indexed by number. `None` if it can't be parsed.
     selectors: Vec<Option<Arc<Selector>>>,
-    /// By their text.
+    /// Keyed by selector text.
     selector_numbers: FxHashMap<Box<[u8]>, u32>,
     loading: Loading,
     /// [`Host::rules_that_asked_for_types`]
     asked_for_types: Vec<Arc<Rule>>,
 }
 
-/// What `getParserServices` of `@typescript-eslint/utils` throws starts so, in all its versions.
-const ASKS_FOR_TYPES: &[u8] = b"You have used a rule which requires ";
+/// The start of the error that `getParserServices` in `@typescript-eslint/utils` throws, in every version.
+const NEEDS_TYPES_ERROR_PREFIX: &[u8] = b"You have used a rule which requires ";
 
-/// The plugins of a run. All threads share it.
+/// A run's plugins, shared by all threads.
 pub struct Host<'e> {
     pub(super) engine: &'e dyn Engine,
     cwd: Vec<u8>,
-    /// Whether [`Host::loading`] is read.
+    /// True if [`Host::loading`] will be read.
     measures: bool,
-    /// Whether a rule [has asked for types](Host::has_asked_for_types).
+    /// True if any rule [has asked for types](Host::has_asked_for_types).
     has_been_asked_for_types: AtomicBool,
     state: Guarded<State>,
 }
 
 pub(super) fn number(json: Option<&Json>) -> Option<u32> {
     match json {
-        // A column of -1, which ESLint has, is `u32::MAX`.
+        // ESLint can have a column of -1, which becomes `u32::MAX`.
         Some(Json::Number(n)) if *n < 0.0 => Some((*n as i64) as u32),
         Some(Json::Number(n)) => Some(*n as u32),
         _ => None,
     }
 }
 
-/// [`Host::for_each`]
-struct Each<'e> {
-    /// The heavy ones, and the others.
+/// The work of [`Host::for_each`].
+struct IndexedWork<'e> {
+    /// The heavy files, then the others.
     lists: [Vec<usize>; 2],
-    /// How many of each are taken.
+    /// How many of each have been taken.
     next: [AtomicUsize; 2],
     work: &'e (dyn Fn(usize) + Sync),
 }
 
-impl Each<'_> {
-    fn is_left(&self, list: usize) -> bool {
+impl IndexedWork<'_> {
+    fn has_remaining(&self, list: usize) -> bool {
         self.next[list].load(Ordering::Relaxed) < self.lists[list].len()
     }
 
@@ -177,9 +175,9 @@ impl Each<'_> {
     }
 }
 
-impl Work for Each<'_> {
+impl Work for IndexedWork<'_> {
     fn has_heavy(&self) -> bool {
-        self.is_left(0)
+        self.has_remaining(0)
     }
 
     fn heavy(&self) -> bool {
@@ -191,24 +189,24 @@ impl Work for Each<'_> {
     }
 
     fn needs_realms(&self) -> bool {
-        self.is_left(1)
+        self.has_remaining(1)
     }
 }
 
-/// What [`Host::run_on_block`] is given besides the file.
+/// The arguments of [`Host::run_on_block`] other than the file.
 #[derive(Copy, Clone)]
-struct How<'h> {
+struct RunOptions<'h> {
     settings: &'h FileSettings,
     enabled: &'h [&'h Configured],
     wants_fixes: bool,
     physical_path_len: Option<usize>,
 }
 
-const OUT_OF_STEP: &[u8] =
+const PLUGIN_PROTOCOL_ERROR: &[u8] =
     b"Internal error while running JavaScript plugins. This is a bug in Bun.";
 
 impl<'e> Host<'e> {
-    /// `cwd`: ESLint's `context.cwd`.
+    /// `cwd` is ESLint's `context.cwd`.
     pub fn with_engine(engine: &'e dyn Engine, cwd: &[u8]) -> Host<'e> {
         Host {
             engine,
@@ -219,16 +217,17 @@ impl<'e> Host<'e> {
         }
     }
 
-    /// The same host, which keeps track of what is loaded.
+    /// Returns the same host, which tracks what's loaded if `measures` is set.
     pub fn measuring(self, measures: bool) -> Host<'e> {
         Host { measures, ..self }
     }
 
-    pub(super) fn count_one_for_eslint(&self) {
+    pub(super) fn count_eslint_run(&self) {
         self.state.lock().loading.linted_by_eslint += 1;
     }
 
-    /// What has been loaded so far. Only the number of realms is known unless the host is [measuring](Host::measuring).
+    /// Returns what has been loaded so far. Unless the host is [measuring](Host::measuring), only the number of realms
+    /// is known.
     pub fn loading(&self) -> Loading {
         Loading {
             sizes: self.engine.sizes(),
@@ -236,9 +235,9 @@ impl<'e> Host<'e> {
         }
     }
 
-    /// Answers what a realm asks for whatever it is called with. Returns whether that is what was asked for.
-    pub(super) fn serve_any(&self, asked: u32, details: &[u8], out: &mut Vec<u8>) -> bool {
-        match asked {
+    /// Answers the requests that a realm can make during any kind of call. Returns `false` for any other request.
+    pub(super) fn serve_common(&self, request: u32, details: &[u8], out: &mut Vec<u8>) -> bool {
+        match request {
             ask::START => {
                 self.state.lock().loading.realms += 1;
                 schema::write_start(&self.cwd, self.measures, out);
@@ -270,19 +269,19 @@ impl<'e> Host<'e> {
         self.engine.expect(files, size, most);
     }
 
-    /// [`Engine::may_come`]
-    pub fn may_come(&self, size: u64) {
-        self.engine.may_come(size);
+    /// [`Engine::may_need_realm`]
+    pub fn may_need_realm(&self, size: u64) {
+        self.engine.may_need_realm(size);
     }
 
-    /// [`Engine::comes`]
-    pub fn comes(&self, size: u64) {
-        self.engine.comes(size);
+    /// [`Engine::needs_realm`]
+    pub fn needs_realm(&self, size: u64) {
+        self.engine.needs_realm(size);
     }
 
-    /// [`Engine::has_shown`]
-    pub fn has_shown(&self, size: u64, has_come: bool) {
-        self.engine.has_shown(size, has_come);
+    /// [`Engine::report_realm_need`]
+    pub fn report_realm_need(&self, size: u64, needed_realm: bool) {
+        self.engine.report_realm_need(size, needed_realm);
     }
 
     /// [`Engine::work_off`]
@@ -295,8 +294,8 @@ impl<'e> Host<'e> {
         self.engine.busy()
     }
 
-    /// Calls `work` with every number below `count`, on threads that have a realm. `is_heavy`: whether the file with that number
-    /// is [`HEAVY`](super::HEAVY).
+    /// Calls `work` with every number below `count`, on threads that have a realm. `is_heavy` tells whether the file
+    /// with that number is [`HEAVY`](super::HEAVY).
     pub fn for_each(
         &self,
         count: usize,
@@ -304,29 +303,29 @@ impl<'e> Host<'e> {
         work: &(dyn Fn(usize) + Sync),
     ) {
         let (heavy, light) = (0..count).partition(|&it| is_heavy(it));
-        let each = Each {
+        let indexed_work = IndexedWork {
             lists: [heavy, light],
             next: Default::default(),
             work,
         };
-        // Without a realm each fails, and says why.
-        if self.engine.work_off(&each, &mut || ()).is_err() {
-            each.finish_here();
+        // Without a realm, each file fails with a message that explains why.
+        if self.engine.work_off(&indexed_work, &mut || ()).is_err() {
+            indexed_work.finish_here();
         }
     }
 
-    /// Whether `rule` has asked for types, which are not there for a rule in JavaScript. It runs on no more file.
+    /// True if `rule` has asked for types, which JavaScript rules can't get. It isn't run on any more files.
     pub fn has_asked_for_types(&self, rule: &Arc<Rule>) -> bool {
         self.has_been_asked_for_types.load(Ordering::Relaxed)
             && (self.state.lock().asked_for_types.iter()).any(|it| Arc::ptr_eq(it, rule))
     }
 
-    /// Whether `thrown`, the message of what `rule` has thrown, says that it needs types. From then on it
+    /// True if `thrown`, the message of an error that `rule` threw, means the rule needs types. From then on the rule
     /// [has asked](Host::has_asked_for_types).
     pub fn asks_for_types(&self, rule: &Arc<Rule>, thrown: &[u8]) -> bool {
-        // With an oxlint config the message comes after the class of the error.
+        // With an oxlint config, the error's class precedes the message.
         let message = thrown.strip_prefix(b"Error: ").unwrap_or(thrown);
-        if !message.starts_with(ASKS_FOR_TYPES) {
+        if !message.starts_with(NEEDS_TYPES_ERROR_PREFIX) {
             return false;
         }
         if !self.has_asked_for_types(rule) {
@@ -336,7 +335,7 @@ impl<'e> Host<'e> {
         true
     }
 
-    /// The rules that [have asked for types](Host::has_asked_for_types), by their names.
+    /// The rules that [have asked for types](Host::has_asked_for_types), sorted by name.
     pub fn rules_that_asked_for_types(&self) -> Vec<Arc<Rule>> {
         let mut rules = self.state.lock().asked_for_types.clone();
         crate::utils::sort::sort_by(&mut rules, |a, b| a.id.cmp(&b.id));
@@ -344,7 +343,7 @@ impl<'e> Host<'e> {
         rules
     }
 
-    /// The plugins that are known, each with where it is: `[directory, specifier, alias]` of [`Host::load`], or
+    /// The known plugins, each with its location: the `[directory, specifier, alias]` of [`Host::load`], or the
     /// `[location, null, prefix]` of [`Host::load_located`].
     pub fn plugins(&self) -> Vec<(Arc<Plugin>, Json)> {
         let state = self.state.lock();
@@ -353,9 +352,8 @@ impl<'e> Host<'e> {
         state.plugins.iter().filter_map(located).collect()
     }
 
-    /// Loads a plugin. `specifier`: a path, relative to `directory`, or the name of a package, which
-    /// is looked for from there. `alias`: the prefix of its rules, if it is not the name that the
-    /// plugin has for itself.
+    /// Loads a plugin. `specifier` is a path relative to `directory`, or a package name that's resolved from there.
+    /// `alias` is the prefix of its rules, if that isn't the plugin's own name.
     pub fn load(
         &self,
         directory: &[u8],
@@ -375,7 +373,7 @@ impl<'e> Host<'e> {
         self.load_from(location)
     }
 
-    /// The file that [`Host::load`] would load, as Node.js writes the path. Nothing is loaded.
+    /// Returns the file that [`Host::load`] would load, with the path as Node.js writes it. Doesn't load anything.
     pub fn resolve(&self, directory: &[u8], specifier: &[u8]) -> Result<Vec<u8>, Vec<u8>> {
         let mut message = b"[[".to_vec();
         json_stringify(directory, &mut message);
@@ -383,52 +381,57 @@ impl<'e> Host<'e> {
         json_stringify(specifier, &mut message);
         // `ONLY_RESOLVE`
         message.extend_from_slice(b",null],-1,null]");
-        let mut found = Err(OUT_OF_STEP.to_vec());
+        let mut found = Err(PLUGIN_PROTOCOL_ERROR.to_vec());
         self.engine
             .with_vm(0, &mut |vm| found = self.ask_to_load(vm, &message))?;
         let found = crate::json::parse(&found?);
         let file = found.as_ref().and_then(|it| it.get(b"file")?.as_str());
-        file.map(<[u8]>::to_vec).ok_or_else(|| OUT_OF_STEP.to_vec())
+        file.map(<[u8]>::to_vec)
+            .ok_or_else(|| PLUGIN_PROTOCOL_ERROR.to_vec())
     }
 
-    /// Loads a plugin that an `eslint.config.js` has under `prefix`. `location`: what the script that
-    /// evaluates such a file says about where the plugin is, in `$jsPlugins`.
-    /// With `described`, which is what the plugin consists of as JSON in a string, nothing is loaded yet.
+    /// Loads a plugin that an `eslint.config.js` has under `prefix`. `location` is its entry in `$jsPlugins`, where the
+    /// script that evaluates such a file records where the plugin is. If it has `described`, a string with JSON that
+    /// describes the plugin's contents, nothing is loaded yet.
     pub fn load_located(&self, location: &Json, prefix: &[u8]) -> Result<Arc<Plugin>, Vec<u8>> {
         let entries = location.as_object().unwrap_or_default().iter();
-        let place = entries.filter(|it| it.0 != b"described").cloned().collect();
-        let mut written = b"[".to_vec();
-        write_json(&mut written, &Json::Object(place));
-        written.extend_from_slice(b",null,");
-        json_stringify(prefix, &mut written);
-        written.push(b']');
+        let location_entries = entries.filter(|it| it.0 != b"described").cloned().collect();
+        let mut location_json = b"[".to_vec();
+        write_json(&mut location_json, &Json::Object(location_entries));
+        location_json.extend_from_slice(b",null,");
+        json_stringify(prefix, &mut location_json);
+        location_json.push(b']');
         let described = location.get(b"described").and_then(Json::as_str);
         match described.and_then(crate::json::parse) {
             Some(described) => {
-                Ok(self.register(written, &described, location.get(b"config").is_some()))
+                Ok(self.register(location_json, &described, location.get(b"config").is_some()))
             }
-            None => self.load_from(written),
+            None => self.load_from(location_json),
         }
     }
 
-    /// Takes note of the plugin at `location`, which is `described`.
+    /// Registers the plugin at `location`, whose contents are `described`.
     fn register(
         &self,
         location: Vec<u8>,
         described: &Json,
-        needs_the_configuration: bool,
+        needs_config_file: bool,
     ) -> Arc<Plugin> {
         let mut state = self.state.lock();
         if let Some(known) = state.plugins.iter().find(|it| it.location == location) {
             return Arc::clone(&known.plugin);
         }
-        let place = (state.plugins.len() as u32, state.rules);
-        let plugin = Arc::new(plugin_of(described, place, needs_the_configuration));
+        let numbering = (state.plugins.len() as u32, state.rules);
+        let plugin = Arc::new(plugin_from_description(
+            described,
+            numbering,
+            needs_config_file,
+        ));
         let first_rule = state.rules;
         state.rules += plugin.rules.len() as u32;
         state.plugins.push(Loaded {
             location,
-            needs_the_configuration,
+            needs_config_file,
             first_rule,
             plugin: Arc::clone(&plugin),
         });
@@ -446,40 +449,43 @@ impl<'e> Host<'e> {
         if let Some(plugin) = known(&self.state.lock()) {
             return Ok(plugin);
         }
-        let mut loaded = Err(OUT_OF_STEP.to_vec());
+        let mut loaded = Err(PLUGIN_PROTOCOL_ERROR.to_vec());
         self.engine
             .with_vm(0, &mut |vm| loaded = self.load_in(vm, &location, None))?;
-        let described = crate::json::parse(&loaded?).ok_or(OUT_OF_STEP)?;
+        let described = crate::json::parse(&loaded?).ok_or(PLUGIN_PROTOCOL_ERROR)?;
         Ok(self.register(location, &described, false))
     }
 
-    /// Has `vm` load the plugin at `location`. `place`: its position among the plugins and the number of its first rule, once
-    /// it has them. Returns the description of the plugin.
+    /// Makes `vm` load the plugin at `location`. `numbering` is its index among the plugins and the number of its first
+    /// rule, once it has them. Returns the plugin's description.
     fn load_in(
         &self,
         vm: &mut dyn Vm,
         location: &[u8],
-        place: Option<(usize, u32)>,
+        numbering: Option<(usize, u32)>,
     ) -> Result<Vec<u8>, Vec<u8>> {
-        let place = place.map_or_else(
+        let numbering_json = numbering.map_or_else(
             || "null,null".to_owned(),
             |(position, first_rule)| format!("{position},{first_rule}"),
         );
-        self.ask_to_load(vm, &[b"[", location, b",", place.as_bytes(), b"]"].concat())
+        self.ask_to_load(
+            vm,
+            &[b"[", location, b",", numbering_json.as_bytes(), b"]"].concat(),
+        )
     }
 
     fn ask_to_load(&self, vm: &mut dyn Vm, message: &[u8]) -> Result<Vec<u8>, Vec<u8>> {
-        let returned = vm.call(call::LOAD, message, &mut |asked, details, out| {
-            self.serve_any(asked, details, out);
+        let returned = vm.call(call::LOAD, message, &mut |request, details, out| {
+            self.serve_common(request, details, out);
         })?;
         match returned.split_first() {
             Some((&result::DONE, described)) => Ok(described.to_vec()),
             Some((&result::FAILED, why)) => Err(why.to_vec()),
-            _ => Err(OUT_OF_STEP.to_vec()),
+            _ => Err(PLUGIN_PROTOCOL_ERROR.to_vec()),
         }
     }
 
-    /// Given JSON, selectors as text, appends what [`ask::SELECTORS`] says.
+    /// Takes a JSON list of selector strings and appends the answer to [`ask::SELECTORS`].
     fn describe_selectors(&self, texts: &[u8], out: &mut Vec<u8>) {
         let texts = crate::json::parse(texts);
         let mut state = self.state.lock();
@@ -518,7 +524,6 @@ impl<'e> Host<'e> {
         out.push(b']');
     }
 
-    /// The selectors with these numbers.
     fn selectors_at(&self, numbers: impl Iterator<Item = u32>) -> Vec<Option<Arc<Selector>>> {
         let mut numbers = numbers.peekable();
         if numbers.peek().is_none() {
@@ -530,8 +535,8 @@ impl<'e> Host<'e> {
             .collect()
     }
 
-    /// The positions of the plugins that a realm has to load for the rules `enabled`, in ascending order.
-    fn plugins_of(enabled: &[&Configured]) -> Vec<u32> {
+    /// The indices of the plugins that a realm has to load for the rules `enabled`, ascending.
+    fn plugins_to_load(enabled: &[&Configured]) -> Vec<u32> {
         let without_module = enabled.iter().filter(|it| it.rule.location.is_none());
         let mut positions: Vec<u32> = without_module.map(|it| it.rule.plugin).collect();
         positions.sort_unstable();
@@ -539,9 +544,10 @@ impl<'e> Host<'e> {
         positions
     }
 
-    /// Runs the rules `enabled` on `file`. `physical_path_len`: how much of the path of the file is ESLint's `physicalFilename`, if
-    /// not all of it. `wants_fixes`: `false` is ESLint's `disableFixes`. Not whether somebody reads them: to be asked for one is
-    /// part of what a rule does. `parse_again`: for a thread that has no realm. A thread that has one parses the text itself.
+    /// Runs the rules `enabled` on `file`. `physical_path_len` is the length of the prefix of the file's path that is
+    /// ESLint's `physicalFilename`, if that isn't the whole path. `wants_fixes: false` is ESLint's `disableFixes`. It
+    /// doesn't depend on whether anyone reads the fixes, because being asked for a fix is part of what a rule does.
+    /// `parse_again` is used if the calling thread has no realm: the thread that has one then parses the text itself.
     pub fn run_on_block<'a>(
         &self,
         file: &'a File<'a>,
@@ -551,19 +557,21 @@ impl<'e> Host<'e> {
         physical_path_len: Option<usize>,
         parse_again: Option<&ParseAgain>,
     ) -> Result<Vec<Report>, Failure> {
-        let how = How {
+        let run_options = RunOptions {
             settings,
             enabled,
             wants_fixes,
             physical_path_len,
         };
         let size = file.text().len();
-        let mut outcome = Err(Failure::from(OUT_OF_STEP.to_vec()));
-        if self.engine.is_here() {
-            (self.engine).with_vm_here(size, &mut |vm| outcome = self.run_in(vm, file, &how))?;
+        let mut outcome = Err(Failure::from(PLUGIN_PROTOCOL_ERROR.to_vec()));
+        if self.engine.thread_has_realm() {
+            (self.engine).with_vm_here(size, &mut |vm| {
+                outcome = self.run_in(vm, file, &run_options)
+            })?;
         } else if let Some(parse_again) = parse_again {
             self.engine.with_vm(size, &mut |vm| {
-                parse_again(&mut |file| outcome = self.run_in(vm, file, &how));
+                parse_again(&mut |file| outcome = self.run_in(vm, file, &run_options));
             })?;
         }
         let (reports, used) = outcome?;
@@ -571,29 +579,29 @@ impl<'e> Host<'e> {
         Ok(reports)
     }
 
-    /// Returns the reports, and the indices of the variables that rules have marked as used.
+    /// Returns the reports and the indices of the variables that rules marked as used.
     fn run_in<'a>(
         &self,
         vm: &mut dyn Vm,
         file: &'a File<'a>,
-        how: &How,
+        run_options: &RunOptions,
     ) -> Result<(Vec<Report>, Vec<u32>), Failure> {
-        let How {
+        let RunOptions {
             settings,
             enabled,
             wants_fixes,
             physical_path_len,
-        } = *how;
+        } = *run_options;
         let text = file.text();
         let offsets = Utf16OffsetTable::without_bom(text);
-        let has_mark = text.starts_with(b"\xEF\xBB\xBF");
+        let has_bom = text.starts_with(b"\xEF\xBB\xBF");
         let path = file.path();
-        let plugins = Self::plugins_of(enabled);
+        let plugins = Self::plugins_to_load(enabled);
         let mut message =
             Vec::with_capacity(24 + (plugins.len() + enabled.len()) * 4 + path.len() + text.len());
         let is_espree = Dialect::of(file) == Dialect::Espree;
         let flags = u32::from(wants_fixes)
-            | (u32::from(has_mark) << 1)
+            | (u32::from(has_bom) << 1)
             | (u32::from(is_espree) << 2)
             | (u32::from(settings.sources.is_some()) << 3)
             | (u32::from(file.language().is_oxlint) << 4)
@@ -615,14 +623,14 @@ impl<'e> Host<'e> {
             wire::words(&mut message, &[configured.id]);
         }
         message.extend_from_slice(path);
-        message.extend_from_slice(if has_mark { &text[3..] } else { text });
+        message.extend_from_slice(if has_bom { &text[3..] } else { text });
 
         let mut nodes = None;
-        // What `code_path::estree::analyze` says about the file.
+        // The result of `code_path::estree::analyze` for the file.
         let mut code_paths: Option<Vec<u32>> = None;
         let reported = RefCell::new(Vec::new());
-        let mut serve = |asked: u32, details: &[u8], out: &mut Vec<u8>| match asked {
-            _ if self.serve_any(asked, details, out) => {}
+        let mut serve = |request: u32, details: &[u8], out: &mut Vec<u8>| match request {
+            _ if self.serve_common(request, details, out) => {}
             ask::SETTINGS => out.extend_from_slice(&settings.json),
             ask::CONFIGURED => {
                 let position = std::str::from_utf8(details)
@@ -656,7 +664,7 @@ impl<'e> Host<'e> {
                 }
             }
             ask::LIB_VARIABLES => {
-                // typescript-eslint defines the `const` of `x as const` after the libraries.
+                // typescript-eslint defines the `const` in `x as const` after the libraries.
                 let for_const = LanguageOptions::lib_name_count() as u32;
                 let mut words = vec![for_const + 1, 0];
                 words.extend(file.language().lib_variable_entries());
@@ -692,13 +700,13 @@ impl<'e> Host<'e> {
         loop {
             let returned = vm.call(call::LINT, &message, &mut serve)?;
             let Some((&kind, content)) = returned.split_first() else {
-                return Err(OUT_OF_STEP.to_vec().into());
+                return Err(PLUGIN_PROTOCOL_ERROR.to_vec().into());
             };
             if kind == result::DONE && content.is_empty() {
                 return Ok((reported.take(), Vec::new()));
             }
             let Some(parts) = crate::json::parse(content).and_then(Json::into_array) else {
-                return Err(OUT_OF_STEP.to_vec().into());
+                return Err(PLUGIN_PROTOCOL_ERROR.to_vec().into());
             };
             match kind {
                 result::DONE => {
@@ -724,12 +732,12 @@ impl<'e> Host<'e> {
                     for position in parts.iter().filter_map(|it| number(Some(it))) {
                         let mut state = self.state.lock();
                         let Some(plugin) = state.plugins.get(position as usize) else {
-                            return Err(OUT_OF_STEP.to_vec().into());
+                            return Err(PLUGIN_PROTOCOL_ERROR.to_vec().into());
                         };
                         let (location, first_rule) = (plugin.location.clone(), plugin.first_rule);
-                        if plugin.needs_the_configuration {
+                        if plugin.needs_config_file {
                             let what = [b"the plugin \"", &plugin.plugin.name[..], b"\""].concat();
-                            state.loading.needs_the_configuration_for(&what);
+                            state.loading.needs_config_file_for(&what);
                         }
                         drop(state);
                         self.load_in(vm, &location, Some((position as usize, first_rule)))?;
@@ -737,7 +745,7 @@ impl<'e> Host<'e> {
                 }
                 result::NEEDS_SETTINGS => {
                     let Some(sources) = &settings.sources else {
-                        return Err(OUT_OF_STEP.to_vec().into());
+                        return Err(PLUGIN_PROTOCOL_ERROR.to_vec().into());
                     };
                     let id = settings.id.to_string();
                     let parts: [&[u8]; 7] = [
@@ -753,18 +761,19 @@ impl<'e> Host<'e> {
                     match loaded.split_first() {
                         Some((&result::DONE, _)) => {}
                         Some((&result::FAILED, why)) => return Err(why.to_vec().into()),
-                        _ => return Err(OUT_OF_STEP.to_vec().into()),
+                        _ => return Err(PLUGIN_PROTOCOL_ERROR.to_vec().into()),
                     }
                     let loading = &mut self.state.lock().loading;
-                    loading.needs_the_configuration_for(b"\"settings\"");
+                    loading.needs_config_file_for(b"\"settings\"");
                 }
-                _ => return Err(OUT_OF_STEP.to_vec().into()),
+                _ => return Err(PLUGIN_PROTOCOL_ERROR.to_vec().into()),
             }
         }
     }
 }
 
-/// What oxlint takes the file for: 0 a module, 1 a script, 2 CommonJS, and 4 if it can't have JSX. With another configuration 0.
+/// How oxlint treats the file: 0 for a module, 1 for a script, 2 for CommonJS, plus 4 if it can't have JSX. 0 with any
+/// other config.
 fn source_type_for_oxlint<'a>(file: &'a File<'a>) -> u32 {
     if !file.language().is_oxlint {
         return 0;
@@ -781,12 +790,14 @@ fn source_type_for_oxlint<'a>(file: &'a File<'a>) -> u32 {
     source_type | (u32::from(has_no_jsx) << 2)
 }
 
-/// `{ name, isAlias, id, file, export, hasNothing, rules: [{ name, at, type, fixable, hasSuggestions, schema, defaultOptions, deprecated, replacedBy }] }`. The rules are
-/// numbered from `first`, in that order. `position`: that of the plugin. `needs_the_configuration`: no module exports it.
-fn plugin_of(
+/// Reads a plugin's description:
+/// `{ name, isAlias, id, file, export, hasNothing, rules: [{ name, at, type, fixable, hasSuggestions, schema, .. }] }`,
+/// where `..` is `defaultOptions`, `deprecated` and `replacedBy`. The rules are numbered from `first`, in that order.
+/// `position` is the plugin's index. `needs_config_file` means no module exports it.
+fn plugin_from_description(
     described: &Json,
     (position, first): (u32, u32),
-    needs_the_configuration: bool,
+    needs_config_file: bool,
 ) -> Plugin {
     let name = described
         .get(b"name")
@@ -801,7 +812,7 @@ fn plugin_of(
         .get(b"rules")
         .and_then(Json::as_array)
         .unwrap_or_default();
-    // The rules of `--rulesdir` are those of a plugin without a name, and have no prefix.
+    // `--rulesdir` rules belong to a plugin without a name and have no prefix.
     let separator: &[u8] = if name.is_empty() { b"" } else { b"/" };
     let rule = |(i, it): (usize, &Json)| {
         Arc::new(Rule {
@@ -834,11 +845,11 @@ fn plugin_of(
                 let replaced_by = it.get(b"replacedBy").cloned().unwrap_or(Json::Null);
                 Box::new((deprecated.clone(), replaced_by))
             }),
-            needs_the_configuration: needs_the_configuration && it.get(b"at").is_none(),
+            needs_config_file: needs_config_file && it.get(b"at").is_none(),
             location: it.get(b"at").map(|at| {
-                let mut written = Vec::new();
-                write_json(&mut written, at);
-                written.into()
+                let mut rule_location_json = Vec::new();
+                write_json(&mut rule_location_json, at);
+                rule_location_json.into()
             }),
             plugin: position,
             index: first + i as u32,
@@ -859,7 +870,8 @@ fn plugin_of(
             ])
         }),
         id: (described.get(b"id").and_then(Json::as_str)).map(Into::into),
-        has_nothing: described.get(b"hasNothing").and_then(Json::as_bool) == Some(true),
+        has_no_plugin_properties: described.get(b"hasNothing").and_then(Json::as_bool)
+            == Some(true),
         rules,
     }
 }

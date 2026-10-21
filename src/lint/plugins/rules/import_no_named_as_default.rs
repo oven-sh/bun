@@ -12,7 +12,7 @@ const USING_EXPORTED_NAME: Message = Message::new("", "Using exported name '{{na
 const OXLINT: Message = Message::new("", "Module {{export_name}} has named export {{module_name}}");
 
 pub struct State<'a> {
-    /// `None`: oxlint asks its own records.
+    /// `None` for oxlint, which uses its module records.
     maps: Option<ExportMaps<'a>>,
 }
 
@@ -48,7 +48,7 @@ impl Rule for NoNamedAsDefault {
                 check_default(declaration, local, maps, cx);
                 continue;
             }
-            // oxlint's record has what is at the top level, and it passes over the types.
+            // oxlint's module record only has the top level, and oxlint skips type imports.
             if declaration.is_type_only() || !matches!(stmt.parent(), Node::File(_)) {
                 continue;
             }
@@ -66,7 +66,7 @@ impl Rule for NoNamedAsDefault {
     }
 }
 
-/// upstream's `checkDefault`, of an `ImportDefaultSpecifier`.
+/// upstream's `checkDefault` for an `ImportDefaultSpecifier`.
 fn check_default<'a>(declaration: Import<'a>, local: Ident<'a>, maps: &ExportMaps<'a>, cx: &Cx<'a, NoNamedAsDefault>) {
     let (source, analyzed_name) = (declaration.spec().bytes(), local.bytes());
     let Some(imported_module) = maps.get(source) else {
@@ -84,11 +84,11 @@ fn check_default<'a>(declaration: Import<'a>, local: Ident<'a>, maps: &ExportMap
     if let Some((_, named)) = maps.reexport(imported_module, analyzed_name)
         && let Some((_, default)) = maps.reexport(imported_module, b"default")
     {
-        // Where one of them is ignored upstream throws.
+        // Upstream throws if either one is ignored.
         let (Some(named), Some(default)) = (named, default) else {
             return;
         };
-        // It compares `local` of the two modules too, which no module has.
+        // Upstream also compares the two modules' `local`, which no module has.
         if named.path() == default.path() {
             return;
         }
@@ -96,11 +96,11 @@ fn check_default<'a>(declaration: Import<'a>, local: Ident<'a>, maps: &ExportMap
     cx.report(local, USING_EXPORTED_NAME).data("name", local);
 }
 
-/// What another module exports that it has from elsewhere, for oxlint.
+/// oxlint only: another module's re-exports.
 struct Reexports<'m> {
-    /// The first of the `indirect_export_entries` with each `export_name`.
+    /// The first of the `indirect_export_entries` for each `export_name`.
     by_export_name: FxHashMap<&'m [u8], &'m IndirectExportEntry>,
-    /// The specifier and the name of each `import name from "specifier"`.
+    /// The (specifier, name) of each `import name from "specifier"`.
     default_imports: FxHashSet<(&'m [u8], &'m [u8])>,
 }
 
@@ -114,7 +114,7 @@ impl<'m> Reexports<'m> {
         Reexports { by_export_name, default_imports: default_imports.map(|it| (&*it.module_request, &*it.local_name)).collect() }
     }
 
-    /// `export { a as default, a } from "m"`, and the same of what is imported from `m`.
+    /// `export { a as default, a } from "m"`, or the same exports of a binding imported from `m`.
     fn default_and_named_are_same_reexport(&self, name: &[u8]) -> bool {
         let (Some(default_entry), Some(named_entry)) = (self.by_export_name.get(&b"default"[..]), self.by_export_name.get(name)) else {
             return false;
@@ -125,7 +125,7 @@ impl<'m> Reexports<'m> {
         if default_entry.module_request != named_entry.module_request {
             return false;
         }
-        // Of `import a from "m"; export { a as default }` the record has the name `a`.
+        // For `import a from "m"; export { a as default }` the record has the name `a`.
         let is_default_import = self.default_imports.contains(&(&*default_entry.module_request, &**default_import));
         if is_default_import { **named_import == *b"default" } else { default_import == named_import }
     }

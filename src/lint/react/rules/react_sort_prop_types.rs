@@ -31,29 +31,29 @@ const PROPS_NOT_SORTED: Message =
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// `typeAnnotations`: by its name the first `type A = { .. }` of the file.
+    /// `typeAnnotations`: the file's first `type A = { .. }` for each name.
     type_annotations: OnceCell<FxHashMap<Name<'a>, Stmt<'a>>>,
 }
 
-/// The `properties` of an object literal, or the `members` of a type literal.
+/// An object literal's `properties` or a type literal's `members`.
 #[derive(Copy, Clone)]
 enum Declarations<'a> {
     Properties(List<'a, Prop<'a>>),
     Members(List<'a, Member<'a>>),
 }
 
-/// What `getKey` returns.
+/// The result of `getKey`.
 struct PropName<'a> {
     /// `String(propName)`
     string: Cow<'a, [u8]>,
-    /// What `<` makes of it, if it is no string.
+    /// Its value in a `<` comparison, if it isn't a string.
     number: Option<f64>,
 }
 
-/// `prev` or `curr` of `checkSorted`.
+/// `prev` or `curr` in `checkSorted`.
 struct Checked<'a> {
     node: Property<'a>,
-    /// In lower case with `ignoreCase`.
+    /// Lowercased with `ignoreCase`.
     name: PropName<'a>,
     is_required: bool,
     is_callback: bool,
@@ -61,45 +61,46 @@ struct Checked<'a> {
     is_reported: bool,
 }
 
-/// A declaration that is no spread, for `sortInSource`.
+/// A non-spread declaration, for `sortInSource`.
 struct Sortable<'a> {
     node: Property<'a>,
-    /// How many spreads are before it.
+    /// Number of spreads before it.
     group: u32,
-    /// What `sorter` looks at before the keys: `false` comes first.
+    /// The flags that `sorter` compares before the keys. `false` sorts first.
     rank: [bool; 2],
     /// `String(getKeyValue(node))`
     key: Cow<'a, [u8]>,
-    /// What `commentnodeMap` has: from the first comment before it to the last one after it ..
+    /// Its `commentnodeMap` entry: from the first comment before it to the last comment after it ..
     range: Span,
-    /// .. and the same in UTF-16 code units, from where the text starts that is sorted.
+    /// .. and the same range in UTF-16 code units, relative to the start of the sorted text.
     units: Span,
 }
 
 /// `sortedAttrTextVal`
 struct Moved<'a> {
     sorted_attr_text: Cow<'a, [u8]>,
-    /// Empty where none is added.
+    /// Empty if no separator is added.
     separator: &'a [u8],
 }
 
 #[derive(Copy, Clone)]
 enum Piece<'t> {
-    /// With its `length`.
+    /// The bytes and their `length` in UTF-16 code units.
     Text(&'t [u8], u32),
-    /// Half of a surrogate pair that an index was in.
+    /// Half of a surrogate pair that an index split.
     Surrogate(u16),
 }
 
-/// A text that is cut and put together again at indices of JavaScript, as upstream does it with `slice` and `+`: also
-/// where an index is no longer at what it was computed for. It is kept in pieces around the place of the last change.
+/// Text that's cut and rejoined at JavaScript string indices, the way upstream does with `slice` and `+`. That includes
+/// indices that no longer point at what they were computed for. The text is stored as pieces on both sides of a cursor,
+/// which sits at the last change.
 struct Source<'t> {
     before: Vec<Piece<'t>>,
-    /// The `length` of `before`.
+    /// `before`'s `length`, which is the cursor's index.
     at: u32,
-    /// The nearest last.
+    /// The pieces after the cursor, nearest last.
     after: Vec<Piece<'t>>,
-    /// What is after `after`: nothing has looked at it yet.
+    /// The text after `after`, not split into pieces yet.
     rest: &'t [u8],
 }
 
@@ -156,7 +157,7 @@ impl Rule for SortPropTypes {
         if !matches!(func.kind(), FnKind::Decl | FnKind::Arrow) || !func.has_body() {
             return;
         }
-        // The annotation of a parameter with a default value is that of the `left` of an `AssignmentPattern`.
+        // A parameter with a default is an `AssignmentPattern`, and the annotation is on its `left`.
         let first = func.params_with_this().next().filter(|it| it.default().is_none());
         let Some(first_arg) = first.and_then(Param::ty) else {
             return;
@@ -167,7 +168,7 @@ impl Rule for SortPropTypes {
                     return;
                 };
                 let known = cx.state.type_annotations.get_or_init(|| type_annotations(cx.file()));
-                // What the walk has come to before the function.
+                // Upstream only knows the aliases its traversal reached before the function.
                 match known.get(&name.name()).map(|it| (it.span().start, it.kind())) {
                     Some((start, StmtKind::TypeAlias(alias))) if start < func.estree_span().start => alias.ty(),
                     _ => return,
@@ -212,7 +213,7 @@ impl SortPropTypes {
         self.check_properties(node, cx);
     }
 
-    /// An object literal, or a variable that is one.
+    /// `node` is an object literal, or a variable initialized with one.
     fn check_properties<'a>(&self, node: Expr<'a>, cx: &Cx<'a, Self>) {
         let object = match node.as_ident().map(|name| find_variable_by_name(Node::Expr(node), name)) {
             Some(Some(Found::Init(init))) => init,
@@ -232,7 +233,7 @@ impl SortPropTypes {
         };
         let mut prev: Option<Checked<'a>> = None;
         for node in declarations.iter() {
-            // After a spread the next one is compared with itself.
+            // A spread starts a new run: upstream compares the next declaration with itself.
             if Declarations::is_spread(node) {
                 prev = None;
                 continue;
@@ -264,7 +265,7 @@ impl SortPropTypes {
         }
     }
 
-    /// `fixPropTypesSort`: the same for all reports in the list.
+    /// `fixPropTypesSort`. Every report in the list gets the same fix.
     #[cold]
     #[inline(never)]
     fn fix_prop_types_sort<'a>(&self, fixer: Fixer<'a>, declarations: Declarations<'a>) -> Option<Fix> {
@@ -274,9 +275,9 @@ impl SortPropTypes {
         Some(fixer.replace(whole, self.sort_in_source(file, declarations, whole)))
     }
 
-    /// `sortInSource(allNodes, originalSource).slice(whole.start, whole.end)`. Nothing is changed before `whole`.
+    /// `sortInSource(allNodes, originalSource).slice(whole.start, whole.end)`. Nothing before `whole` changes.
     fn sort_in_source<'a>(&self, file: &'a File<'a>, all_nodes: Declarations<'a>, whole: Span) -> Vec<u8> {
-        // The `length` of what is from the start of `whole` to an offset, counted from the offset that was asked last.
+        // UTF-16 `length` of the text from the start of `whole` to an offset, counted from the previous offset.
         let (mut known, mut length) = (whole.start, 0u32);
         let mut units_until = |offset: u32| {
             length = match offset >= known {
@@ -307,7 +308,8 @@ impl SortPropTypes {
             Ordering::Equal => strings::order_utf16(&a.key, &b.key),
             by_rank => by_rank,
         });
-        // From the last to the first, as upstream: the first `;` or `,` that one of a group ends with is for the rest.
+        // Last to first, like upstream. The first `;` or `,` found at the end of a declaration becomes the separator
+        // for the rest of its group.
         let mut moved = Vec::with_capacity(sortable.len());
         let (mut separator, mut group): (&[u8], _) = (b"", None);
         for sorted_attr in sorted_attributes.iter().rev() {
@@ -322,7 +324,7 @@ impl SortPropTypes {
                 separator = last_char;
             }
             let shape = sorted_attr.node.value().filter(|_| self.sort_shape_prop).and_then(get_shape_properties);
-            // The comments are lost here.
+            // This drops the declaration's comments.
             let sorted_attr_text = match shape {
                 Some(shape) => Cow::Owned(self.sort_in_source(file, shape, sorted_attr.node.node().span())),
                 None => Cow::Borrowed(with_its_comments),
@@ -330,10 +332,10 @@ impl SortPropTypes {
             let is_added = self.check_types && !sorted_attr_text.ends_with(separator);
             moved.push(Moved { sorted_attr_text, separator: if is_added { separator } else { &[] } });
         }
-        let places: Vec<(&Sortable<'a>, Moved<'a>)> = sortable.iter().zip(moved.into_iter().rev()).collect();
+        let replacements: Vec<(&Sortable<'a>, Moved<'a>)> = sortable.iter().zip(moved.into_iter().rev()).collect();
         let mut source = Source::new(file.text().get(whole.start as usize..).unwrap_or_default());
-        for nodes in places.chunk_by(|a, b| a.0.group == b.0.group) {
-            // So that it is cut once at each place, going forward.
+        for nodes in replacements.chunk_by(|a, b| a.0.group == b.0.group) {
+            // Split at every boundary in one forward pass first, so each position is only cut once.
             for (attr, _) in nodes {
                 source.move_to(attr.units.start);
                 source.move_to(attr.units.end);
@@ -357,7 +359,7 @@ impl SortPropTypes {
     }
 }
 
-/// `typeAnnotations`, when the walk is over.
+/// `typeAnnotations` as it is at the end of the traversal.
 fn type_annotations<'a>(file: &'a File<'a>) -> FxHashMap<Name<'a>, Stmt<'a>> {
     let mut first: FxHashMap<Name<'a>, Stmt<'a>> = FxHashMap::default();
     for statement in file.stmts_of_kind(StmtTag::TypeAlias) {
@@ -375,7 +377,7 @@ fn type_annotations<'a>(file: &'a File<'a>) -> FxHashMap<Name<'a>, Stmt<'a>> {
     first
 }
 
-/// `node.parent.right`, for a `node` that is not the whole of an optional chain.
+/// `node.parent.right`, for a `node` that isn't a whole optional chain.
 fn right_of_parent(node: Expr<'_>) -> Option<Expr<'_>> {
     match node.parent() {
         Node::Expr(parent) if !matches!(parent.kind(), ExprKind::Binary { op: BinOp::Comma, .. }) => parent.right(),
@@ -401,7 +403,7 @@ fn get_shape_properties(node: Expr<'_>) -> Option<Declarations<'_>> {
     is_member_called(call.callee(), "shape").then(|| call.args().first().and_then(Declarations::of))?
 }
 
-/// What `commentnodeMap` has for `node`.
+/// `node`'s entry in `commentnodeMap`.
 fn with_comments<'a>(file: &'a File<'a>, node: Span) -> Span {
     let new_start = file.comments_before(node).next().map_or(node.start, |it| it.start());
     let new_end = file.comments_after(node).next_back().map_or(node.end, |it| it.end());
@@ -440,7 +442,7 @@ impl<'a> PropName<'a> {
         let value = node.key().and_then(|key| {
             let (string, number) = match key.kind() {
                 KeyKind::String(value) => (Cow::Borrowed(value.bytes()), None),
-                // A `TemplateLiteral` has none.
+                // A `TemplateLiteral` has no `value`.
                 KeyKind::ComputedString(value) if !file.slice(key.inner_span(file)).starts_with(b"`") => {
                     (Cow::Borrowed(value.bytes()), None)
                 }
@@ -461,7 +463,7 @@ impl<'a> PropName<'a> {
             };
             (!string.is_empty() && number != Some(0.0)).then_some(PropName { string, number })
         });
-        // The text of nothing is the whole text.
+        // Without a key node, `getText` returns the whole file.
         value.unwrap_or_else(|| {
             let key = get_property_name_node(node.node());
             PropName { string: Cow::Borrowed(key.map_or_else(|| file.text(), |it| file.slice(it))), number: None }
@@ -514,7 +516,7 @@ impl<'t> Source<'t> {
         Source { before: Vec::new(), at: 0, after: Vec::new(), rest }
     }
 
-    /// Takes a piece of at most `units` code units from what is after the place. `None`: the text ends here.
+    /// Takes a piece of at most `units` code units from after the cursor. `None` at the end of the text.
     fn take(&mut self, units: u32) -> Option<Piece<'t>> {
         let (bytes, length) = match self.after.pop() {
             Some(Piece::Text(bytes, length)) if length > units => (bytes, Some(length)),
@@ -541,7 +543,7 @@ impl<'t> Source<'t> {
         Some(taken)
     }
 
-    /// To the index `to`, or to the end of the text.
+    /// Moves the cursor to index `to`, or to the end of the text.
     fn move_to(&mut self, to: u32) {
         while self.at > to
             && let Some(piece) = self.before.pop()
@@ -557,7 +559,7 @@ impl<'t> Source<'t> {
         }
     }
 
-    /// What is after the place loses its first `units` code units.
+    /// Deletes the first `units` code units after the cursor.
     fn remove(&mut self, mut units: u32) {
         while units > 0
             && let Some(piece) = self.take(units)
@@ -566,7 +568,7 @@ impl<'t> Source<'t> {
         }
     }
 
-    /// `bytes` comes after the place.
+    /// Inserts `bytes` after the cursor.
     fn insert(&mut self, bytes: &'t [u8]) {
         self.after.push(Piece::Text(bytes, strings::wtf8_len_utf16(bytes)));
     }

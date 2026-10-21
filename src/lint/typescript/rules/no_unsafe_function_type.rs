@@ -22,7 +22,7 @@ impl Rule for NoUnsafeFunctionType {
         file.mentions("Function").then(GlobalFunctions::default)
     }
 
-    // Also what a class implements and what an interface extends.
+    // Also called for a class's `implements` and an interface's `extends` entries.
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         if let TypeKind::Ref { name, .. } = ty.kind()
             && let Some(name) = name.as_ident()

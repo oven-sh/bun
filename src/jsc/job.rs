@@ -331,21 +331,14 @@ impl JobList {
 
 /// The global a job was scheduled from, when that is not its VM's own: a
 /// `ShadowRealm`'s, or one that `bun test --isolate` has retired. Only the
-/// VM's own global lives as long as the VM, so this keeps the global
-/// GC-protected.
-pub(crate) struct Realm(crate::GlobalRef);
-
-impl Realm {
-    fn new(global: &JSGlobalObject) -> Self {
-        global.to_js_value().protect();
-        Self(crate::GlobalRef::new(global))
-    }
-}
-
-impl Drop for Realm {
-    fn drop(&mut self) {
-        self.0.to_js_value().unprotect();
-    }
+/// VM's own global lives as long as the VM, so the global stays GC-protected
+/// while this lives.
+pub(crate) struct Realm {
+    global: crate::GlobalRef,
+    _protected: Protected,
+    /// The job's own [`JobHeader::complete`] and [`JobHeader::release_unrun`].
+    complete: unsafe fn(*mut JobHeader, &JsThread<'_>) -> JsResult<()>,
+    release_unrun: unsafe fn(*mut JobHeader),
 }
 
 /// The [`Realm`]s of a VM's live jobs, by job (JS thread only). Empty in a VM
@@ -354,29 +347,59 @@ impl Drop for Realm {
 pub(crate) struct JobRealms(bun_collections::ArrayHashMap<NonNull<JobHeader>, Realm>);
 
 impl JobRealms {
-    /// `job` was scheduled from `global`, which is not its VM's own.
+    /// `job` was scheduled from `global`, which is not its VM's own. From here
+    /// the job completes through [`complete_in_realm`] and is released through
+    /// [`release_unrun_in_realm`], so only such a job pays for the lookup.
+    ///
+    /// # Safety
+    /// `job` is the header of a live job that the pool does not have yet.
     #[cold]
     #[inline(never)]
-    fn record(job: *mut JobHeader, global: &JSGlobalObject) {
-        let job = NonNull::new(job).expect("job");
+    unsafe fn record(job: NonNull<JobHeader>, global: &JSGlobalObject) {
+        // SAFETY: fn contract. The job is still this thread's alone.
+        let header = unsafe { &mut *job.as_ptr() };
+        let realm = Realm {
+            global: crate::GlobalRef::new(global),
+            _protected: Protected::new(global.to_js_value()),
+            complete: core::mem::replace(&mut header.complete, complete_in_realm),
+            release_unrun: core::mem::replace(&mut header.release_unrun, release_unrun_in_realm),
+        };
         global
             .bun_vm()
             .job_realms
-            .with_mut(|realms| bun_core::handle_oom(realms.0.put(job, Realm::new(global))));
+            .with_mut(|realms| bun_core::handle_oom(realms.0.put(job, realm)));
     }
 
-    #[inline]
-    fn is_empty(&self) -> bool {
-        self.0.count() == 0
+    /// The realm of `job`, which is ending: the caller holds it until the job is gone.
+    fn take(job: *mut JobHeader) -> Realm {
+        VirtualMachine::get()
+            .job_realms
+            .with_mut(|realms| realms.0.fetch_swap_remove(&NonNull::new(job)?))
+            .expect("a job that has a realm is recorded until it ends")
+            .1
     }
+}
 
-    /// The realm of `job`, which is about to end: the caller holds it until the job is gone.
-    #[cold]
-    #[inline(never)]
-    fn take(&mut self, job: *mut JobHeader) -> Option<Realm> {
-        let job = NonNull::new(job)?;
-        self.0.fetch_swap_remove(&job).map(|(_, realm)| realm)
-    }
+/// [`JobHeader::complete`] of a job that has a [`Realm`]: its `then` runs with that global.
+///
+/// # Safety
+/// As the job's own `complete`.
+unsafe fn complete_in_realm(header: *mut JobHeader, cx: &JsThread<'_>) -> JsResult<()> {
+    // Dropped after `then` has returned.
+    let realm = JobRealms::take(header);
+    // SAFETY: fn contract.
+    unsafe { (realm.complete)(header, &realm.global.js_thread(cx.context())) }
+}
+
+/// [`JobHeader::release_unrun`] of a job that has a [`Realm`].
+///
+/// # Safety
+/// As the job's own `release_unrun`.
+unsafe fn release_unrun_in_realm(header: *mut JobHeader) {
+    // Dropped once the job is gone.
+    let realm = JobRealms::take(header);
+    // SAFETY: fn contract.
+    unsafe { (realm.release_unrun)(header) }
 }
 
 /// One pool-then-complete job. Heap-allocated by [`Job::schedule`]; freed on
@@ -442,7 +465,9 @@ impl<C: JobContext> Job<C> {
             js,
         }));
         if !core::ptr::eq(global, vm.global) {
-            JobRealms::record(job.cast::<JobHeader>(), global);
+            let header = NonNull::new(job.cast::<JobHeader>()).expect("job");
+            // SAFETY: live, and the pool gets it below.
+            unsafe { JobRealms::record(header, global) };
         }
         // SAFETY: live until completed/released on this thread; the pool owns it now.
         unsafe {
@@ -547,42 +572,6 @@ impl<C: JobContext> Drop for Completion<C> {
 pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult<()> {
     let header = ptr.cast::<JobHeader>();
     let vm = global.bun_vm();
-    if !vm.job_realms.get().is_empty() {
-        // SAFETY: fn contract.
-        return unsafe { complete_in_its_realm(header, vm, global) };
-    }
-    // SAFETY: fn contract.
-    unsafe { complete_in(header, vm, global) }
-}
-
-/// [`complete_erased`] where some live job of `vm` has a [`Realm`].
-///
-/// # Safety
-/// As [`complete_erased`], with `header` the job's.
-#[cold]
-#[inline(never)]
-unsafe fn complete_in_its_realm(
-    header: *mut JobHeader,
-    vm: &VirtualMachine,
-    global: &JSGlobalObject,
-) -> JsResult<()> {
-    // Held until `then` has returned, or until the fence has released the job.
-    let realm = vm.job_realms.with_mut(|realms| realms.take(header));
-    let global = realm.as_ref().map_or(global, |realm| &*realm.0);
-    // SAFETY: fn contract.
-    unsafe { complete_in(header, vm, global) }
-}
-
-/// Runs the completion of the job behind `header` with `global` for its `cx.global()`.
-///
-/// # Safety
-/// As [`complete_erased`], with `header` the job's.
-#[inline(always)]
-unsafe fn complete_in(
-    header: *mut JobHeader,
-    vm: &VirtualMachine,
-    global: &JSGlobalObject,
-) -> JsResult<()> {
     // One scheduled by a file `bun test --isolate` has since retired: the swap was that file's
     // exit, and a `then` that calls back directly (node:crypto's callback forms) would run its
     // script under the next file.
@@ -606,12 +595,6 @@ unsafe fn complete_in(
 /// As [`complete_erased`].
 pub unsafe fn release_unrun_erased(ptr: *mut ()) {
     let header = ptr.cast::<JobHeader>();
-    let realms = &VirtualMachine::get().job_realms;
-    // Held until the job is gone.
-    let _realm = match realms.get().is_empty() {
-        true => None,
-        false => realms.with_mut(|realms| realms.take(header)),
-    };
     // SAFETY: as above.
     unsafe { ((*header).release_unrun)(header) }
 }

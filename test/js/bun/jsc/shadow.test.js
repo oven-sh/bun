@@ -158,22 +158,32 @@ test("jobs of two ShadowRealms and of the main realm complete in the realm that 
   expect(heapStats().protectedGlobalObjectCount).toBe(before);
 });
 
-// The sync fs binding and the fs.cp task hold the global of their realm without a job.
-test("a ShadowRealm that nothing references reads and copies files after the heap is collected", async () => {
+// The sync fs binding and the fs.cp task hold the global of their realm without a job. The main
+// realm collects the heap twice: while the first job is in flight, and while the copy is pending
+// with the realm's own code off the stack.
+test("a ShadowRealm that nothing references reads and copies files while the heap is collected", async () => {
   const { promise, resolve } = Promise.withResolvers();
+  const collected = Promise.withResolvers();
+  // Returns nothing: an Immediate cannot cross into the realm.
+  const collectSoon = () => void setImmediate(() => collected.resolve(Bun.gc(true)));
   (() => {
-    realmWithNatives().evaluate(`done => {
-      fs.promises.stat(file).then(stats => {
-        let buffers = 0;
-        for (let i = 0; i < 100; i++) if (fs.readFileSync(file) instanceof Buffer) buffers++;
-        // As in the table above: an error of the copy itself, on Linux.
-        const copied = ${isLinux} ? ${cpError}.then(realmOf) : "own realm";
-        return Promise.resolve(copied).then(copy => done([realmOf(stats), buffers, copy].join(", ")));
-      });
-    }`)(resolve);
+    realmWithNatives().evaluate(`(done, collectSoon) => {
+      fs.promises
+        .stat(file)
+        .then(stats => {
+          let buffers = 0;
+          for (let i = 0; i < 100; i++) if (fs.readFileSync(file) instanceof Buffer) buffers++;
+          // As in the table above: an error of the copy itself, on Linux.
+          const copied = ${isLinux} ? ${cpError}.then(realmOf) : "own realm";
+          collectSoon();
+          return Promise.resolve(copied).then(copy => done([realmOf(stats), buffers, copy].join(", ")));
+        })
+        .catch(error => done("rejected: " + error));
+    }`)(resolve, collectSoon);
   })();
   Bun.gc(true);
   expect(await promise).toBe("own realm, 100, own realm");
+  await collected.promise;
 });
 
 // An fs callback is called through the global its job completes in. Through the VM's own global

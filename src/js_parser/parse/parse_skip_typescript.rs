@@ -2,12 +2,11 @@
 use crate::Error;
 use crate::lexer::T;
 use crate::p::P;
-use crate::parser::{
-    FnOrArrowDataParse, ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag,
-};
+use crate::parser::{ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag};
 use crate::typescript;
 use crate::typescript::SkipTypeOptions;
 use crate::typescript::identifier::{Kind as TsIdentKind, kind_for_identifier};
+use bun_ast::Expr;
 use bun_ast::op::Level;
 use bun_ast::ts::Metadata;
 
@@ -1583,66 +1582,70 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// Whether the ":" after a parenthesized expression that sits between the
-    /// "?" and ":" of a conditional starts an arrow function return type. The
-    /// TypeScript compiler parses the whole arrow function and keeps it only
-    /// when another ":" follows its body:
+    /// The arrow function whose return type starts at the ":" after a
+    /// parenthesized expression that sits between the "?" and ":" of a
+    /// conditional, or `None`. The TypeScript compiler parses the whole arrow
+    /// function and keeps it only when another ":" follows its body:
     ///
     ///   x = a ? (b) : c => d;      // "(b)" is an expression, ":" pairs with "?"
     ///   y = a ? (b) : c => d : e;  // "(b) : c => d" is an arrow function
     ///
-    /// The body is parsed here and thrown away, then parsed again by the
-    /// caller when this returns true. Parsing an expression mutates parser
-    /// state, so the whole parser is restored from a snapshot. The current
-    /// scope is the arrow's `FunctionArgs` scope; no arguments are declared so
-    /// that its members stay untouched. The outcome is memoized by the offset
-    /// of the ":" in `ts_conditional_arrow_attempts`, so the real parse does not
-    /// repeat the attempts nested inside the body.
-    pub(crate) fn is_type_script_arrow_return_type_after_question_and_before_colon(
+    /// `parse_arrow_fn` parses from the "=>" on, and that parse is kept when it
+    /// ends before a ":". Otherwise the whole parser is restored from a
+    /// snapshot, because parsing an expression mutates parser state, and the
+    /// offset of the ":" goes into `ts_conditional_arrow_attempts`. The caller
+    /// then drops the `FunctionArgs` scope, and with it the arguments that
+    /// `parse_arrow_fn` declared there.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn parse_possible_arrow_fn_after_question_and_before_colon(
         &mut self,
-        arrow_data: &FnOrArrowDataParse,
-    ) -> Result<bool, Error> {
+        parse_arrow_fn: impl FnOnce(&mut Self) -> Result<Expr, Error>,
+    ) -> Result<Option<Expr>, Error> {
         self.mark_type_script_only();
-        debug_assert!(self.lexer.start <= (u32::MAX >> 1) as usize);
+        debug_assert!(self.lexer.start <= u32::MAX as usize);
         let memo_key = self.lexer.start as u32;
-        if let Ok(i) = self
+        if self
             .ts_conditional_arrow_attempts
-            .binary_search_by_key(&memo_key, |&packed| packed >> 1)
+            .binary_search(&memo_key)
+            .is_ok()
         {
-            return Ok(self.ts_conditional_arrow_attempts[i] & 1 == 1);
+            return Ok(None);
         }
 
         let snapshot = self.parser_snapshot();
-        self.lexer.is_log_disabled = true;
-
-        let mut data = arrow_data.clone();
-        let result: Result<(), Error> = (|| {
-            self.lexer.expect(T::TColon)?;
+        let backtracked_on_mismatch =
+            core::mem::replace(&mut self.lexer.backtrack_on_mismatch, true);
+        let result: Result<Expr, Error> = (|| {
+            self.lexer.next()?;
             self.skip_typescript_return_type()?;
-            self.parse_arrow_body(&mut [], &mut data)?;
-            // The ":" that pairs with the "?"
-            self.lexer.expect(T::TColon)?;
-            Ok(())
+            let arrow = parse_arrow_fn(self)?;
+            // The ":" that pairs with the "?", and a token after it
+            if self.lexer.token != T::TColon || !self.next_token_matches(|_| true) {
+                return Err(Error::Backtrack);
+            }
+            Ok(arrow)
         })();
+        self.lexer.backtrack_on_mismatch = backtracked_on_mismatch;
 
-        self.restore_parser_snapshot(snapshot);
-        let is_arrow_fn = match result {
-            Ok(()) => true,
-            // Stack and memory exhaustion are not properties of the attempt
-            Err(err @ (Error::StackOverflow | Error::Alloc(_))) => return Err(err),
-            Err(_) => false,
-        };
-
-        // Re-search for the insertion point: attempts nested inside this one may
-        // have added entries of their own.
-        if let Err(insert_at) = self
-            .ts_conditional_arrow_attempts
-            .binary_search_by_key(&memo_key, |&packed| packed >> 1)
-        {
-            self.ts_conditional_arrow_attempts
-                .insert(insert_at, (memo_key << 1) | is_arrow_fn as u32);
+        match result {
+            Ok(arrow) => Ok(Some(arrow)),
+            Err(err) => {
+                self.restore_parser_snapshot(snapshot);
+                // Stack and memory exhaustion are not properties of the attempt
+                if matches!(err, Error::StackOverflow | Error::Alloc(_)) {
+                    return Err(err);
+                }
+                // Attempts nested inside this one may have added entries of their own,
+                // so the insertion point is searched for only now.
+                if let Err(insert_at) = self.ts_conditional_arrow_attempts.binary_search(&memo_key)
+                {
+                    self.ts_conditional_arrow_attempts
+                        .insert(insert_at, memo_key);
+                }
+                Ok(None)
+            }
         }
-        Ok(is_arrow_fn)
     }
 
     // ─────────────────────── try_* wrappers ───────────────────────

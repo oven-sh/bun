@@ -167,7 +167,7 @@ impl<'a> core::ops::DerefMut for NamedImportsType<'a> {
 /// See [`P::parser_snapshot`].
 pub(crate) struct ParserSnapshot<'a> {
     lexer: js_lexer::LexerSnapshot<'a>,
-    comments_to_preserve_before: Vec<js_ast::G::Comment>,
+    comments_to_preserve_before_taken: usize,
     log_msgs_len: usize,
     log_errors: u32,
     log_warnings: u32,
@@ -188,6 +188,7 @@ pub(crate) struct ParserSnapshot<'a> {
     scopes_in_order_len: usize,
     scopes_in_order_for_enum_len: usize,
     symbols_len: usize,
+    ref_to_ts_namespace_member_len: usize,
     allocated_names_len: usize,
     import_records_len: usize,
 }
@@ -384,14 +385,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// until a constraint attempt actually backtracks, which is rare in real code.
     pub(crate) ts_infer_constraint_backtracks: Vec<u32>,
 
-    /// Outcomes of `is_type_script_arrow_return_type_after_question_and_before_colon`,
-    /// keyed by the byte offset of the `:` shifted left by one, with the low bit set
-    /// when the attempt parsed an arrow function. The outcome depends only on the
-    /// source from that offset on, so the real parse that follows a discarded
-    /// attempt can reuse it. Without this memo every nested
-    /// `a ? (b) : c => <body> : e` inside the body is parsed once by the attempt and
-    /// once for real, which is exponential in the nesting depth. Kept sorted for
-    /// binary search.
+    /// Byte offset of each `:` where `parse_possible_arrow_fn_after_question_and_before_colon`
+    /// found no arrow function. The outcome depends only on the source from that
+    /// offset on, so the attempt is not repeated when an attempt around it fails too
+    /// and the same text is parsed again. Without this memo every failed attempt
+    /// would run the failed attempts nested in its body twice, which is exponential
+    /// in the nesting depth. Kept sorted for binary search.
     pub(crate) ts_conditional_arrow_attempts: Vec<u32>,
 
     /// When this flag is enabled, we attempt to fold all expressions that
@@ -8200,19 +8199,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// expression can be undone with [`Self::restore_parser_snapshot`]. The
     /// lexer-only backtracking in `parse_skip_typescript.rs` only covers
     /// types: an expression also declares symbols, pushes scopes, records
-    /// dynamic imports and logs through `P::log()`, which ignores
-    /// `lexer.is_log_disabled`. Lists are captured as lengths and truncated
+    /// dynamic imports and logs. Lists are captured as lengths and truncated
     /// on restore; the attempt's arena allocations just become unreachable.
-    /// The legal comments waiting for the next statement are moved out
-    /// instead: a block body or `import()` drains them, so a length cannot
-    /// restore them.
-    pub(crate) fn parser_snapshot(&mut self) -> ParserSnapshot<'a> {
-        let comments_to_preserve_before =
-            core::mem::take(&mut self.lexer.comments_to_preserve_before);
+    /// A block body or `import()` takes the legal comments that wait for the
+    /// next statement, so the count of taken ones is captured too.
+    pub(crate) fn parser_snapshot(&self) -> ParserSnapshot<'a> {
         let log = self.log();
         ParserSnapshot {
             lexer: self.lexer.snapshot(),
-            comments_to_preserve_before,
+            comments_to_preserve_before_taken: self.lexer.comments_to_preserve_before_taken,
             log_msgs_len: log.msgs.len(),
             log_errors: log.errors,
             log_warnings: log.warnings,
@@ -8235,6 +8230,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             scopes_in_order_len: self.scopes_in_order.len(),
             scopes_in_order_for_enum_len: self.scopes_in_order_for_enum.len(),
             symbols_len: self.symbols.len(),
+            ref_to_ts_namespace_member_len: self.ref_to_ts_namespace_member.len(),
             allocated_names_len: self.allocated_names.len(),
             import_records_len: self.import_records.len(),
         }
@@ -8243,7 +8239,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Undo every parse-pass mutation made since [`Self::parser_snapshot`].
     pub(crate) fn restore_parser_snapshot(&mut self, snapshot: ParserSnapshot<'a>) {
         self.lexer.restore(&snapshot.lexer);
-        self.lexer.comments_to_preserve_before = snapshot.comments_to_preserve_before;
+        self.lexer.comments_to_preserve_before_taken = snapshot.comments_to_preserve_before_taken;
 
         let log = self.log();
         log.msgs.truncate(snapshot.log_msgs_len);
@@ -8275,13 +8271,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.scopes_in_order_for_enum.pop();
         }
 
-        // Enum and namespace symbols also key `ref_to_ts_namespace_member`; a symbol
-        // that later reuses the index must not inherit their namespace data.
         if self.symbols.len() > snapshot.symbols_len {
             self.symbols.truncate(snapshot.symbols_len);
             if TYPESCRIPT {
                 self.ts_use_counts.truncate(snapshot.symbols_len);
             }
+        }
+        // Enum and namespace symbols also key `ref_to_ts_namespace_member`; a symbol
+        // that later reuses the index must not inherit their namespace data. Only
+        // this removes from the map, so a new key shows as a longer map.
+        if self.ref_to_ts_namespace_member.len() > snapshot.ref_to_ts_namespace_member_len {
             let stale: Vec<Ref> = self
                 .ref_to_ts_namespace_member
                 .keys()

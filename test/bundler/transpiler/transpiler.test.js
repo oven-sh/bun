@@ -1,5 +1,16 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, hideFromStackTrace, integersThatNeedRounding, isDebug, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  emptyProcessMaxRSS,
+  hideFromStackTrace,
+  integersThatNeedRounding,
+  isASAN,
+  isDebug,
+  runFixtureMaxRSS,
+  tempDir,
+} from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -424,8 +435,8 @@ describe("Bun.Transpiler", () => {
       // Newlines are important (they trigger backtracking)
       exp("x = (\n  a ? (b = c) : { d: e }\n)", "x = a ? b = c : { d: e };\n");
 
-      // The attempt to parse the arrow body must see the same parser state as
-      // the real parse: private names and the "in" operator.
+      // The attempt parses the arrow body in the parser state of its place:
+      // private names and the "in" operator.
       exp(
         "x = class { #y; y = a ? (b : T) : T => this.#y : c }",
         "x = class {\n  #y;\n  y = a ? (b) => this.#y : c;\n};\n",
@@ -457,26 +468,107 @@ describe("Bun.Transpiler", () => {
       );
 
       // A legal comment scanned between "?" and "(" waits in the lexer for the
-      // next statement. The attempt's block body or import() takes it. The real
-      // parse must still get it.
+      // next statement. The attempt's block body or import() takes it. The
+      // parse after a discarded attempt must still get it.
       exp("x = a ? /*! L */ (b) : T => { let y = 1 } : c", "x = a ? (b) => {\n  /*! L */\n  let y = 1;\n} : c;\n");
       exp("x = a ? /*! L */ (b) : c => { return d }", "x = a ? b : (c) => {\n  /*! L */\n  return d;\n};\n");
       exp('x = a ? /*! L */ (b) : T => import("m") : c', 'x = a ? (b) => import("m") : c;\n');
+      exp(
+        "x = a ? /*! L1 */ (b) : c => { return a ? /*! L2 */ (b) : T => { let y = 1 } : c }",
+        "x = a ? b : (c) => {\n  /*! L1 */\n  return a ? (b) => {\n    /*! L2 */\n    let y = 1;\n  } : c;\n};\n",
+      );
+      exp(
+        "x = a ? /*! L1 */ (b) : T => a ? /*! L2 */ (b) : T => d : e : e; y",
+        "x = a ? (b) => a ? (b) => d : e : e;\n/*! L1 */\n/*! L2 */\ny;\n",
+      );
+      exp(
+        "/*! A */ x = a ? /*! L1 */ (b) : c => { /*! L2 */ z; /*! L3 */ }; /*! B */ y",
+        "/*! A */\nx = a ? b : (c) => {\n  /*! L1 */\n  /*! L2 */\n  z;\n  /*! L3 */\n};\n/*! B */\ny;\n",
+      );
 
-      // The attempt parses the body, so an attempt nested in the body must not
-      // run again when the body is parsed for real: 2^40 parses would hang.
+      // A kept attempt is the only parse of its arrow function: it reports the
+      // errors of that parse and declares the parameters. A discarded attempt
+      // leaves neither behind.
+      err("x = a ? (b) : T => /x/gg : e", 'Duplicate flag "g" in regular expression');
+      err("x = a ? (b) : T => { let b } : e", '"b" has already been declared');
+      err("x = a ? (b, b) : T => 1 : e", '"b" cannot be bound multiple times in the same parameter list');
+      err("x = a ? (...b, c) : T => b : e", 'Unexpected "," after rest pattern');
+      exp("x = a ? (b) : c => { let b }", "x = a ? b : (c) => {\n  let b;\n};\n");
+      exp("x = a ? (b, b) : c => 1", "x = a ? (b, b) : (c) => 1;\n");
+
+      // A token that does not fit ends the attempt. So does a token after the
+      // second ":" that the lexer cannot read.
+      err("x = a ? (b) : c => (d e) : f", 'Expected ")" but found "e"');
+      err("x = a ? (b) : T => d : 'abc", 'Expected ";" but found ":"');
+
+      // An enum from before a discarded attempt is still inlined
+      exp(
+        "enum E { A = 1 }\nx = a ? (b) : c => E.A",
+        'var E;\n((E) => {\n  E[E["A"] = 1] = "A";\n})(E ||= {});\nx = a ? b : (c) => 1 /* A */;\n',
+      );
+
+      // A kept attempt in a discarded one, and a discarded attempt in a kept one
+      exp("x = a ? (b) : c => [a ? (b) : T => d : e]", "x = a ? b : (c) => [a ? (b) => d : e];\n");
+      exp("x = a ? (b) : T => [a ? (b) : c => d] : e", "x = a ? (b) => [a ? b : (c) => d] : e;\n");
+      exp(
+        "x = a ? async (b) : c => a ? async (b) : c => await d : e : e",
+        "x = a ? async (b) => a ? async (b) => await d : e : e;\n",
+      );
+
+      // The body of a discarded attempt is parsed again, so a discarded attempt
+      // nested in that body must not run again: 2^40 parses would hang.
       let kept = "d";
       let discarded = "d";
+      let keptInDiscarded = "d";
       let keptOut = "d";
       let discardedOut = "d";
+      let keptInDiscardedOut = "d";
       for (let i = 0; i < 40; i++) {
         kept = `a ? (b) : c => ${kept} : e`;
         keptOut = `a ? (b) => ${keptOut} : e`;
         discarded = `a ? (b) : c => ${discarded}`;
         discardedOut = `a ? b : (c) => ${discardedOut}`;
+        keptInDiscarded = i < 20 ? `a ? (b) : c => ${keptInDiscarded} : e` : `a ? (b) : c => ${keptInDiscarded}`;
+        keptInDiscardedOut = i < 20 ? `a ? (b) => ${keptInDiscardedOut} : e` : `a ? b : (c) => ${keptInDiscardedOut}`;
       }
       exp(`x = ${kept}`, `x = ${keptOut};\n`);
       exp(`x = ${discarded}`, `x = ${discardedOut};\n`);
+      exp(`x = ${keptInDiscarded}`, `x = ${keptInDiscardedOut};\n`);
+    });
+
+    it("parses an arrow function with a return type between the ? and : of a conditional once", () => {
+      // The type of a decorated property is bound to a symbol as it is parsed.
+      // When the arrow function was parsed a second time, `Foo` was bound to
+      // the symbol that had taken its index: `K`.
+      const withMetadata = new Bun.Transpiler({
+        loader: "ts",
+        tsconfig: { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } },
+      });
+      expect(
+        withMetadata.transformSync("x = a ? (b) : T => { class K { @dec p: Foo } return K } : e"),
+      ).toContain('("design:type", typeof Foo === "undefined" ? Object : Foo)');
+    });
+
+    it("nested arrow functions with return types between ? and : take memory in proportion to their depth", async () => {
+      // Each arrow function here has the next one in its body. Every body was
+      // parsed twice, so depth n took n * n / 2 parses of a level, and what a
+      // parse allocates stays until the file is done.
+      const depth = isDebug || isASAN ? 256 : 640;
+      const fixture = /* js */ `
+        let input = "d";
+        let output = "d";
+        for (let i = 0; i < ${depth}; i++) {
+          input = "a ? (b) : c => " + input + " : e";
+          output = "a ? (b) => " + output + " : e";
+        }
+        const printed = new Bun.Transpiler({ loader: "ts" }).transformSync("x = " + input);
+        console.log(JSON.stringify({ printed: printed === "x = " + output + ";\\n" }));
+      `;
+      const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
+        runFixtureMaxRSS(fixture, { printed: true }),
+        emptyProcessMaxRSS(),
+      ]);
+      expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 25 : 64);
     });
 
     it("type-only import syntax", () => {

@@ -571,25 +571,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // attempt to convert the expressions to bindings first before deciding
             // whether this is an arrow function, and only pick an arrow function if
             // there were no conversion errors.
-            if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon && invalid_log.is_empty() {
-                if opts.is_after_question_and_before_colon {
-                    // Only do this very expensive check if we must
-                    is_arrow_fn = p
-                        .is_type_script_arrow_return_type_after_question_and_before_colon(
-                            &arrow_data,
-                        )?;
-                    if is_arrow_fn {
-                        // We know this will succeed because we've already done it once above
-                        p.lexer.next()?;
-                        p.skip_typescript_return_type()?;
-                    }
-                } else {
-                    // Otherwise, do the less expensive check
-                    is_arrow_fn = p.try_skip_type_script_arrow_return_type_with_backtracking()?;
-                }
-            }
+            let maybe_return_type =
+                Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon && invalid_log.is_empty();
 
-            if is_arrow_fn || opts.force_arrow_fn {
+            let parse_arrow_fn = move |p: &mut Self| -> Result<Expr, Error> {
                 p.maybe_comma_spread_error(comma_after_spread);
                 p.log_arrow_arg_errors(&mut arrow_arg_errors);
 
@@ -605,7 +590,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 arrow.is_async = opts.is_async;
                 arrow.has_rest_arg = spread_range.len > 0;
                 p.pop_scope();
-                return Ok(p.new_expr(arrow, loc));
+                Ok(p.new_expr(arrow, loc))
+            };
+
+            if maybe_return_type && opts.is_after_question_and_before_colon {
+                // Only do this very expensive check if we must. It parses the arrow
+                // function, and undoes that when the ":" pairs with the "?".
+                if let Some(arrow) =
+                    p.parse_possible_arrow_fn_after_question_and_before_colon(parse_arrow_fn)?
+                {
+                    return Ok(arrow);
+                }
+            } else {
+                if maybe_return_type {
+                    // Otherwise, do the less expensive check
+                    is_arrow_fn = p.try_skip_type_script_arrow_return_type_with_backtracking()?;
+                }
+
+                if is_arrow_fn || opts.force_arrow_fn {
+                    return parse_arrow_fn(p);
+                }
             }
         }
 
@@ -1481,11 +1485,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut is_directive_prologue = true;
 
         loop {
-            for comment in p.lexer.comments_to_preserve_before.iter() {
-                let loc = p.lexer.loc();
-                stmts.push(p.s(S::Comment { text: comment.text }, loc));
+            if p.lexer.comments_to_preserve_before_taken
+                != p.lexer.comments_to_preserve_before.len()
+            {
+                p.take_comments_to_preserve_before(&mut stmts);
             }
-            p.lexer.comments_to_preserve_before.clear();
 
             if p.lexer.token == eend {
                 break;
@@ -1597,6 +1601,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         Ok(stmts)
+    }
+
+    /// Puts the legal comments that wait for the next statement before it.
+    #[cold]
+    fn take_comments_to_preserve_before(&mut self, stmts: &mut StmtList<'a>) {
+        let loc = self.lexer.loc();
+        let taken = self.lexer.comments_to_preserve_before_taken;
+        for comment in &self.lexer.comments_to_preserve_before[taken..] {
+            stmts.push(self.s(S::Comment { text: comment.text }, loc));
+        }
+        self.lexer.comments_to_preserve_before_taken = self.lexer.comments_to_preserve_before.len();
     }
 
     /// One-token lookahead: advance past the current token, evaluate `pred`,

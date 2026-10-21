@@ -710,7 +710,7 @@ impl<'s> Checker<'_, 's> {
                         continue;
                     }
                     if let PropKey::Computed(key) = prop.key {
-                        self.check_expression(file, key);
+                        self.check_computed_name(file, key);
                     }
                     self.check_binding_element_accessibility(file, pat, name);
                     // "For a commonjs `const x = require`, validate the alias and exit"
@@ -996,7 +996,7 @@ impl<'s> Checker<'_, 's> {
                 if self.is_computed_name_never_checked(file, key) {
                     self.leave_unvisited(file, key);
                 } else {
-                    self.check_expression(file, key);
+                    self.check_computed_name(file, key);
                 }
             }
             if member.kind == MemberKind::Method {
@@ -1072,7 +1072,21 @@ impl<'s> Checker<'_, 's> {
         if self.is_computed_name_never_checked(file, e) {
             return TypeId::ERROR;
         }
-        self.type_of_expr(file, e)
+        // `links.resolvedType = c.circularConstraintType`, which no member can be named by.
+        if self.computed_names_in_progress.contains(&(file, e)) {
+            return TypeId::EMPTY_OBJECT;
+        }
+        self.computed_names_in_progress.push((file, e));
+        let ty = self.type_of_expr(file, e);
+        self.computed_names_in_progress.pop();
+        ty
+    }
+
+    /// The same, where `checkSourceFile` gets to the name.
+    fn check_computed_name(&mut self, file: FileId, e: ExprId) {
+        self.computed_names_in_progress.push((file, e));
+        self.check_expression(file, e);
+        self.computed_names_in_progress.pop();
     }
 
     /// `checkPropertyDeclaration`: 1267. `checkMethodDeclaration`: 1245.
@@ -1745,7 +1759,7 @@ impl<'s> Checker<'_, 's> {
                         self.check_spread(file, e, p);
                     }
                     if let PropKey::Computed(key) = hir[p].key {
-                        self.check_expression(file, key);
+                        self.check_computed_name(file, key);
                     }
                     if matches!(hir[p].kind, PropKind::Getter | PropKind::Setter) {
                         self.check_node_deferred(file, hir[p].value);
@@ -1971,7 +1985,7 @@ impl<'s> Checker<'_, 's> {
                         _ => false,
                     };
                     match hir[p].key {
-                        PropKey::Computed(key) if continues => self.check_expression(file, key),
+                        PropKey::Computed(key) if continues => self.check_computed_name(file, key),
                         PropKey::Computed(key) => self.leave_unvisited(file, key),
                         _ => {}
                     }

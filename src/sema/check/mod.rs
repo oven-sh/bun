@@ -790,6 +790,7 @@ impl<'s> Program<'s> {
             late_binding_by_symbol: Vec::new(),
             permanently_early_bound: Default::default(),
             declared_members_in_progress: Vec::new(),
+            computed_names_in_progress: Vec::new(),
             declared_index_infos_in_progress: Vec::new(),
             anonymous_members_in_place: Vec::new(),
             index_infos_in_instantiation: Vec::new(),
@@ -1413,6 +1414,8 @@ pub struct Checker<'p, 's> {
     /// The `resolveDeclaredMembers` calls that are inside `getMembersOfSymbol`. Each assigns
     /// `declaredMembers` once the names are bound. See `gets_early_symbols_permanently`.
     declared_members_in_progress: Vec<shape::Declaring>,
+    /// The `[e]` whose `checkComputedPropertyName` is in progress.
+    computed_names_in_progress: Vec<(FileId, ExprId)>,
     /// The `resolveDeclaredMembers` calls that are inside `getIndexInfosOfSymbol`, with `declaredMembersResolved` set.
     /// Each entry is the depth of `stack` at that point (with the `Query::Shape` on top if `resolveObjectTypeMembers`
     /// is the caller) and the first member of the declaration whose computed name is some string, number or symbol. The

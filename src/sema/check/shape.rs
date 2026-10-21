@@ -2381,7 +2381,7 @@ impl<'p, 's> Checker<'p, 's> {
             if !self.can_name_a_member(file, e) {
                 continue;
             }
-            let key = self.type_of_expr(file, e);
+            let key = self.check_computed_property_name(file, e);
             // "Explicit index for key type takes priority"
             if b.shape.index.iter().any(|i| i.key == key) {
                 continue;

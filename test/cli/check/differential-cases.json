@@ -13122,8 +13122,7 @@
   },
   "73-R04": {
     "files": {
-      "a.ts": "import { L3 } from \"./b\";\ndeclare const u: unknown;\n// an ambient class: no TS2449\nconst k1 = u instanceof L1 ? \"s\" : \"s\";\ndeclare class L1 { static [k1]: number; i: number }\nconst p1: never = L1.s;\n// a class in another file\nexport const k3 = u instanceof L3 ? \"s\" : \"s\";\nconst p3: never = L3.s;\n// with TS2449\nconst k2 = u instanceof L2 ? \"s\" : \"s\";\nclass L2 { static [k2] = 1; i = 1 }\nconst p2: never = L2.s;\nconst sentinel: number = \"\";\n",
-      "b.ts": "import { k3 } from \"./a\";\nexport class L3 { static [k3] = 1; i = 1 }\nconst sentinel: number = \"\";\n",
+      "a.ts": "export {};\ndeclare const u: unknown;\n// an ambient class: no TS2449\nconst k1 = u instanceof L1 ? \"s\" : \"s\";\ndeclare class L1 { static [k1]: number; i: number }\nconst p1: never = L1.s;\n// with TS2449\nconst k2 = u instanceof L2 ? \"s\" : \"s\";\nclass L2 { static [k2] = 1; i = 1 }\nconst p2: never = L2.s;\nconst sentinel: number = \"\";\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },

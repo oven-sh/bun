@@ -11371,6 +11371,32 @@ export function k8() { let s: S | null = mk(); while (s) { const cur = s.kids.at
       expect(exitCode).toBe(1);
     });
 
+    // While `[k]` is being checked, it declares no member.
+    test("a computed name whose type is read from the type it's a member of isn't a circularity", async () => {
+      using dir = project({
+        "a.ts": `declare const k: I[typeof w];
+declare const w: "w";
+interface I { [w]: "v"; [k]: 2 }
+export const i: never = null! as I;
+type T = { a: "b"; [l]: number };
+declare const l: T["a"];
+export const t: never = null! as T;
+export class C { static a = "x" as const; static [C.a] = 1; }
+export const c: never = C.x;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(1,20): error TS2339: Property 'w' does not exist on type 'I'.
+        a.ts(4,14): error TS2322: Type 'I' is not assignable to type 'never'.
+        a.ts(7,14): error TS2322: Type 'T' is not assignable to type 'never'.
+        a.ts(8,51): error TS2449: Class 'C' used before its declaration.
+        a.ts(9,14): error TS2322: Type 'any' is not assignable to type 'never'.
+        a.ts(9,27): error TS2339: Property 'x' does not exist on type 'typeof C'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     // The message prints the type of `this`, with the return types of the methods that are being checked.
     test("a property that's missing on `this` in a method of an object literal isn't a circularity", async () => {
       using dir = project({

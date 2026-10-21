@@ -1,4 +1,4 @@
-import { file, spawn, write } from "bun";
+import { file, Glob, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import {
@@ -3145,6 +3145,305 @@ describe("install --filter", () => {
       linked: { "left-pad": false, "is-number": true, "no-deps": true, "a-dep": false, "peer-no-deps": false },
       stored: { "left-pad": false, "is-number": true, "no-deps": true, "a-dep": false, "peer-no-deps": false },
       workspaceLinks: { app: true, tool: false },
+    });
+  });
+
+  // optional-peer-hoist-consumer has an optional peer on optional-peer-hoist-target, and target@1.0.0 depends on
+  // optional-peer-hoist-leaf@2.0.0. An optional peer does not install what only a filtered out workspace depends on.
+  describe("hoisted linker, optional peer", () => {
+    const consumer = "optional-peer-hoist-consumer";
+    const target = "optional-peer-hoist-target";
+    const leaf = "optional-peer-hoist-leaf";
+    type Dependencies = Record<string, string>;
+    type Members = Record<string, { dependencies: Dependencies; devDependencies?: Dependencies }>;
+    type Packages = Record<string, unknown[]>;
+
+    const entry = (resolved: string, info: object = {}) => [resolved, "", info, ""];
+    const optionalPeer = (name: string, range: string) => ({
+      peerDependencies: { [name]: range },
+      optionalPeers: [name],
+    });
+    const consumerAndTarget: Packages = {
+      [consumer]: entry(`${consumer}@1.0.0`, optionalPeer(target, "*")),
+      [leaf]: entry(`${leaf}@2.0.0`),
+      [target]: entry(`${target}@1.0.0`, { dependencies: { [leaf]: "2.0.0" } }),
+    };
+
+    /** Writes the workspaces, and a bun.lock with `packages` if given. */
+    async function setup(ctx: TestCtx, members: Members, packages?: Packages) {
+      const manifests = Object.entries(members).map(
+        ([name, groups]) => [`packages/${name}`, { name, version: "1.0.0", ...groups }] as const,
+      );
+      const lockfile = packages && {
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "root" }, ...Object.fromEntries(manifests) },
+        packages: {
+          ...packages,
+          ...Object.fromEntries(Object.keys(members).map(name => [name, [`${name}@workspace:packages/${name}`]])),
+        },
+      };
+      await Promise.all([
+        write(ctx.packageJson, JSON.stringify({ name: "root", workspaces: ["packages/*"] })),
+        ...manifests.map(([path, manifest]) =>
+          write(join(ctx.packageDir, path, "package.json"), JSON.stringify(manifest)),
+        ),
+        lockfile && write(join(ctx.packageDir, "bun.lock"), JSON.stringify(lockfile)),
+      ]);
+    }
+
+    async function clean(ctx: TestCtx) {
+      const members = await readdirSorted(join(ctx.packageDir, "packages"));
+      await Promise.all(
+        [".", ...members.map(member => join("packages", member))].map(folder =>
+          rm(join(ctx.packageDir, folder, "node_modules"), { recursive: true, force: true }),
+        ),
+      );
+    }
+
+    /** Returns every installed package without a scope, as `<folder>@<version>` less the leading `node_modules/`. */
+    async function run(ctx: TestCtx, ...args: string[]) {
+      await using proc = spawn({
+        cmd: [bunExe(), ...args, "--linker", "hoisted"],
+        cwd: ctx.packageDir,
+        stdout: "ignore",
+        stderr: "pipe",
+        env: ctx.env,
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+      const found = await Array.fromAsync(new Glob("**/node_modules/*/package.json").scan({ cwd: ctx.packageDir }));
+      const installed = found.map(async path => {
+        const { version } = await file(join(ctx.packageDir, path)).json();
+        const folder = dirname(path).replaceAll("\\", "/");
+        return `${folder.replace(/^node_modules\//, "")}@${version}`;
+      });
+      return (await Promise.all(installed)).sort();
+    }
+
+    async function install(ctx: TestCtx, ...args: string[]) {
+      await clean(ctx);
+      return run(ctx, "install", ...args);
+    }
+
+    test.concurrent.each<{ lends: string; lender: Dependencies; full: string[] }>([
+      // The lender's own dependency places the package in `node_modules`.
+      { lends: "directly", lender: { [target]: "1.0.0" }, full: [`${leaf}@2.0.0`, `${target}@1.0.0`] },
+      // deep -> deep-child -> target is longer than app -> consumer -> target, so the optional peer places it.
+      {
+        lends: "through its dependencies",
+        lender: { "optional-peer-hoist-deep": "1.0.0" },
+        full: [
+          "optional-peer-hoist-deep-child/node_modules/optional-peer-hoist-leaf@1.0.0",
+          "optional-peer-hoist-deep-child@1.0.0",
+          "optional-peer-hoist-deep@1.0.0",
+          `${leaf}@2.0.0`,
+          `${target}@1.0.0`,
+        ],
+      },
+    ])("is only installed together with the workspace that provides it $lends", async ({ lender, full }) => {
+      using ctx = await setupTest();
+      await setup(ctx, {
+        app: { dependencies: { [consumer]: "1.0.0" } },
+        lender: { dependencies: lender },
+        other: { dependencies: { "no-deps": "1.0.0" } },
+      });
+      const alone = [`${consumer}@1.0.0`];
+
+      expect(await install(ctx, "--filter", "app")).toEqual(alone);
+      const lockfile = await file(join(ctx.packageDir, "bun.lock")).text();
+      expect(lockfile).toContain(`"${target}@1.0.0"`);
+
+      expect(await install(ctx, "--filter", "!other")).toEqual([...alone, ...full].sort());
+      expect(await install(ctx, "--filter", "app")).toEqual(alone);
+      expect(await file(join(ctx.packageDir, "bun.lock")).text()).toBe(lockfile);
+
+      expect(await run(ctx, "add", "a-dep@1.0.1", "--filter", "app")).toEqual(["a-dep@1.0.1", ...alone]);
+    });
+
+    test.concurrent("is not installed for, or because of, a copy inside a tarball", async () => {
+      using ctx = await setupTest();
+      // bundled-optional-peer bundles optional-peer-deps, which has an optional peer on no-deps.
+      await setup(
+        ctx,
+        {
+          app: { dependencies: { "a-consumer": "npm:a-dep@1.0.1", "bundled-optional-peer": "1.0.0" } },
+          lender: { dependencies: { "no-deps": "1.0.0", "optional-peer-deps": "1.0.0" } },
+        },
+        {
+          "a-consumer": entry("a-dep@1.0.1", optionalPeer("optional-peer-deps", "*")),
+          "bundled-optional-peer": entry("bundled-optional-peer@1.0.0", {
+            dependencies: { "optional-peer-deps": "1.0.0" },
+          }),
+          "bundled-optional-peer/optional-peer-deps": entry("optional-peer-deps@1.0.0", {
+            ...optionalPeer("no-deps", "*"),
+            bundled: true,
+          }),
+          "no-deps": entry("no-deps@1.0.0"),
+          "optional-peer-deps": entry("optional-peer-deps@1.0.0", optionalPeer("no-deps", "*")),
+        },
+      );
+
+      expect(await install(ctx, "--frozen-lockfile", "--filter", "app")).toEqual([
+        "a-consumer@1.0.1",
+        "bundled-optional-peer/node_modules/optional-peer-deps@1.0.0",
+        "bundled-optional-peer@1.0.0",
+      ]);
+    });
+
+    // Next to a consumer whose target is left out, `app` has an optional peer on no-deps whose copy stays.
+    test.concurrent.each<{
+      when: string;
+      flags?: string[];
+      app: Members[string];
+      lender?: Dependencies;
+      packages: Packages;
+      kept: string[];
+    }>([
+      {
+        when: "only the optional peer refers to it, in the bun.lock of an older version",
+        app: { dependencies: { "optional-peer-deps": "1.0.0" } },
+        packages: {
+          "no-deps": entry("no-deps@1.0.0"),
+          "optional-peer-deps": entry("optional-peer-deps@1.0.0", optionalPeer("no-deps", "*")),
+        },
+        kept: ["no-deps@1.0.0", "optional-peer-deps@1.0.0"],
+      },
+      {
+        when: "only the optional peer and a tarball refer to it",
+        app: { dependencies: { "a-consumer": "npm:a-dep@1.0.1", "bundled-optional-peer": "1.0.0" } },
+        packages: {
+          "a-consumer": entry("a-dep@1.0.1", optionalPeer("optional-peer-deps", "*")),
+          "bundled-optional-peer": entry("bundled-optional-peer@1.0.0", {
+            dependencies: { "optional-peer-deps": "1.0.0" },
+          }),
+          "bundled-optional-peer/optional-peer-deps": entry("optional-peer-deps@1.0.0", { bundled: true }),
+          "optional-peer-deps": entry("optional-peer-deps@1.0.0"),
+        },
+        kept: [
+          "a-consumer@1.0.1",
+          "bundled-optional-peer/node_modules/optional-peer-deps@1.0.0",
+          "bundled-optional-peer@1.0.0",
+          "optional-peer-deps@1.0.0",
+        ],
+      },
+      {
+        when: "--production skips the devDependency of the selected workspace that provides it, as without --filter",
+        flags: ["--production"],
+        app: { dependencies: { "optional-peer-deps": "1.0.0" }, devDependencies: { "no-deps": "1.0.0" } },
+        packages: {
+          "no-deps": entry("no-deps@1.0.0"),
+          "optional-peer-deps": entry("optional-peer-deps@1.0.0", optionalPeer("no-deps", "*")),
+        },
+        kept: ["no-deps@1.0.0", "optional-peer-deps@1.0.0"],
+      },
+      {
+        when: "it is nested for the peer, because the selected workspace's own copy is out of the peer's reach",
+        app: {
+          dependencies: { "a-first": "npm:one-fixed-dep@2.0.0", "one-dep": "1.0.0", "one-optional-peer-dep": "1.0.2" },
+        },
+        packages: {
+          "a-first": entry("one-fixed-dep@2.0.0", { dependencies: { "no-deps": "2.0.0" } }),
+          "no-deps": entry("no-deps@2.0.0"),
+          "one-dep": entry("one-dep@1.0.0", { dependencies: { "no-deps": "1.0.1" } }),
+          "one-dep/no-deps": entry("no-deps@1.0.1"),
+          "one-optional-peer-dep": entry("one-optional-peer-dep@1.0.2", optionalPeer("no-deps", "^1.0.0")),
+          "one-optional-peer-dep/no-deps": entry("no-deps@1.0.1"),
+        },
+        kept: [
+          "a-first@2.0.0",
+          "no-deps@2.0.0",
+          "one-dep/node_modules/no-deps@1.0.1",
+          "one-dep@1.0.0",
+          "one-optional-peer-dep/node_modules/no-deps@1.0.1",
+          "one-optional-peer-dep@1.0.2",
+        ],
+      },
+      {
+        when: "it is the filtered out workspace's version, because the selected workspace's version is out of reach",
+        app: { dependencies: { "optional-peer-deps": "1.0.0", "z-other": "npm:one-dep@1.0.0" } },
+        lender: { "no-deps": "1.0.0" },
+        packages: {
+          "no-deps": entry("no-deps@1.0.0"),
+          "optional-peer-deps": entry("optional-peer-deps@1.0.0", optionalPeer("no-deps", "*")),
+          "z-other": entry("one-dep@1.0.0", { dependencies: { "no-deps": "1.0.1" } }),
+          "z-other/no-deps": entry("no-deps@1.0.1"),
+        },
+        kept: ["no-deps@1.0.0", "optional-peer-deps@1.0.0", "z-other/node_modules/no-deps@1.0.1", "z-other@1.0.0"],
+      },
+      {
+        when: "a required peer loads it too, although only the filtered out workspace depends on that package",
+        app: {
+          dependencies: { "a-consumer": "npm:optional-peer-deps@1.0.0", "m-plugin": "npm:peer-deps-fixed@1.0.0" },
+        },
+        lender: { "no-deps": "1.0.0" },
+        packages: {
+          "a-consumer": entry("optional-peer-deps@1.0.0", optionalPeer("no-deps", "*")),
+          "m-plugin": entry("peer-deps-fixed@1.0.0", { peerDependencies: { "no-deps": "^1.0.0" } }),
+          "no-deps": entry("no-deps@1.0.0"),
+        },
+        kept: ["a-consumer@1.0.0", "m-plugin@1.0.0", "no-deps@1.0.0"],
+      },
+    ])("keeps the copy it loads when $when", async ({ flags = [], app, lender = {}, packages, kept }) => {
+      using ctx = await setupTest();
+      await setup(
+        ctx,
+        {
+          app: { ...app, dependencies: { ...app.dependencies, [consumer]: "1.0.0" } },
+          lender: { dependencies: { ...lender, [target]: "1.0.0" } },
+        },
+        { ...packages, ...consumerAndTarget },
+      );
+
+      expect(await install(ctx, "--frozen-lockfile", "--filter", "app", ...flags)).toEqual(
+        [...kept, `${consumer}@1.0.0`].sort(),
+      );
+    });
+
+    // Bun <= 1.4.3 hoisted only what a run installed, which included the target. Here that put one-dep's leaf@1.0.0 at
+    // the root and nested the target's leaf@2.0.0. The consumer still loads what is left of the target.
+    test.concurrent("leaves the target that Bun <= 1.4.3 installed as it is", async () => {
+      using ctx = await setupTest();
+      const oneDep = entry("one-dep@1.0.0", { dependencies: { [leaf]: "1.0.0" } });
+      const app = { [consumer]: "1.0.0", "no-deps": "1.0.0", "one-dep": "1.0.0" };
+      const older = [
+        "no-deps@1.0.0",
+        "one-dep@1.0.0",
+        `${consumer}@1.0.0`,
+        `${leaf}@1.0.0`,
+        `${target}/node_modules/${leaf}@2.0.0`,
+        `${target}@1.0.0`,
+      ];
+
+      // The same layout, from a project where the target is a dependency of `app` and nothing else is left out
+      await setup(
+        ctx,
+        { app: { dependencies: { ...app, [target]: "1.0.0" } } },
+        {
+          ...consumerAndTarget,
+          "no-deps": entry("no-deps@1.0.0"),
+          "one-dep": oneDep,
+          [leaf]: entry(`${leaf}@1.0.0`),
+          [`${target}/${leaf}`]: entry(`${leaf}@2.0.0`),
+        },
+      );
+      expect(await install(ctx, "--frozen-lockfile")).toEqual(older);
+
+      await setup(
+        ctx,
+        { app: { dependencies: app }, lender: { dependencies: { [leaf]: "2.0.0", [target]: "1.0.0" } } },
+        {
+          ...consumerAndTarget,
+          "no-deps": entry("no-deps@1.0.0"),
+          "one-dep": oneDep,
+          [`one-dep/${leaf}`]: entry(`${leaf}@1.0.0`),
+        },
+      );
+      // Copies of the older layout are only looked for when a run installs some packages and finds others in place.
+      await rm(join(ctx.packageDir, "node_modules", "no-deps"), { recursive: true });
+      expect(await run(ctx, "install", "--frozen-lockfile", "--filter", "app")).toEqual(
+        [...older, `one-dep/node_modules/${leaf}@1.0.0`].sort(),
+      );
     });
   });
 });

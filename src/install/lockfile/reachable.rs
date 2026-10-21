@@ -112,29 +112,97 @@ impl Linked {
             return false;
         }
         let linked = self.packages.get_or_insert_with(|| {
-            let pruned = &manager.summary.pruned_workspaces;
-            if workspace_filters.is_empty() && install_root_dependencies && pruned.is_empty() {
-                return packages(lockfile, resolutions, options);
+            match linked_importers(
+                workspace_filters,
+                install_root_dependencies,
+                manager,
+                lockfile,
+                resolutions,
+            ) {
+                None => packages(lockfile, resolutions, options),
+                Some(roots) => packages_from(lockfile, resolutions, &roots, false, options),
             }
-            // `--filter` or a pruned checkout links only some importers.
-            let mut roots: Vec<PackageID> = Vec::new();
-            if install_root_dependencies {
-                roots.push(0);
-            }
-            for row in dep_slices[0].begin() as usize..dep_slices[0].end() as usize {
-                let workspace = resolutions[row];
-                if deps[row].behavior.is_workspace()
-                    && (workspace as usize) < dep_slices.len()
-                    && !pruned.contains(&deps[row].name_hash)
-                    && WorkspaceFilter::is_selected(workspace_filters, workspace)
-                {
-                    roots.push(workspace);
-                }
-            }
-            packages_from(lockfile, resolutions, &roots, false, options)
         });
         !linked.is_set(resolutions[dep_id as usize] as usize)
     }
+}
+
+/// The importers that `--filter` or a pruned checkout leaves to link. `None` if it's all of them.
+fn linked_importers(
+    workspace_filters: &[WorkspaceFilter],
+    install_root_dependencies: bool,
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+    resolutions: &[PackageID],
+) -> Option<Vec<PackageID>> {
+    let pruned = &manager.summary.pruned_workspaces;
+    if workspace_filters.is_empty() && install_root_dependencies && pruned.is_empty() {
+        return None;
+    }
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let dep_slices = lockfile.packages.items_dependencies();
+    let mut roots: Vec<PackageID> = Vec::new();
+    if install_root_dependencies {
+        roots.push(0);
+    }
+    for row in dep_slices[0].begin() as usize..dep_slices[0].end() as usize {
+        let workspace = resolutions[row];
+        if deps[row].behavior.is_workspace()
+            && (workspace as usize) < dep_slices.len()
+            && !pruned.contains(&deps[row].name_hash)
+            && WorkspaceFilter::is_selected(workspace_filters, workspace)
+        {
+            roots.push(workspace);
+        }
+    }
+    Some(roots)
+}
+
+/// Returns the packages that an optional peer does not install under `--filter`: the importers left
+/// out depend on them, and the selected importers use no version of them. Every dependency group
+/// counts, but not an optional peer or the inside of a tarball. `None` without `--filter`, also in
+/// a pruned checkout, which does install them.
+pub(crate) fn foreign_packages(
+    workspace_filters: &[WorkspaceFilter],
+    install_root_dependencies: bool,
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+    resolutions: &[PackageID],
+) -> Option<DynamicBitSet> {
+    if workspace_filters.is_empty() {
+        return None;
+    }
+    let selected = linked_importers(
+        workspace_filters,
+        install_root_dependencies,
+        manager,
+        lockfile,
+        resolutions,
+    )?;
+    let tags = lockfile.packages.items_resolution();
+    let left_out: Vec<PackageID> = (0..tags.len() as PackageID)
+        .filter(|&id| {
+            matches!(
+                tags[id as usize].tag,
+                ResolutionTag::Root | ResolutionTag::Workspace
+            ) && !selected.contains(&id)
+        })
+        .collect();
+    let options = Options {
+        optional_peer: false,
+        bundled: false,
+        ..Options::all(0)
+    };
+    let mut foreign = packages_from(lockfile, resolutions, &left_out, false, options);
+    let names = lockfile.packages.items_name_hash();
+    let own = packages_from(lockfile, resolutions, &selected, false, options);
+    let mut own = own.iterator::<true, true>();
+    while let Some(id) = own.next() {
+        for &version in lockfile.packages_named(names[id]) {
+            foreign.unset(version as usize);
+        }
+    }
+    Some(foreign)
 }
 
 // `resolutions` is passed separately so callers can walk a candidate resolution buffer (dedupe).

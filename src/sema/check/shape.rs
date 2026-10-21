@@ -3100,12 +3100,12 @@ impl<'p, 's> Checker<'p, 's> {
         props.extend(keyed.into_iter().map(|entry| entry.1));
     }
 
-    /// `Loc` of each declaration of the class or interface `sym`.
+    /// `Loc` of each declaration of the class or interface `sym`, including those of a namespace that's merged with it.
     fn ranges_of_declarations(&self, sym: Sym) -> Vec<(u32, u32)> {
         let mut ranges = Vec::new();
         for (file, decl) in self.files().decls_of(sym) {
             match (decl, self.files().loc_of_declaration(file, decl)) {
-                (Decl::Class(_) | Decl::Interface(_), Some(loc)) => ranges.push((loc.pos, loc.end)),
+                (_, Some(loc)) => ranges.push((loc.pos, loc.end)),
                 (Decl::Class(class), None) => ranges.push((
                     self.end_of_token_before(file, self.hir(file)[class].start),
                     self.end_of_class(file, class),
@@ -3138,7 +3138,11 @@ impl<'p, 's> Checker<'p, 's> {
                 let loc = self.hir(file)[member].loc;
                 (loc.pos, loc.end)
             }
-            _ => return false,
+            Some((file, decl)) => match self.files().loc_of_declaration(file, decl) {
+                Some(loc) => (loc.pos, loc.end),
+                None => return false,
+            },
+            None => return false,
         };
         ranges.iter().any(|&(from, to)| from <= start && end <= to)
     }
@@ -4305,6 +4309,11 @@ impl<'p, 's> Checker<'p, 's> {
                 ..
             } => {
                 let ty = self.type_of_symbol(module);
+                // The symbol that `cloneTypeAsModuleType` creates has the flags and the declarations of `module`.
+                if (self.files().flags(module)).intersects(SymFlags::CLASS | SymFlags::INTERFACE) {
+                    contained = [0..0, 0..0];
+                    ranges = self.ranges_of_declarations(module);
+                }
                 // `getSpreadType(ty, { default })` only if `isValidSpreadType(ty)`. It begins with
                 // `tryMergeUnionOfObjectTypeAndEmptyObject`.
                 let spreads = !is_default_only && (!with_default || self.is_valid_spread_type(ty));

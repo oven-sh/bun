@@ -23092,6 +23092,52 @@ export const notMapped: 0 = null! as X<O> & { a: "y" };
       expect(exitCode).toBe(1);
     });
 
+    // `isDeclarationContainedBy` compares positions only, with every declaration of the class, whatever file they're in.
+    test("lists the members that lie within the class or a namespace merged with it first", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: {
+            ...JSON.parse(tsconfig).compilerOptions,
+            module: "nodenext",
+            moduleResolution: "nodenext",
+            esModuleInterop: true,
+          },
+        }),
+        "node_modules/base/package.json": `{ "name": "base", "version": "1.0.0", "types": "index.d.ts" }`,
+        "node_modules/base/index.d.ts": `declare class Base {
+    static early: number;
+    static readonly fixed: number;
+    static inNamespaceRange: number;
+    static padding01: number; static padding02: number; static padding03: number; static padding04: number;
+    static padding05: number; static padding06: number; static padding07: number; static padding08: number;
+    static late: number;
+}
+export = Base;
+`,
+        "node_modules/lib/package.json": `{ "name": "lib", "version": "1.0.0", "types": "index.d.ts" }`,
+        "node_modules/lib/index.d.ts": `import Base = require("base");
+declare class Lib extends Base { static own: number; }
+declare namespace Lib {
+    class Inner {}
+    const constant: number;
+    function make(): void;
+}
+export = Lib;
+`,
+        "a.ts": `import type * as lib from "lib";
+import Lib = require("lib");
+export const statics: typeof Lib = {};
+export const namespaceImport: typeof lib = {};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(3,14): error TS2740: Type '{}' is missing the following properties from type 'typeof Lib': fixed, padding01, padding02, own, and 13 more.
+        a.ts(4,14): error TS2740: Type '{}' is missing the following properties from type 'typeof Lib': padding01, padding02, own, Inner, and 14 more."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("a type parameter is a different type inside a conditional type that distributes over it", async () => {
       using dir = project({
         "a.ts": `type Need<T, U extends T> = [T, U];

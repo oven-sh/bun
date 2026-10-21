@@ -1,9 +1,8 @@
-//! Types: what the type checker knows about the file and the program it is part of.
+//! Types: what the type checker knows about the file and its program.
 //!
-//! This is `ts.TypeChecker`, `ts.Program`, `ts.Type`, `ts.Symbol`, `ts.Signature` and `ts.Node` as
-//! typescript-eslint's rules use them, answered by the checker of `bun check` right after it has
-//! checked the file. The names are TypeScript's in snake_case, so that a rule is ported line by
-//! line. Nothing is computed before a rule asks.
+//! This is `ts.TypeChecker`, `ts.Program`, `ts.Type`, `ts.Symbol`, `ts.Signature` and `ts.Node` as typescript-eslint's
+//! rules use them, backed by `bun check`'s checker right after it has checked the file. The names are TypeScript's in
+//! snake_case, so a rule can be ported line by line. Nothing is computed until a rule asks for it.
 //!
 //! ```ignore
 //! const ON: On = On::new().exprs(&[ExprTag::Await]);
@@ -22,89 +21,82 @@
 //!
 //! # The handles
 //!
-//! All are `Copy`, have the one lifetime of the [`File`], and compare by identity, as the objects
-//! of TypeScript do with `===`.
+//! All are `Copy`, share the [`File`]'s lifetime, and compare by identity, like TypeScript's objects with `===`.
 //!
 //! | TypeScript | here |
 //! | --- | --- |
 //! | `ts.TypeChecker`, `ts.Program`, `parserServices` | [`Types`], from [`File::types`] or [`File::type_checker`] |
 //! | `ts.Type` | [`Type`] |
-//! | `ts.Symbol` | [`TsSymbol`]. A [`Symbol`](crate::semantic::Symbol) is what one file declares in a scope, this is anything that anything in the program declares: also a property, a parameter of a signature, a module |
+//! | `ts.Symbol` | [`TsSymbol`]. A [`Symbol`](crate::semantic::Symbol) is something one file declares in a scope. A `TsSymbol` is anything declared anywhere in the program, including a property, a signature's parameter or a module |
 //! | `ts.Signature` | [`Signature`] |
 //! | `ts.IndexInfo` | [`IndexInfo`] |
 //! | `ts.TypePredicate` | [`TypePredicate`] |
-//! | `ts.Node`, `ts.Declaration` | [`TsNode`]: a node of any file of the program, also of `lib.d.ts` |
+//! | `ts.Node`, `ts.Declaration` | [`TsNode`]: a node in any file of the program, including `lib.d.ts` |
 //! | `ts.SourceFile` | [`SourceFile`] |
 //! | `ts.SyntaxKind` | [`SyntaxKind`] |
 //! | `ts.CompilerOptions` | [`CompilerOptions`], from [`Types::compiler_options`] |
 //! | `ts.TypeFlags`, `ObjectFlags`, `SymbolFlags`, `ModifierFlags`, `NodeFlags`, `ElementFlags`, `TypeFormatFlags` | [`TypeFlags`], [`ObjectFlags`], [`SymbolFlags`], [`ModifierFlags`], [`NodeFlags`], [`ElementFlags`], [`TypeFormatFlags`] |
 //!
-//! # From the syntax to types
+//! # From syntax to types
 //!
 //! | typescript-eslint | here |
 //! | --- | --- |
-//! | `services.getTypeAtLocation(node)` | `node.ty()` on [`Expr`](crate::ast::Expr), [`Pat`](crate::ast::Pat), [`TypeNode`](crate::ast::TypeNode) and [`Node`](crate::ast::Node). `node.type_at_location()` on every handle but `Node`: on a [`Param`](crate::ast::Param), a [`VarDecl`](crate::ast::VarDecl) or a [`Member`](crate::ast::Member), `ty()` is the annotation that is written. [`Types::get_type_at_location`] |
+//! | `services.getTypeAtLocation(node)` | `node.ty()` on [`Expr`](crate::ast::Expr), [`Pat`](crate::ast::Pat), [`TypeNode`](crate::ast::TypeNode) and [`Node`](crate::ast::Node). `node.type_at_location()` on every handle but `Node`, because on a [`Param`](crate::ast::Param), a [`VarDecl`](crate::ast::VarDecl) or a [`Member`](crate::ast::Member), `ty()` is the written annotation. [`Types::get_type_at_location`] |
 //! | `services.getSymbolAtLocation(node)` | `node.ts_symbol()` on every handle |
 //! | `services.esTreeNodeToTSNodeMap.get(node)` | `node.ts_node()`, [`Types::ts_node`] |
 //! | `services.tsNodeToESTreeNodeMap.get(tsNode)` | [`TsNode::to_ast`] |
-//! | the same for `node.id`, `node.key`, `node.property`, which are not nodes here | [`NameOf`]`(owner)`: `NameOf(member).ty()`, or the [`Ident`](crate::ast::Ident) itself: `types.get_type_at_location(ident)` |
+//! | the same for `node.id`, `node.key`, `node.property`, which aren't nodes here | [`NameOf`]`(owner)`: `NameOf(member).ty()`, or the [`Ident`](crate::ast::Ident) itself: `types.get_type_at_location(ident)` |
 //! | `checker.getContextualType(tsNode)` | [`Expr::contextual_type`](crate::ast::Expr::contextual_type) |
 //! | `checker.getResolvedSignature(tsNode)` | [`Expr::resolved_signature`](crate::ast::Expr::resolved_signature) |
 //! | `checker.getTypeFromTypeNode(tsNode)` | [`TypeNode::ty`](crate::ast::TypeNode::ty) |
 //! | `checker.getSignatureFromDeclaration(tsNode)` | [`Func::signature`](crate::ast::Func::signature) |
 //! | `getConstrainedTypeAtLocation(services, node)` | [`utils::get_constrained_type_at_location`] |
 //!
-//! # Where the rest is
+//! # Where to find the rest
 //!
-//! - A method of `ts.TypeChecker` that takes a node, a type, a symbol or a signature first is a
-//!   method of that handle, [`TsNode`], [`Type`], [`TsSymbol`] or [`Signature`]:
-//!   `checker.getApparentType(type)` is `type.get_apparent_type()`, `checker.getTypeOfSymbol(symbol)`
-//!   is `symbol.get_type()`.
-//! - [`Types`] has what is asked of none of them: the compiler options, the types that always
-//!   exist, the symbols in scope.
+//! - A `ts.TypeChecker` method whose first argument is a node, a type, a symbol or a signature is a method of that
+//!   handle ([`TsNode`], [`Type`], [`TsSymbol`] or [`Signature`]): `checker.getApparentType(type)` is
+//!   `type.get_apparent_type()`, `checker.getTypeOfSymbol(symbol)` is `symbol.get_type()`.
+//! - [`Types`] has everything else: the compiler options, the intrinsic types, the symbols in scope.
 //! - `ts-api-utils` is [`tsutils`].
-//! - `@typescript-eslint/type-utils`, and what in `eslint-plugin/src/util` needs types, is [`utils`].
+//! - `@typescript-eslint/type-utils`, plus the parts of `eslint-plugin/src/util` that need types, is [`utils`].
 //!
 //! # Without types
 //!
-//! The runner runs a rule with [`Meta::requires_types`](crate::rule::Meta::requires_types) only on
-//! a file of a checked program. Nothing here panics on any other file: every type is the error
-//! type (which [`Type::is_error`] tells and for which rules report nothing), every symbol and
-//! signature is `None`, every list is empty. A rule that uses types only if there are any asks
-//! [`File::types`], which is `None` then.
+//! The runner only runs a rule with [`Meta::requires_types`](crate::rule::Meta::requires_types) on a file of a checked
+//! program. Nothing here panics on any other file: every type is the error type (see [`Type::is_error`]; rules report
+//! nothing for it), every symbol and signature is `None`, and every list is empty. A rule that uses types only when
+//! they're available calls [`File::types`], which returns `None` otherwise.
 //!
 //! # Where the checker gave up
 //!
-//! A type can be [`Type::is_unresolved`]: a circular query, or a limit. TypeScript has no such
-//! type. It has [`TypeFlags::ANY`], as the error type has, but nothing should be reported for it:
-//! `is_type_any_type`, `discriminate_any_type` and `is_unsafe_assignment` do not count it as `any`.
-//! The error type they do, as upstream. A rule that reports what is *not* of some type
-//! (`only-throw-error`) has to ask [`Type::is_unresolved`] itself.
+//! A type can be [`Type::is_unresolved`], after a circular query or a limit. TypeScript has no such type. It has
+//! [`TypeFlags::ANY`], like the error type, but nothing should be reported for it, so `is_type_any_type`,
+//! `discriminate_any_type` and `is_unsafe_assignment` don't count it as `any`. They do count the error type, as
+//! upstream does. A rule that reports whatever is *not* of some type (`only-throw-error`) has to check
+//! [`Type::is_unresolved`] itself.
 //!
-//! # Where the answers are not those of TypeScript 6
+//! # Differences from TypeScript 6
 //!
-//! The checker follows TypeScript 7 (typescript-go). typescript-eslint runs on TypeScript 6 today.
-//! What is known to differ:
+//! The checker follows TypeScript 7 (typescript-go). typescript-eslint runs on TypeScript 6 today. Known differences:
 //!
-//! - [`Type::to_text`]: the order of the constituents of a union, which is sorted and does not
-//!   depend on what was checked before. Where a long type is cut off. `typeof f` for a function
-//!   with expando members.
-//! - [`Type::get_properties`] is in the order of the declarations, own before inherited.
-//!   TypeScript 7 sorts, TypeScript 6 has the order of insertion. Nothing should depend on it.
-//! - [`Signature::to_text`] has the `new` of a construct signature without being told.
-//! - [`Expr::resolved_signature`](crate::ast::Expr::resolved_signature) is `None` for a call of what is `any`, where
-//!   TypeScript has a signature without parameters that returns `any`. That of an optional call
-//!   returns what the function returns, without the `undefined` of the chain.
-//! - A union has one `undefined` where TypeScript 6 can have the missing type beside it.
-//! - [`TsNode`]: tokens, `ParenthesizedType` and `EndOfFileToken` are not nodes.
-//!   [`TsNode::span`] and [`TsNode::get_source_text`] are empty in the default library, whose text
-//!   is not kept.
-//! - [`SourceFile::package_name`] also answers for a file of a package that only a
-//!   `/// <reference path>` leads to, for which TypeScript knows no package.
-//! - JavaScript: a function with `this.x = ..` and `F.prototype.y = ..` is no class.
-//! - Code with type errors: `F.prototype = {}` in a TypeScript file is an expando member. The
-//!   parameters of a function in an argument of a call that no overload matches have their types
-//!   from the last candidate. `const c = new C(() => c.x)` is no circularity.
+//! - [`Type::to_text`]: the order of a union's constituents, which is sorted and doesn't depend on what was checked
+//!   before. Where a long type is truncated. `typeof f` for a function with expando members.
+//! - [`Type::get_properties`] is in declaration order, own before inherited. TypeScript 7 sorts, TypeScript 6 uses
+//!   insertion order. Nothing should depend on it.
+//! - [`Signature::to_text`] prints a construct signature's `new` without being asked to.
+//! - [`Expr::resolved_signature`](crate::ast::Expr::resolved_signature) is `None` for a call of an `any` value, where
+//!   TypeScript has a signature without parameters that returns `any`. For an optional call, the signature returns what
+//!   the function returns, without the chain's `undefined`.
+//! - A union has one `undefined` where TypeScript 6 can also have the missing type.
+//! - [`TsNode`]: tokens, `ParenthesizedType` and `EndOfFileToken` aren't nodes. [`TsNode::span`] and
+//!   [`TsNode::get_source_text`] are empty in the default library, whose text isn't retained.
+//! - [`SourceFile::package_name`] also works for a package file that's only reachable through a `/// <reference path>`,
+//!   where TypeScript doesn't know the package.
+//! - JavaScript: a function with `this.x = ..` and `F.prototype.y = ..` isn't a class.
+//! - Code with type errors: `F.prototype = {}` in a TypeScript file is an expando member. When no overload matches a
+//!   call, the parameters of a function passed as an argument get their types from the last candidate.
+//!   `const c = new C(() => c.x)` isn't a circularity.
 
 mod flags;
 mod id_set;
@@ -137,7 +129,7 @@ use bun_sema::program::FileId;
 use bun_sema::types::{SigId, TypeId};
 use std::cell::RefCell;
 
-/// What a query answers when there are no types.
+/// A query's result when there are no types.
 trait Absent {
     fn absent() -> Self;
 }
@@ -208,13 +200,12 @@ impl<T> Absent for &[T] {
 
 macro_rules! queries {
     ($($(#[$doc:meta])* fn $name:ident($($arg:ident: $ty:ty),*) -> $ret:ty;)*) => {
-        /// The queries that the type checker answers, for those who cannot name its lifetimes.
+        /// The queries the type checker answers, behind a trait so that callers don't have to name its lifetimes.
         ///
-        /// What is returned by reference lives as long as the file is linted. Each method has a
-        /// body, which is the answer when there are no types.
+        /// Anything returned by reference lives as long as the file is being linted. Each method has a default body,
+        /// which is the result when there are no types.
         ///
-        /// Rules do not call this. It is what [`Type`], [`TsSymbol`] and the other handles are
-        /// made of.
+        /// Rules don't call this. [`Type`], [`TsSymbol`] and the other handles are built on it.
         pub trait Queries<'a> {
             $($(#[$doc])* fn $name(&mut self, $($arg: $ty),*) -> $ret {
                 $(let _ = $arg;)*
@@ -237,13 +228,12 @@ queries! {
     fn current_directory() -> &'a [u8];
     fn current_file() -> FileId;
     fn file_info(file: FileId) -> FileInfo<'a>;
-    fn source_file(file_name: &[u8]) -> Option<FileId>;
-    /// The file that `specifier`, which is written in an import or an export of the file at hand,
-    /// resolves to.
+    /// Returns the file that `specifier` resolves to. `specifier` must appear in an import or export of the current
+    /// file.
     fn resolve_module_name(specifier: &[u8]) -> Option<FileId>;
     fn ambient_module(name: &[u8]) -> Option<SymbolRef>;
-    /// Whether references in the file have the error type because a function or module body is too
-    /// large for control flow analysis (2563).
+    /// True if references in the file have the error type because a function or module body is too large for control
+    /// flow analysis (2563).
     fn was_flow_analysis_ever_disabled() -> bool;
 
     // ── nodes ──
@@ -265,8 +255,8 @@ queries! {
     // ── from a node ──
     fn type_at_location(node: NodeRef) -> TypeId;
     fn symbol_at_location(node: NodeRef) -> Option<SymbolRef>;
-    /// `checker.getAccessedPropertyName(node)`: the name of a property access as it is written, and of an
-    /// element access what `tryGetElementAccessExpressionName` finds for its key.
+    /// `checker.getAccessedPropertyName(node)`: a property access's name as written, or for an element access whatever
+    /// `tryGetElementAccessExpressionName` finds for its key.
     fn accessed_property_name(node: NodeRef) -> Option<&'a [u8]>;
     fn type_from_type_node(node: NodeRef) -> TypeId;
     fn contextual_type(node: NodeRef) -> Option<TypeId>;
@@ -277,7 +267,7 @@ queries! {
     fn shorthand_assignment_value_symbol(node: NodeRef) -> Option<SymbolRef>;
     fn symbol_in_scope(node: NodeRef, meaning: SymbolFlags, name: &[u8]) -> Option<SymbolRef>;
     fn resolve_name(node: NodeRef, name: &[u8], meaning: SymbolFlags, exclude_globals: bool) -> Option<SymbolRef>;
-    fn context_free_type_of_call_resolved_afresh(node: NodeRef) -> TypeId;
+    fn context_free_type_of_freshly_resolved_call(node: NodeRef) -> TypeId;
 
     // ── types ──
     fn type_flags(ty: TypeId) -> TypeFlags;
@@ -301,7 +291,6 @@ queries! {
     fn type_of_property_of_type(ty: TypeId, name: &[u8]) -> Option<TypeId>;
     fn index_infos_of_type(ty: TypeId) -> &'a [IndexInfoData];
     fn signatures_of_type(ty: TypeId, kind: SignatureKind) -> &'a [SigId];
-    fn compare_types(a: TypeId, b: TypeId) -> Option<std::cmp::Ordering>;
     fn type_to_string(ty: TypeId, enclosing: Option<NodeRef>, flags: TypeFormatFlags) -> Vec<u8>;
 
     // ── symbols ──
@@ -315,7 +304,6 @@ queries! {
     fn symbol_table(table: SymbolTable, symbol: SymbolRef) -> &'a [SymbolRef];
     fn is_unknown_symbol(symbol: SymbolRef) -> bool;
     fn deprecation_of_symbol(symbol: SymbolRef) -> Option<&'a [u8]>;
-    fn symbol_to_string(symbol: SymbolRef) -> Vec<u8>;
 
     // ── signatures ──
     fn signature_info(signature: SigId) -> SignatureInfo<'a>;
@@ -325,11 +313,11 @@ queries! {
     fn signature_to_string(signature: SigId) -> Vec<u8>;
 }
 
-/// The answers for a file that is not part of a checked program.
+/// The results for a file that isn't part of a checked program.
 struct NoTypes;
 impl Queries<'_> for NoTypes {}
 
-/// The type checker, right after it has checked the file. What [`File::new`] takes.
+/// The type checker, right after it has checked the file. Passed to [`File::new`].
 pub struct Checker<'a> {
     queries: RefCell<&'a mut dyn Queries<'a>>,
     options: CompilerOptions,
@@ -347,20 +335,20 @@ impl<'a> Checker<'a> {
 }
 
 impl<'a> File<'a> {
-    /// The type checker, if the file is part of a program that has been checked.
+    /// Returns the type checker if the file is part of a checked program.
     #[inline]
     pub fn types(&'a self) -> Option<Types<'a>> {
         self.types.is_some().then_some(Types { file: self })
     }
 
-    /// The same for a rule that [requires types](crate::rule::Meta::requires_types). On a file
-    /// without types it answers everything with the error type, `None` and empty lists.
+    /// The same for a rule that [requires types](crate::rule::Meta::requires_types). On a file without types, every
+    /// query returns the error type, `None` or an empty list.
     #[inline]
     pub fn type_checker(&'a self) -> Types<'a> {
         Types { file: self }
     }
 
-    /// Asks the type checker.
+    /// Runs a query against the type checker.
     #[inline]
     pub(crate) fn query<R>(&self, ask: impl FnOnce(&mut dyn Queries<'a>) -> R) -> R {
         match self
@@ -373,15 +361,15 @@ impl<'a> File<'a> {
         }
     }
 
-    /// Whether a function or module body of the file is too large for control flow analysis (2563), as far as
-    /// the check of the file and the questions of the rules have come across it: to be asked when the rules
-    /// have run. Every reference that would be narrowed has the error type from then on, so what the rules
-    /// that need types say about the file can be wrong or incomplete.
+    /// True if a function or module body in the file is too large for control flow analysis (2563), as far as checking
+    /// the file and the rules' queries have run into it. So call it after the rules have run. From that point every
+    /// reference that would be narrowed has the error type, so type-aware rules' results for the file can be wrong or
+    /// incomplete.
     pub fn is_too_large_for_flow_analysis(&self) -> bool {
         self.query(|it| it.was_flow_analysis_ever_disabled())
     }
 
-    /// The number that the program gives the file.
+    /// The file's id in the program.
     #[inline]
     pub(crate) fn id_in_program(&self) -> FileId {
         self.types
@@ -390,8 +378,8 @@ impl<'a> File<'a> {
     }
 }
 
-/// `ts.TypeChecker` and `ts.Program`: what is not asked of a node, a type, a symbol or a signature.
-/// What is, is a method of [`TsNode`], [`Type`], [`TsSymbol`] or [`Signature`].
+/// `ts.TypeChecker` and `ts.Program`, minus everything that takes a node, a type, a symbol or a signature. Those are
+/// methods of [`TsNode`], [`Type`], [`TsSymbol`] and [`Signature`].
 #[derive(Copy, Clone)]
 pub struct Types<'a> {
     pub(crate) file: &'a File<'a>,
@@ -425,15 +413,15 @@ impl<'a> Types<'a> {
         self.file.query(|q| q.current_directory())
     }
 
-    /// `ts.resolveModuleName(specifier, fileName, options, ts.sys).resolvedModule`, for a specifier
-    /// that an import or an export of the file names.
+    /// `ts.resolveModuleName(specifier, fileName, options, ts.sys).resolvedModule`, for a specifier that appears in an
+    /// import or export of the file.
     pub fn resolve_module_name(self, specifier: &[u8]) -> Option<SourceFile<'a>> {
         let id = self.file.query(|q| q.resolve_module_name(specifier))?;
         Some(SourceFile::new(self.file, id))
     }
 
-    /// `checker.getAmbientModules().find(it => it.name === '"name"')`: what `declare module "name"`
-    /// declares. `name` is without the quotes.
+    /// `checker.getAmbientModules().find(it => it.name === '"name"')`: what `declare module "name"` declares. Pass
+    /// `name` without the quotes.
     pub fn get_ambient_module(self, name: &[u8]) -> Option<TsSymbol<'a>> {
         let id = self.file.query(|q| q.ambient_module(name))?;
         Some(TsSymbol::new(self.file, id))
@@ -451,17 +439,16 @@ impl<'a> Types<'a> {
         node.locate_for_type(self.file).get_type_at_location()
     }
 
-    /// `checker.getAccessedPropertyName(node)` of a property or element access: the name that is written, or the
-    /// one that a key names which is a literal, a constant or an enum member. tsgolint asks this where
-    /// typescript-eslint evaluates the key.
+    /// `checker.getAccessedPropertyName(node)` for a property or element access: the written name, or the name given by
+    /// a key that's a literal, a constant or an enum member. tsgolint uses this where typescript-eslint evaluates the
+    /// key.
     pub fn get_accessed_property_name(self, node: impl Locate<'a>) -> Option<&'a [u8]> {
         let (file, node) = (self.file, node.locate(self.file).raw());
         file.query(|q| q.accessed_property_name(node))
     }
 
-    /// `checker.getSymbolsInScope(node, meaning).find(it => it.name === name)`, which does not make
-    /// the list. It is not `checker.resolveName(..)`: an alias counts for what it is, not for what it
-    /// is an alias of.
+    /// `checker.getSymbolsInScope(node, meaning).find(it => it.name === name)`, without building the list. It isn't
+    /// `checker.resolveName(..)`: an alias counts as an alias, not as its target.
     pub fn get_symbol_in_scope(
         self,
         node: impl Locate<'a>,
@@ -473,7 +460,7 @@ impl<'a> Types<'a> {
         Some(TsSymbol::new(file, symbol))
     }
 
-    // ───────────────────────────── types that always exist ─────────────────────────────
+    // ───────────────────────────── intrinsic types ─────────────────────────────
 
     intrinsic_types! {
         /// `checker.getAnyType()`
@@ -509,11 +496,11 @@ impl<'a> Types<'a> {
     }
 }
 
-/// The names of a program as they are written. The checker respells a `#x` so that it tells the
-/// class that declares it.
-struct WrittenNames<'i>(&'i dyn bun_sema::atom::Intern);
+/// A program's names as written in the source. The checker mangles a `#x` so that the name identifies the declaring
+/// class.
+struct SourceNames<'i>(&'i dyn bun_sema::atom::Intern);
 
-impl bun_sema::atom::Intern for WrittenNames<'_> {
+impl bun_sema::atom::Intern for SourceNames<'_> {
     fn intern(&self, text: &[u8]) -> bun_sema::atom::Atom {
         self.0.intern(text)
     }
@@ -526,14 +513,15 @@ impl bun_sema::atom::Intern for WrittenNames<'_> {
     fn number(&self) -> u64 {
         self.0.number()
     }
-    fn of_this_thread(&self) -> &dyn bun_sema::atom::Intern {
+    fn for_current_thread(&self) -> &dyn bun_sema::atom::Intern {
         self
     }
 }
 
-/// The same, for a file that has [`File::modules`], [`File::formatter`] and [`File::inferred_globals`]. `path`: [`File::path`], the path that the file is
-/// linted under. `None`: the name that the program has for it, which is in the checker's format (`/C:/a.ts`) and spelled as the
-/// program found it.
+/// Calls `then` with the [`File`] for `file`, a file of a checked program, with [`File::modules`], [`File::formatter`]
+/// and [`File::inferred_globals`] set. `path` is [`File::path`], the path the file is linted under. If it's `None`, the
+/// program's name for the file is used, which is in the checker's format (`/C:/a.ts`) and spelled the way the program
+/// found it.
 pub fn with_file_and_modules<R>(
     checker: &mut bun_sema::check::Checker<'_, '_>,
     file: FileId,
@@ -551,7 +539,7 @@ pub fn with_file_and_modules<R>(
         return None;
     }
     let path = path.unwrap_or_else(|| module.file_name());
-    let atoms = &WrittenNames(&checker.p.files.atoms);
+    let atoms = &SourceNames(&checker.p.files.atoms);
     Some(checker.with_services(file, read_library, |services| {
         let types = Checker::new(services);
         let file = File::new(path, hir, bound, atoms, language, Some(types));

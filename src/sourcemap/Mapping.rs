@@ -395,10 +395,11 @@ impl Lookup {
             // `platform::Auto` is
             // cfg-selected (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
-            let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<
+            // `name` comes from the source map and can be any length. A path too long for `buf` is too long to open.
+            let path = bun_paths::resolve_path::join_abs_string_buf_checked::<
                 bun_paths::platform::Loose,
-            >(dir, &mut buf, &[name]);
-            match bun_sys::File::read_from(bun_sys::Fd::cwd(), normalized) {
+            >(dir, &mut buf[..], &[name])?;
+            match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
                 Ok(r) => break 'bytes r,
                 Err(_) => return None,
             }
@@ -439,7 +440,6 @@ pub fn parse(
     bytes: &[u8],
     estimated_mapping_count: Option<usize>,
     sources_count: i32,
-    input_line_count: usize,
     options: ParseOptions,
 ) -> ParseResult {
     scoped_log!(SourceMap, "parse mappings ({} bytes)", bytes.len());
@@ -725,7 +725,6 @@ pub fn parse(
 
     let mut psm = ParsedSourceMap::default();
     psm.mappings = mapping;
-    psm.input_line_count = input_line_count;
     Ok(psm)
 }
 

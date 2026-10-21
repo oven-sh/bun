@@ -42,6 +42,9 @@ extern "C" void StringBuilder__appendUsize(WTF::StringBuilder* builder, size_t n
 
 extern "C" void StringBuilder__appendString(WTF::StringBuilder* builder, const BunString* str)
 {
+    // Upconverting an 8-bit builder for a 16-bit string reads capacity(), which asserts !hasOverflowed().
+    if (builder->hasOverflowed()) [[unlikely]]
+        return;
     str->appendToBuilder(*builder);
 }
 
@@ -77,5 +80,8 @@ extern "C" JSC::EncodedJSValue StringBuilder__toString(WTF::StringBuilder* build
 
 extern "C" void StringBuilder__ensureUnusedCapacity(WTF::StringBuilder* builder, size_t additional)
 {
+    // length() asserts !hasOverflowed().
+    if (builder->hasOverflowed()) [[unlikely]]
+        return;
     builder->reserveCapacity(builder->length() + additional);
 }

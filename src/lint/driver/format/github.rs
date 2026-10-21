@@ -1,5 +1,5 @@
-//! What oxlint calls `github`: a workflow command of GitHub Actions for each problem, then the two lines that its `default` ends
-//! with.
+//! oxlint's `github` format: a GitHub Actions workflow command for each problem, then the two lines that end its
+//! `default` format.
 
 use super::Meta;
 use super::info::Source;
@@ -8,8 +8,8 @@ use super::stylish::plural;
 use crate::results::FileResult;
 use std::io::Write;
 
-/// `escape_data`, and with `is_property` `escape_property`. Nothing else is taken out, as the escape sequences of a terminal are
-/// by `bun_core::fmt::github_action`.
+/// `escape_data`, or `escape_property` with `is_property`. Unlike `bun_core::fmt::github_action`, it doesn't strip
+/// terminal escape sequences.
 fn write_escaped(out: &mut Vec<u8>, text: &[u8], is_property: bool) {
     for byte in text {
         match byte {
@@ -67,7 +67,7 @@ fn write_finished(out: &mut Vec<u8>, meta: &Meta) {
     let _ = writeln!(out, " using {} threads.", run.threads);
 }
 
-/// With the end of the last line. It is never empty.
+/// Includes the final newline. The output is never empty.
 pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     for result in results.iter().filter(|it| !it.messages.is_empty()) {
         let source = Source::new(result, meta);
@@ -92,7 +92,7 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
                 ",line={},endLine={},col={},endColumn={},title=",
                 start.line, end.line, start.column, end.column,
             );
-            // oxlint prints the name of a rule as it is. One of a plugin could end the command with it.
+            // oxlint prints a rule's name unescaped, but a plugin's rule name could then end the command early.
             write_escaped(out, title, true);
             out.extend_from_slice(b"::");
             write_escaped(out, info.filename, false);
@@ -101,7 +101,7 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
             out.push(b'\n');
         }
     }
-    // Without a file to lint oxlint has nothing that counts.
+    // With no files to lint, oxlint doesn't print the counts.
     if meta.run.files > 0 {
         write_found(out, meta);
     }

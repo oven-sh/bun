@@ -100,7 +100,7 @@ interface FsBinding
     path: string,
     options: import("node:fs").WatchFileOptions | undefined,
     listener: WatchFileListener,
-  ): $ZigGeneratedClasses.StatWatcher;
+  ): $Bindgen.StatWatcher;
   write(
     fd: number,
     buffer: NodeJS.ArrayBufferView,

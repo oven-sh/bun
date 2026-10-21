@@ -1,17 +1,17 @@
 //! ESLint's `lib/rules/utils/ast-utils.js`.
 //!
-//! Every export is here under its name in snake case. What differs throughout:
+//! Every export is here under its name in snake case. General differences:
 //!
-//! - No function takes `sourceCode` or a scope: a handle knows its file. Those that have no handle
-//!   to ask take the `&File` first.
-//! - A function is a [`Func`], whatever owns it. Where ESLint looks at `node.parent` of a function
-//!   to find the `MethodDefinition`, the `PropertyDefinition` or the `Property`, that is done here.
-//! - `ChainExpression` is not a node, so `skipChainExpression` is the identity and everything that
-//!   calls it upstream takes the member access or the call itself.
+//! - No function takes `sourceCode` or a scope, because a handle knows its file. Functions without a handle argument
+//!   take the `&File` first.
+//! - A function is a [`Func`], whatever owns it. Where ESLint looks at a function's `node.parent` to find the
+//!   `MethodDefinition`, the `PropertyDefinition` or the `Property`, these functions do that themselves.
+//! - `ChainExpression` isn't a node, so `skipChainExpression` is the identity, and everything that calls it upstream
+//!   takes the member access or the call itself.
 //! - A name or a pattern that upstream takes as `string | RegExp` is an `Option<&str>` here, with a
 //!   `_with` variant that takes functions.
-//! - The predicates of tokens take `&Token`, which is what `Iterator::find`, `filter`,
-//!   `take_while` and `skip_while` give: `file.tokens_after(node).find(is_comma_token)`.
+//! - Token predicates take `&Token`, which is what `Iterator::find`, `filter`, `take_while` and `skip_while` pass:
+//!   `file.tokens_after(node).find(is_comma_token)`.
 //! - A location is a [`Span`], which is what `cx.report` takes.
 
 use super::ancestor_memo::AncestorMemo;
@@ -36,7 +36,7 @@ use std::borrow::Cow;
 
 // ───────────────────────────── constants ─────────────────────────────
 
-/// ESLint's `COMMENTS_IGNORE_PATTERN.test(value)`, for the value of a comment.
+/// ESLint's `COMMENTS_IGNORE_PATTERN.test(value)`, for a comment's value.
 pub fn matches_comments_ignore_pattern(value: &[u8]) -> bool {
     let rest = strings::trim_js_whitespace_start(value);
     if rest.starts_with(b"eslint") || rest.starts_with(b"jscs") {
@@ -50,9 +50,9 @@ pub fn matches_comments_ignore_pattern(value: &[u8]) -> bool {
     .any(|after| strings::wtf8_first_codepoint(after).is_some_and(strings::is_js_whitespace))
 }
 
-/// ESLint's `STATEMENT_LIST_PARENTS.has(node.type)`, for the parent of a statement: a `Program`, a
-/// `BlockStatement`, a `StaticBlock` or a `SwitchCase`. The body of a function is a
-/// `BlockStatement`, and the parent of a statement in it is the `Func`.
+/// ESLint's `STATEMENT_LIST_PARENTS.has(node.type)`, for a statement's parent: a `Program`, a `BlockStatement`, a
+/// `StaticBlock` or a `SwitchCase`. A function's body is a `BlockStatement`, and the parent of a statement in it is the
+/// `Func`.
 pub fn is_statement_list_parent(parent: Node<'_>) -> bool {
     match parent {
         Node::File(_) | Node::Func(_) | Node::Case(_) => true,
@@ -64,8 +64,8 @@ pub fn is_statement_list_parent(parent: Node<'_>) -> bool {
     }
 }
 
-/// The version of ECMAScript that defines the global variable `name`, as
-/// `LanguageOptions::ecma_version` counts them. ESLint's `conf/globals.js`.
+/// The ECMAScript version that defines the global variable `name`, numbered like `LanguageOptions::ecma_version`.
+/// ESLint's `conf/globals.js`.
 pub fn ecmascript_global_since(name: &[u8]) -> Option<u32> {
     Some(match name {
         b"Array"
@@ -119,15 +119,14 @@ pub fn ecmascript_global_since(name: &[u8]) -> Option<u32> {
     })
 }
 
-/// ESLint's `name in ECMASCRIPT_GLOBALS`: the latest version of ECMAScript defines the global
-/// variable `name`.
+/// ESLint's `name in ECMASCRIPT_GLOBALS`: the latest ECMAScript version defines the global variable `name`.
 #[inline]
 pub fn is_ecmascript_global(name: &[u8]) -> bool {
     ecmascript_global_since(name).is_some()
 }
 
-/// Whether `name` is in oxlint's list of the built-in globals, which has neither `Temporal` nor what
-/// the global object inherits from `Object.prototype`.
+/// True if `name` is in oxlint's list of built-in globals, which has neither `Temporal` nor what the global object
+/// inherits from `Object.prototype`.
 pub fn is_builtin_global_of_oxlint(name: &[u8]) -> bool {
     !matches!(
         name,
@@ -150,8 +149,7 @@ pub use super::eslint_utils::{
     is_opening_bracket_token, is_opening_paren_token, is_semicolon_token,
 };
 
-/// ESLint's `isTokenOnSameLine`: `left` ends on the line on which `right` starts. Each is a token,
-/// a comment or a node.
+/// ESLint's `isTokenOnSameLine`: `left` ends on the line where `right` starts. Each is a token, a comment or a node.
 pub fn is_token_on_same_line(file: &File<'_>, left: impl Spanned, right: impl Spanned) -> bool {
     let between = left.span().between(right.span());
     match between.start <= between.end {
@@ -160,21 +158,21 @@ pub fn is_token_on_same_line(file: &File<'_>, left: impl Spanned, right: impl Sp
     }
 }
 
-/// Whether there is no line break in `span`. The start of it is looked at, where most that have one have the first. What is
-/// left of a long one, such as many comments between two tokens, is asked of the lines of the file, which does not take time in
-/// proportion to its length.
+/// True if `span` has no line break. It scans the start of the span, where most spans with a line break have their
+/// first one. For the rest of a long span, such as many comments between two tokens, it uses the file's line table,
+/// which doesn't take time proportional to the length.
 #[inline]
 pub fn is_on_one_line(file: &File<'_>, span: Span) -> bool {
-    const LOOKED_AT: u32 = 512;
-    if span.len() <= LOOKED_AT {
+    const SCANNED_PREFIX_LEN: u32 = 512;
+    if span.len() <= SCANNED_PREFIX_LEN {
         return !strings::contains_js_line_break(file.slice(span));
     }
-    let middle = span.start + LOOKED_AT;
+    let middle = span.start + SCANNED_PREFIX_LEN;
     !strings::contains_js_line_break(file.slice(Span::new(span.start, middle)))
         && file.is_on_same_line(middle, span.end)
 }
 
-/// Whether a `/` follows a `yield` or an `await` in `text`: whether it divides depends on the function around.
+/// True if a `/` follows a `yield` or an `await` in `text`. Whether that `/` divides depends on the enclosing function.
 fn has_slash_after_yield_or_await(text: &[u8]) -> bool {
     [&b"yield"[..], b"await"].into_iter().any(|word| {
         let mut rest = text;
@@ -188,23 +186,23 @@ fn has_slash_after_yield_or_await(text: &[u8]) -> bool {
     })
 }
 
-/// What `equal_tokens` is for `left` and `right`, which follow the same tokens, whatever both start in: code, a regular
-/// expression, a template. Up to where they differ they are in the same. `None` if a comment may have started before that, and
-/// if whitespace, a comment or an escape in a name may be what differs.
-fn equal_tokens_of_text_in_anything(left: &[u8], right: &[u8]) -> Option<bool> {
+/// Returns `equal_tokens` for `left` and `right`, which follow the same tokens, no matter what both start in: code, a
+/// regular expression or a template. Up to the first difference they're in the same context. `None` if a comment may
+/// have started before that, or if the difference may be whitespace, a comment or an escape in a name.
+fn equal_tokens_in_any_context(left: &[u8], right: &[u8]) -> Option<bool> {
     let same = left.iter().zip(right).take_while(|(a, b)| a == b).count();
     let (common, a, b) = (left.get(..same)?, left.get(same), right.get(same));
     if a.is_none() && b.is_none() {
         return Some(true);
     }
-    let can_be_more_than_itself = |byte: Option<&u8>| {
+    let may_start_trivia_or_escape = |byte: Option<&u8>| {
         matches!(
             byte,
             Some(..=b' ' | b'/' | b'*' | b'\\' | b'<' | b'!' | b'-' | 0x80..)
         )
     };
-    if can_be_more_than_itself(a)
-        || can_be_more_than_itself(b)
+    if may_start_trivia_or_escape(a)
+        || may_start_trivia_or_escape(b)
         || [&b"//"[..], b"/*", b"--"]
             .into_iter()
             .any(|it| strings::contains(common, it))
@@ -220,14 +218,14 @@ fn equal_tokens_of_text_in_anything(left: &[u8], right: &[u8]) -> Option<bool> {
     (!common.get(..same - digits)?.ends_with(b"\\u")).then_some(false)
 }
 
-/// What `equal_tokens` is for the texts `left` and `right`, if that shows without splitting them into tokens: they are compared
-/// byte by byte, whitespace and comments against whitespace and comments. From a `/` that is no comment, a substitution of a
-/// template, an escape in a name or a character that is not ASCII and not in a string on, see
-/// [`equal_tokens_of_text_in_anything`]. `None` where more than that is to be known, as where only one of the two has
+/// Returns `equal_tokens` for the texts `left` and `right`, if it can tell without tokenizing them. It compares them
+/// byte by byte, and whitespace and comments against whitespace and comments. Starting at a `/` that isn't a comment, a
+/// template substitution, an escape in a name or a non-ASCII character outside a string, it defers to
+/// [`equal_tokens_in_any_context`]. `None` if that isn't enough, for example where only one of the two has
 /// whitespace, which may or may not separate two tokens.
 fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
     let can_start_trivia = |byte: Option<&u8>| matches!(byte, Some(b'\t'..=b'\r' | b' ' | b'/'));
-    let is_of_word = |byte: Option<&u8>| {
+    let is_word_byte = |byte: Option<&u8>| {
         byte.is_some_and(|it| it.is_ascii_alphanumeric() || matches!(it, b'_' | b'$'))
     };
     // `<!--` and `-->` can start a comment.
@@ -235,16 +233,14 @@ fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
         let (before, rest) = text.split_at(at);
         rest.starts_with(b"-->") || rest.starts_with(b"--") && before.ends_with(b"<!")
     };
-    let in_anything = |l: usize, r: usize| match equal_tokens_of_text_in_anything(
-        left.get(l..)?,
-        right.get(r..)?,
-    )? {
-        true => (!has_slash_after_yield_or_await(left)).then_some(true),
-        false => Some(false),
-    };
+    let in_any_context =
+        |l: usize, r: usize| match equal_tokens_in_any_context(left.get(l..)?, right.get(r..)?)? {
+            true => (!has_slash_after_yield_or_await(left)).then_some(true),
+            false => Some(false),
+        };
     let (mut l, mut r) = (0, 0);
-    // The quote of the string, or of the template before its first substitution, that both are in. It is one token, which
-    // starts at the same place in both.
+    // The quote of the string, or of the template before its first substitution, that both are in. It's one token that
+    // starts at the same position in both.
     let mut quote = None;
     loop {
         if let Some(open) = quote {
@@ -253,7 +249,9 @@ fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
                 return Some(false);
             }
             match a {
-                b'$' if open == b'`' && left.get(l + 1) == Some(&b'{') => return in_anything(l, r),
+                b'$' if open == b'`' && left.get(l + 1) == Some(&b'{') => {
+                    return in_any_context(l, r);
+                }
                 b'\\' => {
                     if *left.get(l + 1)? != *right.get(r + 1)? {
                         return Some(false);
@@ -272,9 +270,9 @@ fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
                 skip_trivia(right, r as u32) as usize,
             );
             if (after.0 > l) != (after.1 > r) {
-                // A word that ends in one goes on in the other.
-                let goes_on = is_of_word(left.get(l)) || is_of_word(right.get(r));
-                return (goes_on && l > 0 && is_of_word(left.get(l - 1))).then_some(false);
+                // A word that ends in one text continues in the other.
+                let word_continues = is_word_byte(left.get(l)) || is_word_byte(right.get(r));
+                return (word_continues && l > 0 && is_word_byte(left.get(l - 1))).then_some(false);
             }
             (l, r) = after;
         }
@@ -289,7 +287,7 @@ fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
             return None;
         }
         if matches!(a, b'/' | b'\\' | 0x80..) || matches!(b, b'/' | b'\\' | 0x80..) {
-            return if a == b { in_anything(l, r) } else { None };
+            return if a == b { in_any_context(l, r) } else { None };
         }
         if a != b {
             return Some(false);
@@ -308,21 +306,21 @@ pub fn equal_tokens<'a>(file: &'a File<'a>, left: impl Spanned, right: impl Span
 }
 
 fn equal_tokens_in<'a>(file: &'a File<'a>, left: Span, right: Span) -> bool {
-    let of_all_tokens = || {
+    let compare_all_tokens = || {
         let (left, right) = (file.tokens_in(left), file.tokens_in(right));
         left.len() == right.len()
             && left
                 .zip(right)
                 .all(|(l, r)| l.kind() == r.kind() && l.has_same_value(r))
     };
-    // In JSX whitespace can be text, and what a name is depends on where it is.
+    // In JSX, whitespace can be text, and what counts as a name depends on the position.
     if file.hir.jsx.is_empty()
         && let Some(answer) = equal_tokens_of_plain_text(file.slice(left), file.slice(right))
     {
-        debug_assert_eq!(answer, of_all_tokens());
+        debug_assert_eq!(answer, compare_all_tokens());
         return answer;
     }
-    of_all_tokens()
+    compare_all_tokens()
 }
 
 /// ESLint's `canContinueExpressionInClassBody`.
@@ -368,7 +366,7 @@ pub fn is_directive_comment(comment: &Token<'_>) -> bool {
     }
 }
 
-/// A token, or source text that is tokenized: what [`can_tokens_be_adjacent`] takes.
+/// The argument of [`can_tokens_be_adjacent`]: a token, or source text to tokenize.
 #[derive(Copy, Clone)]
 pub enum TokenOrText<'t> {
     Token(TokenKind, &'t [u8]),
@@ -408,8 +406,7 @@ impl<'t> From<&'t Vec<u8>> for TokenOrText<'t> {
 
 type Piece<'t> = (TokenKind, &'t [u8]);
 
-/// The end of the piece of a template that starts at `at`, after its `` ` `` or `}`, and whether a
-/// substitution follows.
+/// The end of the template piece that starts at `at`, after its `` ` `` or `}`, and whether a substitution follows.
 fn end_of_template_piece(text: &[u8], mut at: usize) -> Option<(usize, bool)> {
     loop {
         at += strings::index_of_any(text.get(at..)?, b"`$\\")?;
@@ -484,14 +481,13 @@ fn is_keyword_before_expression(word: &[u8]) -> bool {
     )
 }
 
-/// The first and the last of the tokens and comments of `text`. `None` if there are none, or if
-/// `text` cannot be tokenized.
+/// The first and last of `text`'s tokens and comments. `None` if there are none, or if `text` can't be tokenized.
 fn first_and_last_token(text: &[u8]) -> Option<(Piece<'_>, Piece<'_>)> {
     let mut first = None;
     let mut last = None;
-    // Whether a `/` starts a regular expression, as opposed to dividing by what precedes it.
+    // True if a `/` here starts a regular expression instead of dividing.
     let mut is_regex_allowed = true;
-    // For each open `{`, whether it is the `${` of a template.
+    // For each open `{`, whether it's the `${` of a template.
     let mut braces: SmallVec<[bool; 8]> = SmallVec::new();
     let mut at = 0;
     loop {
@@ -575,8 +571,8 @@ fn first_and_last_token(text: &[u8]) -> Option<(Piece<'_>, Piece<'_>)> {
     Some((first?, last?))
 }
 
-/// ESLint's `canTokensBeAdjacent`: whether `left` directly followed by `right` is still these two
-/// tokens. Each is a [`Token`], or text, of which the last or the first token counts.
+/// ESLint's `canTokensBeAdjacent`: true if `left` directly followed by `right` still lexes as these two tokens. Each is
+/// a [`Token`] or text. For text, `left`'s last token or `right`'s first token counts.
 pub fn can_tokens_be_adjacent<'t>(
     left: impl Into<TokenOrText<'t>>,
     right: impl Into<TokenOrText<'t>>,
@@ -618,22 +614,22 @@ pub fn can_tokens_be_adjacent<'t>(
 
 // ───────────────────────────── kinds of nodes ─────────────────────────────
 
-/// Whether `func` is a `FunctionDeclaration`, a `FunctionExpression` or an
-/// `ArrowFunctionExpression` of ESTree: it has a body, and is not a static block.
+/// True if `func` is an ESTree `FunctionDeclaration`, `FunctionExpression` or `ArrowFunctionExpression`: it has a body
+/// and isn't a static block.
 #[inline]
 pub fn is_function_with_body(func: Func<'_>) -> bool {
     func.has_body() && func.kind() != FnKind::StaticBlock
 }
 
-/// Whether ESTree calls `member` a `PropertyDefinition`.
+/// True if ESTree calls `member` a `PropertyDefinition`.
 pub fn is_property_definition(member: Member<'_>) -> bool {
     member.kind() == MemberKind::Property
         && !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
         && matches!(member.parent(), Node::Class(_))
 }
 
-/// The function that `node` is, if ESLint's `isFunction` holds for it: a `Func`, or the `Expr` or
-/// the `Stmt` that owns one.
+/// Returns `node` as a function if ESLint's `isFunction` is true for it: a `Func`, or the `Expr` or `Stmt` that owns
+/// one.
 #[inline]
 pub fn as_function<'a>(node: impl Into<Node<'a>>) -> Option<Func<'a>> {
     function_of(node.into())
@@ -649,8 +645,8 @@ fn function_of(node: Node<'_>) -> Option<Func<'_>> {
     is_function_with_body(func).then_some(func)
 }
 
-/// ESLint's `isFunction`. An overload, a signature, a function type and a static block are not
-/// functions: ESTree has other nodes for them.
+/// ESLint's `isFunction`. An overload, a signature, a function type and a static block aren't functions, because ESTree
+/// has other nodes for them.
 #[inline]
 pub fn is_function<'a>(node: impl Into<Node<'a>>) -> bool {
     as_function(node).is_some()
@@ -662,8 +658,7 @@ pub fn is_loop<'a>(node: impl Into<Node<'a>>) -> bool {
     matches!(node.into(), Node::Stmt(statement) if statement.is_loop())
 }
 
-/// ESLint's `getUpperFunction`: `node` if it is a function, or else the innermost function around
-/// it.
+/// ESLint's `getUpperFunction`: `node` if it's a function, otherwise the innermost function around it.
 pub fn get_upper_function<'a>(node: impl Into<Node<'a>>) -> Option<Func<'a>> {
     let node = node.into();
     std::iter::once(node)
@@ -692,8 +687,8 @@ pub fn is_literal(e: Expr<'_>) -> bool {
     )
 }
 
-/// `node.type === "MemberExpression"`: an `ExprKind::Dot` or an `ExprKind::Index`, but not the `a.b`
-/// of `<a.b />`, a `JSXMemberExpression`, nor that of the type `typeof a.b`, a `TSQualifiedName`.
+/// `node.type === "MemberExpression"`: an `ExprKind::Dot` or an `ExprKind::Index`, but not the `a.b` in `<a.b />`,
+/// which is a `JSXMemberExpression`, or in the type `typeof a.b`, which is a `TSQualifiedName`.
 pub fn is_member_expression(e: Expr<'_>) -> bool {
     match e.tag() {
         ExprTag::Index => true,
@@ -763,26 +758,26 @@ pub fn is_logical_assignment_operator(op: Option<BinOp>) -> bool {
     matches!(op, Some(BinOp::And | BinOp::Or | BinOp::Nullish))
 }
 
-/// ESLint's `isCallee`: `e` is what a call calls. Not what `new` constructs.
+/// ESLint's `isCallee`: `e` is a call's callee, but not a `new` expression's.
 #[inline]
 pub fn is_callee(e: Expr<'_>) -> bool {
     (e.parent().as_expr().and_then(Expr::as_call)).is_some_and(|call| call.callee() == e)
 }
 
-/// `CallExpression > MemberExpression.callee[object.name="process"][property.name="exit"]`: what
-/// `no-process-exit` reports, in ESLint and in eslint-plugin-n.
+/// `CallExpression > MemberExpression.callee[object.name="process"][property.name="exit"]`, which is what
+/// `no-process-exit` reports in ESLint and in eslint-plugin-n.
 pub fn is_process_exit_call(e: Expr<'_>) -> bool {
     let Some(call) = e.as_call() else {
         return false;
     };
     let callee = call.callee();
-    // `[property.name = 'exit']` also holds for `process[exit]` and `process.#exit`.
+    // `[property.name = 'exit']` also matches `process[exit]` and `process.#exit`.
     let obj = match callee.kind() {
         ExprKind::Dot { obj, name, .. } if name.name().is_any(&["exit", "#exit"]) => obj,
         ExprKind::Index { obj, index, .. } if index.is_ident("exit") => obj,
         _ => return false,
     };
-    // In `(process?.exit)()` a `ChainExpression` is the callee.
+    // In `(process?.exit)()` the callee is a `ChainExpression`.
     obj.is_ident("process") && !callee.is_chain_root()
 }
 
@@ -792,9 +787,8 @@ pub fn is_empty_function(func: Func<'_>) -> bool {
     is_function_with_body(func) && func.body_statements().is_some_and(|body| body.is_empty())
 }
 
-/// ESLint's `isDirective`: the parser has given the statement a `directive`. espree gives none in ES3.
-/// typescript-estree does not ask for the version, and also gives one to the strings at the start of
-/// a static block.
+/// ESLint's `isDirective`: the parser gave the statement a `directive`. espree doesn't in ES3. typescript-estree
+/// ignores the version, and also gives one to the strings at the start of a static block.
 pub fn is_directive(statement: Stmt<'_>) -> bool {
     let file = statement.file();
     if !file.uses_typescript_parser() {
@@ -810,8 +804,8 @@ pub fn is_directive(statement: Stmt<'_>) -> bool {
     }
 }
 
-/// ESLint's `isTopLevelExpressionStatement`: an expression statement directly in the file, in a
-/// namespace or in the body of a function.
+/// ESLint's `isTopLevelExpressionStatement`: an expression statement directly in the file, a namespace or a function's
+/// body.
 pub fn is_top_level_expression_statement(statement: Stmt<'_>) -> bool {
     is_expression_statement(statement)
         && match statement.parent() {
@@ -822,8 +816,7 @@ pub fn is_top_level_expression_statement(statement: Stmt<'_>) -> bool {
         }
 }
 
-/// ESLint's `isStartOfExpressionStatement`: an expression statement starts with the first token of
-/// `node`.
+/// ESLint's `isStartOfExpressionStatement`: `node`'s first token starts an expression statement.
 pub fn is_start_of_expression_statement<'a>(node: impl Into<Node<'a>>) -> bool {
     let node = node.into();
     let start = node.span().start;
@@ -845,7 +838,7 @@ pub fn are_braces_necessary(block: Stmt<'_>) -> bool {
     })
 }
 
-/// [`are_braces_necessary`], where `is_followed_by_else` says whether an `else` follows the block.
+/// [`are_braces_necessary`], where `is_followed_by_else` returns whether an `else` follows the block.
 pub fn are_braces_necessary_if(
     block: Stmt<'_>,
     is_followed_by_else: impl FnOnce() -> bool,
@@ -882,7 +875,7 @@ pub fn are_braces_necessary_if(
 
 // ───────────────────────────── values and names ─────────────────────────────
 
-/// ESTree's `Literal.bigint`: the digits as they are written, without the `n` and the `_`.
+/// ESTree's `Literal.bigint`: the source digits without the `n` and the `_`.
 pub fn get_bigint_text(e: Expr<'_>) -> Cow<'_, [u8]> {
     let raw = e.text();
     let digits = raw.strip_suffix(b"n").unwrap_or(raw);
@@ -892,8 +885,7 @@ pub fn get_bigint_text(e: Expr<'_>) -> Cow<'_, [u8]> {
     }
 }
 
-/// ESLint's `getStaticStringValue`: `String(value)` of a literal or of a template literal without
-/// substitutions.
+/// ESLint's `getStaticStringValue`: `String(value)` of a literal or a template literal without substitutions.
 pub fn get_static_string_value(e: Expr<'_>) -> Option<Cow<'_, [u8]>> {
     Some(match e.kind() {
         ExprKind::String(value) => Cow::Borrowed(value.bytes()),
@@ -902,7 +894,7 @@ pub fn get_static_string_value(e: Expr<'_>) -> Option<Cow<'_, [u8]>> {
         ExprKind::False => Cow::Borrowed(b"false"),
         ExprKind::Null => Cow::Borrowed(b"null"),
         ExprKind::Regex(regex) => {
-            // `String(regex)` has the flags in the order of `RegExp.prototype.flags`.
+            // `String(regex)` prints the flags in the order of `RegExp.prototype.flags`.
             let flags = regex.flags();
             match flags.is_sorted() {
                 true => Cow::Borrowed(e.text()),
@@ -921,8 +913,8 @@ pub fn get_static_string_value(e: Expr<'_>) -> Option<Cow<'_, [u8]>> {
     })
 }
 
-/// ESLint's `getStaticPropertyName`, for a [`Key`]. `None` for a private name and for a computed
-/// key that is not a literal.
+/// ESLint's `getStaticPropertyName`, for a [`Key`]. `None` for a private name and for a computed key that isn't a
+/// literal.
 pub fn get_static_key_name(key: Key<'_>) -> Option<Cow<'_, [u8]>> {
     match key.kind() {
         KeyKind::Ident(name)
@@ -935,9 +927,8 @@ pub fn get_static_key_name(key: Key<'_>) -> Option<Cow<'_, [u8]>> {
     }
 }
 
-/// ESLint's `getStaticPropertyName`: the name of the property that a member access (`Expr`)
-/// reads, or that a `Prop`, a `Member` or a `PatProp` defines, if it is known without evaluating
-/// anything. `None` for a private name.
+/// ESLint's `getStaticPropertyName`: the name of the property that a member access (`Expr`) reads, or that a `Prop`, a
+/// `Member` or a `PatProp` defines, if it's known without evaluating anything. `None` for a private name.
 #[inline]
 pub fn get_static_property_name<'a>(node: impl Into<Node<'a>>) -> Option<Cow<'a, [u8]>> {
     static_property_name_of(node.into())
@@ -989,12 +980,12 @@ pub fn is_specific_member_access(
     };
     object_name.is_none_or(|name| object.is_ident(name))
         && property_name.is_none_or(|name| match e.member_name() {
-            Some(written) => written.name().is(name),
+            Some(property) => property.name().is(name),
             None => get_static_property_name(e).is_some_and(|it| *it == *name.as_bytes()),
         })
 }
 
-/// Whether `e` is a member access whose property has one of `names`, whatever the object.
+/// True if `e` is a member access whose property is one of `names`, on any object.
 pub fn is_member_access_of_any(e: Expr<'_>, names: &[&str]) -> bool {
     match e.member_name() {
         Some(name) => name.name().is_any(names),
@@ -1021,9 +1012,8 @@ pub fn equal_literal_value<'a>(left: Expr<'a>, right: Expr<'a>) -> bool {
     }
 }
 
-/// ESLint's `isSameReference`: `a` and `b` are the same variable or the same chain of
-/// member accesses: `a.b.c` and `a["b"]?.c`. With `disable_static_computed_key`, `a.b` and `a["b"]`
-/// are not the same.
+/// ESLint's `isSameReference`: `a` and `b` are the same variable or the same chain of member accesses, like `a.b.c` and
+/// `a["b"]?.c`. With `disable_static_computed_key`, `a.b` and `a["b"]` aren't the same.
 pub fn is_same_reference<'a>(a: Expr<'a>, b: Expr<'a>, disable_static_computed_key: bool) -> bool {
     let (mut left, mut right) = (a, b);
     loop {
@@ -1070,7 +1060,7 @@ pub fn is_same_reference<'a>(a: Expr<'a>, b: Expr<'a>, disable_static_computed_k
     }
 }
 
-/// ESLint's `getBooleanValue`, for a literal: whether it is truthy.
+/// ESLint's `getBooleanValue`, for a literal: whether it's truthy.
 pub fn get_boolean_value(e: Expr<'_>) -> Option<bool> {
     Some(match e.kind() {
         ExprKind::Null | ExprKind::False => false,
@@ -1121,8 +1111,8 @@ pub fn starts_with_upper_case(name: &[u8]) -> bool {
 
 // ───────────────────────────── precedence and parentheses ─────────────────────────────
 
-/// ESLint's `getPrecedence({ type: "BinaryExpression", operator })`, or with `"LogicalExpression"`
-/// or `"SequenceExpression"`: that of an `ExprKind::Binary` with the operator `op`.
+/// ESLint's `getPrecedence({ type: "BinaryExpression", operator })`, or with `"LogicalExpression"` or
+/// `"SequenceExpression"`: the precedence of an `ExprKind::Binary` with the operator `op`.
 pub fn get_binary_operator_precedence(op: BinOp) -> i32 {
     match op {
         BinOp::Comma => 0,
@@ -1140,8 +1130,8 @@ pub fn get_binary_operator_precedence(op: BinOp) -> i32 {
     }
 }
 
-/// ESLint's `getPrecedence`. The root of an optional chain is a `ChainExpression`, 18. It is -1 for
-/// the expressions of TypeScript, which ESLint does not know.
+/// ESLint's `getPrecedence`. The root of an optional chain is a `ChainExpression`, 18. TypeScript's expressions, which
+/// ESLint doesn't know, are -1.
 pub fn get_precedence(e: Expr<'_>) -> i32 {
     match e.kind() {
         ExprKind::Binary { op, .. } => get_binary_operator_precedence(op),
@@ -1170,7 +1160,7 @@ pub fn get_precedence(e: Expr<'_>) -> i32 {
     }
 }
 
-/// The `(` directly before `span` and the `)` directly after it, if both are there.
+/// The `(` directly before `span` and the `)` directly after it, if both exist.
 fn parentheses_around(text: &[u8], span: Span) -> Option<Span> {
     let before = skip_trivia_back(text, span.start).checked_sub(1)?;
     let after = skip_trivia(text, span.end);
@@ -1180,16 +1170,15 @@ fn parentheses_around(text: &[u8], span: Span) -> Option<Span> {
 
 /// ESLint's `isParenthesised`: the token before `node` is a `(` and the token after it a `)`.
 ///
-/// This also holds for the `a` of `f(a)`, `if (a)` and `new (a)`, whose parentheses are not around
-/// the expression but part of the syntax of the parent. [`Expr::is_parenthesized`] is without
-/// those, as is `isParenthesized` of `eslint-utils`.
+/// This is also true for the `a` in `f(a)`, `if (a)` and `new (a)`, whose parentheses aren't around the expression but
+/// part of the parent's syntax. [`Expr::is_parenthesized`] excludes those, like `eslint-utils`' `isParenthesized`.
 pub fn is_parenthesised<'a>(node: impl Into<Node<'a>>) -> bool {
     let node = node.into();
     parentheses_around(node.file().text(), node.span()).is_some()
 }
 
-/// ESLint's `getParenthesisedText`: the text of `node` with every pair of parentheses directly
-/// around it, those of [`is_parenthesised`].
+/// ESLint's `getParenthesisedText`: `node`'s text with every pair of parentheses directly around it, in the sense of
+/// [`is_parenthesised`].
 pub fn get_parenthesised_text<'a>(node: impl Into<Node<'a>>) -> &'a [u8] {
     let node = node.into();
     let (file, mut span) = (node.file(), node.span());
@@ -1201,21 +1190,19 @@ pub fn get_parenthesised_text<'a>(node: impl Into<Node<'a>>) -> &'a [u8] {
 
 // ───────────────────────────── scopes ─────────────────────────────
 
-/// Whether something other than the code of the file defines the global variable `name`, as a
-/// value: [`File::global`].
+/// True if something other than the file's code defines the global variable `name` as a value: [`File::global`].
 #[inline]
 pub fn is_configured_global<'a>(file: &'a File<'a>, name: &[u8]) -> bool {
     file.global(name)
         .is_some_and(|global| global.accepts(false))
 }
 
-/// ESLint's `sourceCode.isGlobalReference`: `e` is an identifier that refers to a global variable
-/// which the file does not declare, but the configuration, a `/* global */` comment or a library of
-/// TypeScript does.
+/// ESLint's `sourceCode.isGlobalReference`: `e` is an identifier that refers to a global variable that the file doesn't
+/// declare, but that the configuration, a `/* global */` comment or a TypeScript library does.
 ///
-/// It goes by the scopes as ESLint has them, not by [`Expr::symbol`]: `namespace Promise {}` hides
-/// the global although it has no value, what another block of a merged namespace exports does not,
-/// and `interface Object {}` in a script is a definition of the global variable itself.
+/// It uses ESLint's scopes, not [`Expr::symbol`]. `namespace Promise {}` hides the global although it has no value, an
+/// export of another block of a merged namespace doesn't, and `interface Object {}` in a script is a definition of the
+/// global variable itself.
 pub fn is_global_reference(e: Expr<'_>) -> bool {
     let (Some(name), file) = (e.as_ident(), e.file()) else {
         return false;
@@ -1225,25 +1212,25 @@ pub fn is_global_reference(e: Expr<'_>) -> bool {
         && file.scope().get_name(name).is_none()
 }
 
-/// ESLint's `isReferenceToGlobalVariable(sourceCode.getScope(node), e)`, for a `node` that `e` is or
-/// is in, with no function or class between them: [`is_global_reference`], but upstream looks for the
-/// reference among those of that scope, where it is not if `e` is in the discriminant of a `switch`,
-/// the object of a `with`, or a decorator of a class or of a parameter.
+/// ESLint's `isReferenceToGlobalVariable(sourceCode.getScope(node), e)`, for a `node` that is or contains `e`, with no
+/// function or class between them. It's [`is_global_reference`], except that upstream searches that scope's references,
+/// which don't include `e` if it's in the discriminant of a `switch`, the object of a `with`, or a decorator of a class
+/// or a parameter.
 pub fn is_reference_to_global_variable(e: Expr<'_>) -> bool {
     is_global_reference(e)
         && e.reference()
             .is_some_and(|it| it.scope() == Node::Expr(e).scope())
 }
 
-/// ESLint's `getVariableByName`. A global variable that the file does not declare is not a
-/// [`Symbol`]: see [`is_configured_global`].
+/// ESLint's `getVariableByName`. A global variable that the file doesn't declare isn't a [`Symbol`]: see
+/// [`is_configured_global`].
 #[inline]
 pub fn get_variable_by_name<'a>(scope: Scope<'a>, name: &str) -> Option<Symbol<'a>> {
     scope.resolve(name)
 }
 
-/// ESLint's `getModifyingReferences`: those of the references to a variable that write to it,
-/// other than the initializer of its declaration.
+/// ESLint's `getModifyingReferences`: the references that write to a variable, other than its declaration's
+/// initializer.
 pub fn get_modifying_references<'a>(
     references: impl IntoIterator<Item = Reference<'a>>,
 ) -> impl Iterator<Item = Reference<'a>> {
@@ -1276,8 +1263,7 @@ pub fn is_array_from_async_method(e: Expr<'_>) -> bool {
     is_specific_member_access(e, Some("Array"), Some("fromAsync"))
 }
 
-/// ESLint's `isMethodWhichHasThisArg`, for a callee: a method of arrays whose second argument is
-/// the `this` of the callback.
+/// ESLint's `isMethodWhichHasThisArg`, for a callee: an array method whose second argument is the callback's `this`.
 pub fn is_method_which_has_this_arg(e: Expr<'_>) -> bool {
     is_member_access_of_any(
         e,
@@ -1312,9 +1298,8 @@ pub fn is_argument_of_global_method_call(
         && member_object(call.callee()).is_some_and(is_global_reference)
 }
 
-/// ESLint's `isPropertyDescriptor`: `e` is given as a property descriptor to
-/// `Object.defineProperty`, `Reflect.defineProperty`, `Object.create` or
-/// `Object.defineProperties`.
+/// ESLint's `isPropertyDescriptor`: `e` is passed as a property descriptor to `Object.defineProperty`,
+/// `Reflect.defineProperty`, `Object.create` or `Object.defineProperties`.
 pub fn is_property_descriptor(e: Expr<'_>) -> bool {
     if is_argument_of_global_method_call(e, "Object", "defineProperty", 2)
         || is_argument_of_global_method_call(e, "Reflect", "defineProperty", 2)
@@ -1335,8 +1320,8 @@ pub fn is_property_descriptor(e: Expr<'_>) -> bool {
             || is_argument_of_global_method_call(object, "Object", "defineProperties", 1))
 }
 
-/// ESLint's `isImportAttributeKey`, for the property whose key it is: a key in the
-/// `with { type: "json" }` of an import or an export, or in the options of `import()`.
+/// ESLint's `isImportAttributeKey`, for the property that has the key: a key in the `with { type: "json" }` of an
+/// import or an export, or in the options of `import()`.
 pub fn is_import_attribute_key(prop: Prop<'_>) -> bool {
     let mut prop = prop;
     loop {
@@ -1400,11 +1385,11 @@ pub fn is_logical_identity(mut e: Expr<'_>, operator: BinOp) -> bool {
     }
 }
 
-/// What [`is_constant_in`] has found out about the links of long chains of binary operators, for a rule that asks about each
-/// link of a chain: `a && b`, `a && b && c`, ..
+/// [`is_constant_in`]'s cache for the links of long chains of binary operators, for a rule that checks each link of a
+/// chain: `a && b`, `a && b && c`, ..
 #[derive(Default)]
 pub struct Constants {
-    /// By the expression and `in_boolean_position`.
+    /// Keyed by the expression and `in_boolean_position`.
     known: FxHashMap<(hir::ExprId, bool), Constant>,
 }
 
@@ -1416,8 +1401,8 @@ struct Constant {
     is_identity_of_or: bool,
 }
 
-/// ESLint's `isConstant`: the value of `e`, or with `in_boolean_position` its truthiness, is the
-/// same each time it is evaluated.
+/// ESLint's `isConstant`: `e`'s value, or with `in_boolean_position` its truthiness, is the same each time it's
+/// evaluated.
 #[inline]
 pub fn is_constant(e: Expr<'_>, in_boolean_position: bool) -> bool {
     !is_variable(e) && may_be_constant(e, in_boolean_position)
@@ -1430,8 +1415,9 @@ fn may_be_constant(e: Expr<'_>, in_boolean_position: bool) -> bool {
     }
 }
 
-/// Whether [`is_constant`] plainly does not hold for `e`, in whatever position: by what it is, if it is no `Binary`. As most
-/// of what is asked about: it has to say no more than [`is_constant_unless_binary`] does.
+/// Fast path: true if [`is_constant`] is obviously false for `e` in any position, judging only by its kind. Never true
+/// for a `Binary`. Most expressions that get checked are like this. It must not return true where
+/// [`is_constant_unless_binary`] would.
 fn is_variable_operand(mut e: Expr<'_>) -> bool {
     while e.unary_op() == Some(UnOp::Not)
         && let Some(operand) = e.operand()
@@ -1446,7 +1432,7 @@ fn is_variable_operand(mut e: Expr<'_>) -> bool {
     }
 }
 
-/// The same, also by an operand of an operator that computes.
+/// The same, but it also looks at the operands of an arithmetic, comparison or bitwise operator.
 fn is_variable_result(e: Expr<'_>) -> bool {
     match e.as_binary() {
         None => is_variable_operand(e),
@@ -1455,7 +1441,7 @@ fn is_variable_result(e: Expr<'_>) -> bool {
     }
 }
 
-/// The same, also by both operands of a logical operator, down the left operands.
+/// The same, but it also looks at both operands of a logical operator, all the way down the left operands.
 fn is_variable(mut e: Expr<'_>) -> bool {
     while let Some((op, left, right)) = e.as_binary() {
         match op {
@@ -1470,7 +1456,7 @@ fn is_variable(mut e: Expr<'_>) -> bool {
     is_variable_operand(e)
 }
 
-/// The same for one who asks about each link of a chain: it does not go down the whole.
+/// The same for a caller that checks each link of a chain, so it doesn't walk down the whole chain.
 fn is_variable_link(e: Expr<'_>) -> bool {
     match e.as_binary() {
         Some((BinOp::And | BinOp::Or | BinOp::Nullish, left, right)) => {
@@ -1480,16 +1466,17 @@ fn is_variable_link(e: Expr<'_>) -> bool {
     }
 }
 
-/// [`is_constant`]. The left operand of a binary operator is not looked at twice, however often it is asked about.
+/// [`is_constant`] with a cache, so that a binary operator's left operand is only evaluated once across all calls.
 #[inline]
 pub fn is_constant_in(e: Expr<'_>, in_boolean_position: bool, constants: &mut Constants) -> bool {
     !is_variable_link(e) && is_constant_chain(e, in_boolean_position, constants)
 }
 
 fn is_constant_chain(e: Expr<'_>, in_boolean_position: bool, constants: &mut Constants) -> bool {
-    /// The links of a shorter chain are not worth remembering.
+    /// The links of a shorter chain aren't worth caching.
     const LONG: usize = 16;
-    // `a + b + c` is `(a + b) + c`, as deep as it is long: down the left operands, and up again.
+    // `a + b + c` is `(a + b) + c`, which is as deep as it's long. So this walks down the left operands and back up
+    // instead of recursing.
     let mut chain: SmallVec<[(Expr<'_>, bool); 8]> = SmallVec::new();
     let (mut at, mut in_boolean) = (e, in_boolean_position);
     let mut found = loop {
@@ -1503,7 +1490,7 @@ fn is_constant_chain(e: Expr<'_>, in_boolean_position: bool, constants: &mut Con
                 at = left;
             }
             _ => {
-                // Only the same operator asks.
+                // Only a parent with the same operator reads this.
                 let above = chain.last().and_then(|it| it.0.binary_op());
                 let is_identity_of =
                     |operator: BinOp| above == Some(operator) && is_logical_identity(at, operator);
@@ -1529,8 +1516,8 @@ fn is_constant_chain(e: Expr<'_>, in_boolean_position: bool, constants: &mut Con
                     _ => false,
                 };
                 let is_right_constant = is_constant(right, in_boolean);
-                let is_identity_of = |operator: BinOp, is_left: bool| {
-                    op == operator && (is_left || is_logical_identity(right, operator))
+                let is_identity_of = |operator: BinOp, left_is_identity: bool| {
+                    op == operator && (left_is_identity || is_logical_identity(right, operator))
                 };
                 Constant {
                     is_constant: left.is_constant && (is_right_constant || is_left_identity)
@@ -1553,8 +1540,8 @@ fn is_constant_chain(e: Expr<'_>, in_boolean_position: bool, constants: &mut Con
 }
 
 fn is_constant_unless_binary(mut e: Expr<'_>, mut in_boolean_position: bool) -> bool {
-    // Not by recursion where the answer is that for one operand: `a = a = ..` and `!!..a` are nested
-    // tens of thousands deep.
+    // Loops instead of recursing where the answer is the same as for one operand, because `a = a = ..` and `!!..a` can
+    // be nested tens of thousands deep.
     loop {
         (e, in_boolean_position) = match e.kind() {
             // A hole in an array.
@@ -1615,9 +1602,10 @@ fn is_constant_unless_binary(mut e: Expr<'_>, mut in_boolean_position: bool) -> 
     }
 }
 
-/// ESLint's `couldBeError`: the value of `e` can be an `Error` object, as far as the syntax tells.
+/// ESLint's `couldBeError`: `e`'s value can be an `Error` object, as far as the syntax tells.
 pub fn could_be_error(e: Expr<'_>) -> bool {
-    // All that it can be the value of. Not by recursion: `a ? a ? .. : b : b` is nested tens of thousands deep.
+    // The expressions whose value `e` can have. A stack instead of recursion, because `a ? a ? .. : b : b` can be
+    // nested tens of thousands deep.
     let mut open: SmallVec<[Expr<'_>; 8]> = SmallVec::new();
     open.push(e);
     while let Some(e) = open.pop() {
@@ -1655,34 +1643,34 @@ pub fn could_be_error(e: Expr<'_>) -> bool {
 
 // ───────────────────────────── functions ─────────────────────────────
 
-/// ESLint's `isES5Constructor`: the name of the function starts with a capital letter.
+/// ESLint's `isES5Constructor`: the function's name starts with a capital letter.
 #[inline]
 pub fn is_es5_constructor(func: Func<'_>) -> bool {
     func.name()
         .is_some_and(|name| starts_with_upper_case(name.bytes()))
 }
 
-/// What ESLint finds as the `parent` of a function.
+/// A function's `parent` in ESLint.
 #[derive(Copy, Clone)]
 enum FunctionParent<'a> {
     /// `MethodDefinition`
     Method(Member<'a>),
-    /// `PropertyDefinition`, whose value the function is.
+    /// `PropertyDefinition` whose value is the function.
     Field(Member<'a>),
     /// `Property` of an object literal.
     Prop(Prop<'a>),
-    /// `Property` of an object pattern, in whose computed key the function is.
+    /// `Property` of an object pattern whose computed key contains the function.
     PatProp(PatProp<'a>),
     /// The function is itself a `TSMethodSignature`.
     Signature(Member<'a>),
-    /// `TSMethodSignature` or `TSPropertySignature`, in whose computed key the function is.
+    /// `TSMethodSignature` or `TSPropertySignature` whose computed key contains the function.
     SignatureKey(Member<'a>),
     Other,
 }
 
 impl<'a> FunctionParent<'a> {
     fn of(func: Func<'a>) -> Self {
-        // The parent of a function type is a `TSTypeAnnotation` or another type.
+        // A function type's parent is a `TSTypeAnnotation` or another type.
         if matches!(func.owner(), Node::Type(_)) {
             return FunctionParent::Other;
         }
@@ -1690,7 +1678,7 @@ impl<'a> FunctionParent<'a> {
             Node::Member(member) if member.flags().contains(Flags::ABSTRACT) => {
                 FunctionParent::Other
             }
-            // The parent of what is in a decorator is the `Decorator`.
+            // The parent of a decorator's expression is the `Decorator`.
             Node::Member(member) if member.decorators().any(|it| it.as_fn() == Some(func)) => {
                 FunctionParent::Other
             }
@@ -1738,7 +1726,7 @@ impl<'a> FunctionParent<'a> {
         }
     }
 
-    /// The `#name` of a class member.
+    /// A class member's `#name`.
     fn private_name(self) -> Option<Name<'a>> {
         match self {
             FunctionParent::Method(member) | FunctionParent::Field(member) => {
@@ -1818,11 +1806,10 @@ pub fn get_function_name_with_kind(func: Func<'_>) -> Vec<u8> {
     out
 }
 
-/// ESLint's `getOpeningParenOfParams`: the `(` of the parameters. For an arrow function with one
-/// parameter and no parentheses, the first token of the parameter.
+/// ESLint's `getOpeningParenOfParams`: the `(` of the parameters, or the parameter's first token for an arrow function
+/// with one parameter and no parentheses.
 ///
-/// As upstream, it is the first `(` after the name, which is a wrong one if the type parameters
-/// have one.
+/// Like upstream, it returns the first `(` after the name, which is the wrong one if the type parameters contain one.
 pub fn get_opening_paren_of_params(func: Func<'_>) -> Option<Span> {
     let (file, text) = (func.file(), func.file().text());
     let mut params = func.params_with_this();
@@ -1853,17 +1840,17 @@ pub fn get_opening_paren_of_params(func: Func<'_>) -> Option<Span> {
         .map(Token::span)
 }
 
-/// Where the first `(` of `func` from `from` on is, which is the end of its name or else its start, if that shows without the
-/// tokens of the file.
+/// The offset of `func`'s first `(` at or after `from`, if it can be found without the file's tokens. `from` is the end
+/// of the function's name, or the function's start if it has none.
 pub(crate) fn first_opening_paren_nearby(func: Func<'_>, from: u32) -> Option<u32> {
     let text = func.file().text();
     let at = match func.open_paren() {
-        // There is no other before it, not even in a comment.
+        // There's no other `(` before it, not even in a comment.
         Some(paren) => {
             let before = text.get(from as usize..paren as usize)?;
             (!strings::contains_char(before, b'(')).then_some(paren)?
         }
-        // Nothing but `async` is before that of an arrow function.
+        // Only `async` can come before an arrow function's `(`.
         None if func.is_arrow() && func.type_params().is_empty() => {
             match func.is_async() && text.get(from as usize..)?.starts_with(b"async") {
                 true => skip_trivia(text, from + "async".len() as u32),
@@ -1875,9 +1862,9 @@ pub(crate) fn first_opening_paren_nearby(func: Func<'_>, from: u32) -> Option<u3
     (text.get(at as usize) == Some(&b'(')).then_some(at)
 }
 
-/// ESLint's `getFunctionHeadLoc`: what to report for a function, so that not all of it is
-/// underlined. The `=>` of an arrow function, otherwise from the start of the function, or of the
-/// method or the property that it is the value of, to the `(` of the parameters.
+/// ESLint's `getFunctionHeadLoc`: the span to report for a function, so that the whole function isn't underlined. It's
+/// the `=>` of an arrow function. Otherwise it runs from the start of the function, or of the method or property whose
+/// value it is, to the `(` of the parameters.
 pub fn get_function_head_loc(func: Func<'_>) -> Span {
     let to_paren = |start: u32| {
         Span::new(
@@ -1938,13 +1925,13 @@ fn find_jsdoc_comment<'a>(file: &'a File<'a>, start: u32) -> Option<Token<'a>> {
         .then_some(before)
 }
 
-/// The braces of the `JSXExpressionContainer` that ESLint has as the parent of `node`.
+/// The braces of the `JSXExpressionContainer` that's `node`'s parent in ESLint.
 fn jsx_container_of(node: Node<'_>) -> Option<Span> {
-    node.as_written().as_expr()?.jsx_container_span()
+    node.owner_or_self().as_expr()?.jsx_container_span()
 }
 
-/// ESLint's `getJSDocComment`, for a function or a class: the `/** .. */` comment that documents
-/// it. `documented_at`: that of a [`ThisBindingMemo`].
+/// ESLint's `getJSDocComment`, for a function or a class: the `/** .. */` comment that documents it. `documented_at` is
+/// a [`ThisBindingMemo`]'s field.
 fn get_jsdoc_comment<'a>(
     node: Node<'a>,
     documented_at: &mut AncestorMemo<'a, Option<u32>>,
@@ -1966,7 +1953,7 @@ fn get_jsdoc_comment<'a>(
                 estree_parent(node).as_expr().map(Expr::kind),
                 Some(ExprKind::Call(_) | ExprKind::New(_))
             );
-            let of_ancestor = |child: Node<'a>, parent: Node<'a>| {
+            let decide_at_ancestor = |child: Node<'a>, parent: Node<'a>| {
                 if let Some(braces) = jsx_container_of(child)
                     && file.comments_before(braces).next().is_some()
                 {
@@ -1986,7 +1973,7 @@ fn get_jsdoc_comment<'a>(
                     {
                         Some(Some(member.span().start))
                     }
-                    // A `SpreadElement` and a `JSXAttribute` are no `Property`.
+                    // A `SpreadElement` or a `JSXAttribute` isn't a `Property`.
                     Node::Prop(prop)
                         if prop.kind() != PropKind::Spread && !prop.is_jsx_attribute() =>
                     {
@@ -2002,7 +1989,7 @@ fn get_jsdoc_comment<'a>(
             let start = match is_argument {
                 true => None,
                 false => documented_at
-                    .find_with(node, estree_parent, of_ancestor)
+                    .find_with(node, estree_parent, decide_at_ancestor)
                     .flatten(),
             };
             find_jsdoc_comment(file, start.unwrap_or_else(|| estree_span(node).start))
@@ -2011,7 +1998,7 @@ fn get_jsdoc_comment<'a>(
     }
 }
 
-/// ESLint's `getJSDocComment`, for a function. `documented_at`: one for all functions of a file.
+/// ESLint's `getJSDocComment`, for a function. Pass the same `documented_at` for all of a file's functions.
 pub fn get_jsdoc_comment_of_function<'a>(
     func: Func<'a>,
     documented_at: &mut AncestorMemo<'a, Option<u32>>,
@@ -2019,8 +2006,7 @@ pub fn get_jsdoc_comment_of_function<'a>(
     get_jsdoc_comment(Node::Func(func), documented_at)
 }
 
-/// ESLint's `hasJSDocThisTag`: the JSDoc comment of the function, or a comment directly before it,
-/// has `@this`.
+/// ESLint's `hasJSDocThisTag`: the function's JSDoc comment, or a comment directly before the function, has `@this`.
 fn has_jsdoc_this_tag<'a>(
     func: Func<'a>,
     documented_at: &mut AncestorMemo<'a, Option<u32>>,
@@ -2032,19 +2018,19 @@ fn has_jsdoc_this_tag<'a>(
             .any(|comment| has_this_tag(comment.comment_value()))
 }
 
-/// What [`is_default_this_binding`] passes on its ways up from a function. The functions that are operands of one chain of
-/// operators, or are returned in one chain of `else if`, all go up that chain.
+/// Caches for the walks up from a function in [`is_default_this_binding`]. Functions that are operands in the same
+/// chain of operators, or are returned in the same chain of `else if`, all walk up that chain.
 #[derive(Default)]
 pub struct ThisBindingMemo<'a> {
-    /// Where the JSDoc comment of a function expression is looked for, if that is before something around it.
+    /// The offset before which a function expression's JSDoc comment is searched, if that's the start of an ancestor.
     documented_at: AncestorMemo<'a, Option<u32>>,
-    /// The outermost of the `||`, `&&`, `??` and `?:` that an expression is an operand of, or the expression itself.
+    /// The outermost `||`, `&&`, `??` or `?:` that an expression is an operand of, or the expression itself.
     outermost_operand: AncestorMemo<'a, Expr<'a>>,
     /// [`get_upper_function`]
     upper_function: AncestorMemo<'a, Func<'a>>,
 }
 
-/// [`is_default_this_binding`] for a rule that asks about many functions of a file, with one `memo` for all of them.
+/// [`is_default_this_binding`] for a rule that checks many of a file's functions, with one `memo` for all of them.
 pub fn is_default_this_binding_with<'a>(
     func: Func<'a>,
     cap_is_constructor: bool,
@@ -2127,7 +2113,7 @@ pub fn is_default_this_binding_with<'a>(
                 }
                 ExprKind::Call(call) => {
                     let (callee, args) = (call.callee(), call.args());
-                    // How many arguments, where the function is, where its `this` is.
+                    // The number of arguments, the function's index and the index of its `this`.
                     let (count, callback, this_arg) = if is_reflect_apply(callee) {
                         (3, 0, 1)
                     } else if is_array_from_method(callee) || is_array_from_async_method(callee) {
@@ -2158,7 +2144,7 @@ pub fn is_default_this_binding_with<'a>(
                     None => return true,
                 }
             }
-            // A `SpreadElement` and a `JSXAttribute` are no `Property`.
+            // A `SpreadElement` or a `JSXAttribute` isn't a `Property`.
             Node::Prop(prop) => {
                 return prop.is_jsx_attribute()
                     || prop.kind() == PropKind::Spread
@@ -2187,8 +2173,7 @@ pub fn is_default_this_binding_with<'a>(
 
 // ───────────────────────────── positions ─────────────────────────────
 
-/// Whether `node` is in the type of a type annotation, an `as` or `satisfies` expression or a type
-/// alias.
+/// True if `node` is in the type of a type annotation, an `as` or `satisfies` expression or a type alias.
 fn is_in_type(node: Node<'_>) -> bool {
     let mut child = node;
     for parent in node.ancestors() {
@@ -2210,20 +2195,41 @@ fn is_in_type(node: Node<'_>) -> bool {
     false
 }
 
-/// ESLint's `needsPrecedingSemicolon`: whether a `;` is needed before `node`, the start of an
-/// expression statement, if it is replaced by something that starts with `(`, `[`, `` ` ``, `/`, `+`
-/// or `-`, which could continue what precedes it.
+/// ESLint's `needsPrecedingSemicolon`: true if a `;` is needed before `node`, which starts an expression statement,
+/// once it's replaced with something that starts with `(`, `[`, `` ` ``, `/`, `+` or `-` and could continue the
+/// preceding code.
 pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
     let node = node.into();
     let file = node.file();
-    let Some(previous) = file.tokens_before(node).next() else {
-        return false;
+    let previous = file.tokens_before(node).next();
+    previous.is_some_and(|it| needs_semicolon_after(file, it, false))
+}
+
+/// True if `next` would continue the statement that ends at `previous` once only whitespace and comments separate them,
+/// like `a()` and `[b].map(c)`. `next` starts a statement on a later line than `previous`.
+pub fn continues_statement<'a>(file: &'a File<'a>, previous: Token<'a>, next: Token<'a>) -> bool {
+    let is_operator = match next.text().first() {
+        Some(b'(' | b'[' | b'`') => false,
+        Some(b'/' | b'+' | b'-' | b'<') => true,
+        _ => return false,
     };
+    !next.is("++") && !next.is("--") && needs_semicolon_after(file, previous, is_operator)
+}
+
+/// [`needs_preceding_semicolon`] for the token after `previous`. ESLint has no `is_before_operator`. A `(` on the next
+/// line doesn't continue `a++` or `a as T`, but a `+`, `-`, `/` or `<` does.
+fn needs_semicolon_after<'a>(
+    file: &'a File<'a>,
+    previous: Token<'a>,
+    is_before_operator: bool,
+) -> bool {
     let kind = previous.kind();
-    if kind == TokenKind::Punctuator
-        && matches!(previous.text(), b":" | b";" | b"{" | b"=>" | b"++" | b"--")
-    {
-        return false;
+    if kind == TokenKind::Punctuator {
+        match previous.text() {
+            b":" | b";" | b"{" | b"=>" => return false,
+            b"++" | b"--" => return is_before_operator,
+            _ => {}
+        }
     }
     let at = get_node_by_range_index(file, previous.start());
 
@@ -2248,7 +2254,7 @@ pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
         _ => false,
     };
     if is_type_syntax || is_in_type(at) {
-        return false;
+        return is_before_operator;
     }
     if is_closing_paren_token(&previous) {
         return !matches!(

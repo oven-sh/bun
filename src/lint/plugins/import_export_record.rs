@@ -1,5 +1,6 @@
-//! What `ExportMapBuilder.parse` of eslint-plugin-import 2.32.0 reads out of one file, without what it asks the context: the
-//! resolver, `esModuleInterop` and `import/docstyle` are applied by who asks. And `unambiguous` of eslint-module-utils.
+//! The data that `ExportMapBuilder.parse` in eslint-plugin-import 2.32.0 extracts from one file, without anything that
+//! depends on the context. The caller applies the resolver, `esModuleInterop` and `import/docstyle`. Also has
+//! `unambiguous` from eslint-module-utils.
 
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -11,15 +12,15 @@ use std::sync::Arc;
 #[derive(Default)]
 pub(crate) struct ExportRecord {
     pub(crate) path: Box<[u8]>,
-    /// With one, all that follows is empty.
+    /// If there's an error, all the fields below are empty.
     pub(crate) errors: Vec<ParseError>,
-    /// `parse` returns `null`: it is neither unambiguously a module nor has it an `import()`.
+    /// True if `parse` returns `null` because the file is neither unambiguously a module nor has an `import()`.
     pub(crate) is_null: bool,
     /// `parseGoal === 'Module'`
     pub(crate) is_module: bool,
-    /// Of the first block comment with `@module`.
+    /// From the first block comment with `@module`.
     pub(crate) doc: Option<Doc>,
-    /// Every `namespace.set`, in order: a later one of the same name replaces the value, not the place.
+    /// Every `namespace.set`, in order. A later one with the same name replaces the value but keeps the position.
     pub(crate) namespace: Vec<Entry>,
     /// Every `reexports.set`, in order.
     pub(crate) reexports: Vec<Reexport>,
@@ -29,16 +30,16 @@ pub(crate) struct ExportRecord {
     pub(crate) imports: Vec<Dependency>,
 }
 
-/// What the parser throws: `message`, `lineNumber`, `column`.
+/// The error the parser throws: `message`, `lineNumber`, `column`.
 pub(crate) struct ParseError {
     pub(crate) message: Box<[u8]>,
-    /// 0: it has no place.
+    /// 0 if the error has no position.
     pub(crate) line: u32,
     pub(crate) column: u32,
 }
 
 pub(crate) struct Entry {
-    /// `None`: `undefined`, the `name` of a node that has none.
+    /// `None` is `undefined`, which is the `name` of a node that has none.
     pub(crate) name: Option<Box<[u8]>>,
     pub(crate) doc: Docs,
     /// The specifier of the `import * as` that `namespace` resolves.
@@ -46,7 +47,7 @@ pub(crate) struct Entry {
     pub(crate) when: When,
 }
 
-/// What `isEsModuleInteropTrue` has to do with a `namespace.set`.
+/// How a `namespace.set` depends on `isEsModuleInteropTrue`.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum When {
     Always,
@@ -55,7 +56,7 @@ pub(crate) enum When {
     WithInteropIfAbsent,
 }
 
-/// `doc`, for each of `import/docstyle`.
+/// `doc`, for each `import/docstyle` value.
 #[derive(Clone, Default)]
 pub(crate) struct Docs {
     pub(crate) jsdoc: Option<Doc>,
@@ -64,12 +65,12 @@ pub(crate) struct Docs {
 
 #[derive(Clone)]
 pub(crate) struct Doc {
-    /// The first tag whose title is `deprecated`: its description.
+    /// The description of the first tag whose title is `deprecated`.
     pub(crate) deprecated: Option<Option<Arc<[u8]>>>,
 }
 
 pub(crate) struct Reexport {
-    /// `None`, here and in `local`: `undefined`, the `name` of a string.
+    /// `None` is `undefined`, here and in `local`. That's the `name` of a string literal.
     pub(crate) name: Option<Box<[u8]>>,
     pub(crate) local: Option<Box<[u8]>>,
     pub(crate) source: Box<[u8]>,
@@ -79,9 +80,9 @@ pub(crate) struct Reexport {
 pub(crate) struct Dependency {
     /// `source.value`
     pub(crate) specifier: Box<[u8]>,
-    /// It replaces what `imports` has for the path.
+    /// If true, it replaces the declarations `imports` already has for the path.
     pub(crate) is_dynamic: bool,
-    /// Each once.
+    /// Without duplicates.
     pub(crate) imported_specifiers: Vec<ImportedSpecifier>,
 }
 
@@ -95,8 +96,9 @@ pub(crate) enum ImportedSpecifier {
 
 const DEFAULT: &[u8] = b"default";
 
-/// How much `typeScriptExport` does again for names that it has exported before. Without a limit: the square of the file.
-const SAID_AGAIN: usize = 1024;
+/// A budget for the work `typeScriptExport` repeats for names it has already exported. Without a limit, that work is
+/// quadratic in the size of the file.
+const REPEATED_WORK_LIMIT: usize = 1024;
 
 /// `unambiguous.test`: `/(^|[;})])\s*(export|import)((\s+\w)|(\s*[{*=]))|import\(/m`
 pub(crate) fn may_be_module(text: &[u8]) -> bool {
@@ -127,7 +129,7 @@ pub(crate) fn may_be_module(text: &[u8]) -> bool {
     false
 }
 
-/// `/(^|[;})])\s*$/m` matches `before`.
+/// True if `/(^|[;})])\s*$/m` matches `before`.
 fn starts_statement(mut before: &[u8]) -> bool {
     loop {
         if before.is_empty() || strings::js_line_break_len_back(before) > 0 {
@@ -154,9 +156,10 @@ pub(crate) fn is_module<'a>(file: &'a File<'a>) -> bool {
     })
 }
 
-/// What has a default, and what follows `...`, goes to the callback as it is, which can be a pattern.
+/// An element with a default, or after `...`, is passed to the callback as is, even if it's a pattern.
 pub(crate) fn recursive_pattern_capture<'a>(pattern: Pat<'a>, callback: &mut dyn FnMut(Pat<'a>)) {
-    // The next is the last, with whether it is looked into. Not by recursion, which a pattern can be too deep for.
+    // A stack with the next pattern on top, each with a flag for whether to descend into it. Iterative, because a
+    // pattern can be nested too deeply for recursion.
     let mut pending: SmallVec<[(Pat<'a>, bool); 8]> = smallvec![(pattern, true)];
     while let Some((pat, is_entered)) = pending.pop() {
         match pat.kind() {
@@ -176,7 +179,8 @@ pub(crate) fn recursive_pattern_capture<'a>(pattern: Pat<'a>, callback: &mut dyn
     }
 }
 
-/// What `captureDoc` makes of the node that starts at `node`. `None`: no comments are before it, and it goes on to the next.
+/// `captureDoc` for the node that starts at `node`. `None` if there are no comments before it, in which case
+/// `captureDoc` tries its next argument.
 fn capture_doc<'a>(file: &'a File<'a>, node: u32) -> Option<Docs> {
     let comments: SmallVec<[Token<'a>; 4]> = file.comments_before(Span::empty(node)).collect();
     (!comments.is_empty()).then(|| Docs {
@@ -185,16 +189,16 @@ fn capture_doc<'a>(file: &'a File<'a>, node: u32) -> Option<Docs> {
     })
 }
 
-/// What is read of the tags of a comment.
+/// The parts of a comment's tags that are used.
 struct Tags {
-    /// The first whose title is `deprecated`: its description.
+    /// The description of the first tag whose title is `deprecated`.
     deprecated: Option<Option<Arc<[u8]>>>,
-    /// The title of one is `module`.
+    /// True if any tag's title is `module`.
     has_module: bool,
 }
 
-/// `doctrine.parse(comment.value, { unwrap: true })`, as far as it is asked. doctrine ends at the first tag that it
-/// cannot parse, and reads a comment that starts with one `*` too. Not so here.
+/// The parts of `doctrine.parse(comment.value, { unwrap: true })` that are used. Unlike this port, doctrine stops at
+/// the first tag it can't parse, and also reads a comment that starts with a single `*`.
 fn tags_of<'a>(file: &'a File<'a>, comment: Token<'a>) -> Tags {
     let mut tags = Tags {
         deprecated: None,
@@ -215,7 +219,7 @@ fn tags_of<'a>(file: &'a File<'a>, comment: Token<'a>) -> Tags {
     tags
 }
 
-/// The last counts.
+/// The last block comment wins.
 fn capture_js_doc<'a>(file: &'a File<'a>, comments: &[Token<'a>]) -> Option<Doc> {
     let mut blocks = comments.iter().rev();
     let last = blocks.find(|it| it.kind() == TokenKind::Block)?;
@@ -246,12 +250,13 @@ fn capture_tom_doc(comments: &[Token]) -> Option<Doc> {
     })
 }
 
-/// `range[0]` of the node of `body` that `stmt` is: of the `ExportNamedDeclaration` around a declaration.
+/// `range[0]` of the `body` node that corresponds to `stmt`. For an exported declaration, that's the
+/// `ExportNamedDeclaration` around it.
 fn start_of(stmt: Stmt) -> u32 {
     stmt.export_span().unwrap_or_else(|| stmt.span()).start
 }
 
-/// `id.name` of a declaration. `None`: it is a kind that has no `id`. `Some(None)`: the `id` is no `Identifier`.
+/// `id.name` of a declaration. `None` for a kind that has no `id`, `Some(None)` if the `id` isn't an `Identifier`.
 fn id_name<'a>(declaration: Stmt<'a>) -> Option<Option<Name<'a>>> {
     let id = match declaration.kind() {
         StmtKind::Fn(it) => it.name(),
@@ -275,19 +280,19 @@ struct Visitor<'a> {
     export_map: ExportRecord,
     /// `Namespace.namespaces`
     namespaces: FxHashMap<Name<'a>, &'a [u8]>,
-    /// The entries whose `namespace` looks a name up in `namespaces`, when it is asked.
+    /// The entries whose `namespace` getter lazily looks a name up in `namespaces`.
     getters: Vec<(usize, Name<'a>)>,
-    /// The statements of the file that `typeScriptExport` takes for declarations of a name.
+    /// For each name, the file's statements that `typeScriptExport` treats as its declarations.
     declarations: Option<FxHashMap<Name<'a>, SmallVec<[Stmt<'a>; 1]>>>,
-    /// What `typeScriptExport` has exported the declarations of, and how much that was.
+    /// The names whose declarations `typeScriptExport` has exported, each with how much work that was.
     exported: FxHashMap<(Name<'a>, When), usize>,
-    said_again: usize,
+    repeated_work: usize,
     /// The names of one `importedSpecifiers`.
     imported: FxHashSet<Name<'a>>,
 }
 
 impl<'a> Visitor<'a> {
-    /// `exportMap.namespace.set`. Where the entry is.
+    /// `exportMap.namespace.set`. Returns the entry's index.
     fn set(&mut self, name: Option<&[u8]>, doc: Docs, when: When) -> usize {
         self.export_map.namespace.push(Entry {
             name: name.map(Box::from),
@@ -305,7 +310,7 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    /// `source`: `None` if `stmt` has no `from`.
+    /// `source` is `None` if `stmt` has no `from`.
     fn capture_dependency(
         &mut self,
         stmt: Stmt<'a>,
@@ -322,7 +327,8 @@ impl<'a> Visitor<'a> {
         });
     }
 
-    /// `captureDependencyWithSpecifiers`, of an `ImportDeclaration`. An `ExportSpecifier` has nothing that it looks at.
+    /// `captureDependencyWithSpecifiers` for an `ImportDeclaration`. It ignores every `ExportSpecifier`, so exports
+    /// don't need it.
     fn capture_dependency_with_specifiers(&mut self, stmt: Stmt<'a>, n: Import<'a>) {
         let named = n.named();
         let whole = [
@@ -340,7 +346,7 @@ impl<'a> Visitor<'a> {
         self.capture_dependency(stmt, Some(n.spec().bytes()), imported_specifiers);
     }
 
-    /// `processSpecifier`, of an `ExportSpecifier`.
+    /// `processSpecifier` for an `ExportSpecifier`.
     fn process_specifier(&mut self, specifier: ExportSpec<'a>, nsource: Option<&'a [u8]>) {
         let name_of = |it: Ident<'a>| (!it.is_string()).then(|| it.name());
         let (local, exported) = (name_of(specifier.local()), specifier.exported());
@@ -358,7 +364,7 @@ impl<'a> Visitor<'a> {
         });
     }
 
-    /// The names of a `VariableDeclaration`, each with the docs of its declarator.
+    /// Sets the names of a `VariableDeclaration`, each with its declarator's docs.
     fn set_variables(
         &mut self,
         declarations: List<'a, VarDecl<'a>>,
@@ -423,9 +429,9 @@ impl<'a> Visitor<'a> {
                 self.set(Some(DEFAULT), doc, When::Always);
             }
             StmtKind::Var(declarations) if ast_node.is_exported() => {
-                let of_ast_node = capture_doc(file, start);
+                let statement_doc = capture_doc(file, start);
                 self.set_variables(declarations, When::Always, &|d| {
-                    capture_doc(file, d.span().start).or_else(|| of_ast_node.clone())
+                    capture_doc(file, d.span().start).or_else(|| statement_doc.clone())
                 });
             }
             _ if ast_node.is_exported() => {
@@ -445,9 +451,9 @@ impl<'a> Visitor<'a> {
                 FxHashMap::default();
             for stmt in file.body().iter().filter(|it| !it.is_exported()) {
                 let declare = |name: Name<'a>| {
-                    let of_name = declarations.entry(name).or_default();
-                    if of_name.last() != Some(&stmt) {
-                        of_name.push(stmt);
+                    let name_declarations = declarations.entry(name).or_default();
+                    if name_declarations.last() != Some(&stmt) {
+                        name_declarations.push(stmt);
                     }
                 };
                 match stmt.kind() {
@@ -476,8 +482,8 @@ impl<'a> Visitor<'a> {
     ) {
         let file = self.file;
         if let Some(&cost) = exported_name.and_then(|it| self.exported.get(&(it, when))) {
-            self.said_again = self.said_again.saturating_add(cost);
-            if self.said_again > SAID_AGAIN {
+            self.repeated_work = self.repeated_work.saturating_add(cost);
+            if self.repeated_work > REPEATED_WORK_LIMIT {
                 return;
             }
         }
@@ -492,10 +498,10 @@ impl<'a> Visitor<'a> {
         let (before, count) = (self.export_map.namespace.len(), exported_decls.len());
         self.set(Some(DEFAULT), Docs::default(), When::WithInteropIfAbsent);
         for decl in exported_decls {
-            let of_decl = capture_doc(file, decl.span().start);
+            let decl_doc = capture_doc(file, decl.span().start);
             let StmtKind::Module(module) = decl.kind() else {
                 // "Export as default"
-                self.set(Some(DEFAULT), of_decl.unwrap_or_default(), when);
+                self.set(Some(DEFAULT), decl_doc.unwrap_or_default(), when);
                 continue;
             };
             for module_block_node in module.body() {
@@ -504,14 +510,14 @@ impl<'a> Visitor<'a> {
                 let name = match module_block_node.kind() {
                     StmtKind::Var(declarations) => {
                         let namespace_decl = module_block_node.span_without_export().start;
-                        let doc = (of_decl.clone())
+                        let doc = (decl_doc.clone())
                             .or_else(|| capture_doc(file, namespace_decl))
                             .or_else(|| capture_doc(file, start));
                         self.set_variables(declarations, when, &|_| doc.clone());
                         continue;
                     }
                     StmtKind::ImportEquals(it) => Some(it.name().name()),
-                    // Where there is no `id` upstream throws.
+                    // Upstream throws if there's no `id`.
                     _ => match id_name(module_block_node) {
                         Some(name) => name,
                         None => continue,
@@ -526,7 +532,7 @@ impl<'a> Visitor<'a> {
     }
 }
 
-/// `processDynamicImport`, of every `ImportExpression`. Whether there is one.
+/// `processDynamicImport` for every `ImportExpression`. Returns true if there's at least one.
 fn process_dynamic_imports<'a>(file: &'a File<'a>, imports: &mut Vec<Dependency>) -> bool {
     let mut has_dynamic_imports = false;
     let mut sources: SmallVec<[(u32, Name<'a>); 4]> = SmallVec::new();
@@ -583,13 +589,14 @@ pub(crate) fn read<'a>(file: &'a File<'a>) -> ExportRecord {
         getters: Vec::new(),
         declarations: None,
         exported: FxHashMap::default(),
-        said_again: 0,
+        repeated_work: 0,
         imported: FxHashSet::default(),
     };
     for ast_node in file.body() {
         visitor.visit(ast_node);
     }
-    // With `esModuleInterop` the first entry is always set: `namespace.size > 0`.
+    // Upstream checks `namespace.size > 0`. With `esModuleInterop` the first recorded `set` always executes, so a
+    // non-empty list means the same.
     if !visitor.export_map.namespace.is_empty() {
         visitor.set(Some(DEFAULT), Docs::default(), When::WithInteropIfAbsent);
     }

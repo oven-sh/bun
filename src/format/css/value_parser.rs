@@ -1,8 +1,8 @@
-//! `postcss-values-parser` 2.0.1 in loose mode (`lib/tokenize.js`, `lib/parser.js`), and what
-//! Prettier makes of its result (`parse/parse-value.js`).
+//! `postcss-values-parser` 2.0.1 in loose mode (`lib/tokenize.js`, `lib/parser.js`), and Prettier's postprocessing of
+//! its result (`parse/parse-value.js`).
 //!
-//! The positions that the parser gives its nodes are wrong in several ways. They are kept that way,
-//! since Prettier goes by them.
+//! The positions that the parser assigns to its nodes are wrong in several ways. They're reproduced as they are,
+//! because Prettier relies on them.
 
 use super::Parser as Syntax;
 use super::selector_parser::{SelectorId, Selectors};
@@ -30,7 +30,7 @@ enum TokenKind {
 #[derive(Debug, Copy, Clone)]
 struct Token {
     kind: TokenKind,
-    /// `token[6]`, and where the text ends.
+    /// `token[6]`, and the end of the token's text.
     pos: u32,
     end: u32,
     /// `token[2]` to `token[5]`
@@ -43,8 +43,8 @@ struct Token {
 #[derive(Debug)]
 pub(crate) struct ParseError;
 
-/// The index of the first character from `from` on that ends a word. A `/` does if `slash` says so,
-/// given what follows it.
+/// Returns the index of the first character at or after `from` that ends a word. A `/` only ends it if `slash`, called
+/// with the character after it, returns true.
 fn word_end(
     css: &[u8],
     from: usize,
@@ -65,7 +65,7 @@ static WORD_END: ByteSet = ByteSet::new(b" \n\t\r(){}*:;@!&'\"+|~>,[]\\/");
 static WORD_END_NUM: ByteSet = ByteSet::new(b" \n\t\r(){}*:;@!&'\"-+|~>,[]\\/");
 static AT_END: ByteSet = ByteSet::new(b" \n\t\r{()'\"\\;,/");
 
-/// `unclosed`: the indices of the `(` that have no `)`.
+/// `unclosed` receives the token indexes of every `(` that has no `)`.
 fn tokenize(
     css: &[u8],
     tokens: &mut Vec<Token>,
@@ -74,7 +74,7 @@ fn tokenize(
     tokens.clear();
     unclosed.clear();
     let length = css.len();
-    // The position of the last line break, which is -1 at first: all columns are one more.
+    // The offset of the last line break. It starts at -1, which makes all columns 1-based.
     let mut offset: i64 = -1;
     let mut line: u32 = 1;
     let mut pos = 0usize;
@@ -89,7 +89,7 @@ fn tokenize(
         }
         let column = |at: usize, offset: i64| (at as i64 - offset) as u32;
         let (start_line, start_column) = (line, column(pos, offset));
-        // Where the text of the token ends, and what `next` is for its last column.
+        // The end of the token's text, and the value of `next` that its end column is computed from.
         let (kind, end, next): (TokenKind, usize, usize);
         match code {
             b'\n' | b' ' | b'\t' | b'\r' | 0x0C => {
@@ -221,10 +221,10 @@ fn tokenize(
     Ok(())
 }
 
-/// `source` and `sourceIndex`, and what Prettier's `calculateLoc` makes of them.
+/// `source` and `sourceIndex`, plus the offsets that Prettier's `calculateLoc` derives from them.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Loc {
-    /// `NONE`: there is none. The same for the others.
+    /// `NONE` if it's missing. The same goes for the other fields.
     source_index: u32,
     start_line: u32,
     start_offset: u32,
@@ -263,20 +263,20 @@ impl Loc {
     }
 }
 
-/// What the parser says of where a node is.
+/// A node's position as reported by the parser.
 #[derive(Copy, Clone)]
 struct Source {
     index: u32,
     start_line: u32,
-    /// The line and the column.
+    /// Line and column.
     end: (u32, u32),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum ValueKind {
-    /// It has a `group`.
+    /// Has a `group`.
     Root,
-    /// It has a `group`.
+    /// Has a `group`.
     Value,
     Word,
     Number,
@@ -285,16 +285,16 @@ pub(crate) enum ValueKind {
     Colon,
     Comma,
     Comment,
-    /// It has a `group`.
+    /// Has a `group`.
     Func,
     Paren,
     AtWord,
     UnicodeRange,
     ParenGroup,
     CommaGroup,
-    /// A string in the `groups` of the parentheses of `url()`.
+    /// A string in the `groups` of `url()`'s parentheses.
     Text,
-    /// What is in the parentheses of `selector()`.
+    /// The contents of the parentheses of `selector()`.
     Selector,
     /// `value-unknown`
     Unknown,
@@ -312,7 +312,7 @@ pub(crate) enum Before {
 /// A range of `Values::text`.
 pub(crate) type Span = (u32, u32);
 
-/// An index into `Values::nodes`. 0: there is none.
+/// An index into `Values::nodes`. 0 means none.
 pub(crate) type ValueId = u32;
 
 #[derive(Debug, Copy, Clone)]
@@ -320,31 +320,31 @@ pub(crate) struct ValueNode {
     pub(crate) kind: ValueKind,
     /// The first byte of `value`, or 0.
     pub(crate) first_byte: u8,
-    /// `value`, if it is a string.
+    /// `value`, if it's a string.
     value: Span,
-    /// Of a number.
+    /// Number only.
     pub(crate) unit: Span,
-    /// Of a word.
+    /// Word only.
     pub(crate) is_hex: bool,
     pub(crate) is_color: bool,
-    /// Of a comment.
+    /// Comment only.
     pub(crate) inline: bool,
     pub(crate) before: Before,
     pub(crate) group: ValueId,
-    /// Of a `value-paren_group`.
+    /// `value-paren_group` only.
     pub(crate) open: ValueId,
     pub(crate) close: ValueId,
     /// `groups`: a range of `Values::lists`.
     groups: (u32, u32),
     pub(crate) selector: SelectorId,
     pub(crate) loc: Loc,
-    /// Whether there is a `source.end`.
+    /// True if it has a `source.end`.
     has_end: bool,
-    /// For the parser: the nodes of a container, what follows in the container that it is in, and `unbalanced`.
+    /// Parser state: a container's children, the next sibling in its own container, and `unbalanced`.
     first_child: ValueId,
     last_child: ValueId,
     next_sibling: ValueId,
-    /// `NO_BALANCE`: it has no such property.
+    /// `NO_BALANCE` if the node has no such property.
     unbalanced: i32,
 }
 
@@ -375,12 +375,12 @@ impl ValueNode {
         }
     }
 
-    /// Whether it has a `source`, after `calculateLoc`.
+    /// True if it has a `source` after `calculateLoc`.
     pub(crate) fn has_source(&self) -> bool {
         self.loc.start_offset != NONE || self.has_end
     }
 
-    /// A group with nothing in it, which nothing says where it is.
+    /// True for an empty group without a position.
     fn is_empty_group(&self) -> bool {
         matches!(self.kind, ValueKind::ParenGroup | ValueKind::CommaGroup)
             && self.groups.0 == self.groups.1
@@ -397,7 +397,7 @@ impl ValueNode {
     }
 }
 
-/// A node of `values`.
+/// A node in `values`.
 #[derive(Copy, Clone)]
 pub(crate) struct ValueRef<'v> {
     pub(crate) values: &'v Values,
@@ -413,31 +413,47 @@ impl<'v> ValueRef<'v> {
         self.node().kind
     }
 
-    /// `node.value`, if it is a string.
+    /// `node.value`, if it's a string.
     pub(crate) fn value(self) -> Option<&'v [u8]> {
         self.values.value(self.id)
     }
 
-    /// Another node of the same values.
-    /// How many blanks follow its `value` in the text.
-    pub(crate) fn blanks_behind(self) -> usize {
-        let rest = self.values.text.get(self.node().value.1 as usize..);
+    /// Returns a number with its unit as written in the source, or `None` if either was changed after parsing.
+    pub(crate) fn number_source_text(self) -> Option<&'v [u8]> {
+        let (number, unit) = (self.node().value, self.node().unit);
+        (number.1 == unit.0).then(|| self.values.text((number.0, unit.1)))
+    }
+
+    /// True if the `@` of `at_word` immediately follows this number in the source. A signed number's `loc` can't be
+    /// used to check this.
+    pub(crate) fn is_number_right_before(self, at_word: ValueRef<'v>) -> bool {
+        self.kind() == ValueKind::Number && self.node().unit.1 + 1 == at_word.node().value.0
+    }
+
+    /// Returns the number of whitespace bytes after its `value` in the source, or after its unit if it's a number.
+    pub(crate) fn whitespace_after(self) -> usize {
+        let end = match self.kind() {
+            ValueKind::Number => self.node().unit.1,
+            _ => self.node().value.1,
+        };
+        let rest = self.values.text.get(end as usize..);
         (rest.unwrap_or_default().iter())
             .take_while(|byte| byte.is_ascii_whitespace())
             .count()
     }
 
-    /// Whether something that is no blank follows its `value` in the text.
-    pub(crate) fn is_before_more(self) -> bool {
+    /// True if anything other than whitespace follows its `value` in the text.
+    pub(crate) fn has_more_after(self) -> bool {
         let rest = self.values.text.get(self.node().value.1 as usize..);
         !rest.unwrap_or_default().trim_ascii_start().is_empty()
     }
 
+    /// Returns a reference to another node in the same `Values`.
     pub(crate) fn at(self, id: ValueId) -> ValueRef<'v> {
         ValueRef { id, ..self }
     }
 
-    /// `node.groups`, or nothing if it has none.
+    /// `node.groups`, or nothing if the node has none.
     pub(crate) fn groups(
         self,
     ) -> impl DoubleEndedIterator<Item = ValueRef<'v>> + ExactSizeIterator + Clone {
@@ -456,33 +472,33 @@ impl<'v> ValueRef<'v> {
     }
 }
 
-/// The parentheses that are open while the nodes of a container are grouped.
+/// A parenthesis that's open while a container's nodes are being grouped.
 #[derive(Copy, Clone)]
 struct OpenParen {
     open: ValueId,
-    /// Where its groups start in `Values::groups`, and the nodes of its last group in `Values::group`.
+    /// The start of its groups in `Values::groups`, and the start of its last group's nodes in `Values::group`.
     groups_start: usize,
     group_start: usize,
 }
 
-/// The values that have been parsed, and what it takes to parse the next one.
+/// The parsed values, plus buffers that are reused to parse the next one.
 #[derive(Default)]
 pub(crate) struct Values {
-    /// The texts of the values, and the strings that are not a part of them.
+    /// The texts of the values, plus strings that aren't substrings of them.
     text: Vec<u8>,
     nodes: Vec<ValueNode>,
     lists: Vec<ValueId>,
     tokens: Vec<Token>,
     /// See [`tokenize`].
     unclosed_parens: Vec<u32>,
-    /// `cache` of the parser.
+    /// The parser's `cache`.
     cache: Vec<ValueId>,
     open_parens: Vec<OpenParen>,
     groups: Vec<ValueId>,
     group: Vec<ValueId>,
 }
 
-/// `/^[+-]?((\d+(\.\d*)?)|(\.\d+))([eE][+-]?\d+)?/`: the length of the match.
+/// Returns the length of the `/^[+-]?((\d+(\.\d*)?)|(\.\d+))([eE][+-]?\d+)?/` match.
 fn number_prefix_len(text: &[u8]) -> Option<usize> {
     let digits = |from: usize| {
         text[from.min(text.len())..]
@@ -514,15 +530,15 @@ fn number_prefix_len(text: &[u8]) -> Option<usize> {
 
 struct ValuesParser<'t> {
     values: &'t mut Values,
-    /// Where the text of the value starts in `Values::text`, which all positions count from.
+    /// The offset of the value's text in `Values::text`. All positions are relative to it.
     base: usize,
     len: usize,
-    /// Where Prettier takes the value to start in the style sheet.
+    /// The offset in the style sheet where Prettier thinks the value starts.
     root_offset: u32,
     position: usize,
     current: ValueId,
     spaces: bool,
-    /// A line that `line_column_to_index` was asked about, and where it starts.
+    /// The last line passed to `line_column_to_index`, and its start offset.
     line: (u32, usize),
 }
 
@@ -604,7 +620,7 @@ impl ValuesParser<'_> {
         id
     }
 
-    /// The `source` and the `sourceIndex` that most nodes get from their token.
+    /// The `source` and `sourceIndex` that most nodes get from their token.
     fn loc_of(token: Token) -> Source {
         Source {
             index: token.pos,
@@ -672,7 +688,7 @@ impl ValuesParser<'_> {
         Ok(())
     }
 
-    /// A node whose value is the text of `token`.
+    /// Adds a node whose value is the text of `token`.
     fn simple(&mut self, kind: ValueKind, token: Token) {
         let value = self.span(token.pos as usize, token.end as usize);
         self.new_node(kind, value, Self::loc_of(token));
@@ -682,7 +698,7 @@ impl ValuesParser<'_> {
     fn space(&mut self) -> Result<(), ParseError> {
         let next = self.token(self.position + 1);
         if next.is_none_or(|next| next.kind == TokenKind::CloseParen) {
-            // It is added to the `raws.after` of the last node, which has to be there.
+            // It's appended to the last node's `raws.after`, so that node has to exist.
             self.last_of_current().ok_or(ParseError)?;
         } else {
             self.spaces = true;
@@ -776,7 +792,7 @@ impl ValuesParser<'_> {
                 self.position += 1;
             }
         }
-        // The positions are taken from the last token, as if the word started there.
+        // The positions come from the last token, as if the word started there.
         let Some(current) = self.token(self.position) else {
             return;
         };
@@ -786,7 +802,7 @@ impl ValuesParser<'_> {
         let word_len = current.end as usize - word_start;
         let is_number = number_prefix_len(self.text_of(current)).is_some();
 
-        // It is split before every `@` but one at the start.
+        // Split before every `@`, except one at the start.
         let mut ind = 0;
         loop {
             let word = &self.text()[word_start..word_start + word_len];
@@ -807,13 +823,13 @@ impl ValuesParser<'_> {
             } else if is_number {
                 let unit_start = number_prefix_len(value).unwrap_or(0);
                 let unit = &value[unit_start..];
-                // `value.replace(unit, "")` removes the first occurrence, wherever it is.
-                // It can only start earlier with what can be in a number.
-                let is_elsewhere = matches!(
+                // `value.replace(unit, "")` removes the first occurrence, wherever it is. The unit can only occur
+                // earlier if it starts with a character that can be part of a number.
+                let may_occur_earlier = matches!(
                     unit.first(),
                     Some(b'+' | b'-' | b'.' | b'e' | b'E' | b'0'..=b'9')
                 );
-                let number = match if is_elsewhere {
+                let number = match if may_occur_earlier {
                     bun_core::strings::index_of(value, unit)
                 } else {
                     None
@@ -851,7 +867,7 @@ impl ValuesParser<'_> {
 
 // ───────────────────────────── Prettier's `parse-value.js` ─────────────────────────────
 
-/// What is looked at of a node to put it into a group.
+/// The fields of a node that grouping looks at.
 struct NodeToGroup {
     kind: ValueKind,
     first_byte: u8,
@@ -863,7 +879,7 @@ struct NodeToGroup {
 struct Grouper<'t> {
     values: &'t mut Values,
     selectors: &'t mut Selectors,
-    /// Where the text of the value starts in `Values::text`.
+    /// The offset of the value's text in `Values::text`.
     base: usize,
     syntax: Syntax,
     is_unbalanced: bool,
@@ -880,7 +896,7 @@ impl Grouper<'_> {
         (self.values.nodes.len() - 1) as ValueId
     }
 
-    /// Adds a group, which is where the nodes in it are: `fillLocFromChildren`, `fillEmptyChildLocs`.
+    /// Adds a group and derives its position from its children: `fillLocFromChildren`, `fillEmptyChildLocs`.
     fn add_group(&mut self, node: &ValueNode) -> ValueId {
         let mut node = *node;
         let (nodes, lists) = (&mut self.values.nodes, &self.values.lists);
@@ -899,7 +915,7 @@ impl Grouper<'_> {
             has_empty_group |= child.is_empty_group();
             let (start, end) = (child.loc.start_offset, child.loc.end_offset);
             if start != NONE && end != NONE {
-                // The first time, it is before `NONE`.
+                // `NONE` is `u32::MAX`, so the first child always wins.
                 if start < node.loc.start_offset {
                     node.loc.start_line = child.loc.start_line;
                     node.loc.start_offset = start;
@@ -917,7 +933,7 @@ impl Grouper<'_> {
         self.add(&node)
     }
 
-    /// What is between the parentheses of the function whose `group` is `group`, counted from the start of the
+    /// Returns the range between the parentheses of the function whose `group` is `group`, relative to the start of the
     /// value.
     fn arguments_range(&self, group: ValueId) -> Option<(usize, usize)> {
         let group = self.node(group);
@@ -930,7 +946,8 @@ impl Grouper<'_> {
         ))
     }
 
-    /// A `value-comma_group` of `self.values.group[start..]`, after `flattenGroups`: if it is only one, that is it.
+    /// Makes a `value-comma_group` from `self.values.group[start..]` and applies `flattenGroups`: a group of one node
+    /// is replaced by that node.
     fn take_comma_group(&mut self, start: usize) -> ValueId {
         if let [only] = self.values.group[start..] {
             self.values.group.truncate(start);
@@ -943,12 +960,12 @@ impl Grouper<'_> {
         })
     }
 
-    /// `parseNestedValue` and `parseValueNode` for the container `id`, and `flattenGroups` for the result.
+    /// `parseNestedValue` and `parseValueNode` for the container `id`, then `flattenGroups` on the result.
     fn group_nodes_of(&mut self, id: ValueId) -> ValueId {
         if !self.stack.has_room() {
             return 0;
         }
-        // A group of one node is that node.
+        // A group of one node is replaced by that node.
         let only = self.node(self.node(id).first_child);
         if only.next_sibling == 0
             && matches!(
@@ -958,7 +975,7 @@ impl Grouper<'_> {
         {
             return self.node(id).first_child;
         }
-        // The functions in it first.
+        // Group the nested functions first.
         let mut child = self.node(id).first_child;
         while child != 0 {
             if self.node(child).kind == ValueKind::Func {
@@ -969,7 +986,7 @@ impl Grouper<'_> {
             }
             child = self.node(child).next_sibling;
         }
-        // How many there are, and the last two.
+        // The number of children, and the last two.
         let (mut len, mut last, mut before_last) = (0usize, 0, 0);
         let mut child = self.node(id).first_child;
         while child != 0 {
@@ -977,7 +994,7 @@ impl Grouper<'_> {
             (before_last, last) = (last, child);
             child = self.node(child).next_sibling;
         }
-        // Whether a comma is followed by a comment and the `)` that ends the list.
+        // True if the list ends with a comma, a comment and the closing `)`.
         let ends_with_comment_and_paren = len >= 3
             && self.node(before_last).kind == ValueKind::Comment
             && self.node(last).kind == ValueKind::Paren
@@ -1040,7 +1057,7 @@ impl Grouper<'_> {
                 }
                 if is_url && self.node(node.group).kind == ValueKind::ParenGroup {
                     let range = self.arguments_range(node.group);
-                    // What is in the parentheses, and in the groups there.
+                    // Scan the contents of the parentheses, including the members of comma groups.
                     let mut has_interpolation = false;
                     let mut has_string_or_function = false;
                     let mut first = None;
@@ -1142,7 +1159,7 @@ impl Grouper<'_> {
                 _ => self.values.group.push(id),
             }
         }
-        // An unclosed parenthesis cannot get here: its groups would be lost, as in Prettier.
+        // An unclosed parenthesis can't get here. Its groups would be lost, as in Prettier.
         if let Some(paren) = self.values.open_parens.last().copied()
             && self.values.group.len() > paren.group_start
         {
@@ -1166,7 +1183,8 @@ impl Grouper<'_> {
 // ───────────────────────────── Prettier's `loc.js` ─────────────────────────────
 
 impl ValuesParser<'_> {
-    /// It goes on from the line that it was asked about before, if that is not a later one: a value of n lines has n nodes.
+    /// Resumes from the line of the previous call unless that line is later. Otherwise a value with n lines, and so
+    /// about n nodes, would take quadratic time.
     fn line_column_to_index(&mut self, (line, column): (u32, u32)) -> u32 {
         let (from, mut index) = Some(self.line).filter(|it| it.0 <= line).unwrap_or((1, 0));
         for _ in from..line {
@@ -1188,7 +1206,6 @@ fn fix_value_word_loc(value: &[u8], index: u32) -> u32 {
 }
 
 impl Values {
-    /// Forgets all values.
     pub(crate) fn clear(&mut self) {
         self.text.clear();
         self.nodes.clear();
@@ -1205,7 +1222,7 @@ impl Values {
             .unwrap_or_default()
     }
 
-    /// `node.value`, if it is a string.
+    /// `node.value`, if it's a string.
     pub(crate) fn value(&self, id: ValueId) -> Option<&[u8]> {
         let node = self.node(id);
         match node.kind {
@@ -1219,18 +1236,18 @@ impl Values {
         }
     }
 
-    /// A string with its quotes.
+    /// Returns a string including its quotes.
     pub(crate) fn raw_string(&self, id: ValueId) -> &[u8] {
         let (start, end) = self.node(id).value;
         self.text((start.saturating_sub(1), end + 1))
     }
 
-    /// The text of a `ValueKind::Text`.
+    /// Returns the text of a `ValueKind::Text`.
     pub(crate) fn text_of(&self, id: ValueId) -> &[u8] {
         self.text(self.node(id).value)
     }
 
-    /// `node.groups`, or nothing if it has none.
+    /// `node.groups`, or nothing if the node has none.
     pub(crate) fn groups(&self, id: ValueId) -> &[ValueId] {
         let (start, end) = self.node(id).groups;
         self.lists
@@ -1277,10 +1294,10 @@ impl Values {
         (self.nodes.len() - 1) as ValueId
     }
 
-    /// Prettier's `parseValue`, and `calculateLoc` for its result. `root_offset`: where Prettier takes
-    /// `value` to start in the style sheet.
+    /// Prettier's `parseValue`, plus `calculateLoc` on its result. `root_offset` is where Prettier thinks `value`
+    /// starts in the style sheet.
     ///
-    /// An error is one that Prettier does not catch: a `)` without a `(`.
+    /// Only fails with the error that Prettier doesn't catch: a `)` without a `(`.
     pub(crate) fn parse(
         &mut self,
         value: &[u8],
@@ -1299,7 +1316,7 @@ impl Values {
         let (base, first_node) = (self.text.len(), self.nodes.len());
         self.text.extend_from_slice(value);
         self.cache.clear();
-        // The `Value`, which is the only node of the root.
+        // The `Value`, which is the root's only node.
         let container = first_node as ValueId;
         self.nodes.push(ValueNode {
             unbalanced: 0,

@@ -1,12 +1,12 @@
-//! What the rules of `jest` and of `vitest` about tests and suites do: `it(..)`, `describe(..)`, their titles and their callbacks. Each
-//! module is a file of oxlint's `rules/shared/jest_vitest`. See [`jest`](crate::jest).
+//! The shared logic of the `jest` and `vitest` rules about tests and suites: `it(..)`, `describe(..)`, their titles and
+//! their callbacks. Each module is a file in oxlint's `rules/shared/jest_vitest`. See [`jest`](crate::jest).
 
 use crate::jest::{
     Arguments, Ctx, JestFnKind, JestGeneralFnKind, MemberExpressionElement, OxlintOrder,
     ParsedGeneralJestFnCall, PossibleJestNode, Runner, Scopes, for_each_call_named_like,
     get_node_name_vec, is_in_call_or_member, is_type_of_jest_fn_call, is_vitest,
     iter_possible_jest_call_node, iter_possible_jest_call_node_with_scope, mentions_jest_method,
-    parent_expression, parse_general_jest_fn_call, parse_jest_fn_call, tests_as_written,
+    parent_expression, parse_general_jest_fn_call, parse_jest_fn_call, tests_by_name,
 };
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -55,7 +55,7 @@ pub(crate) mod no_focused_tests {
         if let Some(only_node) = members.iter().find(|member| member.is_name_equal("only")) {
             ctx.report(only_node.span, NO_FOCUSED_TESTS)
                 .suggest(REMOVE_FOCUS, |fixer| {
-                    // With the `.`, or with the brackets.
+                    // Also removes the `.` or the brackets.
                     let is_computed =
                         !matches!(only_node.element, MemberExpressionElement::IdentName(_));
                     fixer.remove(Span::new(
@@ -143,8 +143,8 @@ pub(crate) mod valid_describe_callback {
     const UNEXPECTED_RETURN_IN_DESCRIBE: Message =
         Message::new("", "Unexpected return statement in describe callback");
 
-    /// For Vitest and Bun the callback can be `async`, and there can be options before it. Bun waits for what it returns, takes
-    /// options after it too, and needs no title.
+    /// In Vitest and Bun the callback can be `async`, and options can come before it. Bun also awaits the callback's
+    /// result, accepts options after it, and doesn't need a title.
     pub(crate) fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let (is_for_vitest, is_for_bun) = (ctx.runner == Runner::Vitest, ctx.runner == Runner::Bun);
         let node = possible_jest_node.node;
@@ -169,8 +169,8 @@ pub(crate) mod valid_describe_callback {
             return;
         }
         let as_function = |arg: Expr<'a>| arg.as_fn().filter(|_| !arg.is_parenthesized());
-        let told_apart = Arguments::of(arguments, ctx.runner);
-        let Some(second) = told_apart.callback else {
+        let parsed_arguments = Arguments::of(arguments, ctx.runner);
+        let Some(second) = parsed_arguments.callback else {
             ctx.report(
                 arguments
                     .first()
@@ -190,8 +190,8 @@ pub(crate) mod valid_describe_callback {
             _ => second,
         };
         let Some(func) = as_function(callback) else {
-            // What a name stands for is not known.
-            if !is_for_bun || !told_apart.can_have_callback() {
+            // We can't tell what an identifier refers to.
+            if !is_for_bun || !parsed_arguments.can_have_callback() {
                 ctx.report(callback.outer_span(), SECOND_ARGUMENT_MUST_BE_FUNCTION);
             }
             return;
@@ -237,19 +237,19 @@ pub(crate) mod valid_title {
     const ACCIDENTAL_SPACE: Message =
         Message::new("", "Should not have leading or trailing spaces");
     const DISALLOWED_WORD: Message = Message::new("", "{{word}} is not allowed in test title");
-    /// For `mustMatch` and `mustNotMatch`, which can come with a message.
+    /// For a `mustMatch` or `mustNotMatch` that's configured with its own message.
     const CONFIGURED: Message = Message::new("", "{{message}}");
     const MUST_MATCH: Message = Message::new("", "{{name}} should match {{pattern}}");
     const MUST_NOT_MATCH: Message = Message::new("", "{{name}} should not match {{pattern}}");
 
     struct CompiledMatcherAndMessage {
         regex: Regex,
-        /// As oxlint prints it.
+        /// The pattern as oxlint prints it.
         raw_pattern: String,
         message: Option<String>,
     }
 
-    /// For `describe`, `it` and `test`.
+    /// One each for `describe`, `it` and `test`.
     type MatcherPatterns = [Option<CompiledMatcherAndMessage>; 3];
 
     pub(crate) struct ValidTitleConfig {
@@ -310,7 +310,7 @@ pub(crate) mod valid_title {
     }
 
     impl ValidTitleConfig {
-        /// `runner`: with Bun the title of a `describe` can be a function, a class or a number.
+        /// `runner` matters because in Bun a `describe` title can also be a function, a class or a number.
         pub(crate) fn new(options: &Options, runner: Runner) -> Self {
             let config = options.object(0);
             let disallowed_words = config.strings("disallowedWords");
@@ -382,12 +382,12 @@ pub(crate) mod valid_title {
             let title = match arg.kind() {
                 _ if arg.is_parenthesized() => None,
                 ExprKind::String(value) => Some((value.bytes(), arg.span())),
-                // What a template with substitutions makes is not known.
+                // The value of a template with substitutions isn't known statically.
                 ExprKind::Template(template) => match template.as_static() {
                     Some(quasi) => Some((quasi.bytes(), arg.span())),
                     None => return,
                 },
-                // String.raw`foo`: the title is what is written.
+                // String.raw`foo`: the title is the raw text.
                 ExprKind::TaggedTemplate(tagged_template)
                     if is_string_raw_member_expression(tagged_template.callee()) =>
                 {
@@ -430,8 +430,8 @@ pub(crate) mod valid_title {
                     .data("word", matched.as_bytes());
                 return;
             }
-            // What is written is kept as it is written, with its escapes. Whitespace and a prefix that are written with
-            // escapes are not taken away.
+            // The fixes keep the raw source text, escapes included. They don't remove whitespace or a prefix that's
+            // written with escapes.
             let inner_span = span.shrink(1, 1);
             let raw_text = ctx.file.slice(inner_span);
             if !self.ignore_spaces && strings::trim_unicode_whitespace(title).len() != title.len() {
@@ -491,19 +491,19 @@ pub(crate) mod valid_title {
         }
     }
 
-    /// Whether there is as much whitespace at the start and at the end of `raw` as of `cooked`.
+    /// True if `raw` has as much leading and trailing whitespace as `cooked`.
     fn can_trim_raw_title(cooked: &[u8], raw: &[u8]) -> bool {
-        let whitespace_around = |text: &[u8]| {
+        let outer_whitespace = |text: &[u8]| {
             let without_start = strings::trim_unicode_whitespace_start(text).len();
             (
                 text.len().saturating_sub(without_start),
                 without_start.saturating_sub(strings::trim_unicode_whitespace(text).len()),
             )
         };
-        whitespace_around(cooked) == whitespace_around(raw)
+        outer_whitespace(cooked) == outer_whitespace(raw)
     }
 
-    /// `String.raw`, of the global `String`.
+    /// Matches `String.raw` on the global `String`.
     fn is_string_raw_member_expression(expr: Expr) -> bool {
         get_member_expr(expr).is_some_and(|member| {
             static_property_name(member).is_some_and(|it| it.is("raw"))
@@ -514,7 +514,7 @@ pub(crate) mod valid_title {
         })
     }
 
-    /// Whether an operand of `a + b + c` is a string or a template.
+    /// True if any operand of `a + b + c` is a string or a template.
     fn does_binary_expression_contain_string_node(expr: Expr) -> bool {
         let is_string_literal = |it: Expr| {
             matches!(it.tag(), ExprTag::String | ExprTag::Template) && !it.is_parenthesized()
@@ -555,7 +555,7 @@ pub(crate) mod consistent_test_it {
                 _ => Ok(None),
             };
             match (test_case_name("withinDescribe"), test_case_name("fn")) {
-                // What is not valid is as if nothing were configured, but that `withinDescribe` is what `fn` is.
+                // Invalid options fall back to the defaults, except that an unset `withinDescribe` still follows `fn`.
                 (Ok(None), Err(())) => ConsistentTestItConfig {
                     within_describe: "test",
                     r#fn: "test",
@@ -572,7 +572,7 @@ pub(crate) mod consistent_test_it {
         }
 
         pub(crate) fn run_once<'a>(self, ctx: &Ctx<'a, '_>) {
-            // The calls of `describe` around.
+            // The enclosing `describe` calls.
             let mut describe_stack: Vec<Span> = Vec::new();
             for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
                 let node = possible_jest_node.node;
@@ -618,9 +618,7 @@ pub(crate) mod consistent_test_it {
                                 Some(b'x') => "x",
                                 _ => "",
                             };
-                            if ctx.runner == Runner::Bun
-                                && !ctx.can_write([prefix, preferred].concat().as_bytes())
-                            {
+                            if !ctx.can_write([prefix, preferred].concat().as_bytes(), ident) {
                                 continue;
                             }
                             report.fix(|fixer| {
@@ -642,7 +640,7 @@ pub(crate) mod consistent_test_it {
         }
     }
 
-    /// The identifier that the chain starts with. There is none for `it["only"]()`.
+    /// The identifier at the start of the chain. `it["only"]()` has none.
     fn get_test_name(call_expr: Expr<'_>) -> Option<Expr<'_>> {
         let mut at = call_expr;
         loop {
@@ -699,7 +697,7 @@ pub(crate) mod no_commented_out_tests {
     const NO_COMMENTED_OUT_TESTS: Message =
         Message::new("", "Some tests appear to be inside comments.");
 
-    /// `rest` without the bytes at its start for which `is_skipped` holds.
+    /// Strips the leading bytes of `rest` that match `is_skipped`.
     fn skip(rest: &[u8], is_skipped: impl Fn(u8) -> bool) -> &[u8] {
         rest.get(rest.iter().take_while(|it| is_skipped(**it)).count()..)
             .unwrap_or_default()
@@ -711,7 +709,8 @@ pub(crate) mod no_commented_out_tests {
             .find_map(|it| rest.strip_prefix(it.as_bytes()))
     }
 
-    /// Whether `line`, which goes on to the end of the comment, starts with `it(`, `xdescribe.only (`, `test["skip"](` or the like.
+    /// True if `line` starts with `it(`, `xdescribe.only (`, `test["skip"](` or similar. `line` runs to the end of the
+    /// comment.
     fn starts_with_test(line: &[u8]) -> bool {
         let prefixed = match line.split_first() {
             Some((b'x' | b'f', rest)) => strip_keyword(rest),
@@ -779,7 +778,7 @@ pub(crate) mod no_conditional_in_test {
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
         let file = ctx.file;
-        let tests = tests_as_written(file, ctx.runner);
+        let tests = tests_by_name(file, ctx.runner);
         if tests.is_empty() {
             return;
         }
@@ -819,14 +818,14 @@ pub(crate) mod no_identical_title {
 
     struct Titled<'a> {
         possible_jest_node: PossibleJestNode<'a>,
-        /// The title.
+        /// The title argument.
         argument: Expr<'a>,
         is_describe: bool,
-        /// A number for the block that it is in, which is greater for what oxc comes to later.
+        /// A number identifying the enclosing block. Blocks that oxc visits later get larger numbers.
         parent: u32,
     }
 
-    /// The title of a call, and what it says.
+    /// The call's title argument and its string value.
     fn title_of(node: Expr<'_>, runner: Runner) -> Option<(Expr<'_>, Name<'_>)> {
         let title = Arguments::of(node.as_call()?.args(), runner).title;
         let argument = title.filter(|it| !it.is_parenthesized())?;
@@ -834,7 +833,7 @@ pub(crate) mod no_identical_title {
     }
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
-        // The titles of more than one call. Most files have none.
+        // Titles shared by more than one call. Most files have none.
         let (mut titles, mut repeated) = (FxHashSet::default(), FxHashSet::default());
         for (_, title) in iter_possible_jest_call_node(ctx.file, ctx.runner)
             .filter_map(|it| title_of(it.node, ctx.runner))
@@ -864,15 +863,15 @@ pub(crate) mod no_identical_title {
                 JestFnKind::General(JestGeneralFnKind::Test) => false,
                 _ => continue,
             };
-            // With Bun `test.if(a)("b", ..)` and `test.if(!a)("b", ..)` are one test.
-            let is_one_of_many = |name: &[u8]| {
+            // In Bun, `test.if(a)("b", ..)` and `test.if(!a)("b", ..)` are one test.
+            let is_variant_modifier = |name: &[u8]| {
                 name == b"each"
                     || ctx.runner == Runner::Bun && (name == b"if" || name.ends_with(b"If"))
             };
-            if (result.members.iter()).any(|m| m.name().is_some_and(is_one_of_many)) {
+            if (result.members.iter()).any(|m| m.name().is_some_and(is_variant_modifier)) {
                 continue;
             }
-            // `get_closest_block`
+            // oxlint's `get_closest_block`.
             let parent = blocks.find(Node::Expr(node), |child, parent| match parent {
                 Node::Stmt(statement) => {
                     (statement.tag() == StmtTag::Block).then(|| statement.span().start + 1)
@@ -892,14 +891,15 @@ pub(crate) mod no_identical_title {
             };
             title_to_calls.entry(title).or_default().push(titled);
         }
-        // oxlint sorts the calls with one title by the block, and compares each with the one before: a `describe('a')` that is
-        // between `it('a')` and `test('a')` then keeps these two apart. It starts from the order of its list, and the sort is not
-        // stable for more than 20: the same sort of as large elements in the same order does the same.
+        // oxlint sorts the calls that share a title by block and compares each with the previous one, so a
+        // `describe('a')` between `it('a')` and `test('a')` hides that those two repeat. The sort starts from oxlint's
+        // list order and isn't stable above 20 elements. Running the same sort on elements of the same size in the same
+        // order gives the same result.
         let mut order = None;
         let several = title_to_calls.values_mut().filter(|it| it.len() > 1);
         let first =
             |it: &&mut SmallVec<[Titled<'a>; 1]>| it.first().map(|it| it.argument.span().start);
-        for calls in utils::sort::in_order_of(several, first) {
+        for calls in utils::sort::collect_sorted_by_key(several, first) {
             let order = order.get_or_insert_with(|| OxlintOrder::new(ctx.file));
             utils::sort::sort_by_cached_key(calls, |it| order.key(it.possible_jest_node));
             let mut kind_and_spans: Vec<(Span, bool, u32)> = calls
@@ -970,12 +970,12 @@ pub(crate) mod no_test_prefixes {
         let report = ctx
             .report(span, NO_TEST_PREFIXES)
             .data("preferred_node_name", preferred_node_name.clone());
-        if ctx.can_write(name.get(1..).unwrap_or_default()) {
+        if ctx.can_write(name.get(1..).unwrap_or_default(), callee) {
             report.fix(|fixer| fixer.replace(span, preferred_node_name));
         }
     }
 
-    /// The name as it is where it is from, and the names of the members.
+    /// Returns the function's name as its module exports it, and the member names.
     fn parse_no_test_prefixes_call<'a>(
         possible_jest_node: PossibleJestNode<'a>,
         ctx: &Ctx<'a, '_>,
@@ -990,7 +990,7 @@ pub(crate) mod no_test_prefixes {
                     .collect(),
             ));
         }
-        // Vitest has no `xit.each`, so that it is not parsed.
+        // Vitest has no `xit.each`, so the parser above rejects it.
         if !is_vitest(ctx.file, ctx.runner) || is_in_call_or_member(possible_jest_node.node) {
             return None;
         }
@@ -1047,7 +1047,7 @@ pub(crate) mod no_test_return_statement {
         }
     }
 
-    /// The `expect(a).toBe(b)` of `return expect(a).toBe(b)`.
+    /// The `expect(a).toBe(b)` in `return expect(a).toBe(b)`.
     fn returned_expect_call(return_stmt: Stmt<'_>) -> Option<Expr<'_>> {
         let StmtKind::Return(Some(call_expr)) = return_stmt.kind() else {
             return None;
@@ -1061,7 +1061,7 @@ pub(crate) mod no_test_return_statement {
         (ident.is_ident("expect") && !ident.is_parenthesized()).then_some(call_expr)
     }
 
-    /// Whether `argument` is an argument of a call of `it` or `test`.
+    /// True if `argument` is an argument of an `it` or `test` call.
     fn is_test_callback<'a>(argument: Expr<'a>, ctx: &Ctx<'a, '_>) -> bool {
         parent_expression(argument).is_some_and(|call_node| {
             call_node
@@ -1109,9 +1109,10 @@ pub(crate) mod prefer_each {
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
         let file = ctx.file;
-        // The loop that something is in, if no call is between, and whether something is in a call of `it.each` or the like.
+        // `loops` caches a node's enclosing loop, if there's no call in between. `tests` caches whether a node is
+        // inside a call to `it.each` or similar.
         let (mut loops, mut tests) = (AncestorMemo::default(), AncestorMemo::default());
-        // The calls that are reported, each with its loop.
+        // The calls to report, each with its loop.
         let mut found: Vec<(Stmt<'a>, Expr<'a>, &'static str)> = Vec::new();
         let kinds = [
             JestGeneralFnKind::Test,
@@ -1143,7 +1144,7 @@ pub(crate) mod prefer_each {
             }
         });
         utils::sort::sort_unstable_by_key(&mut found, |it| it.0.span().start);
-        // A loop is reported once, for the first of its calls.
+        // Each loop is reported once, for its first call.
         for calls in found.chunk_by(|a, b| a.0 == b.0) {
             let Some(&(loop_node, _, mut fn_name)) = calls.first() else {
                 continue;
@@ -1176,7 +1177,7 @@ pub(crate) mod prefer_each {
         }
     }
 
-    /// `it.each(..)`, `test["only"](..)`
+    /// Matches `it.each(..)` and `test["only"](..)`.
     fn is_member_of_test_called(node: Node) -> bool {
         (node.as_expr().and_then(Expr::as_call).map(Call::callee))
             .filter(|it| {
@@ -1196,7 +1197,7 @@ pub(crate) mod prefer_lowercase_title {
 
     pub(crate) struct PreferLowercaseTitleConfig {
         allowed_prefixes: Vec<String>,
-        /// The names of the functions.
+        /// The ignored function names.
         ignores: Vec<&'static str>,
         ignore_top_level_describe: bool,
         lowercase_first_character_only: bool,
@@ -1304,8 +1305,8 @@ pub(crate) mod prefer_todo {
             return;
         };
         let (callee, arguments) = (call_expr.callee(), call_expr.args());
-        let told_apart = Arguments::of(arguments, ctx.runner);
-        let Some(title) = told_apart.title else {
+        let parsed_arguments = Arguments::of(arguments, ctx.runner);
+        let Some(title) = parsed_arguments.title else {
             return;
         };
         let is_filtered = match callee.as_ident() {
@@ -1327,7 +1328,7 @@ pub(crate) mod prefer_todo {
         if is_filtered
             || !matches!(title.tag(), ExprTag::String | ExprTag::Template)
             || title.is_parenthesized()
-            || !told_apart.callback.is_none_or(is_empty_function)
+            || !parsed_arguments.callback.is_none_or(is_empty_function)
             || !is_type_of_jest_fn_call(
                 ctx.file,
                 possible_jest_node,
@@ -1337,7 +1338,7 @@ pub(crate) mod prefer_todo {
             return;
         }
         let mut report = ctx.report(callee, PREFER_TODO);
-        // What oxlint calls the fix that has two parts.
+        // The `help` is oxlint's name for the two-part fix.
         let is_renamed = match callee.kind() {
             ExprKind::Ident(_) | ExprKind::Index { .. } => true,
             ExprKind::Dot { .. } => !callee.is_private_member(),
@@ -1346,8 +1347,8 @@ pub(crate) mod prefer_todo {
         if is_renamed && arguments.len() != 1 {
             report = report.help("Replace with `test.todo` or `it.todo`.");
         }
-        // Neither `test.if(a)(..)` nor the options are taken away.
-        if ctx.runner == Runner::Bun && (!is_renamed || told_apart.options.is_some()) {
+        // The fix never removes `test.if(a)(..)` or the options.
+        if ctx.runner == Runner::Bun && (!is_renamed || parsed_arguments.options.is_some()) {
             return;
         }
         report.fix(|fixer| {
@@ -1357,15 +1358,19 @@ pub(crate) mod prefer_todo {
                     fixer.replace(name.span(), "todo")
                 }
                 ExprKind::Index { index, .. } => fixer.replace(index.outer_span(), "'todo'"),
-                _ => return vec![fixer.remove(node)],
+                _ => fixer.remove(node),
             };
-            match arguments.len() {
-                1 => vec![fix],
-                _ => vec![
+            let fixes = match is_renamed && arguments.len() != 1 {
+                true => vec![
                     fix,
                     fixer.remove(Span::after(title.span(), node.span().end.saturating_sub(1))),
                 ],
-            }
+                false => vec![fix],
+            };
+            // An empty callback often contains the real test, commented out. oxlint deletes it.
+            let has_comment = |it: &Fix| fixer.file().comments_in(it.span).next().is_some();
+            let loses_comment = fixes.iter().any(has_comment);
+            (!loses_comment).then_some(fixes)
         });
     }
 }
@@ -1405,7 +1410,7 @@ pub(crate) mod require_top_level_describe {
             {
                 continue;
             }
-            // The first `describe` is never too many.
+            // The first `describe` is always allowed.
             if kind == JestGeneralFnKind::Describe
                 && (count == 0 || count < max_number_of_top_level_describes)
             {
@@ -1432,14 +1437,14 @@ pub(crate) mod require_top_level_describe {
     }
 }
 
-/// `padding_around_after_all_blocks`, `padding_around_test_blocks`
+/// Shared by `padding_around_after_all_blocks` and `padding_around_test_blocks`.
 pub(crate) mod padding_around_blocks {
     use super::*;
 
     const PADDING_AROUND_JEST_BLOCK: Message =
         Message::new("", "Missing padding before {{name}} block");
 
-    /// `is_for_tests`: for `it` and `test`. Otherwise for `afterAll`.
+    /// `is_for_tests` checks `it` and `test`. Otherwise `afterAll` is checked.
     pub(crate) fn run<'a>(ctx: &Ctx<'a, '_>, is_for_tests: bool) {
         for (possible_jest_node, scope) in
             iter_possible_jest_call_node_with_scope(ctx.file, ctx.runner)
@@ -1472,13 +1477,13 @@ pub(crate) mod padding_around_blocks {
         name: &'a [u8],
     ) {
         let (file, node_start) = (ctx.file, node.span().start);
-        // Not in a block.
+        // Only directly in the file or in a function body, not in a block.
         let statements = match scope {
             None => Some(file.body()),
             Some(Node::Func(func)) if func.kind() != FnKind::StaticBlock => func.body_statements(),
             Some(_) => None,
         };
-        // The last statement that ends before it, which is the one before that which it is in.
+        // The last statement that ends before the call, i.e. the one before the statement that contains it.
         let Some(prev_statement) = statements
             .and_then(|it| it.around_with_previous(node_start)?.1)
             .filter(|it| it.directive().is_none() && it.span().end <= node_start)
@@ -1486,11 +1491,11 @@ pub(crate) mod padding_around_blocks {
             return;
         };
         let prev_statement_end = prev_statement.span().end;
-        // Where the line ends that the statement ends in.
+        // The end of the line on which that statement ends.
         let first_line_break =
             strings::index_of_char(file.slice(Span::new(prev_statement_end, node_start)), b'\n')
                 .map_or(node_start, |at| prev_statement_end + at);
-        // The comments right before it belong to it.
+        // Comments directly above the call belong to it.
         let (mut span_between_start, mut span_between_end) = (prev_statement_end, node_start);
         for comment in file
             .comments_in(Span::new(prev_statement_end, node_start))

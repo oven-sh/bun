@@ -79,7 +79,7 @@ struct Entry<'a> {
     /// Other imports can merge into this one.
     can_grow: bool,
     /// This import can be merged into another one and removed.
-    can_go: bool,
+    can_be_removed: bool,
 }
 
 /// Strips the quotes from `"a"` or `'a'`.
@@ -163,8 +163,8 @@ impl<'a> Tidy<'a> {
                 reached = comment.span().end;
             }
             let rest = self.slice(Span::new(reached, limit));
-            let blanks = rest.len() - rest.trim_ascii_start().len();
-            if next.is_some() && !strings::contains_js_line_break(&rest[..blanks]) {
+            let whitespace_len = rest.len() - rest.trim_ascii_start().len();
+            if next.is_some() && !strings::contains_js_line_break(&rest[..whitespace_len]) {
                 reached = after;
             }
             chunks.push(Chunk {
@@ -213,7 +213,7 @@ impl<'a> Tidy<'a> {
         chunks
     }
 
-    fn has_comments_of_its_own(&self, chunk: &Chunk<'a>) -> bool {
+    fn has_own_comments(&self, chunk: &Chunk<'a>) -> bool {
         [
             chunk.lead,
             chunk.before_comma.to(chunk.after_comma),
@@ -231,7 +231,7 @@ impl<'a> Tidy<'a> {
     }
 
     /// Returns true if `spans` contain a `prettier-ignore` or `oxfmt-ignore` comment.
-    fn is_left_alone(&self, spans: [Span; 2]) -> bool {
+    fn has_ignore_comment(&self, spans: [Span; 2]) -> bool {
         let is_ignore = |span: Span| {
             let text = self.slice(span);
             let text = text.strip_prefix(b"//").unwrap_or_else(|| {
@@ -246,12 +246,12 @@ impl<'a> Tidy<'a> {
             .any(|span| self.file.comments_in(*span).any(|it| is_ignore(it.span())))
     }
 
-    /// `before` starts after the previous statement's line. `behind` is the rest of this statement's line.
+    /// `before` starts after the previous statement's line. `line_rest` is the rest of this statement's line.
     fn entry(
         &self,
         statement: Stmt<'a>,
         import: Import<'a>,
-        [before, behind]: [Span; 2],
+        [before, line_rest]: [Span; 2],
     ) -> Entry<'a> {
         let span = statement.span();
         let braces = self.braces_of(statement, import);
@@ -281,7 +281,10 @@ impl<'a> Tidy<'a> {
             import,
             braces,
             can_grow,
-            can_go: can_grow && !has_comments_inside && !leads && !self.has_comments(behind),
+            can_be_removed: can_grow
+                && !has_comments_inside
+                && !leads
+                && !self.has_comments(line_rest),
         }
     }
 
@@ -355,7 +358,7 @@ impl<'a> Tidy<'a> {
         let before: Vec<u32> = chunks.iter().map(|it| it.before_comma.start).collect();
         crate::sort::sort_by(&mut chunks[..], |a, b| self.compare(a.spec, b.spec));
         chunks.dedup_by(|later, earlier| {
-            !self.has_comments_of_its_own(later) && self.is_same_name(later.spec, earlier.spec)
+            !self.has_own_comments(later) && self.is_same_name(later.spec, earlier.spec)
         });
         !chunks.iter().map(|it| it.before_comma.start).eq(before)
     }
@@ -443,7 +446,7 @@ impl<'a> Tidy<'a> {
                 braces.is_some_and(|braces| self.has_comments(braces.tail))
             };
             let target = can_grow()
-                .find(|&it| !entries[it].can_go)
+                .find(|&it| !entries[it].can_be_removed)
                 .or_else(|| can_grow().find(has_tail_comment))
                 .or_else(|| can_grow().next());
             let mut default = target.and_then(|it| Some(entries[it].import.default()?.span()));
@@ -458,11 +461,11 @@ impl<'a> Tidy<'a> {
                     merged.extend(own(false));
                     continue;
                 }
-                let fits = match (default, entry.import.default()) {
+                let has_same_default = match (default, entry.import.default()) {
                     (Some(one), Some(other)) => self.slice(one) == self.slice(other.span()),
                     _ => true,
                 };
-                if target.is_some() && entry.can_go && fits {
+                if target.is_some() && entry.can_be_removed && has_same_default {
                     default = default.or_else(|| Some(entry.import.default()?.span()));
                     merged.extend(own(true));
                     self.remove(entry.statement);
@@ -526,14 +529,16 @@ pub(super) fn preprocess<'a>(file: &'a File<'a>) -> Option<Vec<u8>> {
     for (index, statement) in body.iter().enumerate() {
         let span = statement.span();
         let next_start = (body.get(index + 1)).map_or(text.len() as u32, |it| it.span().start);
-        let around = [
+        let surrounding = [
             Span::before(previous_end, span),
             tidy.rest_of_line(span, next_start),
         ];
-        previous_end = around[1].end;
+        previous_end = surrounding[1].end;
         match statement.kind() {
-            StmtKind::Import(import) if !import.is_side_effect() && !tidy.is_left_alone(around) => {
-                entries.push(tidy.entry(statement, import, around));
+            StmtKind::Import(import)
+                if !import.is_side_effect() && !tidy.has_ignore_comment(surrounding) =>
+            {
+                entries.push(tidy.entry(statement, import, surrounding));
             }
             _ => {
                 tidy.tidy(&entries);

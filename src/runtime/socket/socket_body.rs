@@ -4,10 +4,12 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
+use crate::generated_bindgen::socket_body::{BunSocket, SocketHandle};
 use bun_core::EncodedSlice;
 use bun_io::KeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsCell;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_ptr::RefPtr;
 // do NOT `use bun_boringssl_sys::SSL` here — it shadows the
@@ -98,7 +100,7 @@ mod tls_socket_functions;
 use crate::api::bun::h2_frame_parser::H2FrameParser;
 use crate::api::bun_secure_context::SecureContext;
 use crate::server::ServerWebSocket;
-use crate::socket::udp_socket_draft::get_us_error;
+use crate::socket::udp_socket::get_us_error;
 
 bun_output::declare_scope!(Socket, visible);
 macro_rules! log {
@@ -3288,20 +3290,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         let [arg] = callframe.arguments_as_array::<1>();
         if callframe.arguments_count() > 0 && arg.to_boolean() {
             this.socket.get().shutdown_read();
-        } else {
-            this.shutdown_write();
+        } else if !this.native_callback.get().defer_shutdown() {
+            this.socket.get().shutdown();
         }
 
         Ok(JSValue::UNDEFINED)
-    }
-
-    /// False while the attached HTTP/2 parser holds the FIN behind output it still owes: it sends the FIN after that output, and a drain follows.
-    fn shutdown_write(&self) -> bool {
-        if self.native_callback.get().defer_shutdown() {
-            return false;
-        }
-        self.socket.get().shutdown();
-        true
     }
 
     #[bun_jsc::host_fn(method)]
@@ -3427,7 +3420,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             .get(global, "socket")?
             .ok_or_else(|| global.throw(format_args!("Expected \"socket\" option")))?;
 
-        let handlers = this.get_handlers();
+        // The "socket" getter can close this socket, which drops its handlers.
+        let Some(handlers) = this.handlers_opt() else {
+            return Ok(JSValue::UNDEFINED);
+        };
         // Parse and validate first: the option getters run user JS that can
         // close this socket and repoint its `Handlers`.
         let reloaded = Handlers::prepare_reload(global, socket_obj)?;
@@ -3496,11 +3492,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // adopt; the old `isDetached()/isNamedPipe()` guard let those
         // through and the `.connected` payload read below would then be
         // illegal-union-access on a `.connecting` socket.
-        let uws::InternalSocket::Connected(raw_socket) = this.socket.get().socket else {
+        if !matches!(this.socket.get().socket, uws::InternalSocket::Connected(_)) {
             return Err(global.throw_invalid_arguments(format_args!(
                 "upgradeTLS requires an established socket"
             )));
-        };
+        }
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(global.throw(format_args!("Expected options object")));
         }
@@ -3635,6 +3631,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             default_data = v;
             default_data.ensure_still_alive();
         }
+
+        // An option getter can close this socket, or re-enter upgradeTLS and adopt its fd.
+        let uws::InternalSocket::Connected(raw_socket) = this.socket.get().socket else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "upgradeTLS requires an established socket"
+            )));
+        };
 
         let vm = handlers.vm;
 
@@ -4209,6 +4212,13 @@ impl NativeCallbacks {
             NativeWritable::Taken
         }
     }
+    /// The attached parser holds the socket's half-close (`defer_shutdown`).
+    pub(crate) fn holds_fin(&self) -> bool {
+        match self {
+            NativeCallbacks::H2(h2) => h2.holds_fin(),
+            NativeCallbacks::None => false,
+        }
+    }
     /// Whether the attached parser takes over the half-close, to send the FIN after its own output.
     #[inline]
     pub(crate) fn defer_shutdown(&self) -> bool {
@@ -4720,65 +4730,43 @@ impl DuplexUpgradeContext {
 
 /// node:tls's `tls.connect({ socket })` entry point: same upgrade as the
 /// public `upgradeTLS`, but hostname policy stays with node's JS layer.
-#[bun_jsc::host_fn]
-pub(crate) fn js_upgrade_tls_deferred(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
+pub(crate) fn upgrade_tls_deferred<'a>(
+    cx: &mut JsScope<'a>,
+    socket: BunSocket<'a>,
+    options: JsLocal<'a>,
 ) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-    let [socket, opts] = callframe.arguments_as_array::<2>();
-    if let Some(this) = socket.as_class_ref::<TCPSocket>() {
-        return NewSocket::<false>::upgrade_tls_impl(this, global, opts, true);
+    match socket {
+        BunSocket::Tcp(this) => {
+            NewSocket::<false>::upgrade_tls_impl(this, cx.global(), options.to_js(), true)
+        }
+        BunSocket::Tls(this) => {
+            NewSocket::<true>::upgrade_tls_impl(this, cx.global(), options.to_js(), true)
+        }
     }
-    if let Some(this) = socket.as_class_ref::<TLSSocket>() {
-        return NewSocket::<true>::upgrade_tls_impl(this, global, opts, true);
-    }
-    Err(global.throw(format_args!("Expected a socket instance")))
 }
 
 /// node:net's `destroy()`: drops the handshake flight held for the handshake callback.
-#[bun_jsc::host_fn]
-pub(crate) fn js_release_held_flight(
-    _global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-    let [socket] = callframe.arguments_as_array::<1>();
-    if let Some(this) = socket.as_class_ref::<TLSSocket>() {
-        this.socket.get().release_held_flight();
-    } else if let Some(this) = socket.as_class_ref::<TCPSocket>() {
+pub(crate) fn release_held_flight(socket: SocketHandle<'_>) {
+    match socket {
         // The raw half of an `upgradeTLS` pair shares the socket of its TLS half.
-        this.socket.get().release_held_flight();
+        SocketHandle::Tcp(this) => this.socket.get().release_held_flight(),
+        SocketHandle::Tls(this) => this.socket.get().release_held_flight(),
+        SocketHandle::Ignored(_) => {}
     }
-    Ok(JSValue::UNDEFINED)
 }
 
 /// node:tls with the built-in `checkServerIdentity`: `server_identity` refuses a wrong name like Bun.connect's.
-#[bun_jsc::host_fn]
-pub(crate) fn js_check_server_identity_in_handshake(
-    _global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-    let [socket, in_handshake] = callframe.arguments_as_array::<2>();
-    if let Some(this) = socket.as_class_ref::<TLSSocket>() {
-        this.update_flags(|f| f.set(Flags::DEFERS_SERVER_IDENTITY, in_handshake != JSValue::TRUE));
+pub(crate) fn check_server_identity_in_handshake(socket: SocketHandle<'_>, in_handshake: bool) {
+    if let SocketHandle::Tls(this) = socket {
+        this.update_flags(|f| f.set(Flags::DEFERS_SERVER_IDENTITY, !in_handshake));
     }
-    Ok(JSValue::UNDEFINED)
 }
 
 /// `tls.connect()`'s first 'connect' listener, where node sends the ClientHello.
-#[bun_jsc::host_fn]
-pub(crate) fn js_first_flight_before_fin(
-    _global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-    let [socket] = callframe.arguments_as_array::<1>();
-    if let Some(this) = socket.as_class_ref::<TLSSocket>() {
+pub(crate) fn first_flight_before_fin(socket: SocketHandle<'_>) {
+    if let SocketHandle::Tls(this) = socket {
         this.socket.get().set_first_flight_before_fin();
     }
-    Ok(JSValue::UNDEFINED)
 }
 
 #[bun_jsc::host_fn]
@@ -5060,71 +5048,29 @@ pub(crate) fn js_upgrade_duplex_to_tls(
     Ok(array)
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn js_is_named_pipe_socket(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-
-    let [socket, _, _] = callframe.arguments_as_array::<3>();
-    if callframe.arguments_count() < 1 {
-        return Err(global.throw_not_enough_arguments(
-            "isNamedPipeSocket",
-            1,
-            callframe.arguments_count() as usize,
-        ));
+pub(crate) fn is_named_pipe_socket(socket: SocketHandle<'_>) -> bool {
+    match socket {
+        SocketHandle::Tcp(this) => this.socket.get().is_named_pipe(),
+        SocketHandle::Tls(this) => this.socket.get().is_named_pipe(),
+        SocketHandle::Ignored(_) => false,
     }
-    if let Some(this) = socket.as_class_ref::<TCPSocket>() {
-        return Ok(JSValue::from(this.socket.get().is_named_pipe()));
-    } else if let Some(this) = socket.as_class_ref::<TLSSocket>() {
-        return Ok(JSValue::from(this.socket.get().is_named_pipe()));
-    }
-    Ok(JSValue::FALSE)
 }
 
-/// node:net's `_final`. `false`: the handle holds the FIN (`NewSocket::shutdown_write`). `undefined`: not a native socket.
-#[bun_jsc::host_fn]
-pub(crate) fn js_shutdown_write(
-    _global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-
-    let [socket, _, _] = callframe.arguments_as_array::<3>();
-    if let Some(this) = socket.as_class_ref::<TCPSocket>() {
-        return Ok(JSValue::from(this.shutdown_write()));
-    } else if let Some(this) = socket.as_class_ref::<TLSSocket>() {
-        return Ok(JSValue::from(this.shutdown_write()));
+/// node:net's `_final`, after `shutdown()`: the attached HTTP/2 parser holds the FIN behind output it still owes, and a drain follows that FIN.
+pub(crate) fn is_shutdown_held(socket: SocketHandle<'_>) -> bool {
+    match socket {
+        SocketHandle::Tcp(this) => this.native_callback.get().holds_fin(),
+        SocketHandle::Tls(this) => this.native_callback.get().holds_fin(),
+        SocketHandle::Ignored(_) => false,
     }
-    Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn js_get_buffered_amount(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-
-    let [socket, _, _] = callframe.arguments_as_array::<3>();
-    if callframe.arguments_count() < 1 {
-        return Err(global.throw_not_enough_arguments(
-            "getBufferedAmount",
-            1,
-            callframe.arguments_count() as usize,
-        ));
+pub(crate) fn get_buffered_amount(socket: SocketHandle<'_>) -> usize {
+    match socket {
+        SocketHandle::Tcp(this) => this.buffered_data_for_node_net.get().len(),
+        SocketHandle::Tls(this) => this.buffered_data_for_node_net.get().len(),
+        SocketHandle::Ignored(_) => 0,
     }
-    if let Some(this) = socket.as_class_ref::<TCPSocket>() {
-        return Ok(JSValue::js_number(
-            this.buffered_data_for_node_net.get().len() as f64,
-        ));
-    } else if let Some(this) = socket.as_class_ref::<TLSSocket>() {
-        return Ok(JSValue::js_number(
-            this.buffered_data_for_node_net.get().len() as f64,
-        ));
-    }
-    Ok(JSValue::js_number(0.0))
 }
 
 #[bun_jsc::host_fn]

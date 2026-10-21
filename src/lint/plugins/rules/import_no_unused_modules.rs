@@ -23,7 +23,7 @@ pub struct NoUnusedModules {
     missing_exports: bool,
     unused_exports: bool,
     ignore_unused_type_exports: bool,
-    /// What `doPreparation` has found. All files of a run are in one project.
+    /// The result of `doPreparation`. Every file in a run belongs to the same project.
     prepared: OnceLock<Box<Prepared>>,
 }
 
@@ -34,7 +34,7 @@ const EXPORT_ALL_DECLARATION: &[u8] = b"ExportAllDeclaration";
 const IMPORT_NAMESPACE_SPECIFIER: &[u8] = b"ImportNamespaceSpecifier";
 const IMPORT_DEFAULT_SPECIFIER: &[u8] = b"ImportDefaultSpecifier";
 const DEFAULT: &[u8] = b"default";
-/// How the `name` of a node that has none is printed.
+/// How upstream prints the `name` of a node that has none.
 const UNDEFINED: &[u8] = b"undefined";
 
 const DECLARATIONS: [StmtTag; 7] = [
@@ -47,10 +47,10 @@ const DECLARATIONS: [StmtTag; 7] = [
     StmtTag::ExportDefault,
 ];
 
-/// A value of `exportList`: by the name, whether `whereUsed` has something.
+/// A value of `exportList`: maps each name to whether its `whereUsed` is non-empty.
 type Exports = FxHashMap<Box<[u8]>, bool>;
 
-/// What of the file that asks decides how the other files are found and read.
+/// The parts of the linted file's configuration that decide how the other files are found and parsed.
 struct Context {
     settings: Arc<Json>,
     parser_options: Json,
@@ -59,32 +59,32 @@ struct Context {
     ecma_version: u32,
     jsx: bool,
     experimental_decorators: bool,
-    is_of_eslint_8: bool,
+    is_eslint_8: bool,
 }
 
-/// What upstream keeps between the files. It changes it with every file that it lints, for an editor: not so here.
+/// The state upstream keeps across files. Upstream updates it with every file it lints, for editors. This doesn't.
 struct Prepared {
     context: Context,
-    /// Otherwise upstream throws: nothing is reported.
+    /// If false, upstream throws, so nothing is reported.
     is_listed: bool,
     ignored_files: FxHashSet<Box<[u8]>>,
     export_list: FxHashMap<Box<[u8]>, Arc<Exports>>,
-    /// The same for another context.
+    /// The same state for a different context.
     next: OnceLock<Box<Prepared>>,
 }
 
-/// An entry of a value of `importList`.
+/// One entry in a value of `importList`.
 struct Used<'a> {
     path: Cow<'a, [u8]>,
     names: SmallVec<[&'a [u8]; 4]>,
 }
 
-/// `exportList.get(file)`, once it is asked for. `None`: nothing is reported.
+/// `exportList.get(file)`, computed lazily. `None` means nothing is reported.
 #[derive(Default)]
 pub struct Usage(OnceCell<Option<Arc<Exports>>>);
 
 impl Context {
-    fn of(language: &LanguageOptions) -> Context {
+    fn from_language(language: &LanguageOptions) -> Context {
         Context {
             settings: Arc::clone(&language.settings),
             parser_options: language.parser_options.clone(),
@@ -93,17 +93,17 @@ impl Context {
             ecma_version: language.ecma_version,
             jsx: language.jsx,
             experimental_decorators: language.experimental_decorators,
-            is_of_eslint_8: language.eslint_8.is_some(),
+            is_eslint_8: language.eslint_8.is_some(),
         }
     }
 
-    fn is_of(&self, language: &LanguageOptions) -> bool {
+    fn matches_language(&self, language: &LanguageOptions) -> bool {
         self.parser == language.parser
             && self.source_type == language.source_type
             && self.ecma_version == language.ecma_version
             && self.jsx == language.jsx
             && self.experimental_decorators == language.experimental_decorators
-            && self.is_of_eslint_8 == language.eslint_8.is_some()
+            && self.is_eslint_8 == language.eslint_8.is_some()
             && self.settings == language.settings
             && self.parser_options == language.parser_options
     }
@@ -113,17 +113,18 @@ fn is_node_module(path: &[u8]) -> bool {
     strings::contains(path, b"/node_modules/")
 }
 
-/// The key of `exportList` for a name.
+/// Returns the `exportList` key for a name.
 fn key_of(name: &[u8]) -> &[u8] {
     if name == DEFAULT { IMPORT_DEFAULT_SPECIFIER } else { name }
 }
 
-/// `pkg[name]`, if it is truthy.
+/// `pkg[name]`, if it's truthy.
 fn field_of<'p>(pkg: &'p Json, name: &[u8]) -> Option<&'p Json> {
     pkg.get(name).filter(|it| it.is_truthy())
 }
 
-/// `fileIsInPkg`. Where upstream throws, for lack of a `package.json` or at a value that is no string: no.
+/// `fileIsInPkg`. Returns false where upstream throws, which is when there's no `package.json` or a value isn't a
+/// string.
 fn file_is_in_pkg(modules: &dyn Modules, file: &[u8]) -> bool {
     let Some((pkg, path)) = read_pkg_up(modules, file) else { return false };
     if matches!(pkg.get(b"private"), Some(Json::Bool(true))) {
@@ -142,7 +143,7 @@ fn file_is_in_pkg(modules: &dyn Modules, file: &[u8]) -> bool {
         || field_of(&pkg, b"main").is_some_and(check_pkg_field_string)
 }
 
-/// `forEachDeclarationIdentifier`: the name, which is `None` for `undefined`, and `isTypeDeclaration`.
+/// `forEachDeclarationIdentifier`. The callback gets the name, `None` for `undefined`, and `isTypeDeclaration`.
 fn for_each_declaration_identifier<'a>(declaration: Stmt<'a>, cb: &mut dyn FnMut(Option<&'a [u8]>, bool)) {
     let (id, is_type_declaration) = match declaration.kind() {
         StmtKind::Fn(it) if it.has_body() => (it.name(), false),
@@ -163,7 +164,7 @@ fn for_each_declaration_identifier<'a>(declaration: Stmt<'a>, cb: &mut dyn FnMut
     }
 }
 
-/// The same for the `id` of a declarator.
+/// The same for a declarator's `id`.
 fn for_each_identifier_of<'a>(id: Pat<'a>, cb: &mut dyn FnMut(Option<&'a [u8]>, bool)) {
     match id.kind() {
         PatKind::Object(_) => recursive_pattern_capture(id, &mut |pattern| {
@@ -173,7 +174,7 @@ fn for_each_identifier_of<'a>(id: Pat<'a>, cb: &mut dyn FnMut(Option<&'a [u8]>, 
         }),
         PatKind::Array(elements) => {
             for element in elements {
-                // At a hole upstream throws.
+                // Upstream throws on a hole.
                 let Some(pattern) = element.pat().filter(|it| !matches!(it.kind(), PatKind::Missing)) else { continue };
                 let is_identifier = !element.is_rest() && element.default().is_none();
                 let name = pattern.as_ident().filter(|_| is_identifier);
@@ -184,7 +185,7 @@ fn for_each_identifier_of<'a>(id: Pat<'a>, cb: &mut dyn FnMut(Option<&'a [u8]>, 
     }
 }
 
-/// Whether `updateExportUsage` finds a name in a statement of the program.
+/// True if `updateExportUsage` finds a name in this top-level statement.
 fn exports_something(stmt: Stmt) -> bool {
     match stmt.kind() {
         StmtKind::ExportDefault(_) => true,
@@ -199,8 +200,8 @@ fn exports_something(stmt: Stmt) -> bool {
     }
 }
 
-/// Whether `updateImportUsage` makes an export of the file out of what it imports from itself and, as the preparation
-/// has read it, did not import.
+/// True if `updateImportUsage` would add an export to the file's own list, which happens when the file imports
+/// something from itself that it didn't import when `doPreparation` read it.
 fn imports_from_itself<'a>(file: &'a File<'a>, path: &[u8], is_prepared: bool) -> bool {
     let (Some(resolvers), Some(maps)) = (Resolvers::of(file.settings()), ExportMaps::of(file)) else { return false };
     let (mut has_default, mut new_imports) = (false, FxHashMap::<&'a [u8], bool>::default());
@@ -245,10 +246,10 @@ fn imports_from_itself<'a>(file: &'a File<'a>, path: &[u8], is_prepared: bool) -
 }
 
 impl NoUnusedModules {
-    /// `doPreparation`. Where `listFilesToProcess` throws nothing is found.
+    /// `doPreparation`. If `listFilesToProcess` throws, no files are found.
     fn prepare<'a>(&self, file: &'a File<'a>) -> Prepared {
         let mut prepared = Prepared {
-            context: Context::of(file.language()),
+            context: Context::from_language(file.configured_language()),
             is_listed: false,
             ignored_files: FxHashSet::default(),
             export_list: FxHashMap::default(),
@@ -325,27 +326,27 @@ impl NoUnusedModules {
         prepared
     }
 
-    /// As if `file` were the first that is linted.
+    /// Returns the state as if `file` were the first file linted.
     fn prepared<'a>(&self, file: &'a File<'a>) -> &Prepared {
-        let (mut place, mut is_new) = (&self.prepared, false);
+        let (mut slot, mut is_new) = (&self.prepared, false);
         loop {
-            let prepared = place.get_or_init(|| {
+            let prepared = slot.get_or_init(|| {
                 is_new = true;
                 Box::new(self.prepare(file))
             });
-            if is_new || prepared.context.is_of(file.language()) {
+            if is_new || prepared.context.matches_language(file.configured_language()) {
                 return prepared;
             }
-            place = &prepared.next;
+            slot = &prepared.next;
         }
     }
 
-    /// What `checkUsage` looks a name up in.
+    /// Returns the map that `checkUsage` looks names up in.
     fn exports_of<'a>(&self, file: &'a File<'a>) -> Option<Arc<Exports>> {
         let modules = file.modules()?;
         let path = paths::portable(file.path(), file.path());
         let prepared = self.prepared(file);
-        // A file that is not in `src` is not in the list.
+        // A file outside `src` isn't in the list.
         let exports = prepared.export_list.get(&path[..])?;
         let is_exempt = prepared.ignored_files.contains(&path[..]) || file_is_in_pkg(modules, &path);
         (!is_exempt).then(|| Arc::clone(exports))
@@ -440,7 +441,7 @@ impl Rule for NoUnusedModules {
         let node = match file.body().first() {
             Some(first) => first.export_span().unwrap_or_else(|| first.span()),
             None if file.uses_typescript_parser() => file.program_span(),
-            // espree's `Program` without a token is the whole text.
+            // espree's `Program` spans the whole text if there are no tokens.
             None => file.span(),
         };
         cx.report(node, NO_EXPORTS).on_exit(true);

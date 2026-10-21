@@ -69,7 +69,7 @@ pub fn from_w_path<'a>(buf: &'a mut [u8], utf16: &[u16]) -> &'a ZStr {
     let to_copy = strings::trim_prefix_comptime::<u16>(utf16, &windows::LONG_PATH_PREFIX);
     let last = buf.len() - 1;
     let encode_into_result = strings::copy_utf16_into_utf8(&mut buf[..last], to_copy);
-    let written = encode_into_result.written as usize;
+    let written = encode_into_result.written;
     debug_assert!(written < buf.len());
     buf[written] = 0;
     ZStr::from_buf(buf, written)
@@ -453,7 +453,7 @@ pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
         return without_trailing_slash(input);
     }
 
-    let root_len = resolve_path::windows_filesystem_root(input).len() + 1;
+    let root_len = resolve_path::windows_filesystem_root(input).len();
 
     let mut path = input;
     while path.len() > root_len && matches!(path[path.len() - 1], b'/' | b'\\') {

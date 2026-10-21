@@ -713,6 +713,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                     kept.into_bump_slice_mut(),
                                 ),
                                 is_single_line: object.get().is_single_line,
+                                close_brace_loc: object.get().close_brace_loc,
                             },
                             binding.loc,
                         )

@@ -4447,6 +4447,23 @@ describe("iterator result consumers", () => {
     }).toEqual({ async: [1, 2, 3], sync: ["s1", "s2"] });
   });
 
+  test("ReadableStream.from over a sync generator, pipe aborted during the first read", async () => {
+    let finished = false;
+    function* gen() {
+      try {
+        yield 1;
+        yield 2;
+      } finally {
+        finished = true;
+      }
+    }
+    const controller = new AbortController();
+    const piped = ReadableStream.from(gen()).pipeTo(new WritableStream(), { signal: controller.signal });
+    controller.abort();
+    expect(await piped.catch(e => e.name)).toBe("AbortError");
+    expect(finished).toBe(true);
+  });
+
   test("ReadableStream.from over an async iterator whose results have accessors", async () => {
     const reads = [];
     let i = 0;

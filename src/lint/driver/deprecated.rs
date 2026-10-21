@@ -57,8 +57,10 @@ fn write_js(out: &mut Vec<u8>, rule: &js_plugin::Rule, (deprecated, replaced_by)
     out.push(b'}');
 }
 
-fn write(out: &mut Vec<u8>, rule: &Deprecated) {
-    let (id, rest) = (rule.0.as_bytes(), deprecated_info(rule));
+/// `id`: what the configuration calls the rule, if not what ESLint calls it.
+fn write(out: &mut Vec<u8>, rule: &Deprecated, id: Option<&[u8]>) {
+    let id = id.unwrap_or(rule.0.as_bytes());
+    let rest = deprecated_info(rule);
     out.extend_from_slice(&[b"{\"ruleId\":\"", id, b"\",", rest, b"}"].concat());
 }
 
@@ -78,14 +80,17 @@ pub(crate) fn write_used(out: &mut Vec<u8>, config: Option<&ResolvedConfig>) {
             {
                 let id = RuleId::Known(rule.entry.meta).to_vec();
                 let deprecated = deprecated_rule(&id);
-                deprecated.into_iter().for_each(|it| write(out, it));
+                let name = rule.name().map(|it| &it[..]);
+                deprecated.into_iter().for_each(|it| write(out, it, name));
             }
             Entry::Js(rule) if rule.severity != Severity::Off => {
                 let rule = &*rule.configured.rule;
                 let deprecated = rule.deprecated.as_deref().into_iter();
                 deprecated.for_each(|it| write_js(out, rule, it));
             }
-            Entry::Formatting(rule) if rule.severity != Severity::Off => write(out, rule.rule),
+            Entry::Formatting(rule) if rule.severity != Severity::Off => {
+                write(out, rule.rule, None);
+            }
             _ => {}
         }
         if out.len() == separated {

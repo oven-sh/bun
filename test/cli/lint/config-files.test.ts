@@ -388,6 +388,58 @@ describe.concurrent("an eslint.config.js", () => {
       },
       timeout,
     );
+
+    test(
+      "usedDeprecatedRules has the name of the configuration",
+      async () => {
+        const { raw, exitCode } = await lint(
+          {
+            "eslint.config.mjs": `export default [{
+              files: ["**/*.ts"],
+              plugins: { ts: { meta: { name: "@typescript-eslint/eslint-plugin" }, rules: {} } },
+              rules: { "ts/no-empty-interface": "error" },
+            }];`,
+            "a.ts": "export interface A {}\n",
+          },
+          ["a.ts"],
+        );
+        const [{ usedDeprecatedRules: used }] = JSON.parse(raw).results;
+        expect(used.map((it: { ruleId: string }) => it.ruleId)).toEqual(["ts/no-empty-interface"]);
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    // A plugin that says nothing about itself is what the usual name says, wherever it comes from: a file of the project too.
+    test("a plugin without a name, from a file of the project, is built in under the usual name", async () => {
+      const { problems, exitCode } = await lint(
+        {
+          "eslint.config.mjs": `import ts from "./ts.mjs";\nexport default [{ files: ["**/*.ts"], plugins: { "@typescript-eslint": ts }, rules: { "@typescript-eslint/no-explicit-any": "error" } }];`,
+          "ts.mjs": `export default { rules: { "no-explicit-any": ${rule("TSAnyKeyword")} } };`,
+          "a.ts": "export let a: any = 1;\n",
+        },
+        ["a.ts"],
+      );
+      expect(problems).toEqual(["a.ts:1:15 @typescript-eslint/no-explicit-any"]);
+      expect(exitCode).toBe(1);
+    });
+
+    // ESLint allows one name for different plugins in objects for different files. It is then no alias for either.
+    test("one name for two built-in packages, for different files, is neither", async () => {
+      const { problems, exitCode } = await lint(
+        {
+          "eslint.config.mjs": `export default [
+            { files: ["**/*.ts"], plugins: { x: ${ts} }, rules: { "x/no-explicit-any": "error" } },
+            { files: ["**/*.js"], plugins: { x: ${node} }, rules: { "x/no-process-exit": "error" } },
+          ];`,
+          "a.ts": "export let a: any = 1;\nprocess.exit();\n",
+          "b.js": "debugger;\n",
+        },
+        ["a.ts", "b.js"],
+      );
+      expect(problems).toEqual(["a.ts:1:15 x/no-explicit-any", "b.js:1:1 x/no-process-exit"]);
+      expect(exitCode).toBe(1);
+    });
   });
 
   // What ESLint 10.12 reports.

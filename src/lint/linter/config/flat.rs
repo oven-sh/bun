@@ -12,6 +12,7 @@ use crate::options::Json;
 use crate::paths::{self, package_of};
 use crate::rule::{Frameworks, Kind, Plugin, minor_of};
 use crate::runner::RuleEntry;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// A JavaScript plugin that is loaded already, and what `$jsPlugins` would have for it: `{ module, export }`. These come from
@@ -118,27 +119,34 @@ fn answered_by(
     }
 }
 
-/// What a plugin is called: what it says, with its version; else the package that it was exported from, if it was found in a module.
-/// `name`, `located`: what `plugins` and `$jsPlugins` of the object have for it. eslint-plugin-import, eslint-plugin-react and
-/// eslint-plugin-import-lite, which `@antfu/eslint-config` has as `import`, all say nothing.
-fn called<'j>(name: &'j Json, located: Option<&'j Json>) -> Option<&'j [u8]> {
-    let module = || located?.get(b"module")?.as_str();
-    name.as_str().or_else(|| module().map(package_of))
+/// What a plugin is called: what it says, with its version; else the package in `node_modules` that it was exported from, if it
+/// was found in one. `name`, `located`: what `plugins` and `$jsPlugins` of the object have for it. eslint-plugin-import,
+/// eslint-plugin-react and eslint-plugin-import-lite, which `@antfu/eslint-config` has as `import`, all say nothing. A plugin
+/// from a file of the project says nothing either.
+fn called<'j>(name: &'j Json, located: Option<&'j Json>) -> Option<Cow<'j, [u8]>> {
+    if let Some(name) = name.as_str() {
+        return Some(Cow::Borrowed(name));
+    }
+    let module = located?.get(b"module")?.as_str()?;
+    let package = package_of(module);
+    if package.len() == module.len() {
+        return None;
+    }
+    Some(match bun_core::strings::contains_char(package, b'\\') {
+        true => Cow::Owned(bun_core::strings::replace_owned(package, b"\\", b"/")),
+        false => Cow::Borrowed(package),
+    })
 }
 
-/// The [foreign](AnsweredBy::Package) and the [other](AnsweredBy::Alias) names of the plugins of a whole configuration file.
-fn add_plugin_names(
-    registry: &Registry,
-    json: &Json,
-    foreign: &mut Vec<Box<[u8]>>,
-    aliases: &mut Vec<(Box<[u8]>, Plugin)>,
-) {
+/// Who answers for each name of a plugin in `json`, which is what a configuration file exports or a part of it. A name that
+/// objects have different plugins under, for different files, is [`AnsweredBy::Package`]: only one thing can be named by it.
+fn add_plugin_names(registry: &Registry, json: &Json, into: &mut Vec<(Box<[u8]>, AnsweredBy)>) {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return;
     }
     if let Json::Array(items) = json {
         for item in items {
-            add_plugin_names(registry, item, foreign, aliases);
+            add_plugin_names(registry, item, into);
         }
         return;
     }
@@ -146,22 +154,16 @@ fn add_plugin_names(
     let located = json.get(b"$jsPlugins");
     for (prefix, name) in plugins.unwrap_or_default() {
         let located = located.and_then(|it| it.get(prefix));
-        match answered_by(registry, prefix, called(name, located), located.is_some()) {
-            AnsweredBy::Here => {}
-            AnsweredBy::Alias(plugin) => {
-                if !aliases.iter().any(|it| *it.0 == prefix[..]) {
-                    aliases.push((prefix[..].into(), plugin));
-                }
-            }
-            AnsweredBy::Package => {
-                if !foreign.iter().any(|it| **it == prefix[..]) {
-                    foreign.push(prefix[..].into());
-                }
-            }
+        let called = called(name, located);
+        let answered = answered_by(registry, prefix, called.as_deref(), located.is_some());
+        match into.iter_mut().find(|it| *it.0 == prefix[..]) {
+            Some(known) if known.1 != answered => known.1 = AnsweredBy::Package,
+            Some(_) => {}
+            None => into.push((prefix[..].into(), answered)),
         }
     }
     if let Some(extends) = json.get(b"extends") {
-        add_plugin_names(registry, extends, foreign, aliases);
+        add_plugin_names(registry, extends, into);
     }
 }
 
@@ -706,14 +708,11 @@ impl Reader<'_> {
             let located = json.get(b"$jsPlugins").and_then(|it| it.get(prefix));
             let can_be_loaded =
                 located.is_some() || self.js_locations.iter().any(|it| *it.0 == prefix[..]);
-            let is_built_in =
-                match answered_by(self.registry, prefix, called(name, located), can_be_loaded) {
-                    AnsweredBy::Here => true,
-                    // Not if another plugin has the name too: see `from_flat`.
-                    AnsweredBy::Alias(_) => self.aliases.iter().any(|it| *it.0 == prefix[..]),
-                    AnsweredBy::Package => false,
-                };
-            match is_built_in {
+            let called = called(name, located);
+            let answered = answered_by(self.registry, prefix, called.as_deref(), can_be_loaded);
+            // Not under a name that another plugin has too: see `from_flat`.
+            let is_foreign = self.foreign_prefixes.iter().any(|it| **it == prefix[..]);
+            match answered != AnsweredBy::Package && !is_foreign {
                 true => {
                     object.plugins.push(prefix[..].into());
                     if let Some(name) = name.as_str() {
@@ -989,15 +988,19 @@ impl Config {
             handing_back: Vec::new(),
         };
         reader.add_named(named);
-        add_plugin_names(
-            registry,
-            json,
-            &mut reader.foreign_prefixes,
-            &mut reader.aliases,
-        );
-        // A name that another plugin has too, in another object or in bunfig.toml, is foreign everywhere.
-        let foreign = &reader.foreign_prefixes;
-        reader.aliases.retain(|it| !foreign.contains(&it.0));
+        let mut names = Vec::new();
+        add_plugin_names(registry, json, &mut names);
+        for (prefix, answered) in names {
+            // A name that bunfig.toml has too is foreign.
+            if reader.foreign_prefixes.contains(&prefix) {
+                continue;
+            }
+            match answered {
+                AnsweredBy::Here => {}
+                AnsweredBy::Alias(plugin) => reader.aliases.push((prefix, plugin)),
+                AnsweredBy::Package => reader.foreign_prefixes.push(prefix),
+            }
+        }
         let defaults = crate::json::parse(DEFAULT_CONFIG).unwrap_or(Json::Null);
         for object in defaults.as_array().unwrap_or_default() {
             reader.object_with_extends(object)?;

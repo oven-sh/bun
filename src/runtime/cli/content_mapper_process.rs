@@ -87,8 +87,9 @@ impl Programs {
         inbox.is_closed = matches!(command, Command::Stop);
         inbox.commands.push(command);
         if let Some(event_loop) = &inbox.event_loop {
+            // Not `Loop::wakeup`: its `&mut Loop` would alias the one that the I/O thread has while it ticks.
             // SAFETY: see `LoopToWake`.
-            unsafe { (*event_loop.0).wakeup() };
+            unsafe { bun_uws::us_wakeup_loop(event_loop.0) };
         }
         true
     }

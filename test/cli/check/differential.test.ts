@@ -35,7 +35,6 @@ const tsconfig = JSON.stringify({
 test.concurrent.skipIf(!tsc)("matches `tsc --singleThreaded` on one thread for modules in cycles", async () => {
   using dir = tempDir("bun-check-differential", {
     "tsconfig.json": tsconfig,
-    // With 52 or 60 modules TypeScript 7.0 reports TS2321 in every file and 7.1 in none. Up to 48 they agree.
     ...modulesInCycles(isDebug || isASAN ? 24 : 48),
   });
   const root = String(dir);
@@ -576,21 +575,7 @@ test.concurrent.skipIf(!tsc)("reports TS2879 at the first fragment checked, on a
   for (const lines of ours) expect(lines).toEqual(theirs);
 });
 
-// Without React's types, a file gets one TS2875. TypeScript 7.0 reports it at the tag a checker reaches first, which
-// depends on what else that checker has checked. TypeScript 7.1 reports it at the first tag in the text, and so does
-// `bun check`. These are the positions TypeScript 7.1 reports for `modulesOfComponents(56)`, module by module.
-const firstTags = `
-  c0.tsx(1,21) c1.tsx(2,21) c2.tsx(2,21) c3.tsx(2,34) c4.tsx(3,22) c5.tsx(3,41) c6.tsx(4,13)
-  c7.tsx(5,13) c8.tsx(3,61) c9.tsx(4,30) c10.tsx(4,26) c11.tsx(4,34) c12.tsx(6,10) c13.tsx(5,13)
-  c14.tsx(4,21) c15.tsx(4,21) c16.tsx(4,21) c17.tsx(4,34) c18.tsx(5,22) c19.tsx(4,41) c20.tsx(5,13)
-  c21.tsx(6,13) c22.tsx(4,61) c23.tsx(5,30) c24.tsx(5,26) c25.tsx(4,34) c26.tsx(6,10) c27.tsx(5,13)
-  c28.tsx(4,21) c29.tsx(4,21) c30.tsx(4,21) c31.tsx(4,34) c32.tsx(5,22) c33.tsx(4,41) c34.tsx(5,13)
-  c35.tsx(6,13) c36.tsx(4,61) c37.tsx(5,30) c38.tsx(5,26) c39.tsx(4,34) c40.tsx(6,10) c41.tsx(5,13)
-  c42.tsx(4,21) c43.tsx(4,21) c44.tsx(4,21) c45.tsx(4,34) c46.tsx(5,22) c47.tsx(4,41) c48.tsx(5,13)
-  c49.tsx(6,13) c50.tsx(4,61) c51.tsx(5,30) c52.tsx(5,26) c53.tsx(4,34) c54.tsx(6,10) c55.tsx(5,13)
-`
-  .trim()
-  .split(/\s+/);
+// Without React's types, a file gets one TS2875, at the first tag in the text.
 const isJsxRuntimeError = (line: string) => line.includes("error TS2875:");
 const jsxRuntimeErrorPositions = (lines: string[]) => lines.filter(isJsxRuntimeError).map(line => line.split(":")[0]);
 
@@ -605,10 +590,8 @@ test.concurrent.skipIf(!tsc)("reports TS2875 at the file's first tag on any thre
     linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
     ...[1, 2, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
   ]);
-  for (const lines of ours) {
-    expect(jsxRuntimeErrorPositions(lines).sort()).toEqual(firstTags.slice(0, modules).sort());
-    expect(lines.filter(line => !isJsxRuntimeError(line))).toEqual(theirs.filter(line => !isJsxRuntimeError(line)));
-  }
+  expect(theirs.filter(isJsxRuntimeError).length).toBe(modules);
+  for (const lines of ours) expect(lines).toEqual(theirs);
 });
 
 // The first tag counts even if it's never checked, like the second class in `extends` or the body of `with`. A file in

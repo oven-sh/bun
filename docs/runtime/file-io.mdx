@@ -162,9 +162,9 @@ await Bun.write("out/other/file.txt", "data", { createPath: false }); // rejects
 
 ### Overwriting an existing file
 
-When the destination is a path or a `Bun.file(path)`, `Bun.write` replaces the file's contents: after the write, the file holds exactly the bytes of `data`, even if it was longer before. The file is written in place, so it keeps its inode, hard links, and permissions.
+When the destination is a path or a `Bun.file(path)`, `Bun.write` replaces the file's contents: after the write, the file holds exactly the bytes of `data`, even if it was longer before. Bun writes the file in place, so the file keeps its inode and hard links. The file keeps its permissions too, unless the `mode` option sets them. Bun applies `mode` when `data` is a `BunFile`, and ignores `mode` when `data` is a string or a `TypedArray`.
 
-When the destination is a file descriptor (a number or `Bun.file(fd)`), `Bun.write` writes at the descriptor's current position and leaves the rest of the file as it is. One exception: empty `data` that is not a file or a stream, such as an empty string or `TypedArray`, truncates the file to zero length. Open the descriptor with the flags you need (for example `"r+"` to write into an existing file) and close it yourself.
+When the destination is a file descriptor (a number or `Bun.file(fd)`), `Bun.write` writes at the descriptor's current position and leaves the rest of the file as it is. One exception: empty `data` that is not a file or a stream, such as an empty string or `TypedArray`, truncates the file to zero length. Open the descriptor with the flags you need (for example `"r+"` to write into an existing file) and close it yourself. To append to a file, use a [`FileSink`](#incremental-writing-with-filesink) on a descriptor that you open in append mode.
 
 `Bun.write` is not atomic. Another process can observe a partially written file, and two writes to the same path at the same time can interleave their bytes. This is not specific to Bun. It is how writes to a shared path work. When readers must never see a partial file, write to a temporary path in the same directory and rename it over the destination:
 
@@ -175,6 +175,10 @@ const tmp = `config.json.${crypto.randomUUID()}.tmp`; // unique per write, same 
 await Bun.write(tmp, JSON.stringify(config));
 await rename(tmp, "config.json"); // atomic on the same filesystem
 ```
+
+Two writes to the same path that overlap are not ordered either. The write that you start first can finish last, and then the file holds the older data. Bun can complete a small string or `TypedArray` write before `Bun.write` returns. Bun completes other writes later, in no fixed order. Code that overlaps writes can therefore work while the data is small and lose an update when the data grows.
+
+Start a write to a path after the previous write to that path settles. In a server, requests overlap, so an `await` in each request handler is not enough. The rename above keeps the file whole, but it does not order two replacements.
 
 ---
 
@@ -318,7 +322,7 @@ interface Bun {
     input: string | Blob | ArrayBuffer | SharedArrayBuffer | TypedArray | Response,
     options?: {
       createPath?: boolean; // default true
-      mode?: number;
+      mode?: number; // applied when input is a BunFile
     },
   ): Promise<number>;
 }
@@ -334,7 +338,7 @@ interface BunFile {
   bytes(): Promise<Uint8Array>;
   write(
     input: string | Blob | ArrayBuffer | SharedArrayBuffer | TypedArray | Response,
-    options?: { createPath?: boolean },
+    options?: { createPath?: boolean; type?: string },
   ): Promise<number>;
   writer(params?: { highWaterMark?: number }): FileSink;
   exists(): Promise<boolean>;

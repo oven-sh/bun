@@ -2140,11 +2140,14 @@ declare module "bun" {
    *
    * If `destination` exists, it must be a regular file or symlink to a file. If `destination`'s directory does not exist, it is created by default.
    *
-   * An existing file is overwritten in place and truncated to the new length. It keeps its inode, hard links, and
-   * permissions. A file descriptor destination (a number or `Bun.file(fd)`) is written at its current position and
-   * is not truncated, except that an empty `input` that is not a file or a stream truncates it to zero length. The
-   * write is not atomic: concurrent writers to one path can interleave. For an atomic replace, write to a temporary
-   * path and `rename()` it over the destination.
+   * An existing file is overwritten in place and truncated to the new length. It keeps its inode and hard links, and
+   * it keeps its permissions unless `mode` sets them. A file descriptor destination (a number or `Bun.file(fd)`) is
+   * written at its current position and is not truncated, except that an empty `input` that is not a file or a
+   * stream truncates it to zero length.
+   *
+   * The write is not atomic: concurrent writers to one path can interleave. For an atomic replace, write to a
+   * temporary path and `rename()` it over the destination. Writes to one path that overlap are not ordered either:
+   * an earlier write can finish after a later one. Start a write to a path after the previous write to it settles.
    *
    * @category File System
    *
@@ -2159,7 +2162,15 @@ declare module "bun" {
     input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | Archive | ReadableStream,
     options?: {
       /**
-       * If writing to a PathLike, set the permissions of the file.
+       * The permissions of the destination file, for example `0o600`.
+       *
+       * `mode` takes effect when `input` is a `BunFile`: the destination gets
+       * exactly this mode, whether Bun creates it or it already exists. When
+       * `input` is a `ReadableStream`, Bun uses `mode` only to create a file
+       * that does not exist, and the process umask applies.
+       *
+       * `mode` has no effect when `input` is a string, a `TypedArray`, an
+       * `ArrayBuffer`, an `Archive`, or a `Blob` that holds data.
        */
       mode?: number;
       /**
@@ -2792,6 +2803,13 @@ declare module "bun" {
          * @default true
          */
         createPath?: boolean;
+        /**
+         * Set the MIME type of this `BunFile`: the value of its `type`
+         * property, and the `Content-Type` of a `Response` made from the file.
+         * The file on disk does not record it. A string that is not a valid
+         * MIME type is ignored.
+         */
+        type?: string;
       },
     ): Promise<number>;
 

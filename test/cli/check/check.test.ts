@@ -1717,7 +1717,9 @@ export function lastInAnObject() { ({ ...x6 } = o); }
         `export const probe: never = [${imported.map((_, at) => `v${at}`)}] as const;\n`,
     });
     const { stdout, exitCode } = await check(dir);
-    expect(stdout).toBe(`a.ts(7,14): error TS2322: Type '[2, 1, 1, 2, 1, 2]' is not assignable to type 'never'.`);
+    expect(stdout).toBe(
+      `a.ts(7,14): error TS2322: Type 'readonly [2, 1, 1, 2, 1, 2]' is not assignable to type 'never'.`,
+    );
     expect(exitCode).toBe(1);
   });
 
@@ -11017,7 +11019,7 @@ export const e7: UU<Req> = null! as Req; export const e8: Req = null! as UU<Req>
       expect(stdout).toMatchInlineSnapshot(`
         "a.ts(6,85): error TS2322: Type '2' is not assignable to type '1'.
         a.ts(7,67): error TS2322: Type 'number' is not assignable to type 'never'.
-        a.ts(8,66): error TS2322: Type '[1]' is not assignable to type 'never'.
+        a.ts(8,66): error TS2322: Type 'readonly [1]' is not assignable to type 'never'.
         a.ts(9,61): error TS2322: Type '1' is not assignable to type 'never'.
         a.ts(10,75): error TS2322: Type '"a"' is not assignable to type 'never'.
         a.ts(11,58): error TS2322: Type '{ a: 1; }' is not assignable to type 'never'.
@@ -11152,11 +11154,11 @@ declare function take(x: never): void; take({ a: [1] } as const);
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(2,30): error TS2322: Type '{ readonly a: [1, { readonly b: "x"; }]; }' is not assignable to type 'never'.
-        a.ts(3,14): error TS2322: Type '{ readonly a: { b: [1]; }; }' is not assignable to type 'never'.
-        a.ts(4,14): error TS2322: Type '[[1]]' is not assignable to type 'never'.
-        a.ts(5,14): error TS2322: Type '{ readonly a: [1]; }' is not assignable to type 'never'.
-        a.ts(6,45): error TS2345: Argument of type '{ readonly a: [1]; }' is not assignable to parameter of type 'never'."
+        "a.ts(2,30): error TS2322: Type '{ readonly a: readonly [1, { readonly b: "x"; }]; }' is not assignable to type 'never'.
+        a.ts(3,14): error TS2322: Type '{ readonly a: { readonly b: readonly [1]; }; }' is not assignable to type 'never'.
+        a.ts(4,14): error TS2322: Type 'readonly [readonly [1]]' is not assignable to type 'never'.
+        a.ts(5,14): error TS2322: Type '{ readonly a: readonly [1]; }' is not assignable to type 'never'.
+        a.ts(6,45): error TS2345: Argument of type '{ readonly a: readonly [1]; }' is not assignable to parameter of type 'never'."
       `);
       expect(exitCode).toBe(1);
     });

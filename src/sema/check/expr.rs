@@ -3490,15 +3490,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if expects_tuple {
             // Readonly, unless the contextual type is mutable.
-            let list = self.array_of(TypeId::ANY);
             let is_readonly = is_const
-                // `someType` tests `never` itself, which is assignable to any array type.
-                && context != Some(TypeId::NEVER)
-                && !context.is_some_and(|c| {
-                    self.parts(c).iter().any(|&m| {
-                        !self.is_any(m) && !self.is_nullish(m) && self.is_assignable(m, list)
-                    })
-                });
+                && !context
+                    .is_some_and(|c| self.parts(c).iter().any(|&m| self.is_mutable_array_like(m)));
             let ty = self.normalized_tuple(&types, &flags, is_readonly);
             if in_pattern {
                 return ty;

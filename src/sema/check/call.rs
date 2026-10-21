@@ -2569,19 +2569,9 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => flag,
             });
         }
-        // For a `const` type parameter it's readonly, unless `rest` may be a mutable array type
-        // (`isMutableArrayLikeType`).
-        let mut readonly = is_const;
-        if is_const {
-            let any_array = self.array_of(TypeId::ANY);
-            for &m in self.parts(rest) {
-                if self.is_mutable_array_or_tuple(m)
-                    || !self.is_any(m) && !self.is_nullish(m) && self.is_assignable(m, any_array)
-                {
-                    readonly = false;
-                }
-            }
-        }
+        // For a `const` type parameter it's readonly, unless `rest` may be a mutable array type.
+        let readonly =
+            is_const && !(self.parts(rest).iter()).any(|&m| self.is_mutable_array_like(m));
         self.normalized_tuple(&elems, &flags, readonly)
     }
 

@@ -2106,8 +2106,8 @@ impl<'p, 's> Checker<'p, 's> {
         pairs
     }
 
-    /// `isMutableArrayLikeType`
-    fn is_mutable_array_like(&mut self, ty: TypeId) -> bool {
+    /// `isMutableArrayLikeType`. Callers pass the members of a union, so `ty` is not `never`.
+    pub(super) fn is_mutable_array_like(&mut self, ty: TypeId) -> bool {
         if self.is_mutable_array_or_tuple(ty) {
             return true;
         }

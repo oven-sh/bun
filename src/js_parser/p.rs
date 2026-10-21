@@ -1655,8 +1655,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // import statements cannot be wrapped in a try/catch and
                     // require cannot return a promise.
                     && !handles_import_errors
-                    // require() of a JSON file returns the parsed value, which a namespace
-                    // import cannot stand for. Only the specifier is known here.
+                    // require() of a JSON file returns its value, not a module namespace.
                     && !strings::has_suffix_comptime(pathname, b".json");
 
                 if should_unwrap_require {

@@ -1172,10 +1172,9 @@ fn file_names_from_specs(
     let mut wildcard_files: Vec<Option<Vec<u8>>> = Vec::new();
     let mut wildcard_indices = crate::util::FxHashMap::<Vec<u8>, usize>::default();
     let mut wildcard_json_files = OrderedFiles::default();
-    // The key is the entry as written. The lookups below use absolute paths, so they only find an entry that's written
-    // as one.
     for name in literal {
-        literal_files.insert(key(name), join(base, name));
+        let file = join(base, name);
+        literal_files.insert(key(&file), file);
     }
     if !include.is_empty() {
         let mut extensions: Vec<&[u8]> = supported.iter().flat_map(|g| g.iter().copied()).collect();

@@ -22796,6 +22796,16 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(exitCode).toBe(1);
     });
 
+    test("a file in `files` hides the files that `include` matches with the same name and a lesser extension", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "lib": ["esnext"], "types": [], "noEmit": true }, "files": ["a.ts", "./a.ts"], "include": ["a.*"] }`,
+        "a.ts": "",
+        "a.d.ts": "",
+      });
+      const { stdout } = await check(dir, ["--listFilesOnly"]);
+      expect(stdout.split("\n").filter(line => !/\/lib\.[\w.]+\.d\.ts$/.test(line))).toEqual(["<dir>/a.ts"]);
+    });
+
     test("reports a missing value in a JSON file at the end of the token before it", async () => {
       using dir = project({
         "tsconfig.json": withResolveJsonModule,

@@ -465,18 +465,14 @@ it("reload() works", () => {
 });
 
 it("reload() works when dir is reached through a symlink", () => {
-  const { dir } = make(["pages/index.tsx", "pages/posts/hey.tsx"]);
-  fs.symlinkSync(dir, dir + "-link", "junction");
-  try {
-    const router = new FileSystemRouter({ dir: dir + "-link/pages", style: "nextjs" });
-    const routes = { ...router.routes };
-    expect(Object.keys(routes).sort()).toEqual(["/", "/posts/hey"]);
-    router.reload();
-    expect(router.routes).toEqual(routes);
-    expect(router.match("/posts/hey")?.name).toBe("/posts/hey");
-  } finally {
-    fs.unlinkSync(dir + "-link");
-  }
+  using tmp = tempDir("filesystem-router-symlink", { "real/pages/index.tsx": "", "real/pages/posts/hey.tsx": "" });
+  fs.symlinkSync(path.join(String(tmp), "real"), path.join(String(tmp), "link"), "junction");
+  const router = new FileSystemRouter({ dir: path.join(String(tmp), "link", "pages"), style: "nextjs" });
+  const routes = { ...router.routes };
+  expect(Object.keys(routes).sort()).toEqual(["/", "/posts/hey"]);
+  router.reload();
+  expect(router.routes).toEqual(routes);
+  expect(router.match("/posts/hey")?.name).toBe("/posts/hey");
 });
 
 it("reload() works with new dirs/files", () => {
@@ -626,7 +622,7 @@ it.skipIf(isWindows)("does not use another directory that shares dir's resolver 
       bunExe(),
       "-e",
       `
-        try { Bun.resolveSync("./missing", "/"); } catch {} // caches "/"
+        Bun.resolveSync(process.execPath, "/"); // caches "/"
         try {
           new Bun.FileSystemRouter({ dir: process.argv[1], style: "nextjs" });
           console.log("no error");

@@ -167,6 +167,10 @@ impl NapiEnv {
         Self::set_last_error(Some(self), NapiStatus::pending_exception)
     }
 
+    pub(crate) fn cannot_run_js(&self) -> napi_status {
+        Self::set_last_error(Some(self), NapiStatus::cannot_run_js)
+    }
+
     /// Runs `completion` (an addon's `complete` or `call_js`) in `context`, the one whose script
     /// asked for the work: what the callback opens is that context's. Once the context has
     /// stopped the callback still runs, since it owns memory only it can free, but functions
@@ -477,7 +481,7 @@ pub(crate) enum NapiStatus {
     // detachable_arraybuffer_expected = 20,
     // would_deadlock = 21,
     // no_external_buffers_allowed = 22,
-    // cannot_run_js = 23,
+    cannot_run_js = 23,
 }
 
 /// This is not an `enum` so that the enum values cannot be trivially returned from NAPI functions,
@@ -1962,17 +1966,24 @@ impl napi_async_work {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    pub(crate) fn schedule(&mut self) {
+    /// Returns false if the VM is closed. The addon still has to delete the work.
+    pub(crate) fn schedule(&mut self) -> bool {
         if self.scheduled {
-            return;
+            return true;
+        }
+        let vm = self.global.bun_vm();
+        // A finalizer can call this during the GC that destroys the heap.
+        if vm.closed() {
+            return false;
         }
         self.scheduled = true;
         self.poll_ref.ref_(bun_io::js_vm_ctx());
         // The work object belongs to the addon and `execute` receives this
         // env, so the VM waits for it (Node likewise settles its threadpool
         // requests before an environment is freed).
-        self.ticket = Some(self.global.bun_vm().ticket());
+        self.ticket = Some(vm.ticket());
         WorkPool::schedule(&raw mut self.task);
+        true
     }
 
     pub(crate) unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
@@ -2334,7 +2345,9 @@ extern "C" fn napi_queue_async_work(env_: napi_env, work_: *mut napi_async_work)
         return env.invalid_arg();
     };
     debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
-    work.schedule();
+    if !work.schedule() {
+        return env.cannot_run_js();
+    }
     env.ok()
 }
 
@@ -2368,8 +2381,8 @@ extern "C" fn napi_get_node_version(
 
 #[cfg(windows)]
 type napi_event_loop = *mut bun_sys::windows::libuv::Loop;
-#[cfg(not(windows))]
-type napi_event_loop = *mut EventLoop;
+#[cfg(unix)]
+type napi_event_loop = *mut super::uv_posix::UvLoop;
 
 #[unsafe(no_mangle)]
 extern "C" fn napi_get_uv_event_loop(env_: napi_env, loop_: *mut napi_event_loop) -> napi_status {
@@ -2382,13 +2395,16 @@ extern "C" fn napi_get_uv_event_loop(env_: napi_env, loop_: *mut napi_event_loop
         // TODO(@190n) investigate
         *loop_out = VirtualMachine::get().uv_loop();
     }
-    #[cfg(not(windows))]
+    #[cfg(unix)]
     {
-        // there is no uv event loop on posix, we use our event loop handle.
-        // SAFETY: `VirtualMachine::event_loop` already yields `*mut EventLoop`;
-        // no const→mut cast needed.
-        // SAFETY: bun_vm() never null for a Bun-owned global.
-        *loop_out = env.to_js().bun_vm().event_loop();
+        // Bun doesn't run libuv on POSIX. The addon gets this VM's `UvLoop`, and
+        // `uv_posix` implements the uv_* functions on this VM's event loop.
+        // SAFETY: the env's VM is alive while the env is.
+        let uv_loop = unsafe { super::uv_posix::UvLoop::of_vm(env.to_js().bun_vm()) };
+        if uv_loop.is_null() {
+            return env.generic_failure();
+        }
+        *loop_out = uv_loop;
     }
     env.ok()
 }
@@ -4220,12 +4236,11 @@ mod posix_platform_specific_v8_apis {
 // uv_* symbol references (posix DCE suppression)
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Lists only the uv_* symbols defined in C and C++. `uv_posix` exports its own.
 #[cfg(unix)]
 mod uv_functions_to_export {
     unsafe extern "C" {
         pub(super) fn uv_accept();
-        pub(super) fn uv_async_init();
-        pub(super) fn uv_async_send();
         pub(super) fn uv_available_parallelism();
         pub(super) fn uv_backend_fd();
         pub(super) fn uv_backend_timeout();
@@ -4233,13 +4248,8 @@ mod uv_functions_to_export {
         pub(super) fn uv_barrier_init();
         pub(super) fn uv_barrier_wait();
         pub(super) fn uv_buf_init();
-        pub(super) fn uv_cancel();
         pub(super) fn uv_chdir();
-        pub(super) fn uv_check_init();
-        pub(super) fn uv_check_start();
-        pub(super) fn uv_check_stop();
         pub(super) fn uv_clock_gettime();
-        pub(super) fn uv_close();
         pub(super) fn uv_cond_broadcast();
         pub(super) fn uv_cond_destroy();
         pub(super) fn uv_cond_init();
@@ -4249,7 +4259,6 @@ mod uv_functions_to_export {
         pub(super) fn uv_cpu_info();
         pub(super) fn uv_cpumask_size();
         pub(super) fn uv_cwd();
-        pub(super) fn uv_default_loop();
         pub(super) fn uv_disable_stdio_inheritance();
         pub(super) fn uv_dlclose();
         pub(super) fn uv_dlerror();
@@ -4332,11 +4341,7 @@ mod uv_functions_to_export {
         pub(super) fn uv_handle_set_data();
         pub(super) fn uv_handle_size();
         pub(super) fn uv_handle_type_name();
-        pub(super) fn uv_has_ref();
         pub(super) fn uv_hrtime();
-        pub(super) fn uv_idle_init();
-        pub(super) fn uv_idle_start();
-        pub(super) fn uv_idle_stop();
         pub(super) fn uv_if_indextoiid();
         pub(super) fn uv_if_indextoname();
         pub(super) fn uv_inet_ntop();
@@ -4347,8 +4352,6 @@ mod uv_functions_to_export {
         pub(super) fn uv_ip4_name();
         pub(super) fn uv_ip6_addr();
         pub(super) fn uv_ip6_name();
-        pub(super) fn uv_is_active();
-        pub(super) fn uv_is_closing();
         pub(super) fn uv_is_readable();
         pub(super) fn uv_is_writable();
         pub(super) fn uv_key_create();
@@ -4377,7 +4380,6 @@ mod uv_functions_to_export {
         pub(super) fn uv_mutex_lock();
         pub(super) fn uv_mutex_trylock();
         pub(super) fn uv_mutex_unlock();
-        pub(super) fn uv_now();
         pub(super) fn uv_once();
         pub(super) fn uv_open_osfhandle();
         pub(super) fn uv_os_environ();
@@ -4415,19 +4417,14 @@ mod uv_functions_to_export {
         pub(super) fn uv_poll_init_socket();
         pub(super) fn uv_poll_start();
         pub(super) fn uv_poll_stop();
-        pub(super) fn uv_prepare_init();
-        pub(super) fn uv_prepare_start();
-        pub(super) fn uv_prepare_stop();
         pub(super) fn uv_print_active_handles();
         pub(super) fn uv_print_all_handles();
         pub(super) fn uv_process_get_pid();
         pub(super) fn uv_process_kill();
-        pub(super) fn uv_queue_work();
         pub(super) fn uv_random();
         pub(super) fn uv_read_start();
         pub(super) fn uv_read_stop();
         pub(super) fn uv_recv_buffer_size();
-        pub(super) fn uv_ref();
         pub(super) fn uv_replace_allocator();
         pub(super) fn uv_req_get_data();
         pub(super) fn uv_req_get_type();
@@ -4489,13 +4486,6 @@ mod uv_functions_to_export {
         pub(super) fn uv_thread_setaffinity();
         pub(super) fn uv_thread_setname();
         pub(super) fn uv_thread_setpriority();
-        pub(super) fn uv_timer_again();
-        pub(super) fn uv_timer_get_due_in();
-        pub(super) fn uv_timer_get_repeat();
-        pub(super) fn uv_timer_init();
-        pub(super) fn uv_timer_set_repeat();
-        pub(super) fn uv_timer_start();
-        pub(super) fn uv_timer_stop();
         pub(super) fn uv_translate_sys_error();
         pub(super) fn uv_try_write();
         pub(super) fn uv_try_write2();
@@ -4527,8 +4517,6 @@ mod uv_functions_to_export {
         pub(super) fn uv_udp_try_send();
         pub(super) fn uv_udp_try_send2();
         pub(super) fn uv_udp_using_recvmmsg();
-        pub(super) fn uv_unref();
-        pub(super) fn uv_update_time();
         pub(super) fn uv_uptime();
         pub(super) fn uv_utf16_length_as_wtf8();
         pub(super) fn uv_utf16_to_wtf8();
@@ -4707,11 +4695,10 @@ pub(crate) fn fix_dead_code_elimination() {
     // `uv_functions_to_export` module above.
     #[cfg(unix)]
     {
+        super::uv_posix::fix_dead_code_elimination();
         use uv_functions_to_export::*;
         keep_symbols!(
             uv_accept,
-            uv_async_init,
-            uv_async_send,
             uv_available_parallelism,
             uv_backend_fd,
             uv_backend_timeout,
@@ -4719,13 +4706,8 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_barrier_init,
             uv_barrier_wait,
             uv_buf_init,
-            uv_cancel,
             uv_chdir,
-            uv_check_init,
-            uv_check_start,
-            uv_check_stop,
             uv_clock_gettime,
-            uv_close,
             uv_cond_broadcast,
             uv_cond_destroy,
             uv_cond_init,
@@ -4735,7 +4717,6 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_cpu_info,
             uv_cpumask_size,
             uv_cwd,
-            uv_default_loop,
             uv_disable_stdio_inheritance,
             uv_dlclose,
             uv_dlerror,
@@ -4818,11 +4799,7 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_handle_set_data,
             uv_handle_size,
             uv_handle_type_name,
-            uv_has_ref,
             uv_hrtime,
-            uv_idle_init,
-            uv_idle_start,
-            uv_idle_stop,
             uv_if_indextoiid,
             uv_if_indextoname,
             uv_inet_ntop,
@@ -4833,8 +4810,6 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_ip4_name,
             uv_ip6_addr,
             uv_ip6_name,
-            uv_is_active,
-            uv_is_closing,
             uv_is_readable,
             uv_is_writable,
             uv_key_create,
@@ -4863,7 +4838,6 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_mutex_lock,
             uv_mutex_trylock,
             uv_mutex_unlock,
-            uv_now,
             uv_once,
             uv_open_osfhandle,
             uv_os_environ,
@@ -4901,19 +4875,14 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_poll_init_socket,
             uv_poll_start,
             uv_poll_stop,
-            uv_prepare_init,
-            uv_prepare_start,
-            uv_prepare_stop,
             uv_print_active_handles,
             uv_print_all_handles,
             uv_process_get_pid,
             uv_process_kill,
-            uv_queue_work,
             uv_random,
             uv_read_start,
             uv_read_stop,
             uv_recv_buffer_size,
-            uv_ref,
             uv_replace_allocator,
             uv_req_get_data,
             uv_req_get_type,
@@ -4975,13 +4944,6 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_thread_setaffinity,
             uv_thread_setname,
             uv_thread_setpriority,
-            uv_timer_again,
-            uv_timer_get_due_in,
-            uv_timer_get_repeat,
-            uv_timer_init,
-            uv_timer_set_repeat,
-            uv_timer_start,
-            uv_timer_stop,
             uv_translate_sys_error,
             uv_try_write,
             uv_try_write2,
@@ -5013,8 +4975,6 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_udp_try_send,
             uv_udp_try_send2,
             uv_udp_using_recvmmsg,
-            uv_unref,
-            uv_update_time,
             uv_uptime,
             uv_utf16_length_as_wtf8,
             uv_utf16_to_wtf8,

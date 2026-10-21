@@ -18,7 +18,7 @@ use crate::pe::{DOSHeader, PEHeader, SectionHeader};
 use crate::read_struct;
 
 const MAGIC: &[u8; 8] = b"BUNBLTNS";
-const FORMAT_VERSION: u32 = 1;
+const FORMAT_VERSION: u32 = 2;
 const HEADER_SIZE: usize = 48;
 const RECORD_SIZE: usize = 6 * 4;
 
@@ -40,6 +40,9 @@ pub enum BuiltinsError {
     Invalid,
     #[error("UnsupportedBuiltinsVersion")]
     UnsupportedVersion,
+    /// The sources were built for a different JavaScriptCore version or set of private names than this bun's.
+    #[error("BuiltinsEngineMismatch")]
+    EngineMismatch,
 }
 
 #[derive(Clone, Copy)]
@@ -57,6 +60,8 @@ pub struct Module<'a> {
 pub struct Builtins<'a> {
     /// Identifies these sources to bytecode generated from them (JSC's `decodeBuiltinFunction` stamp).
     pub source_stamp: u32,
+    /// Identifies the JavaScriptCore version and private names of the bun that wrote the section (`engineStamp`).
+    engine_stamp: Option<core::num::NonZeroU32>,
     count: u32,
     records: &'a [u8],
     dep_offsets: &'a [u8],
@@ -82,6 +87,7 @@ impl<'a> Builtins<'a> {
         let deps_offset = field(5) as usize;
         let data_offset = field(6) as usize;
         let data_len = field(7) as usize;
+        let engine_stamp = core::num::NonZeroU32::new(field(8));
 
         let n = count as usize;
         let records = sub(
@@ -120,12 +126,22 @@ impl<'a> Builtins<'a> {
 
         Ok(Self {
             source_stamp,
+            engine_stamp,
             count,
             records,
             dep_offsets,
             deps,
             data,
         })
+    }
+
+    /// Returns `self` if the bun that owns the `host` section can compile these sources.
+    pub fn require_same_engine(self, host: &Builtins<'_>) -> Result<Self, BuiltinsError> {
+        if self.engine_stamp.is_some() && self.engine_stamp == host.engine_stamp {
+            Ok(self)
+        } else {
+            Err(BuiltinsError::EngineMismatch)
+        }
     }
 
     pub fn module(&self, id: u32) -> Option<Module<'a>> {

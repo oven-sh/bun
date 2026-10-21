@@ -1472,6 +1472,31 @@ describe.skipIf(!isPosix)("stdout pipe backpressure", () => {
   });
 });
 
+// The stderr pipe closes without any data before JS touches child.stderr, so the exit path creates its stream
+// without a native handle.
+it.skipIf(!isPosix)("emits 'close' when an unread stdio pipe closed without any data", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { spawn } = require("child_process");
+      const c = spawn("/bin/sh", ["-c", "echo hello"], { stdio: ["inherit", "pipe"] });
+      c.stdout.on("data", d => process.stdout.write("OUT:" + d));
+      c.on("close", () => {
+        c.stderr.unref();
+        c.stderr.ref();
+        console.log("closed", c.stderr.readableEnded, c.stderr.destroyed);
+      });`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("OUT:hello\nclosed true true\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 // child.stdout.pause() must stop the native reader so the kernel pipe fills
 // and the child blocks on write. Previously, once the stream had flowed even
 // once the native FileReader kept the poll armed (or uv_read_start active on

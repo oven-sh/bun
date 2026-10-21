@@ -328,6 +328,7 @@ fn enqueue_download(
         offline_miss(this, task_id, "", name, is_required);
         return Err(ForTarballError::Offline);
     }
+    temporary_directory_for_linker(this, &task_context)?;
     if !push_task_callback(this, task_id, task_context) {
         return Ok(());
     }
@@ -363,12 +364,13 @@ pub fn enqueue_tarball_for_reading(
     alias: &[u8],
     resolution: &Resolution,
     task_context: TaskCallbackContext,
-) {
+) -> Result<(), ForTarballError> {
     // `enqueue_local_tarball` copies `path` into the filename store before `string_bytes` can grow.
     let path = this.lockfile.str_detached(resolution.local_tarball());
     let task_id = Task::Id::for_tarball(path);
+    temporary_directory_for_linker(this, &task_context)?;
     if !push_task_callback(this, task_id, task_context) {
-        return;
+        return Ok(());
     }
 
     let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
@@ -383,6 +385,21 @@ pub fn enqueue_tarball_for_reading(
         Some(&integrity),
     );
     this.task_batch.push(ThreadPool::Batch::from(task));
+    Ok(())
+}
+
+/// A tarball is extracted in the temporary directory. A linker pass ends the install itself, so
+/// it gets the error. For every other caller, the task that is made next ends the process.
+fn temporary_directory_for_linker(
+    this: &mut PackageManager,
+    context: &TaskCallbackContext,
+) -> Result<(), ForTarballError> {
+    if is_asked_by_linker(context)
+        && let Err(why) = try_get_temporary_directory(this)
+    {
+        return Err(ForTarballError::NoTemporaryDirectory(why));
+    }
+    Ok(())
 }
 
 /// Returns `Err(Offline)` if the repository isn't cached. Nothing is queued then, and the caller

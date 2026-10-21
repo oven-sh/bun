@@ -2214,6 +2214,7 @@ pub(crate) fn install_isolated_packages(
                 result: installer::Result::None,
                 relink: installer::Relink::Off,
                 newly_trusted: false,
+                scripts_started: false,
                 blocked_scripts: 0,
                 left_out_links: Vec::new(),
                 task: bun_threading::thread_pool::CountedTask::new(
@@ -2299,8 +2300,7 @@ pub(crate) fn install_isolated_packages(
                     "\"{}\" is not a valid install folder name",
                     (bun_core::fmt::escape_control_chars(name),),
                 );
-                Output::flush();
-                Global::exit(1);
+                installer.abort();
             }
         }
 
@@ -2380,7 +2380,7 @@ pub(crate) fn install_isolated_packages(
                             );
                             Output::flush();
                             if installer.manager().options.enable.fail_early() {
-                                Global::exit(1);
+                                installer.abort();
                             }
                             CompleteState::Fail
                         } else {
@@ -2539,7 +2539,13 @@ pub(crate) fn install_isolated_packages(
 
                     // Downloads only produce the unpatched folder; `apply_package_patch` derives the rest.
                     let cache_subpath_z = installer.cached_folder_name(entry_id, None);
-                    let cache_dir = installer.manager_mut().get_cache_directory();
+                    let opened = package_manager::directories::try_get_cache_directory(
+                        installer.manager_mut(),
+                    );
+                    let cache_dir = match opened {
+                        Ok(cache_dir) => cache_dir,
+                        Err(why) => installer.abort_without(&why),
+                    };
 
                     let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
                     {
@@ -2610,8 +2616,7 @@ pub(crate) fn install_isolated_packages(
                                 dep.name.slice(string_buf),
                                 &pkg_res,
                                 ctx,
-                            );
-                            Ok(())
+                            )
                         }
                         _ => package_manager::enqueue_tarball_for_download(
                             installer.manager_mut(),
@@ -2624,6 +2629,9 @@ pub(crate) fn install_isolated_packages(
                     match enqueued {
                         Ok(()) => {}
                         Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
+                        Err(ForTarballError::NoTemporaryDirectory(why)) => {
+                            installer.abort_without(&why)
+                        }
                         Err(ForTarballError::AlreadyFailed | ForTarballError::Offline) => {
                             installer.on_download_not_queued(entry_id);
                         }
@@ -2645,7 +2653,7 @@ pub(crate) fn install_isolated_packages(
                             );
                             Output::flush();
                             if installer.manager().options.enable.fail_early() {
-                                Global::exit(1);
+                                installer.abort();
                             }
                             installer.set_step(entry_id, Step::Done);
                             installer.on_task_complete(entry_id, CompleteState::Fail);
@@ -2675,7 +2683,7 @@ pub(crate) fn install_isolated_packages(
 
             if let Some(err) = wait.err {
                 Output::err(err, "failed to install packages", format_args!(""));
-                Global::exit(1);
+                installer.abort();
             }
         }
         installer.tasks_in_flight.wait();

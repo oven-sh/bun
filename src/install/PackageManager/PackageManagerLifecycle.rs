@@ -19,7 +19,7 @@ use crate::initialize_store;
 
 use super::directories;
 use crate::lifecycle_script_runner::{
-    InstallCtx, LifecycleScriptSubprocess as RealLifecycleScriptSubprocess,
+    Ending, Exit, InstallCtx, LifecycleScriptSubprocess as RealLifecycleScriptSubprocess,
 };
 use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::Command;
@@ -333,7 +333,11 @@ impl PackageManager {
             return Ok(());
         }
 
-        self.ensure_temp_node_gyp_script()?;
+        // The shim is made once, for every script of this process, so no script starts without it.
+        if !self.ensure_temp_node_gyp_script()? {
+            let (ending, exit) = (Ending::OwnExit, Exit::Code(1));
+            InstallCtx::end_install(install_ctx.as_ref(), &self.lockfile, ending, exit);
+        }
 
         // `list` is moved into `spawn_package_scripts` below; copy
         // `cwd` out so the PATH builder can borrow it independently.

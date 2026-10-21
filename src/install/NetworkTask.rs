@@ -806,6 +806,9 @@ pub enum ForTarballError {
     /// original failure was already reported) and advance their own bookkeeping.
     #[error("TarballFailedToDownload")]
     AlreadyFailed,
+    /// Only a linker pass gets this. Nothing is queued or reported.
+    #[error("{0}")]
+    NoTemporaryDirectory(crate::package_manager_real::directories::DirectoryError),
 }
 bun_core::oom_from_alloc!(ForTarballError);
 impl From<ForTarballError> for crate::Error {
@@ -813,9 +816,9 @@ impl From<ForTarballError> for crate::Error {
         match e {
             ForTarballError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
             ForTarballError::InvalidURL => crate::Error::InvalidURL,
-            ForTarballError::AlreadyFailed | ForTarballError::Offline => {
-                crate::Error::TarballFailedToDownload
-            }
+            ForTarballError::AlreadyFailed
+            | ForTarballError::Offline
+            | ForTarballError::NoTemporaryDirectory(_) => crate::Error::TarballFailedToDownload,
         }
     }
 }

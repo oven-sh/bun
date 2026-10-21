@@ -1077,6 +1077,11 @@ impl PackageManager {
     }
 
     pub(crate) fn crash(&mut self) -> ! {
+        self.print_log();
+        Global::crash();
+    }
+
+    pub(crate) fn print_log(&mut self) {
         if self.options.log_level != package_manager_options::LogLevel::Silent {
             // SAFETY: `self.log` points to a separate `bun_ast::Log` allocation (borrowed from
             // `ctx.log`) that outlives the singleton. `&mut self` only covers the pointer field,
@@ -1088,7 +1093,6 @@ impl PackageManager {
                 .log_mut()
                 .print(std::ptr::from_mut(Output::error_writer()));
         }
-        Global::crash();
     }
 
     pub fn has_enough_time_passed_between_waiting_messages() -> bool {
@@ -1256,14 +1260,16 @@ impl PackageManager {
         };
     }
 
-    pub(crate) fn ensure_temp_node_gyp_script(&mut self) -> Result<(), Error> {
+    /// Makes the `node-gyp` shim that the lifecycle scripts of this process find on PATH. If this
+    /// returns `Ok(false)`, it printed why there is none, and the caller ends the process.
+    pub(crate) fn ensure_temp_node_gyp_script(&mut self) -> Result<bool, Error> {
         // The body is
         // already idempotent (early-returns when `node_gyp_tempdir_name` is
         // non-empty), so a simple `AtomicBool` ran-flag suffices.
         // NB: not `bun_core::run_once!` — body is fallible and the contract is
-        // "2nd call = Ok(()) regardless of 1st outcome" (D006).
+        // "2nd call = Ok(true) regardless of 1st outcome" (D006).
         if ENSURE_TEMP_NODE_GYP_SCRIPT_ONCE.swap(true, Ordering::AcqRel) {
-            return Ok(());
+            return Ok(true);
         }
         ensure_temp_node_gyp_script_run(self)
     }
@@ -1393,12 +1399,18 @@ extern "C" fn remove_node_gyp_tempdir() {
     }
 }
 
-fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), Error> {
+fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<bool, Error> {
     if !manager.node_gyp_tempdir_name.is_empty() {
-        return Ok(());
+        return Ok(true);
     }
 
-    let tempdir = get_temporary_directory(manager);
+    let tempdir = match directories::try_get_temporary_directory(manager) {
+        Ok(tempdir) => tempdir,
+        Err(why) => {
+            Output::err_generic("{}", (why,));
+            return Ok(false);
+        }
+    };
     let mut path_buf = bun_paths::path_buffer_pool::get();
     let node_gyp_tempdir_name =
         fs::FileSystem::tmpname(b"node-gyp", &mut path_buf.0, bun_core::fast_random())?;
@@ -1414,14 +1426,14 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
             // it should not exist
             bun_core::pretty_errorln!("<r><red>error<r>: node-gyp tempdir already exists");
-            Global::crash();
+            return Ok(false);
         }
         Err(e) => {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: <b><red>{}<r> creating node-gyp tempdir",
                 bstr::BStr::new(e.name()),
             );
-            Global::crash();
+            return Ok(false);
         }
     };
     if NODE_GYP_TEMPDIR
@@ -1455,7 +1467,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
                 "<r><red>error<r>: <b><red>{}<r> creating node-gyp tempdir",
                 bstr::BStr::new(e.name()),
             );
-            Global::crash();
+            return Ok(false);
         }
     };
 
@@ -1486,7 +1498,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
             bstr::BStr::new(e.name()),
             FILE_NAME,
         );
-        Global::crash();
+        return Ok(false);
     }
 
     // `bun x` removes the PATH entry that equals BUN_WHICH_IGNORE_CWD, so the two must be identical.
@@ -1513,7 +1525,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         .map
         .put_alloc_key_and_value(b"BUN_WHICH_IGNORE_CWD", &node_gyp_abs_dir)?;
 
-    Ok(())
+    Ok(true)
 }
 
 fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::InitOpts) -> ! {

@@ -5,7 +5,7 @@ use std::io::Write as _;
 use bun_ast::Log;
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::fmt::EscapeControlChars;
-use bun_core::{Environment, Global, Output};
+use bun_core::{Environment, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};
 use bun_sys::{self as sys, Fd};
@@ -15,6 +15,7 @@ use bun_sys::{FdDirExt as _, FdExt as _};
 
 use crate::bin_real;
 use crate::cache_publish::{RenameError, RenameRetry};
+use crate::lifecycle_script_runner::{Ending, Exit};
 use crate::lockfile::package;
 use crate::package_install::{
     BUN_TAG, Method as InstallMethod, Staging, StagingLock, StagingPath, Summary as InstallSummary,
@@ -454,6 +455,60 @@ impl<'a> Installer<'a> {
         Ok(())
     }
 
+    /// Called on the main thread. Every exit that this file makes goes through here.
+    #[cold]
+    pub(crate) fn end(&mut self, ending: Ending, exit: Exit) -> ! {
+        Output::flush();
+        self.discard_entries_with_unfinished_scripts(ending);
+        exit.run()
+    }
+
+    /// Ends the install with exit code 1.
+    #[cold]
+    pub(crate) fn abort(&mut self) -> ! {
+        self.end(Ending::OwnExit, Exit::Code(1))
+    }
+
+    /// Ends the install, because a directory that the pass needs cannot be used.
+    #[cold]
+    pub(crate) fn abort_without(&mut self, directory: &directories::DirectoryError) -> ! {
+        Output::err_generic("{}", (directory,));
+        self.abort()
+    }
+
+    /// Called on the main thread when the task of the entry failed on the thread pool. This is not
+    /// part of `on_task_fail`, because `relink_bins_of_members_with_scripts` also calls that one,
+    /// after the scripts have run.
+    pub(crate) fn on_task_run_fail(&mut self, entry_id: StoreEntryId, err: &TaskError) {
+        let task = &self.tasks[entry_id.get() as usize];
+        // The entry can be in place, and its scripts have not finished. An entry that is as this
+        // install found it only goes if the next install finds it trusted without being told
+        // again: that install would run nothing.
+        if self.manager().options.do_.contains(Do::RUN_SCRIPTS)
+            && self.is_trusted(entry_id)
+            && (task.is_changed() || (task.newly_trusted && self.stays_trusted(entry_id)))
+        {
+            self.delete_store_copy(entry_id);
+        }
+        self.on_task_fail(entry_id, err);
+    }
+
+    /// Returns true if the install goes on, and the next install finds the entry trusted too.
+    /// `--trust` only records a name once the scripts of its entry are known.
+    fn stays_trusted(&self, entry_id: StoreEntryId) -> bool {
+        let store::Ids { dep_id, .. } = self.store.ids(entry_id);
+        let lockfile = self.lockfile();
+        !self.manager().options.enable.fail_early()
+            && (self.store.entries.items_scripts()[entry_id.get() as usize]
+                .get()
+                .is_some()
+                || lockfile.has_trusted_dependency(
+                    lockfile.str(&lockfile.buffers.dependencies[dep_id as usize].name),
+                    self.pkg_name(entry_id),
+                    self.resolution(entry_id),
+                ))
+    }
+
     /// Called from main thread
     pub(crate) fn on_task_fail(&mut self, entry_id: StoreEntryId, err: &TaskError) {
         self.set_step(entry_id, Step::Done);
@@ -542,15 +597,15 @@ impl<'a> Installer<'a> {
                 .and_then(|()| Fd::cwd().delete_tree(staging.slice()));
         }
 
-        // Like the hoisted linker, exit without saving the lockfile when a patch does not apply.
-        if self.manager().options.enable.fail_early() || matches!(err, TaskError::Patching(_)) {
-            Global::exit(1);
-        }
-
         // Remove the symlinks to this `link:` dependency. Otherwise `start_link_task` in the next
         // install would consider it already linked and never run its scripts.
         if pkg_res.tag == ResolutionTag::Symlink && self.is_trusted(entry_id) {
             self.left_out_entries.push(entry_id);
+        }
+
+        // Like the hoisted linker, exit without saving the lockfile when a patch does not apply.
+        if self.manager().options.enable.fail_early() || matches!(err, TaskError::Patching(_)) {
+            self.abort();
         }
 
         self.summary.fail += 1;
@@ -819,25 +874,62 @@ impl<'a> Installer<'a> {
         )
     }
 
-    /// Called on the main thread. An entry that stays at its final path counts as installed, so its
-    /// scripts would never run.
-    pub(crate) fn discard_entries_with_unfinished_scripts(&mut self, failed: StoreEntryId) {
-        // A task that still runs would put its entry in place after this has looked at it.
-        self.tasks_in_flight.wait();
+    /// Called on the main thread, before bun ends the install. An entry that stays at its final
+    /// path counts as installed, so its scripts would never run.
+    fn discard_entries_with_unfinished_scripts(&mut self, ending: Ending) {
         let store = self.store;
-        for (index, step) in store.entries.items_step().iter().enumerate() {
+        let steps = store.entries.items_step();
+        let runs_scripts = self.manager().options.do_.contains(Do::RUN_SCRIPTS);
+        if !runs_scripts && self.left_out_entries.is_empty() {
+            return;
+        }
+
+        // A task that hasn't started must not start, because it would put its entry in place. A
+        // task that runs stores its next step over this.
+        for step in steps {
+            for first in [Step::LinkPackage, Step::SymlinkDependencies] {
+                let _ = step.compare_exchange(
+                    first as u32,
+                    Step::Withdrawn as u32,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                );
+            }
+        }
+        // A task that still runs would put its entry in place after the loop below has looked at
+        // it. A pool without a worker runs no task, so the wait would not end.
+        if self.manager().thread_pool.has_workers() {
+            self.tasks_in_flight.wait();
+        }
+
+        for index in 0..steps.len() {
             let entry_id = StoreEntryId::from(index as u32);
-            // Every unfinished trusted entry is discarded, because it is not known yet whether it
-            // has scripts: a bun.lock written by an older Bun does not record that.
-            if entry_id == failed
-                || (step.load(Ordering::Acquire) != Step::Done as u32 && self.is_trusted(entry_id))
-            {
-                self.delete_store_copy(entry_id);
-                // Also remove the symlinks to a `link:` dependency, because `start_link_task` takes
-                // them to mean that its scripts already ran.
-                if self.resolution(entry_id).tag == ResolutionTag::Symlink {
-                    self.left_out_entries.push(entry_id);
+            let step = steps[index].load(Ordering::Acquire);
+            // No task ran with a step that is still withdrawn.
+            if !runs_scripts || step == Step::Withdrawn as u32 || !self.is_trusted(entry_id) {
+                continue;
+            }
+            let task = &self.tasks[index];
+            let discards = if step == Step::Done as u32 {
+                // The task failed, and `run_tasks` has not taken that result. It takes the entry
+                // away if it does.
+                task.is_changed() && matches!(task.result, Result::Err(_))
+            } else {
+                match ending {
+                    // It isn't known yet whether the entry has scripts: a bun.lock written by an
+                    // older Bun doesn't record that.
+                    Ending::FailedScript => true,
+                    Ending::OwnExit => task.is_changed(),
                 }
+            };
+            if !discards {
+                continue;
+            }
+            self.delete_store_copy(entry_id);
+            // Also remove the symlinks to a `link:` dependency, because `start_link_task` takes
+            // them to mean that its scripts already ran.
+            if self.resolution(entry_id).tag == ResolutionTag::Symlink {
+                self.left_out_entries.push(entry_id);
             }
         }
         self.unlink_left_out_entries();
@@ -1001,6 +1093,8 @@ pub struct Task {
     /// The relink task continues with the lifecycle script steps. See
     /// `Installer::is_newly_trusted`.
     pub(crate) newly_trusted: bool,
+    /// Main-thread only: this install has started a script of the entry.
+    pub(crate) scripts_started: bool,
     /// Set by `Step::RunPreinstall` on the task thread, read by `on_task_complete` like `relink`.
     pub(crate) blocked_scripts: u8,
     /// The warnings that `lay_folder_links` returned. `Installer::warn_left_out_links` logs them.
@@ -1063,6 +1157,10 @@ pub enum Step {
     // only the main thread sets blocked, and only the main thread
     // sets a blocked task to symlink_dependency_binaries
     Blocked,
+
+    /// `Installer::discard_entries_with_unfinished_scripts` set it. A task that starts with it
+    /// does nothing. A task that runs stores its next step over it.
+    Withdrawn,
 }
 
 impl Step {
@@ -1081,6 +1179,7 @@ impl Step {
             6 => Step::RunPostInstallAndPrePostPrepare,
             7 => Step::Done,
             8 => Step::Blocked,
+            9 => Step::Withdrawn,
             // Was @enumFromInt; cold atomic-load decode so the panic branch is fine.
             _ => unreachable!(),
         }
@@ -1088,6 +1187,12 @@ impl Step {
 }
 
 impl Task {
+    /// Returns true if this install put the entry in place, or started one of its scripts. Called
+    /// on the main thread while the task doesn't run.
+    fn is_changed(&self) -> bool {
+        self.relink == Relink::Off || self.scripts_started
+    }
+
     /// Called from task thread
     fn next_step(&self, current_step: Step) -> Step {
         let next_step: Step = match current_step {
@@ -1105,7 +1210,7 @@ impl Task {
             Step::Binaries => Step::RunPostInstallAndPrePostPrepare,
             Step::RunPostInstallAndPrePostPrepare => Step::Done,
 
-            Step::Done | Step::Blocked => unreachable!("unexpected step"),
+            Step::Done | Step::Blocked | Step::Withdrawn => unreachable!("unexpected step"),
         };
 
         // SAFETY: `installer` is a BACKREF — the `Installer` owns `tasks[]` and
@@ -1270,6 +1375,8 @@ impl Task {
                     debug_assert!(false);
                     return Ok(Result::None);
                 }
+
+                Step::Withdrawn => return Ok(Result::None),
             }
             step = self.next_step(step);
         }

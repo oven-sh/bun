@@ -678,6 +678,42 @@ describe("net.Socket write", () => {
   );
 });
 
+it("write() and end() send utf-16le bytes for every spelling of the encoding name", async () => {
+  const text = "a\u00a1\u0100\u{1f600}";
+  const expected = Buffer.from(text, "utf16le").toString("hex");
+  // Replies with the bytes that it received, as hex.
+  const server = createServer({ allowHalfOpen: true }, socket => {
+    const chunks: Buffer[] = [];
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("end", () => socket.end(Buffer.concat(chunks).toString("hex")));
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const results: Record<string, string> = {};
+    const want: Record<string, string> = {};
+    for (const encoding of ["utf16le", "utf-16le", "UTF-16LE", "ucs2", "UCS-2"] as BufferEncoding[]) {
+      for (const method of ["write", "end"]) {
+        want[`${method} ${encoding}`] = expected;
+        const socket = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+        let received = "";
+        socket.setEncoding("utf8").on("data", chunk => (received += chunk));
+        await once(socket, "connect");
+        if (method === "write") {
+          socket.write(text, encoding);
+          socket.end();
+        } else {
+          socket.end(text, encoding);
+        }
+        await once(socket, "close");
+        results[`${method} ${encoding}`] = received;
+      }
+    }
+    expect(results).toEqual(want);
+  } finally {
+    server.close();
+  }
+});
+
 it("should handle connection error", done => {
   let errored = false;
 

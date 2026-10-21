@@ -1733,6 +1733,11 @@ impl Tracer {
         self.traces.borrow_mut().push(DiagAndArgs { code, args });
     }
 
+    /// Logs that `file` declares the ambient module `name`, so that its imports of `name` aren't resolved.
+    pub fn locally_declared_ambient_module(&self, name: &[u8], file: &[u8]) {
+        self.write(6144, &[Arg::Bytes(name), Arg::Path(file)]);
+    }
+
     /// `getTraces`
     pub fn into_traces(self) -> Vec<DiagAndArgs> {
         self.traces.into_inner()

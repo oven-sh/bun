@@ -1136,6 +1136,7 @@
 6138	E	Property '{0}' is declared but its value is never read.
 6140	E	Auto discovery for typings is enabled in project '{0}'. Running extra resolution pass for module '{1}' using cache location '{2}'.
 6142	E	Module '{0}' was resolved to '{1}', but '--jsx' is not set.
+6144	M	Module '{0}' was resolved as locally declared ambient module in file '{1}'.
 6148	M	Directory '{0}' does not exist, skipping all lookups in it.
 6164	M	Skipping module '{0}' that looks like an absolute URI, target file types: {1}.
 6182	M	Scoped package detected, looking in '{0}'

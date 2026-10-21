@@ -2761,6 +2761,20 @@ fn module_augmentations(hir: &hir::File, atoms: &Interner) -> Vec<ModuleId> {
     augmentations
 }
 
+/// `file.AmbientModuleNames` (`collectModuleReferences`)
+fn ambient_module_names(hir: &hir::File) -> Vec<Atom> {
+    if hir.has_module_syntax || hir.modules.is_empty() {
+        return Vec::new();
+    }
+    let statements = hir.ids(hir.body);
+    let declared = statements.filter_map(|s| ambient_module(hir, s, false));
+    let names = declared.map(|m| match hir[m].name {
+        ModuleName::String(name) | ModuleName::Ident(name) => name,
+        ModuleName::Global => known::global,
+    });
+    names.collect()
+}
+
 /// True if `mergeModuleAugmentation` merges `symbol`, which a `declare global` or a `declare module
 /// "m"` declares. It only does so for `symbol.Declarations[0]`, so that has to be one of
 /// `collected`, the `module_augmentations` of the file.
@@ -6378,9 +6392,13 @@ impl<'s> Files<'s> {
         let runtime = runtime.filter(|_| crate::resolve::is_jsx_file_name(path));
         // Each entry of `moduleNames` is resolved, even one that repeats another.
         let (types_tracer, tracer) = (Tracer::default(), Tracer::default());
+        // A name that the file itself declares as an ambient module isn't looked up on disk.
+        let declared_here = ambient_module_names(hir);
         if program_options.trace_resolution {
             let trace = |name: &[u8], mode: ResolutionMode| {
-                if !name.is_empty() {
+                if declared_here.iter().any(|&it| atoms.bytes(it) == name) {
+                    tracer.locally_declared_ambient_module(name, path);
+                } else if !name.is_empty() {
                     resolver.resolve_module_name_traced(name, from, mode, Some(&tracer));
                 }
             };
@@ -6499,6 +6517,7 @@ impl<'s> Files<'s> {
         }
         keyed_names.shared_sort_by_key(|name| name.0);
         module_names.extend(keyed_names.into_iter().map(|name| name.1));
+        module_names.retain(|name| !declared_here.contains(&name.0));
         resolve_ahead(&module_names);
         let mut imports = Vec::new();
         let (mut untyped_imports, mut untyped_import_files) = (Vec::new(), Vec::new());

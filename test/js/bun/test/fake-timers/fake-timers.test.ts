@@ -12,7 +12,7 @@ import { performance as perfHooksPerformance, PerformanceObserver } from "node:p
 import nodeTimers, { setTimeout as nodeSetTimeout } from "node:timers";
 import { setTimeout as nodeSetTimeoutPromise } from "node:timers/promises";
 import { promisify } from "node:util";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from "vitest";
 import WebSocket from "ws";
 
 afterEach(() => vi.useRealTimers());
@@ -2627,13 +2627,13 @@ describe("the timers of the ws package follow the fake clock", () => {
 
   test("handshakeTimeout", async () => {
     const server = net.createServer(() => {}).listen(0, "127.0.0.1");
+    onTestFinished(() => void server.close());
     await once(server, "listening");
     vi.useFakeTimers();
     const client = new WebSocket(url(server), { handshakeTimeout: 60_000 });
     const failed = once(client, "error");
     vi.advanceTimersByTime(60_000);
     expect(await failed).toEqual([expect.objectContaining({ message: "Opening handshake has timed out" })]);
-    server.close();
   });
 
   test("the wait for the peer's close frame", async () => {
@@ -2651,6 +2651,7 @@ describe("the timers of the ws package follow the fake clock", () => {
         }),
       )
       .listen(0, "127.0.0.1");
+    onTestFinished(() => void server.close());
     await once(server, "listening");
     const client = new WebSocket(url(server));
     await once(client, "open");
@@ -2659,7 +2660,6 @@ describe("the timers of the ws package follow the fake clock", () => {
     const closed = once(client, "close");
     vi.advanceTimersByTime(30_000);
     expect((await closed)[0]).toBe(1006);
-    server.close();
   });
 });
 

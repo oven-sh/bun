@@ -275,9 +275,8 @@ pub(super) struct HskSnapshot {
 }
 
 pub(super) struct DeferredAbort {
-    /// Names the stream on the connection. lsquic frees a stream on the tick
-    /// that finishes it, which the peer can cause at any time, so the entry
-    /// holds no pointer: `settle_deferred_aborts` asks the conn for the id.
+    /// The stream, by name: lsquic frees one on the tick that finishes it,
+    /// and the peer can finish a held stream at any time.
     id: u64,
     reset: Option<u64>,
     stop: Option<u64>,

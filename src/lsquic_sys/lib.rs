@@ -417,9 +417,7 @@ impl Conn {
             v => Some(v != 0),
         }
     }
-    /// The live stream with this id. lsquic frees a stream on the tick that
-    /// finishes it, and it never reuses an id, so an id stays a safe name for
-    /// a stream where the pointer does not.
+    /// The live stream with this id, which lsquic never reuses.
     pub fn stream_by_id(&self, id: u64) -> Option<Stream> {
         unsafe extern "C" {
             fn lsquic_conn_get_stream_by_id(c: *mut lsquic_conn, id: u64) -> *mut lsquic_stream;

@@ -2065,9 +2065,8 @@ class QuicStream {
           ? error.errorCode
           : getQuicSessionState(inner.session).internalErrorCode;
     } else {
-      // Diverges from Node v26.3.0, which sends nothing for a clean destroy
-      // (https://github.com/nodejs/node/blob/v26.3.0/doc/api/quic.md#L1844-L1846):
-      // the peer returns the stream's MAX_STREAMS credit only after the stream ends.
+      // Node v26.3.0 sends nothing here and loses the stream's place
+      // (https://github.com/nodejs/node/blob/v26.3.0/doc/api/quic.md#L1844-L1846).
       abortCode = 0n; // the one reset code after which the peer's `closed` resolves
     }
     // When the whole session is being torn down, the cascaded per-stream

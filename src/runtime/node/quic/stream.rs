@@ -966,9 +966,7 @@ impl QuicStream {
                 reset = Some(code);
             }
         }
-        // Parked only while nothing of the send side reached lsquic: lsquic
-        // cannot finish such a stream, so its pointer stays valid for
-        // `QuicSession::flush_deferred_aborts`.
+        // A stream that already sent keeps nothing back, as on main.
         let parks = (stop.is_some() || reset.is_some()) && !self.wrote_to_lsquic.get();
         let always_sent = self.abort_always_sent.get();
         let parked_on = self
@@ -976,8 +974,7 @@ impl QuicStream {
             .filter(|session| parks && session.parks_stream_abort(always_sent));
         match parked_on {
             Some(session) => {
-                // `teardown` clears the ctx next: lsquic must not poll a
-                // stream that has no owner until the flush releases it.
+                // `teardown` nulls the ctx next, so nothing answers lsquic.
                 s.want_read(false);
                 s.want_write(false);
                 session.defer_stream_abort(s.id(), stop, reset, always_sent);

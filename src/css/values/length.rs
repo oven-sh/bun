@@ -470,10 +470,13 @@ impl Length {
     }
 
     pub(crate) fn add_internal(self, other: Length) -> Length {
-        if let Some(r) = self.try_add(&other) {
-            return r;
+        if let Some(sum) = protocol::TryAdd::try_add(&self, &other) {
+            return sum;
         }
-        self.add__(other)
+        match self.into_calc().add_terms(other.into_calc()) {
+            Calc::Value(v) => *v,
+            calc => Self::Calc(Box::new(calc)),
+        }
     }
 
     pub(crate) fn into_calc(self) -> Calc<Length> {
@@ -481,93 +484,6 @@ impl Length {
             Self::Calc(c) => *c,
             v => Calc::Value(Box::new(v)),
         }
-    }
-
-    fn add__(self, other: Length) -> Length {
-        let mut a = self;
-        let mut b = other;
-
-        if a.is_zero() {
-            return b;
-        }
-
-        if b.is_zero() {
-            return a;
-        }
-
-        if a.is_sign_negative() && b.is_sign_positive() {
-            core::mem::swap(&mut a, &mut b);
-        }
-
-        match (a, b) {
-            (Self::Calc(ca), b) if matches!(*ca, Calc::Value(_)) && !matches!(b, Self::Calc(_)) => {
-                let Calc::Value(v) = *ca else { unreachable!() };
-                v.add__(b)
-            }
-            (a, Self::Calc(cb)) if matches!(*cb, Calc::Value(_)) && !matches!(a, Self::Calc(_)) => {
-                let Calc::Value(v) = *cb else { unreachable!() };
-                a.add__(*v)
-            }
-            (a, b) => Self::Calc(Box::new(Calc::Sum {
-                left: Box::new(a.into_calc()),
-                right: Box::new(b.into_calc()),
-            })),
-        }
-        // For borrowck this needs
-        // to move out of the Box, so the conditions are folded into match guards.
-    }
-
-    fn try_add(&self, other: &Length) -> Option<Length> {
-        if let (Self::Value(a), Self::Value(b)) = (self, other) {
-            if let Some(res) = a.try_add(*b) {
-                return Some(Self::Value(res));
-            }
-            return None;
-        }
-
-        if let Self::Calc(c) = self {
-            match &**c {
-                Calc::Value(v) => return v.try_add(other),
-                Calc::Sum { left, right } => {
-                    let a = Self::Calc(left.clone());
-                    if let Some(res) = a.try_add(other) {
-                        return Some(res.add__(Self::Calc(right.clone())));
-                    }
-
-                    let b = Self::Calc(right.clone());
-                    if let Some(res) = b.try_add(other) {
-                        return Some(Self::Calc(left.clone()).add__(res));
-                    }
-
-                    return None;
-                }
-                _ => return None,
-            }
-            // `Box` ownership requires cloning the sub-nodes here (no aliasing
-            // of the same heap node).
-        }
-
-        if let Self::Calc(c) = other {
-            match &**c {
-                Calc::Value(v) => return v.try_add(self),
-                Calc::Sum { left, right } => {
-                    let a = Self::Calc(left.clone());
-                    if let Some(res) = self.try_add(&a) {
-                        return Some(res.add__(Self::Calc(right.clone())));
-                    }
-
-                    let b = Self::Calc(right.clone());
-                    if let Some(res) = self.try_add(&b) {
-                        return Some(Self::Calc(left.clone()).add__(res));
-                    }
-
-                    return None;
-                }
-                _ => return None,
-            }
-        }
-
-        None
     }
 
     fn unwrap_calc(length: Length) -> Length {
@@ -591,20 +507,6 @@ impl Length {
         }
     }
 
-    fn is_sign_negative(&self) -> bool {
-        let Some(s) = self.try_sign() else {
-            return false;
-        };
-        s.is_sign_negative()
-    }
-
-    fn is_sign_positive(&self) -> bool {
-        let Some(s) = self.try_sign() else {
-            return false;
-        };
-        s.is_sign_positive()
-    }
-
     pub(crate) fn partial_cmp(&self, other: &Length) -> Option<Ordering> {
         if let (Self::Value(a), Self::Value(b)) = (self, other) {
             return LengthValue::partial_cmp(*a, *b);
@@ -616,13 +518,6 @@ impl Length {
         match self {
             Self::Value(v) => Some(Self::Value(v.map(map_fn))),
             _ => None,
-        }
-    }
-
-    fn is_zero(&self) -> bool {
-        match self {
-            Self::Value(v) => v.is_zero(),
-            _ => false,
         }
     }
 
@@ -652,6 +547,15 @@ impl protocol::MulF32 for LengthValue {
     #[inline]
     fn mul_f32(self, rhs: f32) -> Self {
         LengthValue::mul_f32(self, rhs)
+    }
+}
+/// Two values with units that add. `calc()` keeps every other pair as a sum.
+impl protocol::TryAdd for Length {
+    fn try_add(&self, rhs: &Self) -> Option<Self> {
+        match (self, rhs) {
+            (Self::Value(a), Self::Value(b)) => LengthValue::try_add(*a, *b).map(Self::Value),
+            _ => None,
+        }
     }
 }
 impl protocol::TryAdd for LengthValue {

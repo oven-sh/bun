@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 const nestedFunctions = /* js */ `
@@ -180,6 +181,49 @@ describe("bundler", () => {
       expect(out).toContain(`__toESM(require("./toml.conf", { type: "toml" }), 1);`);
     },
     run: { stdout: "Hello, world! | Hello, world! | plain | <h1>Title</h1> | 1" },
+  });
+  // The printer leaves `, 1` off for the types in `Loader::require_returns_generated_es_module`
+  // (src/ast/loader.rs). That list is a copy of what the runtime does, which this pins.
+  test("require(path, { type }) returns a module namespace for text, md and sqlite only", async () => {
+    const types = [
+      ["css", "a { color: red }"],
+      ["file", "file"],
+      ["json", `{ "a": 1 }`],
+      ["jsonc", `{ "a": 1 /* comment */ }`],
+      ["json5", "{ a: 1 }"],
+      ["toml", "a = 1\n"],
+      ["yaml", "a: 1\n"],
+      ["xml", "<a>1</a>"],
+      ["wasm", Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0])],
+      ["base64", "base64"],
+      ["dataurl", "dataurl"],
+      ["text", "text"],
+      ["sh", "echo hi\n"],
+      ["sqlite", messagesDb],
+      ["html", "<p>hi</p>"],
+      ["md", "# hi\n"],
+    ] as const;
+    using dir = tempDir("require-type-namespace", {
+      ...Object.fromEntries(types.map(([type, contents]) => [type + ".data", contents])),
+      "main.cjs": `
+        const isNamespace = value =>
+          value != null && typeof value === "object" && !!value.__esModule && Object.hasOwn(value, "default");
+        const namespaces = ${JSON.stringify(types.map(([type]) => type))}.filter(type =>
+          isNamespace(require("./" + type + ".data", { type })),
+        );
+        console.log(JSON.stringify(namespaces));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: `["text","sqlite","md"]\n`, stderr: "" });
+    expect(exitCode).toBe(0);
   });
   // Node's require() takes one argument.
   itBundled("bun/type-attribute-cjs-target-node", {

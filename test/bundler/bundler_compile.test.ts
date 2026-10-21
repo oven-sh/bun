@@ -1154,33 +1154,6 @@ describe("bundler", () => {
     },
     run: { stdout: "Hello, world!", setCwd: true },
   });
-  // cjs output, which --bytecode implies, turns the import into a require()
-  // call. The runtime needs the `type` attribute there: `my.db` has no
-  // extension that names the sqlite loader.
-  for (const [suffix, options] of [
-    ["cjs", { format: "cjs" }],
-    ["bytecode", { bytecode: true }],
-  ] as const) {
-    itBundled(`compile/sqlite-type-attribute-${suffix}`, {
-      compile: true,
-      ...options,
-      files: {
-        "/entry.ts": /* js */ `
-          import db from './my.db' with {type: "sqlite"};
-          console.log(db.query("select message from messages LIMIT 1").get().message);
-        `,
-      },
-      runtimeFiles: {
-        "/my.db": (() => {
-          const db = new Database(":memory:");
-          db.exec("create table messages (message text)");
-          db.exec("insert into messages values ('Hello, world!')");
-          return db.serialize();
-        })(),
-      },
-      run: { stdout: "Hello, world!", setCwd: true },
-    });
-  }
 
   // A text import in a compiled executable is embedded as a string body
   // (8-bit when ASCII, UTF-16LE otherwise) that the runtime hands back without

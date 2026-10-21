@@ -22796,6 +22796,22 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(exitCode).toBe(1);
     });
 
+    test("reports the first compiler option at the root of a tsconfig.json without `compilerOptions`", async () => {
+      using dir = project({
+        // `noEmit` is also an option of `tsc --build`, and those aren't reported.
+        "tsconfig.json": `{ "noEmit": true, "types": [], "lib": ["esnext"] }`,
+        "nested/tsconfig.json": `{ "strict": true, "compilerOptions": { "types": [], "lib": ["esnext"] } }`,
+        "nested/a.ts": `export const a = 1;\n`,
+      });
+      const [root, nested] = await Promise.all([check(dir), check(dir, ["-p", "nested"])]);
+      expect(root.stdout).toContain(
+        "tsconfig.json(1,19): error TS6258: 'types' should be set inside the 'compilerOptions' object of the config json file",
+      );
+      expect(root.stdout).not.toContain("'lib' should be set");
+      expect(root.exitCode).toBe(1);
+      expect(nested).toMatchObject({ stdout: "", exitCode: 0 });
+    });
+
     test("reports a project reference without a valid `path` or with an invalid `circular`", async () => {
       using dir = project({
         "tsconfig.json": `{

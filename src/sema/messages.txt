@@ -1168,6 +1168,7 @@
 6236	E	Arguments for the rest parameter '{0}' were not provided.
 6239	M	File '{0}' exists according to earlier cached lookups.
 6240	M	File '{0}' does not exist according to earlier cached lookups.
+6258	E	'{0}' should be set inside the 'compilerOptions' object of the config json file
 6263	E	Module '{0}' was resolved to '{1}', but '--allowArbitraryExtensions' is not set.
 6265	M	Resolving type reference directive for program that specifies custom typeRoots, skipping lookup in 'node_modules' folder.
 6266	E	Option '{0}' can only be specified on command line.

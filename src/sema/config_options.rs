@@ -168,6 +168,17 @@ bun_core::comptime_string_set! {
     static COMMAND_LINE_ONLY_OPTIONS = { b"help", b"ignoreConfig", b"listFilesOnly", b"locale", b"showConfig", b"watch" };
 }
 
+bun_core::comptime_string_set! {
+    /// `commonOptionsWithBuild`. Every other option is in `optionsForCompiler`.
+    static COMMON_OPTIONS_WITH_BUILD = {
+        b"help", b"watch", b"preserveWatchOutput", b"listFiles", b"explainFiles", b"listEmittedFiles", b"pretty",
+        b"traceResolution", b"diagnostics", b"extendedDiagnostics", b"generateCpuProfile", b"generateTrace",
+        b"incremental", b"declaration", b"declarationMap", b"emitDeclarationOnly", b"sourceMap", b"inlineSourceMap",
+        b"noCheck", b"deduplicatePackages", b"noEmit", b"assumeChangesOnlyAffectDirectDependencies", b"locale",
+        b"quiet", b"singleThreaded", b"pprofDir", b"checkers", b"runExternalCode",
+    };
+}
+
 /// An error in an option.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Problem {
@@ -442,6 +453,9 @@ fn kind_of_root(name: &[u8]) -> Option<Kind> {
 /// `file`.
 pub fn problems(file: &TsConfigSourceFile, object: ExprId, within: In) -> Vec<Problem> {
     let mut out = Vec::new();
+    // `rootCompilerOptions[0]`
+    let mut root_compiler_option = None;
+    let mut has_compiler_options = false;
     for (property, name) in file.properties(object) {
         let name = &name.to_vec();
         let value = &file.convert_property_value_to_json(file.initializer(property));
@@ -456,6 +470,20 @@ pub fn problems(file: &TsConfigSourceFile, object: ExprId, within: In) -> Vec<Pr
                 span: name_span,
             });
             continue;
+        }
+        has_compiler_options |= name == b"compilerOptions";
+        if within == In::Root
+            && root_compiler_option.is_none()
+            && possible_option(name).is_some_and(|option| option == &name[..])
+            && !COMMON_OPTIONS_WITH_BUILD.contains(name)
+        {
+            root_compiler_option = Some(Problem {
+                property,
+                index: None,
+                code: 6258,
+                args: vec![name.clone()],
+                span: name_span,
+            });
         }
         if within == In::Root && name == b"excludes" {
             out.push(Problem {
@@ -605,5 +633,6 @@ pub fn problems(file: &TsConfigSourceFile, object: ExprId, within: In) -> Vec<Pr
             _ => {}
         }
     }
+    out.extend(root_compiler_option.filter(|_| !has_compiler_options));
     out
 }

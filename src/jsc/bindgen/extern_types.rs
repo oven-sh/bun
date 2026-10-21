@@ -118,10 +118,21 @@ pub struct ExternWithValue<T: Copy> {
 }
 
 unsafe extern "C" {
-    /// `value` is a `BufferSource` or a `Blob` whose bytes are in memory.
+    /// `value` is a `BufferSource`, or holds a `Blob` whose bytes are in memory.
     pub(super) safe fn Bun__Bindgen__bytesOfBlobOrBuffer(value: JSValue) -> ExternBytes;
+    /// As above. Always sets `is_shared`.
+    pub(super) safe fn Bun__Bindgen__bytesOfBlobOrBufferAndIsShared(
+        value: JSValue,
+        is_shared: &mut bool,
+    ) -> ExternBytes;
     pub(super) fn Bun__Bindgen__constructArrayFromValues(
         global: *mut JSGlobalObject,
+        values: *const JSValue,
+        count: usize,
+    ) -> JSValue;
+    pub(super) fn Bun__Bindgen__createNullPrototypeObject(
+        global: *mut JSGlobalObject,
+        first_member_name_index: u32,
         values: *const JSValue,
         count: usize,
     ) -> JSValue;
@@ -135,6 +146,13 @@ unsafe extern "C" {
         global: *mut JSGlobalObject,
         index: u32,
     ) -> JSValue;
+    pub(super) fn Bun__Bindgen__putRecordEntry(
+        global: &JSGlobalObject,
+        record: JSValue,
+        key: *const u8,
+        key_length: usize,
+        value: JSValue,
+    ) -> bool;
     pub(super) fn Bun__Bindgen__setInternalField(
         global: *mut JSGlobalObject,
         cell: *mut c_void,

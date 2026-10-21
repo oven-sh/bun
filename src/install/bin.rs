@@ -1922,13 +1922,16 @@ pub(crate) fn link_free_bins(
 ) {
     // Two copies of the same path, because the linker reads `target_node_modules_path` while it
     // holds `node_modules_path` by `&mut`.
-    let abs_node_modules = || -> AbsPath {
+    let abs_node_modules = || -> Option<AbsPath> {
         let mut dir = AbsPath::init_top_level_dir();
-        let _ = dir.append(node_modules);
-        dir
+        dir.try_append(node_modules).ok()?;
+        Some(dir)
     };
-    let (target_node_modules_path, mut node_modules_path) =
-        (abs_node_modules(), abs_node_modules());
+    let (Some(target_node_modules_path), Some(mut node_modules_path)) =
+        (abs_node_modules(), abs_node_modules())
+    else {
+        return;
+    };
 
     let mut seen: StringHashMap<()> = StringHashMap::default();
     match global_bin_path {

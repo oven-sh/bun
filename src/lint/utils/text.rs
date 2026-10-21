@@ -1,4 +1,4 @@
-//! The operations of JavaScript strings, on UTF-8 text.
+//! JavaScript's string operations, on UTF-8 text.
 //!
 //! | JavaScript | here |
 //! | --- | --- |
@@ -22,7 +22,8 @@
 //! | `require("natural-compare")` | [`natural_compare`] |
 //! | `esutils.keyword.isIdentifierES5`, `isIdentifierES6` | [`is_identifier_es5`], [`is_identifier_es6`] |
 //! | `s.split(/\r\n\|[\r\n\u2028\u2029]/u)`, `/\r\n\|[\r\n\u2028\u2029]/u.test(s)` | [`strings::js_lines`], [`strings::contains_js_line_break`] |
-//! | `s.slice(a, b)` with UTF-16 indices that are not in the middle of a surrogate pair, which are taken as its start | [`strings::wtf8_slice_by_utf16`], [`strings::wtf8_offset_of_utf16_index`] |
+//! | `s.slice(a, b)` with UTF-16 indices (an index in the middle of a surrogate pair is treated as the pair's start) |
+//! [`strings::wtf8_slice_by_utf16`], [`strings::wtf8_offset_of_utf16_index`] |
 
 use bun_core::lexer::{char_and_size, is_type_script_identifier_part};
 use bun_core::strings;
@@ -42,10 +43,10 @@ pub fn last_code_point(text: &[u8]) -> Option<u32> {
     (!text.is_empty()).then(|| bun_core::lexer::last_char(text).0 as u32)
 }
 
-/// What follows `prefix` in `text`, if `/^prefix/iu` matches. `prefix`: characters of ASCII, no capitals.
+/// Returns what follows `prefix` in `text`, if `/^prefix/iu` matches. `prefix` must be ASCII without capitals.
 ///
-/// With these flags U+017F is an `s` and U+212A a `k`, and both are a `\w`. No other character outside ASCII is one of ASCII but
-/// for its case.
+/// With these flags U+017F matches `s` and U+212A matches `k`, and both match `\w`. No other non-ASCII character
+/// case-folds to an ASCII character.
 pub fn strip_prefix_ignoring_case<'t>(text: &'t [u8], prefix: &[u8]) -> Option<&'t [u8]> {
     let mut rest = text;
     for &c in prefix {
@@ -59,7 +60,7 @@ pub fn strip_prefix_ignoring_case<'t>(text: &'t [u8], prefix: &[u8]) -> Option<&
     Some(rest)
 }
 
-/// The byte that the character outside ASCII starts with that is `c` but for its case, and `c` if there is none.
+/// The first byte of the non-ASCII character that case-folds to `c`, or `c` if there's none.
 #[inline]
 pub fn first_byte_of_other_case(c: u8) -> u8 {
     match c {
@@ -107,7 +108,7 @@ fn map_case<'t>(
     Cow::Owned(out)
 }
 
-/// Whether `text` ends with `ending`, whatever the case of the ASCII letters.
+/// True if `text` ends with `ending`, ignoring the case of ASCII letters.
 pub fn ends_with_ignore_ascii_case(text: &[u8], ending: &[u8]) -> bool {
     (text.len().checked_sub(ending.len()))
         .and_then(|at| text.get(at..))
@@ -155,7 +156,7 @@ pub fn is_lower_case(text: &[u8]) -> bool {
 /// ESLint's and typescript-eslint's `upperCaseFirst`: `text[0].toUpperCase() + text.slice(1)`.
 pub fn upper_case_first(text: &[u8]) -> Cow<'_, [u8]> {
     let (c, size) = char_and_size(text, 0);
-    // `text[0]` of a character outside the BMP is half of a surrogate pair, which has no case.
+    // For a character outside the BMP, `text[0]` is a lone surrogate, which has no case.
     if size == 0 || c > 0xFFFF {
         return Cow::Borrowed(text);
     }
@@ -212,7 +213,7 @@ pub fn number_to_string(n: f64) -> Vec<u8> {
     bun_sema::atom::number_to_string(n)
 }
 
-/// Whether `text` is an `IdentifierName` without escapes. Reserved words are.
+/// True if `text` is an `IdentifierName` without escapes. Reserved words count.
 pub fn is_identifier_name(text: &[u8]) -> bool {
     let mut points = strings::wtf8_codepoints(text).map(|it| it.1);
     points
@@ -221,8 +222,8 @@ pub fn is_identifier_name(text: &[u8]) -> bool {
         && points.all(|c| is_type_script_identifier_part(c as i32))
 }
 
-/// `String.fromCodePoint(...values)`, also `String.fromCharCode(...values)`: a lead and a trail
-/// surrogate in a row are one character.
+/// `String.fromCodePoint(...values)`, also `String.fromCharCode(...values)`: a lead surrogate followed by a trail
+/// surrogate becomes one character.
 pub fn string_from_code_points(values: impl IntoIterator<Item = u32>) -> Vec<u8> {
     let mut text = Vec::new();
     for value in values {
@@ -231,11 +232,11 @@ pub fn string_from_code_points(values: impl IntoIterator<Item = u32>) -> Vec<u8>
     text
 }
 
-/// The npm package `natural-compare`, which `sort-keys` and `member-ordering` sort by: as
-/// [`strings::order_utf16`], but a run of digits counts as the number it is, and the order of ASCII is punctuation,
-/// digits, upper case, lower case.
+/// The npm package `natural-compare`, which `sort-keys` and `member-ordering` sort with. It's like
+/// [`strings::order_utf16`], but a run of digits compares as a number, and ASCII is ordered punctuation, digits, upper
+/// case, lower case.
 pub fn natural_compare(a: &[u8], b: &[u8]) -> Ordering {
-    /// Where the code unit `code` is in the order.
+    /// The code unit `code`'s position in the order.
     fn rank(code: u32) -> u32 {
         match code {
             code @ (..45 | 128..) => code,
@@ -344,15 +345,14 @@ fn is_reserved_word_es6(name: &[u8]) -> bool {
     )
 }
 
-/// `esutils.keyword.isIdentifierES6(name)`: an identifier that is not a reserved word outside of
-/// strict mode.
+/// `esutils.keyword.isIdentifierES6(name)`: an identifier that isn't a reserved word outside strict mode.
 pub fn is_identifier_es6(name: &[u8]) -> bool {
     is_identifier_name(name) && !is_reserved_word_es6(name)
 }
 
-/// `esutils.keyword.isIdentifierES5(name)`: the same, but `yield` is an identifier, characters
-/// outside the BMP are not allowed, and neither is what is a letter only by `Other_ID_Start` or
-/// `Other_ID_Continue`: ES5 goes by general categories.
+/// `esutils.keyword.isIdentifierES5(name)`: the same, but `yield` is an identifier, and it rejects characters outside
+/// the BMP and characters that are only letters because of `Other_ID_Start` or `Other_ID_Continue`, because ES5 uses
+/// general categories.
 pub fn is_identifier_es5(name: &[u8]) -> bool {
     is_identifier_name(name)
         && (name == b"yield" || !is_reserved_word_es6(name))

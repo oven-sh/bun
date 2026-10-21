@@ -1,13 +1,13 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint_eslint::rules::init_declarations::{
-    Config, Finding, declared_namespace_around, has_declare,
+    Config, Finding, enclosing_declared_namespace, has_declare,
 };
 
 /// Require or disallow initialization in variable declarations.
 pub struct InitDeclarations {
     config: Config,
-    /// Without options, upstream hands its context to ESLint's rule, which then reads no mode and reports nothing.
+    /// Without options, upstream passes its context to ESLint's rule, which then finds no mode and reports nothing.
     has_mode: bool,
 }
 
@@ -28,7 +28,7 @@ impl Rule for InitDeclarations {
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         // oxlint uses ESLint's rule here, which defaults to `always`. Do the same when there's no package to match.
         let language = file.language();
-        if !self.has_mode && !language.is_oxlint && !language.stands_alone {
+        if !self.has_mode && !language.is_oxlint && !language.has_no_foreign_config {
             return None;
         }
         Some(())
@@ -48,7 +48,7 @@ impl InitDeclarations {
         let config = &self.config;
         if decl.flags().contains(Flags::AMBIENT)
             && (has_declare(found.declaration)
-                || !config.is_never && declared_namespace_around(found.declaration).is_some())
+                || !config.is_never && enclosing_declared_namespace(found.declaration).is_some())
         {
             return;
         }
@@ -59,7 +59,7 @@ impl InitDeclarations {
             report.data("idName", found.name);
             return;
         }
-        // For oxlint the type annotation is part of it.
+        // oxlint's span includes the type annotation.
         if cx.language().is_oxlint {
             let report = cx.report(decl.binding_span(), found.message);
             report
@@ -67,7 +67,7 @@ impl InitDeclarations {
                 .data("idName", found.name);
             return;
         }
-        // Without the type annotation: as many columns as the name is long.
+        // Without the type annotation: the span is as many columns wide as the name is long.
         let pat = decl.pat();
         let report = cx.report(pat, found.message).data("idName", found.name);
         if pat.text() != found.name.bytes() {

@@ -65,7 +65,7 @@ impl Rule for PreferStringStartsEndsWith {
     }
 }
 
-/// The argument of the call, if a method can be called on it as it is written.
+/// The call's argument, if a method can be called on it without adding parentheses.
 fn can_replace(call: Call<'_>) -> Option<Expr<'_>> {
     let argument = call.args().first().filter(|_| call.args().len() == 1)?;
     let can = match argument.tag() {
@@ -76,7 +76,7 @@ fn can_replace(call: Call<'_>) -> Option<Expr<'_>> {
     can.then_some(argument)
 }
 
-/// Whether the pattern is a `^` and characters (`true`) or characters and a `$` (`false`), and the characters.
+/// Returns `true` for a `^` followed by characters and `false` for characters followed by a `$`, plus the characters.
 fn check_regex(pattern: &[u8], flags: &[u8]) -> Option<(bool, Vec<u32>)> {
     if !pattern.starts_with(b"^") && !pattern.ends_with(b"$")
         || strings::contains_char(flags, b'm')
@@ -84,7 +84,7 @@ fn check_regex(pattern: &[u8], flags: &[u8]) -> Option<(bool, Vec<u32>)> {
     {
         return None;
     }
-    let ast = regex::parse_pattern(pattern, regex::Mode::of_flags(flags), regex::Options::default()).ok()?;
+    let ast = regex::parse_pattern(pattern, regex::Mode::from_flags(flags), regex::Options::default()).ok()?;
     let RegexKind::Pattern { alternatives } = ast.pattern().kind() else {
         return None;
     };

@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { NodeHTTPResponse } from "../server/NodeHTTPResponse.bind.ts";
 
 export default b.module({ rustPath: "crate::node::node_http_binding" });
 
@@ -19,7 +20,7 @@ export const BunServer = b.union({
 export const getBunServerOpenCount = b.fn({ args: { server: BunServer }, returns: b.f64 });
 
 /** `kInternalSocketData` of the socket given to `handleUpgrade()` of `ws`, which can be any `Duplex`. */
-export const UpgradeResponse = b.union({ response: b.classRef("NodeHTTPResponse"), ignored: b.any });
+export const UpgradeResponse = b.union({ response: NodeHTTPResponse, ignored: b.any });
 export const DeflateParams = b.dictionary({
   serverMaxWindowBits: b.f64.loose.nullable.default(15),
   clientMaxWindowBits: b.f64.loose.nullable.default(15),

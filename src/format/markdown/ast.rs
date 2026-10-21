@@ -1,8 +1,8 @@
-//! The syntax tree of a Markdown text: [mdast](https://github.com/syntax-tree/mdast) as
-//! mdast-util-from-markdown builds it, with the nodes that Prettier's extensions add.
+//! A Markdown text's syntax tree: [mdast](https://github.com/syntax-tree/mdast) as mdast-util-from-markdown builds it,
+//! with the nodes that Prettier's extensions add.
 //!
-//! The tree is flat: nodes refer to each other by index. Strings are ranges of the text, or of
-//! [`Tree::strings`] if they are not written the way they are meant.
+//! The tree is flat: nodes refer to each other by index. Strings are ranges of the text, or of [`Tree::strings`] if
+//! their value differs from the source text.
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Kind {
@@ -18,7 +18,7 @@ pub enum Kind {
     Code,
     Definition,
     FootnoteDefinition,
-    /// For oxfmt: what is between `:::name`, which is its `value`, and `:::`, which is `second`.
+    /// For oxfmt: the content between `:::name`, which is its `value`, and `:::`, which is `second`.
     Directive,
     Table,
     TableRow,
@@ -38,12 +38,12 @@ pub enum Kind {
     FootnoteReference,
     InlineMath,
     WikiLink,
-    /// MDX: `import ..`, `export ..`, HTML that is not a comment, `{/* .. */}`.
+    /// MDX: `import ..`, `export ..`, HTML that isn't a comment, `{/* .. */}`.
     Import,
     Export,
     Jsx,
     EsComment,
-    /// What Prettier's `splitText` makes of a `Text`: words and white space, which are not nodes here.
+    /// The result of Prettier's `splitText` on a `Text`: words and whitespace, which aren't nodes here.
     Sentence,
 }
 
@@ -54,8 +54,7 @@ pub const NONE: NodeId = u32::MAX;
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub struct Str {
     start: u32,
-    /// The highest bit says that it is a range of `Tree::strings`, the one below that there is no
-    /// string: `null`.
+    /// The highest bit means it's a range of `Tree::strings`. The bit below it means there's no string: `null`.
     len: u32,
 }
 
@@ -80,7 +79,7 @@ impl Str {
         self.len & Str::NULL != 0
     }
 
-    /// The part of it from `start` to `end`.
+    /// The substring from `start` to `end`.
     pub(crate) fn slice(self, start: usize, end: usize) -> Str {
         Str {
             start: self.start + start as u32,
@@ -107,18 +106,18 @@ pub enum Align {
 #[derive(Copy, Clone, Debug)]
 pub struct Node {
     pub kind: Kind,
-    /// `spread` of a list and an item, `ordered` of a list.
+    /// A list's or item's `spread`, a list's `ordered`.
     pub spread: bool,
     pub ordered: bool,
-    /// `isAligned` of a list.
+    /// A list's `isAligned`.
     pub is_aligned: bool,
-    /// `checked` of an item: 0 is `null`, 1 `false`, 2 `true`.
+    /// An item's `checked`: 0 is `null`, 1 `false`, 2 `true`.
     pub checked: u8,
     pub reference_type: ReferenceType,
-    /// For oxfmt: 1 for HTML that a certain text ends (`-->`, `</script>` ..), 1 for indented code.
-    /// `depth` of a heading, `start` of an ordered list, the number of columns of a table, which are
-    /// at `Tree::aligns[first_align..]`, the number of tokens of a sentence, which are at
-    /// `Tree::tokens[first_align..]`. Of a list: how many lists of its kind are right before it.
+    /// For oxfmt: 1 for HTML that ends at a specific text (`-->`, `</script>` ..), 1 for indented code.
+    /// A heading's `depth`, an ordered list's `start`, a table's column count (the columns are at
+    /// `Tree::aligns[first_align..]`), a sentence's token count (the tokens are at `Tree::tokens[first_align..]`). For
+    /// a list: how many lists of its kind are right before it.
     pub number: u32,
     pub first_align: u32,
     pub start: u32,
@@ -128,11 +127,11 @@ pub struct Node {
     pub next: NodeId,
     pub first_child: NodeId,
     pub last_child: NodeId,
-    /// `value`, `url`, or `label` of a reference.
+    /// `value`, `url`, or a reference's `label`.
     pub value: Str,
-    /// `lang`, `title`, or `label` of a definition.
+    /// `lang`, `title`, or a definition's `label`.
     pub second: Str,
-    /// `meta`, `alt`, or `url` of a definition... see the accessors.
+    /// `meta`, `alt`, or a definition's `url`. See the accessors.
     pub third: Str,
     /// `identifier`
     pub identifier: Str,
@@ -169,9 +168,9 @@ pub struct Tree {
     pub(crate) nodes: Vec<Node>,
     pub(crate) strings: Vec<u8>,
     pub(crate) aligns: Vec<Align>,
-    /// The words and the white space of all sentences.
+    /// The words and whitespace of all sentences.
     pub(crate) tokens: Vec<super::preprocess::Token>,
-    /// Where each line of the text starts.
+    /// The start of each line of the text.
     pub(crate) line_starts: Vec<u32>,
 }
 
@@ -184,7 +183,7 @@ impl Tree {
         self.line_starts.clear();
     }
 
-    /// Adds a node that is not in anything yet.
+    /// Adds a node with no parent yet.
     pub(crate) fn add(&mut self, kind: Kind, start: u32, end: u32) -> NodeId {
         self.nodes.push(Node::new(kind, start, end));
         (self.nodes.len() - 1) as NodeId
@@ -246,7 +245,7 @@ impl Tree {
         }
     }
 
-    /// Takes `child` out of its parent.
+    /// Removes `child` from its parent.
     pub(crate) fn detach(&mut self, child: NodeId) {
         let Some(&Node {
             parent,
@@ -285,7 +284,7 @@ impl Tree {
         }
     }
 
-    /// A string that is not written in the text the way it is meant: what `write` appends.
+    /// A string whose value differs from the source text: whatever `write` appends.
     pub(crate) fn owned(&mut self, write: impl FnOnce(&mut Vec<u8>)) -> Str {
         let start = self.strings.len();
         write(&mut self.strings);
@@ -295,7 +294,7 @@ impl Tree {
         }
     }
 
-    /// `text`: what the tree is the syntax of. A string that is `null` is empty.
+    /// `text` is the text the tree was parsed from. A `null` string is empty.
     pub fn str<'t>(&'t self, text: &'t [u8], string: Str) -> &'t [u8] {
         if string.is_null() {
             return &[];
@@ -404,14 +403,14 @@ impl Tree {
         &self.line_starts
     }
 
-    /// The number of the line that `offset` is on. The first is 1.
+    /// The 1-based number of the line that `offset` is on.
     pub(crate) fn line(&self, offset: u32) -> u32 {
         self.line_starts
             .partition_point(|&start| start <= offset)
             .max(1) as u32
     }
 
-    /// Where the line that `offset` is on starts.
+    /// The start of the line that `offset` is on.
     pub(crate) fn line_start(&self, offset: u32) -> u32 {
         self.line_starts
             .get(self.line(offset) as usize - 1)

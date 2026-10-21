@@ -934,16 +934,25 @@ test("strips leading and trailing whitespace from a response field value", async
   }
 });
 
-test("enforces the response header size limit it advertises", async () => {
+test("a response header set over the size limit fails that request and no other on the connection", async () => {
+  const held = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  let heldRequests = 0;
   await using origin = Bun.serve({
     port: 0,
     tls,
     http3: true,
     http1: false,
-    fetch(req) {
+    async fetch(req) {
+      const { pathname } = new URL(req.url);
+      if (pathname === "/held") {
+        heldRequests++;
+        held.resolve();
+        await release.promise;
+        return new Response("held");
+      }
       const headers = new Headers();
-      const count = Number(new URL(req.url).pathname.slice(1));
-      for (let i = 0; i < count; i++) headers.append("set-cookie", "");
+      for (let i = 0; i < Number(pathname.slice(1)); i++) headers.append("set-cookie", "");
       return new Response(null, { headers });
     },
   });
@@ -952,6 +961,8 @@ test("enforces the response header size limit it advertises", async () => {
   // Leaves room for :status and the fields Bun.serve adds.
   const under = fieldsAtTheLimit - 8;
 
+  const other = fetch(`${origin.url}held`, h3);
+  await held.promise;
   const served = await fetch(`${origin.url}${under}`, h3);
   expect(served.headers.getSetCookie()).toEqual(Array(under).fill(""));
   const refused = await fetch(`${origin.url}${fieldsAtTheLimit + 1}`, h3).then(
@@ -959,7 +970,10 @@ test("enforces the response header size limit it advertises", async () => {
     err => err.code,
   );
   expect(refused).toBe("ResponseHeadersTooLarge");
-  expect((await fetch(`${origin.url}1`, h3)).headers.getSetCookie()).toEqual([""]);
+  release.resolve();
+  expect(await (await other).text()).toBe("held");
+  // A closed connection would have sent it again on a new one.
+  expect(heldRequests).toBe(1);
 });
 
 // Stale-session retry: a request bound on session A when A's conn closes

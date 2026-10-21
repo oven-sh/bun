@@ -49,8 +49,7 @@ struct us_quic_hset {
     struct us_quic_header_t *headers;
     unsigned int count, hcap;
     int is_server;
-    /* Size as RFC 9114 §4.2.2 counts it, and the es_max_header_list_size this
-     * endpoint advertises. lsquic only advertises that setting. */
+    /* Size as RFC 9114 §4.2.2 counts it, and the context's max_header_set_size. */
     size_t size, max_size;
     int too_large;
 };
@@ -68,6 +67,8 @@ struct us_quic_socket_context_s {
      * us_quic_engine_leave finishes it. */
     int shutdown_pending;
     int is_client;
+    /* lsquic only advertises es_max_header_list_size. This is what us_quic_hsi_process enforces. */
+    unsigned int max_header_set_size;
     unsigned int conn_count;
     unsigned int conn_ext_size;
     /* Stream bytes written since the last process_conns. Once this exceeds
@@ -482,7 +483,7 @@ static void *us_quic_hsi_create(void *hsi_ctx, lsquic_stream_t *s, int is_push) 
     struct us_quic_hset *h = (struct us_quic_hset *) us_calloc(1, sizeof(struct us_quic_hset));
     if (!h) return NULL;
     h->is_server = !((us_quic_socket_context_t *) hsi_ctx)->is_client;
-    h->max_size = ((us_quic_socket_context_t *) hsi_ctx)->settings.es_max_header_list_size;
+    h->max_size = ((us_quic_socket_context_t *) hsi_ctx)->max_header_set_size;
     return h;
 }
 
@@ -835,7 +836,8 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     ctx->settings.es_ecn = 0;
     /* Same value as Http2Context::maxHeaderListSize. */
     size_t max_header_size = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE ? BUN_DEFAULT_MAX_HTTP_HEADER_SIZE : 64 * 1024;
-    ctx->settings.es_max_header_list_size = max_header_size > 0xffffff ? 0xffffff : (unsigned) max_header_size;
+    ctx->max_header_set_size = max_header_size > 0xffffff ? 0xffffff : (unsigned) max_header_size;
+    ctx->settings.es_max_header_list_size = ctx->max_header_set_size;
     ctx->settings.es_init_max_streams_bidi = 100;
     /* Static-table-only response encoding: skips the per-header dynamic
      * table search (lsqpack_enc_encode + XXH32 + header_out_dynamic_entry
@@ -1375,8 +1377,10 @@ us_quic_socket_context_t *us_create_quic_client_context(
     lsquic_engine_init_settings(&ctx->settings, LSENG_HTTP);
     ctx->settings.es_versions = (1u << LSQVER_I001);
     ctx->settings.es_ecn = 0;
-    /* Same as the HTTP/2 client's LOCAL_MAX_HEADER_LIST_SIZE. */
-    ctx->settings.es_max_header_list_size = 256 * 1024;
+    /* One field holds at most LSXPACK_MAX_STRLEN bytes, so a server isn't told it may send more. */
+    ctx->settings.es_max_header_list_size = 64 * 1024;
+    /* A server may ignore that setting. Same as the HTTP/2 client's LOCAL_MAX_HEADER_LIST_SIZE. */
+    ctx->max_header_set_size = 256 * 1024;
     ctx->settings.es_ext_http_prio = 0;
 
     struct lsquic_engine_api api;

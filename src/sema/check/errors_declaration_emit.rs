@@ -2785,7 +2785,7 @@ impl SymbolTrackerImpl {
         let location = self.error_location();
         let name = match self.error_name_node.is_some() {
             true => location,
-            false => hir.name(location),
+            false => get_name_of_declaration(hir, location),
         };
         // `DeclarationNameToString`
         match (self.text(c, name), hir.data(location)) {

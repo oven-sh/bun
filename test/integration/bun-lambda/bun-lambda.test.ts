@@ -223,9 +223,16 @@ export default {
     console.log("response: %o", new Response("body", { status: 201 }));
     console.log("callback: %O of %o", JSON.parse, "text");
     console.log("event: %j", { a: [1] });
-    console.log("big: %j", { n: 10n });
+    const cycle = { a: 1 };
+    cycle.self = cycle;
+    console.log("cycle: %j", cycle);
     console.log("%s at %d, %j, %s", { toString: () => "custom" }, new Date(5), new Date(5), Object.create(null));
-    console.error("%s | %s | %s", { a: 1 }, [1, 2, 3], new Error("boom"));
+    class Point { toString() { return "(1, 2)"; } }
+    class Day extends Date {}
+    console.log("%s is %s, %s, %s", new Point(), new Date(5), new Day(5), [1, 2, 3]);
+    console.log("%s and %s", { [Symbol.toPrimitive]: () => "prim" }, new Map([[1, 2]]));
+    const boom = Object.assign(new Error("boom"), { stack: "Error: boom\\n    at fetch (/var/task/handler.ts:1:1)" });
+    console.error("%s | %s | %s", { a: 1 }, Object.assign([1, 2, 3], { toString: () => "own" }), boom);
     console.log("null: %s, %d, %j, %o", null, null, null, null);
     console.log("undefined: %s, %d, %j, %o", undefined, undefined, undefined, undefined);
     console.log("%i items, %f cpu", "42px", "1.5x");
@@ -247,6 +254,7 @@ export default {
   );
 
   const headers = new Headers({ "x-a": "b" });
+  const boom = Object.assign(new Error("boom"), { stack: "Error: boom\n    at fetch (/var/task/handler.ts:1:1)" });
   expect(stderr).toBe("");
   expect(posts.map(post => post.path)).toEqual(["invocation/req-log/response"]);
   const response = JSON.parse(posts[0].body.body);
@@ -266,9 +274,11 @@ export default {
     `INFO RequestId: req-log response: ${fold(new Response("body", { status: 201 }))}`,
     'INFO RequestId: req-log callback: [Function: parse] of "text"',
     'INFO RequestId: req-log event: {"a":[1]}',
-    `INFO RequestId: req-log big: ${fold({ n: 10n })}`,
+    "INFO RequestId: req-log cycle: [Circular]",
     `INFO RequestId: req-log custom at 5, "1970-01-01T00:00:00.005Z", ${fold(Object.create(null))}`,
-    "ERROR RequestId: req-log [object Object] | 1,2,3 | Error: boom",
+    `INFO RequestId: req-log (1, 2) is ${fold(new Date(5))}, ${fold(new Date(5))}, ${fold([1, 2, 3])}`,
+    `INFO RequestId: req-log prim and ${fold(new Map([[1, 2]]))}`,
+    `ERROR RequestId: req-log ${fold({ a: 1 })} | own | ${fold(boom)}`,
     "INFO RequestId: req-log null: null, 0, null, null",
     "INFO RequestId: req-log undefined: undefined, NaN, undefined, undefined",
     "INFO RequestId: req-log 42 items, 1.5 cpu",
@@ -325,3 +335,21 @@ test.concurrent.each([
     });
   },
 );
+
+// node:util throws for a value JSON.stringify rejects. The same handler throws on Node's Lambda runtime.
+test.concurrent("a BigInt under %j throws in the handler, as any other throw in fetch", async () => {
+  const { stdout, stderr, exitCode, posts } = await runLambda(
+    `export default { fetch: () => console.log("%j", 10n) };\n`,
+    [{ requestId: "req-bigint", event: httpEvent }],
+  );
+  expect(stderr).toBe("");
+  expect(stdout).toStartWith("ERROR RequestId: req-bigint ");
+  expect(stdout).toContain("TypeError: JSON.stringify cannot serialize BigInt.\r      at stringifyJSON (");
+  expect(posts).toEqual([
+    {
+      path: "invocation/req-bigint/response",
+      body: { statusCode: 500, headers: {}, body: "", isBase64Encoded: true },
+    },
+  ]);
+  expect(exitCode).toBe(1);
+});

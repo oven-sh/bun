@@ -27,14 +27,67 @@ function formatNumber(value: number): string {
   return Object.is(value, -0) ? "-0" : String(value);
 }
 
+// node:util's rule for %s: an object with a built-in toString (an Error, a Date, a plain object) is inspected,
+// so an Error keeps its stack. An object with its own toString prints that.
+function hasBuiltInToString(value: object): boolean {
+  const hasOwn = Object.prototype.hasOwnProperty;
+  const hasToString = typeof (value as any).toString === "function";
+  const hasToPrimitive = typeof (value as any)[Symbol.toPrimitive] === "function";
+  if (!hasToString && !hasToPrimitive) {
+    return true;
+  }
+  // The object in the prototype chain that owns toString or Symbol.toPrimitive.
+  let owner: object | null = value;
+  while (
+    owner !== null &&
+    !(hasToString && hasOwn.call(owner, "toString")) &&
+    !(hasToPrimitive && hasOwn.call(owner, Symbol.toPrimitive))
+  ) {
+    owner = Object.getPrototypeOf(owner);
+  }
+  if (owner === null || owner === value) {
+    return false;
+  }
+  const constructor = Object.getOwnPropertyDescriptor(owner, "constructor")?.value;
+  return typeof constructor === "function" && (globalThis as any)[constructor.name] === constructor;
+}
+
+let circularMessage: string | undefined;
+
+// node:util's %j: a cycle prints as [Circular]. Any other throw (a BigInt) reaches the caller.
+function stringifyJSON(value: unknown): string {
+  try {
+    return String(JSON.stringify(value));
+  } catch (error) {
+    if (circularMessage === undefined) {
+      const cycle: any = {};
+      cycle.self = cycle;
+      try {
+        JSON.stringify(cycle);
+      } catch (circularError) {
+        circularMessage = (circularError as Error).message;
+      }
+    }
+    if (error instanceof TypeError && error.message === circularMessage) {
+      return "[Circular]";
+    }
+    throw error;
+  }
+}
+
 function formatSpecifier(specifier: string, value: any): string {
   switch (specifier) {
     case "%s":
       if (typeof value === "number") {
         return formatNumber(value);
       }
-      // %s prints String(value) as Bun's console does. node:util inspects an object with a built-in toString.
-      return typeof value === "bigint" ? `${value}n` : String(value);
+      if (typeof value === "bigint") {
+        return `${value}n`;
+      }
+      if (typeof value === "object" && value !== null && hasBuiltInToString(value)) {
+        return Bun.inspect(value);
+      }
+      return String(value);
     case "%d":
       if (typeof value === "bigint") {
         return `${value}n`;
@@ -48,7 +101,7 @@ function formatSpecifier(specifier: string, value: any): string {
     case "%f":
       return typeof value === "symbol" ? "NaN" : formatNumber(parseFloat(value));
     case "%j":
-      return String(JSON.stringify(value));
+      return stringifyJSON(value);
     case "%c":
       return "";
     default:
@@ -71,13 +124,7 @@ function formatArgs(args: any[]): string {
     if (next === args.length) {
       return specifier;
     }
-    const value = args[next++];
-    try {
-      return formatSpecifier(specifier, value);
-    } catch {
-      // A log call does not throw: a BigInt under %j or an object with no toString under %s prints as a value.
-      return Bun.inspect(value);
-    }
+    return formatSpecifier(specifier, args[next++]);
   });
   for (; next < args.length; next++) {
     message += " " + formatValue(args[next]);

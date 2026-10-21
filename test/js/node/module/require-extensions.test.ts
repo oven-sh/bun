@@ -285,6 +285,40 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
       const second = require(id);
       console.log(JSON.stringify({ first, cached, sameExports: second === first, calls }));
     `,
+    "stopped-fixture.cjs": `
+      const Module = require("module");
+      const fs = require("fs");
+      const path = require("path");
+      const vm = require("vm");
+      const ext = Module._extensions[".mjs"] ? ".mjs" : ".js";
+      const original = Module._extensions[ext];
+      const nothing = {};
+      let caught = nothing;
+      Module._extensions[ext] = function (module, filename) {
+        try {
+          return original.call(this, module, filename);
+        } catch (e) {
+          // Only an assignment: the request to stop is still there, and it ends a catch block at its first call.
+          caught = e;
+        }
+      };
+      const state = (globalThis.state = { started: false, done: false });
+      let code;
+      // A timeout can pass before the module body starts. The next attempt has a longer one and a new file.
+      for (let attempt = 0, timeout = 100; !state.started; attempt++, timeout *= 2) {
+        const file = path.join(__dirname, "spin-" + attempt + ".mjs");
+        fs.writeFileSync(file, "globalThis.state.started = true; while (!globalThis.state.done) {}");
+        state.done = false;
+        try {
+          vm.runInContext("load()", vm.createContext({ load: () => require(file) }), { timeout });
+          code = "no error";
+        } catch (e) {
+          code = e.code;
+        }
+        state.done = true;
+      }
+      console.log(JSON.stringify({ code, caught: caught === nothing ? "nothing" : String(caught) }));
+    `,
     "throws.js": `export default 1;\nthrow new Error("boom");\n`,
     "throws.ts": `export default 1 as number;\nthrow new Error("boom");\n`,
     "throws.mjs": `export default 1;\nthrow new Error("boom");\n`,
@@ -344,6 +378,16 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
   test("a handler that catches the error keeps the module in require.cache", async () => {
     expect(await run("recover-fixture.cjs")).toEqual({
       stdout: JSON.stringify({ first: { recovered: "boom" }, cached: true, sameExports: true, calls: 1 }),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // What stops a vm run is not an error of the module: no script can catch it, as in Node.
+  test("a handler's catch does not run for a module that a vm timeout stops", async () => {
+    expect(await run("stopped-fixture.cjs")).toEqual({
+      stdout: JSON.stringify({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT", caught: "nothing" }),
       stderr: "",
       exitCode: 0,
       signalCode: null,

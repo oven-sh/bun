@@ -4,6 +4,7 @@
  *  `bunx vitest test/js/bun/test/mock-fn.test.js`
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/mock-fn.test.js`
  */
+import vm from "node:vm";
 import test_interop from "./test-interop.js";
 var { isBun, describe, test, it, expect, jest, vi, mock, spyOn } = await test_interop();
 
@@ -383,6 +384,28 @@ describe("mock()", () => {
     expect(fn.mock.calls[0]).toEqual([43]);
     expect(fn).toHaveBeenLastCalledWith(43);
     expect(fn).toHaveBeenCalledWith(43);
+  });
+  test("a call that a node:vm timeout stops keeps its incomplete result", () => {
+    // A timeout can pass before the implementation starts. The next turn has a longer one.
+    for (let timeout = 50; ; timeout *= 2) {
+      let started = false;
+      const fn = jest.fn(() => {
+        started = true;
+        // The loop has an end, so a timeout that does not work fails this test and does not hang it.
+        for (const end = Date.now() + 10_000; Date.now() < end;);
+      });
+      let code;
+      try {
+        vm.runInContext("fn()", vm.createContext({ fn }), { timeout });
+      } catch (error) {
+        code = error.code;
+      }
+      expect(code).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT");
+      if (!started) continue;
+      // What stops the run is not a value that the implementation threw.
+      expect(fn.mock.results).toEqual([{ type: "incomplete", value: undefined }]);
+      break;
+    }
   });
   test("mockReset works", () => {
     const instance = new Error("foo");

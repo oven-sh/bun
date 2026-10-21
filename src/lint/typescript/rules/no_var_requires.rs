@@ -18,12 +18,12 @@ impl NoVarRequires {
         if !callee.is_ident("require") || callee.symbol().is_some() {
             return;
         }
-        // For oxc `(require)` is no name.
+        // For oxc `(require)` isn't an identifier.
         if cx.language().is_oxlint && callee.is_parenthesized() {
             return;
         }
         let is_used = match e.parent() {
-            // For oxlint it is used wherever it is not a statement, if it has one argument.
+            // For oxlint it's used wherever it isn't a statement, as long as it has one argument.
             parent if cx.language().is_oxlint => {
                 let is_statement = matches!(parent, Node::Stmt(it) if it.tag() == StmtTag::Expr);
                 call.args().len() == 1 && (!is_statement || e.is_parenthesized())
@@ -47,7 +47,7 @@ impl NoVarRequires {
         if path.is_some_and(|path| self.allow.iter().any(|pattern| pattern.test(path.bytes()))) {
             return;
         }
-        // Upstream looks `require` up by its name alone, so a type of that name counts too.
+        // Upstream looks up `require` by name only, so a type with that name counts too.
         if Node::Expr(e).scope().resolve("require").is_none() {
             cx.report(e, NO_VAR_REQS);
         }

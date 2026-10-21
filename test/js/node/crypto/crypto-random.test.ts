@@ -221,6 +221,43 @@ describe("randomFill default size with multi-byte typed arrays", () => {
   });
 });
 
+it("randomFill never reports success for bytes it didn't write", async () => {
+  const fill = (view: Uint8Array, change: () => void, offset = 0) => {
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    randomFill(view, offset, err => resolve(err));
+    change();
+    return promise;
+  };
+  const zeros = Buffer.alloc(32);
+
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 2 });
+  expect(await fill(new Uint8Array(memory.buffer, 64, 32), () => memory.grow(1))).toBeNull();
+  expect(Buffer.from(memory.buffer, 64, 32)).not.toEqual(zeros);
+  expect(Buffer.from(memory.buffer, 32, 32)).toEqual(zeros);
+  expect(Buffer.from(memory.buffer, 96, 32)).toEqual(zeros);
+
+  const resizable = new ArrayBuffer(64, { maxByteLength: 64 });
+  expect(await fill(new Uint8Array(resizable), () => resizable.resize(32))).toBeNull();
+  expect(Buffer.from(resizable)).not.toEqual(zeros);
+
+  for (const offset of [32, 48]) {
+    const trimmed = new ArrayBuffer(64, { maxByteLength: 64 });
+    expect((await fill(new Uint8Array(trimmed), () => trimmed.resize(32), offset))?.code).toBe(
+      "ERR_CRYPTO_OPERATION_FAILED",
+    );
+  }
+
+  const outOfBounds = new ArrayBuffer(64, { maxByteLength: 64 });
+  expect((await fill(new Uint8Array(outOfBounds, 0, 64), () => outOfBounds.resize(32)))?.code).toBe(
+    "ERR_CRYPTO_OPERATION_FAILED",
+  );
+
+  const transferred = new ArrayBuffer(32);
+  expect((await fill(new Uint8Array(transferred), () => transferred.transfer()))?.code).toBe(
+    "ERR_CRYPTO_OPERATION_FAILED",
+  );
+});
+
 describe("checkPrime candidate handling", () => {
   it("checkPrimeSync uses the candidate bytes provided at call time", () => {
     expect(checkPrimeSync(Buffer.from([7]), { checks: 1 })).toBe(true);

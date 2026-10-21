@@ -187,9 +187,9 @@ describe.concurrent.each(commands)("bun %s", command => {
     using repo = await repository({ "a.js": tidy });
     const { root } = repo;
     write(root, "a.js", before);
-    for (const written of ["nothing", "--output=written.txt", "-O", "HEAD..HEAD", "HEAD HEAD", "HEAD:a.js"]) {
-      const { stdout, stderr, exitCode } = await bun(root, [command, `--changed=${written}`]);
-      expect(stderr).toContain(`"${written}" is not a branch, tag or commit in this repository`);
+    for (const ref of ["nothing", "--output=written.txt", "-O", "HEAD..HEAD", "HEAD HEAD", "HEAD:a.js"]) {
+      const { stdout, stderr, exitCode } = await bun(root, [command, `--changed=${ref}`]);
+      expect(stderr).toContain(`"${ref}" is not a branch, tag or commit in this repository`);
       expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
     }
     expect(existsSync(join(root, "written.txt"))).toBe(false);
@@ -236,7 +236,7 @@ describe.concurrent.each(commands)("bun %s", command => {
       stderr: `No changed files to ${verb[command]}\n`,
       exitCode: 0,
     });
-    // A file is staged, but the argument names a different one.
+    // A file is staged, but the argument is a different file.
     write(root, "b.js", before);
     await git(root, "add", "b.js");
     const { stderr, exitCode } = await bun(root, [command, "--staged", "a.js"]);
@@ -433,12 +433,12 @@ describe.concurrent.each(commands)("bun %s", command => {
       expect(exitCode).toBe(1);
     }
 
-    const written = await bun(root, [...writing[command], "--staged"]);
-    expect(written.stderr).toContain(
+    const writeResult = await bun(root, [...writing[command], "--staged"]);
+    expect(writeResult.stderr).toContain(
       `2 files have both staged and unstaged changes, so they were not ${done[command]}`,
     );
-    expect(written.stderr).not.toContain("good.js");
-    expect(written.exitCode).toBe(2);
+    expect(writeResult.stderr).not.toContain("good.js");
+    expect(writeResult.exitCode).toBe(2);
     expect(read(root, "sub/bad.js")).toBe(tidy);
     expect(read(root, "good.js")).toBe(before);
     expect(await git(root, "show", ":sub/bad.js")).toBe("\n" + before);
@@ -510,21 +510,22 @@ test.concurrent(
 describe.concurrent("bun lint --staged --fix still reports the problems in a partly staged file", () => {
   // One problem that can be fixed, and one that cannot.
   const staged = "let a = 1;\nexport { a };\nif (a) {\n}\n";
-  const left = staged + "export const unstaged = 1;\n";
+  const workingTreeText = staged + "export const unstaged = 1;\n";
   const rules = ["--rule", "prefer-const: error", "--rule", "no-empty: error"];
-  const refusal = (ext: string) => `error: partly.${ext} has both staged and unstaged changes, so it was not fixed\n`;
+  const notFixedError = (ext: string) =>
+    `error: partly.${ext} has both staged and unstaged changes, so it was not fixed\n`;
 
   async function partlyStaged(ext: string, more: Record<string, string> = {}) {
     const repo = await repository({ [`partly.${ext}`]: tidy, [`whole.${ext}`]: tidy, ...more });
     write(repo.root, `partly.${ext}`, staged);
     write(repo.root, `whole.${ext}`, before);
     await git(repo.root, "add", "-A");
-    write(repo.root, `partly.${ext}`, left);
+    write(repo.root, `partly.${ext}`, workingTreeText);
     return repo;
   }
 
   async function isUntouched(root: string, ext: string) {
-    expect(read(root, `partly.${ext}`)).toBe(left);
+    expect(read(root, `partly.${ext}`)).toBe(workingTreeText);
     expect(await git(root, "show", `:partly.${ext}`)).toBe(staged);
     expect(await git(root, "show", `:whole.${ext}`)).toBe(after.lint);
     expect(await git(root, "status", "--porcelain")).toBe(`MM partly.${ext}\nM  whole.${ext}\n`);
@@ -543,7 +544,7 @@ describe.concurrent("bun lint --staged --fix still reports the problems in a par
     // That's the problem in whole.js.
     expect(stderr).toContain("Fixed 1 problem in 1 file\n");
     expect(stderr).toContain("Linted 2 files ");
-    expect(stderr).toContain(refusal("js"));
+    expect(stderr).toContain(notFixedError("js"));
     expect(exitCode).toBe(2);
     await isUntouched(repo.root, "js");
   });
@@ -573,7 +574,7 @@ describe.concurrent("bun lint --staged --fix still reports the problems in a par
         "partly.js: eslint(prefer-const)",
       ]);
     }
-    expect(stderr).toContain(refusal(ext));
+    expect(stderr).toContain(notFixedError(ext));
     expect(exitCode).toBe(2);
     await isUntouched(repo.root, ext);
   });
@@ -583,7 +584,7 @@ describe.concurrent("bun lint --staged --fix still reports the problems in a par
     const { stderr, exitCode } = await bun(repo.root, ["lint", "--staged", "--fix", "--rule", "no-empty: error"]);
     expect(stderr).not.toContain("unstaged");
     expect(exitCode).toBe(1);
-    expect(read(repo.root, "partly.js")).toBe(left);
+    expect(read(repo.root, "partly.js")).toBe(workingTreeText);
   });
 });
 

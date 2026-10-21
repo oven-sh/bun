@@ -572,6 +572,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) is_inside_single_stmt_body: bool,
 
     /// We must be careful to avoid revisiting nodes that have scopes.
+    /// A revisited node can be part of a `define` value, which is shared with other parses.
     pub(crate) is_revisit_for_substitution: bool,
 
     pub(crate) method_call_must_be_replaced_with_undefined: bool,
@@ -1001,84 +1002,58 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // `&mut P` — avoids the aliased-`&mut` that arises when a transposer
     // *field* holds `&mut self` while a `&mut P` is materialised inside the
     // visitor (PORTING.md §Forbidden).
-    pub(crate) fn maybe_transpose_if_import(&mut self, arg: Expr, state: &TransposeState) -> Expr {
-        match arg.data {
-            js_ast::ExprData::EIf(ex) => Expr::init(
-                E::If {
-                    yes: self.maybe_transpose_if_import(ex.yes, state),
-                    no: self.maybe_transpose_if_import(ex.no, state),
-                    test: ex.test,
-                },
-                arg.loc,
-            ),
-            _ => self.transpose_import(arg, state),
+    /// Applies `leaf` to every branch of a nested ternary. Loops over the `no` branches and only
+    /// recurses into `yes`. Returns `None` after logging a stack overflow.
+    fn transpose_each_branch(
+        &mut self,
+        arg: Expr,
+        leaf: &mut impl FnMut(&mut Self, Expr) -> Expr,
+    ) -> Option<Expr> {
+        let js_ast::ExprData::EIf(first) = arg.data else {
+            return Some(leaf(self, arg));
+        };
+        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            self.report_stack_overflow(arg.loc);
+            return None;
+        }
+        let root = Expr::init(E::If { ..*first }, arg.loc);
+        let mut link = root.data.e_if().expect("infallible: variant checked");
+        loop {
+            link.yes = self.transpose_each_branch(link.yes, leaf)?;
+            let no = link.no;
+            let js_ast::ExprData::EIf(next) = no.data else {
+                link.no = leaf(self, no);
+                return Some(root);
+            };
+            link.no = Expr::init(E::If { ..*next }, no.loc);
+            link = link.no.data.e_if().expect("infallible: variant checked");
         }
     }
 
-    pub(crate) fn maybe_transpose_if_require(&mut self, arg: Expr, state: &TransposeState) -> Expr {
-        match arg.data {
-            js_ast::ExprData::EIf(ex) => Expr::init(
-                E::If {
-                    yes: self.maybe_transpose_if_require(ex.yes, state),
-                    no: self.maybe_transpose_if_require(ex.no, state),
-                    test: ex.test,
-                },
-                arg.loc,
-            ),
-            _ => self.transpose_require(arg, state),
-        }
-    }
-
-    pub(crate) fn transpose_known_to_be_if_require(
+    pub(crate) fn maybe_transpose_if_import(
         &mut self,
         arg: Expr,
         state: &TransposeState,
-    ) -> Expr {
-        // Caller guarantees `arg.data` is `EIf`.
-        let js_ast::ExprData::EIf(ex) = arg.data else {
-            unreachable!()
-        };
-        Expr::init(
-            E::If {
-                yes: self.maybe_transpose_if_require(ex.yes, state),
-                no: self.maybe_transpose_if_require(ex.no, state),
-                test: ex.test,
-            },
-            arg.loc,
-        )
+    ) -> Option<Expr> {
+        self.transpose_each_branch(arg, &mut |p, branch| p.transpose_import(branch, state))
     }
 
-    pub(crate) fn maybe_transpose_if_require_resolve(&mut self, arg: Expr, state: Expr) -> Expr {
-        match arg.data {
-            js_ast::ExprData::EIf(ex) => Expr::init(
-                E::If {
-                    yes: self.maybe_transpose_if_require_resolve(ex.yes, state),
-                    no: self.maybe_transpose_if_require_resolve(ex.no, state),
-                    test: ex.test,
-                },
-                arg.loc,
-            ),
-            _ => self.transpose_require_resolve(arg, state),
-        }
+    pub(crate) fn maybe_transpose_if_require(
+        &mut self,
+        arg: Expr,
+        state: &TransposeState,
+    ) -> Option<Expr> {
+        self.transpose_each_branch(arg, &mut |p, branch| p.transpose_require(branch, state))
     }
 
-    pub(crate) fn transpose_known_to_be_if_require_resolve(
+    pub(crate) fn maybe_transpose_if_require_resolve(
         &mut self,
         arg: Expr,
         state: Expr,
-    ) -> Expr {
-        // Caller guarantees `arg.data` is `EIf`.
-        let js_ast::ExprData::EIf(ex) = arg.data else {
-            unreachable!()
-        };
-        Expr::init(
-            E::If {
-                yes: self.maybe_transpose_if_require_resolve(ex.yes, state),
-                no: self.maybe_transpose_if_require_resolve(ex.no, state),
-                test: ex.test,
-            },
-            arg.loc,
-        )
+    ) -> Option<Expr> {
+        self.transpose_each_branch(arg, &mut |p, branch| {
+            p.transpose_require_resolve(branch, state)
+        })
     }
 
     /// Record the destructured property names of an `await import()` /
@@ -1300,14 +1275,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// something else.
     pub(crate) fn conditional_namespace_records(
         &mut self,
-        expr: Expr,
+        mut expr: Expr,
         out: &mut Vec<u32>,
     ) -> Option<()> {
-        match expr.data {
-            js_ast::ExprData::EIf(e) => {
-                self.conditional_namespace_records(e.yes, out)?;
-                self.conditional_namespace_records(e.no, out)
+        while let js_ast::ExprData::EIf(e) = expr.data {
+            if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+                self.report_stack_overflow(expr.loc);
+                return None;
             }
+            self.conditional_namespace_records(e.yes, out)?;
+            expr = e.no;
+        }
+        match expr.data {
             js_ast::ExprData::ERequireString(req)
                 if self.options.bundle && req.unwrapped_id.get().is_none() =>
             {
@@ -2137,15 +2116,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// returns. A block `var n` hoisted onto a parameter `n` is a linked ref
     /// of the same variable.
     pub(crate) fn record_assignment(&mut self, ref_: Ref) {
-        let mut ref_ = ref_;
-        loop {
-            let symbol = &mut self.symbols[ref_.inner_index() as usize];
-            if !symbol.has_link() {
-                symbol.set_has_been_assigned_to(true);
-                return;
-            }
-            ref_ = symbol.link.get();
-        }
+        let root = js_ast::symbol::follow_symbols(&self.symbols, ref_);
+        self.symbols[root.inner_index() as usize].set_has_been_assigned_to(true);
     }
 
     /// See `Symbol::import_used_as_value`.
@@ -2651,6 +2623,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 B::Object {
                     properties: bun_ast::StoreSlice::from_bump(items_hmr),
                     is_single_line: false,
+                    close_brace_loc: bun_ast::Loc::EMPTY,
                 },
                 bun_ast::Loc::EMPTY,
             );
@@ -4020,6 +3993,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     B::Object {
                         properties: bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut()),
                         is_single_line: ex.is_single_line,
+                        close_brace_loc: ex.close_brace_loc,
                     },
                     expr.loc,
                 ));
@@ -4582,44 +4556,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.source.index.0 as js_ast::base::RefInt,
             js_ast::base::RefTag::Symbol,
         )
-    }
-
-    pub(crate) fn default_name_for_expr(&mut self, expr: Expr, loc: bun_ast::Loc) -> LocRef {
-        match &expr.data {
-            js_ast::ExprData::EFunction(func_container) => {
-                if let Some(_name) = &func_container.func.name {
-                    if let Some(r#ref) = _name.ref_.to_nullable() {
-                        return LocRef { loc, ref_: r#ref };
-                    }
-                }
-            }
-            js_ast::ExprData::EIdentifier(ident) => {
-                return LocRef {
-                    loc,
-                    ref_: ident.ref_,
-                };
-            }
-            js_ast::ExprData::EImportIdentifier(ident) => {
-                if !Self::ALLOW_MACROS
-                    || (Self::ALLOW_MACROS && !self.macro_.refs.contains(&ident.ref_))
-                {
-                    return LocRef {
-                        loc,
-                        ref_: ident.ref_,
-                    };
-                }
-            }
-            js_ast::ExprData::EClass(class) => {
-                if let Some(_name) = &class.class_name {
-                    if let Some(r#ref) = _name.ref_.to_nullable() {
-                        return LocRef { loc, ref_: r#ref };
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        self.create_default_name(loc)
     }
 
     pub(crate) fn discard_scopes_up_to(&mut self, scope_index: usize) {
@@ -5514,11 +5450,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Returns `false` if visiting removed every statement and no part was pushed.
     pub(crate) fn append_part(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
         stmts: &'a mut [Stmt],
-    ) -> Result<(), crate::Error> {
+    ) -> Result<bool, crate::Error> {
         // Uses recorded outside a part's visit (the parse pass resolving
         // decorator-metadata types) belong to no part.
         self.part_uses.clear();
@@ -5543,12 +5480,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             for i in 0..self.relocated_top_level_vars.len() {
                 // Follow links because "var" declarations may be merged due to hoisting
                 let mut local = self.relocated_top_level_vars[i];
-                while !local.ref_.is_empty() {
-                    let symbol = &self.symbols[local.ref_.inner_index() as usize];
-                    if !symbol.has_link() {
-                        break;
-                    }
-                    local.ref_ = symbol.link.get();
+                if !local.ref_.is_empty() {
+                    local.ref_ = js_ast::symbol::follow_symbols(&self.symbols, local.ref_);
                 }
                 self.relocated_top_level_vars[i] = local;
                 let Some(ref_) = local.ref_.to_nullable() else {
@@ -5580,7 +5513,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.relocated_top_level_vars.clear();
         }
 
-        if !part_stmts.is_empty() {
+        let appended = !part_stmts.is_empty();
+        if appended {
             // SAFETY: `into_bump_slice_mut` leaks the BumpVec into the arena and
             // returns the unique `&'a mut [T]` for that allocation. We compute
             // `can_be_removed_if_unused` while the `&mut` is live (reborrowed as
@@ -5639,7 +5573,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.declared_symbols.clear_retaining_capacity();
             self.import_records_for_current_part.clear();
         }
-        Ok(())
+        Ok(appended)
     }
 
     /// A pattern runs getters or the iterator on its value, so only a literal value is side-effect free.
@@ -6730,6 +6664,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .expect("unreachable");
                 count != stmts.len()
             }
+            crate::parser::Runtime::ReplaceableExport::Inject { value, .. }
+                if replacement.injects_default() =>
+            {
+                self.inject_default_export(stmts, *value, loc)
+            }
             crate::parser::Runtime::ReplaceableExport::Inject { name, value } => {
                 let count = stmts.len();
                 // `ReplaceableExport::Inject` boxes the name, so copy into the bump
@@ -6757,6 +6696,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    pub(crate) fn inject_default_export(
+        &mut self,
+        stmts: &mut crate::parser::StmtList<'a>,
+        value: Expr,
+        loc: bun_ast::Loc,
+    ) -> bool {
+        let count = stmts.len();
+        let mut export_default = self.s(
+            S::ExportDefault {
+                default_name: js_ast::LocRef::default(),
+                value: js_ast::StmtOrExpr::Expr(value),
+            },
+            loc,
+        );
+        // Hide `replace_exports` from the visitor so it doesn't replace the export generated here.
+        let replace_exports = core::mem::take(&mut self.options.features.replace_exports);
+        // The export that this one replaces is visited as dead code.
+        let was_dead = core::mem::replace(&mut self.is_control_flow_dead, false);
+        self.visit_and_append_stmt(stmts, &mut export_default)
+            .expect("unreachable");
+        self.is_control_flow_dead = was_dead;
+        self.options.features.replace_exports = replace_exports;
+        count != stmts.len()
+    }
+
     pub(crate) fn replace_decl_and_possibly_remove(
         &mut self,
         decl: &mut G::Decl,
@@ -6765,6 +6729,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         use crate::parser::Runtime::ReplaceableExport;
         match replacement {
             ReplaceableExport::Delete => false,
+            // `s_local` injects `export default` because `default` can't be a binding name.
+            ReplaceableExport::Inject { .. } if replacement.injects_default() => false,
             ReplaceableExport::Replace(value) => {
                 let mut v = *value;
                 self.visit_expr(&mut v);
@@ -6880,16 +6846,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmts_inside_closure: &'a mut [Stmt],
         all_values_are_pure: bool,
     ) -> Result<(), crate::Error> {
-        let mut name_ref = original_name_ref;
-
         // Follow the link chain in case symbols were merged
-        let mut symbol = &self.symbols[name_ref.inner_index() as usize];
-        while symbol.has_link() {
-            let link = symbol.link.get();
-            name_ref = link;
-            symbol = &self.symbols[name_ref.inner_index() as usize];
-        }
-        let symbol_kind = symbol.kind;
+        let name_ref = js_ast::symbol::follow_symbols(&self.symbols, original_name_ref);
+        let symbol_kind = self.symbols[name_ref.inner_index() as usize].kind;
         let arena = self.arena;
 
         // Make sure to only emit a variable once for a given namespace, since there
@@ -7143,6 +7102,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::ExprData::EString(str_) => {
                 return self.new_expr(&*str_, loc);
             }
+            // The define table is shared by every parse and later passes mutate AST nodes in place,
+            // so clone the value.
+            js_ast::ExprData::EObject(_) | js_ast::ExprData::EArray(_) => {
+                let shared = Expr { data: value, loc };
+                if let Ok(copy) = shared.deep_clone_no_detach(self.arena, self.stack_check) {
+                    return copy;
+                }
+            }
             _ => {}
         }
         Expr { data: value, loc }
@@ -7151,40 +7118,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // `parts` is `&[Box<[u8]>]` to match the active `DotDefine.parts:
     // Vec<Box<[u8]>>` shape (auto-derefs at call sites). The full draft uses
     // `StoreSlice<StoreStr>`; both index to a `[u8]` so the body is unchanged.
-    pub(crate) fn is_dot_define_match(&mut self, expr: Expr, parts: &[Box<[u8]>]) -> bool {
-        match expr.data {
-            js_ast::ExprData::EDot(ex) => {
-                if parts.len() > 1 {
-                    if ex.optional_chain.is_some() {
-                        return false;
-                    }
-                    // Intermediates must be dot expressions
-                    let last = parts.len() - 1;
-                    let is_tail_match = strings::eql(&parts[last], &ex.name);
-                    return is_tail_match && self.is_dot_define_match(ex.target, &parts[..last]);
+    pub(crate) fn is_dot_define_match(&mut self, mut expr: Expr, mut parts: &[Box<[u8]>]) -> bool {
+        while parts.len() > 1 {
+            let last = parts.len() - 1;
+            // Intermediates must be dot expressions
+            if let js_ast::ExprData::EDot(ex) = expr.data {
+                if ex.optional_chain.is_some() || !strings::eql(&parts[last], &ex.name) {
+                    return false;
                 }
-            }
-            js_ast::ExprData::EImportMeta(_) => {
-                return parts.len() == 2 && &*parts[0] == b"import" && &*parts[1] == b"meta";
+                expr = ex.target;
+                parts = &parts[..last];
+                continue;
             }
             // Note: this behavior differs from esbuild
             // esbuild does not try to match index accessors
             // we do, but only if it's a UTF8 string
             // the intent is to handle people using this form instead of E.Dot. So we really only want to do this if the accessor can also be an identifier
-            js_ast::ExprData::EIndex(index) => {
-                if parts.len() > 1 {
-                    if let js_ast::ExprData::EString(mut s) = index.index.data {
-                        if s.is_utf8() {
-                            if index.optional_chain.is_some() {
-                                return false;
-                            }
-                            let last = parts.len() - 1;
-                            let is_tail_match = strings::eql(&parts[last], s.slice(self.arena));
-                            return is_tail_match
-                                && self.is_dot_define_match(index.target, &parts[..last]);
-                        }
-                    }
+            if let js_ast::ExprData::EIndex(index) = expr.data
+                && let js_ast::ExprData::EString(mut s) = index.index.data
+                && s.is_utf8()
+            {
+                if index.optional_chain.is_some()
+                    || !strings::eql(&parts[last], s.slice(self.arena))
+                {
+                    return false;
                 }
+                expr = index.target;
+                parts = &parts[..last];
+                continue;
+            }
+            break;
+        }
+        match expr.data {
+            js_ast::ExprData::EImportMeta(_) => {
+                return parts.len() == 2 && &*parts[0] == b"import" && &*parts[1] == b"meta";
             }
             js_ast::ExprData::EIdentifier(ex) => {
                 // The last expression must be an identifier
@@ -7327,6 +7294,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                     }
                                 }
+                                // The visit pass skipped this method after a stack overflow.
+                                js_ast::ExprData::EMissing(_)
+                                    if self.reported_stack_overflow.get() => {}
                                 _ => unreachable!(),
                             }
                         }
@@ -7689,6 +7659,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
     ) {
         use js_ast::g::PropertyKind;
+
+        // The visit pass skipped this method after a stack overflow.
+        if self.reported_stack_overflow.get() && prop.value.is_some_and(|value| value.is_missing())
+        {
+            return;
+        }
 
         // Local helper: bump-alloc an arg pair and call __legacyMetadataTS.
         // pulled out of the per-arm code to cut a ~3x repetition.
@@ -9252,12 +9228,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // If this symbol was merged, use the symbol at the end of the
                         // linked list in the map. This is the case for multiple "var"
                         // declarations with the same name, for example.
-                        let mut r#ref = input;
-                        let mut symbol_ref = &ctx.symbols[r#ref.inner_index() as usize];
-                        while symbol_ref.has_link() {
-                            r#ref = symbol_ref.link.get();
-                            symbol_ref = &ctx.symbols[r#ref.inner_index() as usize];
-                        }
+                        let r#ref = js_ast::symbol::follow_symbols(ctx.symbols, input);
 
                         ctx.top_level
                             .entry(r#ref)
@@ -9274,15 +9245,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .push(js_ast::NAMESPACE_EXPORT_PART_INDEX);
         }
 
+        let force_cjs_to_esm = self.unwrap_all_requires
+            || exports_kind == js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs;
+
         let wrapper_ref: Ref = 'brk: {
             if self.options.features.hot_module_reloading {
                 break 'brk self.hmr_api_ref;
             }
 
             // When code splitting is enabled, always create wrapper_ref to match esbuild behavior.
+            // The linker wraps every CommonJS file and may wrap a FORCE_CJS_TO_ESM file, so those need one too.
             // Otherwise, use needsWrapperRef() to optimize away unnecessary wrappers.
             if self.options.bundle
-                && (self.options.code_splitting || self.needs_wrapper_ref(parts.as_slice()))
+                && (self.options.code_splitting
+                    || exports_kind == js_ast::ExportsKind::Cjs
+                    || force_cjs_to_esm
+                    || self.needs_wrapper_ref(parts.as_slice()))
             {
                 use core::fmt::Write as _;
                 let mut buf = bun_alloc::ArenaString::new_in(arena);
@@ -9362,9 +9340,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let symbols = core::mem::replace(&mut self.symbols, BumpVec::new_in(arena));
         let parts_list = core::mem::replace(parts, BumpVec::new_in(arena));
         let import_records = self.import_records.move_to_baby_list(arena);
-
-        let force_cjs_to_esm = self.unwrap_all_requires
-            || exports_kind == js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs;
 
         // PERF: box at the construction site so the ~1 KB `Ast` is written
         // straight into the heap allocation and only the thin `Box` pointer is
@@ -10240,6 +10215,7 @@ impl LowerUsingDeclarationsContext {
                 finally: Some(js_ast::Finally {
                     loc,
                     stmts: bun_ast::StoreSlice::new_mut(finally_stmts),
+                    body_loc: loc,
                 }),
             },
             loc,

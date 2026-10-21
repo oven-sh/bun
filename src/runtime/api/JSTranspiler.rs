@@ -5,7 +5,11 @@ use bun_options_types::TargetExt as _;
 use std::io::Write as _;
 
 use crate::Error;
-use crate::node::{StringOrBuffer, ThreadIsolated};
+use crate::generated_bindgen::transpiler::{
+    TranspilerExternal, TranspilerMinify, TranspilerOptions, TranspilerSourcemap,
+};
+use crate::node::types::Buffer;
+use crate::node::{Encoding, StringOrBuffer, ThreadIsolated};
 use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
 use bun_ast::Expr;
 use bun_ast::Loader;
@@ -18,12 +22,12 @@ use bun_js_parser::parser::Runtime;
 use bun_js_parser::parser::ScanPassResult;
 use bun_js_parser::{self as JSAst};
 use bun_js_printer as JSPrinter;
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper, StringOrJsBytes};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, ArgumentsSlice, CallFrame, ComptimeStringMapExt, JSArrayIterator, JSGlobalObject,
-    JSPromise, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell, JsResult, LogJsc,
-    StringJsc,
+    self as jsc, JSArrayIterator, JSGlobalObject, JSPromise, JSPropertyIterator,
+    JSPropertyIteratorOptions, JSValue, JsCell, JsResult, LogJsc, StringJsc,
 };
 use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
@@ -35,7 +39,7 @@ use bun_options_types::schema::api;
 // Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `JsCell` (= `UnsafeCell` projector). `JsCell` is
 // `#[repr(transparent)]`, so field offsets are unchanged.
-#[bun_jsc::JsClass(name = "Transpiler")]
+/// `Transpiler`, declared in `Transpiler.bind.ts`.
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct JSTranspiler {
     pub(crate) transpiler: JsCell<Transpiler::Transpiler<'static>>,
@@ -106,27 +110,28 @@ impl Default for Config {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// `from_js` enum lookups for `Loader`/`Target`. The canonical implementation
-// lives in `bun_bundler_jsc::options_jsc` and
-// carries the spec'd error semantics (throw `TypeError` on non-string / unknown
-// loader). The earlier local shims here only did a bare `phf` lookup and
-// silently returned `None` for unknown loaders, breaking
-// `transpiler-utf16-loader.test.ts`.
-// ──────────────────────────────────────────────────────────────────────────
-
-use bun_bundler_jsc::options_jsc::{loader_from_js, target_from_js};
+use bun_bundler_jsc::options_jsc::loader_from_js;
 use bun_collections::index_sort;
 
-fn source_map_option_from_js(
+/// Reads the `code` argument. Copies a buffer because the loader's `toString()` and macros run JS that can
+/// write to, shrink or detach it. Skips the copy when the parser will reject the buffer for its length anyway.
+fn code_from_js(
     global: &JSGlobalObject,
-    value: JSValue,
-) -> JsResult<Option<SourceMapOption>> {
-    options::SOURCE_MAP_OPTION_MAP.from_js(global, value)
-}
-
-fn level_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<bun_ast::Level>> {
-    bun_ast::Level::MAP.from_js(global, value)
+    value: StringOrJsBytes<'_>,
+) -> JsResult<StringOrBuffer<'static>> {
+    let parsed = StringOrBuffer::from_string_or_js_bytes(global, value, Encoding::Utf8);
+    let StringOrBuffer::Buffer(buffer) = &parsed else {
+        return Ok(parsed);
+    };
+    if !buffer.buffer.can_change_under_borrow()
+        && buffer.buffer.byte_len > bun_ast::Source::MAX_PARSEABLE_LEN
+    {
+        return Ok(parsed);
+    }
+    match buffer.buffer.try_copy_bytes() {
+        Some(copy) => Ok(StringOrBuffer::owned(copy)),
+        None => Err(global.throw_out_of_memory()),
+    }
 }
 
 /// Deep-clone a [`MacroMap`]. The keys are `Box<[u8]>`, so an owned copy
@@ -157,18 +162,14 @@ impl Config {
     pub(crate) fn from_js(
         &mut self,
         global: &JSGlobalObject,
-        object: JSValue,
+        object: Option<TranspilerOptions<'_>>,
         arena: &Arena,
     ) -> JsResult<()> {
-        if object.is_undefined_or_null() {
+        let Some(object) = object else {
             return Ok(());
-        }
+        };
 
-        if !object.is_object() {
-            return Err(global.throw_invalid_arguments(format_args!("Expected an object")));
-        }
-
-        if let Some(define) = object.get_truthy(global, "define")? {
+        if let Some(define) = object.define.map(JsLocal::to_js) {
             'define: {
                 if define.is_undefined_or_null() {
                     break 'define;
@@ -220,35 +221,16 @@ impl Config {
             }
         }
 
-        if let Some(external) = object.get(global, "external")? {
-            'external: {
-                if external.is_undefined_or_null() {
-                    break 'external;
+        if let Some(external) = object.external {
+            match external {
+                TranspilerExternal::Name(str) => {
+                    if !str.is_empty() {
+                        self.transform.external = vec![str.to_owned_slice().into_boxed_slice()];
+                    }
                 }
-
-                let toplevel_type = external.js_type();
-                if toplevel_type.is_string_like() {
-                    let str = external.to_bun_string(global)?;
-                    if str.is_empty() {
-                        break 'external;
-                    }
-                    self.transform.external = vec![str.to_owned_slice().into_boxed_slice()];
-                } else if toplevel_type.is_array() {
-                    let count = external.get_length(global)?;
-                    if count == 0 {
-                        break 'external;
-                    }
-
-                    let mut externals: Vec<Box<[u8]>> = Vec::with_capacity(count as usize);
-                    let mut iter = external.array_iterator(global)?;
-                    while let Some(entry) = iter.next()? {
-                        if !entry.js_type().is_string_like() {
-                            return Err(global.throw_invalid_arguments(format_args!(
-                                "external must be a string or string[]",
-                            )));
-                        }
-
-                        let str = entry.to_bun_string(global)?;
+                TranspilerExternal::Names(names) => {
+                    let mut externals: Vec<Box<[u8]>> = Vec::with_capacity(names.len());
+                    for str in names {
                         if str.is_empty() {
                             continue;
                         }
@@ -256,37 +238,29 @@ impl Config {
                     }
 
                     self.transform.external = externals;
-                } else {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "external must be a string or string[]",
-                    )));
                 }
             }
         }
 
-        if let Some(loader) = object.get(global, "loader")? {
-            if let Some(resolved) = loader_from_js(global, loader)? {
-                if !resolved.is_java_script_like() {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "only JavaScript-like loaders supported for now",
-                    )));
-                }
-
-                self.default_loader = resolved;
+        if let Some(resolved) = loader_from_js(global, object.loader.to_js())? {
+            if !resolved.is_java_script_like() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "only JavaScript-like loaders supported for now",
+                )));
             }
+
+            self.default_loader = resolved;
         }
 
-        if let Some(target) = object.get(global, "target")? {
-            if let Some(resolved) = target_from_js(global, target)? {
+        if let Some(target) = object.target {
+            if let Some(resolved) = bun_ast::Target::MAP.get(target) {
                 self.transform.target = Some(resolved.to_api());
             }
         }
 
-        if let Some(tsconfig) = object.get(global, "tsconfig")? {
+        let tsconfig = object.tsconfig.to_js();
+        if !tsconfig.is_undefined_or_null() {
             'tsconfig: {
-                if tsconfig.is_undefined_or_null() {
-                    break 'tsconfig;
-                }
                 let kind = tsconfig.js_type();
 
                 if kind.is_array() {
@@ -322,7 +296,7 @@ impl Config {
 
         self.runtime.allow_runtime = false;
 
-        if let Some(macros) = object.get_truthy(global, "macro")? {
+        if let Some(macros) = object.r#macro.map(JsLocal::to_js) {
             'macros: {
                 if macros.is_undefined_or_null() {
                     break 'macros;
@@ -366,100 +340,89 @@ impl Config {
             }
         }
 
-        if let Some(flag) = object.get_boolean_loose(global, "autoImportJSX")? {
+        if let Some(flag) = object.auto_import_jsx {
             self.runtime.auto_import_jsx = flag;
         }
 
-        if let Some(flag) = object.get_boolean_loose(global, "allowBunRuntime")? {
+        if let Some(flag) = object.allow_bun_runtime {
             self.runtime.allow_runtime = flag;
         }
 
-        if let Some(flag) = object.get_boolean_loose(global, "inline")? {
+        if let Some(flag) = object.inlining {
             self.runtime.inlining = flag;
         }
 
-        if let Some(flag) = object.get_boolean_loose(global, "minifyWhitespace")? {
+        if let Some(flag) = object.minify_whitespace {
             self.minify_whitespace = flag;
         }
 
-        if let Some(flag) = object.get_boolean_loose(global, "deadCodeElimination")? {
+        if let Some(flag) = object.dead_code_elimination {
             self.dead_code_elimination = flag;
         }
 
-        if let Some(flag) = object.get_boolean_loose(global, "replMode")? {
+        if let Some(flag) = object.repl_mode {
             self.repl_mode = flag;
         }
 
-        if let Some(minify) = object.get_truthy(global, "minify")? {
-            if minify.is_boolean() {
-                self.minify_whitespace = minify.to_boolean();
-                self.minify_syntax = self.minify_whitespace;
-                self.minify_identifiers = self.minify_syntax;
-            } else if minify.is_object() {
-                if let Some(whitespace) = minify.get_boolean_loose(global, "whitespace")? {
-                    self.minify_whitespace = whitespace;
+        if let Some(minify) = &object.minify {
+            match minify {
+                TranspilerMinify::All(minify) => {
+                    self.minify_whitespace = *minify;
+                    self.minify_syntax = self.minify_whitespace;
+                    self.minify_identifiers = self.minify_syntax;
                 }
-                if let Some(syntax) = minify.get_boolean_loose(global, "syntax")? {
-                    self.minify_syntax = syntax;
+                TranspilerMinify::Options(minify) => {
+                    if let Some(whitespace) = minify.whitespace {
+                        self.minify_whitespace = whitespace;
+                    }
+                    if let Some(syntax) = minify.syntax {
+                        self.minify_syntax = syntax;
+                    }
+                    if let Some(syntax) = minify.identifiers {
+                        self.minify_identifiers = syntax;
+                    }
                 }
-                if let Some(syntax) = minify.get_boolean_loose(global, "identifiers")? {
-                    self.minify_identifiers = syntax;
+            }
+        }
+
+        if let Some(flag) = object.sourcemap {
+            match flag {
+                TranspilerSourcemap::Enabled(flag) => {
+                    if flag {
+                        self.transform.source_map = Some(api::SourceMapMode::Inline);
+                    } else {
+                        self.transform.source_map = Some(api::SourceMapMode::None);
+                    }
                 }
-            } else {
+                TranspilerSourcemap::Mode(flag) => {
+                    if let Some(source) = options::SOURCE_MAP_OPTION_MAP.get(flag) {
+                        self.transform.source_map = Some(SourceMapOption::to_api(Some(*source)));
+                    } else {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "sourcemap must be one of \"inline\", \"linked\", \"external\", or \"none\"",
+                        )));
+                    }
+                }
+            }
+        }
+
+        if let Some(packages) = object.packages {
+            let Some(packages) = options::PACKAGES_OPTION_MAP.get(packages) else {
                 return Err(global.throw_invalid_arguments(format_args!(
-                    "Expected minify to be a boolean or an object",
+                    "packages must be one of \"bundle\" or \"external\"",
                 )));
-            }
+            };
+            self.transform.packages = Some(PackagesOption::to_api(Some(*packages)));
         }
 
-        if let Some(flag) = object.get(global, "sourcemap")? {
-            if flag.is_boolean() || flag.is_undefined_or_null() {
-                if flag.to_boolean() {
-                    self.transform.source_map = Some(api::SourceMapMode::Inline);
-                } else {
-                    self.transform.source_map = Some(api::SourceMapMode::None);
-                }
-            } else {
-                if let Some(source) = source_map_option_from_js(global, flag)? {
-                    self.transform.source_map = Some(SourceMapOption::to_api(Some(source)));
-                } else {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "sourcemap must be one of \"inline\", \"linked\", \"external\", or \"none\"",
-                    )));
-                }
-            }
-        }
+        let mut tree_shaking: Option<bool> = object.tree_shaking;
+        let trim_unused_imports: Option<bool> = object.trim_unused_imports;
 
-        if let Some(packages) = object.get_optional_enum_from_map(
-            global,
-            "packages",
-            &options::PACKAGES_OPTION_MAP,
-            "\"bundle\" or \"external\"",
-        )? {
-            self.transform.packages = Some(PackagesOption::to_api(Some(packages)));
-        }
-
-        let mut tree_shaking: Option<bool> = None;
-        if let Some(v) = object.get_boolean_loose(global, "treeShaking")? {
-            tree_shaking = Some(v);
-        }
-
-        let mut trim_unused_imports: Option<bool> = None;
-        if let Some(v) = object.get_boolean_loose(global, "trimUnusedImports")? {
-            trim_unused_imports = Some(v);
-        }
-
-        if let Some(exports) = object.get_truthy(global, "exports")? {
-            if !exports.is_object() {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("exports must be an object"))
-                );
-            }
-
+        if let Some(exports) = &object.exports {
             let mut replacements = bun_ast::runtime::ReplaceableExportMap::default();
             // errdefer replacements.clearAndFree(allocator) → Drop on error path
 
-            if let Some(eliminate) = exports.get_truthy(global, "eliminate")? {
+            if let Some(eliminate) = exports.eliminate.map(JsLocal::to_js) {
                 if !eliminate.js_type().is_array() {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "exports.eliminate must be an array",
@@ -522,7 +485,7 @@ impl Config {
                 }
             }
 
-            if let Some(replace) = exports.get_truthy(global, "replace")? {
+            if let Some(replace) = exports.replace.map(JsLocal::to_js) {
                 let Some(replace_obj) = replace.get_object() else {
                     return Err(
                         global.throw_invalid_arguments(format_args!("replace must be an object"))
@@ -609,9 +572,9 @@ impl Config {
             self.runtime.replace_exports = replacements;
         }
 
-        if let Some(log_level) = object.get_truthy(global, "logLevel")? {
-            if let Some(level) = level_from_js(global, log_level)? {
-                self.log.level = level;
+        if let Some(log_level) = object.log_level {
+            if let Some(level) = bun_ast::Level::MAP.get(log_level) {
+                self.log.level = *level;
             } else {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "logLevel must be one of \"verbose\", \"debug\", \"info\", \"warn\", or \"error\"",
@@ -916,7 +879,9 @@ fn export_replacement_value(
         // `E::EString::init` erases the borrow to `'static` per the AST
         // crate's `Str` convention (see ast/E.rs).
         let data = arena.alloc_slice_copy(utf8.slice());
-        return Ok(Some(Expr::init(
+        // The result outlives every parse, so don't allocate it in the thread-local store.
+        return Ok(Some(Expr::allocate(
+            arena,
             bun_ast::E::EString::init(data),
             bun_ast::Loc::EMPTY,
         )));
@@ -926,15 +891,11 @@ fn export_replacement_value(
 }
 
 impl JSTranspiler {
-    // JsClass construct hook — invoked via the codegen'd `${T}Class__construct`
-    // shim emitted by `#[bun_jsc::JsClass]`, NOT via `#[host_fn]` (constructors
-    // return `*mut Self`, not `JSValue`, so the free-fn shim would be ill-typed).
     pub(crate) fn constructor(
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
+        cx: &mut JsScope<'_>,
+        config_arg: Option<TranspilerOptions<'_>>,
     ) -> JsResult<*mut JSTranspiler> {
-        let [config_arg] = callframe.arguments_as_array::<1>();
-
+        let global = cx.global();
         // NOTE: a non-POD field cannot be left uninitialized in a live Box
         // (zeroed()/assume_init() on Transpiler is UB), so build `config` + `transpiler` on the
         // stack first, then move both into the Box. Nothing observes the
@@ -1011,6 +972,8 @@ impl JSTranspiler {
         // is uniquely owned at init time, so `&mut` projection is alias-free.
         let transpiler = unsafe { this.transpiler.get_mut() };
         transpiler.set_log(&raw mut config.log);
+        // `set_log` doesn't update `options.log`, which `configure_defines` logs to.
+        transpiler.options.log = &raw mut config.log;
 
         transpiler.options.no_macros = config.no_macros;
         transpiler.configure_linker_with_auto_jsx(false);
@@ -1260,29 +1223,18 @@ impl JSTranspiler {
         unsafe { self.transpiler_mut() }.parse(parse_options, None)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn scan(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn scan(
+        &self,
+        cx: &mut JsScope<'_>,
+        code_arg: StringOrJsBytes<'_>,
+        loader_arg: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
         jsc::mark_binding();
-        // SAFETY: bun_vm() returns the live VM singleton on this thread.
-        let vm = global.bun_vm();
-        let mut args = ArgumentsSlice::init(vm, callframe.arguments());
-        let Some(code_arg) = args.next() else {
-            return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
-        };
-
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
-            return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
-        };
+        let global = cx.global();
+        let code_holder = code_from_js(global, code_arg)?;
         let code = code_holder.slice();
-        args.eat();
 
-        let loader: Option<Loader> = 'brk: {
-            if let Some(arg) = args.next() {
-                args.eat();
-                break 'brk loader_from_js(global, arg)?;
-            }
-            break 'brk None;
-        };
+        let loader: Option<Loader> = loader_from_js(global, loader_arg.to_js())?;
 
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
@@ -1339,110 +1291,70 @@ impl JSTranspiler {
         )
     }
 
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn transform(
         &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        code_arg: StringOrJsBytes<'_>,
+        loader_arg: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        let cx = global.js_thread_of_caller(callframe);
+        let global = cx.global();
+        let js_thread = global.js_thread_of_caller_no_frame();
         jsc::mark_binding();
-        // SAFETY: bun_vm() returns the live VM singleton on this thread.
-        let vm = global.bun_vm();
-        let mut args = ArgumentsSlice::init(vm, callframe.arguments());
-        let Some(code_arg) = args.next() else {
-            return Err(global.throw_invalid_argument_type(
-                "transform",
-                "code",
-                "string or Uint8Array",
-            ));
-        };
-
-        let code = if let Some(buffer) = code_arg.as_array_buffer(global) {
-            let bytes = buffer.byte_slice().to_vec();
-            global.vm().report_extra_memory(bytes.len());
-            StringOrBuffer::owned_isolated(bytes)
-        } else if let Some(code) = StringOrBuffer::from_js_async(global, code_arg)? {
-            code
-        } else {
-            return Err(global.throw_invalid_argument_type(
-                "transform",
-                "code",
-                "string or Uint8Array",
-            ));
-        };
-
-        args.eat();
-        let loader: Option<Loader> = 'brk: {
-            if let Some(arg) = args.next() {
-                args.eat();
-                break 'brk loader_from_js(global, arg)?;
+        let code = match code_arg {
+            StringOrJsBytes::Bytes(buffer) => {
+                let bytes = Buffer::from_array_buffer(global, buffer.to_js())
+                    .slice()
+                    .to_vec();
+                global.vm().report_extra_memory(bytes.len());
+                StringOrBuffer::owned_isolated(bytes)
             }
-            break 'brk None;
+            StringOrJsBytes::String(text) => StringOrBuffer::thread_isolated_string(global, text),
         };
+
+        let loader: Option<Loader> = loader_from_js(global, loader_arg.to_js())?;
 
         let default_loader = self.config.get().default_loader;
         Ok(TransformTask::schedule(
             self,
-            callframe.this(),
+            this_value.to_js(),
             code,
-            &cx,
+            &js_thread,
             loader.unwrap_or(default_loader),
         ))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn transform_sync(
+    pub(crate) fn transform_sync<'a>(
         &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
+        cx: &mut JsScope<'a>,
+        code_arg: StringOrJsBytes<'a>,
+        loader_or_context: JsLocal<'a>,
+        context: JsLocal<'a>,
     ) -> JsResult<JSValue> {
         jsc::mark_binding();
-        let arguments = callframe.arguments();
-
-        // SAFETY: bun_vm() returns the live VM singleton on this thread.
-        let vm = global.bun_vm();
-        let mut args = ArgumentsSlice::init(vm, arguments);
-        let Some(code_arg) = args.next() else {
-            return Err(global.throw_invalid_argument_type(
-                "transformSync",
-                "code",
-                "string or Uint8Array",
-            ));
-        };
 
         let arena = Arena::new();
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
-            return Err(global.throw_invalid_argument_type(
-                "transformSync",
-                "code",
-                "string or Uint8Array",
-            ));
-        };
+        let global = cx.global();
+        let code_holder = code_from_js(global, code_arg)?;
         let code = code_holder.slice();
-        arguments[0].ensure_still_alive();
-        let _keep0 = bun_jsc::EnsureStillAlive(arguments[0]);
 
-        args.eat();
         let mut js_ctx_value: JSValue = JSValue::ZERO;
         let loader: Option<Loader> = 'brk: {
-            if let Some(arg) = args.next() {
-                args.eat();
-                if arg.is_number() || arg.is_string() {
-                    break 'brk loader_from_js(global, arg)?;
-                }
+            let arg = loader_or_context.to_js();
+            if arg.is_number() || arg.is_string() {
+                break 'brk loader_from_js(global, arg)?;
+            }
 
-                if arg.is_object() {
-                    js_ctx_value = arg;
-                    break 'brk None;
-                }
+            if arg.is_object() {
+                js_ctx_value = arg;
             }
             break 'brk None;
         };
 
-        if let Some(arg) = args.next_eat() {
-            if arg.is_object() {
-                js_ctx_value = arg;
+        let context = context.to_js();
+        if !context.is_undefined() {
+            if context.is_object() {
+                js_ctx_value = context;
             } else {
                 return Err(global.throw_invalid_argument_type(
                     "transformSync",
@@ -1597,40 +1509,19 @@ fn named_imports_to_js(
 }
 
 impl JSTranspiler {
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn scan_imports(
         &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
+        cx: &mut JsScope<'_>,
+        code_arg: StringOrJsBytes<'_>,
+        loader_arg: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        // SAFETY: bun_vm() returns the live VM singleton on this thread.
-        let vm = global.bun_vm();
-        let mut args = ArgumentsSlice::init(vm, callframe.arguments());
-
-        let Some(code_arg) = args.next() else {
-            return Err(global.throw_invalid_argument_type(
-                "scanImports",
-                "code",
-                "string or Uint8Array",
-            ));
-        };
-
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
-            return Err(global.throw_invalid_argument_type(
-                "scanImports",
-                "code",
-                "string or Uint8Array",
-            ));
-        };
-        args.eat();
+        let global = cx.global();
+        let code_holder = code_from_js(global, code_arg)?;
         let code = code_holder.slice();
 
         let mut loader: Loader = self.config.get().default_loader;
-        if let Some(arg) = args.next() {
-            if let Some(l) = loader_from_js(global, arg)? {
-                loader = l;
-            }
-            args.eat();
+        if let Some(l) = loader_from_js(global, loader_arg.to_js())? {
+            loader = l;
         }
 
         if !loader.is_java_script_like() {

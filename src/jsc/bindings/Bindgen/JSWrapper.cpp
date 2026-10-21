@@ -10,13 +10,23 @@ using namespace JSC;
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSClassConstructor, InternalFunction);
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSClassConstructor);
 
-void analyzeInternalFields(JSCell* cell, HeapAnalyzer& analyzer, std::span<const WriteBarrier<Unknown>> fields, std::span<const ASCIILiteral> names)
+GCClient::IsoSubspace* createSubspaceForClass(VM& vm, unsigned classIndex, size_t cellSize)
 {
-    VM& vm = cell->vm();
-    for (size_t i = 0; i < fields.size(); ++i) {
-        if (JSValue value = fields[i].get(); value.isCell())
-            analyzer.analyzePropertyNameEdge(cell, value.asCell(), Identifier::fromString(vm, names[i]).impl());
-    }
+    RELEASE_ASSERT(cellSize <= MarkedSpace::largeCutoff);
+    return WebCore::subspaceForImplSlow(
+        vm,
+        WebCore::SubspaceForInit { static_cast<unsigned>(cellSize), JSDestructibleObject::numberOfLowerTierPreciseCells, WebCore::SubspaceForInit::CellType::Destructible, false },
+        WebCore::SubspaceSlots {
+            OBJECT_OFFSETOF(WebCore::ExtendedDOMClientIsoSubspaces, m_clientSubspaceForBindgenClass) + classIndex * sizeof(GCClient::IsoSubspace*),
+            OBJECT_OFFSETOF(WebCore::ExtendedDOMIsoSubspaces, m_subspaceForBindgenClass) + classIndex * sizeof(IsoSubspace*),
+        },
+        nullptr);
+}
+
+void analyzeInternalField(JSCell* cell, HeapAnalyzer& analyzer, const WriteBarrier<Unknown>& field, ASCIILiteral name)
+{
+    if (JSValue value = field.get(); value && value.isCell())
+        analyzer.analyzePropertyNameEdge(cell, value.asCell(), Identifier::fromString(cell->vm(), name).impl());
 }
 
 const ClassInfo JSClassConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSClassConstructor) };
@@ -28,6 +38,12 @@ JSC_DEFINE_HOST_FUNCTION(callJSClassConstructor, (JSGlobalObject * globalObject,
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* constructor = uncheckedDowncast<JSClassConstructor>(callFrame->jsCallee());
     return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, makeString(constructor->name(), " constructor cannot be invoked without 'new'"_s));
+}
+
+JSC_DEFINE_HOST_FUNCTION(illegalConstructor, (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "Illegal constructor"_s);
 }
 
 JSClassConstructor::JSClassConstructor(VM& vm, Structure* structure, NativeFunction construct)
@@ -72,8 +88,11 @@ Structure* structureForNewTarget(JSGlobalObject* globalObject, CallFrame* callFr
 {
     // JSC_GET_DERIVED_STRUCTURE, for a Structure that is not a member of the global object.
     JSObject* newTarget = asObject(callFrame->newTarget());
-    if (newTarget == callFrame->jsCallee()) [[likely]]
-        return structureForClass(globalObject, classIndex);
+    if (newTarget == callFrame->jsCallee()) [[likely]] {
+        // The callee is the constructor of a class of `m_classes`, so its global object is the one that holds them.
+        auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+        return global->m_bindgenAdditions.m_classes[classIndex].get(global);
+    }
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* functionGlobalObject = tryGetFunctionRealm(newTarget);

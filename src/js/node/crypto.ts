@@ -246,7 +246,7 @@ Object.assign(Hash.prototype, {
     return new Hash(this[kHandle], options);
   },
   _transform: function (chunk, encoding, callback) {
-    this[kHandle].update(this, chunk, encoding);
+    this[kHandle].update(this, chunk, encoding, false);
     callback();
   },
   _flush: function (callback) {
@@ -286,7 +286,7 @@ Object.assign(Hmac.prototype, {
     return this[kHandle].digest(outputEncoding);
   },
   _transform: function (chunk, encoding, callback) {
-    this[kHandle].update(this, chunk, encoding);
+    this[kHandle].update(this, chunk, encoding, false);
     callback();
   },
   _flush: function (callback) {

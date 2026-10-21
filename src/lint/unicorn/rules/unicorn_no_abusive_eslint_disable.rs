@@ -30,7 +30,7 @@ impl Rule for NoAbusiveEslintDisable {
             }
             let comment_span = comment.comment_value_span();
             let text = cx.slice(comment_span);
-            // The `*` of `/**`, or a word.
+            // Fast path: the comment starts with the `*` of `/**` or with some other word.
             if text.first().is_some_and(|it| it.is_ascii_graphic() && !matches!(it, b'e' | b'o')) {
                 continue;
             }
@@ -41,7 +41,7 @@ impl Rule for NoAbusiveEslintDisable {
                 _ => continue,
             };
             let rest = rest.strip_prefix(b"-next-line").or_else(|| rest.strip_prefix(b"-line")).unwrap_or(rest);
-            // `eslint-disablefoo` is nothing.
+            // `eslint-disablefoo` isn't a directive.
             if !rest.is_empty() && strings::trim_unicode_whitespace_start(rest).len() == rest.len() {
                 continue;
             }
@@ -53,8 +53,8 @@ impl Rule for NoAbusiveEslintDisable {
             let count = if has_rule { invalid_rules } else { 1 };
             for _ in 0..count {
                 let report = cx.report(comment_span, message);
-                // ESLint's disable comments would silence a report at the comment itself. Report at column -1 instead, like
-                // eslint-plugin-unicorn does.
+                // ESLint's disable comments would silence a report at the comment itself. Report at column -1 instead,
+                // like eslint-plugin-unicorn does.
                 if !cx.file().language().is_oxlint {
                     let line = cx.file().line_of(comment_span.start);
                     report.start_at(Position { line, column: u32::MAX });
@@ -71,7 +71,7 @@ fn for_each_rule_name<'t>(text: &'t [u8], mut emit_rule: impl FnMut(&'t [u8])) {
     let mut chars = strings::wtf8_codepoints(text).peekable();
     let mut previous = None;
     while let Some((index, ch)) = chars.next() {
-        // `--`, or `-` between blanks: the rest says why.
+        // `--`, or `-` between whitespace, starts the description.
         let is_description_start = ch == u32::from(b'-')
             && chars
                 .peek()

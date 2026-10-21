@@ -38,8 +38,7 @@ fn is_non_commutative_operator_with_shorthand(op: BinOp) -> bool {
     )
 }
 
-/// Whether evaluating `e` once instead of twice, or the reverse, runs the same getters, setters and
-/// `toString` calls.
+/// True if evaluating `e` once instead of twice, or the reverse, runs the same getters, setters and `toString` calls.
 fn can_be_fixed(e: Expr) -> bool {
     let is_simple = |obj: Expr| matches!(obj.kind(), ExprKind::Ident(_) | ExprKind::This);
     match e.kind() {
@@ -59,7 +58,7 @@ fn can_be_fixed(e: Expr) -> bool {
 }
 
 /// oxlint's `check_is_same_reference`. An index can be any expression, written twice: `a[i - 1] = a[i - 1] + b`.
-fn is_same_reference_for_oxlint<'a>(target: Expr<'a>, e: Expr<'a>) -> bool {
+fn oxlint_is_same_reference<'a>(target: Expr<'a>, e: Expr<'a>) -> bool {
     match target.kind() {
         ExprKind::Ident(name) => e.as_ident() == Some(name) && !e.is_parenthesized(),
         ExprKind::Dot { .. } | ExprKind::Index { .. } => {
@@ -86,11 +85,11 @@ impl OperatorAssignment {
         let replacement = assign_op_text(Some(op));
         let is_oxlint = cx.language().is_oxlint;
         let is_same_reference = |e: Expr<'a>| match is_oxlint {
-            true => is_same_reference_for_oxlint(target, e),
+            true => oxlint_is_same_reference(target, e),
             false => is_same_reference(target, e, true),
         };
         if is_same_reference(left) {
-            // A default value in a destructuring assignment.
+            // Skip a default value in a destructuring assignment.
             if is_assignment_target(e) {
                 return;
             }
@@ -109,7 +108,7 @@ impl OperatorAssignment {
             });
         } else if is_commutative && is_same_reference(right) && !is_assignment_target(e)
         {
-            // `a = b * a` is not fixed to `a *= b`: that changes the order of the `valueOf` calls.
+            // `a = b * a` isn't fixed to `a *= b`, because that changes the order of the `valueOf` calls.
             cx.report(e, REPLACED)
                 .data("operator", replacement)
                 .labels_with(|it| it.note = format!("Use '{replacement}' shorthand instead of '='.").into());
@@ -131,7 +130,7 @@ impl OperatorAssignment {
             }
             let (file, whole, operator) = (fixer.file(), e.span(), e.operator_span()?);
             let before_operator = Span::new(whole.start, operator.start);
-            // They would be duplicated.
+            // The comments would be duplicated.
             if file.comments_in(before_operator).next().is_some() {
                 return None;
             }

@@ -551,7 +551,7 @@ impl ValkeyClient {
         let wrote = self.socket.write(chunk);
         if wrote > 0 {
             self.write_buffer
-                .consume(u32::try_from(wrote).expect("int cast"));
+                .consume(usize::try_from(wrote).expect("int cast"));
         }
         self.write_buffer.len() > 0
     }
@@ -810,8 +810,7 @@ impl ValkeyClient {
                     return Ok(());
                 }
 
-                self.read_buffer
-                    .consume(u32::try_from(bytes_consumed).expect("int cast"));
+                self.read_buffer.consume(bytes_consumed);
                 self.reply_scanner.reset();
 
                 let mut value_to_handle = value; // Use temp var for defer

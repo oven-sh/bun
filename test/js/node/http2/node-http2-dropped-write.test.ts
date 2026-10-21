@@ -32,10 +32,26 @@ const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
 // The initial flow-control window of a stream and of a connection (RFC 9113 section 6.9.2).
 const WINDOW = 65535;
 const MB = Buffer.alloc(1 << 20, 97);
-// More than a loopback socket takes from a sender whose peer does not read. On Linux that is about
-// 2.5 MB. It was not measured on the other systems, so they keep the larger body.
-const BIG = Buffer.alloc((process.platform === "linux" ? 12 : 24) << 20, 97);
 const isBun = typeof process.versions.bun === "string";
+/**
+ * The most that a loopback socket can hold when its peer does not read: the send buffer of the
+ * sender plus the receive buffer of the peer. Linux gives both limits. The other systems have no
+ * such file, and 22 MiB is above their defaults.
+ */
+function unreadSocketLimit() {
+  try {
+    const limit = (name: string) =>
+      Number(fs.readFileSync(`/proc/sys/net/ipv4/${name}`, "utf8").trim().split(/\s+/)[2]);
+    return limit("tcp_rmem") + limit("tcp_wmem");
+  } catch {
+    return 22 << 20;
+  }
+}
+// A body that such a socket cannot take. The tests that block a socket with it run in Bun only,
+// and not where the socket takes every body (Windows) or where the limits ask for more than 64 MiB.
+const BIG_SIZE = unreadSocketLimit() + (2 << 20);
+const blocksSocket = isBun && process.platform !== "win32" && BIG_SIZE <= 64 << 20;
+const BIG = Buffer.alloc(blocksSocket ? BIG_SIZE : 0, 97);
 
 function frame(type: number, flags: number, streamId: number, payload: Buffer = Buffer.alloc(0)) {
   const header = Buffer.alloc(9);
@@ -621,7 +637,7 @@ describe("client: the stream ends with DATA frames still queued", () => {
   ];
   for (const [name, ask] of blockedAsks) {
     const title = `${name} gets the error of the stream when the peer resets it behind a blocked socket`;
-    test(title, { skip: !isBun || process.platform === "win32" }, async () => {
+    test(title, { skip: !blocksSocket }, async () => {
       const MAX = 0x7fffffff;
       const { promise: accepted, resolve: accept } = Promise.withResolvers<net.Socket>();
       const server = net.createServer(socket => {
@@ -1429,7 +1445,7 @@ describe("server: the client leaves with DATA frames still queued", () => {
   // The empty END_STREAM frame of stream 3 waits behind the response of stream 1. close() must
   // not finish the response, or reset the stream, before that frame has left. On Windows the
   // socket takes the whole response of stream 1 at once, so nothing waits.
-  const held = { skip: !isBun || process.platform === "win32" };
+  const held = { skip: !blocksSocket };
   test("end() then close() behind socket backpressure finishes after END_STREAM leaves", held, async () => {
     const events: string[] = [];
     const { promise: answered, resolve: hasAnswered } = Promise.withResolvers<void>();
@@ -1776,7 +1792,7 @@ describe("client: the request ends before its HEADERS frame is sent", () => {
   test(
     "a request that ended and closed before it had an id finishes without its END_STREAM frame",
     {
-      skip: !isBun || process.platform === "win32",
+      skip: !blocksSocket,
     },
     async () => {
       const sockets = new Set<net.Socket>();

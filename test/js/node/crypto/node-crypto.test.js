@@ -1165,6 +1165,63 @@ it("cipher.setAAD on a non-authenticated cipher throws ERR_CRYPTO_INVALID_STATE"
   });
 });
 
+// The child never writes to the 2 GiB buffer, so its pages are never committed.
+it("a 2 GiB buffer argument throws ERR_OUT_OF_RANGE", async () => {
+  const script = `
+    import crypto from "node:crypto";
+    let big;
+    try {
+      big = new Uint8Array(2 ** 31);
+    } catch {
+      console.log("SKIP");
+      process.exit(0);
+    }
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const results = {};
+    const record = (label, fn) => {
+      try {
+        fn();
+        results[label] = "returned";
+      } catch (e) {
+        results[label] = e.code + ": " + e.message;
+      }
+    };
+    record("createSecretKey", () => crypto.createSecretKey(big));
+    record("createSecretKey ArrayBuffer", () => crypto.createSecretKey(big.buffer));
+    record("createHmac", () => crypto.createHmac("sha256", big));
+    record("createCipheriv", () => crypto.createCipheriv("aes-128-gcm", big, Buffer.alloc(12)));
+    record("hkdfSync ikm", () => crypto.hkdfSync("sha256", big, "salt", "info", 16));
+    record("hkdfSync ikm ArrayBuffer", () => crypto.hkdfSync("sha256", big.buffer, "salt", "info", 16));
+    record("hkdfSync salt", () => crypto.hkdfSync("sha256", "key", big, "info", 16));
+    record("hkdfSync info", () => crypto.hkdfSync("sha256", "key", "salt", big, 16));
+    record("sign data", () => crypto.sign("sha256", big, privateKey));
+    record("verify signature", () => crypto.verify("sha256", Buffer.from("x"), publicKey, big));
+    record("publicEncrypt oaepLabel", () =>
+      crypto.publicEncrypt({ key: publicKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepLabel: big }, Buffer.alloc(16)),
+    );
+    console.log(JSON.stringify(results));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  if (stdout.trim() !== "SKIP") {
+    expect(JSON.parse(stdout)).toEqual({
+      "createSecretKey": "ERR_OUT_OF_RANGE: key is too big",
+      "createSecretKey ArrayBuffer": "ERR_OUT_OF_RANGE: key is too big",
+      "createHmac": "ERR_OUT_OF_RANGE: key is too big",
+      "createCipheriv": "ERR_OUT_OF_RANGE: key is too big",
+      "hkdfSync ikm": "ERR_OUT_OF_RANGE: key is too big",
+      "hkdfSync ikm ArrayBuffer": "ERR_OUT_OF_RANGE: key is too big",
+      "hkdfSync salt": "ERR_OUT_OF_RANGE: salt is too big",
+      "hkdfSync info": "ERR_OUT_OF_RANGE: info is too big",
+      "sign data": "ERR_OUT_OF_RANGE: data is too big",
+      "verify signature": "ERR_OUT_OF_RANGE: signature is too big",
+      "publicEncrypt oaepLabel": "ERR_OUT_OF_RANGE: oaepLabel is too big",
+    });
+  }
+  expect(exitCode).toBe(0);
+});
+
 it("generatePrime(Sync) should return an ArrayBuffer", async () => {
   const prime = crypto.generatePrimeSync(512);
   expect(prime).toBeInstanceOf(ArrayBuffer);

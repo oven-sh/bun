@@ -9,7 +9,7 @@ const PREFER_EVENT_TARGET: Message = Message::new("", "Prefer `EventTarget` over
 
 const IGNORED_PACKAGES: [&str; 2] = ["@angular/core", "eventemitter3"];
 
-/// A string or a template without substitutions that names one of [`IGNORED_PACKAGES`].
+/// A string or a template without substitutions that's one of [`IGNORED_PACKAGES`].
 fn is_ignored_package(source: Expr) -> bool {
     static_string(source).is_some_and(|it| it.is_any(&IGNORED_PACKAGES))
 }

@@ -9,7 +9,7 @@ pub struct NoConfusingArrayWith;
 const NEGATIVE_INDEX: Message = Message::new("", "Avoid using a negative index with `Array#with()`.");
 const LENGTH_INDEX: Message = Message::new("", "Avoid using `.length` as the index in `Array#with()`.");
 
-/// The `name` of `a.name`: not of `a?.name`, `a.#name`, `a["name"]`.
+/// The `name` in `a.name`, but not in `a?.name`, `a.#name` or `a["name"]`.
 fn plain_member_name(member: Expr<'_>) -> Option<Ident<'_>> {
     member.member_name().filter(|_| !member.is_optional() && !member.is_private_member())
 }

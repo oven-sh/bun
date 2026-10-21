@@ -6,7 +6,7 @@ pub struct NoUselessConcat;
 const UNEXPECTED_CONCAT: Message =
     Message::new("unexpectedConcat", "Unexpected string concatenation of literals.");
 
-/// The operands, if `e` is a `+`.
+/// Returns the operands, if `e` is a `+`.
 fn as_concatenation(e: Expr<'_>) -> Option<(Expr<'_>, Expr<'_>)> {
     match e.as_binary() {
         Some((BinOp::Add, left, right)) => Some((left, right)),
@@ -27,20 +27,20 @@ impl Rule for NoUselessConcat {
         let Some((mut left, mut right)) = as_concatenation(e) else {
             return;
         };
-        // oxlint does not see through parentheses.
+        // oxlint doesn't look through parentheses.
         let is_oxlint = cx.language().is_oxlint;
-        let sees = |e: Expr| !(is_oxlint && e.is_parenthesized());
+        let looks_into = |e: Expr| !(is_oxlint && e.is_parenthesized());
         // `foo + "a" + "b"`
-        while let Some((_, inner)) = as_concatenation(left).filter(|_| sees(left)) {
+        while let Some((_, inner)) = as_concatenation(left).filter(|_| looks_into(left)) {
             left = inner;
         }
-        while let Some((inner, _)) = as_concatenation(right).filter(|_| sees(right)) {
+        while let Some((inner, _)) = as_concatenation(right).filter(|_| looks_into(right)) {
             right = inner;
         }
         if ast_utils::is_string_literal(left)
             && ast_utils::is_string_literal(right)
-            && sees(left)
-            && sees(right)
+            && looks_into(left)
+            && looks_into(right)
             && ast_utils::is_token_on_same_line(cx.file(), left, right)
             && let Some(operator) = e.operator_span()
         {

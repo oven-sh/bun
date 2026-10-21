@@ -6961,14 +6961,18 @@ it("fs.writev keeps buffers attached while the write is in flight", async () => 
   expect(readFileSync(file, "latin1")).toBe("DDDDDDDD");
 });
 
-it("fs.write keeps the source buffer attached while the write is in flight", async () => {
+it.each([
+  ["over an ArrayBuffer", () => new Uint8Array(new ArrayBuffer(8))],
+  // Too large to be stored inline, and has no ArrayBuffer until something reads `.buffer`.
+  ["with no ArrayBuffer yet", () => new Uint8Array(64 * 1024)],
+])("fs.write keeps a source buffer %s attached while the write is in flight", async (_, makeBuffer) => {
   using dir = tempDir("fs-write-pin", {});
   const file = join(String(dir), "out.bin");
   const fd = openSync(file, "w");
-  const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x44);
+  const buf = makeBuffer().fill(0x44);
   const { promise, resolve, reject } = Promise.withResolvers();
   try {
-    fs.write(fd, buf, 0, buf.byteLength, 0, (err, written) => (err ? reject(err) : resolve(written)));
+    fs.write(fd, buf, 0, 8, 0, (err, written) => (err ? reject(err) : resolve(written)));
 
     // The native write runs on the thread pool and reads the source bytes
     // through a raw pointer; the backing store must not be detachable out

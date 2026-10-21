@@ -1156,7 +1156,7 @@ describe("hostile option objects", () => {
     // — the worker keeps reading the same pointer.
     const a = new Uint8Array(tinyPng.length + 4096);
     a.set(tinyPng);
-    const p = new Bun.Image(a.subarray(0, tinyPng.length)).png().bytes();
+    const p = new Bun.Image(a).png().bytes();
     const moved = a.buffer.transfer();
     // While pinned: transfer() returned a COPY; `a` is NOT detached.
     expect(moved.byteLength).toBe(tinyPng.length + 4096);

@@ -4,7 +4,7 @@ import { createRequire } from "module";
 import path from "path";
 import { inspect } from "util";
 import jsclasses from "./../jsc/bindings/js_classes.ts";
-import { InvalidThisBehavior, type ClassDefinition, type Field } from "./class-definitions.ts";
+import { type ClassDefinition, type Field } from "./class-definitions.ts";
 import { writeIfNotChanged } from "./helpers.ts";
 
 const require = createRequire(import.meta.url);
@@ -810,7 +810,6 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
 
     if ("fn" in proto[name]) {
       const fn = proto[name].fn;
-      const invalidThisBehavior = proto[name].invalidThisBehavior ?? InvalidThisBehavior.Throw;
       rows.push(`
 JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -831,12 +830,7 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
   }
 
   if (!thisObject) [[unlikely]] {
-      ${
-        invalidThisBehavior == InvalidThisBehavior.Throw
-          ? `
-    RELEASE_AND_RETURN(scope, Bun::throwInvalidThisCallError(lexicalGlobalObject, callFrame, "${typeName}"_s));`
-          : `return JSValue::encode(JSC::jsUndefined());`
-      }
+    RELEASE_AND_RETURN(scope, Bun::throwInvalidThisCallError(lexicalGlobalObject, callFrame, "${typeName}"_s));
   }
 
   JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);

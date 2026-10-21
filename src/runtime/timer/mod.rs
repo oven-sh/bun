@@ -32,16 +32,13 @@ pub(crate) mod timer;
 
 // ─── impl_timer_object! ──────────────────────────────────────────────────────
 // Shared scaffold for `TimeoutObject` / `ImmediateObject`: both are a
-// `#[JsClass]` payload of `{ref_count, event_loop_timer, internals}` whose
+// `Timer.bind.ts` class over `{ref_count, event_loop_timer, internals}` whose
 // JS-facing host-fns are pure forwarders to `TimerObjectInternals`. The macro
 // emits the parts shared by both types so each `*.rs` file holds only its
-// type-specific surface (`init`, `do_refresh`, cached-prop accessors,
+// type-specific surface (`init`, `do_refresh`, the `_idleStart` accessors,
 // `run_immediate_task`).
 //
-// Emits, at the call-site module path (so `#[JsClass]`/`#[host_fn]` produce the
-// same extern symbol names as before — `Timeout__create`, `TimeoutPrototype__*`,
-// `ImmediateClass__construct`, …):
-//   - `#[bun_jsc::JsClass(name = $js_name)] pub struct $T { … }`
+// Emits, at the call-site module path, `pub struct $T { … }` and:
 //   - `bun_event_loop::impl_timer_owner!($T; from_timer_ptr => event_loop_timer)`
 //   - `impl RefCounted for $T` (intrusive `ref_count` field, `deinit` destructor)
 //   - `impl Default for $T` (`EventLoopTimer::init_paused(EventLoopTimerTag::$tag)`)
@@ -49,7 +46,7 @@ pub(crate) mod timer;
 //     and the forwarder host-fns `to_primitive`/`do_ref`/`do_unref`/`has_ref`/
 //     `get_destroyed`/`dispose`.
 //
-// Type-specific items (`init`, `do_refresh`, `close`, cached-prop get/set,
+// Type-specific items (`init`, `do_refresh`, `close`, `_idleStart` get/set,
 // `run_immediate_task`) go in a *second* `impl $T` block in the caller's file.
 //
 // Paths in the body are written `super::…` / `::crate_name::…` because the
@@ -57,7 +54,6 @@ pub(crate) mod timer;
 // so `super` at the expansion site resolves back here to `timer/mod.rs`.
 macro_rules! impl_timer_object {
     ($T:ident, $tag:ident, $js_name:literal) => {
-        #[::bun_jsc::JsClass(name = $js_name)]
         #[derive(::bun_ptr::RefCounted)]
         pub(crate) struct $T {
             pub ref_count: ::bun_ptr::RefCount<Self>,
@@ -127,13 +123,12 @@ macro_rules! impl_timer_object {
                 clock: super::Clock,
             ) -> ::bun_jsc::JSValue {
                 // Heap-allocate; `*mut Self` is the
-                // `m_ctx` payload of the codegen'd JSCell wrapper. Ownership
+                // pointer the JS wrapper holds. Ownership
                 // transfers to the wrapper via `to_js_ptr`; freed by
                 // `deref → deinit → heap::take`.
                 let payload: *mut Self =
                     ::bun_core::heap::into_raw(::std::boxed::Box::new(Self::default()));
-                // SAFETY: `to_js_ptr` is the `#[JsClass]`-generated `*__create`
-                // shim; `payload` is a fresh heap allocation whose ownership
+                // SAFETY: `payload` is a fresh heap allocation whose ownership
                 // transfers to the GC wrapper.
                 let js_value = unsafe { Self::to_js_ptr(payload, cx.global()) };
                 // Round-trip ABI check.
@@ -160,49 +155,25 @@ macro_rules! impl_timer_object {
                 js_value
             }
 
-            // C-ABI shim (`${name}Class__construct`) is emitted by
-            // `#[bun_jsc::JsClass]` via `host_fn_construct_result`; do not also
-            // annotate with `#[host_fn]` here.
-            pub(crate) fn constructor(
-                global: &::bun_jsc::JSGlobalObject,
-                _frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<*mut Self> {
-                Err(global.throw(format_args!(concat!($js_name, " is not constructible"))))
-            }
-
-            #[::bun_jsc::host_fn(method)]
-            pub(crate) fn to_primitive(
-                this: &Self,
-                _global: &::bun_jsc::JSGlobalObject,
-                _frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
+            pub(crate) fn to_primitive(this: &Self) -> ::bun_jsc::JsResult<u64> {
                 this.internals.to_primitive()
             }
 
-            #[::bun_jsc::host_fn(method)]
             pub(crate) fn do_ref(
                 this: &Self,
-                global: &::bun_jsc::JSGlobalObject,
-                frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                this.internals.do_ref(global, frame.this())
+                this_value: ::bun_jsc::bindgen::JsWrapper<'_, Self>,
+            ) -> ::bun_jsc::JSValue {
+                this.internals.do_ref(this_value.to_js())
             }
 
-            #[::bun_jsc::host_fn(method)]
             pub(crate) fn do_unref(
                 this: &Self,
-                global: &::bun_jsc::JSGlobalObject,
-                frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                this.internals.do_unref(global, frame.this())
+                this_value: ::bun_jsc::bindgen::JsWrapper<'_, Self>,
+            ) -> ::bun_jsc::JSValue {
+                this.internals.do_unref(this_value.to_js())
             }
 
-            #[::bun_jsc::host_fn(method)]
-            pub(crate) fn has_ref(
-                this: &Self,
-                _global: &::bun_jsc::JSGlobalObject,
-                _frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
+            pub(crate) fn has_ref(this: &Self) -> bool {
                 this.internals.has_ref()
             }
 
@@ -210,22 +181,12 @@ macro_rules! impl_timer_object {
                 self.internals.finalize()
             }
 
-            #[::bun_jsc::host_fn(getter)]
-            pub(crate) fn get_destroyed(
-                this: &Self,
-                _global: &::bun_jsc::JSGlobalObject,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                Ok(::bun_jsc::JSValue::from(this.internals.get_destroyed()))
+            pub(crate) fn get_destroyed(this: &Self) -> bool {
+                this.internals.get_destroyed()
             }
 
-            #[::bun_jsc::host_fn(method)]
-            pub(crate) fn dispose(
-                this: &Self,
-                global: &::bun_jsc::JSGlobalObject,
-                _frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                this.internals.cancel(global.bun_vm_ptr());
-                Ok(::bun_jsc::JSValue::UNDEFINED)
+            pub(crate) fn dispose(this: &Self, cx: &mut ::bun_jsc::bindgen::JsScope<'_>) {
+                this.internals.cancel(cx.global().bun_vm_ptr());
             }
         }
     };

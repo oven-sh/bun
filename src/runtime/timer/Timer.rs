@@ -666,7 +666,7 @@ pub(crate) fn fake_request_animation_frame_export(
     );
     let timeout = TimeoutObject::from_js(timeout).expect("TimeoutObject::init returns its wrapper");
     // SAFETY: the wrapper is pinned by the heap that holds the timer.
-    unsafe { (*timeout).internals.to_primitive() }
+    unsafe { (*timeout).internals.to_primitive() }.map(JSValue::js_number_from_uint64)
 }
 
 // HOST_EXPORT(Bun__FakeTimers__queueTick, c)

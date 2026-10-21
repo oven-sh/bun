@@ -1,4 +1,4 @@
-use bun_lint::fix::Around;
+use bun_lint::fix::Removal;
 use bun_lint::prelude::*;
 use bun_lint::semantic::DeclarationKinds;
 use bun_lint::utils::oxlint::has_module_syntax;
@@ -79,7 +79,7 @@ impl Pattern {
         }
     }
 
-    /// As it is in the configuration.
+    /// The pattern as written in the config.
     pub fn source(&self) -> &str {
         self.text
             .strip_prefix('/')
@@ -88,7 +88,7 @@ impl Pattern {
     }
 }
 
-/// What a message calls a variable, which decides the pattern that it names.
+/// How a message describes a variable, which also decides which ignore pattern it mentions.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum VariableType {
     ArrayDestructure,
@@ -99,7 +99,7 @@ pub enum VariableType {
 
 // ───────────────────────────── variables ─────────────────────────────
 
-/// The `VarDecl` that the pattern `pat` is part of.
+/// Returns the `VarDecl` that the pattern `pat` is part of.
 fn declarator(pat: Pat<'_>) -> Option<VarDecl<'_>> {
     if let Node::VarDecl(declaration) = pat.parent() {
         return Some(declaration);
@@ -151,8 +151,8 @@ fn uses_explicit_resource_management(def: Declaration) -> bool {
     }
 }
 
-/// ESLint's `isSelfReference` with `getFunctionDefinitions`: `reference` is in a function that the
-/// variable is the name of, or is initialized with.
+/// ESLint's `isSelfReference` with `getFunctionDefinitions`: `reference` is in a function that the variable names, or
+/// is initialized with.
 fn is_self_reference<'a>(variable: Variable<'a>, reference: Reference<'a>) -> bool {
     let Some(symbol) = variable.symbol() else {
         return false;
@@ -199,15 +199,15 @@ fn is_for_in_of_ref(reference: Reference) -> bool {
     first.is_some_and(|it| it.tag() == StmtTag::Return)
 }
 
-/// ESLint's `isUsedVariable`, but for `eslintUsed`.
+/// ESLint's `isUsedVariable`, except for the `eslintUsed` check.
 fn is_used_variable(variable: Variable) -> bool {
     let (mut rhs, mut walks) = (None, None);
     variable.references().any(|reference| {
         if is_for_in_of_ref(reference) {
             return true;
         }
-        // Only what is written to is on the left of an assignment or the operand of an update, and
-        // without an assignment before there is no right side to be in.
+        // Only a write reference can be an assignment's left side or an update's operand, and without an earlier
+        // assignment there's no right side to be in.
         let mut is_for_itself = false;
         if reference.is_write() || rhs.is_some() {
             let walks = walks.get_or_insert_with(Walks::default);
@@ -218,15 +218,15 @@ fn is_used_variable(variable: Variable) -> bool {
     })
 }
 
-/// Whether a look at the first reference that reads `symbol` tells that [`is_used_variable`] holds. Nearly every variable
-/// is such.
-fn is_plainly_used(symbol: Symbol) -> bool {
+/// Fast path: true if the first reference that reads `symbol` is enough to prove [`is_used_variable`]. That's the case
+/// for nearly every variable.
+fn is_obviously_used(symbol: Symbol) -> bool {
     let kinds = symbol.declaration_kinds();
-    // What nothing modifies is on the left of no assignment, and is not read for itself.
+    // A variable that's never modified is never an assignment's left side, so it's never read just to update itself.
     if kinds.contains(DeclarationKinds::CLASS_NAME) || symbol.has_modifying_references() {
         return false;
     }
-    // In the function that declares it, it is in no function that it is the name of.
+    // A reference directly in the function that declares the variable can't be inside a function the variable names.
     let names_functions =
         kinds.intersects(DeclarationKinds::VARIABLE | DeclarationKinds::FUNCTION_NAME);
     symbol
@@ -237,9 +237,8 @@ fn is_plainly_used(symbol: Symbol) -> bool {
         })
 }
 
-/// Whether ESLint has `func` as the `value` of a `Property` or a `MethodDefinition` whose `kind` is
-/// `"set"`. An abstract setter is a `TSAbstractMethodDefinition`, one of an interface or a type
-/// literal a `TSMethodSignature`.
+/// True if, in ESLint, `func` is the `value` of a `Property` or `MethodDefinition` whose `kind` is `"set"`. An abstract
+/// setter is a `TSAbstractMethodDefinition`, and a setter in an interface or type literal is a `TSMethodSignature`.
 fn is_setter(func: Func) -> bool {
     func.kind() == FnKind::Setter
         && !matches!(
@@ -248,7 +247,7 @@ fn is_setter(func: Func) -> bool {
         )
 }
 
-/// Whether `pat` is where the parameter `symbol` is written first: `function (a, b, a) {}`
+/// True if `pat` is the first occurrence of the parameter `symbol`: `function (a, b, a) {}`
 pub fn is_first_parameter_named<'a>(symbol: Symbol<'a>, pat: Pat<'a>) -> bool {
     let first = symbol.declarations().find_map(|def| match def {
         Declaration::Param(it) => Some(it),
@@ -257,7 +256,7 @@ pub fn is_first_parameter_named<'a>(symbol: Symbol<'a>, pat: Pat<'a>) -> bool {
     first == Some(pat)
 }
 
-/// Where the last of the parameters of `func` that are used is written first, or 0.
+/// Returns the start offset of `func`'s last used parameter (its first occurrence), or 0.
 fn last_used_arg(func: Func) -> u32 {
     let mut last = 0;
     for param in func.params_with_this() {
@@ -284,7 +283,7 @@ fn is_after_last_used_arg<'a>(func: Func<'a>, symbol: Symbol<'a>) -> bool {
 
 // ───────────────────────────── suggestions ─────────────────────────────
 
-/// What has a `...` or a default value.
+/// A node that can have a `...` or a default value.
 #[derive(Copy, Clone)]
 enum Holder<'a> {
     Prop(PatProp<'a>),
@@ -292,7 +291,7 @@ enum Holder<'a> {
     Param(Param<'a>),
 }
 
-/// A node of ESTree that is part of a binding pattern, or has one.
+/// An ESTree node that's part of a binding pattern, or has one.
 #[derive(Copy, Clone)]
 enum Estree<'a> {
     Identifier(Pat<'a>),
@@ -318,8 +317,8 @@ impl<'a> Estree<'a> {
         }
     }
 
-    /// The pattern that a `PatProp` or a `PatElem` with the parent `node` is in.
-    fn of_owner(node: Node<'a>) -> Self {
+    /// Returns the pattern that contains a `PatProp` or `PatElem` whose parent is `node`.
+    fn from_owner(node: Node<'a>) -> Self {
         match node {
             Node::Pat(pat) => Estree::of(pat),
             _ => Estree::Other,
@@ -350,7 +349,7 @@ impl<'a> Estree<'a> {
                     Node::PatElem(it) if it.default().is_some() => {
                         Estree::AssignmentPattern(Holder::Elem(it))
                     }
-                    Node::PatElem(it) => Estree::of_owner(it.parent()),
+                    Node::PatElem(it) => Estree::from_owner(it.parent()),
                     Node::Param(it) if it.is_rest() => Estree::RestElement(Holder::Param(it)),
                     Node::Param(it) if it.default().is_some() => {
                         Estree::AssignmentPattern(Holder::Param(it))
@@ -365,10 +364,10 @@ impl<'a> Estree<'a> {
             }
             Estree::AssignmentPattern(Holder::Prop(it)) => Estree::Property(it),
             Estree::Property(it) | Estree::RestElement(Holder::Prop(it)) => {
-                Estree::of_owner(it.parent())
+                Estree::from_owner(it.parent())
             }
             Estree::RestElement(Holder::Elem(it)) | Estree::AssignmentPattern(Holder::Elem(it)) => {
-                Estree::of_owner(it.parent())
+                Estree::from_owner(it.parent())
             }
             Estree::RestElement(Holder::Param(it))
             | Estree::AssignmentPattern(Holder::Param(it)) => Estree::above_param(it),
@@ -419,8 +418,8 @@ fn param_count(func: Func) -> usize {
     func.params().len() + usize::from(func.this_param().is_some())
 }
 
-/// Which of ESLint's functions goes on, with a node further out. There they call each other: a level of the stack for each level
-/// of the pattern, of which the parser holds more.
+/// The ESLint function to run next, on a node further out. In ESLint they call each other, which takes a stack frame
+/// per level of the pattern, and the parser accepts deeper patterns than the stack can handle.
 enum Step<'a> {
     Done(Option<Fix>),
     Variables(Estree<'a>),
@@ -504,7 +503,7 @@ impl<'a> Fixes<'a> {
         })
     }
 
-    /// Removes a whole declaration, unless that could change how what is around it is parsed.
+    /// Removes a whole declaration, unless that could change how the surrounding code parses.
     fn remove_declaration(&self, at: Span) -> Option<Fix> {
         if self.is_not_safe_to_remove(self.after(at), self.before(at)) {
             return None;
@@ -512,7 +511,7 @@ impl<'a> Fixes<'a> {
         Some(self.fixer.remove(at))
     }
 
-    /// Removes one of the several declarators of `statement`.
+    /// Removes one of `statement`'s several declarators.
     fn remove_declarator(
         &self,
         declarator: VarDecl<'a>,
@@ -549,7 +548,7 @@ impl<'a> Fixes<'a> {
         self.remove_with_previous(span)
     }
 
-    fn follow(&self, mut step: Step<'a>) -> Option<Fix> {
+    fn run_steps(&self, mut step: Step<'a>) -> Option<Fix> {
         loop {
             step = match step {
                 Step::Done(fix) => return fix,
@@ -562,18 +561,18 @@ impl<'a> Fixes<'a> {
     }
 
     fn fix_variables(&self, node: Estree<'a>) -> Option<Fix> {
-        self.follow(Step::Variables(node))
+        self.run_steps(Step::Variables(node))
     }
 
     fn fix_nested_array_variable(&self, node: Estree<'a>) -> Option<Fix> {
-        self.follow(Step::NestedArrayVariable(node))
+        self.run_steps(Step::NestedArrayVariable(node))
     }
 
     fn fix_rest_in_pattern(&self, node: Estree<'a>) -> Option<Fix> {
-        self.follow(Step::RestInPattern(node))
+        self.run_steps(Step::RestInPattern(node))
     }
 
-    /// What ESLint's `fixVariables` does with a pattern that is all of what `declarator` declares.
+    /// The part of ESLint's `fixVariables` for a pattern that's the whole `id` of `declarator`.
     fn fix_whole_declarator(&self, declarator: VarDecl<'a>) -> Option<Fix> {
         let statement = declarator.parent().as_stmt()?;
         let StmtKind::Var(declarations) = statement.kind() else {
@@ -673,7 +672,7 @@ impl<'a> Fixes<'a> {
         }
     }
 
-    /// The identifier is the whole of what `declarator` declares: `var a = b`.
+    /// The identifier is the whole `id` of `declarator`: `var a = b`.
     fn fix_declared_identifier(&self, declarator: VarDecl<'a>) -> Option<Fix> {
         let statement = declarator.parent().as_stmt()?;
         let StmtKind::Var(declarations) = statement.kind() else {
@@ -690,7 +689,7 @@ impl<'a> Fixes<'a> {
                 | StmtKind::ForOf { body, .. }
                 | StmtKind::While { body, .. }
                 | StmtKind::DoWhile { body, .. } => {
-                    // It is in the head of the loop.
+                    // It's in the loop's head.
                     if body != statement {
                         return None;
                     }
@@ -707,7 +706,7 @@ impl<'a> Fixes<'a> {
         self.remove_declaration(statement.span_without_export())
     }
 
-    /// What is left when nothing more specific applies to the identifier at `id`.
+    /// The fallback when nothing more specific applies to the identifier at `id`.
     fn fix_identifier(&self, id: Span, parent: Estree<'a>) -> Option<Fix> {
         let (before, after) = (self.before(id), self.after(id));
         if let Some(before) = before
@@ -731,7 +730,7 @@ impl<'a> Fixes<'a> {
         Some(self.fixer.remove(id))
     }
 
-    /// The identifier `pat` of a variable declaration, a parameter or a `catch` clause.
+    /// Fixes the identifier `pat` of a variable declaration, a parameter or a `catch` clause.
     fn fix_binding(&self, pat: Pat<'a>) -> Option<Fix> {
         let id = Estree::Identifier(pat);
         let span = id.span();
@@ -847,7 +846,7 @@ impl<'a> Fixes<'a> {
     }
 }
 
-/// `id`: the range of ESLint's `variable.identifiers[0]`.
+/// `id` is the range of ESLint's `variable.identifiers[0]`.
 fn handle_fixes<'a>(
     fixer: Fixer<'a>,
     variable: Variable<'a>,
@@ -878,8 +877,8 @@ fn handle_fixes<'a>(
     }
 }
 
-/// Whether evaluating `e` runs no other code, so nothing is lost if it's deleted. Anything not listed here counts as impure:
-/// calls, `new`, `await`, member access (it can run a getter), spread, tagged templates, JSX.
+/// True if evaluating `e` runs no other code, so nothing is lost if it's deleted. Anything not listed here counts as
+/// impure: calls, `new`, `await`, member access (it can run a getter), spread, tagged templates, JSX.
 pub(crate) fn is_pure(e: Expr) -> bool {
     let mut rest = vec![e];
     while let Some(e) = rest.pop() {
@@ -906,7 +905,7 @@ pub(crate) fn is_pure(e: Expr) -> bool {
                 }
             }
             ExprKind::Class(class) => {
-                if !defines_purely(class, &mut rest) {
+                if !is_pure_class_definition(class, &mut rest) {
                     return false;
                 }
             }
@@ -926,8 +925,8 @@ pub(crate) fn is_pure(e: Expr) -> bool {
     true
 }
 
-/// Whether defining `class` runs no other code, if the expressions this adds to `evaluated` are [pure](is_pure).
-fn defines_purely<'a>(class: Class<'a>, evaluated: &mut Vec<Expr<'a>>) -> bool {
+/// True if defining `class` runs no other code, provided the expressions this adds to `evaluated` are [pure](is_pure).
+fn is_pure_class_definition<'a>(class: Class<'a>, evaluated: &mut Vec<Expr<'a>>) -> bool {
     if class.decorators().next().is_some() {
         return false;
     }
@@ -942,22 +941,23 @@ fn defines_purely<'a>(class: Class<'a>, evaluated: &mut Vec<Expr<'a>>) -> bool {
     })
 }
 
-/// Whether other `<script>`s or inline event handlers of a page can use what the file declares at its top level: it's neither an
-/// ES module nor CommonJS.
+/// True if the file is neither an ES module nor CommonJS, so a page's other `<script>`s and inline event handlers can
+/// use its top-level declarations.
 fn is_classic_script<'a>(file: &'a File<'a>) -> bool {
     !has_module_syntax(file) && !file.mentions_any(&["require", "module", "exports"])
 }
 
-/// Whether deleting the declaration `def` of the unused `symbol` can't change what the program does. `--fix-suggestions` applies
-/// every suggestion at once with nobody looking, so with no config file the rule only suggests a removal that passes this.
+/// True if deleting the declaration `def` of the unused `symbol` can't change what the program does.
+/// `--fix-suggestions` applies every suggestion without review, so with no config file the rule only suggests a removal
+/// that passes this.
 ///
-/// A parameter stays, because the number of parameters can matter: Express takes a function with four for an error handler. So
-/// does a name in a destructuring pattern, which reads a property or runs an iterator.
+/// A parameter is kept, because the number of parameters can matter: Express treats a function with four as an error
+/// handler. So is a name in a destructuring pattern, which reads a property or runs an iterator.
 ///
-/// Imports are the exception. An unused import always goes. `import { a } from "b"` goes as a whole, even though the module is then
-/// no longer loaded for its side effects, as in ESLint, oxlint and every "remove unused imports" command. `import a from "b"`
-/// becomes `import "b"`.
-fn can_be_removed_unseen<'a>(symbol: Symbol<'a>, def: Declaration<'a>) -> bool {
+/// Imports are the exception. An unused import is always removed. `import { a } from "b"` is removed entirely, even
+/// though the module is then no longer loaded for its side effects, as in ESLint, oxlint and every "remove unused
+/// imports" command. `import a from "b"` becomes `import "b"`.
+fn is_safe_to_remove_without_review<'a>(symbol: Symbol<'a>, def: Declaration<'a>) -> bool {
     let file = symbol.file();
     if symbol.scope() == file.top_level_scope() && is_classic_script(file) {
         return false;
@@ -973,7 +973,7 @@ fn can_be_removed_unseen<'a>(symbol: Symbol<'a>, def: Declaration<'a>) -> bool {
         Declaration::Fn(_) => true,
         Declaration::Class(class) => {
             let mut evaluated = Vec::new();
-            defines_purely(class, &mut evaluated) && evaluated.into_iter().all(is_pure)
+            is_pure_class_definition(class, &mut evaluated) && evaluated.into_iter().all(is_pure)
         }
         Declaration::ImportDefault(_)
         | Declaration::ImportNamespace(_)
@@ -982,7 +982,7 @@ fn can_be_removed_unseen<'a>(symbol: Symbol<'a>, def: Declaration<'a>) -> bool {
     }
 }
 
-// ───────────────────────────── the rule ─────────────────────────────
+// ───────────────────────────── rule ─────────────────────────────
 
 impl NoUnusedVars {
     /// ESLint's `getVariableDescription`.
@@ -1004,7 +1004,9 @@ impl NoUnusedVars {
     /// file, because it's the default there and [the hint](Self::hint) mentions it.
     pub fn unused_message_data(&self, kind: VariableType, file: &File) -> String {
         match self.description(kind) {
-            (_, Some(pattern)) if file.language().stands_alone && pattern.source() == "^_" => {
+            (_, Some(pattern))
+                if file.language().has_no_foreign_config && pattern.source() == "^_" =>
+            {
                 String::new()
             }
             (description, Some(pattern)) => {
@@ -1024,7 +1026,7 @@ impl NoUnusedVars {
         }
     }
 
-    /// Reports a variable whose name says that it is unused, if it is used.
+    /// Reports a variable whose name matches an ignore pattern, if it's used.
     fn report_if_used<'a>(
         &self,
         cx: &Cx<'a, Self>,
@@ -1049,16 +1051,16 @@ impl NoUnusedVars {
         if !self.ignore_rest_siblings {
             return false;
         }
-        let is_defined_beside_rest = variable.declarations().any(|def| match def {
+        let is_defined_next_to_rest = variable.declarations().any(|def| match def {
             Declaration::Var(pat) | Declaration::Param(pat) => has_rest_sibling(Node::Pat(pat)),
             _ => false,
         });
-        is_defined_beside_rest || variable.references().any(|it| has_rest_sibling(it.node()))
+        is_defined_next_to_rest || variable.references().any(|it| has_rest_sibling(it.node()))
     }
 
     fn check<'a>(&self, symbol: Symbol<'a>, cx: &Cx<'a, Self>) {
-        // Nothing else is said about what is used.
-        if !self.report_used_ignore_pattern && is_plainly_used(symbol) {
+        // Without `reportUsedIgnorePattern`, a used variable is never reported.
+        if !self.report_used_ignore_pattern && is_obviously_used(symbol) {
             return;
         }
         let Some(def) = symbol
@@ -1176,23 +1178,23 @@ impl NoUnusedVars {
             .data("additional", self.unused_message_data(kind, cx.file()))
             .hint(self.hint(def, kind))
             .suggest_with(REMOVE_VAR, &[("varName", name.bytes())], |fixer| {
-                if !cx.language().stands_alone {
+                if !cx.language().has_no_foreign_config {
                     return handle_fixes(fixer, variable, def, at);
                 }
                 let fix = handle_fixes(fixer, variable, def, at)
-                    .filter(|_| can_be_removed_unseen(symbol, def))?;
+                    .filter(|_| is_safe_to_remove_without_review(symbol, def))?;
                 if !fix.text.is_empty() {
                     return Some(fix);
                 }
-                // A statement that had its lines to itself takes them with it.
+                // If the statement was the only thing on its lines, remove the lines too.
                 Some(Fix {
-                    span: Around::of(cx.text(), fix.span).without_leftovers(),
+                    span: Removal::of(cx.text(), fix.span).without_leftovers(),
                     ..fix
                 })
             });
     }
 
-    /// Reports the names in `/* global a, b */` comments that nothing refers to.
+    /// Reports the unreferenced names in `/* global a, b */` comments.
     fn check_global_comments<'a>(&self, cx: &Cx<'a, Self>) {
         let file = cx.file();
         for global in file.globals_in_comments() {
@@ -1200,7 +1202,7 @@ impl NoUnusedVars {
             let Some(&comment) = global.comments.first() else {
                 continue;
             };
-            // What a script declares as well is checked as that.
+            // A name that the script also declares is checked as a declared variable.
             if global.setting == Global::Off
                 || file.is_global_marked_used(name)
                 || file.scope().get_bytes(name).is_some()
@@ -1293,7 +1295,7 @@ impl Rule for NoUnusedVars {
         }
     }
 
-    // At the end, as upstream: other rules mark variables as used while they run.
+    // Runs at the end, like upstream, because other rules mark variables as used while they run.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         for symbol in cx.file().symbols() {
             self.check(symbol, cx);

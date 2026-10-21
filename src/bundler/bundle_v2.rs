@@ -18,6 +18,7 @@ pub use bv2_impl::dispatch;
 pub use bv2_impl::{
     CompileResult, CompileResultForSourceMap, CompileResultForSourceMapColumns, ContentHasher,
     EventLoop, ImportTracker, PartRange, StableRef, WrapKind, generic_path_with_pretty_initialized,
+    target_from_hashbang,
 };
 pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, ImportTrackerStatus};
 // Flatten the impl-body module into this file's namespace so external callers
@@ -470,9 +471,6 @@ pub mod bv2_impl {
             /// (`js_parser/ast/Parser.rs:1997` resolves `framework.react_fast_refresh
             /// .import_source`) when `features.react_fast_refresh` is on.
             pub(crate) react_fast_refresh: Option<ReactFastRefresh>,
-            /// Mirrors `Framework.is_built_in_react` — read by
-            /// `linker_context::generateChunksInParallel` to gate `BakeExtra`.
-            pub(crate) is_built_in_react: bool,
             /// The routers with `clientPages`. In the browser build, the files under them lose
             /// their router's `serverExports`, and the imports that only those use.
             pub(crate) client_page_dirs: Vec<ClientPageDir>,
@@ -491,14 +489,12 @@ pub mod bv2_impl {
                 built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
                 server_components: Option<ServerComponents>,
                 react_fast_refresh: Option<ReactFastRefresh>,
-                is_built_in_react: bool,
                 client_page_dirs: Vec<ClientPageDir>,
             ) -> Self {
                 Self {
                     built_in_modules,
                     server_components,
                     react_fast_refresh,
-                    is_built_in_react,
                     client_page_dirs,
                 }
             }
@@ -619,8 +615,7 @@ pub mod bv2_impl {
         /// `EntryPointMap`.
         /// Lives in the bundler (lower tier) so both `bun_runtime::bake::production`
         /// and `BundleV2::generate_from_bake_production_cli` share ONE nominal type
-        /// (PORTING.md §Layering). Router-integration methods (`InsertionHandler`)
-        /// are added by `bun_runtime::bake` via a local trait impl.
+        /// (PORTING.md §Layering).
         pub mod production {
             use super::Side;
 
@@ -784,6 +779,8 @@ pub mod bv2_impl {
                 safe fn JSBundlerPlugin__drainDeferred(this: &mut Plugin, rejected: bool);
                 #[link_name = "JSBundlerPlugin__hasOnBeforeParsePlugins"]
                 safe fn JSBundlerPlugin__hasOnBeforeParsePlugins(this: &Plugin) -> i32;
+                #[link_name = "JSBundlerPlugin__freezeFilters"]
+                safe fn JSBundlerPlugin__freezeFilters(this: &Plugin);
                 // `ctx`/`args`/`result` are opaque cookies the C++ side round-trips
                 // to Rust-registered native-plugin callbacks without dereferencing
                 // in `JSBundlerPlugin.cpp` itself (same posture as `matchOnLoad`
@@ -815,6 +812,11 @@ pub mod bv2_impl {
                 #[inline]
                 pub(crate) fn has_on_before_parse_plugins(&self) -> bool {
                     JSBundlerPlugin__hasOnBeforeParsePlugins(self) != 0
+                }
+
+                /// Call on the JS thread before a bundle pass. After this, `addFilter` and `onBeforeParse` throw.
+                pub fn freeze_filters(&self) {
+                    JSBundlerPlugin__freezeFilters(self)
                 }
 
                 #[inline]
@@ -954,7 +956,9 @@ pub mod bv2_impl {
                     self.get_key_value(specifier).is_some()
                 }
                 /// Returns a `resolver::Result` for a file in the map, or `None` if
-                /// not found (see [`Self::lookup`] for what matches).
+                /// not found. Handles direct key matches and relative specifiers
+                /// joined against `dirname(source_file)` (with Windows
+                /// drive-letter / separator normalization).
                 ///
                 /// `arena` is the build's bump arena (`BundleV2::arena()`);
                 /// the matched key is copied into it so the returned
@@ -967,33 +971,23 @@ pub mod bv2_impl {
                     source_file: &[u8],
                     specifier: &[u8],
                 ) -> Option<bun_resolver::Result> {
-                    let (key, _) = self.lookup(source_file, specifier)?;
+                    if self.map.is_empty() {
+                        return None;
+                    }
+
                     // SAFETY: ARENA — `arena` is the build-pass bump arena
                     // (never freed before the `Result` is consumed); detaching the
                     // borrow lifetime matches the established `Path<'static>`
                     // convention used throughout `bun_resolver` (PORTING.md
                     // §Lifetimes: ARENA → `&'bump T`).
-                    let key: &'static [u8] =
-                        unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(key)) };
-                    Some(Self::result_for_key(key))
-                }
-
-                /// Map-owned key and contents. Handles direct key matches and
-                /// relative specifiers joined against `dirname(source_file)` (with
-                /// Windows drive-letter / separator normalization). `source_file`
-                /// is `b""` for an entry point.
-                pub(crate) fn lookup(
-                    &self,
-                    source_file: &[u8],
-                    specifier: &[u8],
-                ) -> Option<(&[u8], &[u8])> {
-                    if self.map.is_empty() {
-                        return None;
-                    }
+                    let dupe = |key: &[u8]| -> &'static [u8] {
+                        // SAFETY: see ARENA note above — bytes live in the build-pass arena.
+                        unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(key)) }
+                    };
 
                     // Direct key match. Return the map-owned key, not the parameter.
-                    if let Some(found) = self.get_key_value(specifier) {
-                        return Some(found);
+                    if let Some((key, _)) = self.get_key_value(specifier) {
+                        return Some(Self::result_for_key(dupe(key)));
                     }
 
                     // Also try joining a relative specifier against the importer's
@@ -1038,7 +1032,7 @@ pub mod bv2_impl {
                             {
                                 b"/"
                             } else {
-                                bun_resolver::fs::FileSystem::instance().top_level_dir
+                                bun_resolver::fs::FileSystem::instance().top_level_dir()
                             }
                         } else {
                             source_dir
@@ -1057,8 +1051,8 @@ pub mod bv2_impl {
                             );
                         }
                         let joined = &buf[0..joined_len];
-                        if let Some((key, value)) = self.map.get_key_value(joined) {
-                            return Some((key.as_ref(), value.as_ref()));
+                        if let Some((key, _)) = self.map.get_key_value(joined) {
+                            return Some(Self::result_for_key(dupe(key.as_ref())));
                         }
                     }
 
@@ -2598,7 +2592,7 @@ pub mod bv2_impl {
                 })
                 .map(|((source, loader), _)| (source.path.text, source.contents(), *loader));
             let checked = options::TypeChecked {
-                cwd: self.transpiler.fs().top_level_dir,
+                cwd: self.transpiler.fs().top_level_dir(),
                 tsconfig: self.transpiler.options.tsconfig_override.as_deref(),
                 conditions: &self.transpiler.options.custom_conditions,
                 loaders: &self.transpiler.options.loaders,
@@ -2954,7 +2948,8 @@ pub mod bv2_impl {
                     bun_paths::resolve_path::platform::Loose,
                     false,
                 >(
-                    bun_resolver::fs::FileSystem::get().top_level_dir, path.text
+                    bun_resolver::fs::FileSystem::get().top_level_dir(),
+                    path.text,
                 );
                 // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
                 // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
@@ -3337,6 +3332,9 @@ pub mod bv2_impl {
                 this.framework = Some(bo.framework);
                 this.linker.framework = this.framework.as_ref().map(bun_ptr::BackRef::new);
                 this.plugins = bo.plugins;
+                if let Some(plugins) = this.plugins_ref() {
+                    plugins.freeze_filters();
+                }
                 if this.transpiler.options.server_components {
                     debug_assert!(
                         this.client_transpiler_ref()
@@ -4763,6 +4761,10 @@ pub mod bv2_impl {
                     )
                 };
                 let mut additional_output_files: Vec<options::OutputFile> = Vec::new();
+                let mut has_unusable_output_path = false;
+                // Without an output directory the paths are only returned, so they can have any length.
+                let opens_output_paths = !self.transpiler.resolver.opts.output_dir.is_empty()
+                    || self.transpiler.options.compile_mode.is_executable();
                 let mut templates: Vec<(usize, options::PathTemplate)> = Vec::new();
 
                 for reachable_source in reachable_files {
@@ -4868,6 +4870,17 @@ pub mod bv2_impl {
                             v.into_boxed_slice()
                         };
 
+                        if opens_output_paths
+                            && !template.check_output_path(
+                                self.transpiler.log_mut(),
+                                source.path.pretty,
+                                &output_path,
+                            )
+                        {
+                            has_unusable_output_path = true;
+                            continue;
+                        }
+
                         // Hand the existing `source.contents` buffer to the
                         // OutputFile — no copy: move the contents
                         // out instead of `to_vec()`-cloning,
@@ -4906,6 +4919,9 @@ pub mod bv2_impl {
                 }
 
                 self.graph.additional_output_files = additional_output_files;
+                if has_unusable_output_path {
+                    return Err(crate::Error::BuildFailed);
+                }
             }
             Ok(())
         }
@@ -5017,7 +5033,7 @@ pub mod bv2_impl {
                     }
                 }
             }
-            let _load_deinit = LoadDeinitGuard(std::ptr::from_mut(load));
+            let load_deinit = LoadDeinitGuard(std::ptr::from_mut(load));
             bun_core::scoped_log!(
                 Bundle,
                 "onLoad: ({}, {:?})",
@@ -5056,6 +5072,8 @@ pub mod bv2_impl {
                         ),
                     );
 
+                    // Drop first. The decrement below can finish a dev server bundle, which frees `load`'s arena.
+                    drop(load_deinit);
                     // An error occurred, prevent spinning the event loop forever
                     this.decrement_scan_counter();
                 }
@@ -5172,6 +5190,8 @@ pub mod bv2_impl {
                         log.warnings += (kind == bun_ast::Kind::Warn) as u32;
                     }
 
+                    // Drop first, as above.
+                    drop(load_deinit);
                     // An error occurred, prevent spinning the event loop forever
                     this.decrement_scan_counter();
                 }
@@ -5551,6 +5571,8 @@ pub mod bv2_impl {
             // creating `Worker`s and reading `graph`.
             self.linker.source_maps.line_offset_wait_group.wait();
             self.linker.source_maps.quoted_contents_wait_group.wait();
+            // The last IO callback may still be using the worker pool that `pool.deinit()` frees.
+            self.graph.pool().wait_for_io_tasks();
 
             {
                 // We do this before the rest to make it harder for any dangling pointers to data to be used in there.
@@ -5807,19 +5829,26 @@ pub mod bv2_impl {
             // Open the output directory and write the metafile relative to it,
             // routed through `bun_sys::File`.
             let mut buf = bun_paths::path_buffer_pool::get();
-            let joined = bun_paths::resolve_path::join_string_buf::<
+            let written = match bun_paths::resolve_path::join_z_buf_checked::<
                 bun_paths::resolve_path::platform::Auto,
-            >(&mut buf.0[..], &[outdir, file_path]);
-            // Create parent directories if needed (relative to outdir).
-            let parent = bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Loose>(
-                joined,
-            );
-            if !parent.is_empty() {
-                let _ = bun_sys::mkdir_recursive(parent);
-            }
-            let mut zbuf = bun_paths::path_buffer_pool::get();
-            let joined_z = bun_paths::resolve_path::z(joined, &mut zbuf);
-            match bun_sys::File::write_file(bun_core::Fd::cwd(), joined_z, content) {
+            >(&mut buf.0[..], &[outdir, file_path])
+            {
+                Some(joined_z) => {
+                    // Create parent directories if needed (relative to outdir).
+                    let parent = bun_paths::resolve_path::dirname::<
+                        bun_paths::resolve_path::platform::Loose,
+                    >(joined_z.as_bytes());
+                    if !parent.is_empty() {
+                        let _ = bun_sys::mkdir_recursive(parent);
+                    }
+                    bun_sys::File::write_file(bun_core::Fd::cwd(), joined_z, content)
+                }
+                None => Err(bun_sys::Error::from_code(
+                    bun_sys::E::ENAMETOOLONG,
+                    bun_sys::Tag::open,
+                )),
+            };
+            match written {
                 Ok(()) => {}
                 Err(err) => {
                     bun_core::warn!(
@@ -6169,8 +6198,32 @@ pub mod bv2_impl {
             });
 
             // Then all the distinct CSS bundles (these are JS->CSS, not CSS->CSS)
+            let mut css_orders = Vec::with_capacity(start.css_entry_points.count());
+            let mut css_too_deep = Vec::new();
             for entry_point in start.css_entry_points.keys() {
-                let order = crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&mut self.linker, self.graph.heap, &[*entry_point]);
+                match crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&mut self.linker, self.graph.heap, &[*entry_point]) {
+                    Ok(order) => css_orders.push((*entry_point, order)),
+                    Err(too_deep) => css_too_deep.push((*entry_point, too_deep)),
+                }
+            }
+            // Treat an `@import` chain that's too deep like an invalid import. The
+            // dev server reports the error for that file and skips its chunk.
+            for (entry_point, too_deep) in css_too_deep {
+                let sources = self.graph.input_files.items_source();
+                let mut log = bun_ast::Log::init();
+                too_deep.add_to_log(sources, &mut log);
+                dev_server
+                    .handle_parse_task_failure(
+                        crate::Error::InvalidCssImport,
+                        bake::Graph::Client,
+                        sources[entry_point.get() as usize].path.text,
+                        &raw const log,
+                        self,
+                    )
+                    .map_err(|_| AllocError)?;
+                let _ = start.css_entry_points.ordered_remove(&entry_point);
+            }
+            for (entry_point, order) in css_orders {
                 let order_len = order.len() as usize;
                 chunks.push(Chunk {
                     entry_point: chunk::EntryPoint::non_entry_point(
@@ -6407,7 +6460,7 @@ pub mod bv2_impl {
             let out = generic_path_with_pretty_initialized(
                 path,
                 target,
-                self.transpiler.fs().top_level_dir,
+                self.transpiler.fs().top_level_dir(),
                 bump,
             )?;
             Ok(out)
@@ -6780,13 +6833,14 @@ pub mod bv2_impl {
                 // backrefs valid for `'a` (see `init`). Compute the raw ptr first, then
                 // deref once, so the `&mut self` borrow doesn't span the rest of the loop
                 // body.
+                // `bake_graph` is the imported file's graph. Resolution failures are logged under the importer's graph.
                 let (transpiler_ptr, bake_graph, target): (
                     *mut Transpiler<'a>,
                     bake::Graph,
                     options::Target,
                 ) = if import_record.tag == bun_ast::ImportRecordTag::BakeResolveToSsrGraph {
                     if self.framework.is_none() {
-                        self.log_for_resolution_failures(source.path.text, bake::Graph::Ssr).add_error_fmt(
+                        self.log_for_resolution_failures(source.path.text, ctx.target.bake_graph()).add_error_fmt(
                             Some(source),
                             import_record.range.loc,
                             format_args!("The 'bunBakeGraph' import attribute cannot be used outside of a Bun Bake bundle"),
@@ -6804,7 +6858,7 @@ pub mod bv2_impl {
                             .unwrap()
                             .separate_ssr_graph;
                     if !is_supported {
-                        self.log_for_resolution_failures(source.path.text, bake::Graph::Ssr).add_error_fmt(
+                        self.log_for_resolution_failures(source.path.text, ctx.target.bake_graph()).add_error_fmt(
                             Some(source),
                             import_record.range.loc,
                             format_args!("Framework does not have a separate SSR graph to put this import into"),
@@ -6909,7 +6963,10 @@ pub mod bv2_impl {
                             // SAFETY: log lives in DevServer/transpiler, disjoint from `self.graph`.
                             let log: &mut bun_ast::Log = unsafe {
                                 &mut *std::ptr::from_mut::<bun_ast::Log>(
-                                    self.log_for_resolution_failures(source.path.text, bake_graph),
+                                    self.log_for_resolution_failures(
+                                        source.path.text,
+                                        ctx.target.bake_graph(),
+                                    ),
                                 )
                             };
 
@@ -7025,18 +7082,22 @@ pub mod bv2_impl {
                                     } else {
                                         #[cfg(windows)]
                                         let mut buf = bun_paths::path_buffer_pool::get();
+                                        let top_level_dir = Fs::FileSystem::get().top_level_dir();
                                         let specifier_to_use: &[u8] = if loader == Loader::Html
-                                            && import_record.path.text.starts_with(
-                                                Fs::FileSystem::instance().top_level_dir,
-                                            ) {
-                                            let specifier_to_use = &import_record.path.text
-                                                [Fs::FileSystem::instance().top_level_dir.len()..];
+                                            && import_record.path.text.starts_with(top_level_dir)
+                                        {
+                                            let specifier_to_use =
+                                                &import_record.path.text[top_level_dir.len()..];
                                             #[cfg(windows)]
                                             {
-                                                &*bun_paths::resolve_path::path_to_posix_buf::<u8>(
-                                                    specifier_to_use,
-                                                    &mut *buf,
-                                                )
+                                                if specifier_to_use.len() <= buf.len() {
+                                                    &*bun_paths::resolve_path::path_to_posix_buf::<u8>(
+                                                        specifier_to_use,
+                                                        &mut *buf,
+                                                    )
+                                                } else {
+                                                    specifier_to_use
+                                                }
                                             }
                                             #[cfg(not(windows))]
                                             {
@@ -7129,8 +7190,10 @@ pub mod bv2_impl {
                             // blocks an assertion failure because the DevServer
                             // reserves the HTML file's spot in IncrementalGraph for the
                             // route definition.
-                            let log =
-                                self.log_for_resolution_failures(source.path.text, bake_graph);
+                            let log = self.log_for_resolution_failures(
+                                source.path.text,
+                                ctx.target.bake_graph(),
+                            );
                             log.add_range_error_fmt(
                                 Some(source),
                                 import_record.range,
@@ -7151,15 +7214,15 @@ pub mod bv2_impl {
                                 bun_paths::resolve_path::platform::Loose,
                                 false,
                             >(
-                                self.transpiler.fs().top_level_dir, path.text
+                                self.transpiler.fs().top_level_dir(), path.text
                             );
-                            if loader == Loader::Html && entry.kind == bake_types::CacheKind::Asset
+                            // A cached JSON or text module is also an `Asset`, but it has no asset URL.
+                            if loader == Loader::Html
+                                && entry.kind == bake_types::CacheKind::Asset
+                                && let Some(hash) = dev_server.asset_hash(path.text)
                             {
                                 // Overload `path.text` to point to the final URL
                                 // This information cannot be queried while printing because a lock wouldn't get held.
-                                let hash = dev_server
-                                    .asset_hash(path.text)
-                                    .expect("cached asset not found");
                                 import_record.path.text = path.text;
                                 import_record.path.namespace = b"file";
                                 // SAFETY: `alloc_str` returns into the bundler arena which
@@ -7665,15 +7728,16 @@ pub mod bv2_impl {
                     let source_path = this.graph.input_files.items_source()[source_index as usize]
                         .path
                         .text;
+                    let fd = parse_result.watcher_data.fd;
+                    let mut adopted = false;
                     if this.should_add_watcher(source_path) {
-                        let fd = parse_result.watcher_data.fd;
                         let dir_fd = parse_result.watcher_data.dir_fd;
                         let hash = bun_wyhash::hash(source_path) as u32;
                         let bun_watcher = this.bun_watcher_mut().unwrap();
                         // The watcher keeps the path past this bundle; borrow it
                         // only when it is interned for the process lifetime
                         // (`dupe_alloc` leaves other paths in the bundle arena).
-                        let _ = if Fs::as_interned_path(source_path).is_some() {
+                        let added = if Fs::as_interned_path(source_path).is_some() {
                             bun_watcher.add_file::<{ cfg!(windows) }>(
                                 fd,
                                 source_path,
@@ -7684,6 +7748,11 @@ pub mod bv2_impl {
                         } else {
                             bun_watcher.add_file::<true>(fd, source_path, hash, dir_fd, None)
                         };
+                        adopted = matches!(added, Ok(bun_watcher::FdOwnership::Watcher));
+                    }
+                    // A file that's already watched keeps its first descriptor.
+                    if !adopted && parse_result.watcher_data.owns_fd {
+                        let _ = bun_sys::close(fd);
                     }
                 }
             }
@@ -8246,6 +8315,17 @@ pub mod bv2_impl {
         Esm,
     }
 
+    pub fn target_from_hashbang(buffer: &[u8]) -> Option<options::Target> {
+        const HB: &[u8] = b"#!/usr/bin/env bun";
+        if buffer.len() > HB.len() && buffer.starts_with(HB) {
+            match buffer[HB.len()] {
+                b'\n' | b' ' => return Some(options::Target::Bun),
+                _ => {}
+            }
+        }
+        None
+    }
+
     pub fn generic_path_with_pretty_initialized(
         path: &bun_paths::fs::Path<'static>,
         target: options::Target,
@@ -8254,9 +8334,6 @@ pub mod bv2_impl {
     ) -> crate::Result<bun_paths::fs::Path<'static>> {
         use crate::bun_fs::PathResolverExt as _;
         use crate::bun_node_fallbacks;
-        use bun_io::Write as _;
-
-        let mut buf = bun_paths::path_buffer_pool::get();
 
         let is_node = path.namespace == b"node";
         if is_node
@@ -8266,49 +8343,44 @@ pub mod bv2_impl {
             return Ok(*path);
         }
 
-        if path.is_file() || is_node {
-            let mut buf2 = bun_paths::path_buffer_pool::get();
-            let rel = bun_paths::resolve_path::relative_platform_buf::<
+        // `pretty` is only displayed, never opened, so it can be longer than MAX_PATH_BYTES.
+        let ssr_prefix: &[u8] = if target == options::Target::ServerComponentsSsr {
+            b"ssr:"
+        } else {
+            b""
+        };
+        let mut prefixed = Vec::new();
+        let mut path_clone: crate::bun_fs::Path<'_> = *path;
+        path_clone.pretty = if path.is_file() || is_node {
+            let rel = bun_paths::resolve_path::relative_platform::<
                 bun_paths::resolve_path::platform::Loose,
                 false,
-            >(&mut **buf2, top_level_dir, path.text);
-            let mut path_clone: crate::bun_fs::Path<'_> = *path;
-            if target == options::Target::ServerComponentsSsr {
-                let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
-                let _ = fbs.write_all(b"ssr:");
-                let _ = fbs.write_all(rel);
-                let written = fbs.pos;
-                path_clone.pretty = &buf.0[..written];
+            >(top_level_dir, path.text);
+            if ssr_prefix.is_empty() {
+                rel
             } else {
-                path_clone.pretty = rel;
+                prefixed = [ssr_prefix, rel].concat();
+                &prefixed
             }
-            path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
         } else {
-            let mut path_clone: crate::bun_fs::Path<'_> = *path;
-            let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
-            if target == options::Target::ServerComponentsSsr {
-                let _ = fbs.write_all(b"ssr:");
-            }
-            let _ = write_escaped_namespace(&mut fbs, path_clone.namespace);
-            let _ = fbs.write_all(b":");
-            let _ = fbs.write_all(path_clone.text);
-            let written = fbs.pos;
-            path_clone.pretty = &buf.0[..written];
-            path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
-        }
+            prefixed.reserve(ssr_prefix.len() + path.namespace.len() + 1 + path.text.len());
+            prefixed.extend_from_slice(ssr_prefix);
+            push_escaped_namespace(&mut prefixed, path.namespace);
+            prefixed.extend_from_slice(b":");
+            prefixed.extend_from_slice(path.text);
+            &prefixed
+        };
+        path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
     }
 
-    fn write_escaped_namespace<W: bun_io::Write + ?Sized>(
-        w: &mut W,
-        slice: &[u8],
-    ) -> bun_io::Result {
-        let mut rest = slice;
+    fn push_escaped_namespace(out: &mut Vec<u8>, namespace: &[u8]) {
+        let mut rest = namespace;
         while let Some(i) = strings::index_of_char(rest, b':') {
-            w.write_all(&rest[..i as usize])?;
-            w.write_all(b"::")?;
+            out.extend_from_slice(&rest[..i as usize]);
+            out.extend_from_slice(b"::");
             rest = &rest[i as usize + 1..];
         }
-        w.write_all(rest)
+        out.extend_from_slice(rest);
     }
 
     #[repr(u8)]

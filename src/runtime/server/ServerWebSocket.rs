@@ -739,9 +739,33 @@ impl ServerWebSocket {
             Opcode::Binary => self.binary_to_js(global_object, message),
             _ => unreachable!(),
         };
-        // Converting the payload threw (or the VM is terminating): there is
-        // no message to deliver; the handler's landing frame folds it.
-        let data = data?;
+        let data = match data {
+            Ok(data) => data,
+            Err(e) => {
+                // Copying the message for the handler failed. Close the connection instead of
+                // silently dropping a message.
+                let err_value = global_object.take_error(e);
+                if err_value.is_termination_exception() {
+                    return Err(e);
+                }
+                // Without an `error` handler, only the 1011 close reports the failure. An uncaught
+                // exception would exit the process.
+                let reported = if on_error.is_empty_or_undefined_or_null() {
+                    Ok(())
+                } else {
+                    self.handler().run_error_callback(
+                        on_error,
+                        global_object,
+                        self.js_value().unwrap_or(JSValue::UNDEFINED),
+                        err_value,
+                    )
+                };
+                if !self.is_closed() {
+                    ws.fail_out_of_memory();
+                }
+                return reported;
+            }
+        };
         let arguments = [self.js_value().unwrap_or(JSValue::UNDEFINED), data];
 
         let result = match call_corked(
@@ -824,7 +848,12 @@ impl ServerWebSocket {
                 ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global_this, data)
             }
             BinaryType::Blob => {
-                let blob = Blob::new(Blob::init(data.to_vec(), global_this));
+                let mut bytes = Vec::new();
+                if bytes.try_reserve_exact(data.len()).is_err() {
+                    return Err(bun_jsc::JsError::OutOfMemory);
+                }
+                bytes.extend_from_slice(data);
+                let blob = Blob::new(Blob::init(bytes, global_this));
                 // SAFETY: `blob` is the live allocation `Blob::new` just made. `BlobExt::to_js`
                 // reports the payload size to the GC, which the by-value `JsClass::to_js` skips.
                 Ok(unsafe { BlobExt::to_js(&*blob, global_this) })
@@ -1549,15 +1578,25 @@ impl WebSocketHandler for WsPackageSocket {
         unsafe { &*this }.0.attach(ws);
     }
     #[inline(always)]
-    unsafe fn on_message(this: *mut Self, _ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
+    unsafe fn on_message(this: *mut Self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
         // SAFETY: per trait contract.
         unsafe {
             Self::dispatch(this, |this| {
-                this.call(this.0.handler().on_message, |global| {
-                    Ok([
-                        ArrayBuffer::create_buffer(global, message)?,
-                        JSValue::js_boolean(opcode == Opcode::Binary),
-                    ])
+                let global = this.0.handler().global_object();
+                let buffer = match ArrayBuffer::create_buffer(global, message) {
+                    Ok(buffer) => buffer,
+                    Err(e) => {
+                        // Same as `ServerWebSocket::on_message`. `ws.ts` turns the close into the
+                        // socket's 'error' event.
+                        if global.take_error(e).is_termination_exception() {
+                            return Err(e);
+                        }
+                        ws.fail_out_of_memory();
+                        return Ok(());
+                    }
+                };
+                this.call(this.0.handler().on_message, |_| {
+                    Ok([buffer, JSValue::js_boolean(opcode == Opcode::Binary)])
                 })
             })
         };

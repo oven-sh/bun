@@ -199,7 +199,7 @@ impl PackageManagerCommand {
             ("$BUN_INSTALL", bun_install),
             (
                 "the project directory",
-                Some(Fs::FileSystem::get().top_level_dir),
+                Some(Fs::FileSystem::get().top_level_dir()),
             ),
             ("the current directory", Some(cwd)),
         ];
@@ -340,7 +340,7 @@ impl PackageManagerCommand {
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"bin") {
             let output_path = Path::resolve_path::join_abs::<Path::platform::Auto>(
-                Fs::FileSystem::get().top_level_dir,
+                Fs::FileSystem::get().top_level_dir(),
                 pm.options.bin_path.as_bytes(),
             );
             bun_core::prettyln!("{}", bstr::BStr::new(output_path));
@@ -614,7 +614,7 @@ impl PackageManagerCommand {
                 Output::println(format_args!(
                     "{} node_modules{}",
                     bstr::BStr::new(strings::without_trailing_slash(
-                        Fs::FileSystem::get().top_level_dir
+                        Fs::FileSystem::get().top_level_dir()
                     )),
                     if all { "" } else { " (0 installed)" },
                 ));

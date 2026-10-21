@@ -1219,35 +1219,43 @@ test.concurrent.each(["// @bun", "// @bun with a source map", "coverageIgnoreSou
   },
 );
 
-test("no brace of a block is listed when node:inspector turns the profiler on", async () => {
-  using dir = tempDir("cov-inspector", {
-    "lib.ts": `export function never()
-{
-  return 1;
+test("an error has the same position with --coverage", async () => {
+  using dir = tempDir("cov-error-position", {
+    "lib.ts": `export function disposes() {
+  {
+    using thrower = { [Symbol.dispose]() { throw new Error("disposed"); } };
+    Object(thrower);
+  }
 }
 `,
-    "main.ts": `
-import { codeCoverageForFile } from "bun:jsc";
-import inspector from "node:inspector";
-import { join } from "node:path";
-const session = new inspector.Session();
-session.connect();
-session.post("Profiler.enable");
-session.post("Profiler.startPreciseCoverage");
-await import("./lib.ts");
-console.log(codeCoverageForFile(join(import.meta.dir, "lib.ts"), false));
+    "lib.test.ts": `
+import { test } from "bun:test";
+import { disposes } from "./lib.ts";
+test("disposes", () => {
+  try {
+    disposes();
+  } catch (error) {
+    console.log(error.stack.split("\\n").find(line => line.includes("at disposes")));
+  }
+});
 `,
   });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toEndWith("| 1,3\n");
-  expect(exitCode).toBe(0);
+  const [plain, covered] = await Promise.all(
+    [[], ["--coverage"]].map(async flags => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...flags],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      return { frame: stdout.split("\n").find(line => line.includes("at disposes")), exitCode };
+    }),
+  );
+  expect(plain.frame).toEndWith("lib.ts:5:3)");
+  expect(covered).toEqual(plain);
+  expect(plain.exitCode).toBe(0);
 });
 
 test("reports an error for a coverage directory longer than the path buffer", async () => {

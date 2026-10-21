@@ -3013,6 +3013,7 @@ fn codegen_object_pattern(
         b::Object {
             properties: StoreSlice::from_bump(properties),
             is_single_line: true,
+            close_brace_loc: Loc::EMPTY,
         },
         loc,
     ))

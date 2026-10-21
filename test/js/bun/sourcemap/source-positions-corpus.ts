@@ -169,7 +169,8 @@ export const cases: Record<string, Case> = {
  0|];
 `,
   },
-  // Both braces of an object are code, also where it is assigned to. Those of a block, a body, a class and a binding are not.
+  // Both braces of an object are code, also where it is assigned to, as a `var` in a block is.
+  // Those of a block, a body, a class and a binding are not.
   "braces.ts": {
     functions: "5/7",
     lines: `
@@ -273,6 +274,13 @@ export const cases: Record<string, Case> = {
  1|    a: first,
  1|  },
  1|] = [{ a: 1 }];
+ 1|if (typed.v) {
+ -|  var
+ 1|  {
+ 1|    v: hoisted,
+ 1|  }
+ 1|  = typed;
+ -|}
  1|export const spaced = {
  0|  async am
  0|  () {},

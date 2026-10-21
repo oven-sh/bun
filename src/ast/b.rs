@@ -75,6 +75,7 @@ pub struct Property {
 pub struct Object {
     pub properties: crate::StoreSlice<Property>,
     pub is_single_line: bool,
+    pub close_brace_loc: crate::Loc,
 }
 // No `impl Default` on purpose: only `is_single_line` has a sensible default;
 // `properties` does not, so every constructor must supply it.

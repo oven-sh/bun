@@ -7,7 +7,7 @@ use bun_collections::VecExt;
 use bun_collections::bit_set::DynamicBitSet;
 use bun_core::{self, Utf8Bytes};
 use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
-use bun_sourcemap::{Mapping, Ordinal, ParsedSourceMap};
+use bun_sourcemap::{Ordinal, ParsedSourceMap};
 
 type LinesHits = Vec<u32>;
 type Bitset = DynamicBitSet;
@@ -608,7 +608,7 @@ pub struct BasicBlockRange {
 pub struct ByteRangeMapping {
     /// A bit for each code unit of the text JSC compiled, which is what JSC's offsets and the
     /// source map's generated columns count. Set if the unit can make its line executable:
-    /// it is not white space or a brace, or the printer maps it. The text is only borrowed.
+    /// not white space or a brace, or `print_for_coverage` maps it. The text is only borrowed.
     executable_units: Bitset,
     /// Code unit offset of the first unit of each line of the text.
     line_starts: Vec<u32>,
@@ -716,7 +716,16 @@ impl ByteRangeMapping {
         let mut lines = LineCounts::default();
 
         if let Some(source_map) = source_map.as_deref() {
-            for_each_distinct_mapping(source_map, |mapping| {
+            let mut previous_original = None;
+            source_map.for_each_mapping(|mapping| {
+                // The printer repeats a mapping at column 0 of a line that starts without one.
+                let original = (
+                    mapping.original.lines.zero_based(),
+                    mapping.original.columns.zero_based(),
+                );
+                if previous_original.replace(original) == Some(original) {
+                    return;
+                }
                 let (Ok(line), Some(offset)) = (
                     usize::try_from(mapping.original.lines.zero_based()),
                     self.offset_of(mapping.generated),
@@ -817,46 +826,21 @@ impl ByteRangeMapping {
         }
     }
 
-    /// `scan` sets no brace. For coverage the printer maps the braces of an object, not of a block.
-    fn set_mapped_units_executable(&mut self, text: &[u8], already_bundled: bool) {
-        let vm = bun_jsc::VirtualMachine::VirtualMachine::get().as_mut();
-        if already_bundled {
-            // JSC compiles a `// @bun` file as written, so the original positions are in `text`.
-            if let Some(source_map) = print_for_coverage(self.source_url.slice(), text) {
-                for &original in source_map.mappings.original() {
-                    if let Some(offset) = self.offset_of(original) {
-                        self.executable_units.set(offset as usize);
-                    }
-                }
+    /// `scan` sets no brace. Those of an object are code, and the printer tells them from a block's.
+    fn set_mapped_units_executable(&mut self, text: &[u8]) {
+        let Some(source_map) = print_for_coverage(self.source_url.slice(), text) else {
+            return;
+        };
+        for &original in source_map.mappings.original() {
+            if let Some(offset) = self.offset_of(original) {
+                self.executable_units.set(offset as usize);
             }
-        } else if vm.transpiler.options.code_coverage
-            && let Some(source_map) = vm.source_mappings().get(self.source_url.slice())
-        {
-            // Not when `node:inspector` turned the profiler on: the printer then maps every brace.
-            for_each_distinct_mapping(&source_map, |mapping| {
-                if let Some(offset) = self.offset_of(mapping.generated) {
-                    self.executable_units.set(offset as usize);
-                }
-            });
         }
     }
 }
 
-/// Skips what the printer repeats at column 0 of a generated line that starts without a mapping.
-fn for_each_distinct_mapping(source_map: &ParsedSourceMap, mut each: impl FnMut(Mapping)) {
-    let mut previous_original = None;
-    source_map.for_each_mapping(|mapping| {
-        let original = (
-            mapping.original.lines.zero_based(),
-            mapping.original.columns.zero_based(),
-        );
-        if previous_original.replace(original) != Some(original) {
-            each(mapping);
-        }
-    });
-}
-
-/// The source map from parsing and printing `text`, if both succeed.
+/// The source map from parsing and printing `text`, the text JSC compiled, if both succeed.
+/// The one that errors use keeps the braces of blocks: a `using` is disposed of at the `}`.
 fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<ParsedSourceMap> {
     let arena = bun_alloc::Arena::new();
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
@@ -1029,7 +1013,6 @@ extern "C" fn ByteRangeMapping__generate(
     str_: &bun_core::String,
     source_contents_str: &bun_core::String,
     source_id: i32,
-    already_bundled: bool,
 ) {
     // SAFETY: thread_map() returns a pointer into this thread's owned Box<HashMap>;
     // valid for the lifetime of the thread, and we are the only mutable accessor on
@@ -1051,7 +1034,7 @@ extern "C" fn ByteRangeMapping__generate(
 
     let mut new_value =
         ByteRangeMapping::compute(source_contents_str, source_hash, source_id, source_url);
-    new_value.set_mapped_units_executable(source_contents.slice(), already_bundled);
+    new_value.set_mapped_units_executable(source_contents.slice());
     map.insert(hash, new_value);
 }
 

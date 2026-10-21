@@ -1357,7 +1357,7 @@ pub struct Options<'a> {
     pub minify_identifiers: bool,
     pub minify_syntax: bool,
     pub print_dce_annotations: bool,
-    /// Coverage lists every line the source map has, so the braces of blocks and classes stay out.
+    /// What the source map has is code to coverage, so the braces of blocks and classes stay out.
     pub code_coverage: bool,
 
     pub inline_require_and_import_errors: bool,
@@ -2179,7 +2179,9 @@ pub(crate) mod __gated_printer {
             stmts: &[Stmt],
             close_brace_loc: Option<bun_ast::Loc>,
         ) {
-            self.add_source_mapping_for_block_brace(loc);
+            if !self.options.code_coverage {
+                self.add_source_mapping(loc);
+            }
             self.print(b"{");
             if !stmts.is_empty() {
                 self.print_newline();
@@ -2189,8 +2191,8 @@ pub(crate) mod __gated_printer {
                 self.print_indent();
             }
             if let Some(cbl) = close_brace_loc {
-                if cbl.start > loc.start {
-                    self.add_source_mapping_for_block_brace(cbl);
+                if cbl.start > loc.start && !self.options.code_coverage {
+                    self.add_source_mapping(cbl);
                 }
             }
             self.print(b"}");
@@ -2379,6 +2381,7 @@ pub(crate) mod __gated_printer {
                                     temp_bindings.as_mut_slice(),
                                 ),
                                 is_single_line: true,
+                                close_brace_loc: bun_ast::Loc::EMPTY,
                             };
                             // `from_bump` wraps a `&mut T` as a non-null arena ref; here the
                             // pointee is a stack local but `print_binding` only reads it and
@@ -2444,13 +2447,6 @@ pub(crate) mod __gated_printer {
             }
             self.source_map_builder
                 .add_source_mapping(location, self.writer.slice());
-        }
-
-        #[inline]
-        pub(crate) fn add_source_mapping_for_block_brace(&mut self, location: bun_ast::Loc) {
-            if !self.options.code_coverage {
-                self.add_source_mapping(location);
-            }
         }
 
         #[inline]
@@ -2542,7 +2538,9 @@ pub(crate) mod __gated_printer {
 
             self.print_space();
 
-            self.add_source_mapping_for_block_brace(class.body_loc);
+            if !self.options.code_coverage {
+                self.add_source_mapping(class.body_loc);
+            }
             self.print(b"{");
             self.print_newline();
             self.indent();
@@ -2572,8 +2570,8 @@ pub(crate) mod __gated_printer {
             self.needs_semicolon = false;
             self.unindent();
             self.print_indent();
-            if class.close_brace_loc.start > class.body_loc.start {
-                self.add_source_mapping_for_block_brace(class.close_brace_loc);
+            if class.close_brace_loc.start > class.body_loc.start && !self.options.code_coverage {
+                self.add_source_mapping(class.close_brace_loc);
             }
             self.print(b"}");
         }
@@ -5018,9 +5016,9 @@ pub(crate) mod __gated_printer {
                 }
                 ExprData::EString(key_str) => {
                     let key_str = key_str.flattened(self.bump);
-                    self.add_source_mapping(key.loc);
                     if key_str.is_utf8() {
                         self.print_space_before_identifier();
+                        self.add_source_mapping(key.loc);
                         let mut allow_shorthand = true;
                         if !IS_JSON && lexer::is_identifier(key_str.slice8()) {
                             self.print_identifier(key_str.slice8());
@@ -5065,6 +5063,7 @@ pub(crate) mod __gated_printer {
                         }
                     } else if !IS_JSON && self.can_print_identifier_utf16(key_str.slice16()) {
                         self.print_space_before_identifier();
+                        self.add_source_mapping(key.loc);
                         self.print_identifier_utf16(key_str.slice16())
                             .expect("unreachable");
 
@@ -5104,6 +5103,7 @@ pub(crate) mod __gated_printer {
                             }
                         }
                     } else {
+                        self.add_source_mapping(key.loc);
                         let c = Self::best_quote_char_for_e_string(&key_str, false);
                         self.print(c);
                         self.print_string_characters_utf16(key_str.slice16(), c);

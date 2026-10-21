@@ -1202,8 +1202,9 @@ static EncodedJSValue defaultTeeAbortMicrotask(JSGlobalObject* globalObject, JSV
     RETURN_IF_EXCEPTION(scope, {});
     resolvePromise(globalObject, teeState->cancelPromise(), cancelResult);
     RETURN_IF_EXCEPTION(scope, {});
-    // Nobody holds cancelPromise unless a branch's cancel() was called: a source whose
-    // cancel() rejects must not report an unhandled rejection.
+    // Nobody holds cancelPromise unless a branch's cancel() was called, and a pending tee read
+    // settled it already: a source cancel() that rejects reports no unhandled rejection.
+    markPromiseAsHandled(vm, cancelResult);
     markPromiseAsHandled(vm, teeState->cancelPromise());
     return JSValue::encode(jsUndefined());
 }

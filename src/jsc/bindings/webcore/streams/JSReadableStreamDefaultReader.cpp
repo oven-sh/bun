@@ -193,6 +193,7 @@ static double drainQueueEntriesInto(JSC::VM& vm, JSGlobalObject* globalObject, J
     size_t queueLength = isByte ? byteController->m_queue.size() : defaultController->m_queue.size();
     // [[queueTotalSize]] is deliberately NOT decremented while draining (see above).
     unsigned written = 0;
+    double writtenSize = 0;
     for (unsigned i = 0; i < queueLength; ++i) {
         JSValue chunk;
         if (isByte) {
@@ -211,8 +212,7 @@ static double drainQueueEntriesInto(JSC::VM& vm, JSGlobalObject* globalObject, J
             chunk = JSUint8Array::create(globalObject, globalObject->typedArrayStructure(TypeUint8, resizable), WTF::move(buffer), byteOffset, byteLength);
             RETURN_IF_EXCEPTION(scope, size);
         } else {
-            // A copy on a body-clone tee branch (the previous iteration) can run user code that
-            // reads or cancels this branch: the queue and the state are re-read each iteration.
+            // The copy below runs user code (userJS: yes) that can read or cancel this branch.
             if (stream->m_state == ReadableStreamState::Errored) [[unlikely]] {
                 JSValue storedError = stream->m_storedError.get();
                 throwException(globalObject, scope, storedError ? storedError : jsUndefined());
@@ -220,30 +220,34 @@ static double drainQueueEntriesInto(JSC::VM& vm, JSGlobalObject* globalObject, J
             }
             if (defaultController->m_queue.isEmpty() || stream->m_state != ReadableStreamState::Readable) [[unlikely]]
                 break;
+            double entrySize = 0;
             {
                 WTF::Locker locker { defaultController->cellLock() };
                 auto& entry = defaultController->m_queue.first();
                 chunk = entry.value.get();
+                entrySize = entry.size;
                 defaultController->m_queue.removeFirst(locker);
             }
-            // Script readMany() on a body-clone tee branch gets copies (see dequeueChunkForRead).
-            // A failed copy errored the stream and reset this queue: stop with that error.
             if (auto* isolatingTee = teeBranchIsolatingChunks(defaultController)) [[unlikely]] {
                 chunk = isolateTeeBranchChunk(globalObject, isolatingTee, chunk);
                 RETURN_IF_EXCEPTION(scope, size);
                 if (!chunk) {
+                    if (stream->m_state == ReadableStreamState::Closed)
+                        break;
                     ASSERT(stream->m_state == ReadableStreamState::Errored);
                     JSValue storedError = stream->m_storedError.get();
                     throwException(globalObject, scope, storedError ? storedError : jsUndefined());
                     return size;
                 }
             }
+            writtenSize += entrySize;
         }
         into->putDirectIndex(globalObject, base + i, chunk);
         RETURN_IF_EXCEPTION(scope, size);
         written = i + 1;
     }
-    if (into->length() > base + written) {
+    if (written < queueLength) [[unlikely]] {
+        size = writtenSize;
         into->setLength(globalObject, base + written);
         RETURN_IF_EXCEPTION(scope, size);
     }

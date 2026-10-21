@@ -839,10 +839,9 @@ describe("#45782: a chunk read from one body is not aliased by its clone", () =>
     ).clone();
     await Bun.sleep(0);
     reader = clone.body!.getReader();
+    // The getter's nested read() calls take the other two chunks and close the branch.
     const result = await reader.readMany();
-    expect(result.done).toBe(false);
-    expect(result.value.length).toBeGreaterThanOrEqual(1);
-    expect(result.value.every((value: unknown) => value !== undefined)).toBe(true);
+    expect(result).toEqual({ value: [{ x: 1 }], size: 1, done: false });
     expect((await reader.read()).done).toBe(true);
   });
 
@@ -886,8 +885,78 @@ describe("#45782: a chunk read from one body is not aliased by its clone", () =>
     await Bun.sleep(0);
     reader = clone.body!.getReader();
     const result = await reader.readMany();
-    expect(result.value.length).toBe(1);
+    expect(result).toEqual({ value: [{ x: 1 }], size: 1, done: false });
     expect((await reader.read()).done).toBe(true);
+  });
+
+  test("a getter that cancels the branch and then throws during readMany()", async () => {
+    let reader!: ReadableStreamDefaultReader;
+    const clone = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue({
+            get x() {
+              reader.cancel();
+              throw new Error("boom");
+            },
+          });
+          controller.close();
+        },
+      }),
+    ).clone();
+    await Bun.sleep(0);
+    reader = clone.body!.getReader();
+    const result = await reader.readMany();
+    expect(result).toEqual({ value: [], size: 0, done: false });
+    expect((await reader.read()).done).toBe(true);
+  });
+
+  test("a typed-array chunk with an own property copies with its prototype and no crash", async () => {
+    const chunk = Buffer.from("hi") as Buffer & { id: number };
+    chunk.id = 1;
+    const view = new DataView(new ArrayBuffer(4)) as DataView & { id: number };
+    view.id = 2;
+    const clone = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(chunk);
+          controller.enqueue(view);
+          controller.close();
+        },
+      }),
+    ).clone();
+    const reader = clone.body!.getReader();
+    const copy = (await reader.read()).value as Buffer & { id?: number };
+    const viewCopy = (await reader.read()).value as DataView & { id?: number };
+    expect(Buffer.isBuffer(copy)).toBe(true);
+    expect(copy.toString()).toBe("hi");
+    expect(Object.keys(copy)).toEqual(["0", "1"]);
+    expect(copy.id).toBeUndefined();
+    expect(viewCopy).toBeInstanceOf(DataView);
+    expect(viewCopy.id).toBeUndefined();
+  });
+
+  test("a failed copy with a tee read pending on the source reports no unhandled rejection", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const source = new ReadableStream({ start(c) { c.enqueue(() => {}); }, pull() { return new Promise(() => {}); }, cancel() { throw new Error("cancel fails"); } });
+         const response = new Response(source);
+         const clone = response.clone();
+         await Bun.sleep(0);
+         clone.text().catch(e => console.log("clone", e.name));
+         await response.body.getReader().read().catch(e => console.log("original", e.name));
+         await Bun.sleep(0);
+         console.log("done");`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("original DataCloneError\nclone DataCloneError\ndone\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 
   test("a failed copy whose source cancel() throws reports no unhandled rejection", async () => {

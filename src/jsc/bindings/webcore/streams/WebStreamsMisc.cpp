@@ -248,19 +248,35 @@ JSValue structuredCloneStreamChunk(JSGlobalObject* globalObject, JSValue chunk)
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
+        // The view's own structure carries its prototype (Buffer, a subclass). A structure with
+        // own properties expects out-of-line storage the fresh cell has none of: then start from
+        // the intrinsic structure and set the prototype.
+        TypedArrayType type = typedArrayType(view->type());
         Structure* structure = view->structure();
-        switch (typedArrayType(view->type())) {
+        bool reuseStructure = !structure->outOfLineCapacity() && !structure->isDictionary();
+        if (!reuseStructure)
+            structure = globalObject->typedArrayStructure(type, false);
+        JSArrayBufferView* result = nullptr;
+        switch (type) {
 #define CLONE_TYPED_ARRAY(name) \
     case Type##name:            \
-        RELEASE_AND_RETURN(scope, JS##name##Array::create(globalObject, structure, WTF::move(copy), 0, byteLength / elementSize(Type##name)));
+        result = JS##name##Array::create(globalObject, structure, WTF::move(copy), 0, byteLength / elementSize(Type##name)); \
+        break;
             FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(CLONE_TYPED_ARRAY)
 #undef CLONE_TYPED_ARRAY
         case TypeDataView:
-            RELEASE_AND_RETURN(scope, JSDataView::create(globalObject, structure, WTF::move(copy), 0, byteLength));
-        case NotTypedArray:
+            result = JSDataView::create(globalObject, structure, WTF::move(copy), 0, byteLength);
             break;
+        case NotTypedArray:
+            RELEASE_ASSERT_NOT_REACHED();
         }
-        RELEASE_ASSERT_NOT_REACHED();
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!reuseStructure) {
+            JSValue prototype = view->getPrototypeDirect();
+            if (prototype != result->getPrototypeDirect())
+                result->setPrototypeDirect(vm, prototype);
+        }
+        return result;
     }
     if (auto* jsBuffer = dynamicDowncast<JSArrayBuffer>(chunk)) {
         ArrayBuffer* buffer = jsBuffer->impl();

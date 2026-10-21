@@ -306,10 +306,7 @@ JSValue JSReadableStreamDefaultController::dequeueChunkForRead(JSGlobalObject* g
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     ASSERT(!m_queue.isEmpty());
-    // A body-clone tee branch hands script a copy. The decision is read before the close step
-    // below clears the algorithm slots; the copy runs after the dequeue (it can run user code,
-    // and a re-entrant read must see the next chunk) and before the close-or-pull bookkeeping
-    // (a failed copy errors the stream, which resets this queue).
+    // Read before the close step below clears the algorithm slots.
     auto* isolatingTee = teeBranchIsolatingChunks(this);
     JSValue chunk;
     {
@@ -321,8 +318,7 @@ JSValue JSReadableStreamDefaultController::dequeueChunkForRead(JSGlobalObject* g
         RETURN_IF_EXCEPTION(scope, {});
         if (!chunk)
             return {};
-        // User code inside the copy can read the rest of the queue (which closes the stream)
-        // or cancel the branch. The bookkeeping below is for a stream that is still readable.
+        // The copy runs user code (userJS: yes) that can close or cancel this branch.
         if (m_stream->m_state != ReadableStreamState::Readable)
             return chunk;
     }
@@ -347,8 +343,6 @@ void JSReadableStreamDefaultController::pullSteps(JSGlobalObject* globalObject, 
         JSValue chunk = dequeueChunkForRead(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
         if (!chunk) {
-            // The copy failed (the branch is errored), or user code inside the copy closed the
-            // branch first and the error was a no-op.
             if (stream->m_state == ReadableStreamState::Closed)
                 RELEASE_AND_RETURN(scope, readRequest->closeSteps(globalObject));
             ASSERT(stream->m_state == ReadableStreamState::Errored);

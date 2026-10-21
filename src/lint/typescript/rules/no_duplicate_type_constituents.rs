@@ -32,7 +32,7 @@ fn all_same<T: Copy>(
     }
 }
 
-/// For the parts that are rarely written in two ways: the same but for whitespace and comments.
+/// For parts that are rarely written in two ways: true if they're the same apart from whitespace and comments.
 fn is_same_source<'a>(file: &'a File<'a>, a: Span, b: Span) -> bool {
     file.slice(a) == file.slice(b) || ast_utils::equal_tokens(file, a, b)
 }
@@ -114,8 +114,8 @@ fn is_same_tuple_elem<'a>(a: TupleElem<'a>, b: TupleElem<'a>) -> bool {
         && is_same_ast_node(a.ty(), b.ty())
 }
 
-/// Upstream's `isSameAstNode`: the two are written the same, but for whitespace, comments,
-/// parentheses and separators.
+/// Upstream's `isSameAstNode`: true if the two are written the same apart from whitespace, comments, parentheses and
+/// separators.
 fn is_same_ast_node<'a>(mut a: TypeNode<'a>, mut b: TypeNode<'a>) -> bool {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return false;
@@ -203,20 +203,20 @@ fn is_same_ast_node<'a>(mut a: TypeNode<'a>, mut b: TypeNode<'a>) -> bool {
         (TypeKind::Template(_), _) | (TypeKind::Typeof { .. }, _) | (TypeKind::Import { .. }, _) => {
             ast_utils::equal_tokens(a.file(), a, b)
         }
-        // Keywords and literals, which are the same only if their text is.
+        // Keywords and literals, which are only the same if their text is.
         _ => false,
     }
 }
 
-/// [`is_same_ast_node`] of a constituent and a later one. What the later one is a part of is not the same, and all that
-/// is around a type that is nested deeply would be compared with it to the end.
+/// [`is_same_ast_node`] of a constituent and a later one. A type that contains the later one can't be the same. Without
+/// this check, every ancestor of a deeply nested type would be compared with it to the end.
 fn is_repeated_by<'a>(earlier: TypeNode<'a>, later: TypeNode<'a>) -> bool {
     !earlier.span().contains(later.span()) && is_same_ast_node(earlier, later)
 }
 
-/// Whether tsgolint's scanner sees no `|` or `&` in `before_constituent`: from the start of the union or intersection to
-/// a constituent. The `}` that ends a substitution of a template type is a brace for it, so the `` ` `` that ends the
-/// template starts a string, to the next `` ` ``.
+/// True if tsgolint's scanner sees no `|` or `&` in `before_constituent`, which runs from the start of the union or
+/// intersection to a constituent. The scanner treats the `}` that ends a template type's substitution as a plain brace,
+/// so the `` ` `` that ends the template starts a string that runs to the next `` ` ``.
 fn is_separator_before_unseen<'a>(file: &'a File<'a>, before_constituent: Span) -> bool {
     let mut is_in_string = false;
     for token in file.tokens_in(before_constituent) {
@@ -232,7 +232,7 @@ fn is_separator_before_unseen<'a>(file: &'a File<'a>, before_constituent: Span) 
     true
 }
 
-/// `previous`: for [`DUPLICATE`], `Union` or `Intersection` and the constituent that it repeats.
+/// `previous` is for [`DUPLICATE`]: `Union` or `Intersection`, and the constituent that's repeated.
 fn report<'a>(
     cx: &Cx<'a, NoDuplicateTypeConstituents>,
     message: Message,
@@ -244,15 +244,15 @@ fn report<'a>(
     let is_union_or_intersection_token =
         |token: &Token<'a>| (token.is("&") || token.is("|")) && parent.contains(token.span());
 
-    // The `|` or `&` and the parentheses around the constituent, which go with it. tsgolint's constituent is the
-    // parenthesized type: it goes whole, with the comments and line breaks between its parentheses.
+    // The `|` or `&` and the parentheses around the constituent are removed with it. tsgolint's constituent is the
+    // parenthesized type, which is removed whole, including comments and line breaks inside its parentheses.
     let is_oxlint = cx.language().is_oxlint;
     let mut removed: SmallVec<[Span; 8]> = SmallVec::new();
     removed.push(match is_oxlint {
         true => constituent_node.outer_span(),
         false => constituent_node.span(),
     });
-    // tsgolint removes the `|` or `&` after the constituent where its scanner sees none before it.
+    // tsgolint removes the `|` or `&` after the constituent if its scanner sees none before it.
     let outer = constituent_node.outer_span();
     let is_before_unseen = is_oxlint
         && is_separator_before_unseen(file, Span::new(parent.start, outer.start))
@@ -295,14 +295,15 @@ fn report<'a>(
     }
 
     // oxlint points at the first of the two. tsgolint's constituent is the parenthesized type.
-    let place = match (is_oxlint, previous) {
+    let report_span = match (is_oxlint, previous) {
         (true, Some((_, previous))) => previous.outer_span(),
         (true, None) => constituent_node.outer_span(),
         (false, _) => Span::new(constituent_node.span().start, end),
     };
-    let mut report = cx.report(place, message).comments_apply_at(constituent_node.outer_span());
+    let mut report = cx.report(report_span, message).comments_apply_at(constituent_node.outer_span());
     if let Some((union_or_intersection, previous)) = previous {
-        // tsgolint 7.0 says it with its parentheses and with what is before it, from the end of the token before.
+        // tsgolint 7.0 prints it with its parentheses and everything before it, starting at the end of the previous
+        // token.
         let (file, outer) = (previous.file(), previous.outer_span());
         let text = match file.language().is_oxlint {
             true => file.slice(Span::new(file.end_of_token_before(outer.start), outer.end)),
@@ -319,8 +320,8 @@ fn report<'a>(
 struct Constituents<'a> {
     /// `Union` or `Intersection`
     tag: TypeTag,
-    /// The union is the type of an optional parameter.
-    is_of_optional_parameter: bool,
+    /// True if the union is an optional parameter's type.
+    is_optional_parameter_type: bool,
     unique_constituents: Vec<TypeNode<'a>>,
     cached_type_map: IdMap<Type<'a>, TypeNode<'a>>,
 }
@@ -339,8 +340,8 @@ impl<'a> Constituents<'a> {
             report(cx, DUPLICATE, constituent_node, Some((union_or_intersection, previous)));
         };
 
-        // The syntax is compared first, which is cheaper than to ask for the type. tsgolint 7.0 only compares the
-        // types: `{ a: 1 } | { a: 1 }` are two.
+        // Compare the syntax first, which is cheaper than getting the type. tsgolint 7.0 only compares the types, and
+        // `{ a: 1 } | { a: 1 }` are two types.
         if !cx.language().is_oxlint
             && let Some(&previous) = self.unique_constituents.iter().find(|it| is_repeated_by(**it, constituent_node))
         {
@@ -361,7 +362,7 @@ impl<'a> Constituents<'a> {
             return;
         }
 
-        if self.is_of_optional_parameter && ty.has_flags(TypeFlags::UNDEFINED) {
+        if self.is_optional_parameter_type && ty.has_flags(TypeFlags::UNDEFINED) {
             report(cx, UNNECESSARY, constituent_node, None);
         }
         self.unique_constituents.push(constituent_node);
@@ -385,8 +386,8 @@ impl NoDuplicateTypeConstituents {
         if matches!(parent, Node::Type(parent) if parent.tag() == tag) {
             return;
         }
-        // tsgolint asks only for the question token, and only a constructor has parameter properties.
-        let is_of_optional_parameter = tag == TypeTag::Union
+        // tsgolint only checks for the question token, and only a constructor has parameter properties.
+        let is_optional_parameter_type = tag == TypeTag::Union
             && matches!(parent, Node::Param(param) if param.is_optional()
                 && match cx.language().is_oxlint {
                     true => {
@@ -403,7 +404,7 @@ impl NoDuplicateTypeConstituents {
                 });
         let mut constituents = Constituents {
             tag,
-            is_of_optional_parameter,
+            is_optional_parameter_type,
             unique_constituents: Vec::new(),
             cached_type_map: IdMap::new(),
         };

@@ -80,7 +80,7 @@ const oxlint = { ".oxlintrc.json": `{ "rules": { "no-debugger": "error", "no-var
 
 describe.concurrent("without a config file", () => {
   test("the default format is pretty, which ends with a summary", async () => {
-    const [byDefault, named] = await Promise.all([
+    const [byDefault, explicit] = await Promise.all([
       lint({ "a.js": bad }, warnsAboutVar),
       lint({ "a.js": bad }, [...warnsAboutVar, "-f", "pretty"]),
     ]);
@@ -104,7 +104,7 @@ describe.concurrent("without a config file", () => {
     );
     expect(byDefault.stderr).toBe("Linted 1 file\n");
     expect(byDefault.exitCode).toBe(1);
-    expect(named).toEqual(byDefault);
+    expect(explicit).toEqual(byDefault);
   });
 
   test("a [lint] section in bunfig.toml doesn't change the default format", async () => {
@@ -239,15 +239,15 @@ describe.concurrent("rule names link to their docs pages", () => {
     ["oxlint", "stylish", "eslint(no-debugger)"],
   ] as const)("in a terminal: %s, %s", async (config, format, name) => {
     const project = { ...configs[config], ...files };
-    const [shown, piped] = await Promise.all([
+    const [terminal, piped] = await Promise.all([
       inTerminal(project, ["-f", format]),
       lint(project, ["-f", format], { FORCE_COLOR: "1" }),
     ]);
-    expect(shown.output).toContain(link("eslint/no-debugger", name));
+    expect(terminal.output).toContain(link("eslint/no-debugger", name));
     // Apart from the links, it matches colored output in a pipe.
     expect(piped.stdout).toContain("\x1b[");
     expect(piped.stdout).not.toContain("\x1b]8");
-    expect(lines(withoutLinks(shown.output))).toEqual(lines(piped.stdout + piped.stderr));
+    expect(lines(withoutLinks(terminal.output))).toEqual(lines(piped.stdout + piped.stderr));
   });
 
   test.skipIf(!hasTerminal)("the URL uses the plugin's docs directory, not its prefix", async () => {
@@ -256,24 +256,24 @@ describe.concurrent("rule names link to their docs pages", () => {
   });
 
   test.skipIf(!hasTerminal)("no links without colors or in an output file", async () => {
-    const [plain, refused, toFile] = await Promise.all([
+    const [plain, noColorFlag, toFile] = await Promise.all([
       inTerminal(files, [], { NO_COLOR: "1" }),
       inTerminal(files, ["--no-color"]),
       inTerminal(files, ["-o", "report.txt"]),
     ]);
     expect(plain.output).toContain("no-debugger");
-    expect(refused.output).toContain("no-debugger");
-    for (const { output } of [plain, refused, toFile]) expect(output).not.toContain("\x1b]8");
+    expect(noColorFlag.output).toContain("no-debugger");
+    for (const { output } of [plain, noColorFlag, toFile]) expect(output).not.toContain("\x1b]8");
   });
 
   test.each(["pretty", "stylish"])("no links in a pipe: %s", async format => {
-    const [plain, colored, asked] = await Promise.all([
+    const [plain, colored, colorFlag] = await Promise.all([
       lint(files, ["-f", format]),
       lint(files, ["-f", format], { FORCE_COLOR: "1" }),
       lint(files, ["-f", format, "--color"]),
     ]);
     expect(plain.stdout).not.toContain("\x1b");
-    for (const { stdout } of [colored, asked]) {
+    for (const { stdout } of [colored, colorFlag]) {
       expect(stdout).toContain("\x1b[");
       expect(stdout).not.toContain("\x1b]8");
       expect(Bun.stripANSI(stdout)).toBe(plain.stdout);
@@ -325,16 +325,16 @@ describe.concurrent("--fix prints what it fixed", () => {
   });
 
   test("also with an ESLint or oxlint config, and oxlint's stdout stays the same", async () => {
-    const [ofEslint, ofOxlint] = await Promise.all([
+    const [withEslint, withOxlint] = await Promise.all([
       lint({ ...eslint, "a.js": twice }, ["--fix"]),
       lint({ ...oxlint, "a.js": twice }, ["--fix"]),
     ]);
-    expect(ofEslint).toEqual({
+    expect(withEslint).toEqual({
       stdout: "",
       stderr: "Fixed 2 problems in 1 file\n✓ No problems in 2 files\n",
       exitCode: 0,
     });
-    expect({ ...ofOxlint, stdout: withoutTime(ofOxlint.stdout) }).toEqual({
+    expect({ ...withOxlint, stdout: withoutTime(withOxlint.stdout) }).toEqual({
       stdout: "✓ No problems in 1 file, fixed 1\n",
       stderr: "Fixed 2 problems in 1 file\n",
       exitCode: 0,

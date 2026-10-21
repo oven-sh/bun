@@ -39,7 +39,7 @@ impl Rule for NoStaticElementInteractions {
         let Some(jsx_el) = as_jsx_element(e) else {
             return;
         };
-        // `onClick={null}` is no handler, and neither is `onClick` alone.
+        // `onClick={null}` isn't a handler, and neither is a bare `onClick`.
         let is_handler = |value: AttributeValue| !matches!(value, AttributeValue::ExpressionContainer(e) if is_null_literal(e));
         let has_handler = |handler: &String| has_jsx_prop(jsx_el, handler).and_then(get_prop_value).is_some_and(is_handler);
         if jsx_el.attrs().is_empty() || !self.handlers.iter().any(has_handler) {

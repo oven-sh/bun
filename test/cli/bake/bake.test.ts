@@ -450,7 +450,18 @@ test.concurrent.each([
   );
   const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
 
-  expect(await get(url, "/missing")).toBe("200 1");
+  // One save can start the process twice on Windows, and each start prints its own port.
+  if (!isWindows) {
+    expect(await get(url, "/missing")).toBe("200 1");
+    return;
+  }
+  const deadline = Date.now() + 10_000;
+  let response = "";
+  while (response !== "200 1" && Date.now() < deadline) {
+    const latest = [...output.text.matchAll(/url: (http:\/\/\S+)/g)].at(-1)![1];
+    response = await get(latest, "/missing").catch(String);
+  }
+  expect(response).toBe("200 1");
 });
 
 // Creating a symlink on Windows needs a privilege that CI does not have.

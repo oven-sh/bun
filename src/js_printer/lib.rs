@@ -2920,7 +2920,7 @@ pub(crate) mod __gated_printer {
                     self.print_space_before_identifier();
                     self.print_symbol(self.options.hmr_ref);
                     if record.tag == ImportRecordTag::Builtin {
-                        self.print(b".builtin(");
+                        self.print(b".requireBuiltin(");
                     } else {
                         self.print(b".require(");
                     }
@@ -2978,8 +2978,6 @@ pub(crate) mod __gated_printer {
             }
 
             // External import()
-            self.add_source_mapping(record.range.loc);
-
             self.print_space_before_identifier();
 
             let preload = record.flags.contains(ImportRecordFlags::IMPORTS_CHUNK)
@@ -3576,6 +3574,7 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::ERequireString(e) => {
+                    self.add_source_mapping(expr.loc);
                     self.print_require_or_import_expr(
                         e.import_record_index,
                         e.unwrapped_id.is_some(),
@@ -3592,6 +3591,7 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print_space_before_identifier();
+                    self.add_source_mapping(expr.loc);
 
                     if let Some(require_ref) = self.options.require_ref {
                         self.print_symbol(require_ref);
@@ -3644,6 +3644,7 @@ pub(crate) mod __gated_printer {
                             self.print(b")");
                         }
                     } else {
+                        self.add_source_mapping(expr.loc);
                         self.print_require_or_import_expr(
                             e.import_record_index,
                             false,
@@ -4726,6 +4727,17 @@ pub(crate) mod __gated_printer {
                     && (self.options.minify_syntax || !self.options.has_run_symbol_renamer))
         }
 
+        /// Returns true if `key` must be printed as `[key]`. YAML and JSON5 keys can be any value.
+        /// A bare array or object key is a syntax error, and `minify_syntax` prints a boolean as `!0`.
+        pub(crate) fn property_key_must_be_computed(&self, key: &Expr) -> bool {
+            match &key.data {
+                ExprData::ENumber(e) => self.number_property_key_must_be_computed(e.value()),
+                ExprData::EBoolean(_) | ExprData::EBranchBoolean(_) => self.options.minify_syntax,
+                ExprData::EArray(_) | ExprData::EObject(_) => true,
+                _ => false,
+            }
+        }
+
         /// `E::ObjectJSON` (JSON-only): always printed in JSON shape.
         pub(crate) fn print_object_json(&mut self, e: &E::ObjectJSON) {
             if !self.stack_check.is_safe_to_recurse() {
@@ -4941,13 +4953,14 @@ pub(crate) mod __gated_printer {
 
             let key = item.key.expect("infallible: prop has key");
 
-            // Automatically print numbers that would cause a syntax error as computed properties
+            // Automatically print keys that would cause a syntax error as computed properties
             if !IS_JSON
                 && !item.flags.contains(js_ast::flags::Property::IsComputed)
-                && matches!(&key.data, ExprData::ENumber(e) if self.number_property_key_must_be_computed(e.value()))
+                && self.property_key_must_be_computed(&key)
             {
                 // "{ -1: 0 }" must be printed as "{ [-1]: 0 }"
                 // "{ 1/0: 0 }" must be printed as "{ [1/0]: 0 }"
+                // "{ {x: 1}: 0 }" must be printed as "{ [{x: 1}]: 0 }"
                 set_flag(&mut item.flags, js_ast::flags::Property::IsComputed, true);
             }
 
@@ -5392,7 +5405,6 @@ pub(crate) mod __gated_printer {
                 StmtData::SFunction(s) => {
                     self.print_indent();
                     self.print_space_before_identifier();
-                    self.add_source_mapping(stmt.loc);
                     let name = s.func.name.as_ref().unwrap_or_else(|| {
                         Output::panic(format_args!(
                             "Internal error: expected func to have a name ref"
@@ -5400,9 +5412,11 @@ pub(crate) mod __gated_printer {
                     });
                     let name_ref = name.ref_;
 
+                    // `stmt.loc` is what follows `export`.
                     if s.func.flags.contains(G::FnFlags::IsExport) {
                         self.print(b"export ");
                     }
+                    self.add_source_mapping(stmt.loc);
                     if s.func.flags.contains(G::FnFlags::IsAsync) {
                         self.print(b"async ");
                     }
@@ -5436,12 +5450,12 @@ pub(crate) mod __gated_printer {
 
                     self.print_indent();
                     self.print_space_before_identifier();
-                    self.add_source_mapping(stmt.loc);
                     let name_ref = s.class.class_name.as_ref().unwrap().ref_;
                     if s.is_export {
                         self.print(b"export ");
                     }
 
+                    self.add_source_mapping(stmt.loc);
                     self.print(b"class ");
                     self.add_source_mapping(s.class.class_name.as_ref().unwrap().loc);
                     let name_str = self.name_for_symbol(name_ref);
@@ -5470,7 +5484,9 @@ pub(crate) mod __gated_printer {
                 StmtData::SExportDefault(s) => {
                     self.print_indent();
                     self.print_space_before_identifier();
-                    self.add_source_mapping(stmt.loc);
+                    if let js_ast::StmtOrExpr::Expr(_) = s.value {
+                        self.add_source_mapping(stmt.loc);
+                    }
                     self.print(b"export default ");
 
                     match s.value {
@@ -5493,6 +5509,7 @@ pub(crate) mod __gated_printer {
                             return Ok(());
                         }
                         js_ast::StmtOrExpr::Stmt(s2) => {
+                            self.add_source_mapping(s2.loc);
                             match &s2.data {
                                 StmtData::SFunction(func) => {
                                     self.print_space_before_identifier();
@@ -5961,9 +5978,10 @@ pub(crate) mod __gated_printer {
 
                     if let Some(finally) = &s.finally {
                         self.print_space();
+                        self.add_source_mapping(finally.loc);
                         self.print(b"finally");
                         self.print_space();
-                        self.print_block(finally.loc, slice_of(finally.stmts), None);
+                        self.print_block(finally.body_loc, slice_of(finally.stmts), None);
                     }
 
                     self.print_newline();
@@ -6663,8 +6681,7 @@ pub(crate) mod __gated_printer {
             self.print_semicolon_if_needed();
             self.print_indent();
             self.print_space_before_identifier();
-            self.add_source_mapping(loc);
-            self.print_decl_stmt(is_export, kind, decls);
+            self.print_decl_stmt(loc, is_export, kind, decls);
         }
 
         /// The initializer of such a declarator, as a statement. Its value is
@@ -6786,6 +6803,7 @@ pub(crate) mod __gated_printer {
 
         pub(crate) fn print_decl_stmt(
             &mut self,
+            loc: bun_ast::Loc,
             is_export: bool,
             kind: S::Kind,
             decls: &[G::Decl],
@@ -6793,6 +6811,7 @@ pub(crate) mod __gated_printer {
             if is_export {
                 self.print(b"export ");
             }
+            self.add_source_mapping(loc);
             let tlm: TopLevelAndIsExport = if Self::MAY_HAVE_MODULE_INFO {
                 TopLevelAndIsExport { is_export }
             } else {
@@ -7645,7 +7664,6 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
             IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
         ),
         cover_lines_without_mappings: true,
-        approximate_input_line_count: tree.approximate_newline_count,
         prepend_count: IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
         line_offset_tables: match opts.line_offset_tables.take() {
             Some(table) => LineOffsetTables::Borrowed(table),

@@ -179,6 +179,9 @@ pub struct Options<'a> {
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
 
+    /// Inline the source file's paths for `import.meta.dir`, `.dirname`, `.file`, `.path`, `.url`.
+    pub inline_import_meta_paths: bool,
+
     /// When using react fast refresh or server components, the framework is
     /// able to customize what import sources are used.
     pub framework: Option<&'a options::Framework>, // TYPE_ONLY: was bun_runtime::bake::Framework
@@ -227,6 +230,7 @@ impl<'a> Default for Options<'a> {
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
+            inline_import_meta_paths: false,
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: false,
@@ -316,6 +320,7 @@ impl<'a> Options<'a> {
             transform_only: self.transform_only,
             import_meta_main_value: self.import_meta_main_value,
             lower_import_meta_main_for_node_js: self.lower_import_meta_main_for_node_js,
+            inline_import_meta_paths: self.inline_import_meta_paths,
             framework: self.framework,
             repl_mode: self.repl_mode,
             lower_toml_datetimes: self.lower_toml_datetimes,
@@ -391,6 +396,7 @@ impl<'a> Options<'a> {
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
+            inline_import_meta_paths: false,
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: loader == options::Loader::Toml,

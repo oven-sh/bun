@@ -99,6 +99,18 @@ fn module_preload_registration(
     Ok(code)
 }
 
+fn chunk_uses_import_meta_arg(chunk: &Chunk) -> bool {
+    chunk.compile_results_for_chunk.iter().any(|result| {
+        matches!(
+            result,
+            CompileResult::Javascript {
+                result: PrintResult::Result(printed),
+                ..
+            } if printed.uses_import_meta_arg
+        )
+    })
+}
+
 /// This runs after we've already populated the compile results
 pub(crate) fn post_process_js_chunk(
     ctx: GenerateChunkCtx,
@@ -361,10 +373,7 @@ pub(crate) fn post_process_js_chunk(
 
         break 'brk CompileResult::Javascript {
             source_index: Index::INVALID.value(),
-            result: PrintResult::Result(js_printer::PrintResultSuccess {
-                code: Box::default(),
-                source_map: None,
-            }),
+            result: PrintResult::Result(js_printer::PrintResultSuccess::default()),
             module_info: None,
         };
     };
@@ -441,20 +450,33 @@ pub(crate) fn post_process_js_chunk(
 
     // Add @bun comments and CJS wrapper start for each chunk when targeting Bun.
     let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun();
-    if is_bun {
-        if c.options.generate_bytecode_cache && output_format == options::OutputFormat::Cjs {
-            const INPUT: &[u8] =
-                b"// @bun @bytecode @bun-cjs\n(function(exports, require, module, __filename, __dirname) {";
-            j.push_static(INPUT);
-            line_offset.advance(INPUT);
-        } else if c.options.generate_bytecode_cache {
+    let has_bun_cjs_wrapper = c.chunk_has_bun_cjs_wrapper(chunk);
+    if has_bun_cjs_wrapper {
+        let mut push = |bytes: &'static [u8]| {
+            j.push_static(bytes);
+            line_offset.advance(bytes);
+        };
+        let bytecode = c.options.generate_bytecode_cache;
+        if chunk_uses_import_meta_arg(chunk) {
+            push(if bytecode {
+                b"// @bun @bytecode @bun-cjs\n(function(exports, require, module, __filename, __dirname, "
+            } else {
+                b"// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname, "
+            });
+            push(E::ImportMeta::CJS_WRAPPER_ARG);
+            push(b") {");
+        } else {
+            // One piece: `generate_isolated_hash` covers each piece's length, so a split moves `[hash]` names.
+            push(if bytecode {
+                b"// @bun @bytecode @bun-cjs\n(function(exports, require, module, __filename, __dirname) {"
+            } else {
+                b"// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {"
+            });
+        }
+    } else if is_bun {
+        if c.options.generate_bytecode_cache {
             j.push_static(b"// @bun @bytecode\n");
             line_offset.advance(b"// @bun @bytecode\n");
-        } else if output_format == options::OutputFormat::Cjs {
-            const INPUT: &[u8] =
-                b"// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {";
-            j.push_static(INPUT);
-            line_offset.advance(INPUT);
         } else {
             j.push_static(b"// @bun\n");
             line_offset.advance(b"// @bun\n");
@@ -749,7 +771,7 @@ pub(crate) fn post_process_js_chunk(
             }
         }
         options::OutputFormat::Cjs => {
-            if is_bun {
+            if has_bun_cjs_wrapper {
                 j.push_static(b"})\n");
                 line_offset.advance(b"})\n");
             }
@@ -1260,10 +1282,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
     if stmts.is_empty() {
         return CompileResult::Javascript {
             source_index,
-            result: PrintResult::Result(js_printer::PrintResultSuccess {
-                code: Box::default(),
-                source_map: None,
-            }),
+            result: PrintResult::Result(js_printer::PrintResultSuccess::default()),
             module_info: None,
         };
     }

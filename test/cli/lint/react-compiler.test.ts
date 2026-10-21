@@ -250,6 +250,22 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     expect(exit).toBe(1);
   });
 
+  test("an arrow function in a default can't be evaluated earlier if its body has a statement", async () => {
+    const { diagnostics, exit } = await report(small.arrows);
+    expect(diagnostics).toEqual(expected.reports.arrows.diagnostics);
+    // A `return` and an empty statement. An expression, an empty block and a directive aren't reported.
+    for (const path of ["arrows.jsx", "arrows.tsx"]) {
+      expect([path, locationsOf(diagnostics[path])]).toEqual([
+        path,
+        [
+          ["react(todo)", 1, 46],
+          ["react(todo)", 2, 51],
+        ],
+      ]);
+    }
+    expect(exit).toBe(1);
+  });
+
   test(
     "a long component is compiled",
     async () => {
@@ -555,6 +571,10 @@ describe.concurrent(
     test("on complete messages, suggestions, disable comments, and files the plugin doesn't compile", async () => {
       const { files, exitCode } = await messages(eslintSmall);
       expect(files).toEqual(expected.eslint.small);
+      const arrowsWithAStatement = ["1:46-1:68", "2:51-2:62"].map(
+        position =>
+          `react-hooks/todo ${position} Todo: (BuildHIR::node.lowerReorderableExpression) Expression type \`ArrowFunctionExpression\` cannot be safely reordered`,
+      );
       // Nothing is reported for `$FlowFixMe[react-rule-hook]` and `[react-rule-unsafe-ref]`, for a file with a
       // decorator, or for a component without a name.
       expect(briefly(files)).toEqual({
@@ -597,6 +617,10 @@ describe.concurrent(
             ? `react-hooks/${start}`
             : `react-hooks/${start}: (BuildHIR::node.lowerReorderableExpression) Expression type \`${kind}\` cannot be safely reordered`,
         ),
+        // An arrow function whose body has a `return`, and one with an empty statement. A directive is not a
+        // statement.
+        "arrows.jsx": arrowsWithAStatement,
+        "arrows.tsx": arrowsWithAStatement,
         // Two rules report at the same start position. They're ordered as in the config, regardless of where the
         // reports end.
         "react-by-its-name.jsx": [

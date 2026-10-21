@@ -1413,12 +1413,20 @@ fn is_reorderable_expression(
             let stmts = arrow.body.stmts.slice();
             if arrow.prefer_expr && stmts.len() == 1 {
                 if let ast::stmt::Data::SReturn(r) = &stmts[0].data {
-                    if let Some(v) = &r.value {
-                        return is_reorderable_expression(builder, v, false);
-                    }
+                    // The parser's visit pass makes `return undefined` a `return`.
+                    return r
+                        .value
+                        .as_ref()
+                        .is_none_or(|v| is_reorderable_expression(builder, v, false));
                 }
             }
-            stmts.is_empty()
+            // A directive or a comment is not a statement in upstream's tree.
+            stmts.iter().all(|stmt| {
+                matches!(
+                    stmt.data,
+                    ast::stmt::Data::SDirective(_) | ast::stmt::Data::SComment(_)
+                )
+            })
         }
         Data::ECall(call)
             if call.was_jsx_element && !builder.environment().config.jsx_can_be_reordered =>

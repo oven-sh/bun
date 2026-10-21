@@ -2211,21 +2211,14 @@ pub(crate) fn extra_supported_extensions<'h>(
     (host.extra_file_extensions().iter())
         .filter(move |it| allow_js || !it.1.is_javascript())
         .map(|it| &it.0[..])
+        // Not the `""` of `--loader :ts`: callers match a suffix, and every name ends with it.
+        .filter(|it| !it.is_empty())
         .filter(move |it| !builtins.iter().any(|group| group.contains(it)))
 }
 
 /// `FileExtensionIs`: a path that's nothing but the extension doesn't count.
 pub(crate) fn file_extension_is(path: &[u8], extension: &[u8]) -> bool {
     path.len() > extension.len() && path.ends_with(extension)
-}
-
-/// `file_extension_is` for an extension that may be one of `extra_supported_extensions`. The `""` of `--loader :ts`
-/// is a name with no extension, as `Host::script_kind` reads it: as a suffix it would be every name.
-pub(crate) fn supported_extension_is(path: &[u8], extension: &[u8]) -> bool {
-    if extension.is_empty() {
-        return bun_paths::extension(path).is_empty();
-    }
-    file_extension_is(path, extension)
 }
 
 /// `FileExtensionIsOneOf`

@@ -7,9 +7,9 @@ use crate::config_options::{Declaration, In, converted, is_enum, is_file_path, i
 use crate::json::{Json, TsConfigSourceFile};
 use crate::resolve::{
     Host, Options, ancestors, combine_paths, contains_path, displayed_path,
-    equate_string_case_insensitive, extra_supported_extensions, get_base_file_name,
-    get_path_components, get_relative_path_from_directory, inside, is_rooted_disk_path,
-    is_same_path, join, known_extension, remove_file_extension, supported_extension_is,
+    equate_string_case_insensitive, extra_supported_extensions, file_extension_is_one_of,
+    get_base_file_name, get_path_components, get_relative_path_from_directory, inside,
+    is_rooted_disk_path, is_same_path, join, known_extension, remove_file_extension,
     supported_extensions, to_lowercase_unicode_15, to_path, typescript_path,
 };
 use crate::session::Session;
@@ -280,7 +280,7 @@ impl Roots {
             .extension_groups
             .iter()
             .any(|group| group.iter().any(|it| has_extension(it)))
-            || (self.extra_extensions.iter()).any(|it| supported_extension_is(path, it));
+            || self.extra_extensions.iter().any(|it| has_extension(it));
         let whole = PathParts {
             directory,
             name: b"",
@@ -1702,9 +1702,7 @@ fn match_files(
             Listed {
                 files: files
                     .into_iter()
-                    .filter(|file| {
-                        (self.extensions.iter()).any(|it| supported_extension_is(file, it))
-                    })
+                    .filter(|file| file_extension_is_one_of(file, self.extensions))
                     .filter_map(|file| {
                         let name = &file[..];
                         let index = self.files.matches_file(PathParts { directory, name })?;

@@ -178,16 +178,17 @@ const entries: Entry[] = [
     }),
   })),
   {
-    // `""` is the extension of a name with no `.`, not a suffix of every name: `include` doesn't match `notes.txt`.
+    // `""` isn't a suffix for `include` to match: every name ends with it, and `notes.txt` would be in the program.
+    // A file with no extension is TypeScript when it's the entry point or imported.
     name: "--loader for files without an extension",
     wrong: "imported",
-    isIncluded: true,
+    isIncluded: false,
     loader: ["", "ts"],
     // `Bun.build` drops the `""` key.
     commands: withLoader.filter(command => command !== "Bun.build"),
-    main: () => ["main.ts"],
+    main: () => ["cli"],
     files: (isCorrect, pathsImport) => ({
-      "main.ts": `${pathsImport}import { n } from "./imported";\nexport const m: number = n;\n${run}`,
+      "cli": `${pathsImport}import { n } from "./imported";\nexport const m: number = n;\n${run}`,
       "imported": `export const n: number = ${value(isCorrect)};\n`,
       "notes.txt": `not a script\n`,
     }),

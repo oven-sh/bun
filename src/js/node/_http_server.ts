@@ -3105,7 +3105,7 @@ function accountQueuedHeaderBytes(res, queued) {
 function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
   callWriteHeadIfObservable(res, res[headerStateSymbol]);
   if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
-    updateHasBody(res, res.statusCode);
+    updateHasBody(res, (res.statusCode = validateStatusCode(res.statusCode)));
   }
   accountQueuedHeaderBytes(res, queued);
   if (!res._hasBody) {
@@ -3136,7 +3136,7 @@ function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
 function bufferPipelinedEnd(res, queued, chunk, encoding, callback) {
   callWriteHeadIfObservable(res, res[headerStateSymbol], true);
   if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
-    updateHasBody(res, res.statusCode);
+    updateHasBody(res, (res.statusCode = validateStatusCode(res.statusCode)));
   }
   accountQueuedHeaderBytes(res, queued);
   if (chunk && !res._hasBody) {
@@ -3535,7 +3535,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // the header state without deriving _hasBody and a later body write to
     // a 204/304 would reach the wire chunk-framed with no terminator.
     // updateHasBody only ever clears _hasBody, so this is idempotent.
-    updateHasBody(this, this.statusCode);
+    updateHasBody(this, (this.statusCode = validateStatusCode(this.statusCode)));
   }
   if (chunk && !this._hasBody) {
     if (this[kRejectNonStandardBodyWrites]) {
@@ -3585,7 +3585,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
         // One native crossing for cork + writeHead + end (writeHeadAndEnd
         // corks natively around both phases).
         contentLength = handle.writeHeadAndEnd(
-          validateStatusCode(this[kSnapshotStatusCode] ?? this.statusCode),
+          this[kSnapshotStatusCode] ?? this.statusCode,
           this[kSnapshotStatusMessage] ?? this.statusMessage,
           renderedHeaders,
           chunk,
@@ -3746,7 +3746,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     // the header state without deriving _hasBody and a later body write to
     // a 204/304 would reach the wire chunk-framed with no terminator.
     // updateHasBody only ever clears _hasBody, so this is idempotent.
-    updateHasBody(this, this.statusCode);
+    updateHasBody(this, (this.statusCode = validateStatusCode(this.statusCode)));
   }
   if (chunk && !this._hasBody) {
     if (this[kRejectNonStandardBodyWrites]) {
@@ -3773,7 +3773,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
       const renderedHeaders = renderNativeHeaders(this);
       try {
         handle.writeHead(
-          validateStatusCode(this[kSnapshotStatusCode] ?? this.statusCode),
+          this[kSnapshotStatusCode] ?? this.statusCode,
           this[kSnapshotStatusMessage] ?? this.statusMessage,
           renderedHeaders,
           renderedAutoHeaders,
@@ -3973,7 +3973,7 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
       const renderedHeaders = renderNativeHeaders(this);
       try {
         handle.writeHead(
-          validateStatusCode(this[kSnapshotStatusCode] ?? this.statusCode),
+          this[kSnapshotStatusCode] ?? this.statusCode,
           this[kSnapshotStatusMessage] ?? this.statusMessage,
           renderedHeaders,
           renderedAutoHeaders,
@@ -4118,7 +4118,7 @@ ServerResponse.prototype.flushHeaders = function () {
       const renderedHeaders = renderNativeHeaders(this);
       try {
         handle.writeHead(
-          validateStatusCode(this[kSnapshotStatusCode] ?? this.statusCode),
+          this[kSnapshotStatusCode] ?? this.statusCode,
           this[kSnapshotStatusMessage] ?? this.statusMessage,
           renderedHeaders,
           renderedAutoHeaders,

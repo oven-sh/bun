@@ -28,6 +28,7 @@ import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";
+import { text } from "node:stream/consumers";
 import { connect as tlsConnect } from "node:tls";
 import { inspect } from "node:util";
 import tunnel from "tunnel";
@@ -7637,6 +7638,25 @@ it.each([
   try {
     const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
     expect(response.status).toBe(expected);
+  } finally {
+    server.close();
+  }
+});
+
+it.each(["write", "end"] as const)("%s(body) sends no body when statusCode is the string 304", async method => {
+  const server = http.createServer((req, res) => {
+    // @ts-expect-error
+    res.statusCode = "304";
+    res[method]("body");
+    res.end();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    socket.end("GET / HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n");
+    const [head, body] = (await text(socket)).split("\r\n\r\n");
+    expect(head).toStartWith("HTTP/1.1 304 Not Modified\r\n");
+    expect(body).toBe("");
   } finally {
     server.close();
   }

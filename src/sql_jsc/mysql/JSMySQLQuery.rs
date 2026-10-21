@@ -1,7 +1,7 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 
-use crate::jsc::codegen::{js_mysql_connection, js_mysql_query as js};
+use crate::jsc::codegen::js_mysql_query as js;
 use crate::jsc::{
     CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, VirtualMachine,
     VirtualMachineSqlExt as _, bun_string_jsc,
@@ -100,10 +100,9 @@ impl JSMySQLQuery {
                 "run must be called with 2 arguments connection and target"
             )));
         }
-        let Some(connection) = js_mysql_connection::from_js_ref(arguments[0]) else {
+        let Some(connection) = arguments[0].as_class_ref::<MySQLConnection>() else {
             return Err(global_object.throw(format_args!("connection must be a MySQLConnection")));
         };
-        let connection: &MySQLConnection = &connection;
         let target = arguments[1];
         if !target.is_object() {
             return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));

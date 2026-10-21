@@ -11,7 +11,6 @@
 use core::cell::Cell;
 use core::mem;
 
-use crate::generated_classes::PropertyName;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::store as blob_store;
@@ -804,15 +803,10 @@ impl Image {
 // shim, but these are *static* class accessors (no receiver). The C-ABI shim
 // is emitted by `.classes.ts` codegen (`generated_classes.rs`) and calls them
 // as `Image::<fn>(…)`, so they live in an inherent `impl` with the codegen's
-// exact arity — including the trailing opaque `PropertyName` it threads
-// through but `get_backend` ignores.
+// exact arity.
 
 impl Image {
-    pub(crate) fn get_backend(
-        global: &JSGlobalObject,
-        _: JSValue,
-        _: PropertyName,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn get_backend(global: &JSGlobalObject, _: JSValue) -> JsResult<JSValue> {
         // `BACKEND` only ever stores a valid `Backend as u8` discriminant
         // (`set_backend` round-trips through `Backend`); any other value is
         // corruption — trap.
@@ -824,12 +818,7 @@ impl Image {
         bun_core::String::static_(<&'static str>::from(&b)).to_js(global)
     }
 
-    pub(crate) fn set_backend(
-        global: &JSGlobalObject,
-        _: JSValue,
-        value: JSValue,
-        _: PropertyName,
-    ) -> bool {
+    pub(crate) fn set_backend(global: &JSGlobalObject, _: JSValue, value: JSValue) -> bool {
         match value.to_enum::<codecs::Backend>(global, "Bun.Image.backend") {
             Ok(b) => {
                 codecs::BACKEND.store(b as u8, core::sync::atomic::Ordering::Relaxed);

@@ -1257,11 +1257,7 @@ impl Expect {
     }
 
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen; static getter has no `&self`.
-    pub(crate) fn get_static_not(
-        global_this: &JSGlobalObject,
-        _: JSValue,
-        _: crate::generated_classes::PropertyName,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn get_static_not(global_this: &JSGlobalObject, _: JSValue) -> JsResult<JSValue> {
         let mut f = Flags::default();
         f.set_not(true);
         ExpectStatic::create(global_this, f)
@@ -1271,7 +1267,6 @@ impl Expect {
     pub(crate) fn get_static_resolves_to(
         global_this: &JSGlobalObject,
         _: JSValue,
-        _: crate::generated_classes::PropertyName,
     ) -> JsResult<JSValue> {
         let mut f = Flags::default();
         f.set_promise(Promise::Resolves);
@@ -1282,7 +1277,6 @@ impl Expect {
     pub(crate) fn get_static_rejects_to(
         global_this: &JSGlobalObject,
         _: JSValue,
-        _: crate::generated_classes::PropertyName,
     ) -> JsResult<JSValue> {
         let mut f = Flags::default();
         f.set_promise(Promise::Rejects);

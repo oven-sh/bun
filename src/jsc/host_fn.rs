@@ -467,29 +467,27 @@ pub fn host_fn_lazy_passthrough(
     f(global)
 }
 
-/// Static getter: `fn(&JSGlobalObject, JSValue, PropertyName) -> R`.
+/// Static getter: `fn(&JSGlobalObject, JSValue) -> R`.
 #[track_caller]
 #[inline]
-pub fn host_fn_static_getter<P, R: IntoHostFnReturn>(
+pub fn host_fn_static_getter<R: IntoHostFnReturn>(
     global: &JSGlobalObject,
     this_value: JSValue,
-    prop: P,
-    f: impl FnOnce(&JSGlobalObject, JSValue, P) -> R,
+    f: impl FnOnce(&JSGlobalObject, JSValue) -> R,
 ) -> JSValue {
-    host_fn_result(global, || f(global, this_value, prop))
+    host_fn_result(global, || f(global, this_value))
 }
 
-/// Static setter: `fn(&JSGlobalObject, JSValue, JSValue, PropertyName) -> R`.
+/// Static setter: `fn(&JSGlobalObject, JSValue, JSValue) -> R`.
 #[track_caller]
 #[inline]
-pub fn host_fn_static_setter<P, R: IntoHostSetterReturn>(
+pub fn host_fn_static_setter<R: IntoHostSetterReturn>(
     global: &JSGlobalObject,
     this_value: JSValue,
     value: JSValue,
-    prop: P,
-    f: impl FnOnce(&JSGlobalObject, JSValue, JSValue, P) -> R,
+    f: impl FnOnce(&JSGlobalObject, JSValue, JSValue) -> R,
 ) -> bool {
-    host_setter_result(global, || f(global, this_value, value, prop))
+    host_setter_result(global, || f(global, this_value, value))
 }
 
 /// Constructor: `fn(&JSGlobalObject, &CallFrame) -> R`.

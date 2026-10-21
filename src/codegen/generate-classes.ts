@@ -1869,8 +1869,8 @@ function generateRust(
         const id = rustSnakeIdent(getter);
         thunk(
           names.getter,
-          `(global: &JSGlobalObject, this_value: JSValue, prop: PropertyName) -> JSValue`,
-          `    host_fn::host_fn_static_getter(global, this_value, prop, |g, t, p| ${T}::${id}(g, t, p))`,
+          `(global: &JSGlobalObject, this_value: JSValue, _: PropertyName) -> JSValue`,
+          `    host_fn::host_fn_static_getter(global, this_value, |g, t| ${T}::${id}(g, t))`,
         );
       }
 
@@ -1878,8 +1878,8 @@ function generateRust(
         const id = rustSnakeIdent(setter);
         thunk(
           names.setter,
-          `(global: &JSGlobalObject, this_value: JSValue, value: JSValue, prop: PropertyName) -> bool`,
-          `    host_fn::host_fn_static_setter(global, this_value, value, prop, |g, t, v, p| ${T}::${id}(g, t, v, p))`,
+          `(global: &JSGlobalObject, this_value: JSValue, value: JSValue, _: PropertyName) -> bool`,
+          `    host_fn::host_fn_static_setter(global, this_value, value, |g, t, v| ${T}::${id}(g, t, v))`,
         );
       }
 
@@ -2013,11 +2013,10 @@ use core::ffi::c_void;
 #[allow(dead_code, unreachable_pub, unused)]
 use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 
-/// \`JSC::PropertyName\` — opaque pointer-sized handle (UniquedStringImpl*).
+/// \`JSC::PropertyName\`, the last argument of a custom getter or setter (UniquedStringImpl*).
 #[allow(dead_code, unreachable_pub, unused)]
 #[repr(transparent)]
-#[derive(Clone, Copy)]
-pub struct PropertyName(pub *const c_void);
+pub struct PropertyName(*const c_void);
 `;
 
 function generateLazyClassStructureHeader(typeName, { klass = {}, proto = {} }) {

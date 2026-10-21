@@ -474,10 +474,16 @@ describe("malformed PNG structure", () => {
   });
 
   test("maxPixels also bounds what an iCCP chunk inflates to", async () => {
-    const iccp = Buffer.concat([Buffer.from("icc\0\0"), zlib.deflateSync(Buffer.alloc(1 << 20))]);
-    const png = Buffer.concat([tinyPng.subarray(0, 33), pngChunk("iCCP", iccp), tinyPng.subarray(33)]);
+    const withProfile = (size: number) => {
+      const iccp = Buffer.concat([Buffer.from("icc\0\0"), zlib.deflateSync(Buffer.alloc(size))]);
+      return Buffer.concat([tinyPng.subarray(0, 33), pngChunk("iCCP", iccp), tinyPng.subarray(33)]);
+    };
+    const png = withProfile(32 << 20);
     expect(await rgbaOf(png)).toStrictEqual(await rgbaOf(tinyPng));
     await expect(new Bun.Image(png, { maxPixels: 64 }).png().bytes()).rejects.toThrow(/decode failed/);
+    // A profile of an ordinary size is fine under any limit.
+    expect(await new Bun.Image(withProfile(1 << 20), { maxPixels: 64 }).metadata()).toMatchObject({ format: "png" });
+    await new Bun.Image(withProfile(1 << 20), { maxPixels: 64 }).png().bytes();
   });
 });
 

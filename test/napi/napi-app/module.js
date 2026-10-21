@@ -1958,10 +1958,9 @@ nativeTests.test_async_work_worker_terminate = async () => {
       .async_work_with_external_buffer(require("node:worker_threads").workerData);`,
     { eval: true, workerData: report },
   );
-  worker.once("error", error => {
-    throw error;
-  });
-  while (Atomics.load(report, 0) === 0) await new Promise(resolve => setImmediate(resolve));
+  const { promise: failed, reject } = Promise.withResolvers();
+  worker.once("error", reject);
+  while (Atomics.load(report, 0) === 0) await Promise.race([failed, new Promise(resolve => setImmediate(resolve))]);
   console.log("terminate() resolved with", await worker.terminate());
   console.log("finalized during execute():", report[1]);
 };
@@ -1975,10 +1974,9 @@ nativeTests.test_gated_calls_worker_terminate = async () => {
       .gated_calls_until_terminated(require("node:worker_threads").workerData);`,
     { eval: true, workerData: report },
   );
-  worker.once("error", error => {
-    throw error;
-  });
-  while (Atomics.load(report, 0) === 0) await new Promise(resolve => setImmediate(resolve));
+  const { promise: failed, reject } = Promise.withResolvers();
+  worker.once("error", reject);
+  while (Atomics.load(report, 0) === 0) await Promise.race([failed, new Promise(resolve => setImmediate(resolve))]);
   console.log("terminate() resolved with", await worker.terminate());
   console.log("napi_throw:", report[1], "exception pending:", report[2]);
 };

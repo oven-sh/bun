@@ -115,8 +115,9 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
 
     // SAFETY: ctx is valid.
     let _ = unsafe { spng_set_crc_action(ctx, SPNG_CRC_USE, SPNG_CRC_USE) };
-    // iCCP, zTXt and iTXt may inflate to at most the size of the largest RGBA buffer allowed.
-    let max_inflated = max_pixels.saturating_mul(4).min(i32::MAX as u64) as usize;
+    // iCCP, zTXt and iTXt may inflate to at most the size of the largest RGBA buffer allowed, but
+    // never less than libpng's default of 8 MB, so a small `maxPixels` still takes any usual profile.
+    let max_inflated = max_pixels.saturating_mul(4).clamp(8 << 20, i32::MAX as u64) as usize;
     // SAFETY: ctx is valid.
     let _ = unsafe { spng_set_chunk_limits(ctx, max_inflated, usize::MAX) };
     // SAFETY: ctx is valid; bytes outlives the ctx (freed at end of scope).

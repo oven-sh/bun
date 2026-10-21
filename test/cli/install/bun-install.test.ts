@@ -16700,6 +16700,34 @@ describe.concurrent("a relative --cwd is applied once", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A second `..` doesn't fail. It leaves the project that was named and runs in the one above it.
+  it.each([
+    [["update", "--cwd", ".."], "+ inner-dep@inner-dep"],
+    [["--cwd=..", "update"], "+ inner-dep@inner-dep"],
+    [["why", "inner-dep", "--cwd", ".."], "inner-dep@inner-dep\n  └─ inner (requires file:./inner-dep)\n"],
+    [["--cwd=..", "why", "inner-dep"], "inner-dep@inner-dep\n  └─ inner (requires file:./inner-dep)\n"],
+  ])("bun %j in a subdirectory of a project that is inside another project", async (cmd, expected) => {
+    using dir = tempDir("install-cwd-parent", {
+      "package.json": JSON.stringify({ name: "outer", dependencies: { "outer-dep": "file:./outer-dep" } }),
+      "outer-dep/package.json": JSON.stringify({ name: "outer-dep", version: "1.0.0" }),
+      "inner/package.json": JSON.stringify({ name: "inner", dependencies: { "inner-dep": "file:./inner-dep" } }),
+      "inner/inner-dep/package.json": JSON.stringify({ name: "inner-dep", version: "1.0.0" }),
+      "inner/scripts/.keep": "",
+    });
+    const outer = String(dir);
+    const inner = join(outer, "inner");
+    for (const project of [outer, inner]) {
+      expect((await bunIn(project, ["install"])).exitCode).toBe(0);
+      await rm(join(project, "node_modules"), { recursive: true });
+    }
+
+    const { stdout, stderr, exitCode } = await bunIn(join(inner, "scripts"), cmd);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain(expected);
+    expect(await exists(join(outer, "node_modules"))).toBeFalse();
+    expect(exitCode).toBe(0);
+  });
+
   // With no package.json anywhere above, both write one and start over.
   it.each(["link", "unlink"])("bun --cwd=fresh %s", async subcommand => {
     using dir = tempDir("install-cwd-relative-link", { "fresh/.keep": "" });

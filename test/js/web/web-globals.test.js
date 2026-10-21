@@ -422,6 +422,72 @@ describe.concurrent("byte order mark at the first dialog read of stdin", () => {
   });
 });
 
+// TEMPORARY, removed before this change leaves draft. It records what a PowerShell pipe writes to the stdin of a Bun
+// child on Windows. Each case fails on purpose: the failure output is the record.
+describe.skipIf(!isWindows)("what a PowerShell pipe writes to the stdin of a Bun child", () => {
+  // -File and param(): nothing is quoted into a command line.
+  const driver = `
+param($bun, $dir, $codePage)
+$ErrorActionPreference = "Stop"
+if ($codePage) { [Console]::InputEncoding = [System.Text.Encoding]::GetEncoding([int]$codePage) }
+$rows = [ordered]@{}
+function Probe($name) {
+  $rows[$name] = [ordered]@{
+    consoleInputCodePage = [Console]::InputEncoding.CodePage
+    consoleInputPreamble = [Console]::InputEncoding.GetPreamble().Length
+    outputEncoding = $OutputEncoding.WebName
+    outputEncodingPreamble = $OutputEncoding.GetPreamble().Length
+    hex = @('y' | & $bun (Join-Path $dir hex.js))[-1]
+    hexOfTwoLines = @('y', 'y' | & $bun (Join-Path $dir hex.js))[-1]
+    confirm = @('y' | & $bun (Join-Path $dir confirm.js))[-1]
+    prompt = @('yes' | & $bun (Join-Path $dir prompt.js))[-1]
+  }
+}
+Probe "default"
+$OutputEncoding = [System.Text.Encoding]::UTF8
+Probe "utf8"
+[ordered]@{ version = $PSVersionTable.PSVersion.ToString(); rows = $rows } | ConvertTo-Json -Compress -Depth 4
+`;
+  // "shared": the console of the test runner. A code page: a console of the shell's own, set to that code page.
+  const consoles = ["shared", "437", "65001"];
+  const cases = ["powershell", "pwsh"].flatMap(shell => consoles.map(codePage => [shell, codePage]));
+
+  test.each(cases)(
+    "%s, console: %s",
+    async (shell, codePage) => {
+      using dir = tempDir("dialog-mark-powershell", {
+        "driver.ps1": driver,
+        "hex.js": `console.log(Buffer.from(await Bun.stdin.bytes()).toString("hex"));`,
+        "confirm.js": `const answer = confirm("ok?"); console.log("\\n" + answer);`,
+        "prompt.js": `const answer = prompt("q"); console.log("\\n" + JSON.stringify(answer).replaceAll("\\uFEFF", "<U+FEFF>"));`,
+      });
+      const ownConsole = codePage !== "shared";
+      await using proc = spawn({
+        cmd: [
+          shell,
+          "-NoProfile",
+          "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          require("path").join(String(dir), "driver.ps1"),
+          bunExe(),
+          String(dir),
+          ...(ownConsole ? [codePage] : []),
+        ],
+        env: bunEnv,
+        windowsHide: ownConsole,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ shell, codePage, exitCode, stderr, stdout }).toEqual({});
+    },
+    60_000,
+  );
+});
+
 test("confirm (yes) unix newline", async () => {
   const proc = spawn({
     cmd: [bunExe(), require("path").join(import.meta.dir, "./confirm-fixture.js")],

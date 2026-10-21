@@ -394,6 +394,22 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("Bun.$, Bun.sql, Bun.postgres and Bun.SQL are created once", async () => {
+      const script = `
+        for (const name of ["$", "sql", "postgres", "SQL"]) console.log(name, Bun[name] === Bun[name], Object.isExtensible(Bun[name]));
+        try {
+          await Bun.$\`exit 3\`.quiet();
+        } catch (error) {
+          console.log(error instanceof Bun.$.ShellError);
+        }
+      `;
+      expect(await run("*", ["-e", script])).toEqual({
+        stdout: "$ true false\nsql true false\npostgres true false\nSQL true false\ntrue\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     test("jest.useFakeTimers() marks setTimeout", async () => {
       using dir = tempDir("immutable-globals", {
         "timers.test.js": `

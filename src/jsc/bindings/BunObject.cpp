@@ -398,9 +398,15 @@ static EncodedJSValue lazyBunObjectValue(JSGlobalObject* lexicalGlobalObject, En
     auto scope = DECLARE_THROW_SCOPE(vm);
     // A CustomValue getter's thisValue is the property's owner, not the receiver.
     JSObject* bunObject = JSValue::decode(thisValue).getObject();
-    JSValue value = create(vm, defaultGlobalObject(bunObject->globalObject()));
+    auto* globalObject = defaultGlobalObject(bunObject->globalObject());
+    JSValue value = create(vm, globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    bunObject->putDirect(vm, propertyName, value, PropertyAttribute::DontDelete | 0);
+    {
+        JSC::AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+        bunObject->putDirect(vm, propertyName, value, PropertyAttribute::DontDelete | 0);
+    }
+    if (value.isObject())
+        globalObject->didCreateBuiltin(vm, asObject(value));
     return JSValue::encode(value);
 }
 

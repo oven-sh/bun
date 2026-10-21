@@ -1,5 +1,7 @@
 #include <root.h>
 #include <JavaScriptCore/ArgList.h>
+#include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSGlobalObjectInlines.h>
 
 // SUPPRESS_ASAN: MarkedArgumentBuffer's inline buffer (first 8 entries) relies on
 // JSC's conservative stack scan to keep its values alive. ASAN's
@@ -17,4 +19,14 @@ extern "C" SUPPRESS_ASAN void MarkedArgumentBuffer__run(
 extern "C" void MarkedArgumentBuffer__append(void* args, JSC::EncodedJSValue value)
 {
     static_cast<JSC::MarkedArgumentBuffer*>(args)->append(JSC::JSValue::decode(value));
+}
+
+extern "C" size_t MarkedArgumentBuffer__size(void* args)
+{
+    return static_cast<JSC::MarkedArgumentBuffer*>(args)->size();
+}
+
+extern "C" JSC::EncodedJSValue MarkedArgumentBuffer__constructArray(void* args, JSC::JSGlobalObject* globalObject)
+{
+    return JSC::JSValue::encode(JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), *static_cast<JSC::MarkedArgumentBuffer*>(args)));
 }

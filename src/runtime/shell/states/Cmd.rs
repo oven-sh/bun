@@ -725,11 +725,7 @@ impl Cmd {
                 let global = interp
                     .global_this_ref()
                     .expect("JS values not allowed in this context");
-                let idx = val.idx as usize;
-                if idx >= interp.jsobjs.len() {
-                    return Err(global.throw(format_args!("Invalid JS object reference in shell")));
-                }
-                let jsval = interp.jsobjs[idx];
+                let jsval = interp.jsobj(global, val.idx)?;
 
                 if let Some(buf) = jsval.as_array_buffer(global) {
                     if flags.stdin() {

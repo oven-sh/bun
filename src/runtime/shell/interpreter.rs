@@ -33,6 +33,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use bun_sys::{self, Fd};
 
+pub(crate) use crate::generated_classes::js_ShellInterpreter as js;
 pub(crate) use crate::shell::env_map::EnvMap;
 use crate::shell::io::IO;
 use crate::shell::states::assigns::Assigns;
@@ -276,18 +277,6 @@ pub(crate) struct Interpreter {
 
     pub args: JsCell<Box<ShellArgs>>,
 
-    /// JS objects used as input for the shell script. Owned storage —
-    /// `create_shell_interpreter` moves the parsed-script's vec in here.
-    ///
-    /// GC liveness: this `Vec` is heap storage invisible to the conservative
-    /// scan, but it is a duplicate of a rooted copy — `Bun__createShellInterpreter`
-    /// (ShellBindings.cpp) copies the same values into the C++
-    /// `JSShellInterpreter` wrapper's `jsvalueArray` (`valuesArray: true` in
-    /// Shell.classes.ts), which the generated `visitChildren` visits. The
-    /// wrapper outlives the run (`this_jsvalue` + `hasPendingActivity`), and
-    /// the mini-event-loop path always passes an empty vec.
-    pub(crate) jsobjs: Vec<crate::jsc::JSValue>,
-
     pub(crate) root_shell: JsCell<ShellExecEnv>,
     pub(crate) root_io: JsCell<IO>,
 
@@ -421,13 +410,12 @@ impl Interpreter {
     pub(crate) fn parse<'a>(
         arena: &'a bun_alloc::Arena,
         src: &'a [u8],
-        jsobjs: &'a mut [crate::jsc::JSValue],
+        jsobjs_len: u32,
         jsstrings_to_escape: &'a [bun_core::String],
         out_parser: &mut Option<bun_shell_parser::Parser<'a>>,
         out_lex_result: &mut Option<bun_shell_parser::LexResult<'a>>,
     ) -> crate::Result<bun_shell_parser::ast::Script<'a>> {
         use crate::shell::shell_body::{LexerAscii, LexerUnicode, ParseError, Parser};
-        let jsobjs_len = jsobjs.len() as u32;
         let lex_result = if bun_core::is_all_ascii(src) {
             let mut lexer = LexerAscii::new(arena, src, jsstrings_to_escape, jsobjs_len);
             lexer.lex().map_err(crate::Error::from)?;
@@ -441,17 +429,7 @@ impl Interpreter {
             *out_lex_result = Some(lex_result);
             return Err(ParseError::Lex.into());
         }
-        let jsobjs_raw: &'a mut [bun_shell_parser::JSValueRaw] = {
-            let len = jsobjs.len();
-            let ptr = jsobjs.as_mut_ptr().cast::<bun_shell_parser::JSValueRaw>();
-            // SAFETY: `bun_jsc::JSValue` and `bun_shell_parser::JSValueRaw` are both
-            // `#[repr(transparent)]` over `usize` — see the `JSValueRaw` doc in
-            // `shell_parser/parse.rs`. Reinterpret in place via a typed pointer cast.
-            // Compute `len` before deriving the raw mut pointer so the shared
-            // reborrow inside `len()` does not stack on top of the Unique tag.
-            unsafe { core::slice::from_raw_parts_mut(ptr, len) }
-        };
-        *out_parser = Some(Parser::new(arena, lex_result, jsobjs_raw)?);
+        *out_parser = Some(Parser::new(arena, lex_result)?);
         Ok(out_parser.as_mut().unwrap().parse()?)
     }
 
@@ -476,7 +454,6 @@ impl Interpreter {
         ctx: *mut bun_options_types::context::ContextData,
         event_loop: EventLoopHandle,
         shargs: Box<ShellArgs>,
-        jsobjs: Vec<crate::jsc::JSValue>,
         export_env_: Option<EnvMap>,
         cwd_: Option<&[u8]>,
     ) -> ShellResult<Box<Interpreter>> {
@@ -557,7 +534,6 @@ impl Interpreter {
             free_list: JsCell::new(Vec::new()),
             event_loop,
             args: JsCell::new(shargs),
-            jsobjs,
             root_shell: JsCell::new(ShellExecEnv {
                 _buffered_stdout: Bufio::default(),
                 _buffered_stderr: Bufio::default(),
@@ -695,14 +671,7 @@ impl Interpreter {
             let arena = unsafe { &*arena_ptr };
             let mut out_parser: Option<bun_shell_parser::Parser<'_>> = None;
             let mut out_lex_result: Option<bun_shell_parser::LexResult<'_>> = None;
-            match Self::parse(
-                arena,
-                src,
-                &mut [],
-                &[],
-                &mut out_parser,
-                &mut out_lex_result,
-            ) {
+            match Self::parse(arena, src, 0, &[], &mut out_parser, &mut out_lex_result) {
                 Ok(s) => s,
                 Err(err) => {
                     let what = if from_source { "script " } else { "" };
@@ -727,14 +696,7 @@ impl Interpreter {
 
         // ── init ───────────────────────────────────────────────────────────
         let evtloop = EventLoopHandle::init_mini(std::ptr::from_mut(mini));
-        let interp = match Self::init(
-            std::ptr::from_mut(ctx),
-            evtloop,
-            shargs,
-            Vec::new(),
-            None,
-            cwd,
-        ) {
+        let interp = match Self::init(std::ptr::from_mut(ctx), evtloop, shargs, None, cwd) {
             Ok(i) => i,
             Err(e) => e.throw_mini(),
         };
@@ -1124,7 +1086,6 @@ impl Interpreter {
         size += self.args.get().memory_cost();
         size += self.root_shell.get().memory_cost();
         size += self.root_io.get().memory_cost();
-        size += self.jsobjs.len() * core::mem::size_of::<crate::jsc::JSValue>();
         let vm_args = self.vm_args_utf8.get();
         for arg in vm_args {
             size += arg.slice().len();
@@ -1157,6 +1118,22 @@ impl Interpreter {
         // deref. `global_this` is set exactly once by `create_shell_interpreter`
         // from a live `&JSGlobalObject`; the global is process-lifetime.
         Some(crate::jsc::JSGlobalObject::opaque_ref(g))
+    }
+
+    /// The `idx`th JS object interpolated into the script.
+    pub(crate) fn jsobj(
+        &self,
+        global: &crate::jsc::JSGlobalObject,
+        idx: u32,
+    ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
+        let jsobj = match js::jsobjs_get_cached(self.this_jsvalue.get()) {
+            Some(jsobjs) => jsobjs.get_direct_index(global, idx)?,
+            None => crate::jsc::JSValue::ZERO,
+        };
+        if jsobj.is_empty() {
+            return Err(global.throw(format_args!("Invalid JS object reference in shell")));
+        }
+        Ok(jsobj)
     }
 
     /// `mini` prints and exits(1); `js` raises a JS exception. Dispatch on
@@ -1267,7 +1244,6 @@ impl Interpreter {
 
     pub(crate) fn finish(&self, exit_code: ExitCode) -> Yield {
         use crate::jsc::JSValue;
-        use crate::jsc::generated::JSShellInterpreter;
 
         log!(
             "Interpreter(0x{:x}) finish {}",
@@ -1295,7 +1271,7 @@ impl Interpreter {
                     // `fail` already rejected the promise.
                     self.keep_alive.with_mut(|k| k.disable());
                     self.deref_root_shell_and_io_if_needed(true);
-                } else if let Some(resolve) = JSShellInterpreter::resolve_get_cached(this_jsvalue) {
+                } else if let Some(resolve) = js::resolve_get_cached(this_jsvalue) {
                     let loop_ = self.event_loop;
                     // `global_this` is `Some` on the `EventLoopHandle::Js` path
                     // (set by `create_shell_interpreter`); see `global_this_ref`.
@@ -1329,9 +1305,7 @@ impl Interpreter {
                         ),
                         Err(err) if !global_this.has_pending_termination_exception() => {
                             let error = global_this.take_error(err);
-                            if let Some(reject) =
-                                JSShellInterpreter::reject_get_cached(this_jsvalue)
-                            {
+                            if let Some(reject) = js::reject_get_cached(this_jsvalue) {
                                 event_loop.run_callback(
                                     self.task_context(),
                                     reject,
@@ -1343,16 +1317,8 @@ impl Interpreter {
                         }
                         Err(_) => {}
                     }
-                    JSShellInterpreter::resolve_set_cached(
-                        this_jsvalue,
-                        global_this,
-                        JSValue::UNDEFINED,
-                    );
-                    JSShellInterpreter::reject_set_cached(
-                        this_jsvalue,
-                        global_this,
-                        JSValue::UNDEFINED,
-                    );
+                    js::resolve_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
+                    js::reject_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
                 }
             }
         } else {
@@ -1405,7 +1371,6 @@ impl Interpreter {
     /// Take the pending exception and set `failed`; `Some` when the promise still has to be rejected.
     fn take_failure(&self) -> Option<(crate::jsc::JSValue, crate::jsc::JSValue)> {
         use crate::jsc::JSValue;
-        use crate::jsc::generated::JSShellInterpreter;
 
         // Mini event loop: `Interpreter::throw` prints and exits instead.
         let global_this = self.global_this_ref()?;
@@ -1438,9 +1403,9 @@ impl Interpreter {
         if this_jsvalue == JSValue::ZERO {
             return None;
         }
-        let reject = JSShellInterpreter::reject_get_cached(this_jsvalue);
-        JSShellInterpreter::resolve_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
-        JSShellInterpreter::reject_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
+        let reject = js::reject_get_cached(this_jsvalue);
+        js::resolve_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
+        js::reject_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
         Some((reject?, error))
     }
 
@@ -3045,29 +3010,12 @@ pub(crate) fn unreachable_state(context: &str, state: &str) -> ! {
 // ─── createShellInterpreter ─────────────────────────────────────────────────
 // Host fn for `Bun.$` template tag — `BunObject_callback_createShellInterpreter`.
 
-// C++ side (`ShellBindings.cpp`) takes `void* ptr` — `Interpreter` is opaque
-// across the boundary, layout is irrelevant. Defined `extern "C" SYSV_ABI`.
-bun_jsc::jsc_abi_extern! {
-    #[allow(improper_ctypes)]
-    // PRECONDITION: `ptr` must point to a live `Interpreter` — C++ calls back
-    // into `ShellInterpreter__estimatedSize(ptr)` which dereferences it, and
-    // the JS wrapper takes ownership of the allocation (freed via `finalize`).
-    // Cannot be `safe fn`: `NonNull` alone does not encode points-to-valid-T.
-    fn Bun__createShellInterpreter(
-        global: *const crate::jsc::JSGlobalObject,
-        ptr: *mut Interpreter,
-        parsed_shell_script: crate::jsc::JSValue,
-        resolve: crate::jsc::JSValue,
-        reject: crate::jsc::JSValue,
-    ) -> crate::jsc::JSValue;
-}
-
 pub(crate) fn create_shell_interpreter(
     global: &crate::jsc::JSGlobalObject,
     callframe: &crate::jsc::CallFrame,
 ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
     use crate::jsc::{ArgumentsSlice, JsClass as _};
-    use crate::shell::parsed_shell_script::ParsedShellScript;
+    use crate::shell::parsed_shell_script::{self, ParsedShellScript};
 
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let vm = global.bun_vm();
@@ -3097,7 +3045,7 @@ pub(crate) fn create_shell_interpreter(
         )));
     }
 
-    let (shargs, jsobjs, quiet, cwd, export_env) = parsed_shell_script.take(global);
+    let (shargs, quiet, cwd, export_env) = parsed_shell_script.take(global);
 
     let cwd_slice = cwd.as_ref().map(|c| c.to_utf8());
 
@@ -3109,13 +3057,12 @@ pub(crate) fn create_shell_interpreter(
         core::ptr::null_mut(),
         event_loop,
         shargs,
-        jsobjs,
         export_env,
         cwd_slice.as_ref().map(|c| c.slice()),
     ) {
         ShellResult::Ok(i) => i,
         ShellResult::Err(e) => {
-            // shargs/jsobjs were consumed by `init` and dropped on its error
+            // shargs was consumed by `init` and dropped on its error
             // path; export_env likewise.
             return Err(e.throw_js(global));
         }
@@ -3132,13 +3079,12 @@ pub(crate) fn create_shell_interpreter(
             .set(std::ptr::from_ref::<crate::jsc::JSGlobalObject>(global).cast_mut());
         it.estimated_size_for_gc
             .set(it.compute_estimated_size_for_gc());
-        let js_value = Bun__createShellInterpreter(
-            global,
-            interpreter,
-            parsed_shell_script_js,
-            resolve,
-            reject,
-        );
+        let js_value = js::to_js(interpreter, global);
+        js::resolve_set_cached(js_value, global, resolve);
+        js::reject_set_cached(js_value, global, reject);
+        if let Some(jsobjs) = parsed_shell_script::js::jsobjs_get_cached(parsed_shell_script_js) {
+            js::jsobjs_set_cached(js_value, global, jsobjs);
+        }
         it.this_jsvalue.set(js_value);
         it.keep_alive.with_mut(|k| {
             // `bun_vm_ptr()` is the live per-thread VM singleton.

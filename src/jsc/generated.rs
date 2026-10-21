@@ -260,5 +260,3 @@ macro_rules! js_class_module {
 js_class_module!(JSBlob      = "Blob"      as crate::webcore_types::Blob { name, stream });
 js_class_module!(JSResponse  = "Response"  { body, headers, url, statusText, stream });
 js_class_module!(JSRequest   = "Request"   { body, headers, url, signal, stream });
-// `values: ["resolve", "reject"]` in src/runtime/api/Shell.classes.ts.
-js_class_module!(JSShellInterpreter      = "ShellInterpreter"      { resolve, reject });

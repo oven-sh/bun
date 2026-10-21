@@ -10,8 +10,7 @@ export default [
     hasPendingActivity: true,
     configurable: false,
     klass: {},
-    values: ["resolve", "reject"],
-    valuesArray: true,
+    values: ["resolve", "reject", "jsobjs"],
     memoryCost: true,
     estimatedSize: true,
     proto: {

@@ -8,7 +8,7 @@ export default [
     finalize: true,
     hasPendingActivity: false,
     configurable: false,
-    valuesArray: true,
+    values: ["jsobjs"],
     memoryCost: true,
     estimatedSize: true,
     klass: {},

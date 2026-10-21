@@ -113,7 +113,13 @@ function WriteStream(fd): void {
 Object.defineProperty(WriteStream, "prototype", {
   get() {
     const Real = fs.WriteStream.prototype;
-    Object.defineProperty(WriteStream, "prototype", { value: Real });
+    // $toClass takes a function that has no `prototype` yet, and this one has the accessor.
+    Object.defineProperty(WriteStream, "prototype", {
+      value: Real,
+      writable: true,
+      enumerable: false,
+      configurable: false,
+    });
 
     WriteStream.prototype._refreshSize = function () {
       const oldCols = this.columns;
@@ -178,7 +184,7 @@ Object.defineProperty(WriteStream, "prototype", {
 
     return Real;
   },
-  enumerable: true,
+  enumerable: false,
   configurable: true,
 });
 

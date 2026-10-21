@@ -617,7 +617,10 @@ fn open_config(
             } else {
                 b"tsconfig.json"
             };
-            errors.push(ConfigError::new(5092, &[name]));
+            errors.push(ConfigError {
+                at: file.root_expression_span().map(at),
+                ..ConfigError::new(5092, &[name])
+            });
             Json::Object(Vec::new())
         }
     };

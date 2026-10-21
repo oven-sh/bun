@@ -567,6 +567,11 @@ impl<'s> TsConfigSourceFile<'s> {
             .filter(|&root| root_expression(&self.hir) == Some(root))
     }
 
+    /// The span of the first statement's expression.
+    pub(crate) fn root_expression_span(&self) -> Option<(u32, u32)> {
+        root_expression(&self.hir).map(|root| self.span(root))
+    }
+
     /// `ForEachPropertyAssignment`: returns the first property of `object` named `key` or `key2`. An empty `key2` is
     /// matched like any other name.
     pub fn property(&self, object: ExprId, key: &[u8], key2: Option<&[u8]>) -> Option<PropId> {

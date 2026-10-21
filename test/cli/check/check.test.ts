@@ -22812,6 +22812,15 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(nested).toMatchObject({ stdout: "", exitCode: 0 });
     });
 
+    test("reports a tsconfig.json whose root isn't an object at the root value", async () => {
+      using dir = project({ "tsconfig.json": `// Why?\n  [1, 2]\n`, "console.d.ts": "" });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        "tsconfig.json(2,3): error TS5092: The root value of a 'tsconfig.json' file must be an object.",
+      );
+      expect(exitCode).toBe(1);
+    });
+
     test("reports a project reference without a valid `path` or with an invalid `circular`", async () => {
       using dir = project({
         "tsconfig.json": `{

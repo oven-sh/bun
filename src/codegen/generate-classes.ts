@@ -873,46 +873,10 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     }
   }
   const DECLARE_VISIT_CHILDREN =
-    values.length || obj.estimatedSize || obj.valuesArray || Object.values(proto).find(a => a.cache === true)
+    values.length || obj.estimatedSize || Object.values(proto).find(a => a.cache === true)
       ? "DECLARE_VISIT_CHILDREN;\n"
       : "";
 
-  var weakOwner = "";
-  var weakInit = ``;
-  if (obj.hasPendingActivity) {
-    weakInit = `m_weakThis = JSC::Weak<${name}>(this, getOwner());`;
-    weakOwner = `
-    JSC::Weak<${name}> m_weakThis;
-
-    static bool hasPendingActivity(void* ctx);
-
-    class Owner final : public JSC::WeakHandleOwner {
-      public:
-          bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor&, ASCIILiteral* reason) final
-          {
-              auto* controller = uncheckedDowncast<${name}>(handle.slot()->asCell());
-              // m_ctx is null between wrapper creation and constructor return
-              // when constructNeedsThis is set; GC during that window must not
-              // call into the Zig hasPendingActivity with nullptr.
-              if (controller->wrapped() && ${name}::hasPendingActivity(controller->wrapped())) {
-                  if (reason) [[unlikely]] {
-                    *reason = "has pending activity"_s;
-                  }
-                  return true;
-              }
-
-              return false;
-          }
-          void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
-      };
-
-      static JSC::WeakHandleOwner* getOwner()
-      {
-          static NeverDestroyed<Owner> m_owner;
-          return &m_owner.get();
-      }
-      `;
-  }
   const final = obj.final ?? true;
 
   return `
@@ -921,9 +885,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         using Base = JSC::JSDestructibleObject;
         static constexpr unsigned StructureFlags = Base::StructureFlags;
         static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
-        ${obj.valuesArray ? `static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx, WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray);` : ""}
-        ${obj.valuesArray && obj.values && obj.values.length > 0 ? `static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx${obj.values.map(v => `, JSC::JSValue ${v}`).join("")});` : ""}
-        ${obj.valuesArray && obj.values && obj.values.length > 0 ? `static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx, WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray${obj.values.map(v => `, JSC::JSValue ${v}`).join("")});` : ""}
 
         DECLARE_EXPORT_INFO;
         template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -956,13 +917,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
             m_ctx = nullptr;
         }
 
-        ${
-          obj.valuesArray
-            ? `const WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>& values() const { return jsvalueArray; }
-        `
-            : ""
-        }
-
         static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
         // constexpr: the extern "C" <Type>__ptrOffset constants initialized from
         // this are then constant-initialized in every build mode (no static
@@ -981,46 +935,17 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 
         void* m_ctx { nullptr };
 
-        ${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr${obj.valuesArray ? ", WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray_" : ""})
-            : Base(vm, structure)${obj.valuesArray ? ", jsvalueArray(WTF::move(jsvalueArray_))" : ""}
+        ${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
+            : Base(vm, structure)
         {
             m_ctx = sinkPtr;
-            ${weakInit.trim()}
-        }
-
-        ${
-          obj.valuesArray && obj.values && obj.values.length > 0
-            ? `${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr${obj.values.map(v => `, JSC::JSValue ${v}`).join("")})
-            : Base(vm, structure)${obj.values.map(v => `\n            , m_${v}(${v}, JSC::WriteBarrierEarlyInit)`).join("")}
-        {
-            m_ctx = sinkPtr;
-            ${weakInit.trim()}
-        }`
-            : ""
-        }
-
-        ${
-          obj.valuesArray && obj.values && obj.values.length > 0
-            ? `${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray_${obj.values.map(v => `, JSC::JSValue ${v}`).join("")})
-            : Base(vm, structure), jsvalueArray(WTF::move(jsvalueArray_))${obj.values.map(v => `\n            , m_${v}(${v}, JSC::WriteBarrierEarlyInit)`).join("")}
-        {
-            m_ctx = sinkPtr;
-            ${weakInit.trim()}
-        }`
-            : ""
         }
 
         void finishCreation(JSC::VM&);
 
-        
-
-        ${weakOwner}
-
         ${DECLARE_VISIT_CHILDREN}
 
         ${renderCachedFieldsHeader(typeName, klass, proto, values)}
-        
-        ${obj.valuesArray ? "WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>> jsvalueArray;" : ""}
     };
   `.trim();
 }
@@ -1031,7 +956,7 @@ function cachedFieldTable(obj: ClassDefinition): { member: string; name: string 
 }
 
 function generateClassImpl(typeName, obj: ClassDefinition) {
-  const { klass: fields, finalize, proto, construct, estimatedSize, hasPendingActivity = false } = obj;
+  const { klass: fields, finalize, proto, construct, estimatedSize } = obj;
   const name = className(typeName);
   const cachedFields = cachedFieldTable(obj);
   // Below this the per-field inline expansion is no bigger than the table.
@@ -1067,23 +992,16 @@ ${cachedFields.map(({ member, name: n }) => `    { OBJECT_OFFSETOF(${name}, ${me
   // WriteBarrier<> fields on the JSCell, so addEventListener() etc. can add an edge from a
   // black wrapper to a white callback with no barrier firing.
   //
-  // Generated classes don't have that problem. Every GC-visible edge below is either:
+  // Generated classes don't have that problem. Every GC-visible edge below is
   //   - a WriteBarrier<Unknown> field on the JSCell, mutated only via .set(vm, thisObject, v)
   //     (see *SetCachedValue / cached getter paths), which calls vm.writeBarrier(thisObject, v)
   //     and re-greys thisObject if it was already marked (Heap::addToRememberedSet pushes it
-  //     back onto m_mutatorMarkStack so visitChildren runs again), or
-  //   - jsvalueArray, a FixedVector<WriteBarrier<>> populated before allocateCell() and never
-  //     resized.
+  //     back onto m_mutatorMarkStack so visitChildren runs again).
   //
-  // In all cases the write barrier (or immutability) guarantees correctness, so re-walking
+  // The write barrier guarantees correctness, so re-walking
   // every live instance of every generated type after each mutator yield is pure overhead.
   // Only visitChildren is needed.
-  //
-  // hasPendingActivity does not need visitChildren at all: liveness is decided by the
-  // WeakHandleOwner calling hasPendingActivity(wrapped()) directly during weak processing.
-  // The previous addOpaqueRoot(wrapped()) had no consumer (the Weak's context was nullptr,
-  // so containsOpaqueRoot(context) always checked for nullptr, never m_ctx).
-  if (DEFINE_VISIT_CHILDREN_LIST.length || estimatedSize || values.length || obj.valuesArray) {
+  if (DEFINE_VISIT_CHILDREN_LIST.length || estimatedSize || values.length) {
     DEFINE_VISIT_CHILDREN = `
 template<typename Visitor>
 void ${name}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
@@ -1101,7 +1019,6 @@ visitor.reportExtraMemoryVisited(size);
     }
     ${values}
     ${DEFINE_VISIT_CHILDREN_LIST}
-    ${obj.valuesArray ? "for (auto& value : thisObject->jsvalueArray) { visitor.append(value); }" : ""}
 }
 
 DEFINE_VISIT_CHILDREN(${name});
@@ -1110,17 +1027,6 @@ DEFINE_VISIT_CHILDREN(${name});
   }
 
   var output = CACHED_FIELD_TABLE;
-
-  if (hasPendingActivity) {
-    externs +=
-      `extern JSC_CALLCONV bool JSC_HOST_CALL_ATTRIBUTES ${symbolName(typeName, "hasPendingActivity")}(void* ptr);` +
-      "\n";
-    output += `
-    bool ${name}::hasPendingActivity(void* ctx) {
-        return ${symbolName(typeName, "hasPendingActivity")}(ctx);
-    }
-`;
-  }
 
   if (finalize) {
     output += `
@@ -1187,39 +1093,9 @@ void ${name}::finishCreation(VM& vm)
 }
 
 ${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
-  ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure, ctx${obj.valuesArray ? ", WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>()" : ""});
+  ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure, ctx);
   ptr->finishCreation(vm);
   return ptr;
-}
-
-${
-  obj.valuesArray
-    ? `${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx, WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray) {
-  ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure, ctx, WTF::move(jsvalueArray));
-  ptr->finishCreation(vm);
-  return ptr;
-}`
-    : ""
-}
-
-${
-  obj.valuesArray && obj.values && obj.values.length > 0
-    ? `${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx${obj.values.map(v => `, JSC::JSValue ${v}`).join("")}) {
-  ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure, ctx${obj.values.map(v => `, ${v}`).join("")});
-  ptr->finishCreation(vm);
-  return ptr;
-}`
-    : ""
-}
-
-${
-  obj.valuesArray && obj.values && obj.values.length > 0
-    ? `${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx, WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray${obj.values.map(v => `, JSC::JSValue ${v}`).join("")}) {
-  ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure, ctx, WTF::move(jsvalueArray)${obj.values.map(v => `, ${v}`).join("")});
-  ptr->finishCreation(vm);
-  return ptr;
-}`
-    : ""
 }
 
 extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${typeName}__fromJS(JSC::EncodedJSValue value)  {
@@ -1329,70 +1205,6 @@ extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__cr
       : ""
   }
   return JSValue::encode(instance);
-}
-
-${
-  obj.valuesArray
-    ? `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__createWithValues(Zig::GlobalObject* globalObject, void* ptr, void* markedArgumentBuffer) {
-  auto &vm = globalObject->vm();
-  JSC::Structure* structure = globalObject->${className(typeName)}Structure();
-  auto* args = static_cast<JSC::MarkedArgumentBuffer*>(markedArgumentBuffer);
-  WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>> jsvalueArray(args->size());
-  for (size_t i = 0; i < args->size(); ++i) {
-    jsvalueArray[i].setWithoutWriteBarrier(args->at(i));
-  }
-  ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr, WTF::move(jsvalueArray));
-  ${
-    obj.estimatedSize
-      ? `
-      auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
-      vm.heap.reportExtraMemoryAllocated(instance, size);`
-      : ""
-  }
-  return JSValue::encode(instance);
-}`
-    : ""
-}
-
-${
-  obj.valuesArray && obj.values && obj.values.length > 0
-    ? `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__createWithInitialValues(Zig::GlobalObject* globalObject, void* ptr${obj.values.map(v => `, JSC::EncodedJSValue ${v}`).join("")}) {
-  auto &vm = globalObject->vm();
-  JSC::Structure* structure = globalObject->${className(typeName)}Structure();
-  ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr${obj.values.map(v => `, JSC::JSValue::decode(${v})`).join("")});
-  ${
-    obj.estimatedSize
-      ? `
-      auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
-      vm.heap.reportExtraMemoryAllocated(instance, size);`
-      : ""
-  }
-  return JSValue::encode(instance);
-}`
-    : ""
-}
-
-${
-  obj.valuesArray && obj.values && obj.values.length > 0
-    ? `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__createWithValuesAndInitialValues(Zig::GlobalObject* globalObject, void* ptr, void* markedArgumentBuffer${obj.values.map(v => `, JSC::EncodedJSValue ${v}`).join("")}) {
-  auto &vm = globalObject->vm();
-  JSC::Structure* structure = globalObject->${className(typeName)}Structure();
-  auto* args = static_cast<JSC::MarkedArgumentBuffer*>(markedArgumentBuffer);
-  WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>> jsvalueArray(args->size());
-  for (size_t i = 0; i < args->size(); ++i) {
-    jsvalueArray[i].setWithoutWriteBarrier(args->at(i));
-  }
-  ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr, WTF::move(jsvalueArray)${obj.values.map(v => `, JSC::JSValue::decode(${v})`).join("")});
-  ${
-    obj.estimatedSize
-      ? `
-      auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
-      vm.heap.reportExtraMemoryAllocated(instance, size);`
-      : ""
-  }
-  return JSValue::encode(instance);
-}`
-    : ""
 }
 
 ${DEFINE_VISIT_CHILDREN}
@@ -1673,7 +1485,6 @@ function generateRust(
     call = false,
     memoryCost,
     values = [],
-    hasPendingActivity = false,
     rustPath,
     sharedThis = true,
   } = {} as ClassDefinition,
@@ -1700,7 +1511,7 @@ function generateRust(
     // Calling convention: every C++-side decl for these symbols uses
     // `extern JSC_CALLCONV` which expands to `extern "C" SYSV_ABI` on Windows
     // (see `#define JSC_CALLCONV` below in the .cpp emitter), so every thunk
-    // — including finalize/hasPendingActivity/memoryCost/estimatedSize — must
+    // — including finalize/memoryCost/estimatedSize — must
     // be `extern "sysv64"` on win-x64. `jsc_host_abi!` does the cfg-split.
     thunks.push(
       `bun_jsc::jsc_host_abi! {\n` +
@@ -1734,10 +1545,6 @@ function generateRust(
     thunks.push(
       `#[allow(dead_code, unreachable_pub, unused)]\n#[unsafe(no_mangle)]\npub static ${symbolName(typeName, "ZigStructSize")}: usize = core::mem::size_of::<${T}>();`,
     );
-  }
-
-  if (hasPendingActivity) {
-    thunk(symbolName(typeName, "hasPendingActivity"), `(this: &${T}) -> bool`, `    ${T}::has_pending_activity(this)`);
   }
 
   if (refCounted) {

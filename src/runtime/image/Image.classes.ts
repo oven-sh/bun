@@ -16,8 +16,7 @@ export default [
     // the JSRef on the native side holds a Strong ref to this wrapper, the
     // wrapper's sourceJS slot keeps the ArrayBuffer alive, and the buffer is
     // pinned for the task's duration — so the slice stays valid off-thread.
-    // (No `hasPendingActivity` polling; the JSRef upgrade/downgrade is
-    //  explicit at schedule/then.)
+    // (The JSRef upgrade/downgrade is explicit at schedule/then.)
     values: ["sourceJS"],
     configurable: false,
     JSType: "0b11101110",

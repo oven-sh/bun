@@ -157,11 +157,6 @@ export class ClassDefinition {
   proto: Record<string, Field>;
   values?: string[];
   /**
-   * When true, the class will accept a MarkedArgumentBuffer* to create a
-   * WTF::FixedVector<JSC::Unknown> jsvalueArray member that will be visited by GC.
-   */
-  valuesArray?: boolean;
-  /**
    * Set this to `"0b11101110"`.
    */
   JSType?: string;
@@ -191,7 +186,6 @@ export class ClassDefinition {
    * If none is provided, we use the struct size.
    */
   memoryCost?: boolean;
-  hasPendingActivity?: boolean;
   isEventEmitter?: boolean;
 
   configurable?: boolean;

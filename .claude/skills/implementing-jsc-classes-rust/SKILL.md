@@ -7,7 +7,7 @@ description: Creates JavaScript classes using Bun's Rust bindings generator (.cl
 
 Bridge JavaScript and Rust through `.classes.ts` definitions and Rust implementations.
 
-`src/codegen/bindgen.ts` (`*.bind.ts`, `docs/project/bindgen.mdx`) is replacing this generator: typed arguments, and the struct is stored inside the JS object or, with `refCounted: true`, is a separate refcounted allocation. It does not do `hasPendingActivity` or a custom `estimatedSize` yet.
+`src/codegen/bindgen.ts` (`*.bind.ts`, `docs/project/bindgen.mdx`) is replacing this generator: typed arguments, and the struct is stored inside the JS object or, with `refCounted: true`, is a separate refcounted allocation. It does not do a custom `estimatedSize` yet.
 
 ## Architecture
 
@@ -23,7 +23,6 @@ export default [
     name: "Matcher",
     construct: true,
     finalize: true,
-    hasPendingActivity: true,
     proto: {
       scan:  { fn: "scan",  length: 1 },
       match: { fn: "match", length: 1 },
@@ -36,7 +35,6 @@ Options:
 
 - `construct`: Has a public `new Foo()` constructor
 - `finalize`: Needs cleanup beyond `Drop` (rarely — see Finalize below)
-- `hasPendingActivity`: GC keep-alive while async work is in flight
 - `proto`: Methods (`fn:`), getters (`getter: true`, optionally `cache: true`)
 - `values: [...]`: WriteBarrier slots for JS values the native side holds (callbacks, buffers)
 
@@ -44,29 +42,23 @@ Options:
 
 ```rust
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[bun_jsc::JsClass]
 pub struct Matcher {
     pattern: Box<[u8]>,
-    has_pending_activity: AtomicUsize,
 }
 
 impl Matcher {
     pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Matcher>> {
         let arg = frame.argument(0);
         let pattern = bun_core::String::from_js(arg, global)?.to_utf8_bytes().into();
-        Ok(Box::new(Matcher { pattern, has_pending_activity: AtomicUsize::new(0) }))
+        Ok(Box::new(Matcher { pattern }))
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn r#match(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // ...
         Ok(JSValue::TRUE)
-    }
-
-    pub fn has_pending_activity(&self) -> bool {
-        self.has_pending_activity.load(Ordering::SeqCst) > 0
     }
 }
 ```
@@ -79,7 +71,6 @@ impl Matcher {
 | method (`fn:`)      | `pub fn name(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>`   |
 | getter              | `pub fn get_x(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue>`               |
 | finalize            | `pub fn finalize(self: Box<Self>)` — or omit; the blanket `JsFinalize` just drops    |
-| hasPendingActivity  | `pub fn has_pending_activity(&self) -> bool`                                         |
 
 A missing or mis-typed hook is a **compile error** in `cargo check -p bun_runtime` — the generated code calls the inherent method directly.
 
@@ -126,7 +117,7 @@ Never store raw `JSValue` in a struct field. Declare a slot in `.classes.ts` (`v
 
 ## Reference implementations
 
-- `src/runtime/api/Shell.classes.ts` — constructor, methods, `hasPendingActivity`
+- `src/runtime/api/Shell.classes.ts` — `refCounted`, methods, `values: [...]`
 - `src/runtime/server/server.classes.ts` — `noConstructor`, cached getters, `values: [...]`, custom finalize
 - `src/runtime/image/Image.rs:56` — the `pub use crate::generated_classes::js_Image as js;` one-liner
 - `src/jsc/host_fn.rs` — the host-fn adapters the codegen dispatches through

@@ -74,7 +74,7 @@ pub(crate) struct Image {
     /// Strong while at least one PipelineTask is in flight, weak otherwise. The
     /// Strong→wrapper→sourceJS-slot chain is what keeps the borrowed ArrayBuffer
     /// alive across the WorkPool roundtrip; switching to weak when idle lets GC
-    /// collect the wrapper without polling `hasPendingActivity` every cycle.
+    /// collect the wrapper.
     this_ref: JsCell<JsRef>,
     pending_tasks: Cell<u32>,
 }

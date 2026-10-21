@@ -439,7 +439,7 @@ fn camel_to_snake(s: &str) -> String {
 
 // ──────────────────────────────────────────────────────────────────────────
 // #[bun_jsc::host_call] — bare ABI rewrite for non-JSHostFn signatures
-// (e.g. `hasPendingActivity: extern fn(*mut Self) -> bool`).
+// (e.g. `estimatedSize: extern fn(*mut Self) -> usize`).
 // ──────────────────────────────────────────────────────────────────────────
 
 #[proc_macro_attribute]
@@ -455,9 +455,9 @@ pub fn host_call(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let output = &sig.output;
     let (impl_generics, _ty_generics, where_clause) = sig.generics.split_for_impl();
     // No implicit `#[no_mangle]` — multiple types share method names
-    // (`has_pending_activity`, `ptr_without_type_checks`, …) and collide at
+    // (`estimated_size`, `ptr_without_type_checks`, …) and collide at
     // codegen otherwise. The generated `.classes.ts` wrappers own the canonical
-    // `${T}__hasPendingActivity` link names; callers needing a C symbol attach
+    // `${T}__estimatedSize` link names; callers needing a C symbol attach
     // `#[unsafe(export_name = "…")]` themselves (re-emitted via `#(#attrs)*`).
     quote! {
         #[cfg(all(windows, target_arch = "x86_64"))]

@@ -6,7 +6,6 @@ export default [
     construct: true,
     noConstructor: true,
     finalize: true,
-    hasPendingActivity: false,
     configurable: false,
     values: ["jsobjs"],
     memoryCost: true,

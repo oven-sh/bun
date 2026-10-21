@@ -1,7 +1,10 @@
 // Tests for Bun REPL
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { chmodSync, statSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { once } from "node:events";
+import { chmodSync, existsSync, readdirSync, statSync } from "node:fs";
+import http2 from "node:http2";
+import type { AddressInfo } from "node:net";
 import path from "path";
 
 const stripAnsi = Bun.stripANSI;
@@ -22,16 +25,18 @@ async function runRepl(
     cwd?: string;
     /** Where the REPL keeps .bun_repl_history. Defaults to an empty directory. */
     home?: string;
+    /** Flags that follow `bun repl`. */
+    args?: string[];
   } = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number; outputs: string[] }> {
   const inputStr = Array.isArray(input) ? input.join("\n") + "\n" : input;
-  const { env = {}, cwd } = options;
+  const { env = {}, cwd, args = [] } = options;
 
   // The REPL loads and saves $HOME/.bun_repl_history (USERPROFILE on Windows).
   using tempHome = tempDir("repl-home", {});
   const home = options.home ?? String(tempHome);
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "repl"],
+    cmd: [bunExe(), "repl", ...args],
     stdin: Buffer.from(inputStr),
     stdout: "pipe",
     stderr: "pipe",
@@ -837,6 +842,246 @@ describe.concurrent("Bun REPL", () => {
       expect(outputs).toEqual(["42", "42", "undefined", '{\n  name: "test",\n}', '"test"']);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("flags of `bun run`", () => {
+    interface Options {
+      cwd?: string;
+      env?: Record<string, string | undefined>;
+    }
+
+    async function bun(args: string[], { cwd, env }: Options = {}) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...bunEnv, NO_COLOR: "1", ...env },
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stripAnsi(stdout), stderr: stripAnsi(stderr), exitCode };
+    }
+
+    /** Runs `bun repl <args>` and `bun <args>`, which do the same with these flags. Returns what the REPL did. */
+    async function replAndRun(args: string[], options?: Options) {
+      const [repl, run] = await Promise.all([bun(["repl", ...args], options), bun(args, options)]);
+      expect(repl).toEqual(run);
+      return repl;
+    }
+
+    const printExecArgv = "console.log(JSON.stringify(process.execArgv))";
+    const printTlsVersions = `const tls = require("node:tls"); console.log(tls.DEFAULT_MIN_VERSION, tls.DEFAULT_MAX_VERSION)`;
+
+    test.each([
+      ["--expose-gc defines gc()", ["--expose-gc"], "console.log(typeof gc)", "function\n"],
+      ["--stack-trace-limit=3", ["--stack-trace-limit=3"], "console.log(Error.stackTraceLimit)", "3\n"],
+      ["--stack-trace-limit 4", ["--stack-trace-limit", "4"], "console.log(Error.stackTraceLimit)", "4\n"],
+      // node:tls reads these two from process.execArgv.
+      ["--tls-min-v1.3", ["--tls-min-v1.3"], printTlsVersions, "TLSv1.3 TLSv1.3\n"],
+      ["--tls-max-v1.2", ["--tls-max-v1.2"], printTlsVersions, "TLSv1.2 TLSv1.2\n"],
+      [
+        "process.execArgv holds the flags",
+        ["--no-addons", "--title", "repl-title"],
+        printExecArgv,
+        JSON.stringify(["--no-addons", "--title", "repl-title", "-e", printExecArgv]) + "\n",
+      ],
+    ])("%s", async (_name, flags, script, stdout) => {
+      expect(await replAndRun([...flags, "-e", script])).toEqual({ stdout, stderr: "", exitCode: 0 });
+    });
+
+    test("process.execArgv holds the flags in front of `repl` too", async () => {
+      expect(await bun(["--no-addons", "repl", "--expose-gc", "-e", printExecArgv])).toEqual({
+        stdout: JSON.stringify(["--no-addons", "--expose-gc", "-e", printExecArgv]) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.each([
+      ["--cpu-prof", ".cpuprofile"],
+      ["--cpu-prof-md", ".md"],
+      ["--heap-prof", ".heapprofile"],
+      ["--heap-prof-md", ".md"],
+    ])("%s writes a profile when the REPL exits", async (flag, extension) => {
+      using dir = tempDir("repl-profile", {});
+      const dirFlag = flag.startsWith("--cpu") ? "--cpu-prof-dir" : "--heap-prof-dir";
+      const { stdout, exitCode } = await bun(["repl", flag, dirFlag, "profiles", "-e", "console.log('evaluated')"], {
+        cwd: String(dir),
+      });
+      expect(stdout).toBe("evaluated\n");
+      const profiles = path.join(String(dir), "profiles");
+      const written = existsSync(profiles) ? readdirSync(profiles) : [];
+      expect(written.map(name => path.extname(name))).toEqual([extension]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("--trace-exit prints where the process exits", async () => {
+      const { stdout, stderr, exitCode } = await bun(["repl", "--trace-exit", "-e", "process.exit(3)"]);
+      expect(stdout).toBe("");
+      expect(stderr).toMatch(
+        /WARNING: Exited the environment with code 3\n +at exit \(node:internal\/process\/pre_execution/,
+      );
+      expect(exitCode).toBe(3);
+    });
+
+    test("--trace-env prints each access to process.env", async () => {
+      const { stdout, stderr, exitCode } = await bun(["repl", "--trace-env", "-e", "process.env.REPL_TRACE_ENV_PROBE"]);
+      expect(stdout).toBe("");
+      expect(stderr).toContain('[--trace-env] get "REPL_TRACE_ENV_PROBE"\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test("--no-macros disables the macros of what the REPL imports", async () => {
+      using dir = tempDir("repl-no-macros", {
+        "macro.ts": `export function value() { return "macro ran"; }`,
+        "uses-macro.ts": `import { value } from "./macro.ts" with { type: "macro" };\nconsole.log(value());`,
+      });
+      const script = `await import("./uses-macro.ts")`;
+      const [enabled, disabled] = await Promise.all([
+        bun(["repl", "-e", script], { cwd: String(dir) }),
+        bun(["repl", "--no-macros", "-e", script], { cwd: String(dir) }),
+      ]);
+      expect(enabled).toEqual({ stdout: "macro ran\n", stderr: "", exitCode: 0 });
+      expect(disabled.stdout).toBe("");
+      expect(disabled.stderr).toContain("Macros are disabled");
+      expect(disabled.exitCode).toBe(1);
+    });
+
+    test("--fetch-preconnect connects before the first evaluation", async () => {
+      const opened = Promise.withResolvers<void>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: { open: () => opened.resolve(), data() {} },
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "repl", `--fetch-preconnect=http://127.0.0.1:${server.port}`, "-e", "await Bun.stdin.text()"],
+        stdin: "pipe",
+        stdout: "ignore",
+        stderr: "inherit",
+        env: bunEnv,
+      });
+      await opened.promise;
+      proc.stdin.end();
+      expect(await proc.exited).toBe(0);
+    });
+
+    test("--fetch-preconnect refuses a URL that is not HTTP", async () => {
+      const args = ["--fetch-preconnect=ftp://127.0.0.1:1", "-e", "console.log('evaluated')"];
+      expect(await replAndRun(args)).toEqual({
+        stdout: "",
+        stderr: 'error: preconnect URL must be HTTP or HTTPS: "ftp://127.0.0.1:1"\n',
+        exitCode: 1,
+      });
+    });
+
+    test.each([
+      ["--redis-preconnect", "REDIS_URL", "redis://127.0.0.1:"],
+      ["--sql-preconnect", "DATABASE_URL", "postgres://127.0.0.1:"],
+    ])("%s connects before the first evaluation", async (flag, variable, url) => {
+      const opened = Promise.withResolvers<void>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: { open: () => opened.resolve(), data() {} },
+      });
+      // The server never answers, so the client never finishes: the process is killed with the test.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "repl", flag, "-e", "await Bun.stdin.text()"],
+        stdin: "pipe",
+        stdout: "ignore",
+        stderr: "inherit",
+        env: { ...bunEnv, [variable]: url + server.port },
+      });
+      await opened.promise;
+    });
+
+    test("--experimental-http2-fetch lets fetch() negotiate HTTP/2", async () => {
+      const server = http2.createSecureServer({ ...tls, allowHTTP1: true }, (req, res) => {
+        res.writeHead(200);
+        res.end(req.httpVersion);
+      });
+      // A client exits with its connection open.
+      server.on("clientError", () => {});
+      server.on("secureConnection", socket => socket.on("error", () => {}));
+      server.listen(0);
+      await once(server, "listening");
+      try {
+        const { port } = server.address() as AddressInfo;
+        const script = `const response = await fetch("https://localhost:${port}", { tls: { rejectUnauthorized: false } }); console.log(await response.text());`;
+        const [without, withFlag] = await Promise.all([
+          bun(["repl", "-e", script]),
+          replAndRun(["--experimental-http2-fetch", "-e", script]),
+        ]);
+        expect(without).toEqual({ stdout: "1.1\n", stderr: "", exitCode: 0 });
+        expect(withFlag).toEqual({ stdout: "2.0\n", stderr: "", exitCode: 0 });
+      } finally {
+        server.close();
+      }
+    });
+
+    test("the flags apply when the REPL reads its input from stdin", async () => {
+      using dir = tempDir("repl-flags-stdin", {});
+      const { outputs, stderr, exitCode } = await runRepl(["typeof gc", "Error.stackTraceLimit", ".exit"], {
+        cwd: String(dir),
+        args: ["--expose-gc", "--stack-trace-limit=3", "--cpu-prof", "--cpu-prof-dir", "profiles"],
+      });
+      expect(outputs).toEqual(['"function"', "3"]);
+      expect(stderr).toBe("");
+      const profiles = path.join(String(dir), "profiles");
+      const written = existsSync(profiles) ? readdirSync(profiles) : [];
+      expect(written.map(name => path.extname(name))).toEqual([".cpuprofile"]);
+      expect(exitCode).toBe(0);
+    });
+
+    describe("that already worked", () => {
+      test.each([
+        ["--define", ["--define", "FROM_FLAG:'flag'"], "console.log(FROM_FLAG)", "flag\n"],
+        ["--smol and --title", ["--smol", "--title", "repl-title"], "console.log(process.title)", "repl-title\n"],
+        [
+          "--no-deprecation",
+          ["--no-deprecation"],
+          `process.emitWarning("old", "DeprecationWarning"); console.log(process.noDeprecation)`,
+          "true\n",
+        ],
+        ["--throw-deprecation", ["--throw-deprecation"], "console.log(process.throwDeprecation)", "true\n"],
+      ])("%s", async (_name, flags, script, stdout) => {
+        expect(await replAndRun([...flags, "-e", script])).toEqual({ stdout, stderr: "", exitCode: 0 });
+      });
+
+      test("[define] of bunfig.toml, .env, and paths of tsconfig.json", async () => {
+        using dir = tempDir("repl-project", {
+          "bunfig.toml": `[define]\nFROM_BUNFIG = "'bunfig'"\n`,
+          ".env": "FROM_DOTENV=dotenv\n",
+          "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./lib/*"] } } }),
+          "lib/value.ts": `export const value = "paths";`,
+        });
+        const script = `console.log(FROM_BUNFIG, process.env.FROM_DOTENV, (await import("@lib/value")).value)`;
+        expect(await replAndRun(["-e", script], { cwd: String(dir) })).toEqual({
+          stdout: "bunfig dotenv paths\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      test("--conditions", async () => {
+        using dir = tempDir("repl-conditions", {
+          "node_modules/pkg/package.json": JSON.stringify({
+            name: "pkg",
+            exports: { custom: "./custom.js", default: "./default.js" },
+          }),
+          "node_modules/pkg/custom.js": `module.exports = "custom";`,
+          "node_modules/pkg/default.js": `module.exports = "default";`,
+        });
+        const script = `console.log(require("pkg"))`;
+        const [without, withFlag] = await Promise.all([
+          bun(["repl", "-e", script], { cwd: String(dir) }),
+          bun(["repl", "--conditions=custom", "-e", script], { cwd: String(dir) }),
+        ]);
+        expect(without).toEqual({ stdout: "default\n", stderr: "", exitCode: 0 });
+        expect(withFlag).toEqual({ stdout: "custom\n", stderr: "", exitCode: 0 });
+      });
     });
   });
 

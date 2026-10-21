@@ -5594,6 +5594,29 @@ describe("fs.write", () => {
     }
   });
 
+  it("filehandle.write rejects an offset or length outside the buffer", async () => {
+    using dir = tempDir("fs-filehandle-write-positional-errors", {});
+    const dest = join(String(dir), "out.bin");
+    for (const [args, error] of positionalWriteErrors) {
+      const handle = await promises.open(dest, "w+");
+      let outcome: unknown;
+      try {
+        await handle.write(positionalWriteHead);
+        outcome = await (handle.write as Function)(positionalWriteBuffer, ...args).then(
+          (result: { bytesWritten: number }) => result.bytesWritten,
+          (err: any) => ({ name: err.name, code: err.code, message: err.message }),
+        );
+      } finally {
+        await handle.close();
+      }
+      expect({ args, outcome, file: readFileSync(dest, "latin1") }).toEqual({
+        args,
+        outcome: error,
+        file: positionalWriteHead,
+      });
+    }
+  });
+
   it("should work with (fd, string, position, encoding, callback)", done => {
     const path = `${tmpdir()}/bun-fs-write-3-${Date.now()}.txt`;
     const fd = fs.openSync(path, "w");

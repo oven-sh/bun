@@ -2070,10 +2070,12 @@ impl<'p, 's> Checker<'p, 's> {
                 .and_then(|&(file, func)| at(file, self.hir(file)[func].start)),
             TypeData::Synth(ref shape) => match shape.symbol_declared_at {
                 Some((file, pos, _)) => at(file, pos),
-                // `getOrCreateTypeFromSignature`: the symbol has the signature's declaration. The symbol of
-                // `getInstantiatedTypePart` has none, and sorts after those that have one.
+                // `getInstantiatedTypePart`: the symbol has the declarations of the instantiated type's symbol.
+                None if shape.instantiation_expression.is_some() => {
+                    self.sort_position(shape.created_from?.0)
+                }
+                // `getOrCreateTypeFromSignature`: the symbol has the signature's declaration.
                 None if shape.literal == Literalness::No
-                    && shape.instantiation_expression.is_none()
                     && shape.props.is_empty()
                     && shape.index.is_empty() =>
                 {
@@ -2100,8 +2102,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `t.symbol.Name` of an object type whose symbol has no declarations. `compareSymbols` puts
-    /// such a symbol after those that have one and before nil.
+    /// `t.symbol.Name` of an object type whose symbol has no declarations, or those of another symbol. `compareSymbols`
+    /// puts a symbol without declarations after those that have one and before nil.
     fn name_of_symbol_without_declarations(&self, ty: TypeId) -> Option<&'static [u8]> {
         match self.data(ty) {
             TypeData::Synth(shape) if shape.instantiation_expression.is_some() => {

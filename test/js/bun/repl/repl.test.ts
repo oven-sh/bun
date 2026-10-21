@@ -1946,25 +1946,22 @@ describe.concurrent("REPL history file", () => {
     expect(await loadAndSave(String(dir))).toEqual([...lines.slice(lines.length - maxEntries + 1), "2 + 2", ""]);
   });
 
-  // `.history` lists the last 20 entries with their numbers, so it shows how
-  // many entries the session loaded without a save in between.
+  // Runs `.history` on top of the given history file. It lists the last 20
+  // entries with their numbers, so it shows how many entries the session
+  // loaded without a save in between.
+  async function listHistory(history: string) {
+    using dir = tempDir("repl-history-list", { ".bun_repl_history": history });
+    const { outputs, stderr, exitCode } = await runRepl([".history", ".exit"], { home: String(dir) });
+    const [heading, ...listed] = (outputs[0] ?? "").split("\n").map(line => line.trim());
+    return { heading, first: listed[0], last: listed.at(-1), listed: listed.length, stderr, exitCode };
+  }
+
   test.each([maxEntries - 1, maxEntries, maxEntries + 1, maxEntries + 200])(
     "loads the newest entries of a file with %d",
     async count => {
       const lines = Array.from({ length: count }, (_, i) => `entry_${i}`);
-      using dir = tempDir("repl-history-count", { ".bun_repl_history": lines.join("\n") + "\n" });
-
-      const { outputs, stderr, exitCode } = await runRepl([".history", ".exit"], { home: String(dir) });
-      const listed = (outputs[0] ?? "").split("\n").map(line => line.trim());
       const loaded = Math.min(count, maxEntries);
-      expect({
-        heading: listed[0],
-        first: listed[1],
-        last: listed.at(-1),
-        listed: listed.length - 1,
-        stderr,
-        exitCode,
-      }).toEqual({
+      expect(await listHistory(lines.join("\n") + "\n")).toEqual({
         heading: "Command History:",
         first: `${loaded - 19}  entry_${count - 20}`,
         last: `${loaded}  entry_${count - 1}`,
@@ -1974,6 +1971,21 @@ describe.concurrent("REPL history file", () => {
       });
     },
   );
+
+  // With one `remove(0)` per entry over the maximum, this load takes longer
+  // than the test may run.
+  test("loads a file with half a million lines", async () => {
+    const older = Buffer.alloc(2 * 500_000, "x\n").toString();
+    const lines = Array.from({ length: maxEntries }, (_, i) => `entry_${i}`);
+    expect(await listHistory(older + lines.join("\n") + "\n")).toEqual({
+      heading: "Command History:",
+      first: `${maxEntries - 19}  entry_${maxEntries - 20}`,
+      last: `${maxEntries}  entry_${maxEntries - 1}`,
+      listed: 20,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 
   // A limit on the bytes that are read would cut this entry and, at the next
   // save, erase every entry before it.

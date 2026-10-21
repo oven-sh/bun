@@ -1227,7 +1227,8 @@ test("the braces of an object are listed when the file comes from the transpiler
     one: 1,
   },
 ];
-${"// a comment\n".repeat(400)}`,
+// ${Buffer.alloc(4096, "-")}
+`,
     "lib.test.ts": `
 import { test } from "bun:test";
 import { list } from "./lib.ts";
@@ -1307,6 +1308,42 @@ test("lib", () => { Object(lib); });
   const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
   const record = lcov.split("end_of_record").find(r => r.includes("lib.ts\n"));
   expect(record!.match(/^DA:.*$/gm)).toEqual([7, 8, 9, 10, 11, 12, 13, 14].map(line => `DA:${line},1`));
+  expect(exitCode).toBe(0);
+});
+
+test("node:inspector turns the profiler on and no brace is listed", async () => {
+  const lib = `export const never = () => (
+  {
+    one: 1,
+  }
+);
+`;
+  using dir = tempDir("cov-inspector", {
+    "lib.ts": lib,
+    "bundled.js": "// @bun\n" + lib,
+    "main.ts": `
+import { codeCoverageForFile } from "bun:jsc";
+import inspector from "node:inspector";
+import { join } from "node:path";
+const session = new inspector.Session();
+session.connect();
+session.post("Profiler.enable");
+session.post("Profiler.startPreciseCoverage");
+for (const file of ["lib.ts", "bundled.js"]) {
+  await import("./" + file);
+  console.log(codeCoverageForFile(join(import.meta.dir, file), false).split("|").at(-1));
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe(" 3\n 4\n");
   expect(exitCode).toBe(0);
 });
 

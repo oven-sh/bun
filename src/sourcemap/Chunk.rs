@@ -616,7 +616,7 @@ impl NewBuilder<'_, VLQSourceMap> {
         self.has_prev_state = true;
     }
 
-    /// VLQ has nowhere to keep it.
+    /// VLQ has nowhere to keep a mark.
     pub fn mark_object_brace(&mut self) {
         if let Some(internal) = &mut self.source_map.ctx.internal {
             internal.mark_object_brace(&self.prev_state);

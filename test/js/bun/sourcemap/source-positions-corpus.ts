@@ -169,7 +169,7 @@ export const cases: Record<string, Case> = {
  0|];
 `,
   },
-  // Both braces of an object are code, also where it is assigned to, as a `var` in a block is.
+  // Both braces of an object literal are code, and of a pattern that is assigned to, which a `var` in a block becomes.
   // Those of a block, a body, a class and a binding are not.
   "braces.ts": {
     functions: "5/7",

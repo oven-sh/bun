@@ -294,8 +294,12 @@ fn clear_locs(expr: &mut bun_ast::Expr) {
         ExprData::EObject(mut object) => {
             object.close_brace_loc = bun_ast::Loc::EMPTY;
             for property in object.properties.iter_mut() {
-                property.key.iter_mut().for_each(clear_locs);
-                property.value.iter_mut().for_each(clear_locs);
+                if let Some(key) = &mut property.key {
+                    clear_locs(key);
+                }
+                if let Some(value) = &mut property.value {
+                    clear_locs(value);
+                }
             }
         }
         ExprData::EArray(mut array) => {

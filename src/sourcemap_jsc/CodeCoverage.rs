@@ -608,7 +608,8 @@ pub struct BasicBlockRange {
 pub struct ByteRangeMapping {
     /// A bit for each code unit of the text JSC compiled, which is what JSC's offsets and the
     /// source map's generated columns count. Set if the unit can make its line executable:
-    /// not white space or a brace, or a brace of an object literal. The text is only borrowed.
+    /// not white space, `{` or `}`, or marked as a brace of an object literal. The text itself is
+    /// only borrowed while this is made.
     executable_units: Bitset,
     /// Code unit offset of the first unit of each line of the text.
     line_starts: Vec<u32>,
@@ -834,14 +835,14 @@ impl ByteRangeMapping {
                 InternalSourceMap {
                     data: blob.list.as_ptr(),
                 }
-                .for_each_object_brace(|_, original| self.set_executable(original));
+                .for_each_object_brace(|brace| self.set_executable(brace.original));
             }
         } else if let Some(source_map) = bun_jsc::VirtualMachine::VirtualMachine::get()
             .as_mut()
             .source_mappings()
             .get(self.source_url.slice())
         {
-            source_map.for_each_object_brace(|generated, _| self.set_executable(generated));
+            source_map.for_each_object_brace(|brace| self.set_executable(brace.generated));
         }
     }
 
@@ -891,8 +892,7 @@ fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<bun_core::MutableStrin
         },
     )
     .ok()?;
-    let blob = chunk?.buffer;
-    InternalSourceMap::is_valid_blob(blob.list.as_slice()).then_some(blob)
+    Some(chunk?.buffer)
 }
 
 /// `ByteRangeMapping::line_starts` and `executable_units`. Lines end where
@@ -1048,7 +1048,15 @@ extern "C" fn ByteRangeMapping__generate(
 
     let mut new_value =
         ByteRangeMapping::compute(source_contents_str, source_hash, source_id, source_url);
-    new_value.set_object_braces_executable(source_contents.slice(), already_bundled);
+    // `node:inspector` turns the profiler on too. Nothing is marked for it.
+    if bun_jsc::VirtualMachine::VirtualMachine::get()
+        .as_mut()
+        .transpiler
+        .options
+        .code_coverage
+    {
+        new_value.set_object_braces_executable(source_contents.slice(), already_bundled);
+    }
     map.insert(hash, new_value);
 }
 

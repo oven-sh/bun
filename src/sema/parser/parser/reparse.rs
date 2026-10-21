@@ -1023,7 +1023,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         let has_no_typed_params = function.this_ty(&self.f).is_none()
             && params.iter().all(|param| self.f[param].ty.is_none());
         if type_params.is_empty() && ret.is_none() && has_no_typed_params {
-            let ty = self.reparse_unchecked_type(ty);
+            let ty = self.reparse_type(ty);
             self.f.jsdoc_types.push((JsDocTypeOwner::Fn(func), ty));
             self.jsdoc.full_signatures.insert(func.0);
         }

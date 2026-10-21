@@ -1044,15 +1044,19 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The types in the JSDoc comments of `file` that `checkSourceFile` never reaches: those of the
-    /// `@type` tags for which TypeScript has no annotation (`jsdoc_types`), the class names of
-    /// `@augments` tags, and the `T` of `T=` and `...T`. `getTypeFromTypeNode` only resolves them as
-    /// far as something requests, so a pass over all of a file's nodes skips what they contain.
+    /// `@type` tags for which TypeScript has no annotation (`jsdoc_types`) other than a function's,
+    /// the class names of `@augments` tags, and the `T` of `T=` and `...T`. `getTypeFromTypeNode`
+    /// only resolves them as far as something requests, so a pass over all of a file's nodes skips
+    /// what they contain.
     pub(super) fn unchecked_jsdoc_types(&self, file: FileId) -> RangeSet {
         let hir = self.hir(file);
         if !hir.is_js {
             return RangeSet::new(std::iter::empty());
         }
-        let assigned = hir.jsdoc_types.iter().map(|assigned| assigned.1);
+        let assigned = hir.jsdoc_types.iter().filter_map(|&(owner, ty)| {
+            // `checkSourceElement(node.FunctionLikeData().FullSignature)`
+            (!matches!(owner, JsDocTypeOwner::Fn(_))).then_some(ty)
+        });
         let class_names = hir.augments_tags.iter().filter_map(|tag| {
             // The `extends` clause has a copy of the type arguments, which is checked.
             let name = &hir[tag.class_name];

@@ -125,6 +125,7 @@ impl Checker<'_, '_> {
         {
             return;
         }
+        self.check_type_node(file, node);
         let ty = self.type_from_node(file, node);
         if self.contextual_call_signature(file, func, ty).is_none() {
             let start = start_of_type(hir, node);

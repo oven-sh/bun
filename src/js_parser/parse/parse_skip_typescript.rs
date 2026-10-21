@@ -1621,7 +1621,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.skip_typescript_return_type()?;
             let arrow = parse_arrow_fn(self)?;
             // The ":" that pairs with the "?", and a token after it
-            if self.lexer.token != T::TColon || !self.next_token_matches(|_| true) {
+            if self.lexer.token != T::TColon || !self.can_read_next_token() {
                 return Err(Error::Backtrack);
             }
             Ok(arrow)

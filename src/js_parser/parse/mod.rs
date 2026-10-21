@@ -417,6 +417,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// The end of `parse_paren_expr` when the parentheses hold the arguments of an
+    /// arrow function. The lexer is at the "=>".
+    #[inline(always)]
+    fn parse_paren_arrow_fn(
+        &mut self,
+        loc: bun_ast::Loc,
+        opts: ParenExprOpts,
+        spread_range: bun_ast::Range,
+        comma_after_spread: bun_ast::Loc,
+        arrow_arg_errors: &mut DeferredArrowArgErrors,
+        invalid_log: &LocList<'a>,
+        args: BumpVec<'a, G::Arg>,
+        arrow_data: &mut FnOrArrowDataParse,
+    ) -> Result<Expr, Error> {
+        let p = self;
+        p.maybe_comma_spread_error(comma_after_spread);
+        p.log_arrow_arg_errors(arrow_arg_errors);
+
+        // Now that we've decided we're an arrow function, report binding pattern
+        // conversion errors
+        if !invalid_log.is_empty() {
+            for loc_ in invalid_log.iter() {
+                loc_.add_error(p.log(), p.source);
+            }
+        }
+        let args_slice: &'a mut [G::Arg] = args.into_bump_slice_mut();
+        let mut arrow = p.parse_arrow_body(args_slice, arrow_data)?;
+        arrow.is_async = opts.is_async;
+        arrow.has_rest_arg = spread_range.len > 0;
+        p.pop_scope();
+        Ok(p.new_expr(arrow, loc))
+    }
+
     /// This assumes that the open parenthesis has already been parsed by the caller
     pub(crate) fn parse_paren_expr(
         &mut self,
@@ -573,32 +606,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // there were no conversion errors.
             let maybe_return_type =
                 Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon && invalid_log.is_empty();
-
-            let parse_arrow_fn = move |p: &mut Self| -> Result<Expr, Error> {
-                p.maybe_comma_spread_error(comma_after_spread);
-                p.log_arrow_arg_errors(&mut arrow_arg_errors);
-
-                // Now that we've decided we're an arrow function, report binding pattern
-                // conversion errors
-                if !invalid_log.is_empty() {
-                    for loc_ in invalid_log.iter() {
-                        loc_.add_error(p.log(), p.source);
-                    }
-                }
-                let args_slice: &'a mut [G::Arg] = args.into_bump_slice_mut();
-                let mut arrow = p.parse_arrow_body(args_slice, &mut arrow_data)?;
-                arrow.is_async = opts.is_async;
-                arrow.has_rest_arg = spread_range.len > 0;
-                p.pop_scope();
-                Ok(p.new_expr(arrow, loc))
-            };
-
             if maybe_return_type && opts.is_after_question_and_before_colon {
                 // Only do this very expensive check if we must. It parses the arrow
                 // function, and undoes that when the ":" pairs with the "?".
-                if let Some(arrow) =
-                    p.parse_possible_arrow_fn_after_question_and_before_colon(parse_arrow_fn)?
-                {
+                let arrow =
+                    p.parse_possible_arrow_fn_after_question_and_before_colon(move |p| {
+                        p.parse_paren_arrow_fn(
+                            loc,
+                            opts,
+                            spread_range,
+                            comma_after_spread,
+                            &mut arrow_arg_errors,
+                            &invalid_log,
+                            args,
+                            &mut arrow_data,
+                        )
+                    })?;
+                if let Some(arrow) = arrow {
                     return Ok(arrow);
                 }
             } else {
@@ -608,7 +632,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if is_arrow_fn || opts.force_arrow_fn {
-                    return parse_arrow_fn(p);
+                    return p.parse_paren_arrow_fn(
+                        loc,
+                        opts,
+                        spread_range,
+                        comma_after_spread,
+                        &mut arrow_arg_errors,
+                        &invalid_log,
+                        args,
+                        &mut arrow_data,
+                    );
                 }
             }
         }
@@ -1623,6 +1656,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let result = matches!(self.lexer.next(), Ok(())) && pred(self);
         self.lexer.restore(&old_lexer);
         result
+    }
+
+    /// Whether the lexer can read the token after the current one. Not inlined,
+    /// so that the lexer snapshot is not in the frame of a caller that recurses.
+    #[inline(never)]
+    fn can_read_next_token(&mut self) -> bool {
+        self.next_token_matches(|_| true)
     }
 
     #[inline]

@@ -230,24 +230,67 @@ describe.skipIf(isWindows)("Bun.file() of a pipe or a socket that has bytes wait
     return { readFd, writeFd, close, [Symbol.dispose]: () => fds.forEach(close) };
   }
 
+  // Each case asks for something that stats the Bun.file() while `first` waits in it. `second` is
+  // written after that, and the read has to return both.
+  type BunFile = ReturnType<typeof Bun.file>;
+  type Case = { ask: (file: BunFile) => unknown; read: (file: BunFile, asked: any) => Promise<string> };
+  const text = (file: BunFile) => file.text();
+  const stream = async (file: BunFile) => {
+    let text = "";
+    for await (const chunk of file.stream()) text += Buffer.from(chunk);
+    return text;
+  };
+  const cases: Record<string, Case> = {
+    ".size, then text()": { ask: file => file.size, read: text },
+    ".size, then stream()": { ask: file => file.size, read: stream },
+    "exists(), then text()": { ask: file => file.exists(), read: text },
+    "exists(), then stream()": { ask: file => file.exists(), read: stream },
+    "lastModified, then text()": { ask: file => file.lastModified, read: text },
+    "structuredClone(), then text()": { ask: file => structuredClone(file), read: text },
+    ".size, then slice(0, 100).text()": { ask: file => file.size, read: file => file.slice(0, 100).text() },
+    "Bun.inspect(new Response(file)), then its text()": {
+      ask: file => {
+        const response = new Response(file);
+        Bun.inspect(response);
+        return response;
+      },
+      read: (_, response: Response) => response.text(),
+    },
+    "new Response(file).body": {
+      ask: file => new Response(file).body,
+      read: async (_, body: ReadableStream<Uint8Array>) => {
+        let text = "";
+        for await (const chunk of body) text += Buffer.from(chunk);
+        return text;
+      },
+    },
+  };
   for (const kind of ["socket", "pipe"] as const) {
-    test(`${kind}: Bun.file(fd).size, then text() reads to the end`, async () => {
-      using fds = open(kind);
-      writeSync(fds.writeFd, first);
-      const file = Bun.file(fds.readFd);
-      const asked = { st_size: fstatSync(fds.readFd).size, size: file.size };
-      writeSync(fds.writeFd, second);
-      fds.close(fds.writeFd);
+    for (const [name, { ask, read }] of Object.entries(cases)) {
+      test(`${kind}: ${name} reads to the end`, async () => {
+        using fds = open(kind);
+        writeSync(fds.writeFd, first);
+        const file = Bun.file(fds.readFd);
+        const st_size = fstatSync(fds.readFd).size;
+        const asked = await ask(file);
+        writeSync(fds.writeFd, second);
+        fds.close(fds.writeFd);
 
-      expect({ ...asked, text: await file.text() }).toEqual({ st_size: waiting, size: Infinity, text: first + second });
-    });
+        expect({ st_size, text: await read(file, asked), size: file.size }).toEqual({
+          st_size: waiting,
+          text: first + second,
+          size: Infinity,
+        });
+      });
+    }
   }
 
+  // Bun.stdin, process.stdin, Bun.file(0) and Bun.file("/dev/stdin") need a process whose stdin is the pipe.
   describe("as the stdin of a child", () => {
     // `first` is in the child's stdin before the child starts. The child asks, then prints what `fstat`
     // reported on a line of its own. `second` is sent only after that line.
-    type Case = { file?: string; stat?: string; ask: string; read: string };
-    const script = ({ file = "Bun.stdin", stat = "fs.fstatSync(0)", ask, read }: Case) => `
+    type Script = { file?: string; stat?: string; ask: string; read: string };
+    const script = ({ file = "Bun.stdin", stat = "fs.fstatSync(0)", ask, read }: Script) => `
       const fs = require("fs");
       const stdin = ${file};
       const st_size = ${stat}.size;
@@ -258,7 +301,7 @@ describe.skipIf(isWindows)("Bun.file() of a pipe or a socket that has bytes wait
       process.stdout.write(JSON.stringify({ size: String(stdin.size), text }));
     `;
 
-    async function readsToTheEnd(kind: keyof typeof kinds, parts: Case) {
+    async function readsToTheEnd(kind: keyof typeof kinds, parts: Script) {
       using fds = open(kind);
       writeSync(fds.writeFd, first);
       await using proc = Bun.spawn({
@@ -294,50 +337,32 @@ describe.skipIf(isWindows)("Bun.file() of a pipe or a socket that has bytes wait
     }
 
     const text = "text = await stdin.text();";
-    const stream = "for await (const chunk of stdin.stream()) text += Buffer.from(chunk);";
-    const cases: Record<string, Case> = {
-      ".size, then text()": { ask: "stdin.size;", read: text },
-      ".size, then stream()": { ask: "stdin.size;", read: stream },
-      "exists(), then text()": { ask: "await stdin.exists();", read: text },
-      "exists(), then stream()": { ask: "await stdin.exists();", read: stream },
+    const scripts: Record<string, Script & { kind: keyof typeof kinds }> = {
+      "socket: Bun.stdin.size, then text()": { kind: "socket", ask: "stdin.size;", read: text },
+      "pipe: Bun.stdin.size, then text()": { kind: "pipe", ask: "stdin.size;", read: text },
+      "pipe: Bun.stdin.exists(), then stream()": {
+        kind: "pipe",
+        ask: "await stdin.exists();",
+        read: "for await (const chunk of stdin.stream()) text += Buffer.from(chunk);",
+      },
+      "pipe: Bun.stdin.size, then process.stdin": {
+        kind: "pipe",
+        ask: "stdin.size;",
+        read: "for await (const chunk of process.stdin) text += chunk;",
+      },
+      "pipe: Bun.file(0).size, then text()": { kind: "pipe", file: "Bun.file(0)", ask: "stdin.size;", read: text },
+      // The same pipe through `stat()` of a path.
+      'pipe: Bun.file("/dev/stdin").size, then text()': {
+        kind: "pipe",
+        file: 'Bun.file("/dev/stdin")',
+        stat: 'fs.statSync("/dev/stdin")',
+        ask: "stdin.size;",
+        read: text,
+      },
     };
-    for (const kind of ["socket", "pipe"] as const) {
-      for (const [caseName, parts] of Object.entries(cases)) {
-        test.concurrent(`${kind}: ${caseName} reads to the end`, () => readsToTheEnd(kind, parts));
-      }
+    for (const [name, { kind, ...parts }] of Object.entries(scripts)) {
+      test.concurrent(`${name} reads to the end`, () => readsToTheEnd(kind, parts));
     }
-
-    // The kind of stdin makes no difference to these, so only the pipe runs them.
-    describe("asked or read another way", () => {
-      const otherCases: Record<string, Case> = {
-        "lastModified, then text()": { ask: "stdin.lastModified;", read: text },
-        "structuredClone(), then text()": { ask: "structuredClone(stdin);", read: text },
-        "Bun.inspect(new Response(Bun.stdin)), then its text()": {
-          ask: "const response = new Response(stdin); Bun.inspect(response);",
-          read: "text = await response.text();",
-        },
-        ".size, then slice(0, 100).text()": { ask: "stdin.size;", read: "text = await stdin.slice(0, 100).text();" },
-        ".size, then process.stdin": {
-          ask: "stdin.size;",
-          read: "for await (const chunk of process.stdin) text += chunk;",
-        },
-        "new Response(Bun.stdin).body": {
-          ask: "const body = new Response(stdin).body;",
-          read: "for await (const chunk of body) text += Buffer.from(chunk);",
-        },
-        "Bun.file(0).size, then text()": { file: "Bun.file(0)", ask: "stdin.size;", read: text },
-        // The same pipe through `stat()` of a path.
-        'Bun.file("/dev/stdin").size, then text()': {
-          file: 'Bun.file("/dev/stdin")',
-          stat: 'fs.statSync("/dev/stdin")',
-          ask: "stdin.size;",
-          read: text,
-        },
-      };
-      for (const [caseName, parts] of Object.entries(otherCases)) {
-        test.concurrent(`pipe: ${caseName} reads to the end`, () => readsToTheEnd("pipe", parts));
-      }
-    });
   });
 });
 

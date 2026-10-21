@@ -37,6 +37,9 @@ pub(crate) struct TimerObjectInternals {
     pub(crate) context: bun_jsc::ContextId,
     /// `VirtualMachine::test_isolation_generation` when it did.
     pub(crate) generation: u32,
+    /// Whether this timeout came from the fake timer functions installed by
+    /// `useFakeTimers`. Captured native timer functions remain real timers.
+    pub(crate) fakeable: bool,
 }
 
 // Putting `interval` between `id` and `this_value` would pad this to 48 bytes.
@@ -63,6 +66,7 @@ impl Default for TimerObjectInternals {
             flags: Cell::new(Flags::default()),
             context: bun_jsc::ContextId::default(),
             generation: 0,
+            fakeable: false,
         }
     }
 }
@@ -288,6 +292,7 @@ impl TimerObjectInternals {
         interval: u32,
         callback: JSValue,
         arguments: JSValue,
+        fakeable: bool,
     ) {
         let vm = VirtualMachine::get_mut_ptr();
         let state = crate::jsc_hooks::runtime_state();
@@ -308,6 +313,7 @@ impl TimerObjectInternals {
             interval: Cell::new(interval),
             context: cx.context().id(),
             generation: cx.vm().test_isolation_generation,
+            fakeable,
             this_value: JsCell::new(JsRef::empty()),
         };
         // `self` is at its final address (embedded in its heap-allocated parent).

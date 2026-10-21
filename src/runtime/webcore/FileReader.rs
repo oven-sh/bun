@@ -23,9 +23,7 @@ bun_core::declare_scope!(FileReader, visible);
 
 // R-2 (host-fn re-entrancy): every JS-exposed / vtable-reachable method takes
 // `&self`; per-field interior mutability via `Cell` (Copy) / `JsCell` (non-
-// Copy). The `SourceContext` trait and `BufferedReaderParent` shims still
-// hand in `&mut Self` / `*mut Self` until those layers are migrated — `&mut T`
-// auto-derefs to `&T` so the impls below compile against either. `Cell<T>` and
+// Copy). The `BufferedReaderParent` shims still hand in `*mut Self`. `Cell<T>` and
 // `JsCell<T>` are both `#[repr(transparent)]`, so the embedded layout (offset
 // 0 of `NewSource<FileReader>`) is unchanged.
 pub struct FileReader {
@@ -273,8 +271,8 @@ bun_io::impl_buffered_reader_parent! {
     // as HTMLRewriter) that can drop this stream's last GC root and allocate
     // before the read loop's frames unwind, so the reader pins its parent —
     // and, through `increment_count`, the JS wrapper — for the duration.
-    ref_  = |this| (*(&*this).parent()).increment_count();
-    deref = |this| { let _ = Source::decrement_count((&*this).parent()); };
+    ref_  = |this| (&*this).parent_const().increment_count();
+    deref = |this| Source::decrement_count((&*this).parent());
 }
 
 impl FileReader {
@@ -385,8 +383,7 @@ impl FileReader {
             #[cfg(windows)]
             let need_io_ref = true;
             if need_io_ref {
-                // SAFETY: see `parent()`.
-                unsafe { (*self.parent()).increment_count() };
+                self.parent_const().increment_count();
                 self.waiting_for_on_reader_done.set(true);
             }
             self.reader().set_limit(self.max_size);
@@ -401,7 +398,7 @@ impl FileReader {
                     self.waiting_for_on_reader_done.set(false);
                     let parent = self.parent();
                     // SAFETY: see `parent()`; JS finalizer still holds a ref so this cannot free it.
-                    let _ = unsafe { Source::decrement_count(parent) };
+                    unsafe { Source::decrement_count(parent) };
                 }
                 return streams::Start::Err(e);
             }
@@ -415,8 +412,7 @@ impl FileReader {
                     && !self.reader().is_done()
                 {
                     self.waiting_for_on_reader_done.set(true);
-                    // SAFETY: see `parent()`.
-                    unsafe { (*self.parent()).increment_count() };
+                    self.parent_const().increment_count();
                 }
             }
             #[cfg(windows)]
@@ -430,8 +426,7 @@ impl FileReader {
                     && !self.reader().is_done()
                 {
                     self.waiting_for_on_reader_done.set(true);
-                    // SAFETY: see `parent()`.
-                    unsafe { (*self.parent()).increment_count() };
+                    self.parent_const().increment_count();
                 }
             }
         }
@@ -488,17 +483,13 @@ impl FileReader {
         streams::Start::Ready
     }
 
-    /// Safe accessor for the parent `NewSource.global_this` back-reference.
-    ///
-    /// One unsafe (`from_field_ptr` raw-place projection of a `Copy` field —
-    /// no `&Source` is materialized so no aliasing with `&self`); callers
-    /// then `Deref` the returned `BackRef` with no unsafe.
+    /// The parent `NewSource.global_this` back-reference.
     #[inline]
     fn parent_global(&self) -> bun_ptr::BackRef<jsc::JSGlobalObject> {
-        // SAFETY: see `parent()` — `self` is the `context` field of a live
-        // heap-allocated `Source`. Reading the `Copy` `global_this` via
-        // `(*ptr).field` is a raw-place read, not a `&Source` borrow.
-        unsafe { (*self.parent()).global_this }.expect("NewSource.global_this set before use")
+        self.parent_const()
+            .global_this
+            .get()
+            .expect("NewSource.global_this set before use")
     }
 
     /// Lazily start the reader for a native-sink hookup. Bun's file-backed
@@ -510,9 +501,9 @@ impl FileReader {
         if self.started.get() {
             return None;
         }
-        // SAFETY: see `parent()` — `self` is the `context` field of a live
-        // heap-allocated `Source`; single-threaded JS, no aliasing `&mut`.
-        unsafe { (*self.parent()).global_this = Some(bun_ptr::BackRef::new(global)) };
+        self.parent_const()
+            .global_this
+            .set(Some(bun_ptr::BackRef::new(global)));
         match self.on_start() {
             streams::Start::Ready | streams::Start::Empty | streams::Start::ChunkSize(_) => None,
             other => Some(other),
@@ -590,7 +581,7 @@ impl FileReader {
     /// The JS stream was errored with `reason`. A native reader that waits now fails with it.
     pub(crate) fn error_native_consumer(&self, reason: jsc::JSValue) {
         // SAFETY: see `parent()`.
-        let _pin = unsafe { SourcePin::new(self.parent()) };
+        let _pin = unsafe { RefPtr::init_ref(self.parent()) };
         let global = self.parent_const().global_this();
         let err = streams::StreamError::JSValue(jsc::strong::Optional::create(reason, global));
         let sink = *self.sink.get();
@@ -637,14 +628,15 @@ impl FileReader {
         self.reader().update_ref(false);
     }
 
-    fn finalize_detach(&self) -> bool {
+    fn wrapper_finalized(&self) {
         debug_assert!(!(self.done.get() && self.waiting_for_on_reader_done.get()));
         if self.done.get() || !self.waiting_for_on_reader_done.get() {
-            return false;
+            return;
         }
         self.waiting_for_on_reader_done.set(false);
         self.done.set(true);
-        true
+        // SAFETY: see `parent()`; the wrapper's ref keeps the count > 0.
+        unsafe { Source::decrement_count(self.parent()) };
     }
 
     pub(crate) fn on_read_chunk(&self, chunk: Chunk<'_>, state: ReadState) -> bool {
@@ -779,7 +771,7 @@ impl FileReader {
             .with_mut(|p| p.clear_without_deallocation());
         // A re-entrant cancel() inside `run()` reaches on_reader_done, which drops the across-read ref and lets a GC free this box while the io caller still holds `&mut` into it.
         // SAFETY: see `parent()`.
-        let _pin = unsafe { SourcePin::new(self.parent()) };
+        let _pin = unsafe { RefPtr::init_ref(self.parent()) };
         self.pending.with_mut(|p| p.run());
         // Re-entrant cancel or a nested pull that read to EOF closed the reader; tell the io caller to stop so it does not re-read the captured fd.
         ret && !self.done.get() && !self.reader().is_done()
@@ -908,7 +900,7 @@ impl FileReader {
         // `waiting_for_on_reader_done` reads below must not land on a freed box.
         let parent = self.parent();
         // SAFETY: see `parent()`.
-        let _pin = unsafe { SourcePin::new(parent) };
+        let _pin = unsafe { RefPtr::init_ref(parent) };
         let sink = *self.sink.get();
         if sink.is_some() {
             self.consume_reader_buffer();
@@ -941,13 +933,12 @@ impl FileReader {
 
         // Only close the stream if there's no buffered data left to deliver
         if self.buffered.get().is_empty() {
-            // SAFETY: see `parent()`; the pin keeps the count > 0.
-            unsafe { (*parent).on_close() };
+            self.parent_const().on_close();
         }
         if self.waiting_for_on_reader_done.get() {
             self.waiting_for_on_reader_done.set(false);
             // SAFETY: see `parent()`; `_pin` keeps the count > 0.
-            let _ = unsafe { Source::decrement_count(parent) };
+            unsafe { Source::decrement_count(parent) };
         }
     }
 
@@ -961,7 +952,7 @@ impl FileReader {
         // and drop the across-read ref before the read of it below.
         let parent = self.parent();
         // SAFETY: see `parent()`.
-        let _pin = unsafe { SourcePin::new(parent) };
+        let _pin = unsafe { RefPtr::init_ref(parent) };
 
         let sink = *self.sink.get();
         if sink.is_some() {
@@ -981,7 +972,7 @@ impl FileReader {
         if self.waiting_for_on_reader_done.get() && !self.done.get() {
             self.waiting_for_on_reader_done.set(false);
             // SAFETY: see `parent()`; `_pin` keeps the count > 0.
-            let _ = unsafe { Source::decrement_count(parent) };
+            unsafe { Source::decrement_count(parent) };
         }
         self.close_after_error();
     }
@@ -1058,72 +1049,42 @@ impl FileReader {
 
 pub(crate) type Source = readable_stream::NewSource<FileReader>;
 
-/// Holds a ref on the `Source` that embeds a `FileReader` while a dispatch runs
-/// user JS. Dropping it releases the ref and can free the source, so a pin must
-/// outlive every use of the reader it protects.
-struct SourcePin(*mut Source);
-
-impl SourcePin {
-    /// # Safety
-    /// `parent` is the live `Source` that embeds the caller.
-    unsafe fn new(parent: *mut Source) -> Self {
-        // SAFETY: fn contract.
-        unsafe { (*parent).increment_count() };
-        Self(parent)
-    }
-}
-
-impl Drop for SourcePin {
-    fn drop(&mut self) {
-        // SAFETY: balances the ref taken in `new`.
-        let _ = unsafe { Source::decrement_count(self.0) };
-    }
-}
-
 // SAFETY: `FileReader` is always the `context` field of a heap-allocated
-// `Source`. `parent` is the `raw` arm because the ref-count pin
-// (`increment_count`/`decrement_count`) and `global_this` are plain `Source`
-// fields; callers deref in a tight `unsafe { (*ptr).method() }` scope and never
-// hold `&mut Source` across other `self.*` accesses.
+// `Source`. `parent` is the `raw` arm for releasing a ref, which can free it.
 bun_core::impl_field_parent! { FileReader => Source.context; pub fn raw parent; pub fn shared parent_const; }
 
 impl readable_stream::SourceContext for FileReader {
     const NAME: &'static str = "File";
     const SUPPORTS_REF: bool = true;
     crate::source_context_codegen!(js_FileInternalReadableStreamSource);
-    // R-2: trait sigs are still `&mut self` (shared with ByteBlobLoader/
-    // ByteStream — separate migration); the inherent impls take `&self`, so
-    // these forward via auto-deref. The `&mut` here is what the codegen shim
-    // currently emits; once `NewSource` is celled the trait flips to `&self`
-    // and these become straight `Self::*(self, ..)` calls.
-    fn on_start(&mut self) -> streams::Start {
+    fn on_start(&self) -> streams::Start {
         Self::on_start(self)
     }
-    fn on_pull(&mut self, buf: &mut [u8], arr: JSValue) -> streams::Result {
+    fn on_pull(&self, buf: &mut [u8], arr: JSValue) -> streams::Result {
         Self::on_pull(self, buf, arr)
     }
-    fn on_cancel(&mut self) {
+    fn on_cancel(&self) {
         Self::on_cancel(self);
     }
-    fn deinit_fn(&mut self) {
+    fn deinit_fn(&self) {
         Self::deinit(self)
     }
-    fn finalize_detach(&mut self) -> bool {
-        Self::finalize_detach(self)
+    fn wrapper_finalized(&self) {
+        Self::wrapper_finalized(self)
     }
-    fn set_ref_unref(&mut self, e: bool) {
+    fn set_ref_unref(&self, e: bool) {
         Self::set_ref_or_unref(self, e)
     }
-    fn drain_internal_buffer(&mut self) -> Vec<u8> {
+    fn drain_internal_buffer(&self) -> Vec<u8> {
         Self::drain(self)
     }
     fn memory_cost_fn(&self) -> usize {
         Self::memory_cost(self)
     }
-    fn set_raw_mode(&mut self, flag: bool) -> Option<sys::Result<()>> {
+    fn set_raw_mode(&self, flag: bool) -> Option<sys::Result<()>> {
         Some(Self::set_raw_mode(self, flag))
     }
-    fn set_flowing(&mut self, flag: bool) {
+    fn set_flowing(&self, flag: bool) {
         Self::set_flowing(self, flag)
     }
     // toBufferedValue: null

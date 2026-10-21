@@ -3,6 +3,7 @@ use core::cell::Cell;
 use bun_collections::VecExt;
 use bun_jsc::strong::Optional as StrongOptional;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell};
+use bun_ptr::RefPtr;
 use bun_sys::Error as SysError;
 
 use crate::webcore::streams::{self, BufferAction, IntoArray};
@@ -16,10 +17,6 @@ bun_output::declare_scope!(ByteStream, visible);
 /// (Copy scalars / raw ptrs) or [`JsCell`] (non-Copy). `high_water_mark` /
 /// `size_hint` are written only at init time (before the JS wrapper exists)
 /// and stay bare.
-///
-/// The `SourceContext` trait still spells its callbacks `&mut self` (shared
-/// across `ByteBlobLoader` / `FileReader`); the trait impl below auto-derefs
-/// to the `&self` inherent bodies.
 pub struct ByteStream {
     pub(crate) buffered: Buffered,
     pub(crate) has_received_last_chunk: Cell<bool>,
@@ -185,17 +182,13 @@ impl ProducerHold {
         let Some(source) = self.source.get() else {
             return;
         };
-        let source = source.as_ptr();
-        // SAFETY: live through our ref. The caller may hold the `&ByteStream` of this very source
-        // (the chunk it just delivered): shared reads of its cells here, and the root is a
-        // separate field written through the raw pointer.
-        unsafe {
-            let bytes = &(*source).context;
-            if bytes.sink.get().is_some() || bytes.buffer_action.get().is_some() {
-                Source::root_wrapper(source);
-            } else {
-                Source::unroot_wrapper(source);
-            }
+        // SAFETY: live through our ref.
+        let source = unsafe { source.as_ref() };
+        let bytes = &source.context;
+        if bytes.sink.get().is_some() || bytes.buffer_action.get().is_some() {
+            source.root_wrapper();
+        } else {
+            source.unroot_wrapper();
         }
     }
 
@@ -207,9 +200,8 @@ impl ProducerHold {
     /// producer (which drops the hold), and the wrapper is not always rooted.
     pub(crate) fn bytes(&self) -> Option<PinnedBytes> {
         let source = self.source.get()?;
-        // SAFETY: live through our ref; no borrow of the source exists yet.
-        unsafe { (*source.as_ptr()).increment_count() };
-        Some(PinnedBytes(source))
+        // SAFETY: live through our ref.
+        Some(PinnedBytes(unsafe { RefPtr::init_ref(source.as_ptr()) }))
     }
 
     /// Stop being the producer. The source stays pinned by the returned guard, so the caller can
@@ -218,10 +210,9 @@ impl ProducerHold {
         let source = self.source.take()?;
         self.parked.set(false);
         // SAFETY: still pinned by our ref, which the guard now owns.
-        unsafe {
-            (*source.as_ptr()).producer.set(streams::SourceHandle::None);
-            (*source.as_ptr()).wrapper_unrooted.set(false);
-        }
+        let source = unsafe { RefPtr::from_raw(source.as_ptr()) };
+        source.producer.set(streams::SourceHandle::None);
+        source.wrapper_unrooted.set(false);
         Some(PinnedBytes(source))
     }
 
@@ -262,20 +253,12 @@ impl Drop for ProducerHold {
 }
 
 /// A counted ref on a stream's `Source` for the guard's life; derefs to its ByteStream.
-pub(crate) struct PinnedBytes(core::ptr::NonNull<Source>);
+pub(crate) struct PinnedBytes(RefPtr<Source>);
 
 impl core::ops::Deref for PinnedBytes {
     type Target = ByteStream;
     fn deref(&self) -> &ByteStream {
-        // SAFETY: pinned by this guard's ref; ByteStream is `&self`-only.
-        unsafe { &(*self.0.as_ptr()).context }
-    }
-}
-
-impl Drop for PinnedBytes {
-    fn drop(&mut self) {
-        // SAFETY: balances the ref this guard owns. Can free the source.
-        unsafe { Source::decrement_count(self.0.as_ptr()) };
+        &self.0.context
     }
 }
 
@@ -285,32 +268,29 @@ impl readable_stream::SourceContext for ByteStream {
     const SUPPORTS_REF: bool = false;
     crate::source_context_codegen!(js_BytesInternalReadableStreamSource);
 
-    // R-2: trait sigs are fixed at `&mut self` (shared with the other
-    // `SourceContext` impls); `&mut T` auto-derefs to `&T` so each body
-    // forwards to the `&self` inherent method below.
-    fn on_start(&mut self) -> streams::Start {
+    fn on_start(&self) -> streams::Start {
         Self::on_start(self)
     }
-    fn on_pull(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result {
+    fn on_pull(&self, buf: &mut [u8], view: JSValue) -> streams::Result {
         Self::on_pull(self, buf, view)
     }
-    fn on_cancel(&mut self) {
+    fn on_cancel(&self) {
         Self::on_cancel(self)
     }
-    fn deinit_fn(&mut self) {
+    fn deinit_fn(&self) {
         Self::finalize(self)
     }
-    fn wrapper_finalized(&mut self) {
+    fn wrapper_finalized(&self) {
         self.parent_const().producer.get().consumer_collected();
     }
-    fn drain_internal_buffer(&mut self) -> Vec<u8> {
+    fn drain_internal_buffer(&self) -> Vec<u8> {
         Self::drain(self)
     }
     fn memory_cost_fn(&self) -> usize {
         Self::memory_cost(self)
     }
     fn to_buffered_value(
-        &mut self,
+        &self,
         cx: &bun_jsc::JsThread<'_>,
         action: streams::BufferActionTag,
     ) -> Option<bun_jsc::JsResult<JSValue>> {
@@ -884,12 +864,7 @@ impl ByteStream {
     /// NOTE: not `impl Drop` — `ByteStream` is the `context` payload of a `.classes.ts`
     /// `ReadableStreamSource`; teardown is driven by the GC finalizer via `Source::finalize`,
     /// which calls this. Per §JSC, `.classes.ts` payloads use `finalize`, not `deinit`/`Drop`.
-    ///
-    /// R-2: stays `&mut self` — this is the destructor path (called once from
-    /// `SourceContext::deinit_fn(&mut self)` after the ref-count hits zero), so
-    /// no JS re-entry can alias `self`; and `parent().deinit()` needs unique
-    /// `Box` provenance.
-    fn finalize(&mut self) {
+    fn finalize(&self) {
         bun_jsc::mark_binding!();
         self.buffered.clear();
 
@@ -920,7 +895,7 @@ impl ByteStream {
         }
         // Enclosing `Box<NewSource<ByteStream>>` is freed by the caller
         // (`NewSource::decrement_count`) after this returns; freeing it here would
-        // deallocate the storage backing `&mut self` (dangling UAF).
+        // deallocate the storage backing `&self` (dangling UAF).
     }
 
     pub(crate) fn drain(&self) -> Vec<u8> {

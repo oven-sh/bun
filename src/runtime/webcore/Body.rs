@@ -915,7 +915,7 @@ impl Value {
             webcore::readable_stream::NewSource {
                 // `ByteStream::default()` is the post-setup state.
                 context: ByteStream::default(),
-                global_this: Some(bun_ptr::BackRef::new(cx.global())),
+                global_this: core::cell::Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
                 ..Default::default()
             },
         );
@@ -1507,7 +1507,7 @@ impl Value {
         let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
             webcore::readable_stream::NewSource {
                 context: ByteStream::default(),
-                global_this: Some(bun_ptr::BackRef::new(cx.global())),
+                global_this: core::cell::Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
                 ..Default::default()
             },
         );

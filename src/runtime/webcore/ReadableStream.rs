@@ -3,7 +3,9 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::webcore::jsc::SysErrorJsc as _;
-use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::webcore::jsc::{
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult,
+};
 // `bun_jsc` not yet a dep; alias to local shim so `bun_jsc::Strong` etc. resolve.
 use crate::webcore::jsc as bun_jsc;
 use bun_collections::VecExt;
@@ -205,7 +207,7 @@ impl ReadableStream {
         let blob = match self.ptr {
             Source::Blob(blobby) => {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
-                let blobby = unsafe { &mut *blobby };
+                let blobby = unsafe { &*blobby };
                 blobby.to_any_blob(global_this)?
             }
             Source::File(_) => {
@@ -541,7 +543,7 @@ impl ReadableStream {
         match &store.data {
             webcore::blob::store::Data::Bytes(_) => {
                 let reader = NewSource::<ByteBlobLoader>::new_mut(NewSource {
-                    global_this: Some(bun_ptr::BackRef::new(cx.global())),
+                    global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
                     context: ByteBlobLoader::default(),
                     ..Default::default()
                 });
@@ -550,7 +552,7 @@ impl ReadableStream {
             }
             webcore::blob::store::Data::File(_) => {
                 let reader = NewSource::<FileReader>::new_mut(NewSource {
-                    global_this: Some(bun_ptr::BackRef::new(cx.global())),
+                    global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
                     context: FileReader {
                         event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                             cx.vm().as_mut().event_loop().cast(),
@@ -593,7 +595,7 @@ impl ReadableStream {
         buffered_reader: &mut bun_io::BufferedReader,
     ) -> JsResult<JSValue> {
         let source = NewSource::<FileReader>::new_mut(NewSource {
-            global_this: Some(bun_ptr::BackRef::new(cx.global())),
+            global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
             context: FileReader {
                 event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                     cx.vm().as_mut().event_loop().cast(),
@@ -628,7 +630,7 @@ impl ReadableStream {
         err: syscall::Error,
     ) -> JsResult<JSValue> {
         let source = NewSource::<FileReader>::new_mut(NewSource {
-            global_this: Some(bun_ptr::BackRef::new(cx.global())),
+            global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
             context: FileReader {
                 event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                     cx.vm().as_mut().event_loop().cast(),
@@ -806,29 +808,26 @@ pub trait SourceContext: Sized {
     /// `js_${NAME}InternalReadableStreamSource::sink_owner_set_cached`
     fn js_sink_owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
 
-    fn on_start(&mut self) -> streams::Start;
-    fn on_pull(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result;
-    fn on_cancel(&mut self);
+    fn on_start(&self) -> streams::Start;
+    fn on_pull(&self, buf: &mut [u8], view: JSValue) -> streams::Result;
+    fn on_cancel(&self);
     /// Per-context teardown side-effects (unref pollers, flush pending callbacks,
     /// release handles). **Must NOT free the enclosing `NewSource<Self>` allocation** —
     /// that is done by the caller ([`NewSource::decrement_count`]) *after* this
     /// returns, via `Box::from_raw`, which then runs `Drop` on every field. Freeing
-    /// here would deallocate the storage backing the live `&mut self` borrow (UAF).
-    fn deinit_fn(&mut self);
-
-    fn finalize_detach(&mut self) -> bool {
-        false
-    }
+    /// here would deallocate the storage backing the live `&self` borrow (UAF).
+    fn deinit_fn(&self);
 
     /// The JS wrapper was collected while native refs remain. Runs inside a GC
     /// sweep: no JS. `ByteStream` tells its producer nobody can read it now.
-    fn wrapper_finalized(&mut self) {}
+    /// `FileReader` releases its across-read ref.
+    fn wrapper_finalized(&self) {}
 
     /// `setRefUnrefFn` — default no-op.
-    fn set_ref_unref(&mut self, _enable: bool) {}
+    fn set_ref_unref(&self, _enable: bool) {}
 
     /// `drainInternalBuffer` — default returns empty.
-    fn drain_internal_buffer(&mut self) -> Vec<u8> {
+    fn drain_internal_buffer(&self) -> Vec<u8> {
         Vec::<u8>::default()
     }
 
@@ -839,7 +838,7 @@ pub trait SourceContext: Sized {
 
     /// `toBufferedValue` — `None` ⇒ "not implemented" (caller throws TODO).
     fn to_buffered_value(
-        &mut self,
+        &self,
         _cx: &bun_jsc::JsThread<'_>,
         _action: streams::BufferActionTag,
     ) -> Option<JsResult<JSValue>> {
@@ -849,12 +848,12 @@ pub trait SourceContext: Sized {
     /// Returns `None` if the context type does not support raw mode.
     /// The `None` default is only reachable if codegen wires `setRawMode` for
     /// a context that does not implement it (see `set_raw_mode_from_js`).
-    fn set_raw_mode(&mut self, _flag: bool) -> Option<bun_sys::Result<()>> {
+    fn set_raw_mode(&self, _flag: bool) -> Option<bun_sys::Result<()>> {
         None
     }
 
     /// Default no-op.
-    fn set_flowing(&mut self, _flag: bool) {}
+    fn set_flowing(&self, _flag: bool) {}
 }
 
 // Hand-wired JSC class (the `#[bun_jsc::JsClass]` derive cannot be used on a
@@ -870,8 +869,10 @@ pub trait SourceContext: Sized {
 #[repr(C)]
 pub struct NewSource<C: SourceContext> {
     pub context: C,
-    pub cancelled: bool,
-    pub ref_count: u32,
+    pub cancelled: Cell<bool>,
+    /// The JS wrapper holds one ref. The rest are native: a `FileReader`'s across-read ref
+    /// (`waiting_for_on_reader_done`), a `ByteStream`'s producer, and scoped `RefPtr` pins.
+    pub ref_count: Cell<u32>,
     pub pending_err: Option<syscall::Error>,
     /// Upstream producer to notify on cancel/drain/consumer-attach. Replaces
     /// the per-signal fn-ptr + ctx-ptr pairs with one typed handle.
@@ -879,7 +880,7 @@ pub struct NewSource<C: SourceContext> {
     // JSC_BORROW: process-lifetime VM global. Heap m_ctx field reassigned in
     // `start()` from a fresh `&JSGlobalObject`; `BackRef` gives a safe `Deref`
     // projection without propagating a lifetime parameter into FFI codegen.
-    pub global_this: Option<bun_ptr::BackRef<JSGlobalObject>>,
+    pub global_this: Cell<Option<bun_ptr::BackRef<JSGlobalObject>>>,
     /// Back-reference to the owning `JS{Blob,Bytes,File}InternalReadableStreamSource`
     /// wrapper. Starts `Weak` (set in [`Self::to_readable_stream`]), is
     /// [`JsRef::upgrade`]d to `Strong` in [`Self::increment_count`] while a
@@ -888,7 +889,7 @@ pub struct NewSource<C: SourceContext> {
     /// only the wrapper's own ref remains. [`Self::finalize`] flips it to
     /// `Finalized` so [`Self::on_close`] reads `None` instead of a
     /// dead-but-unswept cell.
-    pub this_jsvalue: jsc::JsRef,
+    pub this_jsvalue: JsCell<jsc::JsRef>,
     /// The producer's native ref does not root the wrapper ([`Self::unroot_wrapper`]).
     pub wrapper_unrooted: Cell<bool>,
     /// R-2: written by context methods (`ByteStream::to_any_blob`,
@@ -914,7 +915,7 @@ jsc::impl_abort_handle_owner!(
     },
     |this, _cause| {
         // SAFETY: trait contract — `this` is live.
-        let wrapper = unsafe { &(*this).this_jsvalue };
+        let wrapper = unsafe { (*this).this_jsvalue.get() };
         // Collected and not swept yet: so are those peers, and the finalizer releases this.
         if wrapper.try_get().is_none() && !wrapper.is_finalized() {
             return;
@@ -928,12 +929,12 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
     fn default() -> Self {
         Self {
             context: C::default(),
-            cancelled: false,
-            ref_count: 1,
+            cancelled: Cell::new(false),
+            ref_count: Cell::new(1),
             pending_err: None,
             producer: Cell::new(streams::SourceHandle::None),
-            global_this: None,
-            this_jsvalue: jsc::JsRef::empty(),
+            global_this: Cell::new(None),
+            this_jsvalue: JsCell::new(jsc::JsRef::empty()),
             wrapper_unrooted: Cell::new(false),
             is_closed: Cell::new(false),
             reader_context: Cell::new(None),
@@ -1040,6 +1041,24 @@ impl<C: SourceContext> NewSourceCodegen for NewSource<C> {
     }
 }
 
+impl<C: SourceContext> bun_ptr::AnyRefCounted for NewSource<C> {
+    #[inline]
+    unsafe fn rc_ref(this: *mut Self) {
+        // SAFETY: caller contract — `this` is live.
+        unsafe { (*this).increment_count() }
+    }
+    #[inline]
+    unsafe fn rc_deref(this: *mut Self) {
+        // SAFETY: forwarded caller contract.
+        unsafe { Self::decrement_count(this) }
+    }
+    #[inline]
+    unsafe fn rc_has_one_ref(this: *const Self) -> bool {
+        // SAFETY: caller contract — `this` is live.
+        unsafe { (*this).ref_count.get() == 1 }
+    }
+}
+
 // Enforce the layout invariant `from_js`/`Source` rely on.
 const _: () = assert!(core::mem::offset_of!(NewSource<ByteBlobLoader>, context) == 0);
 const _: () = assert!(core::mem::offset_of!(NewSource<ByteStream>, context) == 0);
@@ -1069,10 +1088,12 @@ impl<C: SourceContext> NewSource<C> {
     /// VM-owned global outlives every `NewSource` it owns.
     #[inline]
     pub fn global_this(&self) -> &JSGlobalObject {
-        self.global_this
-            .as_ref()
-            .expect("NewSource.global_this used before init")
-            .get()
+        JSGlobalObject::opaque_ref(
+            self.global_this
+                .get()
+                .expect("NewSource.global_this used before init")
+                .as_const_ptr(),
+        )
     }
 
     /// Heap-allocate and hand back the raw pointer.
@@ -1114,25 +1135,25 @@ impl<C: SourceContext> NewSource<C> {
         unsafe { &mut *Self::new(init) }
     }
 
-    pub fn set_ref(&mut self, value: bool) {
+    pub fn set_ref(&self, value: bool) {
         if C::SUPPORTS_REF {
             self.context.set_ref_unref(value);
         }
     }
 
-    pub fn on_pull_from_js(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result {
+    pub fn on_pull_from_js(&self, buf: &mut [u8], view: JSValue) -> streams::Result {
         self.context.on_pull(buf, view)
     }
 
-    pub fn on_start_from_js(&mut self) -> streams::Start {
+    pub fn on_start_from_js(&self) -> streams::Start {
         self.context.on_start()
     }
 
-    pub fn cancel(&mut self) {
-        if self.cancelled {
+    pub fn cancel(&self) {
+        if self.cancelled.get() {
             return;
         }
-        self.cancelled = true;
+        self.cancelled.set(true);
         self.context.on_cancel();
         let mut p = self.producer.replace(streams::SourceHandle::None);
         p.close(None);
@@ -1145,8 +1166,8 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     /// Tell the C++ `JSNativeStreamSourceAdapter` (if a stream consumer attached one) that the native side closed.
-    pub fn on_close(&mut self) {
-        if self.cancelled || !self.is_reader_live() {
+    pub fn on_close(&self) {
+        if self.cancelled.get() || !self.is_reader_live() {
             return;
         }
         // A finalized wrapper reads `None` here (see `this_jsvalue`), so a close after GC is a no-op.
@@ -1186,59 +1207,37 @@ impl<C: SourceContext> NewSource<C> {
         ));
     }
 
-    pub fn increment_count(&mut self) {
-        self.ref_count += 1;
+    pub fn increment_count(&self) {
+        self.ref_count.set(self.ref_count.get() + 1);
         // A ref beyond the JS wrapper's own is held (in practice a FileReader
         // `waiting_for_on_reader_done` I/O ref). Root the wrapper so
         // `on_close`, reached from `on_reader_done` off the event loop with
         // no JS frame on the stack, never reads a dead-but-unswept cell.
         if !self.wrapper_unrooted.get() {
-            // SAFETY: `self` is live for the call.
-            unsafe { Self::upgrade_wrapper(self) };
+            self.upgrade_wrapper();
         }
     }
 
-    /// # Safety
-    /// `this` points at a live `NewSource<C>`.
-    unsafe fn upgrade_wrapper(this: *mut Self) {
-        // SAFETY: fn contract; field places only, see `unroot_wrapper`.
-        unsafe {
-            if let Some(global) = (*this).global_this.as_deref() {
-                if (*this).this_jsvalue.is_not_empty() {
-                    (*this).this_jsvalue.upgrade(global);
-                }
+    fn upgrade_wrapper(&self) {
+        if let Some(global) = self.global_this.get().as_deref() {
+            if self.this_jsvalue.get().is_not_empty() {
+                self.this_jsvalue.with_mut(|this| this.upgrade(global));
             }
         }
     }
 
     /// The producer's ref leaves the wrapper collectable. [`SourceContext::wrapper_finalized`]
     /// tells the producer if that happens.
-    ///
-    /// Takes a raw pointer: the producer reaches this while it holds a `&C` into
-    /// `this` (the chunk it is delivering to), so only the fields written here
-    /// are touched, never a `&mut Self` that would cover the context too.
-    ///
-    /// # Safety
-    /// `this` points at a live `NewSource<C>`.
-    pub unsafe fn unroot_wrapper(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe {
-            (*this).wrapper_unrooted.set(true);
-            (*this).this_jsvalue.downgrade();
-        }
+    pub fn unroot_wrapper(&self) {
+        self.wrapper_unrooted.set(true);
+        self.this_jsvalue.with_mut(jsc::JsRef::downgrade);
     }
 
     /// Undo [`Self::unroot_wrapper`]: a consumer that does not hold the wrapper takes the bytes.
-    ///
-    /// # Safety
-    /// As [`Self::unroot_wrapper`].
-    pub unsafe fn root_wrapper(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe {
-            (*this).wrapper_unrooted.set(false);
-            if (*this).ref_count > 1 {
-                Self::upgrade_wrapper(this);
-            }
+    pub fn root_wrapper(&self) {
+        self.wrapper_unrooted.set(false);
+        if self.ref_count.get() > 1 {
+            self.upgrade_wrapper();
         }
     }
 
@@ -1251,23 +1250,23 @@ impl<C: SourceContext> NewSource<C> {
     ///
     /// SAFETY: `this` must point at a live `NewSource<C>` produced by
     /// [`Self::new`] (i.e. `Box::into_raw`). Caller must not dereference `this`
-    /// — nor any interior pointer such as `&mut context` — after this returns.
-    pub unsafe fn decrement_count(this: *mut Self) -> u32 {
+    /// — nor any interior pointer such as `&context` — after this returns.
+    pub unsafe fn decrement_count(this: *mut Self) {
         // SAFETY: caller contract — `this` is live for the duration of this block.
         let remaining = unsafe {
-            let r = &mut (*this).ref_count;
+            let r = &(*this).ref_count;
             #[cfg(debug_assertions)]
-            if *r == 0 {
+            if r.get() == 0 {
                 panic!("Attempted to decrement ref count below zero");
             }
-            *r -= 1;
-            *r
+            r.set(r.get() - 1);
+            r.get()
         };
         if remaining == 1 {
             // Only the JS wrapper's own ref remains: drop the Strong root so
             // the wrapper becomes collectable again.
             // SAFETY: caller contract — `this` is live while remaining > 0.
-            unsafe { (*this).this_jsvalue.downgrade() };
+            unsafe { (*this).this_jsvalue.with_mut(jsc::JsRef::downgrade) };
         }
         if remaining == 0 {
             // SAFETY: still live; run side-effect teardown while fields are valid.
@@ -1278,12 +1277,10 @@ impl<C: SourceContext> NewSource<C> {
             // `&mut` borrow of `*this` is live at this point — reclaim and drop,
             // which runs `Drop` on `context` and all other fields, then frees.
             drop(unsafe { bun_core::heap::take(this) });
-            return 0;
         }
-        remaining
     }
 
-    pub fn drain(&mut self) -> Vec<u8> {
+    pub fn drain(&self) -> Vec<u8> {
         self.context.drain_internal_buffer()
     }
 
@@ -1298,8 +1295,8 @@ impl<C: SourceContext> NewSource<C> {
             <Self as NewSourceCodegen>::to_js(self, cx.global())
         };
         out_value.ensure_still_alive();
-        if self.this_jsvalue.is_empty() {
-            self.this_jsvalue = jsc::JsRef::init_weak(out_value);
+        if self.this_jsvalue.get().is_empty() {
+            self.this_jsvalue.set(jsc::JsRef::init_weak(out_value));
             if let Some(context) = cx.vm().as_graph_context(cx.context()) {
                 // SAFETY: the wrapper just made owns this heap allocation; the handle leaves its
                 // context when this is dropped.
@@ -1321,7 +1318,7 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn set_raw_mode_from_js(
-        this: &mut Self,
+        this: &Self,
         global: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1335,7 +1332,7 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn set_flowing_from_js(
-        this: &mut Self,
+        this: &Self,
         _global: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1360,7 +1357,7 @@ impl<C: SourceContext> NewSource<C> {
 // `NewSource<C>` (aliased as `{Blob,Bytes,File}InternalReadableStreamSource`).
 impl<C: SourceContext> NewSource<C> {
     pub fn pull_from_js(
-        &mut self,
+        &self,
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1385,11 +1382,12 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn start_from_js(
-        &mut self,
+        &self,
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.global_this = Some(bun_ptr::BackRef::new(global_this));
+        self.global_this
+            .set(Some(bun_ptr::BackRef::new(global_this)));
         self.reader_context.set(Some(
             global_this.bun_vm().context_of_caller(call_frame).id(),
         ));
@@ -1402,7 +1400,7 @@ impl<C: SourceContext> NewSource<C> {
         }
     }
 
-    pub fn get_is_closed_from_js(&mut self, _global_object: &JSGlobalObject) -> JSValue {
+    pub fn get_is_closed_from_js(&self, _global_object: &JSGlobalObject) -> JSValue {
         JSValue::from(self.is_closed.get())
     }
 
@@ -1441,7 +1439,7 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn cancel_from_js(
-        &mut self,
+        &self,
         _global_object: &JSGlobalObject,
         _call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1450,7 +1448,7 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn update_ref_from_js(
-        &mut self,
+        &self,
         _global_object: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1459,31 +1457,16 @@ impl<C: SourceContext> NewSource<C> {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn finalize(self: Box<Self>) {
-        // Refcounted: `decrement_count` releases the JS wrapper's +1; allocation
-        // may outlive this call if other refs remain, so hand ownership back to
-        // the raw refcount via a raw pointer (the call may free `*this`).
-        let this = Box::into_raw(self);
-        // SAFETY: `this` is live — just unwrapped from `Box`.
-        unsafe { (*this).this_jsvalue.finalize() };
-        // SAFETY: `this` is live; the JS-wrapper +1 (released last) keeps ref_count > 0
-        // across whatever ref the producer drops in response.
-        unsafe {
-            if (*this).ref_count > 1 {
-                (*this).context.wrapper_finalized();
-            }
+    pub fn finalize(&self) {
+        self.this_jsvalue.with_mut(jsc::JsRef::finalize);
+        // The wrapper's ref, released after this, keeps the count > 0 across the refs this drops.
+        if self.ref_count.get() > 1 {
+            self.context.wrapper_finalized();
         }
-        // SAFETY: `this` is live; the JS-wrapper ref below still pins the count.
-        if unsafe { (*this).context.finalize_detach() } {
-            // SAFETY: `this` is live; the JS-wrapper +1 (released below) keeps ref_count > 0.
-            let _ = unsafe { Self::decrement_count(this) };
-        }
-        // SAFETY: `this` came from `Box::into_raw`; not accessed after.
-        let _ = unsafe { Self::decrement_count(this) };
     }
 
     pub fn drain_from_js(
-        &mut self,
+        &self,
         global_this: &JSGlobalObject,
         _call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1503,7 +1486,7 @@ impl<C: SourceContext> NewSource<C> {
     // text/arrayBuffer/blob/bytes/json all share the same body modulo
     // `BufferActionTag`. Collapsed into one helper to avoid 5× drift.
     fn to_buffered_value_from_js(
-        &mut self,
+        &self,
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
         action: streams::BufferActionTag,
@@ -1519,7 +1502,7 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn text_from_js(
-        &mut self,
+        &self,
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1527,7 +1510,7 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn array_buffer_from_js(
-        &mut self,
+        &self,
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1539,7 +1522,7 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn blob_from_js(
-        &mut self,
+        &self,
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1547,7 +1530,7 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn bytes_from_js(
-        &mut self,
+        &self,
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1555,7 +1538,7 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn json_from_js(
-        &mut self,
+        &self,
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {

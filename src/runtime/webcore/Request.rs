@@ -273,7 +273,7 @@ impl Request {
                             // SAFETY: `Source::Blob` holds a live `*mut ByteBlobLoader`
                             // for as long as the readable stream exists; we only read
                             // its `content_type` slice and immediately copy below.
-                            let ct: &[u8] = unsafe { (*blob).content_type.as_slice() };
+                            let ct: &[u8] = unsafe { (*blob).content_type.get().as_slice() };
                             Some(std::ptr::from_ref::<[u8]>(ct))
                         }
                         _ => None,

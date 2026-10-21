@@ -1463,6 +1463,8 @@ describe("backpressure", () => {
       noPipelining?: string;
       // Why the tests of the socket timeout leave this door out.
       noSocketTimeout?: string;
+      // Why the tests of a stopped socket leave this door out.
+      noStop?: string;
       open(
         listener: RequestListener,
         options?: http.ServerOptions,
@@ -1560,6 +1562,7 @@ describe("backpressure", () => {
       "http2.createSecureServer({ allowHTTP1: true }).emit('connection', socket)": {
         noFinBehindBody: "the response is lost when the client's FIN follows the body, with or without a stop",
         noSocketTimeout: "Bun serves this socket through a Duplex that has no setTimeout() (Node: a TLSSocket)",
+        noStop: "nothing can end a connection of that Duplex while it is stopped, so a request body does not stop it",
         open(listener, options = {}) {
           const server = http2.createSecureServer({ ...tlsOptions, allowHTTP1: true, ...options }, listener as never);
           return listening(
@@ -1839,6 +1842,7 @@ describe("backpressure", () => {
       const FRAME = Buffer.concat([Buffer.from("10000\r\n"), Buffer.alloc(0x10000, "d"), Buffer.from("\r\n")]);
       const NET_SOCKET = "server.emit('connection', socket) with a net.Socket";
       const ALLOW_HTTP1 = "http2.createSecureServer({ allowHTTP1: true }) with an HTTP/1.1 client";
+      const RAW_SOCKET_HTTP2 = "http2.createSecureServer({ allowHTTP1: true }).emit('connection', socket)";
       const withSocketTimeout = doorsWhere(door => !door.native && !door.noSocketTimeout);
 
       const turn = () => new Promise<void>(resolve => setImmediate(resolve));
@@ -1911,7 +1915,7 @@ describe("backpressure", () => {
       }
       const GET = (path: string) => `GET ${path} HTTP/1.1\r\nHost: localhost\r\n\r\n`;
 
-      describe.each(doorsWhere(door => !door.native && !door.noPipelining))("%s", door => {
+      describe.each(doorsWhere(door => !door.native && !door.noPipelining && !door.noStop))("%s", door => {
         // The three requests are written at once. Each is parsed only once the body ahead of it has
         // been, so without a stop the last one is dispatched while nothing has read the first body.
         it("stops the socket for each request body that nothing reads, and serves the requests behind them", async () => {
@@ -2404,13 +2408,39 @@ describe("backpressure", () => {
               await connection.closed;
               expect(connection.serverSide()?.destroyed).toBe(true);
               // The socket is destroyed with bytes of the body unread, so a reset follows the response, as in Node.
-              // Windows drops what the client has not read yet when the reset arrives.
-              if (process.platform !== "win32") expect(connection.statuses()).toEqual(["HTTP/1.1 413"]);
+              // Linux keeps what the client has not read yet when the reset arrives. Windows and macOS can drop it.
+              if (process.platform === "linux") expect(connection.statuses()).toEqual(["HTTP/1.1 413"]);
             } finally {
               connection.close();
             }
           },
         );
+      });
+
+      // Bun serves this door through a Duplex in the place of the TLS socket. It has no timer, and its close does not
+      // reach the raw socket while that is stopped. So a request body does not stop it, and the client's FIN gets through.
+      it(`ends a connection with an abandoned body when its client leaves: ${RAW_SOCKET_HTTP2}`, async () => {
+        const closed = Promise.withResolvers<void>();
+        const connection = await connectTo(
+          RAW_SOCKET_HTTP2,
+          (req, res) => {
+            req.socket.once("close", () => closed.resolve());
+            req.once("data", () => {
+              req.pause();
+              res.writeHead(413).end("too large;");
+            });
+          },
+          { keepAliveTimeout: 100, keepAliveTimeoutBuffer: 50 },
+        );
+        try {
+          writeBody(connection.client, "/abandoned");
+          await connection.receive("too large;");
+          connection.client.destroy();
+          await closed.promise;
+          expect(connection.serverSide()?.destroyed).toBe(true);
+        } finally {
+          connection.close();
+        }
       });
 
       it("does not keep the process alive for a request whose body has stopped the socket, as in Node", async () => {

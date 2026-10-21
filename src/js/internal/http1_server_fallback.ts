@@ -35,6 +35,8 @@ type IncomingMessage = import("node:http").IncomingMessage;
 const kHttp1StoppedSocket = Symbol("http1StoppedSocket");
 // On a socket whose keep-alive timeout is armed: the request whose response is out.
 const kHttp1KeepAliveRequest = Symbol("http1KeepAliveRequest");
+// On a socket that a request body does not stop: nothing can end its connection while it is stopped.
+const kHttp1NoReadStop = Symbol.for("::bunhttp1noreadstop::");
 
 interface Http1FallbackRequest extends IncomingMessage {
   upgrade: boolean;
@@ -628,7 +630,7 @@ function connectionListenerHTTP1(server, socket, options) {
   };
   // Node's parserOnBody (https://github.com/nodejs/node/blob/v26.3.0/lib/_http_common.js#L128-L141). Not in Node: a destroyed request takes no bytes and stops nothing.
   parser[kOnBody] = function onHttp1Body(chunk) {
-    if (!req || req._dumped || req.destroyed || req.push(chunk)) return;
+    if (!req || req._dumped || req.destroyed || req.push(chunk) || socket[kHttp1NoReadStop]) return;
     readStop(socket);
     if (req[kHttp1StoppedSocket] === undefined) {
       req[kHttp1StoppedSocket] = socket;

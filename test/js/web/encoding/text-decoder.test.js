@@ -6,6 +6,7 @@ import {
   isASAN,
   normalizeBunSnapshot,
   rss,
+  runWithError,
   tempDir,
   withoutAggressiveGC,
 } from "harness";
@@ -297,10 +298,24 @@ describe("TextDecoder", () => {
     expect(decoder.ignoreBOM).toBe(false);
   });
 
-  it("should throw on invalid input", () => {
-    expect(() => {
-      const decoder = new TextDecoder("utf-8", { fatal: 10, ignoreBOM: {} });
-    }).toThrow();
+  // WebIDL boolean conversion is ToBoolean: any value is valid.
+  // Minifiers emit `{ignoreBOM: 1}` for `{ignoreBOM: true}`. https://github.com/oven-sh/bun/issues/40758
+  it("constructor coerces fatal and ignoreBOM with ToBoolean", () => {
+    const truthy = new TextDecoder("utf-8", { fatal: 10, ignoreBOM: {} });
+    expect({ fatal: truthy.fatal, ignoreBOM: truthy.ignoreBOM }).toEqual({ fatal: true, ignoreBOM: true });
+
+    const falsy = new TextDecoder("utf-8", { fatal: 0, ignoreBOM: "" });
+    expect({ fatal: falsy.fatal, ignoreBOM: falsy.ignoreBOM }).toEqual({ fatal: false, ignoreBOM: false });
+  });
+
+  it.each([
+    [1, true],
+    [0, false],
+  ])("ignoreBOM: %p coerces to %p and controls BOM stripping", (value, expected) => {
+    const decoder = new TextDecoder("utf-8", { ignoreBOM: value });
+    expect(decoder.ignoreBOM).toBe(expected);
+    const withBOM = new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0x62, 0x63]);
+    expect(decoder.decode(withBOM)).toBe(expected ? "\uFEFFabc" : "abc");
   });
 
   it("should support undifined", () => {
@@ -312,6 +327,11 @@ describe("TextDecoder", () => {
     expect(() => {
       const decoder = new TextDecoder("utf-8", undefined);
     }).not.toThrow();
+  });
+
+  it("has the lengths of the IDL", () => {
+    expect(TextDecoder.length).toBe(0);
+    expect(TextDecoder.prototype.decode.length).toBe(0);
   });
 
   // https://webidl.spec.whatwg.org/#es-dictionary step 1:
@@ -348,6 +368,18 @@ describe("TextDecoder", () => {
 
     it.each([5, "x", true, 0n])("constructor rejects primitive options: %p", opt => {
       expect(() => new TextDecoder("utf-8", opt)).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    });
+
+    it("shows a lone surrogate in refused options as it is", () => {
+      const message = `The "options" argument must be of type object. Received type string ('a\ud800')`;
+      expect(runWithError(() => new TextDecoder("utf-8", "a\ud800"))?.message).toBe(message);
+      expect(runWithError(() => new TextDecoder().decode(new Uint8Array(), "a\ud800"))?.message).toBe(message);
+    });
+
+    it("refuses options before it looks up the label", () => {
+      expect(() => new TextDecoder("nope", 1)).toThrow(
         expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
       );
     });

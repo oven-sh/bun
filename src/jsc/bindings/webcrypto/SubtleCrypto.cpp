@@ -56,8 +56,10 @@
 #include "CryptoKeyAKP.h"
 #include "CryptoKeyEC.h"
 #include "CryptoKeyRSA.h"
+#include "BunString.h"
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
+#include "VectorSizeLimit.h"
 #include "node/crypto/CryptoUtil.h"
 #include <openssl/bytestring.h>
 #include <openssl/err.h>
@@ -66,7 +68,6 @@
 #include <functional>
 #include "JSRsaHashedImportParams.h"
 #include "JSRsaHashedKeyGenParams.h"
-#include "JSRsaKeyGenParams.h"
 #include "JSRsaOaepParams.h"
 #include "JSRsaPssParams.h"
 #include <JavaScriptCore/JSONObject.h>
@@ -106,22 +107,6 @@ static ExceptionOr<CryptoAlgorithmIdentifier> toHashIdentifier(JSGlobalObject& s
     if (digestParams.hasException())
         return digestParams.releaseException();
     return digestParams.returnValue()->identifier;
-}
-
-static bool isRSAESPKCSWebCryptoDeprecated(JSGlobalObject& state)
-{
-    return true;
-    // auto& globalObject = *uncheckedDowncast<JSDOMGlobalObject>(&state);
-    // auto* context = globalObject.scriptExecutionContext();
-    // return context && context->settingsValues().deprecateRSAESPKCSWebCryptoEnabled;
-}
-
-static bool isSafeCurvesEnabled(JSGlobalObject& state)
-{
-    return true;
-    // auto& globalObject = *uncheckedDowncast<JSDOMGlobalObject>(&state);
-    // auto* context = globalObject.scriptExecutionContext();
-    // return context && context->settingsValues().webCryptoSafeCurvesEnabled;
 }
 
 // The lazy *Vector() accessors on the parameter classes copy these dictionary members into
@@ -168,19 +153,13 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
     if (!identifier) [[unlikely]]
         return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
 
-    if (*identifier == CryptoAlgorithmIdentifier::Ed25519 && !isSafeCurvesEnabled(state))
-        return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
-
     std::unique_ptr<CryptoAlgorithmParameters> result;
     switch (operation) {
     case Operations::Encrypt:
     case Operations::Decrypt:
         switch (*identifier) {
         case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
-            if (isRSAESPKCSWebCryptoDeprecated(state))
-                return Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
-            result = makeUnique<CryptoAlgorithmParameters>(params);
-            break;
+            return Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
         case CryptoAlgorithmIdentifier::RSA_OAEP: {
             auto params = convertDictionary<CryptoAlgorithmRsaOaepParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
@@ -282,16 +261,8 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         break;
     case Operations::GenerateKey:
         switch (*identifier) {
-        case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5: {
-            if (isRSAESPKCSWebCryptoDeprecated(state))
-                return Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
-            auto params = convertDictionary<CryptoAlgorithmRsaKeyGenParams>(state, value.get());
-            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-            if (!isAcceptableVectorSource(params.publicExponent))
-                return Exception { OperationError, "Input data is too large"_s };
-            result = makeUnique<CryptoAlgorithmRsaKeyGenParams>(params);
-            break;
-        }
+        case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
+            return Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
         case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
         case CryptoAlgorithmIdentifier::RSA_PSS:
         case CryptoAlgorithmIdentifier::RSA_OAEP: {
@@ -414,10 +385,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
     case Operations::ImportKey:
         switch (*identifier) {
         case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
-            if (isRSAESPKCSWebCryptoDeprecated(state))
-                return Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
-            result = makeUnique<CryptoAlgorithmParameters>(params);
-            break;
+            return Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
         case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
         case CryptoAlgorithmIdentifier::RSA_PSS:
         case CryptoAlgorithmIdentifier::RSA_OAEP: {
@@ -681,11 +649,9 @@ static std::optional<Vector<uint8_t>> copyToVector(BufferSource&& data, Ref<Defe
     return Vector<uint8_t> { std::span { data.data(), data.length() } };
 }
 
-static bool isSupportedExportKey(JSGlobalObject& state, CryptoAlgorithmIdentifier identifier)
+static bool isSupportedExportKey(CryptoAlgorithmIdentifier identifier)
 {
     switch (identifier) {
-    case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
-        return !isRSAESPKCSWebCryptoDeprecated(state);
     case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
     case CryptoAlgorithmIdentifier::RSA_PSS:
     case CryptoAlgorithmIdentifier::RSA_OAEP:
@@ -794,18 +760,12 @@ static std::unique_ptr<CryptoAlgorithmParameters> crossThreadCopyImportParams(co
     }
 }
 
-void SubtleCrypto::addAuthenticatedEncryptionWarningIfNecessary(CryptoAlgorithmIdentifier algorithmIdentifier)
-{
-}
-
 // MARK: - Exposed functions.
 
 void SubtleCrypto::encrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& key, BufferSource&& dataBufferSource, Ref<DeferredPromise>&& promise)
 {
     auto& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    addAuthenticatedEncryptionWarningIfNecessary(key.algorithmIdentifier());
 
     auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTF::move(algorithmIdentifier), Operations::Encrypt);
     RETURN_IF_EXCEPTION(scope, void());
@@ -850,8 +810,6 @@ void SubtleCrypto::decrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& alg
 {
     auto& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    addAuthenticatedEncryptionWarningIfNecessary(key.algorithmIdentifier());
 
     auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTF::move(algorithmIdentifier), Operations::Decrypt);
     RETURN_IF_EXCEPTION(scope, void());
@@ -1337,7 +1295,7 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
 
 void SubtleCrypto::exportKey(KeyFormat format, CryptoKey& key, Ref<DeferredPromise>&& promise)
 {
-    if (!isSupportedExportKey(*promise->globalObject(), key.algorithmIdentifier())) {
+    if (!isSupportedExportKey(key.algorithmIdentifier())) {
         promise->reject(Exception { NotSupportedError });
         return;
     }
@@ -1419,7 +1377,7 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
         return;
     }
 
-    if (!isSupportedExportKey(state, key.algorithmIdentifier())) {
+    if (!isSupportedExportKey(key.algorithmIdentifier())) {
         promise->reject(Exception { NotSupportedError });
         return;
     }
@@ -1475,16 +1433,21 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
                         promise->reject(Exception { ExistingExceptionError });
                         return;
                     }
-                    CString jwkUTF8String = jwkString.utf8(StrictConversion);
-                    bytes.append(jwkUTF8String.span());
-
                     // AES-KW (RFC 3394) can only wrap plaintext whose length is a multiple of
                     // 8 bytes. A serialized JWK usually isn't, so pad it with trailing spaces,
                     // which JSON.parse ignores when the key is unwrapped. This matches Node.js.
-                    if (wrappingKey->algorithmIdentifier() == CryptoAlgorithmIdentifier::AES_KW) {
-                        while (bytes.size() % 8)
-                            bytes.append(' ');
+                    auto jwkUTF8 = Bun::UTF8View::tryCreate(jwkString);
+                    size_t paddedSize = jwkUTF8 ? jwkUTF8->bytes().size() : 0;
+                    if (wrappingKey->algorithmIdentifier() == CryptoAlgorithmIdentifier::AES_KW)
+                        paddedSize = roundUpToMultipleOf(8, paddedSize);
+                    if (!jwkUTF8 || paddedSize > Bun::maxVectorSize<uint8_t>() || !bytes.tryReserveInitialCapacity(paddedSize)) [[unlikely]] {
+                        weakThis->m_pendingPromises.remove(index);
+                        promise->reject(OperationError, "Input data is too large"_s);
+                        return;
                     }
+                    bytes.append(jwkUTF8->bytes());
+                    while (bytes.size() < paddedSize)
+                        bytes.append(' ');
                 }
                 }
 
@@ -1601,7 +1564,7 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                     keyData = bytes;
                     break;
                 case SubtleCrypto::KeyFormat::Jwk: {
-                    String jwkString(bytes.span());
+                    String jwkString(byteCast<Latin1Character>(bytes.span()));
                     auto jwkObject = JSONParse(&state, jwkString);
                     if (scope.exception()) [[unlikely]] {
                         weakThis->m_pendingPromises.remove(index);
@@ -2067,7 +2030,7 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
             operationKind = Operations::Decapsulate;
         else if (op == "exportKey"_s) {
             auto params = normalize(algorithm, Operations::ImportKey);
-            return params && isSupportedExportKey(state, params->identifier);
+            return params && isSupportedExportKey(params->identifier);
         } else
             return false;
 

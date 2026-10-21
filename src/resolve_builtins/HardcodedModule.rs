@@ -9,8 +9,8 @@ pub enum HardcodedModule {
     Bun,
     #[strum(serialize = "abort-controller")]
     AbortController,
-    #[strum(serialize = "bun:app")]
-    BunApp,
+    #[strum(serialize = "bun:bake")]
+    BunBake,
     #[strum(serialize = "bun:ffi")]
     BunFfi,
     #[strum(serialize = "bun:jsc")]
@@ -207,7 +207,7 @@ bun_core::comptime_string_map! {
     pub static HARDCODED_MODULE_MAP: HardcodedModule = {
         // Bun
         b"bun" => HardcodedModule::Bun,
-        b"bun:app" => HardcodedModule::BunApp,
+        b"bun:bake" => HardcodedModule::BunBake,
         b"bun:ffi" => HardcodedModule::BunFfi,
         b"bun:jsc" => HardcodedModule::BunJsc,
         b"bun:main" => HardcodedModule::BunMain,
@@ -325,17 +325,6 @@ pub struct Alias {
     pub tag: import_record::Tag,
     pub node_builtin: bool,
     pub node_only_prefix: bool,
-}
-
-impl Default for Alias {
-    fn default() -> Self {
-        Self {
-            path: zstr!(""),
-            tag: import_record::Tag::Builtin,
-            node_builtin: false,
-            node_only_prefix: false,
-        }
-    }
 }
 
 /// Prepend `"node:"` to a literal at compile time iff it isn't already prefixed.
@@ -721,7 +710,7 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
         },
     ),
     entry!("bun:test"),
-    entry!("bun:app"),
+    entry!("bun:bake"),
     entry!("bun:ffi"),
     entry!("bun:jsc"),
     entry!("bun:main"),

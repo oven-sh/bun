@@ -21,7 +21,7 @@ const QUIC_STREAM_HEADERS_FLAGS_TERMINAL: u32 = 1;
 /// Mirrors Node's `Stream::State` (see `node_quic_binding.rs` for the
 /// `IDX_STATE_STREAM_*` offsets the JS layer reads).
 #[repr(C)]
-pub struct StreamState {
+pub(crate) struct StreamState {
     pub(crate) id: i64,
     pub(crate) pending: u8,
     pub(crate) fin_sent: u8,
@@ -80,6 +80,11 @@ const PULL_STATUS_DATA: f64 = 1.0;
 const PULL_STATUS_BLOCKED: f64 = 2.0;
 const PULL_STATUS_ERROR: f64 = -1.0;
 
+/// Identifies a stream within its session. Keys are never reused, so unlike a pointer,
+/// a stale key can't match a newer stream.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct Key(pub(super) u64);
+
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(super) enum PendingEnd {
     #[default]
@@ -105,12 +110,13 @@ pub(super) struct Inbound {
 /// `#[repr(C)]` so `vtable` is at offset 0 — the C shim reads it via
 /// `*(us_nq_vtable**)stream_ctx`. Without it Rust may reorder fields.
 #[repr(C)]
-pub struct QuicStream {
+pub(crate) struct QuicStream {
     /// MUST stay the first field — see `node_quic_shim.c`.
     vtable: *const lsquic::NqVtable,
     raw: Cell<*mut lsquic::lsquic_stream>,
     /// Owning session (raw pointer; the JS-side Strong keeps it alive).
     session: Cell<*mut QuicSession>,
+    key: Key,
     session_js: JsCell<Option<Strong>>,
     this_value: JsCell<JsRef>,
     state: Cell<*mut StreamState>,
@@ -136,13 +142,16 @@ impl QuicStream {
         global: &JSGlobalObject,
         vtable: *const lsquic::NqVtable,
         session: *mut QuicSession,
+        key: Key,
         session_handle: JSValue,
         raw: *mut lsquic::lsquic_stream,
     ) -> JsResult<(*mut QuicStream, JSValue)> {
+        // `bind_raw` sets `raw` after the allocations below succeed.
         let stream = QuicStream {
             vtable,
-            raw: Cell::new(raw),
+            raw: Cell::new(null_mut()),
             session: Cell::new(session),
+            key,
             session_js: JsCell::new(Some(Strong::create(session_handle, global))),
             this_value: JsCell::new(JsRef::empty()),
             state: Cell::new(null_mut()),
@@ -232,14 +241,22 @@ impl QuicStream {
         if (urgency, incremental) != DEFAULT_PRIORITY {
             let _ = s.set_http_prio(urgency, incremental);
         }
+        // lsquic_stream_send_headers only buffers the block; the flush in
+        // drain_outbound needs a write event, which nothing else requests
+        // unless the JS side already started the writer.
+        let mut want_write = false;
         for (bytes, count, eos) in self.pending_headers.with_mut(core::mem::take) {
             self.wrote_to_lsquic.set(true);
-            if s.send_headers(&bytes, count, eos) == 0 && eos {
-                self.with_state(|st| {
-                    st.fin_sent = 1;
-                    st.write_ended = 1;
-                });
-                s.shutdown(1);
+            if s.send_headers(&bytes, count, eos) == 0 {
+                if eos {
+                    self.with_state(|st| {
+                        st.fin_sent = 1;
+                        st.write_ended = 1;
+                    });
+                    s.shutdown(1);
+                } else {
+                    want_write = true;
+                }
             }
         }
         if uni {
@@ -257,7 +274,7 @@ impl QuicStream {
         } else {
             s.want_read(true);
         }
-        if self.outbound.get().started {
+        if want_write || self.outbound.get().started {
             s.want_write(true);
         }
     }
@@ -354,6 +371,10 @@ impl QuicStream {
             return true;
         }
         self.ls().is_some_and(|s| s.has_unacked_data())
+    }
+    /// True until lsquic opens the stream.
+    pub(super) fn is_pending(&self) -> bool {
+        self.with_state(|s| s.pending != 0)
     }
 
     pub(super) fn stream_id(&self) -> i64 {
@@ -462,9 +483,7 @@ impl QuicStream {
         if !session.is_null() {
             // SAFETY: the session outlives its streams.
             unsafe {
-                (*session).push_event(SessionEvent::StreamBlocked {
-                    stream: core::ptr::from_ref(self).cast_mut(),
-                });
+                (*session).push_event(SessionEvent::StreamBlocked { stream: self.key });
             }
         }
     }
@@ -512,9 +531,7 @@ impl QuicStream {
                 }
             } else if end == PendingEnd::Trailers && !self.trailers_requested.replace(true) {
                 if let Some(session) = self.session_ref() {
-                    session.push_event(SessionEvent::StreamWantsTrailers {
-                        stream: core::ptr::from_ref(self).cast_mut(),
-                    });
+                    session.push_event(SessionEvent::StreamWantsTrailers { stream: self.key });
                 }
             }
             s.want_write(false);
@@ -528,9 +545,7 @@ impl QuicStream {
         });
         if was_full && pending < hwm {
             if let Some(session) = self.session_ref() {
-                session.push_event(SessionEvent::StreamDrain {
-                    stream: core::ptr::from_ref(self).cast_mut(),
-                });
+                session.push_event(SessionEvent::StreamDrain { stream: self.key });
             }
         }
     }
@@ -549,8 +564,13 @@ impl QuicStream {
         self.with_state(|s| s.read_ended = 1);
         if let Some(wakeup) = self.take_wakeup() {
             let vm = global.bun_vm().as_mut();
-            vm.event_loop_ref()
-                .run_callback(wakeup.get(), global, JSValue::UNDEFINED, &[]);
+            vm.event_loop_ref().run_callback(
+                bun_event_loop::ContextId::NONE,
+                wakeup.get(),
+                global,
+                JSValue::UNDEFINED,
+                &[],
+            );
         }
     }
 
@@ -574,7 +594,7 @@ impl QuicStream {
             // The session's `streams` Vec is the only other holder; remove
             // it before downgrading so process_events can't iterate a freed
             // stream. SAFETY: as above.
-            unsafe { (*session).remove_stream(core::ptr::from_ref(self).cast_mut()) };
+            unsafe { (*session).remove_stream(self.key) };
         }
         self.outbound.with_mut(|o| o.data.clear());
         self.inbound.with_mut(|i| {
@@ -584,19 +604,41 @@ impl QuicStream {
         self.with_state(|s| s.read_ended = 1);
         if let Some(wakeup) = self.take_wakeup() {
             let vm = global.bun_vm().as_mut();
-            vm.event_loop_ref()
-                .run_callback(wakeup.get(), global, JSValue::UNDEFINED, &[]);
+            vm.event_loop_ref().run_callback(
+                bun_event_loop::ContextId::NONE,
+                wakeup.get(),
+                global,
+                JSValue::UNDEFINED,
+                &[],
+            );
         }
         self.wakeup.set(None);
         self.session_js.set(None);
         self.this_value.with_mut(|r| r.downgrade());
     }
 
+    /// Replaces `on_stream_close` after `QuicEndpoint::detach_for_finalize`.
+    pub(super) unsafe extern "C" fn on_close_detached(
+        ctx: *mut c_void,
+        _s: *mut lsquic::lsquic_stream,
+    ) {
+        // SAFETY: `finalize` nulls the lsquic ctx, so a non-null ctx is live.
+        // `session` may be freed, so only touch `raw`.
+        if let Some(qs) = unsafe { super::ffi::ctx_ref::<QuicStream>(ctx) } {
+            qs.raw.set(null_mut());
+        }
+    }
+
     #[expect(
         clippy::boxed_local,
         reason = "codegen's host_fn_finalize calls this as `|b| QuicStream::finalize(b)` and requires `self: Box<Self>`"
     )]
-    pub(crate) fn finalize(self: Box<Self>) {}
+    pub(crate) fn finalize(self: Box<Self>) {
+        if let Some(s) = self.ls() {
+            // SAFETY: a non-null `raw` is live (see `ls()`).
+            unsafe { s.set_ctx(null_mut()) };
+        }
+    }
 
     pub(crate) fn get_reader(&self, _g: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         self.with_state(|s| s.has_reader = 1);
@@ -647,6 +689,7 @@ impl QuicStream {
         };
         let vm = global.bun_vm().as_mut();
         vm.event_loop_ref().run_callback(
+            bun_event_loop::ContextId::NONE,
             cb,
             global,
             JSValue::UNDEFINED,
@@ -1002,9 +1045,10 @@ pub(super) unsafe extern "C" fn on_new_stream(
     if is_local {
         if let Some(qs) = session.take_pending_local_stream(id & STREAM_ID_UNI_BIT as u64 != 0) {
             // SAFETY: pending streams are kept alive by their wrapper Strong.
-            unsafe { (*qs).bind_raw(s) };
+            let pending = unsafe { &*qs };
+            pending.bind_raw(s);
             session.push_event(SessionEvent::StreamReady {
-                stream: qs,
+                stream: pending.key,
                 remote: false,
             });
             return qs.cast();
@@ -1021,69 +1065,84 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
         return;
     };
     if ctx.is_null() {
-        let mut buf = [0u8; 4096];
-        while stream.read(&mut buf) > 0 {}
+        let mut stack_buf = bun_core::vec::UninitBuf::<4096>::uninit();
+        // SAFETY: lsquic only stores into the slice and the drained bytes are never read back.
+        let buf = unsafe { stack_buf.as_bytes_mut() };
+        while stream.read(buf) > 0 {}
         return;
     }
     // SAFETY: `ctx` is the live QuicStream we returned from on_new_stream.
     let qs = unsafe { &*ctx.cast::<QuicStream>() };
-    if let Some(hset) = stream.take_header_set() {
-        let pairs = hset.pairs();
-        /// RFC 9114 §8.1 H3_MESSAGE_ERROR — malformed message (a request
-        /// carrying :status). Matches lsquic's `HEC_MESSAGE_ERROR`
-        /// (lsquic_hq.h:82); 0x105 is H3_FRAME_UNEXPECTED, a different code.
-        const H3_MESSAGE_ERROR: u64 = 0x10e;
-        let has_status = pairs
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .find(|kv| kv[0] == b":status")
-            .map(|kv| kv[1].len() == 3 && kv[1][0] == b'1');
-        // A :status in a request is malformed: node's nghttp3 resets the
-        // stream (RFC 9114 §4.1.2), and routing it to `oninfo` would leave
-        // the request unanswered until the idle timeout.
-        let peer_is_client = qs.session_ref().is_some_and(|s| s.is_server());
-        if peer_is_client && has_status.is_some() {
-            if let Some(s) = qs.ls() {
-                // reset() only ends the read side when the peer already
-                // FIN'd/RST'd, so STOP_SENDING is what stops a malformed
-                // request streaming a body into a stream nothing will answer.
-                s.reset(H3_MESSAGE_ERROR);
-                s.stop_sending(H3_MESSAGE_ERROR);
+    // Returns false if a malformed header block reset the stream.
+    let claim_header_sets = || -> bool {
+        while let Some(hset) = stream.take_header_set() {
+            let pairs = hset.pairs();
+            /// RFC 9114 §8.1 H3_MESSAGE_ERROR — malformed message (a request
+            /// carrying :status). Matches lsquic's `HEC_MESSAGE_ERROR`
+            /// (lsquic_hq.h:82); 0x105 is H3_FRAME_UNEXPECTED, a different code.
+            const H3_MESSAGE_ERROR: u64 = 0x10e;
+            let has_status = pairs
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .find(|kv| kv[0] == b":status")
+                .map(|kv| kv[1].len() == 3 && kv[1][0] == b'1');
+            // A :status in a request is malformed: node's nghttp3 resets the
+            // stream (RFC 9114 §4.1.2), and routing it to `oninfo` would leave
+            // the request unanswered until the idle timeout.
+            let peer_is_client = qs.session_ref().is_some_and(|s| s.is_server());
+            if peer_is_client && has_status.is_some() {
+                if let Some(s) = qs.ls() {
+                    // reset() only ends the read side when the peer already
+                    // FIN'd/RST'd, so STOP_SENDING is what stops a malformed
+                    // request streaming a body into a stream nothing will answer.
+                    s.reset(H3_MESSAGE_ERROR);
+                    s.stop_sending(H3_MESSAGE_ERROR);
+                }
+                qs.mark_reset(H3_MESSAGE_ERROR);
+                return false;
             }
-            qs.mark_reset(H3_MESSAGE_ERROR);
-            return;
+            // 1xx interim responses are HINTS (RFC 9114 §4.1).
+            let is_interim = has_status.unwrap_or(false);
+            let kind = if is_interim {
+                QUIC_STREAM_HEADERS_KIND_HINTS
+            } else if qs.mark_headers_received() {
+                QUIC_STREAM_HEADERS_KIND_INITIAL
+            } else {
+                QUIC_STREAM_HEADERS_KIND_TRAILING
+            };
+            if let Some(session) = qs.session_ref() {
+                session.push_event(SessionEvent::StreamHeaders {
+                    stream: qs.key,
+                    pairs,
+                    kind,
+                });
+            }
         }
-        // 1xx interim responses are HINTS (RFC 9114 §4.1).
-        let is_interim = has_status.unwrap_or(false);
-        let kind = if is_interim {
-            QUIC_STREAM_HEADERS_KIND_HINTS
-        } else if qs.mark_headers_received() {
-            QUIC_STREAM_HEADERS_KIND_INITIAL
-        } else {
-            QUIC_STREAM_HEADERS_KIND_TRAILING
-        };
-        if let Some(session) = qs.session_ref() {
-            session.push_event(SessionEvent::StreamHeaders {
-                stream: ctx.cast(),
-                pairs,
-                kind,
-            });
-        }
+        true
+    };
+    if !claim_header_sets() {
+        return;
     }
     if stream.received_early_data() {
         qs.with_state(|s| s.received_early_data = 1);
     }
-    let mut buf = [0u8; 16 * 1024];
+    let mut stack_buf = bun_core::vec::UninitBuf::<{ 16 * 1024 }>::uninit();
+    // SAFETY: lsquic is the only writer of `buf`; each iteration reads back only `buf[..n]`.
+    let buf = unsafe { stack_buf.as_bytes_mut() };
     let mut got_any = false;
     loop {
-        let n = stream.read(&mut buf);
+        let n = stream.read(buf);
         match n {
             n if n > 0 => {
                 qs.push_inbound(&buf[..n as usize], false);
                 got_any = true;
             }
             0 => {
+                // lsquic returns 0 even if this read decoded one more header block.
+                if !claim_header_sets() {
+                    break;
+                }
                 qs.push_inbound(&[], true);
                 stream.want_read(false);
                 let write_done = qs.with_state(|s| s.fin_sent != 0 || s.write_ended != 0);
@@ -1100,7 +1159,7 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
     }
     if got_any {
         if let Some(session) = qs.session_ref() {
-            session.push_event(SessionEvent::StreamWake { stream: ctx.cast() });
+            session.push_event(SessionEvent::StreamWake { stream: qs.key });
         }
     }
 }
@@ -1110,18 +1169,15 @@ lsquic_callback! {
         qs.drain_outbound();
     }
 
-    pub(super) fn on_stream_close(
-        ctx: *mut c_void as qs: &QuicStream,
-        _s: *mut lsquic::lsquic_stream,
-    ) {
+    pub(super) fn on_stream_close(qs: &QuicStream, _s: *mut lsquic::lsquic_stream) {
         // The lsquic_stream is freed immediately after this callback returns.
         qs.raw.set(null_mut());
         if let Some(session) = qs.session_ref() {
-            session.push_event(SessionEvent::StreamClosed { stream: ctx.cast() });
+            session.push_event(SessionEvent::StreamClosed { stream: qs.key });
         }
     }
 
-    pub(super) fn on_stream_reset(ctx: *mut c_void as qs: &QuicStream, how: c_int, code: u64) {
+    pub(super) fn on_stream_reset(qs: &QuicStream, how: c_int, code: u64) {
         if how == 0 || how == 2 {
             qs.mark_reset(code);
             if let Some(s) = qs.ls() {
@@ -1136,10 +1192,10 @@ lsquic_callback! {
             }
             if let Some(session) = qs.session_ref() {
                 session.push_event(SessionEvent::StreamReset {
-                    stream: ctx.cast(),
+                    stream: qs.key,
                     code,
                 });
-                session.push_event(SessionEvent::StreamWake { stream: ctx.cast() });
+                session.push_event(SessionEvent::StreamWake { stream: qs.key });
             }
         }
         if how == 1 || how == 2 {
@@ -1148,10 +1204,10 @@ lsquic_callback! {
             if let Some(session) = qs.session_ref() {
                 // Node's `onstream` still observes a live writer.
                 session.push_event(SessionEvent::StreamStopSending {
-                    stream: ctx.cast(),
+                    stream: qs.key,
                     code,
                 });
-                session.push_event(SessionEvent::StreamWake { stream: ctx.cast() });
+                session.push_event(SessionEvent::StreamWake { stream: qs.key });
             } else {
                 qs.apply_peer_stop_sending(code);
             }

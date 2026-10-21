@@ -53,71 +53,14 @@
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
 #include "BunClientData.h"
+#include "headers-handwritten.h"
 
 namespace WebCore {
 using namespace JSC;
 
 extern "C" JSC::EncodedJSValue TextEncoder__encode8(JSC::JSGlobalObject* global, const Latin1Character* stringPtr, size_t stringLen);
 extern "C" JSC::EncodedJSValue TextEncoder__encode16(JSC::JSGlobalObject* global, const char16_t* stringPtr, size_t stringLen);
-extern "C" size_t TextEncoder__encodeInto8(const Latin1Character* stringPtr, size_t stringLen, void* ptr, size_t len);
-extern "C" size_t TextEncoder__encodeInto16(const char16_t* stringPtr, size_t stringLen, void* ptr, size_t len);
 extern "C" JSC::EncodedJSValue TextEncoder__encodeRopeString(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSString* str);
-
-template<> TextEncoder::EncodeIntoResult convertDictionary<TextEncoder::EncodeIntoResult>(JSGlobalObject& lexicalGlobalObject, JSValue value)
-{
-    auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    bool isNullOrUndefined = value.isUndefinedOrNull();
-    auto* object = isNullOrUndefined ? nullptr : value.getObject();
-    if (!isNullOrUndefined && !object) [[unlikely]] {
-        throwTypeError(&lexicalGlobalObject, throwScope);
-        return {};
-    }
-    TextEncoder::EncodeIntoResult result;
-    JSValue readValue;
-    if (isNullOrUndefined)
-        readValue = jsUndefined();
-    else {
-        readValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "read"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!readValue.isUndefined()) {
-        result.read = convert<IDLUnsignedLongLong>(lexicalGlobalObject, readValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue writtenValue;
-    if (isNullOrUndefined)
-        writtenValue = jsUndefined();
-    else {
-        writtenValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "written"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!writtenValue.isUndefined()) {
-        result.written = convert<IDLUnsignedLongLong>(lexicalGlobalObject, writtenValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    return result;
-}
-
-JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const TextEncoder::EncodeIntoResult& dictionary)
-{
-    auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    auto result = constructEmptyObject(&lexicalGlobalObject, globalObject.objectPrototype());
-
-    if (!IDLUnsignedLongLong::isNullValue(dictionary.read)) {
-        auto readValue = toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, IDLUnsignedLongLong::extractValueFromNullable(dictionary.read));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "read"_s), readValue);
-    }
-    if (!IDLUnsignedLongLong::isNullValue(dictionary.written)) {
-        auto writtenValue = toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, IDLUnsignedLongLong::extractValueFromNullable(dictionary.written));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "written"_s), writtenValue);
-    }
-    return result;
-}
 
 // Functions
 
@@ -134,7 +77,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSTextEncoderPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSTextEncoderPrototype* ptr = new (NotNull, JSC::allocateCell<JSTextEncoderPrototype>(vm)) JSTextEncoderPrototype(vm, globalObject, structure);
+        JSTextEncoderPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSTextEncoderPrototype))) JSTextEncoderPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -148,7 +91,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -169,15 +112,15 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextEncoderDOMConstruc
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSTextEncoderDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
+    auto* structure = structureForNewTarget<TextEncoder>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = TextEncoder::create();
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<TextEncoder>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<TextEncoder>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, structure, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
-    setSubclassStructureIfNeeded<TextEncoder>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSTextEncoderDOMConstructorConstruct, JSTextEncoderDOMConstructor::construct);
@@ -192,11 +135,7 @@ template<> JSValue JSTextEncoderDOMConstructor::prototypeForStructure(JSC::VM& v
 
 template<> void JSTextEncoderDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "TextEncoder"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSTextEncoder::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "TextEncoder"_s, JSTextEncoder::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -213,8 +152,8 @@ const ClassInfo JSTextEncoderPrototype::s_info = { "TextEncoder"_s, &Base::s_inf
 void JSTextEncoderPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSTextEncoder::info(), JSTextEncoderPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSTextEncoder::info(), JSTextEncoderPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSTextEncoder::s_info = { "TextEncoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTextEncoder) };
@@ -265,12 +204,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderConstructor, (JSGlobalObject * lexicalGlob
     return JSValue::encode(JSTextEncoder::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
-static inline JSValue jsTextEncoder_encodingGetter(JSGlobalObject& lexicalGlobalObject, JSTextEncoder& thisObject)
+static inline JSValue jsTextEncoder_encodingGetter(JSGlobalObject& lexicalGlobalObject, JSTextEncoder&)
 {
-    auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLDOMString>(lexicalGlobalObject, throwScope, impl.encoding())));
+    return Bun::commonStrings(lexicalGlobalObject.vm()).utf8WithDashString();
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsTextEncoder_encoding, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
@@ -291,25 +227,23 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
     JSC::JSString* input = argument0.value().toString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     JSC::EncodedJSValue res;
-    StringView str;
-    if (input->is8Bit()) {
-        if (input->isNonSubstringRope()) {
-            GCDeferralContext gcDeferralContext(vm);
-            auto encodedValue = TextEncoder__encodeRopeString(lexicalGlobalObject, input);
-            if (!JSC::JSValue::decode(encodedValue).isUndefined()) {
-                RELEASE_AND_RETURN(throwScope, encodedValue);
-            }
-
-            RETURN_IF_EXCEPTION(throwScope, {});
+    if (input->is8Bit() && input->isNonSubstringRope()) {
+        GCDeferralContext gcDeferralContext(vm);
+        auto encodedValue = TextEncoder__encodeRopeString(lexicalGlobalObject, input);
+        if (!JSC::JSValue::decode(encodedValue).isUndefined()) {
+            RELEASE_AND_RETURN(throwScope, encodedValue);
         }
 
-        str = input->view(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
-        res = TextEncoder__encode8(lexicalGlobalObject, str.span8().data(), str.length());
+    }
+
+    // A substring's view has the width of its base string now, which can differ from input->is8Bit().
+    auto str = input->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (str->is8Bit()) {
+        res = TextEncoder__encode8(lexicalGlobalObject, str->span8().data(), str->length());
     } else {
-        str = input->view(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        res = TextEncoder__encode16(lexicalGlobalObject, str.span16().data(), str.length());
+        res = TextEncoder__encode16(lexicalGlobalObject, str->span16().data(), str->length());
     }
 
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -345,7 +279,7 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
         return {};
     }
 
-    size_t res = 0;
+    TextEncoderEncodeIntoResult res = {};
     if (!source->is8Bit()) {
         const auto span = source->span16();
         res = TextEncoder__encodeInto16(span.data(), span.size(), destination->vector(), destination->byteLength());
@@ -356,8 +290,14 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
 
     Bun::GlobalScope* globalScope = reinterpret_cast<Bun::GlobalScope*>(lexicalGlobalObject);
     auto* result = JSC::constructEmptyObject(vm, globalScope->encodeIntoObjectStructure());
-    result->putDirectOffset(vm, 0, JSC::jsNumber(static_cast<uint32_t>(res)));
-    result->putDirectOffset(vm, 1, JSC::jsNumber(static_cast<uint32_t>(res >> 32)));
+    // The counts only need a double when the destination is 2 GiB or larger.
+    if ((res.read | res.written) <= static_cast<size_t>(std::numeric_limits<int32_t>::max())) [[likely]] {
+        result->putDirectOffset(vm, 0, JSC::jsNumber(static_cast<int32_t>(res.read)));
+        result->putDirectOffset(vm, 1, JSC::jsNumber(static_cast<int32_t>(res.written)));
+    } else {
+        result->putDirectOffset(vm, 0, JSC::jsNumber(res.read));
+        result->putDirectOffset(vm, 1, JSC::jsNumber(res.written));
+    }
 
     return JSValue::encode(result);
 }
@@ -369,12 +309,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTextEncoderPrototypeFunction_encodeInto, (JSGlobalObj
 
 JSC::GCClient::IsoSubspace* JSTextEncoder::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSTextEncoder, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForTextEncoder.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextEncoder = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForTextEncoder.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTextEncoder = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSTextEncoder, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForTextEncoder, m_subspaceForTextEncoder));
 }
 
 void JSTextEncoder::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -386,53 +321,8 @@ void JSTextEncoder::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSTextEncoderOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    UNUSED_PARAM(handle);
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
-void JSTextEncoderOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsTextEncoder = static_cast<JSTextEncoder*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsTextEncoder->wrapped(), jsTextEncoder);
-}
-
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7TextEncoder@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore11TextEncoderE[];
-}
-#endif
-#endif
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TextEncoder>&& impl)
 {
-
-    if constexpr (std::is_polymorphic_v<TextEncoder>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7TextEncoder@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore11TextEncoderE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // TextEncoder has subclasses. If TextEncoder has subclasses that get passed
-        // to toJS() we currently require TextEncoder you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
     return createWrapper<TextEncoder>(globalObject, WTF::move(impl));
 }
 

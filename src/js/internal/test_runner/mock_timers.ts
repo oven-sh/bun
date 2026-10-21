@@ -12,6 +12,12 @@ const {
 const { addAbortListener } = require("internal/abort_listener");
 
 const nodeTimers = require("node:timers");
+
+interface MockableTimers {
+  setTimeout: unknown;
+  setInterval: unknown;
+  setImmediate: unknown;
+}
 const nodeTimersPromises = require("node:timers/promises");
 const EventEmitter = require("node:events");
 
@@ -460,7 +466,20 @@ class MockTimers {
     return this.#createTimer(false, callback, TIMERS_DEFAULT_INTERVAL.setImmediate, ...args);
   }
 
-  async #promisifyTimer({ timerFn, clearFn, ms, result, options }) {
+  async #promisifyTimer({
+    timerFn,
+    clearFn,
+    ms,
+    result,
+    options,
+  }: {
+    __proto__?: null;
+    timerFn;
+    clearFn;
+    ms;
+    result;
+    options;
+  }) {
     const { promise, resolve, reject } = Promise.withResolvers();
 
     let abortListener;
@@ -547,10 +566,10 @@ class MockTimers {
         "setTimeout": () => {
           this.#storeOriginalSetTimeout();
 
-          globalThis.setTimeout = this.#setTimeout;
+          (globalThis as MockableTimers).setTimeout = this.#setTimeout;
           globalThis.clearTimeout = this.#clearTimeout;
 
-          nodeTimers.setTimeout = this.#setTimeout;
+          (nodeTimers as MockableTimers).setTimeout = this.#setTimeout;
           nodeTimers.clearTimeout = this.#clearTimeout;
 
           nodeTimersPromises.setTimeout = this.#setTimeoutPromisified.bind(this);
@@ -558,10 +577,10 @@ class MockTimers {
         "setInterval": () => {
           this.#storeOriginalSetInterval();
 
-          globalThis.setInterval = this.#setInterval;
+          (globalThis as MockableTimers).setInterval = this.#setInterval;
           globalThis.clearInterval = this.#clearInterval;
 
-          nodeTimers.setInterval = this.#setInterval;
+          (nodeTimers as MockableTimers).setInterval = this.#setInterval;
           nodeTimers.clearInterval = this.#clearInterval;
 
           nodeTimersPromises.setInterval = this.#setIntervalPromisified.bind(this);
@@ -574,16 +593,16 @@ class MockTimers {
           // "Receiver must be an instance of MockTimers"
           // because #setImmediate is the only function here
           // that calls #createTimer and it's not bound to MockTimers
-          globalThis.setImmediate = this.#setImmediate.bind(this);
+          (globalThis as MockableTimers).setImmediate = this.#setImmediate.bind(this);
           globalThis.clearImmediate = this.#clearImmediate;
 
-          nodeTimers.setImmediate = this.#setImmediate.bind(this);
+          (nodeTimers as MockableTimers).setImmediate = this.#setImmediate.bind(this);
           nodeTimers.clearImmediate = this.#clearImmediate;
           nodeTimersPromises.setImmediate = this.#setImmediatePromisified.bind(this);
         },
         "Date": () => {
           this.#nativeDateDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Date");
-          globalThis.Date = this.#createDate();
+          (globalThis as { Date: unknown }).Date = this.#createDate();
         },
         "AbortSignal.timeout": () => {
           this.#storeOriginalAbortSignalTimeout();
@@ -669,7 +688,13 @@ class MockTimers {
   /**
    * Enables the MockTimers replacing the native timers with the fake ones.
    */
-  enable(options = { __proto__: null, apis: SUPPORTED_APIS, now: 0 }) {
+  enable(
+    options: { __proto__?: null; apis?: string[]; now?: number | Date } = {
+      __proto__: null,
+      apis: SUPPORTED_APIS,
+      now: 0,
+    },
+  ) {
     const internalOptions = { __proto__: null, ...options } as { apis?: string[]; now?: number | Date };
     if (this.#isEnabled) {
       throw $ERR_INVALID_STATE("MockTimers is already enabled!");

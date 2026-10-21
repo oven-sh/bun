@@ -55,7 +55,7 @@ describe("fetch compress option", () => {
         body: payload,
         compress: encoding,
       });
-      const json = await res.json();
+      const json: any = await res.json();
       expect(json.encoding).toBe(encoding);
       expect(json.decoded).toBe(payload);
       expect(json.rawLength).toBeLessThan(Buffer.byteLength(payload));
@@ -69,7 +69,7 @@ describe("fetch compress option", () => {
         body: new TextEncoder().encode(payload),
         compress: encoding,
       });
-      const json = await res.json();
+      const json: any = await res.json();
       expect(json.encoding).toBe(encoding);
       expect(json.decoded).toBe(payload);
       expect(json.rawLength).toBeLessThan(Buffer.byteLength(payload));
@@ -82,7 +82,7 @@ describe("fetch compress option", () => {
         body: new Blob([payload]),
         compress: encoding,
       });
-      const json = await res.json();
+      const json: any = await res.json();
       expect(json.encoding).toBe(encoding);
       expect(json.decoded).toBe(payload);
       expect(json.rawLength).toBeLessThan(Buffer.byteLength(payload));
@@ -96,7 +96,7 @@ describe("fetch compress option", () => {
         body: payload,
         compress: { encoding, level },
       });
-      const json = await res.json();
+      const json: any = await res.json();
       expect(json.encoding).toBe(encoding);
       expect(json.decoded).toBe(payload);
     });
@@ -109,7 +109,7 @@ describe("fetch compress option", () => {
       body: payload,
       compress: true,
     });
-    const json = await res.json();
+    const json: any = await res.json();
     expect(json.encoding).toBe("gzip");
     expect(json.decoded).toBe(payload);
   });
@@ -121,7 +121,7 @@ describe("fetch compress option", () => {
       body: payload,
       compress: false,
     });
-    const json = await res.json();
+    const json: any = await res.json();
     expect(json.encoding).toBe("");
     expect(json.decoded).toBe(payload);
     expect(json.rawLength).toBe(Buffer.byteLength(payload));
@@ -135,7 +135,7 @@ describe("fetch compress option", () => {
       headers: { "Content-Encoding": "identity" },
       compress: "gzip",
     });
-    const json = await res.json();
+    const json: any = await res.json();
     expect(json.encoding).toBe("identity");
     expect(json.rawLength).toBe(Buffer.byteLength(payload));
   });
@@ -152,7 +152,7 @@ describe("fetch compress option", () => {
       }),
       compress: "gzip",
     });
-    const json = await res.json();
+    const json: any = await res.json();
     expect(json.encoding).toBe("");
     expect(json.decoded).toBe(payload);
   });
@@ -164,7 +164,7 @@ describe("fetch compress option", () => {
       body: "",
       compress: "gzip",
     });
-    const json = await res.json();
+    const json: any = await res.json();
     expect(json.encoding).toBe("");
     expect(json.rawLength).toBe(0);
   });
@@ -177,7 +177,7 @@ describe("fetch compress option", () => {
       body: big,
       compress: "gzip",
     });
-    const json = await res.json();
+    const json: any = await res.json();
     expect(json.encoding).toBe("gzip");
     expect(json.decoded).toBe(big);
     expect(json.rawLength).toBeLessThan(big.length);
@@ -189,7 +189,7 @@ describe("fetch compress option", () => {
     using server = makeServer();
     const big = Buffer.alloc(600 * 1024, "abcdefghij").toString();
     const res = await fetch(server.url, { method: "POST", body: big, compress: "deflate" });
-    const json = await res.json();
+    const json: any = await res.json();
     expect(json.encoding).toBe("deflate");
     expect(json.decoded).toBe(big);
   });
@@ -215,7 +215,7 @@ describe("fetch compress option", () => {
       body: big,
       compress: "gzip",
     });
-    const json = await res.json();
+    const json: any = await res.json();
     expect(json.encoding).toBe("gzip");
     expect(Number(json.contentLength)).toBe(json.rawLength);
     expect(json.sha).toBe(new Bun.CryptoHasher("sha1").update(big).digest("hex"));
@@ -242,7 +242,7 @@ describe("fetch compress option", () => {
       fetch: () => new Response(null, { status: 307, headers: { Location: String(target) } }),
     });
     const res = await fetch(src.url, { method: "POST", body: payload, compress: "gzip" });
-    const json = await res.json();
+    const json: any = await res.json();
     expect(json.encoding).toBe("gzip");
     expect(json.decoded).toBe(payload);
   });
@@ -263,8 +263,7 @@ describe("fetch compress option", () => {
       fetch("http://127.0.0.1:1/", {
         method: "POST",
         body: "x",
-        // @ts-expect-error
-        compress: { encoding: "gzip", level },
+        compress: { encoding: "gzip", level } as any,
       }),
     ).toThrow(/compress\.level/);
   });
@@ -281,7 +280,7 @@ describe("fetch compress option", () => {
       body: Bun.file(join(String(dir), "body.txt")),
       compress: "gzip",
     });
-    const json = await res.json();
+    const json: any = await res.json();
     expect(json.encoding).toBe("gzip");
     expect(json.decoded).toBe(big);
     expect(json.rawLength).toBeLessThan(big.length);

@@ -60,7 +60,6 @@ public:
     using KeyOrKeyPairCallback = Function<void(KeyOrKeyPair&&)>;
     // FIXME: https://bugs.webkit.org/show_bug.cgi?id=169395
     using VectorCallback = Function<void(const Vector<uint8_t>&)>;
-    using VoidCallback = Function<void()>;
     using ExceptionCallback = Function<void(ExceptionCode, const String&)>;
     using KeyDataCallback = Function<void(CryptoKeyFormat, KeyData&&)>;
     // sharedKey, ciphertext

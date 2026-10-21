@@ -88,10 +88,6 @@ html.dark .shiki span {
   margin-bottom: 2rem !important;
 }
 
-footer#footer a[href*="mintlify.com"] {
-  display: none;
-}
-
 .nav-tabs {
   width: 100% !important;
 }

@@ -1,0 +1,405 @@
+//! Circularity errors: 2313, and 2502 2577 7022 7023 7024. `report_circularity_error` reports 7022 when
+//! `check_circular_resolutions` requests the types.
+//!
+//! In TypeScript 7.0.2's checker.go these are reported when `pushTypeResolution` finds the requested resolution already
+//! in progress, in `getBaseConstructorTypeOfClass`, `getBaseTypes` and `getResolvedBaseConstraint`. Every entry from
+//! that one to the top of the stack is in the cycle. An entry that only leads into the cycle isn't. Here they're the
+//! cycles that `Checker::enter` found when the types were requested.
+
+use super::explain::NOWHERE;
+use super::sink::held;
+use super::*;
+use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, Symbol, SymbolId};
+
+impl Checker<'_, '_> {
+    pub(super) fn check_circularities(&mut self, file: FileId) {
+        self.check_circular_resolutions(file);
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let unchecked = self.unchecked_jsdoc_types(file);
+        // `checkClassLikeDeclaration`, `checkInterfaceDeclaration`
+        for c in 0..hir.classes.len() {
+            if bound.class_symbol[c].is_some() && !self.is_never_checked(hir.classes[c].start) {
+                let own = self.class_sym(file, ClassId(c as u32));
+                self.base_constructor_type_of_class(own);
+                self.base_types(own);
+            }
+        }
+        for &symbol in bound.interface_symbol.iter().filter(|s| s.is_some()) {
+            let own = self.files().sym(file, symbol);
+            self.base_types(own);
+        }
+        for p in 0..hir.type_params.len() {
+            let constraint = hir.type_params[p].constraint;
+            if constraint.is_none()
+                || bound.type_param_scope[p].is_none()
+                || bound.type_param_symbol[p].is_none()
+                || unchecked.contain(hir[constraint].pos)
+            {
+                continue;
+            }
+            let own = TypeParamId(p as u32);
+            // `getConstraintDeclaration`: the merged declarations of a class or an interface all declare the same type
+            // parameter.
+            let (of, declaration, _) =
+                self.type_param_declaration_with(file, own, |it: &TypeParam| it.constraint);
+            if (of, declaration) != (file, own) {
+                continue;
+            }
+            let param = self.type_param(file, own);
+            if !self.has_non_circular_base_constraint(param) {
+                let start = start_of_type(hir, constraint);
+                let end = self.end_of_type_node_from(file, constraint, start);
+                let name = self.atom_text(hir.type_params[p].name);
+                let related = self.origin_of_circular_constraint(param, file, constraint);
+                self.error_at((file, start, end), 2313, &[Arg::Bytes(&name)])
+                    .related_information
+                    .extend(related);
+            }
+        }
+    }
+
+    /// `getResolvedBaseConstraint`: reports 2313 for the key of the mapped type at `mapped`, whose base constraint
+    /// turned out to be circular.
+    pub(super) fn report_circular_mapped_key(&mut self, file: FileId, mapped: TypeNodeId) {
+        let hir = self.hir(file);
+        let TypeNodeKind::Mapped(m) = hir[mapped].kind else {
+            return;
+        };
+        let param = &hir[hir[m].param];
+        // `GetDiagnostics` reads a file's diagnostics right after checking it, in program order, so diagnostics that
+        // checking a later file adds to it are never read.
+        let files = self.files();
+        let order = |f: FileId| (!files.module(f).is_lib, files.rank_of_file(f));
+        let is_read = (self.task.file).is_none_or(|checked| order(checked) <= order(file));
+        let constraint = param.constraint;
+        if constraint.is_none() || !is_read {
+            return;
+        }
+        let start = start_of_type(hir, constraint);
+        let end = self.end_of_type_node_from(file, constraint, start);
+        let mut err = self.new_diagnostic((file, start, end), 2313, &[Arg::Atom(param.name)]);
+        let key = self.type_param(file, hir[m].param);
+        if !(self.circular_constraint_origins.iter()).any(|it| it.0 == key) {
+            let current = self.current_node().or(self.current_source_element);
+            let current = current.filter(|_| self.eager.is_empty());
+            self.circular_constraint_origins.push((key, current));
+        }
+        if let Some(origin) = self.origin_of_circular_constraint(key, file, constraint) {
+            err.add_related_info(origin);
+        }
+        self.add_diagnostic_of(Some(Query::TypeNode(file, constraint)), err);
+    }
+
+    /// Requests the types for which `reportCircularityError`, `getReturnTypeOfSignature` and
+    /// `getTypeOfAccessors` report cycles.
+    fn check_circular_resolutions(&mut self, file: FileId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let unchecked = self.unchecked_jsdoc_types(file);
+        for i in 0..hir.pats.len() {
+            let pat = PatId(i as u32);
+            if !matches!(hir[pat].kind, PatKind::Ident(_))
+                || matches!(bound.pat_parent[i], PatParent::None)
+                || unchecked.contain(hir[pat].pos)
+                || self.is_never_checked(hir[pat].pos)
+                || self.returns_before_type_of_symbol(file, pat)
+            {
+                continue;
+            }
+            self.type_of_pat(file, pat);
+            // `parameterInitializerContainsUndefined` is evaluated where the parameter is read. Reading it in its own
+            // default is circular.
+            if let PatParent::Param(p) = bound.pat_parent[i]
+                && hir[p].ty.is_some()
+                && hir[p].default.is_some()
+            {
+                self.type_of_expr(file, hir[p].default);
+            }
+        }
+        for i in 0..hir.members.len() {
+            let member = MemberId(i as u32);
+            if !matches!(
+                hir[member].kind,
+                MemberKind::Property | MemberKind::Getter | MemberKind::Setter
+            ) || matches!(bound.member_owner[i], MemberOwner::None)
+                || unchecked.contain(hir[member].start)
+                || self.is_never_checked(hir[member].start)
+            {
+                continue;
+            }
+            // `getTypeOfSymbol`: a symbol's property and accessor declarations form one property, identified by the
+            // first.
+            let is_first = bound.member_symbol[i].is_some() && {
+                let sym = self.symbol_of_member(file, member);
+                self.value_declaration_of_property(sym) == Some((file, Decl::Member(member)))
+            };
+            if is_first || hir[member].kind == MemberKind::Property {
+                self.type_of_member_declaration(file, member);
+            }
+        }
+        for i in 0..hir.fns.len() {
+            let func = FnId(i as u32);
+            if matches!(bound.fns[i].owner, FnOwner::None)
+                || unchecked.contain(hir[func].start)
+                || self.is_never_checked(hir[func].start)
+            {
+                continue;
+            }
+            // An annotated accessor of a class, an interface or a type literal was already requested above, along with
+            // the property it declares.
+            let is_member = matches!(hir[func].kind, FnKind::Getter | FnKind::Setter)
+                && !(hir[func].kind == FnKind::Getter
+                    && matches!(bound.fns[i].owner, FnOwner::Expr(_)));
+            if hir[func].ret.is_some() && !is_member
+                || hir[func].ret.is_none()
+                    && !matches!(hir[func].body, FnBody::None)
+                    && self.is_inferred_return_type_requested(file, func)
+            {
+                self.return_type_of_fn(file, func);
+            }
+        }
+        self.check_circular_exports(file);
+        self.check_circular_assignment_declarations(file);
+    }
+
+    /// True if checking the declaration `func` requests its inferred return type. `checkFunctionOrMethodDeclaration`
+    /// requests it only for a generator, `checkAccessorDeclaration` doesn't for a setter, and `checkReturnStatement`
+    /// requests it for the enclosing function.
+    pub(super) fn is_inferred_return_type_requested(&self, file: FileId, func: FnId) -> bool {
+        let (hir, info) = (self.hir(file), &self.bound(file).fns[func.idx()]);
+        let is_requested_at_declaration = match hir[func].kind {
+            FnKind::Setter => false,
+            FnKind::Decl | FnKind::Method => {
+                matches!(info.owner, FnOwner::Expr(_)) || hir[func].flags.contains(Flags::GENERATOR)
+            }
+            _ => true,
+        };
+        is_requested_at_declaration || !info.returns.is_empty()
+    }
+
+    /// The end of `getTypeOfAccessors`, where `popTypeResolution` finds the cycle. `members` are the declarations of
+    /// the property `sym`.
+    pub(super) fn report_circular_accessors(&mut self, sym: Sym, members: &[(FileId, MemberId)]) {
+        let accessor_of_kind = |c: &Self, kind: MemberKind| {
+            members
+                .iter()
+                .copied()
+                .find(|&(file, m)| c.hir(file)[m].kind == kind)
+        };
+        let (getter, setter) = (
+            accessor_of_kind(self, MemberKind::Getter),
+            accessor_of_kind(self, MemberKind::Setter),
+        );
+        // `getAnnotatedAccessorTypeNode`
+        let annotated_getter = getter.filter(|&(file, g)| {
+            let hir = self.hir(file);
+            hir[hir[g].func].ret.is_some()
+        });
+        let annotated_setter = setter.filter(|&(file, s)| {
+            let hir = self.hir(file);
+            let node = hir[hir[s].func].effective_set_accessor_type_annotation_node(hir);
+            node.is_some()
+        });
+        // `core.Find(symbol.Declarations, ast.IsAutoAccessorPropertyDeclaration)`
+        let auto_accessor = members.iter().copied().find(|&(file, m)| {
+            let member = &self.hir(file)[m];
+            member.kind == MemberKind::Property && member.flags.contains(Flags::ACCESSOR)
+        });
+        // `symbolToString`
+        let (file, first) = members[0];
+        let end = self.end_of_member_name(file, first);
+        let name = self.source_text(file, self.hir(file)[first].name_pos, end);
+        let ((file, accessor), code) = match (annotated_getter, annotated_setter) {
+            (Some(getter), _) => (getter, 2502),
+            (None, Some(setter)) => (setter, 2502),
+            // tsgo reports it on the set accessor, which may be nil.
+            _ if auto_accessor.is_some_and(|(file, m)| self.hir(file)[m].ty.is_some()) => {
+                match setter {
+                    Some(setter) => (setter, 2502),
+                    None => {
+                        let err = Reported::new(NOWHERE, 2502, held(vec![name]));
+                        return self.add_diagnostic_of(Some(Query::Symbol(sym)), err);
+                    }
+                }
+            }
+            _ => match getter {
+                Some(getter) if self.p.files.options.no_implicit_any => (getter, 7023),
+                _ => return,
+            },
+        };
+        let at = (
+            file,
+            self.hir(file)[accessor].name_pos,
+            self.end_of_member_name(file, accessor),
+        );
+        let err = self.new_diagnostic(at, code, &[Arg::Bytes(&name)]);
+        self.add_diagnostic_of(Some(Query::Symbol(sym)), err);
+    }
+
+    /// `symbol.ValueDeclaration` of the CommonJS export `symbol`, or `None` if it isn't an assignment.
+    pub(super) fn commonjs_value_declaration(&self, symbol: Symbol) -> Option<ExprId> {
+        match *symbol.decls.get(symbol.value_declaration as usize)? {
+            Decl::ModuleExports(assignment) | Decl::ExportsProperty(assignment) => Some(assignment),
+            _ => None,
+        }
+    }
+
+    /// `checkExportAssignment`, `checkBinaryLikeExpression`: requests the types of `export default e`, `export = e` and
+    /// `module.exports = e`.
+    fn check_circular_exports(&mut self, file: FileId) {
+        for (i, symbol) in self.bound(file).symbols.iter().enumerate() {
+            if symbol
+                .flags
+                .intersects(SymFlags::VARIABLE | SymFlags::PROPERTY)
+                && matches!(
+                    symbol.decls.first(),
+                    Some(Decl::ExportExpr(_) | Decl::ModuleExports(_))
+                )
+            {
+                let sym = self.files().sym(file, SymbolId(i as u32));
+                self.type_of_symbol(sym);
+            }
+        }
+    }
+
+    /// `checkPropertyAccessExpression` resolves the type of a property declared by `f.a = e`, `this.a = e` or
+    /// `exports.a = e` when it checks the left side, provided that's the property it finds there. (In a file that also
+    /// has `module.exports = e`, `exports` has the type of `e`.) `Object.defineProperty(f, "a", descriptor)` resolves
+    /// it only if the descriptor reads the property.
+    fn check_circular_assignment_declarations(&mut self, file: FileId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        if !hir.is_js {
+            return;
+        }
+        let this_or_exports_declarations = (bound.symbols.iter().flat_map(|symbol| symbol.decls))
+            .filter_map(|decl| match decl {
+                Decl::ThisProperty(e) | Decl::ExportsProperty(e) => Some(e),
+                _ => None,
+            });
+        for &declaration in (bound.expando_declarations.iter()).chain(this_or_exports_declarations)
+        {
+            let checked = match hir[declaration].kind {
+                ExprKind::Assign { target, .. } => target,
+                _ => declaration,
+            };
+            self.type_of_expr(file, checked);
+        }
+    }
+
+    /// `getNameOfDeclaration`: the position of `func`'s own name or, for an anonymous function expression, of the name
+    /// it's assigned to (`GetAssignedName`).
+    fn name_of_function(&self, file: FileId, func: FnId) -> Option<u32> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let e = match bound.fns[func.idx()].owner {
+            FnOwner::Member(m) => return Some(hir[m].name_pos),
+            _ if hir[func].name.is_some() => return Some(hir[func].name_pos),
+            FnOwner::Expr(e) => e,
+            _ => return None,
+        };
+        match bound.parent_of_expr(e) {
+            // A method or an accessor of an object literal, with a computed name.
+            Parent::Prop(p)
+                if matches!(
+                    hir[p].kind,
+                    PropKind::Method | PropKind::Getter | PropKind::Setter
+                ) =>
+            {
+                Some(hir[p].pos)
+            }
+            _ => bound.get_assigned_name(hir, e),
+        }
+    }
+
+    /// The end of `getReturnTypeOfSignature`, where `popTypeResolution` finds the cycle. Reports 2577, 7023 at the
+    /// function's name, or 7024 at an unnamed function. For an accessor of an object literal this is the end of
+    /// `getTypeOfAccessors`. For `owner`, see `add_diagnostic_of`.
+    pub(super) fn report_circular_return_type(
+        &mut self,
+        owner: Option<Query>,
+        file: FileId,
+        func: FnId,
+    ) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let no_implicit_any = self.p.files.options.no_implicit_any;
+        let fn_owner = bound.fns[func.idx()].owner;
+        // `printed` is the position of the name shown in the message, if it isn't `of`'s name.
+        let report_at_name = |c: &mut Self, of: FnId, code: u32, printed: Option<u32>| {
+            if let Some(start) = c.name_of_function(file, of) {
+                let end = c.end_of_name_at(file, start);
+                let printed = printed.unwrap_or(start);
+                let name = c.source_text(file, printed, c.end_of_name_at(file, printed));
+                let err = c.new_diagnostic((file, start, end), code, &[Arg::Bytes(&name)]);
+                c.add_diagnostic_of(owner, err);
+                return true;
+            }
+            false
+        };
+        if matches!(hir[func].kind, FnKind::Getter | FnKind::Setter) {
+            // Accessors of classes, interfaces and type literals are reported with the property they declare.
+            if let FnOwner::Expr(e) = fn_owner {
+                // `symbolToString`: the name of the symbol's first declaration.
+                let symbol = match bound.parent_of_expr(e) {
+                    Parent::Prop(p) => {
+                        let first = self.first_declaration_of_literal_member(file, p);
+                        Some(hir[first].pos)
+                    }
+                    _ => None,
+                };
+                let getter = (hir[func].kind == FnKind::Getter).then_some(func);
+                let setter = match getter {
+                    Some(getter) => (self.sibling_accessor(file, getter, FnKind::Setter))
+                        .map(|(_, setter)| setter),
+                    None => Some(func),
+                };
+                let setter = setter.filter(|&s| {
+                    let node = hir[s].effective_set_accessor_type_annotation_node(hir);
+                    node.is_some()
+                });
+                match (getter, setter) {
+                    (Some(getter), _) if hir[getter].ret.is_some() => {
+                        report_at_name(self, getter, 2502, symbol)
+                    }
+                    (_, Some(setter)) => report_at_name(self, setter, 2502, symbol),
+                    (Some(getter), None) => {
+                        no_implicit_any && report_at_name(self, getter, 7023, symbol)
+                    }
+                    (None, None) => false,
+                };
+            }
+        } else if hir[func].ret.is_some() {
+            let ret = hir[func].ret;
+            let start = start_of_type(hir, ret);
+            let at = (file, start, self.end_of_type_node_from(file, ret, start));
+            let err = self.new_diagnostic(at, 2577, &[]);
+            self.add_diagnostic_of(owner, err);
+        } else if no_implicit_any
+            && !matches!(hir[func].body, FnBody::None)
+            && !report_at_name(self, func, 7023, None)
+        {
+            let (start, end) = self.error_range_of_fn(file, func);
+            let err = self.new_diagnostic((file, start, end), 7024, &[]);
+            self.add_diagnostic_of(owner, err);
+        }
+    }
+
+    /// `getResolvedBaseConstraint`: 2751 at what `c.currentNode` was when `param`'s constraint was found to be
+    /// circular, unless that node is inside `error_node` (the constraint) or encloses it.
+    fn origin_of_circular_constraint(
+        &self,
+        param: TypeId,
+        file: FileId,
+        error_node: TypeNodeId,
+    ) -> Option<Reported> {
+        let mut origins = self.circular_constraint_origins.iter();
+        let current = origins.find(|it| it.0 == param)?.1?;
+        let (of, current_node) = self.node_of_current_node(current);
+        let hir = self.hir(file);
+        let error_node = hir.node(error_node);
+        // `isNodeDescendantOf`
+        let is_in =
+            |node: Node, ancestor: Node| hir.find_ancestor(node, |n| n == ancestor).is_some();
+        if of == file && (is_in(error_node, current_node) || is_in(current_node, error_node)) {
+            return None;
+        }
+        Some(Reported::bare(self.span_of_current_node(current), 2751))
+    }
+}

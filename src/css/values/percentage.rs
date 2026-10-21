@@ -459,17 +459,6 @@ impl NumberOrPercentage {
         }
     }
 
-    // pub fn parse(input: *css.Parser) Result(NumberOrPercentage) {
-    //     _ = input; // autofix
-    //     @panic(css.todo_stuff.depth);
-    // }
-
-    // pub fn toCss(this: *const NumberOrPercentage, dest: *css.Printer) css.PrintErr!void {
-    //     _ = this; // autofix
-    //     _ = dest; // autofix
-    //     @panic(css.todo_stuff.depth);
-    // }
-
     pub(crate) fn into_f32(&self) -> f32 {
         match self {
             Self::Number(n) => *n,

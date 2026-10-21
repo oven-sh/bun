@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, describeWithContainer, isDockerEnabled } from "harness";
+import { bunEnv, bunExe, describeWithContainer } from "harness";
 import path from "path";
 
 // A Postgres `timestamp` (WITHOUT TIME ZONE) carries no offset, so the binary
 // path decodes it as UTC (µs since 2000-01-01). The simple/text path must do
 // the same — otherwise it goes through JS Date.parse and is read as local time,
 // making the two protocols disagree on non-UTC hosts. `timestamptz` and `date`
-// must keep decoding correctly.
+// must keep decoding correctly, including the seconds-resolution offsets the
+// server prints for historical instants and the always-text array types.
 //
 // The fixture runs against a real Postgres server (docker-compose in CI, or a
 // DATABASE_URL/local instance otherwise) and prints "OK TZ=<tz> offsetMin=<n>"
@@ -47,43 +48,16 @@ function assertRoundTrip(stdout: string, stderr: string, TZ: string) {
   expect(stdout).toMatch(TZ === "Etc/UTC" ? /offsetMin=0\b/ : /offsetMin=-?[1-9]/);
 }
 
-if (isDockerEnabled()) {
-  // CI: run against the docker-compose Postgres service.
-  describeWithContainer("postgres", { image: "postgres_plain" }, container => {
-    describe.each(TIMEZONES)("TZ=%s", TZ => {
-      test.concurrent("TIMESTAMP decode is UTC on both protocols", async () => {
-        await container.ready;
-        const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
-        const { stdout, stderr, exitCode } = await runFixture(url, TZ);
-        expect(stdout).toContain("CONNECTED");
-        assertRoundTrip(stdout, stderr, TZ);
-        expect(exitCode).toBe(0);
-      });
-    });
-  });
-} else {
-  // No docker daemon (e.g. local/sandboxed environments). If a Postgres server
-  // is reachable at DATABASE_URL or the conventional local address, exercise
-  // the fixture there so the round-trip is still covered.
-  const url = process.env.DATABASE_URL || "postgres://bun_sql_test@127.0.0.1:5432/bun_sql_test";
-
-  describe.each(TIMEZONES)("postgres (local) TZ=%s", TZ => {
+// CI: run against the docker-compose Postgres service.
+describeWithContainer("postgres", { image: "postgres_plain" }, container => {
+  describe.each(TIMEZONES)("TZ=%s", TZ => {
     test.concurrent("TIMESTAMP decode is UTC on both protocols", async () => {
+      await container.ready;
+      const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
       const { stdout, stderr, exitCode } = await runFixture(url, TZ);
-      // The fixture prints "CONNECTED" once it reaches the server. If it never
-      // got that far, there's no Postgres to talk to here; the docker-gated
-      // branch above provides the CI coverage.
-      if (!stdout.includes("CONNECTED")) {
-        if (process.env.DATABASE_URL) {
-          throw new Error(
-            `sql-postgres-datetime-roundtrip: DATABASE_URL was provided but fixture never reached CONNECTED\nstdout:\n${stdout}\nstderr:\n${stderr}`,
-          );
-        }
-        console.warn("sql-postgres-datetime-roundtrip: no Postgres reachable at " + url + "; skipping assertions");
-        return;
-      }
+      expect(stdout).toContain("CONNECTED");
       assertRoundTrip(stdout, stderr, TZ);
       expect(exitCode).toBe(0);
     });
   });
-}
+});

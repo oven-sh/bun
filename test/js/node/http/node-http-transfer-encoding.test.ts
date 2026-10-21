@@ -1247,12 +1247,13 @@ test("a request trailer section reaches req.rawTrailers over TLS", async () => {
 });
 
 // An accepted Upgrade request gets the end of its body when the peer's FIN cuts it. A trailer
-// section that the parser rejected before that FIN is not the request's.
-describe("a rejected trailer section does not reach an Upgrade request at the peer's FIN", () => {
+// section that the parser rejected before that FIN, or that the FIN cut, is not the request's.
+describe("an Upgrade request gets no trailer fields at the peer's FIN", () => {
   test.each([
-    // These 10 bytes fit in the inline buffer of a std::string in every standard library, and the
-    // last section fits in none. The limit goes down after the head of the request, which has
-    // more fields than that.
+    // These 10 bytes fit in the inline buffer of a std::string in every standard library. The
+    // sections of the last two rows fit in none. The limit goes down after the head of the
+    // request, which has more fields than that. Node.js does not reject a section for its
+    // count: it gives the request the fields up to the limit.
     ["more fields than server.maxHeadersCount", "a:\r\nb:\r\n\r\n", 1, "HPE_HEADER_OVERFLOW"],
     ["a Content-Length field", "Content-Length: 5\r\n\r\n", undefined, "HPE_INVALID_CONTENT_LENGTH"],
     [
@@ -1261,7 +1262,9 @@ describe("a rejected trailer section does not reach an Upgrade request at the pe
       undefined,
       "HPE_INVALID_TRANSFER_ENCODING",
     ],
-  ])("%s", async (_, section, maxHeadersCount, code) => {
+    // No error: the FIN comes before the end of the section.
+    ["199 field lines and no end", Buffer.alloc(199 * 6, "a: 1\r\n").toString(), undefined, undefined],
+  ])("from a section with %s", async (_, section, maxHeadersCount, code) => {
     const { promise: atFin, resolve, reject } = Promise.withResolvers<string[]>();
     const clientErrors: (string | undefined)[] = [];
     const opened: Duplex[] = [];
@@ -1289,7 +1292,7 @@ describe("a rejected trailer section does not reach an Upgrade request at the pe
     try {
       await once(socket, "data");
       socket.end(section);
-      expect({ rawTrailers: await atFin, clientErrors }).toEqual({ rawTrailers: [], clientErrors: [code] });
+      expect({ rawTrailers: await atFin, clientErrors }).toEqual({ rawTrailers: [], clientErrors: code ? [code] : [] });
     } finally {
       socket.destroy();
       for (const each of opened) each.destroy();
@@ -1380,6 +1383,9 @@ describe("a 2,000,000 byte request trailer section", () => {
     for await (const chunk of server.stdout as ReadableStream<Uint8Array>) {
       firstLine += Buffer.from(chunk).toString();
       if (firstLine.includes("\n")) break;
+    }
+    if (!firstLine.includes("\n")) {
+      throw new Error(`the fixture exited with code ${await server.exited} before it printed its port`);
     }
     ({ port } = JSON.parse(firstLine));
   });

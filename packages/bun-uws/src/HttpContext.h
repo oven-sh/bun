@@ -788,6 +788,10 @@ private:
             us_socket_unref((us_socket_t *) returnedData);
 
             if constexpr (IsNodeHttp) {
+                /* JavaScript stopped the parser inside this read: no request takes what the read still captured of a trailer section. */
+                if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED) [[unlikely]] {
+                    ((HttpResponseData<SSL, true> *) httpResponseData)->releaseRequestTrailers();
+                }
                 if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED) {
                     httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED;
                     Bun__NodeHTTP__onReadParsed(SSL, (us_socket_t *) returnedData);
@@ -1030,14 +1034,13 @@ private:
                 if (!us_socket_is_closed(s) && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY)) {
                     httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY;
                     httpResponseData->isConnectRequest = true;
+                    /* That body did not complete: its request gets nothing of the trailer section, and the tunnel keeps nothing of it. */
+                    ((HttpResponseData<SSL, true> *) httpResponseData)->releaseRequestTrailers();
                     if (httpResponseData->inStream) {
                         httpResponseData->inStream((HttpResponse<SSL> *) s, "", 0, true, httpResponseData->userData);
                         if (!us_socket_is_closed(s)) {
                             httpResponseData->inStream = nullptr;
                         }
-                    } else {
-                        /* No reader gets that end: the tunnel lives on without what the parser had of a trailer section. */
-                        ((HttpResponseData<SSL, true> *) httpResponseData)->releaseRequestTrailers();
                     }
                 }
                 return s;

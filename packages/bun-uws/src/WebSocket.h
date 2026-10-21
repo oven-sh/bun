@@ -326,6 +326,22 @@ private:
         }
     }
 
+    /* Calls the close handler with 1006, or with -failure.kind in a wsPackage context. */
+    void emitFailure(const WebSocketFailure &failure, unsigned int detail) {
+        if (!getContextData()->wsPackage) {
+            emitClose(1006, failure.diagnostic);
+            return;
+        }
+
+        char text[16];
+        size_t length = 0;
+        if (failure.kind == WebSocketFailureKind::InvalidOpcode || failure.kind == WebSocketFailureKind::InvalidControlPayloadLength
+            || failure.kind == WebSocketFailureKind::InvalidCloseCode) {
+            length = (size_t) (std::to_chars(text, text + sizeof(text), detail).ptr - text);
+        }
+        emitClose(-(int) failure.kind, {text, length});
+    }
+
 public:
     /* Send websocket close frame, send FIN once everything before it is written, emit close event.
      * Will not append a close reason if code is 0 or 1005. */
@@ -347,22 +363,32 @@ public:
     /* RFC 6455 7.1.7, fail the connection after a protocol error. The peer gets failure.closeCode.
      * The close handler gets 1006, or -failure.kind in a wsPackage context. */
     void failConnection(const WebSocketFailure &failure, unsigned int detail) {
-        if (!getContextData()->wsPackage) {
-            if (sendClose(failure.closeCode, failure.diagnostic)) {
-                emitClose(1006, failure.diagnostic);
-            }
+        if (sendClose(failure.closeCode, getContextData()->wsPackage ? std::string_view() : failure.diagnostic)) {
+            emitFailure(failure, detail);
+        }
+    }
+
+    /* Fails the connection because a received message couldn't be buffered or copied for its handler.
+     * Nothing here may allocate for this connection, because a failed allocation would abort the process. */
+    void failOutOfMemory() {
+        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) this);
+        if (webSocketData->isShuttingDown) {
             return;
         }
 
-        if (sendClose(failure.closeCode, {})) {
-            char text[16];
-            size_t length = 0;
-            if (failure.kind == WebSocketFailureKind::InvalidOpcode || failure.kind == WebSocketFailureKind::InvalidControlPayloadLength
-                || failure.kind == WebSocketFailureKind::InvalidCloseCode) {
-                length = (size_t) (std::to_chars(text, text + sizeof(text), detail).ptr - text);
-            }
-            emitClose(-(int) failure.kind, {text, length});
+        /* Drop the queued publishes, because sendCloseFrame() would write them first. */
+        getContextData()->topicTree->freeSubscriber(webSocketData->subscriber);
+        webSocketData->subscriber = nullptr;
+
+        if (!getBufferedAmount()) {
+            failConnection(FAIL_OUT_OF_MEMORY, 0);
+            return;
         }
+
+        /* Sending a Close frame would grow the backpressure buffer, so report the failure and reset the connection. */
+        webSocketData->isShuttingDown = true;
+        emitFailure(FAIL_OUT_OF_MEMORY, 0);
+        us_socket_close((us_socket_t *) this, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
     }
 
     /* Corks the response if possible. Leaves already corked socket be. */

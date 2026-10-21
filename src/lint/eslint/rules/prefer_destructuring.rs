@@ -4,7 +4,7 @@ use bun_lint::rule::Plugin;
 /// Require destructuring from arrays and/or objects.
 pub struct PreferDestructuring {
     config: Config,
-    /// An option of typescript-eslint's rule, which oxlint's port of this one has.
+    /// An option of typescript-eslint's rule, which oxlint's port of this rule also has.
     enforce_for_declaration_with_type_annotation: bool,
 }
 
@@ -13,7 +13,7 @@ pub const PREFER_DESTRUCTURING: Message =
 
 const PRECEDENCE_OF_ASSIGNMENT_EXPR: i32 = 1;
 
-/// `kind` as the message has it: oxlint writes it with a capital.
+/// Returns `kind` as the message prints it. oxlint capitalizes it.
 fn type_in_message<R: Rule>(kind: &'static str, cx: &Cx<'_, R>) -> &'static str {
     match (cx.language().is_oxlint, kind) {
         (false, _) => kind,
@@ -22,7 +22,7 @@ fn type_in_message<R: Rule>(kind: &'static str, cx: &Cx<'_, R>) -> &'static str 
     }
 }
 
-/// Which kinds of destructuring are enforced for a kind of node.
+/// The kinds of destructuring enforced for one kind of node.
 #[derive(Copy, Clone, Default)]
 pub struct Enabled {
     pub array: bool,
@@ -38,7 +38,7 @@ impl Enabled {
     }
 }
 
-/// The options. typescript-eslint's rule of the same name runs this rule after checks of its own.
+/// The options. typescript-eslint's rule of the same name runs this rule after its own checks.
 pub struct Config {
     pub variable_declarator: Enabled,
     pub assignment_expression: Enabled,
@@ -55,8 +55,8 @@ enum Property<'a> {
 }
 
 impl<'a> Property<'a> {
-    /// Whether it is written as the name `left`, or as a string with that text.
-    fn is_called(self, left: Option<Name<'a>>) -> bool {
+    /// True if it's the name `left`, or a string with that text.
+    fn is_named(self, left: Option<Name<'a>>) -> bool {
         match self {
             Property::Name(name) => left == Some(name),
             Property::Computed(index) => left.is_some() && left == index.as_string(),
@@ -64,8 +64,8 @@ impl<'a> Property<'a> {
     }
 }
 
-/// `e` as a `MemberExpression` that could be destructured: not an optional chain, not of `super`,
-/// not of a private name.
+/// Returns `e` as a `MemberExpression` that could be destructured: not an optional chain, not on `super`, and not a
+/// private name.
 fn member_expression(e: Expr<'_>) -> Option<(Expr<'_>, Property<'_>)> {
     let (object, property) = match e.as_dot() {
         Some(_) if e.is_private_member() => return None,
@@ -104,8 +104,8 @@ impl Config {
         }
     }
 
-    /// The kind of destructuring to use instead of assigning `object.property` to `left`, which is
-    /// the name if that is an identifier. `None` if there is nothing to report.
+    /// Returns the kind of destructuring to use instead of assigning `object.property`, or `None` if there's nothing to
+    /// report. `left` is the target's name, if the target is an identifier.
     fn perform_check<'a>(
         &self,
         enabled: Enabled,
@@ -113,7 +113,7 @@ impl Config {
         property: Property<'a>,
         is_port_of_oxlint: bool,
     ) -> Option<&'static str> {
-        // For oxlint's port every number is an index, and it says nothing about a template.
+        // oxlint's port treats every number as an index, and doesn't report a template.
         if let Property::Computed(index) = property
             && let Some(n) = index.as_number()
             && (is_port_of_oxlint || n.is_finite() && n.fract() == 0.0)
@@ -125,11 +125,11 @@ impl Config {
         if !enabled.object || is_port_of_oxlint && is_template {
             return None;
         }
-        let has_same_name = property.is_called(left);
+        let has_same_name = property.is_named(left);
         (self.enforce_for_renamed_properties || has_same_name).then_some("object")
     }
 
-    /// ESLint's listener for a `VariableDeclarator`. `can_fix`: whether to offer the fix.
+    /// ESLint's listener for a `VariableDeclarator`. The fix is only offered if `can_fix` is true.
     #[inline(never)]
     pub fn check_variable_declarator<'a, R: Rule>(
         &self,
@@ -150,22 +150,22 @@ impl Config {
         else {
             return;
         };
-        let has_same_name = property.is_called(left);
-        // oxlint's port of ESLint's rule points at the value, without its parentheses if the name is another.
-        let place = match declaration.init() {
+        let has_same_name = property.is_named(left);
+        // oxlint's port of ESLint's rule points at the initializer, without its parentheses if the names differ.
+        let location = match declaration.init() {
             Some(init) if is_port_of_oxlint && kind == "object" && !has_same_name => init.span(),
             Some(init) if is_port_of_oxlint => init.outer_span(),
             _ => declaration.span(),
         };
         let report = cx
-            .report(place, PREFER_DESTRUCTURING)
+            .report(location, PREFER_DESTRUCTURING)
             .claims(declaration)
             .unless_claimed(declaration)
             .called_with(declaration);
         let report = report
             .data("type", type_in_message(kind, cx))
             .data("kind", kind);
-        // oxlint's port also fixes `let x = a["x"]`, does not look for comments, and leaves most parentheses.
+        // oxlint's port also fixes `let x = a["x"]`, doesn't check for comments, and keeps most parentheses.
         if is_port_of_oxlint {
             if kind == "object" && has_same_name && declaration.ty().is_none() {
                 report.fix(|fixer| {
@@ -196,8 +196,9 @@ impl Config {
             }
             return;
         }
-        // Only `let x = a.x` is fixed.
+        // Only fix `let x = a.x`. ESLint also rewrites `let x: T = a.x`, which drops the `T`.
         if can_fix
+            && declaration.ty().is_none()
             && kind == "object"
             && let Property::Name(name) = property
             && left == Some(name)
@@ -226,8 +227,8 @@ impl Config {
             return;
         };
         let (enabled, left) = (self.assignment_expression, target.as_ident());
-        // oxlint's port: `enforceForRenamedProperties` is for `a = b[c]` alone, and `a = b["a"]` is reported once more,
-        // whatever the options are.
+        // In oxlint's port, `enforceForRenamedProperties` only applies to `a = b[c]`, and `a = b["a"]` gets one more
+        // report, whatever the options are.
         if cx.language().is_oxlint && R::META.plugin == Plugin::Eslint {
             let (arrays, objects) = match property {
                 Property::Name(name) => (0, usize::from(enabled.object && left == Some(name))),
@@ -249,16 +250,18 @@ impl Config {
                 return;
             }
             let arrays = std::iter::repeat_n(("Array", "array"), arrays);
-            for (said, kind) in arrays.chain(std::iter::repeat_n(("Object", "object"), objects)) {
+            for (capitalized, kind) in
+                arrays.chain(std::iter::repeat_n(("Object", "object"), objects))
+            {
                 cx.report(e, PREFER_DESTRUCTURING)
                     .unless_claimed(e)
-                    .data("type", said)
+                    .data("type", capitalized)
                     .data("kind", kind);
             }
             return;
         }
         if let Some(kind) = self.perform_check(enabled, left, property, false)
-            // A default value in a pattern is not an assignment.
+            // A default value in a pattern isn't an assignment.
             && !utils::is_assignment_target(e)
         {
             cx.report(e, PREFER_DESTRUCTURING)

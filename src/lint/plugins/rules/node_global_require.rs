@@ -10,7 +10,7 @@ const GLOBAL_REQUIRE: Message = Message::new("", "Unexpected require().");
 impl Rule for GlobalRequire {
     const META: Meta = Meta::oxlint(Plugin::Node, "global-require", Kind::Suggestion);
     const ON: On = On::new().function_calls(&["require"]);
-    /// That something is in what a `require()` must not be in.
+    /// Caches whether a node is inside something a `require()` isn't allowed in.
     type State<'a> = AncestorMemo<'a, ()>;
 
     fn new(_: &Options) -> Self {
@@ -32,7 +32,7 @@ impl Rule for GlobalRequire {
 }
 
 fn is_acceptable_parent(child: Node, parent: Node) -> bool {
-    // oxc has a node for parentheses and one around an optional chain.
+    // oxc's AST has a node for parentheses and one around an optional chain.
     if matches!(child, Node::Expr(e) if e.is_parenthesized() || e.is_chain_root()) {
         return false;
     }

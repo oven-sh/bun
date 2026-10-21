@@ -307,8 +307,7 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
 
     pub(crate) dev_server: Option<Box<crate::bake::DevServer::DevServer>>,
 
-    /// Route → index in RouteList.cpp. User routes may be applied multiple
-    /// times due to SNI, so we have to store them.
+    /// Route → index in RouteList.cpp. uWS route handlers keep pointers into this Vec.
     pub(crate) user_routes: Vec<UserRoute<SSL, DEBUG>>,
 
     /// Raw shadow of the wrapper's `m_onClientError` WriteBarrier slot.
@@ -337,6 +336,12 @@ impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
     fn drop(&mut self) {
         // Before `config`, which owns the arena the dev server's transpilers and views live in.
         drop(self.dev_server.take());
+        if let Some(plugins) = &self.plugins {
+            // SAFETY: the intrusive refcount permits mutation through any owner. Each server has its
+            // own `ServePlugins`, so no other `&mut` to it is live while the server is being freed.
+            unsafe { &mut *plugins.as_ptr() }
+                .forget_server(AnyServer::from(std::ptr::from_ref::<Self>(self)));
+        }
         // The remaining owned fields (config, base_url, h3_alt_svc,
         // user_routes, all_closed_promise) drop automatically.
     }
@@ -2833,8 +2838,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // reshaped for borrowck (PORTING.md §Forbidden — aliased
         // `&mut`). No long-lived `&mut Self` is held across re-derives from
         // `this`; each use site reborrows fresh and the borrow ends before the
-        // next derive. The serverName / SNI loop extracts raw `(ptr, len)` so
-        // no `&self.config` outlives the per-domain `set_routes()` call.
+        // next derive.
         //
         // SAFETY (applies to every `&mut *this` below): `this` was produced by
         // `init()` and is live for this call; only one reference derived from
@@ -2932,20 +2936,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             route_list_value = unsafe { (*this).set_routes() };
 
             // add serverName to the SSL context using the default ssl options
-            // extract raw (ptr, len) so no `&self.config` borrow
-            // outlives the `set_routes()` call below. set_routes() does not
-            // touch `config.ssl_config`, so the bytes remain valid.
-            let server_name_raw = this_ref
+            let server_name = this_ref
                 .config
                 .ssl_config
                 .as_ref()
                 .and_then(|c| c.server_name_cstr())
-                .filter(|n| !n.to_bytes().is_empty())
-                .map(|n| (n.as_ptr(), n.to_bytes().len()));
-            if let Some((name_ptr, name_len)) = server_name_raw {
-                // SAFETY: name_ptr/name_len were just extracted from the live
-                // `config.ssl_config.server_name` CString; valid + NUL-terminated.
-                let server_name = unsafe { bun_core::ffi::cstr(name_ptr) };
+                .filter(|n| !n.to_bytes().is_empty());
+            if let Some(server_name) = server_name {
                 // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                 if bun_opaque::opaque_deref_mut(app)
                     .add_server_name_with_options(server_name, &ssl_options, false)
@@ -2966,27 +2963,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     Self::deinit(this);
                     return JSValue::ZERO;
                 }
-
-                // SAFETY: server_name is a CStr; ZStr::from_raw upholds the NUL invariant.
-                let z = unsafe { bun_core::ZStr::from_raw(name_ptr.cast(), name_len) };
-                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                bun_opaque::opaque_deref_mut(app).domain(z);
-                if throw_ssl_error_if_necessary(global) {
-                    // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                    Self::deinit(this);
-                    return JSValue::ZERO;
-                }
-
-                // Ensure routes are set for that domain name.
-                // SAFETY: `this` is the live boxed server from `init()`; no
-                // other borrow is live — `&mut` scoped to this call.
-                let _ = unsafe { (*this).set_routes() };
             }
 
             // SNI: per-hostname contexts
-            // iterate by index and reborrow `&*this` per iteration so
-            // the `set_routes()` `&mut` at the bottom of the loop body never
-            // overlaps an outstanding `&self.config.sni` borrow.
             let sni_len = this_ref.config.sni.as_ref().map_or(0, |s| s.slice().len());
             for i in 0..sni_len {
                 let (name_ptr, name_len, sni_opts) = {
@@ -3004,8 +2983,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         sni_ssl_config.as_usockets(),
                     )
                 };
-                // SAFETY: name_ptr/name_len point into config.sni[i].server_name;
-                // set_routes() does not mutate config.sni so the bytes are valid.
+                // SAFETY: name_ptr/name_len point into config.sni[i].server_name.
                 let sni_name = unsafe { bun_core::ffi::cstr(name_ptr) };
                 // SAFETY: sni_name is a CStr; NUL invariant holds for ZStr.
                 let z = unsafe { bun_core::ZStr::from_raw(name_ptr.cast(), name_len) };
@@ -3044,16 +3022,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     Self::deinit(this);
                     return JSValue::ZERO;
                 }
-                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                bun_opaque::opaque_deref_mut(app).domain(z);
                 if throw_ssl_error_if_necessary(global) {
                     // SAFETY: caller contract — `this` is the live boxed server from `init()`.
                     Self::deinit(this);
                     return JSValue::ZERO;
                 }
-                // SAFETY: `this` is the live boxed server from `init()`; no
-                // other borrow is live — `&mut` scoped to this call.
-                let _ = unsafe { (*this).set_routes() };
             }
         } else {
             app = match uws_sys::NewApp::<SSL>::create(&uws_sys::BunSocketContextOptions::default())
@@ -4012,6 +3985,16 @@ impl AnyServer {
         any_server_dispatch!(self, |s| &s.config)
     }
 
+    /// Whether a route of the `routes` option, or a static route, has exactly this path.
+    pub(crate) fn has_route(&self, path: &[u8]) -> bool {
+        any_server_dispatch!(self, |s| {
+            s.user_routes
+                .iter()
+                .any(|r| r.route.path.as_bytes() == path)
+                || s.config.static_routes.iter().any(|r| &*r.path == path)
+        })
+    }
+
     #[inline]
     pub(crate) fn terminated(&self) -> bool {
         any_server_dispatch!(self, |s| s.flags.contains(ServerFlags::TERMINATED))
@@ -4214,7 +4197,7 @@ impl AnyServer {
     /// - `Pending` if `callback` was stored. It will call `on_plugins_resolved` or `on_plugins_rejected` later.
     pub(crate) fn get_or_load_plugins(
         &self,
-        callback: ServePluginsCallback<'_>,
+        callback: ServePluginsCallback,
     ) -> GetOrStartLoadResult<'_> {
         any_server_dispatch_mut!(self, |s| s.get_or_load_plugins(callback))
     }

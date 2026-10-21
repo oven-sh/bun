@@ -905,7 +905,16 @@ impl<'a, 'b> Driver<'a, 'b> {
                             block_value.push(stmt);
                         }
                         GotoVariant::Try => {
-                            // noop
+                            // The `try` terminal visits the target. This check isn't in upstream. It catches
+                            // a pass that removed the terminal without merging the target, which drops code.
+                            if !self.cx.is_scheduled(*goto_block) {
+                                return Err(cold_invariant(
+                                    "Expected the fallthrough of a try to be scheduled",
+                                    Some(format!("bb{} is not scheduled", goto_block.0)),
+                                    None,
+                                )
+                                .into());
+                            }
                         }
                     }
                 }

@@ -149,8 +149,10 @@ impl DevServer {
                     break 'arr arr;
                 }
             },
-            // clientId
+            // clientId: none when the router has no client entry, so there is no bundle to load.
             client_id: match framework_bundle.cached_client_bundle_url.get() {
+                // SAFETY: per-access raw deref; `router.types` not reallocated.
+                _ if unsafe { (*router_type).client_file }.is_none() => JSValue::NULL,
                 Some(s) => s,
                 None => 'str: {
                     let bundle_index: u32 = route_bundle_index.get();
@@ -235,7 +237,7 @@ impl DevServer {
             // Extract pathname from URL (remove protocol, host, query, hash)
             let pathname = extract_pathname_from_url(url.slice());
             if self.router.match_slow(pathname, &mut params).is_some() {
-                params.to_js(global)
+                params.to_js(global)?
             } else {
                 JSValue::NULL
             }
@@ -496,7 +498,49 @@ impl DevServer {
         Ok(array.into_boxed_slice())
     }
 
-    pub(crate) fn on_js_request_with_bundle(
+    /// Serves `/_bun/client/<route>-<generation>.js`.
+    pub(super) fn serve_client_script(
+        &mut self,
+        bundle_index: route_bundle::Index,
+        generation: u32,
+        resp: AnyResponse,
+        method: Method,
+    ) {
+        let route_bundle = &self.route_bundles[bundle_index.get() as usize];
+        if route_bundle.client_script_generation != generation
+            || route_bundle.server_state != route_bundle::State::Loaded
+        {
+            return resp.corked(move || on_outdated_js_corked(resp));
+        }
+
+        // The in-flight bundle already freed the code of every file that failed in it, so wait for it to finish.
+        if route_bundle.client_bundle.is_none()
+            && let Some(current_bundle) = &mut self.current_bundle
+        {
+            let deferred = bun_ptr::RefPtr::new(DeferredScriptRequest {
+                ref_count: ::core::cell::Cell::new(1),
+                route_bundle_index: bundle_index,
+                generation,
+                response: ::core::cell::Cell::new(Some(ResponseAndMethod {
+                    response: resp,
+                    method,
+                })),
+            });
+            // `script_requests` keeps `deferred` alive until the response removes this handler.
+            resp.on_aborted_this(
+                |deferred: bun_ptr::ThisPtr<DeferredScriptRequest>, _: AnyResponse| {
+                    deferred.response.set(None)
+                },
+                deferred.this_ptr(),
+            );
+            current_bundle.script_requests.push(deferred);
+            return;
+        }
+
+        self.on_js_request_with_bundle(bundle_index, resp, method);
+    }
+
+    fn on_js_request_with_bundle(
         &mut self,
         bundle_index: route_bundle::Index,
         resp: AnyResponse,
@@ -507,6 +551,21 @@ impl DevServer {
         // immediately decays to a raw pointer.
         let route_bundle: *mut RouteBundle =
             unsafe { &mut *self_ptr }.route_bundle_ptr(bundle_index);
+        // A route of a router with no client entry has no browser bundle.
+        // SAFETY: shared, statement-scoped reads; nothing mutates `route_bundles` or `router` here.
+        if let route_bundle::Data::Framework(fw) = unsafe { &(*route_bundle).data } {
+            // SAFETY: as above, a shared read of a field that nothing mutates here.
+            let router = unsafe { &(*self_ptr).router };
+            if router
+                .type_ptr_const(router.route_ptr(fw.route_index).r#type)
+                .client_file
+                .is_none()
+            {
+                resp.write_status(b"404 Not Found");
+                resp.end(b"", false);
+                return;
+            }
+        }
         // SAFETY: `route_bundle` points into `self.route_bundles`, not resized in
         // this fn; the shared reborrow ends with this statement.
         let cached: Option<bun_ptr::ThisPtr<StaticRoute>> =
@@ -594,6 +653,12 @@ impl DevServer {
             }
         }
 
+        let route_page_files = match &route_bundle.data {
+            route_bundle::Data::Framework(fw) => Some(self.client_page_files(fw.route_index)),
+            route_bundle::Data::Html(_) => None,
+        }
+        .filter(|files| files.page.is_some() || !files.layouts.is_empty());
+
         let client_file: Option<incremental_graph::ClientFileIndex> = match &route_bundle.data {
             route_bundle::Data::Framework(fw) => {
                 let type_idx = self.router.route_ptr(fw.route_index).r#type;
@@ -642,6 +707,7 @@ impl DevServer {
                     react_refresh_entry_point: react_fast_refresh_id,
                     script_id,
                     console_log: self.should_receive_console_log_from_browser(),
+                    route_page_files: route_page_files.as_ref(),
                 })?;
         Ok(client_bundle)
     }

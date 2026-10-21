@@ -1526,8 +1526,7 @@ describe.each([
       }
     });
 
-    // BoringSSL reads its ALPN selection callback, which sends the refusal's
-    // alert, off the SSL_CTX that setKeyCert() installed.
+    // The refusal still sends its alert after setKeyCert().
     it("refuses the connection when ALPNCallback throws after setKeyCert()", async () => {
       const contextB = tls.createSecureContext({ key: agent3Key, cert: agent3Cert, ca: [ca2] });
       const server = tls.createServer({
@@ -1609,8 +1608,7 @@ describe.each([
   });
 
   // As in Node, setKeyCert() replaces the certificate, the key and the CAs of a connection, and the
-  // `ciphers` and `sigalgs` stay those of the server. BoringSSL reads both off the SSL_CTX, which
-  // setKeyCert() replaces before either is used.
+  // `ciphers` and `sigalgs` stay those of the server.
   // `ciphers` restricts TLS 1.2 only, and a TLS 1.2 handshake with no common signature algorithm
   // moves to a cipher that needs no signature.
   describe.each([
@@ -1655,6 +1653,8 @@ describe.each([
           settle = settled.resolve;
           const client = transport.open({ rejectUnauthorized: false, ALPNProtocols: ["a"], [setting]: ofClient });
           client.on("error", () => {});
+          // A failure that the server does not report shows as a missing event.
+          client.on("close", settled.resolve);
           await settled.promise;
           client.destroy();
         }
@@ -1664,6 +1664,61 @@ describe.each([
         server.close();
       }
     });
+  });
+
+  // BoringSSL completes a certificate that has no chain from the store of the connection's SSL_CTX,
+  // which setKeyCert() keeps. The `ca` of the selected context has to complete it.
+  it("presents the intermediate that the `ca` of the selected context holds", async () => {
+    // agent6-cert.pem is the agent6 leaf followed by the ca3 intermediate that signed it. ca1 issued ca3.
+    const [agent6Leaf, ca3Cert] = agent6Cert.split(/(?=-----BEGIN CERTIFICATE-----)/);
+    const context = tls.createSecureContext({ key: agent6Key, cert: agent6Leaf, ca: [ca3Cert] });
+    const server = tls.createServer(
+      {
+        key: agent2Key,
+        cert: agent2Cert,
+        maxVersion,
+        ALPNCallback(this: tls.TLSSocket, { protocols }: { protocols: string[] }) {
+          this.setKeyCert(context);
+          return protocols[0];
+        },
+      },
+      socket => void socket.on("error", () => {}).end(),
+    );
+    try {
+      using transport = await transports.listener(server);
+      // The client trusts the root only, so it verifies the leaf only with the intermediate in hand.
+      const client = transport.open({ ca: [ca1], checkServerIdentity: () => undefined, ALPNProtocols: ["a"] });
+      await once(client, "secureConnect");
+      const seen = { served: client.getPeerCertificate().serialNumber, authorized: client.authorized };
+      client.destroy();
+      expect(seen).toEqual({ served: new X509Certificate(agent6Leaf).serialNumber, authorized: true });
+    } finally {
+      server.close();
+    }
+  });
+
+  // Node's TLSWrap::SetKeyCert.
+  it("setKeyCert() throws for a context with no certificate and keeps the one of the server", async () => {
+    const thrown: string[] = [];
+    const server = createAlpnServer({
+      requestCert: false,
+      ALPNCallback(this: tls.TLSSocket, { protocols }: { protocols: string[] }) {
+        try {
+          this.setKeyCert(tls.createSecureContext({ ca: [ca2] }));
+        } catch (e) {
+          thrown.push((e as Error).message);
+        }
+        return protocols[0];
+      },
+    });
+    server.on("secureConnection", report);
+    try {
+      using transport = await transports.listener(server);
+      const { served } = await exchange(transport.open({ rejectUnauthorized: false, ALPNProtocols: ["a"] }));
+      expect({ thrown, served }).toEqual({ thrown: ["SetKeyCert"], served: "agent2" });
+    } finally {
+      server.close();
+    }
   });
 
   // ALPNCallback runs before BoringSSL picks the cipher and the session, so that the context it
@@ -1762,8 +1817,8 @@ describe.each([
     }
   });
 
-  // BoringSSL reads the callbacks of a handshake off the SSL_CTX that is current when the
-  // ClientHello arrives, and setKeyCert() replaces that.
+  // setKeyCert() keeps the SSL_CTX of the connection, where BoringSSL reads the callbacks of the
+  // handshake.
   describe("after setKeyCert() before the handshake", () => {
     const contextB = tls.createSecureContext({ key: agent3Key, cert: agent3Cert, ca: [ca2] });
 

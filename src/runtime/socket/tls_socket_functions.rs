@@ -203,8 +203,13 @@ pub(super) mod ffi {
         // Swaps the cert/key/chain (and session-related state) this connection
         // serves to those of `ctx`; takes its own reference to `ctx`.
         pub(crate) fn SSL_set_SSL_CTX(ssl: *mut SSL, ctx: *mut SSL_CTX) -> *mut SSL_CTX;
-        /// openssl.c: `SSL_set_SSL_CTX` for a server, which also gives `ctx` the select-certificate callback. Returns 0 when it is too late to switch.
-        pub(crate) fn us_ssl_set_server_ctx(ssl: *mut SSL, ctx: *mut SSL_CTX) -> core::ffi::c_int;
+        /// openssl.c: `setKeyCert()` on a server. Returns 0 when it is too late to change anything and -1 when `ctx` has no certificate.
+        pub(crate) fn us_ssl_set_key_cert(
+            ssl: *mut SSL,
+            ctx: *mut SSL_CTX,
+            sid_ctx: *const u8,
+            sid_ctx_length: usize,
+        ) -> core::ffi::c_int;
         /// openssl.c then hands the ALPN protocols of this SSL's ClientHello to `us_dispatch_alpn_offer`.
         pub(crate) safe fn us_ssl_on_alpn_offer(ssl: &SSL);
         // Stores `cb`/`arg` opaquely on the CTX (BoringSSL never derefs `arg`
@@ -853,7 +858,7 @@ pub(super) fn get_tls_peer_finished_message(
 /// `tlsSocket.setKeyCert(secureContext)` - serve this connection's identity
 /// from the given context: SSL_set_SSL_CTX swaps the cert/key/chain used for
 /// the rest of the handshake (Node calls it from ALPNCallback / SNICallback).
-/// On a server, a call that comes after BoringSSL picked the certificate changes nothing.
+/// A server keeps its SSL_CTX and takes the identity and the CAs only (`us_ssl_set_key_cert`).
 pub(crate) fn set_key_cert(
     this: &This,
     global: &JSGlobalObject,
@@ -879,9 +884,18 @@ pub(crate) fn set_key_cert(
             ffi::SSL_set_SSL_CTX(ssl_ptr.cast(), ctx.as_ptr().cast());
             // A client keeps no session id context (see `us_internal_ssl_attach`).
             boringssl::SSL_set_session_id_context(ssl_ptr, core::ptr::null(), 0);
-        } else if ffi::us_ssl_set_server_ctx(ssl_ptr.cast(), ctx.as_ptr().cast()) != 0 {
-            // BoringSSL reads the callbacks of a handshake off the SSL_CTX that is current.
-            super::install_sni_alpn_selector(ctx.as_ptr());
+        } else {
+            let sid_ctx = (*sc).digest.get();
+            if ffi::us_ssl_set_key_cert(
+                ssl_ptr.cast(),
+                ctx.as_ptr().cast(),
+                sid_ctx.as_ptr(),
+                sid_ctx.len(),
+            ) < 0
+            {
+                // Node's message (`TLSWrap::SetKeyCert`).
+                return Err(global.throw(format_args!("SetKeyCert")));
+            }
         }
     }
     Ok(JSValue::UNDEFINED)

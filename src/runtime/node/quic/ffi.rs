@@ -10,6 +10,7 @@ use core::ffi::c_void;
 ///   back via `*(us_nq_vtable**)ctx`. Those structs are `#[repr(C)]` precisely
 ///   so that first-field read stays valid, and the shim never invents or
 ///   offsets a context pointer.
+/// * A server session is the ctx of its handshake's mini conn first, then of the promoted conn.
 /// * The only other value the shim can pass is NULL — teardown clears the
 ///   conn/stream ctx (and lsquic passes NULL for crypto/mini-conn streams that
 ///   never got one), so a null check is the whole liveness test. A non-null

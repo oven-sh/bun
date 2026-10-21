@@ -206,50 +206,37 @@ pub(super) struct TlsContext {
     _alpn: Option<Box<Vec<u8>>>,
 }
 
+/// The session of the handshake that `ssl`, a live SSL of an lsquic conn, runs, if it has one.
+unsafe fn session_of<'a>(ssl: *const ssl::SSL) -> Option<&'a super::session::QuicSession> {
+    // SAFETY: lsquic keeps the SSL -> conn link for as long as the SSL lives.
+    let conn = unsafe { bun_lsquic_sys::lsquic_ssl_to_conn(ssl.cast()) };
+    if conn.is_null() {
+        return None;
+    }
+    // SAFETY: `conn` is live. Its ctx is its session from its first packet on, or null (`ctx_ref`).
+    unsafe { super::ffi::ctx_ref(bun_lsquic_sys::lsquic_conn_get_ctx(conn)) }
+}
+
 unsafe extern "C" fn keylog_cb(ssl: *const ssl::SSL, line: *const core::ffi::c_char) {
     if line.is_null() {
         return;
     }
-    // SAFETY: `line` is the NUL-terminated NSS key log line BoringSSL
-    // guarantees valid for this callback; the SSL → conn → session walk is
-    // safe because lsquic owns all three for the SSL's lifetime.
+    // SAFETY: BoringSSL passes the SSL of the handshake that made the line.
+    let Some(session) = (unsafe { session_of(ssl) }) else {
+        return;
+    };
+    // SAFETY: BoringSSL passes a NUL-terminated line that is valid for this callback.
     let bytes = unsafe { core::ffi::CStr::from_ptr(line).to_bytes().to_vec() };
-    // SAFETY: lsquic stored the conn on the SSL via SSL_set_app_data — but
-    // we can't rely on that index; use lsquic_ssl_to_conn instead.
-    let conn = unsafe { bun_lsquic_sys::lsquic_ssl_to_conn(ssl.cast()) };
-    if conn.is_null() {
-        return;
-    }
-    // SAFETY: as above.
-    let ctx = unsafe { bun_lsquic_sys::lsquic_conn_get_ctx(conn) };
-    if ctx.is_null() {
-        // SAFETY: peer_ctx is the Rust QuicEndpoint for every conn on it.
-        let peer_ctx = unsafe { bun_lsquic_sys::lsquic_conn_get_peer_ctx(conn, core::ptr::null()) };
-        if !peer_ctx.is_null() {
-            // SAFETY: as above.
-            let endpoint = unsafe { &*peer_ctx.cast::<super::endpoint::QuicEndpoint>() };
-            let mut local = core::ptr::null();
-            let mut peer = core::ptr::null();
-            // SAFETY: `conn` is live; out-params point at stack slots.
-            let peer_addr = if unsafe {
-                bun_lsquic_sys::lsquic_conn_get_sockaddr(
-                    conn,
-                    core::ptr::from_mut(&mut local),
-                    core::ptr::from_mut(&mut peer),
-                )
-            } == 0
-            {
-                super::endpoint::stored_addr_from_sockaddr(peer)
-            } else {
-                return;
-            };
-            endpoint.buffer_early_keylog(ssl.cast_mut().cast(), peer_addr, bytes);
-        }
-        return;
-    }
-    // SAFETY: ctx is the QuicSession (conn-ctx).
-    let session = unsafe { &*ctx.cast::<super::session::QuicSession>() };
     session.push_event(super::session::SessionEvent::Keylog(bytes));
+}
+
+/// BoringSSL calls this when it has parsed a server handshake's ClientHello.
+unsafe extern "C" fn client_hello_cb(hello: *const ssl::SSL_CLIENT_HELLO) -> c_int {
+    // SAFETY: BoringSSL passes a live ClientHello, and `ssl` is the SSL of its handshake.
+    if let Some(session) = unsafe { session_of((*hello).ssl) } {
+        session.on_client_hello();
+    }
+    ssl::ssl_select_cert_success
 }
 
 unsafe extern "C" fn alpn_select_cb(
@@ -483,6 +470,7 @@ impl TlsContext {
                 ssl::SSL_CTX_set_keylog_callback(ctx, Some(keylog_cb));
             }
             if config.is_server {
+                ssl::SSL_CTX_set_select_certificate_cb(ctx, Some(client_hello_cb));
                 if config.verify_client {
                     // SSL_VERIFY_PEER alone matches Node's TLS 1.3 semantics (see QuicSession::maybe_report_handshake).
                     ssl::SSL_CTX_set_verify(ctx, ssl::SSL_VERIFY_PEER, None);

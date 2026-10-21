@@ -40,15 +40,23 @@ struct us_nq_vtable {
                             const char *sni);
     int (*packets_out)(void *owner, const struct lsquic_out_spec *specs,
                        unsigned n);
-    void (*on_mini_conn_failed)(void *owner, const struct sockaddr *peer_sa,
-                                uint64_t error_code);
+    void *(*on_new_mini_conn)(void *owner, lsquic_conn_t *c);
+    void (*on_mini_conn_failed)(void *conn_ctx, uint64_t error_code);
 };
 
-static lsquic_conn_ctx_t *nq_on_new_conn(void *if_ctx, lsquic_conn_t *c) {
-    void *existing = (void *) lsquic_conn_get_ctx(c);
-    if (existing) return (lsquic_conn_ctx_t *) existing;
+/* A client conn has its session from lsquic_engine_connect(). */
+static lsquic_conn_ctx_t *nq_on_new_client_conn(void *if_ctx, lsquic_conn_t *c) {
+    (void) if_ctx;
+    return lsquic_conn_get_ctx(c);
+}
+/* Rust reads the session that the mini conn carried, if any, from the conn. */
+static lsquic_conn_ctx_t *nq_on_new_server_conn(void *if_ctx, lsquic_conn_t *c) {
     struct us_nq_vtable *vt = if_ctx;
     return (lsquic_conn_ctx_t *) vt->on_new_conn(vt->owner, c);
+}
+static lsquic_conn_ctx_t *nq_on_new_mini_conn(void *if_ctx, lsquic_conn_t *c) {
+    struct us_nq_vtable *vt = if_ctx;
+    return (lsquic_conn_ctx_t *) vt->on_new_mini_conn(vt->owner, c);
 }
 static void nq_on_conn_closed(lsquic_conn_t *c) {
     void *ctx = (void *) lsquic_conn_get_ctx(c);
@@ -65,10 +73,9 @@ static void nq_on_hsk_done(lsquic_conn_t *c, enum lsquic_hsk_status s) {
         vt->on_hsk_done(ctx, (int) s);
     }
 }
-static void nq_on_mini_conn_failed(void *if_ctx, const struct sockaddr *peer_sa,
-                                   uint64_t error_code) {
-    struct us_nq_vtable *vt = if_ctx;
-    vt->on_mini_conn_failed(vt->owner, peer_sa, error_code);
+static void nq_on_mini_conn_failed(lsquic_conn_ctx_t *ctx, uint64_t error_code) {
+    struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
+    vt->on_mini_conn_failed(ctx, error_code);
 }
 static void nq_on_hsk_confirmed(lsquic_conn_t *c) {
     void *ctx = (void *) lsquic_conn_get_ctx(c);
@@ -333,28 +340,37 @@ int us_nq_stream_send_headers(lsquic_stream_t *s, const char *buf, size_t len,
     return lsquic_stream_send_headers(s, &list, eos);
 }
 
-static const struct lsquic_stream_if nq_stream_if = {
-    .on_new_conn = nq_on_new_conn,
-    .on_conn_closed = nq_on_conn_closed,
-    .on_new_stream = nq_on_new_stream,
-    .on_read = nq_on_read,
-    .on_write = nq_on_write,
-    .on_close = nq_on_stream_close,
-    .on_hsk_done = nq_on_hsk_done,
-    .on_hsk_confirmed = nq_on_hsk_confirmed,
-    .on_mini_conn_failed = nq_on_mini_conn_failed,
-    .on_goaway_received = nq_on_goaway_received,
-    .on_new_token = nq_on_new_token,
-    .on_sess_resume_info = nq_on_sess_resume,
-    .on_reset = nq_on_reset,
-    .on_conncloseframe_received = nq_on_conncloseframe,
-    .on_dg_write = nq_on_dg_write,
-    .on_datagram = nq_on_datagram,
-    .on_datagram_status = nq_on_datagram_status,
-    .on_early_data_failed = nq_on_early_data_failed,
-    .on_path_switch = nq_on_path_switch,
-    .on_origin = nq_on_origin,
+#define NQ_STREAM_IF_COMMON                               \
+    .on_conn_closed = nq_on_conn_closed,                  \
+    .on_new_stream = nq_on_new_stream,                    \
+    .on_read = nq_on_read,                                \
+    .on_write = nq_on_write,                              \
+    .on_close = nq_on_stream_close,                       \
+    .on_hsk_done = nq_on_hsk_done,                        \
+    .on_hsk_confirmed = nq_on_hsk_confirmed,              \
+    .on_goaway_received = nq_on_goaway_received,          \
+    .on_new_token = nq_on_new_token,                      \
+    .on_sess_resume_info = nq_on_sess_resume,             \
+    .on_reset = nq_on_reset,                              \
+    .on_conncloseframe_received = nq_on_conncloseframe,   \
+    .on_dg_write = nq_on_dg_write,                        \
+    .on_datagram = nq_on_datagram,                        \
+    .on_datagram_status = nq_on_datagram_status,          \
+    .on_early_data_failed = nq_on_early_data_failed,      \
+    .on_path_switch = nq_on_path_switch,                  \
+    .on_origin = nq_on_origin
+
+static const struct lsquic_stream_if nq_client_stream_if = {
+    .on_new_conn = nq_on_new_client_conn,
+    NQ_STREAM_IF_COMMON,
 };
+static const struct lsquic_stream_if nq_server_stream_if = {
+    .on_new_conn = nq_on_new_server_conn,
+    .on_new_mini_conn = nq_on_new_mini_conn,
+    .on_mini_conn_failed = nq_on_mini_conn_failed,
+    NQ_STREAM_IF_COMMON,
+};
+#undef NQ_STREAM_IF_COMMON
 
 static SSL_CTX *nq_get_ssl_ctx(void *peer_ctx, const struct sockaddr *local) {
     struct us_nq_vtable *vt = *(struct us_nq_vtable **) peer_ctx;
@@ -435,6 +451,8 @@ void us_nq_settings_init(struct lsquic_engine_settings *s, int is_server,
     /* lsquic then parses nothing past an unclaimed header block. A client's
      * default of 2 lets the body reach JS ahead of the `onheaders` before it. */
     s->es_max_header_sets = 1;
+    /* node's handshakeTimeout bounds the whole handshake. */
+    s->es_handshake_to_strict = 1;
 }
 
 #define NQ_SET(field, ctype) \
@@ -507,7 +525,7 @@ lsquic_engine_t *us_nq_engine_new(int is_server, int is_http,
     struct lsquic_engine_api api;
     memset(&api, 0, sizeof(api));
     api.ea_settings = settings;
-    api.ea_stream_if = &nq_stream_if;
+    api.ea_stream_if = is_server ? &nq_server_stream_if : &nq_client_stream_if;
     api.ea_stream_if_ctx = vt;
     api.ea_packets_out = nq_packets_out;
     api.ea_packets_out_ctx = vt;

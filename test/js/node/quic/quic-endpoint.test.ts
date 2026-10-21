@@ -2,7 +2,7 @@
 // connect() through an endpoint; a later connect in the other mode must fail
 // loudly instead of silently reusing an engine that cannot frame it.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, normalizeBunSnapshot, tempDir, withoutAsanQuarantine } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { createSocket } from "node:dgram";
 import { readFileSync } from "node:fs";
@@ -216,6 +216,30 @@ describe("dual-mode endpoint", () => {
       peer: 0n,
     });
   });
+
+  // The peer's long-header packets are for the client connection. To the server
+  // engine they would be the first packets of new connections, which a busy
+  // endpoint refuses.
+  test("does not refuse its own client connection when it is busy as a server", async () => {
+    const tp = { maxIdleTimeout: 1 };
+    const sniOpt = { "*": { keys: [key], certs: [cert] } };
+    const quiet = (s: any) => s.closed.catch(() => {});
+    await using peer = await listen(quiet, { sni: sniOpt, alpn: ["dual-test"], transportParams: tp });
+    await using dual = await listen(quiet, { sni: sniOpt, alpn: ["dual-test"], transportParams: tp });
+
+    const client = await connect(peer.address!, {
+      endpoint: dual,
+      alpn: "dual-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: tp,
+    } as SessionOptions);
+    dual.busy = true;
+    await client.opened;
+    client.close();
+
+    expect(dual.stats.serverBusyCount).toBe(0n);
+  });
 });
 
 // RFC 9000 §18.2: maxIdleTimeout 0 disables the idle timeout, and node stores
@@ -328,6 +352,22 @@ describe("node:quic in a Worker", () => {
     // stderr contains each worker's ExperimentalWarning.
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "PASS\n", stderr: expect.any(String), exitCode: 0 });
   }, 30000);
+
+  test("worker.terminate() doesn't crash with sessions that are still in their handshake", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        join(import.meta.dir, "quic-worker-terminate-handshake-fixture.ts"),
+        join(keysDir, "agent1-key.pem"),
+        join(keysDir, "agent1-cert.pem"),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "PASS\n", stderr: expect.any(String), exitCode: 0 });
+  }, 30000);
 });
 
 // lsquic queues a stateless reset for retry when its send fails. The endpoint socket sets IP_RECVERR,
@@ -402,4 +442,84 @@ describe("endpoint.close() with an unsent stateless reset", () => {
     // LeakSanitizer needs more than the default 5 s on a debug build.
     60_000,
   );
+});
+
+// The tests of a server session's handshake that also run in Node.js are in
+// quic-server-handshake.test.ts. These two need what only Bun has.
+describe("a server session and its handshake", () => {
+  const tp = { maxIdleTimeout: 1 };
+  const sniOpt = { "*": { keys: [key], certs: [cert] } };
+
+  test("a session does not get the key log of a connection that the listen callback destroyed", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        join(import.meta.dir, "quic-keylog-refused-fixture.ts"),
+        join(keysDir, "agent1-key.pem"),
+        join(keysDir, "agent1-cert.pem"),
+        "3",
+        "3",
+      ],
+      // A session can only get another handshake's lines by mistake when its
+      // own handshake's TLS state takes the allocation of a refused one's.
+      // The release allocator hands a freed block out again. ASAN does so
+      // only without its quarantine.
+      env: withoutAsanQuarantine(bunEnv),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const own = {
+      labels: [
+        "CLIENT_HANDSHAKE_TRAFFIC_SECRET",
+        "CLIENT_TRAFFIC_SECRET_0",
+        "EXPORTER_SECRET",
+        "SERVER_HANDSHAKE_TRAFFIC_SECRET",
+        "SERVER_TRAFFIC_SECRET_0",
+      ],
+      clientRandoms: 1,
+    };
+    // `stderr` holds the ExperimentalWarning of a clean run. It is in the
+    // compared object so that a failure shows it.
+    expect({ sessions: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      sessions: [own, own, own],
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  }, 30000);
+
+  // The endpoint destroys the session and closes. The handshake completes with
+  // no session, and the endpoint must tell the client, which would otherwise
+  // wait for its idle timeout.
+  test("a client is refused when the listen callback throws", async () => {
+    const server = await listen(
+      () => {
+        throw new Error("from the listen callback");
+      },
+      { sni: sniOpt, alpn: ["handshake-test"], transportParams: tp },
+    );
+    const serverClosed = server.closed.then(
+      () => "closed",
+      (e: Error) => e.message,
+    );
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(server.address!, {
+      endpoint,
+      alpn: "handshake-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 30 },
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    const opened = await client.opened.then(
+      () => "opened",
+      (e: any) => ({ code: e.code, errorCode: e.errorCode }),
+    );
+
+    expect({ opened, serverClosed: await serverClosed }).toEqual({
+      opened: { code: "ERR_QUIC_TRANSPORT_ERROR", errorCode: 2n },
+      serverClosed: "from the listen callback",
+    });
+  });
 });

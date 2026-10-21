@@ -106,8 +106,9 @@ pub struct NqVtable {
     ) -> *mut SSL_CTX,
     pub packets_out:
         unsafe extern "C" fn(owner: *mut c_void, specs: *const lsquic_out_spec, n: c_uint) -> c_int,
-    pub on_mini_conn_failed:
-        unsafe extern "C" fn(owner: *mut c_void, peer_sa: *const sockaddr, error_code: u64),
+    pub on_new_mini_conn:
+        unsafe extern "C" fn(owner: *mut c_void, c: *mut lsquic_conn) -> *mut c_void,
+    pub on_mini_conn_failed: unsafe extern "C" fn(conn_ctx: *mut c_void, error_code: u64),
 }
 
 unsafe extern "C" {
@@ -149,7 +150,6 @@ unsafe extern "C" {
     ) -> *mut lsquic_conn;
 
     pub fn lsquic_conn_get_ctx(c: *const lsquic_conn) -> *mut c_void;
-    pub fn lsquic_conn_get_peer_ctx(c: *const lsquic_conn, local_sa: *const c_void) -> *mut c_void;
     pub fn lsquic_conn_set_ctx(c: *mut lsquic_conn, ctx: *mut c_void);
     pub fn lsquic_conn_close(c: *mut lsquic_conn);
     fn lsquic_conn_going_away(c: *mut lsquic_conn);
@@ -375,17 +375,55 @@ settings_setters! {
     delay_onclose => us_nq_settings_set_delay_onclose : c_int,
 }
 
+/// `conn` must be a live `lsquic_conn_t`.
+unsafe fn sockaddrs(conn: *mut lsquic_conn) -> Option<(*const sockaddr, *const sockaddr)> {
+    let mut local = core::ptr::null();
+    let mut peer = core::ptr::null();
+    // SAFETY: caller contract; the out-params point at stack slots.
+    let found = unsafe { lsquic_conn_get_sockaddr(conn, &raw mut local, &raw mut peer) } == 0;
+    found.then_some((local, peer))
+}
+
+/// Borrowed mini conn (a server handshake). A `Conn` method on it calls through NULL.
+#[derive(Copy, Clone)]
+pub struct MiniConn(core::ptr::NonNull<lsquic_conn>);
+
+impl MiniConn {
+    /// `raw` must be a live mini conn for the lifetime of the returned value.
+    pub unsafe fn from_raw(raw: *mut lsquic_conn) -> Option<Self> {
+        core::ptr::NonNull::new(raw).map(Self)
+    }
+    /// Takes the application context off the conn.
+    pub fn clear_ctx(&self) {
+        // SAFETY: `self.0` is live (caller contract).
+        unsafe { lsquic_conn_set_ctx(self.0.as_ptr(), core::ptr::null_mut()) }
+    }
+    /// Makes the conn skip its TLS handshake and answer a transport CONNECTION_CLOSE of `code`.
+    pub fn refuse(&self, code: c_uint) {
+        // SAFETY: as above.
+        unsafe { lsquic_conn_abort_error(self.0.as_ptr(), 0, code, core::ptr::null()) }
+    }
+    /// The `(local, peer)` sockaddrs of the conn's first packet.
+    pub fn sockaddrs(&self) -> Option<(*const sockaddr, *const sockaddr)> {
+        // SAFETY: as above.
+        unsafe { sockaddrs(self.0.as_ptr()) }
+    }
+}
+
 /// Borrowed `lsquic_conn_t`. lsquic owns the conn and frees it after
 /// `on_conn_closed` returns; callers must not hold a `Conn` past that point.
 #[derive(Copy, Clone)]
 pub struct Conn(*mut lsquic_conn);
 
 impl Conn {
-    /// # Safety
-    /// `raw` must be a live `lsquic_conn_t` for the lifetime of the returned
-    /// value (i.e. until `on_conn_closed` returns for it).
+    /// `raw` must be a live full conn (not a `MiniConn`) until `on_conn_closed` returns for it.
     pub unsafe fn from_raw(raw: *mut lsquic_conn) -> Option<Self> {
         (!raw.is_null()).then_some(Self(raw))
+    }
+    /// The `(local, peer)` sockaddrs of the conn's current path.
+    pub fn sockaddrs(&self) -> Option<(*const sockaddr, *const sockaddr)> {
+        // SAFETY: `self.0` is live (caller contract).
+        unsafe { sockaddrs(self.0) }
     }
     pub fn close(&self) {
         // SAFETY: `self.0` is live (caller contract).

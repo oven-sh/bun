@@ -18,7 +18,7 @@ use crate::jsc_hooks::timer_all_mut as timer_all;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 use super::callbacks;
-use super::ffi::lsquic_callback;
+use super::ffi::{ctx_ref, lsquic_callback};
 use super::now_ns;
 use super::session::{self, QuicSession, SOCKADDR_IN_LEN, SOCKADDR_IN6_LEN, StoredAddr};
 use super::stream;
@@ -69,13 +69,8 @@ const QUIC_TRANSPORT_CONNECTION_REFUSED: core::ffi::c_uint = 0x2;
 const QUIC_VERSION_1: u32 = 0x0000_0001;
 /// QUIC v2 wire version (RFC 9369 §3).
 const QUIC_VERSION_2: u32 = 0x6b33_43cf;
-const INITIAL_TYPE_V1: u8 = 0b00; // RFC 9000 §17.2
-const INITIAL_TYPE_V2: u8 = 0b01; // RFC 9369 §3.2
 /// Longest connection ID QUIC v1/v2 allow (RFC 9000 §17.2).
 const MAX_CID_LEN: usize = 20;
-/// Long-header form bit (byte0 bit 7; RFC 8999 §5.1).
-const LONG_HEADER_FORM_BIT: u8 = 0x80;
-const LONG_HEADER_TYPE_MASK: u8 = 0x3;
 /// Byte offset of the DCID length in a long-header packet: form/type byte +
 /// 4-byte version (RFC 8999 §5.1).
 const LONG_HEADER_DCID_LEN_OFFSET: usize = 5;
@@ -88,7 +83,7 @@ const IPV4_ADDR_LEN: usize = 4;
 const IPV6_ADDR_LEN: usize = 16;
 /// QUIC CRYPTO_ERROR base (RFC 9001 §4.8) + TLS handshake_failure(40).
 const CRYPTO_ERROR_HANDSHAKE_FAILURE: u64 = 0x0100 + 40;
-const PROVISIONAL_TIMEOUT_NS: u64 = 10_000_000_000;
+const VERNEG_PROBE_TIMEOUT_NS: u64 = 10_000_000_000;
 
 const IDX_STATS_CREATED_AT: usize = 0;
 const IDX_STATS_DESTROYED_AT: usize = 1;
@@ -138,32 +133,6 @@ pub(super) fn stored_addr_from_sockaddr(ptr: *const c_void) -> StoredAddr {
         SOCKADDR_IN_LEN
     };
     StoredAddr::from_raw(ptr.cast(), len)
-}
-
-fn conn_peer_addr(conn: *mut lsquic::lsquic_conn) -> Option<StoredAddr> {
-    let mut local: *const c_void = null();
-    let mut peer: *const c_void = null();
-    // SAFETY: `conn` is live for the duration of the callback that passed it.
-    if unsafe {
-        lsquic::lsquic_conn_get_sockaddr(
-            conn,
-            core::ptr::from_mut(&mut local),
-            core::ptr::from_mut(&mut peer),
-        )
-    } == 0
-        && !peer.is_null()
-    {
-        Some(stored_addr_from_sockaddr(peer))
-    } else {
-        None
-    }
-}
-
-struct ProvisionalSession {
-    dcid: Vec<u8>,
-    peer: StoredAddr,
-    created_ns: u64,
-    session: *mut QuicSession,
 }
 
 struct BindConfig {
@@ -234,12 +203,8 @@ pub(crate) struct QuicEndpoint {
     pub(super) server_local_tp: JsCell<lsquic::NqTransportParams>,
     pub(super) client_local_tp: JsCell<lsquic::NqTransportParams>,
     pending_new_sessions: JsCell<Vec<*mut QuicSession>>,
-    /// Server sessions announced at Initial receipt (Node's event order).
-    provisional: JsCell<Vec<ProvisionalSession>>,
     pending_verneg: JsCell<Vec<(*mut QuicSession, [u8; VERNEG_PROBE_CID_LEN], u64)>>,
-    dead_provisional_peers: JsCell<Vec<(StoredAddr, u64)>>,
     block_list: Cell<Option<*mut crate::node::net::block_list::BlockList>>,
-    early_keylog: JsCell<Vec<(*mut c_void, StoredAddr, Vec<u8>)>>,
     block_list_js: JsCell<Option<bun_jsc::Strong>>,
     block_list_allow: Cell<bool>,
     pub(crate) event_loop_timer: JsCell<EventLoopTimer>,
@@ -256,7 +221,7 @@ pub(crate) struct QuicEndpoint {
     /// a native callback (on_data, the timer) is on the stack and owns the
     /// flush when it unwinds -- JS it dispatches (onSessionNew and friends) must
     /// not re-enter lsquic mid-callback, which is why `processing` alone is not
-    /// enough: on_data announces to JS *before* it feeds packets.
+    /// enough: `on_new_mini_conn` creates a session while on_data feeds packets.
     send_scope_depth: Cell<u32>,
 
     global: Cell<*const JSGlobalObject>,
@@ -470,8 +435,7 @@ extern "C" fn on_data(
     if closed_any {
         this.drive_engines_once();
     }
-    // This callback dispatches JS (provisional announce) before it feeds
-    // packets; hold the send scope so that JS cannot flush lsquic underneath us.
+    // `on_new_mini_conn` runs inside `lsquic_engine_packet_in`: the scope keeps it out of lsquic.
     this.send_scope_depth.set(this.send_scope_depth.get() + 1);
     bun_boringssl_sys::ERR_clear_error();
     for i in 0..packets {
@@ -606,14 +570,7 @@ extern "C" fn on_data(
         {
             continue;
         }
-        // Node announces server sessions at Initial receipt — before the
-        // handshake — so `onsession` precedes the client's `opened`.
-        if let Err(err) =
-            this.maybe_announce_provisional(global, payload, core::ptr::from_ref(peer).cast())
-        {
-            crate::dispatch::fold(Err(err));
-        }
-        let engines = match owner_engine {
+        let engines = match owner_engine.or_else(|| this.client_engine_owner(payload)) {
             // Already matched above: the other engine would only miss it.
             Some(e) => [e, null_mut()],
             None => [this.server_engine.get(), this.client_engine.get()],
@@ -645,68 +602,6 @@ extern "C" fn on_data(
 }
 
 lsquic_callback! {
-    fn on_mini_conn_failed(this: &QuicEndpoint, peer_sa: *const c_void, error_code: u64) {
-        /// CRYPTO_ERROR base (RFC 9001 §4.8) + TLS no_application_protocol(120).
-        const CRYPTO_ERROR_NO_APPLICATION_PROTOCOL: u64 = 0x0100 + 120;
-        if peer_sa.is_null() {
-            return;
-        }
-        let peer = stored_addr_from_sockaddr(peer_sa);
-        this.discard_early_keylog(&peer);
-        let peer_decoded = peer.decode();
-        let failed = this.provisional.with_mut(|v| {
-            let idx = v.iter().position(|p| p.peer.decode() == peer_decoded);
-            idx.map(|i| v.remove(i).session)
-        });
-        /// Bit 63 marks "the peer sent its own CONNECTION_CLOSE" (QUIC codes
-        /// fit in 62 bits); the low bits carry the peer's code. See the
-        /// connection-close-pns lsquic patch.
-        const PEER_CLOSE_BIT: u64 = 1 << 63;
-        if let Some(session) = failed {
-            if let Some(session) = this.live_session(session) {
-                if error_code & PEER_CLOSE_BIT != 0 {
-                    // Not a failure: the client closed during the handshake
-                    // (connect() then immediate close()). Report the peer's
-                    // own code so `closed` settles the way node's does.
-                    session.push_event(session::SessionEvent::PeerClose {
-                        app_error: false,
-                        code: error_code & !PEER_CLOSE_BIT,
-                        reason: Vec::new(),
-                    });
-                    session.push_event(session::SessionEvent::Closed);
-                    session.schedule_process();
-                    return;
-                }
-                if error_code == 0 {
-                    // The peer went away without a frame (destroyed client,
-                    // dropped packets): node's server surfaces the idle death
-                    // of a handshaking session as a clean close, not an error.
-                    session.push_event(session::SessionEvent::PeerClose {
-                        app_error: false,
-                        code: 0,
-                        reason: Vec::new(),
-                    });
-                    session.push_event(session::SessionEvent::Closed);
-                    session.schedule_process();
-                    return;
-                }
-                let code = error_code;
-                let reason: &[u8] = if code == CRYPTO_ERROR_NO_APPLICATION_PROTOCOL {
-                    b"no application protocol"
-                } else {
-                    b"handshake failed"
-                };
-                session.push_event(session::SessionEvent::PeerClose {
-                    app_error: false,
-                    code,
-                    reason: reason.to_vec(),
-                });
-                session.push_event(session::SessionEvent::Closed);
-                session.schedule_process();
-            }
-        }
-    }
-
     fn packets_out(
         this: &QuicEndpoint,
         specs: *const lsquic::lsquic_out_spec,
@@ -1151,11 +1046,8 @@ impl QuicEndpoint {
             server_local_tp: JsCell::new(lsquic::NqTransportParams::default()),
             client_local_tp: JsCell::new(lsquic::NqTransportParams::default()),
             pending_new_sessions: JsCell::new(Vec::new()),
-            provisional: JsCell::new(Vec::new()),
             pending_verneg: JsCell::new(Vec::new()),
-            dead_provisional_peers: JsCell::new(Vec::new()),
             block_list: Cell::new(None),
-            early_keylog: JsCell::new(Vec::new()),
             block_list_js: JsCell::new(None),
             block_list_allow: Cell::new(false),
             event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
@@ -1201,7 +1093,8 @@ impl QuicEndpoint {
             get_client_ssl_ctx,
             lookup_cert,
             packets_out,
-            on_mini_conn_failed,
+            on_new_mini_conn: session::on_new_mini_conn,
+            on_mini_conn_failed: session::on_mini_conn_failed,
         });
         // SAFETY: `raw` was just created and is uniquely owned by the wrapper.
         unsafe {
@@ -1492,9 +1385,7 @@ impl QuicEndpoint {
         let _keep_alive = bun_jsc::Strong::create(self.this_value.get().get(), global);
 
         loop {
-            // Arrival order: both push sites append, and a burst of Initials in
-            // one recvmmsg batch must announce in the order the sessions loop
-            // below then walks them.
+            // In the order the ClientHellos were parsed.
             let Some(session) = self.pending_new_sessions.with_mut(|v| {
                 if v.is_empty() {
                     None
@@ -1527,7 +1418,7 @@ impl QuicEndpoint {
             session.process_events(global);
             session.maybe_finish_deferred_close();
         }
-        self.sweep_provisional();
+        self.sweep_verneg_probes();
         self.rearm_timer();
         self.update_keepalive();
         if self.closing.get()
@@ -1609,12 +1500,9 @@ impl QuicEndpoint {
             }
         }
         let mut ms = earliest_us.map(|us| (us.max(0) as u64).div_ceil(1000).max(1));
-        // Both of these are settled only by `sweep_provisional`, and neither
-        // keeps an engine ticking on its own -- a probe has no engine at all,
-        // and an idle engine stops advising a tick -- so without a poll the
-        // sweep never runs and an announced session never settles.
+        // A probe has no engine to advise a tick, so only this poll runs its sweep.
         const SWEEP_POLL_MS: u64 = 250;
-        if !self.pending_verneg.get().is_empty() || !self.provisional.get().is_empty() {
+        if !self.pending_verneg.get().is_empty() {
             ms = Some(ms.map_or(SWEEP_POLL_MS, |m| m.min(SWEEP_POLL_MS)));
         }
         if self.followup_due.get() {
@@ -1653,101 +1541,28 @@ impl QuicEndpoint {
         this_ref.process(global);
     }
 
-    /// Node announces server sessions at Initial receipt.
-    fn maybe_announce_provisional(
-        &self,
-        global: &JSGlobalObject,
-        payload: &[u8],
-        peer: *const c_void,
-    ) -> JsResult<()> {
-        if self.server_engine.get().is_null()
-            || self.with_state(|s| s.listening) == 0
-            || self.closing.get()
-        {
-            return Ok(());
+    /// The client engine, if `payload` is a long-header packet of one of its connections.
+    fn client_engine_owner(&self, payload: &[u8]) -> Option<*mut lsquic::lsquic_engine> {
+        let client = self.client_engine.get();
+        if client.is_null() || self.server_engine.get().is_null() {
+            return None;
         }
-        // Long header: 0b1xxx_xxxx; version != 0 (0 = version negotiation);
-        // DCID length-prefixed at byte 5 (RFC 8999 §5.1).
-        if payload.len() < LONG_HEADER_MIN_LEN || payload[0] & LONG_HEADER_FORM_BIT == 0 {
-            return Ok(());
-        }
-        let version = u32::from_be_bytes([payload[1], payload[2], payload[3], payload[4]]);
-        // Type bits (byte0 5:4): v1 Initial = 0b00 (RFC 9000 §17.2), v2
-        // Initial = 0b01 (RFC 9369 §3.2).
-        let type_bits = (payload[0] >> 4) & LONG_HEADER_TYPE_MASK;
-        let is_initial = match version {
-            QUIC_VERSION_1 => type_bits == INITIAL_TYPE_V1,
-            QUIC_VERSION_2 => type_bits == INITIAL_TYPE_V2,
-            _ => false,
-        };
-        if !is_initial {
-            return Ok(());
+        if payload.len() < LONG_HEADER_MIN_LEN || payload[0] & HEADER_FORM_LONG == 0 {
+            return None;
         }
         let dcid_len = payload[LONG_HEADER_DCID_LEN_OFFSET] as usize;
         let dcid_start = LONG_HEADER_DCID_LEN_OFFSET + 1;
         if dcid_len == 0 || dcid_len > MAX_CID_LEN || payload.len() < dcid_start + dcid_len {
-            return Ok(());
+            return None;
         }
         let dcid = &payload[dcid_start..dcid_start + dcid_len];
-        if self.provisional.get().iter().any(|p| p.dcid == dcid) {
-            return Ok(());
-        }
-        // On a dual-mode endpoint the peer's Initial *response* carries our
-        // client's SCID, which only the client engine hashes -- checking the
-        // server engine alone would announce a phantom server session for it.
-        let known = [self.server_engine.get(), self.client_engine.get()]
-            .into_iter()
-            .filter(|e| !e.is_null())
-            .any(|e| {
-                // SAFETY: engines live until release_socket.
-                unsafe { lsquic::lsquic_engine_cid_in_use(e, dcid.as_ptr(), dcid.len()) != 0 }
-            });
-        if known {
-            return Ok(());
-        }
-        let peer_stored = stored_addr_from_sockaddr(peer);
-        let peer_decoded = peer_stored.decode();
-        let (busy, max_conns) = self.with_state(|s| (s.busy, s.max_connections_total));
-        // `closing`: on_new_conn refuses these at promotion, so announcing one
-        // here would surface a session that can never open.
-        if self.closing.get()
-            || busy != 0
-            || (max_conns > 0 && self.sessions.get().len() >= max_conns as usize)
-        {
-            return Ok(());
-        }
-        bun_core::scoped_log!(
-            quic,
-            "announce provisional dcid={:02x?} peer={:?}",
-            dcid,
-            peer_decoded
-        );
-        let endpoint_handle = self.this_value.get().get();
-        let (session, _handle) = QuicSession::create(
-            global,
-            self.vtable_ptr,
-            core::ptr::from_ref(self).cast_mut(),
-            endpoint_handle,
-            null_mut(),
-            true,
-            self.application(true),
-        )?;
-        let applied = self.apply_server_session_options(global, session);
-        self.sessions.with_mut(|v| v.push(session));
-        self.pending_new_sessions.with_mut(|v| v.push(session));
-        self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
-        self.provisional.with_mut(|v| {
-            v.push(ProvisionalSession {
-                dcid: dcid.to_vec(),
-                peer: peer_stored,
-                created_ns: now_ns(),
-                session,
-            })
-        });
-        applied
+        // SAFETY: engines live until release_socket.
+        let in_use = unsafe { lsquic::lsquic_engine_cid_in_use(client, dcid.as_ptr(), dcid.len()) };
+        // The server engine does not know this DCID and would start a handshake for the packet.
+        (in_use != 0).then_some(client)
     }
 
-    /// Queues the handshake-failure close both timeout lists deliver.
+    /// Queues the handshake-failure close of a probe that got no reply.
     fn expire_session(&self, session: *mut QuicSession) -> bool {
         let Some(session) = self.live_session(session) else {
             return false;
@@ -1761,28 +1576,16 @@ impl QuicEndpoint {
         true
     }
 
-    fn sweep_provisional(&self) {
+    fn sweep_verneg_probes(&self) {
         let now = now_ns();
         let mut n_expired = 0usize;
-        // Unbounded, like `pending_verneg` below: a fixed cap left the overflow
-        // in `provisional`, where `on_new_conn` can still match it and promote
-        // a session that was already past its deadline as a successful one.
         let mut expired: Vec<*mut QuicSession> = Vec::new();
-        self.provisional.with_mut(|v| {
-            v.retain(|p| {
-                if now.saturating_sub(p.created_ns) < PROVISIONAL_TIMEOUT_NS {
-                    return true;
-                }
-                expired.push(p.session);
-                false
-            });
-        });
         // A probe has no lsquic conn, so no handshake or idle timeout covers
         // it, and RFC 9000 s6.1 makes the reply optional with no retransmit:
         // without this a dropped reply hangs `opened` and `close()` forever.
         self.pending_verneg.with_mut(|v| {
             v.retain(|(session, _, created_ns)| {
-                if now.saturating_sub(*created_ns) < PROVISIONAL_TIMEOUT_NS {
+                if now.saturating_sub(*created_ns) < VERNEG_PROBE_TIMEOUT_NS {
                     return true;
                 }
                 expired.push(*session);
@@ -1799,97 +1602,35 @@ impl QuicEndpoint {
             // ask `rearm_timer` for the follow-up pass that delivers these.
             self.followup_due.set(true);
         }
-        self.dead_provisional_peers
-            .with_mut(|d| d.retain(|&(_, at)| now.saturating_sub(at) < PROVISIONAL_TIMEOUT_NS));
     }
 
-    pub(super) fn on_new_conn(&self, conn: *mut lsquic::lsquic_conn) -> *mut QuicSession {
+    /// Makes a new mini conn skip its TLS handshake and answer CONNECTION_REFUSED.
+    fn refuse_mini_conn(conn: lsquic::MiniConn) -> *mut QuicSession {
+        conn.refuse(QUIC_TRANSPORT_CONNECTION_REFUSED);
+        null_mut()
+    }
+
+    /// Creates the session that lsquic keeps as a new mini conn's ctx, or refuses the conn.
+    pub(super) fn on_new_mini_conn(&self, conn: lsquic::MiniConn) -> *mut QuicSession {
         let global_ptr = self.global.get();
-        if global_ptr.is_null() {
-            return null_mut();
+        // A session accepted during close() keeps `sessions` non-empty: the finish gate stays shut.
+        if global_ptr.is_null() || self.closing.get() {
+            // Node.js answers nothing: https://github.com/nodejs/node/blob/v26.3.0/src/quic/endpoint.cc#L1409
+            return Self::refuse_mini_conn(conn);
         }
         // SAFETY: as in `on_data`.
         let global = unsafe { &*global_ptr };
-        // lsquic promotes a server conn only after its handshake completes, and never
-        // calls `on_hsk_done` for it.
-        // SAFETY: `conn` is the live conn lsquic just created.
-        let Some(handshaken) = (unsafe { lsquic::Conn::from_raw(conn) }) else {
-            return null_mut();
-        };
-        let endpoint_handle = self.this_value.get().get();
-        let peer = conn_peer_addr(conn);
-        let provisional = self.provisional.with_mut(|v| {
-            let idx = peer
-                .as_ref()
-                .and_then(|peer| v.iter().position(|p| p.peer.decode() == peer.decode()));
-            idx.map(|i| v.remove(i).session)
-        });
-        if let Some(session) = provisional {
-            if let Some(live) = self.live_session(session) {
-                live.bind_conn(conn);
-                live.note_handshake_ok(handshaken);
-                return session;
-            }
-        }
-        // A close() must stop accepting: a session promoted now keeps
-        // `sessions` non-empty and the finish gate never trips. CONNECTION_
-        // REFUSED (not a code-0 close) is what makes the client reject.
-        if self.closing.get() {
-            // SAFETY: `conn` is the live conn lsquic just created.
-            unsafe {
-                lsquic::lsquic_conn_abort_error(
-                    conn,
-                    0,
-                    QUIC_TRANSPORT_CONNECTION_REFUSED,
-                    core::ptr::null(),
-                );
-            }
-            return null_mut();
-        }
         let (busy, max_conns) = self.with_state(|s| (s.busy, s.max_connections_total));
+        // As Node.js does: https://github.com/nodejs/node/blob/v26.3.0/src/quic/endpoint.cc#L1503
         if busy != 0 || (max_conns > 0 && self.sessions.get().len() >= max_conns as usize) {
-            // SAFETY: `conn` is the live conn lsquic just created.
-            unsafe {
-                lsquic::lsquic_conn_abort_error(
-                    conn,
-                    0,
-                    QUIC_TRANSPORT_CONNECTION_REFUSED,
-                    core::ptr::null(),
-                );
-            }
             self.add_stat(IDX_STATS_SERVER_BUSY_COUNT, 1);
-            return null_mut();
-        }
-        let peer_decoded = peer.as_ref().and_then(StoredAddr::decode);
-        let was_dead = peer_decoded.is_some()
-            && self
-                .dead_provisional_peers
-                .get()
-                .iter()
-                .any(|(addr, _)| addr.decode() == peer_decoded);
-        if was_dead {
-            // One marker per destroyed provisional, so consume exactly one:
-            // draining them all would treat a peer's later retries as live.
-            self.dead_provisional_peers.with_mut(|d| {
-                if let Some(i) = d.iter().position(|(addr, _)| addr.decode() == peer_decoded) {
-                    d.swap_remove(i);
-                }
-            });
-            // Node's dead server goes silent, and `lsquic_conn_abort` sends a
-            // CONNECTION_CLOSE -- use the silent variant the sibling in
-            // session.rs uses.
-            // SAFETY: `conn` is the live conn lsquic just created.
-            if let Some(c) = unsafe { lsquic::Conn::from_raw(conn) } {
-                c.abort_silent();
-            }
-            return null_mut();
+            return Self::refuse_mini_conn(conn);
         }
         match QuicSession::create(
             global,
             self.vtable_ptr,
             core::ptr::from_ref(self).cast_mut(),
-            endpoint_handle,
-            conn,
+            self.this_value.get().get(),
             true,
             self.application(true),
         ) {
@@ -1897,24 +1638,48 @@ impl QuicEndpoint {
                 if let Err(err) = self.apply_server_session_options(global, session) {
                     crate::dispatch::fold(Err(err));
                 }
-                self.sessions.with_mut(|v| v.push(session));
-                self.pending_new_sessions.with_mut(|v| v.push(session));
-                self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
                 // SAFETY: session was just created.
-                unsafe { (*session).note_handshake_ok(handshaken) };
+                unsafe { (*session).bind_mini_conn(conn) };
+                self.sessions.with_mut(|v| v.push(session));
                 session
             }
             Err(e) => {
-                // Abort like the sibling null-return branches, or the conn
-                // lingers with no session behind it.
                 crate::dispatch::fold(Err(e));
-                // SAFETY: `conn` is the live conn lsquic just created.
-                if let Some(c) = unsafe { lsquic::Conn::from_raw(conn) } {
-                    c.abort_silent();
-                }
-                null_mut()
+                Self::refuse_mini_conn(conn)
             }
         }
+    }
+
+    /// Queues the listen callback for a server session whose ClientHello TLS has parsed.
+    pub(super) fn announce(&self, session: *mut QuicSession) {
+        self.pending_new_sessions.with_mut(|v| v.push(session));
+        self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
+    }
+
+    /// Binds a promoted conn to the session its mini conn had, or drops it if that session is gone.
+    pub(super) fn on_new_conn(&self, conn: *mut lsquic::lsquic_conn) -> *mut QuicSession {
+        // lsquic promotes a server conn only after its handshake completes, and never
+        // calls `on_hsk_done` for it.
+        // SAFETY: `conn` is the live conn lsquic just created.
+        let Some(handshaken) = (unsafe { lsquic::Conn::from_raw(conn) }) else {
+            return null_mut();
+        };
+        // SAFETY: `conn` is the live conn lsquic just created.
+        let ctx = unsafe { lsquic::lsquic_conn_get_ctx(conn) };
+        // SAFETY: `ctx_ref` documents the shim's context-pointer contract.
+        let Some(session) = (unsafe { ctx_ref::<QuicSession>(ctx) }) else {
+            if self.closing.get() {
+                // A code-0 close would not make the client of a closing endpoint reject.
+                handshaken.abort_error(false, QUIC_TRANSPORT_CONNECTION_REFUSED, c"");
+            } else {
+                // Node's dead server goes silent: no CONNECTION_CLOSE.
+                handshaken.abort_silent();
+            }
+            return null_mut();
+        };
+        session.bind_conn(conn);
+        session.note_handshake_ok(handshaken);
+        ctx.cast()
     }
 
     pub(super) fn configured_alpn(&self, is_server: bool) -> Option<Vec<u8>> {
@@ -1974,17 +1739,6 @@ impl QuicEndpoint {
             .with_mut(|v| v.retain(|&s| s != session));
         self.pending_verneg
             .with_mut(|v| v.retain(|&(s, _, _)| s != session));
-        let now = now_ns();
-        self.provisional.with_mut(|v| {
-            v.retain(|p| {
-                if p.session != session {
-                    return true;
-                }
-                self.dead_provisional_peers
-                    .with_mut(|d| d.push((p.peer, now)));
-                false
-            })
-        });
     }
 
     fn build_engine(
@@ -2167,32 +1921,6 @@ impl QuicEndpoint {
         Ok(())
     }
 
-    pub(super) fn buffer_early_keylog(&self, ssl: *mut c_void, peer: StoredAddr, line: Vec<u8>) {
-        self.early_keylog.with_mut(|v| v.push((ssl, peer, line)));
-    }
-
-    /// Without this, buffered lines outlive the freed `SSL*` and a later
-    /// handshake at the recycled address claims a dead handshake's secrets.
-    fn discard_early_keylog(&self, peer: &StoredAddr) {
-        let peer_decoded = peer.decode();
-        self.early_keylog
-            .with_mut(|v| v.retain(|(_, p, _)| p.decode() != peer_decoded));
-    }
-    pub(super) fn take_early_keylog(&self, ssl: *mut c_void) -> Vec<Vec<u8>> {
-        self.early_keylog.with_mut(|v| {
-            let mut out = Vec::new();
-            v.retain_mut(|(s, _, line)| {
-                if *s == ssl {
-                    out.push(core::mem::take(line));
-                    false
-                } else {
-                    true
-                }
-            });
-            out
-        })
-    }
-
     fn deliver_endpoint_close(&self, global: &JSGlobalObject, context: u8, status: c_int) {
         self.poll_ref.with_mut(|p| p.disable());
         if let Some(callback) = callbacks::get(global, "onEndpointClose") {
@@ -2367,7 +2095,6 @@ impl QuicEndpoint {
             self.vtable_ptr,
             core::ptr::from_ref(self).cast_mut(),
             frame.this(),
-            null_mut(),
             false,
             self.application(false),
         )?;
@@ -2420,7 +2147,7 @@ impl QuicEndpoint {
         unsafe {
             lsquic::lsquic_conn_set_ctx(conn, session.cast());
             (*session).conn.set(conn);
-            (*session).cache_sockaddrs(conn);
+            (*session).cache_sockaddrs(lsquic::Conn::from_raw(conn).and_then(|c| c.sockaddrs()));
             // `conn` is set above, so teardown clears the conn's ctx and the
             // late callbacks no-op instead of reaching an unrooted session.
             if let Err(e) = (*session).apply_options(global, options) {
@@ -2458,7 +2185,6 @@ impl QuicEndpoint {
             self.vtable_ptr,
             core::ptr::from_ref(self).cast_mut(),
             this_value,
-            null_mut(),
             false,
             session::Application::None,
         )?;
@@ -2673,13 +2399,13 @@ impl QuicEndpoint {
     fn detach_for_finalize(&self) {
         self.sessions.with_mut(Vec::clear);
         self.pending_new_sessions.with_mut(Vec::clear);
-        self.provisional.with_mut(Vec::clear);
         self.pending_verneg.with_mut(Vec::clear);
         self.vtable.with_mut(|vt| {
             if let Some(vt) = vt.as_mut() {
                 vt.owner = null_mut();
                 vt.on_stream_close = stream::QuicStream::on_close_detached;
                 vt.on_conn_closed = QuicSession::on_closed_detached;
+                vt.on_mini_conn_failed = QuicSession::on_mini_conn_failed_detached;
             }
         });
     }

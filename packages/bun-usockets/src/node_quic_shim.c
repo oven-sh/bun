@@ -435,6 +435,18 @@ void us_nq_settings_init(struct lsquic_engine_settings *s, int is_server,
     /* lsquic then parses nothing past an unclaimed header block. A client's
      * default of 2 lets the body reach JS ahead of the `onheaders` before it. */
     s->es_max_header_sets = 1;
+    if (!is_http) {
+        /* lsquic's defaults are HTTP/3's, which has no bidirectional stream
+         * that the server opens: the window announced for one is 0, and a
+         * peer that honours 0 cannot send its first byte. Raw QUIC has such
+         * streams. Give them the window of a stream that the client opens.
+         * Bun 1.4.3 and older send against that window on both kinds, so a
+         * smaller one (Node's default is 256 KiB) would be overrun. */
+        if (is_server)
+            s->es_init_max_stream_data_bidi_local = s->es_init_max_stream_data_bidi_remote;
+        else
+            s->es_init_max_stream_data_bidi_remote = s->es_init_max_stream_data_bidi_local;
+    }
 }
 
 #define NQ_SET(field, ctype) \

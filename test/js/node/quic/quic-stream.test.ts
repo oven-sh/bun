@@ -6,7 +6,7 @@ import { bunEnv, bunExe, tempDir, withoutAsanQuarantine } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { connect, listen, type QuicEndpoint, type SessionOptions } from "node:quic";
+import { connect, listen, QuicEndpoint, type SessionOptions } from "node:quic";
 
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
@@ -620,3 +620,246 @@ test("a stream that reuses a destroyed stream's allocation doesn't get its queue
   expect(stdout).toBe(JSON.stringify({ opened: 16, delivered: 16, closedBeforeSent: [] }) + "\n");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// RFC 9000 section 18.2: the limit on what an endpoint sends on a stream is
+// the one its peer announced for that kind of stream. For a bidirectional
+// stream the kind depends on who opened it. A stream the server opens is
+// limited by the client's initialMaxStreamDataBidiRemote in one direction and
+// by the server's initialMaxStreamDataBidiLocal in the other.
+describe("flow control by who opened the stream", () => {
+  const sni = { "*": { keys: [key], certs: [cert] } };
+  const pattern = Buffer.from(Array.from({ length: 251 }, (_, i) => i));
+  const bytes = (size: number) => Buffer.alloc(size, pattern);
+  const compare = (got: Buffer | undefined, want: Buffer) => ({
+    bytes: got?.length ?? 0,
+    intact: got?.equals(want) ?? false,
+  });
+  const settled = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "closed",
+      (err: Error) => err.message,
+    );
+
+  async function readAll(stream: any) {
+    const chunks: Uint8Array[] = [];
+    for await (const batch of stream) chunks.push(...batch);
+    return Buffer.concat(chunks);
+  }
+
+  // One raw QUIC session. The server opens a bidirectional stream and sends
+  // `down` on it. The client sends `up` on that stream.
+  async function exchange(options: { down: Buffer; up: Buffer; client?: object; server?: object }) {
+    const { down, up } = options;
+    const serverClosed = Promise.withResolvers<string>();
+    const atServer = Promise.withResolvers<Buffer>();
+    await using server = await listen(
+      async (session: any) => {
+        session.onerror = () => {};
+        settled(session.closed).then(serverClosed.resolve);
+        await session.opened;
+        const stream = await session.createBidirectionalStream({ body: down });
+        stream.closed.catch(() => {});
+        readAll(stream).then(atServer.resolve, atServer.reject);
+      },
+      { sni, alpn: ["quic-test"], transportParams: options.server },
+    );
+
+    await using endpoint = new QuicEndpoint();
+    const client: any = await connect(server.address!, {
+      endpoint,
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: options.client,
+      onerror() {},
+    } as SessionOptions);
+    const clientClosed = settled(client.closed);
+    const atClient = Promise.withResolvers<Buffer>();
+    client.onstream = (stream: any) => {
+      stream.closed.catch(() => {});
+      if (up.length > 0) stream.setBody(up);
+      else stream.writer.endSync();
+      readAll(stream).then(atClient.resolve, atClient.reject);
+    };
+
+    // A session that dies ends the wait with what arrived.
+    const dead = Promise.all([clientClosed, serverClosed.promise]).then(() => undefined);
+    const unlessDead = (data: Promise<Buffer>) =>
+      Promise.race([data, dead]).then(
+        got => got,
+        () => undefined,
+      );
+    const [gotDown, gotUp] = await Promise.all([unlessDead(atClient.promise), unlessDead(atServer.promise)]);
+    client.close();
+    return {
+      down: compare(gotDown, down),
+      up: compare(gotUp, up),
+      client: await clientClosed,
+      server: await serverClosed.promise,
+    };
+  }
+
+  const whole = (down: Buffer, up: Buffer) => ({
+    down: { bytes: down.length, intact: true },
+    up: { bytes: up.length, intact: true },
+    client: "closed",
+    server: "closed",
+  });
+
+  test("a stream the server opens carries megabytes with default options", async () => {
+    const down = bytes(1_000_000);
+    const up = bytes(300_000);
+    expect(await exchange({ down, up })).toEqual(whole(down, up));
+  });
+
+  test("default options announce the same window for a stream the server opens as for one the client opens", async () => {
+    await using server = await listen(
+      (session: any) => {
+        session.closed.catch(() => {});
+      },
+      { sni, alpn: ["quic-test"] },
+    );
+    await using endpoint = new QuicEndpoint();
+    const client: any = await connect(server.address!, {
+      endpoint,
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+    } as SessionOptions);
+    await client.opened;
+    // `remoteTransportParams` is what the server put on the wire.
+    const fromClient = client.localTransportParams;
+    const fromServer = client.remoteTransportParams;
+    client.close();
+    expect({
+      client: fromClient.initialMaxStreamDataBidiRemote,
+      server: fromServer.initialMaxStreamDataBidiLocal,
+    }).toEqual({
+      client: fromClient.initialMaxStreamDataBidiLocal,
+      server: fromServer.initialMaxStreamDataBidiRemote,
+    });
+  });
+
+  // The first STREAM frame of each body is larger than the 1024-byte window.
+  // A sender that reads the limit for streams the client opens (megabytes by
+  // default) sends it whole, and the receiver closes the session with
+  // FLOW_CONTROL_ERROR.
+  test("the server stays inside the client's initialMaxStreamDataBidiRemote on a stream it opened", async () => {
+    const down = bytes(4096);
+    const up = bytes(0);
+    expect(await exchange({ down, up, client: { initialMaxStreamDataBidiRemote: 1024 } })).toEqual(whole(down, up));
+  });
+
+  test("the client stays inside the server's initialMaxStreamDataBidiLocal on a stream the server opened", async () => {
+    const down = bytes(1);
+    const up = bytes(4096);
+    expect(await exchange({ down, up, server: { initialMaxStreamDataBidiLocal: 1024 } })).toEqual(whole(down, up));
+  });
+
+  // When the handshake of a resumed session completes, lsquic gives each
+  // stream that exists the limit the server now announces. A unidirectional
+  // stream must get initialMaxStreamDataUni. The window for bidirectional
+  // streams here is smaller than the early data, so that limit cannot be set
+  // and the client aborts the connection.
+  test("a unidirectional stream opened in 0-RTT keeps the peer's limit for unidirectional streams", async () => {
+    const body = bytes(4000);
+    let sessions = 0;
+    const resumedClosed = Promise.withResolvers<string>();
+    const atServer = Promise.withResolvers<{ early: boolean; data: Buffer }>();
+    await using server = await listen(
+      (session: any) => {
+        const resumed = ++sessions === 2;
+        session.onerror = () => {};
+        if (resumed) settled(session.closed).then(resumedClosed.resolve);
+        else session.closed.catch(() => {});
+        session.onstream = async (stream: any) => {
+          stream.closed.catch(() => {});
+          const data = await readAll(stream);
+          if (resumed) atServer.resolve({ early: stream.early, data });
+        };
+      },
+      { sni, alpn: ["quic-test"], transportParams: { initialMaxStreamDataBidiRemote: 256 } },
+    );
+
+    await using endpoint = new QuicEndpoint();
+    const options = { endpoint, alpn: "quic-test", servername: "localhost", verifyPeer: "manual", onerror() {} };
+    const ticket = Promise.withResolvers<Buffer>();
+    const token = Promise.withResolvers<Buffer>();
+    const first: any = await connect(server.address!, {
+      ...options,
+      onsessionticket: ticket.resolve,
+      onnewtoken: token.resolve,
+    } as SessionOptions);
+    await first.opened;
+    const [sessionTicket, newToken] = await Promise.all([ticket.promise, token.promise]);
+    await first.close();
+
+    const second: any = await connect(server.address!, {
+      ...options,
+      sessionTicket,
+      token: newToken,
+    } as SessionOptions);
+    const clientClosed = settled(second.closed);
+    // Before `opened`: the body leaves as 0-RTT data.
+    const stream = await second.createUnidirectionalStream({ body });
+    stream.closed.catch(() => {});
+    const opened = await second.opened.then(
+      (info: any) => ({ earlyDataAccepted: info.earlyDataAccepted }),
+      (err: Error) => err.message,
+    );
+    const got = await Promise.race([atServer.promise, clientClosed.then(() => undefined)]);
+    second.close();
+    expect({
+      opened,
+      early: got?.early,
+      stream: compare(got?.data, body),
+      client: await clientClosed,
+      server: await resumedClosed.promise,
+    }).toEqual({
+      opened: { earlyDataAccepted: true },
+      early: true,
+      stream: { bytes: body.length, intact: true },
+      client: "closed",
+      server: "closed",
+    });
+  });
+
+  // HTTP/3 has no bidirectional stream that the server opens (RFC 9114
+  // section 6.1), so the rule above is for raw QUIC only. An HTTP/3 client
+  // announces a window of 0 for such a stream. The server must still be able
+  // to send the HEADERS frame that makes the client refuse the stream.
+  test("an HTTP/3 client still refuses a bidirectional stream that the server opens", async () => {
+    const serverClosed = Promise.withResolvers<any>();
+    await using server = await listen(
+      async (session: any) => {
+        session.onerror = () => {};
+        session.closed.then(
+          () => serverClosed.resolve(undefined),
+          (err: any) => serverClosed.resolve(err),
+        );
+        await session.opened;
+        const stream = await session.createBidirectionalStream({
+          headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+        });
+        stream.closed.catch(() => {});
+      },
+      { sni },
+    );
+    await using endpoint = new QuicEndpoint();
+    const client: any = await connect(server.address!, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      onerror() {},
+    } as SessionOptions);
+    client.opened.catch(() => {});
+    client.closed.catch(() => {});
+    client.onstream = (stream: any) => stream.closed.catch(() => {});
+    const err = await serverClosed.promise;
+    // 259 is H3_STREAM_CREATION_ERROR.
+    expect({ code: err?.code, errorCode: Number(err?.errorCode) }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: 259,
+    });
+  });
+});

@@ -137,6 +137,16 @@ export const lsquic: Dependency = {
     // lsquic_prq_destroy() only frees the free list. A stateless reset whose
     // send failed is on the returned list, so destroying the engine leaks it.
     "patches/lsquic/prq-free-returned-conns.patch",
+    // A bidirectional stream's initial send limit came from the connection's
+    // role: the peer's limit for streams the client opens, the only kind
+    // HTTP/3 has. On a stream the server opened (raw QUIC through node:quic)
+    // both sides sent against the wrong one of the peer's two limits and the
+    // receiver closed the connection with FLOW_CONTROL_ERROR. The limit now
+    // follows who opened the stream (RFC 9000 section 18.2). The loop that
+    // gives 0-RTT streams the peer's real limits does the same, and gives a
+    // unidirectional stream the unidirectional limit. HTTP/3 mode keeps its
+    // bidirectional limits.
+    "patches/lsquic/stream-send-limit-by-initiator.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

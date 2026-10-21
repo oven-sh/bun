@@ -1,0 +1,141 @@
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -448,9 +448,17 @@
+     lsquic_time_t               ifc_saved_ack_received;
+     lsquic_packno_t             ifc_max_ack_packno[N_PNS];
+     lsquic_packno_t             ifc_max_non_probing;
++    /* bun: the peer's initial limit on what we send on a bidirectional
++     * stream depends on who opened the stream (RFC 9000 Section 18.2).
++     * Upstream keeps one limit, chosen by the connection's role.  That is
++     * the right one only for streams the client opens, the only ones
++     * HTTP/3 has.
++     */
+     struct {
+-        uint64_t    max_stream_send;
+-        uint8_t     ack_exp;
++        /* We open it: peer's initial_max_stream_data_bidi_remote */
++        uint64_t    max_stream_send_ours;
++        /* The peer opens it: peer's initial_max_stream_data_bidi_local */
++        uint64_t    max_stream_send_peers;
+     }                           ifc_cfg;
+     int                       (*ifc_process_incoming_packet)(
+                                                 struct ietf_full_conn *,
+@@ -460,6 +468,10 @@
+     unsigned                    ifc_n_slack_all;    /* App PNS only */
+     unsigned                    ifc_max_retx_since_last_ack;
+     unsigned short              ifc_max_udp_payload;    /* Cached TP */
++    /* bun: was ifc_cfg.ack_exp.  Here it fills padding, so that the second
++     * limit in ifc_cfg does not make the connection larger.
++     */
++    uint8_t                     ifc_ack_exp;            /* Cached TP */
+     lsquic_time_t               ifc_max_ack_delay;
+     uint64_t                    ifc_ecn_counts_in[N_PNS][4];
+     lsquic_stream_id_t          ifc_max_req_id;
+@@ -1133,7 +1145,7 @@
+                 conn->ifc_enpub->enp_stream_if,
+                 conn->ifc_enpub->enp_stream_if_ctx,
+                 conn->ifc_settings->es_init_max_stream_data_bidi_local,
+-                conn->ifc_cfg.max_stream_send, flags);
++                conn->ifc_cfg.max_stream_send_ours, flags);
+     if (!stream)
+         return -1;
+     if (!lsquic_hash_insert(conn->ifc_pub.all_streams, &stream->id,
+@@ -3652,14 +3664,41 @@
+ 
+     conn->ifc_pub.conn_cap.cc_max = params->tp_init_max_data;
+ 
++    /* bun: see ifc_cfg */
++    conn->ifc_cfg.max_stream_send_ours
++                                = params->tp_init_max_stream_data_bidi_remote;
++    conn->ifc_cfg.max_stream_send_peers
++                                = params->tp_init_max_stream_data_bidi_local;
++    if (conn->ifc_flags & IFC_HTTP)
++    {
++        /* HTTP/3 has no bidirectional stream that the server opens.  If one
++         * is made anyway, it keeps upstream's limit, the one for a stream
++         * that the client opens.  stream_write_avail_with_frames() asserts
++         * that a stream's limit has room for its frame headers, and the
++         * handshake checks that (es_check_tp_sanity) for this limit only.
++         * The other limit can be zero.
++         */
++        if (conn->ifc_flags & IFC_SERVER)
++            conn->ifc_cfg.max_stream_send_ours
++                                = conn->ifc_cfg.max_stream_send_peers;
++        else
++            conn->ifc_cfg.max_stream_send_peers
++                                = conn->ifc_cfg.max_stream_send_ours;
++    }
++
+     for (el = lsquic_hash_first(conn->ifc_pub.all_streams); el;
+                              el = lsquic_hash_next(conn->ifc_pub.all_streams))
+     {
+         stream = lsquic_hashelem_getdata(el);
+-        if (is_our_stream(conn, stream))
+-            limit = params->tp_init_max_stream_data_bidi_remote;
++        /* bun: a unidirectional stream opened in 0-RTT took a bidirectional
++         * limit here.
++         */
++        if (((stream->id >> SD_SHIFT) & 1) == SD_UNI)
++            limit = params->tp_init_max_stream_data_uni;
++        else if (is_our_stream(conn, stream))
++            limit = conn->ifc_cfg.max_stream_send_ours;
+         else
+-            limit = params->tp_init_max_stream_data_bidi_local;
++            limit = conn->ifc_cfg.max_stream_send_peers;
+         if (0 != lsquic_stream_set_max_send_off(stream, limit))
+         {
+             ABORT_WARN("cannot set peer-supplied max_stream_data=%"PRIu64
+@@ -3668,13 +3707,7 @@
+         }
+     }
+ 
+-    if (conn->ifc_flags & IFC_SERVER)
+-        conn->ifc_cfg.max_stream_send
+-                                = params->tp_init_max_stream_data_bidi_local;
+-    else
+-        conn->ifc_cfg.max_stream_send
+-                                = params->tp_init_max_stream_data_bidi_remote;
+-    conn->ifc_cfg.ack_exp = params->tp_ack_delay_exponent;
++    conn->ifc_ack_exp = params->tp_ack_delay_exponent;
+ 
+     /* bun: es_idle_timeout_ms (ms-granular) takes precedence over the
+      * seconds-granular es_idle_timeout. */
+@@ -5415,7 +5448,7 @@
+ 
+     stream = lsquic_stream_new(stream_id, &conn->ifc_pub,
+                                iface, stream_ctx, initial_window,
+-                               conn->ifc_cfg.max_stream_send, flags);
++                               conn->ifc_cfg.max_stream_send_peers, flags);
+     if (stream)
+     {
+         if (conn->ifc_bpus)
+@@ -5944,7 +5977,7 @@
+         new_acki = &conn->ifc_ack;
+ 
+     parsed_len = conn->ifc_conn.cn_pf->pf_parse_ack_frame(p, len, new_acki,
+-                                                        conn->ifc_cfg.ack_exp);
++                                                        conn->ifc_ack_exp);
+     if (parsed_len < 0)
+         goto err;
+ 
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -4328,11 +4328,15 @@
+         lsquic_stream_window_update(stream, offset);
+         return 0;
+     }
+-    else if (offset < stream->tosend_off)
++    /* bun: count the bytes that are buffered and not yet in a packet.  A
++     * limit inside them made the send credit (max_send_off - tosend_off -
++     * sm_n_buffered) wrap.
++     */
++    else if (offset < stream->tosend_off + stream->sm_n_buffered)
+     {
+         LSQ_INFO("new offset (%"PRIu64" bytes) is smaller than the amount of "
+-            "data already sent on this stream (%"PRIu64" bytes)", offset,
+-            stream->tosend_off);
++            "data already written to this stream (%"PRIu64" bytes)", offset,
++            stream->tosend_off + stream->sm_n_buffered);
+         return -1;
+     }
+     else

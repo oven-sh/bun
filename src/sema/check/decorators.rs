@@ -438,7 +438,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             DecoratorOwner::Member(_) => {
-                if params.len() <= 2 {
+                if self.parameter_count(params) <= 2 {
                     2
                 } else {
                     3

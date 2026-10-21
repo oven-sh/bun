@@ -11,6 +11,8 @@ bun audit
 
 Bun reads the package list from `bun.lock` (no `node_modules` required), sends it to the npm advisory endpoint, and prints a report. Bun sends packages from a scoped registry to that registry instead. If that registry has no advisory endpoint, Bun lists those packages as skipped and they don't affect the exit code.
 
+With no package to audit, `bun audit` sends no request and reports no vulnerabilities. This is also the case if there is no `bun.lock` because the project has no workspaces and no dependencies.
+
 `bun audit` never modifies `package.json`, `bun.lock`, or `node_modules`. To apply fixes, use [`bun audit fix`](#bun-audit-fix).
 
 If Bun finds no vulnerabilities, the command prints:

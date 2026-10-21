@@ -10321,11 +10321,33 @@ describe.concurrent("pm trust", async () => {
         env,
       });
 
+      // `bun install` saves no lockfile for this project, so a missing lockfile means that nothing is installed.
       let err = await stderr.text();
-      expect(err).toContain("error: missing lockfile, nothing to trust\nnote: run 'bun install' first\n");
+      expect(normalizeBunSnapshot(err)).toBe(
+        "bun pm trust <version> (<revision>)\n" +
+          "error: 0 scripts ran. This means all dependencies are already trusted or none have scripts.",
+      );
       let out = await stdout.text();
-      expect(out).toBeEmpty();
+      expect(out).toBe("\n");
       expect(await exited).toBe(1);
+    });
+
+    test("no lockfile", async () => {
+      const { packageDir, packageJson, env } = await setupTest();
+      await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies: { "uses-what-bin": "1.0.0" } }));
+
+      await using proc = spawn({
+        cmd: [bunExe(), "pm", "trust", "--all"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(err).toContain("error: missing lockfile, nothing to trust\nnote: run 'bun install' first\n");
+      expect(out).toBeEmpty();
+      expect(exitCode).toBe(1);
     });
 
     test("some dependencies, non with scripts", async () => {
@@ -12435,7 +12457,10 @@ describe.concurrent("outdated", () => {
   }
   test("errors without a lockfile", async () => {
     const { packageDir, packageJson, env } = await setupTest();
-    await write(packageJson, JSON.stringify({ name: "no-lockfile", version: "1.0.0" }));
+    await write(
+      packageJson,
+      JSON.stringify({ name: "no-lockfile", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+    );
 
     await using proc = spawn({
       cmd: [bunExe(), "outdated"],
@@ -12448,6 +12473,26 @@ describe.concurrent("outdated", () => {
     const [err, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
     expect(err).toContain("error: missing lockfile, nothing outdated");
     expect(exitCode).toBe(1);
+  });
+  // `bun install` saves no lockfile for a project without dependencies.
+  test("nothing is outdated in a project without dependencies, which has no lockfile", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
+    await write(packageJson, JSON.stringify({ name: "no-dependencies", version: "1.0.0" }));
+
+    await using proc = spawn({
+      cmd: [bunExe(), "outdated"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect({ err, out: normalizeBunSnapshot(out), exitCode }).toEqual({
+      err: "",
+      out: "bun outdated <version> (<revision>)",
+      exitCode: 0,
+    });
   });
   test("in workspace", async () => {
     const { packageDir, packageJson, env } = await setupTest();

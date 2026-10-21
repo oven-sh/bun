@@ -17,7 +17,10 @@ import { resolveBulkAdvisoryFixture } from "./registry/fixtures/audit/audit-fixt
 
 function fixture(
   folder:
-    "express@3" | "vuln-with-only-dev-dependencies" | "safe-is-number@7" | "mix-of-safe-and-vulnerable-dependencies",
+    | "express@3"
+    | "vuln-with-only-dev-dependencies"
+    | "safe-is-number@7"
+    | "mix-of-safe-and-vulnerable-dependencies",
 ) {
   return join(import.meta.dirname, "registry", "fixtures", "audit", folder);
 }
@@ -400,6 +403,21 @@ describe("`bun audit`", () => {
     },
   });
 
+  // `bun install` saves no lockfile for a project without dependencies, so this is that project as it is on disk.
+  doAuditTest("should exit 0 when there are no dependencies in package.json and no lockfile", {
+    exitCode: 0,
+    files: {
+      "package.json": JSON.stringify({
+        name: "empty-package",
+        version: "1.0.0",
+      }),
+    },
+    fn: async ({ stdout, stderr }) => {
+      expect(await stderr).toBe("");
+      expect(normalizeBunSnapshot(await stdout)).toBe(AUDIT_HEADER + noVulnerabilities(0));
+    },
+  });
+
   doAuditTest("should exit 0 when there are no vulnerabilities", {
     exitCode: 0,
     files: fixture("safe-is-number@7"),
@@ -621,6 +639,7 @@ describe("`bun audit`", () => {
   // With no package to audit there is nothing to send, so the result does not depend on a registry.
   const rootOnlyLock = { lockfileVersion: 1, workspaces: { "": { name: "test" } }, packages: {} };
   describe.each<[string, DirectoryTree, string[], string]>([
+    ["no dependencies and no lockfile", { "package.json": JSON.stringify({ name: "test", version: "1.0.0" }) }, [], ""],
     [
       "a bun.lock with only the root",
       { "package.json": JSON.stringify({ name: "test", version: "1.0.0" }), "bun.lock": JSON.stringify(rootOnlyLock) },
@@ -3439,7 +3458,7 @@ describe("`bun audit fix`", () => {
   test.concurrent("refuses to run without a lockfile", async () => {
     await using server = startRegistry({});
     using dir = tempDir("audit-fix-", {
-      "package.json": JSON.stringify({ name: "foo" }),
+      "package.json": JSON.stringify({ name: "foo", dependencies: { "a-dep": "1.0.2" } }),
       "bunfig.toml": Bun.TOML.stringify({ install: { registry: server.url.href } }),
     });
 

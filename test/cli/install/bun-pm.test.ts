@@ -3135,6 +3135,52 @@ describe.concurrent("without a package.json", () => {
     });
   });
 
+  // Removing the last global package leaves a package.json without dependencies and no lockfile.
+  test("bun pm hash -g and bun outdated -g find nothing after the last global package was removed", async () => {
+    using project = fresh("pm-global-removed");
+    expect(await project.run("add", "-g", join(project.root, "pkg"))).toMatchObject({ exitCode: 0 });
+    expect(await project.run("remove", "-g", "pkg")).toMatchObject({ exitCode: 0 });
+    expect(await readdirSorted(project.globalDir)).toEqual(["node_modules", "package.json"]);
+    // A package.json above the global directory, such as one in the home directory, changes nothing.
+    await Bun.write(join(project.root, "package.json"), JSON.stringify({ name: "home", dependencies: { pkg: "1" } }));
+
+    expect(await project.run("pm", "hash", "-g")).toEqual({
+      stdout: "0000000000000000-0000000000000000-0000000000000000-0000000000000000",
+      stderr: "",
+      exitCode: 0,
+    });
+    const outdated = await project.run("outdated", "-g");
+    expect({ ...outdated, stdout: normalizeBunSnapshot(outdated.stdout) }).toEqual({
+      stdout: "bun outdated <version> (<revision>)",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // No folder above the global directory is its project, whatever the global package.json has in it.
+  test("bun pm hash -g does not look for a project above the global directory", async () => {
+    using project = fresh("pm-global-module-type");
+    await Bun.write(join(project.globalDir, "package.json"), JSON.stringify({ type: "module" }));
+    await Bun.write(join(project.root, "package.json"), JSON.stringify({ name: "home", dependencies: { pkg: "1" } }));
+    expect(await project.run("pm", "hash", "-g")).toEqual({
+      stdout: "0000000000000000-0000000000000000-0000000000000000-0000000000000000",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A global add that fails leaves the same state: a package.json without dependencies and no lockfile.
+  test("bun pm hash -g finds nothing after a global add that failed", async () => {
+    using project = fresh("pm-global-failed-add");
+    expect(await project.run("add", "-g", join(project.root, "missing"))).toMatchObject({ exitCode: 1 });
+    expect(await readdirSorted(project.globalDir)).toEqual(["package.json"]);
+    expect(await project.run("pm", "hash", "-g")).toEqual({
+      stdout: "0000000000000000-0000000000000000-0000000000000000-0000000000000000",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("bun pm ls -g says why a global lockfile does not load", async () => {
     using project = fresh("pm-ls-global-broken-lockfile");
     expect(await project.run("add", "-g", join(project.root, "pkg"))).toMatchObject({ exitCode: 0 });

@@ -11,6 +11,7 @@ use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{LoadResult, Lockfile, Package, PackageIndexEntry, print_log_errors};
 use crate::package_manager::Options::{Enable, LogLevel};
 use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
+use crate::package_manager::workspace_manifests::ScratchManifests;
 use crate::{
     Dependency, DependencyID, DependencyVersionTag, Features, GetJsonResult, PackageID,
     PackageManager, ResolutionTag, dependency, invalid_package_id,
@@ -779,11 +780,14 @@ pub fn dedupe_before_install(
 
     match load_result {
         LoadResult::NotFound => {
-            if !quiet {
-                Output::err_generic("missing lockfile, nothing to dedupe", ());
-                bun_core::note!("run 'bun install' first");
-            }
-            Global::exit(1);
+            let Some(empty) = ScratchManifests::empty_lockfile(manager) else {
+                if !quiet {
+                    Output::err_generic("missing lockfile, nothing to dedupe", ());
+                    bun_core::note!("run 'bun install' first");
+                }
+                Global::exit(1);
+            };
+            *manager.lockfile = empty;
         }
         LoadResult::Err(cause) => {
             if !quiet {

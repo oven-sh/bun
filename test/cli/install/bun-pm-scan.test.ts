@@ -76,7 +76,7 @@ describe.concurrent("bun pm scan", () => {
 
     test("shows error when lockfile doesn't exist", async () => {
       await using dir = tempDir("scan-no-lockfile", {
-        "package.json": JSON.stringify({ name: "test", dependencies: {} }),
+        "package.json": leftPadPkg,
         "bunfig.toml": `[install.security]\nscanner = "test-scanner"`,
       });
 
@@ -89,6 +89,32 @@ describe.concurrent("bun pm scan", () => {
       `);
       expect(stdout).toBe("");
       expect(exitCode).toBe(1);
+    });
+
+    // `bun install` saves no lockfile for a project without dependencies, so the scanner gets an empty list.
+    test("scans nothing when there are no dependencies and no lockfile", async () => {
+      await using dir = tempDir("scan-no-dependencies", {
+        "package.json": JSON.stringify({ name: "test", dependencies: {} }),
+        "bunfig.toml": scannerBunfig,
+        "scanner.js": `
+          module.exports = {
+            scanner: {
+              version: "1",
+              scan: async function(payload) {
+                console.error("PACKAGES:", JSON.stringify(payload.packages));
+                return [];
+              }
+            }
+          };
+        `,
+      });
+
+      const [stdout, stderr, exitCode] = await runScan(dir);
+
+      expect(stderr).toContain("PACKAGES: []\n");
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toBe("No advisories found\n");
+      expect(exitCode).toBe(0);
     });
 
     test("shows error when package.json doesn't exist", async () => {

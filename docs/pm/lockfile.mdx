@@ -48,6 +48,17 @@ print = "yarn"
 
 </CodeGroup>
 
+#### A project with no dependencies
+
+Bun writes no `bun.lock` for a project that has no workspaces and no dependencies in its `package.json`. Commands that read the lockfile treat that project as one with nothing installed. For example, `bun audit` and `bun outdated` report an empty result and exit `0`.
+
+These commands decide from the root `package.json` alone. Without a `bun.lock`, they still exit `1` when that file:
+
+- has a `workspaces` field, even one that matches no folder
+- is next to a `pnpm-workspace.yaml`
+- is empty (write `{}` to start a project without dependencies)
+- is below a folder whose `package.json` has dependencies or workspaces, or has a lockfile next to it
+
 #### Text-based lockfile
 
 Bun v1.2 changed the default lockfile format to the text-based `bun.lock`. To migrate an existing binary `bun.lockb`, run `bun install --save-text-lockfile --frozen-lockfile --lockfile-only` and delete `bun.lockb`.

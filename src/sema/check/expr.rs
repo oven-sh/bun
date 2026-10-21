@@ -821,7 +821,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn is_const_type_variable_worker(&mut self, ty: TypeId, depth: u32) -> bool {
-        match self.data(ty) {
+        match self.data(self.non_distributed(ty)) {
             // `core.Some(t.symbol.Declarations, ..)`. Same-named type parameters across a class's
             // or interface's declarations share one symbol.
             &TypeData::TypeParam(f, tp, ..) => {

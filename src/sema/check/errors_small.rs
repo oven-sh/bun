@@ -516,7 +516,7 @@ impl<'p> Checker<'p, '_> {
     /// `t.symbol`
     pub(super) fn symbol_of_type(&self, ty: TypeId) -> Option<SymbolAtLocation<'p>> {
         let files = self.files();
-        Some(match *self.data(ty) {
+        Some(match *self.data(self.non_distributed(ty)) {
             TypeData::ThisParam(symbol) | TypeData::Enum { symbol, .. } => {
                 SymbolAtLocation::Symbol(symbol)
             }

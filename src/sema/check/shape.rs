@@ -930,18 +930,19 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getActualTypeVariable`
     pub(super) fn actual_type_variable(&mut self, ty: TypeId) -> TypeId {
-        let is_substitution = |c: &Self, t: TypeId| c.is_kind(t, tf::SUBSTITUTION);
         match *self.data(ty) {
             TypeData::Substitution { base, .. } => self.actual_type_variable(base),
-            TypeData::IndexedAccess { obj, index, .. }
-                if is_substitution(self, obj) || is_substitution(self, index) =>
-            {
-                let (obj, index) = (
+            TypeData::IndexedAccess { obj, index, .. } => {
+                let actual = (
                     self.actual_type_variable(obj),
                     self.actual_type_variable(index),
                 );
-                self.indexed_access(obj, index)
+                match actual == (obj, index) {
+                    true => ty,
+                    false => self.indexed_access(actual.0, actual.1),
+                }
             }
+            TypeData::Marker(Marker::Distributed(of)) => of,
             _ => ty,
         }
     }

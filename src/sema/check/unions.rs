@@ -2007,7 +2007,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// The name of the symbol that `getTypeNameSymbol` returns. `alias`: `t.alias.symbol`.
     fn type_name(&self, ty: TypeId, alias: Option<Sym>) -> Option<&'p [u8]> {
         let files = self.files();
-        let name = match (alias, self.data(ty)) {
+        let name = match (alias, self.data(self.non_distributed(ty))) {
             (Some(alias), _) => files.symbol(alias).name,
             // The `this` type has its class's symbol.
             (None, &TypeData::Ref { target: sym, .. } | &TypeData::ThisParam(sym)) => {
@@ -2046,7 +2046,7 @@ impl<'p, 's> Checker<'p, 's> {
         let at = |file: FileId, pos: u32| -> Option<DeclarationPosition> {
             Some((!self.files().module(file).is_lib, file, pos))
         };
-        match *self.data(ty) {
+        match *self.data(self.non_distributed(ty)) {
             TypeData::Ref { target: sym, .. }
             | TypeData::ThisParam(sym)
             | TypeData::Enum { symbol: sym, .. }
@@ -2354,6 +2354,8 @@ impl<'p, 's> Checker<'p, 's> {
                 ..
             } => 2,
             TypeData::Synth(ref shape) => u8::from(shape.is_regular),
+            // `getDistributedTypeFromTypeParameter`
+            TypeData::Marker(Marker::Distributed(_)) => 1,
             // `createArrayLiteralType`, `getTypeFromArrayBindingPattern`
             TypeData::Ref { .. } | TypeData::Tuple { .. } => {
                 u8::from(self.types().is_array_literal(t))
@@ -2449,7 +2451,13 @@ impl<'p, 's> Checker<'p, 's> {
             (
                 TypeData::Marker(Marker::Restrictive(x)),
                 TypeData::Marker(Marker::Restrictive(y)),
+            )
+            | (
+                TypeData::Marker(Marker::Distributed(x)),
+                TypeData::Marker(Marker::Distributed(y)),
             ) => types(*x, *y),
+            (TypeData::Marker(Marker::Distributed(x)), TypeData::TypeParam(..)) => types(*x, b),
+            (TypeData::TypeParam(..), TypeData::Marker(Marker::Distributed(y))) => types(a, *y),
             (TypeData::Marker(x), TypeData::Marker(y)) => {
                 let rank = |marker: &Marker| match *marker {
                     Marker::Super => (0, 0),
@@ -2460,6 +2468,7 @@ impl<'p, 's> Checker<'p, 's> {
                     Marker::Restrictive(_) => (5, 0),
                     Marker::TupleElement(index) => (6, index),
                     Marker::TupleThis => (7, 0),
+                    Marker::Distributed(_) => (8, 0),
                 };
                 rank(x).cmp(&rank(y))
             }

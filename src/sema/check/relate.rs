@@ -1937,8 +1937,19 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn derive_cond_piece(&mut self, t: TypeId, which: usize) -> TypeId {
-        let (file, _, mapper, nodes) = self.cond_origin(t);
+        let (file, _, mut mapper, nodes) = self.cond_origin(t);
         let declared = self.type_from_node(file, nodes[which]);
+        // `getConstraintOfDistributiveConditionalType` of a declared type maps the check type to its constraint, the
+        // type parameter itself. Unlike the declared type, the result has a mapper in tsgo. See `Types::mapped_type`.
+        if matches!(*self.data(t), TypeData::Cond { for_constraint, .. } if for_constraint != MapperId::IDENTITY)
+            && (self.types().mapping(mapper).iter()).all(|pair| pair.0 == pair.1)
+        {
+            let check = self.type_from_node(file, nodes[0]);
+            let mut pairs: SmallVec<[(TypeId, TypeId); 8]> =
+                SmallVec::from_slice(self.types().mapping(mapper));
+            pairs.push((check, self.non_distributed(check)));
+            mapper = self.types().mapper_of(&pairs);
+        }
         self.instantiate(declared, mapper)
     }
 
@@ -1975,7 +1986,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn cond_distributes_over(&mut self, t: TypeId) -> Option<TypeId> {
         let (file, _, _, nodes) = self.cond_origin(t);
         let declared = self.type_from_node(file, nodes[0]);
-        (self.flags(declared) & tf::TYPE_PARAMETER != 0).then_some(declared)
+        (self.flags(declared) & tf::TYPE_PARAMETER != 0).then(|| self.non_distributed(declared))
     }
 
     /// `getInferredTrueTypeFromConditionalType`: the true branch instantiated with `combinedMapper`.
@@ -4654,6 +4665,10 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Fns { decls, .. } => (4, decls[0].0.0, decls[0].1.0),
             // All clones of a type parameter have its symbol.
             TypeData::TypeParam(file, tp, _) => (3, file.0, tp.0),
+            TypeData::Marker(Marker::Distributed(of)) => match *self.data(*of) {
+                TypeData::TypeParam(file, tp, _) => (3, file.0, tp.0),
+                _ => (0, t.0, 0),
+            },
             TypeData::Tuple {
                 flags, readonly, ..
             } => {

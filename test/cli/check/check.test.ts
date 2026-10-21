@@ -1922,7 +1922,8 @@ export function l4<U extends { a: unknown }, V extends { a: unknown }>(v: U["a"]
       `intersections.ts(19,9): error TS2322: Type 'readonly U[] | [U] | E' is not assignable to type 'symbol'.`,
       `  Type 'E' is not assignable to type 'symbol'.`,
       `normalized.ts(4,9): error TS2322: Type '{ z: 3; }' is not assignable to type 'string'.`,
-      `normalized.ts(9,9): error TS2322: Type '{ z: 3; }' is not assignable to type 'string'.`,
+      `normalized.ts(9,9): error TS2322: Type 'U | { z: 3; }' is not assignable to type 'string'.`,
+      `  Type 'U' is not assignable to type 'string'.`,
       `normalized.ts(14,9): error TS2322: Type '{ z: 3; } | (U[K] & V[K])' is not assignable to type 'string'.`,
       `  Type '{ z: 3; }' is not assignable to type 'string'.`,
       `normalized.ts(19,9): error TS2322: Type '{ z: 3; } | U["a"] | V["a"]' is not assignable to type 'string'.`,
@@ -23006,6 +23007,48 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       using dir = project(files);
       const { stdout, exitCode } = await check(dir);
       expect(stdout.split("\n").sort()).toEqual(expected.sort());
+      expect(exitCode).toBe(1);
+    });
+
+    test("a type parameter is a different type inside a conditional type that distributes over it", async () => {
+      using dir = project({
+        "a.ts": `type Need<T, U extends T> = [T, U];
+type InFunctionType<T, U extends () => T> = T extends any ? Need<() => T, U> : never;
+type InMappedType<T, U extends { [K in keyof T]: T[K] }> = T extends any ? Need<{ [K in keyof T]: T[K] }, U> : never;
+type InTypeLiteral<T, U extends T> = T extends any ? { a: Need<T, U> } : never;
+type Parenthesized<T, U extends T> = (T) extends any ? Need<T, U> : never;
+type NotNaked<T, U extends T> = [T] extends [any] ? Need<T, U> : never;
+type OtherParameter<T, U extends T> = U extends any ? Need<T, U> : never;
+type Keys<T, U extends keyof T> = T extends any ? [Need<keyof T, U>, Pick<T, U>, T[U]] : never;
+type Index<T> = { [K in keyof T]: K }[T extends any[] ? keyof T & number : keyof T];
+function toDistributed<T>(x: T): T extends any ? T : never {
+  return x;
+}
+function fromDistributed<T>(x: T extends any ? T : never): T {
+  return x;
+}
+declare function infer1<T>(x: T extends any ? T | Promise<T> : never): T;
+declare function infer2<T>(x: T extends any ? { [K in keyof T]: T[K] } : never): T;
+export const results: never = [infer1(1), infer2({ a: 1 })];
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,75): error TS2344: Type 'U' does not satisfy the constraint '() => T'.
+          Type '() => T' is not assignable to type '() => T'. Two different types with this name exist, but they are unrelated.
+            Type 'T' is not assignable to type 'T'. Two different types with this name exist, but they are unrelated.
+              'T' is only assignable to the non-distributed 'T', but 'T' has been distributed here.
+        a.ts(3,107): error TS2344: Type 'U' does not satisfy the constraint '{ [K in keyof T]: T[K]; }'.
+          Type '{ [K in keyof T]: T[K]; }' is not assignable to type '{ [K in keyof T]: T[K]; }'. Two different types with this name exist, but they are unrelated.
+            Type 'keyof T' is not assignable to type 'keyof T'. Two different types with this name exist, but they are unrelated.
+              Type 'string | number | symbol' is not assignable to type 'keyof T'.
+                Type 'string' is not assignable to type 'keyof T'.
+        a.ts(4,67): error TS2344: Type 'U' does not satisfy the constraint 'T'.
+          'U' is only assignable to the non-distributed 'T', but 'T' has been distributed here.
+        a.ts(11,3): error TS2719: Type 'T' is not assignable to type 'T'. Two different types with this name exist, but they are unrelated.
+          'T' is only assignable to the non-distributed 'T', but 'T' has been distributed here.
+        a.ts(18,14): error TS2322: Type '(number | { a: unknown; })[]' is not assignable to type 'never'."
+      `);
       expect(exitCode).toBe(1);
     });
 

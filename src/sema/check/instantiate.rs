@@ -527,7 +527,9 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> (TypeId, MapperId) {
         let (mut pairs, mut own) = (Vec::new(), Vec::new());
         self.any_type_in(t, true, |part| {
-            if self.flags(part) & tf::TYPE_PARAMETER != 0 {
+            if matches!(self.data(part), TypeData::Marker(Marker::Distributed(_))) {
+                // A mapper maps the type parameter that it's made from, which is visited next.
+            } else if self.flags(part) & tf::TYPE_PARAMETER != 0 {
                 pairs.push((part, map(self, part)));
             } else if let TypeData::Synth(shape) = self.data(part) {
                 for &sig in shape.call.iter().chain(&shape.construct) {
@@ -651,7 +653,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let active = self.active_mappers.find(mapper);
-        if class == InstantiationClass::TypeParameter {
+        if class != InstantiationClass::Other {
             match active.map(|at| &mut self.active_mappers.activations[at].params) {
                 Some(seen) if seen.contains(&ty) => {}
                 Some(seen) => {
@@ -660,7 +662,10 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 None => self.instantiation_count += 1,
             }
-            return self.types().map(mapper, ty).unwrap_or(ty);
+            return match class {
+                InstantiationClass::TypeParameter => self.types().map(mapper, ty).unwrap_or(ty),
+                _ => self.types().mapped_type(mapper, ty),
+            };
         }
         let serial = active.map_or(0, |at| self.active_mappers.activations[at].serial);
         if self.index_infos_in_instantiation.is_empty()
@@ -703,7 +708,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         match self.types().instantiation_class(ty) {
             InstantiationClass::Unchanged => Some(ty),
-            InstantiationClass::TypeParameter => Some(self.types().map(mapper, ty).unwrap_or(ty)),
+            InstantiationClass::TypeParameter | InstantiationClass::DistributedTypeParameter => {
+                Some(self.types().mapped_type(mapper, ty))
+            }
             _ if !self.index_infos_in_instantiation.is_empty() => None,
             _ => match self.recent_instantiations.get_tagged(ty.0, mapper.0) {
                 Some((known, _)) => Some(TypeId(known)),

@@ -130,6 +130,7 @@ impl<'p, 's> Checker<'p, 's> {
         target: TypeId,
         mapper: MapperId,
     ) -> MapperId {
+        let source = self.non_distributed(source);
         let target = self.types().map(mapper, target).unwrap_or(target);
         let mut pairs: SmallVec<[(TypeId, TypeId); 8]> =
             SmallVec::from_slice(self.types().mapping(mapper));
@@ -1545,6 +1546,7 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId::UNRESOLVED;
         };
         let check_declared = self.type_from_node(file, check);
+        let check_declared = self.non_distributed(check_declared);
         // `T extends U ? X : Y` with a naked `T` distributes over a union.
         if self.flags(check_declared) & tf::TYPE_PARAMETER != 0
             && let Some(value) = self.types().map(mapper, check_declared)
@@ -1927,7 +1929,7 @@ impl<'p, 's> Checker<'p, 's> {
             return Err(declared);
         }
         if is_distributive
-            && let Some(value) = self.types().map(root_mapper, root_check)
+            && let Some(value) = (self.types()).map(root_mapper, self.non_distributed(root_check))
             && (self.is_union(value) || value.is_never())
         {
             return Err(declared);
@@ -1951,7 +1953,9 @@ impl<'p, 's> Checker<'p, 's> {
         let is_circular = self.flags(check_declared) & tf::TYPE_PARAMETER != 0
             && matches!(
                 self.data(checked),
-                TypeData::TypeParam(..) | TypeData::ThisParam(_)
+                TypeData::TypeParam(..)
+                    | TypeData::ThisParam(_)
+                    | TypeData::Marker(Marker::Distributed(_))
             )
             && !self.has_non_circular_base_constraint(checked);
         let constraint = if is_circular {
@@ -2090,6 +2094,7 @@ impl<'p, 's> Checker<'p, 's> {
             return Some((self.type_from_node(file, of), true));
         }
         let declared = self.type_from_node(file, constraint);
+        let declared = self.non_distributed(declared);
         match *self.data(declared) {
             TypeData::TypeParam(..) => match self.constraint_of_type_param(declared) {
                 Some(c) => match *self.data(c) {
@@ -2121,6 +2126,7 @@ impl<'p, 's> Checker<'p, 's> {
         let declared = self.p.type_node_types.get(&self.task, &(file, constraint));
         self.is_type_node_settled(file, constraint)
             && declared.is_some_and(|declared| {
+                let declared = self.non_distributed(declared);
                 !matches!(self.data(declared), TypeData::TypeParam(..))
                     || (self.p.type_param_constraints.get(&self.task, &declared)).is_some()
             })
@@ -2642,6 +2648,7 @@ impl<'p, 's> Checker<'p, 's> {
                     return ty;
                 }
                 let declared = self.type_from_node(file, check);
+                let declared = self.non_distributed(declared);
                 let Some(checked) = self.types().map(mapper, declared) else {
                     return ty;
                 };

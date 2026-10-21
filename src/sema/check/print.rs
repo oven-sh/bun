@@ -1795,7 +1795,9 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 self.type_reference_to_node(ty, *target, args)
             }
             TypeData::TypeParam(..) => self.type_parameter_to_node(ty),
-            TypeData::Marker(Marker::Restrictive(of)) => self.type_to_node(*of),
+            TypeData::Marker(Marker::Restrictive(of) | Marker::Distributed(of)) => {
+                self.type_to_node(*of)
+            }
             TypeData::Marker(marker) => Node::simple(self.name_of_marker(*marker)),
             TypeData::Union(_) => self.union_to_node(ty),
             TypeData::Intersection(members) => self.intersection_to_node(members),
@@ -6063,6 +6065,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         let (_, _, mut mapper, nodes) = self.c.cond_origin(ty);
         // The check type was a type parameter and no longer is, so a new type parameter keeps the type distributive.
         let root_check_type = self.c.type_from_node(file, nodes[0]);
+        let root_check_type = self.c.non_distributed(root_check_type);
         let new_type_variable = if self.flags & GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS != 0
             && !self.c.is_type_param(check_type)
         {

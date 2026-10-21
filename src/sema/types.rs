@@ -526,6 +526,9 @@ pub enum Marker {
     SubForCheck,
     /// `getRestrictiveTypeParameter`: the type parameter without a constraint.
     Restrictive(TypeId),
+    /// `getDistributedTypeFromTypeParameter`: what the type parameter's name refers to inside a conditional type that
+    /// distributes over it. Its constraint is the type parameter.
+    Distributed(TypeId),
     /// `createTupleTargetType`: `typeParameters` and `thisType`. All targets share them, because only
     /// a mapper ever observes them.
     TupleElement(u32),
@@ -1904,6 +1907,8 @@ pub enum InstantiationClass {
     /// Looked up in the mapper.
     TypeParameter,
     Other,
+    /// `Marker::Distributed`: the type parameter that it's made from is looked up in the mapper.
+    DistributedTypeParameter,
 }
 
 impl InstantiationClass {
@@ -1913,6 +1918,7 @@ impl InstantiationClass {
         match number {
             0 => InstantiationClass::Unchanged,
             1 => InstantiationClass::TypeParameter,
+            3 => InstantiationClass::DistributedTypeParameter,
             _ => InstantiationClass::Other,
         }
     }
@@ -1975,6 +1981,9 @@ impl TypeRecord<'_> {
             return InstantiationClass::Unchanged;
         }
         match self.created.0 {
+            TypeData::Marker(Marker::Distributed(_)) => {
+                InstantiationClass::DistributedTypeParameter
+            }
             TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) => {
                 InstantiationClass::TypeParameter
             }
@@ -3452,7 +3461,10 @@ impl<'p, 's> Types<'p, 's> {
             }
             TypeData::ThisParam(_)
             | TypeData::Marker(
-                Marker::Restrictive(_) | Marker::TupleElement(_) | Marker::TupleThis,
+                Marker::Restrictive(_)
+                | Marker::Distributed(_)
+                | Marker::TupleElement(_)
+                | Marker::TupleThis,
             ) => ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES,
             TypeData::Marker(_) => {
                 ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES | ObjectFlags::HAS_MARKER
@@ -4243,6 +4255,28 @@ impl<'p, 's> Types<'p, 's> {
             .map(|i| mapping[i].1)
     }
 
+    /// `getNonDistributedTypeParameter`
+    #[inline]
+    pub fn non_distributed(&self, ty: TypeId) -> TypeId {
+        match *self.get(ty) {
+            TypeData::Marker(Marker::Distributed(of)) => of,
+            _ => ty,
+        }
+    }
+
+    /// `getMappedType`. A declared type has a mapper here that maps each of its outer type parameters to itself, where
+    /// tsgo has none and `instantiateType` returns the type unchanged.
+    pub fn mapped_type(&self, id: MapperId, param: TypeId) -> TypeId {
+        let TypeData::Marker(Marker::Distributed(of)) = *self.get(param) else {
+            return self.map(id, param).unwrap_or(param);
+        };
+        match self.map(id, of) {
+            Some(mapped) if mapped != of => mapped,
+            _ if self.mapping(id).iter().all(|pair| pair.0 == pair.1) => param,
+            _ => of,
+        }
+    }
+
     /// Returns `keyType` of `prop` if `prop` is a mapped type's property that stores the key in `Prop::name_type`
     /// instead of in its mapper. In that form `Prop::mapper` is the mapped type's own mapper, and that's how the form
     /// is recognized, because a mapper that includes the key is a different mapper. Returns `None` for any other
@@ -4565,6 +4599,7 @@ follow_enum!(Marker {
     Marker::SuperForCheck => (),
     Marker::SubForCheck => (),
     Marker::Restrictive(a) => (a),
+    Marker::Distributed(a) => (a),
     Marker::TupleElement(a) => (a),
     Marker::TupleThis => (),
 });

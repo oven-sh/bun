@@ -2073,6 +2073,12 @@ impl<'p, 's> Checker<'p, 's> {
         self.types().get(ty)
     }
 
+    /// `getNonDistributedTypeParameter`
+    #[inline]
+    pub(super) fn non_distributed(&self, ty: TypeId) -> TypeId {
+        self.types().non_distributed(ty)
+    }
+
     /// A view of the published types plus the task-local ones, which is everything the task sees.
     #[inline(always)]
     pub fn types(&self) -> Types<'p, 's> {

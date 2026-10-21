@@ -932,7 +932,7 @@ impl Checker<'_, '_> {
             }
             if is_variable
                 && let TypeNodeKind::Mapped(m) = hir[parent].kind
-                && ty == self.type_param(file, hir[m].param)
+                && self.non_distributed(ty) == self.type_param(file, hir[m].param)
                 && let Some((_, constraint)) = self.mapped_key_flow_constraint(file, parent, node)
             {
                 constraints.push(constraint);

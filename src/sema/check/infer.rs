@@ -214,7 +214,7 @@ impl Inference {
         }
     }
 
-    /// `getInferenceInfoForType`
+    /// `getInferenceInfoForType` for a type that isn't a distributed type parameter.
     #[inline]
     fn index_of(&self, ty: TypeId) -> Option<usize> {
         self.params.iter().position(|&p| p == ty)
@@ -222,6 +222,15 @@ impl Inference {
 }
 
 impl<'p, 's> Checker<'p, 's> {
+    /// `getInferenceInfoForType`
+    #[inline]
+    fn inference_info_for_type(&self, n: &Inference, ty: TypeId) -> Option<usize> {
+        n.index_of(ty).or_else(|| match *self.data(ty) {
+            TypeData::Marker(Marker::Distributed(of)) => n.index_of(of),
+            _ => None,
+        })
+    }
+
     /// Infers `params` from `source` to `target`. For `infer` in conditional types.
     pub fn infer_from_types(
         &mut self,
@@ -402,9 +411,12 @@ impl<'p, 's> Checker<'p, 's> {
         if self.is_no_infer(target) {
             return;
         }
-        target = self.actual_type_variable(target);
+        // A distributed type parameter stays as it is for `isTypeParameterAtTopLevel`.
+        if !self.is_type_param(target) {
+            target = self.actual_type_variable(target);
+        }
         if self.is_type_variable(target) {
-            if let Some(index) = n.index_of(target) {
+            if let Some(index) = self.inference_info_for_type(n, target) {
                 // `ObjectFlagsNonInferrableType`: a type with omitted parts isn't a candidate.
                 // Neither is `nonInferrableAnyType`. It lacks the flag, so a type that contains it
                 // is still a candidate.
@@ -933,7 +945,7 @@ impl<'p, 's> Checker<'p, 's> {
             // from which an inference was made at a priority as good as a naked type parameter
             // would get.
             for &t in targets {
-                if n.index_of(t).is_some() {
+                if self.inference_info_for_type(n, t).is_some() {
                     naked = t;
                     type_variable_count += 1;
                     continue;
@@ -977,7 +989,10 @@ impl<'p, 's> Checker<'p, 's> {
                     let TypeData::Intersection(parts) = self.data(t) else {
                         return;
                     };
-                    let Some(&v) = parts.iter().find(|&&p| n.index_of(p).is_some()) else {
+                    let Some(&v) = parts
+                        .iter()
+                        .find(|&&p| self.inference_info_for_type(n, p).is_some())
+                    else {
                         return;
                     };
                     if variable.is_some_and(|other| other != v) {
@@ -1007,7 +1022,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         } else {
             for &t in targets {
-                if n.index_of(t).is_some() {
+                if self.inference_info_for_type(n, t).is_some() {
                     type_variable_count += 1;
                 } else {
                     self.infer_types(n, source, t);
@@ -1023,7 +1038,7 @@ impl<'p, 's> Checker<'p, 's> {
             type_variable_count > 0
         } {
             for &t in targets {
-                if n.index_of(t).is_some() {
+                if self.inference_info_for_type(n, t).is_some() {
                     self.infer_with_priority(n, source, t, PRIORITY_NAKED);
                 }
             }
@@ -1071,7 +1086,7 @@ impl<'p, 's> Checker<'p, 's> {
                     self.cond_piece(source, which),
                     self.cond_piece(target, which),
                 );
-                self.infer_types(n, s, t);
+                self.infer_types(n, self.non_distributed(s), t);
             }
             return;
         }
@@ -1106,7 +1121,7 @@ impl<'p, 's> Checker<'p, 's> {
             // A substring inferred for a type parameter constrained to, say, `number` becomes the
             // number it spells.
             if let Some(value) = self.string_literal_value(source)
-                && let Some(index) = n.index_of(target)
+                && let Some(index) = self.inference_info_for_type(n, target)
                 && let Some(constraint) = self.base_constraint_of(n.params[index])
                 && !self.is_any(constraint)
                 && let Some(matching_type) = self.literal_matching_text(value, source, constraint)
@@ -1493,7 +1508,7 @@ impl<'p, 's> Checker<'p, 's> {
             let middle_length = target_arity.saturating_sub(start_length + end_length);
             let fixed_tuple_constraint =
                 |c: &mut Self, n: &Inference, t: TypeId| -> Option<usize> {
-                    let index = n.index_of(t)?;
+                    let index = c.inference_info_for_type(n, t)?;
                     let constraint = c.base_constraint_of(n.params[index])?;
                     match c.data(constraint) {
                         TypeData::Tuple { flags, .. }
@@ -1509,8 +1524,8 @@ impl<'p, 's> Checker<'p, 's> {
                 if a.contains(ElemFlags::VARIADIC) && b.contains(ElemFlags::VARIADIC) {
                     // `[...T, ...U]`: `T` takes as many source elements as there are arguments for
                     // it.
-                    if let Some(implied_arity) = n
-                        .index_of(element_types[start_length])
+                    if let Some(implied_arity) = self
+                        .inference_info_for_type(n, element_types[start_length])
                         .and_then(|i| n.candidates[i].implied_arity)
                     {
                         let skipped = (end_length + source_arity).saturating_sub(implied_arity);
@@ -2104,7 +2119,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // `{ [P in keyof T]: X }`: reverse the mapping to recover the type it was mapped
                 // from, and infer from that to `T`, at a lower priority than a direct inference to
                 // `T`, and lower still if it is only partial.
-                if let Some(index) = n.index_of(of)
+                if let Some(index) = self.inference_info_for_type(n, of)
                     && n.candidates[index].fixed.is_none()
                     && let Some(inferred) = self.reverse_mapped_type(source, target, of)
                 {
@@ -3319,7 +3334,9 @@ impl<'p, 's> Checker<'p, 's> {
                 TypeData::ReverseMapped { source, mapped, of } => {
                     left.extend([*source, *mapped, *of]);
                 }
-                TypeData::Keyof(t) | TypeData::StringMapping { ty: t, .. } => left.push(*t),
+                TypeData::Keyof(t)
+                | TypeData::StringMapping { ty: t, .. }
+                | TypeData::Marker(Marker::Distributed(t)) => left.push(*t),
                 _ => {}
             }
             while let Some(sig) = signatures.pop() {

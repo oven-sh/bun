@@ -1719,6 +1719,11 @@ impl<'p, 's> Checker<'p, 's> {
             return cached;
         }
         let TypeData::TypeParam(file, tp, enclosing_mapper) = *self.data(param) else {
+            if matches!(self.data(param), TypeData::Marker(Marker::Distributed(_)))
+                && !self.has_non_circular_base_constraint(param)
+            {
+                return None;
+            }
             // The constraint of a `this` type or a marker type is assigned when the type is
             // created.
             return self.constraint_from_type_param(param);
@@ -1770,6 +1775,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (file, tp, enclosing_mapper) = match *self.data(param) {
             TypeData::TypeParam(file, tp, enclosing_mapper) => (file, tp, enclosing_mapper),
             TypeData::ThisParam(sym) => return Some(self.declared_type(sym)),
+            TypeData::Marker(Marker::Distributed(of)) => return Some(of),
             _ if param == TypeId::MARKER_SUB => return Some(TypeId::MARKER_SUPER),
             _ if param == TypeId::MARKER_SUB_FOR_CHECK => {
                 return Some(TypeId::MARKER_SUPER_FOR_CHECK);
@@ -2255,7 +2261,9 @@ impl<'p, 's> Checker<'p, 's> {
                 // `filled` changes with every default, so each one would get a new mapper. Most don't need one.
                 Some(default) => match self.types().instantiation_class(default) {
                     InstantiationClass::Unchanged => default,
-                    InstantiationClass::TypeParameter => {
+                    InstantiationClass::TypeParameter
+                    | InstantiationClass::DistributedTypeParameter => {
+                        let default = self.non_distributed(default);
                         if places.is_empty() {
                             // Like a mapper, keep the first of two equal parameters.
                             for (at, &param) in params.iter().enumerate() {
@@ -3319,9 +3327,55 @@ impl<'p, 's> Checker<'p, 's> {
             TypeNodeKind::Ref { .. } => {
                 match self.get_intended_type_from_jsdoc_type_reference(file, node) {
                     Some(intended) => intended,
-                    None => self.get_type_reference_type(file, node),
+                    None => {
+                        let ty = self.get_type_reference_type(file, node);
+                        self.distributed_type_parameter(file, node, ty)
+                    }
                 }
             }
+        }
+    }
+
+    /// `getDistributedTypeParameter`. `ty` is the type of the type reference `node`.
+    fn distributed_type_parameter(&mut self, file: FileId, node: TypeNodeId, ty: TypeId) -> TypeId {
+        let TypeData::TypeParam(of, tp, _) = *self.data(ty) else {
+            return ty;
+        };
+        if !self.files().has_conditional_or_mapped_type(file) {
+            return ty;
+        }
+        let (hir, name) = (self.hir(file), self.hir(of)[tp].name);
+        let symbol_of = |c: &mut Self, reference: TypeNodeId| match hir[reference].kind {
+            TypeNodeKind::Ref { name, .. } => {
+                let scope = c.bound(file).type_scope[reference.idx()];
+                c.resolve_type_reference_name(file, scope, name, true)
+            }
+            _ => None,
+        };
+        let mut above = hir.parent(hir.node(node));
+        loop {
+            match hir.data(above) {
+                NodeData::Type(conditional) => {
+                    if let TypeNodeKind::Cond { check, .. } = hir[conditional].kind
+                        // `isSimpleIdentifierTypeReference`
+                        && let TypeNodeKind::Ref {
+                            name: checked,
+                            args,
+                        } = hir[check].kind
+                        && args.is_empty()
+                        && hir.texts(checked).eq([name])
+                        && (self.parenthesized_types_around(file, check, hir[conditional].pos))
+                            .next()
+                            .is_none()
+                        && (check == node || symbol_of(self, check) == symbol_of(self, node))
+                    {
+                        return self.intern(TypeData::Marker(Marker::Distributed(ty)));
+                    }
+                }
+                NodeData::Stmt(_) | NodeData::File | NodeData::None => return ty,
+                _ => {}
+            }
+            above = hir.parent(above);
         }
     }
 
@@ -4974,8 +5028,8 @@ impl<'p, 's> Checker<'p, 's> {
         let types = self.types();
         match types.instantiation_class(ty) {
             InstantiationClass::Unchanged => return false,
-            InstantiationClass::TypeParameter => {
-                return self.could_contain_type_variables(types.map(mapper, ty).unwrap_or(ty));
+            InstantiationClass::TypeParameter | InstantiationClass::DistributedTypeParameter => {
+                return self.could_contain_type_variables(types.mapped_type(mapper, ty));
             }
             InstantiationClass::Other if levels == 0 => return false,
             InstantiationClass::Other => {}
@@ -5000,8 +5054,9 @@ impl<'p, 's> Checker<'p, 's> {
                 let stays_below_the_top = |&member: &TypeId| match types.instantiation_class(member)
                 {
                     InstantiationClass::Unchanged => true,
-                    InstantiationClass::TypeParameter => {
-                        let actual = types.map(mapper, member).unwrap_or(member);
+                    InstantiationClass::TypeParameter
+                    | InstantiationClass::DistributedTypeParameter => {
+                        let actual = types.mapped_type(mapper, member);
                         self.flags(actual) & (tf::ANY | tf::UNKNOWN) == 0
                     }
                     InstantiationClass::Other => types.is_plain_object(member),

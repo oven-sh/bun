@@ -1064,7 +1064,14 @@ impl<'p, 's> Checker<'p, 's> {
             && target != TypeId::MARKER_SUPER_FOR_CHECK
             && target != TypeId::MARKER_SUB_FOR_CHECK
         {
-            match self.base_constraint_of(target) {
+            let base_constraint = self.base_constraint_of(target);
+            let non_distributed = self.non_distributed(target);
+            match base_constraint {
+                _ if non_distributed != target
+                    && self.is_assignable(generalized_source, non_distributed) =>
+                {
+                    self.report_error(r, 5113, &[generalized_source_name, target_name]);
+                }
                 Some(constraint) if self.is_assignable(generalized_source, constraint) => {
                     let args = [generalized_source_name, target_name, Arg::Type(constraint)];
                     self.report_error(r, 5075, &args);

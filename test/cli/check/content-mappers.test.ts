@@ -1,0 +1,733 @@
+import { afterAll, describe, expect, test } from "bun:test";
+import { bunExe, isWindows, tempDir } from "harness";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { endChildren, longLimit, spawn } from "../children";
+import { env as plainOutput } from "./differential";
+
+afterAll(endChildren);
+
+// A content mapper is a program from a package that turns a file TypeScript can't read into TypeScript. The mappers here
+// are small scripts that Bun runs. Unless a comment says otherwise, the expected output is what `tsc` 7.1 prints for the
+// same project.
+
+const env = {
+  ...plainOutput,
+  GITHUB_WORKSPACE: undefined,
+  npm_lifecycle_event: undefined,
+  npm_package_json: undefined,
+  BUN_INTERNAL_SCRIPTS_OF_COMMANDS: undefined,
+  BUN_INTERNAL_CHECK_SCRIPTS: undefined,
+};
+
+// What every mapper starts with. `serve` answers each request with the result of its handler, or with nothing if that's
+// `SKIP`. By default a file maps to the text between `<script>` and `</script>`.
+const prelude = String.raw`
+const fs = require("fs");
+const SKIP = Symbol();
+const frame = message => {
+  const body = Buffer.from(typeof message === "string" ? message : JSON.stringify(message));
+  return Buffer.concat([Buffer.from("Content-Length: " + body.length + "\r\n\r\n"), body]);
+};
+const raw = bytes => process.stdout.write(bytes);
+const send = message => raw(frame({ jsonrpc: "2.0", ...message }));
+const script = content => {
+  const bytes = Buffer.from(content);
+  const start = bytes.indexOf("<script>") + 8, end = bytes.indexOf("</script>");
+  return { text: bytes.subarray(start, end).toString(), extension: ".ts", mappings: [[0, end - start, start, end - start, 0]] };
+};
+const defaults = {
+  initialize: () => ({ positionEncoding: "utf-8", diagnosticSource: "m" }),
+  openProject: () => ({}),
+  closeProject: () => null,
+  transform: ({ content }) => script(content),
+};
+function serve(handlers = {}) {
+  handlers = { ...defaults, ...handlers };
+  let buffer = Buffer.alloc(0);
+  process.stdin.on("data", chunk => {
+    buffer = Buffer.concat([buffer, chunk]);
+    for (;;) {
+      const header = buffer.indexOf("\r\n\r\n");
+      if (header < 0) return;
+      const length = Number(/Content-Length: (\d+)/.exec(buffer.subarray(0, header).toString())[1]);
+      if (buffer.length < header + 4 + length) return;
+      const message = JSON.parse(buffer.subarray(header + 4, header + 4 + length).toString());
+      buffer = buffer.subarray(header + 4 + length);
+      if (!message.method) continue;
+      const result = handlers[message.method](message.params, message.id);
+      if (result !== SKIP) send({ id: message.id, result });
+    }
+  });
+}
+`;
+
+const app = `<template>
+  <p>hi</p>
+</template>
+<script>
+export const count: number = "one";
+export function greet(name: string) { return name; }
+</script>
+`;
+
+const main = `import { greet, count } from "./App.vue";
+greet(count);
+`;
+
+const errorsOfApp = `App.vue(5,14): error TS2322: Type 'string' is not assignable to type 'number'.
+main.ts(2,7): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.`;
+
+type Project = {
+  /** The mapper's code after `prelude`. */
+  mapper: string;
+  files?: Record<string, string>;
+  /** Replaces properties of `tsconfig.json`. */
+  config?: object;
+  compilerOptions?: object;
+  /** `typescript.contentMapper` in the package's `package.json`. */
+  manifest?: object;
+};
+
+function project({ mapper, files, config, compilerOptions, manifest }: Project) {
+  return tempDir("bun-check-mappers", {
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        strict: true,
+        noEmit: true,
+        module: "esnext",
+        moduleResolution: "bundler",
+        lib: ["esnext"],
+        types: [],
+        ...compilerOptions,
+      },
+      contentMappers: [{ package: "m", extensions: [".vue"] }],
+      include: ["*.ts", "*.vue"],
+      ...config,
+    }),
+    "node_modules/m/package.json": JSON.stringify({
+      name: "m",
+      version: "1.0.0",
+      typescript: { contentMapper: { exec: [bunExe(), "mapper.js"], ...manifest } },
+    }),
+    "node_modules/m/mapper.js": prelude + mapper,
+    "App.vue": app,
+    "main.ts": main,
+    ...files,
+  });
+}
+
+async function check(dir: { toString(): string }, args: string[], extra: Record<string, string | undefined> = {}) {
+  await using proc = spawn({
+    cmd: [bunExe(), "check", "--no-pretty", ...args],
+    cwd: String(dir),
+    env: { ...env, ...extra },
+    timeout: longLimit,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout.replaceAll("\\", "/").trim(), stderr, exitCode };
+}
+
+/** Checks the project with `--runExternalCode`. */
+async function expectErrors(options: Project, errors: string) {
+  using dir = project(options);
+  const { stdout, exitCode } = await check(dir, ["--runExternalCode"]);
+  expect(stdout).toBe(errors);
+  expect(exitCode).toBe(errors ? 1 : 0);
+}
+
+/** A mapper whose `transform` changes `r`, the default result. */
+const changed = (body: string) =>
+  `serve({ transform: params => { const r = script(params.content); ${body}; return r; } });`;
+
+const failed = (why: string) => `App.vue(1,1): error TS18069: The content mapper 'm' failed to transform this file.
+  ${why}`;
+const invalidResponse = failed("The content mapper returned an invalid transform response.");
+const requestFailed = failed("The content mapper process failed while handling the transform request.");
+const notInitialized = (why: string) => `error TS18099: The content mapper 'm' could not be initialized.
+  ${why}`;
+const isVirtual =
+  "  This location is in virtual code produced by the content mapper 'm@1.0.0' and has no corresponding location in the original file.";
+
+describe.concurrent("a content mapper", () => {
+  test("errors are reported where they are in the original file", async () => {
+    await expectErrors({ mapper: `serve();` }, errorsOfApp);
+  });
+
+  test("a project without errors", async () => {
+    await expectErrors(
+      { mapper: `serve();`, files: { "App.vue": app.replace(`"one"`, "1"), "main.ts": `import "./App.vue";\n` } },
+      "",
+    );
+  });
+
+  const notAscii = `<template>😀 日本語 é</template>
+<script>
+export const s = "😀日本"; export const count: number = "one";
+export function greet(name: string) { return name; }
+</script>
+`;
+  const errorsOfNotAscii = errorsOfApp.replace("(5,14)", "(3,39)");
+
+  test("offsets in UTF-8", async () => {
+    await expectErrors({ mapper: `serve();`, files: { "App.vue": notAscii } }, errorsOfNotAscii);
+  });
+
+  test("offsets in UTF-16", async () => {
+    const mapper = `serve({
+      initialize: () => ({ positionEncoding: "utf-16", diagnosticSource: "m" }),
+      transform: ({ content }) => {
+        const start = content.indexOf("<script>") + 8, end = content.indexOf("</script>");
+        return { text: content.slice(start, end), extension: ".ts", mappings: [[0, end - start, start, end - start, 0]] };
+      },
+    });`;
+    await expectErrors({ mapper, files: { "App.vue": notAscii } }, errorsOfNotAscii);
+  });
+
+  test("a byte order mark and CRLF", async () => {
+    await expectErrors({ mapper: `serve();`, files: { "App.vue": "﻿" + app.replaceAll("\n", "\r\n") } }, errorsOfApp);
+  });
+
+  test("an error in text that the mapper made up", async () => {
+    const mapper = `serve({ transform: () => ({
+      text: "const generated: number = 'x';\\nexport const count = 1; export function greet(n: string) { return n; }\\n",
+      extension: ".ts",
+    }) });`;
+    await expectErrors(
+      { mapper },
+      `App.vue(1,7): error TS2322: Type 'string' is not assignable to type 'number'.
+${isVirtual}
+main.ts(2,7): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.`,
+    );
+  });
+
+  test("spans that correspond as a whole", async () => {
+    const mapper = `serve({ transform: ({ content }) => {
+      const text = "export const myCount: number = 'x';\\nexport const other: string = myCount;\\n";
+      return { text, extension: ".ts", mappings: [
+        [13, 7, content.indexOf("my-count"), 8, 2],
+        [text.indexOf("other"), 5, content.indexOf("zzz"), 3, 1],
+      ] };
+    } });`;
+    await expectErrors(
+      { mapper, files: { "App.vue": `<a my-count zzz />\n`, "main.ts": `import "./App.vue";\n` } },
+      `App.vue(1,4): error TS2322: Type 'string' is not assignable to type 'number'.
+App.vue(1,13): error TS2322: Type 'number' is not assignable to type 'string'.`,
+    );
+  });
+
+  test("the mapper's own errors", async () => {
+    await expectErrors(
+      { mapper: changed(`r.diagnostics = [{ start: 1, length: 8, messageText: "bad template", code: 7 }]`) },
+      `App.vue(1,2): error m7: bad template`,
+    );
+  });
+
+  test("directives that ignore and expect errors", async () => {
+    const mapper = `serve({ transform: ({ content }) => {
+      const r = script(content);
+      const line = n => {
+        let at = 0;
+        for (let i = 0; i < n; i++) at = r.text.indexOf("\\n", at) + 1;
+        return [at, r.text.indexOf("\\n", at)];
+      };
+      r.diagnosticDirectives = {
+        unusedExpectDirectiveDiagnostics: [{ code: 55, messageText: "unused expect" }],
+        directives: [[0, 15, ...line(1), 0], [16, 15, ...line(2), 1, 0], [32, 22, ...line(3), 1, 0]],
+      };
+      return r;
+    } });`;
+    const file = `<!-- ignore -->
+<!-- expect -->
+<!-- expect unused -->
+<script>
+export const a: number = "one";
+export const b: number = "two";
+export const c: number = 3;
+</script>
+`;
+    await expectErrors(
+      { mapper, files: { "App.vue": file, "main.ts": `import "./App.vue";\n` } },
+      `App.vue(3,1): error m55: unused expect`,
+    );
+  });
+
+  test("supplemental files", async () => {
+    const mapper = changed(`
+      r.supplemental = [{ text: "declare const fromSupplemental: number;\\nconst wrong: string = 1;\\n", extension: ".ts" }];
+      r.text += "export const viaGlobal: string = fromSupplemental;\\n"`);
+    await expectErrors(
+      { mapper },
+      `App.vue(5,14): error TS2322: Type 'string' is not assignable to type 'number'.
+App.vue(4,14): error TS2322: Type 'number' is not assignable to type 'string'.
+${isVirtual}
+App.vue(2,7): error TS2322: Type 'number' is not assignable to type 'string'.
+${isVirtual}
+main.ts(2,7): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.`,
+    );
+  });
+
+  test("options reach the mapper", async () => {
+    const mapper = `let options;
+    serve({
+      openProject: params => { options = params.options; return {}; },
+      transform: () => ({ text: "export const count: " + options.type + " = 'x';\\n", extension: ".ts" }),
+    });`;
+    await expectErrors(
+      {
+        mapper,
+        config: { contentMappers: [{ package: "m", extensions: [".vue"], options: { type: "boolean" } }] },
+        files: { "main.ts": `import "./App.vue";\n` },
+      },
+      `App.vue(1,14): error TS2322: Type 'string' is not assignable to type 'boolean'.
+${isVirtual}`,
+    );
+  });
+
+  test("two entries with the same package share a process", async () => {
+    using dir = project({
+      mapper: `fs.appendFileSync(__dirname + "/started.txt", "x"); serve();`,
+      config: {
+        contentMappers: [
+          { package: "m", extensions: [".vue"] },
+          { package: "m", extensions: [".sv"] },
+        ],
+        include: ["*.ts", "*.vue", "*.sv"],
+      },
+      files: { "B.sv": app },
+    });
+    const { stdout } = await check(dir, ["--runExternalCode"]);
+    expect(stdout).toBe(
+      `App.vue(5,14): error TS2322: Type 'string' is not assignable to type 'number'.
+B.sv(5,14): error TS2322: Type 'string' is not assignable to type 'number'.
+main.ts(2,7): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.`,
+    );
+    expect(await Bun.file(join(String(dir), "node_modules/m/started.txt")).text()).toBe("x");
+  });
+
+  test("it runs in its package's directory, and its standard error is shown", async () => {
+    using dir = project({ mapper: `console.error("cwd=" + require("path").basename(process.cwd())); serve();` });
+    const { stdout, stderr } = await check(dir, ["--runExternalCode"]);
+    expect(stderr).toContain("cwd=m\n");
+    expect(stdout).toBe(errorsOfApp);
+  });
+
+  test("it has exited when the check ends", async () => {
+    using dir = project({ mapper: `fs.writeFileSync(__dirname + "/pid.txt", String(process.pid)); serve();` });
+    const { stdout } = await check(dir, ["--runExternalCode"]);
+    expect(stdout).toBe(errorsOfApp);
+    const pid = Number(await Bun.file(join(String(dir), "node_modules/m/pid.txt")).text());
+    expect(() => process.kill(pid, 0)).toThrow();
+  });
+
+  test("a file larger than a pipe's buffer", async () => {
+    const lines = 200_000;
+    const comments = Buffer.alloc(lines * 13, "// a comment\n").toString();
+    await expectErrors(
+      { mapper: `serve();`, files: { "App.vue": app.replace("<script>\n", "<script>\n" + comments) } },
+      errorsOfApp.replace("(5,14)", `(${5 + lines},14)`),
+    );
+  });
+});
+
+describe.concurrent("a mapper that doesn't follow the protocol", () => {
+  // `tsc` reports one of three errors here, depending on which of its threads is first.
+  test.each([
+    ["text that isn't a header", `raw("hello world\\n\\n\\n"); serve();`, `jsonrpc: invalid header: "hello world/n"`],
+    ["a header without a length", `raw("X-Thing: 1\\r\\n\\r\\n{}"); serve();`, "jsonrpc: no content length"],
+    [
+      "a negative length",
+      `raw("Content-Length: -5\\r\\n\\r\\n{}"); serve();`,
+      "jsonrpc: invalid content length: negative value -5",
+    ],
+    [
+      "a length that isn't a number",
+      `raw("Content-Length: abc\\r\\n\\r\\n{}"); serve();`,
+      `jsonrpc: invalid content length: parse error: strconv.ParseInt: parsing "abc": invalid syntax`,
+    ],
+    // For these, `tsc` prints an error of Go's JSON decoder.
+    [
+      "a message that isn't JSON",
+      `serve({ initialize: () => { raw(frame("{nope")); return SKIP; } });`,
+      "jsonrpc: invalid message",
+    ],
+    [
+      "a message that isn't an object",
+      `serve({ initialize: () => { raw(frame("[1,2]")); return SKIP; } });`,
+      "jsonrpc: invalid message",
+    ],
+    [
+      "another version of JSON-RPC",
+      `serve({ initialize: (params, id) => { raw(frame({ jsonrpc: "1.0", id, result: defaults.initialize() })); return SKIP; } });`,
+      "jsonrpc: invalid message",
+    ],
+  ])("%s", async (_, mapper, why) => {
+    await expectErrors(
+      { mapper },
+      notInitialized(`The content mapper's 'initialize' request failed: ipc: connection closed\n${why}`),
+    );
+  });
+
+  test("a length that never arrives", async () => {
+    await expectErrors(
+      { mapper: `raw("Content-Length: 1000000000000000000\\r\\n\\r\\n{}"); setTimeout(() => process.exit(0), 50);` },
+      notInitialized("The content mapper process exited before responding to the 'initialize' request (exit code 0)."),
+    );
+  });
+
+  test("answers that nothing asked for are dropped", async () => {
+    const mapper = `send({ method: "log", params: {} });
+    send({ id: 99, method: "ask", params: {} });
+    serve({ transform: (params, id) => {
+      send({ id: "nope", result: { text: "wrong", extension: ".ts" } });
+      send({ id: 7, result: null });
+      send({ id, result: script(params.content) });
+      send({ id, result: { text: "export {}", extension: ".ts" } });
+      return SKIP;
+    } });`;
+    await expectErrors({ mapper }, errorsOfApp);
+  });
+
+  test("only answers with the wrong id, then exits", async () => {
+    const mapper = `serve({ initialize: () => {
+      send({ id: "nope", result: defaults.initialize() });
+      setTimeout(() => process.exit(0), 50);
+      return SKIP;
+    } });`;
+    await expectErrors(
+      { mapper },
+      notInitialized("The content mapper process exited before responding to the 'initialize' request (exit code 0)."),
+    );
+  });
+
+  test.each([
+    ["initialize", notInitialized("The content mapper's 'initialize' request failed: ipc: remote error [-1]: no")],
+    ["openProject", failed("The content mapper process failed while handling the project request.")],
+    ["transform", requestFailed],
+  ])("answers %s with an error", async (method, errors) => {
+    const mapper = `serve({ ${method}: (params, id) => { send({ id, error: { code: -1, message: "no" } }); return SKIP; } });`;
+    await expectErrors({ mapper }, errors);
+  });
+
+  test("a message with the same name twice", async () => {
+    const mapper = `serve({ transform: (params, id) => {
+      raw(frame('{"jsonrpc":"2.0","id":"' + id + '","result":{"text":"","text":"export {}","extension":".ts"}}'));
+      return SKIP;
+    } });`;
+    await expectErrors({ mapper }, requestFailed);
+  });
+
+  test("a message that's nested too deeply", async () => {
+    const mapper = `serve({ transform: (params, id) => {
+      const deep = "[".repeat(2000000) + "]".repeat(2000000);
+      raw(frame('{"jsonrpc":"2.0","id":"' + id + '","result":{"text":"","extension":".ts","x":' + deep + '}}'));
+      return SKIP;
+    } });`;
+    await expectErrors({ mapper }, requestFailed);
+  });
+
+  test("an unknown position encoding", async () => {
+    await expectErrors(
+      { mapper: `serve({ initialize: () => ({ positionEncoding: "utf-32", diagnosticSource: "m" }) });` },
+      notInitialized("The content mapper selected unsupported position encoding 'utf-32'."),
+    );
+  });
+
+  test.each([
+    ["a huge offset", "[0, 5, 2000000000, 5, 0]", invalidResponse],
+    ["an offset that isn't an int32", "[0, 5, 3000000000, 5, 0]", invalidResponse],
+    ["a negative offset", "[-1, 5, 0, 5, 0]", invalidResponse],
+    ["a negative length", "[0, -5, 0, 5, 0]", invalidResponse],
+    ["a fraction", "[0.5, 5, 0, 5, 0]", invalidResponse],
+    ["a string", `["0", 5, 0, 5, 0]`, invalidResponse],
+    ["too few numbers", "[0, 5, 0, 5]", invalidResponse],
+    ["too many numbers", "[0, 5, 0, 5, 0, 1, 2]", invalidResponse],
+    ["past the end of the new text", "[0, 100000, 0, 5, 1]", invalidResponse],
+    ["past the end of the original text", "[0, 5, 0, 100000, 1]", invalidResponse],
+    [
+      "an unknown kind",
+      "[0, 5, 0, 5, 9]",
+      "App.vue(1,1): error TS18083: The content mapper 'm' produced a position mapping with an invalid kind (near virtual offset 0).",
+    ],
+    [
+      "verbatim, but the texts differ",
+      "[0, 5, 0, 5, 0]",
+      "App.vue(1,1): error TS18073: The content mapper 'm' produced a verbatim mapping that does not match the original content (virtual offset 0, original offset 0).",
+    ],
+  ])("a mapping with %s", async (_, tuple, errors) => {
+    await expectErrors({ mapper: changed(`r.mappings = [${tuple}]`) }, errors);
+  });
+
+  test("mappings that overlap", async () => {
+    await expectErrors(
+      { mapper: changed(`const at = r.mappings[0][2]; r.mappings = [[0, 10, at, 10, 0], [5, 10, at + 5, 10, 0]]`) },
+      "App.vue(1,1): error TS18081: The content mapper 'm' produced overlapping or out-of-order position mappings (near virtual offset 5).",
+    );
+  });
+
+  test("an offset in the middle of a character", async () => {
+    const utf8 = `serve({ transform: () => ({ text: "export const é = 1;", extension: ".ts", mappings: [[14, 1, 1, 1, 1]] }) });`;
+    await expectErrors({ mapper: utf8, files: { "App.vue": "é é\n" } }, invalidResponse);
+    const utf16 = `serve({
+      initialize: () => ({ positionEncoding: "utf-16", diagnosticSource: "m" }),
+      transform: () => ({ text: "export const a = '😀';", extension: ".ts", mappings: [[18, 1, 1, 1, 1]] }),
+    });`;
+    await expectErrors({ mapper: utf16, files: { "App.vue": "😀😀\n" } }, invalidResponse);
+  });
+
+  test.each([".exe", "ts", ".d.ts", "", ".TS"])("the extension %j", async extension => {
+    await expectErrors(
+      { mapper: changed(`r.extension = ${JSON.stringify(extension)}`) },
+      failed(`The content mapper returned an output with unsupported virtual extension '${extension}'.`),
+    );
+  });
+
+  test("after five files it isn't used again", async () => {
+    const files: Record<string, string> = { "main.ts": "export {};\n" };
+    for (let i = 0; i < 8; i++) files[`F${i}.vue`] = app;
+    using dir = project({ mapper: changed(`r.extension = ".exe"`), files });
+    // Which five depends on the order in which the answers arrive, as in `tsc`.
+    const { stdout, exitCode } = await check(dir, ["--runExternalCode"]);
+    const lines = stdout.split("\n");
+    expect(lines[0]).toBe("error TS18070: The content mapper 'm' failed 5 times and will not be used.");
+    expect(lines.filter(line => line.includes("TS18069")).length).toBe(5);
+    expect(exitCode).toBe(1);
+  });
+});
+
+describe.concurrent("a mapper's process", () => {
+  test.each([0, 3])("exits with code %d at once", async code => {
+    await expectErrors(
+      { mapper: `process.exit(${code});` },
+      notInitialized(
+        `The content mapper process exited before responding to the 'initialize' request (exit code ${code}).`,
+      ),
+    );
+  });
+
+  test.each([
+    ["exits", `process.exit(3)`],
+    ["throws", `throw new Error("expected by the test")`],
+    [
+      "exits after half an answer",
+      `fs.writeSync(1, frame({ jsonrpc: "2.0", id, result: script(params.content) }).subarray(0, 40)); process.exit(0)`,
+    ],
+  ])("%s in the middle of a request", async (_, body) => {
+    await expectErrors({ mapper: `serve({ transform: (params, id) => { ${body}; } });` }, requestFailed);
+  });
+
+  test.skipIf(isWindows)("is killed in the middle of a request", async () => {
+    await expectErrors({ mapper: `serve({ transform: () => process.kill(process.pid, "SIGKILL") });` }, requestFailed);
+  });
+
+  // `tsc` prints the errors and then waits forever.
+  test("never answers the last request", async () => {
+    await expectErrors({ mapper: `serve({ closeProject: () => SKIP });` }, errorsOfApp);
+  });
+
+  test("writes a lot to standard error", async () => {
+    using dir = project({ mapper: `process.stderr.write(Buffer.alloc(1 << 20, "e")); serve();` });
+    const { stdout, stderr } = await check(dir, ["--runExternalCode"]);
+    expect(stderr.length).toBeGreaterThan(1 << 20);
+    expect(stdout).toBe(errorsOfApp);
+  });
+
+  test.skipIf(isWindows)("a command that doesn't exist", async () => {
+    await expectErrors(
+      { mapper: `serve();`, manifest: { exec: ["does-not-exist-anywhere"] } },
+      notInitialized(
+        `The content mapper command 'does-not-exist-anywhere' could not be started: exec: "does-not-exist-anywhere": executable file not found in $PATH`,
+      ),
+    );
+    await expectErrors(
+      { mapper: `serve();`, manifest: { exec: ["./nope/x"] } },
+      notInitialized(
+        `The content mapper command './nope/x' could not be started: fork/exec ./nope/x: no such file or directory`,
+      ),
+    );
+  });
+
+  test("arguments are passed as they are, without a shell", async () => {
+    const marker = "$(touch shell-ran.txt); `touch shell-ran.txt` && touch shell-ran.txt";
+    using dir = project({
+      mapper: `if (process.argv[2] !== ${JSON.stringify(marker)}) process.exit(9); serve();`,
+      manifest: { exec: [bunExe(), "mapper.js", marker] },
+    });
+    const { stdout } = await check(dir, ["--runExternalCode"]);
+    expect(stdout).toBe(errorsOfApp);
+    expect(existsSync(join(String(dir), "node_modules/m/shell-ran.txt"))).toBe(false);
+  });
+
+  // The limit is five seconds, as in `tsc`.
+  test("never answers the first request", async () => {
+    await expectErrors(
+      { mapper: `setInterval(() => {}, 1000);` },
+      notInitialized("The content mapper did not respond to the 'initialize' request within 5 seconds."),
+    );
+  });
+});
+
+describe.concurrent("nothing starts without --runExternalCode on the command line", () => {
+  const started = `fs.writeFileSync(__dirname + "/started.txt", "x"); serve();`;
+  const notAllowed = (line: number) =>
+    `main.ts(1,30): error TS2307: Cannot find module './App.vue' or its corresponding type declarations.
+tsconfig.json(${line}): error TS18068: Content mappers require the '--runExternalCode' command line flag to be enabled.`;
+
+  async function expectNotStarted(
+    options: Omit<Project, "mapper">,
+    args: string[],
+    extra: Record<string, string> = {},
+    cmd = ["check", "--no-pretty"],
+  ) {
+    using dir = project({ mapper: started, ...options });
+    await using proc = spawn({
+      cmd: [bunExe(), ...cmd, ...args],
+      cwd: String(dir),
+      env: { ...env, ...extra },
+      timeout: longLimit,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(existsSync(join(String(dir), "node_modules/m/started.txt"))).toBe(false);
+    return stdout
+      .replaceAll("\\", "/")
+      .replace(/tsconfig\.json\(\d+,\d+\)/g, "tsconfig.json")
+      .trim();
+  }
+  const withoutPlace = notAllowed(0).replace("(0)", "");
+
+  test("the control: with the flag, it starts", async () => {
+    using dir = project({ mapper: started });
+    await check(dir, ["--runExternalCode"]);
+    expect(existsSync(join(String(dir), "node_modules/m/started.txt"))).toBe(true);
+  });
+
+  test("no flag", async () => {
+    expect(await expectNotStarted({}, [])).toBe(withoutPlace);
+  });
+
+  test("--runExternalCode false", async () => {
+    expect(await expectNotStarted({}, ["--runExternalCode", "false"])).toBe(withoutPlace);
+    expect(await expectNotStarted({}, ["--runExternalCode=false"])).toBe(withoutPlace);
+  });
+
+  test("in tsconfig.json", async () => {
+    expect(await expectNotStarted({ compilerOptions: { runExternalCode: true } }, [])).toBe(
+      `main.ts(1,30): error TS2307: Cannot find module './App.vue' or its corresponding type declarations.
+tsconfig.json: error TS6266: Option 'runExternalCode' can only be specified on command line.
+tsconfig.json: error TS18068: Content mappers require the '--runExternalCode' command line flag to be enabled.`,
+    );
+  });
+
+  test("in a tsconfig.json that's extended", async () => {
+    const files = { "base.json": `{ "compilerOptions": { "runExternalCode": true } }` };
+    expect(await expectNotStarted({ config: { extends: "./base.json" }, files }, [])).toBe(
+      `base.json(1,24): error TS6266: Option 'runExternalCode' can only be specified on command line.
+${withoutPlace}`,
+    );
+  });
+
+  // These have no counterpart in `tsc`, or `tsc` accepts them.
+  test("in BUN_OPTIONS", async () => {
+    expect(await expectNotStarted({}, [], { BUN_OPTIONS: "--runExternalCode" })).toBe(withoutPlace);
+    await expectNotStarted({}, [], { BUN_OPTIONS: "check --runExternalCode" });
+  });
+
+  test("before `check`", async () => {
+    expect(await expectNotStarted({}, [], {}, ["--runExternalCode", "check", "--no-pretty"])).toBe(withoutPlace);
+  });
+
+  test("in a response file", async () => {
+    expect(await expectNotStarted({ files: { "args.txt": "--runExternalCode" } }, ["@args.txt"])).toBe(withoutPlace);
+  });
+
+  test("in bunfig.toml", async () => {
+    const files = { "bunfig.toml": `runExternalCode = true\n[check]\nrunExternalCode = true\n` };
+    expect(await expectNotStarted({ files }, [])).toBe(withoutPlace);
+  });
+
+  test("after `--`", async () => {
+    await expectNotStarted({}, ["--", "--runExternalCode"]);
+  });
+
+  test("bun --check, bun test --check and bun build --check", async () => {
+    const files = { "main.test.ts": main, "index.ts": main };
+    await expectNotStarted({ files }, [], {}, ["--check", "--runExternalCode", "index.ts"]);
+    await expectNotStarted({ files }, [], {}, ["test", "--check", "--runExternalCode"]);
+    await expectNotStarted({ files }, [], {}, ["build", "--check", "--runExternalCode", "index.ts", "--outdir", "out"]);
+  });
+});
+
+// The mapper answers late, out of order, twice, with ids that nothing asked for, one byte at a time or several answers in
+// one write. What it does for a file depends on the seed and on the file's name only.
+describe.concurrent("answers in any order and in any pieces", () => {
+  const mapper = String.raw`
+const mulberry32 = a => () => {
+  a |= 0; a = (a + 0x6d2b79f5) | 0;
+  let t = Math.imul(a ^ (a >>> 15), 1 | a);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
+const hash = text => { let h = 2166136261; for (const c of text) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return h >>> 0; };
+const seed = Number(process.env.SEED);
+let merged = [];
+const flush = () => { if (merged.length) raw(Buffer.concat(merged.splice(0))); };
+const write = message => {
+  const bytes = frame({ jsonrpc: "2.0", ...message });
+  if (seed % 3 === 1) for (const byte of bytes) raw(Buffer.from([byte]));
+  else if (seed % 3 === 2) { merged.push(bytes); if (merged.length >= 10) flush(); else setTimeout(flush, 2); }
+  else raw(bytes);
+};
+serve({ transform: ({ content, fileName }, id) => {
+  const random = mulberry32(seed ^ hash(require("path").basename(fileName)));
+  const delay = Math.floor(random() * 10), before = random(), after = random();
+  setTimeout(() => {
+    if (before < 0.2) write({ id: "api999999", result: { text: "wrong", extension: ".ts" } });
+    if (before > 0.8) write({ id: "q" + id, method: "question", params: {} });
+    write({ id, result: script(content) });
+    if (after < 0.3) write({ id, result: { text: "const twice: number = '';", extension: ".ts" } });
+  }, delay);
+  return SKIP;
+} });`;
+  const count = 30;
+  const files: Record<string, string> = {
+    "main.ts": `import { v0 } from "./F0.vue";\nconst s: string = v0;\n`,
+  };
+  for (let i = 0; i < count; i++) {
+    const targets = [i + 1, i * 2 + 1, (i * 7 + 3) % count].filter(
+      (t, at, all) => t < count && t !== i && all.indexOf(t) === at,
+    );
+    files[`F${i}.vue`] = `<script>
+${targets.map(t => `import { v${t} } from "./F${t}.vue";`).join("\n")}
+export const v${i}: number = ${i % 7 === 0 ? `"text"` : i};
+export const sum${i} = () => [${targets.map(t => "v" + t).join(", ")}];
+</script>
+`;
+  }
+  const lineOf = (i: number) =>
+    files[`F${i}.vue`].split("\n").findIndex(line => line.startsWith(`export const v${i}:`)) + 1;
+  const errors = [0, 14, 21, 28, 7]
+    .map(i => `F${i}.vue(${lineOf(i)},14): error TS2322: Type 'string' is not assignable to type 'number'.`)
+    .concat(`main.ts(2,7): error TS2322: Type 'number' is not assignable to type 'string'.`)
+    .join("\n");
+
+  test.each([
+    [1, 1],
+    [1, 4],
+    [2, 1],
+    [2, 4],
+    [3, 1],
+    [3, 4],
+  ])("seed %d, %d threads", async (seed, threads) => {
+    // Only `main.ts` is listed, so the other files are found one import at a time.
+    using dir = project({ mapper, files, config: { files: ["main.ts"], include: undefined } });
+    const { stdout, exitCode } = await check(dir, ["--runExternalCode", "--threads", String(threads)], {
+      SEED: String(seed),
+    });
+    expect(stdout).toBe(errors);
+    expect(exitCode).toBe(1);
+  });
+});

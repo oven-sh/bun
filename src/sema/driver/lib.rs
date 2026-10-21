@@ -614,6 +614,9 @@ pub struct CommandLine {
     pub project: Option<Vec<u8>>,
     /// `--build`, which need not be the first argument.
     pub build: bool,
+    /// `--runExternalCode`, if it's among the arguments themselves. In a response file it has no effect, because only
+    /// the person who runs the command may allow a project to run programs.
+    pub runs_external_code: bool,
     /// The other `options`.
     pub compiler_options: Vec<CompilerOption>,
     /// The `errors` about response files. See `Request::errors`.
@@ -737,6 +740,16 @@ impl CommandLineParser<'_> {
         if name.eq_ignore_ascii_case(b"build") {
             self.parsed.build = true;
             return i;
+        }
+        if name.eq_ignore_ascii_case(b"runExternalCode") {
+            let is_value = |next: &&[u8]| matches!(*next, b"true" | b"false" | b"null");
+            let next = args.get(i).copied().filter(is_value);
+            let next = next.filter(|_| inline_value.is_none());
+            if self.response_files.is_empty() {
+                self.parsed.runs_external_code =
+                    matches!(inline_value.or(next), None | Some(b"true"));
+            }
+            return i + usize::from(next.is_some());
         }
         // A boolean only consumes the next argument if that's one of its values.
         let is_value = |next: &&[u8]| {

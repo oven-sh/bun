@@ -640,6 +640,45 @@ A flag applies to the projects that `bun check` reports. With [`-b`](#every-proj
 bun check -b --strict
 ```
 
+## Vue, Svelte, Astro, and other file types
+
+TypeScript 7.1 adds content mappers. A content mapper is a program from a package in `node_modules` that turns a file TypeScript cannot read, such as a `.vue` file, into TypeScript. `bun check` checks the result and reports each error at the matching line and column of your file.
+
+List the mappers in `tsconfig.json`:
+
+```json tsconfig.json icon="file-json"
+{
+  "contentMappers": [{ "package": "my-vue-mapper", "extensions": [".vue"] }],
+  "include": ["src/**/*.ts", "src/**/*.vue"]
+}
+```
+
+Then pass `--runExternalCode`:
+
+```bash terminal icon="terminal"
+bun check --runExternalCode
+```
+
+```txt
+src/App.vue(12,7): error TS2322: Type 'string' is not assignable to type 'number'.
+```
+
+<Warning>
+  `--runExternalCode` lets the project choose programs that run on your computer with your permissions. The
+  `tsconfig.json` says which packages, and each package's `package.json` says which command. Use the flag only in
+  projects whose `tsconfig.json` and `node_modules` you trust.
+</Warning>
+
+The flag only works on the command line of `bun check`, after `check`. It has no effect in `tsconfig.json`, `bunfig.toml`, `BUN_OPTIONS`, or a response file (`@file`). Without the flag, `bun check` starts nothing and reports TS18068:
+
+```txt
+tsconfig.json(2,3): error TS18068: Content mappers require the '--runExternalCode' command line flag to be enabled.
+```
+
+`bun --check`, `bun test --check`, `bun build --check`, `Bun.build({ check: true })`, and `bun lint` never run a content mapper.
+
+Each mapper runs once per `bun check`, in its package's directory, and stops when the check ends. What it prints to standard error appears in your terminal. `bun check` does not trust what a mapper answers: an answer that is malformed or points outside of the file is an error on that file, and after five such files the mapper is not used again.
+
 ## Differences from `tsc`
 
 `bun check` aims to report exactly what `tsc` from TypeScript 7.1 reports. `process.versions.typescript` is the exact version.
@@ -681,6 +720,7 @@ bun check [flags] [...files or directories]
 | `--no-pretty`            | One line per error, like `tsc --pretty false`. Default when piped   |
 | `--all`                  | Show every error. Without it, identical errors are grouped above 50 |
 | `--threads <n>`          | Number of threads. Default: one per CPU core                        |
+| `--runExternalCode`      | Run the programs that `contentMappers` in `tsconfig.json` lists     |
 | `--timing`               | Print how long loading and checking took                            |
 | `--cwd <path>`           | Set the working directory                                           |
 | `--no-script`            | Run the type checker even if the project has a `check` script       |

@@ -18,6 +18,7 @@ use crate::verify::{ConfigLocation, Problem};
 use bstr::ByteSlice;
 use bun_core::strings;
 use bun_threading::Guarded;
+use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// `contentmapper.Mapper`: an entry of `contentMappers`, with what its package's `package.json` says about it.
@@ -566,8 +567,8 @@ impl FrameDecoder {
     }
 
     /// Returns the next complete message, or `None` if more bytes are needed. The buffer only grows by the bytes that
-    /// arrive, whatever length a header announces.
-    fn next(&mut self) -> Result<Option<&[u8]>, Malformed> {
+    /// arrive, whatever length a header announces. An error is the text of the original's error.
+    fn next(&mut self) -> Result<Option<&[u8]>, Vec<u8>> {
         while !self.is_in_message {
             let from = self.searched.max(self.consumed);
             let Some(found) = strings::index_of_char_usize(&self.buffer[from..], b'\n') else {
@@ -578,17 +579,16 @@ impl FrameDecoder {
             self.consumed += line.len();
             if line == b"\r\n" {
                 if self.content_length == 0 {
-                    return Err(Malformed);
+                    return Err(b"jsonrpc: no content length".to_vec());
                 }
                 self.is_in_message = true;
                 break;
             }
-            let colon = strings::index_of_char_usize(line, b':').ok_or(Malformed)?;
+            let Some(colon) = strings::index_of_char_usize(line, b':') else {
+                return Err([b"jsonrpc: invalid header: ", &go_quoted(line)[..]].concat());
+            };
             if &line[..colon] == b"Content-Length" {
-                let digits = str::from_utf8(line[colon + 1..].trim_ascii());
-                let length = digits.ok().and_then(|it| it.parse::<i64>().ok());
-                self.content_length =
-                    u64::try_from(length.ok_or(Malformed)?).map_err(|_| Malformed)?;
+                self.content_length = parse_content_length(line[colon + 1..].trim_ascii())?;
             }
         }
         if ((self.buffer.len() - self.consumed) as u64) < self.content_length {
@@ -601,21 +601,70 @@ impl FrameDecoder {
     }
 }
 
+/// `strconv.ParseInt`, and the errors of `jsonrpc.Reader.Read` about it.
+fn parse_content_length(digits: &[u8]) -> Result<u64, Vec<u8>> {
+    use std::num::IntErrorKind::{NegOverflow, PosOverflow};
+    let invalid = &b"jsonrpc: invalid content length: "[..];
+    let parsed = str::from_utf8(digits).map(str::parse::<i64>);
+    let why: &[u8] = match parsed {
+        Ok(Ok(length)) => {
+            let negative = || [invalid, b"negative value ", &number(length)[..]].concat();
+            return u64::try_from(length).map_err(|_| negative());
+        }
+        Ok(Err(error)) if matches!(error.kind(), PosOverflow | NegOverflow) => {
+            b"value out of range"
+        }
+        _ => b"invalid syntax",
+    };
+    let parsing = b"parse error: strconv.ParseInt: parsing ";
+    Err([invalid, parsing, &go_quoted(digits)[..], b": ", why].concat())
+}
+
+/// Go's `%q`
+fn go_quoted(text: &[u8]) -> Vec<u8> {
+    let mut quoted = vec![b'"'];
+    for (start, end, character) in text.char_indices() {
+        let bytes = &text[start..end];
+        match character {
+            '"' => quoted.extend_from_slice(b"\\\""),
+            '\\' => quoted.extend_from_slice(b"\\\\"),
+            '\n' => quoted.extend_from_slice(b"\\n"),
+            '\r' => quoted.extend_from_slice(b"\\r"),
+            '\t' => quoted.extend_from_slice(b"\\t"),
+            // An invalid sequence decodes as U+FFFD, which is three bytes if it's really in the text.
+            _ if character.is_control() || character == '\u{FFFD}' && bytes.len() != 3 => {
+                for byte in bytes {
+                    quoted.extend_from_slice(format!("\\x{byte:02x}").as_bytes());
+                }
+            }
+            _ => quoted.extend_from_slice(bytes),
+        }
+    }
+    quoted.push(b'"');
+    quoted
+}
+
 /// `jsonrpc.Writer.Write`
-fn frame(message: &Json) -> Vec<u8> {
-    let mut body = Vec::new();
-    message.stringify(&mut body);
+fn frame(body: &[u8]) -> Vec<u8> {
     [
         b"Content-Length: ",
         &number(body.len())[..],
         b"\r\n\r\n",
-        &body,
+        body,
     ]
     .concat()
 }
 
 fn member(name: &str, value: Json) -> (Vec<u8>, Json) {
     (name.as_bytes().to_vec(), value)
+}
+
+/// A call that `Connection::begin` has registered.
+pub struct BegunCall {
+    /// What `Connection::wait` needs.
+    pub id: u64,
+    /// The bytes to write to the process.
+    pub request: Vec<u8>,
 }
 
 /// A call that's waiting for its response.
@@ -645,8 +694,8 @@ pub struct Connection {
 }
 
 impl Connection {
-    /// The first half of `Call`. Returns the call's number, and the bytes to write to the process.
-    pub fn begin(&self, method: &str, params: Json) -> Result<(u64, Vec<u8>), CallError> {
+    /// The first half of `Call`.
+    pub fn begin(&self, method: &str, params: &Json) -> Result<BegunCall, CallError> {
         let id = {
             let mut state = self.state.lock();
             if let Some(terminal) = &state.terminal {
@@ -657,13 +706,20 @@ impl Connection {
             state.pending.push(PendingCall { id, response: None });
             id
         };
-        let request = Json::Object(vec![
-            member("jsonrpc", Json::String(b"2.0".to_vec())),
-            member("id", Json::String([b"api", &number(id)[..]].concat())),
-            member("method", Json::String(method.as_bytes().to_vec())),
-            member("params", params),
-        ]);
-        Ok((id, frame(&request)))
+        let mut body = [
+            b"{\"jsonrpc\":\"2.0\",\"id\":\"api",
+            &number(id)[..],
+            b"\",\"method\":\"",
+            method.as_bytes(),
+            b"\",\"params\":",
+        ]
+        .concat();
+        params.stringify(&mut body);
+        body.push(b'}');
+        Ok(BegunCall {
+            id,
+            request: frame(&body),
+        })
     }
 
     /// The second half of `Call`: blocks until the call `id` has a response, the connection has ended, or the time is
@@ -703,26 +759,28 @@ impl Connection {
         bytes: &[u8],
         parse_json: &dyn Fn(&[u8]) -> Option<Json>,
     ) -> Result<Vec<u8>, CallError> {
+        if let Some(terminal) = &self.state.lock().terminal {
+            return Err(terminal.clone());
+        }
         let mut decoder = self.decoder.lock();
         decoder.push(bytes);
         let mut replies = Vec::new();
-        let cause: &[u8] = loop {
+        let cause = loop {
             let message = match decoder.next() {
                 Ok(Some(message)) => parse_json(message),
                 Ok(None) => return Ok(replies),
-                Err(Malformed) => break b"jsonrpc: invalid header",
+                Err(cause) => break cause,
             };
-            let Some(message) = message else {
-                break b"jsonrpc: invalid message";
-            };
-            let handled = handle_message(message, &mut self.state.lock().pending, &mut replies);
+            let handled = message.ok_or(Malformed).and_then(|message| {
+                handle_message(message, &mut self.state.lock().pending, &mut replies)
+            });
             self.has_changed.notify_all();
             if handled.is_err() {
-                break b"jsonrpc: invalid message";
+                break b"jsonrpc: invalid message".to_vec();
             }
         };
         let terminal = CallError::Failed {
-            detail: [b"ipc: connection closed\n", cause].concat(),
+            detail: [b"ipc: connection closed\n", &cause[..]].concat(),
         };
         self.end(terminal.clone());
         Err(terminal)
@@ -778,11 +836,14 @@ fn handle_message(
             member("code", Json::Number(-32603.0)),
             member("message", Json::String(text)),
         ]);
-        replies.extend(frame(&Json::Object(vec![
+        let mut body = Vec::new();
+        Json::Object(vec![
             member("jsonrpc", Json::String(b"2.0".to_vec())),
             member("id", id.clone()),
             member("error", error),
-        ])));
+        ])
+        .stringify(&mut body);
+        replies.extend(frame(&body));
         return Ok(());
     }
     // A response that no call is waiting for is dropped.
@@ -815,7 +876,7 @@ pub enum InitializeError {
     ProcessStart { command: Vec<u8>, detail: Vec<u8> },
     ProcessExit { code: i32 },
     NoResponse,
-    InvalidResponse,
+    InvalidResponse { detail: &'static [u8] },
     Request { detail: Vec<u8> },
     PositionEncoding(Vec<u8>),
     EmptyDiagnosticSource,
@@ -880,11 +941,7 @@ impl InitializeError {
             InitializeError::NoResponse => {
                 problem.with(1, 18102, &[&number(INITIALIZE_TIMEOUT_SECONDS)])
             }
-            InitializeError::InvalidResponse => problem.with(
-                1,
-                18103,
-                &[b"it isn't an object with the expected properties"],
-            ),
+            InitializeError::InvalidResponse { detail } => problem.with(1, 18103, &[detail]),
             InitializeError::Request { detail } => problem.with(1, 18104, &[detail]),
             InitializeError::PositionEncoding(encoding) => problem.with(1, 18087, &[encoding]),
             InitializeError::EmptyDiagnosticSource => problem.with(1, 18088, &[]),
@@ -1101,8 +1158,12 @@ impl Processes {
             CallError::TimedOut => InitializeError::NoResponse,
             CallError::Failed { detail } => InitializeError::Request { detail },
         })?;
-        let invalid = InitializeError::InvalidResponse;
-        let response = response.ok_or_else(|| invalid.clone())?;
+        let response = response.ok_or(InitializeError::InvalidResponse {
+            detail: b"jsontext: unexpected EOF",
+        })?;
+        let invalid = InitializeError::InvalidResponse {
+            detail: b"it isn't an object with the expected properties",
+        };
         let fields = Fields::of(&response).map_err(|_| invalid.clone())?;
         let encoding = fields.string(b"positionEncoding");
         let encoding = encoding.map_err(|_| invalid.clone())?;
@@ -1269,7 +1330,10 @@ impl<'a> Project<'a> {
         let opened = self.open(mapper_index);
         // `project.Identity` opens the project of a mapper with `dynamicConfig`, and whatever fails there counts as a
         // project error.
-        let (handle, initialized) = opened.map_err(|error| match error {
+        let OpenProject {
+            handle,
+            initialized,
+        } = opened.map_err(|error| match error {
             TransformError::Initialize(_) if mapper.dynamic_config => {
                 TransformError::Project(ProjectError::Failed)
             }
@@ -1290,14 +1354,17 @@ impl<'a> Project<'a> {
         decode_transform_result(&response, content, &initialized)
     }
 
-    /// `openProjectLocked`: sends `openProject` unless the project is open. Returns the project's handle.
-    fn open(&self, mapper_index: usize) -> Result<(Vec<u8>, Initialized), TransformError> {
+    /// `openProjectLocked`: sends `openProject` unless the project is open.
+    fn open(&self, mapper_index: usize) -> Result<OpenProject, TransformError> {
         let mapper = &self.mappers[mapper_index];
         let mut entry = self.entries[mapper_index].lock();
         let initialized = self.processes.connection_for(mapper);
         let initialized = initialized.map_err(TransformError::Initialize)?;
         if entry.is_open {
-            return Ok((entry.handle.clone(), initialized));
+            return Ok(OpenProject {
+                handle: entry.handle.clone(),
+                initialized,
+            });
         }
         if entry.handle.is_empty() {
             let id = self.processes.next_project.fetch_add(1, Ordering::Relaxed);
@@ -1328,7 +1395,10 @@ impl<'a> Project<'a> {
             decode_open_project_result(&response, mapper, mapper_index, source)
                 .map_err(TransformError::Project)?;
         entry.is_open = true;
-        Ok((entry.handle.clone(), initialized))
+        Ok(OpenProject {
+            handle: entry.handle.clone(),
+            initialized,
+        })
     }
 
     /// `Close`: tells the mappers that no more requests for this program follow.
@@ -1341,11 +1411,13 @@ impl<'a> Project<'a> {
             }
             option_diagnostics.append(&mut entry.option_diagnostics);
             let handle = Json::String(std::mem::take(&mut entry.handle));
+            // Nothing depends on the answer, so this doesn't wait for it. The original does, after it has printed
+            // the errors, and never exits if the mapper doesn't answer.
             let _ = self.processes.transport.call(&Call {
                 mapper,
                 method: "closeProject",
                 params: Json::Object(vec![(b"projectHandle".to_vec(), handle)]),
-                timeout_seconds: None,
+                timeout_seconds: Some(0),
             });
         }
         Closed {
@@ -1421,12 +1493,25 @@ fn int32(value: &Json) -> Result<i32, Malformed> {
     i32::try_from(integer(value)?).map_err(|_| Malformed)
 }
 
+/// A project that a mapper knows about.
+struct OpenProject {
+    /// `projectHandle`
+    handle: Vec<u8>,
+    initialized: Initialized,
+}
+
+struct WideCharacter {
+    /// The UTF-16 offset of its end.
+    utf16_end: u32,
+    /// By how much the byte offset of its end exceeds that.
+    extra_bytes: u32,
+}
+
 /// `positionNormalizer`: converts offsets in a text from a mapper's unit to bytes.
 struct PositionNormalizer<'t> {
     text: &'t [u8],
-    /// `ast.PositionMap`, for UTF-16 offsets in a text that isn't all ASCII: for each character of more than one byte, the
-    /// UTF-16 offset of its end, and by how much the byte offset exceeds that.
-    wide_characters: Option<Vec<(u32, u32)>>,
+    /// `ast.PositionMap`, for UTF-16 offsets in a text that isn't all ASCII: its characters of more than one byte.
+    wide_characters: Option<Vec<WideCharacter>>,
     /// The text's length in the mapper's unit.
     length: i64,
 }
@@ -1451,7 +1536,10 @@ impl<'t> PositionNormalizer<'t> {
             let (character, size) = bun_core::lexer::char_and_size(text, at);
             at += size;
             delta += size as u32 - if character >= 0x10000 { 2 } else { 1 };
-            wide_characters.push((at as u32 - delta, delta));
+            wide_characters.push(WideCharacter {
+                utf16_end: at as u32 - delta,
+                extra_bytes: delta,
+            });
         }
         Some(PositionNormalizer {
             text,
@@ -1469,8 +1557,9 @@ impl<'t> PositionNormalizer<'t> {
         let byte_position = match &self.wide_characters {
             None => position,
             Some(wide_characters) => {
-                let before = wide_characters.partition_point(|it| it.0 <= position);
-                position + before.checked_sub(1).map_or(0, |at| wide_characters[at].1)
+                let before = wide_characters.partition_point(|it| it.utf16_end <= position);
+                let last = before.checked_sub(1).map(|at| &wide_characters[at]);
+                position + last.map_or(0, |it| it.extra_bytes)
             }
         };
         match self.text.get(byte_position as usize) {
@@ -1480,13 +1569,28 @@ impl<'t> PositionNormalizer<'t> {
     }
 
     /// Returns the byte offsets of the range that begins at `start` and is `length` long.
-    fn normalize_range(&self, start: i64, length: i64) -> Result<(u32, u32), Malformed> {
+    fn normalize_range(&self, start: i64, length: i64) -> Result<Range<u32>, Malformed> {
         if length < 0 {
             return Err(Malformed);
         }
         let end = start.checked_add(length).ok_or(Malformed)?;
-        Ok((self.normalize(start)?, self.normalize(end)?))
+        Ok(self.normalize(start)?..self.normalize(end)?)
     }
+}
+
+/// `OptionDiagnosticResult`
+struct RawOptionDiagnostic<'j> {
+    path: &'j [Json],
+    text: &'j [u8],
+    code: i32,
+}
+
+/// `Diagnostic`, with its range in the mapper's unit.
+struct RawDiagnostic<'j> {
+    start: i64,
+    length: i64,
+    code: i32,
+    text: &'j [u8],
 }
 
 /// `openProjectLocked`, after the request. Returns the response's `optionDiagnostics`.
@@ -1507,11 +1611,11 @@ fn decode_open_project_result(
     let mut decoded = Vec::new();
     for diagnostic in option_diagnostics {
         let fields = Fields::of(diagnostic).map_err(malformed)?;
-        decoded.push((
-            fields.list(b"path").map_err(malformed)?,
-            fields.string(b"messageText").map_err(malformed)?,
-            fields.int32(b"code").map_err(malformed)?,
-        ));
+        decoded.push(RawOptionDiagnostic {
+            path: fields.list(b"path").map_err(malformed)?,
+            text: fields.string(b"messageText").map_err(malformed)?,
+            code: fields.int32(b"code").map_err(malformed)?,
+        });
     }
     if mapper.dynamic_config && config_identity.is_empty() {
         return Err(ProjectError::MissingConfigIdentity);
@@ -1526,25 +1630,27 @@ fn decode_open_project_result(
     if !names.all(is_rooted_disk_path) {
         return Err(ProjectError::NonAbsoluteWatchedFile);
     }
-    let decoded = decoded.into_iter().map(|(path, text, code)| {
-        let path = path.iter().map(|segment| match segment {
-            Json::String(property) => Ok(OptionPathSegment::Property(property.clone())),
-            Json::Number(_) => {
-                let index = integer(segment)
-                    .ok()
-                    .and_then(|it| usize::try_from(it).ok());
-                index.map(OptionPathSegment::Index).ok_or(Malformed)
-            }
-            _ => Err(Malformed),
+    let decoded = decoded
+        .into_iter()
+        .map(|RawOptionDiagnostic { path, text, code }| {
+            let path = path.iter().map(|segment| match segment {
+                Json::String(property) => Ok(OptionPathSegment::Property(property.clone())),
+                Json::Number(_) => {
+                    let index = integer(segment)
+                        .ok()
+                        .and_then(|it| usize::try_from(it).ok());
+                    index.map(OptionPathSegment::Index).ok_or(Malformed)
+                }
+                _ => Err(Malformed),
+            });
+            Ok(OptionDiagnostic {
+                mapper: mapper_index,
+                path: path.collect::<Result<_, _>>().map_err(malformed)?,
+                source: diagnostic_source.to_vec(),
+                code,
+                text: text.to_vec(),
+            })
         });
-        Ok(OptionDiagnostic {
-            mapper: mapper_index,
-            path: path.collect::<Result<_, _>>().map_err(malformed)?,
-            source: diagnostic_source.to_vec(),
-            code,
-            text: text.to_vec(),
-        })
-    });
     decoded.collect()
 }
 
@@ -1571,12 +1677,12 @@ fn decode_transform_result(
     let mut raw_diagnostics = Vec::new();
     for diagnostic in reported {
         let fields = Fields::of(diagnostic).map_err(malformed)?;
-        raw_diagnostics.push((
-            fields.integer(b"start").map_err(malformed)?,
-            fields.integer(b"length").map_err(malformed)?,
-            fields.int32(b"code").map_err(malformed)?,
-            fields.string(b"messageText").map_err(malformed)?,
-        ));
+        raw_diagnostics.push(RawDiagnostic {
+            start: fields.integer(b"start").map_err(malformed)?,
+            length: fields.integer(b"length").map_err(malformed)?,
+            code: fields.int32(b"code").map_err(malformed)?,
+            text: fields.string(b"messageText").map_err(malformed)?,
+        });
     }
     let canonical = raw.normalize(&original_positions, initialized)?;
     let mut outputs = Vec::new();
@@ -1594,9 +1700,15 @@ fn decode_transform_result(
         })?);
     }
     let mut diagnostics = Vec::new();
-    for (start, length, code, text) in raw_diagnostics {
+    for RawDiagnostic {
+        start,
+        length,
+        code,
+        text,
+    } in raw_diagnostics
+    {
         let range = original_positions.normalize_range(start, length);
-        let (start, end) = range.map_err(malformed)?;
+        let Range { start, end } = range.map_err(malformed)?;
         diagnostics.push(ExternalDiagnostic {
             start,
             end,
@@ -1795,7 +1907,7 @@ impl<'j> RawOutput<'j> {
             let if_unused = match unused {
                 None => None,
                 Some(unused) => {
-                    let (start, end) = original.map_err(invalid_range)?;
+                    let Range { start, end } = original.map_err(invalid_range)?;
                     Some(ExternalDiagnostic {
                         start,
                         end,

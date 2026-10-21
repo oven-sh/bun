@@ -9,7 +9,7 @@ use bun_bundler::options::{TypeChecked, loaders_from_transform_options};
 use bun_clap as clap;
 use bun_core::{Global, Output, ZStr, env_var};
 use bun_sema_driver::format::{self, Layout, Style};
-use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided};
+use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided, Transport};
 use bun_sema_driver::{
     Category, CommandLine, CompilerOption, Diagnostic, FlagError, Progress, RejectedFlag, Report,
     Request, ScriptKind,
@@ -29,6 +29,8 @@ struct Options {
     /// `--all`: never group identical errors.
     all: bool,
     timing: bool,
+    /// `--runExternalCode`, typed after `check`.
+    runs_external_code: bool,
 }
 
 fn usage_error(args: core::fmt::Arguments<'_>) -> ! {
@@ -40,10 +42,15 @@ fn usage_error(args: core::fmt::Arguments<'_>) -> ! {
 const PROJECT: &[clap::Param<clap::Help>] = &[clap::param!(
     "-p, --project/--tsconfig-override <path>  Path to a tsconfig.json or its directory"
 )];
-/// Only listed for `--help`. It's parsed as a compiler option.
-const PRETTY: &[clap::Param<clap::Help>] = &[clap::param!(
-    "--pretty <bool>?   Show source code around each error <d>(default in a terminal)<r>"
-)];
+/// Only listed for `--help`. They're parsed as compiler options.
+const LIKE_TSC: &[clap::Param<clap::Help>] = &[
+    clap::param!(
+        "--pretty <bool>?   Show source code around each error <d>(default in a terminal)<r>"
+    ),
+    clap::param!(
+        "--runExternalCode  Run the programs from <b>node_modules<r> that <b>contentMappers<r> in tsconfig.json lists"
+    ),
+];
 const OTHERS: &[clap::Param<clap::Help>] = &[
     clap::param!(
         "-b, --build        Check the projects in <b>references<r> too, like <b>tsc -b<r>"
@@ -67,7 +74,8 @@ const OTHERS: &[clap::Param<clap::Help>] = &[
     clap::param!("--no-emit"),
     clap::param!("<POS>..."),
 ];
-pub(crate) const PARAMS: &[clap::Param<clap::Help>] = clap::concat_params!(PROJECT, PRETTY, OTHERS);
+pub(crate) const PARAMS: &[clap::Param<clap::Help>] =
+    clap::concat_params!(PROJECT, LIKE_TSC, OTHERS);
 /// Compiler options aren't in the table. See `unknown_long_flags_are_positional`.
 static TABLE: &clap::ConvertedTable =
     clap::comptime_table!(clap::concat_params!(PROJECT, OTHERS), cold);
@@ -166,6 +174,11 @@ fn parse(args: &[&ZStr]) -> Options {
         true => Some(false),
         false => bun_sema_driver::tristate(&command_line.compiler_options, b"pretty"),
     };
+    // Arguments from `BUN_OPTIONS` come first. If they include `check`, what follows it may be from there too.
+    let typed = bun_core::argv()
+        .len()
+        .saturating_sub(1 + bun_core::bun_options_argc());
+    options.runs_external_code = command_line.runs_external_code && args.len() < typed;
     options.command_line = command_line;
     options
 }
@@ -456,9 +469,13 @@ impl CheckCommand {
             &Paths::Arguments(command_line),
             &command_line.compiler_options,
             options.threads,
-            // Only set here, because this function never returns.
             Provided {
+                // Only set here, because this function never returns.
                 ends_the_process: true,
+                // Only set here, because only `bun check` has the flag.
+                content_mapper_transport: options.runs_external_code.then(|| {
+                    Box::<super::content_mapper_process::Programs>::default() as Box<dyn Transport>
+                }),
                 ..Default::default()
             },
             |report| (print_report(&report, options, &cwd), report),

@@ -13,9 +13,10 @@ use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, windows_volume_name_len, z};
 use bun_paths::{basename_posix, path_buffer_pool};
 use bun_sema::atom::Interner;
-use bun_sema::content_mapper::{Processes, Transport};
+use bun_sema::content_mapper::Processes;
+pub use bun_sema::content_mapper::{Call, CallError, Connection, Transport};
 use bun_sema::hir;
-use bun_sema::json::Json;
+pub use bun_sema::json::Json;
 use bun_sema::resolve::{
     CachedConfig, Host, ModuleDetection, ParseOptions, Paths, ScriptKind, ancestors,
     case_insensitive_hash, inside, is_declaration_file_name, is_same_path, join, root_length,
@@ -1236,8 +1237,29 @@ fn parse_package_json(arena: &Arena, text: &[u8]) -> Option<Json> {
     unmarshal_fields(root.get(), log.warnings > 0)
 }
 
+/// `Connection::receive` with this crate's JSON parser.
+pub fn receive_from_content_mapper(
+    connection: &Connection,
+    bytes: &[u8],
+) -> Result<Vec<u8>, CallError> {
+    connection.receive(bytes, &|text| {
+        parse_json_with(&Arena::new(), text, DuplicateNames::Rejected)
+    })
+}
+
+/// `json.AllowDuplicateNames`
+#[derive(Copy, Clone, PartialEq)]
+enum DuplicateNames {
+    Allowed,
+    Rejected,
+}
+
 /// `Host::parse_json`
-pub fn parse_json(arena: &Arena, text: &[u8]) -> Option<Json> {
+fn parse_json(arena: &Arena, text: &[u8]) -> Option<Json> {
+    parse_json_with(arena, text, DuplicateNames::Allowed)
+}
+
+fn parse_json_with(arena: &Arena, text: &[u8], duplicate_names: DuplicateNames) -> Option<Json> {
     use bun_parsers::json::ParsedJson;
     if !is_valid(text) {
         return None;
@@ -1253,7 +1275,11 @@ pub fn parse_json(arena: &Arena, text: &[u8]) -> Option<Json> {
         _ => return None,
     };
     // The only warning is about a duplicate key.
-    unmarshal_json_value(&root, log.warnings > 0)
+    let has_duplicates = log.warnings > 0;
+    if has_duplicates && duplicate_names == DuplicateNames::Rejected {
+        return None;
+    }
+    unmarshal_json_value(&root, has_duplicates)
 }
 
 /// The disk, for a few queries across many directories. Each query is a system call, and no directory is listed or

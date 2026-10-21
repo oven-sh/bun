@@ -6142,6 +6142,13 @@ impl<'s> Files<'s> {
                     }
                 } else if reads && !state.to_read.is_empty() && state.ready.len() <= AHEAD {
                     let count = state.to_read.len().min(RUN);
+                    // This thread waits for the mapper of a mapped file. Other threads read what's behind that file, so
+                    // that a mapper gets many requests to work on.
+                    let mut some = state.to_read.iter().take(count);
+                    let mapped = some.position(|file| {
+                        content_mapper::is_mapped(&options.content_mappers, file.path)
+                    });
+                    let count = mapped.map_or(count, |at| at + 1);
                     let some: Vec<_> = state.to_read.drain(..count).collect();
                     state.in_progress += count;
                     drop(state);

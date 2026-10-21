@@ -2956,7 +2956,15 @@ impl<'a> Transpiler<'a> {
                 };
             }
             options::Loader::Dataurl | options::Loader::Base64 => {
-                bun_core::Output::panic(format_args!("TODO: dataurl, base64"));
+                self.log_mut().add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "loader \"{}\" is not supported with --no-bundle",
+                        <&'static str>::from(loader),
+                    ),
+                );
+                return Ok(None);
             }
             options::Loader::Css => {
                 match self.build_css_output(

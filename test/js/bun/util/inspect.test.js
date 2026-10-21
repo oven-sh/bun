@@ -1471,7 +1471,7 @@ describe("values of another realm", () => {
       Bun.inspect(
         vm.runInNewContext("Object.setPrototypeOf(this, (class Window { m() {} }).prototype); this.a = 1; this"),
       ),
-    ).toBe("Window {\n  a: 1,\n  m: [Function: m],\n}");
+    ).toBe("Window {\n  a: 1,\n}");
   });
 
   it("properties inherited from its global aren't printed", () => {

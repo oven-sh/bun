@@ -845,7 +845,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
 
     JSC::JSValue objectArg = callFrame->argument(0);
     // V8 rejects a Proxy too. JS would never see a `stack` written to the cell's own storage.
-    if (!objectArg.isObject() || asObject(objectArg)->type() == JSC::ProxyObjectType || isImportMetaEnvForTests(asObject(objectArg))) {
+    // A WebAssembly GC object can't get a property and its Structure has no global object. V8 rejects it too.
+    if (!objectArg.isObject() || asObject(objectArg)->type() == JSC::ProxyObjectType || asObject(objectArg)->type() == JSC::JSType::WebAssemblyGCObjectType || isImportMetaEnvForTests(asObject(objectArg))) {
         return JSC::JSValue::encode(throwTypeError(lexicalGlobalObject, scope, "invalid_argument"_s));
     }
 

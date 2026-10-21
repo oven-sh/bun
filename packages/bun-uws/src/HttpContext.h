@@ -34,6 +34,7 @@
 #include <span>
 #include <array>
 #include <mutex>
+#include <openssl/ssl.h>
 
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
@@ -320,6 +321,18 @@ private:
         return us_socket_close(s, 0, nullptr);
     }
 
+    /* A TLS send that the kernel rejected ends the write side too, and the next writable event closes the socket.
+     * Like Node, node:https still dispatches the requests that came with this read. */
+    template <bool IsNodeHttp>
+    static bool isShutDownByOwner(us_socket_t *s) {
+        if constexpr (SSL && IsNodeHttp) {
+            if (us_socket_ssl_send_rejected(s) && !(SSL_get_shutdown((const ssl_st *) us_socket_get_native_handle(s)) & SSL_SENT_SHUTDOWN)) {
+                return false;
+            }
+        }
+        return us_socket_is_shut_down(s);
+    }
+
     template <bool IsNodeHttp>
     static us_socket_t *onData(us_socket_t *s, char *data, int length) {
         // ref the socket to make sure we process it entirely before it is closed
@@ -590,7 +603,7 @@ private:
             }
 
             /* We absolutely have to terminate parsing if shutdown */
-            if (us_socket_is_shut_down((us_socket_t *) s)) {
+            if (isShutDownByOwner<IsNodeHttp>((us_socket_t *) s)) {
                 return nullptr;
             }
 
@@ -682,7 +695,7 @@ private:
                 }
 
                 /* We absolutely have to terminate parsing if shutdown */
-                if (us_socket_is_shut_down((us_socket_t *) user)) {
+                if (isShutDownByOwner<IsNodeHttp>((us_socket_t *) user)) {
                     /* node:http: this socket can be a tunnel that still reads. Its bytes are not for a body that ended. */
                     if constexpr (IsNodeHttp) {
                         if (fin) {

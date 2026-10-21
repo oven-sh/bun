@@ -77,7 +77,8 @@ bun_core::declare_scope!(cache, visible);
 /// an abstract class are mapped elsewhere.
 /// Version 45: A JSX spread no longer empties an object `--define`. Older entries can print it as `{}`.
 /// Version 46: `finally` is mapped, and the `{` after it is mapped elsewhere.
-const EXPECTED_VERSION: u32 = 46;
+/// Version 47: `emitDecoratorMetadata` names the right type in the body of `a ? (b): T => {...} : c`.
+const EXPECTED_VERSION: u32 = 47;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

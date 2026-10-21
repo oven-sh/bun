@@ -674,6 +674,7 @@ impl Snapshots {
             let result = if file.dirty { self.write_sorted(&file) } else { Ok(()) };
             if let Some(file) = file.file {
                 file.write_all(&self.file_buf)
+                    .and_then(|()| bun_sys::ftruncate(file.handle, self.file_buf.len() as i64))
                     .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
                 let _ = file.close();
             }
@@ -1196,10 +1197,8 @@ impl Snapshots {
             buf[dir_len] = after_dir;
         }
 
-        let mut flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
-        if self.update_snapshots {
-            flags |= bun_sys::O::TRUNC;
-        }
+        // Not O_TRUNC: a run that exits before `write_snapshot_file` must leave the old contents.
+        let flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
         let fd = bun_sys::open(ZStr::from_buf(&buf[..], len), flags, 0o644)?;
         current.file = Some(bun_sys::File::from_fd(fd));
         Ok(())

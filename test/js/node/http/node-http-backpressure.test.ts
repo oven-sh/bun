@@ -5078,6 +5078,25 @@ describe("backpressure", () => {
         }
       });
 
+      // Node.js gives an empty chunk to the socket too, and the socket answers for the bytes that it holds.
+      it("an empty write() returns false while the socket holds its high water mark", async () => {
+        const returned: boolean[] = [];
+        const started = Promise.withResolvers<http.ServerResponse>();
+        const socket = onBudgetSocket((req, res, socket) => {
+          res.setHeader("Content-Length", socket.writableHighWaterMark);
+          returned.push(res.write(Buffer.alloc(socket.writableHighWaterMark, "a")));
+          started.resolve(res);
+        });
+        try {
+          const res = await started.promise;
+          await turn();
+          returned.push(res.write(""));
+          expect(returned).toEqual([false, false]);
+        } finally {
+          socket.destroy();
+        }
+      });
+
       // The server hears the 'drain' of the socket while the socket holds bytes again, under its high water mark, so
       // no second 'drain' of the socket comes by itself. Node.js v26.3.0 emits no 'drain' on the response then. Bun
       // makes the socket owe one more.

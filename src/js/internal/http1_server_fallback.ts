@@ -220,12 +220,9 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     return chunk;
   }
 
-  // What the socket answered to the last write: false when it holds its high water mark or more.
-  let accepted = true;
-
   // Like the `conn.writable` gate of Node's _writeRaw: a write to a socket that was ended (after the client's FIN) would destroy it.
   function writeToSocket(data, callback?) {
-    if (!socket.writableEnded) accepted = socket.write(data, callback);
+    if (!socket.writableEnded) socket.write(data, callback);
   }
 
   // Gives the callback of a chunk to the socket, which runs it when it has written the chunk. The connection keeps it too, for failHeldCallbacks().
@@ -382,17 +379,17 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     },
     write(chunk, encoding, callback, _strictContentLength, onWritten) {
       const buf = toBuffer(chunk, encoding);
-      accepted = true;
       writeHeadToSocket(null);
       if (onWritten) onWritten = heldBySocket(onWritten);
       const length = writeBody(buf, onWritten);
       // The callback of an empty chunk runs behind the bytes that the socket holds, as in Node.js. An empty socket gets no write for it: an Http2Stream would send a DATA frame.
       if (onWritten && !length) {
-        if (socket.writableLength > 0) accepted = socket.write("", "latin1", onWritten);
+        if (socket.writableLength > 0) socket.write("", "latin1", onWritten);
         else process.nextTick(onWritten);
       }
-      // Node's rule: the socket's own write() reports the backpressure. A discarded chunk (HEAD, 204, 304) is null.
-      if (buf === null || accepted !== false) return length;
+      // Node's rule: the socket's own write() reports the backpressure, which is a buffer at or over its high water mark. It says so for an empty chunk too. A discarded chunk (HEAD, 204, 304) is null.
+      const holds = socket.writableLength;
+      if (buf === null || socket.writableEnded || !holds || holds < socket.writableHighWaterMark) return length;
       // Like native write_or_end: a negative result, and the callback waits for the drain.
       if (callback) this.onwritable = callback;
       // An empty write has no length to negate.

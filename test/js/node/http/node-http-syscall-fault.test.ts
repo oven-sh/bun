@@ -19,9 +19,9 @@ afterEach(() => fault.clear());
 describe.skipIf(skip)("node:http under injected syscall faults", () => {
   test("upRes.pipe(res) with res.destroy() racing a queued drain (subprocess)", async () => {
     // A TLS-terminating proxy re-streams a large upstream body via pipe(),
-    // short sends force backpressure → on_writable/on_drain on every
+    // 1-byte sends force backpressure → on_writable/on_drain on every
     // event-loop turn, and the downstream is destroyed while a drain callback
-    // is queued. Forcing short sends makes the backpressure deterministic
+    // is queued. Forcing 1-byte sends makes the backpressure deterministic
     // without depending on kernel buffer sizes.
     //
     // Runs in a subprocess so the outcome is observable as exitCode/signal.
@@ -49,15 +49,14 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
         up.on("error", () => res.destroy());
       });
       proxy.listen(0, "127.0.0.1", async () => {
-        // 256-byte sends → guaranteed backpressure → on_drain is exercised on
+        // 1-byte sends → guaranteed backpressure → on_drain is exercised on
         // every event-loop turn for both the proxy→client and upstream→proxy legs.
-        // With 1-byte sends and four clients this took 5 s and more on a debug build.
-        fault.set({ syscall: "send", action: "short", bytes: 256, repeat: -1 });
-        fault.set({ syscall: "writev", action: "short", bytes: 256, repeat: -1 });
+        fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
+        fault.set({ syscall: "writev", action: "short", bytes: 1, repeat: -1 });
 
         const port = proxy.address().port;
         const reqs = [];
-        for (let i = 0; i < 2; i++) {
+        for (let i = 0; i < 4; i++) {
           reqs.push(new Promise(resolve => {
             const r = https.get({ port, host: "127.0.0.1", ca: process.env.CERT }, res => {
               let n = 0;
@@ -101,7 +100,8 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
     } finally {
       upstream.close();
     }
-  });
+    // On a debug build the start of the subprocess, its TLS setup and its exit take about 3.5 s of the default 5 s.
+  }, 30_000);
 
   test("Bun.serve streaming response under 1-byte sends with client abort mid-body (subprocess)", async () => {
     // Covers the uWS HttpResponse path (AsyncSocket → us_socket_write →
@@ -197,7 +197,8 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
       stderr: expect.any(String),
     });
     expect(exitCode).toBe(0);
-  });
+    // On a debug build the subprocess takes about 3 s until its first response, of the default 5 s.
+  }, 30_000);
 });
 
 describe.skipIf(skip)("node:http pipelining under short sends", () => {

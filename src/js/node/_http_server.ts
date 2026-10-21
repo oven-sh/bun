@@ -3065,6 +3065,7 @@ function settleWhenEmpty(res) {
   const owed = res[kNeedDrain];
   if (held === 0 && !owed) return;
   const handle = res[kHandle];
+  // The native handle does not count what uWS holds in its cork, so a write under 16 KiB can still be unsent at 0.
   if (handle.bufferedAmount > 0) {
     // Armed on a live connection only: a handle that reports closed can still answer, and would be asked again without end.
     if (handle.onwritable === undefined && !(handle.flags & NodeHTTPResponseFlags.closed_or_completed)) {

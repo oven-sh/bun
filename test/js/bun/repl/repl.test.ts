@@ -1171,6 +1171,20 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
     );
   });
 
+  // `repl | cat` leaves the terminal in line mode: Ctrl+D twice is the half line, then a read of no bytes.
+  test("Ctrl+D twice on a terminal in line mode does not evaluate the line that is being typed", async () => {
+    using dir = tempDir("repl-line-mode", {});
+    const marker = path.join(String(dir), "ran");
+    await withTerminalRepl(
+      async ({ proc, send }) => {
+        send(`require("fs").writeFileSync(process.env.MARKER, "")\x04\x04`);
+        await proc.exited;
+        expect(existsSync(marker)).toBe(false);
+      },
+      { cmd: ["sh", "-c", `"$0" repl | cat`, bunExe()], env: { MARKER: marker } },
+    );
+  });
+
   test("require works in terminal", async () => {
     await withTerminalRepl(async ({ send, waitFor }) => {
       send("typeof require\n");

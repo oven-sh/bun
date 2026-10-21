@@ -2352,8 +2352,7 @@ impl<'a> Repl<'a> {
         while self.running {
             let key = match self.read_key() {
                 Some(key) => key,
-                // The end of a pipe or a file ends the last line as Enter does. Not on a terminal:
-                // a read of no bytes from one can be a hang-up or a read timeout.
+                // A terminal does not count: a read of no bytes from one can be a hang-up or a read timeout.
                 None if self.stdin_at_eof
                     && !Output::is_stdin_tty()
                     && !self.line_editor.buffer.is_empty() =>

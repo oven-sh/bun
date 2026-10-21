@@ -3614,6 +3614,7 @@ fn wrap_hook_call_with_guard(guard_ref: Ref, call_expr: Expr, before: u32, after
             finally: Some(Finally {
                 loc,
                 stmts: leak_stmts(vec![guard_call(after)]),
+                body_loc: loc,
             }),
         },
         loc,
@@ -3674,6 +3675,7 @@ fn create_function_body_hook_guard(
             finally: Some(Finally {
                 loc,
                 stmts: leak_stmts(vec![guard_call(after)]),
+                body_loc: loc,
             }),
         },
         loc,

@@ -5999,9 +5999,10 @@ pub(crate) mod __gated_printer {
 
                     if let Some(finally) = &s.finally {
                         self.print_space();
+                        self.add_source_mapping(finally.loc);
                         self.print(b"finally");
                         self.print_space();
-                        self.print_block(finally.loc, slice_of(finally.stmts), None);
+                        self.print_block(finally.body_loc, slice_of(finally.stmts), None);
                     }
 
                     self.print_newline();

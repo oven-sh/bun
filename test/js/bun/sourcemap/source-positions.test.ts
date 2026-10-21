@@ -484,6 +484,32 @@ describe.each(Object.keys(builds))("the source map of %s", name => {
     expect(checked).toBeGreaterThan(0);
   });
 
+  test("maps finally and the { after it to the same", () => {
+    const wrong: string[] = [];
+    let checked = 0;
+    for (const { path, code, map } of outputs[name]) {
+      const originals = (map.sourcesContent as string[]).map(content => content.split(/\r?\n/));
+      const originalOf = new Map(
+        decode(map.mappings).map(([line, column, ...original]) => [`${line}:${column}`, original]),
+      );
+      code.split("\n").forEach((line, generatedLine) => {
+        for (const { 0: keyword, index } of line.matchAll(/\bfinally ?(?=\{)/g)) {
+          checked++;
+          for (const [column, text] of [
+            [index, "finally"],
+            [index + keyword.length, "{"],
+          ] as const) {
+            const [source, originalLine, originalColumn] = originalOf.get(`${generatedLine}:${column}`) ?? [];
+            if (!originals[source!]?.[originalLine!]?.startsWith(text, originalColumn))
+              wrong.push(`${path}:${generatedLine + 1}:${column + 1}`);
+          }
+        }
+      });
+    }
+    expect(wrong).toEqual([]);
+    expect(checked).toBeGreaterThan(0);
+  });
+
   test("node:module's SourceMap finds each call", () => {
     const wrong: string[] = [];
     let checked = 0;

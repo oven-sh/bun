@@ -468,12 +468,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let finally_loc = p.lexer.loc();
             let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, finally_loc)?;
             p.lexer.expect(T::TFinally)?;
+            let finally_body_loc = p.lexer.loc();
             p.lexer.expect(T::TOpenBrace)?;
             let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
             p.lexer.next()?;
             finally = Some(js_ast::Finally {
                 loc: finally_loc,
                 stmts: bun_ast::StoreSlice::from_bump(stmts),
+                body_loc: finally_body_loc,
             });
             p.pop_scope();
         }

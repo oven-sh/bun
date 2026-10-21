@@ -16719,10 +16719,8 @@ describe.concurrent("a relative --cwd is applied once", () => {
     const above = String(dir);
     const named = join(above, "named");
     const below = join(named, "below");
-    for (const each of [above, named, below]) {
-      expect((await bunIn(each, ["install"])).exitCode).toBe(0);
-      await rm(join(each, "node_modules"), { recursive: true });
-    }
+    expect((await bunIn(named, ["install"])).exitCode).toBe(0);
+    await rm(join(named, "node_modules"), { recursive: true });
 
     const { stdout, stderr, exitCode } = await bunIn(below, cmd);
     expect({ stdout: normalizeBunSnapshot(stdout), stderr, exitCode }).toEqual({

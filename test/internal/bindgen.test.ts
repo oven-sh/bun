@@ -96,13 +96,13 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.string.utf8.owned.default("x")).toThrow("cannot have a default");
   const refCounted = b.class({ rustPath: "T", refCounted: true });
   const inline = b.class({ rustPath: "T" });
-  for (const type of [inline, inline.nullable, b.union({ inline, ignored: b.any }), refCounted]) {
+  for (const type of [inline, inline.nullable, b.union({ instance: inline, ignored: b.any }), refCounted]) {
     expect(() => b.dictionary({ type })).toThrow(
       "an instance that Rust takes as &T cannot be in an array or a dictionary",
     );
     expect(() => b.array(type)).toThrow("an instance that Rust takes as &T cannot be in an array or a dictionary");
   }
-  expect(() => b.union({ inline, again: inline })).toThrow("again is never chosen");
+  expect(() => b.union({ instance: inline, again: inline })).toThrow("again is never chosen");
   expect(() => b.namespace({})).toThrow("a namespace with no functions");
   expect(() => b.namespace({ f: b.fn({ args: { x: b.i32 } }) as any })).toThrow(
     "f: write what b.fn takes, without b.fn",

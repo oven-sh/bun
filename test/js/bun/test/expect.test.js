@@ -2502,6 +2502,35 @@ describe("expect()", () => {
     expect(() => expect(undefined).not.toHaveProperty("length")).toThrow();
   });
 
+  test("an argument that is left out is undefined", () => {
+    expect(undefined).toBe();
+    expect(1).not.toBe();
+    expect(undefined).toEqual();
+    expect(undefined).toStrictEqual();
+    expect([undefined]).toContain();
+    expect([1]).not.toContain();
+    expect([undefined]).toContainEqual();
+    expect({ undefined: 1 }).toContainKey();
+    expect({ a: undefined }).toContainValue();
+    expect(1).toBeCloseTo(1, undefined);
+    expect().pass(undefined);
+
+    const results = [];
+    expect.extend({
+      toCallEqualsWithOneArgument(received) {
+        results.push(this.equals(received));
+        return { pass: true, message: () => "" };
+      },
+    });
+    expect(undefined).toCallEqualsWithOneArgument();
+    expect(1).toCallEqualsWithOneArgument();
+    expect(results).toEqual([true, false]);
+  });
+
+  test("expect.not does not need expect as its receiver", () => {
+    expect("b").toEqual(Object.create(expect).not.stringContaining("a"));
+  });
+
   test("toBe()", () => {
     const a = 1;
     const b = 1;

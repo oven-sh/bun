@@ -409,6 +409,8 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
   const sameMember = (type: ts.Type, member: ts.Symbol) =>
     checker.getPropertyOfType(type, member.name) ??
     checker.getPropertiesOfType(type).find(other => other.escapedName === member.escapedName);
+  /** The compiler numbers a well-known symbol: `__@dispose@123`. */
+  const nameOf = (member: ts.Symbol) => member.name.replace(/^__@(\w+)@\d+$/, "[Symbol.$1]");
 
   /** A dictionary or a class of the schema lists all it has, so nothing reads or gives any other member. */
   function membersTheSchemaLacks(published: ts.Type, schema: ts.Type) {
@@ -422,7 +424,7 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
       )
       .flatMap(part => part.getProperties())
       .filter(member => !listed.some(part => sameMember(part, member)))
-      .map(member => member.name);
+      .map(nameOf);
     return [...new Set(names)];
   }
 
@@ -476,7 +478,7 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
     compareSignatures(`new ${path}`, published.getConstructSignatures(), constructs);
     for (const member of schema.getProperties()) {
       const promised = sameMember(published, member);
-      const memberPath = path ? `${path}.${member.name}` : member.name;
+      const memberPath = path ? `${path}.${nameOf(member)}` : nameOf(member);
       if (promised) compare(memberPath, checker.getTypeOfSymbol(promised), checker.getTypeOfSymbol(member));
       else broken.push(`${memberPath} is not published`);
     }
@@ -561,6 +563,18 @@ describe("@types/bun integration test", () => {
       "Transpiler.bind.ts: new Transpiler(options?: TranspilerOptions | undefined): Transpiler: options has no jsxOptimizationInline",
       // Published, and a Request has neither.
       "filesystem_router.bind.ts: new FileSystemRouter().match(input: string | Request | Response): MatchedRoute | null: input has no keepalive, duplex",
+      // globals.d.ts does not declare these.
+      "resolve_message.bind.ts: new BuildMessage().toJSON is not published",
+      "resolve_message.bind.ts: new BuildMessage().column is not published",
+      "resolve_message.bind.ts: new BuildMessage().line is not published",
+      "resolve_message.bind.ts: new BuildMessage().notes is not published",
+      "resolve_message.bind.ts: new BuildMessage().[Symbol.toPrimitive] is not published",
+      "resolve_message.bind.ts: new ResolveMessage().toJSON is not published",
+      "resolve_message.bind.ts: new ResolveMessage().column is not published",
+      "resolve_message.bind.ts: new ResolveMessage().line is not published",
+      "resolve_message.bind.ts: new ResolveMessage().requireStack is not published",
+      "resolve_message.bind.ts: new ResolveMessage().stack is not published",
+      "resolve_message.bind.ts: new ResolveMessage().[Symbol.toPrimitive] is not published",
       // `pendingDeclarations` in test/internal/source-lints/redis-client-types.test.ts.
       "valkey.bind.ts: new RedisClient().psubscribe is not published",
       "valkey.bind.ts: new RedisClient().pubsub is not published",

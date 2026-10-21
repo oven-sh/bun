@@ -1329,6 +1329,11 @@ describe("Bun.Image", () => {
   });
 });
 
+test("a subclass inherits Bun.Image.backend", () => {
+  class Subclass extends Bun.Image {}
+  expect(Subclass.backend).toBe(Bun.Image.backend);
+});
+
 describe("decode-only formats (BMP / TIFF / GIF)", () => {
   // Several tests here flip the process-global backend; restore after the
   // describe so leaks can't reach the suites below regardless of throw paths.

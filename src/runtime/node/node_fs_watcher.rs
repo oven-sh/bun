@@ -9,10 +9,11 @@ use bun_core::strings;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
+use bun_jsc::bindgen::JsScope;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
-    self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CallFrame, CommonAbortReason,
+    self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CommonAbortReason,
     CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult, SysErrorJsc,
     VirtualMachineRef as VirtualMachine,
 };
@@ -22,6 +23,7 @@ use bun_ptr::{ParentRef, RefPtr, ThreadSafeRefCount};
 use bun_sys::{self, SystemErrno};
 use bun_threading::Mutex;
 
+use crate::generated_bindgen::node_fs_watcher::js_FSWatcher as js;
 use crate::node::types::{Encoding, PathLikeExt};
 use crate::webcore::encoding as Encoder;
 
@@ -40,10 +42,8 @@ use super::win_watcher as path_watcher;
 // dance in the old `emit_abort`/`emit_error` was a manual workaround for
 // exactly that. With `Cell`/`JsCell` (UnsafeCell-backed) the miscompile is
 // structurally impossible and those methods are now plain `&self`.
-#[bun_jsc::JsClass(no_constructor)]
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub(crate) struct FSWatcher {
-    // codegen: jsc.Codegen.JSFSWatcher provides toJS/fromJS/fromJSDirect
     /// JS-thread uses only.
     ctx: *mut VirtualMachine,
     /// How the (process-wide) watcher thread delivers event batches to the
@@ -87,12 +87,6 @@ bun_jsc::impl_abort_handle_owner!(FSWatcher, abort_handle, |this, cause| {
         bun_jsc::AbortCause::ContextStopped(_) => this.close_without_event(),
     }
 });
-
-/// `jsc.Codegen.JSFSWatcher` cached-slot accessors (`values: ["listener"]` in
-/// node.classes.ts). The C++ side is emitted by `generate-classes.ts`.
-pub(crate) mod js {
-    bun_jsc::codegen_cached_accessors!("FSWatcher"; listener);
-}
 
 impl FSWatcher {
     /// JS thread only (Windows delivers fs events on the loop thread).
@@ -766,9 +760,7 @@ impl FSWatcher {
         self.js_this.get_or_undefined()
     }
 
-    /// `FSWatcher.initJS`. Takes `*mut Self` so the
-    /// already-heap-allocated payload can be handed to `${T}__create` via
-    /// `to_js_ptr` without re-boxing (see jsc_macros::JsClass).
+    /// `FSWatcher.initJS`.
     ///
     /// # Safety
     /// `this` must be the unique `heap::alloc` pointer produced by `init`;
@@ -966,28 +958,20 @@ fn emit_js<const EVENT_TYPE: EventType>(
 }
 
 impl FSWatcher {
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_ref(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_ref(&self) {
         if !self.closed.get() && !self.persistent.get() {
             self.persistent.set(true);
             let vm_ctx = self.vm_ctx();
             self.poll_ref.with_mut(|r| r.ref_(vm_ctx));
         }
-        Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_unref(
-        &self,
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn do_unref(&self) {
         if self.persistent.get() {
             self.persistent.set(false);
             let vm_ctx = self.vm_ctx();
             self.poll_ref.with_mut(|r| r.unref(vm_ctx));
         }
-        Ok(JSValue::UNDEFINED)
     }
 
     // this can be called from Watcher Thread or JS Context Thread
@@ -1091,14 +1075,8 @@ impl FSWatcher {
         self.js_this.set(JsRef::empty());
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_close(
-        &self,
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn do_close(&self, _: &mut JsScope<'_>) {
         self.close();
-        Ok(JSValue::UNDEFINED)
     }
 
     pub(crate) fn init(args: &Arguments<'_>) -> bun_sys::Result<*mut FSWatcher> {

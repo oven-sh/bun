@@ -46,7 +46,7 @@ pub struct FileReader {
     /// Length of the slice window at `start_offset`; the reader is limited to it when it is started and ends the stream there. Read-only after init.
     pub(crate) max_size: Option<usize>,
     pub(crate) started: Cell<bool>,
-    /// The Blob's one cached stream (`Blob::get_stream_with_cache`): a consumer leaves it unspent for the next user.
+    /// The one stream an fd-backed Blob caches (`Blob::get_stream_with_cache`), e.g. `Bun.stdin.stream()`, which `process.stdin` reads too.
     pub(crate) shared: Cell<bool>,
     pub(crate) waiting_for_on_reader_done: Cell<bool>,
     pub(crate) event_loop: Cell<EventLoopHandle>,

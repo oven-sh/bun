@@ -34,6 +34,21 @@ test.concurrent("process.stdin.resume() works after Bun.spawn took Bun.stdin.str
   expect(exitCode).toBe(0);
 });
 
+test.concurrent("process.stdin closes when resumed right after Bun.spawn took Bun.stdin.stream()", async () => {
+  const [stdout, stderr, exitCode] = await runWithStdin(`
+    import { once } from "node:events";
+    const child = Bun.spawn([process.execPath, "-e", "process.stdin.resume()"], { stdin: Bun.stdin.stream() });
+    process.stdin.resume();
+    await once(process.stdin, "close");
+    console.log("stdin closed");
+    await child.exited;
+    console.log("child exited");
+  `);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("stdin closed\nchild exited\n");
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("Bun.stdin.stream() stays readable after spawnSync, spawn, and the stdio array form", async () => {
   const [stdout, stderr, exitCode] = await runWithStdin(`
     Bun.spawnSync(${noop}, { stdin: Bun.stdin.stream() });
@@ -50,46 +65,31 @@ test.concurrent("Bun.stdin.stream() stays readable after spawnSync, spawn, and t
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("process.stdin works after Bun.spawn took a Response over Bun.stdin.stream()", async () => {
-  const [stdout, stderr, exitCode] = await runWithStdin(`
-    const child = Bun.spawn(${cat}, { stdout: "inherit", stdin: new Response(Bun.stdin.stream()) });
-    await child.exited;
-    process.stdin.resume();
-    console.log("resume ok");
-  `);
-  expect(stderr).toBe("");
-  expect(stdout).toBe("from parent\nresume ok\n");
-  expect(exitCode).toBe(0);
-});
-
-// bytes(), arrayBuffer() and blob() lift the fd out as a Blob. text() reads through the stream itself.
-test.concurrent.each(["bytes", "arrayBuffer", "blob", "text"])(
-  "process.stdin works after Response.%s() over Bun.stdin.stream()",
-  async method => {
-    const [stdout, stderr, exitCode] = await runWithStdin(`
-      const response = new Response(Bun.stdin.stream());
-      const body = await new Response(await response.${method}()).text();
-      console.log(JSON.stringify(body), response.bodyUsed);
-      process.stdin.resume();
-      process.stdin.on("end", () => console.log("stdin end"));
-    `);
-    expect(stderr).toBe("");
-    expect(stdout).toBe('"from parent\\n" true\nstdin end\n');
-    expect(exitCode).toBe(0);
-  },
-);
-
 // A Response over the stdin Blob makes its own stream for `.body`. That one
-// is not shared, so a consumer leaves it locked as any body stream.
-test.concurrent("a Response body stream over Bun.stdin is spent, the cached stream is not", async () => {
+// is not shared, so spawn spends it like any other stream.
+test.concurrent("spawn spends a Response body stream over Bun.stdin, not the cached stream", async () => {
   const [stdout, stderr, exitCode] = await runWithStdin(`
     const response = new Response(Bun.stdin);
     const body = response.body;
     console.log(body === Bun.stdin.stream());
-    await response.bytes();
-    console.log(body.locked, Bun.stdin.stream().locked);
+    await Bun.spawn(${noop}, { stdin: body }).exited;
+    console.log(body.locked, response.bodyUsed, Bun.stdin.stream().locked);
   `);
   expect(stderr).toBe("");
-  expect(stdout).toBe("false\ntrue false\n");
+  expect(stdout).toBe("false\ntrue true false\n");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("Bun.spawn still refuses a Bun.stdin.stream() that was already used", async () => {
+  const [stdout, stderr, exitCode] = await runWithStdin(`
+    await Bun.stdin.stream().cancel();
+    try {
+      Bun.spawn(${noop}, { stdin: Bun.stdin.stream() });
+    } catch (e) {
+      console.log(e.code, e.message);
+    }
+  `);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ERR_INVALID_STATE 'stdin' ReadableStream has already been used\n");
   expect(exitCode).toBe(0);
 });

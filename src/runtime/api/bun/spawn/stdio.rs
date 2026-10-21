@@ -500,7 +500,11 @@ impl Stdio {
 
         if let Some(stream_) = webcore::ReadableStream::from_js(value, cx.global())? {
             let mut stream = stream_;
-            if let Some(blob) = stream.to_any_blob(cx.global()) {
+            // The child reads the fd itself, which leaves `Bun.stdin.stream()` to `process.stdin`.
+            if let Some(blob) = stream
+                .shared_blob(cx.global())
+                .or_else(|| stream.to_any_blob(cx.global()))
+            {
                 return out_stdio.extract_blob(cx.global(), blob, i);
             }
 

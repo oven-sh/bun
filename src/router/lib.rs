@@ -561,7 +561,11 @@ impl<'a> RouteLoader<'a> {
         // The resolver's caches match a path by its hash alone, so a hit can be the
         // listing of an unrelated directory, which has no routes of this router.
         let public_dir = match entries_dir.strip_prefix(&base_dir[..base_dir.len() - 1]) {
-            Some(rest) if rest.first().is_none_or(|c| bun_paths::resolve_path::is_sep_any(*c)) => {
+            Some(rest)
+                if rest
+                    .first()
+                    .is_none_or(|c| bun_paths::resolve_path::is_sep_any(*c)) =>
+            {
                 rest
             }
             _ => return,

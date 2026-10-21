@@ -1,7 +1,6 @@
 // The public keys no peer's chain may hold. us_x509_verify_chain (openssl.c) asks after every chain it verifies.
 #include "./root_certs_header.h"
 #include <array>
-#include <mutex>
 #include <string.h>
 #include <vector>
 
@@ -52,24 +51,8 @@ static constexpr us_spki_hash us_blocked_spkis[] = {
      0x62, 0xf5, 0xee, 0x57, 0xf0, 0x87, 0x7d, 0x5a, 0x8a, 0x41},
 };
 
-// The test-only list is process-wide and handshakes run on several threads, so every access takes the mutex.
-static std::mutex &us_blocked_spkis_for_testing_mutex() {
-  static std::mutex mutex;
-  return mutex;
-}
-
-static std::vector<us_spki_hash> &us_blocked_spkis_for_testing() {
-  static std::vector<us_spki_hash> list;
-  return list;
-}
-
-static bool us_is_blocked_spki_for_testing(const us_spki_hash &digest) {
-  std::lock_guard<std::mutex> lock(us_blocked_spkis_for_testing_mutex());
-  for (const us_spki_hash &blocked : us_blocked_spkis_for_testing()) {
-    if (digest == blocked) return true;
-  }
-  return false;
-}
+// Handshakes on every thread read this without a lock, so a test changes it only while none is running.
+static std::vector<us_spki_hash> us_blocked_spkis_for_testing;
 
 // A key that cannot be encoded is X509_V_ERR_UNSPECIFIED rather than X509_V_OK, so that it is not let through.
 static int us_x509_blocked_key_error(X509 *cert) {
@@ -82,7 +65,10 @@ static int us_x509_blocked_key_error(X509 *cert) {
   for (const us_spki_hash &blocked : us_blocked_spkis) {
     if (digest == blocked) return X509_V_ERR_CERT_REVOKED;
   }
-  return us_is_blocked_spki_for_testing(digest) ? X509_V_ERR_CERT_REVOKED : X509_V_OK;
+  for (const us_spki_hash &blocked : us_blocked_spkis_for_testing) {
+    if (digest == blocked) return X509_V_ERR_CERT_REVOKED;
+  }
+  return X509_V_OK;
 }
 
 static int us_x509_stack_blocked_key_error(const STACK_OF(X509) *certs) {
@@ -103,11 +89,9 @@ int us_x509_store_ctx_blocked_key_error(X509_STORE_CTX *ctx) {
 void us_add_blocked_spki_for_testing(const uint8_t *hash) {
   us_spki_hash entry;
   memcpy(entry.data(), hash, entry.size());
-  std::lock_guard<std::mutex> lock(us_blocked_spkis_for_testing_mutex());
-  us_blocked_spkis_for_testing().push_back(entry);
+  us_blocked_spkis_for_testing.push_back(entry);
 }
 
 void us_clear_blocked_spkis_for_testing() {
-  std::lock_guard<std::mutex> lock(us_blocked_spkis_for_testing_mutex());
-  us_blocked_spkis_for_testing().clear();
+  us_blocked_spkis_for_testing.clear();
 }

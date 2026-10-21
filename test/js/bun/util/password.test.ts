@@ -1,6 +1,6 @@
 import { password } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
 
 const placeholder = "hey";
 
@@ -540,6 +540,74 @@ test("verify rejects encoded argon2 hashes with cost parameters above the suppor
   const junkMemory = hashed.replace("$m=8,", "$m=8x,");
   expect(() => password.verifySync("correct horse", junkMemory)).toThrow("InvalidEncoding");
   await expect(password.verify("correct horse", junkMemory)).rejects.toThrow("InvalidEncoding");
+});
+
+// argon2 allocates memoryCost KiB up front. verify() reads the cost from the encoded hash.
+describe("argon2 when memoryCost can't be allocated", () => {
+  const script = (memoryCost: number) => /* js */ `
+    const { password } = Bun;
+    const describeError = e => ({ name: e.name, code: e.code, message: e.message });
+    const options = { algorithm: "argon2id", memoryCost: ${memoryCost}, timeCost: 1 };
+    const small = { algorithm: "argon2id", memoryCost: 8, timeCost: 1 };
+    const encoded = password.hashSync("hunter2", small).replace("$m=8,", "$m=${memoryCost},");
+    const results = {};
+    try {
+      password.hashSync("hunter2", options);
+      results.hashSync = "resolved";
+    } catch (e) {
+      results.hashSync = describeError(e);
+    }
+    results.hash = await password.hash("hunter2", options).then(() => "resolved", describeError);
+    try {
+      results.verifySync = password.verifySync("hunter2", encoded);
+    } catch (e) {
+      results.verifySync = describeError(e);
+    }
+    results.verify = await password.verify("hunter2", encoded).then(v => v, describeError);
+    results.afterwards = await password.verify("hunter2", await password.hash("hunter2", small));
+    console.log(JSON.stringify(results));
+  `;
+  const outOfMemory = (verb: string) => ({
+    name: "Error",
+    code: "PASSWORD_OUT_OF_MEMORY",
+    message: `Password ${verb} failed with error "OutOfMemory"`,
+  });
+  const expected = {
+    hashSync: outOfMemory("hashing"),
+    hash: outOfMemory("hashing"),
+    verifySync: outOfMemory("verification"),
+    verify: outOfMemory("verification"),
+    afterwards: true,
+  };
+
+  async function runChild(cmd: string[], env: NodeJS.Dict<string>) {
+    await using proc = Bun.spawn({ cmd, env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr isn't checked because ASAN prints a warning for every allocation it rejects.
+    return { result: JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode })), exitCode };
+  }
+
+  test.skipIf(!isASAN)("throws PASSWORD_OUT_OF_MEMORY (ASAN allocation cap)", async () => {
+    const { result, exitCode } = await runChild([bunExe(), "-e", script(65536)], {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1", "max_allocation_size_mb=32"]
+        .filter(Boolean)
+        .join(":"),
+    });
+    expect(result).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isASAN || !isLinux)("throws PASSWORD_OUT_OF_MEMORY (address-space limit)", async () => {
+    // 4 GiB is the largest cost verify() accepts. ASAN builds can't start under this limit.
+    const gib = 1024 * 1024; // in KiB, the unit of both ulimit -v and memoryCost
+    const { result, exitCode } = await runChild(
+      ["/bin/sh", "-c", `ulimit -v ${4 * gib} && exec "$0" "$@"`, bunExe(), "-e", script(4 * gib)],
+      bunEnv,
+    );
+    expect(result).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
 });
 
 test("verifySync reads the password buffer only after every argument has been coerced", () => {

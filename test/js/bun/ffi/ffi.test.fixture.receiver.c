@@ -66,6 +66,7 @@ typedef enum {
 } napi_status;
 BUN_FFI_IMPORT void* NapiHandleScope__open(void* napi_env, bool detached);
 BUN_FFI_IMPORT void NapiHandleScope__close(void* napi_env, void* handleScope);
+BUN_FFI_IMPORT bool NapiEnv__throwPendingException(void* napi_env);
 BUN_FFI_IMPORT extern struct NapiEnv Bun__thisFFIModuleNapiEnv;
 #endif
 
@@ -135,8 +136,21 @@ typedef void* JSContext;
 // The value is 6.
 // On ARM64_32, the value is something else but it really doesn't matter for our case
 // However, I don't want this to subtly break amidst future upgrades to JavaScriptCore
-#define LOAD_ARGUMENTS_FROM_CALL_FRAME \
-  int64_t *argsPtr = (int64_t*)((size_t*)callFrame + Bun_FFI_PointerOffsetToArgumentsList)
+//
+// The call frame only contains the arguments the caller passed.
+// If the caller passed fewer than `count`, read from a copy padded with undefined.
+static int64_t* Bun_FFI_padArguments(int64_t* passed, int32_t passedCount, int64_t* padded, int32_t count) {
+  int32_t i = 0;
+  for (; i < passedCount; i++) padded[i] = passed[i];
+  for (; i < count; i++) padded[i] = TagValueUndefined;
+  return padded;
+}
+
+#define LOAD_ARGUMENTS_FROM_CALL_FRAME(count) \
+  int64_t *argsPtr = (int64_t*)((size_t*)callFrame + Bun_FFI_PointerOffsetToArgumentsList); \
+  int32_t passedCount = ((EncodedJSValue*)callFrame)[Bun_FFI_PointerOffsetToArgumentCountIncludingThis].asBits.payload - 1; \
+  int64_t paddedArgs[count]; \
+  if (passedCount < count) argsPtr = Bun_FFI_padArguments(argsPtr, passedCount, paddedArgs, count)
 
 
 
@@ -144,10 +158,10 @@ static bool JSVALUE_IS_CELL(EncodedJSValue val) __attribute__((__always_inline__
 static bool JSVALUE_IS_INT32(EncodedJSValue val) __attribute__((__always_inline__)); 
 static bool JSVALUE_IS_NUMBER(EncodedJSValue val) __attribute__((__always_inline__));
 
-static uint64_t JSVALUE_TO_UINT64(EncodedJSValue value) __attribute__((__always_inline__));
-static int64_t  JSVALUE_TO_INT64(EncodedJSValue value) __attribute__((__always_inline__));
-uint64_t JSVALUE_TO_UINT64_SLOW(EncodedJSValue value);
-int64_t  JSVALUE_TO_INT64_SLOW(EncodedJSValue value);
+// Converts an argument to the ABIType `abiType` the way dlopen() does. If it throws, it sets `*threw` and the wrapper must return.
+uint64_t JSVALUE_TO_SLOT_SLOW(void* jsGlobalObject, int32_t abiType, bool* threw, int64_t value);
+static uint64_t JSVALUE_TO_UINT64(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue value) __attribute__((__always_inline__));
+static int64_t  JSVALUE_TO_INT64(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue value) __attribute__((__always_inline__));
 
 EncodedJSValue UINT64_TO_JSVALUE_SLOW(void* jsGlobalObject, uint64_t val);
 EncodedJSValue INT64_TO_JSVALUE_SLOW(void* jsGlobalObject, int64_t val);
@@ -161,7 +175,8 @@ static EncodedJSValue FLOAT_TO_JSVALUE(float val) __attribute__((__always_inline
 static EncodedJSValue BOOLEAN_TO_JSVALUE(bool val) __attribute__((__always_inline__));
 static EncodedJSValue PTR_TO_JSVALUE(void* ptr) __attribute__((__always_inline__));
 
-static void* JSVALUE_TO_PTR(EncodedJSValue val) __attribute__((__always_inline__));
+static void* JSVALUE_TO_PTR(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue val) __attribute__((__always_inline__));
+static void* JSVALUE_TO_BUFFER(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue val) __attribute__((__always_inline__));
 static int32_t JSVALUE_TO_INT32(EncodedJSValue val) __attribute__((__always_inline__));
 static float JSVALUE_TO_FLOAT(EncodedJSValue val) __attribute__((__always_inline__));
 static double JSVALUE_TO_DOUBLE(EncodedJSValue val) __attribute__((__always_inline__));
@@ -209,8 +224,9 @@ static uint64_t JSVALUE_TO_TYPED_ARRAY_LENGTH(EncodedJSValue val) {
 // Now, they're stored at the beginning of the 64-bit value
 // This behavior change enables the JIT to handle it better
 // It also is better readability when console.log(myPtr)
-static void* JSVALUE_TO_PTR(EncodedJSValue val) {
-  if (val.asInt64 == TagValueNull)
+static void* JSVALUE_TO_PTR(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue val) {
+  // null or undefined
+  if ((val.asInt64 & ~UndefinedTag) == TagValueNull)
     return 0;
 
   if (JSCELL_IS_TYPED_ARRAY(val)) {
@@ -221,9 +237,22 @@ static void* JSVALUE_TO_PTR(EncodedJSValue val) {
     return (void*)(uintptr_t)JSVALUE_TO_INT32(val);
   }
 
-  // Assume the JSValue is a double
-  val.asInt64 -= DoubleEncodeOffset;
-  return (void*)(uintptr_t)val.asDouble;
+  if (JSVALUE_IS_NUMBER(val)) {
+    val.asInt64 -= DoubleEncodeOffset;
+    return (void*)(uintptr_t)val.asDouble;
+  }
+
+  // Accepts a JSCallback, an ArrayBuffer, a BigInt or an object with a `ptr`. Throws on anything else.
+  return (void*)JSVALUE_TO_SLOT_SLOW(jsGlobalObject, abiType, threw, val.asInt64);
+}
+
+static void* JSVALUE_TO_BUFFER(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue val) {
+  if (JSCELL_IS_TYPED_ARRAY(val)) {
+    return JSVALUE_TO_TYPED_ARRAY_VECTOR(val);
+  }
+
+  // Always throws.
+  return (void*)JSVALUE_TO_SLOT_SLOW(jsGlobalObject, abiType, threw, val.asInt64);
 }
 
 static EncodedJSValue PTR_TO_JSVALUE(void* ptr) {
@@ -313,7 +342,7 @@ static bool JSVALUE_TO_BOOL(EncodedJSValue val) {
 }
 
 
-static uint64_t JSVALUE_TO_UINT64(EncodedJSValue value) {
+static uint64_t JSVALUE_TO_UINT64(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue value) {
   if (JSVALUE_IS_INT32(value)) {
     return (uint64_t)JSVALUE_TO_INT32(value);
   }
@@ -326,9 +355,10 @@ static uint64_t JSVALUE_TO_UINT64(EncodedJSValue value) {
     return (uint64_t)JSVALUE_TO_TYPED_ARRAY_LENGTH(value);
   }
 
-  return JSVALUE_TO_UINT64_SLOW(value);
+  // Accepts a BigInt. Throws on anything else.
+  return JSVALUE_TO_SLOT_SLOW(jsGlobalObject, abiType, threw, value.asInt64);
 }
-static int64_t JSVALUE_TO_INT64(EncodedJSValue value) {
+static int64_t JSVALUE_TO_INT64(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue value) {
   if (JSVALUE_IS_INT32(value)) {
     return (int64_t)JSVALUE_TO_INT32(value);
   }
@@ -337,7 +367,7 @@ static int64_t JSVALUE_TO_INT64(EncodedJSValue value) {
     return (int64_t)JSVALUE_TO_DOUBLE(value);
   }
 
-  return JSVALUE_TO_INT64_SLOW(value);
+  return (int64_t)JSVALUE_TO_SLOT_SLOW(jsGlobalObject, abiType, threw, value.asInt64);
 }
 
 static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) {
@@ -373,7 +403,7 @@ float not_a_callback(float arg0);
 
 /* ---- Your Wrapper Function ---- */
 ZIG_REPR_TYPE JSFunctionCall(void* JS_GLOBAL_OBJECT, void* callFrame) {
-  LOAD_ARGUMENTS_FROM_CALL_FRAME;
+  LOAD_ARGUMENTS_FROM_CALL_FRAME(1);
   EncodedJSValue arg0;
   arg0.asInt64 = *argsPtr;
     float return_value = not_a_callback(    JSVALUE_TO_FLOAT(arg0));

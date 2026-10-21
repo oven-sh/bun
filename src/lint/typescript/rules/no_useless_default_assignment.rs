@@ -49,8 +49,8 @@ fn get_array_element_type<'a>(array_type: Type<'a>, element_index: usize) -> Opt
     array_type.get_number_index_type()
 }
 
-/// As upstream, the `a` of the computed key `[a]` is taken for the name. tsgolint has a name there only for an identifier
-/// or a literal that is written without parentheses, and takes the empty name too.
+/// As upstream, the `a` in the computed key `[a]` is used as the name. tsgolint only finds a name there for an
+/// unparenthesized identifier or literal, and it also accepts the empty name.
 fn get_property_name<'a>(key: Key<'a>, is_oxlint: bool) -> Option<&'a [u8]> {
     let name: &'a [u8] = match key.kind() {
         KeyKind::Ident(name)
@@ -72,10 +72,10 @@ fn get_property_name<'a>(key: Key<'a>, is_oxlint: bool) -> Option<&'a [u8]> {
     (is_oxlint || !name.is_empty()).then_some(name)
 }
 
-/// The names for which upstream's `hasPropertyInAllBranches(expression, name)` holds: those of the properties that every branch
-/// of `expression` has, if all of them are object literals.
+/// Returns the names for which upstream's `hasPropertyInAllBranches(expression, name)` is true: the properties that
+/// every branch of `expression` has, provided all branches are object literals.
 fn get_properties_in_all_branches<'a>(expression: Expr<'a>, is_oxlint: bool) -> FxHashSet<&'a [u8]> {
-    // For each name, how many branches have it, and the last of them.
+    // For each name, how many branches have it, and the last branch that does.
     let mut found: FxHashMap<&'a [u8], (u32, u32)> = FxHashMap::default();
     let mut branches = 0;
     let mut rest: SmallVec<[Expr<'a>; 8]> = smallvec![expression];
@@ -98,13 +98,13 @@ fn get_properties_in_all_branches<'a>(expression: Expr<'a>, is_oxlint: bool) -> 
     found.into_iter().filter(|(_, (count, _))| *count == branches).map(|(name, _)| name).collect()
 }
 
-/// The index of `item` in `list`, whose elements are in the order of the source.
+/// Returns the index of `item` in `list`, whose elements are in source order.
 fn index_in<'a, T: Handle<'a> + Spanned + PartialEq>(list: List<'a, T>, item: T) -> Option<usize> {
     let index = list.index_of_start(item.span().start).filter(|&index| list.get(index) == Some(item));
     index.or_else(|| list.iter().position(|it| it == item))
 }
 
-/// The index of `param` among all that is written between the parentheses of `func`.
+/// Returns the index of `param` among everything between `func`'s parentheses.
 fn index_of_parameter<'a>(func: Func<'a>, param: Param<'a>) -> Option<usize> {
     match func.this_param() {
         Some(this_param) if this_param == param => Some(0),
@@ -123,7 +123,7 @@ fn is_conditional_or_logical(expression: Expr) -> bool {
     )
 }
 
-/// The type of the property that `property` of an object pattern reads.
+/// Returns the type of the property that `property`, in an object pattern, reads.
 fn get_type_of_property<'a>(property: PatProp<'a>, cx: &mut Context<'a>) -> Option<Type<'a>> {
     let Node::Pat(object_pattern) = property.parent() else {
         return None;
@@ -137,7 +137,7 @@ fn get_type_of_property<'a>(property: PatProp<'a>, cx: &mut Context<'a>) -> Opti
             Node::VarDecl(declarator) => declarator.init(),
             _ => None,
         };
-        // tsgolint knows the type of an optional property only where every branch of the initializer writes it.
+        // tsgolint only knows an optional property's type if every branch of the initializer sets it.
         match init.filter(|init| is_oxlint || is_conditional_or_logical(*init)) {
             Some(init) => {
                 let properties = cx.state.get_or_insert_with(init, || get_properties_in_all_branches(init, is_oxlint));
@@ -152,9 +152,9 @@ fn get_type_of_property<'a>(property: PatProp<'a>, cx: &mut Context<'a>) -> Opti
     Some(symbol.get_type())
 }
 
-/// The type of what the object or array pattern `pattern` destructures.
+/// Returns the type of the value that the object or array pattern `pattern` destructures.
 fn get_source_type_for_pattern<'a>(pattern: Pat<'a>, cx: &mut Context<'a>) -> Option<Type<'a>> {
-    // tsgolint also takes a rest parameter, a rest element and a parameter of a function without a body.
+    // tsgolint also handles a rest parameter, a rest element and a parameter of a function without a body.
     let is_oxlint = cx.language().is_oxlint;
     match pattern.parent() {
         Node::VarDecl(declarator) => Some(declarator.init()?.ty()),
@@ -195,7 +195,7 @@ fn is_simple_type_for_message(ty: Type) -> bool {
     ty.has_flags(primitive_like) || ty.symbol().is_some_and(|symbol| !symbol.name().is_empty())
 }
 
-/// tsgolint reports the default with the parentheses around it.
+/// tsgolint reports the default including its parentheses.
 fn report_default<'a>(right: Expr<'a>, message: Message, cx: &Context<'a>) -> Report<'a> {
     match cx.language().is_oxlint && right.is_parenthesized() {
         true => cx.report(right.outer_span(), message),
@@ -203,7 +203,7 @@ fn report_default<'a>(right: Expr<'a>, message: Message, cx: &Context<'a>) -> Re
     }
 }
 
-/// `removal`: from the end of what has the default `right` to the end of the default.
+/// `removal` runs from the end of the thing that has the default `right` to the end of the default.
 fn report_useless<'a>(message: Message, right: Expr<'a>, removal: Span, ty: &'static str, cx: &Context<'a>) {
     let mut report = report_default(right, message, cx).data("type", ty);
     if cx.language().is_oxlint {
@@ -212,8 +212,8 @@ fn report_useless<'a>(message: Message, right: Expr<'a>, removal: Span, ty: &'st
     report.suggest(REMOVE_DEFAULT_ASSIGNMENT, |fixer| fixer.remove(removal));
 }
 
-/// `value`: the type of what has the default, if it is known as one type. `target`: the type annotation of what has the
-/// default, or its name.
+/// `value` is the type of the thing that has the default, if it's known as a single type. `target` is that thing's type
+/// annotation, or its name.
 fn report_useless_default<'a>(
     right: Expr<'a>,
     removal: Span,
@@ -261,7 +261,7 @@ fn check_parameter<'a>(param: Param<'a>, cx: &Context<'a>) {
         return;
     }
 
-    // Only a function expression has a contextual type that says what it is called with.
+    // Only a function expression has a contextual type that tells what it's called with.
     if param.is_parameter_property() {
         return;
     }
@@ -281,9 +281,9 @@ fn check_parameter<'a>(param: Param<'a>, cx: &Context<'a>) {
     if signatures.first().is_none_or(|first| first.declaration() == Some(func.ts_node())) {
         return;
     }
-    // tsgolint asks the first signature only.
-    let asked = if cx.language().is_oxlint { 1 } else { signatures.len() };
-    let default_can_be_used = signatures.iter().take(asked).any(|signature| {
+    // tsgolint only checks the first signature.
+    let checked_count = if cx.language().is_oxlint { 1 } else { signatures.len() };
+    let default_can_be_used = signatures.iter().take(checked_count).any(|signature| {
         let Some(param_symbol) = signature.get_parameters().get(param_index) else {
             return true;
         };
@@ -314,8 +314,8 @@ fn check_property<'a>(property: PatProp<'a>, cx: &mut Context<'a>) {
     }
 }
 
-/// `element`: the one at `element_index` of `array_pattern`. `source`: the type of what `array_pattern` destructures, once it
-/// has been asked for, if that is a tuple type.
+/// `element` is the one at `element_index` in `array_pattern`. `source` caches the type `array_pattern` destructures,
+/// if that's a tuple type.
 fn check_element<'a>(
     array_pattern: Pat<'a>,
     element_index: usize,
@@ -346,7 +346,7 @@ fn check_element<'a>(
     let fixed_length = target.fixed_length();
     let mut end = tuple_args.len();
     if cx.language().is_oxlint && element_index >= fixed_length {
-        // tsgolint: a trailing element cannot reach this position if too many required elements precede it.
+        // tsgolint: a trailing element can't reach this position if too many required elements precede it.
         let (flags, mut position) = (target.element_flags(), fixed_length);
         end = fixed_length;
         while end < tuple_args.len() && position <= element_index {
@@ -362,7 +362,7 @@ fn check_element<'a>(
         let mut candidates = tuple_args.iter().take(end).skip(fixed_length);
         let value = match element_index < fixed_length {
             true => tuple_args.get(element_index),
-            // tsgolint names `getUnionType` of the candidates: known here only where they are one type.
+            // tsgolint prints `getUnionType` of the candidates, which is only known here if they're all the same type.
             false if cx.language().is_oxlint => candidates.next().filter(|first| candidates.all(|it| it == *first)),
             false => None,
         };
@@ -380,7 +380,7 @@ impl Rule for NoUselessDefaultAssignment {
         .params()
         .pats(&[PatTag::Object, PatTag::Array])
         .exprs(&[ExprTag::Assign]);
-    /// [`get_properties_in_all_branches`] of what has been asked about.
+    /// Caches [`get_properties_in_all_branches`] per expression.
     type State<'a> = IdMap<Expr<'a>, FxHashSet<&'a [u8]>>;
 
     fn new(options: &Options) -> Self {
@@ -400,7 +400,7 @@ impl Rule for NoUselessDefaultAssignment {
             on = on.finish();
         }
         on = on.params().pats(&[PatTag::Object, PatTag::Array]);
-        // tsgolint does not look at the defaults of a destructuring assignment.
+        // tsgolint ignores the defaults in a destructuring assignment.
         match file.language().is_oxlint {
             true => on,
             false => on.exprs(&[ExprTag::Assign]),
@@ -411,8 +411,8 @@ impl Rule for NoUselessDefaultAssignment {
         Some(IdMap::new())
     }
 
-    // A default in the target of a destructuring assignment. What is assigned has no type that
-    // upstream looks at, so only `= undefined` is useless there.
+    // A default in a destructuring assignment's target. Upstream doesn't look at the assigned value's type, so only
+    // `= undefined` is useless there.
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let ExprKind::Assign {
             op: None,

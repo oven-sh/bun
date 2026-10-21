@@ -1,4 +1,4 @@
-//! Breaking text into lines, and tables.
+//! Wraps text into lines, and formats tables.
 
 use super::line_buffer::LineBuffer;
 use super::markers::is_block_marker_token;
@@ -30,7 +30,7 @@ fn parse_table_cells(line: &[u8]) -> Vec<&[u8]> {
         .collect()
 }
 
-/// The lines of a table, with its columns aligned if it has a row of dashes.
+/// Returns the lines of a table, with its columns aligned if it has a separator row.
 pub(super) fn format_table_block(table_lines: &[&[u8]]) -> Vec<Vec<u8>> {
     let unchanged = || table_lines.iter().map(|line| line.to_vec()).collect();
     let Some(separator_index) = table_lines.iter().position(|line| is_table_separator(line)) else {
@@ -95,8 +95,8 @@ pub(super) fn format_table_block(table_lines: &[&[u8]]) -> Vec<Vec<u8>> {
     result
 }
 
-/// Where what starts with `{@` at `start` ends: behind the brace that closes it, and behind what follows that
-/// without white space in between.
+/// Returns where the inline tag that starts with `{@` at `start` ends. That's after its closing brace and after
+/// anything that follows the brace without whitespace.
 fn inline_tag_end(bytes: &[u8], start: usize) -> usize {
     let len = bytes.len();
     let mut depth = 1;
@@ -115,7 +115,7 @@ fn inline_tag_end(bytes: &[u8], start: usize) -> usize {
     i
 }
 
-/// The last space in `text` that is not in a `{@link ...}`.
+/// Returns the last space in `text` that isn't inside a `{@link ...}`.
 fn find_last_breakable_space(text: &[u8]) -> Option<usize> {
     let mut last_space = None;
     let mut i = 0;
@@ -132,7 +132,7 @@ fn find_last_breakable_space(text: &[u8]) -> Option<usize> {
     last_space
 }
 
-/// The words of `text`. A `{@link ...}` is one word.
+/// Splits `text` into words. A `{@link ...}` is one word.
 fn tokenize_words(text: &[u8]) -> Vec<&[u8]> {
     let mut tokens = Vec::new();
     let len = text.len();
@@ -156,7 +156,7 @@ fn tokenize_words(text: &[u8]) -> Vec<&[u8]> {
     }
 }
 
-/// Whether `token` is like `{@link Foo}`, with or without something behind it.
+/// True if `token` looks like `{@link Foo}`, possibly with something after it.
 fn is_inline_tag(token: &[u8]) -> bool {
     token.len() >= 3
         && token.starts_with(b"{@")
@@ -164,8 +164,8 @@ fn is_inline_tag(token: &[u8]) -> bool {
         && strings::contains_char(token, b'}')
 }
 
-/// Breaks a paragraph into lines of at most `max_width` columns. The first has `first_line_offset` columns
-/// less, the others are indented by `continuation_indent`.
+/// Wraps a paragraph into lines of at most `max_width` columns. The first line gets `first_line_offset` fewer columns,
+/// and the others are indented by `continuation_indent`.
 pub(super) fn wrap_paragraph(
     text: &[u8],
     max_width: usize,
@@ -219,7 +219,7 @@ pub(super) fn wrap_paragraph(
     if current_line.is_empty() {
         return;
     }
-    // prettier-plugin-jsdoc breaks a last line once more if it is exactly as long as a line can be.
+    // prettier-plugin-jsdoc breaks the last line once more if it's exactly as long as a line can be.
     if !is_first_line
         && current_width == effective_max
         && let Some(last_space) = find_last_breakable_space(&current_line)
@@ -232,8 +232,8 @@ pub(super) fn wrap_paragraph(
     push_line(&current_line, is_first_line);
 }
 
-/// For text that is nothing but paragraphs with empty lines between them. `is_balanced`: a paragraph whose
-/// lines all fit keeps them.
+/// For text that's only paragraphs separated by empty lines. With `is_balanced`, a paragraph whose lines all fit keeps
+/// its line breaks.
 pub(super) fn wrap_plain_paragraphs(text: &[u8], max_width: usize, is_balanced: bool) -> Vec<u8> {
     fn flush(
         paragraph: &mut Vec<&[u8]>,

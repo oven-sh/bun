@@ -175,11 +175,6 @@ impl<'a> CommonStrings<'a> {
     pub fn alpn_http11(self) -> JSValue {
         CommonStringsForRust::AlpnHttp11.to_js(self.global_object)
     }
-    /// `"utf-8"` (the WHATWG encoding name; `"utf8"` is the node one)
-    #[inline]
-    pub fn utf8_with_dash(self) -> JSValue {
-        CommonStringsForRust::Utf8WithDash.to_js(self.global_object)
-    }
     /// `"abandoned"`
     #[inline]
     pub fn quic_datagram_abandoned(self) -> JSValue {

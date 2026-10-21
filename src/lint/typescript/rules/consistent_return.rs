@@ -47,7 +47,7 @@ fn is_thenable_type_with_void_value<'a>(
         && ty.get_awaited_type().is_some_and(|awaited| is_thenable_type_with_void_value(node, awaited, visited))
 }
 
-/// tsgo's `GetFunctionFlags(node) & FunctionFlagsAsync`: never of an accessor or a constructor.
+/// tsgo's `GetFunctionFlags(node) & FunctionFlagsAsync`, which is never set for an accessor or a constructor.
 fn has_function_flags_async(func: Func<'_>) -> bool {
     matches!(func.kind(), FnKind::Decl | FnKind::Expr | FnKind::Arrow | FnKind::Method) && func.is_async()
 }
@@ -66,7 +66,7 @@ fn is_return_void_or_thenable_void(func: Func<'_>) -> bool {
     })
 }
 
-/// tsgo's `GetAssignedName`: the name that a function expression has from where it is.
+/// tsgo's `GetAssignedName`: the name a function expression gets from its position.
 fn assigned_name<'a>(e: Expr<'a>, file: &'a File<'a>) -> Option<&'a [u8]> {
     let left = match e.parent() {
         _ if e.is_parenthesized() => return None,
@@ -78,7 +78,7 @@ fn assigned_name<'a>(e: Expr<'a>, file: &'a File<'a>) -> Option<&'a [u8]> {
         Node::VarDecl(declarator) => return declarator.pat().as_ident().map(Name::bytes),
         Node::Expr(parent) => match parent.kind() {
             ExprKind::Binary { left, right, .. } if right == e => left,
-            // The default of a shorthand property is no `BinaryExpression` for tsgo.
+            // For tsgo a shorthand property's default isn't a `BinaryExpression`.
             ExprKind::Assign { target, value, .. }
                 if value == e
                     && !matches!(parent.parent(), Node::Prop(prop) if prop.kind() == PropKind::Shorthand) =>
@@ -104,7 +104,7 @@ fn assigned_name<'a>(e: Expr<'a>, file: &'a File<'a>) -> Option<&'a [u8]> {
     }
 }
 
-/// How tsgolint calls a function.
+/// tsgolint's name for a function.
 fn tsgolint_function_name(func: Func) -> Vec<u8> {
     let file = func.file();
     let name = match (func.name(), func.owner()) {
@@ -140,8 +140,8 @@ impl ConsistentReturn {
         });
     }
 
-    /// The rule of tsgolint 7.0. A function that can return `void` may end without a `return`, as may one in which a
-    /// `return` has been reported. It makes no exception for constructors, and points at the whole function.
+    /// tsgolint 7.0's rule. A function that can return `void` may end without a `return`, and so may one where a
+    /// `return` has already been reported. It makes no exception for constructors, and it points at the whole function.
     fn check_as_tsgolint<'a>(&self, func: Func<'a>, cx: &Cx<'a, Self>) {
         let returns_void = OnceCell::new();
         let allows_void = || *returns_void.get_or_init(|| is_return_void_or_thenable_void(func));

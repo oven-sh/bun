@@ -1,12 +1,14 @@
-// A second set of inputs from the compiler's fixtures, in which a linter compiles what the fixtures mean to be compiled.
+// Makes a second set of inputs from the compiler's fixtures, in which a linter compiles the functions the fixtures are
+// about.
 //
 //   bun force.ts <fixtures> <out directory>
 //
-// The fixtures are written for a compiler that compiles every function of a file. A linter compiles what looks like a
-// component or a hook (it has a name like one, and makes JSX or calls a hook), so `function Component() { return foo(); }`
-// is never looked at. Here each function that starts at the start of a line gets the directive 'use memo', which asks for
-// it to be compiled. Lines keep their numbers. The heads are found by their looks, on one line or ending in a line `}) {`:
-// it does not matter if some are missed, or if a file no longer parses, since both sides read the same files.
+// The fixtures are written for a compiler that compiles every function in a file. A linter only compiles what looks
+// like a component or a hook (it's named like one, and creates JSX or calls a hook), so it skips
+// `function Component() { return foo(); }`. This script adds a 'use memo' directive, which opts a function in to
+// compilation, to each function that starts in column 1. Line numbers don't change. Function heads are found with
+// regular expressions, either on one line or ending in a `}) {` line. It doesn't matter if some are missed, or if a
+// file no longer parses, because both tools read the same files.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -22,7 +24,7 @@ const FUNCTION_OPEN = new RegExp(String.raw`^${EXPORT}(?:async\s+)?function\b.*[
 const ARROW = new RegExp(String.raw`^${EXPORT}(?:const|let|var)\s+\w+.*=>\s*\{$`);
 const HEAD_END = /^[}\]]?\)(?::.*)?\s*\{$/;
 
-/** As many `)` as `(`: the `{` at the end is not in the parameters. */
+/** True if the line has as many `)` as `(`, so the `{` at its end isn't inside the parameters. */
 const closed = (line: string) => line.split("(").length === line.split(")").length;
 
 let files = 0;

@@ -27,7 +27,7 @@ impl Rule for PreferEnumInitializers {
         };
         let is_oxlint = cx.language().is_oxlint;
         for (index, member) in declaration.members().iter().enumerate() {
-            // oxlint passes over a name that is a string.
+            // oxlint skips members whose name is a string.
             if member.init().is_some()
                 || is_oxlint && !matches!(member.key().map(Key::kind), Some(KeyKind::Ident(_)))
             {

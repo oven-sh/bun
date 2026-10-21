@@ -183,4 +183,30 @@ describe("ArrayBufferSink", () => {
     if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  it("write() throws when converting the chunk to a string closes the sink", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        for (const ret of ["payload", "pay\u4f60"]) {
+          const sink = new Bun.ArrayBufferSink();
+          sink.start({ highWaterMark: 64 });
+          sink.write("seed");
+          const chunk = Object.assign(new String("x"), { [Symbol.toPrimitive]() { sink.close(); return ret; } });
+          try { console.log(sink.write(chunk)); }
+          catch (e) { console.log(/already been closed/.test(e.message)); }
+        }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("true\ntrue\n");
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });

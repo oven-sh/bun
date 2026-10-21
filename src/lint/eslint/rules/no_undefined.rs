@@ -7,7 +7,7 @@ const UNEXPECTED_UNDEFINED: Message =
     Message::new("unexpectedUndefined", "Unexpected use of undefined.");
 
 impl NoUndefined {
-    /// A variable that the file declares.
+    /// Checks a variable that the file declares.
     fn check_symbol<'a>(&self, symbol: Symbol<'a>, cx: &mut Cx<'a, Self>) {
         for reference in symbol.references().filter(|it| !it.is_init()) {
             cx.report(reference, UNEXPECTED_UNDEFINED);
@@ -21,7 +21,7 @@ impl NoUndefined {
                 continue;
             };
             cx.report(span, UNEXPECTED_UNDEFINED);
-            // ESLint has a second variable for the name, in the scope of the class.
+            // ESLint has a second variable for the name, in the class's scope.
             if let Declaration::Class(class) = declaration
                 && matches!(class.owner(), Node::Stmt(_))
             {
@@ -30,7 +30,7 @@ impl NoUndefined {
         }
     }
 
-    /// The global variable.
+    /// Checks the global variable.
     fn check_global<'a>(&self, cx: &mut Cx<'a, Self>) {
         if !ast_utils::is_configured_global(cx.file(), b"undefined") {
             return;
@@ -46,7 +46,7 @@ impl NoUndefined {
 impl Rule for NoUndefined {
     const META: Meta = Meta::eslint("no-undefined", Kind::Suggestion).reports_at_the_end();
     const ON: On = On::new().finish();
-    /// `undefined`
+    /// The name `undefined`.
     type State<'a> = Name<'a>;
 
     fn new(_: &Options) -> Self {

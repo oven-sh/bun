@@ -75,7 +75,7 @@ export const cases: Record<string, Case> = {
  0|      return "one";
  1|    case 2:
  1|      return "two";
- -|    default:
+ 0|    default:
  0|      return "many";
  -|  }
  -|}
@@ -84,7 +84,7 @@ export const cases: Record<string, Case> = {
  1|    throw new Error("x");
  1|  } catch (e) {
  1|    return 1;
- -|  } finally {
+ 1|  } finally {
  1|    f(true);
  -|  }
  -|}
@@ -138,7 +138,7 @@ export const cases: Record<string, Case> = {
  -|declare const d: number;
  1|export const e: B = {
  1|  a: 1,
- -|};
+ 1|};
  0|export function f(x: C): A | undefined {
  0|  return undefined;
  -|}
@@ -167,6 +167,124 @@ export const cases: Record<string, Case> = {
  0|  1,
  0|  2,
  0|];
+`,
+  },
+  // Both braces of an object literal are code, and of a pattern that is assigned to, which a `var` in a block becomes.
+  // Those of a block, a body, a class and a binding are not.
+  "braces.ts": {
+    functions: "5/7",
+    lines: `
+ 2|const twice = (
+ 2|  n: number,
+ 2|): { x: number } => ({
+ 2|  x: n,
+ 2|});
+ 1|const typed: {
+ -|  v: number;
+ 1|} = {
+ 1|  v: 1,
+ 1|};
+ 3|const thrice = () =>
+ 3|  ({
+ 3|    y: typed.v,
+ 3|  });
+ 1|export const never = () =>
+ 0|  ({
+ 0|    z: 1,
+ 0|  });
+ 1|const list = [
+ 1|  {
+ 1|    one: 1,
+ 1|  },
+ 1|  {
+ 1|    two: 2,
+ 1|  },
+ 1|];
+ 1|export const chosen = !typed.v
+ 0|  ? {
+ 0|      yes: 1,
+ 0|    }
+ 1|  : {
+ 1|      no: 1,
+ 1|    };
+ 1|export const neither = !typed.v &&
+ 0|  {
+ 0|    and: 1,
+ 0|  };
+ 1|export const empty = {
+ 1|};
+ 1|const withMethod = {
+ 1|  method() {
+ 1|    return 1;
+ -|  },
+ 1|};
+ 1|withMethod.method();
+ 1|function pattern(
+ -|  {
+ 1|    one,
+ -|  }: { one?: number },
+ -|) {
+ 1|  return one;
+ -|}
+ 1|pattern({ one: 1 });
+ 2|for (const item of list) ({
+ 2|  two: item.two,
+ 2|}).two;
+ 1|for (const item of list) {
+ 2|  twice(item.one ?? 0);
+ -|}
+ 1|function early() {
+ 1|  if (typed.v) {
+ 1|    return 1;
+ -|  }
+ 0|  return 2;
+ -|}
+ 1|early();
+ 1|if (typed.v)
+ -|{
+ 1|  thrice();
+ -|}
+ 0|else
+ -|{
+ 0|  Object(0);
+ -|}
+ 1|if (!typed.v)
+ -|{
+ 0|  Object(0);
+ -|}
+ 1|else
+ -|{
+ 1|  Object(1);
+ -|}
+ 1|switch (typed.v) {
+ 1|  case 1:
+ -|  {
+ 1|    thrice();
+ -|  }
+ -|}
+ -|{
+ 1|  thrice();
+ -|}
+ 1|export class Empty
+ -|{
+ -|}
+ 1|let first: any;
+ 1|[
+ 1|  {
+ 1|    a: first,
+ 1|  },
+ 1|] = [{ a: 1 }];
+ 1|if (typed.v) {
+ -|  var
+ 1|  {
+ 1|    v: hoisted,
+ 1|  }
+ 1|  = typed;
+ -|}
+ 1|export const spaced = {
+ 0|  async am
+ 0|  () {},
+ 1|};
 `,
   },
   // Where a constant is inlined, its value has the position of its declaration.
@@ -385,7 +503,7 @@ export const cases: Record<string, Case> = {
  3|    case 3:
  3|      g();
  3|      break;
- -|    default:
+ 0|    default:
  0|      return 4;
  -|  }
  3|  g();
@@ -400,7 +518,7 @@ export const cases: Record<string, Case> = {
  2|      return 1;
  -|    }
  1|    g();
- -|  } finally {
+ 3|  } finally {
  3|    g();
  -|  }
  1|  g();
@@ -421,21 +539,296 @@ export const cases: Record<string, Case> = {
  1|} catch {}
 `,
   },
-  "generators.ts": {
-    functions: "4/4",
+  // `case` and `default` ran as often as what follows them, not as often as a `case` was compared.
+  "switch.ts": {
+    functions: "6/7",
     lines: `
- 1|function* once() {
- 1|  yield 1;
+ 3|function defaultLast(x: number) {
+ 3|  switch (x) {
+ 1|    case
+ 1|      1:
+ 1|      at();
+ 1|      break;
+ 2|    default:
+ 2|      at();
+ -|  }
  -|}
+ 1|defaultLast(1);
+ 1|defaultLast(2);
+ 1|defaultLast(2);
+ 3|function defaultFirst(x: number) {
+ 3|  switch (x) {
+ 2|    default:
+ 2|      at();
+ 3|    case 1:
+ 3|      at();
+ -|  }
+ -|}
+ 1|defaultFirst(1);
+ 1|defaultFirst(2);
+ 1|defaultFirst(2);
+ 3|function blocks(x: number) {
+ 3|  switch (x) {
+ 1|    case 1: {
+ 1|      at();
+ 1|      break;
+ -|    }
+ 2|    default: {
+ 2|      at();
+ -|    }
+ -|  }
+ -|}
+ 1|blocks(1);
+ 1|blocks(2);
+ 1|blocks(2);
+ 1|function empty(x: number) {
+ 1|  switch (x) {
+ 1|    case 1:
+ 1|    default:
+ -|  }
+ -|}
+ 1|empty(1);
+ 2|function uncalledArrow(x: unknown) {
+ 2|  switch (x) {
+ 2|    case 1:
+ 2|    case () => 1:
+ 2|      at();
+ -|  }
+ -|}
+ 1|uncalledArrow(1);
+ 1|uncalledArrow(1);
+ 3|function sameLine(x: number) {
+ 3|  switch (x) {
+ 2|    case 1: return; default:
+ 2|      at();
+ -|  }
+ -|}
+ 1|sameLine(1);
+ 1|sameLine(2);
+ 1|sameLine(2);
+`,
+  },
+  // `finally` ran as often as its block, however the `try` was left.
+  "finally.ts": {
+    functions: "11/12",
+    lines: `
+ 2|function completes() {
+ 2|  try {
+ 2|    at();
+ 2|  } finally {
+ 2|    at();
+ -|  }
+ -|}
+ 1|completes();
+ 1|completes();
+ 1|function handles() {
+ 1|  try {
+ 1|    throw new Error();
+ 1|  } catch {
+ 1|    at();
+ 1|  } finally {
+ 1|    at();
+ -|  }
+ -|}
+ 1|handles();
+ 1|function neverCatches() {
+ 1|  try {
+ 1|    at();
+ 0|  } catch {
+ 0|    at();
+ 1|  } finally {
+ 1|    at();
+ -|  }
+ -|}
+ 1|neverCatches();
+ 1|function throws() {
+ 1|  try {
+ 1|    throw new Error();
+ 1|  } finally {
+ 1|    at();
+ -|  }
+ -|}
+ 1|try {
+ 1|  throws();
+ 1|} catch {}
+ 1|function continues() {
+ 1|  for (let i = 0; i < 3; i++) {
+ 3|    try {
+ 3|      continue;
+ 3|    } finally {
+ 3|      at();
+ -|    }
+ -|  }
+ -|}
+ 1|continues();
+ 1|function* closed() {
+ 1|  try {
+ 1|    yield 1;
+ 1|  } finally {
+ 1|    at();
+ -|  }
+ -|}
+ 1|const returned = closed();
+ 1|returned.next();
+ 1|returned.return();
+ 1|async function stuck() {
+ 1|  try {
+ 1|    await new Promise(() => {});
+ 0|  } finally {
+ 0|    at();
+ -|  }
+ -|}
+ 1|stuck();
+ 0|export function uncalled() {
+ 0|  try {
+ 0|    at();
+ 0|  } finally {
+ 0|    at();
+ -|  }
+ -|}
+ 1|function multiline() {
+ 1|  try
+ -|  {
+ 1|    at();
+ -|  }
+ 1|  finally
+ -|  {
+ 1|    at();
+ -|  }
+ -|}
+ 1|multiline();
+ 3|function sameLine(x: boolean) {
+ 3|  try {
+ 3|    if (x) return 1;
+ 3|    at(); } finally {
+ 3|    at();
+ -|  }
+ -|}
+ 1|sameLine(true);
+ 1|sameLine(true);
+ 1|sameLine(false);
+ 1|function sameLineAsCatch() {
+ 1|  try {
+ 1|    at();
+ 1|  } catch { at(); } finally {
+ 1|    at();
+ -|  }
+ -|}
+ 1|sameLineAsCatch();
+`,
+  },
+  // What is after a statement that the function was left at, and did not come back to.
+  "generators.ts": {
+    functions: "7/7",
+    lines: `
  1|function* never() {
  0|  yield 1;
  -|}
- 1|async function stuck() {
- 1|  await new Promise(() => {});
- -|}
- 1|once().next();
  1|never();
+ 2|function* generator() {
+ 2|  at();
+ 2|  yield 1;
+ 1|  at();
+ 1|  yield 2;
+ 0|  at();
+ -|}
+ 1|const resumed = generator();
+ 1|resumed.next();
+ 1|resumed.next();
+ 1|generator().next();
+ 2|function* left() {
+ 2|  try {
+ 2|    yield 1;
+ 0|    at();
+ 1|  } catch {
+ 1|    at();
+ -|  }
+ 1|  at();
+ -|}
+ 1|const returned = left();
+ 1|returned.next();
+ 1|returned.return();
+ 1|const thrown = left();
+ 1|thrown.next();
+ 1|thrown.throw(new Error());
+ 1|function* delegates() {
+ 1|  yield* [1, 2];
+ 0|  at();
+ -|}
+ 1|delegates().next();
+ 1|async function stuck() {
+ 1|  at();
+ 1|  await new Promise(() => {});
+ 0|  at();
+ -|}
  1|stuck();
+ 1|async function rejected() {
+ 1|  try {
+ 1|    await Promise.reject(new Error());
+ 0|    at();
+ 1|  } catch {
+ 1|    at();
+ -|  }
+ 1|  at();
+ -|}
+ 1|rejected();
+`,
+  },
+  // What `?.`, a logical assignment and a value that is there skip. A `case` that does not match did not run.
+  "skipped.ts": {
+    functions: "8/8",
+    lines: `
+ 4|function one() {
+ 4|  at();
+ 4|  return 1;
+ -|}
+ 2|function chain(o?: { a(n: number): void }) {
+ 2|  o
+ 1|    ?.a(
+ 1|      one(),
+ 1|    );
+ -|}
+ 1|chain();
+ 1|chain({ a() {} });
+ 2|function call(f?: (n: number) => void) {
+ 2|  f?.(
+ 1|    one(),
+ 1|  );
+ -|}
+ 1|call();
+ 1|call(() => {});
+ 2|function assign(o: Record<string, number | null>) {
+ 2|  o.a ||=
+ 1|    one();
+ 2|  o.b &&=
+ 0|    one();
+ 2|  o.c ??=
+ 0|    one();
+ -|}
+ 1|assign({ a: 1, b: 0, c: 0 });
+ 1|assign({ a: 0, b: 0, c: 0 });
+ 2|function parameter(
+ 2|  v =
+ 1|    one(),
+ -|) {
+ 2|  at();
+ -|}
+ 1|parameter();
+ 1|parameter(1);
+ 1|function pattern({
+ 1|  v =
+ 0|    one(),
+ -|}: { v?: number }) {
+ 1|  at();
+ -|}
+ 1|pattern({ v: 1 });
+ 1|let node: any = { next: { next: {} } };
+ 3|while (node?.next) {
+ 2|  node = node.next;
+ -|}
+ 1|switch (2 as number) {
+ 0|  case node?.next: at();
+ -|}
 `,
   },
   // What is a function to the engine alone: not one of the file's functions, and not run until it is.

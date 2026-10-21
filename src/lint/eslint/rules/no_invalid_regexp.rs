@@ -7,24 +7,23 @@ use smallvec::SmallVec;
 
 /// Disallow invalid regular expression strings in `RegExp` constructors.
 pub struct NoInvalidRegexp {
-    /// The characters in `allowConstructorFlags` that are not flags of ECMAScript.
+    /// The characters in `allowConstructorFlags` that aren't ECMAScript flags.
     allowed_flags: Vec<u8>,
 }
 
 const REGEX_MESSAGE: Message = Message::new("regexMessage", "{{message}}.");
-/// What oxlint says instead.
+/// oxlint's message.
 const INVALID: Message = Message::new("regexMessage", "Invalid regular expression: {{message}}");
 const VALID_FLAGS_NOTE: &str = "Valid flags are: d (indices), g (global), i (ignore case), m (multiline),\n             s (dot all), u (unicode), v (unicode sets), y (sticky)";
 
 const VALID_FLAGS: &[u8] = b"dgimsuvy";
 
 impl NoInvalidRegexp {
-    /// Upstream's `validateRegExpFlags`, for flags that are known.
+    /// Upstream's `validateRegExpFlags`, for flags that are statically known.
     fn validate_flags(&self, flags: &[u8]) -> Option<Vec<u8>> {
-        // What is left of the flags without the first occurrence of each flag that exists, and
-        // those of them that exist.
+        // The flags that remain after removing the first occurrence of each valid flag, and the valid ones among them.
         let (mut flags_to_check, mut duplicate_flags) = (Vec::new(), Vec::new());
-        // The flags that exist so far, each once.
+        // The valid flags seen so far, each once.
         let mut seen: SmallVec<[&[u8]; 8]> = SmallVec::new();
         let ends = strings::wtf8_codepoints(flags).map(|(offset, _)| offset).skip(1).chain([flags.len()]);
         let mut start = 0;
@@ -63,7 +62,7 @@ impl NoInvalidRegexp {
             return;
         }
         let args = call.args();
-        // `None` if they cannot be determined.
+        // `None` if they can't be determined.
         let flags = match args.get(1) {
             None => Some(&b""[..]),
             Some(flags) => flags.as_string().map(Name::bytes),
@@ -80,8 +79,8 @@ impl NoInvalidRegexp {
         };
         let mode = |unicode: bool, unicode_sets: bool| regex::Mode { unicode, unicode_sets };
         let error = match flags {
-            Some(flags) => validate(regex::Mode::of_flags(flags)),
-            // It is invalid whatever the flags are.
+            Some(flags) => validate(regex::Mode::from_flags(flags)),
+            // Reported only if it's invalid whatever the flags are.
             None => validate(mode(true, false))
                 .and_then(|_| validate(mode(false, true)))
                 .and_then(|_| validate(mode(false, false))),
@@ -92,14 +91,14 @@ impl NoInvalidRegexp {
     }
 }
 
-/// A string literal that is an argument as it is: for oxlint one in parentheses is none.
+/// Returns `argument` if it's a bare string literal. For oxlint a parenthesized one doesn't count.
 fn string_literal(argument: Expr<'_>) -> Option<Expr<'_>> {
     (argument.tag() == ExprTag::String && !argument.is_parenthesized()).then_some(argument)
 }
 
 impl NoInvalidRegexp {
-    /// oxlint does not ask what `RegExp` is, reads the flags as they are written, and looks at the pattern only if it knows
-    /// the flags. It points at the flag, or at what its parser points at.
+    /// oxlint doesn't check what `RegExp` refers to, reads the flags from their source text, and only looks at the
+    /// pattern if it knows the flags. It reports at the flag, or wherever its parser reports.
     fn check_as_oxlint<'a>(&self, e: Expr<'a>, cx: &Cx<'a, Self>) {
         let (ExprKind::Call(call) | ExprKind::New(call)) = e.kind() else {
             return;
@@ -124,12 +123,12 @@ impl NoInvalidRegexp {
             let mut start = 0;
             for end in ends.filter(|_| !text.is_empty()) {
                 let flag = &text[start..end];
-                let place = Span::empty(flags.span().start + 1 + start as u32);
+                let report_span = Span::empty(flags.span().start + 1 + start as u32);
                 start = end;
-                let shown = bstr::BStr::new(flag);
+                let flag_text = bstr::BStr::new(flag);
                 if flag == b"u" && mode.unicode_sets || flag == b"v" && mode.unicode {
                     let (new, old) = if flag == b"u" { ('u', 'v') } else { ('v', 'u') };
-                    cx.report(place, INVALID)
+                    cx.report(report_span, INVALID)
                         .data("message", "`u` and `v` flags should be used alone")
                         .help("Specify only one of 'u' or 'v' flags")
                         .first_label(format!("the '{new}' flag cannot be used when the '{old}' flag is specified"));
@@ -138,20 +137,20 @@ impl NoInvalidRegexp {
                 mode.unicode |= flag == b"u";
                 mode.unicode_sets |= flag == b"v";
                 if seen.contains(&flag) {
-                    cx.report(place, INVALID)
+                    cx.report(report_span, INVALID)
                         .data("message", "Duplicated flag")
                         .help_with(|| {
-                            format!("Remove the duplicated '{shown}' flag from the regular expression flags")
+                            format!("Remove the duplicated '{flag_text}' flag from the regular expression flags")
                         })
-                        .first_label(format!("flag '{shown}' already specified"));
+                        .first_label(format!("flag '{flag_text}' already specified"));
                     return;
                 }
                 seen.push(flag);
                 if !strings::contains(VALID_FLAGS, flag) && !strings::contains(&self.allowed_flags, flag) {
-                    cx.report(place, INVALID)
+                    cx.report(report_span, INVALID)
                         .data("message", "Unknown flag")
                         .note(VALID_FLAGS_NOTE)
-                        .first_label(format!("flag '{shown}' is not a valid regular expression flag"));
+                        .first_label(format!("flag '{flag_text}' is not a valid regular expression flag"));
                     return;
                 }
             }

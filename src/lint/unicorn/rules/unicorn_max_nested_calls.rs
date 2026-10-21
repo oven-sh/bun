@@ -11,7 +11,7 @@ const MAX_NESTED_CALLS: Message = Message::new("", "Call is nested too deeply. M
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// The call that something is in an argument of. `None`: a function, a class or JSX comes first.
+    /// Maps a node to the call whose argument contains it. `None` if a function, a class or JSX comes first.
     enclosing_calls: AncestorMemo<'a, Option<Expr<'a>>>,
 }
 
@@ -29,7 +29,7 @@ impl Rule for MaxNestedCalls {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        // No further than it takes to know.
+        // Stop walking up once the depth exceeds `max`.
         let (mut depth, mut at) = (1, e);
         while depth <= self.max
             && let Some(Some(call)) = cx.state.enclosing_calls.find(Node::Expr(at), enclosing_call)
@@ -45,7 +45,7 @@ impl Rule for MaxNestedCalls {
 
 fn enclosing_call<'a>(child: Node<'a>, parent: Node<'a>) -> Option<Option<Expr<'a>>> {
     match parent {
-        // Calls inside a new scope are counted independently. A statement is in one, or in none.
+        // Calls inside a new scope are counted independently. A statement is in such a scope or at the top level.
         Node::Func(_) | Node::Class(_) | Node::Stmt(_) | Node::VarDecl(_) => Some(None),
         Node::Expr(e) => match e.tag() {
             ExprTag::Jsx => Some(None),

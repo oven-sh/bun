@@ -94,7 +94,7 @@ pub(crate) struct Entry {
     /// `Dep.Index` — head of the singly-linked dep chain for this dir.
     pub(crate) first_dep: u32,
     /// To pass to `Watcher.remove`.
-    pub(crate) watch_index: u16,
+    pub(crate) watch_index: bun_watcher::WatchItemIndex,
 }
 impl Default for Entry {
     fn default() -> Self {

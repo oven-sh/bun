@@ -48,7 +48,7 @@ pub const WATCH_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
 pub type Event = WatchEvent;
 pub type WatchList = MultiArrayList<WatchItem>;
 pub type HashType = u32;
-pub type WatchItemIndex = u16;
+pub type WatchItemIndex = u32;
 pub const MAX_EVICTION_COUNT: usize = 8096;
 
 const NO_WATCH_ITEM: WatchItemIndex = WatchItemIndex::MAX;

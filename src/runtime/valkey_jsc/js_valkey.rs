@@ -932,7 +932,7 @@ impl JSValkeyClient {
     pub(crate) fn get_buffered_amount(&self, _global: &JSGlobalObject) -> JSValue {
         let client = self.client.get();
         let len = client.write_buffer.len() + client.read_buffer.len();
-        JSValue::js_number(f64::from(len))
+        JSValue::js_number(len as f64)
     }
 
     pub(crate) fn do_connect(

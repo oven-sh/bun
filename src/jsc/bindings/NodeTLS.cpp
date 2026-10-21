@@ -359,4 +359,22 @@ JSC_DEFINE_HOST_FUNCTION(selectServerName, (JSC::JSGlobalObject * globalObject, 
     return JSValue::encode(selected ? values.at(selected - 1) : jsUndefined());
 }
 
+// (hash: ArrayBufferView) => void, where hash is the SHA-256 of a DER SubjectPublicKeyInfo.
+JSC_DEFINE_HOST_FUNCTION(addBlockedSPKIForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* hash = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->argument(0));
+    if (!hash) return ERR::INVALID_ARG_TYPE(scope, globalObject, "SPKI hash must be a buffer"_s);
+    if (hash->byteLength() != SHA256_DIGEST_LENGTH) return ERR::OUT_OF_RANGE(scope, globalObject, "SPKI hash must be 32 bytes"_s);
+    us_add_blocked_spki_for_testing(static_cast<const uint8_t*>(hash->vector()));
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(clearBlockedSPKIsForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    us_clear_blocked_spkis_for_testing();
+    return JSValue::encode(jsUndefined());
+}
+
 } // namespace Bun

@@ -1,7 +1,7 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::regex::{self, ast::Kind as RegexKind};
-use bun_lint::utils::char_source::Written;
+use bun_lint::utils::char_source::LiteralSourceMap;
 use bun_lint::utils::eslint_utils::{ReferenceTracker, TraceMap, get_string_if_constant};
 use std::cell::OnceCell;
 
@@ -18,9 +18,8 @@ const REQUIRED: Message = Message::new(
 const TRACE_MAP: TraceMap<'static, ()> =
     TraceMap::new(&[("RegExp", TraceMap::EMPTY.call(()).construct(()))]);
 
-/// Whether a position in `pattern` is known to be the same position in the text of `regex_node`,
-/// after its delimiter.
-fn is_written_as_is(pattern: &[u8], regex_node: Expr<'_>) -> bool {
+/// True if an offset in `pattern` is known to be the same offset in `regex_node`'s source text, after its delimiter.
+fn has_same_offsets_in_source(pattern: &[u8], regex_node: Expr<'_>) -> bool {
     match regex_node.kind() {
         ExprKind::String(_) => !strings::contains_char(regex_node.text(), b'\\'),
         ExprKind::Number(_)
@@ -34,7 +33,7 @@ fn is_written_as_is(pattern: &[u8], regex_node: Expr<'_>) -> bool {
     }
 }
 
-/// `?<tempN>`, where `N` is one more than the highest that `pattern` has.
+/// Returns `?<tempN>`, where `N` is one more than the highest `tempN` in `pattern`.
 fn temporary_group_name(pattern: &[u8]) -> Vec<u8> {
     let mut highest_temp_count = 0.0_f64;
     let mut rest = pattern;
@@ -50,8 +49,7 @@ fn temporary_group_name(pattern: &[u8]) -> Vec<u8> {
     [&b"?<temp"[..], count.as_slice(), b">"].concat()
 }
 
-/// `node`: what has the regular expression, or the call. `regex_node`: what has the regular
-/// expression.
+/// `node` is the regex literal or the `RegExp` call. `regex_node` is the literal or the call's pattern argument.
 fn check_regex<'a>(
     cx: &Cx<'a, PreferNamedCaptureGroup>,
     pattern: &[u8],
@@ -62,18 +60,18 @@ fn check_regex<'a>(
     if !strings::contains_char(pattern, b'(') {
         return;
     }
-    let Ok(ast) = regex::parse_pattern(pattern, regex::Mode::of_flags(flags), regex::Options::default()) else {
+    let Ok(ast) = regex::parse_pattern(pattern, regex::Mode::from_flags(flags), regex::Options::default()) else {
         return;
     };
-    let as_is = OnceCell::new();
+    let same_offsets = OnceCell::new();
     let in_string = OnceCell::new();
     let group_name = OnceCell::new();
     let unnamed_count = OnceCell::new();
-    // Where the last group starts in `pattern`, in bytes and in UTF-16 units, and the offset in
-    // bytes that `regex_node` has after as many units. The groups come in the order of their `(`,
-    // so that all of them take time in proportion to the texts.
+    // The last group's start in `pattern`, in bytes and in UTF-16 units. `source_cursor` tracks the byte offset in
+    // `regex_node` after the same number of units. The groups come in the order of their `(`, so handling all of them
+    // takes time linear in the texts.
     let (mut start, mut utf16_start) = (0, 0);
-    let mut written = Utf16Cursor::new(regex_node.text());
+    let mut source_cursor = Utf16Cursor::new(regex_node.text());
     for group in ast.capturing_groups() {
         if !matches!(group.kind(), RegexKind::CapturingGroup { name: None, .. }) {
             continue;
@@ -81,18 +79,18 @@ fn check_regex<'a>(
         let since = pattern.get(start..group.start() as usize).unwrap_or_default();
         utf16_start += regex::utf16_index(since, since.len()) as u32;
         start += since.len();
-        // oxlint points at the group, where it is written, or else at what the pattern is made of.
-        let place = match cx.language().is_oxlint {
-            true if *as_is.get_or_init(|| is_written_as_is(pattern, regex_node)) => {
+        // oxlint points at the group in the source, or at the whole pattern argument if it can't be located.
+        let location = match cx.language().is_oxlint {
+            true if *same_offsets.get_or_init(|| has_same_offsets_in_source(pattern, regex_node)) => {
                 let pattern_start = regex_node.span().start + 1;
                 Span::new(pattern_start + group.start(), pattern_start + group.end())
             }
-            true => (in_string.get_or_init(|| Written::new(regex_node)).as_ref())
+            true => (in_string.get_or_init(|| LiteralSourceMap::new(regex_node)).as_ref())
                 .and_then(|it| it.span(utf16_start, utf16_start + regex::utf16_index(group.raw(), group.raw().len()) as u32))
                 .unwrap_or_else(|| regex_node.span()),
             false => node.span(),
         };
-        let mut report = cx.report(place, REQUIRED).data("group", group.raw().to_vec());
+        let mut report = cx.report(location, REQUIRED).data("group", group.raw().to_vec());
         if cx.language().is_oxlint {
             let count = *unnamed_count.get_or_init(|| {
                 let groups = ast.capturing_groups();
@@ -100,9 +98,9 @@ fn check_regex<'a>(
             });
             report = report.data("unnamed_count", count.to_string()).data("s", if count == 1 { "" } else { "s" });
         }
-        if *as_is.get_or_init(|| is_written_as_is(pattern, regex_node)) {
+        if *same_offsets.get_or_init(|| has_same_offsets_in_source(pattern, regex_node)) {
             // After the delimiter and the `(`.
-            let after_paren = Span::empty(regex_node.span().start + written.byte_offset(utf16_start + 2) as u32);
+            let after_paren = Span::empty(regex_node.span().start + source_cursor.byte_offset(utf16_start + 2) as u32);
             report
                 .suggest(ADD_GROUP_NAME, |fixer| {
                     fixer.insert_before(after_paren, &group_name.get_or_init(|| temporary_group_name(pattern))[..])
@@ -112,7 +110,7 @@ fn check_regex<'a>(
     }
 }
 
-/// [`strings::wtf8_offset_of_utf16_index`] for indices that do not decrease.
+/// [`strings::wtf8_offset_of_utf16_index`] for indices that never decrease.
 struct Utf16Cursor<'t> {
     text: &'t [u8],
     at: usize,
@@ -169,7 +167,7 @@ impl Rule for PreferNamedCaptureGroup {
             let Some(regex_node) = call.args().first() else {
                 continue;
             };
-            // For ESLint a literal is the string that it would be made into, for oxlint it is no string.
+            // ESLint treats a regex literal argument as the string it converts to. oxlint doesn't treat it as a string.
             if cx.language().is_oxlint && regex_node.tag() == ExprTag::Regex {
                 continue;
             }

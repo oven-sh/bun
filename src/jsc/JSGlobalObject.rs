@@ -124,23 +124,31 @@ impl JSGlobalObject {
 
     #[cold]
     pub fn throw_string_too_long(&self) -> JsError {
+        self.throw_value(self.create_string_too_long_error())
+    }
+
+    pub fn create_string_too_long_error(&self) -> JSValue {
         const _: () = assert!(bun_core::string::WTF_STRING_MAX_LENGTH == 2147483647);
         self.err(
             crate::ErrorCode::STRING_TOO_LONG,
             format_args!("Cannot create a string longer than 2147483647 characters"),
         )
-        .throw()
+        .to_js()
     }
 
     /// Node's error for a failed allocation, as opposed to JSC's
     /// [`Self::throw_out_of_memory`].
     #[cold]
     pub fn throw_memory_allocation_failed(&self) -> JsError {
+        self.throw_value(self.create_memory_allocation_failed_error())
+    }
+
+    pub fn create_memory_allocation_failed_error(&self) -> JSValue {
         self.err(
             crate::ErrorCode::MEMORY_ALLOCATION_FAILED,
             format_args!("Failed to allocate memory"),
         )
-        .throw()
+        .to_js()
     }
 
     #[cold]
@@ -313,10 +321,6 @@ impl JSGlobalObject {
 
     pub fn throw_todo(&self, msg: &[u8]) -> JsError {
         let err = EncodedSlice::utf8(msg).to_error_instance(self);
-        if err.is_empty() {
-            debug_assert!(self.has_exception());
-            return JsError::Thrown;
-        }
         let name_value = match BunString::static_("TODOError").to_js(self) {
             Ok(v) => v,
             Err(_) => return JsError::Thrown,
@@ -359,7 +363,11 @@ impl JSGlobalObject {
     /// `${T}Class__construct` thunk entirely, so the stub would be dead code.
     #[cold]
     pub fn throw_illegal_constructor(&self) -> JsError {
-        crate::ErrorCode::ILLEGAL_CONSTRUCTOR.throw(self, format_args!("Illegal constructor"))
+        self.throw_value(self.create_illegal_constructor_error())
+    }
+
+    pub fn create_illegal_constructor_error(&self) -> JSValue {
+        crate::ErrorCode::ILLEGAL_CONSTRUCTOR.fmt(self, format_args!("Illegal constructor"))
     }
 
     #[inline]
@@ -821,10 +829,6 @@ impl JSGlobalObject {
 
     pub fn throw_sys_error(&self, opts: &SysErrOptions, message: Arguments<'_>) -> JsError {
         let err = self.create_error_instance(message);
-        if err.is_empty() {
-            debug_assert!(self.has_exception());
-            return JsError::Thrown;
-        }
         err.put(
             self,
             b"code",
@@ -844,12 +848,7 @@ impl JSGlobalObject {
     /// Note: If you are throwing an error within somewhere in the Bun API,
     /// chances are you should be using `.err(...).throw()` instead.
     pub fn throw(&self, args: Arguments<'_>) -> JsError {
-        let instance = self.create_error_instance(args);
-        if instance.is_empty() {
-            debug_assert!(self.has_exception());
-            return JsError::Thrown;
-        }
-        self.throw_value(instance)
+        self.throw_value(self.create_error_instance(args))
     }
 
     pub fn queue_microtask(&self, function: JSValue, args: &[JSValue]) {
@@ -940,8 +939,8 @@ impl JSGlobalObject {
         })
     }
 
-    pub(crate) fn generate_heap_snapshot(&self) -> JSValue {
-        JSC__JSGlobalObject__generateHeapSnapshot(self)
+    pub(crate) fn generate_heap_snapshot(&self) -> JsResult<JSValue> {
+        crate::from_js_host_call(self, || JSC__JSGlobalObject__generateHeapSnapshot(self))
     }
 
     /// DEPRECATED — use [`TopExceptionScope`](crate::TopExceptionScope) to check for exceptions

@@ -19,17 +19,17 @@ const EXPORT_TYPE: u8 = 2;
 const EXPORT_NAMESPACE: u8 = 4;
 
 impl Checker<'_, '_> {
-    /// The checks that `checkClassLikeDeclaration` and the callers of
-    /// `checkExportsOnMergedDeclarations` run on the declarations of `file`.
+    /// The checks that `checkClassLikeDeclaration` and the callers of `checkExportsOnMergedDeclarations` run on the
+    /// declarations of `file`.
     pub(super) fn check_merged_symbols(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if hir.has_errors || hir.kind == FileKind::Json {
             return;
         }
         for i in 0..bound.symbols.len() {
-            let (id, symbol) = (SymbolId(i as u32), &bound.symbols[i]);
-            // "If localSymbol is defined on node then node itself is exported", or else "symbol might contain other declarations that
-            // are exported".
+            let (id, symbol) = (SymbolId(i as u32), bound.symbol(SymbolId(i as u32)));
+            // "If localSymbol is defined on node then node itself is exported", or else "symbol might contain other
+            // declarations that are exported".
             if symbol.export_symbol.is_some() && symbol.decls.len() > 1 {
                 self.check_exports_on_merged_declarations(file, id);
             }
@@ -48,19 +48,19 @@ impl Checker<'_, '_> {
             return;
         }
         if let Decl::Fn(function) = decl
-            && bound.symbols[symbol.idx()].parent.is_some()
+            && bound.symbol(symbol).parent.is_some()
             && let Some(scope) = bound.scope_of_declaration(hir, decl).some()
             && let Some(local) = bound.lookup(bound.scopes[scope.idx()].locals, hir[function].name)
-            && bound.symbols[local.idx()].export_symbol == symbol
+            && bound.symbol(local).export_symbol == symbol
         {
             self.check_function_or_constructor_symbol_at(file, local, Some(decl));
         }
         self.check_function_or_constructor_symbol_at(file, symbol, Some(decl));
     }
 
-    /// `checkFunctionOrConstructorSymbol` for the symbol `id` of `file`. "Only check the symbol
-    /// once": a function checks it if it is the first of its functions in `file`. `at`: the
-    /// function. `None`: a class, which comes after all the functions.
+    /// `checkFunctionOrConstructorSymbol` for the symbol `id` of `file`. "Only check the symbol once": a function
+    /// checks it if it's the first of the symbol's functions in `file`. `at` is the function, or `None` for a class,
+    /// which comes after all the functions.
     fn check_function_or_constructor_symbol_at(
         &mut self,
         file: FileId,
@@ -68,7 +68,7 @@ impl Checker<'_, '_> {
         at: Option<Decl>,
     ) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
-        let symbol = &bound.symbols[id.idx()];
+        let symbol = bound.symbol(id);
         let first = symbol.decls.iter().find_map(|&decl| {
             let function = self.function_of_declaration((file, decl))?;
             Some((decl, function))
@@ -76,7 +76,7 @@ impl Checker<'_, '_> {
         if at.is_some() && first.map(|first| first.0) != at {
             return;
         }
-        // A single declaration with a body: no error is possible.
+        // A single declaration with a body can't have an error.
         if let Some((_, function)) = first
             && symbol.decls.len() == 1
             && !symbol.flags.contains(SymFlags::MERGED)
@@ -86,12 +86,12 @@ impl Checker<'_, '_> {
             return;
         }
         let sym = files.sym(file, id);
-        // Checked once per symbol, whichever of its parts the loop over the symbols reaches. A
-        // function has the symbol it declares, which is a part: never the clone they are merged into.
+        // Checked once per symbol, whichever of its parts the loop over the symbols reaches. A function has the symbol
+        // it declares, which is a part, never the clone that the parts are merged into.
         if at.is_none() && sym.file == file && sym.id != id {
             return;
         }
-        // The declarations in other files ask when those files are checked.
+        // The declarations in other files are checked when those files are checked.
         let is_checked_by_function = match first {
             None => false,
             // `hasBindableName`
@@ -101,12 +101,12 @@ impl Checker<'_, '_> {
             {
                 false
             }
-            // "ignore javascript function declarations so that redeclaring a function in a JS file is not reported as a duplicate", but
-            // "run check on export symbol" (`symbol.Parent != nil`). A constructor has a parent.
+            // "ignore javascript function declarations so that redeclaring a function in a JS file is not reported as a
+            // duplicate", but "run check on export symbol" (`symbol.Parent != nil`). A constructor has a parent.
             Some(_) => !hir.is_js || symbol.parent.is_some(),
         };
-        // `checkClassLikeDeclaration` checks `getSymbolOfDeclaration(node)`, which is not the
-        // local symbol of an export. FOR SPEED: no error is possible in what is no function.
+        // `checkClassLikeDeclaration` checks `getSymbolOfDeclaration(node)`, which isn't an export's local symbol. FOR
+        // SPEED: a symbol that isn't a function can't have an error.
         let class = symbol
             .decls
             .iter()
@@ -234,7 +234,8 @@ impl Checker<'_, '_> {
         let Some(&first) = declarations.first().filter(|_| has_overloads) else {
             return;
         };
-        // `checkFlagAgreementBetweenOverloads`: "Error if some overloads have a flag that is not shared by all overloads."
+        // `checkFlagAgreementBetweenOverloads`: "Error if some overloads have a flag that is not shared by all
+        // overloads."
         if some_node_flags != all_node_flags {
             let canonical = self.get_canonical_overload(first, body_declaration);
             let canonical_flags = self.get_effective_declaration_flags(canonical, FLAGS_TO_CHECK);
@@ -322,7 +323,7 @@ impl Checker<'_, '_> {
         args: &[Arg<'_>],
     ) -> Option<&mut Reported> {
         let (start, end) = match decl {
-            // `GetErrorRangeForNode` spans the whole of a method signature.
+            // `GetErrorRangeForNode` spans all of a method signature.
             Decl::Member(m) if self.hir(file)[m].kind == MemberKind::Method => {
                 (self.hir(file)[m].name_pos, self.end_of_member_name(file, m))
             }
@@ -331,8 +332,8 @@ impl Checker<'_, '_> {
         Some(self.error_at((file, start, end), code, args))
     }
 
-    /// `c.error(ast.GetNameOfDeclaration(declaration), ..)`. A constructor has no name, and an error
-    /// at no node is in no file.
+    /// `c.error(ast.GetNameOfDeclaration(declaration), ..)`. A constructor has no name, and an error without a node
+    /// isn't in any file.
     fn error_at_name_of_declaration(&mut self, declaration: Declaration, code: u32) {
         match declaration.1 {
             Decl::Member(m) if self.hir(declaration.0)[m].kind == MemberKind::Constructor => {
@@ -367,7 +368,7 @@ impl Checker<'_, '_> {
     /// `node.Flags&ast.NodeFlagsAmbient != 0`
     fn is_in_ambient_context(&self, (file, decl): Declaration) -> bool {
         let hir = self.hir(file);
-        // FOR SPEED: the parents of the nodes of a declaration file are not needed.
+        // FOR SPEED: avoids looking up parents in a declaration file.
         hir.kind == FileKind::Declaration || hir.is_ambient(hir.node(decl))
     }
 
@@ -377,8 +378,8 @@ impl Checker<'_, '_> {
         function.is_some_and(|it| self.hir(declaration.0)[it].flags.contains(Flags::REPARSED))
     }
 
-    /// `getSignaturesOfSymbol`: "the previous node is of the same kind and immediately precedes the implementation node (i.e. has the
-    /// same parent and ends where the implementation starts)".
+    /// `getSignaturesOfSymbol`: "the previous node is of the same kind and immediately precedes the implementation node
+    /// (i.e. has the same parent and ends where the implementation starts)".
     fn immediately_precedes(&self, previous: Declaration, implementation: Declaration) -> bool {
         let kind = |(file, decl): Declaration| self.hir(file).kind(self.hir(file).node(decl));
         let loc = |(file, decl): Declaration| self.files().loc_of_declaration(file, decl);
@@ -399,7 +400,8 @@ impl Checker<'_, '_> {
             .contains(Flags::ABSTRACT)
     }
 
-    /// `getCanonicalOverload`: "the implementation is the canonical signature only if it is in the same container as the first overload".
+    /// `getCanonicalOverload`: "the implementation is the canonical signature only if it is in the same container as
+    /// the first overload".
     fn get_canonical_overload(
         &self,
         first: Declaration,
@@ -428,14 +430,14 @@ impl Checker<'_, '_> {
             // `ast.IsModuleBlock(n.Parent) && ast.IsGlobalScopeAugmentation(n.Parent.Parent)`
             let is_in_global_augmentation = !matches!(decl, Decl::Var(_) | Decl::Require(_))
                 && statement.is_some_and(|s| {
-                    matches!(bound.stmt_parent[s.idx()], Parent::Module(m) if hir[m].name == ModuleName::Global)
+                    matches!(bound.parent_of_stmt(s), Parent::Module(m) if hir[m].name == ModuleName::Global)
                 });
-            // `getEnclosingContainer`, which starts at `n.Parent`: the container the statement is
-            // in, not the scope a namespace creates.
+            // `getEnclosingContainer`, which starts at `n.Parent`: the container the statement is in, not the scope a
+            // namespace creates.
             let container = match (decl, statement) {
-                // The type literal, which is no export context.
+                // The type literal, which isn't an export context.
                 (Decl::Member(_), _) => None,
-                (_, Some(s)) => bound.stmt_scope[s.idx()].some(),
+                (_, Some(s)) => bound.scope_of_stmt(s).some(),
                 _ => bound.scope_of_declaration(hir, decl).some(),
             };
             if container
@@ -470,8 +472,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `GetCombinedModifierFlags`. The flags stored with a declaration lack the modifiers that are
-    /// errors on it, and have `AMBIENT` for `NodeFlagsAmbient`. Here it is the `declare` modifier.
+    /// `GetCombinedModifierFlags`. The flags stored with a declaration lack the modifiers that are errors on it, and
+    /// have `AMBIENT` for `NodeFlagsAmbient`. Here `AMBIENT` means the `declare` modifier.
     fn get_combined_modifier_flags(&self, declaration: Declaration) -> Flags {
         let (file, decl) = declaration;
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -479,7 +481,7 @@ impl Checker<'_, '_> {
             Decl::Member(m) => (hir[m].flags, hir[m].modifiers),
             _ => {
                 let statement = self.statement_with_modifiers(declaration);
-                let modifiers = statement.map_or(Span::EMPTY, |s| hir[s].modifiers);
+                let modifiers = statement.map_or(Span::EMPTY, |s| hir.stmt_modifiers(s));
                 (bound.modifier_flags(hir, decl), modifiers)
             }
         };
@@ -520,8 +522,8 @@ impl Checker<'_, '_> {
         if self.is_declaration_name_missing(file, decl) {
             return;
         }
-        // "We may be here because of some extra nodes between overloads that could not be parsed into a valid node. In this case the
-        // subsequent node is not really consecutive (.pos !== node.end), and we must ignore it here."
+        // "We may be here because of some extra nodes between overloads that could not be parsed into a valid node. In
+        // this case the subsequent node is not really consecutive (.pos !== node.end), and we must ignore it here."
         if let Some(subsequent) = self.subsequent_declaration(node) {
             let is_same_name = match (decl, subsequent) {
                 (Decl::Fn(f), Decl::Fn(next)) => {
@@ -541,9 +543,9 @@ impl Checker<'_, '_> {
                 _ => false,
             };
             if is_same_name {
-                // "we can get here in two cases 1. mixed static and instance class members 2. something with the same name was defined
-                // before the set of overloads that prevents them from merging. here we'll report error only for the first case since
-                // for second we should already report error in binder"
+                // "we can get here in two cases 1. mixed static and instance class members 2. something with the same
+                // name was defined before the set of overloads that prevents them from merging. here we'll report error
+                // only for the first case since for second we should already report error in binder"
                 if let (Decl::Member(m), Decl::Member(next)) = (decl, subsequent)
                     && (hir[m].flags ^ hir[next].flags).contains(Flags::STATIC)
                 {
@@ -575,8 +577,8 @@ impl Checker<'_, '_> {
         let code = if is_constructor {
             2390
         } else if self.is_abstract_declaration(node) {
-            // "Report different errors regarding non-consecutive blocks of declarations depending on whether the node in question is
-            // abstract."
+            // "Report different errors regarding non-consecutive blocks of declarations depending on whether the node
+            // in question is abstract."
             2516
         } else {
             2391
@@ -584,16 +586,12 @@ impl Checker<'_, '_> {
         self.error_at_declaration(node, code, &[]);
     }
 
-    /// `checkExportsOnMergedDeclarations` for the local symbol `symbol` of `file`, which has an
-    /// `ExportSymbol`.
+    /// `checkExportsOnMergedDeclarations` for the local symbol `symbol` of `file`, which has an `ExportSymbol`.
     fn check_exports_on_merged_declarations(&mut self, file: FileId, symbol: SymbolId) {
-        let (hir, declarations) = (
-            self.hir(file),
-            &self.bound(file).symbols[symbol.idx()].decls,
-        );
-        // The declaration kinds that run this check: a class, an interface, an enum, a namespace, a
-        // variable, a type alias. Not a function or an import.
-        let asks = |decl: &Decl| {
+        let (hir, declarations) = (self.hir(file), self.bound(file).symbol(symbol).decls);
+        // The declaration kinds that run this check: a class, an interface, an enum, a namespace, a variable, a type
+        // alias. Not a function or an import.
+        let runs_this_check = |decl: &Decl| {
             matches!(
                 decl,
                 Decl::Class(_)
@@ -604,7 +602,7 @@ impl Checker<'_, '_> {
                     | Decl::Alias(_)
             )
         };
-        if !declarations.iter().any(asks) {
+        if !declarations.iter().any(runs_this_check) {
             return;
         }
         let symbol = self.files().sym(file, symbol);
@@ -634,7 +632,7 @@ impl Checker<'_, '_> {
             } else {
                 continue;
             };
-            if let Some(at) = self.place_of_declaration(file, d) {
+            if let Some(at) = self.span_of_declaration(file, d) {
                 let name = Arg::Bytes(&hir.text[at.1 as usize..at.2 as usize]);
                 self.error_at(at, code, &[name]);
             }
@@ -657,13 +655,15 @@ impl Checker<'_, '_> {
             Decl::Class(_) | Decl::Enum(_) | Decl::EnumMember(_) => EXPORT_TYPE | EXPORT_VALUE,
             Decl::File => EXPORT_TYPE | EXPORT_VALUE | EXPORT_NAMESPACE,
             Decl::Var(_) | Decl::Require(_) | Decl::Fn(_) | Decl::ImportSpec(_) => EXPORT_VALUE,
-            // "Export assigned entity name expressions act as aliases and should fall through, otherwise they export values."
+            // "Export assigned entity name expressions act as aliases and should fall through, otherwise they export
+            // values."
             Decl::ExportExpr(_) | Decl::ModuleExports(_) | Decl::ExportsProperty(_)
                 if !files.flags(symbol).contains(SymFlags::ALIAS) =>
             {
                 EXPORT_VALUE
             }
-            // "The below options all declare an Alias, which is allowed to merge with other values within the importing module."
+            // "The below options all declare an Alias, which is allowed to merge with other values within the importing
+            // module."
             Decl::ExportExpr(_)
             | Decl::ModuleExports(_)
             | Decl::ExportsProperty(_)

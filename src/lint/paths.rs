@@ -1,10 +1,10 @@
-//! Paths.
+//! Path helpers.
 //!
-//! Every path of the linter and the formatter is absolute and separated by `/`, which is what a configuration matches its
-//! patterns against: `C:\a\b` is `C:/a/b`, and `\\server\share\a` is `//server/share/a`. [`from_native`] converts what comes
-//! from outside. Only a root ends with a `/`: `/`, `C:/`, `//server/share/`.
+//! Every path in the linter and the formatter is absolute and uses `/` as the separator, because that's the form
+//! configs match their patterns against: `C:\a\b` is `C:/a/b`, and `\\server\share\a` is `//server/share/a`.
+//! [`from_native`] converts paths that come from outside. Only a root ends with a `/`: `/`, `C:/`, `//server/share/`.
 //!
-//! The arithmetic is that of `node:path`, which ESLint and Prettier compute with: `bun_node_path`.
+//! Path operations go through `bun_node_path`, so they behave like `node:path`, which ESLint and Prettier use.
 
 use bun_core::strings;
 use bun_node_path as node;
@@ -13,7 +13,7 @@ use bun_paths::resolve_path::{
 };
 use bun_sema::resolve::is_same_path;
 
-/// Whose paths. Those of Windows begin with a drive or a share, and upper and lower case are the same in them.
+/// The platform whose path rules apply. Windows paths begin with a drive or a share and are case-insensitive.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Style {
     Posix,
@@ -21,8 +21,8 @@ pub enum Style {
 }
 
 impl Style {
-    /// Whose `path`, which is absolute, is. It is seen from the path, as in `getPathImpl` of `@eslint/config-array`, not from the
-    /// system that this runs on: so the paths of Windows are tested on every system.
+    /// The style of the absolute path `path`. It's detected from the path itself, like `getPathImpl` in
+    /// `@eslint/config-array`, not from the host platform. That way Windows paths can be tested on every platform.
     pub fn of(path: &[u8]) -> Style {
         match path {
             [b'/', b'/', ..] => Style::Windows,
@@ -32,27 +32,27 @@ impl Style {
     }
 }
 
-/// A path of the system, or an argument, with `/` for `\` where that is a separator.
+/// Converts a native path or a command-line argument. Replaces `\` with `/` on platforms where `\` is a separator.
 pub fn from_native(path: &[u8]) -> Vec<u8> {
     let mut path = path.to_vec();
     platform_to_posix_in_place(&mut path);
     path
 }
 
-/// A path as the system writes it, which is how ESLint prints it.
+/// Converts a path to the platform's native form, which is how ESLint prints it.
 pub fn to_native(mut path: Vec<u8>) -> Vec<u8> {
     posix_to_platform_in_place(&mut path);
     path
 }
 
-/// `written`, a path as the file at `from`, or a file in that directory, has it: where `from` is a path of Windows, `\` is a
-/// separator too.
-pub fn portable(from: &[u8], written: &[u8]) -> Vec<u8> {
-    of_node(Style::of(from), written)
+/// Converts `raw_path`, a path written in the file at `from` or in a file in the directory `from`. If `from` is a
+/// Windows path, `\` is also a separator.
+pub fn portable(from: &[u8], raw_path: &[u8]) -> Vec<u8> {
+    from_node_path(Style::of(from), raw_path)
 }
 
-/// What Node answers, which has `\` for the paths of Windows.
-fn of_node(style: Style, answer: &[u8]) -> Vec<u8> {
+/// Converts a result from `bun_node_path`, which uses `\` in Windows paths.
+fn from_node_path(style: Style, answer: &[u8]) -> Vec<u8> {
     let mut path = answer.to_vec();
     if style == Style::Windows {
         slashes_to_posix_in_place(&mut path);
@@ -93,8 +93,8 @@ pub fn resolve_as(style: Style, base: &[u8], path: &[u8]) -> Vec<u8> {
         Style::Posix => node::resolve_posix_t(&paths, buf, buf2),
         Style::Windows => node::resolve_windows_t(&paths, buf, buf2),
     };
-    // It fails for the name of a server that no system takes.
-    of_node(style, resolved.unwrap_or(path))
+    // It only fails for an invalid server name.
+    from_node_path(style, resolved.unwrap_or(path))
 }
 
 /// `path.relative(base, path)` of two resolved paths. Empty if they are the same.
@@ -102,8 +102,20 @@ pub fn relative(base: &[u8], path: &[u8]) -> Vec<u8> {
     relative_as(Style::of(base), base, path)
 }
 
+/// Escapes `path` for display. A file name can contain a line break or a terminal escape sequence.
+pub fn escaped(path: &[u8]) -> Vec<u8> {
+    bun_core::fmt::escape_control_chars(path)
+        .to_string()
+        .into_bytes()
+}
+
+/// [`relative`], passed through [`escaped`].
+pub fn relative_escaped(base: &[u8], path: &[u8]) -> Vec<u8> {
+    escaped(&relative(base, path))
+}
+
 pub fn relative_as(style: Style, base: &[u8], path: &[u8]) -> Vec<u8> {
-    // So it is for nearly every file.
+    // Fast path: almost every file is inside `base`.
     if let Some(rest) = inside_as(style, base, path) {
         return rest.to_vec();
     }
@@ -115,11 +127,11 @@ pub fn relative_as(style: Style, base: &[u8], path: &[u8]) -> Vec<u8> {
         Style::Posix => node::relative_posix_t(base, path, buf, buf2, buf3),
         Style::Windows => node::relative_windows_t(base, path, buf, buf2, buf3),
     };
-    of_node(style, relative.unwrap_or(path))
+    from_node_path(style, relative.unwrap_or(path))
 }
 
-/// The names in `path`, without `.` and with `..` resolved. The drive, or the server and the share, are the first of them, and
-/// stay.
+/// The components of `path`, without `.` and with `..` resolved. The drive, or the server and share, come first, and
+/// `..` never removes them.
 fn names(path: &[u8]) -> Vec<&[u8]> {
     let root = match (path, Style::of(path)) {
         ([b'/', b'/', ..], _) => 2,
@@ -141,11 +153,11 @@ fn names(path: &[u8]) -> Vec<&[u8]> {
     names
 }
 
-/// `toRelativePath` of `@eslint/config-array`: the way from the directory `base` to `path`. Empty if they are the same. It
-/// starts with `..` if `path` is outside of `base`, also on another drive: it is not `path.relative` of the two, but of what
-/// `path.toNamespacedPath` makes of them, which all begins with `\\?\`.
+/// `toRelativePath` in `@eslint/config-array`: the relative path from the directory `base` to `path`. Empty if they're
+/// the same. It starts with `..` if `path` is outside `base`, even on another drive. That's because it isn't
+/// `path.relative` of the two paths but of their `path.toNamespacedPath` forms, which all begin with `\\?\`.
 pub(crate) fn relative_to_base(base: &[u8], path: &[u8]) -> Vec<u8> {
-    // What follows the base as it is written is the answer if there is nothing in it to resolve.
+    // Fast path: if `path` starts with `base` and the rest has nothing to resolve, the rest is the result.
     let rest = match path.strip_prefix(base) {
         Some([b'/', rest @ ..]) => Some(rest),
         Some(rest) if base.ends_with(b"/") => Some(rest),
@@ -156,7 +168,7 @@ pub(crate) fn relative_to_base(base: &[u8], path: &[u8]) -> Vec<u8> {
     {
         return rest.to_vec();
     }
-    // `relative` of `@std/path/windows` compares what `toLowerCase()` makes of the two.
+    // `relative` in `@std/path/windows` compares the two paths after `toLowerCase()`.
     let is_case_sensitive = Style::of(base) == Style::Posix;
     let (base, path) = (names(base), names(path));
     let common = base
@@ -169,8 +181,8 @@ pub(crate) fn relative_to_base(base: &[u8], path: &[u8]) -> Vec<u8> {
     parts.join(&b'/')
 }
 
-/// What [`relative_to_base`] of `base` and an entry of `directory` has before the name of the entry. `None`: `base` is further
-/// down, and it is not the same for all of them.
+/// The prefix that [`relative_to_base`] puts before the name of any entry of `directory`. `None` if `base` is below
+/// `directory`, where the prefix differs between entries.
 pub(crate) fn relative_to_base_before_name(base: &[u8], directory: &[u8]) -> Option<Vec<u8>> {
     let mut relative = relative_to_base(base, directory);
     if !relative.is_empty() {
@@ -187,7 +199,7 @@ pub fn is_external(relative: &[u8]) -> bool {
     relative == b".." || relative.starts_with(b"../")
 }
 
-/// What follows `directory/` in `path`, if `path` is inside of `directory`. Both are resolved.
+/// The part of `path` after `directory/`, if `path` is inside `directory`. Both must be resolved.
 pub fn inside<'p>(directory: &[u8], path: &'p [u8]) -> Option<&'p [u8]> {
     inside_as(Style::of(directory), directory, path)
 }
@@ -205,7 +217,7 @@ pub fn inside_as<'p>(style: Style, directory: &[u8], path: &'p [u8]) -> Option<&
     }
 }
 
-/// Whether `path` is `outer`, or inside of it. Both are resolved.
+/// True if `path` is `outer` or inside it. Both must be resolved.
 pub fn is_at_or_inside(outer: &[u8], path: &[u8]) -> bool {
     let is_same = match Style::of(outer) {
         Style::Posix => outer == path,
@@ -214,7 +226,7 @@ pub fn is_at_or_inside(outer: &[u8], path: &[u8]) -> bool {
     is_same || inside(outer, path).is_some()
 }
 
-/// `path.dirname(path)`. A root is its own directory.
+/// `path.dirname(path)`. A root is its own parent.
 pub fn dirname(path: &[u8]) -> &[u8] {
     dirname_as(Style::of(path), path)
 }
@@ -234,7 +246,7 @@ pub fn basename(path: &[u8]) -> &[u8] {
     }
 }
 
-/// The name of the file at `path`, whichever separator it is written with: `path.win32.basename(path)`.
+/// `path.win32.basename(path)`: the file name of `path`, whichever separator it uses.
 pub fn file_name(path: &[u8]) -> &[u8] {
     node::basename_windows_t(path, None)
 }
@@ -247,8 +259,8 @@ pub fn extname(path: &[u8]) -> &[u8] {
     }
 }
 
-/// `path.win32.toNamespacedPath(path)`: `\\?\C:\a`, `\\?\UNC\server\share\a`. The system takes what follows `\\?\` as it is,
-/// however long it is.
+/// `path.win32.toNamespacedPath(path)`: `\\?\C:\a`, `\\?\UNC\server\share\a`. Windows doesn't normalize what follows
+/// `\\?\` or limit its length.
 pub fn namespaced(path: &[u8]) -> Vec<u8> {
     let len = node::to_namespaced_path_buf_len::<u8>(path);
     let mut buffers = vec![0; 2 * len];
@@ -258,7 +270,7 @@ pub fn namespaced(path: &[u8]) -> Vec<u8> {
         .to_vec()
 }
 
-/// `path` resolved. One that is not absolute is in `/`.
+/// Resolves `path`. A relative path is resolved against `/`.
 pub(crate) fn absolute(path: &[u8]) -> Vec<u8> {
     match path {
         // The root of the drive, not the working directory on it.
@@ -267,7 +279,8 @@ pub(crate) fn absolute(path: &[u8]) -> Vec<u8> {
     }
 }
 
-/// `path`, which is absolute, resolved, with a `/` at its start, also before the name of a drive: no relative path starts so.
+/// Resolves the absolute path `path` and makes it start with a `/`, even before a drive name. No relative path starts
+/// that way.
 pub(crate) fn rooted(path: &[u8]) -> Vec<u8> {
     let resolved = absolute(path);
     match resolved.starts_with(b"/") {
@@ -297,7 +310,7 @@ pub fn join_normalized(a: &[u8], b: &[u8]) -> Vec<u8> {
         Style::Posix => node::join_posix_t(&paths, buf, buf2),
         Style::Windows => node::join_windows_t(&paths, buf, buf2),
     };
-    of_node(style, joined)
+    from_node_path(style, joined)
 }
 
 /// `path.normalize(path)`
@@ -308,7 +321,7 @@ pub fn normalize(path: &[u8]) -> Vec<u8> {
         Style::Posix => node::normalize_posix_t(path, &mut buf),
         Style::Windows => node::normalize_windows_t(path, &mut buf),
     };
-    of_node(style, normalized)
+    from_node_path(style, normalized)
 }
 
 /// The package that `name` belongs to. `name` is a package name or a path to a file inside one, because eslint-config-next
@@ -329,7 +342,7 @@ pub fn package_of(name: &[u8]) -> &[u8] {
     &inside[..end.unwrap_or(inside.len())]
 }
 
-/// `directory` and the directories that it is in, up to the root.
+/// `directory` and its ancestors, up to the root.
 pub fn ancestors(directory: &[u8]) -> impl Iterator<Item = &[u8]> {
     let mut next = Some(directory);
     std::iter::from_fn(move || {

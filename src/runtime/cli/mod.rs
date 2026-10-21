@@ -1722,6 +1722,7 @@ pub(crate) mod command {
             Global::exit(1);
         }
 
+        let mut after_create: usize = 0;
         let mut template_name_start: usize = 0;
         let mut positionals: [&[u8]; 2] = [b"", b""];
         let mut positional_i: usize = 0;
@@ -1735,6 +1736,9 @@ pub(crate) mod command {
                 let slice = strings::trim(remainder[remainder_i].as_bytes(), b" \t\n");
                 if !slice.is_empty() {
                     if !strings::has_prefix(slice, b"--") {
+                        if positional_i == 0 {
+                            after_create = remainder_i + 2;
+                        }
                         if positional_i == 1 {
                             template_name_start = remainder_i + 2;
                         }
@@ -1805,11 +1809,11 @@ To create a project with the official Next.js scaffolding tool, run
                 || strings::starts_with_char(template_name, b'@'))
             && example_tag != ExampleTag::LocalFolder;
 
-        // `bun create` takes a flag wherever it stands. What follows the name of a template that bunx runs is the
-        // template's.
+        // After `create`, `bun create` takes a flag wherever it stands. What follows the name of a template that bunx
+        // runs is the template's.
         arguments::disallow_code_generation_from_strings_among(match use_bunx {
-            true => &args[1..template_name_start],
-            false => &args[1..],
+            true => &args[after_create..template_name_start],
+            false => &args[after_create..],
         });
 
         if use_bunx {

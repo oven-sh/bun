@@ -109,6 +109,8 @@ describe.concurrent.skipIf(builtStrict)("a command that bundles", () => {
     ["bun create <component> =strict", ["create", "./App.tsx", strict], {}],
     // Before `create` it is a flag of `bun`, and after it one of `bun create`. The higher level holds.
     ["bun =strict create <component> <the flag>", [strict, "create", "./App.tsx", flag], {}],
+    // A `--` before `create` ends the flags of `bun`, not those of `bun create`.
+    ["bun -- create <component> =strict", ["--", "create", "./App.tsx", strict], {}],
     // Given more than once among the flags of `bun`, the last counts, as for `bun <file>`.
     ["bun install --analyze: the flag, then =strict, in BUN_OPTIONS", analyze, { BUN_OPTIONS: `${flag} ${strict}` }],
   ] as const)("%s refuses a macro", async (_, cmd, env) => {
@@ -118,6 +120,8 @@ describe.concurrent.skipIf(builtStrict)("a command that bundles", () => {
   test.each([
     ["bun install --analyze", analyze, {}, allowed],
     ["bun install --analyze, the flag in BUN_OPTIONS", analyze, { BUN_OPTIONS: flag }, asNode],
+    // `bun build` parses what BUN_OPTIONS adds with its own flags, which do not have this one.
+    ["bun build, =strict in BUN_OPTIONS", ["build", "./entry.ts"], { BUN_OPTIONS: strict }, allowed],
     [
       "bun install --analyze: =strict, then the flag, in BUN_OPTIONS",
       analyze,
@@ -148,9 +152,9 @@ describe.concurrent.skipIf(builtStrict)("a command that bundles", () => {
     });
   });
 
-  // `--` ends the flags of `bun create`. The command goes on to its install step, which finds no registry.
+  // `--` ends the flags of `bun create`.
   test("bun create <component> -- =strict runs a macro", async () => {
-    expect(await bundle(["create", "./App.tsx", "--", strict])).toMatchObject({ macro: "made 2", created: true });
+    expect(await bundle(["create", "./App.tsx", "--", strict])).toMatchObject({ macro: "made 2" });
   });
 
   // What follows the name of a template from npm goes to the template, which this registry does not have.

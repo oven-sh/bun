@@ -7,7 +7,7 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
 use bun_core::handle_oom;
 
 use crate::Graph::Graph;
-use crate::bun_css::css_parser::BundlerCssRule;
+use crate::bun_css::css_parser::{BundlerCssRule, BundlerCssRuleList};
 use crate::bun_css::{BundlerStyleSheet, ImportConditions, LayerName};
 use crate::chunk::{CssImportOrder, CssImportOrderKind, Layers};
 use crate::linker_context_mod::debug;
@@ -105,6 +105,16 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             BStr::new(&sources[source_index.get() as usize].path.pretty)
         }
 
+        /// Whether an "@import" of this file stops at the cycle check of `visit`. A file that is not CSS stays in `visited`.
+        fn is_in_import_chain(&self, source_index: Index) -> bool {
+            self.css_asts[source_index.get() as usize].is_some()
+                && self
+                    .visited
+                    .slice()
+                    .iter()
+                    .any(|visited| visited.get() == source_index.get())
+        }
+
         fn visit(
             &mut self,
             source_index: Index,
@@ -132,15 +142,6 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                         source_index.get(),
                         self.input_file_pretty(source_index),
                     );
-                    // A browser does not load this import, but it still declares the layers of its conditions.
-                    if has_layer(wrapping_conditions) {
-                        self.order.push(CssImportOrder {
-                            kind: CssImportOrderKind::Layers(Layers::Owned(Vec::new())),
-                            // SAFETY: arena-backed `Vec` header; `CssImportOrder` suppresses `Drop` on it (see the note at `bitwise_copy`).
-                            conditions: unsafe { bitwise_copy(wrapping_conditions) },
-                            condition_import_records: Vec::new(),
-                        });
-                    }
                     return;
                 }
             }
@@ -201,6 +202,24 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                                     &mut nested_import_records,
                                 ),
                             );
+                            // Chrome and Firefox declare the layer of an "@import" that a cycle cuts. WebKit does not.
+                            if self.is_in_import_chain(record.source_index)
+                                && nested_conditions
+                                    .slice()
+                                    .iter()
+                                    .all(|c| !c.has_anonymous_layer())
+                                && nested_conditions
+                                    .slice()
+                                    .last()
+                                    .is_some_and(|c| c.layer.is_some())
+                            {
+                                self.order.push(CssImportOrder {
+                                    kind: CssImportOrderKind::Layers(Layers::Owned(Vec::new())),
+                                    // SAFETY: arena-backed `Vec` header; `CssImportOrder` suppresses `Drop` on it (see the note at `bitwise_copy`).
+                                    conditions: unsafe { bitwise_copy(&*nested_conditions) },
+                                    condition_import_records: Vec::new(),
+                                });
+                            }
                             self.visit(
                                 record.source_index,
                                 &mut nested_conditions,
@@ -345,6 +364,36 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
 
     debug_css_order(this, &order, CssOrderDebugStep::BeforeHoisting);
 
+    // A duplicate file is decided here, ahead of the hoist, because `copy_can_win` reads the order of the source.
+    {
+        let mut source_index_duplicates: ArrayHashMap<u32, Vec<u32>> = ArrayHashMap::new();
+        let mut i = order.len();
+        'next_backward: while i != 0 {
+            i -= 1;
+            let CssImportOrderKind::SourceIndex(idx) = order.at(i).kind else {
+                continue;
+            };
+            let gop = handle_oom(source_index_duplicates.get_or_put(idx.get()));
+            if !gop.found_existing {
+                *gop.value_ptr = Vec::<u32>::default();
+            }
+            for &j in gop.value_ptr.slice() {
+                let later = &order.at(j as usize).conditions;
+                if is_conditional_import_redundant(&order.at(i).conditions, later, Levels::Esbuild)
+                    && !copy_can_win(order.slice(), i, later, css_asts)
+                {
+                    // The copy is redundant, but its "@layer" names keep their place in the layer order.
+                    let sheet = css_asts[idx.get() as usize].as_deref().unwrap();
+                    order.mut_(i).kind = CssImportOrderKind::Layers(Layers::borrow(
+                        core::ptr::NonNull::from(&sheet.layer_names).cast::<Vec<LayerName>>(),
+                    ));
+                    continue 'next_backward;
+                }
+            }
+            gop.value_ptr.push(i as u32);
+        }
+    }
+
     // CSS syntax unfortunately only allows "@import" rules at the top of the
     // file. This means we must hoist all external "@import" rules to the top of
     // the file when bundling, even though doing so will change the order of CSS
@@ -385,14 +434,11 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     // file, replace all but the last copy with just the layers that are in that
     // file. This works because in CSS, the last instance of a declaration
     // overrides all previous instances of that declaration.
-    // An earlier copy in one more "layer()" can win over the last copy, and then it stays: `copy_can_win`.
     let mut masked_import_has_layer = false;
     {
-        let mut source_index_duplicates: ArrayHashMap<u32, Vec<u32>> = ArrayHashMap::new();
         let mut external_path_duplicates: StringArrayHashMap<Vec<u32>> = StringArrayHashMap::new();
 
-        let order_len = order.len();
-        let mut i: u32 = order_len as u32;
+        let mut i: u32 = order.len() as u32;
         // Borrowck: `order.at(i)` and `order.mut_(i)`
         // cannot overlap, and `is_conditional_import_redundant` needs to read
         // both `entry.conditions` and `order.at(j).conditions`. Hold raw
@@ -403,53 +449,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             i -= 1;
             // SAFETY: i < order.len; buffer is not reallocated in this loop.
             let entry: &CssImportOrder = unsafe { &*order_ptr.add(i as usize) };
-            // SAFETY: the loop writes only to `order[i]`, after the last read of this slice.
-            let entries: &[CssImportOrder] =
-                unsafe { core::slice::from_raw_parts(order_ptr, order_len) };
             match &entry.kind {
-                CssImportOrderKind::SourceIndex(idx) => {
-                    let idx = *idx;
-                    let gop = handle_oom(source_index_duplicates.get_or_put(idx.get()));
-                    if !gop.found_existing {
-                        *gop.value_ptr = Vec::<u32>::default();
-                    }
-                    for &j in gop.value_ptr.slice() {
-                        // SAFETY: j < order.len; see note above.
-                        let later = unsafe { &(*order_ptr.add(j as usize)).conditions };
-                        let sheet = css_asts[idx.get() as usize].as_deref().unwrap();
-                        // A rule with "composes" does not print inside "@layer", so such a copy is always masked.
-                        if is_conditional_import_redundant(
-                            &entry.conditions,
-                            later,
-                            Levels::Esbuild,
-                        ) && !(sheet.composes.count() == 0
-                            && copy_can_win(
-                                entries,
-                                i as usize,
-                                later,
-                                Some(sheet.layer_names.slice()),
-                                css_asts,
-                            ))
-                        {
-                            // This import is redundant, but it might have @layer rules.
-                            // So we should keep the @layer rules so that the cascade ordering of layers
-                            // is preserved
-                            //
-                            // `crate::bun_css::LayerName` (lifetime-erased
-                            // shadow) and `::bun_css::LayerName` are distinct nominal
-                            // types; cast through `NonNull` to satisfy
-                            // `Layers::borrow`.
-                            let layer_names_ptr = core::ptr::NonNull::from(
-                                &css_asts[idx.get() as usize].as_deref().unwrap().layer_names,
-                            )
-                            .cast::<Vec<LayerName>>();
-                            order.mut_(i as usize).kind =
-                                CssImportOrderKind::Layers(Layers::borrow(layer_names_ptr));
-                            continue 'next_backward;
-                        }
-                    }
-                    gop.value_ptr.push(i);
-                }
                 CssImportOrderKind::ExternalPath(p) => {
                     let gop = handle_oom(external_path_duplicates.get_or_put(p.text));
                     if !gop.found_existing {
@@ -462,12 +462,12 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             &entry.conditions,
                             later,
                             Levels::Esbuild,
-                        ) && !copy_can_win(entries, i as usize, later, None, css_asts)
-                        {
+                        ) {
                             // Don't remove duplicates entirely. The import conditions may
                             // still introduce layers to the layer order. Represent this as a
                             // file with an empty layer list.
-                            masked_import_has_layer |= has_layer(&entry.conditions);
+                            masked_import_has_layer |=
+                                entry.conditions.slice().iter().any(|c| c.layer.is_some());
                             order.mut_(i as usize).kind =
                                 CssImportOrderKind::Layers(Layers::Masked {
                                     path: *p,
@@ -478,7 +478,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     }
                     gop.value_ptr.push(i);
                 }
-                CssImportOrderKind::Layers(_) => {}
+                CssImportOrderKind::SourceIndex(_) | CssImportOrderKind::Layers(_) => {}
             }
         }
     }
@@ -649,31 +649,28 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 entry.kind,
                 CssImportOrderKind::Layers(Layers::Masked { .. })
             );
-            let is_pre_import_list =
-                matches!(entry.kind, CssImportOrderKind::Layers(Layers::PreImport(_)));
+            let is_pre_import_list = entry.is_pre_import_list();
             let duplicates: &[u32] = layer_duplicates.at(index).indices.slice();
             let mut j = duplicates.len();
             while j != 0 {
                 j -= 1;
                 let duplicate_index = duplicates[j];
                 let covering = wip_order.at(duplicate_index as usize);
-                // The body of a file leaves its leading statements to such a list, and only such a list always stays.
-                if is_pre_import_list
-                    && !matches!(
-                        covering.kind,
-                        CssImportOrderKind::Layers(Layers::PreImport(_))
-                    )
-                {
+                // esbuild lets each entry with these names cover the list, but only such a list prints the statements of its file: css/CSSAtLayerOrderMarkerDoesNotStandForStatement.
+                if is_pre_import_list && !covering.is_pre_import_list() {
                     continue;
                 }
-                // A masked import keeps esbuild's test: the pass after this loop decides what it prints.
-                let is_redundant = if is_masked_import {
+                // A masked import keeps esbuild's test, but not against a list that has only the layers of its conditions: css/CSSAtLayerOrderCutImportDoesNotCoverMaskedImport.
+                let is_redundant = if is_masked_import
+                    && !matches!(covering.kind, CssImportOrderKind::Layers(Layers::Owned(_)))
+                {
                     is_conditional_import_redundant(
                         &entry.conditions,
                         &covering.conditions,
                         Levels::Esbuild,
                     )
                 } else {
+                    // esbuild does not test the rest of the conditions, so an entry with no conditions covers "layer(a)": css/CSSAtLayerOrderAfterPlainFile.
                     is_conditional_import_redundant(
                         &entry.conditions,
                         &covering.conditions,
@@ -707,11 +704,9 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             && duplicate_index as usize == wip_order.len() - 1
                         {
                             let other = wip_order.at(duplicate_index as usize);
+                            // esbuild also drops a pre-import list here, but the file entry does not print the name of an empty block: css/CSSAtLayerOrderFirstImportHasSameNamesInEmptyBlocks.
                             if matches!(other.kind, CssImportOrderKind::Layers(_))
-                                && !matches!(
-                                    other.kind,
-                                    CssImportOrderKind::Layers(Layers::PreImport(_))
-                                )
+                                && !other.is_pre_import_list()
                                 && import_conditions_are_equal(
                                     entry.conditions.slice_const(),
                                     other.conditions.slice_const(),
@@ -956,7 +951,7 @@ fn has_layer(conditions: &[ImportConditions]) -> bool {
     conditions.iter().any(|c| c.layer.is_some())
 }
 
-/// The names of a layer list, or of the layers that a file has rules for.
+/// The names of a layer list, or the layer names that a file declares.
 fn layer_names_of<'a>(
     entry: &'a CssImportOrder,
     css_asts: &'a [crate::bundled_ast::CssCol],
@@ -986,19 +981,42 @@ fn layer_path(conditions: &[ImportConditions]) -> impl Iterator<Item = Option<&'
         })
 }
 
-/// Whether the rules of the copy `order[at]` can win over the rules of a later copy with the conditions `later`. esbuild takes the later copy to win.
+/// Whether `rules` has a rule in a layer block whose name starts with `name`.
+fn has_rule_in_layer(rules: &BundlerCssRuleList, name: &[u8]) -> bool {
+    rules.v.iter().any(|rule| match rule {
+        BundlerCssRule::LayerBlock(block) => {
+            !block.rules.v.is_empty()
+                && block
+                    .name
+                    .as_ref()
+                    .is_some_and(|layer| layer.v.slice().first() == Some(&name))
+        }
+        BundlerCssRule::Media(media) => has_rule_in_layer(&media.rules, name),
+        BundlerCssRule::Supports(supports) => has_rule_in_layer(&supports.rules, name),
+        _ => false,
+    })
+}
+
+/// Whether the rules of the file copy `order[at]` can win over the rules of a later copy with the conditions `later`. esbuild takes the later copy to win.
 fn copy_can_win(
     order: &[CssImportOrder],
     at: usize,
     later: &[ImportConditions],
-    own_layers: Option<&[LayerName]>,
     css_asts: &[crate::bundled_ast::CssCol],
 ) -> bool {
     let entry = &order[at];
-    // The copy is in one more layer, so it wins only when another layer of the later copy is ahead of that one.
+    let CssImportOrderKind::SourceIndex(idx) = entry.kind else {
+        return false;
+    };
+    let sheet = css_asts[idx.get() as usize].as_deref().unwrap();
+    // The copy is in one more layer. A rule of it wins only in a layer of the file that is declared ahead of that one.
     let Some(extra) = layer_path(&entry.conditions.slice()[later.len()..]).next() else {
         return false;
     };
+    // A rule with "composes" does not print inside "@layer" (#38538), so such a copy is always masked.
+    if sheet.composes.count() != 0 {
+        return false;
+    }
     // Each entry below an "@import ... layer;" prints its own "@layer{}" block, so a copy there stays only when it is alone.
     if let Some(anonymous) = entry
         .conditions
@@ -1019,57 +1037,53 @@ fn copy_can_win(
             return false;
         }
     }
-    let is_own = |name: &[u8]| {
-        Some(name) != extra
-            && own_layers.is_none_or(|own| {
-                own.iter()
-                    .any(|layer| layer.v.slice().first() == Some(&name))
-            })
-    };
+    let is_own = |name: &[u8]| Some(name) != extra && has_rule_in_layer(&sheet.rules, name);
     let later_path: Vec<Option<&[u8]>> = layer_path(later).collect();
-    order[..at].iter().any(|other| {
+    'next_entry: for other in &order[..at] {
+        let is_unconditional = other
+            .conditions
+            .slice()
+            .iter()
+            .all(|c| c.supports.is_none() && c.media.media_queries.is_empty());
         let mut below = later_path.as_slice();
         for name in layer_path(&other.conditions) {
             match below.split_first() {
                 Some((first, rest)) if *first == name => below = rest,
-                Some(_) => return false,
-                None => return name.is_some_and(&is_own),
+                Some(_) => continue 'next_entry,
+                None if name == extra && name.is_some() => {
+                    // The extra layer comes first, so each layer of the file behind it loses.
+                    if is_unconditional {
+                        return false;
+                    }
+                    continue 'next_entry;
+                }
+                None if name.is_some_and(&is_own) => return true,
+                None => continue 'next_entry,
             }
         }
-        layer_names_of(other, css_asts).iter().any(|layer| {
+        // The names of a file can be below "@media" or "@supports", so they do not end the search.
+        let is_statement_list = matches!(other.kind, CssImportOrderKind::Layers(_));
+        for layer in layer_names_of(other, css_asts) {
             let parts = layer.v.slice();
-            parts.len() > below.len()
-                && parts
+            if parts.len() <= below.len()
+                || !parts
                     .iter()
                     .zip(below)
                     .all(|(part, name)| Some(*part) == *name)
-                && is_own(parts[below.len()])
-        })
-    })
-}
-
-fn layer_lists_are_equal(a: &[LayerName], b: &[LayerName]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.eql(b))
-}
-
-/// Whether two import orders print the same CSS. `CssImportOrder::hash` leaves the conditions out.
-pub(crate) fn css_import_orders_are_equal(a: &[CssImportOrder], b: &[CssImportOrder]) -> bool {
-    a.len() == b.len()
-        && a.iter().zip(b).all(|(a, b)| {
-            import_conditions_are_equal(a.conditions.slice_const(), b.conditions.slice_const())
-                && match (&a.kind, &b.kind) {
-                    (CssImportOrderKind::Layers(a), CssImportOrderKind::Layers(b)) => {
-                        layer_lists_are_equal(a.inner().slice(), b.inner().slice())
-                    }
-                    (CssImportOrderKind::ExternalPath(a), CssImportOrderKind::ExternalPath(b)) => {
-                        a.text == b.text
-                    }
-                    (CssImportOrderKind::SourceIndex(a), CssImportOrderKind::SourceIndex(b)) => {
-                        a.get() == b.get()
-                    }
-                    _ => false,
+            {
+                continue;
+            }
+            let child = parts[below.len()];
+            if Some(child) == extra {
+                if is_statement_list && is_unconditional {
+                    return false;
                 }
-        })
+            } else if is_own(child) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn import_conditions_are_equal(a: &[ImportConditions], b: &[ImportConditions]) -> bool {

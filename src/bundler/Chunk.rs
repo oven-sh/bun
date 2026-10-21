@@ -1484,6 +1484,11 @@ impl CssImportOrder {
         }
     }
 
+    /// Whether this entry is the list of the "@layer" names of a file ahead of its first "@import".
+    pub(crate) fn is_pre_import_list(&self) -> bool {
+        matches!(self.kind, CssImportOrderKind::Layers(Layers::PreImport(_)))
+    }
+
     /// Whether an "@import ... layer;" wraps this entry. Below one, the import order keeps no layer list.
     pub(crate) fn has_anonymous_layer(&self) -> bool {
         self.conditions

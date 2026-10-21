@@ -353,12 +353,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                     };
 
                     {
-                        // Strip leading "@import" and ".ignored" rules. Any
-                        // "@layer" statement rules interleaved with them are
-                        // preserved, because they carry layer ordering
-                        // information that is not re-emitted elsewhere by
-                        // the bundler (e.g. Tailwind's
-                        // `@layer theme, base, components, utilities;`).
+                        // Strip leading "@import" and ".ignored" rules. An "@layer" statement among them stays, unless a `Layers::PreImport` entry prints it.
                         //
                         // IMPORTANT: `ast` is only a shallow copy of the
                         // per-source stylesheet, so `ast.rules.v.items` still
@@ -372,7 +367,6 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         //
                         // Regression: #28914
                         let original_rules = ast.rules.v.as_slice();
-                        // A `Layers::PreImport` entry prints the statements that hold these names.
                         let mut listed_names: usize = if entry.has_anonymous_layer() {
                             0
                         } else {
@@ -386,14 +380,11 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                 BundlerCssRule::Import(_) | BundlerCssRule::Ignored => {}
                                 BundlerCssRule::LayerStatement(statement) => {
                                     match listed_names.checked_sub(statement.names.len() as usize) {
-                                        Some(rest) if listed_names > 0 => {
+                                        Some(rest) => {
                                             listed_names = rest;
                                             listed_statements += 1;
                                         }
-                                        _ => {
-                                            listed_names = 0;
-                                            layer_count += 1;
-                                        }
+                                        None => layer_count += 1,
                                     }
                                 }
                                 _ => {

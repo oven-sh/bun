@@ -1,13 +1,12 @@
 import { expect, test } from "bun:test";
 import { tempDir } from "harness";
 import path from "node:path";
-import { OP, RawClient } from "../../web/websocket/raw-peer";
+import { closePayload, OP, RawClient } from "../../js/web/websocket/raw-peer";
 
 // A message, ping or pong handler runs JS. When it returns, the microtask drain can resume a test
 // body that then calls `expect(promise).rejects`, which ticks the event loop from inside the
-// handler. That tick reads the next frame on the same socket through the same frame parser.
-// The parser must be between frames when a handler runs, or the nested frame is misparsed:
-// a new data frame used to fail as interleaved with the message still on the parser's stack.
+// handler. That tick reads the next frame on the same socket through the same frame parser, so
+// the parser must be between frames whenever a handler runs.
 
 // A server that upgrades every request. A close rejects every promise in `pending`, so a test
 // that waits on one fails with the close code instead of its timeout.
@@ -77,7 +76,7 @@ test("a nested tick after a fragmented message reads a new message on its own", 
       message(ws, message) {
         got.push(message.toString());
         if (message === "hello") ready.resolve();
-        if (message === "second") second.reject(new Error("second"));
+        else second.reject(new Error("second"));
       },
     },
     ready,
@@ -93,7 +92,44 @@ test("a nested tick after a fragmented message reads a new message on its own", 
   expect(got).toEqual(["hello", "second"]);
 });
 
-test("a nested tick after a message that ended in a continuation read reads the next frame", async () => {
+test("a fragmented message started in a nested tick survives the return to the outer handler", async () => {
+  const got: string[] = [];
+  const ready = Promise.withResolvers<void>();
+  const pinged = Promise.withResolvers<void>();
+  const done = Promise.withResolvers<void>();
+  using server = serve(
+    {
+      message(ws, message) {
+        got.push(message.toString());
+        if (message === "hello") ready.resolve();
+        else done.resolve();
+      },
+      ping() {
+        pinged.reject(new Error("pinged"));
+      },
+    },
+    ready,
+    pinged,
+    done,
+  );
+  using raw = await RawClient.upgrade(server.port);
+  raw.text("hel", { fin: false });
+  raw.send(OP.continuation, "lo");
+  // Resumes inside the server's message handler for "hello".
+  await ready.promise;
+  raw.text("sec", { fin: false });
+  raw.ping("p");
+  await expect(pinged.promise).rejects.toThrow("pinged");
+  // The handler for "hello" returns at the next await, with "sec" in the fragment buffer.
+  raw.send(OP.continuation, "ond");
+  await done.promise;
+  expect(got).toEqual(["hello", "second"]);
+});
+
+test.each([
+  ["header", 3],
+  ["payload", 7],
+])("a nested tick after a message split inside its %s reads the next one, split the same way", async (_, head) => {
   const got: string[] = [];
   const ready = Promise.withResolvers<void>();
   const second = Promise.withResolvers<void>();
@@ -102,19 +138,83 @@ test("a nested tick after a message that ended in a continuation read reads the 
       message(ws, message) {
         got.push(message.toString());
         if (message === "hello") ready.resolve();
-        if (message === "second") second.reject(new Error("second"));
+        else second.reject(new Error("second"));
       },
     },
     ready,
     second,
   );
   using raw = await RawClient.upgrade(server.port);
-  // Header, mask and one payload byte in the first read, the rest in a second read.
-  await writeSplit(raw, raw.frame(OP.text, "hello"), 7);
+  await writeSplit(raw, raw.frame(OP.text, "hello"), head);
   // Resumes inside the server's message handler for "hello".
   await ready.promise;
-  raw.text("second");
-  await expect(second.promise).rejects.toThrow("second");
+  // Both reads of "second" happen in the nested tick.
+  const split = writeSplit(raw, raw.frame(OP.text, "second"), head);
+  await expect(split.then(() => second.promise)).rejects.toThrow("second");
+  expect(got).toEqual(["hello", "second"]);
+  // The handler for "hello" has returned to the parser by the time this ping is read.
+  raw.ping("alive");
+  expect(await raw.next()).toBe('pong "alive"');
+});
+
+test.each([
+  ["whole", 0],
+  ["split inside its payload", 7],
+])(
+  "a nested tick that reads the socket closes it when a frame follows the %s message in the outer read",
+  async (_, head) => {
+    const got: string[] = [];
+    const ready = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    using server = serve(
+      {
+        message(ws, message) {
+          got.push(message.toString());
+          if (message === "first") ready.resolve();
+          else closed.reject(new Error(`read ${message}`));
+        },
+      },
+      ready,
+      closed,
+    );
+    using raw = await RawClient.upgrade(server.port);
+    // One write, so that one read holds the end of "first" and all of "second".
+    const frames = Buffer.concat([raw.frame(OP.text, "first"), raw.frame(OP.text, "second")]);
+    if (head) await writeSplit(raw, frames, head);
+    else raw.write(frames);
+    // Resumes inside the server's message handler for "first". "second" is in the loop's only receive
+    // buffer, which the read of "third" overwrites.
+    await ready.promise;
+    raw.text("third");
+    await expect(closed.promise).rejects.toThrow(
+      "1006: WebSocket handler ran the event loop with received frames left to parse",
+    );
+    expect(got).toEqual(["first"]);
+  },
+);
+
+test("a read that ends one split message and starts the next leaves the connection open", async () => {
+  const got: string[] = [];
+  const ready = Promise.withResolvers<void>();
+  const done = Promise.withResolvers<void>();
+  using server = serve(
+    {
+      message(ws, message) {
+        got.push(message.toString());
+        if (message === "hello") ready.resolve();
+        else done.resolve();
+      },
+    },
+    ready,
+    done,
+  );
+  using raw = await RawClient.upgrade(server.port);
+  const hello = raw.frame(OP.text, "hello");
+  const frames = Buffer.concat([hello, raw.frame(OP.text, "second")]);
+  await writeSplit(raw, frames.subarray(0, hello.length + 7), 7);
+  await ready.promise;
+  raw.write(frames.subarray(hello.length + 7));
+  await done.promise;
   expect(got).toEqual(["hello", "second"]);
 });
 
@@ -178,6 +278,15 @@ for (const [name, opcode, handler, echo] of [
     expect(control).toEqual(name === "ping" ? ["sync", "pqr"] : ["pqr"]);
   });
 }
+
+test("a close frame read in two parts keeps its code and reason", async () => {
+  const closed = Promise.withResolvers<void>();
+  using server = serve({ message() {} }, closed);
+  using raw = await RawClient.upgrade(server.port);
+  await writeSplit(raw, raw.frame(OP.close, closePayload(1000, "bye")), 7);
+  await expect(closed.promise).rejects.toThrow("1000: bye");
+  expect(await raw.next()).toBe('close 1000 "bye"');
+});
 
 // The same re-entry without bun:test: a macro runs at transpile time, and the transpiler waits for
 // its promise by ticking the event loop. The macro's promise settles once the server has handled

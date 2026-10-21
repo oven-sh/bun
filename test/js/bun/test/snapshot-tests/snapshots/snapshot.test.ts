@@ -1018,7 +1018,8 @@ test("toJSON is called like pretty-format", () => {
   expect(fn).toMatchInlineSnapshot(`[Function]`);
 
   // the objectContaining sample prints its properties, not its toJSON
-  expect({ m: expect.objectContaining({ toJSON: () => "sample", b: { toJSON: () => "nested" } }) }).toMatchInlineSnapshot(`
+  expect({ m: expect.objectContaining({ toJSON: () => "sample", b: { toJSON: () => "nested" } }) })
+    .toMatchInlineSnapshot(`
     {
       "m": ObjectContaining {
         "b": "nested",
@@ -1038,11 +1039,14 @@ test("toJSON is called like pretty-format", () => {
 
   // property matchers: Jest merges them into a plain copy of the received
   // object, which has no prototype toJSON, so the shape is printed
-  expect(new Duration(1000)).toMatchInlineSnapshot({ values: expect.any(Object) }, `
+  expect(new Duration(1000)).toMatchInlineSnapshot(
+    { values: expect.any(Object) },
+    `
     Duration {
       "values": Any<Object>,
     }
-  `);
+  `,
+  );
 });
 
 test("a throwing toJSON fails the snapshot matcher", () => {

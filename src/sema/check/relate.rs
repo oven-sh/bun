@@ -853,12 +853,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.remove_missing_type(ty, prop.flags.contains(PropFlags::OPTIONAL))
     }
 
-    /// `getTypeOfSymbol` of a property: with the missing type, the placeholder for an omitted
-    /// property.
-    pub(super) fn type_of_prop_with_missing(&mut self, prop: &Prop, mapper: MapperId) -> TypeId {
-        self.type_of_prop(prop, mapper)
-    }
-
     /// `property_in_type`, for looking up several names in sequence. `inherited`: `inherited_of`
     /// the shape of `members`. `ty`: the type that has `members`.
     #[inline]
@@ -3478,7 +3472,7 @@ impl<'p, 's> Checker<'p, 's> {
                 .and_then(|members| Some((members.resolved.prop(name)?, members.mapper))),
         };
         if let Some((prop, mapper)) = prop {
-            return self.type_of_prop_with_missing(prop, mapper);
+            return self.type_of_prop(prop, mapper);
         }
         let Some(members) = self.members_for_index_infos(t) else {
             return TypeId::UNDEFINED;

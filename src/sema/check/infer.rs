@@ -2062,7 +2062,7 @@ impl<'p, 's> Checker<'p, 's> {
                     .shape()
                     .props
                     .iter()
-                    .map(|p| self.type_of_prop_with_missing(p, sm.mapper))
+                    .map(|p| self.type_of_prop(p, sm.mapper))
                     .collect();
                 let indexed = self.structured(sm);
                 let infos = indexed.index_infos().iter();
@@ -2241,7 +2241,7 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             // `links.propertyType = c.getTypeOfSymbol(prop)`
-            self.type_of_prop_with_missing(prop, members.mapper);
+            self.type_of_prop(prop, members.mapper);
             // It has the `nameType` and the `Declarations` of `prop`, and no `ValueDeclaration`.
             let mut flags = self.name_flag_of_copy(source, prop, true);
             if !adds_optional && prop.flags.contains(PropFlags::OPTIONAL) {
@@ -2275,7 +2275,7 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(prop) = members.resolved.prop(name) else {
             return TypeId::UNRESOLVED;
         };
-        let property_type = self.type_of_prop_with_missing(prop, members.mapper);
+        let property_type = self.type_of_prop(prop, members.mapper);
         // `{ [P in keyof T[K]]: X }` was mapped from the same type as `{ [P in keyof T]: X }`.
         // Normalizing to that form creates fewer types.
         let (mut mapped, mut of) = (mapped, of);

@@ -11889,6 +11889,11 @@ export {};
         b.tsx(7,22): error TS2322: Type 'undefined' is not assignable to type '{}'."
       `);
       expect(exitCode).toBe(1);
+      // The missing type that exactOptionalPropertyTypes adds to an optional declaration is taken away where a
+      // property is read, as tsc does. It changes nothing here.
+      const exact = await check(dir, ["--jsx", "react", "--exactOptionalPropertyTypes"]);
+      expect(exact.stdout).toBe(stdout);
+      expect(exact.exitCode).toBe(1);
     });
 
     test("inference from an instance of the class whose field is being resolved", async () => {

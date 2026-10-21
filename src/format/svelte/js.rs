@@ -3,8 +3,8 @@
 use super::ast::{Expression, ExpressionKind, Span};
 use super::parser::{Js, ParsedExpression, Statement};
 use crate::html::js::Parse;
-use crate::options::{Goal, ParsePart, Part};
-use bun_lint::ast::walk::{Visitor, walk};
+use crate::options::{Goal, ParsePart, ParsedPart, Part};
+use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::ast::{BinOp, Expr, ExprKind, File, FnBody, Node, Stmt, StmtKind, VarKind};
 
 pub(crate) struct FromParser<'p> {
@@ -40,20 +40,20 @@ fn kind_of(e: Expr<'_>) -> ExpressionKind {
     }
 }
 
-/// Describes `e`, which was parsed from text that starts at offset `at` in the component.
-fn describe<'b>(file: &'b File<'b>, e: Expr<'b>, at: u32) -> Expression {
+/// Describes `e`, which is in the part whose comments have the ids in `comments`.
+fn describe<'b>(file: &'b File<'b>, e: Expr<'b>, comments: (u32, u32)) -> Expression {
     let span = e.span();
     // Svelte attaches the comments before a parenthesis to the `ParenthesizedExpression`, which it drops.
     let after = e.parens().next().map_or(0, |innermost| innermost.start + 1);
-    let from = (file.comments().into_iter().map(|it| it.span()))
+    let from = ((comments.0..comments.1).map(|id| file.comment(id).span()))
         .find(|it| it.start >= after && it.end <= span.start)
         .map_or(span.start, |it| it.start);
     let span = Span {
-        start: at + span.start,
-        end: at + span.end,
+        start: span.start,
+        end: span.end,
     };
     Expression {
-        from: at + from,
+        from,
         ..Expression::new(span, kind_of(e))
     }
 }
@@ -177,13 +177,13 @@ impl FromParser<'_> {
         }
     }
 
-    /// Parses the code at `at` and calls `read` with its only statement and its end offset. `until` is where the
-    /// parser must treat the component as ending.
+    /// Parses the code at `at` and calls `read` with the statement it became and where it is. `until` is where the
+    /// parser must treat the component as ending. The part is forgotten once `read` returns.
     fn part<R>(
         &mut self,
         (mut until, at): (usize, usize),
         goal: Goal,
-        read: impl for<'b> Fn(&'b File<'b>, Stmt<'b>, u32) -> Option<R>,
+        read: impl for<'b> Fn(&'b File<'b>, Stmt<'b>, ParsedPart) -> Option<R>,
     ) -> Result<R, usize> {
         let is_typescript = self.is_typescript || goal == Goal::Type;
         loop {
@@ -194,7 +194,7 @@ impl FromParser<'_> {
                 is_typescript,
             };
             let (mut result, mut stops_at, mut typescript_at) = (Err(at), None, None);
-            let parsed = (self.parse_part)(part, &mut |file, end| {
+            let parsed = (self.parse_part)(part, &mut |file, statement, parsed| {
                 let mut early = EarlyErrors {
                     is_typescript,
                     depth: 0,
@@ -202,20 +202,20 @@ impl FromParser<'_> {
                     first_typescript_operator: None,
                     first_assertion: None,
                 };
-                walk(file, &mut early);
+                walk_node(Node::Stmt(statement), &mut early);
                 stops_at = early.first_typescript_operator;
                 // acorn doesn't support any TypeScript syntax.
-                typescript_at = (file.first_typescript_syntax_in_javascript().into_iter())
-                    .chain(early.first_assertion)
+                let (from, to) = parsed.diagnostics;
+                let typescript = file.first_typescript_syntax_in_javascript_among(from..to);
+                typescript_at = (typescript.into_iter().chain(early.first_assertion))
                     .min()
                     .filter(|it| {
                         !is_typescript && early.first_error.is_none_or(|error| *it < error)
                     })
-                    .map(|it| at + it as usize);
-                result = match (early.first_error, file.body().iter().next()) {
-                    (Some(error), _) => Err(at + error as usize),
-                    (None, None) => Err(at),
-                    (None, Some(statement)) => read(file, statement, at as u32 + end).ok_or(at),
+                    .map(|it| it as usize);
+                result = match early.first_error {
+                    Some(error) => Err(error as usize),
+                    None => read(file, statement, parsed).ok_or(at),
                 };
             });
             if let Err(error) = parsed {
@@ -225,7 +225,7 @@ impl FromParser<'_> {
             // Retry with the text cut off before the TypeScript operator.
             match (stops_at, typescript_at) {
                 (Some(it), _) => {
-                    until = at + it as usize;
+                    until = it as usize;
                     self.stopped_at = Some(until);
                 }
                 (None, Some(it)) => {
@@ -235,6 +235,29 @@ impl FromParser<'_> {
                 (None, None) => return result,
             }
         }
+    }
+
+    /// Parses one expression, commas included, at `at`.
+    fn expression(&mut self, text: &[u8], at: usize) -> Result<ParsedExpression, usize> {
+        self.part(
+            (text.len(), at),
+            Goal::Expression,
+            |file, statement, parsed| {
+                let StmtKind::Expr(e) = statement.kind() else {
+                    return None;
+                };
+                let first = (kind_of(e) == ExpressionKind::Sequence)
+                    .then(|| e.sequence().first().copied())
+                    .flatten();
+                let assertion = assertion_at_end(first.unwrap_or(e));
+                Some(ParsedExpression {
+                    expression: describe(file, e, parsed.comments),
+                    end: parsed.end,
+                    first: first.map(|it| describe(file, it, parsed.comments)),
+                    assertion,
+                })
+            },
+        )
     }
 
     /// Parses `program` and calls `read` with its first statement. `at` is the offset in the component of `program`'s
@@ -262,26 +285,7 @@ impl Js for FromParser<'_> {
     }
 
     fn expression_at(&mut self, text: &[u8], at: usize) -> Result<ParsedExpression, usize> {
-        self.part(
-            (text.len(), at),
-            Goal::Expression,
-            |file, statement, end| {
-                let StmtKind::Expr(e) = statement.kind() else {
-                    return None;
-                };
-                let first = (kind_of(e) == ExpressionKind::Sequence)
-                    .then(|| e.sequence().first().copied())
-                    .flatten();
-                let at = at as u32;
-                let assertion = assertion_at_end(first.unwrap_or(e));
-                Some(ParsedExpression {
-                    expression: describe(file, e, at),
-                    end,
-                    first: first.map(|it| describe(file, it, at)),
-                    assertion: assertion.map(|it| (at + it.0, at + it.1)),
-                })
-            },
-        )
+        self.expression(text, at)
     }
 
     fn ends_of_expressions(&mut self, text: &[u8], at: usize, until: usize) -> Vec<usize> {
@@ -335,33 +339,38 @@ impl Js for FromParser<'_> {
     }
 
     fn statement_at(&mut self, text: &[u8], at: usize) -> Result<Statement, usize> {
-        // `type` can be an identifier.
+        // `type` can be an identifier. If it is one, the expression is parsed once more.
         if text.get(at..).is_some_and(|it| it.starts_with(b"type")) {
-            return Ok(match self.expression_at(text, at) {
+            return Ok(match self.expression(text, at) {
                 Ok(_) => Statement::Expression,
                 Err(_) => Statement::Other,
             });
         }
-        self.part((text.len(), at), Goal::Declaration, |_, statement, end| {
-            let StmtKind::Var(declarations) = statement.kind() else {
-                return Some(Statement::Other);
-            };
-            Some(match declarations.iter().next().map(|it| it.var_kind()) {
-                Some(VarKind::Let | VarKind::Const) => Statement::Declaration(end),
-                _ => Statement::OtherDeclaration,
-            })
-        })
+        self.part(
+            (text.len(), at),
+            Goal::Declaration,
+            |_, statement, parsed| {
+                let StmtKind::Var(declarations) = statement.kind() else {
+                    return Some(Statement::Other);
+                };
+                Some(match declarations.iter().next().map(|it| it.var_kind()) {
+                    Some(VarKind::Let | VarKind::Const) => Statement::Declaration(parsed.end),
+                    _ => Statement::OtherDeclaration,
+                })
+            },
+        )
     }
 
     fn type_at(&mut self, text: &[u8], at: usize) -> Result<(Span, bool), usize> {
         self.part(
             (text.len(), at),
             Goal::Type,
-            |file, statement, _| match statement.kind() {
+            |_, statement, parsed| match statement.kind() {
                 StmtKind::TypeAlias(alias) => {
                     let span = alias.ty().span();
-                    let span = Span::new(at + span.start as usize, at + span.end as usize);
-                    Some((span, file.comments().next().is_some()))
+                    let span = Span::new(span.start as usize, span.end as usize);
+                    let (from, to) = parsed.comments;
+                    Some((span, from < to))
                 }
                 _ => None,
             },

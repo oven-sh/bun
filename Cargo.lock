@@ -1643,6 +1643,7 @@ dependencies = [
  "bun_core",
  "bun_highway",
  "bun_sema",
+ "bun_sema_standalone",
  "bun_threading",
  "smallvec",
 ]

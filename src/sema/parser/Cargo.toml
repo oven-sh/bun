@@ -15,5 +15,9 @@ bun_ast.workspace = true
 bun_threading.workspace = true
 smallvec.workspace = true
 
+[dev-dependencies]
+# The native symbols that Bun's C and C++ side provides to `bun_core`.
+bun_sema_standalone = { path = "../standalone" }
+
 [lints]
 workspace = true

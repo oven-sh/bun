@@ -15,11 +15,13 @@ mod lexer;
 mod names;
 mod parser;
 mod pragmas;
+mod session;
 mod summarize;
 mod token;
 
 pub use names::FileAtoms;
 pub use parser::keyword_suggestion;
+pub use session::{Mark, PartOk, Session};
 
 use bun_sema::atom::Intern;
 use bun_sema::hir::FileBuilder;
@@ -144,15 +146,13 @@ pub struct Options {
     /// and only for TypeScript's dialect.
     pub reads_jsdoc: bool,
     pub dialect: bun_sema::resolve::Dialect,
-    /// Parse only this part of the text.
-    pub part: Option<Part>,
     /// Records what a formatter needs to attach comments to nodes: `enclosing_node`, `preceding_node` and
     /// `following_node` of `hir::Comment`, and the HTML-like comments of a script.
     pub attach_comments: bool,
 }
 
 /// A part of a text, parsed like acorn's `parseExpressionAt`: whatever follows it isn't checked, and only one token of
-/// it is scanned. The resulting file has one statement.
+/// it is scanned. It becomes one statement of the file: see [`Session`].
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Part {
     pub goal: Goal,
@@ -226,8 +226,7 @@ pub struct Parsed {
     pub file: Box<FileBuilder>,
     /// True if a top-level `await` was parsed as a keyword.
     pub has_top_level_await: bool,
-    /// The end of the last token of [`Options::part`] (or of the text), and the end of the token after it, which is the
-    /// last one scanned.
+    /// The end of the last token of the text, and the end of the token after it, which is the last one scanned.
     pub end: (u32, u32),
 }
 

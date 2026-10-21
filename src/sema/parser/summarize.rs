@@ -2,7 +2,8 @@
 //! goes through the parser without recovery, which rejects it at the first error. A rejected text
 //! is parsed again by the parser that recovers from errors the way TypeScript's does.
 
-use crate::{Options, Part, Rejection, Scratch};
+use crate::session::{self, PartOk};
+use crate::{Options, Part, Rejected, Rejection, Scratch};
 use bun_alloc::Arena;
 use bun_sema::atom::{Intern, Interner};
 use bun_sema::hir::{
@@ -38,12 +39,12 @@ impl ThreadCaches {
 }
 
 /// Takes one of the `SCRATCH` entries. Its slot stays empty until `return_scratch`.
-fn take_scratch() -> Box<Scratch> {
+pub(crate) fn take_scratch() -> Box<Scratch> {
     let taken = SCRATCH.with_borrow_mut(|all| all.iter_mut().find_map(Option::take));
     taken.unwrap_or_default()
 }
 
-fn return_scratch(scratch: Box<Scratch>) {
+pub(crate) fn return_scratch(scratch: Box<Scratch>) {
     SCRATCH.with_borrow_mut(|all| {
         if let Some(free) = all.iter_mut().find(|it| it.is_none()) {
             *free = Some(scratch);
@@ -251,7 +252,6 @@ fn parse_file_as(
         recovers: false,
         reads_jsdoc: how.jsdoc == JsDoc::Read,
         dialect,
-        part: None,
         attach_comments: how.attach_comments,
     };
     let once = |options, scratch: &mut Scratch| match atoms {
@@ -557,7 +557,7 @@ pub struct PartError {
 }
 
 impl PartError {
-    fn of(rejection: &crate::Rejected, at: u32) -> PartError {
+    pub(crate) fn of(rejection: &crate::Rejected, at: u32) -> PartError {
         PartError {
             at,
             is_too_deep: rejection.why == Rejection::TooDeep,
@@ -565,83 +565,76 @@ impl PartError {
     }
 }
 
-/// Parses the parts of one text: see [`Part`]. What the scanner needs to know about the whole text is computed once.
+// `BUN_DEBUG_sema_parts=1` logs a `part` line per [`Parts::parse`], a `parse` line per parser run and a `rejected`
+// line per part that no run parsed.
+bun_core::declare_scope!(sema_parts, hidden);
+
+/// Parses the parts of one text into one file, at their offsets in the text: see [`session::Session`].
 pub struct Parts<'t> {
     text: &'t [u8],
-    scratch: Option<Box<Scratch>>,
-    /// Swapped in for `scratch.stops` while parsing the text of one part.
-    part_stops: bun_highway::ScannerStopsBuffer,
+    /// Begun with the dialect of the first part, which every part is read in, and its mark from before any part.
+    session: Option<(session::Session<'t>, session::Mark, Dialect)>,
 }
+
+/// Where a [`Parts`] was: see [`Parts::mark`].
+#[derive(Copy, Clone)]
+pub struct PartsMark(Option<session::Mark>);
 
 impl<'t> Parts<'t> {
     pub fn of(text: &'t [u8]) -> Parts<'t> {
-        let mut scratch = take_scratch();
-        // This is a different text than the last one, possibly at the same address.
-        scratch.stops.forget();
         Parts {
             text,
-            scratch: Some(scratch),
-            part_stops: Default::default(),
+            session: None,
         }
     }
 
-    /// Calls `then` with the file, which has one statement, the interner of its atoms, the file's text, and the end of
-    /// `part`'s last token in that text. The text starts where the part starts and ends with the token after the part,
-    /// so a search in the file's text doesn't scan everything around the part. There's no JSX, `await` is a keyword,
-    /// and there's no error recovery.
+    /// Where the parts kept so far end in the file. [`Parts::rollback`] forgets what is parsed after this.
+    pub fn mark(&self) -> PartsMark {
+        PartsMark(
+            self.session
+                .as_ref()
+                .map(|(session, ..)| session::Session::mark(session)),
+        )
+    }
+
+    /// Forgets the parts parsed since `to`: their nodes, comments and diagnostics, as if they had never been parsed.
+    pub fn rollback(&mut self, to: &PartsMark) {
+        if let Some((session, before_any, _)) = &mut self.session {
+            session::Session::rollback(session, to.0.as_ref().unwrap_or(before_any));
+        }
+    }
+
+    /// Parses `part` after the parts kept so far, and calls `then` with the file of them all, the interner of its atoms,
+    /// the whole text, and where the part is in the file. [`Parts::rollback`] forgets a part that isn't kept.
     pub fn parse<'s, R>(
         &mut self,
         dialect: Dialect,
         is_javascript: bool,
         part: Part,
-        then: impl FnOnce(Summary<'_, 's>, &dyn Intern, &[u8], u32) -> R,
+        then: impl FnOnce(Summary<'_, 's>, &dyn Intern, &[u8], PartOk) -> R,
     ) -> Result<R, PartError> {
-        let (text, scratch) = (self.text, self.scratch.get_or_insert_default());
-        let options = |from: u32, until: u32| Options {
-            is_javascript,
-            dialect,
-            part: Some(Part {
-                from,
-                until,
-                ..part
-            }),
-            attach_comments: true,
-            ..Default::default()
-        };
-        // Find where the part ends.
-        let whole = options(part.from, part.until);
-        let found = crate::parse_with_own_atoms(text, whole, scratch).or_else(|rejection| {
-            if !rejection.why.is_scanner_error() {
-                return Err(PartError::of(&rejection, rejection.at));
+        bun_core::scoped_log!(sema_parts, "part {}..{}", part.from, part.until);
+        let text = self.text;
+        let (session, _, begun_in) = match &mut self.session {
+            Some(begun) => begun,
+            None => {
+                let Some(session) = session::Session::begin(text, dialect) else {
+                    let rejected = Rejected::new(Rejection::TooLarge);
+                    return Err(PartError::of(&rejected, 0));
+                };
+                let before_any = session.mark();
+                self.session.insert((session, before_any, dialect))
             }
-            // What follows a part doesn't have to be a valid token. If it isn't, end the text before it.
-            crate::parse_with_own_atoms(text, options(part.from, rejection.after), scratch)
-                .map_err(|again| PartError::of(&again, rejection.after))
-        })?;
-        let until = found.end.1;
-        scratch.recycle(found.file);
-        let code = (text.get(part.from as usize..until as usize)).unwrap_or_default();
-        core::mem::swap(&mut scratch.stops, &mut self.part_stops);
-        scratch.stops.forget();
-        let parsed = crate::parse_with_own_atoms(code, options(0, code.len() as u32), scratch);
-        core::mem::swap(&mut scratch.stops, &mut self.part_stops);
-        let mut parsed =
-            parsed.map_err(|rejection| PartError::of(&rejection, part.from + rejection.at))?;
-        let result = then(
-            Summary::InPlace(&mut parsed.file),
-            &scratch.atoms(code),
-            code,
-            parsed.end.0,
+        };
+        debug_assert!(
+            *begun_in == dialect,
+            "the parts of a text are read in one dialect"
         );
-        scratch.recycle(parsed.file);
+        let ok = session.part_at(part.goal, is_javascript, part.from, part.until)?;
+        // `Summary::InPlace` has the file mutably while the atoms borrow the session.
+        let mut file = core::mem::take(session.file());
+        let result = then(Summary::InPlace(&mut file), &session.atoms(), text, ok);
+        *session.file() = file;
         Ok(result)
-    }
-}
-
-impl Drop for Parts<'_> {
-    fn drop(&mut self) {
-        if let Some(scratch) = self.scratch.take() {
-            return_scratch(scratch);
-        }
     }
 }

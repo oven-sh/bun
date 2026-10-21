@@ -14,7 +14,47 @@ export const dgramGuessHandleType = b.fn({ args: { fd: b.i32 }, returns: b.strin
 export const dgramListenFd = b.fn({ args: { fd: b.i32 }, throws: true });
 export const dgramCloseFd = b.fn({ args: { fd: b.i32 }, throws: true });
 
-const UDPSocket = b.classRef("UDPSocket");
+const js = { capability: "js", throws: true } as const;
+const membership = { ...js, args: { address: b.any, interfaceAddress: b.any }, returns: b.bool };
+const sourceSpecificMembership = {
+  ...js,
+  args: { source: b.any, group: b.any, interfaceAddress: b.any },
+  returns: b.bool,
+};
+
+/** What `Bun.udpSocket()` resolves to. */
+export const UDPSocket = b.class({
+  rustPath: "crate::socket::udp_socket::UDPSocket",
+  configurable: false,
+  /** The handlers of the options. */
+  internalFields: ["onData", "onDrain", "onError"],
+  proto: {
+    addMembership: membership,
+    address: { ...js, getter: b.any, cache: true },
+    addSourceSpecificMembership: sourceSpecificMembership,
+    binaryType: { ...js, getter: b.any, cache: true },
+    close: {},
+    closed: { getter: b.bool },
+    dropMembership: membership,
+    dropSourceSpecificMembership: sourceSpecificMembership,
+    fd: { getter: b.i32 },
+    hostname: { ...js, getter: b.any, cache: true },
+    port: { getter: b.i32.optional, cache: true },
+    ref: { rustName: "ref_" },
+    reload: { ...js, args: { options: b.any } },
+    remoteAddress: { ...js, getter: b.any, cache: true },
+    /** `(payload)` when connected, `(payload, port, address)` when not. */
+    send: { ...js, args: { args: b.any.variadic }, returns: b.bool, length: 3 },
+    sendMany: { ...js, args: { packets: b.any }, returns: b.i32, length: 3 },
+    setBroadcast: { ...js, args: { enabled: b.any }, returns: b.any },
+    setMulticastInterface: { ...js, args: { address: b.any }, returns: b.bool },
+    setMulticastLoopback: { ...js, args: { enabled: b.any }, returns: b.any },
+    setMulticastTTL: { ...js, args: { ttl: b.any }, returns: b.i32 },
+    setTTL: { ...js, args: { ttl: b.any }, returns: b.i32 },
+    unref: {},
+    "@@dispose": { rustName: "close", length: 1 },
+  },
+});
 
 export const connect = b.fn({
   args: { socket: UDPSocket, host: b.string.loose, port: b.i32 },

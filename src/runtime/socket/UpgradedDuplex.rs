@@ -20,7 +20,7 @@ use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, h
 use bun_uws::{us_bun_verify_error_t, uws_callback};
 
 use super::ssl_wrapper::SSLWrapper;
-use crate::generated_classes::js_TLSSocket;
+use crate::generated_bindgen::socket_body::js_TLSSocket;
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(UpgradedDuplex, visible);

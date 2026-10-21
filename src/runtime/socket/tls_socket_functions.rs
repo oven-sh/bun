@@ -6,7 +6,7 @@ use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_jsc::JsClass as _;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    self as jsc, CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult, StringJsc as _,
+    self as jsc, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult, StringJsc as _,
 };
 
 use crate::api::bun_x509 as X509;
@@ -280,11 +280,7 @@ use crate::node::StringOrBuffer;
 // `socket_body` instance.
 type This = super::TLSSocket;
 
-pub(super) fn get_servername(
-    this: &This,
-    global: &JSGlobalObject,
-    _frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(super) fn get_servername(this: &This, global: &JSGlobalObject) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
@@ -304,17 +300,12 @@ pub(super) fn get_servername(
 pub(super) fn set_servername(
     this: &This,
     global: &JSGlobalObject,
-    frame: &CallFrame,
+    server_name: JSValue,
 ) -> JsResult<JSValue> {
     if this.is_server() {
         return Err(global.throw(format_args!(
             "Cannot issue SNI from a TLS server-side socket"
         )));
-    }
-
-    let [server_name] = frame.arguments_as_array::<1>();
-    if frame.arguments_count() < 1 {
-        return Err(global.throw(format_args!("Expected 1 argument")));
     }
 
     if !server_name.is_string() {
@@ -346,11 +337,7 @@ pub(super) fn set_servername(
     Ok(JSValue::UNDEFINED)
 }
 
-pub(super) fn get_peer_x509_certificate(
-    this: &This,
-    global: &JSGlobalObject,
-    _frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(super) fn get_peer_x509_certificate(this: &This, global: &JSGlobalObject) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
@@ -361,11 +348,7 @@ pub(super) fn get_peer_x509_certificate(
     Ok(JSValue::UNDEFINED)
 }
 
-pub(super) fn get_x509_certificate(
-    this: &This,
-    global: &JSGlobalObject,
-    _frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(super) fn get_x509_certificate(this: &This, global: &JSGlobalObject) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
@@ -378,11 +361,7 @@ pub(super) fn get_x509_certificate(
     Ok(JSValue::UNDEFINED)
 }
 
-pub(super) fn get_tls_version(
-    this: &This,
-    global: &JSGlobalObject,
-    _frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(super) fn get_tls_version(this: &This, global: &JSGlobalObject) -> JsResult<JSValue> {
     jsc::mark_binding();
 
     let Some(ssl_ptr) = this.socket.get().ssl() else {
@@ -403,15 +382,9 @@ pub(super) fn get_tls_version(
 pub(super) fn set_max_send_fragment(
     this: &This,
     global: &JSGlobalObject,
-    frame: &CallFrame,
+    arg: JSValue,
 ) -> JsResult<JSValue> {
     jsc::mark_binding();
-
-    let [arg] = frame.arguments_as_array::<1>();
-
-    if frame.arguments_count() < 1 {
-        return Err(global.throw(format_args!("Expected size to be a number")));
-    }
 
     if !arg.is_number() {
         return Err(global.throw(format_args!("Expected size to be a number")));
@@ -435,13 +408,12 @@ pub(super) fn set_max_send_fragment(
 pub(super) fn get_peer_certificate(
     this: &This,
     global: &JSGlobalObject,
-    frame: &CallFrame,
+    arg: JSValue,
 ) -> JsResult<JSValue> {
     jsc::mark_binding();
 
-    let [arg] = frame.arguments_as_array::<1>();
     let mut abbreviated: bool = true;
-    if frame.arguments_count() > 0 {
+    if !arg.is_undefined() {
         if !arg.is_boolean() {
             return Err(global.throw(format_args!("Expected abbreviated to be a boolean")));
         }
@@ -615,11 +587,7 @@ pub(super) fn get_peer_certificate(
     Ok(first_obj)
 }
 
-pub(super) fn get_certificate(
-    this: &This,
-    global: &JSGlobalObject,
-    _frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(super) fn get_certificate(this: &This, global: &JSGlobalObject) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
@@ -631,11 +599,7 @@ pub(super) fn get_certificate(
     Ok(JSValue::UNDEFINED)
 }
 
-pub(super) fn get_tls_finished_message(
-    this: &This,
-    global: &JSGlobalObject,
-    _frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(super) fn get_tls_finished_message(this: &This, global: &JSGlobalObject) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
@@ -667,11 +631,7 @@ pub(super) fn get_tls_finished_message(
     Ok(buffer)
 }
 
-pub(super) fn get_shared_sigalgs(
-    this: &This,
-    global: &JSGlobalObject,
-    _frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(super) fn get_shared_sigalgs(this: &This, global: &JSGlobalObject) -> JsResult<JSValue> {
     jsc::mark_binding();
 
     let Some(ssl_ptr) = this.socket.get().ssl() else {
@@ -770,11 +730,7 @@ pub(super) fn get_shared_sigalgs(
     Ok(array)
 }
 
-pub(super) fn get_cipher(
-    this: &This,
-    global: &JSGlobalObject,
-    _frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(super) fn get_cipher(this: &This, global: &JSGlobalObject) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
@@ -834,7 +790,6 @@ pub(super) fn get_cipher(
 pub(super) fn get_tls_peer_finished_message(
     this: &This,
     global: &JSGlobalObject,
-    _frame: &CallFrame,
 ) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
@@ -873,14 +828,10 @@ pub(super) fn get_tls_peer_finished_message(
 pub(crate) fn set_key_cert(
     this: &This,
     global: &JSGlobalObject,
-    frame: &CallFrame,
+    arg: JSValue,
 ) -> JsResult<JSValue> {
     if this.socket.get().is_detached() {
         return Ok(JSValue::UNDEFINED);
-    }
-    let [arg] = frame.arguments_as_array::<1>();
-    if frame.arguments_count() < 1 {
-        return Err(global.throw(format_args!("setKeyCert requires a SecureContext")));
     }
     let Some(sc) = SecureContext::from_js(arg) else {
         return Err(global.throw(format_args!("setKeyCert requires a SecureContext")));
@@ -922,16 +873,14 @@ pub(crate) fn set_key_cert(
 pub(crate) fn export_keying_material(
     this: &This,
     global: &JSGlobalObject,
-    frame: &CallFrame,
+    length_arg: JSValue,
+    label_arg: JSValue,
+    context_arg: JSValue,
 ) -> JsResult<JSValue> {
     if this.socket.get().is_detached() {
         return Ok(JSValue::UNDEFINED);
     }
 
-    let [length_arg, label_arg, context_arg] = frame.arguments_as_array::<3>();
-    if frame.arguments_count() < 2 {
-        return Err(global.throw(format_args!("Expected length and label to be provided")));
-    }
     if !length_arg.is_number() {
         return Err(global.throw(format_args!("Expected length to be a number")));
     }
@@ -950,7 +899,7 @@ pub(crate) fn export_keying_material(
 
     // Converting `context` can run user JS (toString / Symbol.toPrimitive)
     // that closes the socket, so do it before fetching the SSL*.
-    let context = if frame.arguments_count() > 2 {
+    let context = if !context_arg.is_undefined() {
         match StringOrBuffer::from_js(global, context_arg)? {
             Some(sb) => Some(sb),
             None => {
@@ -997,11 +946,7 @@ pub(crate) fn export_keying_material(
     Ok(buffer)
 }
 
-pub(super) fn get_ephemeral_key_info(
-    this: &This,
-    global: &JSGlobalObject,
-    _frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(super) fn get_ephemeral_key_info(this: &This, global: &JSGlobalObject) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::NULL);
     };
@@ -1071,11 +1016,7 @@ fn current_session(this: &This, ssl: &boringssl::SSL) -> *mut ffi::SSL_SESSION {
     ffi::SSL_get_session(ssl)
 }
 
-pub(super) fn get_session(
-    this: &This,
-    global: &JSGlobalObject,
-    _frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(super) fn get_session(this: &This, global: &JSGlobalObject) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
@@ -1102,18 +1043,10 @@ pub(super) fn get_session(
 pub(super) fn set_session(
     this: &This,
     global: &JSGlobalObject,
-    frame: &CallFrame,
+    session_arg: JSValue,
 ) -> JsResult<JSValue> {
     if this.socket.get().is_detached() {
         return Ok(JSValue::UNDEFINED);
-    }
-
-    let [session_arg] = frame.arguments_as_array::<1>();
-
-    if frame.arguments_count() < 1 {
-        return Err(global.throw(format_args!(
-            "Expected session to be a string, Buffer or TypedArray"
-        )));
     }
 
     if let Some(sb) = StringOrBuffer::from_js(global, session_arg)? {
@@ -1159,11 +1092,7 @@ impl Drop for OwnedSession {
     }
 }
 
-pub(super) fn get_tls_ticket(
-    this: &This,
-    global: &JSGlobalObject,
-    _frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(super) fn get_tls_ticket(this: &This, global: &JSGlobalObject) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
@@ -1189,11 +1118,7 @@ pub(super) fn get_tls_ticket(
     jsc::ArrayBuffer::create_buffer(global, slice)
 }
 
-pub(super) fn renegotiate(
-    this: &This,
-    global: &JSGlobalObject,
-    _frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(super) fn renegotiate(this: &This, global: &JSGlobalObject) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
@@ -1204,11 +1129,7 @@ pub(super) fn renegotiate(
     Ok(JSValue::UNDEFINED)
 }
 
-pub(super) fn disable_renegotiation(
-    this: &This,
-    _global: &JSGlobalObject,
-    _frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(super) fn disable_renegotiation(this: &This, _global: &JSGlobalObject) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
@@ -1219,11 +1140,7 @@ pub(super) fn disable_renegotiation(
     Ok(JSValue::UNDEFINED)
 }
 
-pub(super) fn is_session_reused(
-    this: &This,
-    _global: &JSGlobalObject,
-    _frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(super) fn is_session_reused(this: &This, _global: &JSGlobalObject) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::FALSE);
     };
@@ -1235,19 +1152,13 @@ pub(super) fn is_session_reused(
 pub(super) fn set_verify_mode(
     this: &This,
     global: &JSGlobalObject,
-    frame: &CallFrame,
+    request_cert_js: JSValue,
+    reject_unauthorized_js: JSValue,
 ) -> JsResult<JSValue> {
     if this.socket.get().is_detached() {
         return Ok(JSValue::UNDEFINED);
     }
 
-    let [request_cert_js, reject_unauthorized_js] = frame.arguments_as_array::<2>();
-
-    if frame.arguments_count() < 2 {
-        return Err(global.throw(format_args!(
-            "Expected requestCert and rejectUnauthorized arguments"
-        )));
-    }
     if !request_cert_js.is_boolean() || !reject_unauthorized_js.is_boolean() {
         return Err(global.throw(format_args!(
             "Expected requestCert and rejectUnauthorized arguments to be boolean"

@@ -699,6 +699,10 @@ impl<'s> Checker<'_, 's> {
                         );
                     }
                     let (name, prop) = (hir[p].value, &hir[p]);
+                    if let PropKey::Private(_) = prop.key {
+                        let end = self.end_of_token_at(file, prop.key_pos);
+                        self.grammar_error_at((file, prop.key_pos, end), 18064, &[]);
+                    }
                     if is_bodiless && self.is_renamed_binding_element(file, p) {
                         if !self.is_checking_in_flow_loop {
                             self.renamed_binding_elements_in_types.push(p);

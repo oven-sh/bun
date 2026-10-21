@@ -382,6 +382,11 @@ impl Checker<'_, '_> {
             return;
         }
         let (key, name_kind) = (property.key, property.name_kind);
+        // Outside a class the key is `PropKey::None`.
+        if is_private_name_at(hir, property.pos) {
+            let end = self.end_of_prop_name(file, p);
+            self.grammar_error_at((file, property.pos, end), 18064, &[]);
+        }
         let Some(expr_type) =
             self.literal_type_from_property_name(file, key, name_kind, property.pos)
         else {

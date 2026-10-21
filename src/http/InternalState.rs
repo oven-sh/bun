@@ -46,6 +46,9 @@ pub struct InternalState<'a> {
     /// Prefix of `compressed_body` the decoder has already taken.
     compressed_body_consumed: usize,
     pub(crate) content_length: Option<usize>,
+    /// `timeout=N` of the response's `Keep-Alive` header: how long the origin
+    /// keeps the connection open after this response.
+    pub(crate) keepalive_timeout_seconds: Option<u32>,
     pub(crate) total_body_received: usize,
     // Self-borrow into `original_request_body.bytes`; `RawSlice` carries the
     // outlives-holder invariant (the backing `original_request_body` is a
@@ -134,6 +137,7 @@ impl Default for InternalState<'_> {
             compressed_body: MutableString::init_empty(),
             compressed_body_consumed: 0,
             content_length: None,
+            keepalive_timeout_seconds: None,
             total_body_received: 0,
             request_body: bun_ptr::RawSlice::EMPTY,
             original_request_body: HTTPRequestBody::Bytes(b""),

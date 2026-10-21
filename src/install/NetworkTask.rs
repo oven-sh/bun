@@ -18,6 +18,21 @@ use crate::extract_tarball;
 use crate::npm::{self as npm, PackageManifest};
 use crate::{ExtractTarball, PackageManager, TarballStream, Task};
 
+/// Keep-alive pool of the registry requests. Every one is a GET, and a GET
+/// written onto a connection the registry closed is retried on a new one, so
+/// the pool keeps a registry connection for 5 minutes instead of the 4 s
+/// default that protects non-idempotent requests. One slow manifest then does
+/// not make every dependent discovered after it pay a new TLS handshake.
+///
+/// The id keeps these connections away from the default pool (id 0) and from
+/// every `Bun.FetchSession` (ids count up from 1), so a POST sent through
+/// either never rides a connection parked under this longer window.
+const REGISTRY_POOL: bun_http::PoolOptions = bun_http::PoolOptions {
+    id: u64::MAX,
+    idle_timeout_seconds: 5 * 60,
+    max_idle_sockets: 0,
+};
+
 // Adapter so `StringOrTinyString::init_append_if_needed` can intern overflow
 // names into the resolver's filename arena. The bun_sys-level `FilenameStore` exposes `append` /
 // `append_lower_case` but doesn't itself implement `strings::Appender` (that
@@ -750,6 +765,7 @@ impl NetworkTask {
                 http_proxy,
                 proxy_settings: pm.proxy_settings(),
                 idle_timeout_seconds: pm.idle_timeout_seconds(),
+                pool: REGISTRY_POOL,
                 ..Default::default()
             },
         );
@@ -942,6 +958,7 @@ impl NetworkTask {
             http_proxy: pm.http_proxy(&url),
             proxy_settings: pm.proxy_settings(),
             idle_timeout_seconds: pm.idle_timeout_seconds(),
+            pool: REGISTRY_POOL,
             ..Default::default()
         };
 

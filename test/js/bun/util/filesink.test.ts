@@ -1488,7 +1488,7 @@ describe.concurrent("start() on an open writer", () => {
       return fs.readdirSync("/proc/self/fd").filter(fd => {
         try {
           const path = fs.readlinkSync("/proc/self/fd/" + fd);
-          return path.includes(dir) || path === "/dev/ptmx";
+          return path.includes(dir) || path.endsWith("/ptmx");
         } catch {
           return false;
         }
@@ -1555,21 +1555,32 @@ describe.concurrent("start() on an open writer", () => {
     expect(result).toEqual({ buffered: "", target: "short", closed: "all" });
   });
 
-  it.skipIf(!isLinux)("a TTY writer still writes synchronously after start({ path }) fails", async () => {
+  it.skipIf(!isLinux).each([
+    ["open", `const path = join(dir, "missing", "target.txt");`],
+    [
+      "epoll_ctl",
+      // A FIFO with a reader opens for writing, but cannot take over the TTY's poll.
+      `const path = join(dir, "fifo");
+      Bun.spawnSync(["mkfifo", path]);
+      const reader = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);`,
+    ],
+  ])("a TTY writer still writes synchronously after start({ path }) fails in %s", async (syscall, setup) => {
     const result = await run(`
+      ${setup}
       const writer = Bun.file("/dev/ptmx").writer();
-      let code;
+      let failed;
       try {
-        writer.start({ path: join(dir, "missing", "target.txt") });
+        writer.start({ path });
       } catch (e) {
-        code = e.code;
+        failed = e.syscall;
       }
       writer.write("short");
       const buffered = writer.flush();
       await writer.end();
-      console.log(JSON.stringify({ code, buffered, closed: await closed() }));
+      if (typeof reader === "number") fs.closeSync(reader);
+      console.log(JSON.stringify({ failed, buffered, closed: await closed() }));
     `);
-    expect(result).toEqual({ code: "ENOENT", buffered: 0, closed: "all" });
+    expect(result).toEqual({ failed: syscall, buffered: 0, closed: "all" });
   });
 
   it("start({ path }) settles a queued write and flushes it to the new path", async () => {

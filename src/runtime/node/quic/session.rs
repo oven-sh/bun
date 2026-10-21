@@ -552,6 +552,7 @@ impl QuicSession {
         if self.announced.replace(true) {
             return;
         }
+        // Node.js announces at a Retry-validated Initial: https://github.com/nodejs/node/blob/v26.3.0/src/quic/endpoint.cc#L1617
         if let Some(endpoint) = self.endpoint_ref() {
             endpoint.announce(core::ptr::from_ref(self).cast_mut());
         }

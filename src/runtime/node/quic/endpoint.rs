@@ -1615,11 +1615,13 @@ impl QuicEndpoint {
         let global_ptr = self.global.get();
         // A session accepted during close() keeps `sessions` non-empty: the finish gate stays shut.
         if global_ptr.is_null() || self.closing.get() {
+            // Node.js answers nothing: https://github.com/nodejs/node/blob/v26.3.0/src/quic/endpoint.cc#L1409
             return Self::refuse_mini_conn(conn);
         }
         // SAFETY: as in `on_data`.
         let global = unsafe { &*global_ptr };
         let (busy, max_conns) = self.with_state(|s| (s.busy, s.max_connections_total));
+        // As Node.js does: https://github.com/nodejs/node/blob/v26.3.0/src/quic/endpoint.cc#L1503
         if busy != 0 || (max_conns > 0 && self.sessions.get().len() >= max_conns as usize) {
             self.add_stat(IDX_STATS_SERVER_BUSY_COUNT, 1);
             return Self::refuse_mini_conn(conn);

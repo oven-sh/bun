@@ -1753,6 +1753,9 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
         ];
         for (const [name, init, content] of [...sources, ...iterables]) {
           for (const [consumer, consume] of consumers) {
+            // Bun.serve() sends these two without using them up, with or without a read of `.body`, so that
+            // a handler can return one Response for every request: serve-reused-response.test.ts.
+            if (consumer === "Bun.serve() sends it" && (name === '""' || name === "Uint8Array(0)")) continue;
             test(`${name} .body then ${consumer}`, async () => {
               const owner = make(init());
               const stream = owner.body!;

@@ -386,6 +386,9 @@ fn release_body_stream(response: &mut Response, global_this: &JSGlobalObject) {
     {
         return;
     }
+    if response.get_body_value().is_unread_empty() {
+        return;
+    }
     if let Some(stream) = response.get_body_readable_stream() {
         stream.value.ensure_still_alive();
         response.detach_readable_stream(global_this);
@@ -2665,7 +2668,8 @@ where
         // GET strips the handler's Content-Length / Transfer-Encoding and frames
         // from the body, so HEAD must too (RFC 9110 §9.3.2). Only a bodiless
         // Response leaves those headers as what GET would have sent (#15355).
-        let body_decides_framing = {
+        let unread_empty = response.get_body_value().is_unread_empty();
+        let body_decides_framing = !unread_empty && {
             let body_value = response.get_body_value();
             body_value.to_blob_if_possible();
             !matches!(
@@ -2748,7 +2752,7 @@ where
                 }
                 this.end_without_body(this.should_close_connection());
             }
-            Body::Value::Locked(_) => {
+            Body::Value::Locked(_) if !unread_empty => {
                 this.render_metadata();
                 if !MUX {
                     // SAFETY: FFI handle
@@ -2760,7 +2764,11 @@ where
                 }
                 this.end_without_body(this.should_close_connection());
             }
-            Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_) => {
+            Body::Value::Locked(_)
+            | Body::Value::Used
+            | Body::Value::Null
+            | Body::Value::Empty
+            | Body::Value::Error(_) => {
                 this.render_metadata();
                 // SAFETY: FFI handle
                 resp.write_header_int(b"content-length", 0);
@@ -3183,6 +3191,11 @@ where
             return;
         }
 
+        if value.is_unread_empty() {
+            this.do_render_blob();
+            return;
+        }
+
         // If a ReadableStream can trivially be converted to a Blob, do so.
         // If it's a WTFStringImpl and it cannot be used as a UTF-8 string, convert it to a Blob.
         value.to_blob_if_possible();
@@ -3575,6 +3588,7 @@ where
         if let Some(server) = this.server.get()
             && let Some(response) = this.response_mut()
             && matches!(response.get_body_value(), Body::Value::Locked(_))
+            && !response.get_body_value().is_unread_empty()
         {
             Self::cancel_unread_body(response, server.global_this());
         }
@@ -4109,7 +4123,9 @@ where
         // SAFETY: caller contract: `response` is live. This is the only borrow
         // of its body, and it ends before `render` reborrows the cell.
         let body_value = unsafe { (*response).get_body_value() };
-        body_value.to_blob_if_possible();
+        if !body_value.is_unread_empty() {
+            body_value.to_blob_if_possible();
+        }
         let sent_after_return = match body_value {
             Body::Value::Blob(blob) => shim::blob_needs_to_read_file(blob),
             Body::Value::Locked(_) => true,

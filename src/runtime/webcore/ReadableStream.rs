@@ -235,7 +235,7 @@ impl ReadableStream {
                 bytes.to_any_blob()?
             }
             // Closed before anything read from it: the same store-less empty Blob `new Blob([])` gives.
-            Source::JavaScript if ReadableStream__isClosedUnread(self.value, global_this) => {
+            Source::JavaScript if self.is_closed_unread(global_this) => {
                 webcore::blob::Any::Blob(Blob::init_empty(global_this))
             }
             Source::JavaScript | Source::Invalid => return None,
@@ -423,6 +423,11 @@ impl ReadableStream {
     pub fn is_locked(&self, global_object: &JSGlobalObject) -> bool {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
         ReadableStream__isLocked(self.value, global_object)
+    }
+
+    /// Closed with nothing ever read or attached, so no byte can come out.
+    pub fn is_closed_unread(&self, global_object: &JSGlobalObject) -> bool {
+        ReadableStream__isClosedUnread(self.value, global_object)
     }
 
     /// Fetch's "body is unusable" (<https://fetch.spec.whatwg.org/#body-unusable>).

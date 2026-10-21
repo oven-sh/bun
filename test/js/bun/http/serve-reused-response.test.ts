@@ -1,6 +1,7 @@
 import { serve } from "bun";
 import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { isDisturbed } from "node:stream";
 
 // A fetch handler that returns a Response whose body has already been used
 // (most often the same Response object returned for every request) must invoke
@@ -259,5 +260,177 @@ describe("returning a Response with an already-used body", () => {
     expect(stderr).toContain("Response body already used");
     // The error is reported like any other unhandled error thrown from the fetch handler.
     expect(exitCode).toBe(1);
+  });
+});
+
+// Bun.serve sends an empty string or buffer without using it up, so a handler can return the same
+// Response for every request. A read of `.body` does not change that.
+describe("returning the same Response with an empty string or buffer as its body", () => {
+  const emptyBodies = {
+    string: () => "",
+    Uint8Array: () => new Uint8Array(0),
+    ArrayBuffer: () => new ArrayBuffer(0),
+  };
+  const kinds = Object.keys(emptyBodies) as (keyof typeof emptyBodies)[];
+
+  async function answers(url: URL, methods: string[]) {
+    const answers: unknown[] = [];
+    for (const method of methods) {
+      const response = await fetch(url, { method });
+      answers.push({
+        status: response.status,
+        contentLength: response.headers.get("content-length"),
+        transferEncoding: response.headers.get("transfer-encoding"),
+        body: await response.text(),
+      });
+    }
+    return answers;
+  }
+  const emptyAnswer = (status: number) => ({ status, contentLength: "0", transferEncoding: null, body: "" });
+
+  const handlers = {
+    "a handler": (kept: Response) => ({ fetch: () => kept }),
+    // Its promise is still pending when the handler returns, which is a separate path into the renderer.
+    "a handler that settles later": (kept: Response) => ({
+      async fetch() {
+        await new Promise(resolve => setImmediate(resolve));
+        return kept;
+      },
+    }),
+  };
+
+  describe.each(kinds)("%s", kind => {
+    describe.each([true, false])("with .body read: %p", readBody => {
+      describe.each(Object.keys(handlers) as (keyof typeof handlers)[])("from %s", handler => {
+        it.each([
+          ["GET", "GET", "GET", "GET"],
+          ["HEAD", "GET", "HEAD", "GET"],
+        ])("answers %s, %s, %s, %s", async (...methods) => {
+          const kept = new Response(emptyBodies[kind]());
+          const stream = readBody ? kept.body! : undefined;
+          const error = jest.fn(() => new Response("handled", { status: 500 }));
+          await using server = serve({ port: 0, ...handlers[handler](kept), error });
+
+          expect(await answers(server.url, methods)).toEqual(methods.map(() => emptyAnswer(200)));
+          expect(error).not.toHaveBeenCalled();
+          expect({
+            bodyUsed: kept.bodyUsed,
+            sameStream: !readBody || kept.body === stream,
+            locked: kept.body!.locked,
+          }).toEqual({ bodyUsed: false, sameStream: true, locked: false });
+        });
+      });
+    });
+  });
+
+  it.each(kinds)("%s: answers every request when the handler reads .body and keeps a clone()", async kind => {
+    const kept = new Response(emptyBodies[kind]());
+    const clones: Response[] = [];
+    const error = jest.fn(() => new Response("handled", { status: 500 }));
+    await using server = serve({
+      port: 0,
+      fetch() {
+        if (kept.body) clones.push(kept.clone());
+        return kept;
+      },
+      error,
+    });
+
+    const methods = ["GET", "GET", "HEAD", "GET"];
+    expect(await answers(server.url, methods)).toEqual(methods.map(() => emptyAnswer(200)));
+    expect(error).not.toHaveBeenCalled();
+    expect(kept.bodyUsed).toBe(false);
+    expect(await Promise.all(clones.map(clone => clone.text()))).toEqual(["", "", "", ""]);
+  });
+
+  it("answers every request from error() after a read of .body", async () => {
+    const kept = new Response("", { status: 503 });
+    const stream = kept.body!;
+    await using server = serve({
+      port: 0,
+      fetch() {
+        throw new Error("to error()");
+      },
+      error: () => kept,
+    });
+
+    expect(await answers(server.url, ["GET", "HEAD", "GET"])).toEqual([
+      emptyAnswer(503),
+      emptyAnswer(503),
+      emptyAnswer(503),
+    ]);
+    expect({ bodyUsed: kept.bodyUsed, locked: stream.locked }).toEqual({ bodyUsed: false, locked: false });
+  });
+
+  // A status without content takes its own path through the renderer.
+  describe.each([204, 304])("with status %d", status => {
+    it.each(Object.keys(handlers) as (keyof typeof handlers)[])("from %s after a read of .body", async handler => {
+      const kept = new Response("", { status });
+      const stream = kept.body!;
+      await using server = serve({ port: 0, ...handlers[handler](kept) });
+
+      const methods = ["GET", "HEAD", "GET"];
+      expect(await answers(server.url, methods)).toEqual(
+        methods.map(() => ({ ...emptyAnswer(status), contentLength: null })),
+      );
+      expect({ bodyUsed: kept.bodyUsed, locked: stream.locked }).toEqual({ bodyUsed: false, locked: false });
+    });
+  });
+
+  it.each(kinds)("%s: a send leaves the body and its stream unread, and a later read uses them up", async kind => {
+    const kept = new Response(emptyBodies[kind]());
+    const stream = kept.body!;
+    const codes: string[] = [];
+    await using server = serve({
+      port: 0,
+      fetch: () => kept,
+      error(err: any) {
+        codes.push(err.code);
+        return new Response("handled", { status: 500 });
+      },
+    });
+    const state = () => ({ bodyUsed: kept.bodyUsed, disturbed: isDisturbed(stream), locked: stream.locked });
+
+    expect(await answers(server.url, ["GET"])).toEqual([emptyAnswer(200)]);
+    expect(state()).toEqual({ bodyUsed: false, disturbed: false, locked: false });
+
+    expect(await kept.text()).toBe("");
+    expect(state()).toEqual({ bodyUsed: true, disturbed: true, locked: true });
+    expect((await fetch(server.url)).status).toBe(500);
+    expect(codes).toEqual(["ERR_STREAM_CANNOT_PIPE"]);
+  });
+
+  // The stream stays the body after a send: once something holds it, the body is in use like any other.
+  it("is refused once a reader holds .body", async () => {
+    const kept = new Response("");
+    const stream = kept.body!;
+    const codes: string[] = [];
+    await using server = serve({
+      port: 0,
+      fetch: () => kept,
+      error(err: any) {
+        codes.push(err.code);
+        return new Response("handled", { status: 500 });
+      },
+    });
+
+    expect(await answers(server.url, ["GET"])).toEqual([emptyAnswer(200)]);
+    stream.getReader();
+    expect((await fetch(server.url)).status).toBe(500);
+    expect(codes).toEqual(["ERR_STREAM_CANNOT_PIPE"]);
+  });
+
+  // Only a Response without content leaves the handler's Content-Length on a HEAD answer.
+  it("HEAD keeps the handler's Content-Length after a read of .body", async () => {
+    await using server = serve({
+      port: 0,
+      fetch() {
+        const response = new Response("", { headers: { "Content-Length": "123" } });
+        response.body;
+        return response;
+      },
+    });
+
+    expect(await answers(server.url, ["HEAD"])).toEqual([{ ...emptyAnswer(200), contentLength: "123" }]);
   });
 });

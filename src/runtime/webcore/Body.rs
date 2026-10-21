@@ -220,6 +220,8 @@ pub struct PendingValue {
     pub(crate) size_hint: blob::SizeType,
 
     pub(crate) deinit: bool,
+    /// `readable` is the closed stream that `.body` made of an `Empty` body.
+    pub(crate) was_empty: bool,
     pub(crate) action: Action,
 }
 
@@ -248,6 +250,7 @@ impl Default for PendingValue {
             producer: streams::SourceHandle::None,
             size_hint: 0,
             deinit: false,
+            was_empty: false,
             action: Action::None,
         }
     }
@@ -733,6 +736,13 @@ impl Value {
         }
     }
 
+    /// `Empty` behind the stream `.body` made of it, which nothing has read or locked. `Bun.serve` sends `Empty`
+    /// without using it up, so it leaves this body and its stream alone too.
+    pub(crate) fn is_unread_empty(&self) -> bool {
+        matches!(self, Value::Locked(locked) if locked.was_empty
+            && locked.readable.get().is_some_and(|stream| stream.is_closed_unread(locked.global())))
+    }
+
     pub(crate) fn size(&mut self) -> blob::SizeType {
         match self {
             Value::Blob(b) => b.get_size_for_bindings() as blob::SizeType,
@@ -778,6 +788,7 @@ impl Value {
     pub(crate) fn to_readable_stream(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         jsc::mark_binding();
 
+        let was_empty = matches!(self, Value::Empty);
         // From here on the stream is the body: `.body`, `bodyUsed` and every reader go through it.
         let stream = match self {
             Value::Used => return ReadableStream::used(cx.global()),
@@ -805,6 +816,9 @@ impl Value {
             ReadableStream::from_js_direct(stream).unwrap(),
             cx.global(),
         );
+        if let Value::Locked(locked) = self {
+            locked.was_empty = was_empty;
+        }
         Ok(stream)
     }
 
@@ -1545,7 +1559,9 @@ impl Value {
         // must then drop its cached `.body` (`sync_body_stream_caches`).
         // Anything else is teed.
         if let Value::Locked(locked) = self {
+            let was_empty = locked.was_empty;
             match locked.take_blob_from_unread_stream(cx.global(), readable.as_deref().copied()) {
+                Some(_) if was_empty => *self = Value::Empty,
                 Some(blob) => *self = Value::from(blob),
                 None => return self.tee(cx, readable),
             }

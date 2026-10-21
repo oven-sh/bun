@@ -1032,7 +1032,7 @@ impl JSValkeyClient {
         // `on_valkey_close` adopts none. The caller's scoped ref covers the
         // call.
         self.reconnect_timer.disarm(self);
-        self.client_mut().on_close()
+        self.client_mut().on_close(valkey::Status::Disconnected)
     }
 
     // `onconnect`/`onclose` are declared with `this: true` in
@@ -1911,10 +1911,11 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.client_mut().socket = Socket::SocketTcp(uws::SocketTCP::detached());
         // Before `on_close()`: it runs `onclose` and settles the connect()
         // promise, and a connect() called from either must see Disconnected.
-        this.client_mut().status = valkey::Status::Disconnected;
+        let closed =
+            core::mem::replace(&mut this.client_mut().status, valkey::Status::Disconnected);
         let _defer = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
 
-        this.client_mut().on_close()
+        this.client_mut().on_close(closed)
     }
 
     pub(crate) fn on_end(this: &JSValkeyClient, socket: SocketType<SSL>) {
@@ -1936,10 +1937,11 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let _guard = this.ref_guard();
         // SAFETY: as in `on_close`; a dial that fails gets this event instead.
         let _socket_ref = unsafe { RefPtr::from_raw(this.as_ctx_ptr()) };
-        this.client_mut().status = valkey::Status::Disconnected;
+        let closed =
+            core::mem::replace(&mut this.client_mut().status, valkey::Status::Disconnected);
         let _defer = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
 
-        this.client_mut().on_close()
+        this.client_mut().on_close(closed)
     }
 
     pub(crate) fn on_timeout(this: &JSValkeyClient, socket: SocketType<SSL>) {
@@ -2101,10 +2103,11 @@ impl ValkeyDeferredClose {
                 debug_assert!(this.client.get().socket.is_closed());
                 // No socket ref to give back: `connect()` forgets it only once
                 // it has a socket, and this task exists because it never did.
-                this.client_mut().status = valkey::Status::Disconnected;
+                let status =
+                    core::mem::replace(&mut this.client_mut().status, valkey::Status::Disconnected);
                 // (A socket's close event arrives inside the client's context; so does this one.)
                 let _context = this.vm().enter_context(this.context);
-                let closed = this.client_mut().on_close();
+                let closed = this.client_mut().on_close(status);
                 this.update_poll_ref();
                 crate::dispatch::fold(closed);
             }

@@ -2306,17 +2306,20 @@ describe("Valkey: Auto-Pipelining", () => {
   // `enableAutoPipelining: false`: the first command of a burst goes out
   // alone, and the rest go out as one batch when its reply arrives.
   const FIRST_THEN_BATCH = ">a <a >b >c >d <b <c <d";
+  const CLOSED = "ERR_REDIS_CONNECTION_CLOSED";
 
   // Answers every command and keeps one wire log per connection, in the order
   // the connections arrive. `GET k` is logged as `>k` when it arrives and as
   // `<k` when its reply goes out: the key, or an error for the key "bad". Any
-  // other command is logged by name and answered with OK. The handshake
-  // (HELLO, SELECT) is not logged. Every command of a socket read is logged
-  // before the first of them is answered. So a client that writes `b` only
-  // once it has the reply to `a` gives ">a <a >b <b", and a client that writes
-  // both in one batch gives ">a >b <a <b". With `dropOn`, the first connection
-  // is closed, with no reply, when the GET of that key arrives.
-  function wireLogServer({ dropOn }: { dropOn?: string } = {}) {
+  // other command is logged by name and answered with OK, except HELLO, which
+  // is not logged. Every command of a socket read is logged before the first
+  // of them is answered. So a client that writes `b` only once it has the reply
+  // to `a` gives ">a <a >b <b", and a client that writes both in one batch
+  // gives ">a >b <a <b". Two options cut the first connection short. `dropOn`
+  // closes it, with no reply, when the command with that label arrives.
+  // `rejectLarge` answers a command that one read does not hold with an error
+  // and closes, as redis-server does for a value above its limit.
+  function wireLogServer({ dropOn, rejectLarge }: { dropOn?: string; rejectLarge?: boolean } = {}) {
     const logs: string[][] = [];
     const server = Bun.listen<{ buffer: Buffer; chunks: Buffer[]; log: string[]; dropped: boolean }>({
       hostname: "127.0.0.1",
@@ -2331,15 +2334,25 @@ describe("Valkey: Auto-Pipelining", () => {
         data(socket, chunk) {
           const state = socket.data;
           if (state.dropped) return;
-          // A command ends with CRLF. Until a read does, the command is not
-          // complete, and a large one is not parsed again at each read.
+          const first = state.log === logs[0];
+          // A command ends with CRLF. Until the bytes read so far do, the
+          // command is not complete, and a large one is not parsed again at
+          // each read. The CR can be the last byte of the read before.
           state.chunks.push(chunk);
-          if (chunk.length < 2 || chunk[chunk.length - 2] !== 0x0d || chunk[chunk.length - 1] !== 0x0a) return;
+          const beforeLast = chunk.length > 1 ? chunk[chunk.length - 2] : state.chunks.at(-2)?.at(-1);
+          if (beforeLast !== 0x0d || chunk[chunk.length - 1] !== 0x0a) {
+            if (rejectLarge && first) {
+              state.dropped = true;
+              state.log.push("<ERR");
+              socket.end("-ERR Protocol error: invalid bulk length\r\n");
+            }
+            return;
+          }
           state.buffer = Buffer.concat([state.buffer, ...state.chunks]);
           state.chunks = [];
           const commands = readCommands(state).map(([name = "", key = ""]) => {
             name = name.toUpperCase();
-            if (name !== "GET") return { label: name, reply: "+OK\r\n", logged: name !== "HELLO" && name !== "SELECT" };
+            if (name !== "GET") return { label: name, reply: "+OK\r\n", logged: name !== "HELLO" };
             return {
               label: key,
               reply: key === "bad" ? "-ERR boom\r\n" : `$${key.length}\r\n${key}\r\n`,
@@ -2350,7 +2363,8 @@ describe("Valkey: Auto-Pipelining", () => {
             if (logged) state.log.push(`>${label}`);
           }
           for (const { label, reply, logged } of commands) {
-            if (label === dropOn && state.log === logs[0]) {
+            if (label === dropOn && first) {
+              if (!logged) state.log.push(`>${label}`);
               state.dropped = true;
               socket.end();
               return;
@@ -2363,7 +2377,7 @@ describe("Valkey: Auto-Pipelining", () => {
     });
     return {
       url: `redis://127.0.0.1:${server.port}`,
-      // A connection that carried only the handshake has an empty log.
+      // A connection that carried only HELLO has an empty log.
       wire: () => logs.map(log => log.join(" ")).filter(log => log !== ""),
       [Symbol.dispose]: () => server.stop(true),
     };
@@ -2393,7 +2407,9 @@ describe("Valkey: Auto-Pipelining", () => {
     "new RedisClient(url, undefined)",
     "new RedisClient(url, null)",
     "new RedisClient(url, {})",
+    "new RedisClient(url, { enableAutoPipelining: undefined })",
     "new RedisClient(url).duplicate()",
+    "new RedisClient(url, { enableAutoPipelining: null })",
     "new RedisClient(url, { enableAutoPipelining: false })",
     "new RedisClient(url, { enableAutoPipelining: false }).duplicate()",
     "new RedisClient(url, { enableAutoPipelining: true })",
@@ -2436,7 +2452,9 @@ describe("Valkey: Auto-Pipelining", () => {
         "new RedisClient(url, undefined)": ONE_AT_A_TIME,
         "new RedisClient(url, null)": ONE_AT_A_TIME,
         "new RedisClient(url, {})": ONE_AT_A_TIME,
+        "new RedisClient(url, { enableAutoPipelining: undefined })": ONE_AT_A_TIME,
         "new RedisClient(url).duplicate()": ONE_AT_A_TIME,
+        "new RedisClient(url, { enableAutoPipelining: null })": FIRST_THEN_BATCH,
         "new RedisClient(url, { enableAutoPipelining: false })": FIRST_THEN_BATCH,
         "new RedisClient(url, { enableAutoPipelining: false }).duplicate()": FIRST_THEN_BATCH,
         "new RedisClient(url, { enableAutoPipelining: true })": ONE_BATCH,
@@ -2453,7 +2471,9 @@ describe("Valkey: Auto-Pipelining", () => {
       "new RedisClient(url, undefined)": ONE_BATCH,
       "new RedisClient(url, null)": ONE_BATCH,
       "new RedisClient(url, {})": ONE_BATCH,
+      "new RedisClient(url, { enableAutoPipelining: undefined })": ONE_BATCH,
       "new RedisClient(url).duplicate()": ONE_BATCH,
+      "new RedisClient(url, { enableAutoPipelining: null })": FIRST_THEN_BATCH,
       "new RedisClient(url, { enableAutoPipelining: false })": FIRST_THEN_BATCH,
       "new RedisClient(url, { enableAutoPipelining: false }).duplicate()": FIRST_THEN_BATCH,
       "new RedisClient(url, { enableAutoPipelining: true })": ONE_BATCH,
@@ -2466,7 +2486,14 @@ describe("Valkey: Auto-Pipelining", () => {
   // it returns. `client(...)` is `new RedisClient(...)`, `burst(client)` issues
   // a GET of each of KEYS in one tick, and `settled(promise)` gives the value,
   // or the code of the error.
-  const FLAG_CASES: { name: string; dropOn?: string; run: string; replies: unknown; wire: unknown }[] = [
+  const FLAG_CASES: {
+    name: string;
+    dropOn?: string;
+    rejectLarge?: boolean;
+    run: string;
+    replies: string[];
+    wire: string[];
+  }[] = [
     {
       name: "a burst issued in the continuation of connect()",
       run: `const c = client(url); await c.connect(); return burst(c);`,
@@ -2483,7 +2510,7 @@ describe("Valkey: Auto-Pipelining", () => {
       name: "a burst on a client that selects the database of its URL",
       run: `const c = client(url + "/2"); await c.connect(); return burst(c);`,
       replies: KEYS,
-      wire: [ONE_AT_A_TIME],
+      wire: [`>SELECT <SELECT ${ONE_AT_A_TIME}`],
     },
     {
       name: "a burst issued from onconnect",
@@ -2534,21 +2561,91 @@ describe("Valkey: Auto-Pipelining", () => {
       wire: [">a <a >b <b >c <c >x <x"],
     },
     {
-      // What becomes of `c` and `d` is not asserted: only that they settle.
+      // The connection was ready, so the commands that wait reject with the
+      // one in flight. A command issued after the drop goes out on the next
+      // connection.
       name: "a connection drop under a burst",
       dropOn: "b",
       run: `
         const c = client(url);
         await c.connect();
         const outcomes = await Promise.all(${JSON.stringify(KEYS)}.map(key => settled(c.get(key))));
-        return outcomes.slice(0, 2);`,
-      replies: ["a", "ERR_REDIS_CONNECTION_CLOSED"],
-      wire: expect.arrayContaining([">a <a >b"]),
+        return [...outcomes, await c.get("x")];`,
+      replies: ["a", CLOSED, CLOSED, CLOSED, "x"],
+      wire: [">a <a >b", ">x <x"],
+    },
+    {
+      // With the offline queue off, a command issued after the drop rejects too.
+      name: "a connection drop under a burst, with enableOfflineQueue: false",
+      dropOn: "b",
+      run: `
+        const c = client(url, { enableOfflineQueue: false });
+        await c.connect();
+        const outcomes = await Promise.all(${JSON.stringify(KEYS)}.map(key => settled(c.get(key))));
+        return [...outcomes, await settled(c.get("x"))];`,
+      replies: ["a", CLOSED, CLOSED, CLOSED, CLOSED],
+      wire: [">a <a >b"],
+    },
+    {
+      // A client without the flag keeps a never-batched command that waits,
+      // here EXEC, and sends it on the next connection.
+      name: "a connection drop in the body of a MULTI",
+      dropOn: "INCR",
+      run: `
+        const c = client(url);
+        await c.connect();
+        const commands = [c.send("MULTI", []), c.incr("n"), c.incr("n"), c.send("EXEC", [])];
+        return [...(await Promise.all(commands.map(settled))), await c.get("x")];`,
+      replies: ["OK", CLOSED, CLOSED, CLOSED, "x"],
+      wire: [">MULTI <MULTI >INCR", ">x <x"],
+    },
+    {
+      // The error reply arrives while the client still writes the command, so
+      // nothing is in flight when the connection closes.
+      name: "a connection drop after an early error reply to a large command",
+      rejectLarge: true,
+      run: `
+        const c = client(url);
+        await c.connect();
+        const outcomes = await Promise.all([
+          settled(c.get("a")),
+          c.set("k", Buffer.alloc(8 * 1024 * 1024, "x").toString()).then(() => "resolved", () => "rejected"),
+          settled(c.get("b")),
+          settled(c.get("c")),
+        ]);
+        return [...outcomes, await c.get("x")];`,
+      replies: ["a", "rejected", CLOSED, CLOSED, "x"],
+      wire: [">a <a <ERR", ">x <x"],
+    },
+    {
+      // The first connection is not ready when it drops, so the queue is kept.
+      name: "a connection drop before the connection is ready",
+      dropOn: "HELLO",
+      run: `
+        const c = client(url);
+        return Promise.all(${JSON.stringify(KEYS)}.map(key => settled(c.get(key))));`,
+      replies: KEYS,
+      wire: [">HELLO", ONE_AT_A_TIME],
+    },
+    {
+      // A client that sets the option keeps the rule of main at a drop: only
+      // the command in flight rejects, and the rest goes out on the next
+      // connection.
+      name: "a connection drop under a burst of a client that sets enableAutoPipelining",
+      dropOn: "a",
+      run: `
+        const c = client(url, { enableAutoPipelining: false });
+        await c.connect();
+        await new Promise(resolve => setImmediate(resolve));
+        const outcomes = await Promise.all(${JSON.stringify(KEYS)}.map(key => settled(c.get(key))));
+        return [...outcomes, await c.get("x")];`,
+      replies: [CLOSED, "b", "c", "d", "x"],
+      wire: [">a", ">b >c >d <b <c <d >x <x"],
     },
   ];
 
   test.concurrent(`with ${FLAG}, a client sends one command at a time in every state of its queue`, async () => {
-    const servers = FLAG_CASES.map(({ dropOn }) => wireLogServer({ dropOn }));
+    const servers = FLAG_CASES.map(({ dropOn, rejectLarge }) => wireLogServer({ dropOn, rejectLarge }));
     try {
       const script = `
         const urls = JSON.parse(process.env.URLS);

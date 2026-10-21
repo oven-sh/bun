@@ -508,8 +508,13 @@ impl ValkeyClient {
         result
     }
 
-    fn reject_in_flight_commands(&mut self, message: &[u8], err: RedisError) -> JsResult<()> {
-        if self.in_flight.is_empty() {
+    fn reject_in_flight_commands(
+        &mut self,
+        mut queue: command::entry::Queue,
+        message: &[u8],
+        err: RedisError,
+    ) -> JsResult<()> {
+        if self.in_flight.is_empty() && queue.is_empty() {
             return Ok(());
         }
 
@@ -520,7 +525,7 @@ impl ValkeyClient {
                 err,
                 global_this: GlobalRef::from(vm.global()),
                 in_flight: core::mem::take(&mut self.in_flight),
-                queue: command::entry::Queue::new(),
+                queue,
             });
             deferred_failure.enqueue();
             return Ok(());
@@ -528,8 +533,7 @@ impl ValkeyClient {
 
         let global_this = self.global_object();
         let jsvalue = valkey_error_to_js(&global_this, message, err);
-        let mut entries = command::entry::Queue::new();
-        Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
+        Self::reject_all_pending_commands(&mut self.in_flight, &mut queue, &global_this, jsvalue)
     }
 
     /// Flush pending data to the socket
@@ -638,8 +642,8 @@ impl ValkeyClient {
         }
     }
 
-    /// Handle connection closed event
-    pub(crate) fn on_close(&mut self) -> JsResult<()> {
+    /// Handle connection closed event. `closed` is the status the connection had.
+    pub(crate) fn on_close(&mut self, closed: Status) -> JsResult<()> {
         self.unregister_auto_flusher();
         self.write_buffer.clear_and_free();
         // A partial reply can never complete now; left in place it counts as
@@ -683,10 +687,23 @@ impl ValkeyClient {
             delay_ms, self.retry_attempts, self.max_retries
         );
 
+        // A one-at-a-time client fails its queue with a connection that was ready, so no part of a burst runs on the next one.
+        let waiting = if self.flags.one_command_at_a_time
+            && closed == Status::Connected
+            && !self.flags.is_selecting_db_internal
+        {
+            core::mem::take(&mut self.queue)
+        } else {
+            command::entry::Queue::new()
+        };
         self.flags.is_reconnecting = true;
         self.flags.is_selecting_db_internal = false;
 
-        self.reject_in_flight_commands(b"Connection closed", RedisError::ConnectionClosed)?;
+        self.reject_in_flight_commands(
+            waiting,
+            b"Connection closed",
+            RedisError::ConnectionClosed,
+        )?;
 
         // Signal reconnect timer should be started
         self.on_valkey_reconnect();

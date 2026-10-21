@@ -88,7 +88,8 @@ Object.defineProperty(ReadStream, "prototype", {
             return this;
           }
         }
-      } else {
+      } else if (!this.destroyed) {
+        // A destroyed stream has no handle in Node (https://github.com/nodejs/node/blob/v26.3.0/lib/tty.js#L79): only the flag is recorded.
         const state = (this[kRawModeState] ??= new Uint8Array(rawModeStateSize));
         const err = ttySetMode(this.fd, flag, state);
         if (err) {
@@ -100,6 +101,12 @@ Object.defineProperty(ReadStream, "prototype", {
       this.isRaw = flag;
 
       return this;
+    };
+
+    // For process.stdin's _destroy, as https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/tty.c#L358-L366. No 'error' event.
+    Prototype[require("internal/shared").kLeaveRawMode] = function () {
+      const state = this[kRawModeState];
+      if (process.platform !== "win32" && state) ttySetMode(this.fd, false, state);
     };
 
     Object.defineProperty(ReadStream, "prototype", { value: Prototype });

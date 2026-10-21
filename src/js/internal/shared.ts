@@ -449,6 +449,7 @@ export default {
   kHandle: Symbol("kHandle"),
   kClusterOwner: Symbol("kClusterOwner"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),
+  kLeaveRawMode: Symbol("kLeaveRawMode"),
   kWeakHandler: Symbol("kWeak"),
   kCustomPromisifyArgsSymbol: Symbol("customPromisifyArgs"),
   kEmptyObject,

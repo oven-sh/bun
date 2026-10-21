@@ -1,8 +1,9 @@
 import { createSocketPair } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, nodeExe, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
 import { exec } from "node:child_process";
-import { closeSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, constants, openSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 test.concurrent("pipe does the right thing", async () => {
@@ -328,11 +329,21 @@ test.concurrent("resuming after EOF is buffered behind unread data still deliver
   });
 });
 
-// The same state as a consumer that pauses in 'data' reaches it, in flowing mode only.
-// The chunk and EOF arrive together, 'data' pauses with a part of the chunk unread, and
-// resume() comes after EOF was pushed (endedAtResume). Bun 1.3.14 emits 'end' here.
+// A consumer that pauses in 'data' with a part of the chunk unread, while the chunk and EOF
+// arrive together. After a pause() and a resume() in different turns, a second read is in
+// flight, and it pushes EOF while the stream is paused (endedAtResume). A 'resume' listener
+// that called _undestroy() then cleared that state, and 'end' was lost.
 describe.skipIf(isWindows)("pause() in 'data', EOF, then resume()", () => {
-  test.concurrent.each(["process.nextTick", "setImmediate"])("from %s still emits 'end'", async schedule => {
+  const pairs = {
+    "in one turn": [`stdin.pause(); stdin.resume(); setImmediate(ready);`, false],
+    "in two turns": [`stdin.pause(); setImmediate(() => { stdin.resume(); setImmediate(ready); });`, true],
+  } as const;
+  test.concurrent.each(
+    (["in one turn", "in two turns"] as const).flatMap(pair =>
+      (["process.nextTick", "setImmediate"] as const).map(schedule => [pair, schedule] as const),
+    ),
+  )("after a pause() and resume() %s, resume() from %s still emits 'end'", async (pair, schedule) => {
+    const [prelude, endedAtResume] = pairs[pair];
     using dir = tempDir("stdin-pause-eof", {});
     const gate = join(String(dir), "gate");
     const [childEnd, parentEnd] = createSocketPair();
@@ -358,16 +369,13 @@ describe.skipIf(isWindows)("pause() in 'data', EOF, then resume()", () => {
             });
           });
           stdin.on("end", () => (result.end = true));
+          function ready() {
+            fs.writeSync(1, "READY\\n");
+            // Blocks this thread until the chunk and EOF are both in the socket.
+            while (!fs.existsSync(${JSON.stringify(gate)})) {}
+          }
           setImmediate(() => {
-            // A 'resume' event leaves a second read in flight, so the chunk and EOF
-            // are pushed back to back.
-            stdin.pause();
-            stdin.resume();
-            setImmediate(() => {
-              fs.writeSync(1, "READY\\n");
-              // Blocks this thread until the chunk and EOF are both in the socket.
-              while (!fs.existsSync(${JSON.stringify(gate)})) {}
-            });
+            ${prelude}
           });
           process.on("exit", () => fs.writeSync(1, JSON.stringify(result) + "\\n"));`,
         ],
@@ -391,13 +399,591 @@ describe.skipIf(isWindows)("pause() in 'data', EOF, then resume()", () => {
       const exitCode = await proc.exited;
       const result: StdioResult = { stdout, exitCode, stderr: exitCode === 0 ? undefined : await stderr };
       expect(result).toEqual({
-        stdout: "READY\n" + JSON.stringify({ data: "abcdefgh", endedAtResume: true, end: true }) + "\n",
+        stdout: "READY\n" + JSON.stringify({ data: "abcdefgh", endedAtResume, end: true }) + "\n",
         exitCode: 0,
       });
     } finally {
       closeSync(childEnd);
       if (writeEnd !== undefined) closeSync(writeEnd);
     }
+  });
+});
+
+// On pipe, socket and TTY stdin, destroy() releases the native reader whatever listeners
+// exist, and nothing takes the reader back. Unless a case sends EOF, the parent holds the
+// writer of fd 0 open until the child is gone, so a child that exits did so because stdin
+// let go of the event loop and not because of EOF.
+describe("destroy()", () => {
+  // "pipe" is what Bun.spawn gives: a socket pair on POSIX. "shell pipe" is an anonymous
+  // pipe, as in `cmd | bun`.
+  type Kind = "pipe" | "shell pipe" | "tty" | "file";
+  const kinds: Kind[] = ["pipe", "file", "tty", ...(isPosix ? ["shell pipe" as const] : [])];
+  type Io = { feed: (data: string) => void; end: () => void; proc: Bun.Subprocess };
+  // When the child prints the marker, the parent runs the action. The steps run in order.
+  type Step = [marker: string, action: (io: Io) => void];
+  type Report = { events: string[]; destroyed: boolean; fd0: boolean; exitCode: number | null; signalCode: unknown };
+
+  // The child reports once, when it exits. It calls done() after the last step of its case.
+  function child(body: string) {
+    return `
+      const stdin = process.stdin;
+      const events = [];
+      const onData = () => events.push("data");
+      const onReadable = () => events.push("readable");
+      const onClose = () => events.push("close");
+      process.on("uncaughtException", err => events.push("uncaught " + err.message));
+      process.on("exit", () => {
+        let fd0 = true;
+        try {
+          require("node:fs").fstatSync(0);
+        } catch {
+          fd0 = false;
+        }
+        console.log("RESULT " + JSON.stringify({ events, destroyed: stdin.destroyed, fd0 }));
+      });
+      // From here the child must exit by itself. A timer that is due runs even when it is
+      // unref'd, so only a loop that something still holds counts as alive.
+      function done() {
+        setTimeout(() => {
+          if (typeof Bun === "object" && !require("bun:internal-for-testing").getEventLoopStats().loopActive) return;
+          events.push("STILL_ALIVE");
+          process.exit(1);
+        }, 1500).unref();
+      }
+      ${body}
+    `;
+  }
+
+  function report(output: string, stderr: string, exitCode: number | null, signalCode: unknown): Report {
+    const result = output.match(/RESULT (\{[^}]*\})/);
+    // A child that did not report shows its raw output in the diff.
+    return { ...(result ? JSON.parse(result[1]) : { output, stderr }), exitCode, signalCode };
+  }
+
+  function ignoreEpipe(err: any) {
+    if (err?.code !== "EPIPE") throw err;
+  }
+
+  async function run(kind: Kind, body: string, steps: Step[] = [], exe = bunExe()): Promise<Report> {
+    const script = child(body);
+    let next = 0;
+    const advance = (output: string, io: Io) => {
+      while (next < steps.length && output.includes(steps[next][0])) steps[next++][1](io);
+    };
+    const decoder = new TextDecoder();
+    let output = "";
+
+    if (kind === "tty") {
+      const reported = Promise.withResolvers<void>();
+      await using proc = Bun.spawn({
+        cmd: [exe, "-e", script],
+        env: bunEnv,
+        terminal: {
+          // Wide enough that ConPTY does not wrap the RESULT line.
+          cols: 200,
+          rows: 24,
+          data(terminal, chunk) {
+            output += decoder.decode(chunk, { stream: true });
+            // Ctrl-D at the start of a line is EOF on a POSIX terminal.
+            advance(output, { feed: data => void terminal.write(data), end: () => void terminal.write("\x04"), proc });
+            if (/RESULT \{[^}]*\}/.test(Bun.stripANSI(output))) reported.resolve();
+          },
+          exit() {
+            reported.resolve();
+          },
+        },
+      });
+      await Promise.all([reported.promise, proc.exited]);
+      proc.terminal?.close();
+      // The terminal puts CR LF, and on Windows VT sequences, around the line.
+      return report(Bun.stripANSI(output).replace(/[\r\n]/g, ""), "", proc.exitCode, proc.signalCode);
+    }
+
+    using dir = tempDir("stdin-destroy", { "input.txt": "hello\n" });
+    // The shell waits for cat, and cat waits for the parent to close its end.
+    const cmd =
+      kind === "shell pipe"
+        ? ["sh", "-c", `cat | { "$0" -e "$1"; echo "EXIT $?"; }`, exe, script]
+        : [exe, "-e", script];
+    await using proc = Bun.spawn({
+      cmd,
+      stdin: kind === "file" ? Bun.file(join(String(dir), "input.txt")) : "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const sink = kind === "file" ? undefined : (proc.stdin as Bun.FileSink);
+    let ended = false;
+    const io: Io = {
+      feed(data) {
+        try {
+          Promise.resolve(sink?.write(data)).catch(ignoreEpipe);
+          Promise.resolve(sink?.flush()).catch(ignoreEpipe);
+        } catch (err) {
+          ignoreEpipe(err);
+        }
+      },
+      end() {
+        if (ended) return;
+        ended = true;
+        try {
+          Promise.resolve(sink?.end()).catch(ignoreEpipe);
+        } catch (err) {
+          ignoreEpipe(err);
+        }
+      },
+      proc,
+    };
+    const drain = async () => {
+      for await (const chunk of proc.stdout) {
+        output += decoder.decode(chunk, { stream: true });
+        advance(output, io);
+        if (kind === "shell pipe" && /EXIT \d+/.test(output)) io.end();
+      }
+    };
+    const [stderr] = await Promise.all([proc.stderr.text(), drain(), proc.exited]);
+    const shellExit = output.match(/EXIT (\d+)/);
+    return report(output, stderr, shellExit ? Number(shellExit[1]) : proc.exitCode, proc.signalCode);
+  }
+
+  const arming = {
+    "on('data')": `stdin.on("data", onData);`,
+    "on('readable')": `stdin.on("readable", onReadable);`,
+    "resume()": `stdin.resume();`,
+    "ref()": `stdin.ref();`,
+    "read(n)": `stdin.read(1);`,
+  };
+  const held = kinds.filter(kind => kind !== "file");
+  // [title, stdin kinds, code, events]
+  const releases: [string, readonly Kind[], string, string[]][] = [
+    [
+      "on('data') then destroy()",
+      kinds,
+      `stdin.on("close", onClose); stdin.on("data", onData); stdin.destroy(); done();`,
+      ["close"],
+    ],
+  ];
+  for (const [name, arm] of Object.entries(arming)) {
+    // Each way to take the reader runs on a pipe. The other kinds share that JavaScript.
+    const armKinds = name === "on('data')" ? kinds : (["pipe"] as const);
+    releases.push([
+      `${name} then destroy(err)`,
+      armKinds,
+      `${arm} stdin.destroy(new Error("mine")); done();`,
+      ["uncaught mine"],
+    ]);
+  }
+  releases.push(
+    [
+      "on('data'), then removeAllListeners() and destroy() in a later turn",
+      held,
+      `stdin.on("data", onData); setImmediate(() => { stdin.removeAllListeners(); stdin.destroy(); done(); });`,
+      [],
+    ],
+    [
+      "on('data'), destroy() then removeAllListeners()",
+      kinds,
+      `stdin.on("data", onData); stdin.destroy(); stdin.removeAllListeners(); done();`,
+      [],
+    ],
+    [
+      "destroy(err) with an 'error' listener that throws",
+      ["pipe"],
+      `stdin.on("error", () => { throw new Error("from error listener"); });
+       stdin.on("data", onData);
+       stdin.destroy(new Error("mine"));
+       done();`,
+      ["uncaught from error listener"],
+    ],
+    [
+      "destroy() with a 'close' listener that throws",
+      ["pipe"],
+      `stdin.prependListener("close", () => { throw new Error("from close listener"); });
+       stdin.on("data", onData);
+       stdin.destroy();
+       done();`,
+      ["uncaught from close listener"],
+    ],
+    [
+      "destroy(err) in a later turn",
+      ["pipe"],
+      `stdin.on("data", onData); setImmediate(() => { stdin.destroy(new Error("mine")); done(); });`,
+      ["uncaught mine"],
+    ],
+    [
+      "on('data'), removeAllListeners('end') then push(null)",
+      ["pipe"],
+      `stdin.on("data", onData); stdin.removeAllListeners("end"); stdin.push(null); done();`,
+      [],
+    ],
+    [
+      "push(null) then push(chunk)",
+      ["pipe"],
+      `stdin.on("data", onData); stdin.push(null); stdin.push("x"); done();`,
+      ["uncaught stream.push() after EOF"],
+    ],
+    [
+      "on('data'), emit('end') then destroy()",
+      ["pipe"],
+      `stdin.on("data", onData); stdin.emit("end"); stdin.destroy(); done();`,
+      [],
+    ],
+    // The listener that starts the flow, and the four ways to take the native reader.
+    [
+      "destroy(), then on('data'), resume(), ref(), read(n) and on('readable')",
+      ["pipe"],
+      `stdin.on("resume", () => events.push("resume"));
+       stdin.destroy();
+       stdin.on("data", onData);
+       events.push("flowing=" + stdin.readableFlowing);
+       setImmediate(() => { stdin.resume(); stdin.ref(); stdin.read(5); stdin.on("readable", onReadable); done(); });`,
+      ["flowing=null"],
+    ],
+  );
+  const rows = releases.flatMap(([title, rowKinds, body, events]) =>
+    rowKinds.map(kind => [kind, title, body, events] as const),
+  );
+  const released = (events: readonly string[]): Report => ({
+    events: [...events],
+    destroyed: true,
+    fd0: true,
+    exitCode: 0,
+    signalCode: null,
+  });
+
+  test.concurrent.each(rows)("%s stdin: %s lets the process exit", async (kind, _title, body, events) => {
+    expect(await run(kind, body)).toEqual(released(events));
+  });
+
+  // Node's resume() returns for a destroyed stream since v26.1.
+  const node = nodeExe();
+  const [nodeMajor, nodeMinor] = node
+    ? Bun.spawnSync([node, "-p", "process.versions.node"]).stdout.toString().split(".").map(Number)
+    : [0, 0];
+  test.skipIf(nodeMajor < 26 || (nodeMajor === 26 && nodeMinor < 1))("node gives the same reports", async () => {
+    // Newer versions of Node close fd 0 when a file stream is destroyed.
+    const reports = await Promise.all(rows.map(([kind, , body]) => run(kind, body, [], node!)));
+    expect(reports.map(({ fd0, ...rest }) => rest)).toEqual(
+      rows.map(([, , , events]) => {
+        const { fd0, ...rest } = released(events);
+        return rest;
+      }),
+    );
+  });
+
+  test.concurrent("destroy(err) with no 'error' listener and no uncaughtException handler is fatal", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stdin.on("data", () => {});
+        process.stdin.destroy(new Error("mine"));
+        process.on("exit", code => console.log("exit " + code));`,
+      ],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("exit 1\n");
+    expect(stderr).toContain("error: mine");
+    expect(exitCode).toBe(1);
+    expect(proc.signalCode).toBeNull();
+  });
+
+  test.concurrent("emit('close') by the user does not destroy stdin", async () => {
+    const body = `
+      stdin.on("data", chunk => {
+        events.push("data " + chunk + " destroyed=" + stdin.destroyed);
+        stdin.destroy();
+        done();
+      });
+      stdin.emit("close");
+      console.log("READY");
+    `;
+    expect(await run("pipe", body, [["READY", io => io.feed("hello")]])).toEqual(
+      released(["data hello destroyed=false"]),
+    );
+  });
+
+  // A prompt that ends on Ctrl-D emits 'end' by hand, and the next prompt reads again.
+  test.concurrent.skipIf(!isPosix)("emit('end') by the user does not destroy stdin", async () => {
+    const body = `
+      function prompt(tag) {
+        return new Promise(resolve => {
+          stdin.setRawMode(true);
+          stdin.resume();
+          let line = "";
+          const onData = chunk => {
+            const end = chunk.indexOf(4);
+            line += chunk.subarray(0, end === -1 ? chunk.length : end);
+            if (end !== -1) stdin.emit("end");
+          };
+          stdin.on("data", onData);
+          stdin.once("end", () => {
+            stdin.removeListener("data", onData);
+            stdin.setRawMode(false);
+            stdin.pause();
+            resolve(line);
+          });
+          console.log("READY" + tag);
+        });
+      }
+      (async () => {
+        events.push("first " + (await prompt(1)));
+        await new Promise(resolve => setImmediate(resolve));
+        events.push("second " + (await prompt(2)));
+        done();
+      })();
+    `;
+    const steps: Step[] = [
+      ["READY1", io => io.feed("abc\x04")],
+      ["READY2", io => io.feed("def\x04")],
+    ];
+    expect(await run("tty", body, steps)).toEqual({ ...released(["first abc", "second def"]), destroyed: false });
+  });
+
+  // Node gives the terminal back in destroy(), and setRawMode() on a destroyed stream does not touch it.
+  test.concurrent.skipIf(!isPosix)("destroy() leaves raw mode, and setRawMode() cannot enter it again", async () => {
+    const body = `
+      const { execSync } = require("node:child_process");
+      const cooked = () => /(^|\\s)icanon/.test(execSync("stty -a", { stdio: ["inherit", "pipe", "ignore"] }).toString());
+      stdin.setRawMode(true);
+      events.push("cooked=" + cooked());
+      stdin.destroy();
+      events.push("destroyed: cooked=" + cooked());
+      stdin.setRawMode(true);
+      events.push("setRawMode(true): cooked=" + cooked() + " isRaw=" + stdin.isRaw);
+      done();
+    `;
+    expect(await run("tty", body)).toEqual(
+      released(["cooked=false", "destroyed: cooked=true", "setRawMode(true): cooked=true isRaw=true"]),
+    );
+  });
+
+  // With a construct step, the first read waits on a listener that removeAllListeners() drops.
+  test.concurrent.each([
+    ["pipe", "on('data')", `stdin.on("data", chunk => events.push("data " + chunk));`],
+    [
+      "pipe",
+      "on('readable')",
+      `stdin.on("readable", () => { const chunk = stdin.read(); if (chunk) events.push("data " + chunk); });`,
+    ],
+    ...(isPosix ? ([["tty", "on('data')", `stdin.on("data", chunk => events.push("data " + chunk));`]] as const) : []),
+  ] as const)("%s stdin: removeAllListeners() in the first turn, then %s, still reads", async (kind, _arm, arm) => {
+    const body = `
+      stdin.removeAllListeners();
+      ${arm}
+      stdin.on("end", () => events.push("end"));
+      console.log("READY");
+    `;
+    // A terminal in cooked mode gives the line with its newline, and echoes it.
+    const line = kind === "tty" ? "hello\n" : "hello";
+    const steps: Step[] = [
+      ["READY", io => io.feed(line)],
+      // The echo of the line shows that the terminal has taken it.
+      [kind === "tty" ? "hello\r\n" : "READY", io => io.end()],
+    ];
+    expect(await run(kind, body, steps)).toEqual(released(["data " + line, "end"]));
+  });
+
+  // finished() and pipeline() settle on 'end', before stdin is destroyed, and do not depend on 'close'.
+  test.concurrent.each(["pipe", "file"] as const)(
+    "%s stdin: finished() and pipeline() settle at EOF when a later 'end' listener throws",
+    async kind => {
+      const body = `
+        const { finished, pipeline, Writable } = require("node:stream");
+        const sink = new Writable({ write(chunk, encoding, callback) { callback(); } });
+        finished(stdin, err => events.push("finished destroyed=" + stdin.destroyed + " error=" + (err?.code ?? null)));
+        pipeline(stdin, sink, err => events.push("pipeline error=" + (err?.code ?? null)));
+        let closed = false;
+        stdin.on("close", () => { closed = true; });
+        stdin.on("end", () => { throw new Error("from end listener"); });
+        events.push("autoClose=" + stdin.autoClose);
+        process.prependListener("exit", () => events.push("close=" + closed));
+        console.log("READY");
+      `;
+      const steps: Step[] = [["READY", io => (io.feed("hello"), io.end())]];
+      // The throw keeps autoDestroy from running on a pipe. Bun destroys file stdin from a
+      // listener of its own, which Node does not have, and 'close' follows.
+      const file = kind === "file";
+      expect(await run(kind, body, steps)).toEqual({
+        ...released([
+          "autoClose=" + !file,
+          "finished destroyed=false error=null",
+          "uncaught from end listener",
+          "pipeline error=null",
+          "close=" + file,
+        ]),
+        destroyed: file,
+      });
+    },
+  );
+
+  test.concurrent("EOF destroys stdin after removeAllListeners('end')", async () => {
+    const body = `
+      stdin.on("close", onClose);
+      stdin.on("data", onData);
+      stdin.removeAllListeners("end");
+      console.log("READY");
+    `;
+    expect(await run("pipe", body, [["READY", io => (io.feed("hello"), io.end())]])).toEqual(
+      released(["data", "close"]),
+    );
+  });
+
+  test.concurrent("destroy() after a read leaves Bun.stdin.stream() unlocked", async () => {
+    const body = `
+      stdin.on("data", () => {
+        stdin.destroy();
+        events.push("locked=" + Bun.stdin.stream().locked);
+        done();
+      });
+      console.log("READY");
+    `;
+    expect(await run("pipe", body, [["READY", io => io.feed("hello")]])).toEqual(released(["locked=false"]));
+  });
+
+  // The native source is shared with Bun.stdin.stream(). destroy() stops it, and a reader
+  // that comes later does not start it again.
+  test.concurrent("destroy() on a stdin that never read also stops Bun.stdin.stream()", async () => {
+    const body = `
+      stdin.removeAllListeners();
+      stdin.destroy();
+      Bun.stdin.stream().getReader().read().then(({ value }) => events.push("read " + Buffer.from(value)));
+      console.log("READY");
+      done();
+    `;
+    expect(await run("pipe", body, [["READY", io => io.feed("hello")]])).toEqual(released([]));
+  });
+
+  test.concurrent("process.stdin is an instance of an fs.ReadStream that the program replaced", async () => {
+    using dir = tempDir("stdin-replaced", { "input.txt": "hello" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("node:fs");
+        fs.ReadStream = class extends fs.ReadStream {};
+        process.stdin.on("data", chunk => {
+          console.log(JSON.stringify({ replaced: process.stdin instanceof fs.ReadStream, data: String(chunk) }));
+        });`,
+      ],
+      stdin: Bun.file(join(String(dir), "input.txt")),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    expect(await stdioResult(proc)).toEqual({
+      stdout: JSON.stringify({ replaced: true, data: "hello" }) + "\n",
+      exitCode: 0,
+    });
+  });
+
+  // Node's test/pseudo-tty/test-readable-tty-keepalive.js: it ends stdin with push(null) and must then exit.
+  test.concurrent("test-readable-tty-keepalive.js exits", async () => {
+    const exited = Promise.withResolvers<void>();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "..", "test", "pseudo-tty", "test-readable-tty-keepalive.js")],
+      env: bunEnv,
+      terminal: {
+        data() {},
+        exit() {
+          exited.resolve();
+        },
+      },
+    });
+    await Promise.all([exited.promise, proc.exited]);
+    proc.terminal?.close();
+    expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
+
+  // A FIFO as the stdin of a child timed out on macOS in CI, so these run on Linux.
+  describe.skipIf(!isLinux)("bytes written after destroy() stay in the pipe", () => {
+    // The child reopens its stdin by path, two turns of the loop after the bytes were written:
+    // a reader that still watched fd 0 has taken them by then.
+    const left = `
+      const fs = require("node:fs");
+      // The process outlives its stdin, as a server does. It gives up if the signal never comes.
+      const alive = setTimeout(() => process.exit(2), 20_000);
+      process.on("SIGUSR2", () => {
+        setImmediate(() => setImmediate(() => {
+          const fd = fs.openSync(process.env.STDIN_FIFO, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+          const buffer = Buffer.alloc(16);
+          try {
+            events.push("left " + buffer.toString("utf8", 0, fs.readSync(fd, buffer)));
+          } catch (err) {
+            events.push("left " + err.code);
+          }
+          clearTimeout(alive);
+          done();
+        }));
+      });
+    `;
+    test.concurrent.each([
+      [
+        "destroy(err) of a stdin that read",
+        `${left}
+        stdin.on("data", chunk => {
+          events.push("data " + chunk);
+          stdin.destroy(new Error("mine"));
+          console.log("READY2");
+        });
+        console.log("READY1");`,
+        ["data first", "uncaught mine", "left later"],
+      ],
+      [
+        "destroy() of a stdin that never read, after a read through Bun.stdin.stream()",
+        `${left}
+        const reader = Bun.stdin.stream().getReader();
+        reader.read().then(({ value }) => {
+          events.push("read " + Buffer.from(value));
+          reader.releaseLock();
+          stdin.destroy();
+          console.log("READY2");
+        });
+        console.log("READY1");`,
+        ["read first", "left later"],
+      ],
+    ] as const)("%s", async (_title, body, events) => {
+      using dir = tempDir("stdin-destroy-fifo", {});
+      const fifo = join(String(dir), "fifo");
+      mkfifo(fifo);
+      // Non-blocking, so that the open does not wait for a writer.
+      const readEnd = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+      const writeEnd = openSync(fifo, "w");
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", child(body)],
+          stdin: readEnd,
+          stdout: "pipe",
+          stderr: "pipe",
+          env: { ...bunEnv, STDIN_FIFO: fifo },
+        });
+        const stderr = proc.stderr.text();
+        const decoder = new TextDecoder();
+        let output = "";
+        let step = 0;
+        for await (const chunk of proc.stdout) {
+          output += decoder.decode(chunk, { stream: true });
+          if (step === 0 && output.includes("READY1")) {
+            step = 1;
+            writeSync(writeEnd, "first");
+          }
+          if (step === 1 && output.includes("READY2")) {
+            step = 2;
+            writeSync(writeEnd, "later");
+            proc.kill("SIGUSR2");
+          }
+        }
+        await proc.exited;
+        expect(report(output, await stderr, proc.exitCode, proc.signalCode)).toEqual(released(events));
+      } finally {
+        closeSync(readEnd);
+        closeSync(writeEnd);
+      }
+    });
   });
 });
 

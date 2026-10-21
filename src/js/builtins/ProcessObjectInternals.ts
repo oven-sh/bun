@@ -125,9 +125,9 @@ export function getStdinStream(
   // if true, while the stream is own()ed it will not
   let forceUnref = false;
 
-  function own() {
-    // After EOF there is nothing left to read: no acquisition path ('readable'
-    // listeners, resume(), ref(), an explicit read()) may take the reader back.
+  // Takes the native reader and refs the event loop. The caller has checked `destroyed`.
+  function acquire() {
+    // After EOF there is nothing left to read.
     if (stream_reachedEof) return;
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
@@ -138,6 +138,10 @@ export function getStdinStream(
       needsInternalReadRefresh = false;
       internalRead(stream);
     }
+  }
+
+  function own() {
+    if (!stream.destroyed) acquire();
   }
 
   function disown() {
@@ -154,12 +158,18 @@ export function getStdinStream(
     source?.updateRef?.(false);
   }
 
+  const socketLike = isTTY || fdType !== BunProcessStdinFdType.file;
   const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
-  const stream = new ReadStream(null, { fd, autoClose: false });
+  const stream = new ReadStream(null, socketLike ? { fd } : { fd, autoClose: false });
+  if (socketLike) {
+    // Node builds these kinds as a net.Socket, with no construct step: the first read and a first-tick destroy() wait on no listener.
+    stream._readableState.constructed = true;
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L415: with emitClose off, finished() settles on 'end'. _destroy emits 'close'.
+    stream._readableState.emitClose = false;
+  }
 
   const originalOn = stream.on;
 
-  let stream_destroyed = false;
   let stream_reachedEof = false;
   stream.addListener = stream.on = function (event, listener) {
     // Streams don't generally required to present any data when only
@@ -181,7 +191,7 @@ export function getStdinStream(
 
   // tty.ReadStream is supposed to extend from net.Socket.
   // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
-  if (isTTY || fdType !== BunProcessStdinFdType.file) {
+  if (socketLike) {
     stream.ref = function () {
       forceUnref = false;
       own();
@@ -202,7 +212,9 @@ export function getStdinStream(
 
   const originalResume = stream.resume;
   stream.resume = function () {
-    own();
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/readable.js#L1245. Readable.prototype.resume here is narrower.
+    if (this.destroyed) return this;
+    acquire();
     return originalResume.$call(this);
   };
 
@@ -212,7 +224,7 @@ export function getStdinStream(
     // An explicit read() must acquire the native reader: _read() without one only
     // records needsInternalReadRefresh, which own() replays. Owning afterwards so a
     // throwing size never refs stdin; read(0) kicks never own (pause() relies on it).
-    if (size !== 0 && reader === undefined && !stream_destroyed) {
+    if (size !== 0 && reader === undefined) {
       own();
     }
     return ret;
@@ -277,15 +289,22 @@ export function getStdinStream(
   }
   stream._read = triggerRead;
 
-  stream.on("resume", () => {
-    // After EOF, _undestroy() would clear `ended` and 'end' would never be emitted.
-    if (stream_reachedEof) return;
-    if (stream.isPaused()) return; // fake resume
-    $debug('on("resume");');
-    own();
-    stream._undestroy();
-    stream_destroyed = false;
-  });
+  function destroyAfterEnd() {
+    stream.destroy();
+  }
+
+  function emitClose() {
+    // Set by the stream layer unless an 'error' listener threw. Node's net.Socket emits 'close' then too.
+    if (stream._readableState.closeEmitted) stream.emit("close");
+  }
+
+  // In place of fs.ReadStream's: fd 0 stays open, and the reader is released even when no 'close' is emitted.
+  stream._destroy = function (err, cb) {
+    disown();
+    if (isTTY) stream[require("internal/shared").kLeaveRawMode]?.();
+    cb(err);
+    if (socketLike) process.nextTick(emitClose);
+  };
 
   stream._readableState.reading = false;
 
@@ -299,26 +318,12 @@ export function getStdinStream(
     });
   });
 
-  // The stream is created with autoClose: false so autoDestroy is off; match
-  // Node by destroying stdin once 'end' has emitted ('close' follows 'end').
-  stream.on("end", () => {
-    if (!stream_destroyed) {
-      stream_destroyed = true;
-      process.nextTick(() => {
-        stream.destroy();
-      });
-    }
-  });
-
-  stream.on("close", () => {
-    if (!stream_destroyed) {
-      stream_destroyed = true;
-      process.nextTick(() => {
-        stream.destroy();
-        disown();
-      });
-    }
-  });
+  if (!socketLike) {
+    // Node does not destroy file stdin after 'end'. Bun does, and 'close' follows. An emit('end') by the user has readableEnded false.
+    stream.on("end", () => {
+      if (stream.readableEnded) process.nextTick(destroyAfterEnd);
+    });
+  }
 
   return stream;
 }

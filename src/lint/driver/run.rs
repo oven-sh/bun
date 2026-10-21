@@ -1632,8 +1632,9 @@ impl Run<'_> {
                 self.began.elapsed().as_secs_f64() * 1000.0,
             );
         }
-        // In a run that passes, advice is noise. `--doctor` always prints it.
-        if fails_on_problems && format.is_human_readable() && !options.quiet && !options.silent {
+        // In a run that passes, advice is noise. `--verbose` and `--doctor` always print it.
+        let prints_advice = fails_on_problems && format.is_human_readable() && !options.quiet;
+        if (prints_advice || options.verbose) && !options.silent {
             for line in std::mem::take(&mut *loader.advice.lock()) {
                 pretty!(
                     &mut self.out.stderr,
@@ -1643,7 +1644,7 @@ impl Run<'_> {
                 );
             }
         }
-        if !fails_on_problems && format.is_human_readable() {
+        if !options.verbose {
             not_built_in.about_layout.clear();
         }
         for note in not_built_in.notes().filter(|_| !options.silent) {

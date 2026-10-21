@@ -5853,25 +5853,29 @@ describe.concurrent("deprecated formatting rules", () => {
     [".eslintrc.json", rules => rc({ rules })],
   ];
   const stylishArgs = ["-f", "stylish", "."];
+  const verboseArgs = ["--verbose", ...stylishArgs];
   const notes = (stderr: string) => stderr.split("\n").filter(it => it.startsWith("note: "));
   const note = (count: number, names: string) => `note: ${count} deprecated formatting rules did not run: ${names}`;
 
-  test.each(flavors)("%s: they don't run, and only a run that fails prints a note", async (name, config) => {
+  test.each(flavors)("%s: they don't run, and only --verbose prints a note", async (name, config) => {
     const files = { [name]: config(rules), "a.js": untidy };
-    const [found, stylish, clean, warned] = await Promise.all([
+    const passes = { ...files, "a.js": "   x = 'y'\n" };
+    const [found, stylish, clean, verbose, verboseClean] = await Promise.all([
       lint(files),
       lint(files, stylishArgs),
-      lint({ ...files, "a.js": "   x = 'y'\n" }, stylishArgs),
-      lint({ ...files, [name]: config({ ...rules, "no-debugger": "warn" }) }, stylishArgs),
+      lint(passes, stylishArgs),
+      lint(files, verboseArgs),
+      lint(passes, verboseArgs),
     ]);
     expect(found.problems).toEqual(["a.js:1:1 no-debugger"]);
     expect(found.exitCode).toBe(1);
-    expect(notes(stylish.stderr)).toEqual([note(3, "indent, quotes, semi")]);
+    expect(notes(stylish.stderr)).toEqual([]);
     expect(notes(clean.stderr)).toEqual([]);
     expect(clean.exitCode).toBe(0);
-    expect(warned.raw).toContain("1 problem (0 errors, 1 warning)");
-    expect(notes(warned.stderr)).toEqual([]);
-    expect(warned.exitCode).toBe(0);
+    expect(notes(verbose.stderr)).toEqual([note(3, "indent, quotes, semi")]);
+    expect(verbose.exitCode).toBe(1);
+    expect(notes(verboseClean.stderr)).toEqual([note(3, "indent, quotes, semi")]);
+    expect(verboseClean.exitCode).toBe(0);
   });
 
   test("prints one note for all files and config files, with the first three rule names", async () => {
@@ -5884,7 +5888,7 @@ describe.concurrent("deprecated formatting rules", () => {
         "b/eslint.config.mjs": on("semi", "comma-dangle", "arrow-parens"),
         "b/c.js": "/* eslint yield-star-spacing: 2 */ c",
       },
-      ["-f", "stylish", "a", "b"],
+      ["--verbose", "-f", "stylish", "a", "b"],
     );
     expect(notes(stderr)).toEqual([note(5, "arrow-parens, comma-dangle, eol-last, ..")]);
     expect(exitCode).toBe(1);
@@ -5892,7 +5896,7 @@ describe.concurrent("deprecated formatting rules", () => {
 
   test("the note uses the singular for one rule", async () => {
     const config = flavors[0][1]({ semi: 2, "no-debugger": 2 });
-    const { stderr } = await lint({ "eslint.config.mjs": config, "a.js": "debugger" }, stylishArgs);
+    const { stderr } = await lint({ "eslint.config.mjs": config, "a.js": "debugger" }, verboseArgs);
     expect(notes(stderr)).toEqual(["note: 1 deprecated formatting rule did not run: semi"]);
   });
 
@@ -5919,7 +5923,7 @@ describe.concurrent("deprecated formatting rules", () => {
   test("rules turned on by --rule or an inline config comment don't run either, and are in the note", async () => {
     const files = { "a.js": `/* eslint quotes: ["error", "sideways"], no-debugger: "error" */ ${untidy}` };
     const flags = ["--no-config-lookup", "--rule", "semi: error", "--rule", "indent: [warn, sideways]"];
-    const [found, stylish] = await Promise.all([lint(files, [...flags, "."]), lint(files, [...flags, ...stylishArgs])]);
+    const [found, stylish] = await Promise.all([lint(files, [...flags, "."]), lint(files, [...flags, ...verboseArgs])]);
     expect(found.problems).toEqual(["a.js:1:66 no-debugger"]);
     expect(found.exitCode).toBe(1);
     expect(notes(stylish.stderr)).toEqual([note(3, "indent, quotes, semi")]);
@@ -5927,13 +5931,13 @@ describe.concurrent("deprecated formatting rules", () => {
 
   // It's on stderr, so a tool that reads the report doesn't see it.
   test.each(["--quiet", "--format=json", "--format=unix", "--format=github", "--format=agent"])(
-    "the note is printed with %s",
+    "--verbose prints the note with %s too",
     async flag => {
       const files = { "a.js": untidy };
       const without = { "eslint.config.mjs": flavors[0][1]({ "no-debugger": "error" }) };
       const [noted, plain] = await Promise.all([
-        lint({ ...files, "eslint.config.mjs": flavors[0][1](rules) }, [...stylishArgs, flag]),
-        lint({ ...files, ...without }, [...stylishArgs, flag]),
+        lint({ ...files, "eslint.config.mjs": flavors[0][1](rules) }, [...verboseArgs, flag]),
+        lint({ ...files, ...without }, [...verboseArgs, flag]),
       ]);
       expect(notes(noted.stderr)).toEqual([note(3, "indent, quotes, semi")]);
       // The two reports are identical except for `usedDeprecatedRules` and the temporary directory names. A Windows
@@ -6100,7 +6104,7 @@ describe.concurrent("deprecated formatting rules", () => {
     };
     const [builtIn, stylish, withPackageRules] = await Promise.all([
       lint(files, ["a.js"]),
-      lint({ ...files, "a.js": "debugger\n" }, ["-f", "stylish", "--rule", "no-debugger: error", "a.js"]),
+      lint({ ...files, "a.js": "debugger\n" }, ["--verbose", "-f", "stylish", "--rule", "no-debugger: error", "a.js"]),
       lint(files, ["--no-native-plugin-rules", "a.js"]),
     ]);
     expect(builtIn.problems).toEqual([]);

@@ -839,6 +839,7 @@ _bun_lint_completion() {
         '--output-file[Write the report to a file]:output-file:_files' \
         '-o[Write the report to a file]:output-file:_files' \
         '--quiet[Report errors only]' \
+        '--verbose[Print every note]' \
         '--max-warnings[Exit with 1 if there are more warnings than this]:max-warnings' \
         '--color[Always use colors]' \
         '--no-color[Never use colors]' \

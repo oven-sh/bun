@@ -9,7 +9,7 @@ const UNEXPECTED_TEMPLATE_EXPRESSION: Message = Message::new(
     "Unexpected template string expression.",
 );
 
-/// `/\$\{[^}]+\}/u.test(value)`. For oxlint there can be nothing between the braces.
+/// `/\$\{[^}]+\}/u.test(value)`. oxlint also accepts empty braces.
 fn has_placeholder(value: &[u8], is_oxlint: bool) -> bool {
     let mut rest = value;
     while let Some(at) = strings::index_of(rest, b"${") {
@@ -23,8 +23,8 @@ fn has_placeholder(value: &[u8], is_oxlint: bool) -> bool {
     false
 }
 
-/// Where the text has what can be, or be the start of, a `${` in the value of a string: that, or either character written as an
-/// escape, or in JSX as an entity. In ascending order.
+/// Returns the offsets, in ascending order, where the source may start a `${` in a string's value: a literal `${`, or
+/// either character written as an escape or, in JSX, as an entity.
 fn find_candidates(file: &File) -> Vec<u32> {
     let text = file.text();
     let has_jsx = file.has_exprs([ExprTag::Jsx]);
@@ -33,7 +33,7 @@ fn find_candidates(file: &File) -> Vec<u32> {
     while let Some(&at) = backslashes.next() {
         match text.get(at as usize + 1) {
             Some(b'$' | b'x' | b'u' | b'0' | b'4') => found.push(at),
-            // The second starts no escape.
+            // The second backslash doesn't start an escape.
             Some(b'\\') => _ = backslashes.next(),
             _ => {}
         }
@@ -59,19 +59,19 @@ fn find_candidates(file: &File) -> Vec<u32> {
     found
 }
 
-/// Whether one of `candidates` is in `span`.
+/// True if one of `candidates` is in `span`.
 #[inline]
 fn has_candidate(candidates: &[u32], span: Span) -> bool {
     let next = candidates.partition_point(|at| *at < span.start);
     candidates.get(next).is_some_and(|at| *at < span.end)
 }
 
-/// Whether what is written at `span` is in quotes, as opposed to backticks.
+/// True if the text at `span` is in quotes rather than backticks.
 fn is_quoted(file: &File, span: Span) -> bool {
     matches!(file.text().get(span.start as usize), Some(b'"' | b'\''))
 }
 
-/// A name that can be written as a string: in the braces of an import or an export, of a module.
+/// Checks a name that can be written as a string: an import or export specifier, or a module's name.
 fn check_ident<'a>(name: Ident<'a>, cx: &mut Cx<'a, NoTemplateCurlyInString>) {
     if name.is_string() && has_placeholder(name.name().bytes(), cx.language().is_oxlint) {
         cx.report(name, UNEXPECTED_TEMPLATE_EXPRESSION);
@@ -97,14 +97,14 @@ fn check_string_key<'a>(key: Key<'a>, value: Name<'a>, cx: &Cx<'a, NoTemplateCur
     }
 }
 
-/// `e`: a string with a candidate in it.
+/// `e` is a string with a candidate in it.
 #[inline(never)]
 fn check_string<'a>(e: Expr<'a>, cx: &Cx<'a, NoTemplateCurlyInString>) {
     let is_oxlint = cx.language().is_oxlint;
-    let is_as_written = is_oxlint && e.is_jsx_attribute_string();
-    let value = e.as_string().map(|it| if is_as_written { e.text() } else { it.bytes() });
-    let has_one = value.is_some_and(|it| has_placeholder(it, is_oxlint));
-    if has_one && !e.is_jsx_text() && !e.is_jsx_tag_name() {
+    let uses_raw_text = is_oxlint && e.is_jsx_attribute_string();
+    let value = e.as_string().map(|it| if uses_raw_text { e.text() } else { it.bytes() });
+    let has_match = value.is_some_and(|it| has_placeholder(it, is_oxlint));
+    if has_match && !e.is_jsx_text() && !e.is_jsx_tag_name() {
         cx.report(e, UNEXPECTED_TEMPLATE_EXPRESSION);
     }
 }
@@ -127,7 +127,7 @@ impl Rule for NoTemplateCurlyInString {
             StmtTag::ImportEquals,
             StmtTag::Module,
         ]);
-    /// What [`find_candidates`] returns.
+    /// The result of [`find_candidates`].
     type State<'a> = Vec<u32>;
 
     fn new(_: &Options) -> Self {
@@ -139,7 +139,7 @@ impl Rule for NoTemplateCurlyInString {
         if candidates.is_empty() {
             return None;
         }
-        // Each starts with a `${` of its own: if there are as many, no candidate is in a string.
+        // Each template placeholder starts with its own `${`. If the counts are equal, no candidate is in a string.
         let in_expressions = file.exprs_of_kind(ExprTag::Template).filter_map(Expr::as_template).map(|it| it.exprs().len());
         let in_types = file.types_of_kind(TypeTag::Template).filter_map(TypeNode::as_template).map(|it| it.types().len());
         (in_expressions.chain(in_types).sum::<usize>() != candidates.len()).then_some(candidates)
@@ -152,7 +152,7 @@ impl Rule for NoTemplateCurlyInString {
         }
     }
 
-    // The strings that are a `Literal` for ESLint and not an expression here.
+    // The strings that are a `Literal` in ESLint but not an expression here.
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let specifier = match stmt.kind() {

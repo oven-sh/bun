@@ -53,8 +53,8 @@ pub fn is_declared_again(interface: Interface<'_>) -> bool {
 pub fn is_only_declaration(interface: Interface<'_>) -> bool {
     let statement = interface.stmt();
     let is_in_namespace = || {
-        let mut around = Node::Stmt(statement).ancestors();
-        around.any(|it| matches!(it, Node::Stmt(it) if it.as_module().is_some()))
+        let mut enclosing_nodes = Node::Stmt(statement).ancestors();
+        enclosing_nodes.any(|it| matches!(it, Node::Stmt(it) if it.as_module().is_some()))
     };
     !is_declared_again(interface) && !statement.file().is_declaration_file() && !is_in_namespace()
 }

@@ -91,7 +91,7 @@ fn message_type(ty: TypeNode<'_>) -> &[u8] {
     if is_simple_type(ty) { ty.text() } else { b"T" }
 }
 
-/// Whether a scope around `ty`, other than the global scope, declares `name`.
+/// True if a scope around `ty`, other than the global scope, declares `name`.
 fn is_shadowed<'a>(ty: TypeNode<'a>, name: Name<'a>) -> bool {
     Node::Type(ty)
         .scope()
@@ -157,7 +157,7 @@ impl ArrayType {
         let (is_readonly, is_readonly_with_array) = match name.bytes() {
             b"Array" => (false, false),
             b"ReadonlyArray" => (true, false),
-            // oxlint does not know it.
+            // oxlint doesn't handle `Readonly`.
             b"Readonly" if cx.language().is_oxlint => return,
             b"Readonly" if args.first().is_some_and(|it| it.tag() == TypeTag::Array) => {
                 (true, true)
@@ -169,7 +169,7 @@ impl ArrayType {
         } else {
             self.default
         };
-        // oxlint takes `Array` for `Array<any>`.
+        // oxlint treats `Array` as `Array<any>`.
         if args.is_empty()
             && cx.language().is_oxlint
             && style != Style::Generic

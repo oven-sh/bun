@@ -6136,7 +6136,8 @@ impl<'p, 's> Checker<'p, 's> {
         {
             let target_elems = self.type_arguments(target);
             let variable = ElemFlags::REST | ElemFlags::VARIADIC;
-            let target_has_rest_element = target_flags.iter().any(|f| f.intersects(variable));
+            let target_has_rest_element = target_flags.iter().any(|f| f.contains(ElemFlags::REST));
+            let target_has_variable_element = target_flags.iter().any(|f| f.intersects(variable));
             if self.is_array_or_tuple(source) {
                 let one_element;
                 let (source_elems, source_flags, source_readonly): (&[TypeId], &[ElemFlags], bool) =
@@ -6167,14 +6168,14 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     return Ternary::FALSE;
                 }
-                if !target_has_rest_element && target_arity < source_min_length {
+                if !target_has_variable_element && target_arity < source_min_length {
                     if REPORT {
                         let args = [Arg::Number(source_min_length), Arg::Number(target_arity)];
                         self.report_error(r, 2619, &args);
                     }
                     return Ternary::FALSE;
                 }
-                if !target_has_rest_element && (source_rest || target_arity < source_arity) {
+                if !target_has_variable_element && (source_rest || target_arity < source_arity) {
                     if REPORT {
                         if source_min_length < target_min_length {
                             self.report_error(r, 2620, &[Arg::Number(target_min_length)]);
@@ -6192,15 +6193,16 @@ impl<'p, 's> Checker<'p, 's> {
                     let source_position_from_end = source_arity - 1 - source_position;
                     let target_position =
                         if target_has_rest_element && source_position >= target_start_count {
-                            (target_arity - 1)
-                                .checked_sub(source_position_from_end.min(target_end_count))
+                            target_arity - 1 - source_position_from_end.min(target_end_count)
                         } else {
-                            Some(source_position)
+                            source_position
                         };
-                    let Some(target_position) = target_position.filter(|&p| p < target_arity)
-                    else {
+                    if target_position >= target_arity {
+                        if REPORT {
+                            self.report_error(r, 2621, &[Arg::Number(target_arity)]);
+                        }
                         return Ternary::FALSE;
-                    };
+                    }
                     let target_flag = target_flags[target_position];
                     if target_flag.contains(ElemFlags::VARIADIC)
                         && !source_flag.contains(ElemFlags::VARIADIC)
@@ -6287,7 +6289,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 return result;
             }
-            if target_has_rest_element {
+            if target_has_variable_element {
                 return Ternary::FALSE;
             }
         }

@@ -14,7 +14,7 @@ use bun_core::strings;
 use bun_core::{Global, Output, env_var};
 use bun_install::LogLevel;
 use bun_install::PackageManager;
-use bun_js_printer as JSPrinter;
+use bun_install::package_manager_real::package_json_text;
 use bun_parsers::json as JSON;
 use bun_paths::{resolve_path as path, resolve_path::platform as path_platform};
 use bun_semver as Semver;
@@ -328,29 +328,22 @@ impl PmVersionCommand {
             .expect("checked e_object above")
             .put_string(&json_bump, b"version", &new_version_str)?;
 
-        let mut buffer_writer = JSPrinter::BufferWriter::init();
-        buffer_writer.append_newline = package_json_contents.ends_with(b"\n");
-        let mut package_json_writer = JSPrinter::BufferPrinter::init(buffer_writer);
-
-        if let Err(err) = JSPrinter::print_json(
-            &mut package_json_writer,
+        let new_package_json_contents = match package_json_text::print(
+            package_json_path.as_bytes(),
+            &package_json_contents,
             json,
-            &package_json_source,
-            JSPrinter::PrintJsonOptions {
-                indent: json_result.indentation,
-                mangled_props: None,
-                ..Default::default()
-            },
+            json_result.indentation,
         ) {
-            Output::err_generic("Failed to save package.json: {}", (err.name(),));
-            Global::exit(1);
-        }
+            Ok(contents) => contents,
+            Err(err) => {
+                Output::err_generic("Failed to save package.json: {}", (err.name(),));
+                Global::exit(1);
+            }
+        };
 
-        if let Err(err) = bun_sys::File::write_file(
-            Fd::cwd(),
-            package_json_path,
-            package_json_writer.ctx.written_without_trailing_zero(),
-        ) {
+        if let Err(err) =
+            bun_sys::File::write_file(Fd::cwd(), package_json_path, &new_package_json_contents)
+        {
             Output::err_generic("Failed to write package.json: {}", (BStr::new(err.name()),));
             Global::exit(1);
         }

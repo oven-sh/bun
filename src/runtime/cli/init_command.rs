@@ -6,7 +6,7 @@ use bun_ast::StoreRef;
 use bun_collections::IntegerBitSet;
 use bun_core::{self as bun, Environment, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{MutableString, ZStr, strings};
-use bun_js_printer as js_printer;
+use bun_install::package_manager_real::package_json_text;
 use bun_parsers::json;
 use bun_paths::{self, path_buffer_pool};
 use bun_resolver::fs as Fs;
@@ -809,32 +809,34 @@ impl InitCommand {
                 }
             };
             let _close = created_close;
-            let mut buffer_writer = js_printer::BufferWriter::init();
-            buffer_writer.append_newline = true;
-            let mut package_json_writer = js_printer::BufferPrinter::init(buffer_writer);
-
-            let print_result = js_printer::print_json(
-                &mut package_json_writer,
+            let old_package_json: &[u8] = if did_load_package_json {
+                package_json_contents.list.as_slice()
+            } else {
+                b""
+            };
+            let mut written = match package_json_text::print(
+                b"package.json",
+                old_package_json,
                 bun_ast::Expr {
                     data: bun_ast::ExprData::EObject(fields.object.unwrap()),
                     loc: bun_ast::Loc::EMPTY,
                 },
-                &bun_ast::Source::init_empty_file(b"package.json"),
-                js_printer::PrintJsonOptions {
-                    indent: Default::default(),
-                    mangled_props: None,
-                    ..Default::default()
-                },
-            );
-            if let Err(err) = print_result {
-                bun_core::pretty_errorln!(
-                    "package.json failed to write due to error {}",
-                    err.name(),
-                );
-                package_json_file = None;
-                break 'write_package_json;
+                json::guess_indentation(old_package_json),
+            ) {
+                Ok(written) => written,
+                Err(err) => {
+                    bun_core::pretty_errorln!(
+                        "package.json failed to write due to error {}",
+                        err.name(),
+                    );
+                    package_json_file = None;
+                    break 'write_package_json;
+                }
+            };
+            if written.last() != Some(&b'\n') {
+                written.extend_from_slice(package_json_text::line_break(&written));
             }
-            let written = package_json_writer.ctx.get_written();
+            let written = written.as_slice();
             if let Err(err) = bun_sys::File::borrow(&fd).write_all(written) {
                 bun_core::pretty_errorln!(
                     "package.json failed to write due to error {}",

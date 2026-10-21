@@ -891,6 +891,173 @@ describe.concurrent("whoami", async () => {
   });
 });
 
+// A command that edits package.json writes the edit into the text of the file. What the edit does not touch
+// stays as it is, byte for byte: https://github.com/oven-sh/bun/issues/11536
+describe.concurrent("package.json text", () => {
+  // What a reprint of the whole file loses: comments in six places, CRLF line endings, a blank line, the spelling of
+  // `1.50`, of an escape and of a single-quoted string, an object on one line, trailing commas, text after the root.
+  const PACKAGE_JSON = [
+    `// before the root`,
+    `{`,
+    `  // above a member`,
+    `  "name": "app", /* beside a member */`,
+    ``,
+    `  "version": '1.0.0',`,
+    `  "config": { "retries": 1.50, "caf\\u00e9": true },`,
+    `  "dependencies": {`,
+    `    "a-dep": "1.0.1",`,
+    `    // why this pin: see the incident of March`,
+    `    "no-deps": "^1.0.0", /* do not bump */`,
+    `  },`,
+    `  /* before the closing brace */`,
+    `}`,
+    `// after the root`,
+    ``,
+  ].join("\r\n");
+
+  async function project(packageJson: string = PACKAGE_JSON) {
+    const { packageDir, packageJson: path, env } = await setupTest();
+    await Promise.all([
+      write(path, packageJson),
+      write(join(packageDir, "local", "package.json"), JSON.stringify({ name: "local", version: "1.0.0" })),
+    ]);
+    const run = async (...args: string[]) => {
+      await using proc = spawn({ cmd: [bunExe(), ...args], cwd: packageDir, env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    return { packageDir, path, run, text: () => file(path).text() };
+  }
+
+  // The whole file after the command is the file before it with one replacement.
+  function replaced(from: string | RegExp, to: string) {
+    expect(PACKAGE_JSON).toMatch(from);
+    return PACKAGE_JSON.replace(from, to);
+  }
+
+  test.each([
+    [
+      "bun add puts a new line where the name sorts",
+      ["add", "./local"],
+      replaced(`    "a-dep": "1.0.1",\r\n`, `    "a-dep": "1.0.1",\r\n    "local": "./local",\r\n`),
+    ],
+    [
+      "bun add with another version changes the version",
+      ["add", "no-deps@2.0.0"],
+      replaced(`"no-deps": "^1.0.0"`, `"no-deps": "2.0.0"`),
+    ],
+    [
+      "bun remove takes the line and the comment on it, and leaves the comment above it",
+      ["remove", "no-deps"],
+      replaced(`    "no-deps": "^1.0.0", /* do not bump */\r\n`, ""),
+    ],
+    [
+      "bun remove of every dependency takes the group",
+      ["remove", "a-dep", "no-deps"],
+      replaced(/  "dependencies": \{[^}]*\},\r\n/, ""),
+    ],
+    ["bun update changes the version", ["update", "no-deps"], replaced(`"no-deps": "^1.0.0"`, `"no-deps": "^1.1.0"`)],
+    [
+      "bun update --latest changes the version",
+      ["update", "--latest", "no-deps"],
+      replaced(`"no-deps": "^1.0.0"`, `"no-deps": "^2.0.0"`),
+    ],
+  ])("%s", async (_, args, expected) => {
+    const { run, text } = await project();
+    const { stderr, exitCode } = await run(...args);
+    expect(stderr).not.toContain("error:");
+    expect(await text()).toBe(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a member that sorts to another place takes the comments above it and beside it along", async () => {
+    const { packageDir, run, text } = await project(
+      `{\n  "dependencies": {\n    // c is first here\n    "c": "file:./c", // beside c\n    "b": "file:./b" // beside b\n  }\n}\n`,
+    );
+    await Promise.all(
+      ["a", "b", "c"].map(name =>
+        write(join(packageDir, name, "package.json"), JSON.stringify({ name, version: "1.0.0" })),
+      ),
+    );
+    const { stderr, exitCode } = await run("add", "./a");
+    expect(stderr).not.toContain("error:");
+    expect(await text()).toBe(
+      `{\n  "dependencies": {\n    "a": "./a",\n    "b": "file:./b", // beside b\n    // c is first here\n    "c": "file:./c" // beside c\n  }\n}\n`,
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun patch --commit adds patchedDependencies", async () => {
+    const { packageDir, run, text } = await project();
+    expect((await run("install")).exitCode).toBe(0);
+    expect((await run("patch", "no-deps")).exitCode).toBe(0);
+    expect(await text()).toBe(PACKAGE_JSON);
+    await write(join(packageDir, "node_modules", "no-deps", "patched.js"), "// patched\n");
+    const { stderr, exitCode } = await run("patch", "--commit", "node_modules/no-deps");
+    expect(stderr).not.toContain("error:");
+    expect(await text()).toBe(
+      replaced(
+        `  },\r\n  /* before`,
+        `  },\r\n  "patchedDependencies": {\r\n    "no-deps@1.1.0": "patches/no-deps@1.1.0.patch"\r\n  },\r\n  /* before`,
+      ),
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun pm trust adds trustedDependencies to a file with comments", async () => {
+    const packageJson = `{\r\n\t// the name\r\n\t"name": "app",\r\n\r\n\t"dependencies": { "lifecycle-postinstall": "1.0.0" } /* one */\r\n}\r\n`;
+    const { run, text } = await project(packageJson);
+    expect((await run("install")).exitCode).toBe(0);
+    expect(await text()).toBe(packageJson);
+    const { stderr, exitCode } = await run("pm", "trust", "lifecycle-postinstall");
+    expect(stderr).not.toContain("error:");
+    expect(await text()).toBe(
+      `{\r\n\t// the name\r\n\t"name": "app",\r\n\r\n\t"dependencies": { "lifecycle-postinstall": "1.0.0" }, /* one */\r\n\t"trustedDependencies": [\r\n\t\t"lifecycle-postinstall"\r\n\t]\r\n}\r\n`,
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  // The next three pass before the change too: a reprint of the whole file that says the same was not written.
+  // An edit in the text must not write it either.
+  test("a command that changes nothing does not write the file", async () => {
+    // `bun update` finds nothing to update. The numbers are not spelled the way a printer spells them.
+    const packageJson = `{\n  "name": "app",\n  "config": { "n": [0x10, .5, 1_000, 010] },\n  "dependencies": {\n    "no-deps": "2.0.0"\n  }\n}\n`;
+    const { path, run, text } = await project(packageJson);
+    expect((await run("install")).exitCode).toBe(0);
+    const { mtimeMs } = lstatSync(path);
+    for (const args of [["update"], ["add", "no-deps@2.0.0"], ["install"]]) {
+      const { stderr, exitCode } = await run(...args);
+      expect(stderr).not.toContain("error:");
+      expect(await text()).toBe(packageJson);
+      expect(lstatSync(path).mtimeMs).toBe(mtimeMs);
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  test("a file that is not an object is left alone by a command that changes nothing", async () => {
+    // The parser reads the first value of this file as its root.
+    const packageJson = `"name": "app",\n  "version": "1.0.0"\n}\n`;
+    const { run, text } = await project(packageJson);
+    for (const args of [["update"], ["update", "--latest"]]) {
+      expect((await run(...args)).exitCode).toBe(0);
+      expect(await text()).toBe(packageJson);
+    }
+  });
+
+  test("what one step of a command changes and a later step changes back is as the file has it", async () => {
+    // `bun add no-deps` puts the name in before the install and the range that it resolved to after it.
+    const packageJson = `{\n  "dependencies": {\n    'no-deps': '^2.0.0' // as the file spells it\n  }\n}\n`;
+    const { path, run, text } = await project(packageJson);
+    expect((await run("install")).exitCode).toBe(0);
+    const { mtimeMs } = lstatSync(path);
+    const { stderr, exitCode } = await run("add", "no-deps");
+    expect(stderr).not.toContain("error:");
+    expect(await text()).toBe(packageJson);
+    expect(lstatSync(path).mtimeMs).toBe(mtimeMs);
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe.concurrent("package.json indentation", async () => {
   test("works for root and workspace packages", async () => {
     const { packageDir, packageJson, env } = await setupTest();
@@ -918,8 +1085,9 @@ describe.concurrent("package.json indentation", async () => {
 
     const rootPackageJson = await file(packageJson).text();
 
+    // The lines that are there stay as they are. The new member is indented like the first one.
     expect(rootPackageJson).toBe(
-      `{\n     "name": "foo",\n     "workspaces": ["packages/*"],\n     "dependencies": {\n          "no-deps": "^2.0.0"\n     }\n}`,
+      `\n{\n\n     "name": "foo",\n"workspaces": ["packages/*"],\n     "dependencies": {\n          "no-deps": "^2.0.0"\n     }\n}`,
     );
 
     // now add to workspace. it should keep tab indentation
@@ -940,7 +1108,7 @@ describe.concurrent("package.json indentation", async () => {
 
     expect(await file(packageJson).text()).toBe(rootPackageJson);
     const workspacePackageJson = await file(join(packageDir, "packages", "bar", "package.json")).text();
-    expect(workspacePackageJson).toBe(`{\n\t"name": "bar",\n\t"dependencies": {\n\t\t"no-deps": "^2.0.0"\n\t}\n}`);
+    expect(workspacePackageJson).toBe(`\n{\n\n\t"name": "bar",\n\t"dependencies": {\n\t\t"no-deps": "^2.0.0"\n\t},\n}`);
   });
 
   test("install maintains indentation", async () => {
@@ -958,7 +1126,7 @@ describe.concurrent("package.json indentation", async () => {
     expect(err).not.toContain("error:");
     expect(out).toContain("installed no-deps@2.0.0");
     expect(exitCode).toBe(0);
-    expect(await file(packageJson).text()).toBe(`{\n  "dependencies": {\n    "no-deps": "^2.0.0"\n  }\n}\n`);
+    expect(await file(packageJson).text()).toBe(`{\n  "dependencies": {\n    "no-deps": "^2.0.0"\n  }\n  }\n`);
   });
 });
 

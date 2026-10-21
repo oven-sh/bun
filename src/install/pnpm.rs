@@ -3,7 +3,7 @@ use bun_alloc::AllocError;
 use bun_ast::{self, self as js_ast, E, Expr, ExprData};
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::fmt::{escape_control_chars, for_terminal};
-use bun_core::{Global, strings};
+use bun_core::strings;
 use bun_semver as semver;
 use bun_semver::{ExternalString, String};
 use bun_sys::{self as sys, Fd};
@@ -19,7 +19,7 @@ use crate::migration::{
 use crate::npm::{self};
 use crate::package_manager_real::add_remove_with_filter::WorkspaceTarget;
 use crate::package_manager_real::package_json_write_back;
-use crate::package_manager_real::update_package_json_and_install::print_package_json_into_cache_entry;
+use crate::package_manager_real::update_package_json_and_install::save_entry;
 use crate::repository::Repository;
 use crate::resolution::{self, Resolution, TaggedValue};
 use crate::yarn_berry::scalar_text;
@@ -1958,13 +1958,8 @@ fn update_package_json_after_migration(
         return Ok(());
     }
 
-    // The spliced-in nodes live in `bump` and the AST store, so the cache entry is reprinted to own
-    // its tree.
-    print_package_json_into_cache_entry(root_pkg_json, json);
-    if let Err(err) = root_pkg_json.reparse_root(log) {
-        bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
-        Global::crash();
-    }
+    // The spliced-in nodes live in `bump` and the AST store: the cache entry must own its tree.
+    save_entry(root_pkg_json, json, log);
 
     package_json_write_back::record_migrated(manager, WorkspaceTarget::root(), copied);
 

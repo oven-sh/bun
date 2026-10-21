@@ -10,6 +10,7 @@ use bun_core::fmt::quote;
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::PackageManager;
+use bun_install::package_manager_real::package_json_text;
 use bun_js_printer as js_printer;
 use bun_parsers::json;
 use bun_paths as path;
@@ -30,7 +31,6 @@ struct PackageJson {
     path: Box<[u8]>,
     root: Expr,
     contents: Box<[u8]>,
-    source: Source,
     indentation: bun_ast::Indentation,
 }
 
@@ -196,7 +196,6 @@ impl PmPkgCommand {
             path,
             root: result.root,
             contents,
-            source,
             indentation: result.indentation,
         }
     }
@@ -716,33 +715,24 @@ impl PmPkgCommand {
     fn save_package_json(root: Expr, pkg: &PackageJson, dry_run: bool) {
         let preserve_newline = pkg.contents.last() == Some(&b'\n');
 
-        let mut buffer_writer = js_printer::BufferWriter::init();
-        buffer_writer.buffer.list.reserve(pkg.contents.len() + 1);
-        buffer_writer.append_newline = preserve_newline;
-
-        let mut writer = js_printer::BufferPrinter::init(buffer_writer);
-
-        if let Err(e) = js_printer::print_json(
-            &mut writer,
-            root,
-            &pkg.source,
-            js_printer::PrintJsonOptions {
-                indent: pkg.indentation,
-                mangled_props: None,
-                ..Default::default()
-            },
-        ) {
-            Output::err_generic("Failed to serialize package.json: {s}", (e.name(),));
-            Global::exit(1);
-        }
-
-        let content = writer.ctx.written_without_trailing_zero();
+        let content =
+            match package_json_text::print(&pkg.path, &pkg.contents, root, pkg.indentation) {
+                Ok(content) => content,
+                Err(e) => {
+                    Output::err_generic("Failed to serialize package.json: {s}", (e.name(),));
+                    Global::exit(1);
+                }
+            };
+        let content = content.as_slice();
         if dry_run {
             let _ = Output::writer().write_all(content);
             if !preserve_newline {
                 let _ = Output::writer().write_all(b"\n");
             }
             Output::flush();
+            return;
+        }
+        if *content == *pkg.contents {
             return;
         }
         let path_z = bun_core::ZBox::from_bytes(&pkg.path);

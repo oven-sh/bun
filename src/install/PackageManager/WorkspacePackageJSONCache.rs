@@ -15,8 +15,10 @@ use bun_ast::Indentation;
 use bun_ast::{Log, Source};
 use bun_paths::is_absolute;
 
+use super::package_json_text;
 use crate::bun_json as json;
 use crate::initialize_store;
+use std::borrow::Cow;
 
 pub struct MapEntry {
     /// The nodes are allocated in the process heap and never freed, because a mimalloc heap per
@@ -25,22 +27,46 @@ pub struct MapEntry {
     pub source: Source,
     pub indentation: Indentation,
     indentation_guessed: bool,
+    /// The parser's answer, once a save has asked: the text as loaded is not strict JSON.
+    loaded_is_jsonc: Option<bool>,
     /// Owns the path bytes that `source.path.{text,pretty,name.*}` borrow,
     /// so the source's path slices stay valid for the entry's lifetime.
     /// `StringHashMap` boxes its own key, so keep the duped copy alive here.
     _path_storage: bun_core::ZBox,
     /// Superseded `source.contents` buffers, pinned so cached `root` slices
     /// stay valid; freed when the entry drops.
-    pub stale_contents: Vec<std::borrow::Cow<'static, [u8]>>,
+    pub stale_contents: Vec<Cow<'static, [u8]>>,
 }
 
 impl MapEntry {
-    /// Re-parse `self.source.contents` into `self.root`.
-    ///
-    /// `updatePackageJSONAndInstall` edits a copy of `root`, prints it, and
-    /// writes the printed JSON back into `source.contents`. The caller then
-    /// invokes this to restore the invariant `root == parse(source)`.
-    pub(crate) fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
+    /// The text as the entry was loaded with. A save writes over it, not over an earlier save.
+    fn loaded_text(&self) -> &[u8] {
+        self.stale_contents.first().unwrap_or(&self.source.contents)
+    }
+
+    /// Writes `root` over the loaded text, and takes the tree that the parser reads back.
+    pub fn save(&mut self, root: Expr, log: &mut Log) -> Result<(), Error> {
+        let mut loaded_is_jsonc = self.loaded_is_jsonc;
+        let (text, read) = package_json_text::print_and_read(
+            self.source.path.text,
+            self.loaded_text(),
+            root,
+            self.indentation,
+            &mut loaded_is_jsonc,
+        )?;
+        self.loaded_is_jsonc = loaded_is_jsonc;
+        let old = core::mem::replace(&mut self.source.contents, Cow::Owned(text));
+        self.stale_contents.push(old);
+        let Some(read) = read else {
+            return self.reparse_root(log);
+        };
+        let heap = bun_alloc::Arena::borrowing_default();
+        let tree = json::materialize(&read.root, &self.source, log, &heap)?;
+        self.root = json::clone_out_of_store(&tree, &self.source, log, &heap)?;
+        Ok(())
+    }
+
+    fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
         let heap = bun_alloc::Arena::borrowing_default();
         let parsed = parse_package_json(&self.source, log, &heap, false)?;
         self.root = json::clone_out_of_store(&parsed.root, &self.source, log, &heap)?;
@@ -212,6 +238,7 @@ impl WorkspacePackageJSONCache {
             source,
             indentation: parsed.indentation,
             indentation_guessed: opts.guess_indentation,
+            loaded_is_jsonc: None,
             // `source.path` borrows this allocation; the `Box<[u8]>` heap
             // address is stable across the move into the map.
             _path_storage: key,

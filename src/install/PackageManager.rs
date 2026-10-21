@@ -62,6 +62,8 @@ pub mod command_line_arguments;
 pub mod install_with_manager;
 #[path = "PackageManager/PackageJSONEditor.rs"]
 pub mod package_json_editor;
+#[path = "PackageManager/package_json_text.rs"]
+pub mod package_json_text;
 #[path = "PackageManager/package_json_write_back.rs"]
 pub mod package_json_write_back;
 #[path = "PackageManager/PackageManagerDirectories.rs"]

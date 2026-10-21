@@ -408,6 +408,16 @@ impl ParsedJson {
         parse_to_rows(source, log, PACKAGE_JSON_OPTS, false)
     }
 
+    /// `opts` as given. `is_document`: only whitespace and comments may follow the value.
+    pub fn parse_with_opts(
+        opts: JSONOptions,
+        is_document: bool,
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+    ) -> crate::Result<ParsedJson> {
+        parse_to_rows(source, log, opts, is_document)
+    }
+
     /// A document fetched from an npm registry: strict JSON with no duplicate-key warnings.
     pub fn parse_npm_manifest(
         source: &bun_ast::Source,
@@ -891,6 +901,7 @@ pub(crate) fn skip_ws_and_comments(contents: &[u8], mut p: usize) -> Option<usiz
     None
 }
 
+#[inline(always)]
 fn skip_json_value(contents: &[u8], p: usize) -> Option<usize> {
     match *contents.get(p)? {
         b'"' | b'\'' => skip_string_token(contents, p),
@@ -935,6 +946,138 @@ fn skip_json_value(contents: &[u8], p: usize) -> Option<usize> {
                 }
             }
             (q > p).then_some(q)
+        }
+    }
+}
+
+/// Token scanners over text that the parser has accepted, for a writer that edits the text in place.
+pub mod scan {
+    use bun_core::strings;
+
+    /// What is between two tokens.
+    #[derive(Clone, Copy)]
+    pub struct Gap {
+        /// Where the next token starts.
+        pub end: usize,
+        pub has_comment: bool,
+    }
+
+    /// The gap at `p`; `None` when only whitespace and comments are left.
+    #[inline]
+    pub fn gap(contents: &[u8], p: usize) -> Option<Gap> {
+        // Most gaps are blanks and line feeds before a byte that no gap has.
+        let blanks = contents
+            .get(p..)?
+            .iter()
+            .take_while(|byte| matches!(byte, b' ' | b'\n'))
+            .count();
+        let start = p + blanks;
+        match contents.get(start) {
+            Some(&byte) if byte > b' ' && byte < 0x80 && byte != b'/' => Some(Gap {
+                end: start,
+                has_comment: false,
+            }),
+            _ => gap_of_any_kind(contents, start),
+        }
+    }
+
+    #[inline(never)]
+    fn gap_of_any_kind(contents: &[u8], start: usize) -> Option<Gap> {
+        let end = super::skip_ws_and_comments(contents, start)?;
+        Some(Gap {
+            end,
+            has_comment: strings::contains_char(&contents[start..end], b'/'),
+        })
+    }
+
+    #[derive(Clone, Copy)]
+    pub struct StringToken {
+        pub end: usize,
+        /// A backslash is in it. Without one, the string is the bytes between its quotes.
+        pub has_escape: bool,
+    }
+
+    /// The string token that starts at `start`.
+    pub fn string(contents: &[u8], start: usize) -> Option<StringToken> {
+        let quote = *contents.get(start)?;
+        if quote != b'"' && quote != b'\'' {
+            return None;
+        }
+        let mut p = start + 1;
+        let mut has_escape = false;
+        loop {
+            p += strings::index_of_any(contents.get(p..)?, &[quote, b'\\'])?;
+            if contents[p] == quote {
+                return Some(StringToken {
+                    end: p + 1,
+                    has_escape,
+                });
+            }
+            has_escape = true;
+            p += 2;
+        }
+    }
+
+    /// End of the value (string, number, keyword, object or array) that starts at `start`.
+    pub fn value_end(contents: &[u8], start: usize) -> Option<usize> {
+        match *contents.get(start)? {
+            b'"' | b'\'' => string(contents, start).map(|token| token.end),
+            _ => super::skip_json_value(contents, start),
+        }
+    }
+
+    /// End of the comment that starts at `start`. A `//` comment ends before its line terminator.
+    pub fn comment_end(contents: &[u8], start: usize) -> Option<usize> {
+        match contents.get(start..start + 2)? {
+            b"//" => {
+                let mut p = start + 2;
+                while p < contents.len()
+                    && !matches!(contents[p], b'\n' | b'\r')
+                    && !crate::json_index::is_ls_ps(contents, p)
+                {
+                    p += 1;
+                }
+                Some(p)
+            }
+            b"/*" => Some(start + 2 + strings::index_of(&contents[start + 2..], b"*/")? + 2),
+            _ => None,
+        }
+    }
+
+    /// What the parser reads the string token `token` as. `None` when it does not accept the token.
+    pub fn string_value<'a>(token: &'a [u8], scratch: &'a mut Vec<u8>) -> Option<&'a [u8]> {
+        if super::skip_string_token(token, 0)? != token.len() {
+            return None;
+        }
+        let body = &token[1..token.len() - 1];
+        if !strings::contains_char(body, b'\\') {
+            return Some(body);
+        }
+        scratch.clear();
+        crate::json_stage2::decode_string_body(body, scratch).ok()?;
+        Some(scratch)
+    }
+
+    /// A value that is not a string, an object or an array.
+    #[derive(Clone, Copy)]
+    pub enum Scalar {
+        Number(f64),
+        Boolean(bool),
+        Null,
+    }
+
+    /// What the parser itself reads `token` as: `0x10`, `.5`, `1_000` and `- 1` are numbers to it.
+    #[cold]
+    pub fn scalar(token: &[u8]) -> Option<Scalar> {
+        use bun_ast::expr::Data;
+        let source = bun_ast::Source::init_path_string(b"", token);
+        let mut log = bun_ast::Log::init();
+        let parsed = super::parse_impl(&source, &mut log, super::PACKAGE_JSON_OPTS, true).ok()?;
+        match parsed.root.data {
+            Data::ENumber(number) => Some(Scalar::Number(number.value())),
+            Data::EBoolean(boolean) => Some(Scalar::Boolean(boolean.value)),
+            Data::ENull(_) => Some(Scalar::Null),
+            _ => None,
         }
     }
 }

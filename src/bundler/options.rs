@@ -1195,7 +1195,7 @@ pub struct TypeChecked<'a, 'i> {
     pub entry_points: &'i mut dyn Iterator<Item = &'a [u8]>,
     /// The path, the text and the loader of each JavaScript, TypeScript and JSON file of the
     /// bundle, which the type checker takes instead of reading the file again.
-    /// Also each file of `files` that is in neither the bundle nor on disk.
+    /// Also files of `files` that are not on disk, and that the bundle has no code for.
     pub sources: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8], Loader)>,
 }
 

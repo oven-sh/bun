@@ -2492,9 +2492,7 @@ impl<'p, 's> Checker<'p, 's> {
             match mapped.optional {
                 // `getTemplateTypeFromMappedType` adds the optionality to the declared template type.
                 MappedModifier::Add => c.optional_property(ty),
-                MappedModifier::Remove if is_optional => {
-                    c.filter(ty, |_, m| !m.is_undefined() && m != TypeId::VOID)
-                }
+                MappedModifier::Remove if is_optional => c.remove_missing_or_undefined_type(ty),
                 _ => ty,
             }
         };

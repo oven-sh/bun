@@ -13,7 +13,8 @@ use bun_resolver::fs as Fs;
 use bun_sys::{self, Fd};
 
 use crate::cli as CLI;
-use bun_bundler::options;
+use bun_bundler::{Transpiler, options};
+use bun_options_types::schema::api;
 
 // ──────────────────────────────────────────────────────────────────────────
 // RadioChoice trait — the choice enums used by `process_radio_button`
@@ -399,8 +400,11 @@ impl InitCommand {
 
         let mut fields = PackageJSONFields::default();
 
-        let mut package_json_file: Option<bun_sys::File> =
-            bun_sys::File::openat(destination_dir, b"package.json", bun_sys::O::RDWR, 0).ok();
+        let package_json_open =
+            bun_sys::File::openat(destination_dir, b"package.json", bun_sys::O::RDWR, 0);
+        let package_json_missing =
+            matches!(&package_json_open, Err(err) if err.get_errno() == bun_sys::E::ENOENT);
+        let mut package_json_file: Option<bun_sys::File> = package_json_open.ok();
         let mut package_json_contents: MutableString = MutableString::init_empty();
         bun_ast::initialize_store();
         // Arena for JSON parse / Expr building.
@@ -465,6 +469,8 @@ impl InitCommand {
             b"project".to_vec()
         };
         let mut did_load_package_json = false;
+        let mut entry_from_manifest = false;
+        let mut longest_main_field: usize = 0;
         if !package_json_contents.list.is_empty() {
             'process_package_json: {
                 let source = bun_ast::Source::init_path_string(
@@ -500,6 +506,15 @@ impl InitCommand {
                 {
                     if let Some(str_) = name.as_utf8_string_literal() {
                         fields.entry_point = str_.to_vec();
+                        entry_from_manifest = !fields.entry_point.is_empty();
+                    }
+                }
+                for main_field in [b"module".as_slice(), b"main", b"jsnext:main"] {
+                    if let Some(len) = package_json_expr
+                        .get(main_field)
+                        .and_then(|value| value.as_utf8_string_literal().map(<[u8]>::len))
+                    {
+                        longest_main_field = longest_main_field.max(len);
                     }
                 }
 
@@ -798,17 +813,7 @@ impl InitCommand {
             template.write_to_package_json(&mut fields, &bump)?;
         }
 
-        'write_package_json: {
-            let (fd, created_close): (Fd, Option<bun_sys::CloseOnDrop>) = match package_json_file
-                .as_ref()
-            {
-                Some(f) => (f.handle(), None),
-                None => {
-                    let fd = bun_sys::File::create(Fd::cwd(), b"package.json", true)?.into_raw();
-                    (fd, Some(bun_sys::CloseOnDrop::new(fd)))
-                }
-            };
-            let _close = created_close;
+        {
             let mut buffer_writer = js_printer::BufferWriter::init();
             buffer_writer.append_newline = true;
             let mut package_json_writer = js_printer::BufferPrinter::init(buffer_writer);
@@ -827,37 +832,42 @@ impl InitCommand {
                 },
             );
             if let Err(err) = print_result {
-                bun_core::pretty_errorln!(
-                    "package.json failed to write due to error {}",
-                    err.name(),
-                );
-                package_json_file = None;
-                break 'write_package_json;
+                Output::err(err, "failed to write package.json", ());
+                Global::exit(1);
             }
             let written = package_json_writer.ctx.get_written();
-            if let Err(err) = bun_sys::File::borrow(&fd).write_all(written) {
-                bun_core::pretty_errorln!(
-                    "package.json failed to write due to error {}",
-                    bstr::BStr::new(err.name()),
-                );
-                package_json_file = None;
-                break 'write_package_json;
-            }
-            if let Err(err) =
-                bun_sys::ftruncate(fd, i64::try_from(written.len()).expect("int cast"))
-            {
-                bun_core::pretty_errorln!(
-                    "package.json failed to write due to error {}",
-                    bstr::BStr::new(err.name()),
-                );
-                package_json_file = None;
-                break 'write_package_json;
+            let write_result = match package_json_file.as_ref() {
+                // Read with `pread`, so the offset is still 0.
+                Some(file) => file.write_all(written).and_then(|()| {
+                    bun_sys::ftruncate(
+                        file.handle(),
+                        i64::try_from(written.len()).expect("int cast"),
+                    )
+                }),
+                None if package_json_missing => match Assets::write_new_file(
+                    b"package.json",
+                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::EXCL,
+                    written,
+                ) {
+                    // A symlink to a file that does not exist yet: write through it.
+                    Err(err) if err.get_errno() == bun_sys::E::EEXIST => {
+                        Assets::overwrite(b"package.json", written)
+                    }
+                    result => result,
+                },
+                // Exists but could not be opened, read, or parsed as an object: start it over in place.
+                None => Assets::overwrite(b"package.json", written),
+            };
+            if let Err(err) = write_result {
+                Assets::failed(err, b"package.json");
             }
         }
 
         if steps.write_gitignore {
-            let _ = Assets::create(b".gitignore", Assets::GITIGNORE, &[]);
-            // suppressed
+            Assets::check(
+                Assets::create(b".gitignore", Assets::GITIGNORE, &[]),
+                b".gitignore",
+            );
         }
 
         match template {
@@ -866,56 +876,54 @@ impl InitCommand {
                     Template::create_agent_rule();
                 }
 
-                if package_json_file.is_some() && !did_load_package_json {
+                if !did_load_package_json {
                     bun_core::prettyln!(" + <r><d>package.json<r>");
                     Output::flush();
                 }
 
-                if !fields.entry_point.is_empty()
+                if !minimal
+                    && !fields.entry_point.is_empty()
                     && is_safe_entry_point_path(&fields.entry_point)
+                    && (!entry_from_manifest || is_script_file_name(&fields.entry_point))
                     && !exists(&fields.entry_point)
+                    && !(entry_from_manifest && package_entry_loads(longest_main_field))
                 {
-                    if let Some(dirname) = bun_core::dirname(&fields.entry_point) {
-                        if dirname != b"." {
-                            let _ = bun_sys::Dir::cwd().make_path(dirname);
-                        }
+                    let created = Assets::create_new(
+                        &fields.entry_point,
+                        b"console.log(\"Hello via Bun!\");\n",
+                    );
+                    // A project that already has a package.json works without the stub.
+                    if !entry_from_manifest {
+                        Assets::check(created, &fields.entry_point);
                     }
-
-                    let mut ep_z = fields.entry_point.clone();
-                    ep_z.push(0);
-                    let ep_zstr = ZStr::from_slice_with_nul(&ep_z[..]);
-                    // SAFETY: ep_z[len-1] == 0 written above
-                    let _ = Assets::create_new(ep_zstr, b"console.log(\"Hello via Bun!\");\n");
-                    // suppress
                 }
 
                 if steps.write_tsconfig {
-                    'brk: {
-                        let (filename, what_for): (&[u8], _) =
-                            if is_type_script_entry_point(&fields.entry_point) {
-                                (b"tsconfig.json", " (for bun check and editor autocomplete)")
-                            } else {
-                                (b"jsconfig.json", " (for editor autocomplete)")
-                            };
-                        if Assets::create_full(Assets::TSCONFIG_JSON, filename, what_for, &[])
-                            .is_err()
-                        {
-                            break 'brk;
-                        }
-                    }
+                    let (filename, what_for): (&[u8], _) =
+                        if is_type_script_entry_point(&fields.entry_point) {
+                            (b"tsconfig.json", " (for bun check and editor autocomplete)")
+                        } else {
+                            (b"jsconfig.json", " (for editor autocomplete)")
+                        };
+                    Assets::check(
+                        Assets::create_full(Assets::TSCONFIG_JSON, filename, what_for, &[]),
+                        filename,
+                    );
                 }
 
                 if steps.write_readme {
-                    let _ = Assets::create(
+                    Assets::check(
+                        Assets::create(
+                            b"README.md",
+                            Assets::README_MD,
+                            &[
+                                (b"name", fields.name.as_slice()),
+                                (b"bunVersion", Environment::VERSION_STRING.as_bytes()),
+                                (b"entryPoint", fields.entry_point.as_slice()),
+                            ],
+                        ),
                         b"README.md",
-                        Assets::README_MD,
-                        &[
-                            (b"name", fields.name.as_slice()),
-                            (b"bunVersion", Environment::VERSION_STRING.as_bytes()),
-                            (b"entryPoint", fields.entry_point.as_slice()),
-                        ],
                     );
-                    // suppressed
                 }
 
                 if !fields.entry_point.is_empty() && !did_load_package_json {
@@ -966,82 +974,41 @@ impl Assets {
     pub(crate) const README_MD: &'static [u8] = include_bytes!("init/README.default.md");
     pub(crate) const README2_MD: &'static [u8] = include_bytes!("init/README2.default.md");
 
-    /// Create a new asset file, overriding anything that already exists. Known
-    /// assets will have their contents pre-populated; otherwise the file will be empty.
-    ///
-    /// Takes the asset bytes directly; `asset_name` is the filename.
-    fn create(
-        asset_name: &[u8],
-        asset: &'static [u8],
-        args: &[(&[u8], &[u8])],
-    ) -> Result<(), Error> {
-        let is_template = !args.is_empty();
-        Self::create_full_inner(asset, asset_name, "", is_template, args)
+    /// Create an asset file (`EEXIST` if it exists). With `args`, `{[name]s}` placeholders are substituted.
+    fn create(filename: &[u8], asset: &[u8], args: &[(&[u8], &[u8])]) -> bun_sys::Result<()> {
+        Self::create_full(asset, filename, "", args)
     }
 
-    pub(crate) fn create_with_contents(
-        asset_name: &[u8],
-        contents: &'static [u8],
-        args: &[(&[u8], &[u8])],
-    ) -> Result<(), Error> {
-        let is_template = !args.is_empty();
-        Self::create_full_with_contents(asset_name, contents, "", is_template, args)
-    }
-
-    fn create_new(filename: &ZStr, contents: &[u8]) -> Result<(), Error> {
-        // Create parent dirs then open.
-        if let Some(dir) = bun_core::dirname(filename.as_bytes()) {
+    /// Like [`create`](Self::create) without substitution; creates missing parent directories.
+    fn create_new(filename: &[u8], contents: &[u8]) -> bun_sys::Result<()> {
+        if let Some(dir) = bun_core::dirname(filename) {
             if !dir.is_empty() && dir != b"." {
-                let _ = bun_sys::Dir::cwd().make_path(dir);
+                bun_sys::Dir::cwd().make_path(dir)?;
             }
         }
-        let file = bun_sys::File::openat(
-            Fd::cwd(),
-            filename.as_bytes(),
+        Self::write_new_file(
+            filename,
             bun_sys::O::CREAT | bun_sys::O::EXCL | bun_sys::O::WRONLY,
-            0o666,
+            contents,
         )?;
 
-        file.write_all(contents)?;
-
-        bun_core::prettyln!(" + <r><d>{}<r>", bstr::BStr::new(filename.as_bytes()));
+        bun_core::prettyln!(" + <r><d>{}<r>", bstr::BStr::new(filename));
         Output::flush();
         Ok(())
     }
 
     fn create_full(
-        // content of known asset
-        asset: &'static [u8],
-        // name of asset file to create
+        asset: &[u8],
         filename: &[u8],
         // optionally add a suffix to the end of the `+ filename` message. Must have a leading space.
         message_suffix: &'static str,
         args: &[(&[u8], &[u8])],
-    ) -> Result<(), Error> {
-        let is_template = !args.is_empty();
-        Self::create_full_inner(asset, filename, message_suffix, is_template, args)
-    }
-
-    fn create_full_inner(
-        asset: &'static [u8],
-        filename: &[u8],
-        message_suffix: &'static str,
-        is_template: bool,
-        args: &[(&[u8], &[u8])],
-    ) -> Result<(), Error> {
-        let file = bun_sys::File::openat(
-            Fd::cwd(),
-            filename,
-            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-            0o666,
-        )?;
-
-        // Write contents of known assets to the new file. Template assets get formatted.
-        if is_template {
-            let buf = bun_fmt::substitute_named(asset, args);
-            file.write_all(&buf)?;
+    ) -> bun_sys::Result<()> {
+        let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::EXCL;
+        if args.is_empty() {
+            Self::write_new_file(filename, flags, asset)?;
         } else {
-            file.write_all(asset)?;
+            Self::write_new_file(filename, flags, &bun_fmt::substitute_named(asset, args))?;
         }
         bun_core::prettyln!(
             " + <r><d>{}{}<r>",
@@ -1052,38 +1019,45 @@ impl Assets {
         Ok(())
     }
 
-    fn create_full_with_contents(
-        // name of asset file to create
-        filename: &[u8],
-        contents: &'static [u8],
-        // optionally add a suffix to the end of the `+ filename` message. Must have a leading space.
-        message_suffix: &'static str,
-        // Treat the asset as a format string, using `args` to populate it. Only applies to known assets.
-        is_template: bool,
-        // Format arguments
-        args: &[(&[u8], &[u8])],
-    ) -> Result<(), Error> {
-        let file = bun_sys::File::openat(
-            Fd::cwd(),
-            filename,
-            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-            0o666,
-        )?;
-
-        if is_template {
-            let buf = bun_fmt::substitute_named(contents, args);
-            file.write_all(&buf)?;
-        } else {
-            file.write_all(contents)?;
+    /// `flags` include `O_EXCL`; a file whose write fails is removed again so a rerun creates it.
+    fn write_new_file(filename: &[u8], flags: i32, contents: &[u8]) -> bun_sys::Result<()> {
+        let file = bun_sys::File::openat(Fd::cwd(), filename, flags, 0o666)
+            .map_err(|err| err.with_path(filename))?;
+        let result = file.write_all(contents);
+        drop(file);
+        if result.is_err() {
+            let mut filename_z = filename.to_vec();
+            filename_z.push(0);
+            let _ = bun_sys::unlinkat(Fd::cwd(), ZStr::from_slice_with_nul(&filename_z));
         }
+        result.map_err(|err| err.with_path(filename))
+    }
 
-        bun_core::prettyln!(
-            " + <r><d>{}{}<r>",
-            bstr::BStr::new(filename),
-            message_suffix,
+    /// Replace a file's contents in place. A failure leaves the file where it is.
+    fn overwrite(filename: &[u8], contents: &[u8]) -> bun_sys::Result<()> {
+        let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+        bun_sys::File::openat(Fd::cwd(), filename, flags, 0o666)
+            .and_then(|file| file.write_all(contents))
+            .map_err(|err| err.with_path(filename))
+    }
+
+    /// Whether the file was created; an existing one is left alone, any other failure exits.
+    fn check(result: bun_sys::Result<()>, filename: &[u8]) -> bool {
+        match result {
+            Ok(()) => true,
+            Err(err) if err.get_errno() == bun_sys::E::EEXIST => false,
+            Err(err) => Self::failed(err, filename),
+        }
+    }
+
+    /// Report a scaffold file that could not be written and exit(1).
+    fn failed(err: bun_sys::Error, filename: &[u8]) -> ! {
+        Output::err(
+            err,
+            "failed to write <b>{}<r>",
+            (bstr::BStr::new(filename),),
         );
-        Output::flush();
-        Ok(())
+        Global::exit(1);
     }
 }
 
@@ -1475,6 +1449,11 @@ impl Template {
     }
 
     fn create_agent_rule() {
+        /// The rule is an extra for a detected editor: one that cannot be written is skipped.
+        fn create_rule(path: &[u8], contents: &[u8]) -> bool {
+            Assets::create_new(path, contents).is_ok()
+        }
+
         let mut create_claude_md = Self::is_claude_code_installed()
             // Never overwrite CLAUDE.md
             && !exists(b"CLAUDE.md");
@@ -1487,28 +1466,11 @@ impl Template {
             } else {
                 template_file.path
             };
-            let asset_path_z = {
-                let mut v = asset_path.to_vec();
-                v.push(0);
-                v
-            };
-            let result = Assets::create_new(
-                ZStr::from_slice_with_nul(&asset_path_z[..]),
-                // SAFETY: asset_path_z[len-1] == 0 written above
-                template_file.contents,
-            );
-            if result.is_err() {
-                if create_claude_md {
-                    create_claude_md = false;
-                    // If installing the CLAUDE.md fails for some reason, fall back to installing the cursor rule.
-                    let mut tp = template_file.path.to_vec();
-                    tp.push(0);
-                    let _ = Assets::create_new(
-                        ZStr::from_slice_with_nul(&tp[..]),
-                        // SAFETY: tp[len-1] == 0 written above
-                        template_file.contents,
-                    );
-                }
+            let created = create_rule(asset_path, template_file.contents);
+            if !created && create_claude_md {
+                // If installing the CLAUDE.md fails for some reason, fall back to installing the cursor rule.
+                create_claude_md = false;
+                create_rule(template_file.path, template_file.contents);
             }
 
             #[cfg(not(windows))]
@@ -1518,7 +1480,7 @@ impl Template {
                 // sync if you change it locally. we use a symlink for the cursor
                 // rule in this case so that the github UI for CLAUDE.md (which may
                 // appear prominently in repos) doesn't show a file path.
-                if result.is_ok() && create_claude_md {
+                if created && create_claude_md {
                     'symlink_cursor_rule: {
                         create_claude_md = false;
                         let _ = bun_sys::Dir::cwd().make_path(b".cursor/rules");
@@ -1553,9 +1515,8 @@ impl Template {
                 None => 0,
             };
 
-            let _ = Assets::create_new(
-                ZStr::from_static(b"CLAUDE.md\0"),
-                // SAFETY: literal is NUL-terminated
+            create_rule(
+                b"CLAUDE.md",
                 Self::AGENT_RULE[end_of_frontmatter..].trim_ascii_start(),
             );
         }
@@ -1641,7 +1602,7 @@ impl Template {
             let contents = file.contents;
 
             let result = if path == b"README.md" {
-                Assets::create_with_contents(
+                Assets::create(
                     b"README.md",
                     contents,
                     &[
@@ -1650,28 +1611,17 @@ impl Template {
                     ],
                 )
             } else {
-                let mut p = path.to_vec();
-                p.push(0);
-                Assets::create_new(
-                    ZStr::from_slice_with_nul(&p[..]),
-                    // SAFETY: p[len-1] == 0 written above
-                    contents,
-                )
+                Assets::create_new(path, contents)
             };
             if let Err(err) = result {
-                if matches!(err, crate::Error::Sys(bun_errno::SystemErrno::EEXIST)) {
+                if err.get_errno() == bun_sys::E::EEXIST {
                     bun_core::prettyln!(
                         " ○ <r><yellow>{}<r> (already exists, skipping)",
                         bstr::BStr::new(path),
                     );
                     Output::flush();
                 } else {
-                    Output::err(
-                        err,
-                        "failed to create file: '{s}'",
-                        &[&bstr::BStr::new(path)],
-                    );
-                    Global::crash();
+                    Assets::failed(err, path);
                 }
             }
         }
@@ -1943,6 +1893,38 @@ fn is_type_script_entry_point(entry_point: &[u8]) -> bool {
 /// inside the current working directory.
 fn is_safe_entry_point_path(path: &[u8]) -> bool {
     !bun_paths::is_absolute_loose(path) && !strings::split_any(path, b"/\\").any(|seg| seg == b"..")
+}
+
+/// Whether `path` names a JavaScript or TypeScript file, the only kind of file the stub can be.
+fn is_script_file_name(path: &[u8]) -> bool {
+    !matches!(path.last(), Some(b'/' | b'\\'))
+        && bun_ast::Loader::from_string(bun_paths::extension(path))
+            .is_some_and(|loader| loader.is_java_script_like())
+}
+
+/// Whether `bun .` finds a module for the package in the current directory; undecidable counts as found.
+#[cold]
+fn package_entry_loads(longest_main_field: usize) -> bool {
+    let top_level_dir = Fs::FileSystem::get().top_level_dir;
+    // The resolver joins the directory and a main field into a path buffer without a length check.
+    if top_level_dir.len() + longest_main_field + 64 > bun_paths::MAX_PATH_BYTES {
+        return true;
+    }
+    let mut log = bun_ast::Log::init();
+    let options = api::TransformOptions {
+        target: Some(api::Target::Bun),
+        ..Default::default()
+    };
+    let Ok(mut transpiler) = Transpiler::init(CLI::cli_arena(), &raw mut log, options, None) else {
+        return true;
+    };
+    transpiler.resolver.opts.load_tsconfig_json = false;
+    !matches!(
+        transpiler
+            .resolver
+            .resolve(top_level_dir, b".", bun_ast::ImportKind::EntryPointRun),
+        Err(bun_resolver::Error::ModuleNotFound)
+    )
 }
 
 #[inline]

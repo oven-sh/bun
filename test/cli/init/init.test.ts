@@ -628,3 +628,286 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, ".cursor"))).toBe(false);
   });
 });
+
+// A scaffold file that cannot be written (full disk) must fail `bun init`
+// instead of being left behind empty with exit code 0. bun ignores SIGXFSZ,
+// so under `ulimit -f N` a write past the limit fails with EFBIG, which takes
+// the same path as ENOSPC.
+describe.skipIf(isWindows)("bun init when a file cannot be written", () => {
+  // `ulimit -f 1` lets a file grow to 512 bytes in dash, bash and busybox, and
+  // to 1024 bytes in the /bin/sh of macOS.
+  const ulimitBlock = isWindows ? 0 : measureUlimitBlock();
+  function measureUlimitBlock() {
+    using dir = tempDir("bun-init-ulimit-block", {});
+    Bun.spawnSync({
+      cmd: ["sh", "-c", "trap '' XFSZ; ulimit -f 1; head -c 4096 /dev/zero > probe"],
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    return fs.statSync(path.join(String(dir), "probe")).size;
+  }
+
+  // Lists the dependencies, so that `bun init` runs no `bun install`.
+  const withDependencies = JSON.stringify({
+    name: "pkg",
+    devDependencies: { "@types/bun": "latest" },
+    peerDependencies: { typescript: "^7" },
+  });
+
+  async function init(cwd: string, options: { limit?: number; env?: Record<string, string | undefined> } = {}) {
+    const cmd =
+      options.limit === undefined
+        ? [bunExe(), "init", "-y"]
+        : ["sh", "-c", `ulimit -f ${options.limit} && exec "$@"`, "sh", bunExe(), "init", "-y"];
+    await using proc = Bun.spawn({
+      cmd,
+      cwd,
+      env: options.env ?? initEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  /** Every file below `dir` with its size (directories themselves are left out). */
+  function files(dir: string) {
+    return Object.fromEntries(
+      readdirSync(dir, { recursive: true, encoding: "utf8" })
+        .map(name => [name, fs.statSync(path.join(dir, name))] as const)
+        .filter(([, stat]) => stat.isFile())
+        .map(([name, stat]) => [name, stat.size]),
+    );
+  }
+
+  test.concurrent("package.json: reports the error, removes the empty file, exits 1", async () => {
+    using dir = tempDir("bun-init-enospc-package-json", {});
+    // No file may grow past 0 bytes: the very first write fails.
+    const { stderr, exitCode } = await init(String(dir), { limit: 0 });
+    expect(stderr).toContain("EFBIG");
+    expect(stderr).toContain("failed to write package.json");
+    expect(files(String(dir))).toEqual({});
+    expect(exitCode).toBe(1);
+  });
+
+  // tsconfig.json (735 bytes) is the one scaffold file between 512 and 1024
+  // bytes, so this needs a shell that counts `ulimit -f` in 512-byte blocks.
+  (ulimitBlock === 512 ? test.concurrent : test.skip)(
+    "tsconfig.json: reports the error, removes the partial file, exits 1, and a rerun completes the scaffold",
+    async () => {
+      using dir = tempDir("bun-init-enospc-tsconfig", { "package.json": withDependencies });
+      {
+        const { stdout, stderr, exitCode } = await init(String(dir), { limit: 1 });
+        expect(stderr).toContain("EFBIG");
+        expect(stderr).toContain("failed to write tsconfig.json");
+        expect(stdout).not.toContain("tsconfig.json");
+        const written = files(String(dir));
+        expect(written).toEqual({
+          ".gitignore": expect.any(Number),
+          "index.ts": expect.any(Number),
+          "package.json": expect.any(Number),
+        });
+        expect(Object.values(written)).not.toContain(0);
+        expect(exitCode).toBe(1);
+      }
+      // With space available again the missing files are created.
+      {
+        const { stdout, stderr, exitCode } = await init(String(dir));
+        expect(stderr).not.toContain("failed to write");
+        expect(stdout).toContain("+ tsconfig.json");
+        expect(stdout).toContain("+ README.md");
+        const written = files(String(dir));
+        expect(written).toMatchObject({ "tsconfig.json": expect.any(Number), "README.md": expect.any(Number) });
+        expect(Object.values(written)).not.toContain(0);
+        expect(exitCode).toBe(0);
+      }
+    },
+    30_000,
+  );
+
+  // The Cursor rule is written for a detected editor, not asked for. It is
+  // larger than two `ulimit -f` blocks of either size, and every other scaffold
+  // file is smaller than two blocks.
+  test.concurrent("an agent rule that cannot be written is skipped and leaves no partial file", async () => {
+    using dir = tempDir("bun-init-enospc-agent-rule", { "package.json": withDependencies });
+    const env = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "0", CLAUDE_CODE_AGENT_RULE_DISABLED: "1", CURSOR_TRACE_ID: "1" };
+    const { stdout, stderr, exitCode } = await init(String(dir), { limit: 2, env });
+    expect(stderr).not.toContain("failed to write");
+    expect(stdout).not.toContain(".cursor");
+    const written = files(String(dir));
+    expect(written).toEqual({
+      ".gitignore": expect.any(Number),
+      "README.md": expect.any(Number),
+      "index.ts": expect.any(Number),
+      "package.json": expect.any(Number),
+      "tsconfig.json": expect.any(Number),
+    });
+    expect(Object.values(written)).not.toContain(0);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a package.json that cannot be opened is reported with the cause", async () => {
+    using dir = tempDir("bun-init-package-json-is-a-directory", { "package.json": {} });
+    const { stderr, exitCode } = await init(String(dir));
+    expect(stderr).toContain("EISDIR");
+    expect(stderr).toContain("failed to write package.json");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent(
+    "a package.json that is a symlink to a missing file is written through the link",
+    async () => {
+      using dir = tempDir("bun-init-package-json-symlink", {});
+      fs.symlinkSync("real-package.json", path.join(String(dir), "package.json"));
+      // A new project runs `bun install`. Keep it off the network and let it fail fast.
+      using registry = Bun.serve({ port: 0, fetch: () => new Response("not found", { status: 404 }) });
+      const env = {
+        ...initEnv,
+        BUN_CONFIG_REGISTRY: String(registry.url),
+        BUN_INSTALL_CACHE_DIR: path.join(String(dir), ".cache"),
+      };
+      const { stderr } = await init(String(dir), { env });
+      expect(stderr).not.toContain("failed to write");
+      expect(await Bun.file(path.join(String(dir), "real-package.json")).json()).toMatchObject({ module: "index.ts" });
+    },
+    30_000,
+  );
+});
+
+// `bun init` in a directory that already has a package.json takes the entry
+// point from `module` or `main`. It creates the "Hello via Bun!" stub at that
+// path only when the path names a script and nothing loads for the package
+// yet. It used to create it whenever that exact path did not exist, and the
+// stub then ran in place of the module the package resolved to before. The
+// fixtures list the dependencies, so no `bun install` runs.
+describe("bun init over a package.json that names an entry point", () => {
+  const stubSource = 'console.log("Hello via Bun!");\n';
+  const scaffold = new Set([".gitignore", "README.md", "package.json", "tsconfig.json", "jsconfig.json"]);
+
+  function manifest(fields: Record<string, string>) {
+    return JSON.stringify({
+      name: "pkg",
+      version: "1.0.0",
+      ...fields,
+      devDependencies: { "@types/bun": "latest" },
+      peerDependencies: { typescript: "^7" },
+    });
+  }
+
+  async function bun(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: initEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  /** Everything below `dir` that is not one of init's own scaffold files, directories included. */
+  function leftBehind(dir: string) {
+    return readdirSync(dir, { recursive: true, encoding: "utf8" })
+      .map(name => name.replaceAll("\\", "/"))
+      .filter(name => !scaffold.has(name))
+      .sort();
+  }
+
+  describe.each([
+    // [what, package.json fields, the module that `bun .` runs, where the stub used to be written]
+    ["an extensionless main beside index.js", { main: "./index" }, "index.js", "index"],
+    ["a .js main beside index.ts", { main: "./index.js" }, "index.ts", "index.js"],
+    ["a missing main beside index.js", { main: "./missing.js" }, "index.js", "missing.js"],
+    ["a missing module beside a main", { module: "./missing.mjs", main: "./real.js" }, "real.js", "missing.mjs"],
+  ] as const)("%s", (_what, fields, real, stub) => {
+    test.concurrent.each([
+      ["-y", ["-y"], ""],
+      ["--minimal -y", ["--minimal", "-y"], ""],
+      ["-y <folder>", ["-y", "pkg"], "pkg"],
+    ] as const)(
+      "`bun .` still runs that module after bun init %s",
+      async (_flags, args, folder) => {
+        const project = { "package.json": manifest(fields), [real]: `console.log("the real module");` };
+        using dir = tempDir("bun-init-entry-shadow", folder ? { [folder]: project } : project);
+        const cwd = path.join(String(dir), folder);
+
+        const init = await bun(String(dir), "init", ...args);
+        const run = await bun(cwd, ".");
+
+        expect(init.stdout).not.toContain(" + ./" + stub);
+        expect({
+          ran: run.stdout,
+          stubCreated: fs.existsSync(path.join(cwd, stub)),
+          exitCode: init.exitCode,
+        }).toEqual({ ran: "the real module\n", stubCreated: false, exitCode: 0 });
+      },
+      30_000,
+    );
+  });
+
+  // The documented case: the entry point named by package.json is created when
+  // it is a script and the package does not load yet.
+  test.concurrent.each([
+    ["main", "dist/index.js"],
+    ["module", "index.ts"],
+  ] as const)("creates the stub at a %s that nothing loads for yet", async (field, entry) => {
+    using dir = tempDir("bun-init-entry-create", { "package.json": manifest({ [field]: entry }) });
+    const init = await bun(String(dir), "init", "-y");
+    expect(init.stdout).toContain(" + " + entry);
+    expect(fs.readFileSync(path.join(String(dir), entry), "utf8")).toBe(stubSource);
+    expect(init.exitCode).toBe(0);
+  });
+
+  test.concurrent("--minimal creates no stub at a main that nothing loads for yet", async () => {
+    using dir = tempDir("bun-init-entry-minimal", { "package.json": manifest({ main: "./missing.js" }) });
+    const init = await bun(String(dir), "init", "--minimal", "-y");
+    expect(leftBehind(String(dir))).toEqual([]);
+    expect(init.exitCode).toBe(0);
+  });
+
+  test.concurrent.each([
+    ["data.json", {}],
+    ["build/Release/addon.node", {}],
+    ["bin/cli", {}],
+    ["./addon", { "addon.node": "" }],
+  ] as const)("creates nothing at main %s, which does not name a script", async (main, files) => {
+    using dir = tempDir("bun-init-entry-not-script", { "package.json": manifest({ main }), ...files });
+    const init = await bun(String(dir), "init", "-y");
+    expect(leftBehind(String(dir))).toEqual(Object.keys(files));
+    expect(init.exitCode).toBe(0);
+  });
+
+  test.concurrent(
+    "a main that cannot be created is skipped: nothing is left behind and init exits 0",
+    async () => {
+      const long = Buffer.alloc(4096, "m").toString();
+      const rows: { main: string; files: Record<string, string> }[] = [
+        { main: "./lib/", files: {} },
+        { main: "a/b/", files: {} },
+        { main: "f/child.js", files: { f: "a file, not a directory" } },
+        { main: long + ".js", files: {} },
+        // Whether the package loads is decided without reading tsconfig.json.
+        { main: "./index.js", files: { "index.ts": "", "tsconfig.json": JSON.stringify({ extends: "./" + long }) } },
+      ];
+      const results = await Promise.all(
+        rows.map(async ({ main, files }) => {
+          using dir = tempDir("bun-init-entry-skip", { "package.json": manifest({ main }), ...files });
+          const init = await bun(String(dir), "init", "-y");
+          return { main: main.slice(0, 16), left: leftBehind(String(dir)), exitCode: init.exitCode };
+        }),
+      );
+      expect(results).toEqual(
+        rows.map(({ main, files }) => ({
+          main: main.slice(0, 16),
+          left: Object.keys(files).filter(name => !scaffold.has(name)),
+          exitCode: 0,
+        })),
+      );
+    },
+    30_000,
+  );
+});

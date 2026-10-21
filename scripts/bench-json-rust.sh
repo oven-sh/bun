@@ -49,15 +49,20 @@ KERNELS=(highway_strings highway_json highway_xml highway_sourcemap xxhash3)
 KERNEL_FLAGS=(-std=c++23 -DHWY_DISABLED_TARGETS=HWY_ALL_SVE-HWY_SVE2_128)
 # root.h pulls in JavaScriptCore. This defines its include guard and the macros a kernel file uses from it.
 ROOT_STUB=src/parsers/benches/support/highway_strings_root_stub.h
-# Like build, and also compiles again when this script, or a header the last compile read, is newer than
-# the object. The compiler lists what it read in <object>.d.
+# Like build, and also compiles again when the compiler or the command line changed (<object>.cmd has both),
+# or when a file the last compile read (the compiler lists them in <object>.d) is newer or gone.
+CXX_VERSION=$($CXX --version)
 build_kernel() {
   local out=$1 dep
   shift
-  for dep in scripts/bench-json-rust.sh $(sed -e '1s/^[^:]*://' -e 's/\\$//' "$out.d" 2>/dev/null); do
-    if [ "$dep" -nt "$out" ]; then rm -f "$out"; break; fi
+  if [ "$CXX_VERSION"$'\n'"$*" != "$(cat "$out.cmd" 2>/dev/null)" ]; then rm -f "$out"; fi
+  for dep in $(sed -e '1s/^[^:]*://' -e 's/\\$//' "$out.d" 2>/dev/null); do
+    if [ ! -e "$dep" ] || [ "$dep" -nt "$out" ]; then rm -f "$out"; break; fi
   done
-  if [ ! -f "$out" ] || [ ! -f "$out.d" ]; then "$@" -MMD -MF "$out.d" -o "$out"; fi
+  if [ ! -f "$out" ] || [ ! -f "$out.d" ]; then
+    "$@" -MMD -MF "$out.d" -o "$out"
+    printf '%s\n%s\n' "$CXX_VERSION" "$*" > "$out.cmd"
+  fi
 }
 for k in "${KERNELS[@]}"; do
   flags=("${KERNEL_FLAGS[@]}")

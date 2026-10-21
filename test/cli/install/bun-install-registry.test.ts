@@ -484,16 +484,13 @@ describe.concurrent("certificate authority", () => {
   });
 
   // A relative `cafile` is joined onto the cwd into a path buffer of MAX_PATH_BYTES (4096 bytes on
-  // Linux, 1024 on macOS). A joined path that fits reaches the HTTP thread, which reports it in
-  // full. One that does not fit is reported under the name the user gave. Windows is left out: its
-  // buffer holds more than any path the OS accepts.
+  // Linux, 1024 on macOS). A joined path that fits is reported in full. One that does not fit is
+  // reported under the name the user gave. Windows is left out: its buffer holds more than any path
+  // the OS accepts.
   describe.skipIf(isWindows)("relative cafile near the path buffer length", () => {
     const maxPathBytes = isLinux ? 4096 : 1024;
 
     // `cafile` brings `<packageDir>/<cafile>` to `maxPathBytes + delta` bytes.
-    // `--silent` keeps the main thread's "Resolving dependencies" line off stderr. Each thread
-    // writes to stderr on its own, so that line can otherwise land inside the HTTP thread's
-    // error message when the path is longer than the write buffer.
     async function install(delta: number, from: "--cafile" | "bunfig") {
       const { packageDir, packageJson, env } = await setupTest();
       const cafile = Buffer.alloc(maxPathBytes + delta - Buffer.byteLength(packageDir + "/"), "a").toString();
@@ -505,7 +502,7 @@ describe.concurrent("certificate authority", () => {
         );
       }
       await using proc = spawn({
-        cmd: [bunExe(), "install", "--silent", ...(from === "bunfig" ? [] : ["--cafile", cafile])],
+        cmd: [bunExe(), "install", ...(from === "bunfig" ? [] : ["--cafile", cafile])],
         cwd: packageDir,
         stderr: "pipe",
         stdout: "pipe",
@@ -535,10 +532,8 @@ describe.concurrent("certificate authority", () => {
 
   test("non-existent --cafile with workspaces exits 1 without crashing", async () => {
     const { packageDir, packageJson, env } = await setupTest();
-    // The workspace walk in `PackageManager::init()` populates the workspace
-    // package.json cache before the HTTP thread starts. When the HTTP thread
-    // then fails CA validation and drives process exit, the exit path must not
-    // tear down that main-thread-owned cache from the HTTP thread.
+    // `PackageManager::init()` has filled the workspace package.json cache by the time it finds
+    // that the CA does not load. Its exit then runs the callback that tears that cache down.
     await Promise.all([
       write(
         packageJson,
@@ -672,6 +667,81 @@ ljelkjwelkgjw;lekj;lkejflkj
     const err = await stderr.text();
     expect(err).toContain("HTTPThread: the CA is invalid");
     expect(await exited).toBe(1);
+  });
+
+  // The project has no dependencies, so none of these commands makes a request. A CA that does not
+  // load still stops them at startup, before they print or write anything, on every run.
+  describe("in a command that needs no network", () => {
+    const manifest = JSON.stringify({ name: "foo", version: "1.0.0" });
+
+    async function run(args: string[], files: Record<string, string> = {}) {
+      const { packageDir, packageJson, env } = await setupTest();
+      await Promise.all([
+        write(packageJson, manifest),
+        ...Object.entries(files).map(([name, content]) => write(join(packageDir, name), content)),
+      ]);
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { packageDir, packageJson, result: { stdout, stderr, exitCode } };
+    }
+
+    const bunfigWithMissingCafile = Bun.TOML.stringify({ install: { cafile: "does-not-exist" } });
+    const notACertificate = "-----BEGIN CERTIFICATE-----\njlwkjekfjwlejlgldjfljlkwjef\n-----END CERTIFICATE-----\n";
+
+    describe.each(["install", "pm bin"])("bun %s", command => {
+      test.each([
+        [
+          "a --cafile that does not exist",
+          ["--cafile", "does-not-exist"],
+          {},
+          (dir: string) => `could not find CA file: '${join(dir, "does-not-exist")}'`,
+        ],
+        [
+          "a cafile from bunfig that does not exist",
+          [],
+          { "bunfig.toml": bunfigWithMissingCafile },
+          (dir: string) => `could not find CA file: '${join(dir, "does-not-exist")}'`,
+        ],
+        [
+          "a --cafile that holds no certificate",
+          ["--cafile", "not-a-certificate"],
+          { "not-a-certificate": notACertificate },
+          (dir: string) => `invalid CA file: '${join(dir, "not-a-certificate")}'`,
+        ],
+        ["a --ca that is not a certificate", ["--ca", "not-valid"], {}, () => "the CA is invalid"],
+      ])("stops for %s", async (_, flags, files, message) => {
+        const { packageDir, result } = await run([...command.split(" "), ...flags], files);
+        expect(result).toEqual({ stdout: "", stderr: `HTTPThread: ${message(packageDir)}\n`, exitCode: 1 });
+      });
+    });
+
+    test("bun pm pkg set stops before it writes package.json", async () => {
+      const { packageDir, packageJson, result } = await run([
+        "pm",
+        "pkg",
+        "set",
+        "description=x",
+        "--cafile",
+        "missing",
+      ]);
+      expect(result).toEqual({
+        stdout: "",
+        stderr: `HTTPThread: could not find CA file: '${join(packageDir, "missing")}'\n`,
+        exitCode: 1,
+      });
+      expect(await file(packageJson).text()).toBe(manifest);
+    });
+
+    test("bun pm bin runs with a --cafile that loads", async () => {
+      const { packageDir, result } = await run(["pm", "bin", "--cafile", "cafile"], { cafile: tls.cert });
+      expect(result).toEqual({ stdout: join(packageDir, "node_modules", ".bin") + "\n", stderr: "", exitCode: 0 });
+    });
   });
 });
 

@@ -4,69 +4,57 @@ const types = ["PostgresSQL", "MySQL"];
 const rustPaths = {
   PostgresSQLConnection: "bun_sql_jsc::postgres::PostgresSQLConnection",
   PostgresSQLQuery: "bun_sql_jsc::postgres::PostgresSQLQuery",
-  MySQLConnection: "bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection",
   MySQLQuery: "bun_sql_jsc::mysql::js_my_sql_query::JSMySQLQuery",
 };
-const classes: ClassDefinition[] = [];
-for (const type of types) {
-  classes.push(
-    define({
-      name: `${type}Connection`,
-      rustPath: rustPaths[`${type}Connection`],
-      construct: true,
-      refCounted: true,
-      configurable: false,
-      hasPendingActivity: type === "PostgresSQL",
-      klass: {},
-      JSType: "0b11101110",
-      proto: {
-        close: {
-          fn: "doClose",
-        },
-        ref: {
-          fn: "doRef",
-        },
-        unref: {
-          fn: "doUnref",
-        },
-        flush: {
-          fn: "doFlush",
-        },
-        queries: {
-          getter: "getQueries",
-          this: true,
-        },
-        onclose: {
-          getter: "getOnClose",
-          setter: "setOnClose",
-          this: true,
-        },
-        ...(type === "PostgresSQL"
-          ? {
-              onnotification: {
-                getter: "getOnNotification",
-                setter: "setOnNotification",
-                this: true,
-              },
-            }
-          : {}),
+const classes: ClassDefinition[] = [
+  define({
+    name: "PostgresSQLConnection",
+    rustPath: rustPaths.PostgresSQLConnection,
+    noConstructor: true,
+    refCounted: true,
+    configurable: false,
+    hasPendingActivity: true,
+    JSType: "0b11101110",
+    proto: {
+      close: {
+        fn: "doClose",
       },
-      values:
-        type === "PostgresSQL"
-          ? ["onconnect", "onclose", "queries", "onnotification"]
-          : ["onconnect", "onclose", "queries"],
-    }),
-  );
-
+      flush: {
+        fn: "doFlush",
+      },
+      hold: {
+        fn: "doHold",
+      },
+      unhold: {
+        fn: "doUnhold",
+      },
+      inTransaction: {
+        getter: "getInTransaction",
+      },
+      ref: {
+        fn: "doRef",
+      },
+      sasl: {
+        getter: "getSasl",
+      },
+      onnotification: {
+        getter: "getOnNotification",
+        setter: "setOnNotification",
+        this: true,
+      },
+    },
+    values: ["onconnect", "onclose", "onretire", "checkServerIdentity", "columnTransform", "onnotification"],
+  }),
+];
+for (const type of types) {
   classes.push(
     define({
       name: `${type}Query`,
       rustPath: rustPaths[`${type}Query`],
-      construct: true,
+      noConstructor: true,
       refCounted: true,
       configurable: false,
       JSType: "0b11101110",
-      klass: {},
       proto: {
         run: {
           fn: "doRun",
@@ -74,10 +62,6 @@ for (const type of types) {
         },
         cancel: {
           fn: "doCancel",
-          length: 0,
-        },
-        done: {
-          fn: "doDone",
           length: 0,
         },
         setMode: {
@@ -88,8 +72,37 @@ for (const type of types) {
           fn: "setPendingValueFromJS",
           length: 1,
         },
+        describeResult: {
+          fn: "describeResult",
+          length: 1,
+        },
+        ...(type === "PostgresSQL"
+          ? {
+              setCopy: {
+                fn: "setCopy",
+                length: 2,
+              },
+              copyWrite: {
+                fn: "copyWrite",
+                length: 1,
+              },
+              copyDone: {
+                fn: "copyDone",
+                length: 0,
+              },
+              copyFail: {
+                fn: "copyFail",
+                length: 1,
+              },
+              copyResume: {
+                fn: "copyResume",
+                length: 0,
+              },
+            }
+          : {}),
       },
-      values: ["pendingValue", "target", "columns", "binding"],
+      values:
+        type === "PostgresSQL" ? ["pendingValue", "target", "binding", "copy"] : ["pendingValue", "target", "binding"],
       estimatedSize: true,
     }),
   );

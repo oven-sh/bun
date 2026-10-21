@@ -196,7 +196,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             let _ = self.add_range_error(r, format_args!("Unexpected end of file"));
         } else {
             let raw = &self.contents[p..p + (r.len as usize).max(1)];
-            let _ = self.add_range_error(r, format_args!("Unexpected {}", bstr::BStr::new(raw)));
+            let raw = bun_core::fmt::escape_control_chars(raw);
+            let _ = self.add_range_error(r, format_args!("Unexpected {raw}"));
         }
         crate::Error::ParserError
     }
@@ -209,10 +210,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             let _ = self.add_range_error(r, format_args!("Expected {what} but found end of file"));
         } else {
             let raw = &self.contents[p..p + (r.len as usize).max(1)];
-            let _ = self.add_range_error(
-                r,
-                format_args!("Expected {what} but found \"{}\"", bstr::BStr::new(raw)),
-            );
+            let raw = bun_core::fmt::escape_control_chars(raw);
+            let _ = self.add_range_error(r, format_args!("Expected {what} but found \"{raw}\""));
         }
     }
 
@@ -882,7 +881,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             key_range,
             format_args!(
                 "Duplicate key \"{}\" in object literal",
-                bstr::BStr::new(key_text)
+                bun_core::fmt::escape_control_chars(key_text)
             ),
         );
     }

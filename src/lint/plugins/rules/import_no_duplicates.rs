@@ -28,7 +28,7 @@ const MODULES: Message = Message::new(
 );
 
 type Imports<'a> = SmallVec<[Import<'a>; 2]>;
-/// The keys and the values of `with { key: "value" }`, sorted.
+/// The sorted key-value pairs of `with { key: "value" }`.
 type Attributes<'a> = SmallVec<[(&'a [u8], &'a [u8]); 2]>;
 
 fn attributes_of<'a>(import: Import<'a>) -> Attributes<'a> {
@@ -65,7 +65,7 @@ impl Rule for NoDuplicates {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        // oxlint looks at the top level only, and at its module records.
+        // oxlint only checks the top level, and uses its module records.
         match file.language().is_oxlint {
             true => (!is_waiting_for_modules(file) && import_declarations(file).nth(1).is_some())
                 .then_some(()),
@@ -86,8 +86,8 @@ impl Rule for NoDuplicates {
         for import in import_declarations(file) {
             by_specifier.entry(import.spec()).or_default().push(import);
         }
-        // The imports of each file, or of each specifier that stands for none. Only of specifiers that follow each other in oxlint's
-        // hash map.
+        // Groups the imports by resolved file, or by specifier if it doesn't resolve. Only specifiers that are adjacent
+        // in oxlint's hash map end up in one group.
         let mut groups: Vec<Imports<'a>> = Vec::new();
         let mut previous_key: Option<Cow<'a, [u8]>> = None;
         for (specifier, _) in in_hash_order(requested_modules(file)) {
@@ -120,7 +120,7 @@ impl Rule for NoDuplicates {
                 self.check_group(group, cx);
                 continue;
             }
-            // With other attributes it is another module.
+            // The same file with different attributes is a different module.
             let mut attribute_groups: FxHashMap<Attributes<'a>, Imports<'a>> = FxHashMap::default();
             for &import in group {
                 attribute_groups
@@ -128,9 +128,9 @@ impl Rule for NoDuplicates {
                     .or_default()
                     .push(import);
             }
-            // oxlint sorts them by the attributes.
+            // oxlint sorts them by attributes.
             let several = attribute_groups.iter().filter(|it| it.1.len() > 1);
-            for (_, group) in utils::sort::in_order_of(several, |it| it.0) {
+            for (_, group) in utils::sort::collect_sorted_by_key(several, |it| it.0) {
                 self.check_group(group, cx);
             }
         }
@@ -168,7 +168,8 @@ impl NoDuplicates {
         u8::from(import.namespace().is_some())
     }
 
-    /// The plugin's way: the imports of each block, at any depth, by `import_map` and by what its resolvers find.
+    /// The plugin's version: groups the imports of each block, at any depth, by `import_map` and by what its resolvers
+    /// return.
     fn check_resolved<'a>(&self, cx: &Cx<'a, Self>) {
         let file = cx.file();
         let Some(resolvers) = Resolvers::of(file.settings()) else {
@@ -205,9 +206,10 @@ impl NoDuplicates {
     }
 
     fn check_group<'a>(&self, group: &[Import<'a>], cx: &Cx<'a, Self>) {
-        // Values and, with `preferInline`, types by name; types by name; namespaces; types that are default exports.
+        // [values, plus named types with `preferInline`; named types; namespaces; default-imported types]
         let mut import_entries_maps: [Imports<'a>; 4] = Default::default();
-        // An import for the side effects and an `import type` cannot be merged. An import of values can take in either.
+        // A side-effect import and an `import type` can't be merged with each other, but either can merge into a value
+        // import.
         let (mut key0_side_effect_imports, mut key0_type_only_imports) =
             (Imports::new(), Imports::new());
         let mut key0_has_runtime_specifiers = false;
@@ -264,7 +266,7 @@ impl NoDuplicates {
         }
     }
 
-    /// `module`: what the plugin calls the module. oxlint has none.
+    /// `module`: the plugin's name for the module in the message. `None` for oxlint.
     fn check_duplicates<'a>(
         &self,
         imports: &[Import<'a>],
@@ -279,7 +281,7 @@ impl NoDuplicates {
         };
         let is_oxlint = module.is_none();
         let fix = |fixer| merge_imports_fix(fixer, self.prefer_inline, is_oxlint, imports);
-        // The plugin reports each import, oxlint the first, with a label at each of the others.
+        // The plugin reports every import. oxlint reports the first, with a label on each of the others.
         if let Some(module) = module {
             cx.report(first, IMPORTED_MULTIPLE_TIMES)
                 .data("module", module.to_vec())
@@ -316,11 +318,11 @@ impl NoDuplicates {
     }
 }
 
-/// Where the next two `\n` are from a place on. It is kept for the next question, which is often about the same line.
+/// Finds the next two `\n` after an offset. Caches the last answer, since the next query is often about the same line.
 #[derive(Default)]
 struct NextNewlines {
     from: u32,
-    /// `None`: nothing was asked yet. In it: there is none.
+    /// `None` before the first query. An inner `None` means there's no such `\n`.
     found: Option<[Option<u32>; 2]>,
 }
 
@@ -345,7 +347,7 @@ impl NextNewlines {
     }
 }
 
-/// Where the first `brace` is in `within`. oxlint searches the text, so that what is in a string counts.
+/// Returns the offset of the first `brace` in `within`. oxlint searches the text, so a brace inside a string counts.
 fn find_brace<'a>(file: &'a File<'a>, within: Span, brace: &str, is_oxlint: bool) -> Option<u32> {
     match is_oxlint {
         true => find_next_token_within(file, within, brace.as_bytes()),
@@ -360,14 +362,15 @@ fn brace_position(decl: Import, brace: &str, is_oxlint: bool) -> Option<u32> {
     find_brace(decl.stmt().file(), decl.span(), brace, is_oxlint)
 }
 
-/// `newlines`: one for what is asked about the comments before the imports, one for the ends of the imports.
+/// `newlines`: one cache for queries about the comments before the imports, one for the ends of the imports.
 fn has_problematic_comments(
     decl: Import,
     [after_comment, after_import]: &mut [NextNewlines; 2],
     is_oxlint: bool,
 ) -> bool {
     let (file, span) = (decl.stmt().file(), decl.span());
-    // The plugin asks the comments next to the import, oxlint the closest, whatever is in between.
+    // The plugin checks the comments directly next to the import. oxlint checks the closest ones, whatever is in
+    // between.
     let (mut before, mut after) = match is_oxlint {
         true => (
             file.comments_in(Span::before(0, span)),
@@ -375,7 +378,7 @@ fn has_problematic_comments(
         ),
         false => (file.comments_before(span), file.comments_after(span)),
     };
-    // At most one `\n` is between it and the import. The plugin counts lines.
+    // A comment before the import with at most one `\n` in between. The plugin counts lines instead.
     let comment_before = before
         .next_back()
         .filter(|it| !is_oxlint || !it.text().starts_with(b"#!"));
@@ -385,7 +388,7 @@ fn has_problematic_comments(
     }) {
         return true;
     }
-    // None is.
+    // A comment after the import with no `\n` in between.
     if after.next().is_some_and(|it| match is_oxlint {
         true => after_import.after(file, span.end)[0].is_none_or(|first| first >= it.start()),
         false => file.line_of(it.start()) == file.line_of(span.end),
@@ -399,7 +402,7 @@ fn has_problematic_comments(
 
 struct MergeSpecifier<'a> {
     decl: Import<'a>,
-    /// What is between the braces.
+    /// The text between the braces.
     identifiers: &'a [u8],
 }
 
@@ -415,11 +418,11 @@ fn merge_imports_fix<'a>(
     let file = fixer.file();
     let (&first, rest) = decls.split_first()?;
     let mut newlines = [NextNewlines::default(), NextNewlines::default()];
-    // oxlint merges only what is written alike, without attributes.
-    let is_other = |it: &Import<'a>| {
+    // oxlint only merges imports with the same written specifier and without attributes.
+    let is_unmergeable = |it: &Import<'a>| {
         it.spec() != first.spec() || it.attributes().is_some() || it.phase().is_some()
     };
-    if is_oxlint && decls.iter().any(is_other)
+    if is_oxlint && decls.iter().any(is_unmergeable)
         || first.namespace().is_some()
         || has_problematic_comments(first, &mut newlines, is_oxlint)
     {
@@ -461,7 +464,7 @@ fn merge_imports_fix<'a>(
     let first_brace_content = braces.map_or(&b""[..], |(open, close)| {
         file.slice(Span::new(open + 1, close))
     });
-    // oxlint looks at the text: a comment after the `,` hides it.
+    // oxlint checks the text, so a comment after the `,` hides it.
     let first_has_trailing_comma = match (is_oxlint, braces) {
         (true, _) => {
             !first_is_empty && strings::trim_js_whitespace_end(first_brace_content).ends_with(b",")
@@ -475,7 +478,7 @@ fn merge_imports_fix<'a>(
     if !first_is_empty {
         existing.extend(strings::split(first_brace_content, b",").map(strings::trim_js_whitespace));
     }
-    // oxlint also where types and values come together.
+    // oxlint also does this when merging types with values.
     let should_inline_type_imports = prefer_inline
         || is_oxlint
             && (!first.is_type_only() || specifiers.iter().any(|it| !it.decl.is_type_only()));
@@ -492,14 +495,14 @@ fn merge_imports_fix<'a>(
     if should_add_specifiers && should_inline_type_imports && first.is_type_only() {
         if let Some(type_start) = find_next_token_within(file, first_span, b"type") {
             let type_end = type_start + 4;
-            // The plugin takes the character after it, whatever it is.
+            // The plugin also removes the character after it, whatever it is.
             let after = match file.text().get(type_end as usize..) {
                 Some(tail) if !is_oxlint => strings::js_whitespace_len(tail).max(1) as u32,
                 tail => u32::from(tail.is_some_and(|it| it.starts_with(b" "))),
             };
             fixes.push(fixer.remove(Span::new(type_start, type_end + after)));
         }
-        // The plugin goes by the tokens: `a as b` stays as it is, and a `from` that is imported makes two.
+        // The plugin works on tokens, so `a as b` is left as is and an imported `from` matches twice.
         match is_oxlint {
             true => fixes.extend(
                 first
@@ -578,11 +581,11 @@ fn build_specifiers_text<'a>(
         let (start, is_empty) = (result.len(), specifier.decl.named().is_empty());
         for cur in strings::split(specifier.identifiers, b",") {
             let trimmed = strings::trim_js_whitespace(cur);
-            // For the plugin nothing is a name too, once.
+            // The plugin treats an empty entry as a name too, the first time.
             if is_oxlint && trimmed.is_empty() || !existing.insert(trimmed) {
                 continue;
             }
-            // The first is put after what there is already.
+            // The first one follows the specifiers that are already there.
             if result.len() > start || needs_comma && !is_empty && !cur.is_empty() {
                 result.push(b',');
             }
@@ -591,7 +594,7 @@ fn build_specifiers_text<'a>(
             if is_type {
                 result.extend_from_slice(b"type ");
             }
-            // The plugin takes it with the blanks around it.
+            // The plugin copies it with its surrounding whitespace.
             if !is_oxlint {
                 result.extend_from_slice(cur);
             } else if ends_with_line_comment(trimmed) {
@@ -617,7 +620,7 @@ fn ends_with_line_comment(source: &[u8]) -> bool {
     )
 }
 
-/// Without the blanks that it starts with, up to a line break.
+/// Strips leading whitespace, but not past the first line break.
 fn strip_leading_inline_whitespace(source: &[u8]) -> &[u8] {
     let line = strings::split_once_char(source, b'\n').map_or(source, |it| it.0);
     source
@@ -625,13 +628,13 @@ fn strip_leading_inline_whitespace(source: &[u8]) -> &[u8] {
         .unwrap_or(source)
 }
 
-/// `inside`: what is between the braces.
+/// `inside`: the span between the braces.
 fn merge_into_braces(fixer: Fixer, inside: Span, specifiers_text: &[u8], is_oxlint: bool) -> Fix {
     let (content, close) = (fixer.file().slice(inside), inside.end);
     let trailing = content
         .get(strings::trim_js_whitespace_end(content).len()..)
         .unwrap_or_default();
-    // The plugin puts it right before the `}`.
+    // The plugin inserts it right before the `}`.
     if !is_oxlint || trailing.is_empty() && !content.is_empty() {
         fixer.insert_before(Span::empty(close), specifiers_text)
     } else if trailing.len() == content.len() {

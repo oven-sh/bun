@@ -22,12 +22,13 @@
  * - hoist-bundled-cycle-plugin@1.0.0  peer on host@1.0.0
  *
  * hoist-optional-peer-cycle: the cycle is closed through an optional peer.
- * An optional peer is bound while the tree is built, to whichever version of
- * its name is closest to the copy being processed, and that one binding is
- * shared by every copy of the package. With x@2.0.0 at the root and x@1.0.0
- * nested under `entry`, y@2.0.0 is reached both next to x@1.0.0 (through z,
- * which binds the peer to it) and below a nested x@2.0.0, where that binding
- * conflicts and x@1.0.0 is nested again, which starts the cycle over.
+ * An optional peer is bound while the tree is built, to the version of its
+ * name that is closest to the first copy of the package, and that one binding
+ * is shared by every copy. With x@2.0.0 installed under another name, entry's
+ * x@1.0.0 is the root's x and the first y@2.0.0 binds the peer to it. y@2.0.0
+ * is reached again below a nested x@2.0.0 (the peer of y@1.0.0), where that
+ * binding conflicts and x@1.0.0 is nested again, which starts the cycle over.
+ * With x@2.0.0 as the root's x the peer is bound to that, and the layout ends.
  *
  * - hoist-optional-peer-cycle-entry@1.0.0 -> x@1.0.0
  * - hoist-optional-peer-cycle-x@1.0.0     -> y@1.0.0, z@1.0.0

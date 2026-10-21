@@ -14,7 +14,7 @@ const PREFER_AWAIT_TO_THEN: Message = Message::new("", "Prefer await to then()/c
 impl Rule for PreferAwaitToThen {
     const META: Meta = Meta::oxlint(Plugin::Promise, "prefer-await-to-then", Kind::Suggestion);
     const ON: On = On::new().method_calls(&["then", "catch", "finally"]);
-    /// Whether something is in a `yield` or an `await`.
+    /// Caches whether a node is inside a `yield` or an `await`.
     type State<'a> = AncestorMemo<'a, ()>;
 
     fn new(options: &Options) -> Self {
@@ -32,7 +32,7 @@ impl Rule for PreferAwaitToThen {
         if !is_promise_with_context(call_expr).is_some_and(|name| name.is_any(&["then", "catch", "finally"])) {
             return;
         }
-        // Parentheses and the whole of an optional chain are nodes in between for oxlint.
+        // In oxlint's AST parentheses and an optional chain are nodes in between.
         if matches!(e.parent(), Node::Stmt(parent) if parent.tag() == StmtTag::Return) && !e.is_parenthesized() && !e.is_chain_root() {
             return;
         }

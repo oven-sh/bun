@@ -1,24 +1,27 @@
-//! What the parsers of this crate refuse: what is wrong, and where.
+//! Syntax errors from this crate's parsers: a message and an offset.
 
-/// A syntax error in a file that is not a script: what is wrong, and at which byte of the text, not counting a byte order
-/// mark.
+/// A syntax error in a file that isn't a script: the message, and the byte offset in the text, not counting a byte
+/// order mark.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct SyntaxError(pub Message, pub u32);
 
 impl SyntaxError {
-    /// `self` is in what `normalizeEndOfLine` has made of `original`. The same in `original`.
+    /// Converts the offset from one in `normalizeEndOfLine(original)` to one in `original`.
     #[cold]
     pub(crate) fn before_normalizing_end_of_line(self, original: &[u8]) -> SyntaxError {
-        SyntaxError(self.0, BeforeNormalizing::new(original).place_of(self.1))
+        SyntaxError(
+            self.0,
+            BeforeNormalizing::new(original).original_offset_of(self.1),
+        )
     }
 }
 
-/// Where the places in what `normalizeEndOfLine` has made of a text are in the text. Asked for one after the other, from the
-/// first to the last, they take one pass over the text.
+/// Maps offsets in `normalizeEndOfLine(text)` back to offsets in `text`. Lookups in ascending order take a single
+/// pass over the text in total.
 pub(crate) struct BeforeNormalizing<'a> {
     original: &'a [u8],
-    has_returns: bool,
-    /// The last place, and where that is in `original`.
+    has_carriage_returns: bool,
+    /// The last offset that was looked up, and the matching offset in `original`.
     last: (usize, usize),
 }
 
@@ -26,56 +29,56 @@ impl<'a> BeforeNormalizing<'a> {
     pub(crate) fn new(original: &'a [u8]) -> BeforeNormalizing<'a> {
         BeforeNormalizing {
             original,
-            has_returns: bun_core::strings::contains_char(original, b'\r'),
+            has_carriage_returns: bun_core::strings::contains_char(original, b'\r'),
             last: (0, 0),
         }
     }
 
-    pub(crate) fn place_of(&mut self, place: u32) -> u32 {
-        if !self.has_returns {
-            return place;
+    pub(crate) fn original_offset_of(&mut self, normalized_offset: u32) -> u32 {
+        if !self.has_carriage_returns {
+            return normalized_offset;
         }
-        if (place as usize) < self.last.0 {
+        if (normalized_offset as usize) < self.last.0 {
             self.last = (0, 0);
         }
-        let (mut left, mut at) = (place as usize - self.last.0, self.last.1);
-        while left > 0 && at < self.original.len() {
+        let (mut remaining, mut at) = (normalized_offset as usize - self.last.0, self.last.1);
+        while remaining > 0 && at < self.original.len() {
             at += match self.original[at..].starts_with(b"\r\n") {
                 true => 2,
                 false => 1,
             };
-            left -= 1;
+            remaining -= 1;
         }
-        self.last = (place as usize - left, at);
+        self.last = (normalized_offset as usize - remaining, at);
         at as u32
     }
 }
 
-/// Where a parser notes what it refuses. What it returns on the way, [`Refused`], has no size, so that nothing is paid for
-/// the reason where nothing is refused.
-pub(crate) struct Refusal(std::cell::Cell<SyntaxError>);
+/// Where a parser records its syntax error. The error type that it propagates, [`Rejected`], is zero-sized, so the
+/// success path doesn't pay for carrying the reason.
+pub(crate) struct Rejection(std::cell::Cell<SyntaxError>);
 
-impl Default for Refusal {
+impl Default for Rejection {
     fn default() -> Self {
-        Refusal(std::cell::Cell::new(SyntaxError(
+        Rejection(std::cell::Cell::new(SyntaxError(
             Message::UnexpectedToken,
             0,
         )))
     }
 }
 
-/// A text has been refused, and the reason noted.
+/// The input was rejected, and the reason was recorded in a [`Rejection`].
 #[derive(Debug, Copy, Clone)]
-pub(crate) struct Refused(());
+pub(crate) struct Rejected(());
 
-impl Refusal {
+impl Rejection {
     #[cold]
-    pub(crate) fn note(&self, message: Message, offset: u32) -> Refused {
+    pub(crate) fn note(&self, message: Message, offset: u32) -> Rejected {
         self.0.set(SyntaxError(message, offset));
-        Refused(())
+        Rejected(())
     }
 
-    /// What has been noted last.
+    /// The most recently recorded error.
     #[cold]
     pub(crate) fn reason(&self) -> SyntaxError {
         self.0.get()
@@ -84,7 +87,7 @@ impl Refusal {
 
 macro_rules! messages {
     ($($name:ident = $text:literal,)*) => {
-        /// What is wrong.
+        /// An error message.
         #[repr(u8)]
         #[derive(Debug, Copy, Clone, PartialEq, Eq)]
         pub enum Message {
@@ -136,6 +139,7 @@ messages! {
     UnexpectedCharacter = "Unexpected character",
 
     // JSON
+    ExpectedComma = "Expected \",\"",
     ExpectedEndOfFile = "Expected end of file",
 
     // Handlebars

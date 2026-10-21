@@ -1,5 +1,5 @@
-//! What the rules of `jest` and of `vitest` about hooks do: `beforeEach(..)` and the like. Each module is a file of oxlint's
-//! `rules/shared/jest_vitest`. See [`jest`](crate::jest).
+//! The shared logic of the `jest` and `vitest` rules about hooks (`beforeEach(..)` and the like). Each module is a file
+//! in oxlint's `rules/shared/jest_vitest`. See [`jest`](crate::jest).
 
 use crate::jest::{
     Arguments, Ctx, JestFnKind, JestGeneralFnKind, PossibleJestNode, Runner, Scopes,
@@ -15,7 +15,7 @@ use smallvec::SmallVec;
 
 pub(crate) const HOOKS: [&str; 4] = ["beforeAll", "beforeEach", "afterEach", "afterAll"];
 
-/// Whether the file can have a hook, under whatever name.
+/// True if the file mentions any hook name.
 pub(crate) fn mentions_hook(file: &File) -> bool {
     mentions_any(file, &const { mention_bits(HOOKS) })
 }
@@ -28,7 +28,7 @@ pub(crate) mod no_duplicate_hooks {
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
         type HookNames<'a> = SmallVec<[&'a [u8]; 4]>;
-        // The file, and then the calls of `describe` around, each with its hooks.
+        // A stack of the file and then the enclosing `describe` calls, each with its hooks.
         let mut hook_contexts: Vec<(Span, HookNames<'a>)> =
             vec![(Span::new(0, u32::MAX), HookNames::new())];
         for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
@@ -102,7 +102,7 @@ pub(crate) mod prefer_hooks_in_order {
     const REORDER_HOOKS: Message = Message::new("", "Test hooks are not in a consistent order.");
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
-        // What a hook starts with.
+        // The names a hook call can start with.
         let names: SmallVec<[Name<'a>; 4]> = (HOOKS.iter())
             .filter_map(|it| ctx.file.find_name(it))
             .collect();
@@ -113,7 +113,7 @@ pub(crate) mod prefer_hooks_in_order {
         {
             return;
         }
-        // Every call counts: one that is no hook ends a run of hooks.
+        // Every call counts, because a call that isn't a hook ends a run of hooks.
         let mut calls: Vec<Expr<'a>> = ctx.file.exprs_of_kind(ExprTag::Call).collect();
         utils::sort::sort_unstable_by_key(&mut calls, |it| {
             (it.span().start, std::cmp::Reverse(it.span().end))
@@ -129,7 +129,7 @@ pub(crate) mod prefer_hooks_in_order {
                 })
                 .filter(|it| it.kind == JestFnKind::General(JestGeneralFnKind::Hook))
                 .map(|it| it.name);
-            // Most calls are not in a scope that has a hook.
+            // Most calls aren't in a scope that has a hook.
             if hook_name.is_none() && previous_hook_orders.is_empty() {
                 continue;
             }
@@ -173,7 +173,7 @@ pub(crate) mod prefer_hooks_on_top {
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
         let mut scopes = Scopes::default();
-        // The scopes in which there has been a test.
+        // The scopes that have already had a test.
         let mut hooks_context: FxHashSet<Option<Node<'a>>> = FxHashSet::default();
         for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
             let node = possible_jest_node.node;
@@ -229,14 +229,14 @@ pub(crate) mod require_hook {
             });
         }
 
-        /// `around`: the program, or the call of `describe`, which oxlint's rule is called with.
+        /// `enclosing` is the program or the `describe` call that oxlint's rule is called with.
         fn check_block_body<'a>(
             &self,
             statements: List<'a, Stmt<'a>>,
-            around: Node<'a>,
+            enclosing: Node<'a>,
             ctx: &Ctx<'a, '_>,
         ) {
-            let report = |at: Span| drop(ctx.report(at, USE_HOOK).called_with(around));
+            let report = |at: Span| drop(ctx.report(at, USE_HOOK).called_with(enclosing));
             for stmt in statements {
                 if let Some(expr) = stmt.as_expr() {
                     if let Some(call_expr) = expr.as_call()
@@ -261,7 +261,7 @@ pub(crate) mod require_hook {
             }
         }
 
-        /// `names`: the names of what is called, which are looked at with dots between them.
+        /// `names` are the callee's names, which are matched as if joined with dots.
         fn is_allowed(&self, names: &[&[u8]], runner: Runner) -> bool {
             let first = names.first().copied().unwrap_or_default();
             let is_member_of = |object: &[u8]| match first.strip_prefix(object) {

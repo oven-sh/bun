@@ -2,14 +2,14 @@
 //!
 //! Everything is re-exported from here: `use bun_lint::utils::ts_utils::{get_name_from_member, ..};`
 //!
-//! No function takes `sourceCode` or `context`: a handle knows its file.
+//! No function takes `sourceCode` or `context`, because a handle knows its file.
 //!
-//! **`ChainExpression`.** ESTree has two nodes for all of `a?.b.c()`: the `ChainExpression` and the
-//! `CallExpression` in it. Here they are one `Expr`. Where the answer depends on which is meant, it
-//! stands for the one that upstream's callers pass, and the doc comment says which:
-//! the `ChainExpression` in [`is_strong_precedence_node`], [`is_weak_precedence_parent`],
-//! [`get_wrapping_fixer`], [`get_moved_node_code`], [`is_node_equal`], [`is_conditional_test`], the
-//! element in it in [`is_assignee`] and [`get_wrapping_fixer_for_chain_element`].
+//! **`ChainExpression`.** ESTree has two nodes for the whole `a?.b.c()`: the `ChainExpression` and the `CallExpression`
+//! in it. Here they're one `Expr`. Where the answer depends on which one is meant, the `Expr` represents the one that
+//! upstream's callers pass, and the doc comment says which. It's the `ChainExpression` in
+//! [`is_strong_precedence_node`], [`is_weak_precedence_parent`], [`get_wrapping_fixer`], [`get_moved_node_code`],
+//! [`is_node_equal`] and [`is_conditional_test`], and the element inside it in [`is_assignee`] and
+//! [`get_wrapping_fixer_for_chain_element`].
 
 mod estree;
 mod head_loc;

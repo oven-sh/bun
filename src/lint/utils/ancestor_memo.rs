@@ -1,25 +1,26 @@
-//! A question about a node that its ancestors answer, asked of many nodes.
+//! A cache for a query that's answered by a node's ancestors and is run for many nodes.
 
 use crate::ast::Node;
 use rustc_hash::FxHashMap;
 
-/// How far up it goes before it looks at what is known. Few nodes of ordinary code are further from what decides about them,
-/// and for these nothing is kept.
+/// The number of steps a walk takes before it starts checking the cache. In ordinary code few nodes are further than
+/// this from the ancestor that decides, and nothing is cached for the rest.
 const PLAIN_STEPS: usize = 32;
 
-/// Walks up from a node until an ancestor decides, as `node.ancestors().find_map(..)` does, and remembers the answers for the
-/// nodes it passes. To walk up from each link of `a + a + ..`, `a.b.b ..`, `a, a, ..` or `if .. else if ..` takes quadratic time.
-/// With this, all the walks of a file together take time in proportion to the number of walks and of nodes.
+/// Walks up from a node until an ancestor decides, like `node.ancestors().find_map(..)`, and caches the answer for the
+/// nodes it passes. Walking up from each link of `a + a + ..`, `a.b.b ..`, `a, a, ..` or `if .. else if ..` takes
+/// quadratic time. With this cache, all of a file's walks together take time proportional to the number of walks plus
+/// the number of nodes.
 ///
-/// One memo is for one question: the answer may depend on nothing but the node.
+/// Use one memo per query. The answer must depend only on the node.
 pub struct AncestorMemo<'a, T> {
     far: Far<'a>,
-    /// What the walks that went far found.
+    /// The answers found by walks longer than [`PLAIN_STEPS`].
     answers: Vec<Option<T>>,
 }
 
-/// The nodes that walks have passed far from where they began, each with the index of the answer. It knows nothing of
-/// what the answers are, so that it is compiled once and not for each question.
+/// Maps the nodes that walks passed after their first [`PLAIN_STEPS`] steps to the index of their answer. It isn't
+/// generic over the answer type, so it's compiled once instead of once per query.
 #[derive(Default)]
 struct Far<'a> {
     known: FxHashMap<Node<'a>, u32>,
@@ -31,7 +32,8 @@ impl<'a> Far<'a> {
         self.known.get(&node).copied()
     }
 
-    /// `index` is the answer for what a walk of `steps` steps from `node` has passed after the first [`PLAIN_STEPS`].
+    /// Stores `index` as the answer for the nodes that a walk of `steps` steps from `node` passed after the first
+    /// [`PLAIN_STEPS`].
     #[cold]
     #[inline(never)]
     fn remember(
@@ -41,12 +43,12 @@ impl<'a> Far<'a> {
         index: u32,
         up: &dyn Fn(Node<'a>) -> Node<'a>,
     ) {
-        let mut passed = node;
+        let mut current = node;
         for step in 0..steps {
             if step >= PLAIN_STEPS {
-                self.known.insert(passed, index);
+                self.known.insert(current, index);
             }
-            passed = up(passed);
+            current = up(current);
         }
     }
 }
@@ -62,9 +64,9 @@ impl<T> Default for AncestorMemo<'_, T> {
 }
 
 impl<'a, T: Copy> AncestorMemo<'a, T> {
-    /// `decide(child, parent)` is called with `node` and its parent, then with the parent and its parent, and so on, up to the
-    /// file as `parent`, until it answers. `None` if it never does. What it answers for a `child` is also the answer for
-    /// everything below from where the walk gets to `child`.
+    /// Calls `decide(child, parent)` with `node` and its parent, then with the parent and its parent, and so on up to
+    /// the file as `parent`, until it returns an answer. Returns `None` if it never does. The answer for a `child` is
+    /// also the answer for every node below it whose walk reaches `child`.
     #[inline]
     pub fn find(
         &mut self,
@@ -74,8 +76,8 @@ impl<'a, T: Copy> AncestorMemo<'a, T> {
         self.find_with(node, Node::parent, decide)
     }
 
-    /// [`AncestorMemo::find`] for a walk on which `up` says what the parent of a node is, such as
-    /// [`estree_parent`](super::estree_parent). It has to be the same for every call.
+    /// [`AncestorMemo::find`] for a walk where `up` returns a node's parent, such as
+    /// [`estree_parent`](super::estree_parent). Every call must pass the same `up`.
     #[inline]
     pub fn find_with(
         &mut self,
@@ -110,7 +112,7 @@ impl<'a, T: Copy> AncestorMemo<'a, T> {
         answer
     }
 
-    /// `known`: the index of `answer`, if it has one.
+    /// `known` is `answer`'s index, if it already has one.
     #[cold]
     #[inline(never)]
     fn remember(

@@ -20,7 +20,7 @@ impl Rule for NoUselessErrorCaptureStackTrace {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "no-useless-error-capture-stack-trace", Kind::Suggestion).has_suggestions();
     const ON: On = On::new().method_calls(&["captureStackTrace"]);
-    /// The class in the constructor of which something is.
+    /// Maps a node to the class whose constructor contains it.
     type State<'a> = AncestorMemo<'a, Option<Class<'a>>>;
 
     fn new(_: &Options) -> Self {
@@ -49,7 +49,7 @@ impl Rule for NoUselessErrorCaptureStackTrace {
         {
             return;
         }
-        // Functions without a name do not end the constructor.
+        // An unnamed function still counts as part of the constructor.
         let class = cx.state.find(Node::Expr(e), |_, parent| match parent {
             Node::Func(func) => match func.kind() {
                 FnKind::StaticBlock => Some(None),
@@ -82,7 +82,7 @@ impl Rule for NoUselessErrorCaptureStackTrace {
     }
 }
 
-/// It extends one of the errors of the language.
+/// True if it extends one of the language's built-in errors.
 fn is_error_class(class: Class) -> bool {
     class.extends().map(get_inner_expression).is_some_and(|super_class| {
         super_class.as_ident().is_some_and(|it| it.is_any(&BUILT_IN_ERRORS)) && is_global_reference(super_class)

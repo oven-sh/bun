@@ -1,9 +1,10 @@
-// The inputs of ../../react-compiler.test.ts, which expected.ts gives to oxlint and to ESLint: directories of files, each linted in
-// one run without arguments but `-f json`. Those that are not written for this test are in expected.json.
+// The inputs of ../../react-compiler.test.ts, which expected.ts also runs through oxlint and ESLint. Each one is a
+// directory of files that's linted in one run with no arguments except `-f json`. The inputs that weren't written for
+// this test are in expected.json.
 
 import { ESLINT_ONLY, RULE_NAMES, RULES } from "./shared.ts";
 
-/** An `.oxlintrc.json` with nothing on but `rules`. */
+/** Returns an `.oxlintrc.json` with only `rules` enabled. */
 export const rc = (rules: readonly string[] = RULE_NAMES) =>
   JSON.stringify({
     plugins: ["react"],
@@ -92,7 +93,7 @@ function Clock() {
 
 const impure = "function Component() {\n  return <div>{Date.now()}</div>;\n}\n";
 
-/** oxlint's compiler takes it for `while (true)`. Upstream's has a Todo for it. */
+/** oxlint's compiler treats `for (;;)` as `while (true)`. Upstream's reports a Todo for it. */
 const forever = `import { useRef } from "react";
 
 export function Forever(props: { a: number }) {
@@ -122,7 +123,7 @@ export function Alone(props: { a: number }) {
 }
 `;
 
-/** `x = d` in a pattern has a place of its own, which what comes out of it has. */
+/** `x = d` in a pattern has its own source location, and the value it produces gets that location. */
 const defaults = `import { useState } from "react";
 
 function useDefaultThing(): number {
@@ -152,7 +153,7 @@ export function InTheBody(props: { useThing?: () => number }) {
 }
 `;
 
-/** What is found for `a = a + 1` depends on the order in which the compiler goes over the blocks of the loops. */
+/** What's reported for `a = a + 1` depends on the order in which the compiler visits the loops' blocks. */
 const order = `export default function Component(props) {
   let a = props.a,
     b = 0,
@@ -226,7 +227,10 @@ const order = `export default function Component(props) {
 }
 `;
 
-/** oxc's compiler leaves each effect where it is. Upstream's puts the first write to a captured variable for the later ones. */
+/**
+ * oxc's compiler keeps each effect's own location. Upstream's uses the first write to a captured variable in place of
+ * the later ones.
+ */
 const writes = `export default function Component(props) {
   let a = props.a;
   const read = () => a;
@@ -240,7 +244,7 @@ const writes = `export default function Component(props) {
 }
 `;
 
-/** They are not React's, whatever their names. */
+/** These aren't React's hooks, despite their names. */
 const ownHooks = `export function Component(props) {
   const f = useCallback(() => [props.a()], [props.a()]);
   const m = useMemo(() => [props.a()], [props.a()]);
@@ -254,7 +258,7 @@ function useCallback<T>(callback: T, dependencies?: Array<unknown>): T {
 const useMemo = <T,>(callback: () => T, dependencies?: Array<unknown>): T => callback();
 `;
 
-/** `React.useMemo` is React's by the name `React`, wherever that comes from. */
+/** `React.useMemo` counts as React's because of the name `React`, no matter where it's imported from. */
 const reactByItsName = `import React from "other";
 import * as R from "react";
 
@@ -269,7 +273,10 @@ export function ByAnotherName(props) {
 }
 `;
 
-/** Two of one kind in an `<fbt>`, however deep. It is said beside what else there is. To the plugin the name of an attribute counts. */
+/**
+ * Two tags of the same kind in one `<fbt>`, at any depth. It's reported in addition to the function's other
+ * diagnostics. The plugin also counts an attribute's name.
+ */
 const duplicateFbtTags = `function Both(props) {
   var x = 1;
   return (
@@ -301,7 +308,7 @@ function AnAttribute(props) {
 }
 `;
 
-/** `map` keeps none of its arguments: the function has no scope of its own, whose dependency would be `i18n`. */
+/** `map` doesn't retain its arguments, so the callback doesn't get its own scope, which would depend on `i18n`. */
 const callbackOfMap = `import { useMemo } from "react";
 export function Component({ nodes, i18n }) {
   const grouped = useMemo(() => {
@@ -315,7 +322,7 @@ export function Component({ nodes, i18n }) {
 }
 `;
 
-/** JSX cannot be evaluated earlier, nor can what has JSX in it. */
+/** JSX can't be evaluated earlier, and neither can an expression that contains JSX. */
 const defaultsWithJsx = `export function A({ icon = { on: <Eye />, off: <Off /> } }) {
   return <div>{icon.on}</div>;
 }
@@ -341,8 +348,12 @@ export function F({ text = css\`a\` }) {
 }
 `;
 
-/** A ref is read in render at the top, and then there are `n` of one thing. */
-export const long = (n: number, unit: (k: number) => string, result: (units: string) => [body: string, returns: string]) => {
+/** Reads a ref during render at the top, followed by `n` copies of `unit`. */
+export const long = (
+  n: number,
+  unit: (k: number) => string,
+  result: (units: string) => [body: string, returns: string],
+) => {
   const [body, returns] = result(Array.from({ length: n }, (_, k) => unit(k)).join("\n"));
   return `import { useCallback, useRef, useState } from "react";
 
@@ -355,7 +366,7 @@ ${body}
 `;
 };
 
-/** A type cast is an instruction of its own to the compiler, with a place of its own. `x!` is not. */
+/** The compiler lowers a type cast to its own instruction, with its own location. It doesn't for `x!`. */
 const casts = `function Hidden(props: Props) {
   const Dynamic = useComponent(props.kind) as any;
   const Plain = useComponent(props.kind);
@@ -395,15 +406,15 @@ function NotNull(props: Props) {
 }
 `;
 
-/** The small directories, by the name of the test. */
+/** The small input directories, keyed by test name. */
 export const small: Record<string, Files> = {
   comments,
   "not React": {
     ".oxlintrc.json": rc(),
-    // Nothing here makes JSX or calls a hook, and no name is a component's or a hook's.
+    // Nothing here creates JSX or calls a hook, and nothing is named like a component or a hook.
     "plain.js": notReact(""),
     "class.js": "export class Component {\n  render() {\n    this.props.a = Date.now();\n    return null;\n  }\n}\n",
-    // The same function, asked for.
+    // The same function, opted in with 'use memo'.
     "asked-for.js": notReact("\n  'use memo';"),
   },
   todo: {
@@ -415,10 +426,10 @@ export const small: Record<string, Files> = {
     "alone/.oxlintrc.json": rc(["react/todo"]),
     "alone/a.jsx": severalRules,
   },
-  // What oxc's fork of the compiler takes, or says otherwise, and the compiler that is in Bun does not.
+  // Code that oxc's fork of the compiler accepts, or reports differently, unlike the compiler in Bun.
   fork: {
     ".oxlintrc.json": rc(),
-    // The callback of `useMemo` is a part of the component.
+    // The `useMemo` callback counts as part of the component.
     "ref-in-memo.jsx": `function Component(props) {
   const ref = useRef(null);
   const value = useMemo(() => compute(ref), [props.a]);
@@ -426,7 +437,7 @@ export const small: Record<string, Files> = {
   return <div>{value}{other}</div>;
 }
 `,
-    // What another callback captures is not an operand of the call.
+    // A value that another callback captures isn't an operand of the call.
     "ref-in-callback.jsx": `function Row() {
   const pending = useRef(null);
   const handle = rating => {
@@ -500,7 +511,7 @@ export default memo(function Tree({ items }) {
   return <div>{bad}{items.map(item => <Tree key={item.id} items={item.items} />)}<Tree items={[]} /></div>;
 });
 `,
-    // Its tree has a node for them.
+    // oxc's AST has a node for parentheses.
     "parentheses.tsx": `import { useRef } from "react";
 
 export function Left(props) {
@@ -515,7 +526,7 @@ export function Defaults({ a = (<Eye />), b = props.x as any, c = (1), d = [(1)]
   return <div>{a}{b}{c}{d}</div>;
 }
 `,
-    // It is called each time.
+    // The tag function is called on every evaluation.
     "tagged-template.jsx": `import { useMemo } from "react";
 
 export function Component() {
@@ -523,7 +534,8 @@ export function Component() {
   return <F text={text} />;
 }
 `,
-    // At the first function, not at the declaration of the second, which comes first.
+    // The fork reports this at the first function. Upstream reports it at the unreachable block's first instruction,
+    // which is the hoisted declaration of `second`.
     "unreachable.jsx": `function Component(props) {
   return <div>{first()}</div>;
 
@@ -536,7 +548,8 @@ export function Component() {
   }
 }
 `,
-    // Upstream fails for both by an invariant. It goes through temporaries if the captured one has a key.
+    // Upstream throws an invariant for both. The fork destructures through temporaries if the captured variable has a
+    // key.
     "captured-target.jsx": `export function WithAKey(props) {
   let a = [];
   let b = [];
@@ -622,21 +635,28 @@ function Component(props) {
   },
   order: { ".oxlintrc.json": rc(), "order.jsx": order },
   writes: { ".oxlintrc.json": rc(), "writes.jsx": writes },
-  names: { ".oxlintrc.json": rc(), "own-hooks.tsx": ownHooks, "defaults-with-jsx.jsx": defaultsWithJsx, "react-by-its-name.jsx": reactByItsName, "fbt.jsx": duplicateFbtTags, "callback-of-map.jsx": callbackOfMap },
+  names: {
+    ".oxlintrc.json": rc(),
+    "own-hooks.tsx": ownHooks,
+    "defaults-with-jsx.jsx": defaultsWithJsx,
+    "react-by-its-name.jsx": reactByItsName,
+    "fbt.jsx": duplicateFbtTags,
+    "callback-of-map.jsx": callbackOfMap,
+  },
   lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults },
   node_modules: {
     ".oxlintrc.json": rc(),
     "a.jsx": impure,
     "node_modules/package/a.jsx": impure,
     "vendor/node_modules/package/a.jsx": impure,
-    // The name only has to be somewhere in the path.
+    // `node_modules` only has to be a substring of the path.
     "src/not_node_modules/a.jsx": impure,
   },
 };
 
 type RawDiagnostic = { filename?: string; url?: string; [key: string]: unknown };
 
-/** The same value with the keys of every object in order. */
+/** Returns the same value with every object's keys sorted. */
 function ordered(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(ordered);
   if (typeof value !== "object" || value === null) return value;
@@ -645,8 +665,8 @@ function ordered(value: unknown): unknown {
 }
 
 /**
- * The diagnostics of a report of `-f json` for each file, as they are but for the name of the file and the address of the rule's
- * page, in an order that does not depend on the tool's.
+ * Groups a `-f json` report's diagnostics by file. Drops the filename and the rule's docs URL, and sorts them so the
+ * order doesn't depend on the tool.
  */
 export function byFile(report: { diagnostics: RawDiagnostic[] }): Record<string, unknown[]> {
   const files = new Map<string, string[]>();
@@ -661,14 +681,14 @@ export function byFile(report: { diagnostics: RawDiagnostic[] }): Record<string,
 
 // ── ESLint, with eslint-plugin-react-hooks ──
 
-/** The rules of the plugin that report what the compiler finds. */
+/** The plugin's compiler rules. */
 export const ESLINT_RULES = [
   ...RULES.map(([rule]) => `react-hooks/${rule}`),
   ...ESLINT_ONLY.map(([rule]) => `react-hooks/${rule}`),
   "react-hooks/component-hook-factories",
 ];
 
-/** An `eslint.config.js`. By their names: the rules of the plugin and the parser of typescript-eslint are built in. */
+/** An `eslint.config.js`. It only names the plugin and typescript-eslint's parser, which are built in to `bun lint`. */
 export const eslintConfig = `export default [
   {
     files: ["**/*.{js,jsx,ts,tsx}"],
@@ -688,11 +708,12 @@ const extraDependency = (parameters: string) => `function Component(${parameters
 `;
 
 export const eslintSmall: Files = {
-  // The plugin parses a `.ts` or `.tsx` file with Babel, which knows the name of the file and where in the text a node is.
+  // The plugin parses `.ts` and `.tsx` files with Babel, which records the filename and each node's offsets.
   "typescript.tsx": extraDependency("{ a, b }: { a: number; b: number }"),
-  // All others with Hermes, which knows neither: no line with the name, and no suggestion that needs the place of the list.
+  // It parses everything else with Hermes, which records neither, so there's no filename line and no suggestion that
+  // needs the dependency list's offsets.
   "javascript.jsx": extraDependency("{ a, b }"),
-  // A place of more than ten lines.
+  // A location that spans more than ten lines.
   "long.jsx": `function Component(props) {
   let value = 0;
   try {
@@ -714,9 +735,9 @@ ${["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(name => `    value += props.
   "flow-hook.jsx": readsRef("// $FlowFixMe[react-rule-hook]"),
   "flow-ref.jsx": readsRef("// $FlowFixMe[react-rule-unsafe-ref]"),
   "flow-other.jsx": readsRef("// $FlowFixMe[other]"),
-  // typescript-eslint parses it. Babel, as the plugin calls it, does not.
+  // typescript-eslint parses it. Babel, with the plugin's options, doesn't.
   "decorator.tsx": `@sealed\nclass Store {}\n\n${readsRef("")}`,
-  // No function has the name of a component or a hook, so the plugin does not look further.
+  // No function is named like a component or a hook, so the plugin doesn't compile anything.
   "memo.jsx": `export default memo(props => {
   const ref = useRef(null);
   const value = ref.current;
@@ -738,8 +759,8 @@ type EslintMessage = {
 type EslintResult = { filePath: string; messages: EslintMessage[]; suppressedMessages: EslintMessage[] };
 
 /**
- * The results of ESLint's `-f json` for each file that has messages, suppressed ones too. The paths are relative to one of
- * `directories`, which is `<dir>` in the messages.
+ * Groups ESLint's `-f json` results by file, for files with messages (including suppressed ones). Paths are made
+ * relative to one of `directories`, which becomes `<dir>` in message text.
  */
 export function byEslintFile(results: EslintResult[], directories: string[]) {
   const inside = (path: string) => {
@@ -765,7 +786,7 @@ export function byEslintFile(results: EslintResult[], directories: string[]) {
   return Object.fromEntries(Object.entries(files).sort(([a], [b]) => (a < b ? -1 : 1)));
 }
 
-/** Of each message the rule, the place and the first line. */
+/** Reduces each message to its rule, location and first line. */
 export const briefly = (files: ReturnType<typeof byEslintFile>) =>
   Object.fromEntries(
     Object.entries(files).map(([path, { messages }]) => [

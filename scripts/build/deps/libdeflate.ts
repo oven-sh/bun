@@ -21,6 +21,8 @@ export const libdeflate: Dependency = {
     commit: LIBDEFLATE_COMMIT,
   }),
 
+  patches: ["patches/libdeflate/bounded-emit.patch"],
+
   build: () => ({
     kind: "direct",
     sources: [

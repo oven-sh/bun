@@ -10,16 +10,16 @@ const UNEXPECTED: Message = Message::new("unexpected", "Duplicate name '{{name}}
 const INIT: u8 = 1 << 0;
 const GET: u8 = 1 << 1;
 const SET: u8 = 1 << 2;
-/// How far the three are shifted for a static member.
+/// How far those three bits are shifted for a static member.
 const STATIC: u8 = 3;
 
-/// It is kept between classes only for its allocations.
+/// Only kept between classes to reuse its allocations.
 #[derive(Default)]
 pub struct Seen<'a> {
-    /// The names of the members of one class so far, as their keys have them.
+    /// The names of one class's members so far, as written in their keys.
     names: FxHashSet<Name<'a>>,
-    /// The names that the members of one class have defined so far, each with how, and with a configuration of oxlint
-    /// with the last member that has the name.
+    /// The names that one class's members have defined so far, each with the kinds of definition. With an oxlint
+    /// config, also the last member with that name.
     defined: FxHashMap<Cow<'a, [u8]>, (u8, Option<Member<'a>>)>,
 }
 
@@ -31,8 +31,8 @@ fn key_span(member: Member<'_>) -> Option<Span> {
     }
 }
 
-/// oxlint compares a member with the last before it that has the name, whatever that one is. Two of a private name are
-/// an error.
+/// oxlint compares a member with the last one before it that has the same name, whatever kind that is. Two members with
+/// the same private name are a syntax error.
 fn oxlint_redeclares(member: Member<'_>, before: Member<'_>) -> bool {
     let is_private = |it: Member<'_>| it.key().is_some_and(Key::is_private);
     let is_accessor = |it: Member<'_>| matches!(it.kind(), MemberKind::Getter | MemberKind::Setter);
@@ -42,7 +42,7 @@ fn oxlint_redeclares(member: Member<'_>, before: Member<'_>) -> bool {
         && (member.kind() == before.kind() || !(is_accessor(member) && is_accessor(before)))
 }
 
-/// `ignores_computed`: whether a member with a name in brackets is left out.
+/// With `ignores_computed`, a member with a computed name is skipped.
 pub fn check<'a, R: Rule>(
     class: Class<'a>,
     ignores_computed: bool,
@@ -53,7 +53,8 @@ pub fn check<'a, R: Rule>(
     if members.len() < 2 {
         return;
     }
-    // Few classes have two members with one name. Only `static constructor` and `[("a")]` have a name that is no `Name`.
+    // Fast path, since few classes have two members with the same name. Only `static constructor` and `[("a")]` have a
+    // name that isn't a `Name`.
     seen.names.clear();
     seen.names.reserve(members.len());
     let may_have_duplicates = members.iter().any(|member| match member.kind() {
@@ -71,7 +72,8 @@ pub fn check<'a, R: Rule>(
     seen.reserve(members.len());
     let is_oxlint = cx.language().is_oxlint;
     for member in members {
-        // Neither a `MethodDefinition` nor a `PropertyDefinition`, which oxlint does not ask, or an overload.
+        // Skip overloads, and members that are neither a `MethodDefinition` nor a `PropertyDefinition`. oxlint doesn't
+        // make that distinction.
         if !is_oxlint && member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR)
             || member.func().is_some_and(|func| !func.has_body())
         {
@@ -120,9 +122,9 @@ pub fn check<'a, R: Rule>(
             false => is_defined,
         };
         if is_duplicate && let Some(key) = key_span(member) {
-            // oxlint points at the member before.
-            let place = if is_oxlint { before.and_then(key_span).unwrap_or_default() } else { key };
-            cx.report(place, UNEXPECTED)
+            // oxlint reports at the earlier member.
+            let report_span = if is_oxlint { before.and_then(key_span).unwrap_or_default() } else { key };
+            cx.report(report_span, UNEXPECTED)
                 .hint("Only the last one counts.")
                 .labels_with(|labels| {
                     labels.push(key, format!("\"{}\" is re-declared here", bstr::BStr::new(&name[..])));

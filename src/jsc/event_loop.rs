@@ -10,7 +10,7 @@
 //! poll deadline). See PORTING.md §Dispatch.
 
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU64, Ordering};
 
 use bun_io::{self as Async, Waker};
 use bun_uws as uws;
@@ -94,6 +94,9 @@ pub struct EventLoop {
     pub uws_loop: Option<NonNull<uws::Loop>>,
 
     pub entered_event_loop_count: isize,
+    /// How many times `tasks` was drained. One uws loop iteration drains it several times, so a
+    /// `fetch` can start and finish within one iteration. Atomic because a Worker may read it.
+    task_drains: AtomicU64,
     pub concurrent_ref: AtomicI32,
     /// Atomic nullable pointer to the next-due `WTFTimer`.
     ///
@@ -132,6 +135,7 @@ impl Default for EventLoop {
             deferred_tasks: DeferredTaskQueue::DeferredTaskQueue::default(),
             uws_loop: None,
             entered_event_loop_count: 0,
+            task_drains: AtomicU64::new(0),
             concurrent_ref: AtomicI32::new(0),
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
             #[cfg(unix)]
@@ -565,6 +569,9 @@ impl EventLoop {
     /// turn is over (`tick()` / `tick_tasks_only()` return rather than run more against that VM).
     fn tick_with_count(&mut self, virtual_machine: *mut VirtualMachine) -> Result<u32, Stopped> {
         let mut counter: u32 = 0;
+        // Only this thread writes `task_drains`, so a plain load and store is enough.
+        let drains = self.task_drains.load(Ordering::Relaxed);
+        self.task_drains.store(drains + 1, Ordering::Relaxed);
         tick_queue_with_count(self, virtual_machine, &mut counter)?;
         Ok(counter)
     }
@@ -1494,7 +1501,8 @@ fn el_ref<'a>(owner: *mut ()) -> &'a mut EventLoop {
 // JS thread.
 bun_event_loop::link_impl_JsEventLoop! {
     Jsc for EventLoop => |this| {
-        iteration_number() => (&*(*this).usockets_loop()).iteration_number(),
+        iteration_number() => (&*(*this).usockets_loop()).iteration_number()
+            + (*this).task_drains.load(Ordering::Relaxed),
         // Return raw to avoid asserting uniqueness — multiple handles may name the
         // same VM.
         file_polls() => core::ptr::from_mut(

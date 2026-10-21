@@ -25,8 +25,6 @@ pub(crate) mod path;
 
 #[path = "node/node_os.rs"]
 pub(crate) mod os;
-// codegen (`generated_js2native.rs`) addresses this by its file-stem name.
-pub(crate) use os as node_os;
 
 #[path = "node/node_process.rs"]
 pub(crate) mod process;

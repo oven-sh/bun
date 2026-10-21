@@ -723,15 +723,19 @@ pub(crate) mod command {
         if is_bun_x(argv0) {
             if let Some(next) = argv.get(1) {
                 let next_bytes = next.as_bytes();
-                if next_bytes == b"add"
-                    && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get()
-                        == Some(true)
-                {
-                    return Tag::AddCommand;
+                // To install a package, `bunx` runs its own executable again as `bunx add`, with
+                // the directory it installs into as the working directory.
+                if next_bytes == b"add" {
+                    use bun_install::package_manager_real::run_tasks::is_bunx_tree;
+                    let mut cwd = bun_paths::path_buffer_pool::get();
+                    if bun_sys::getcwd(&mut *cwd).is_ok_and(|len| is_bunx_tree(&cwd[..len])) {
+                        return Tag::AddCommand;
+                    }
                 }
+                // Without a POSIX shell, that install runs each lifecycle script by running this
+                // executable again as `bunx exec --no-env-file`. See `ScriptArgv`.
                 if next_bytes == b"exec"
-                    && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get()
-                        == Some(true)
+                    && (argv.get(2)).is_some_and(|flag| flag.as_bytes() == b"--no-env-file")
                 {
                     return Tag::ExecCommand;
                 }
@@ -764,6 +768,12 @@ pub(crate) mod command {
                 Some(n) => first_arg_name = n,
                 None => return Tag::AutoCommand,
             }
+        }
+
+        // `bun --cwd <dir> lint`: `<dir>` is the value of a flag.
+        let starts_with_flag = argv.get(1).is_some_and(|it| it.starts_with(b"-"));
+        if starts_with_flag && let Some(it) = super::script_or_command::command_after_flags() {
+            first_arg_name = it;
         }
 
         type RootCommandMatcher = strings::ExactSizeMatcher<12>;
@@ -963,18 +973,7 @@ pub(crate) mod command {
             ctx.args = arguments::parse(cmd, ctx)?;
         }
 
-        #[cfg(windows)]
-        {
-            if ctx.debug.hot_reload == HotReload::Watch {
-                {
-                    if !bun_sys::windows::is_watcher_child() {
-                        bun_sys::windows::become_watcher_manager();
-                    } else {
-                        bun_core::set_auto_reload_on_crash(true);
-                    }
-                }
-            }
-        }
+        super::set_up_watch_restarts(ctx);
 
         Ok(ctx)
     }
@@ -1260,7 +1259,7 @@ pub(crate) mod command {
             ctx.parallel || ctx.sequential || !ctx.filters.is_empty() || ctx.workspaces;
         if runs_several
             && ctx.runtime_options.check
-            && !super::check_command::check_project_before()
+            && !super::check_command::check_project_before(None)
         {
             Global::exit(1);
         }
@@ -1298,7 +1297,7 @@ pub(crate) mod command {
         }
 
         if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
-            lint_command::read_program_of_script(ctx);
+            lint_command::read_program_from_stdin(ctx);
             return run_command::RunCommand::exec_eval(ctx);
         }
 
@@ -1411,16 +1410,8 @@ pub(crate) mod command {
         argv: &'a [&'static bun_core::ZStr],
         command: &[u8],
     ) -> &'a [&'static bun_core::ZStr] {
-        let mut args = argv.iter().enumerate();
-        while let Some((at, arg)) = args.next() {
-            match arg.as_bytes() {
-                arg if arg == command => return &argv[at + 1..],
-                // `bun --cwd lint lint`
-                b"--cwd" => _ = args.next(),
-                _ => {}
-            }
-        }
-        &[]
+        let at = super::script_or_command::place_of_command(command);
+        at.and_then(|at| argv.get(at + 1..)).unwrap_or_default()
     }
 
     /// The flags of `command` that stand before it, as in `bun --check format` or `bun -c format`, and then what follows it. If
@@ -1436,8 +1427,8 @@ pub(crate) mod command {
             Some((name, _)) => matches!(name, b"--config" | b"-c" | b"--cwd"),
             None => matches!(arg, b"--config" | b"--cwd" | b"--help" | b"--silent"),
         };
-        let before = (argv.iter().skip(1)).take_while(|arg| arg.as_bytes() != command);
-        let mut args: Vec<_> = before
+        let at = super::script_or_command::place_of_command(command).unwrap_or(argv.len());
+        let mut args: Vec<_> = (argv.iter().take(at).skip(1))
             .filter(|arg| arg.as_bytes().starts_with(b"-"))
             .filter(|arg| !is_of_bun(arg.as_bytes()) && knows(arg.as_bytes()))
             .copied()
@@ -1447,9 +1438,9 @@ pub(crate) mod command {
     }
 
     /// `bun --help lint`: prints the help of `command` and exits if `--help` or `-h` is among the flags of `bun`, which precede it.
-    fn print_help_if_asked_before(argv: &[&'static bun_core::ZStr], command: &[u8], tag: Tag) {
-        let mut before = (argv.iter().map(|it| it.as_bytes())).take_while(|arg| *arg != command);
-        if before.any(|arg| matches!(arg, b"--help" | b"-h")) {
+    fn print_help_if_asked_before(command: &[u8], tag: Tag) {
+        let before = super::script_or_command::arguments_before(command);
+        if before.iter().any(|arg| matches!(*arg, b"--help" | b"-h")) {
             tag_print_help(tag, false);
             Global::exit(0);
         }
@@ -1461,7 +1452,7 @@ pub(crate) mod command {
         // LintCommand parses its own argv.
         let ctx = init(Tag::LintCommand, log)?;
         let argv = argv_zslice();
-        print_help_if_asked_before(&argv, b"lint", Tag::LintCommand);
+        print_help_if_asked_before(b"lint", Tag::LintCommand);
         let knows = super::lint_command::LintCommand::has_flag;
         super::lint_command::LintCommand::exec(ctx, &with_own_flags_before(&argv, b"lint", knows))
     }
@@ -1472,7 +1463,7 @@ pub(crate) mod command {
         // FormatCommand parses its own argv.
         let ctx = init(Tag::FormatCommand, log)?;
         let argv = argv_zslice();
-        print_help_if_asked_before(&argv, b"fmt", Tag::FormatCommand);
+        print_help_if_asked_before(b"fmt", Tag::FormatCommand);
         let knows = super::format_command::FormatCommand::has_flag;
         super::format_command::FormatCommand::exec(
             ctx,
@@ -1834,12 +1825,12 @@ To create a project with the official Next.js scaffolding tool, run
 
         for arg in bun::argv() {
             if arg == b"--hash" {
-                let mut path_buf = bun_paths::path_buffer_pool::get();
-                path_buf[..entry.len()].copy_from_slice(entry);
-                path_buf[entry.len()] = 0;
-                // SAFETY: NUL terminator written at `path_buf[entry.len()]` above.
-                let lockfile_path = bun_core::ZStr::from_buf(&path_buf[..], entry.len());
-                let file = match bun_sys::File::open(lockfile_path, bun_sys::O::RDONLY, 0) {
+                let file = match bun_sys::File::openat(
+                    bun_sys::Fd::cwd(),
+                    &entry[..],
+                    bun_sys::O::RDONLY,
+                    0,
+                ) {
                     Ok(f) => f,
                     Err(err) => {
                         Output::err(err, "failed to open lockfile", ());
@@ -1894,9 +1885,9 @@ To create a project with the official Next.js scaffolding tool, run
     /// Printed at the end of `bun <command> --help` if the project has a script with the same name.
     fn print_note_about_script(command: &str) {
         use crate::cli::script_or_command::{Runs, runs};
-        if runs(command.as_bytes()) == Runs::Script {
+        if matches!(runs(command.as_bytes()), Ok(Runs::Script)) {
             pretty!(
-                "\n<blue>note<r><d>:<r> package.json has a \"{}\" script, so <b>bun {}<r> runs that script\n  Change the script to <b>\"bun {}\"<r> to use the built-in command\n",
+                "\n<blue>note<r><d>:<r> package.json has a \"{}\" script, so <b>bun {}<r> runs that script\n  Change the script to <b>\"bun {}\"<r> to use the built-in command, or pass <b>--no-script<r>\n",
                 command,
                 command,
                 command,
@@ -2295,4 +2286,62 @@ pub(crate) fn print_revision_and_exit() -> ! {
     let _ = w.write_all(b"\n");
     Output::flush();
     Global::exit(0);
+}
+
+/// `--check` with `--hot`: nothing runs unchecked, so the process starts again, as under `--watch`.
+/// Call it before `set_up_watch_restarts`.
+pub(crate) fn watch_instead_of_hot_for_check(ctx: &mut command::ContextData) {
+    if ctx.debug.hot_reload == command::HotReload::Hot {
+        ctx.debug.hot_reload = command::HotReload::Watch;
+        #[cfg(not(windows))]
+        {
+            bun_core::set_auto_reload_on_crash(true);
+        }
+    }
+}
+
+/// Under `--watch` on Windows, a manager process starts this one again after each change.
+pub(crate) fn set_up_watch_restarts(ctx: &command::ContextData) {
+    #[cfg(windows)]
+    {
+        if ctx.debug.hot_reload == command::HotReload::Watch {
+            if !bun_sys::windows::is_watcher_child() {
+                bun_sys::windows::become_watcher_manager();
+            } else {
+                bun_core::set_auto_reload_on_crash(true);
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = ctx;
+}
+
+/// `--no-clear-screen` and `--watch-kill-signal`, once the watch mode is final. Node reads
+/// `--watch-kill-signal` only in watch mode; elsewhere it is accepted and ignored. Matching is
+/// case-insensitive (node uppercases).
+///
+/// `restarts`: the process can start again on a change, so the kill signal applies. True in watch
+/// mode, and for `bun bake`, which starts again when `bake.config.ts` changes.
+pub(crate) fn apply_watch_mode_flags(ctx: &mut command::ContextData, restarts: bool) {
+    if ctx.debug.no_clear_screen && ctx.debug.hot_reload != command::HotReload::None {
+        let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
+    }
+    if !restarts {
+        return;
+    }
+    let Some(kill_signal) = ctx.debug.watch_kill_signal_arg.as_deref() else {
+        return;
+    };
+    let upper = kill_signal.to_ascii_uppercase();
+    match bun_core::SignalCode::from_name(&upper) {
+        Some(sig) => ctx.debug.watch_kill_signal = sig,
+        None => {
+            Output::print_errorln(format_args!(
+                "TypeError [ERR_UNKNOWN_SIGNAL]: Unknown signal: {}",
+                bstr::BStr::new(kill_signal)
+            ));
+            Output::flush();
+            Global::exit(1);
+        }
+    }
 }

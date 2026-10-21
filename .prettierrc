@@ -21,12 +21,6 @@
       }
     },
     {
-      "files": ["src/codegen/bindgenv2/**/*.ts", "*.bindv2.ts"],
-      "options": {
-        "printWidth": 100
-      }
-    },
-    {
       "files": ["src/runtime/cli/init/**"],
       "options": {
         "arrowParens": "always",

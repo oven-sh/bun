@@ -4624,13 +4624,6 @@
           "multiple": false
         },
         {
-          "name": "server-components",
-          "description": "(EXPERIMENTAL) Enable server components",
-          "hasValue": false,
-          "required": false,
-          "multiple": false
-        },
-        {
           "name": "env",
           "description": "Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'.",
           "hasValue": true,

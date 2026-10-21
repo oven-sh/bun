@@ -993,6 +993,7 @@ describe("keep-alive pool reuse window", () => {
     ["timeout=2", 2],
     ["max=100, timeout=1", 2],
     ["timeout=1; max=100", 2],
+    ["timeout=00000000001", 2],
     ["timeout=60\r\nKeep-Alive: timeout=1", 2],
     ["TIMEOUT=2", 2],
     ["timeout=60", 1],

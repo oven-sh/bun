@@ -394,7 +394,11 @@ pub(crate) fn parse_keepalive_timeout(value: &[u8]) -> Option<u32> {
         }
         let rest = rest.trim_ascii_start();
         let digits = &rest[..rest.iter().take_while(|c| c.is_ascii_digit()).count()];
-        if digits.len() > u32::MAX.ilog10() as usize + 1 {
+        if digits.is_empty() {
+            return None;
+        }
+        let significant = &digits[digits.iter().take_while(|&&c| c == b'0').count()..];
+        if significant.len() > u32::MAX.ilog10() as usize + 1 {
             return Some(u32::MAX);
         }
         return bun_http_types::parse_content_length_strict(digits)

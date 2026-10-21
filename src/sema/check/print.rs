@@ -832,7 +832,7 @@ fn type_arguments_text(nodes: Vec<Node>) -> Vec<u8> {
 
 /// `ast.OperatorPrecedence`. `Coalesce` is `LogicalOr`, `DisallowComma` is `Yield`.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum OperatorPrecedence {
+pub(super) enum OperatorPrecedence {
     Comma,
     Spread,
     Yield,
@@ -860,7 +860,7 @@ enum OperatorPrecedence {
 
 impl OperatorPrecedence {
     /// `GetBinaryOperatorPrecedence`, and that of the comma.
-    fn for_binary_operator(op: BinOp) -> OperatorPrecedence {
+    pub(super) fn for_binary_operator(op: BinOp) -> OperatorPrecedence {
         match op {
             BinOp::Comma => OperatorPrecedence::Comma,
             BinOp::Nullish | BinOp::Or => OperatorPrecedence::LogicalOr,
@@ -882,7 +882,7 @@ impl OperatorPrecedence {
     }
 
     /// The precedence of an access or a call, which is also the one its expression is emitted with.
-    fn for_chain(chain: Chain) -> OperatorPrecedence {
+    pub(super) fn for_chain(chain: Chain) -> OperatorPrecedence {
         match chain {
             Chain::No => OperatorPrecedence::Member,
             Chain::Start | Chain::Continue => OperatorPrecedence::OptionalChain,
@@ -890,7 +890,7 @@ impl OperatorPrecedence {
     }
 
     /// `GetExpressionPrecedence` of `e` without the parentheses around it.
-    fn for_expression(hir: &hir::File, e: ExprId) -> OperatorPrecedence {
+    pub(super) fn for_expression(hir: &hir::File, e: ExprId) -> OperatorPrecedence {
         match hir[e].kind {
             ExprKind::Spread(_) => OperatorPrecedence::Spread,
             ExprKind::Yield { .. } => OperatorPrecedence::Yield,
@@ -971,7 +971,7 @@ impl OperatorPrecedence {
 }
 
 /// `TokenToString` of the operator of a unary expression.
-fn unary_operator_text(op: UnOp) -> &'static [u8] {
+pub(super) fn unary_operator_text(op: UnOp) -> &'static [u8] {
     match op {
         UnOp::Plus => b"+",
         UnOp::Minus => b"-",

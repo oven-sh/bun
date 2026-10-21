@@ -395,7 +395,7 @@ fn nested_module_declaration(hir: &File, m: ModuleId) -> Option<StmtId> {
 }
 
 /// `PositionsAreOnSameLine`
-fn positions_are_on_same_line(text: &[u8], pos1: usize, pos2: usize) -> bool {
+pub(super) fn positions_are_on_same_line(text: &[u8], pos1: usize, pos2: usize) -> bool {
     (pos1.min(pos2)..pos1.max(pos2)).all(|at| super::spans::line_break_len(text, at) == 0)
 }
 
@@ -429,9 +429,9 @@ impl ListFormat {
 /// contains the comments.
 pub(super) struct Writer<'a> {
     source: &'a [u8],
-    text: Vec<u8>,
-    indent: usize,
-    is_at_start_of_line: bool,
+    pub(super) text: Vec<u8>,
+    pub(super) indent: usize,
+    pub(super) is_at_start_of_line: bool,
     /// `LFSpaceBetweenSiblings` of a list on several lines.
     pub(super) space_between_siblings: bool,
 }
@@ -462,6 +462,13 @@ impl<'a> Writer<'a> {
         self.text.extend_from_slice(text);
     }
 
+    /// The indentation of a line that is empty so far, for text that another writer appends.
+    pub(super) fn write_indentation(&mut self) {
+        if std::mem::take(&mut self.is_at_start_of_line) {
+            self.text.extend_from_slice(&b"    ".repeat(self.indent));
+        }
+    }
+
     pub(super) fn write_line(&mut self) {
         if !self.is_at_start_of_line {
             self.text.push(b'\n');
@@ -474,10 +481,14 @@ impl<'a> Writer<'a> {
         let mut buffer = Vec::new();
         write_comment_range(self.source, start, end, self.indent, &mut buffer);
         self.write(&buffer);
+        // A comment that isn't terminated ends with the line break that ends the file.
+        if buffer.last() == Some(&b'\n') {
+            self.is_at_start_of_line = true;
+        }
     }
 
     /// `emitLeadingComments`
-    fn emit_leading_comments(&mut self, pos: usize) {
+    pub(super) fn emit_leading_comments(&mut self, pos: usize) {
         let mut has_source_comment = false;
         for comment in super::spans::get_leading_comment_ranges(self.source, pos) {
             if !should_write_comment(&self.source[comment.0..comment.1]) {
@@ -485,7 +496,7 @@ impl<'a> Writer<'a> {
             }
             // `emitNewLineBeforeLeadingCommentOfPosition`
             if !std::mem::replace(&mut has_source_comment, true)
-                && bun_core::strings::contains_char(&self.source[pos..comment.0], b'\n')
+                && !positions_are_on_same_line(self.source, pos, comment.0)
             {
                 self.write_line();
             }
@@ -500,7 +511,7 @@ impl<'a> Writer<'a> {
 
     /// `emitTrailingComments`, and `emitTrailingCommentsOfPosition` with `prefixSpace`. The scan for trailing comments
     /// stops at the line break, so a `/* */` has no `HasTrailingNewLine`.
-    fn emit_trailing_comments(&mut self, end: usize) {
+    pub(super) fn emit_trailing_comments(&mut self, end: usize) {
         for comment in super::spans::get_trailing_comment_ranges(self.source, end) {
             if !should_write_comment(&self.source[comment.0..comment.1]) {
                 continue;
@@ -512,8 +523,34 @@ impl<'a> Writer<'a> {
         }
     }
 
+    /// `emitTrailingComments` with `commentSeparatorBefore`: the space is written at the start of a line too.
+    pub(super) fn emit_trailing_comments_with_space_before(&mut self, end: usize) {
+        for comment in super::spans::get_trailing_comment_ranges(self.source, end) {
+            if !should_write_comment(&self.source[comment.0..comment.1]) {
+                continue;
+            }
+            self.write(b" ");
+            self.emit_comment(comment);
+        }
+    }
+
+    /// `emitTrailingComments`, with `commentSeparatorAfter`.
+    pub(super) fn emit_trailing_comments_with_space_after(&mut self, end: usize) {
+        for comment in super::spans::get_trailing_comment_ranges(self.source, end) {
+            if !should_write_comment(&self.source[comment.0..comment.1]) {
+                continue;
+            }
+            self.emit_comment(comment);
+            self.write(b" ");
+        }
+    }
+
     /// `emitTrailingCommentsOfPosition`, without `prefixSpace`: it writes every kind of comment.
-    fn emit_trailing_comments_of_position(&mut self, pos: usize, force_no_newline: bool) {
+    pub(super) fn emit_trailing_comments_of_position(
+        &mut self,
+        pos: usize,
+        force_no_newline: bool,
+    ) {
         for comment in super::spans::get_trailing_comment_ranges(self.source, pos) {
             self.emit_comment(comment);
             let is_single_line = self.source[comment.0..].starts_with(b"//");
@@ -734,6 +771,8 @@ struct DeclarationEmit<'c, 'p, 's> {
     expando_hosts: FxHashMap<StmtId, Vec<Statement>>,
     /// `expandoMembers`, keyed by the host's statement.
     expando_members: FxHashMap<StmtId, Vec<Statement>>,
+    /// A node that the printer prints is nested too deeply for the stack: there is no text.
+    is_nested_too_deeply: bool,
 }
 
 impl Checker<'_, '_> {
@@ -815,7 +854,8 @@ impl<'p, 's> Checker<'p, 's> {
                     detached_comments: None,
                 };
             }
-            let text = Some(emit.transform_source_file());
+            let text = emit.transform_source_file();
+            let text = (!emit.is_nested_too_deeply).then_some(text);
             (
                 text,
                 emit.tracker.diagnostics,
@@ -897,6 +937,7 @@ impl<'c, 'p, 's> DeclarationEmit<'c, 'p, 's> {
             witnessed_cjs_exports: Vec::new(),
             expando_hosts: FxHashMap::default(),
             expando_members: FxHashMap::default(),
+            is_nested_too_deeply: false,
         }
     }
 
@@ -3006,6 +3047,10 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         }
         writer.write(text);
         writer.emit_trailing_comments(range.1 as usize);
+        // The statement list ends the line, which such a comment has ended.
+        if writer.is_at_start_of_line {
+            writer.text.pop();
+        }
         writer.into_text()
     }
 
@@ -3132,8 +3177,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         created.map(|it| it.0).collect()
     }
 
-    /// The source text of the module specifier literal in the statement `s`.
-    fn module_specifier_text(&self, s: StmtId, spec: Atom) -> Vec<u8> {
+    /// The text of the module specifier of the statement `s`: the literal's source, or a node that the printer prints.
+    fn module_specifier_text(&mut self, s: StmtId, spec: Atom) -> Vec<u8> {
         let hir = self.c.hir(self.file());
         let (from, to) = (hir[s].start, hir[s].loc.end);
         let mut uses = hir.specifier_uses.iter();
@@ -3147,9 +3192,94 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             while end < text.len() && text[end] != quote && text[end] != b'\n' {
                 end += if text[end] == b'\\' { 2 } else { 1 };
             }
-            return text[start..(end + 1).min(text.len())].to_vec();
+            return match text.get(end) {
+                Some(&last) if last == quote => text[start..=end].to_vec(),
+                // A literal that is not terminated ends before the line break.
+                _ => {
+                    let literal = &text[start..end.min(text.len())];
+                    literal.strip_suffix(b"\r").unwrap_or(literal).to_vec()
+                }
+            };
+        }
+        if spec.is_none() {
+            return self.module_specifier_node_text(s);
         }
         super::print::quoted(self.name(spec), b'"', false)
+    }
+
+    /// The expression that `s` has where a module specifier belongs. `NONE`: a string literal, or nothing in the HIR.
+    #[cold]
+    #[inline(never)]
+    fn module_specifier_node(&self, s: StmtId) -> ExprId {
+        let file = self.file();
+        let hir = self.c.hir(file);
+        match hir[s].kind {
+            StmtKind::ImportEquals(i) => hir[i].expression,
+            StmtKind::Import(_) => {
+                // The HIR has no link from an import to its expression. A missing one is at the token after `s`.
+                let within = hir[s].start + 1..=self.c.skip_trivia_from(file, hir[s].loc.end);
+                let written = hir.specifier_expressions.iter().copied();
+                let own = written.filter(|&e| within.contains(&hir[e].pos));
+                own.min_by_key(|&e| hir[e].pos).unwrap_or(ExprId::NONE)
+            }
+            _ => {
+                let written = hir.exports_from_expressions.iter().find(|it| it.0 == s);
+                written.map_or(ExprId::NONE, |it| it.1)
+            }
+        }
+    }
+
+    /// Where the module specifier of the statement `s` ends if it is an expression, 0 if it is a string literal.
+    #[cold]
+    #[inline(never)]
+    fn end_of_module_specifier_node(&self, s: StmtId) -> u32 {
+        let expression = self.module_specifier_node(s);
+        match expression.is_some() {
+            true => self.c.end_of_expr(self.file(), expression),
+            false => 0,
+        }
+    }
+
+    /// `emitExpression(node.ModuleSpecifier, ..)` for a specifier that is no string literal, which tsc keeps as a node.
+    #[cold]
+    #[inline(never)]
+    fn module_specifier_node_text(&mut self, s: StmtId) -> Vec<u8> {
+        use super::print::OperatorPrecedence;
+        use super::print_node::{NodePrinter, Stop};
+        if !self.writes() {
+            return Vec::new();
+        }
+        let file = self.file();
+        let hir = self.c.hir(file);
+        let expression = self.module_specifier_node(s);
+        let (keyword, precedence): (&[u8], _) = match hir[s].kind {
+            StmtKind::ImportEquals(_) => (b"", OperatorPrecedence::Yield),
+            StmtKind::Import(i) if hir[i].clause_start == hir[i].clause_end => {
+                (b"import", OperatorPrecedence::Comma)
+            }
+            _ => (b"from", OperatorPrecedence::Comma),
+        };
+        if expression.is_none() {
+            return Vec::new();
+        }
+        let statement = (hir[s].loc.pos, hir[s].loc.end);
+        let mut printer = NodePrinter::new(&*self.c, file, self.indent, statement);
+        // `emitToken(KindFromKeyword, ..)`: the comments that trail the token.
+        let pos = printer.pos_of(expression);
+        let has_keyword = !keyword.is_empty()
+            && pos >= keyword.len()
+            && pos != statement.1 as usize
+            && hir.text.get(pos - keyword.len()..pos) == Some(keyword);
+        if has_keyword {
+            printer.emit_trailing_comments_with_space_after(pos);
+        }
+        match printer.emit_expression(expression, precedence) {
+            Ok(()) => printer.into_text(),
+            Err(Stop::OutOfStack) => {
+                self.is_nested_too_deeply = true;
+                Vec::new()
+            }
+        }
     }
 
     /// `NewUniqueNameEx(base, GeneratedIdentifierFlagsOptimistic)`, `makeUniqueName`: `base` if nothing in the file has
@@ -3723,22 +3853,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             self.result_has_external_module_indicator = true;
             text.extend_from_slice(b" from ");
             match from_expression {
-                // `rewriteModuleSpecifier` doesn't change anything that isn't a string literal.
-                // A missing expression starts at the next token and ends before it, so its text is empty.
-                Some(&(_, e)) if e.is_some() => {
-                    let around = parentheses_around(hir, e);
-                    let end = match around.first() {
-                        // The parentheses end after the expression, so stop at the innermost `)`.
-                        Some(innermost) if innermost.2 > hir[e].end => innermost.2 - 1,
-                        _ => hir[e].end,
-                    };
-                    let start = start_inside_parentheses(hir, e);
-                    let inside = hir.text.get(start as usize..end as usize);
-                    text.resize(text.len() + around.len(), b'(');
-                    text.extend_from_slice(inside.unwrap_or_default());
-                    text.resize(text.len() + around.len(), b')');
-                }
-                Some(_) => {}
+                // `rewriteModuleSpecifier` keeps the node of what isn't a string literal, and the printer writes it.
+                Some(_) => text.extend_from_slice(&self.module_specifier_node_text(s)),
                 None => text.extend_from_slice(&self.module_specifier_text(s, spec)),
             }
             text.extend_from_slice(&self.resolution_mode_override_text(s, mode));
@@ -3752,16 +3868,25 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let hir = self.c.hir(self.file());
         let statement = &hir.text[hir[s].start as usize..hir[s].loc.end as usize];
         // `GetResolutionModeOverride`
-        let reported = strings::index_of(statement, b"resolution-mode").map(|at| &statement[at..]);
+        let reported = strings::index_of(statement, b"resolution-mode");
         let word: &[u8] = match mode {
             ResolutionMode::Import => b"import",
             ResolutionMode::Require => b"require",
             ResolutionMode::None => {
-                match reported.and_then(|it| bun_core::strings::split_any(it, b"\"'").nth(2)) {
+                let attribute = reported.map(|at| &statement[at..]);
+                let word: &[u8] = match attribute
+                    .and_then(|it| bun_core::strings::split_any(it, b"\"'").nth(2))
+                {
                     Some(b"import") => b"import",
                     Some(b"require") => b"require",
                     _ => return Vec::new(),
+                };
+                // The words are in a module specifier that is an expression.
+                let at = hir[s].start + reported.unwrap_or(0) as u32;
+                if at < self.end_of_module_specifier_node(s) {
+                    return Vec::new();
                 }
+                word
             }
         };
         [b" with { \"resolution-mode\": \"", word, b"\" }"].concat()

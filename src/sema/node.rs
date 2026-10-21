@@ -1536,7 +1536,7 @@ impl<'s> File<'s> {
     /// True for the `import` of an `import.x` that's neither `import.meta` nor called. The keyword of a `MetaProperty`
     /// isn't a node.
     #[inline(always)]
-    fn is_import_keyword(&self, e: ExprId) -> bool {
+    pub(crate) fn is_import_keyword(&self, e: ExprId) -> bool {
         matches!(self[e].kind, ExprKind::Missing)
             && (self.text.get(self[e].pos as usize..))
                 .is_some_and(|rest| rest.starts_with(b"import"))

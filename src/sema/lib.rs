@@ -5,6 +5,8 @@
 //! upstream function each piece of code corresponds to.
 
 #![feature(allocator_api)]
+// For the node printer of `check`, which only a program with errors runs: `#[optimize(size)]` makes it a third smaller.
+#![feature(optimize_attribute)]
 
 pub mod atom;
 pub mod bind;

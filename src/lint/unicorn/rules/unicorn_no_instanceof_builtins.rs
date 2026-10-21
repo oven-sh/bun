@@ -80,8 +80,8 @@ impl Rule for NoInstanceofBuiltins {
         if self.exclude.iter().any(|it| ctor_name.is(it)) {
             return;
         }
-        // What is before and after the left operand in the replacement.
-        let around: Option<(&str, &str)> = match ctor_name.bytes() {
+        // The text before and after the left operand in the replacement.
+        let wrapper: Option<(&str, &str)> = match ctor_name.bytes() {
             b"Array" => Some(("Array.isArray(", ")")),
             b"Error" if self.use_error_is_error => Some(("Error.isError(", ")")),
             b"Function" => Some(("typeof (", ") === 'function'")),
@@ -93,7 +93,7 @@ impl Rule for NoInstanceofBuiltins {
             _ => None,
         };
         let span = Span::new(left.outer_span().start, right.outer_span().end);
-        if let Some((before, after)) = around {
+        if let Some((before, after)) = wrapper {
             cx.report(span, NO_INSTANCEOF_BUILTINS).suggest(USE_ALTERNATIVE, |fixer| {
                 let left_text = fixer.file().slice(left.outer_span());
                 fixer.replace(span, [before.as_bytes(), left_text, after.as_bytes()].concat())

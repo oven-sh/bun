@@ -74,7 +74,7 @@ impl Rule for PreferAt {
 
 type Context<'a> = Cx<'a, PreferAt>;
 
-/// `callee.get_member_expr()`, if it is `a.b`.
+/// `callee.get_member_expr()`, if it's `a.b`.
 fn as_static_member(callee: Expr<'_>) -> Option<Expr<'_>> {
     get_member_expr(callee).filter(|it| it.tag() == ExprTag::Dot && !it.is_private_member())
 }
@@ -83,7 +83,7 @@ fn has_name(static_member: Expr, name: &str) -> bool {
     matches!(static_member.kind(), ExprKind::Dot { name: property, .. } if property.name().is(name))
 }
 
-/// `object.at(argument)` in the place of `full_span`, unless `object` is `arguments`.
+/// Suggests replacing `full_span` with `object.at(argument)`, unless `object` is `arguments`.
 fn report<'a>(at: Expr<'a>, method: &'a [u8], object: Expr<'a>, full_span: Span, argument: &[u8], cx: &Context<'a>) {
     let report = cx.report(at, PREFER_AT).data("method", method);
     if !get_inner_expression(object).is_ident("arguments") {
@@ -148,7 +148,7 @@ impl PreferAt {
             b"last" => self.check_lodash_last(e, call_expr, obj, cx),
             _ => {}
         }
-        // `array.slice(-1)[0]`, once more.
+        // Checks `array.slice(-1)[0]` a second time, from the call.
         if let Node::Expr(computed) = e.parent()
             && !e.is_parenthesized()
             && !e.is_chain_root()
@@ -209,7 +209,7 @@ impl PreferAt {
     }
 }
 
-/// `string.substring(index, index + 1)`. `property`: the `substring`.
+/// `string.substring(index, index + 1)`. `property` is the `substring`.
 fn check_substring<'a>(e: Expr<'a>, call_expr: Call<'a>, property: Ident<'a>, cx: &Context<'a>) {
     let arguments = call_expr.args();
     let (2, Some(first), Some(second)) = (arguments.len(), arguments.first(), arguments.get(1)) else {
@@ -226,7 +226,7 @@ fn check_substring<'a>(e: Expr<'a>, call_expr: Call<'a>, property: Ident<'a>, cx
     if cx.file().comments_in(arguments_span).len() > 0 {
         return;
     }
-    // `substring` takes a negative index for 0 and gives an empty string for what is out of bounds.
+    // `substring` treats a negative index as 0 and returns an empty string for an index out of bounds.
     report.suggest(USE_AT, |fixer| {
         let (start, end) = (property.span().end, arguments_span.start);
         let between = fixer.file().slice(Span::new(start, end));
@@ -237,7 +237,7 @@ fn check_substring<'a>(e: Expr<'a>, call_expr: Call<'a>, property: Ident<'a>, cx
     });
 }
 
-/// The one of the two arguments of `substring` that is the index, if the other is one more.
+/// Returns whichever of `substring`'s two arguments is the index, if the other is one more.
 fn substring_single_character_index<'a>(first: Expr<'a>, second: Expr<'a>) -> Option<Expr<'a>> {
     const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
     if let (Some(start), Some(end)) = (as_number(first), as_number(second))
@@ -246,10 +246,10 @@ fn substring_single_character_index<'a>(first: Expr<'a>, second: Expr<'a>) -> Op
     {
         return Some(if start < end { first } else { second });
     }
-    let is_one = |it: Expr<'a>| as_number(it).is_some_and(|it| (it - 1.0).abs() < f64::EPSILON);
+    let is_number_one = |it: Expr<'a>| as_number(it).is_some_and(|it| (it - 1.0).abs() < f64::EPSILON);
     let is_plus_one = |expression: Expr<'a>, index: Expr<'a>| {
         matches!(get_inner_expression(expression).kind(), ExprKind::Binary { op: BinOp::Add, left: a, right: b }
-            if is_one(b) && is_same_inner_expression(a, index) || is_one(a) && is_same_inner_expression(b, index))
+            if is_number_one(b) && is_same_inner_expression(a, index) || is_number_one(a) && is_same_inner_expression(b, index))
     };
     if is_plus_one(second, first) {
         return Some(first);
@@ -258,7 +258,7 @@ fn substring_single_character_index<'a>(first: Expr<'a>, second: Expr<'a>) -> Op
         return Some(second);
     }
     matches!(get_inner_expression(first).kind(), ExprKind::Binary { op: BinOp::Sub, left, right }
-        if is_one(right) && is_same_inner_expression(left, second))
+        if is_number_one(right) && is_same_inner_expression(left, second))
     .then_some(first)
 }
 
@@ -287,7 +287,7 @@ fn check_slice_pop_shift<'a>(e: Expr<'a>, call_expr: Call<'a>, static_member: Ex
     let index = match (arguments.len(), arguments.first(), arguments.get(1)) {
         (1, Some(first_arg), _) => get_negative_integer(first_arg, Some(5)).filter(|it| *it == -1),
         (2, Some(first_arg), Some(second_arg)) if !is_number_0(second_arg) => {
-            // `pop()` takes the last, which is the first only of one.
+            // `pop()` returns the last element, which is only the first if there's exactly one.
             get_negative_integer(first_arg, None).filter(|first_negative| {
                 has_name(static_member, "shift") || get_negative_integer(second_arg, None) == Some(first_negative + 1)
             })
@@ -300,12 +300,12 @@ fn check_slice_pop_shift<'a>(e: Expr<'a>, call_expr: Call<'a>, static_member: Ex
     }
 }
 
-/// `array.slice(-1)[0]`. `computed`: the whole, of which `call_expr` is the `array.slice(-1)`.
+/// `array.slice(-1)[0]`. `computed` is the whole expression, and `call_expr` is its `array.slice(-1)`.
 fn check_slice_index_access<'a>(call_expr: Call<'a>, computed: Expr<'a>, cx: &Context<'a>) -> bool {
     if computed.is_optional() {
         return false;
     }
-    // It is assigned, assigned to or deleted.
+    // It's assigned, assigned to or deleted.
     if let Node::Expr(parent) = computed.parent()
         && !computed.is_parenthesized()
         && !computed.is_chain_root()
@@ -352,7 +352,7 @@ fn check_slice_index_access<'a>(call_expr: Call<'a>, computed: Expr<'a>, cx: &Co
     true
 }
 
-/// By the parent alone.
+/// Only looks at the parent.
 fn is_assignment_target(e: Expr) -> bool {
     if e.is_parenthesized() || e.is_chain_root() {
         return false;
@@ -388,7 +388,8 @@ fn get_positive_index(expr: Expr) -> Option<i64> {
     as_number(expr).filter(|it| it.fract() == 0.0 && *it <= i64::MAX as f64).map(|it| it as i64)
 }
 
-/// It has no `at`: an object, a function, a class, a number, a boolean, `null`, a regular expression.
+/// True for a value without an `at` method: an object, a function, a class, a number, a boolean, `null`, a regular
+/// expression.
 fn is_unsupported_at_receiver(expr: Expr) -> bool {
     matches!(
         expr.tag(),
@@ -404,7 +405,7 @@ fn is_unsupported_at_receiver(expr: Expr) -> bool {
     )
 }
 
-/// Or a constant that is initialized with one.
+/// The same, or a constant initialized with one.
 fn is_obviously_non_array_receiver(expr: Expr) -> bool {
     let inner = get_inner_expression(expr);
     is_unsupported_at_receiver(inner)
@@ -422,7 +423,7 @@ fn get_negative_integer(expr: Expr, max_abs_value: Option<i64>) -> Option<i64> {
     max_abs_value.is_none_or(|max| value <= max).then_some(-value)
 }
 
-/// The `a` and the -1 of `a.length - 1`.
+/// The `a` and the -1 in `a.length - 1`.
 fn extract_length_minus_pattern(expr: Expr<'_>) -> Option<(Expr<'_>, i64)> {
     let ExprKind::Binary { op: BinOp::Sub, left, right } = get_inner_expression(expr).kind() else {
         return None;

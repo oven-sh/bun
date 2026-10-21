@@ -1276,6 +1276,33 @@ b {
     },
   });
 
+  itBundled("css/URLInEnvFallbackOfAtImportMediaQuery", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./b.css" (min-width: env(foo, url(sub/g.css)));
+        .c0 { color: blue }
+      `,
+      "/b.css": `.b1 { color: green }`,
+      "/sub/g.css": `.c0 { color: red }`,
+    },
+    backend: "cli",
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toBe(`/* b.css */
+@media (min-width: env(foo, url(sub/g.css))) {
+  .b1 {
+    color: green;
+  }
+}
+
+/* entry.css */
+.c0 {
+  color: #00f;
+}
+`);
+    },
+  });
+
   // The block of an unknown at-rule is not a declaration value: `#f00` is an ID selector,
   // not the color red. A `url()` in the block is still an import.
   for (const backend of ["cli", "api"] as const) {

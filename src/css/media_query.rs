@@ -1182,7 +1182,11 @@ impl MediaFeatureValue {
 
         // The real `ParserOptions` are threaded down from
         // `QueryFeature::parse`; `depth = 0` since this is a fresh value.
-        if let Ok(env) = input.try_parse(|i| EnvironmentVariable::parse(i, options, 0)) {
+        // Keep `url()` raw because the linker prints an `@import`'s media query with another file's
+        // import records.
+        if let Ok(env) = input.try_parse(|i| {
+            i.parse_with_raw_url_tokens(|i| EnvironmentVariable::parse(i, options, 0))
+        }) {
             return Ok(MediaFeatureValue::Env(env));
         }
 
@@ -1247,17 +1251,6 @@ impl MediaList {
             Vec::with_capacity_in(self.media_queries.len(), ArenaPtr::new(bump));
         media_queries.extend(self.media_queries.iter().map(|q| q.deep_clone(bump)));
         Self { media_queries }
-    }
-
-    /// `MediaList` carries no
-    /// `ImportRecord` indices so this is just `deep_clone`.
-    #[inline]
-    pub fn clone_with_import_records(
-        &self,
-        bump: &bun_alloc::Arena,
-        _import_records: &mut Vec<bun_ast::ImportRecord>,
-    ) -> Self {
-        self.deep_clone(bump)
     }
 
     /// Structural eq.

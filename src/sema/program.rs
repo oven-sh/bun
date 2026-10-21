@@ -1119,6 +1119,8 @@ struct Loaded<'s, 'r> {
 #[derive(Copy, Clone)]
 struct ToLoad<'r> {
     path: &'r [u8],
+    /// `Resolution::number`
+    number: u32,
     is_lib: bool,
     /// Index of its `PackageId` in `PrefetchState::slots`.
     package: Option<u32>,
@@ -1149,13 +1151,26 @@ struct NamesToResolve<'r> {
 
 struct PrefetchState<'s, 'r> {
     to_resolve: Vec<Arc<NamesToResolve<'r>>>,
-    to_read: std::collections::VecDeque<ToLoad<'r>>,
+    /// The files that no thread has begun to read, indexed by `Resolution::number`.
+    unread: Vec<Option<ToLoad<'r>>>,
+    /// Number of files in `unread`.
+    unread_count: usize,
+    /// The numbers of the files in `unread`. The last one is read first.
+    ///
+    /// `Files::load` walks the files depth first, and takes the last file that a file refers to first. The files are
+    /// read in about that order, so that the walk keeps up with the threads that load. So a file is added again
+    /// whenever another file refers to it, and the list also has numbers of files that are no longer in `unread`.
+    to_read: Vec<u32>,
     /// Files that have been read, with their text. The text is `None` if the run already has the
-    /// file (see `Run::has`).
+    /// file (see `Run::has`). The last one is processed first.
     ready: Vec<(ToLoad<'r>, Option<Cow<'static, [u8]>>)>,
+    /// The number of the file that `Prefetch::take` is waiting for.
+    awaited: Option<u32>,
+    /// The index of that file in `ready`, if it's there. It's processed before the last one.
+    awaited_in_ready: Option<usize>,
     /// Maps each path to its `Resolution::number`: 0, 1, .. in the order the paths are first seen.
     seen: FxHashMap<&'r [u8], u32>,
-    /// Number of files taken from `to_read` that aren't in `done` yet.
+    /// Number of files taken from `unread` that aren't in `done` yet.
     in_progress: usize,
     done: FxHashMap<&'r [u8], Box<Loaded<'s, 'r>>>,
     /// Maps `PackageId.String` to an index in `slots`.
@@ -1163,11 +1178,80 @@ struct PrefetchState<'s, 'r> {
     slots: Vec<Option<ParseSlot<'s, 'r>>>,
 }
 
-impl PrefetchState<'_, '_> {
+impl<'r> PrefetchState<'_, 'r> {
     /// True if there's nothing more to load and no thread is loading. Once true it stays true, because only a thread
     /// that's loading a file can find more files.
     fn is_done(&self) -> bool {
-        self.in_progress == 0 && self.to_read.is_empty()
+        self.in_progress == 0 && self.unread_count == 0
+    }
+
+    /// Returns the number of the file at `path`. It's read before every other file in `unread`, unless a thread has
+    /// already begun to read it. `shared_as`: the package file whose copies it shares a parse with.
+    fn read_next(&mut self, path: &'r [u8], is_lib: bool, shared_as: Option<PackageId<'r>>) -> u32 {
+        let next = self.unread.len() as u32;
+        let number = *self.seen.entry(path).or_insert(next);
+        if number == next {
+            let package = shared_as.map(|id| {
+                let new = self.slots.len() as u32;
+                let slot = *self.by_package_id.entry(id.to_bytes()).or_insert(new);
+                if slot == new {
+                    self.slots.push(None);
+                }
+                slot
+            });
+            self.unread.push(Some(ToLoad {
+                path,
+                number,
+                is_lib,
+                package,
+            }));
+            self.unread_count += 1;
+        }
+        if self.unread[number as usize].is_some() {
+            self.to_read.push(number);
+        }
+        number
+    }
+
+    /// Call when `Prefetch::take` begins to wait for the file at `path`. The walk can't go on without it, so it's
+    /// loaded next.
+    fn await_file(&mut self, path: &[u8]) {
+        self.awaited = self.seen.get(path).copied();
+        self.awaited_in_ready = None;
+        let Some(number) = self.awaited else {
+            return;
+        };
+        if self.unread[number as usize].is_some() {
+            self.to_read.push(number);
+        } else {
+            self.awaited_in_ready = self.ready.iter().position(|it| it.0.number == number);
+        }
+    }
+
+    fn add_ready(&mut self, file: ToLoad<'r>, text: Option<Cow<'static, [u8]>>) {
+        if self.awaited == Some(file.number) {
+            self.awaited_in_ready = Some(self.ready.len());
+        }
+        self.ready.push((file, text));
+    }
+
+    /// Removes and returns the file to process next.
+    fn take_ready(&mut self) -> Option<(ToLoad<'r>, Option<Cow<'static, [u8]>>)> {
+        match self.awaited_in_ready.take() {
+            Some(at) => Some(self.ready.swap_remove(at)),
+            None => self.ready.pop(),
+        }
+    }
+
+    /// Removes and returns the file to read next.
+    fn take_unread(&mut self) -> Option<ToLoad<'r>> {
+        while let Some(number) = self.to_read.pop() {
+            if let Some(file) = self.unread[number as usize].take() {
+                self.unread_count -= 1;
+                return Some(file);
+            }
+        }
+        None
     }
 }
 
@@ -1183,36 +1267,34 @@ struct Prefetch<'s, 'r> {
     /// Wakes the threads that only read. It's a separate condvar because they can't do anything
     /// with a ready file.
     has_to_read: bun_threading::Condvar,
-    /// Wakes the thread that calls `take`, and only that thread, when a file is loaded or all files are. If it waited
-    /// on `has_work`, it could consume the single wake-up for a ready file, and that file would never be processed.
+    /// Wakes the thread that calls `take`, and only that thread, when the file it's waiting for is loaded or all files
+    /// are. If it waited on `has_work`, it could consume the single wake-up for a ready file, and that file would never
+    /// be processed.
     has_loaded: bun_threading::Condvar,
 }
 
 impl<'s, 'r> Prefetch<'s, 'r> {
-    /// Each seed is (path, is a lib).
+    /// Each seed is (path, is a lib). The last one is read first.
     fn new(seeds: Vec<(&'r [u8], bool)>) -> Prefetch<'s, 'r> {
-        let mut seen: FxHashMap<&'r [u8], u32> = FxHashMap::default();
-        for seed in &seeds {
-            let next = seen.len() as u32;
-            seen.entry(seed.0).or_insert(next);
+        let mut state = PrefetchState {
+            to_resolve: Vec::new(),
+            seen: FxHashMap::default(),
+            unread: Vec::new(),
+            unread_count: 0,
+            to_read: Vec::new(),
+            ready: Vec::new(),
+            awaited: None,
+            awaited_in_ready: None,
+            in_progress: 0,
+            done: FxHashMap::default(),
+            by_package_id: FxHashMap::default(),
+            slots: Vec::new(),
+        };
+        for (path, is_lib) in seeds {
+            state.read_next(path, is_lib, None);
         }
         Prefetch {
-            state: Guarded::new(PrefetchState {
-                to_resolve: Vec::new(),
-                seen,
-                to_read: (seeds.into_iter())
-                    .map(|(path, is_lib)| ToLoad {
-                        path,
-                        is_lib,
-                        package: None,
-                    })
-                    .collect(),
-                ready: Vec::new(),
-                in_progress: 0,
-                done: FxHashMap::default(),
-                by_package_id: FxHashMap::default(),
-                slots: Vec::new(),
-            }),
+            state: Guarded::new(state),
             has_work: bun_threading::Condvar::new(),
             has_to_read: bun_threading::Condvar::new(),
             has_loaded: bun_threading::Condvar::new(),
@@ -1226,6 +1308,7 @@ impl<'s, 'r> Prefetch<'s, 'r> {
     /// Blocks until all files are loaded.
     fn wait(&self) {
         let mut state = self.state.lock();
+        state.awaited = None;
         while !state.is_done() {
             self.has_loaded.wait_guarded(&mut state);
         }
@@ -1245,6 +1328,7 @@ impl<'s, 'r> Prefetch<'s, 'r> {
             if state.is_done() {
                 return None;
             }
+            state.await_file(path);
             self.has_loaded.wait_guarded(&mut state);
         }
     }
@@ -5079,7 +5163,8 @@ impl<'s> Files<'s> {
             .map(Tracer::into_traces)
             .unwrap_or_default();
         package_json_info_cache.get_package_json_infos(host, &mut automatic_traces);
-        let seeds: Vec<(&[u8], bool)> = (all_found.files.iter())
+        let seeds: Vec<(&[u8], bool)> = (queued.iter())
+            .map(|it| &all_found.files[it.0.file.idx()])
             .filter(|found| found.is_read)
             .map(|found| (found.path.pretty, found.is_lib))
             .collect();
@@ -6140,35 +6225,41 @@ impl<'s> Files<'s> {
                     if !is_any_left {
                         state.to_resolve.retain(|it| !Arc::ptr_eq(it, &job));
                     }
-                } else if reads && !state.to_read.is_empty() && state.ready.len() <= AHEAD {
-                    let count = state.to_read.len().min(RUN);
-                    // This thread waits for the mapper of a mapped file. Other threads read what's behind that file, so
-                    // that a mapper gets many requests to work on.
-                    let mut some = state.to_read.iter().take(count);
-                    let mapped = some.position(|file| {
-                        content_mapper::is_mapped(&options.content_mappers, file.path)
-                    });
-                    let count = mapped.map_or(count, |at| at + 1);
-                    let some: Vec<_> = state.to_read.drain(..count).collect();
-                    state.in_progress += count;
+                } else if reads && state.unread_count != 0 && state.ready.len() <= AHEAD {
+                    let mut some: SmallVec<[ToLoad<'r>; RUN]> = SmallVec::new();
+                    // This thread waits for the mapper of a mapped file. So it reads that file last, and other threads
+                    // read what's behind it, so that a mapper gets many requests to work on.
+                    let mut mapped = None;
+                    while some.len() < RUN
+                        && mapped.is_none()
+                        && let Some(file) = state.take_unread()
+                    {
+                        match content_mapper::is_mapped(&options.content_mappers, file.path) {
+                            true => mapped = Some(file),
+                            false => some.push(file),
+                        }
+                    }
+                    state.in_progress += some.len() + usize::from(mapped.is_some());
                     drop(state);
-                    for file in some {
+                    // The first of them ends up behind the others in `ready`, so it's processed first.
+                    for file in some.into_iter().rev().chain(mapped) {
                         let is_in_run =
                             file.package.is_none() && run.is_some_and(|run| run.has(file.path));
                         let text = match is_in_run {
                             true => None,
                             false => read_to_load(host, mapping, file.path),
                         };
-                        shared.lock().ready.push((file, text));
+                        shared.lock().add_ready(file, text);
                         has_work.notify_one();
                     }
                     state = shared.lock();
-                } else if processes && let Some((file, text)) = state.ready.pop() {
+                } else if processes && let Some((file, text)) = state.take_ready() {
                     if state.ready.len() == AHEAD {
                         has_to_read.notify_all();
                     }
                     let ToLoad {
                         path,
+                        number: own_number,
                         is_lib,
                         package,
                     } = file;
@@ -6317,65 +6408,46 @@ impl<'s> Files<'s> {
                         .collect();
                     let mut numbers: Vec<u32> = Vec::with_capacity(found.len());
                     state = shared.lock();
-                    let before = state.to_read.len();
+                    let before = state.unread.len();
                     for (path, is_lib, package_id) in found {
-                        let state = &mut *state;
-                        let next = state.seen.len() as u32;
-                        let number = *state.seen.entry(path).or_insert(next);
-                        numbers.push(number);
-                        if number == next {
-                            let is_mapped =
-                                content_mapper::is_mapped(&options.content_mappers, path);
-                            let shares_parse = shares_parses && !is_mapped;
-                            let package = package_id.filter(|_| shares_parse).map(|id| {
-                                let new = state.slots.len() as u32;
-                                let slot = *state.by_package_id.entry(id.to_bytes()).or_insert(new);
-                                if slot == new {
-                                    state.slots.push(None);
-                                }
-                                slot
-                            });
-                            state.to_read.push_back(ToLoad {
-                                path,
-                                is_lib,
-                                package,
-                            });
-                        }
+                        let shared_as = package_id.filter(|_| {
+                            shares_parses
+                                && !content_mapper::is_mapped(&options.content_mappers, path)
+                        });
+                        numbers.push(state.read_next(path, is_lib, shared_as));
                     }
                     for &path in &loaded.supplemental {
-                        let next = state.seen.len() as u32;
-                        if *state.seen.entry(path).or_insert(next) == next {
-                            state.to_read.push_back(ToLoad {
-                                path,
-                                is_lib: false,
-                                package: None,
-                            });
-                        }
+                        let is_lib = false;
+                        state.read_next(path, is_lib, None);
                     }
                     let import_numbers = numbers.split_off(loaded.references.len());
                     loaded.reference_numbers = numbers;
                     for (&at, number) in predicted.iter().zip(import_numbers) {
                         loaded.imports[at].number = number;
                     }
-                    let has_more = state.to_read.len() > before;
+                    let has_more = state.unread.len() > before;
                     let mut has_ready = false;
                     if let (Some(slot), Some(done)) = (package, parsed_now)
                         && let Some(ParseSlot::InProgress(waiting)) =
                             state.slots[slot as usize].replace(done)
                     {
                         has_ready = !waiting.is_empty();
-                        state.ready.extend(waiting);
+                        for (file, text) in waiting {
+                            state.add_ready(file, text);
+                        }
                     }
                     state.done.insert(path, loaded);
                     state.in_progress -= 1;
-                    has_loaded.notify_all();
+                    if state.awaited == Some(own_number) || state.is_done() {
+                        has_loaded.notify_all();
+                    }
                     if has_more || state.in_progress == 0 {
                         has_to_read.notify_all();
                     }
                     if has_more && reads || has_ready || state.in_progress == 0 {
                         has_work.notify_all();
                     }
-                } else if state.in_progress == 0 && state.to_read.is_empty() {
+                } else if state.is_done() {
                     has_work.notify_all();
                     has_to_read.notify_all();
                     return false;

@@ -269,15 +269,13 @@ snapshots:
 
   // pnpm writes `link:../utils` relative to the importer; bun.lock stores it relative to the
   // project, otherwise the install below looks for <project>/../utils.
-  test.each(["file:../utils", "link:../utils"])(
-    "%s of a workspace member that pnpm linked stays a link",
-    async specifier => {
-      await using tmpDir = tempDir("pnpm-migrate-importer-link", {
-        "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/app"] }),
-        "packages/app/package.json": JSON.stringify({ name: "app", dependencies: { utils: specifier } }),
-        "packages/utils/package.json": JSON.stringify({ name: "utils", version: "1.0.0", main: "index.js" }),
-        "packages/utils/index.js": `module.exports = "utils";`,
-        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+  test.each(["file:../utils", "link:../utils"])("%s of a workspace that pnpm linked stays a link", async specifier => {
+    await using tmpDir = tempDir("pnpm-migrate-importer-link", {
+      "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/app"] }),
+      "packages/app/package.json": JSON.stringify({ name: "app", dependencies: { utils: specifier } }),
+      "packages/utils/package.json": JSON.stringify({ name: "utils", version: "1.0.0", main: "index.js" }),
+      "packages/utils/index.js": `module.exports = "utils";`,
+      "pnpm-lock.yaml": `lockfileVersion: '9.0'
 
 importers:
 
@@ -289,31 +287,30 @@ importers:
         specifier: ${specifier}
         version: link:../utils
 `,
-      });
-      const run = async (cwd: string, ...args: string[]) => {
-        await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        return { stdout, stderr, exitCode };
-      };
+    });
+    const run = async (cwd: string, ...args: string[]) => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
 
-      const migrate = await run(String(tmpDir), "pm", "migrate");
-      expect(migrate.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
-      expect(migrate.exitCode).toBe(0);
-      const bunLock = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
-      expect(bunLock).toContain(`"utils": "${specifier}"`);
-      expect(bunLock).toContain('"utils@link:./packages/utils"');
+    const migrate = await run(String(tmpDir), "pm", "migrate");
+    expect(migrate.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+    expect(migrate.exitCode).toBe(0);
+    const bunLock = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    expect(bunLock).toContain(`"utils": "${specifier}"`);
+    expect(bunLock).toContain('"utils@link:./packages/utils"');
 
-      const install = await run(String(tmpDir), "install", "--frozen-lockfile");
-      expect(install.stderr).not.toContain("error:");
-      expect(install.exitCode).toBe(0);
+    const install = await run(String(tmpDir), "install", "--frozen-lockfile");
+    expect(install.stderr).not.toContain("error:");
+    expect(install.exitCode).toBe(0);
 
-      expect(await run(join(tmpDir, "packages", "app"), "-e", `console.log(require("utils"))`)).toEqual({
-        stdout: "utils\n",
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-  );
+    expect(await run(join(tmpDir, "packages", "app"), "-e", `console.log(require("utils"))`)).toEqual({
+      stdout: "utils\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 
   test("pnpm with npm protocol aliases", async () => {
     await using tmpDir = tempDir("pnpm-migrate-npm-aliases", {
@@ -641,7 +638,7 @@ overrides:
   };
   const catalogFixtureMoved =
     "copied pnpm.overrides to overrides, copied pnpm-workspace.yaml to workspaces, copied pnpm-workspace.yaml overrides to overrides in package.json";
-  // The `pnpm` block stays: pnpm itself keeps reading it.
+  // The `pnpm` block is kept, because pnpm itself keeps reading it.
   const catalogFixtureImported = {
     ...rootPackageJson,
     workspaces: {

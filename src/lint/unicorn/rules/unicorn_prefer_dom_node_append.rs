@@ -1,6 +1,8 @@
 use bun_lint_oxlint::ast_util::get_member_expr;
+use crate::unicorn::is_expression_statement;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::utils::visible::is_visibly_dom_node;
 
 /// Enforces the use of, for example, `document.body.append(div);` over `document.body.appendChild(div);` for DOM nodes.
 pub struct PreferDomNodeAppend;
@@ -25,11 +27,14 @@ impl Rule for PreferDomNodeAppend {
         if let Some(call_expr) = e.as_call()
             && call_expr.args().len() == 1
             && !call_expr.is_optional()
-            && let Some(ExprKind::Dot { name, .. }) = get_member_expr(call_expr.callee()).map(Expr::kind)
+            && let Some(ExprKind::Dot { obj, name, .. }) = get_member_expr(call_expr.callee()).map(Expr::kind)
             && name.name().is("appendChild")
             && call_expr.args().first().is_some_and(|it| it.tag() != ExprTag::Spread)
         {
-            cx.report(name, PREFER_DOM_NODE_APPEND).fix(|fixer| fixer.replace(name, "append"));
+            // `appendChild` returns the child, but `append` returns `undefined`. And an XML library's nodes may not
+            // have an `append` method.
+            cx.report(name, PREFER_DOM_NODE_APPEND)
+                .fix_where_safe(|| is_expression_statement(e) && is_visibly_dom_node(obj), |fixer| fixer.replace(name, "append"));
         }
     }
 }

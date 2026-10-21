@@ -54,11 +54,12 @@ interface PluginBuilderExt extends PluginBuilder {
 }
 
 /**
- * Used by Bun.serve() to resolve and load plugins.
+ * Used by Bun.serve() to resolve and load plugins: a module name from bunfig.toml, or a plugin object
+ * from the `bake.config.ts` of `bun bake`.
  */
 export function loadAndResolvePluginsForServe(
   this: BundlerPlugin,
-  plugins: string[],
+  plugins: Array<string | BunPlugin>,
   bunfig_folder: string,
   runSetupFn: typeof runSetupFunction,
 ) {
@@ -80,23 +81,30 @@ export function loadAndResolvePluginsForServe(
 
   let bundlerPlugin = this;
   let promiseResult = (async (
-    plugins: string[],
+    plugins: Array<string | BunPlugin>,
     bunfig_folder: string,
     runSetupFn: typeof runSetupFunction,
     bundlerPlugin: BundlerPlugin,
   ) => {
     let onstart_promises_array: Array<Promise<any>> | undefined = undefined;
     for (let i = 0; i < plugins.length; i++) {
-      let pluginModuleResolved = await Bun.resolve(plugins[i], bunfig_folder);
+      const entry = plugins[i];
+      let pluginModule: BunPlugin;
+      if (typeof entry === "string") {
+        let pluginModuleResolved = await Bun.resolve(entry, bunfig_folder);
 
-      let pluginModuleRaw = await import(pluginModuleResolved);
-      if (!pluginModuleRaw || !pluginModuleRaw.default) {
-        throw new TypeError(`Expected "${plugins[i]}" to be a module which default exports a bundler plugin.`);
+        let pluginModuleRaw = await import(pluginModuleResolved);
+        if (!pluginModuleRaw || !pluginModuleRaw.default) {
+          throw new TypeError(`Expected "${entry}" to be a module which default exports a bundler plugin.`);
+        }
+        pluginModule = pluginModuleRaw.default;
+        if (!pluginModule) throw new InvalidBundlerPluginError(entry, "default export is missing");
+        if (pluginModule.name === undefined) throw new InvalidBundlerPluginError(entry, "name is missing");
+        if (pluginModule.setup === undefined) throw new InvalidBundlerPluginError(entry, "setup() is missing");
+      } else {
+        // `bun bake` checked the name and setup() of each plugin in `bake.config.ts`.
+        pluginModule = entry;
       }
-      let pluginModule = pluginModuleRaw.default;
-      if (!pluginModule) throw new InvalidBundlerPluginError(plugins[i], "default export is missing");
-      if (pluginModule.name === undefined) throw new InvalidBundlerPluginError(plugins[i], "name is missing");
-      if (pluginModule.setup === undefined) throw new InvalidBundlerPluginError(plugins[i], "setup() is missing");
       onstart_promises_array = await runSetupFn.$apply(bundlerPlugin, [
         pluginModule.setup,
         config,
@@ -423,6 +431,8 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
     }
 
     for (let [filter, callback] of results) {
+      // test() on a /g or /y filter starts at lastIndex, which the previous path's match may have advanced.
+      if (filter.global || filter.sticky) filter.lastIndex = 0;
       if (filter.test(inputPath)) {
         var result: ReturnType<OnResolveCallback> = callback({
           path: inputPath,
@@ -537,6 +547,7 @@ export function runOnLoadPlugins(
     }
 
     for (let [filter, callback] of results) {
+      if (filter.global || filter.sticky) filter.lastIndex = 0;
       if (filter.test(path)) {
         var result = callback({
           path,

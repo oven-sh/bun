@@ -2,6 +2,7 @@
 #include "napi.h"
 
 #include "BunProcess.h"
+#include "ObjectBindings.h"
 #include "DLHandleMap.h"
 #include "WebCoreJSBuiltins.h"
 #include "v8/node.h"
@@ -72,6 +73,7 @@
 #ifndef WIN32
 #include <errno.h>
 #include <dlfcn.h>
+#include <limits.h>
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <netdb.h>
@@ -87,6 +89,7 @@
 #include <uv.h>
 #include <io.h>
 #include <fcntl.h>
+#include "NodeExeImportsWindows.h"
 // Using the same typedef and define for `mode_t` and `umask` as node on windows.
 // https://github.com/nodejs/node/blob/ad5e2dab4c8306183685973387829c2f69e793da/src/node_process_methods.cc#L29
 #define umask _umask
@@ -170,15 +173,10 @@ using namespace JSC;
 #endif
 
 using JSGlobalObject = JSC::JSGlobalObject;
-using Exception = JSC::Exception;
 using JSValue = JSC::JSValue;
 using JSString = JSC::JSString;
-using JSModuleLoader = JSC::JSModuleLoader;
-using JSModuleRecord = JSC::JSModuleRecord;
 using Identifier = JSC::Identifier;
-using SourceOrigin = JSC::SourceOrigin;
 using JSObject = JSC::JSObject;
-using JSNonFinalObject = JSC::JSNonFinalObject;
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
@@ -440,14 +438,25 @@ static char* toFileURI(std::span<const char> span)
 
 extern "C" size_t Bun__process_dlopen_count;
 
-extern "C" void CrashHandler__setDlOpenAction(const char* action);
+extern "C" void* CrashHandler__beginDlOpenAction(const char* path);
+extern "C" void CrashHandler__endDlOpenAction(void* guard);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 extern "C" int32_t Bun__addonNeedsGlibcOnMusl(const char* path, size_t len, char* soname_out, size_t soname_cap);
+
+// Drops only this load's reference. A library that registered modules on an earlier load is still referenced by that load.
+static void closeDLHandle(Bun::DLHandleMap::DLHandle handle)
+{
+#if OS(WINDOWS)
+    Bun::NodeExeImports::forget(handle);
+    FreeLibrary(handle);
+#else
+    dlclose(handle);
+#endif
+}
 
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(globalObject_);
-    auto callCountAtStart = globalObject->napiModuleRegisterCallCount;
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     auto& vm = JSC::getVM(globalObject);
 
@@ -475,9 +484,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         JSC::throwTypeError(globalObject, scope, "dlopen requires an object with an exports property"_s);
         return {};
     }
-
-    globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, moduleObject);
-    globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, exports);
 
     Strong<JSC::Unknown> strongExports;
 
@@ -538,6 +544,13 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         }
     }
 
+#if !OS(WINDOWS)
+    // glibc's dlopen() alloca()s a copy of a name without a '/'. A path this long can't be opened anyway.
+    if (filename.length() >= PATH_MAX) [[unlikely]] {
+        return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, "dlopen failed: File name too long"_s);
+    }
+#endif
+
     {
         auto utf8_filename = filename.tryGetUTF8(ConversionMode::LenientConversion);
         if (!utf8_filename) [[unlikely]] {
@@ -547,10 +560,21 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         utf8 = *utf8_filename;
     }
 
+    // An init function can call process.dlopen() recursively, so save the outer call's pending registrations and restore them on return.
+    auto outerNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
+    auto outerV8Modules = std::exchange(globalObject->m_pendingV8Modules, {});
+    auto outerRegisterCallCount = std::exchange(globalObject->napiModuleRegisterCallCount, 0);
+    auto restorePendingRegistrations = WTF::makeScopeExit([&] {
+        globalObject->m_pendingNapiModules = WTF::move(outerNapiModules);
+        globalObject->m_pendingV8Modules = WTF::move(outerV8Modules);
+        globalObject->napiModuleRegisterCallCount = outerRegisterCallCount;
+    });
+
     Bun__process_dlopen_count++;
 
 #if OS(WINDOWS)
     BunString filename_str = Bun::toString(filename);
+    Bun::NodeExeImports::Scope nodeExeImports;
     HMODULE handle = Bun__LoadLibraryBunString(&filename_str);
 #else
 #if OS(LINUX)
@@ -571,12 +595,10 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         }
     }
 #endif
-    CrashHandler__setDlOpenAction(utf8.legacyCStringPointer());
+    // Keep the addon's name in crash reports until this call returns, because its init functions run after dlopen().
+    auto endDlOpenAction = WTF::makeScopeExit([guard = CrashHandler__beginDlOpenAction(utf8.legacyCStringPointer())] { CrashHandler__endDlOpenAction(guard); });
     void* handle = dlopen(utf8.legacyCStringPointer(), RTLD_LAZY);
-    CrashHandler__setDlOpenAction(nullptr);
 #endif
-
-    globalObject->m_pendingNapiModuleDlopenHandle = handle;
 
     if (!handle) {
 #if OS(WINDOWS)
@@ -604,6 +626,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             errorBuilder.append("error code "_s);
             errorBuilder.append(WTF::String::number(errorId));
         }
+        if (WTF::String unresolved = nodeExeImports.unresolvedImportError(nullptr); !unresolved.isNull())
+            errorBuilder.append(" "_s, unresolved, "."_s);
 
         WTF::String msg = errorBuilder.toString();
         if (messageBuffer)
@@ -614,7 +638,14 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, msg);
     }
 
-    if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {
+#if OS(WINDOWS)
+    if (WTF::String unresolved = nodeExeImports.unresolvedImportError(handle); !unresolved.isNull()) {
+        closeDLHandle(handle);
+        return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, makeString("Cannot load native addon "_s, filename, ": "_s, unresolved));
+    }
+#endif
+
+    if (globalObject->napiModuleRegisterCallCount != 0) {
         // Module self-registered via static constructor(s).
         // Move pending registrations into locals before iterating: an
         // nm_register_func can itself call napi_module_register(), which
@@ -623,14 +654,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         // iterator dangling.
         auto pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
         auto pendingV8Modules = std::exchange(globalObject->m_pendingV8Modules, {});
-        // Whatever happens below, no registration state may leak into the next dlopen().
-        auto resetPendingRegistrations = WTF::makeScopeExit([&] {
-            globalObject->m_pendingV8Modules.clear();
-            globalObject->m_pendingNapiModules.clear();
-            globalObject->napiModuleRegisterCallCount = 0;
-            globalObject->m_pendingNapiModuleAndExports[0].clear();
-            globalObject->m_pendingNapiModuleAndExports[1].clear();
-        });
 
         if (handle) {
             // Save all NAPI module registrations
@@ -641,25 +664,22 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
             // Save all V8 C++ module registrations
             for (auto* mod : pendingV8Modules) {
-                Bun::DLHandleMap::singleton().add(handle, mod);
+                Bun::DLHandleMap::singleton().add(handle, mod, vm);
             }
         }
 
-        // A V8-style module's nm_register_func already ran inside dlopen() (node_module_register)
-        // and may have thrown.
-        RETURN_IF_EXCEPTION(scope, {});
+        // Run V8 init functions here instead of in node_module_register(). See https://github.com/oven-sh/bun/issues/20454
+        for (auto* mod : pendingV8Modules) {
+            node::executePendingV8Module(globalObject, mod, strongModule.get());
+            RETURN_IF_EXCEPTION(scope, {});
+        }
 
         // Execute all NAPI modules. If an nm_register_func registers more
         // modules re-entrantly, they accumulate back in m_pendingNapiModules;
         // drain those too once the current batch is done.
         for (;;) {
             for (auto& mod : pendingNapiModules) {
-                // Restore dlopen handle for this module before execution
-                // executePendingNapiModule clears it, so we must set it for each module
-                globalObject->m_pendingNapiModuleDlopenHandle = handle;
-                globalObject->m_pendingNapiModule = mod;
-                Napi::executePendingNapiModule(globalObject);
-                globalObject->m_pendingNapiModule = {};
+                Napi::executePendingNapiModule(globalObject, mod, handle, strongModule.get());
                 RETURN_IF_EXCEPTION(scope, {});
             }
             if (globalObject->m_pendingNapiModules.isEmpty())
@@ -667,33 +687,22 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
         }
 
-        JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
-        if (resultValue && resultValue != strongModule.get()) {
-            if (resultValue.isCell() && resultValue.getObject()->isErrorInstance()) {
-                JSC::throwException(globalObject, scope, resultValue);
-                return {};
-            }
-        }
-
         return JSValue::encode(jsUndefined());
     }
 
     // Module didn't self-register on this load. Check if we have cached registrations.
     if (auto cachedModules = Bun::DLHandleMap::singleton().get(handle)) {
-        // (The V8 registrations are already in DLHandleMap; nothing here re-saves them.)
-        auto resetPendingRegistrations = WTF::makeScopeExit([&] {
-            globalObject->m_pendingV8Modules.clear();
-            globalObject->m_pendingNapiModules.clear();
-            globalObject->napiModuleRegisterCallCount = 0;
-            globalObject->m_pendingNapiModuleAndExports[0].clear();
-            globalObject->m_pendingNapiModuleAndExports[1].clear();
-        });
+        if (!Bun::DLHandleMap::singleton().claimForVM(handle, vm)) {
+            closeDLHandle(handle);
+            return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
+                makeString("Module did not self-register: '"_s, filename, "'."_s));
+        }
 
         // Replay all registrations from this handle. napi ones only queue into
         // m_pendingNapiModules; a V8 one runs its nm_register_func right here.
         for (auto& registration : *cachedModules) {
-            if (auto* const* nodeModule = std::get_if<node::node_module*>(&registration)) {
-                node::node_module_register(*nodeModule);
+            if (auto* v8Module = std::get_if<Bun::V8ModuleRegistration>(&registration)) {
+                node::executePendingV8Module(globalObject, v8Module->module, strongModule.get());
                 RETURN_IF_EXCEPTION(scope, {});
             } else {
                 napi_module_register(std::get<napi_module*>(registration));
@@ -706,21 +715,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         while (!globalObject->m_pendingNapiModules.isEmpty()) {
             auto pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
             for (auto& mod : pendingNapiModules) {
-                // Restore dlopen handle for this module before execution
-                // executePendingNapiModule clears it, so we must set it for each module
-                globalObject->m_pendingNapiModuleDlopenHandle = handle;
-                globalObject->m_pendingNapiModule = mod;
-                Napi::executePendingNapiModule(globalObject);
-                globalObject->m_pendingNapiModule = {};
+                Napi::executePendingNapiModule(globalObject, mod, handle, strongModule.get());
                 RETURN_IF_EXCEPTION(scope, {});
-            }
-        }
-
-        JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
-        if (resultValue && resultValue != strongModule.get()) {
-            if (resultValue.isCell() && resultValue.getObject()->isErrorInstance()) {
-                JSC::throwException(globalObject, scope, resultValue);
-                return {};
             }
         }
 
@@ -742,11 +738,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 #endif
 
     if (!napi_register_module_v1) {
-#if OS(WINDOWS)
-        FreeLibrary(handle);
-#else
-        dlclose(handle);
-#endif
+        closeDLHandle(handle);
 
         if (!scope.exception()) [[likely]] {
             JSC::throwTypeError(globalObject, scope, "symbol 'napi_register_module_v1' not found in native module. Is this a Node API (napi) module?"_s);
@@ -797,17 +789,13 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         if (pointer_to_plugin_name) {
             // TODO: think about the finalizer here
             // currently we do not dealloc napi modules so we don't have to worry about it right now
-            auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
+            auto* meta = new Bun::NapiModuleMeta(handle);
             Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr, env.ptr());
             bool success = resultObject->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
             ASSERT(success);
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
-
-    globalObject->m_pendingNapiModuleAndExports[0].clear();
-    globalObject->m_pendingNapiModuleAndExports[1].clear();
-    globalObject->m_pendingNapiModuleDlopenHandle = nullptr;
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_api.cc#L734-L742
     // https://github.com/oven-sh/bun/issues/1288
@@ -1041,7 +1029,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObj
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 
-static HashMap<int, String>* signalNumberToNameMap = nullptr;
+// One number can have two names, e.g. SIGABRT and SIGIOT.
+static HashMap<int, Vector<String, 2>>* signalNumberToNamesMap = nullptr;
 static HashMap<String, int>* signalNameToNumberMap = nullptr;
 
 // On windows, signals need to have a handle to the uv_signal_t. When sigaction is used, this is kept track globally for you.
@@ -1193,88 +1182,91 @@ static void loadSignalNumberMap()
     });
 }
 
-static void loadSignalNumberToNameMap()
+static void loadSignalNumberToNamesMap()
 {
-    static std::once_flag signalNumberToNameMapOnceFlag;
-    std::call_once(signalNumberToNameMapOnceFlag, [] {
+    static std::once_flag signalNumberToNamesMapOnceFlag;
+    std::call_once(signalNumberToNamesMapOnceFlag, [] {
         auto signalNames = getSignalNames();
-        signalNumberToNameMap = new HashMap<int, String>();
-        signalNumberToNameMap->reserveInitialCapacity(31);
-        signalNumberToNameMap->add(SIGHUP, signalNames[0]);
-        signalNumberToNameMap->add(SIGINT, signalNames[1]);
-        signalNumberToNameMap->add(SIGQUIT, signalNames[2]);
-        signalNumberToNameMap->add(SIGILL, signalNames[3]);
+        signalNumberToNamesMap = new HashMap<int, Vector<String, 2>>();
+        signalNumberToNamesMap->reserveInitialCapacity(31);
+        auto add = [](int signalNumber, const String& signalName) {
+            signalNumberToNamesMap->add(signalNumber, Vector<String, 2>()).iterator->value.append(signalName);
+        };
+        add(SIGHUP, signalNames[0]);
+        add(SIGINT, signalNames[1]);
+        add(SIGQUIT, signalNames[2]);
+        add(SIGILL, signalNames[3]);
 #ifdef SIGTRAP
-        signalNumberToNameMap->add(SIGTRAP, signalNames[4]);
+        add(SIGTRAP, signalNames[4]);
 #endif
-        signalNumberToNameMap->add(SIGABRT, signalNames[5]);
+        add(SIGABRT, signalNames[5]);
 #ifdef SIGIOT
-        signalNumberToNameMap->add(SIGIOT, signalNames[6]);
+        add(SIGIOT, signalNames[6]);
 #endif
 #ifdef SIGBUS
-        signalNumberToNameMap->add(SIGBUS, signalNames[7]);
+        add(SIGBUS, signalNames[7]);
 #endif
-        signalNumberToNameMap->add(SIGFPE, signalNames[8]);
-        signalNumberToNameMap->add(SIGKILL, signalNames[9]);
+        add(SIGFPE, signalNames[8]);
+        add(SIGKILL, signalNames[9]);
 #ifdef SIGUSR1
-        signalNumberToNameMap->add(SIGUSR1, signalNames[10]);
+        add(SIGUSR1, signalNames[10]);
 #endif
-        signalNumberToNameMap->add(SIGSEGV, signalNames[11]);
+        add(SIGSEGV, signalNames[11]);
 #ifdef SIGUSR2
-        signalNumberToNameMap->add(SIGUSR2, signalNames[12]);
+        add(SIGUSR2, signalNames[12]);
 #endif
 #ifdef SIGPIPE
-        signalNumberToNameMap->add(SIGPIPE, signalNames[13]);
+        add(SIGPIPE, signalNames[13]);
 #endif
 #ifdef SIGALRM
-        signalNumberToNameMap->add(SIGALRM, signalNames[14]);
+        add(SIGALRM, signalNames[14]);
 #endif
-        signalNumberToNameMap->add(SIGTERM, signalNames[15]);
+        add(SIGTERM, signalNames[15]);
 #ifdef SIGCHLD
-        signalNumberToNameMap->add(SIGCHLD, signalNames[16]);
+        add(SIGCHLD, signalNames[16]);
 #endif
 #ifdef SIGCONT
-        signalNumberToNameMap->add(SIGCONT, signalNames[17]);
+        add(SIGCONT, signalNames[17]);
 #endif
 #ifdef SIGSTOP
-        signalNumberToNameMap->add(SIGSTOP, signalNames[18]);
+        add(SIGSTOP, signalNames[18]);
 #endif
 #ifdef SIGTSTP
-        signalNumberToNameMap->add(SIGTSTP, signalNames[19]);
+        add(SIGTSTP, signalNames[19]);
 #endif
 #ifdef SIGTTIN
-        signalNumberToNameMap->add(SIGTTIN, signalNames[20]);
+        add(SIGTTIN, signalNames[20]);
 #endif
 #ifdef SIGTTOU
-        signalNumberToNameMap->add(SIGTTOU, signalNames[21]);
+        add(SIGTTOU, signalNames[21]);
 #endif
 #ifdef SIGURG
-        signalNumberToNameMap->add(SIGURG, signalNames[22]);
+        add(SIGURG, signalNames[22]);
 #endif
 #ifdef SIGXCPU
-        signalNumberToNameMap->add(SIGXCPU, signalNames[23]);
+        add(SIGXCPU, signalNames[23]);
 #endif
 #ifdef SIGXFSZ
-        signalNumberToNameMap->add(SIGXFSZ, signalNames[24]);
+        add(SIGXFSZ, signalNames[24]);
 #endif
 #ifdef SIGVTALRM
-        signalNumberToNameMap->add(SIGVTALRM, signalNames[25]);
+        add(SIGVTALRM, signalNames[25]);
 #endif
 #ifdef SIGPROF
-        signalNumberToNameMap->add(SIGPROF, signalNames[26]);
+        add(SIGPROF, signalNames[26]);
 #endif
-        signalNumberToNameMap->add(SIGWINCH, signalNames[27]);
+        add(SIGWINCH, signalNames[27]);
 #ifdef SIGIO
-        signalNumberToNameMap->add(SIGIO, signalNames[28]);
+        add(SIGIO, signalNames[28]);
 #endif
 #ifdef SIGINFO
-        signalNumberToNameMap->add(SIGINFO, signalNames[29]);
+        add(SIGINFO, signalNames[29]);
 #endif
 #ifdef SIGSYS
-        signalNumberToNameMap->add(SIGSYS, signalNames[30]);
+        add(SIGSYS, signalNames[30]);
 #endif
 #ifdef SIGBREAK
-        signalNumberToNameMap->add(SIGBREAK, signalNames[31]);
+        add(SIGBREAK, signalNames[31]);
 #endif
     });
 }
@@ -1282,19 +1274,29 @@ static void loadSignalNumberToNameMap()
 extern "C" bool Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalObject)
 {
     Process* process = globalObject->processObject();
+    auto& vm = JSC::getVM(globalObject);
 
-    loadSignalNumberToNameMap();
-    auto entry = signalNumberToNameMap->find(signalNumber);
-    // Identifier::fromString dereferences the null String of a missing key.
-    if (entry == signalNumberToNameMap->end()) [[unlikely]]
+    loadSignalNumberToNamesMap();
+    auto entry = signalNumberToNamesMap->find(signalNumber);
+    if (entry == signalNumberToNamesMap->end()) [[unlikely]]
         return false;
-    const String& signalName = entry->value;
-    Identifier signalNameIdentifier = Identifier::fromString(JSC::getVM(globalObject), signalName);
-    MarkedArgumentBuffer args;
-    args.append(jsString(JSC::getVM(globalObject), signalNameIdentifier.string()));
-    args.append(jsNumber(signalNumber));
 
-    return process->wrapped().emitForBindings(signalNameIdentifier, args);
+    // Node has one watcher per name, so emit the event under every name that has a listener.
+    Vector<Identifier, 2> eventNames;
+    for (const String& signalName : entry->value) {
+        Identifier eventName = Identifier::fromString(vm, signalName);
+        if (process->wrapped().hasEventListeners(eventName))
+            eventNames.append(eventName);
+    }
+
+    bool fired = false;
+    for (const Identifier& eventName : eventNames) {
+        MarkedArgumentBuffer args;
+        args.append(jsString(vm, eventName.string()));
+        args.append(jsNumber(signalNumber));
+        fired |= process->wrapped().emitForBindings(eventName, args);
+    }
+    return fired;
 }
 
 #if OS(WINDOWS)
@@ -1309,7 +1311,7 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
 #endif
 {
 #if OS(WINDOWS)
-    if (signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()) [[unlikely]]
+    if (!signalNumberToNamesMap->contains(signalNumber)) [[unlikely]]
         return;
 
     auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
@@ -1329,9 +1331,8 @@ extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
 
 extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, int isRejection)
 {
-    if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
-        return false;
-    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    // The exception can come from a node:vm context, which doesn't have its own process object.
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* process = globalObject->processObject();
     auto& wrapped = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
@@ -1379,14 +1380,14 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     auto capture = process->getUncaughtExceptionCaptureCallback();
     if (!capture.isEmpty() && !capture.isUndefinedOrNull()) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
+        (void)call(globalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
         if (auto ex = scope.exception()) {
             (void)scope.tryClearException();
             if (vm.hasPendingTerminationException()) [[unlikely]]
                 return true;
             // if an exception is thrown in the uncaughtException handler, we abort
             Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
-            Bun__Process__exit(lexicalGlobalObject, 1);
+            Bun__Process__exit(globalObject, 1);
         }
     } else if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
         auto emitScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -1564,8 +1565,17 @@ __attribute__((noinline)) static void forwardSignal(int signalNumber)
 static int watchModeStickySignal = 0;
 
 #if !OS(WINDOWS)
+#if OS(LINUX)
+// Tells the seccomp SIGSYS handler in c-bindings.cpp whether to forward a SIGSYS sent with kill(2).
+extern "C" bool Bun__forwardSIGSYSToJS(bool enabled);
+#endif
+
 static void installForwardSignalHandler(int signalNumber)
 {
+#if OS(LINUX)
+    if (signalNumber == SIGSYS && Bun__forwardSIGSYSToJS(true))
+        return;
+#endif
     struct sigaction action;
     memset(&action, 0, sizeof(struct sigaction));
     action.sa_handler = forwardSignal;
@@ -1573,6 +1583,18 @@ static void installForwardSignalHandler(int signalNumber)
     sigaddset(&action.sa_mask, signalNumber);
     action.sa_flags = SA_RESTART;
     sigaction(signalNumber, &action, nullptr);
+}
+
+static void uninstallForwardSignalHandler(int signalNumber)
+{
+#if OS(LINUX)
+    if (signalNumber == SIGSYS && Bun__forwardSIGSYSToJS(false))
+        return;
+#endif
+    if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
+        // Don't uninstall the old handler if it's not the one we installed.
+        signal(signalNumber, oldHandler);
+    }
 }
 
 extern "C" void Bun__installWatchModeSignalHandler(int signalNumber)
@@ -1585,6 +1607,21 @@ extern "C" void Bun__installWatchModeSignalHandler(int signalNumber)
 
 extern "C" void Bun__MemoryPressure__install(JSC::JSGlobalObject* global);
 extern "C" void Bun__MemoryPressure__uninstall(JSC::JSGlobalObject* global);
+
+// The OS handler is per signal number, so count the listeners under every name for that number.
+static int listenerCountForSignal(EventEmitter& eventEmitter, const Identifier& eventName, int signalNumber)
+{
+    int listenerCount = eventEmitter.listenerCount(eventName);
+    // On platforms without SIGINFO, "SIGINFO" maps to 255, which isn't in the map.
+    auto names = signalNumberToNamesMap->find(signalNumber);
+    if (names == signalNumberToNamesMap->end())
+        return listenerCount;
+    for (const String& signalName : names->value) {
+        if (signalName != eventName.string())
+            listenerCount += eventEmitter.listenerCount(Identifier::fromString(eventEmitter.scriptExecutionContext()->vm(), signalName));
+    }
+    return listenerCount;
+}
 
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
@@ -1628,14 +1665,14 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 
         // Signal Handlers
         loadSignalNumberMap();
-        loadSignalNumberToNameMap();
+        loadSignalNumberToNamesMap();
 
         if (!signalToContextIdsMap) {
             signalToContextIdsMap = new HashMap<int, SignalHandleValue>();
         }
 
         if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
-            int listenerCount = eventEmitter.listenerCount(eventName);
+            int listenerCount = listenerCountForSignal(eventEmitter, eventName, signalNumber);
             // Mirror the count for the watcher thread's --watch-kill-signal check.
             Bun__onSignalListenerCountChanged(signalNumber, listenerCount);
 #if OS(LINUX)
@@ -1681,10 +1718,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         // "has JS listeners" source of truth that e.g. self-kill flush consults.
                         if (signalNumber != watchModeStickySignal) {
 #if !OS(WINDOWS)
-                            if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
-                                // Don't uninstall the old handler if it's not the one we installed.
-                                signal(signalNumber, oldHandler);
-                            }
+                            uninstallForwardSignalHandler(signalNumber);
 #else
                             SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
                             Bun__UVSignalHandle__close(signal_handle.handle);
@@ -1905,6 +1939,16 @@ struct ExecveCloexecRestorer {
             fcntl(entry.first, F_SETFD, entry.second);
     }
 };
+
+// String::utf8() asserts on failure, and converting a Latin-1 string of 2^30 or more characters fails.
+static bool appendUTF8(Vector<UTF8CString>& storage, const WTF::String& string)
+{
+    auto utf8 = string.tryGetUTF8();
+    if (!utf8) [[unlikely]]
+        return false;
+    storage.append(WTF::move(*utf8));
+    return true;
+}
 #endif
 
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((minsize)), (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -1982,7 +2026,10 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
             return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, makeString("args["_s, i, "]"_s),
                 item, "must be a string without null bytes"_s);
         }
-        argvStorage.append(str.utf8());
+        if (!appendUTF8(argvStorage, str)) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
     }
 
     // Node declares env = process.env as the default, so an omitted env
@@ -2025,11 +2072,20 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
                 return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "env"_s,
                     envValue, "must be an object with string keys and values without null bytes"_s);
             }
-            envStorage.append(makeString(keyStr, '=', valueStr).utf8());
+            WTF::String entry = tryMakeString(keyStr, '=', valueStr);
+            if (entry.isNull() || !appendUTF8(envStorage, entry)) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
         }
     }
 
-    UTF8CString execPathUtf8 = execPath.utf8();
+    auto execPathConversion = execPath.tryGetUTF8();
+    if (!execPathConversion) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    UTF8CString execPathUtf8 = WTF::move(*execPathConversion);
 
     // Build the null-terminated argv/envp pointer arrays only after the
     // backing storage is fully populated so there is no risk of pointers
@@ -3156,9 +3212,8 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessPpid, (JSC::JSGlobalObject * globalObject, JS
     if (!thisObject) {
         return false;
     }
-    auto& vm = JSC::getVM(globalObject);
-    thisObject->putDirect(vm, propertyName, JSValue::decode(encodedValue), 0);
-    return true;
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    RELEASE_AND_RETURN(scope, Bun::defineOwnDataProperty(globalObject, thisObject, propertyName, JSValue::decode(encodedValue), 0));
 }
 
 static JSValue constructArgv0(VM& vm, JSObject* processObject)
@@ -3313,16 +3368,10 @@ static JSValue constructRevision(VM& vm, JSObject* processObject)
 static JSValue constructEnv(VM& vm, JSObject* processObject)
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(processObject->globalObject());
-    // Lazy property builder: exceptions must not propagate into
-    // reifyStaticProperty, which performs no exception check.
+    // Returning empty with an exception pending skips reification, so this read throws and the next read retries.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSValue env = globalObject->processEnvObject();
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        RETURN_IF_EXCEPTION(scope, JSC::jsUndefined());
-        return JSC::jsUndefined();
-    }
+    JSObject* env = globalObject->processEnvObject();
+    RETURN_IF_EXCEPTION(scope, {});
     return env;
 }
 
@@ -3368,6 +3417,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
     return JSValue::encode(groups);
 }
 
+static void throwUnknownCredential(JSC::ThrowScope& throwScope, JSGlobalObject* globalObject, ASCIILiteral prefix, const String& name)
+{
+    MessageBuilder message;
+    message.append(prefix, name);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+}
+
 static JSValue maybe_uid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* globalObject, JSValue value)
 {
     if (!value.isNumber() && !value.isString()) return JSValue::decode(Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "id"_s, "number or string"_s, value));
@@ -3375,18 +3431,19 @@ static JSValue maybe_uid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* gl
 
     auto str = value.getString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto utf8 = str.utf8();
-    auto name = utf8.legacyCStringPointer();
     struct passwd pwd;
     struct passwd* pp = nullptr;
     char buf[8192];
 
-    if (getpwnam_r(name, &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
-        return jsNumber(pp->pw_uid);
+    // A name longer than `buf` can't match an entry, and nss-systemd aborts on very long names.
+    if (str.length() < sizeof(buf)) {
+        auto utf8 = str.utf8();
+        if (getpwnam_r(utf8.legacyCStringPointer(), &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
+            return jsNumber(pp->pw_uid);
+        }
     }
 
-    auto message = makeString("User identifier does not exist: "_s, str);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+    throwUnknownCredential(throwScope, globalObject, "User identifier does not exist: "_s, str);
     return {};
 }
 
@@ -3397,18 +3454,18 @@ static JSValue maybe_gid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* gl
 
     auto str = value.getString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto utf8 = str.utf8();
-    auto name = utf8.legacyCStringPointer();
     struct group pwd;
     struct group* pp = nullptr;
     char buf[8192];
 
-    if (getgrnam_r(name, &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
-        return jsNumber(pp->gr_gid);
+    if (str.length() < sizeof(buf)) {
+        auto utf8 = str.utf8();
+        if (getgrnam_r(utf8.legacyCStringPointer(), &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
+            return jsNumber(pp->gr_gid);
+        }
     }
 
-    auto message = makeString("Group identifier does not exist: "_s, str);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+    throwUnknownCredential(throwScope, globalObject, "Group identifier does not exist: "_s, str);
     return {};
 }
 
@@ -3584,7 +3641,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObj
     if (user.isString()) {
         auto str = user.getString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        userNameUTF8 = str.utf8();
+        auto utf8 = str.tryGetUTF8();
+        if (!utf8) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+        userNameUTF8 = WTF::move(*utf8);
         userName = userNameUTF8.legacyCStringPointer();
     } else {
         uid_t uid = static_cast<uid_t>(user.toUInt32(globalObject));

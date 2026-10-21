@@ -9,7 +9,7 @@ use std::cmp::Reverse;
 /// Enforce naming conventions for everything across a codebase.
 pub struct NamingConvention {
     options: Vec<NormalizedOption>,
-    /// By [`Selector`].
+    /// Indexed by [`Selector`].
     validators: [Validator; Selector::COUNT],
 }
 
@@ -38,7 +38,7 @@ const UNEXPECTED_UNDERSCORE: Message = Message::new(
 
 // ───────────────────────────── enums ─────────────────────────────
 
-/// Upstream's `Selectors`: `1 << selector` is the value there.
+/// Upstream's `Selectors`. The upstream value is `1 << selector`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
 enum Selector {
@@ -63,7 +63,7 @@ enum Selector {
     Import,
 }
 
-/// The name of each [`Selector`] in the options, and what `selectorTypeToMessageString` makes of it.
+/// Each [`Selector`]'s name in the options, and what `selectorTypeToMessageString` turns it into.
 const SELECTORS: [(&str, &str); Selector::COUNT] = [
     ("variable", "Variable"),
     ("function", "Function"),
@@ -141,7 +141,7 @@ fn parse_selector(name: &[u8]) -> Option<i32> {
     }
 }
 
-/// Upstream's `Modifiers`: the one at `i` has the value `1 << i`.
+/// Upstream's `Modifiers`. The one at index `i` has the value `1 << i`.
 const MODIFIERS: [&str; 17] = [
     "const",
     "readonly",
@@ -179,7 +179,7 @@ const ASYNC: u32 = 1 << 14;
 const DEFAULT: u32 = 1 << 15;
 const NAMESPACE: u32 = 1 << 16;
 
-/// Upstream's `TypeModifiers`, whose values follow those of [`MODIFIERS`].
+/// Upstream's `TypeModifiers`, whose values continue after those of [`MODIFIERS`].
 const TYPE_MODIFIERS: [&str; 5] = ["boolean", "string", "number", "function", "array"];
 const BOOLEAN: u32 = 1 << 17;
 const STRING: u32 = 1 << 18;
@@ -187,7 +187,7 @@ const NUMBER: u32 = 1 << 19;
 const FUNCTION: u32 = 1 << 20;
 const ARRAY: u32 = 1 << 21;
 
-/// The values of those of `names` that are in `all`, where the first has the value `first`.
+/// ORs together the values of the `names` that are in `all`, where the first entry of `all` has the value `first`.
 fn parse_flags(names: &[&str], all: &[&str], first: u32) -> u32 {
     names.iter().fold(0, |flags, name| match all.iter().position(|it| it == name) {
         Some(index) => flags | (first << index),
@@ -252,7 +252,7 @@ fn has_strict_camel_humps(name: &[u8], mut is_upper: bool) -> bool {
     while let Some((at, c)) = points.next() {
         let end = points.peek().map_or(name.len(), |next| next.0);
         let is_uppercase_char = match c > 0xFFFF {
-            // Upstream goes by UTF-16 code units from the second on.
+            // From the second character on, upstream works on UTF-16 code units.
             true => false,
             false if is_first => {
                 is_first = false;
@@ -366,7 +366,7 @@ struct NormalizedOption {
     types: Option<u32>,
 }
 
-/// Upstream's `normalizeOption`: the selectors, and what applies to all of them.
+/// Upstream's `normalizeOption`: the selectors, and the settings that apply to all of them.
 fn normalize_option(option: &Json) -> Option<(Vec<i32>, NormalizedOption)> {
     let object = Object::of(Some(option));
     let selectors = match object.get("selector")? {
@@ -421,23 +421,23 @@ fn default_options() -> Vec<(Vec<i32>, NormalizedOption)> {
     ]
 }
 
-/// What upstream's `createValidator` computes for a [`Selector`].
+/// The data upstream's `createValidator` computes for a [`Selector`].
 struct Validator {
-    /// Indices in `NamingConvention::options`, the highest priority first.
+    /// Indices into `NamingConvention::options`, highest priority first.
     configs: Vec<usize>,
-    /// The modifiers that any of them asks for.
+    /// The modifiers that any of them requires.
     modifiers: u32,
 }
 
 // ───────────────────────────── validation ─────────────────────────────
 
-/// What `getTypeAtLocation` is asked about for a name.
+/// The node passed to `getTypeAtLocation` for a name.
 #[derive(Copy, Clone)]
 enum TypedNode<'a> {
     Pat(Pat<'a>),
     Member(Member<'a>),
     Prop(Prop<'a>),
-    /// Of a selector that is not allowed to have types.
+    /// For a selector that isn't allowed to have types.
     None,
 }
 
@@ -459,7 +459,7 @@ impl<'a> Identifier<'a> {
         }
     }
 
-    fn of_key(key: Key<'a>, file: &'a File<'a>, node: TypedNode<'a>) -> Self {
+    fn from_key(key: Key<'a>, file: &'a File<'a>, node: TypedNode<'a>) -> Self {
         let span = key.inner_span(file);
         let name: &'a [u8] = match key.kind() {
             KeyKind::Ident(name)
@@ -523,7 +523,7 @@ fn is_correct_type(types: Option<u32>, selector: Selector, node: TypedNode) -> b
     types & allowed != 0
 }
 
-/// Upstream's `validateUnderscore`: the name without the underscore, or the message and its `count`.
+/// Upstream's `validateUnderscore`: returns the name without the underscore, or the message and its `count`.
 fn validate_underscore(
     option: Option<UnderscoreOption>,
     is_leading: bool,
@@ -549,7 +549,7 @@ fn validate_underscore(
     }
 }
 
-/// Upstream's `validateAffix`: the name without the affix. `None` if it has none of them.
+/// Upstream's `validateAffix`: returns the name without the affix, or `None` if it has none of them.
 fn validate_affix<'n>(affixes: &[Vec<u8>], is_prefix: bool, name: &'n [u8]) -> Option<&'n [u8]> {
     if affixes.is_empty() {
         return Some(name);
@@ -591,7 +591,7 @@ fn is_destructured(id: Pat) -> bool {
     matches!(id.parent(), Node::PatProp(property) if property.is_shorthand())
 }
 
-/// Whether `owner` is a function or a class expression after `export default`.
+/// True if `owner` is a function or class expression after `export default`.
 fn is_default_export(owner: Node) -> bool {
     matches!(
         owner,
@@ -633,11 +633,11 @@ fn is_function_node(func: Func) -> bool {
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// Upstream's `collectVariables(context)`, if a selector asks for `unused`.
+    /// Upstream's `collectVariables(context)`, computed if a selector requires `unused`.
     analysis: OnceCell<VariableAnalysis<'a>>,
 }
 
-/// Those of the modifiers `global`, `exported` and `unused` that are among `wanted` and that `name` has in `scope`.
+/// Returns the modifiers among `global`, `exported` and `unused` that are in `wanted` and that `name` has in `scope`.
 fn modifiers_in_scope<'a>(
     cx: &Cx<'a, NamingConvention>,
     name: Name<'a>,
@@ -645,7 +645,7 @@ fn modifiers_in_scope<'a>(
     scope: Option<Scope<'a>>,
 ) -> u32 {
     let mut modifiers = 0;
-    if wanted & GLOBAL != 0 && matches!(scope.map(Scope::kind), Some(ScopeKind::Global | ScopeKind::Module)) {
+    if wanted & GLOBAL != 0 && scope.is_some_and(|it| it.kind() == ScopeKind::Global || it.is_top_level_of_module()) {
         modifiers |= GLOBAL;
     }
     if wanted & EXPORTED != 0 && has_export_reference(name, scope) {
@@ -722,8 +722,8 @@ impl NamingConvention {
         }
     }
 
-    /// Those of the modifiers `global`, `exported` and `unused` that are among `kinds`, that a
-    /// configuration for `selector` asks for, and that `name` has. `scope`: where upstream looks it up.
+    /// Returns the modifiers among `global`, `exported` and `unused` that are in `kinds`, that a config for `selector`
+    /// requires, and that `name` has. `scope` returns the scope upstream looks it up in.
     fn scope_modifiers<'a>(
         &self,
         cx: &Cx<'a, Self>,
@@ -763,7 +763,7 @@ impl NamingConvention {
             return;
         }
         for param in func.params_with_this() {
-            // With a keyword before it, it is a `TSParameterProperty`.
+            // With a keyword in front, it's a `TSParameterProperty`.
             let keywords = param.modifiers().iter().fold(Flags::empty(), |all, it| all | it.flag());
             let selector = match keywords.is_empty() {
                 true => Selector::Parameter,
@@ -797,7 +797,7 @@ impl NamingConvention {
 
     fn check_variable_declarator<'a>(&self, declarator: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
         let cx = &*cx;
-        // The parameter of a `catch` is none.
+        // A `catch` parameter isn't a declarator.
         let Node::Stmt(parent) = declarator.parent() else {
             return;
         };
@@ -860,9 +860,9 @@ impl NamingConvention {
         }
         let key = member.key();
         let id = match (key, member.constructor_keyword()) {
-            // Upstream does not ask whether the key of an `AccessorProperty` is computed.
+            // Upstream doesn't check whether an `AccessorProperty`'s key is computed.
             (Some(key), _) if key.is_computed() && selector != Selector::AutoAccessor => return,
-            (Some(key), _) => Identifier::of_key(key, cx.file(), TypedNode::Member(member)),
+            (Some(key), _) => Identifier::from_key(key, cx.file(), TypedNode::Member(member)),
             (None, Some(keyword)) => Identifier {
                 name: b"constructor",
                 span: keyword.span(),
@@ -908,7 +908,7 @@ impl NamingConvention {
         {
             return;
         }
-        let id = Identifier::of_key(key, cx.file(), TypedNode::Prop(property));
+        let id = Identifier::from_key(key, cx.file(), TypedNode::Prop(property));
         let mut modifiers = PUBLIC;
         if selector == Selector::ObjectLiteralMethod && function_value.is_some_and(Func::is_async) {
             modifiers |= ASYNC;
@@ -942,7 +942,7 @@ impl NamingConvention {
             self.validate(cx, Selector::Import, Identifier::new(local), NAMESPACE);
         }
         for specifier in import.named() {
-            // `import { default as Foo }`. As upstream, also a name that is written as a string.
+            // `import { default as Foo }`. As upstream, this also matches a name written as a string.
             let imported = specifier.imported();
             if imported.is_string() || imported.name().is("default") {
                 self.validate(cx, Selector::Import, Identifier::new(specifier.local()), DEFAULT);
@@ -974,13 +974,13 @@ impl NamingConvention {
         let Some(key) = member.key() else {
             return;
         };
-        let id = Identifier::of_key(key, cx.file(), TypedNode::None);
+        let id = Identifier::from_key(key, cx.file(), TypedNode::None);
         let modifiers = if requires_quoting(id.name) { REQUIRES_QUOTES } else { 0 };
         self.validate(cx, Selector::EnumMember, id, modifiers);
     }
 
     fn check_type_parameter<'a>(&self, param: TypeParam<'a>, cx: &mut Cx<'a, Self>) {
-        // `TSTypeParameterDeclaration > TSTypeParameter`: not that of an `infer` or a mapped type.
+        // `TSTypeParameterDeclaration > TSTypeParameter`: not the one of an `infer` or a mapped type.
         if matches!(param.parent(), Node::Type(_)) {
             return;
         }
@@ -993,7 +993,7 @@ impl NamingConvention {
 }
 
 impl Rule for NamingConvention {
-    // It needs types only for the `types` of a selector, and runs without them, as upstream.
+    // It only needs types for a selector's `types`, and runs without them, as upstream does.
     const META: Meta = Meta::typescript("naming-convention", Kind::Suggestion).uses_types();
     const ON: On = On::new()
         .funcs()
@@ -1019,7 +1019,7 @@ impl Rule for NamingConvention {
         let validators = std::array::from_fn(|selector| {
             let mut configs: Vec<(i32, usize)> =
                 all_configs.iter().copied().filter(|it| it.0 & (1 << selector) != 0).collect();
-            // Selectors go ahead of meta selectors, of which `method` and `property` are the first.
+            // Selectors sort before meta selectors, and among those `method` and `property` come first.
             utils::sort::sort_by_key(&mut configs, |&(selector, index)| {
                 (
                     META_SELECTORS.iter().any(|it| it.1 == selector),

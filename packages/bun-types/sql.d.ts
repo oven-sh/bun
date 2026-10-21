@@ -907,9 +907,16 @@ declare module "bun" {
      * What `then()` and `catch()` return is a promise like any other: when it
      * rejects with nothing to handle the rejection, that is reported as an
      * unhandled rejection. So is an error that a `finally()` callback throws.
+     *
      * The failure of a query that was only started, with `execute()` or
-     * `finally()`, is not reported once it has a connection. On SQLite,
-     * `execute()` outside a transaction does report it.
+     * `finally()`, is not reported once it has a connection, nor when
+     * `close({ timeout: 0 })` closes the pool while it waits for one, when it
+     * was cancelled before it started, or when its reservation, transaction or
+     * savepoint has ended. After `execute()`, a failure to connect, a pool that
+     * was already closed, a `cancel()` or the end of the time of
+     * `close({ timeout })`, with a timeout above 0, while it waits for a
+     * connection, and a query that cannot be built are reported. So is the
+     * failure of a query that SQLite runs outside a transaction.
      *
      * Bun reads the parameters when it sends the query. Leave a `Buffer`,
      * `TypedArray`, `Date` or object that you passed alone until the query

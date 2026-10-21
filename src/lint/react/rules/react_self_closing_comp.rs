@@ -43,11 +43,11 @@ impl Rule for SelfClosingComp {
         };
         let is_oxlint = cx.language().is_oxlint;
         let opening = jsx.opening_span();
-        // Nothing but blanks with a line break in them is between the tags.
+        // Empty means nothing between the tags, or only whitespace that includes a line break.
         let between = cx.slice(opening.between(closing));
         let is_empty = between.is_empty()
             || if is_oxlint {
-                // oxlint looks at the text as it is written, and takes a no-break space for a blank.
+                // oxlint checks the raw source text, and counts a no-break space as whitespace.
                 strings::is_all_unicode_whitespace(between) && strings::contains_char(between, b'\n')
             } else {
                 children_is_multiline_spaces(jsx, cx.file())
@@ -56,7 +56,7 @@ impl Rule for SelfClosingComp {
             return;
         }
         let is_wanted = if is_oxlint {
-            // oxlint knows the elements of HTML by a list, and all else is a component.
+            // oxlint recognizes HTML elements from a list, and treats everything else as a component.
             let is_dom_comp =
                 get_identifier_name(jsx).is_some_and(|tag_name| contains_name(&HTML_TAG, tag_name.bytes()));
             if is_dom_comp { self.html } else { self.component }
@@ -66,7 +66,7 @@ impl Rule for SelfClosingComp {
             self.component && !is_namespaced_name(jsx)
         };
         if is_wanted {
-            // oxlint points at the closing tag.
+            // oxlint reports at the closing tag.
             let (at, message) = if is_oxlint { (closing, SELF_CLOSING_COMP) } else { (opening, NOT_SELF_CLOSING) };
             cx.report(at, message).fix(|fixer| {
                 let bracket = opening.end - 1;

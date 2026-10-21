@@ -1,13 +1,13 @@
 //! Prettier's own tests.
 //!
-//! For every fixture and every set of options, Prettier's test runner
-//! (`tests/config/format-test/run-test.js`) checks
-//! - the output against a snapshot, or that the parser rejects the input,
-//! - that formatting the output again changes nothing,
-//! - that the output is the same if the lines of the input end with CRLF or with CR,
-//! - that a byte order mark in front of the input is in front of the output and changes nothing else.
+//! For every fixture and every set of options, Prettier's test runner (`tests/config/format-test/run-test.js`) checks
+//! that
+//! - the output matches a snapshot, or the parser rejects the input,
+//! - formatting the output again changes nothing,
+//! - the output is the same when the input's lines end with CRLF or CR,
+//! - a byte order mark before the input is kept and changes nothing else.
 //!
-//! So does this. The message of a syntax error is not compared.
+//! This runs the same checks. Syntax error messages aren't compared.
 
 use crate::{Bundle, Count, Failure, Flags, Format, output_line, show_cursor};
 use bstr::BStr;
@@ -21,8 +21,9 @@ const BABEL_TS: &str =
 const ONLY_BABEL_TS_REJECTS: &str = "an input that only `babel-ts` rejects: Prettier's `typescript` parser accepts it, and the output is the same";
 const HTML_LIKE_COMMENT: &str = "`babel` rejects HTML-like comments, but the snapshots of js/comments/html-like and of jsx/jsx-test-suite, made with `acorn`, have them formatted";
 const PLUGIN: &str = "formatted by a plugin of Prettier";
+const CHANGES_A_VALUE: &str = "Prettier's output is another value: it drops the blanks at the end of a block scalar (prettier#19764)";
 
-/// What is not run, and why. A case is left out if its path contains the text.
+/// Skipped cases and why. A case is skipped if its path contains the text.
 const EXCLUDED: &[(&str, &str)] = &[
     ("js/arrows-bind", PROPOSAL),
     ("js/async-do-expressions", PROPOSAL),
@@ -83,10 +84,10 @@ const EXCLUDED: &[(&str, &str)] = &[
         "typescript/_errors_/babel-ts2/parenthesized-decorators-tagged-template.ts",
         ONLY_BABEL_TS_REJECTS,
     ),
+    ("yaml/block-folded/block-folded-strip.yml", CHANGES_A_VALUE),
 ];
 
-/// Formatting their output again changes it, in Prettier too: `unstableTests` of
-/// `tests/config/format-test/failed-format-tests.js`.
+/// Not idempotent in Prettier either: `unstableTests` in `tests/config/format-test/failed-format-tests.js`.
 const UNSTABLE: &[&str] = &[
     "flow/hook/declare-hook.js",
     "flow/hook/hook-type-annotation.js",
@@ -119,25 +120,25 @@ const SNAPSHOT: &[u8] = b"/__snapshots__/format.test.js.snap";
 
 enum Expected {
     Output(Vec<u8>),
-    /// The parsers that reject the input. Empty: the only one there is.
+    /// The parsers that reject the input. Empty if the test has only one parser.
     Error(Vec<Vec<u8>>),
 }
 
-/// A fixture with a set of options.
+/// One fixture with one set of options.
 struct Case {
     /// `arrow.js`, `snippet: #0`
     name: Vec<u8>,
-    /// `name: value`, without `parsers`.
+    /// `name: value` pairs, without `parsers`.
     options: Vec<(Vec<u8>, Vec<u8>)>,
-    /// The first is the one that the snapshot is made with.
+    /// The snapshot is made with the first one.
     parsers: Vec<Vec<u8>>,
     input: Vec<u8>,
     expected: Expected,
-    /// The parsers that reject an input of which there is an output.
+    /// Parsers that reject the input even though the snapshot has an output for it.
     rejected_by: Vec<Vec<u8>>,
 }
 
-/// What `` ` `` quotes in a snapshot file.
+/// Unescapes the contents of a template literal in a snapshot file.
 fn unescape(text: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len());
     let mut bytes = text.iter().copied();
@@ -150,7 +151,7 @@ fn unescape(text: &[u8]) -> Vec<u8> {
     out
 }
 
-/// `====title====`, 80 wide.
+/// Matches `====title====`, 80 columns wide.
 fn is_separator(line: &[u8], title: &[u8]) -> bool {
     line.len() == 80
         && line.starts_with(b"=")
@@ -158,7 +159,7 @@ fn is_separator(line: &[u8], title: &[u8]) -> bool {
         && strings::trim(line, b"=") == title
 }
 
-/// The text that a code frame shows: `> 1 | text`, with lines of `^` in between.
+/// Extracts the source text from a code frame: `> 1 | text` lines, with `^` marker lines in between.
 fn text_of_code_frame(frame: &[&[u8]]) -> Vec<u8> {
     let lines = frame.iter().filter_map(|line| {
         let (gutter, text) = strings::split_once_char(line, b'|')?;
@@ -170,10 +171,9 @@ fn text_of_code_frame(frame: &[&[u8]]) -> Vec<u8> {
     lines.collect::<Vec<_>>().join(&b"\n"[..])
 }
 
-/// The sections of a snapshot: the options, the input and the output.
+/// Splits a snapshot into its options, input and output sections.
 fn sections(body: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<u8>, Vec<u8>)> {
-    // With a range, the input is a code frame, and the rest is moved to the right to line up
-    // with it: `    : text`.
+    // With a range, the input is a code frame, and every other line is shifted right to line up with it: `    : text`.
     let first = strings::split(body, b"\n").next()?;
     let offset = match first.trim_ascii_start().starts_with(b":") {
         true => strings::index_of_char_usize(first, b':')? + 1,
@@ -223,7 +223,7 @@ fn sections(body: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<u8>, Vec<u8>)> {
 }
 
 fn parse_snapshots(text: &[u8]) -> Vec<Case> {
-    // By the title without what is after the options.
+    // Keyed by the title up to the end of the options, plus the number.
     let mut cases: BTreeMap<Vec<u8>, Case> = BTreeMap::new();
     for entry in strings::split(text, b"\nexports[`").skip(1) {
         let Some((title, body)) = strings::split_once(entry, b"`] = `\n") else {
@@ -232,11 +232,11 @@ fn parse_snapshots(text: &[u8]) -> Vec<Case> {
         let Some((body, _)) = strings::rsplit_once(body, b"\n`;") else {
             continue;
         };
-        // The number tells apart what has the same title: the same options with other parsers.
+        // The number distinguishes entries with the same title: the same options with other parsers.
         let Some((title, number)) = strings::rsplit_once_char(title, b' ') else {
             continue;
         };
-        // `format`, or `format[acorn]` for a parser that rejects what the first one takes.
+        // `format`, or `format[acorn]` for a parser that rejects input the first parser accepts.
         let Some((title, kind)) = strings::rsplit_once_char(title, b' ') else {
             continue;
         };
@@ -283,7 +283,7 @@ fn parse_snapshots(text: &[u8]) -> Vec<Case> {
                 continue;
             };
             if name == b"parsers" {
-                // `[]`: it is left to the name of the file.
+                // `[]` means the parser is inferred from the file name.
                 let names =
                     strings::split(strings::trim(value, b"[]"), b", ").filter(|it| !it.is_empty());
                 case.parsers = names.map(|it| strings::trim(it, b"\"").to_vec()).collect();
@@ -298,8 +298,7 @@ fn parse_snapshots(text: &[u8]) -> Vec<Case> {
     cases.into_values().collect()
 }
 
-/// Takes the placeholders out of `original`. Where they were goes into the options, in UTF-16 code
-/// units.
+/// Removes the placeholders from `original` and stores their offsets, in UTF-16 code units, in the options.
 fn replace_placeholders(original: &[u8], options: &mut FormatOptions) -> Vec<u8> {
     let placeholders = [
         (&b"cursorOffset"[..], CURSOR),
@@ -327,18 +326,18 @@ fn replace_placeholders(original: &[u8], options: &mut FormatOptions) -> Vec<u8>
     text
 }
 
-/// `<LF>`, `<CRLF>` and `<CR>` at the ends of the lines, the way the snapshots show them.
+/// Shows line endings as `<LF>`, `<CRLF>` and `<CR>`, like the snapshots.
 fn visualize_end_of_line(text: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len() * 2);
     let mut rest = text;
     while let Some(at) = strings::index_of_any(rest, b"\r\n") {
         out.extend_from_slice(&rest[..at]);
-        let (shown, len) = match &rest[at..] {
+        let (marker, len) = match &rest[at..] {
             [b'\r', b'\n', ..] => (&b"<CRLF>\n"[..], 2),
             [b'\r', ..] => (&b"<CR>\n"[..], 1),
             _ => (&b"<LF>\n"[..], 1),
         };
-        out.extend_from_slice(shown);
+        out.extend_from_slice(marker);
         rest = &rest[at + len..];
     }
     out.extend_from_slice(rest);
@@ -347,11 +346,11 @@ fn visualize_end_of_line(text: &[u8]) -> Vec<u8> {
 
 #[derive(Default)]
 struct Tally {
-    /// The output is that of the snapshot.
+    /// The output matches the snapshot.
     format: Count,
-    /// Of those that are not: the parser reports a syntax error.
+    /// How many of the mismatches are syntax errors from our parser.
     syntax_errors: usize,
-    /// The input is rejected, as it should be.
+    /// The input is rejected as expected.
     errors: Count,
     second_format: Count,
     crlf: Count,
@@ -386,7 +385,7 @@ impl Tally {
     }
 }
 
-/// The parser of Prettier that a file with this name is read by.
+/// Returns the Prettier parser inferred from the file name.
 fn parser_of(name: &[u8], language: &[u8]) -> &'static [u8] {
     match strings::rsplit_once_char(name, b'.').map_or(&b""[..], |it| it.1) {
         b"ts" | b"tsx" | b"mts" | b"cts" => b"typescript",
@@ -396,7 +395,7 @@ fn parser_of(name: &[u8], language: &[u8]) -> &'static [u8] {
     }
 }
 
-/// The parser that all of a directory is read by, whatever the names of the files.
+/// Returns the parser used for a whole directory, regardless of file names.
 fn parser_of_directory(language: &[u8]) -> Option<&'static [u8]> {
     match language {
         b"html" => Some(b"html"),
@@ -426,8 +425,8 @@ fn is_javascript_parser(name: &[u8]) -> bool {
     )
 }
 
-/// Prints `FAIL <check> <case> <options>` for each check that fails, how many pass of each kind,
-/// and how many cases are not run for which reason.
+/// Prints `FAIL <check> <case> <options>` for each failed check, then the pass count per kind of check and the number
+/// of skipped cases per reason.
 pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
     let languages = flags.languages.unwrap_or(
         b"js,jsx,typescript,flow,json,css,less,scss,graphql,yaml,markdown,mdx,handlebars,html,vue,angular,lwc,mjml,misc",
@@ -446,7 +445,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
             .filter(|it| it.starts_with(&prefix) && it.ends_with(SNAPSHOT))
         {
             let relative = &snapshot_file[..snapshot_file.len() - SNAPSHOT.len()];
-            // `js/arrows`, whatever is below it.
+            // `js/arrows`, for any depth below it.
             let group = strings::split(relative, b"/")
                 .take(2)
                 .collect::<Vec<_>>()
@@ -458,11 +457,12 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
 
             for case in parse_snapshots(bundle.read(snapshot_file).unwrap_or_default()) {
                 let id = [relative, b"/", &case.name].concat();
-                if !flags.wants(&id) {
+                if !flags.matches_filter(&id) {
                     continue;
                 }
-                // JSON or a style sheet: the parser is not left to the name of the file.
-                let is_named = |it: &&[u8]| {
+                // For these parsers (JSON, style sheets, markup) the test's parser is used instead of one inferred from
+                // the file name.
+                let is_explicit_parser = |it: &&[u8]| {
                     it.starts_with(b"json")
                         || matches!(
                             *it,
@@ -483,32 +483,33 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                         )
                 };
                 let first_parser = case.parsers.first().map(Vec::as_slice);
-                // What is rejected says by which parser in its title, or not at all.
+                // A rejected case's title mentions the rejecting parser, if any.
                 let rejecting_parser = match &case.expected {
                     Expected::Error(parsers) => parsers
                         .iter()
                         .map(Vec::as_slice)
-                        .find(is_named)
+                        .find(is_explicit_parser)
                         .or_else(|| parser_of_directory(language)),
                     Expected::Output(_) => None,
                 };
-                let named_parser = first_parser.filter(is_named).or(rejecting_parser);
-                let ours = named_parser.unwrap_or_else(|| parser_of(&case.name, language));
+                let explicit_parser = first_parser.filter(is_explicit_parser).or(rejecting_parser);
+                let ours = explicit_parser.unwrap_or_else(|| parser_of(&case.name, language));
                 if !case.parsers.is_empty()
-                    && named_parser.is_none()
+                    && explicit_parser.is_none()
                     && !case.parsers.iter().any(|it| is_javascript_parser(it))
                 {
                     *excluded.entry(PLUGIN).or_default() += 1;
                     continue;
                 }
-                // A plugin for what is embedded is not asked where that is left as it is.
-                let is_embedded_left = case
+                // With `embeddedLanguageFormatting: off`, a plugin for embedded code never runs, so the case isn't
+                // skipped.
+                let is_embedded_formatting_off = case
                     .options
                     .iter()
                     .any(|it| it.0 == b"embeddedLanguageFormatting" && it.1 == b"off");
                 if let Some(&(_, reason)) = EXCLUDED
                     .iter()
-                    .filter(|it| it.1 != PLUGIN || !is_embedded_left)
+                    .filter(|it| it.1 != PLUGIN || !is_embedded_formatting_off)
                     .find(|it| strings::contains(&id, it.0.as_bytes()))
                 {
                     *excluded.entry(reason).or_default() += 1;
@@ -520,18 +521,18 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 }
                 let tally = by_directory.entry(group.clone()).or_default();
 
-                // `bun fmt` does not format HTML in templates and in blocks of code by itself yet. Here it is judged.
+                // `bun fmt` doesn't format HTML in templates and code blocks by default yet, but these tests expect it.
                 let mut options = FormatOptions {
                     embedded_html: true,
                     ..FormatOptions::default()
                 };
-                if let Some(parser) = named_parser {
+                if let Some(parser) = explicit_parser {
                     let _ = options.set(b"parser", parser);
                 } else if !case.parsers.is_empty()
                     && (case.rejected_by.iter().any(|it| it == ours)
                         || !case.parsers.iter().any(|it| it == ours))
                 {
-                    // The output is that of another parser, which takes what `babel` does not: types in a `.js` file.
+                    // The output comes from another parser, which accepts what `babel` doesn't: types in a `.js` file.
                     if let Some(other) = case
                         .parsers
                         .iter()
@@ -558,26 +559,30 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                     continue;
                 }
 
-                // The file has what the snapshot cannot show: line endings, a byte order mark.
+                // Prefer the file to the snapshot's input, which can't show line endings or a byte order mark.
                 let on_disk = bundle
                     .read(&id)
                     .filter(|it| std::str::from_utf8(it).is_ok());
                 let (path, original) = match on_disk {
                     Some(input) => (id.clone(), input),
                     None => {
-                        // The name of a file that the test gives the text, which `sync.ts` has noted. Or `snippet: test.cjs`.
-                        // It is parsed as the parser of the test says, if it says.
+                        // The file name that the test passes with the text, recorded by `sync.ts`, or the one in
+                        // `snippet: test.cjs`. The test's parser, if it has one, still decides how it's parsed.
                         let title = case.name.strip_prefix(b"snippet: ");
-                        let noted = strings::split(filenames, b"\n")
+                        let recorded_name = strings::split(filenames, b"\n")
                             .filter_map(|line| strings::split_once(line, b"\t"));
-                        let noted = noted.filter(|it| Some(it.0) == title).map(|it| it.1).next();
-                        let name =
-                            noted.or_else(|| title.filter(|it| strings::contains_char(it, b'.')));
+                        let recorded_name = recorded_name
+                            .filter(|it| Some(it.0) == title)
+                            .map(|it| it.1)
+                            .next();
+                        let name = recorded_name
+                            .or_else(|| title.filter(|it| strings::contains_char(it, b'.')));
                         let _ = options.set(b"filepath", name.unwrap_or_default());
-                        let extension: &[u8] = match (named_parser, language) {
+                        let extension: &[u8] = match (explicit_parser, language) {
                             (Some(parser), _) if parser.starts_with(b"json") => b"json",
                             (Some(b"glimmer"), _) => b"hbs",
-                            // Prettier gives it no name, and what is not called `.html` keeps its doctype as it is written.
+                            // Prettier gets no file name here, and only a file named `.html` has its doctype
+                            // normalized.
                             (Some(b"html" | b"angular" | b"lwc"), _) => b"text",
                             (Some(b"flow"), _) => b"js",
                             (Some(parser), _) => parser,
@@ -589,7 +594,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                         ([b"snippet.", extension].concat(), &case.input[..])
                     }
                 };
-                // Of a snippet with a range, the snapshot does not have the text with the placeholders.
+                // For a snippet with a range, the snapshot's input doesn't have the placeholders.
                 let has_placeholders = options.range_start.is_none() && options.range_end.is_none()
                     || strings::contains(original, RANGE_START)
                     || strings::contains(original, RANGE_END);
@@ -606,7 +611,8 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 let expected = match &case.expected {
                     Expected::Output(expected) => expected,
                     Expected::Error(parsers) => {
-                        // The text of a snippet that is rejected is not in the snapshot: `sync.ts` writes it to `rejected-snippets`.
+                        // A rejected snippet's text isn't in the snapshot, so `sync.ts` writes it to
+                        // `rejected-snippets`.
                         if (parsers.is_empty() || parsers.iter().any(|it| it == ours))
                             && on_disk.is_some()
                         {
@@ -653,12 +659,12 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 if !has_placeholders {
                     continue;
                 }
-                let is_left_alone = options.require_pragma
+                let is_returned_unchanged = options.require_pragma
                     || options.check_ignore_pragma
                     || matches!((options.range_start, options.range_end), (Some(start), Some(end)) if start >= end);
                 let skips_end_of_line = input.trim_ascii().is_empty()
                     || strings::contains_char(&input, b'\r')
-                    || is_left_alone;
+                    || is_returned_unchanged;
                 let ends_of_line = [
                     (&b"\r\n"[..], &mut tally.crlf, "CRLF"),
                     (b"\r", &mut tally.cr, "CR"),

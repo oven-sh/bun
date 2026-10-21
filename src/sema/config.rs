@@ -11,7 +11,7 @@ use crate::resolve::{
     equate_string_case_insensitive, extra_supported_extensions, file_extension_is_one_of,
     get_base_file_name, get_path_components, get_relative_path_from_directory, is_network_path,
     is_rooted_disk_path, is_same_path, join, known_extension, remove_file_extension, root_length,
-    supported_extensions, to_lowercase_unicode_15, to_path, typescript_path,
+    supported_extensions, to_path, typescript_path,
 };
 use crate::session::Session;
 use crate::util::{FxHashSet, SharedSort};
@@ -1938,7 +1938,7 @@ impl GlobPattern {
 
 /// `unicode.ToLower`, which doesn't turn U+0130 into two characters like `char::to_lowercase` does.
 fn to_lower(c: char) -> char {
-    to_lowercase_unicode_15(c).next().unwrap_or(c)
+    c.to_lowercase().next().unwrap_or(c)
 }
 
 /// `strings.ToLower`

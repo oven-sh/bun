@@ -58,7 +58,7 @@ impl Checker<'_, '_> {
             1006 => Vec::new(),
             2688 => vec![name],
             2726 => {
-                let lib = name.to_ascii_lowercase();
+                let lib = crate::resolve::to_file_name_lower_case(&name);
                 let unqualified = lib.strip_prefix(b"lib.").unwrap_or(&lib);
                 let unqualified = unqualified.strip_suffix(b".d.ts").unwrap_or(unqualified);
                 let suggestion = spelling_suggestion(unqualified, crate::resolve::LIBS.iter());

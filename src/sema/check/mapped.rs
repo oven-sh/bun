@@ -6,7 +6,6 @@ use super::shortcuts::task_fact;
 use super::*;
 use crate::bind::Decl;
 use crate::bind::Parent;
-use crate::resolve::{is_cased_since_unicode_16, to_lowercase_unicode_15, to_uppercase_unicode_15};
 use crate::util::SharedSort;
 use smallvec::SmallVec;
 
@@ -3608,4 +3607,36 @@ enum Modifiers<'p> {
     /// requested by name may be created. Example: `interface B { id: string; shape?: keyof typeof shapes }`,
     /// with a `Pick<A | B, "id">` in the initializer of `shapes`.
     Union(TypeId),
+}
+
+/// True if `c` is unassigned in Unicode 15, whose tables `ToUpperJS` and `ToLowerJS` use, but has a case mapping in
+/// `char`'s tables, which are Unicode 17's.
+fn is_cased_since_unicode_16(c: char) -> bool {
+    matches!(
+        c,
+        '\u{1C89}'..='\u{1C8A}'
+            | '\u{A7CB}'..='\u{A7CF}'
+            | '\u{A7D2}'
+            | '\u{A7D4}'
+            | '\u{A7DA}'..='\u{A7DC}'
+            | '\u{10D50}'..='\u{10D65}'
+            | '\u{10D70}'..='\u{10D85}'
+            | '\u{16EA0}'..='\u{16EB8}'
+            | '\u{16EBB}'..='\u{16ED3}'
+    )
+}
+
+/// `char::to_lowercase` with Unicode 15's tables.
+fn to_lowercase_unicode_15(c: char) -> impl Iterator<Item = char> {
+    let is_unmapped = is_cased_since_unicode_16(c);
+    let mapped = c.to_lowercase().filter(move |_| !is_unmapped);
+    mapped.chain(is_unmapped.then_some(c))
+}
+
+/// `char::to_uppercase` with Unicode 15's tables.
+fn to_uppercase_unicode_15(c: char) -> impl Iterator<Item = char> {
+    let is_unmapped =
+        is_cased_since_unicode_16(c) || c.to_uppercase().any(is_cased_since_unicode_16);
+    let mapped = c.to_uppercase().filter(move |_| !is_unmapped);
+    mapped.chain(is_unmapped.then_some(c))
 }

@@ -1380,7 +1380,7 @@ pub fn to_file_name_lower_case(file_name: &[u8]) -> Vec<u8> {
     }
     let mut out = Vec::with_capacity(file_name.len());
     for c in file_name.chars() {
-        let lower = to_lowercase_unicode_15(c).filter(|_| c != '\u{130}');
+        let lower = c.to_lowercase().filter(|_| c != '\u{130}');
         for c in lower.chain((c == '\u{130}').then_some(c)) {
             out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
         }
@@ -4555,38 +4555,6 @@ pub(crate) fn resolve_package_directory(
     Some(found.1)
 }
 
-/// True if `c` is unassigned in Unicode 15, whose tables Go's `unicode` package and `ToUpperJS`
-/// use, but has a case mapping in `char`'s tables, which are Unicode 17's.
-pub(crate) fn is_cased_since_unicode_16(c: char) -> bool {
-    matches!(
-        c,
-        '\u{1C89}'..='\u{1C8A}'
-            | '\u{A7CB}'..='\u{A7CF}'
-            | '\u{A7D2}'
-            | '\u{A7D4}'
-            | '\u{A7DA}'..='\u{A7DC}'
-            | '\u{10D50}'..='\u{10D65}'
-            | '\u{10D70}'..='\u{10D85}'
-            | '\u{16EA0}'..='\u{16EB8}'
-            | '\u{16EBB}'..='\u{16ED3}'
-    )
-}
-
-/// `char::to_lowercase` with Unicode 15's tables.
-pub(crate) fn to_lowercase_unicode_15(c: char) -> impl Iterator<Item = char> {
-    let is_unmapped = is_cased_since_unicode_16(c);
-    let mapped = c.to_lowercase().filter(move |_| !is_unmapped);
-    mapped.chain(is_unmapped.then_some(c))
-}
-
-/// `char::to_uppercase` with Unicode 15's tables.
-pub(crate) fn to_uppercase_unicode_15(c: char) -> impl Iterator<Item = char> {
-    let is_unmapped =
-        is_cased_since_unicode_16(c) || c.to_uppercase().any(is_cased_since_unicode_16);
-    let mapped = c.to_uppercase().filter(move |_| !is_unmapped);
-    mapped.chain(is_unmapped.then_some(c))
-}
-
 /// Maps every character that `unicode.SimpleFold` reaches from `c` (the ones that differ from it
 /// only in case) to the same character.
 fn simple_fold(c: char) -> char {
@@ -4601,8 +4569,8 @@ fn simple_fold(c: char) -> char {
     if matches!(c, '\u{130}' | '\u{131}') {
         return c;
     }
-    let upper = simple(to_uppercase_unicode_15(c), c);
-    simple(to_lowercase_unicode_15(upper), upper)
+    let upper = simple(c.to_uppercase(), c);
+    simple(upper.to_lowercase(), upper)
 }
 
 /// `EquateStringCaseInsensitive`, which is `strings.EqualFold`.

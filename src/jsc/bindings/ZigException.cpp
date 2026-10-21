@@ -84,6 +84,8 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
 
     auto sourceURL = Zig::sourceURL(vm, stackFrame);
     frame.source_url = Bun::toStringRef(sourceURL);
+    // Before the returns below: the frame of a module that waits at a top-level await is async too.
+    frame.is_async = stackFrame.isAsyncFrame();
     auto m_codeBlock = stackFrame.codeBlock();
     if (m_codeBlock) {
         switch (m_codeBlock->codeType()) {
@@ -111,8 +113,6 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
     WTF::String functionName = Zig::functionName(vm, stackFrame, nullptr);
     if (!functionName.isEmpty())
         frame.function_name = Bun::toStringRef(functionName);
-
-    frame.is_async = stackFrame.isAsyncFrame();
 }
 
 static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunString* source_lines,
@@ -285,6 +285,8 @@ public:
         if (openingParentheses > closingParentheses)
             openingParentheses = WTF::notFound;
 
+        StringView functionName;
+        StringView lineInner;
         if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
             // Special case: "unknown" frames don't have parentheses but are valid
             // These appear in stack traces from certain error paths
@@ -294,12 +296,17 @@ public:
                 return true;
             }
 
-            // For any other frame without parentheses, terminate parsing as before
-            offset = stack.length();
-            return false;
+            // A frame with no function name is only its location: code at the top level of a module
+            // or a script, and `async <location>` for a module that waits at a top-level await.
+            lineInner = line;
+            if (lineInner.startsWith("async "_s)) {
+                frame.isAsync = true;
+                lineInner = lineInner.substring(6);
+            }
+        } else {
+            lineInner = StringView_slice(line, openingParentheses + 1, closingParentheses);
+            functionName = line.substring(0, openingParentheses - 1);
         }
-
-        auto lineInner = StringView_slice(line, openingParentheses + 1, closingParentheses);
 
         {
             auto marker1 = 0;
@@ -371,8 +378,6 @@ public:
             }
         }
     done_block:
-
-        StringView functionName = line.substring(0, openingParentheses - 1);
 
         if (functionName == "global code"_s) {
             functionName = StringView();

@@ -6507,7 +6507,8 @@ impl VirtualMachine {
                 )?;
             } else if !frame.position.is_invalid() {
                 pretty_write!(
-                    "<r>      <d>at <r>{}\n",
+                    "<r>      <d>at {}<r>{}\n",
+                    frame.location_prefix(),
                     frame.source_url_formatter(dir, origin, LineColumn::Include, allow_ansi_colors)
                 )?;
             } else if has_name {
@@ -6517,7 +6518,8 @@ impl VirtualMachine {
                 )?;
             } else {
                 pretty_write!(
-                    "<r>      <d>at <r>{}<d>\n",
+                    "<r>      <d>at {}<r>{}<d>\n",
+                    frame.location_prefix(),
                     frame.source_url_formatter(dir, origin, LineColumn::Include, allow_ansi_colors)
                 )?;
             }
@@ -7811,7 +7813,8 @@ impl VirtualMachine {
                 } else {
                     let _ = write!(
                         writer,
-                        "%0A      at {}",
+                        "%0A      at {}{}",
+                        frame.location_prefix(),
                         bun_core::fmt::github_action(loc_str.as_bytes()),
                     );
                 }

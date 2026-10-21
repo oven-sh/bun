@@ -566,6 +566,28 @@ describe("util", () => {
       }
     });
 
+    it("returns the frames on the stack, and no async frame", async () => {
+      let inHandler, inResumed;
+      async function viaThen() {
+        await Promise.resolve().then(function handler() {
+          inHandler = util.getCallSites();
+        });
+      }
+      async function resumed() {
+        await 0;
+        inResumed = util.getCallSites();
+      }
+      async function caller() {
+        await viaThen();
+        await resumed();
+      }
+      await caller();
+      expect({
+        inHandler: inHandler.map(site => site.functionName),
+        inResumed: inResumed.map(site => site.functionName),
+      }).toEqual({ inHandler: ["handler"], inResumed: ["resumed"] });
+    });
+
     it("each frame has the node v26 shape", () => {
       const sites = util.getCallSites(3);
       expect(sites.length).toBeGreaterThan(0);

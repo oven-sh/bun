@@ -23,6 +23,7 @@
 #include <wtf/IterationStatus.h>
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
+#include <JavaScriptCore/JSModuleRecord.h>
 
 #include "ErrorStackFrame.h"
 
@@ -127,13 +128,16 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     // which loses async frames when the caller is the innermost sync frame.
     // Instead we filter out frames up to and including the caller afterwards.
     //
-    // Collect without a limit: stackTraceLimit must apply to visible frames
-    // AFTER Bun's post-filter and AFTER caller removal, not to raw frames from
-    // JSC. If the caller is deep, capping at stackTraceLimit here would collect
-    // only frames that get removed, leaving an empty trace. Stack depth is
-    // bounded by native stack size so this walk is still O(actual depth).
+    // Collect the frames on the stack without a limit: stackTraceLimit must
+    // apply to visible frames AFTER Bun's post-filter and AFTER caller removal,
+    // not to raw frames from JSC. If the caller is deep, capping at
+    // stackTraceLimit here would collect only frames that get removed, leaving
+    // an empty trace. Stack depth is bounded by native stack size so this walk
+    // is still O(actual depth).
+    // The await chains have a limit: the trace keeps at most stackTraceLimit
+    // frames, and an await chain has no bound of its own.
     WTF::Vector<JSC::StackFrame> rawFrames;
-    vm.interpreter.getStackTrace(owner, rawFrames, 1, std::numeric_limits<size_t>::max());
+    vm.interpreter.getStackTrace(owner, rawFrames, 1, std::numeric_limits<size_t>::max(), nullptr, nullptr, nullptr, stackTraceLimit);
 
     // JSC's getStackTrace uses StackVisitor::isImplementationVisibilityPrivate
     // which differs from Bun's helper — post-filter to keep behavior consistent
@@ -159,11 +163,14 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     // because a resumed async function's frame callee is the generator's `next`
     // function (a different cell) but Zig::functionName still reports the
     // original async function's name.
+    // An async frame is never the caller, and it is not the end of the sync
+    // frames: a job that drains the microtask queue has the frames of another
+    // job, with their async frames, above its own.
     size_t removeCount = stackTrace.size();
     for (size_t i = 0; i < stackTrace.size(); i++) {
         const auto& frame = stackTrace.at(i);
         if (frame.isAsyncFrame())
-            break;
+            continue;
         if (frame.callee() == callerObject) {
             removeCount = i + 1;
             break;
@@ -408,6 +415,12 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
     }
 
     if (!frame.hasLineAndColumnInfo()) [[unlikely]] {
+        // A collection can take the code of a module that waits at a top-level await for long.
+        // Its async frame then has the module record and no CodeBlock: the file is still known.
+        if (frame.isAsyncFrame()) {
+            if (auto* moduleRecord = dynamicDowncast<JSC::JSModuleRecord>(frame.callee()))
+                return sourceURL(moduleRecord->sourceCode());
+        }
         return "[native code]"_s;
     }
 

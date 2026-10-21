@@ -1,4 +1,4 @@
-import { tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 const assert = require("assert");
 const os = require("os");
@@ -259,8 +259,7 @@ test("fs.promises async stack through Promise subclass", async () => {
 
   expect(caught).toBeDefined();
   expect(caught.code).toBe("ENOENT");
-  // Subclass .then() may not preserve the reaction chain — must not crash.
-  expect(typeof caught.stack === "string" || caught.stack === undefined).toBe(true);
+  expect(caught.stack).toContain("at async caller");
 });
 
 test("fs.promises async stack through custom thenable", async () => {
@@ -282,8 +281,7 @@ test("fs.promises async stack through custom thenable", async () => {
 
   expect(caught).toBeDefined();
   expect(caught.code).toBe("ENOENT");
-  // Custom thenables break the direct reaction chain — must not crash.
-  expect(typeof caught.stack === "string" || caught.stack === undefined).toBe(true);
+  expect(caught.stack).toContain("at async caller");
 });
 
 test("fs.promises async stack with Promise.all", async () => {
@@ -300,8 +298,141 @@ test("fs.promises async stack with Promise.all", async () => {
 
   expect(caught).toBeDefined();
   expect(caught.code).toBe("ENOENT");
-  // Promise.all uses combinator context — must not crash.
-  expect(typeof caught.stack === "string" || caught.stack === undefined).toBe(true);
+  expect(caught.stack).toContain("at async caller");
+});
+
+// The async frames of a native rejection are the async functions that wait for the promise that native code rejects.
+describe("fs.promises async stack through the promises that settle each other", () => {
+  const missing = () => readFile("/nonexistent-path/does-not-exist.txt");
+  const asyncFramesOf = error =>
+    String(error?.stack)
+      .split("\n")
+      .map(line => /^\s*at async (\S+)/.exec(line)?.[1])
+      .filter(Boolean);
+  const shapes = {
+    then: () => missing().then(v => v),
+    catch: () =>
+      missing().catch(e => {
+        throw e;
+      }),
+    finally: () => missing().finally(() => {}),
+    thenCatchFinally: () =>
+      missing()
+        .then(v => v)
+        .catch(e => {
+          throw e;
+        })
+        .finally(() => {}),
+    returnWithoutAwait: () => (async () => missing())(),
+    handlerReturnsPromise: () => Promise.resolve().then(missing),
+    finallyHandlerReturnsPromise: () => Promise.resolve().finally(missing),
+    resolve: () => new Promise(resolve => resolve(missing())),
+    all: () => Promise.all([missing()]),
+    allOfThen: () => Promise.all([missing().then(v => v)]),
+    thenOfAll: () => Promise.all([missing()]).then(v => v),
+    allOfAll: () => Promise.all([Promise.all([missing()])]),
+    race: () => Promise.race([missing()]),
+    thenOfRace: () => Promise.race([missing()]).then(v => v),
+    any: () =>
+      Promise.any([missing()]).catch(e => {
+        throw e.errors[0];
+      }),
+    // A resolving function as the handler settles its own promise.
+    thenWithResolvingFunctions: () => {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      missing().then(resolve, reject);
+      return promise;
+    },
+    // The newest reaction of a promise is the one that counts.
+    newestOfTwoReactions: () => {
+      const promise = missing();
+      promise.catch(() => {});
+      return promise.then(v => v);
+    },
+  };
+  for (const [name, shape] of Object.entries(shapes)) {
+    test(name, async () => {
+      async function caller() {
+        await shape();
+      }
+      let caught;
+      try {
+        await caller();
+      } catch (e) {
+        caught = e;
+      }
+      expect({ code: caught?.code, asyncFrames: asyncFramesOf(caught) }).toEqual({
+        code: "ENOENT",
+        asyncFrames: ["caller", "<anonymous>"],
+      });
+    });
+  }
+
+  // The handlers are resolving functions of another promise. What waits for the promise that then() returned
+  // still counts, as it did before the walk knew resolving functions.
+  test("resultOfThenWithResolvingFunctions", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const seen = promise.catch(e => e);
+    async function caller() {
+      await missing().then(resolve, reject);
+    }
+    await caller();
+    const caught = await seen;
+    expect({ code: caught?.code, asyncFrames: asyncFramesOf(caught) }).toEqual({
+      code: "ENOENT",
+      asyncFrames: ["caller", "<anonymous>"],
+    });
+  });
+});
+
+// Runs in a child process: each trigger takes JSC off its promise fast paths for the rest of the
+// process. Every state has the same frames.
+// Not concurrent: four debug builds at once take three times as long each.
+test.each([
+  "defining Object.prototype.then",
+  "replacing Promise.prototype.then",
+  "writing Promise.prototype.constructor",
+  "freezing Promise.prototype",
+])("native rejections keep their async stack after %s", async trigger => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "native-rejection-async-stack-fixture.js"), trigger],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const shapes = [
+    "fsPromises",
+    "asyncFunctionReturn",
+    "resolveWithPromise",
+    "race",
+    "thenChain",
+    "promiseSubclass",
+    "forwardingThenable",
+    "thenResolveReject",
+    "thenResolveRejectResult",
+    "catchRejectResult",
+    "catchRejectResultLongChain",
+    "catchRejectResultManyTargets",
+  ];
+  const frames = {
+    ...Object.fromEntries(shapes.map(shape => [shape, [shape, "asyncFramesOf"]])),
+    // A reject function that is only the reject handler is no link to its promise, as in V8.
+    catchReject: [],
+    // One frame for worker(), although the chain leads back to it.
+    failFastWorker: ["worker", "failFastWorker", "asyncFramesOf"],
+  };
+  expect({ result: stdout && JSON.parse(stdout), stderr }).toEqual({
+    result: {
+      "before": frames,
+      "before, in AsyncLocalStorage.run()": frames,
+      "after": frames,
+      "after, in AsyncLocalStorage.run()": frames,
+    },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
 });
 
 it("an unused FileHandle.writer() does not prevent close()", async () => {

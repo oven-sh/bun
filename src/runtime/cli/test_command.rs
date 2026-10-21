@@ -349,6 +349,8 @@ impl TestFailure {
             body.extend_from_slice(b"      at ");
             if !func.slice().is_empty() {
                 let _ = write!(body, "{} (", frame.name_formatter(false));
+            } else {
+                body.extend_from_slice(frame.location_prefix().as_bytes());
             }
             let file_start = body.len();
             body.extend_from_slice(file);

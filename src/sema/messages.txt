@@ -1390,6 +1390,8 @@
 18059	E	Named imports are not allowed in a deferred import.
 18060	E	Deferred imports are only supported when the '--module' flag is set to 'esnext' or 'preserve'.
 18061	E	'{0}' is not a valid meta-property for keyword 'import'. Did you mean 'meta', 'defer', or 'source'?
+18062	E	Regular expression pattern modifiers are only available when targeting '{0}' or later.
+18063	E	Duplicate named capturing groups are only available when targeting '{0}' or later.
 18064	E	Private identifiers cannot be used in destructuring patterns.
 18065	E	Content mapper file extension '{0}' must begin with a '.'.
 18066	E	Content mapper file extension '{0}' is a built-in extension and cannot be registered by a content mapper.

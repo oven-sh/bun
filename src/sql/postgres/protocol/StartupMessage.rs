@@ -29,7 +29,7 @@ impl StartupMessage {
             + options.len()
             + 1;
 
-        let header = int32(count as u32);
+        let header = int32(count)?;
         writer.write(&header)?;
         writer.int4(196608)?;
 

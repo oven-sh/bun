@@ -121,7 +121,7 @@ pub(crate) fn folder_relative_to_top_level_dir<'a>(
     // empty when the package depends on itself
     let relative: &[u8] = if relative.is_empty() { b"." } else { relative };
     let len = relative.len();
-    buf[..len].copy_from_slice(relative);
+    buf.get_mut(..len)?.copy_from_slice(relative);
     #[cfg(windows)]
     path::dangerously_convert_path_to_posix_in_place::<u8>(&mut buf[..len]);
     Some(&buf[..len])

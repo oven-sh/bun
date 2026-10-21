@@ -1,4 +1,4 @@
-//! Any node, and the way up from it.
+//! [`Node`], which can be any node, and parent lookups.
 
 use super::{
     Case, Class, EnumMember, ExportSpec, Expr, File, Func, ImportAttributes, ImportSpec, Member,
@@ -73,8 +73,7 @@ macro_rules! conversions {
                 }
             }
 
-            /// From its first token to the end of its last. Parentheses around an expression or a
-            /// type are not part of it.
+            /// From its first token to the end of its last. Excludes parentheses around an expression or a type.
             pub fn span(self) -> Span {
                 match self {
                     Node::File(file) => file.span(),
@@ -82,7 +81,7 @@ macro_rules! conversions {
                 }
             }
 
-            /// Which vector of the HIR it is in, and where.
+            /// Which HIR vector it's in, and its index there.
             #[inline]
             pub(crate) fn packed(self) -> Packed {
                 match self {
@@ -96,11 +95,11 @@ macro_rules! conversions {
         #[repr(u8)]
         enum Tag { File, $($variant,)* }
 
-        /// How many kinds of nodes there are.
+        /// The number of node kinds.
         pub(crate) const KINDS: usize = [Tag::File, $(Tag::$variant),*].len();
 
         impl<'a> File<'a> {
-            /// The [`Node::index`] of the first node of each kind, and after them [`File::node_count`].
+            /// The [`Node::index`] of the first node of each kind, followed by [`File::node_count`].
             fn kind_index_offsets(&self) -> &[u32; KINDS + 1] {
                 self.lazy.kind_index_offsets.get_or_init(|| {
                     let mut offsets = [0; KINDS + 1];
@@ -114,15 +113,15 @@ macro_rules! conversions {
                 })
             }
 
-            /// How many nodes there are, of all kinds.
+            /// The total number of nodes of all kinds.
             pub fn node_count(&self) -> u32 {
                 self.kind_index_offsets()[KINDS]
             }
         }
 
         impl Node<'_> {
-            /// A number below [`File::node_count`] that no other node of the file has. For who keeps something for some of
-            /// the nodes, the way the file keeps which expressions are in parentheses.
+            /// A number below [`File::node_count`] that's unique within the file. Use it to index a per-node table or
+            /// bit set, like the file's own bit set of parenthesized expressions.
             #[inline]
             pub fn index(self) -> u32 {
                 let Packed { tag, id } = self.packed();
@@ -203,15 +202,15 @@ impl Spanned for super::Modifier<'_> {
 }
 
 impl<'a> Node<'a> {
-    /// The source text of the node.
+    /// The node's source text.
     #[inline]
     pub fn text(self) -> &'a [u8] {
         self.file().slice(self.span())
     }
 
-    /// The `Expr`, the `Stmt`, the `Member` or the `Prop` that a function or a class is written as. Any other node is itself.
+    /// The `Expr`, `Stmt`, `Member` or `Prop` that owns a function or a class. Any other node is returned as is.
     #[inline]
-    pub fn as_written(self) -> Node<'a> {
+    pub fn owner_or_self(self) -> Node<'a> {
         match self {
             Node::Func(func) => func.owner(),
             Node::Class(class) => class.owner(),
@@ -251,18 +250,18 @@ impl<'a> Node<'a> {
         }
     }
 
-    /// What it is directly part of. The file is its own parent.
+    /// Its direct parent. The file is its own parent.
     #[inline]
     pub fn parent(self) -> Node<'a> {
         match self {
             Node::Expr(e) => e.parent(),
             Node::Stmt(s) => s.parent(),
-            _ => self.parent_of_neither_expr_nor_stmt(),
+            _ => self.parent_of_other_node(),
         }
     }
 
-    /// The node that the binder has as `parent`.
-    fn of_parent(file: &'a File<'a>, parent: Parent) -> Node<'a> {
+    /// The node for the binder's `parent`.
+    fn from_binder_parent(file: &'a File<'a>, parent: Parent) -> Node<'a> {
         let (hir, bound) = (&file.hir, &file.bound);
         match parent {
             Parent::None | Parent::File => Node::File(file),
@@ -295,7 +294,7 @@ impl<'a> Node<'a> {
                 let Some(module) = hir.modules.get(m.idx()) else {
                     break Node::File(file);
                 };
-                // From the `C` of `namespace A.B.C` to the `A`.
+                // Walk from the `C` of `namespace A.B.C` up to the `A`.
                 match bound.parent_of_stmt(module.stmt) {
                     Parent::Module(outer) if file.is_nested_namespace(module.stmt) => m = outer,
                     _ => break Node::Stmt(Stmt::new(file, module.stmt)),
@@ -304,19 +303,19 @@ impl<'a> Node<'a> {
         }
     }
 
-    pub(super) fn parent_of_neither_expr_nor_stmt(self) -> Node<'a> {
+    pub(super) fn parent_of_other_node(self) -> Node<'a> {
         match self.file().hides_casts {
-            true => self.parent_where_casts_are_hidden(),
+            true => self.parent_with_hidden_casts(),
             false => self.parent_of_any(),
         }
     }
 
     #[inline(never)]
-    fn parent_where_casts_are_hidden(self) -> Node<'a> {
+    fn parent_with_hidden_casts(self) -> Node<'a> {
         self.parent_of_any()
     }
 
-    /// What few nodes need is in functions of its own, so that where no casts are hidden this one calls nothing.
+    /// The rare cases live in separate functions, so that in a file without hidden casts this one makes no calls.
     #[inline(always)]
     fn parent_of_any(self) -> Node<'a> {
         let file = self.file();
@@ -340,7 +339,7 @@ impl<'a> Node<'a> {
                 Some(&PatParent::Param(p)) => Node::Param(Param::new(file, p)),
                 Some(&PatParent::Prop(_, prop)) => Node::PatProp(PatProp::new(file, prop)),
                 Some(&PatParent::Elem(_, elem)) => Node::PatElem(PatElem::new(file, elem)),
-                Some(PatParent::None) | None => self.parent_that_the_binder_has_not(),
+                Some(PatParent::None) | None => self.parent_not_in_binder(),
             },
             Node::PatProp(p) => owner_of_pattern(p.value().id()),
             Node::PatElem(e) => owner_of_pattern(
@@ -362,9 +361,7 @@ impl<'a> Node<'a> {
                 Some(&MemberOwner::TypeLiteral(t)) => Node::Type(TypeNode::new(file, t)),
                 Some(MemberOwner::None) | None => Node::File(file),
             },
-            Node::Prop(_) if !hir.import_attributes.is_empty() => {
-                self.parent_that_the_binder_has_not()
-            }
+            Node::Prop(_) if !hir.import_attributes.is_empty() => self.parent_not_in_binder(),
             Node::Prop(p) => match bound.prop_owner.get(p.id().idx()) {
                 Some(&owner) if owner.is_some() => Node::Expr(Expr::new(file, owner)),
                 _ => Node::File(file),
@@ -377,15 +374,14 @@ impl<'a> Node<'a> {
             }
             Node::ImportSpec(s) => Node::Stmt(s.import().stmt()),
             Node::ExportSpec(s) => Node::Stmt(s.export().stmt()),
-            Node::Type(_) | Node::TypeParam(_) | Node::TupleElem(_) => {
-                self.parent_that_the_binder_has_not()
-            }
+            Node::Type(_) | Node::TypeParam(_) | Node::TupleElem(_) => self.parent_not_in_binder(),
         }
     }
 
-    /// The parent of type syntax, of the `this` of a `this` parameter, and of a property in a file with import attributes.
+    /// The parents the binder doesn't record: of type syntax, of the `this` of a `this` parameter, and of a property in
+    /// a file with import attributes.
     #[inline(never)]
-    fn parent_that_the_binder_has_not(self) -> Node<'a> {
+    fn parent_not_in_binder(self) -> Node<'a> {
         let file = self.file();
         let unpack =
             |parent: Option<&Packed>| parent.map_or(Node::File(file), |it| it.unpack(file));
@@ -408,13 +404,13 @@ impl<'a> Node<'a> {
         }
     }
 
-    /// Its parent, the parent of that, and so on. The last is the file.
+    /// Its parent, grandparent and so on, ending with the file.
     #[inline]
     pub fn ancestors(self) -> Ancestors<'a> {
         Ancestors { at: Some(self) }
     }
 
-    /// The innermost function that contains it. A function does not contain itself.
+    /// The innermost function that contains it. A function doesn't contain itself.
     pub fn enclosing_function(self) -> Option<Func<'a>> {
         self.ancestors().find_map(Node::as_func)
     }
@@ -429,11 +425,10 @@ impl<'a> Node<'a> {
 }
 
 impl<'a> Expr<'a> {
-    /// What it is directly part of.
     #[inline]
     pub fn parent(self) -> Node<'a> {
         let file = self.file;
-        // The binder never has an expression as the parent of the `a.b` of the type `typeof a.b`.
+        // The binder never records an expression as the parent of the `a.b` in the type `typeof a.b`.
         if !file.hides_casts
             && let Parent::Expr(parent) = file.bound.parent_of_expr(self.id)
             && let Some(raw) = file.hir.exprs.get(parent.idx())
@@ -444,11 +439,11 @@ impl<'a> Expr<'a> {
         self.parent_in_general()
     }
 
-    /// What most expressions are part of that are not part of an expression.
+    /// Handles the most common parents that aren't expressions.
     fn parent_in_general(self) -> Node<'a> {
         let file = self.file;
         if !file.hides_casts {
-            let is_in_no_type = file.bound.type_query_operands.is_empty();
+            let has_no_type_queries = file.bound.type_query_operands.is_empty();
             match file.bound.parent_of_expr(self.id) {
                 Parent::VarInit(d) => return Node::VarDecl(VarDecl::new(file, d)),
                 Parent::Prop(p) if file.hir.import_attributes.is_empty() => {
@@ -460,14 +455,14 @@ impl<'a> Expr<'a> {
                         | Some(hir::Stmt {
                             kind: hir::StmtKind::Expr(_),
                             ..
-                        }) => is_in_no_type && file.is_plainly_no_wrapper(s),
+                        }) => has_no_type_queries && file.is_clearly_not_wrapper(s),
                         Some(_) => true,
                     } =>
                 {
                     return Node::Stmt(Stmt::new(file, s));
                 }
-                Parent::FnBody(f) if is_in_no_type => return Node::Func(Func::new(file, f)),
-                Parent::MemberInit(m) if is_in_no_type => {
+                Parent::FnBody(f) if has_no_type_queries => return Node::Func(Func::new(file, f)),
+                Parent::MemberInit(m) if has_no_type_queries => {
                     return Node::Member(Member::new(file, m));
                 }
                 _ => {}
@@ -489,7 +484,7 @@ impl<'a> Expr<'a> {
         }
         let id = file.with_jsdoc_casts(self.id);
         match bound.parent_of_expr(id) {
-            // The substitutions of a tagged template are in the template.
+            // A tagged template's substitutions are children of the template.
             Parent::Expr(parent) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
                 Some(hir::ExprKind::TaggedTemplate(c)) => {
                     let template = hir::template_in(hir.tagged_templates, c);
@@ -502,7 +497,7 @@ impl<'a> Expr<'a> {
                 }
                 _ => Node::Expr(Expr::new(file, parent)),
             },
-            parent => Node::of_parent(file, parent),
+            parent => Node::from_binder_parent(file, parent),
         }
     }
 }
@@ -547,8 +542,8 @@ impl<'a> Stmt<'a> {
 
     #[inline(never)]
     fn parent_in_rare_cases(self, parent: Parent) -> Node<'a> {
-        match Node::of_parent(self.file, parent) {
-            // The binder records the `switch` for what is in a clause.
+        match Node::from_binder_parent(self.file, parent) {
+            // The binder records the `switch` as the parent of a statement in a clause.
             Node::Stmt(parent) if parent.tag() == StmtTag::Switch => match parent.as_switch() {
                 Some((_, cases)) => cases
                     .around(self.span().start)
@@ -584,17 +579,17 @@ impl<'a> Iterator for Ancestors<'a> {
     }
 }
 
-/// The parents that the binder does not record: those of type syntax. One pass over the vectors of
-/// the HIR, the first time a rule asks for one.
+/// The parents the binder doesn't record, mainly those of type syntax. Built in one pass over the HIR's vectors the
+/// first time a rule needs one.
 pub(crate) struct Parents {
     types: Box<[Packed]>,
     type_params: Box<[Packed]>,
     tuple_elems: Box<[Packed]>,
-    /// The `a.b` of `typeof a.b`, with the type. Sorted.
+    /// Each `a.b` of a `typeof a.b`, paired with the type. Sorted.
     type_query_operands: Box<[(hir::ExprId, hir::TypeNodeId)]>,
-    /// The `this` of each `this` parameter, with the parameter. Sorted.
+    /// The `this` of each `this` parameter, paired with the parameter. Sorted.
     this_names: Box<[(hir::PatId, hir::ParamId)]>,
-    /// For each of `Hir::import_attributes`: the import, the export or the import type.
+    /// The import, export or import type for each entry of `Hir::import_attributes`.
     import_attributes: Box<[Packed]>,
 }
 
@@ -605,7 +600,7 @@ impl Parents {
         at.ok().map(|at| self.type_query_operands[at].1)
     }
 
-    /// Whether the type `id` is in a type that is an error, which has no children.
+    /// True if the type `id` is inside an error type, which has no children.
     fn is_in_error(&self, hir: &super::Hir, id: hir::TypeNodeId) -> bool {
         let mut at = id;
         while let Some(&Packed { tag: Tag::Type, id }) = self.types.get(at.idx()) {
@@ -626,16 +621,17 @@ impl Parents {
         at.ok().map(|at| self.this_names[at].1)
     }
 
-    /// The import, the export or the import type that the attribute `prop` belongs to.
+    /// The import, export or import type that the attribute `prop` belongs to.
     fn of_import_attribute<'a>(&self, file: &'a File<'a>, prop: hir::PropId) -> Node<'a> {
-        // By its `{ .. }`, not by its position: an entry can follow a clause that is nested in the entry before it.
+        // Looked up by its `{ .. }` rather than its position, because an entry can follow a clause nested in the
+        // previous entry.
         let object = file.bound.prop_owner.get(prop.idx());
         object
             .and_then(|&it| self.of_import_attributes(file, it))
             .unwrap_or(Node::File(file))
     }
 
-    /// The import, the export or the import type whose attributes are in the `{ .. }` that is `object`.
+    /// The import, export or import type whose attributes are the `{ .. }` expression `object`.
     pub(super) fn of_import_attributes<'a>(
         &self,
         file: &'a File<'a>,
@@ -645,14 +641,14 @@ impl Parents {
         Some(owner.unpack(file))
     }
 
-    /// The owner of each entry of `Hir::import_attributes`. Clauses nest, so an owner takes only its own, which is the
-    /// one `import_attributes()` returns for it.
+    /// The owner of each entry of `Hir::import_attributes`. Clauses can nest, so an owner claims only its own clause,
+    /// the one `import_attributes()` returns for it.
     fn owners_of_import_attributes(hir: &super::Hir) -> Box<[Packed]> {
         let mut owners = vec![Packed::FILE; hir.import_attributes.len()].into_boxed_slice();
         if owners.is_empty() {
             return owners;
         }
-        // The first owner wins: a type in a JSDoc comment is parsed once for each node that it annotates.
+        // The first owner wins, because a type in a JSDoc comment is parsed once per node it annotates.
         let mut own = |within: Span, owner: Packed| {
             if let Some(it) =
                 ImportAttributes::index_within(hir, within).and_then(|it| owners.get_mut(it))
@@ -815,8 +811,8 @@ impl Parents {
             params(alias.type_params, parent);
             one(alias.ty, parent);
         }
-        // Few expressions have a type in them. This goes through all of them, so what tells that from
-        // the expression alone comes first.
+        // Few expressions contain a type and this loops over all of them, so the check that only needs the expression's
+        // tag comes first.
         const fn kind(tag: hir::ExprTag) -> u64 {
             1 << tag as u8
         }
@@ -854,7 +850,7 @@ impl Parents {
             if ty.is_none() && type_args.len == 0 {
                 continue;
             }
-            // What the parser has left behind can share its type arguments with a node.
+            // An expression the parser abandoned can share its type arguments with a real node.
             if matches!(
                 file.bound.parent_of_expr(hir::ExprId(i as u32)),
                 Parent::None
@@ -878,9 +874,9 @@ impl Parents {
 }
 
 impl File<'_> {
-    /// Whether it shows from the kind of its parent that the expression statement `id` is not a [wrapper](Stmt::is_wrapper).
+    /// True if its parent's kind alone shows that the expression statement `id` isn't a [wrapper](Stmt::is_wrapper).
     #[inline(always)]
-    fn is_plainly_no_wrapper(&self, id: hir::StmtId) -> bool {
+    fn is_clearly_not_wrapper(&self, id: hir::StmtId) -> bool {
         let Parent::Stmt(parent) = self.bound.parent_of_stmt(id) else {
             return true;
         };
@@ -900,13 +896,13 @@ impl File<'_> {
         self.lazy.parents.get_or_init(|| Parents::new(self))
     }
 
-    /// Whether the type `id` is in a type that is an error and whose operand is not a node: `T?`.
+    /// True if the type `id` is inside an error type whose operand isn't a node, like `T?`.
     #[inline]
-    pub(super) fn is_in_type_that_is_an_error(&self, id: hir::TypeNodeId) -> bool {
+    pub(super) fn is_in_error_type(&self, id: hir::TypeNodeId) -> bool {
         let is_error = |it: &hir::TypeNode| matches!(it.kind, hir::TypeNodeKind::JSDoc { .. });
         *self
             .lazy
-            .has_types_that_are_errors
+            .has_error_types
             .get_or_init(|| self.hir.types.iter().any(is_error))
             && self.parents().is_in_error(&self.hir, id)
     }

@@ -101,6 +101,8 @@ fn find_path_inner(
 }
 
 pub(crate) fn stat(path: &[u8]) -> i32 {
+    // Node passes the path to `uv_fs_stat` as a C string, which ends at the first NUL.
+    let path = bun_core::slice_to_nul(path);
     // PERF: `exists_at_type`
     // takes a `&ZStr`, so we copy into a NUL-terminated heap buffer here.
     let zpath = bun_core::ZBox::from_bytes(path);

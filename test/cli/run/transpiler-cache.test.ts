@@ -12,7 +12,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "fs";
-import { bunEnv, bunExe, bunRun, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, MAX_PATH_BYTES, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "path";
 
@@ -207,6 +207,29 @@ describe("transpiler cache", () => {
     // A per-user cache location still works.
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("no-tmpdir-cache");
     expect(newCacheCount()).toBe(1);
+  });
+  test("disables the cache when the cache directory is too long for the path buffer", async () => {
+    writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "long-cache-dir"));
+
+    // 4095 bytes fit in a Linux path buffer without room for a cache file name. 4200 bytes don't fit. With the first
+    // two lengths, the directory, a separator and the file name fill the buffer exactly, without room for the NUL.
+    // Windows environment variables can't be that long. Windows reads HOME from USERPROFILE.
+    const exactFit = isWindows ? [] : [MAX_PATH_BYTES - 28, MAX_PATH_BYTES - 22];
+    const variants: Record<string, string | undefined>[] = [];
+    for (const length of [...exactFit, 4095, 4200]) {
+      const dir = "/" + Buffer.alloc(length - 1, "h").toString();
+      variants.push(
+        { BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined, XDG_CACHE_HOME: undefined, HOME: dir, USERPROFILE: dir },
+        { BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined, XDG_CACHE_HOME: dir },
+        { BUN_RUNTIME_TRANSPILER_CACHE_PATH: dir },
+      );
+    }
+
+    const results = await Promise.all(variants.map(vars => bunRun(join(temp_dir, "a.js"), { ...env, ...vars })));
+    for (const result of results) {
+      expect(result).toSpawn("long-cache-dir");
+    }
+    expect(existsSync(cache_dir)).toBeFalse();
   });
   test("works if the cache is not user-readable", async () => {
     mkdirSync(cache_dir, { recursive: true });
@@ -691,4 +714,148 @@ console.log("OK");
   expect(third.stdout.toString()).toContain("OK");
   expect(third.signalCode).toBeUndefined();
   expect(third.exitCode).toBe(0);
+});
+
+describe("cached sourcemap with a corrupted body", () => {
+  // A cache hit only validates the sourcemap section's outer header, so the reader has to
+  // bounds-check everything it reads from the SyncEntry array and the window stream.
+  //
+  // InternalSourceMap section (src/sourcemap/InternalSourceMap.rs):
+  //   28: stream_offset u32, 32..stream_offset: SyncEntry[sync_count],
+  //   stream_offset..total_len: window stream (32-byte header, then varints).
+  const SOURCEMAP_BYTE_OFFSET_AT = 54;
+  const SOURCEMAP_BYTE_LENGTH_AT = 62;
+  const damage: Record<string, (section: Buffer) => void> = {
+    // The stream shrinks to its 1-byte tail pad, which is too small for a window header.
+    "stream_offset points at the last byte": s => void s.writeUInt32LE(s.length - 1, 28),
+    // Every SyncEntry.byte_offset becomes 0xffffffff.
+    "SyncEntry array filled with 0xff": s => void s.fill(0xff, 32, s.readUInt32LE(28)),
+    // The window section lengths become 0xffff and every flag bit is set.
+    "window stream filled with 0xff": s => void s.fill(0xff, s.readUInt32LE(28)),
+    // The section lengths become 0x8080 and every varint is unterminated.
+    "window stream filled with 0x80": s => void s.fill(0x80, s.readUInt32LE(28)),
+  };
+
+  // Large enough to be cached (>= 4 KiB). The code comes after the filler so the
+  // positions to remap aren't in the first lines of the transpiled output.
+  const line = `// ${Buffer.alloc(120, "x").toString()}\n`;
+  const filler = Buffer.alloc(120 * line.length, line).toString();
+
+  // Writes each corrupted copy of the cache entry, then calls `check`, which runs
+  // bun again. A rejected entry is deleted and rewritten, so
+  // `servedFromDamagedEntry` proves the run was a cache hit.
+  function forEachDamagedEntry(check: (name: string, servedFromDamagedEntry: () => boolean) => void) {
+    const entries = readdirSync(cache_dir).filter(name => name.endsWith(".pile"));
+    expect(entries).toHaveLength(1);
+    const entry = join(cache_dir, entries[0]);
+    const pristine = readFileSync(entry);
+    const smOff = Number(pristine.readBigUInt64LE(SOURCEMAP_BYTE_OFFSET_AT));
+    const smLen = Number(pristine.readBigUInt64LE(SOURCEMAP_BYTE_LENGTH_AT));
+    expect(smLen).toBeGreaterThan(32);
+    expect(smOff + smLen).toBeLessThanOrEqual(pristine.length);
+
+    for (const [name, apply] of Object.entries(damage)) {
+      const data = Buffer.from(pristine);
+      apply(data.subarray(smOff, smOff + smLen));
+      expect(data.equals(pristine)).toBeFalse();
+      writeFileSync(entry, data);
+      check(name, () => readFileSync(entry).equals(data));
+    }
+  }
+
+  // The coverage report walks every mapping in the module.
+  test("bun test --coverage doesn't crash", () => {
+    writeFileSync(
+      join(temp_dir, "lib.ts"),
+      `${filler}
+export function add(a: number, b: number): number { return a + b; }
+export function unused(a: number): number { if (a > 1) { return a * 2; } return a; }
+`,
+    );
+    // Too small to be cached, so lib.ts is the only entry.
+    writeFileSync(
+      join(temp_dir, "lib.test.ts"),
+      `import { expect, test } from "bun:test";
+import { add } from "./lib.ts";
+test("add", () => { expect(add(1, 2)).toBe(3); });
+`,
+    );
+    const run = () => Bun.spawnSync({ cmd: [bunExe(), "test", "--coverage", "./lib.test.ts"], cwd: temp_dir, env });
+    const passed = (result: ReturnType<typeof run>) => /\b1 pass\b/.test(result.stderr.toString());
+
+    const first = run();
+    expect({ passed: passed(first), exitCode: first.exitCode }).toEqual({ passed: true, exitCode: 0 });
+
+    forEachDamagedEntry((name, servedFromDamagedEntry) => {
+      const result = run();
+      expect({
+        name,
+        passed: passed(result),
+        signalCode: result.signalCode,
+        exitCode: result.exitCode,
+        servedFromDamagedEntry: servedFromDamagedEntry(),
+      }).toEqual({ name, passed: true, signalCode: undefined, exitCode: 0, servedFromDamagedEntry: true });
+    });
+  });
+});
+
+// A cache hit on an entry without a sourcemap section would make the module's stack traces unmappable.
+describe("cache entry without a sourcemap section", () => {
+  // See Metadata::encode in src/jsc/RuntimeTranspilerCache.rs.
+  const SOURCEMAP_BYTE_LENGTH_AT = 62;
+  // 120 filler lines, one blank line, the function header, then the throw.
+  const THROW_LINE = 123;
+
+  // Only modules of 4 KiB or more are cached.
+  function writeThrowingModule() {
+    const line = `// ${Buffer.alloc(120, "x").toString()}\n`;
+    const filler = Buffer.alloc(120 * line.length, line).toString();
+    writeFileSync(
+      join(temp_dir, "boom.ts"),
+      `${filler}
+function boom(): number {
+  throw new Error("boom");
+}
+try {
+  boom();
+} catch (e) {
+  console.log((e as Error).stack!.split("\\n")[1].trim());
+}
+`,
+    );
+  }
+
+  const run = (extra: Record<string, string> = {}) =>
+    Bun.spawnSync({ cmd: [bunExe(), "./boom.ts"], cwd: temp_dir, env: { ...env, ...extra } });
+
+  const cacheEntries = () =>
+    existsSync(cache_dir) ? readdirSync(cache_dir).filter(name => name.endsWith(".pile")) : [];
+
+  function expectRemappedFrameAndStoredSourceMap(result: ReturnType<typeof run>) {
+    expect(result.stdout.toString()).toContain(`boom.ts:${THROW_LINE}:`);
+    const entries = cacheEntries();
+    expect(entries).toHaveLength(1);
+    expect(readFileSync(join(cache_dir, entries[0])).readBigUInt64LE(SOURCEMAP_BYTE_LENGTH_AT)).toBeGreaterThan(0n);
+    expect(result.exitCode).toBe(0);
+  }
+
+  test("isn't written when source maps are disabled", () => {
+    writeThrowingModule();
+    const first = run({ BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS: "1" });
+    expect(cacheEntries()).toEqual([]);
+    expect(first.exitCode).toBe(0);
+    expectRemappedFrameAndStoredSourceMap(run());
+  });
+
+  test("is rejected and rewritten with a sourcemap", () => {
+    writeThrowingModule();
+    expectRemappedFrameAndStoredSourceMap(run());
+
+    const entry = join(cache_dir, cacheEntries()[0]);
+    const data = readFileSync(entry);
+    data.writeBigUInt64LE(0n, SOURCEMAP_BYTE_LENGTH_AT);
+    writeFileSync(entry, data);
+
+    expectRemappedFrameAndStoredSourceMap(run());
+  });
 });

@@ -1,14 +1,14 @@
-//! The modules that are built into Node.js.
+//! Node.js's built-in modules.
 
 type Version = [u8; 3];
 
 const NEVER: Version = [u8::MAX; 3];
 
-/// The version that is meant where none is said.
+/// The default version.
 const CURRENT: [u32; 3] = [24, 0, 0];
 
-/// `core.json` of is-core-module 2.17.0: for each name the versions of Node.js that have it, from the
-/// first up to the second, which no longer has it. Sorted.
+/// `core.json` of is-core-module 2.17.0. For each name, the ranges of Node.js versions that have it: from the first
+/// version up to, but not including, the second. Sorted.
 #[rustfmt::skip]
 static MODULES: [(&[u8], &[(Version, Version)]); 161] = [
     (b"_debug_agent", &[([1, 0, 0], [8, 0, 0])]),
@@ -174,7 +174,7 @@ static MODULES: [(&[u8], &[(Version, Version)]); 161] = [
     (b"zlib", &[([0, 5, 0], NEVER)]),
 ];
 
-/// Whether `specifier` is a module of Node.js, with or without `node:`.
+/// True if `specifier` is a Node.js module, with or without `node:`.
 pub fn is_builtin_module(specifier: &[u8]) -> bool {
     is_builtin_module_in(specifier, CURRENT)
 }

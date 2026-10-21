@@ -4,14 +4,14 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 // The CSS parser folds math functions and converts colors, and it prints the results. `f32::asin`, `f32::acos`,
-// `f32::atan`, `f32::atan2`, `f32::hypot` and `f32::cbrt` call the C library. Its result differs in the last bit
-// between glibc, musl, Apple's libm and the C runtime that Bun links on Windows. One stylesheet then builds to
-// different bytes on each of them.
+// `f32::atan`, `f32::atan2`, `f32::hypot`, `f32::cbrt`, `f32::ln` and `f32::log` call the C library. Its result
+// differs in the last bit between glibc, musl, Apple's libm and the C runtime that Bun links on Windows. One
+// stylesheet then builds to different bytes on each of them.
 //
 // Call `crate::values::math` instead. It gives the same bits on every host.
-test("the CSS crates do not call asin, acos, atan, atan2, hypot or cbrt of the C library", async () => {
+test("the CSS crates do not call asin, acos, atan, atan2, hypot, cbrt, ln or log of the C library", async () => {
   const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
-  const names = "asin|acos|atan|atan2|hypot|cbrt";
+  const names = "asin|acos|atan|atan2|hypot|cbrt|ln|log";
   // `x.atan2(y)`, and `f32::atan2(x, y)` through any path but `math::`.
   const banned = new RegExp(`\\.(?:${names})\\s*\\(|(?<!\\bmath)::(?:${names})\\b`);
   const allowed = "src/css/values/math.rs";

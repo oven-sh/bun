@@ -21,6 +21,11 @@ pub(crate) fn atan2(y: f32, x: f32) -> f32 {
     kernel::atan2(f64::from(y), f64::from(x)) as f32
 }
 
+#[inline(never)]
+pub(crate) fn ln(x: f32) -> f32 {
+    kernel::ln(f64::from(x)) as f32
+}
+
 /// `f32::log` divides two `f32` logarithms, which makes `log(32768, 2)` less than 15.
 #[inline(never)]
 pub(crate) fn log(x: f32, base: f32) -> f32 {

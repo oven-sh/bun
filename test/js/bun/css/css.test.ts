@@ -224,9 +224,9 @@ describe("css tests", () => {
     minify_test(`a { width: calc(clamp(1px, 2px, 3px) + 1px) }`, `a{width:3px}`);
   });
   describe("math that is compiled into Bun gives the same value on every host", () => {
-    // `asin()`, `acos()`, `atan()`, `atan2()`, `hypot()`, `log()` with a base, and the cube root and the hue of a
-    // color conversion come from `src/css/values/math.rs`. The same functions of the C library differ in the last
-    // bit between hosts.
+    // `asin()`, `acos()`, `atan()`, `atan2()`, `hypot()`, `log()`, and the cube root and the hue of a color
+    // conversion come from `src/css/values/math.rs`. The same functions of the C library differ in the last bit
+    // between hosts.
     //
     // With Apple's libm, atan2f(0, -1) and acosf(-1) are one ulp below the `f32` nearest to pi, and asinf(1) and
     // atanf(infinity) are one ulp below the one nearest to pi/2. So are acosf(-1) and atanf(infinity) of musl.
@@ -287,6 +287,8 @@ describe("css tests", () => {
     minify_test(`a { line-height: log(0, 2) }`, `a{line-height:-3.40282e38}`);
     minify_test(`a { line-height: log(-1, 2) }`, `a{line-height:0}`);
     minify_test(`a { line-height: log(NaN, 2) }`, `a{line-height:0}`);
+    minify_test(`a { line-height: log(0) }`, `a{line-height:-3.40282e38}`);
+    minify_test(`a { line-height: log(-1) }`, `a{line-height:0}`);
     // The cube root of zero, and of a subnormal.
     minify_test(`a { color: oklab(from black l a b) }`, `a{color:oklab(0% 0 0)}`);
     minify_test(
@@ -337,6 +339,10 @@ describe("css tests", () => {
     // Every host in CI gave another `f32` for these two.
     number("log(10.3035, 2.022)", "3.31277680");
     number("log(13.5905, 6.026)", "1.45281172");
+    // The logf of glibc, of musl and of Windows on arm64 gave another `f32` for the first.
+    number("log(1.0686)", "0.0663494319");
+    number("log(0.001)", "-6.90775537");
+    number("log(1e30)", "69.0775528");
     // The exact value is less than one `f64` ulp below the middle of two `f32`.
     angle("atan2(910.131836, -0.0220102575)", "1.57082045");
   });

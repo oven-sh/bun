@@ -451,7 +451,7 @@ impl<V: CalcValue> Calc<V> {
                     let base = Self::parse_numeric(i, parse_ident)?;
                     return Ok(Calc::Number(math::log(value, base)));
                 }
-                Ok(Calc::Number(value.ln()))
+                Ok(Calc::Number(math::ln(value)))
             }),
             CalcUnit::Sqrt => Self::parse_numeric_fn(input, NumericFnOp::Sqrt, parse_ident),
             CalcUnit::Exp => Self::parse_numeric_fn(input, NumericFnOp::Exp, parse_ident),

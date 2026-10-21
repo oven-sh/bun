@@ -85,7 +85,8 @@ private:
     OnClientErrorCallback onClientError = nullptr;
 
     uint64_t maxHeaderSize = 0; // 0 means no limit
-    uint32_t maxHeadersCount = 0; // node:http server.maxHeadersCount; 0 means not set
+    /* node:http server.maxHeadersCount: 0 means not set, UINT32_MAX is no limit. A connection takes its copy when it opens. */
+    uint32_t maxHeadersCount = 0;
 
     /* HTTP/2: set by Http2Context::attach(). A connection that negotiated h2
      * (ALPN) or opened with the prior-knowledge preface is handed over via

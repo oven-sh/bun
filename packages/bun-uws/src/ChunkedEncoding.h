@@ -196,11 +196,10 @@ namespace uWS {
     constexpr uint64_t STATE_IS_TRAILERS = STATE_HAS_SIZE | STATE_IS_CHUNKED | STATE_WAITING_FOR_LF;
     constexpr uint64_t STATE_IS_TRAILERS_DONE = STATE_HAS_SIZE | STATE_WAITING_FOR_LF;
 
-    /* Default cap on the raw size of a captured trailer section. Node counts
-     * trailer bytes against the same max-header-size budget as request headers
-     * in llhttp, so node:http callers thread the per-server maxHeaderSize
-     * through (already normalized to a nonzero default); this constant is the
-     * fallback for callers that do not. */
+    /* Default cap on the raw size of a captured trailer section. node:http
+     * callers pass HttpParser::maxRawTrailerSize(): what Node counts against
+     * max-header-size, the names and the values, is checked when the section is
+     * complete (HttpParser::validateNodeTrailerSection). */
     constexpr uint64_t MAX_TRAILER_SECTION_SIZE = 16 * 1024;
 
     /* The trailer section is complete once the empty line terminating it has been

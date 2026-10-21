@@ -16,7 +16,7 @@ const TIMEOUT_WHITELIST: [&str; 4] = ["setImmediate", "setTimeout", "requestAnim
 impl Rule for NoCallbackInPromise {
     const META: Meta = Meta::oxlint(Plugin::Promise, "no-callback-in-promise", Kind::Problem);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    /// Whether something is in a callback of `then` or `catch`.
+    /// Caches whether a node is inside a `then` or `catch` callback.
     type State<'a> = AncestorMemo<'a, bool>;
 
     fn new(options: &Options) -> Self {
@@ -34,7 +34,7 @@ impl Rule for NoCallbackInPromise {
     }
 }
 
-/// `exceptions` and `timeoutsErr`. Nothing of it counts if something is not as expected.
+/// Parses `exceptions` and `timeoutsErr`. If anything is malformed, the whole config is ignored.
 fn config(value: &Json) -> Option<(Vec<&str>, bool)> {
     let (mut exceptions, mut timeouts_err) = (Vec::new(), false);
     for (key, value) in value.as_object()? {
@@ -82,7 +82,7 @@ impl NoCallbackInPromise {
     }
 }
 
-/// It is a function that is an argument of `then` or `catch`.
+/// True if it's a function passed to `then` or `catch`.
 fn is_inside_promise(e: Expr) -> bool {
     e.tag() == ExprTag::Fn
         && !e.is_parenthesized()

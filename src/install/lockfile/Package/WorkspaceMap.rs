@@ -21,9 +21,9 @@ pub(crate) struct WorkspaceMap {
     map: Map,
     /// Relative dirs of nameless members that declare dependencies, for `warn_skipped`.
     skipped_with_dependencies: Vec<Box<[u8]>>,
-    /// Whether the last `process_names_array` got to every folder that the patterns name.
+    /// Whether the last `process_names_array` got to every folder that the patterns match.
     is_complete: bool,
-    /// Relative dirs that the patterns name and whose package.json could not be read or parsed.
+    /// Relative dirs that the patterns match but whose package.json couldn't be read or parsed.
     unread: Vec<Box<[u8]>>,
 }
 
@@ -41,7 +41,7 @@ pub struct Entry {
     /// the caller can warn about it (outside `process_names_array`'s log window).
     pub(crate) unsupported_hoisting_limits: Option<Box<[u8]>>,
     /// Whether the glob walk followed a symlink to reach this workspace's folder. `None` means no
-    /// walk could tell, so whoever needs the answer has to check the disk.
+    /// walk could tell, so the code that needs the answer has to check the disk.
     pub(crate) is_behind_link: Option<bool>,
 }
 
@@ -59,7 +59,7 @@ impl WorkspaceMap {
         self.is_complete
     }
 
-    /// Whether the last `process_names_array` could not read the package.json of `abs_dir`.
+    /// Returns true if the last `process_names_array` couldn't read the package.json of `abs_dir`.
     pub(crate) fn could_not_read(&self, source: &bun_ast::Source, abs_dir: &[u8]) -> bool {
         let mut buf = path::path_buffer_pool::get();
         let dir = relative_workspace_path(&mut buf.0, package_json_dir(source), abs_dir);
@@ -209,7 +209,8 @@ pub(crate) enum MissingWorkspace<'a> {
     SkipEmptyToo,
 }
 
-/// `None`: no usable `"name"`, so nothing to link or resolve it by; skipped, as pnpm and npm do.
+/// Returns `None` if there's no usable `"name"`. Nothing could link to or resolve such a workspace,
+/// so it's skipped, like in pnpm and npm.
 fn process_workspace_name(
     workspace_names: &mut WorkspaceMap,
     json_cache: &mut WorkspacePackageJSONCache,
@@ -417,7 +418,8 @@ fn relative_workspace_path<'b>(
 }
 
 impl WorkspaceMap {
-    /// `"workspaces"`: an array, or an object with a `"packages"` array. Any other lists nothing.
+    /// `"workspaces"` is an array, or an object with a `"packages"` array. Any other value means no
+    /// workspaces.
     pub(crate) fn process_manifest(
         &mut self,
         json_cache: &mut WorkspacePackageJSONCache,
@@ -673,7 +675,7 @@ impl WorkspaceMap {
                                 root_dir,
                                 workspace_dir_of(abs_package_json_path),
                             );
-                            // skip root package.json: `**`, or `../*` matching it again
+                            // Skip the root package.json, which `**` or `../*` can match again.
                             if dir.is_empty() {
                                 continue;
                             }
@@ -743,9 +745,9 @@ impl WorkspaceMap {
         Ok(workspace_names.count() as u32)
     }
 
-    /// Whether [`Self::process_names_array`] would make `abs_dir` a workspace, given that `abs_dir`
-    /// has a named package.json. It never reads the disk, so `**` also matches through a symlink.
-    /// An entry that is not a string is an error here too.
+    /// Returns true if [`Self::process_names_array`] would make `abs_dir` a workspace, given that
+    /// `abs_dir` has a named package.json. It never reads the disk, so `**` also matches through a
+    /// symlink.
     pub(crate) fn lists(
         arr: NamesArray<'_>,
         source: &bun_ast::Source,
@@ -790,8 +792,8 @@ impl WorkspaceMap {
     }
 }
 
-/// Whether the glob `user_pattern` matches the package.json in `dir`. `abs_dir` is the absolute
-/// path of `dir`, which is what an absolute pattern is matched against.
+/// Returns true if the glob `user_pattern` matches the package.json in `dir`. `abs_dir` is the
+/// absolute path of `dir`, which is what an absolute pattern is matched against.
 fn glob_lists(user_pattern: &[u8], dir: &[u8], abs_dir: &[u8]) -> bool {
     let dir = if path::is_absolute(user_pattern) {
         abs_dir

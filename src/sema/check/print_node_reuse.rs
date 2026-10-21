@@ -12,18 +12,17 @@ use super::*;
 
 // ───────────────────────────── declarations (`nodebuilderimpl.go`) ─────────────────────────────
 
-/// The options of `Printer::serialize_type_for_declaration`.
+/// Options for `Printer::serialize_type_for_declaration`.
 #[derive(Copy, Clone)]
 pub(super) struct SerializeTypeOptions {
     /// `tryReuse`
     pub(super) try_reuse: bool,
-    /// The symbol is an optional property of a reverse mapped type.
+    /// True if the symbol is an optional property of a reverse mapped type.
     pub(super) is_optional_reverse_mapped: bool,
 }
 
 impl<'p> Printer<'_, 'p, '_> {
-    /// `b.ctx.enclosingDeclaration != nil`: whether the type of a declaration is derived from its
-    /// syntax.
+    /// `b.ctx.enclosingDeclaration != nil`. True if a declaration's type is derived from its syntax.
     fn reuses_nodes(&self) -> bool {
         self.enclosing_declaration.is_some()
     }
@@ -53,9 +52,9 @@ impl<'p> Printer<'_, 'p, '_> {
         if let Some((file, func, _)) = self.c.sig_decl(declared_by)
             && self.reuses_nodes()
         {
-            let written = self.c.hir(file)[func].this_ty(self.c.hir(file));
-            if written.is_some() && self.c.type_from_node(file, written) == this {
-                return self.reuse_type_node(file, written);
+            let this_type_node = self.c.hir(file)[func].this_ty(self.c.hir(file));
+            if this_type_node.is_some() && self.c.type_from_node(file, this_type_node) == this {
+                return self.reuse_type_node(file, this_type_node);
             }
         }
         self.type_to_node(this)
@@ -65,7 +64,7 @@ impl<'p> Printer<'_, 'p, '_> {
     pub(super) fn serialize_type_of_property(&mut self, prop: &Prop, ty: TypeId) -> Node {
         if let Some((file, declaration)) = self.value_declaration_of_property(prop) {
             // `t.symbol == symbol`: a symbol derived from the declared one (`getSpreadSymbol`,
-            // `createSymbolWithType`) is not the symbol of its `unique symbol` type.
+            // `createSymbolWithType`) isn't the symbol of its `unique symbol` type.
             if !matches!(prop.source, PropSource::Symbol(_))
                 && matches!(self.c.data(ty), TypeData::UniqueSymbol { .. })
             {
@@ -87,8 +86,8 @@ impl<'p> Printer<'_, 'p, '_> {
         self.type_to_node(ty)
     }
 
-    /// The syntax-based part of `serializeReturnTypeForSignature`. `returned`: `returnType`.
-    /// `None`: the checker's type is used.
+    /// The syntax-based part of `serializeReturnTypeForSignature`. `returned` is `returnType`.
+    /// Returns `None` if the checker's type has to be used.
     pub(super) fn try_reuse_return_type_of_signature(
         &mut self,
         signature: SigId,
@@ -103,7 +102,7 @@ impl<'p> Printer<'_, 'p, '_> {
         if !self.pseudo_type_equivalent_to_type(file, &pt, returned, false, report_errors) {
             return None;
         }
-        // The pseudochecker does not see an inferred type predicate.
+        // The pseudochecker doesn't see an inferred type predicate.
         if let Some(predicate) = self.c.sig_predicate(signature)
             && !self.c.iso_matches_predicate(file, &pt, predicate)
         {
@@ -125,7 +124,7 @@ impl<'p> Printer<'_, 'p, '_> {
         let (file, declaration) = self.value_declaration_of_property(prop)?;
         let scope = match self.c.hir(file).data(declaration) {
             NodeData::Member(member) => self.c.enclosing_scope_of_member(file, member),
-            NodeData::Prop(written) => self.c.enclosing_scope_of_property(file, written),
+            NodeData::Prop(literal_prop) => self.c.enclosing_scope_of_property(file, literal_prop),
             NodeData::Param(parameter) => {
                 let pat = self.c.hir(file)[parameter].pat;
                 self.c.enclosing_scope_of_pat(file, pat)
@@ -164,14 +163,17 @@ impl<'p> Printer<'_, 'p, '_> {
                 }
                 _ => None,
             },
-            PropSource::Literal(file, written) => {
+            PropSource::Literal(file, literal_prop) => {
                 // A JSX attribute has no inferred type.
-                let owner = self.c.bound(*file).prop_owner[written.idx()];
+                let owner = self.c.bound(*file).prop_owner[literal_prop.idx()];
                 let is_in_object_literal =
                     owner.is_some() && matches!(self.c.hir(*file)[owner].kind, ExprKind::Object(_));
                 // `prop.ValueDeclaration = member.ValueDeclaration`: the first declaration of the name.
-                let declarations = self.c.bound(*file).declarations_of_literal_member(*written);
-                let first = declarations.first().copied().unwrap_or(*written);
+                let declarations = self
+                    .c
+                    .bound(*file)
+                    .declarations_of_literal_member(*literal_prop);
+                let first = declarations.first().copied().unwrap_or(*literal_prop);
                 is_in_object_literal.then_some((*file, self.c.hir(*file).node(first)))
             }
             _ => None,
@@ -272,8 +274,6 @@ impl<'p> Printer<'_, 'p, '_> {
         if accessor.is_none() && (requires_widening || !self.c.iso_has_inferred_type(file, node)) {
             return self.type_to_node(ty);
         }
-        // `addSymbolTypeToContext`
-        self.c.get_symbol_id_of_node(file, node);
         let pt = match accessor {
             Some(func) => self.c.iso_pseudo_of_accessor(file, func),
             None => self.c.iso_pseudo_of_declaration(file, node),
@@ -303,8 +303,7 @@ impl<'p> Printer<'_, 'p, '_> {
             };
             return self.pseudo_type_to_node_with_checker_fallback(file, &pt, ty);
         }
-        // An error already reported for an inferred type is not reported again for the types it is
-        // composed of.
+        // An error already reported for an inferred type isn't reported again for the types it's composed of.
         let reported_inference_fallback =
             report_errors && matches!(&pt, Pseudo::Inferred { errors, .. } if !errors.is_empty());
         let adds_undefined = requires_undefined
@@ -538,8 +537,6 @@ impl<'p> Printer<'_, 'p, '_> {
         declaration: hir::Node,
         try_reuse: bool,
     ) -> Node {
-        // `enclosingSymbolTypes`
-        self.c.get_symbol_id_of_node(file, declaration);
         let Some(ty) = self.c.iso_type_of_declared(file, declaration) else {
             return Node::simple(b"any");
         };
@@ -556,7 +553,7 @@ impl<'p> Printer<'_, 'p, '_> {
         )
     }
 
-    /// `pseudoTypeToNode` for a `PseudoTypeInferred` of the expression `of` that is not a
+    /// `pseudoTypeToNode` for a `PseudoTypeInferred` of the expression `of` that isn't a
     /// signature's return type. The type is that of the declaration containing the expression,
     /// which is widened like that declaration and not like its enclosing context.
     fn inferred_pseudo_type_to_node(&mut self, file: FileId, of: hir::Node) -> Node {
@@ -599,12 +596,12 @@ impl<'p> Printer<'_, 'p, '_> {
         }
     }
 
-    /// `Text()` of the `BigIntLiteral` of `file` whose token starts at `pos`: hexadecimal digits
-    /// are not converted to base 10. `None`: the text of the file is not retained.
+    /// `Text()` of the `BigIntLiteral` of `file` whose token starts at `pos`. Hexadecimal digits
+    /// aren't converted to base 10. Returns `None` if the file's text isn't retained.
     fn text_of_big_int_literal(&self, file: FileId, pos: u32) -> Option<Vec<u8>> {
         let end = self.c.end_of_token_at(file, pos);
-        let written = self.c.hir(file).text.get(pos as usize..end as usize)?;
-        (!written.is_empty()).then(|| crate::json::bigint_token_value(written))
+        let raw_text = self.c.hir(file).text.get(pos as usize..end as usize)?;
+        (!raw_text.is_empty()).then(|| crate::json::bigint_token_value(raw_text))
     }
 
     /// The type parameters and `pseudoParametersToNodeList` of the function `func`.
@@ -665,7 +662,7 @@ impl<'p> Printer<'_, 'p, '_> {
         let declaration = self.c.hir(file)[param.param];
         self.track_parameter_declaration_name(file, param.param);
         let ty = self.pseudo_type_to_node(file, &param.ty);
-        // The name that the reparser gives the parameter of a `@this` tag is not in the source.
+        // The name that the reparser gives the parameter of a `@this` tag isn't in the source.
         let name = if self.c.is_this_parameter(file, param.param) {
             b"this".to_vec()
         } else {
@@ -677,7 +674,7 @@ impl<'p> Printer<'_, 'p, '_> {
         }
     }
 
-    /// `tryReuseExistingNodeHelper` for the name of the property `p` of an object literal: the
+    /// `tryReuseExistingNodeHelper` for the name of the property `p` of an object literal. The
     /// length counted is `Loc.End() - Loc.Pos()`, which includes the leading trivia.
     fn count_reused_property_name(&mut self, file: FileId, p: PropId) {
         let hir = self.c.hir(file);
@@ -821,8 +818,8 @@ impl<'p> Printer<'_, 'p, '_> {
 
 // ───────────────────────────── reused type nodes (`nodecopy.go`) ─────────────────────────────
 
-/// `emitPostfixTypeOperand` for the operand of a postfix type that is a parse tree node, as a
-/// reused node is (`updateNode` preserves the flags): a type query is not parenthesized.
+/// `emitPostfixTypeOperand` for the operand of a postfix type that's a parse tree node, as a reused
+/// node is (`updateNode` preserves the flags). A type query isn't parenthesized.
 fn emit_postfix_type_operand(operand: Node) -> Vec<u8> {
     if operand.precedence == TYPE_OPERATOR && operand.text.starts_with(b"typeof ") {
         operand.text
@@ -832,14 +829,13 @@ fn emit_postfix_type_operand(operand: Node) -> Vec<u8> {
 }
 
 impl<'p> Printer<'_, 'p, '_> {
-    /// Where the first token of `node` of `file` starts, and `node.End()`.
+    /// Returns the start of the first token of `node` in `file`, and `node.End()`.
     fn range_of_node(&self, file: FileId, node: hir::Node) -> (u32, u32) {
         (self.c.hir(file).start(node), self.c.end_of_node(file, node))
     }
 
-    /// `tryReuseExistingNodeHelper`. `existing`: `range_of_node` of the node, which is in `file`.
-    /// `visit`: the visitor, applied to the node. Nothing is counted where the text is not
-    /// retained, in the default library.
+    /// `tryReuseExistingNodeHelper`. `existing` is `range_of_node` of the node, which is in `file`. `visit` applies
+    /// the visitor to the node. Nothing is counted where the text isn't retained, that is, in the default library.
     fn try_reuse_existing_node_helper<T>(
         &mut self,
         file: FileId,
@@ -864,7 +860,7 @@ impl<'p> Printer<'_, 'p, '_> {
     }
 
     /// `reuseNode` for a type node: the outermost `ParenthesizedType` around `node` that opens at
-    /// `floor` or later, `node` itself if there is none. 0 for an annotation.
+    /// `floor` or later, or `node` itself if there is none. `floor` is 0 for an annotation.
     pub(super) fn try_reuse_type_node(
         &mut self,
         file: FileId,
@@ -897,16 +893,16 @@ impl<'p> Printer<'_, 'p, '_> {
         }
     }
 
-    /// The visitor of `getExistingNodeTreeVisitor`, applied to a type node. A node that cannot be
-    /// reused is printed from its type, except a type predicate, which yields `None`. `floor`: the
-    /// parentheses that open before `node` enclose the construct that `node` is the first part of.
+    /// The visitor of `getExistingNodeTreeVisitor`, applied to a type node. A node that can't be reused
+    /// is printed from its type, except a type predicate, which yields `None`. Parentheses that open
+    /// before `floor` enclose the construct that `node` is the first part of, not `node` itself.
     fn visit_existing_type_node(
         &mut self,
         file: FileId,
         node: TypeNodeId,
         floor: u32,
     ) -> Option<Node> {
-        // After an error in a sibling the result is discarded.
+        // After an error in a sibling, the result is discarded anyway.
         if self.had_error() {
             return None;
         }
@@ -944,9 +940,8 @@ impl<'p> Printer<'_, 'p, '_> {
         Some(visited)
     }
 
-    /// `emit`, which emits a node of `file` whose first token is at `start`, between
-    /// `emitLeadingCommentsOfNode` and the part of `emitTrailingCommentsOfNode` that restores
-    /// `containerPos`.
+    /// Runs `emit`, which emits a node of `file` whose first token is at `start`, between
+    /// `emitLeadingCommentsOfNode` and the part of `emitTrailingCommentsOfNode` that restores `containerPos`.
     fn emit_with_leading_comments(
         &mut self,
         file: FileId,
@@ -991,8 +986,8 @@ impl<'p> Printer<'_, 'p, '_> {
         super::spans::skip_trivia_back(&self.c.hir(file).text, start)
     }
 
-    /// `getModuleSpecifierOverride` for the import type `node` of `file`. `None`: the literal is
-    /// left unchanged.
+    /// `getModuleSpecifierOverride` for the import type `node` of `file`. Returns `None` if the
+    /// literal stays unchanged.
     fn get_module_specifier_override(&mut self, file: FileId, node: TypeNodeId) -> Option<Vec<u8>> {
         let enclosing_file = self.enclosing_declaration.map(|enclosing| enclosing.file);
         if enclosing_file == Some(file) {
@@ -1044,7 +1039,7 @@ impl<'p> Printer<'_, 'p, '_> {
     }
 
     /// `emitImportTypeNodeAttributes` for the import type `node` of `file`, after the `, ` that
-    /// `emitImportTypeNode` writes before it. Empty: `node.Attributes == nil`.
+    /// `emitImportTypeNode` writes before it. Returns an empty text if `node.Attributes == nil`.
     fn import_type_attributes_text(&self, file: FileId, node: TypeNodeId) -> Vec<u8> {
         let hir = self.c.hir(file);
         let TypeNodeKind::Import {
@@ -1061,13 +1056,13 @@ impl<'p> Printer<'_, 'p, '_> {
         };
         // `getLiteralTextOfNode`: the node builder's clone of a string is printed from its value.
         let text_of = |start: u32, end: u32, value: Option<Atom>| {
-            let written = hir.text.get(start as usize..end as usize);
-            match (written.and_then(|written| written.first()), value) {
+            let raw_text = hir.text.get(start as usize..end as usize);
+            match (raw_text.and_then(|raw_text| raw_text.first()), value) {
                 (Some(&quote @ (b'"' | b'\'')), Some(value)) if !self.is_transformer => {
                     quoted(self.c.atoms().bytes(value), quote, false)
                 }
                 (None, Some(value)) => quoted(self.c.atoms().bytes(value), b'"', false),
-                _ => written.unwrap_or_default().to_vec(),
+                _ => raw_text.unwrap_or_default().to_vec(),
             }
         };
         // `LFPreserveLines`, `LFIndented`: for nodes with positions in the file that is emitted.
@@ -1123,9 +1118,8 @@ impl<'p> Printer<'_, 'p, '_> {
         cat!(b", { ", keyword, b": ", list, b" }")
     }
 
-    /// Whether `FindAncestor` from the type node `node` of `file` finds
-    /// `getEnclosingDeclarationIgnoringFakeScope()`, which the fields of `Enclosing` other than
-    /// `fake_scope` describe.
+    /// True if `FindAncestor` from the type node `node` of `file` finds `getEnclosingDeclarationIgnoringFakeScope()`,
+    /// which the fields of `Enclosing` other than `fake_scope` describe.
     fn is_in_enclosing_declaration(&self, file: FileId, node: TypeNodeId) -> bool {
         let Some(at) = self.enclosing_declaration.filter(|at| at.file == file) else {
             return false;
@@ -1177,7 +1171,7 @@ impl<'p> Printer<'_, 'p, '_> {
                     }
                     return Some(Node::simple(text));
                 }
-                // `assert` is deprecated: the node builder does not reuse a type that contains it.
+                // `assert` is deprecated, and the node builder doesn't reuse a type that contains it.
                 if token == ImportAttributesToken::Assert && !self.is_transformer {
                     return None;
                 }
@@ -1288,8 +1282,8 @@ impl<'p> Printer<'_, 'p, '_> {
             }
             TypeNodeKind::Tuple(elems) => {
                 let mut parts = Vec::with_capacity(elems.len());
-                // `IsOriginalNodeSingleLine`: the transformer sets `EFSingleLine` in that case, the
-                // node builder always.
+                // `IsOriginalNodeSingleLine`: the transformer sets `EFSingleLine` only in that
+                // case, the node builder always.
                 let text = &hir.text[..];
                 let from = super::super::errors_declaration_emit::pos_before(text, pos as usize);
                 let to = (self.c.end_of_type_node(file, node) as usize).clamp(from, text.len());
@@ -1500,7 +1494,7 @@ impl<'p> Printer<'_, 'p, '_> {
                 })
             }
             TypeNodeKind::Predicate { param, ty, asserts } => {
-                // `IsIdentifier(node.ParameterName)`. `visitDeclarationSubtree` leaves it as it is.
+                // `IsIdentifier(node.ParameterName)`. `visitDeclarationSubtree` leaves it unchanged.
                 if param != known::this && !self.is_transformer {
                     let scope = self.c.bound(file).type_scope[node.idx()];
                     let name = hir.node(node);
@@ -1524,8 +1518,7 @@ impl<'p> Printer<'_, 'p, '_> {
     }
 
     /// `list_text` for the constituents `list` of the union or intersection `node`, or for the type
-    /// arguments of the reference `node`.
-    /// `token`: `|`, `&`, or the `<` that precedes the arguments.
+    /// arguments of the reference `node`. `token` is `|`, `&`, or the `<` that precedes the arguments.
     fn type_node_list_text(
         &self,
         file: FileId,
@@ -1611,7 +1604,7 @@ impl<'p> Printer<'_, 'p, '_> {
     }
 
     /// `trackExistingEntityName(node.Name())` for the `TypeParameterDeclaration` `tp`. A missing
-    /// name resolves to nothing: its clone is emitted, which has no text.
+    /// name doesn't resolve, so its clone is emitted, which has no text.
     fn visit_type_parameter_name(&mut self, file: FileId, tp: TypeParamId) -> Vec<u8> {
         if self.c.hir(file)[tp].name == known::empty {
             return Vec::new();
@@ -1629,7 +1622,7 @@ impl<'p> Printer<'_, 'p, '_> {
         let hir = self.c.hir(file);
         let declaration = hir[tp];
         let mut text = Vec::new();
-        // `emitModifierList`: as written, also those that are errors.
+        // `emitModifierList`: as written, including modifiers that are errors.
         for modifier in hir.modifier_list(declaration.modifiers) {
             if let ModifierKind::Keyword(flag) = modifier.kind {
                 text.extend_from_slice(modifier_text(flag).as_bytes());
@@ -1650,10 +1643,9 @@ impl<'p> Printer<'_, 'p, '_> {
         Some(text)
     }
 
-    /// The type of `node`, a declaration inside a type node. `annotation`: `node.Type()`. The
-    /// visitor of the node builder visits that, and prints `any` if there is none. The transformer
-    /// has `ensureType`, which hands over to the node builder in a JavaScript file and where
-    /// there is no annotation.
+    /// Returns the type of `node`, a declaration inside a type node. `annotation` is `node.Type()`. The node
+    /// builder's visitor visits the annotation, and prints `any` if there is none. The transformer has
+    /// `ensureType`, which hands over to the node builder in a JavaScript file and where there's no annotation.
     fn ensure_type(
         &mut self,
         file: FileId,
@@ -1740,7 +1732,7 @@ impl<'p> Printer<'_, 'p, '_> {
         })
     }
 
-    /// A member of a type literal. `None`: the type literal is printed from its type.
+    /// A member of a type literal. Returns `None` if the type literal has to be printed from its type.
     fn visit_type_element(&mut self, file: FileId, m: MemberId, scope: ScopeId) -> Option<Vec<u8>> {
         let hir = self.c.hir(file);
         let member = hir[m];
@@ -1755,8 +1747,7 @@ impl<'p> Printer<'_, 'p, '_> {
             b""
         };
         let name = match member.key {
-            // A string keeps its quotes and is re-escaped, a number is printed in its canonical
-            // form.
+            // A string keeps its quotes and is re-escaped. A number is printed in its canonical form.
             PropKey::Name(name) => match hir.text.get(hir[m].name_pos as usize) {
                 Some(b'\'') => quoted(&self.text(name), b'\'', false),
                 Some(b'"') => quoted(&self.text(name), b'"', false),
@@ -1766,8 +1757,8 @@ impl<'p> Printer<'_, 'p, '_> {
                 }
                 _ => self.text(name),
             },
-            // `#x` outside a class and `1n` declare nothing (`getDeclarationName`). The node has
-            // the name anyway.
+            // `#x` outside a class and `1n` don't declare anything (`getDeclarationName`). The node
+            // has the name anyway.
             PropKey::None if is_private_name_at(hir, hir[m].name_pos) => {
                 self.property_key_text(file, hir.node(m).with(Part::Name))
             }
@@ -1836,15 +1827,14 @@ impl<'p> Printer<'_, 'p, '_> {
         })
     }
 
-    /// `tryVisitSimpleTypeNode`. `None`: neither `node` nor the type it is the operand of can be
-    /// reused.
+    /// `tryVisitSimpleTypeNode`. Returns `None` if neither `node` nor the type it's the operand of can be reused.
     fn try_visit_simple_type_node(
         &mut self,
         file: FileId,
         node: TypeNodeId,
         floor: u32,
     ) -> Option<Node> {
-        // `SkipParentheses` skips no `ParenthesizedType`.
+        // `SkipParentheses` doesn't skip a `ParenthesizedType`.
         if (self.c.parenthesized_types_around(file, node, floor))
             .next()
             .is_some()
@@ -1900,7 +1890,7 @@ impl<'p> Printer<'_, 'p, '_> {
         let names: Vec<Atom> = hir.texts(name).collect();
         let &first = names.first()?;
         let scope = self.c.bound(file).type_scope[node.idx()];
-        // `visitDeclarationSubtree` leaves the name as it is.
+        // `visitDeclarationSubtree` leaves the name unchanged.
         let introduces_error = if self.is_transformer {
             false
         } else if first == known::this {
@@ -1923,10 +1913,10 @@ impl<'p> Printer<'_, 'p, '_> {
         ))
     }
 
-    /// `trackExistingEntityName` for the name after `typeof` in `query`, which starts with `this`:
-    /// whether the symbol of `getThisContainer` is accessible where the name is printed. A member
-    /// is in no table: it is as accessible as its container (`getContainersOfSymbol`), which for
-    /// a literal is the variable of `getVariableDeclarationOfObjectLiteral`.
+    /// `trackExistingEntityName` for the name after `typeof` in `query`, which starts with `this`.
+    /// True if the symbol of `getThisContainer` is accessible where the name is printed. A member
+    /// isn't in any table, so it's as accessible as its container (`getContainersOfSymbol`), which
+    /// for a literal is the variable of `getVariableDeclarationOfObjectLiteral`.
     fn is_this_container_accessible(&mut self, file: FileId, query: TypeNodeId) -> bool {
         let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
         let TypeNodeKind::Typeof { expr, .. } = hir[query].kind else {
@@ -1944,7 +1934,7 @@ impl<'p> Printer<'_, 'p, '_> {
                 StmtKind::Enum(e) => declared(bound.enum_symbol[e.idx()]),
                 _ => None,
             },
-            // It has no symbol.
+            // A static block has no symbol.
             NodeData::Member(m) if hir[m].kind == MemberKind::StaticBlock => return true,
             NodeData::Member(m) => match bound.member_owner[m.idx()] {
                 MemberOwner::Class(c) => declared(bound.class_symbol[c.idx()]),
@@ -1959,7 +1949,7 @@ impl<'p> Printer<'_, 'p, '_> {
                 let literal = Decl::ObjectLiteral(bound.prop_owner[p.idx()]);
                 self.c.variable_declaration_of_object_literal(file, literal)
             }
-            // The symbol of a function expression is in no table and has no parent.
+            // A function expression's symbol isn't in any table and has no parent.
             _ => None,
         };
         let Some(symbol) = symbol.filter(|_| scope.is_some()) else {
@@ -1988,12 +1978,10 @@ impl<'p> Printer<'_, 'p, '_> {
         let is_type_parameter = files
             .resolve_entity(file, scope, &names, SymFlags::TYPE)
             .is_some_and(|symbol| files.flags(symbol).contains(SymFlags::TYPE_PARAMETER));
-        // The type parameter of a class is not in scope in a static member: it is an unresolved
-        // name there.
+        // A class's type parameter isn't in scope in a static member. It's an unresolved name there.
         let variable = self.c.actual_type_variable(declared);
         if is_type_parameter && matches!(self.c.data(variable), TypeData::TypeParam(..)) {
-            // A type parameter that the mapper of the signature being printed maps represents
-            // another type.
+            // A type parameter that's mapped by the mapper of the signature being printed represents another type.
             if self.c.instantiate(variable, self.mapper) != variable {
                 return None;
             }
@@ -2046,9 +2034,8 @@ impl<'p> Printer<'_, 'p, '_> {
         })
     }
 
-    /// `reuseNode` for the computed property name `[name]` in `file`, where `name` is an entity
-    /// name expression. `None`: it resolves differently, or is inaccessible, where the type is
-    /// printed.
+    /// `reuseNode` for the computed property name `[name]` in `file`, where `name` is an entity name
+    /// expression. Returns `None` if it resolves differently, or is inaccessible, where the type is printed.
     pub(super) fn reuse_computed_property_name(
         &mut self,
         file: FileId,
@@ -2061,7 +2048,7 @@ impl<'p> Printer<'_, 'p, '_> {
         };
         let scope = self.c.enclosing_scope_of_expr(file, name);
         let node = hir.node(name);
-        let computed_property_name = hir.node(self.c.bound(file).expr_parent[name.idx()]);
+        let computed_property_name = hir.node(self.c.bound(file).parent_of_expr(name));
         let existing = self.range_of_node(file, computed_property_name);
         self.try_reuse_existing_node_helper(file, existing, |printer| {
             let introduces_error =
@@ -2074,7 +2061,7 @@ impl<'p> Printer<'_, 'p, '_> {
     }
 
     /// `trackExistingEntityName` for the name `node` that starts with `first` and occurs in `scope`
-    /// of `file`: whether it resolves differently, or is inaccessible, where the type is printed.
+    /// of `file`. True if it resolves differently, or is inaccessible, where the type is printed.
     fn track_existing_entity_name(
         &mut self,
         file: FileId,
@@ -2086,7 +2073,7 @@ impl<'p> Printer<'_, 'p, '_> {
         let files = self.c.files();
         let here = (self.c.resolve(file, scope, first, meaning, false)).unwrap_or(None);
         self.c.note_use_of_tracked_name(file, scope, first, meaning);
-        // A type parameter is not resolved again.
+        // A type parameter isn't resolved again.
         if here.is_some_and(|symbol| files.flags(symbol).contains(SymFlags::TYPE_PARAMETER)) {
             return false;
         }
@@ -2137,8 +2124,8 @@ impl<'p> Printer<'_, 'p, '_> {
         false
     }
 
-    /// `serializeTypeName` for the entity name `names` in `scope` of `file`. `None`: its symbol
-    /// cannot be named where the type is printed.
+    /// `serializeTypeName` for the entity name `names` in `scope` of `file`. Returns `None` if its
+    /// symbol can't be named where the type is printed.
     fn serialize_type_name(
         &mut self,
         file: FileId,
@@ -2164,7 +2151,7 @@ impl<'p> Printer<'_, 'p, '_> {
             files.unknown_symbol
         } else {
             let found = files.resolve_entity(file, scope, names, meaning)?;
-            // An alias that does not itself have the meaning is resolved.
+            // An alias that doesn't itself have the meaning is resolved.
             match files.resolve_alias_as(found, meaning) {
                 Some(symbol) => symbol,
                 None if matches!(self.c.resolve_alias(found), AliasTarget::Unknown) => {

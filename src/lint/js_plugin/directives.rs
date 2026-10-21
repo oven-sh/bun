@@ -1,7 +1,7 @@
 //! The comments that configure ESLint, for its `getInlineConfigNodes` and `getDisableDirectives`.
 //!
-//! Six words for each: its index among the comments of the file, a number for its label, and where its value and its
-//! justification start and end.
+//! Each is six words: its index among the file's comments, a number for its label, and the start and end of its value
+//! and of its justification.
 
 use super::wire;
 use crate::ast::File;
@@ -22,11 +22,11 @@ fn number_of(label: Label) -> u32 {
 pub(super) fn write<'a>(file: &'a File<'a>, offsets: &Utf16OffsetTable, out: &mut Vec<u8>) {
     let mut comments = file.comments().zip(0u32..).peekable();
     for it in file.config_comments() {
-        // `// eslint-disable` and `oxlint-disable` mean nothing to ESLint.
-        if it.is_only_of_oxlint || file.slice(it.label_span).starts_with(b"oxlint") {
+        // ESLint ignores `// eslint-disable` and `oxlint-disable`.
+        if it.is_oxlint_only || file.slice(it.label_span).starts_with(b"oxlint") {
             continue;
         }
-        // Both are in the order of the file.
+        // Both lists are in source order.
         while comments
             .next_if(|(comment, _)| comment.start() < it.span.start)
             .is_some()

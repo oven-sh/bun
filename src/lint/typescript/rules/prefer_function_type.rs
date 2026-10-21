@@ -1,5 +1,7 @@
+use crate::rules::no_unnecessary_template_expression::min_precedence_at;
 use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::prelude::*;
+use bun_lint::utils::visible::{is_declared_again, is_only_declaration};
 
 /// Enforce using function types instead of interfaces with call signatures.
 pub struct PreferFunctionType;
@@ -13,14 +15,14 @@ const UNEXPECTED_THIS_ON_FUNCTION_ONLY_INTERFACE: Message = Message::new(
     "`this` refers to the function type '{{ interfaceName }}', did you intend to use a generic `this` parameter like `<Self>(this: Self, ...) => Self` instead?",
 );
 
-/// What has the member.
+/// The node that declares the member.
 #[derive(Copy, Clone)]
 enum Owner<'a> {
     Interface(Interface<'a>),
     TypeLiteral(TypeNode<'a>),
 }
 
-/// Finds the first `this` type that is not in a type literal, where it is invalid.
+/// Finds the first `this` type outside a type literal. Inside a type literal `this` is invalid.
 #[derive(Default)]
 struct ThisTypes {
     literal_nesting: u32,
@@ -56,7 +58,7 @@ impl<'a> Visitor<'a> for ThisTypes {
     }
 }
 
-/// Whether the interface extends anything but `Function`.
+/// True if the interface extends anything other than `Function`.
 fn has_one_supertype(interface: Interface) -> bool {
     let extends = interface.extends();
     match (extends.first(), extends.len()) {
@@ -66,21 +68,7 @@ fn has_one_supertype(interface: Interface) -> bool {
     }
 }
 
-fn should_wrap_suggestion(parent: Node) -> bool {
-    matches!(parent, Node::Type(parent) if matches!(
-        parent.kind(),
-        TypeKind::Union(_) | TypeKind::Intersection(_) | TypeKind::Array(_)
-    ))
-}
-
-fn comment_text(comment: Token) -> Vec<u8> {
-    match comment.kind() {
-        TokenKind::Line => [&b"//"[..], comment.comment_value()].concat(),
-        _ => [&b"/*"[..], comment.comment_value(), b"*/"].concat(),
-    }
-}
-
-/// The signature `member` as a function type.
+/// Prints the signature `member` as a function type.
 fn function_type(member: Member, return_type: TypeNode) -> Option<Vec<u8>> {
     let text = member.text();
     let colon = return_type.annotation_span().start.checked_sub(member.span().start)? as usize;
@@ -98,54 +86,53 @@ fn fix<'a>(
     owner: Owner<'a>,
 ) -> Option<Vec<Fix>> {
     let file = fixer.file();
-    let has_semicolon = member.text().ends_with(b";");
+    let is_terminated = matches!(member.text().last(), Some(b';' | b','));
     let mut suggestion = function_type(member, return_type)?;
-    // What is replaced, and the `export` before it.
-    let (replaced, export) = match owner {
+    // `function_type` keeps a trailing comma because oxlint's help text includes it.
+    if suggestion.ends_with(b",") {
+        suggestion.pop();
+    }
+    // The span to replace, the name with its type parameters, and the statement's span starting at `export`.
+    let (replaced, name, export) = match owner {
         Owner::TypeLiteral(literal) => {
-            if should_wrap_suggestion(literal.parent()) {
+            if min_precedence_at(literal) > 0 {
                 suggestion.insert(0, b'(');
                 suggestion.push(b')');
             }
-            (literal.span(), None)
+            (literal.span(), None, None)
         }
         Owner::Interface(interface) => {
-            let name = match interface.type_params().angle_brackets_span() {
-                Some(type_params) => file.slice(interface.name().span().to(type_params)),
-                None => interface.name().bytes(),
-            };
-            suggestion = [&b"type "[..], name, b" = ", &suggestion[..]].concat();
-            // oxlint always ends the alias.
-            if has_semicolon || file.language().is_oxlint {
+            let name = interface.name().span();
+            let name = interface.type_params().angle_brackets_span().map_or(name, |it| name.to(it));
+            suggestion = [&b"type "[..], file.slice(name), b" = ", &suggestion[..]].concat();
+            // oxlint always ends the alias with `;`.
+            if is_terminated || file.language().is_oxlint {
                 suggestion.push(b';');
             }
             let statement = interface.stmt();
-            (statement.span_without_export(), statement.export_span())
+            (statement.span_without_export(), Some(name), statement.export_span())
         }
     };
-    let comments = file.comments_before(member).chain(file.comments_after(member));
-    let Some(export) = export else {
-        // Each goes before those before it.
-        let line = file.line_of(member.span().start);
-        let comments: Vec<Token<'a>> = comments.collect();
-        let mut with_comments = Vec::new();
-        for comment in comments.into_iter().rev() {
-            with_comments.extend_from_slice(&comment_text(comment));
-            with_comments.push(if file.line_of(comment.start()) == line { b' ' } else { b'\n' });
-        }
-        with_comments.extend_from_slice(&suggestion);
-        return Some(vec![fixer.replace(replaced, with_comments)]);
-    };
-    // They go before the `export`, not between it and the declaration.
-    let mut comments_text = Vec::new();
-    for comment in comments {
-        comments_text.extend_from_slice(&comment_text(comment));
-        comments_text.push(b'\n');
+    let is_copied = |it: &Token| member.span().contains(it.span()) || name.is_some_and(|name| name.contains(it.span()));
+    let line = file.line_of(member.span().start);
+    // Comments that aren't copied along with the member or the name move to the front, before any `export`.
+    let mut comments = Vec::new();
+    for comment in file.comments_in(replaced).filter(|it| !is_copied(it)) {
+        comments.extend_from_slice(comment.text());
+        let can_share_the_line =
+            comment.kind() == TokenKind::Block && export.is_none() && file.line_of(comment.start()) == line;
+        comments.push(if can_share_the_line { b' ' } else { b'\n' });
     }
-    Some(vec![
-        fixer.insert_before(export, comments_text),
-        fixer.replace(replaced, suggestion),
-    ])
+    // A comment like `// @ts-expect-error` applies to the next line, so don't put another comment between them.
+    if !comments.is_empty() && fixer.has_directive_before(export.unwrap_or(replaced))
+        || fixer.has_directive_before(member) && file.comments_after(member).next().is_some()
+    {
+        return None;
+    }
+    Some(match export {
+        Some(export) => vec![fixer.insert_before(export, comments), fixer.replace(replaced, suggestion)],
+        None => vec![fixer.replace(replaced, [comments, suggestion].concat())],
+    })
 }
 
 fn check_member<'a>(member: Member<'a>, owner: Owner<'a>, cx: &Cx<'a, PreferFunctionType>) {
@@ -163,7 +150,7 @@ fn check_member<'a>(member: Member<'a>, owner: Owner<'a>, cx: &Cx<'a, PreferFunc
             if let Some(this) = this_types.first {
                 let report = cx.report(this, UNEXPECTED_THIS_ON_FUNCTION_ONLY_INTERFACE);
                 let report = report.data("interfaceName", interface.name());
-                // For the help of oxlint.
+                // For oxlint's help text.
                 if cx.language().is_oxlint {
                     report.data("suggestion", function_type(member, return_type).unwrap_or_default());
                 }
@@ -175,19 +162,24 @@ fn check_member<'a>(member: Member<'a>, owner: Owner<'a>, cx: &Cx<'a, PreferFunc
     let report = cx
         .report(member, FUNCTION_TYPE_OVER_CALLABLE_TYPE)
         .data("literalOrInterface", phrase);
-    // For the help of oxlint.
+    // For oxlint's help text.
     let report = match cx.language().is_oxlint {
         true => report.data("suggestion", function_type(member, return_type).unwrap_or_default()),
         false => report,
     };
     if !is_default_export {
-        report.fix(|fixer| fix(fixer, member, return_type, owner));
+        let is_safe = || match owner {
+            Owner::TypeLiteral(_) => true,
+            Owner::Interface(interface) => is_only_declaration(interface),
+        };
+        let is_duplicate = || matches!(owner, Owner::Interface(interface) if is_declared_again(interface));
+        report.fix_where_safe(is_safe, |fixer| fix(fixer, member, return_type, owner).filter(|_| !is_duplicate()));
     }
 }
 
-/// oxlint looks at a type literal that is a type annotation or the type of an alias, or a part of a union that is one
-/// of these, or of an intersection that is the type of an alias. Not in `a as { (): void }` or among type arguments.
-fn oxlint_looks_at(literal: TypeNode) -> bool {
+/// oxlint only checks a type literal that's a type annotation or an alias's type, a member of a union in one of those
+/// positions, or a member of an intersection that's an alias's type. It skips `a as { (): void }` and type arguments.
+fn oxlint_checks_literal(literal: TypeNode) -> bool {
     let is_annotated = |node: Node| matches!(node, Node::VarDecl(_) | Node::Param(_) | Node::Member(_) | Node::Func(_));
     let is_alias = |node: Node| matches!(node, Node::Stmt(it) if it.tag() == StmtTag::TypeAlias);
     if literal.is_parenthesized() {
@@ -234,7 +226,7 @@ impl Rule for PreferFunctionType {
         if let Some(member) = members.first()
             && members.len() == 1
             && matches!(member.kind(), MemberKind::CallSignature | MemberKind::ConstructSignature)
-            && (!cx.language().is_oxlint || oxlint_looks_at(literal))
+            && (!cx.language().is_oxlint || oxlint_checks_literal(literal))
         {
             check_member(member, Owner::TypeLiteral(literal), cx);
         }

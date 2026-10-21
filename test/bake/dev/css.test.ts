@@ -437,6 +437,65 @@ devTest("css hot update carries the edited stylesheet when another root fails in
     }
   },
 });
+// The incremental graph's stale bitset grows in steps of 512 files.
+const modulesPastFirstBitsetStep = Array.from({ length: 520 }, (_, i) => `m${i}`);
+devTest("css file imported from css first, then from a second page's script", {
+  files: {
+    "first.html": emptyHtmlFile({
+      styles: ["first.css"],
+      scripts: ["first.ts"],
+    }),
+    "second.html": emptyHtmlFile({
+      scripts: ["second.ts"],
+    }),
+    "first.css": `
+      .first { color: red; }
+    `,
+    "child.css": `
+      .child { color: blue; }
+    `,
+    "first.ts": `
+      console.log("first");
+      import.meta.hot.accept();
+    `,
+    "second.ts": `
+      import "./child.css";
+      console.log("second");
+    `,
+    ...Object.fromEntries(modulesPastFirstBitsetStep.map(name => [`modules/${name}.ts`, `export default "${name}";`])),
+  },
+  async test(dev) {
+    await using c1 = await dev.client("/first");
+    await c1.expectMessage("first");
+
+    // A bundle without css pushes the client graph past 512 files, so the bitset
+    // grows at the end of the bundle and the new bits mean "cached".
+    await dev.write(
+      "first.ts",
+      [
+        ...modulesPastFirstBitsetStep.map(name => `import "./modules/${name}";`),
+        `console.log("first with modules");`,
+        `import.meta.hot.accept();`,
+      ].join("\n"),
+    );
+    await c1.expectMessage("first with modules");
+
+    // "child.css" enters the client graph as a css import, so it doesn't have its own stylesheet.
+    await dev.write(
+      "first.css",
+      `
+        @import "./child.css";
+        .first { color: red; }
+      `,
+    );
+    await c1.style(".child").color.expect.toBe("#00f");
+
+    // The script import must bundle "child.css" as a stylesheet of this page.
+    await using c2 = await dev.client("/second");
+    await c2.expectMessage("second");
+    await c2.style(".child").color.expect.toBe("#00f");
+  },
+});
 devTest("multiple stylesheets importing same dependency", {
   files: {
     "first.html": emptyHtmlFile({

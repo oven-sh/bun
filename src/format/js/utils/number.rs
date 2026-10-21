@@ -4,15 +4,15 @@ use crate::prelude::*;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 
-/// - Lowercase everything: `0XAB` is `0xab`, `1E5` is `1e5`.
-/// - No `+` and no leading zeros in the exponent: `1e+05` is `1e5`. No exponent that is zero.
-/// - A digit before the dot: `.5` is `0.5`.
-/// - No trailing zeros after the dot, except for one if there is nothing else: `1.50` is `1.5`,
-///   `1.00` is `1.0`.
-/// - No trailing dot: `1.` is `1`.
+/// - Lowercase everything: `0XAB` becomes `0xab`, `1E5` becomes `1e5`.
+/// - No `+` and no leading zeros in the exponent: `1e+05` becomes `1e5`. A zero exponent is dropped.
+/// - A digit before the dot: `.5` becomes `0.5`.
+/// - No trailing zeros after the dot, except for one if there's nothing else: `1.50` becomes `1.5`, `1.00` becomes
+///   `1.0`.
+/// - No trailing dot: `1.` becomes `1`.
 ///
-/// Prettier does this with regular expressions that know nothing about `_`, so a separator in the
-/// wrong place keeps a rule from being applied: `1_0.50` is `1_0.5`, `1.5_0` stays.
+/// Prettier does this with regular expressions that don't handle `_`, so a separator in the wrong place keeps a rule
+/// from applying: `1_0.50` becomes `1_0.5`, `1.5_0` stays.
 pub(crate) fn format_trimmed_number(text: &[u8]) -> Cow<'_, [u8]> {
     if text.len() == 1 || text.iter().all(u8::is_ascii_digit) {
         return Cow::Borrowed(text);
@@ -53,7 +53,8 @@ pub(crate) fn format_trimmed_number(text: &[u8]) -> Cow<'_, [u8]> {
         out.insert(0, b'0');
     }
 
-    // Angular takes a number with more than one dot. Each of the two is done at the first dot where it can be.
+    // Angular accepts a number with more than one dot. Each of the next two rules applies at the first dot where it
+    // matches.
     let next_dot = |out: &[u8], from: usize| {
         out.get(from..)
             .and_then(|rest| bun_core::strings::index_of_char_usize(rest, b'.'))
@@ -96,7 +97,7 @@ pub(crate) fn format_trimmed_number(text: &[u8]) -> Cow<'_, [u8]> {
     }
 }
 
-/// A numeric literal as it is written in the source.
+/// A numeric literal's source text.
 pub(crate) fn format_number_token(text: &[u8]) -> CleanedNumberLiteralText<'_> {
     CleanedNumberLiteralText { text }
 }

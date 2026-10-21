@@ -1,4 +1,7 @@
+use super::call_like_expression::is_printed_as_member_chain;
 use super::semicolon::OptionalSemicolon;
+use crate::js::parentheses::expression::expression_needs_parentheses;
+use crate::js::utils::member_chain::head_of_member_chain;
 use crate::js::utils::typecast::{
     comments_of_outermost_node, has_leading_own_line_comment, is_cast_target,
     is_cast_target_that_hides_its_kind, is_chain_expression_without_comments,
@@ -40,7 +43,7 @@ fn write_return_or_throw<'a>(
             comments,
             indent: DanglingIndentMode::None,
         };
-        // `throw a // comment⏎;/* comment */`: the second one starts a line, because it follows a line comment.
+        // `throw a // comment⏎;/* comment */`: the second comment starts a new line because it follows a line comment.
         let trailing = f.comments().of_node(statement.as_ast_nodes()).trailing;
         let others = trailing.slice(comments.len(), trailing.len());
         write!(
@@ -50,8 +53,9 @@ fn write_return_or_throw<'a>(
     }
 }
 
-/// `return a // comment⏎;`: the `;` is on a later line, so the comment is in the statement. oxfmt writes it behind the
-/// `;` as ordinary text, which has to fit on the line. Prettier writes it like any other trailing comment of the statement.
+/// `return a // comment⏎;`: the `;` is on a later line, so the comment is inside the statement. oxfmt prints it after
+/// the `;` as ordinary text, which has to fit on the line. Prettier prints it like any other trailing comment of the
+/// statement.
 fn comments_that_count_for_the_width<'a>(
     statement: Stmt<'a>,
     f: &Formatter<'a>,
@@ -68,8 +72,8 @@ fn comments_that_count_for_the_width<'a>(
     comments.slice(0, count)
 }
 
-/// The argument of `return` or `throw`, which has to start on the line of the keyword. If it breaks, or starts with a
-/// comment, it is written in parentheses. Prettier's `printArgumentNode`.
+/// The argument of `return` or `throw`, which has to start on the keyword's line. If it breaks or starts with a
+/// comment, it's wrapped in parentheses. Prettier's `printArgumentNode`.
 struct FormatAdjacentArgument<'a>(Expr<'a>);
 
 impl<'a> Format<'a> for FormatAdjacentArgument<'a> {
@@ -80,7 +84,7 @@ impl<'a> Format<'a> for FormatAdjacentArgument<'a> {
         if !f.is_quiet() && has_argument_leading_comments(argument, f) {
             write!(f, ["(", block_indent(&argument), ")"]);
         } else if is_cast_target_that_hides_its_kind(argument, f) {
-            // For Prettier it is a `ParenthesizedExpression`, whatever is in it.
+            // Prettier sees a `ParenthesizedExpression`, whatever is inside.
             write!(f, argument);
         } else if is_binaryish
             || (f.options().experimental_ternaries
@@ -96,8 +100,8 @@ impl<'a> Format<'a> for FormatAdjacentArgument<'a> {
                 ))
             );
         } else if argument.binary_op() == Some(BinOp::Comma) && is_cast_target(argument, f) {
-            // `return (/** @type {T} */ (a, b));`: oxfmt looks at what is in the parentheses of the type cast, and writes the
-            // parentheses of a sequence around all of it.
+            // `return (/** @type {T} */ (a, b));`: oxfmt looks inside the type cast's parentheses, and wraps the whole
+            // thing in a sequence's parentheses.
             write!(
                 f,
                 group(&format_args!("(", soft_block_indent(&argument), ")"))
@@ -108,7 +112,8 @@ impl<'a> Format<'a> for FormatAdjacentArgument<'a> {
     }
 }
 
-/// Prettier's `hasNakedLeftSide`.
+/// Prettier's `hasNakedLeftSide`, plus `a<T>`. Prettier doesn't check for it and turns `return (// comment⏎a)<T>;` into
+/// `return // comment⏎a<T>;`.
 fn has_naked_left_side(e: Expr<'_>) -> bool {
     match e.kind() {
         ExprKind::Assign { .. }
@@ -119,15 +124,16 @@ fn has_naked_left_side(e: Expr<'_>) -> bool {
         | ExprKind::Index { .. }
         | ExprKind::TaggedTemplate(_)
         | ExprKind::NonNull(_)
-        | ExprKind::Satisfies { .. } => true,
+        | ExprKind::Satisfies { .. }
+        | ExprKind::Instantiation { .. } => true,
         ExprKind::As { .. } | ExprKind::AsConst(_) => !e.is_angle_bracket_assertion(),
         ExprKind::Unary { op, .. } => matches!(op, UnOp::PostInc | UnOp::PostDec),
         _ => false,
     }
 }
 
-/// Prettier's `getLeftSide`. It takes the first of a few properties that the node has, so it also goes into the operand of
-/// `!a`, `await a` and `<T>a`, the callee of `new A()` and the first `${}` of a template.
+/// Prettier's `getLeftSide`. It takes the first of a few properties that the node has, so it also descends into the
+/// operand of `!a`, `await a` and `<T>a`, the callee of `new A()` and the first `${}` of a template.
 fn left_side(e: Expr<'_>) -> Option<Expr<'_>> {
     match e.kind() {
         ExprKind::Binary {
@@ -154,14 +160,14 @@ fn left_side(e: Expr<'_>) -> Option<Expr<'_>> {
     }
 }
 
-/// `return !(// comment⏎a) && b;`: Prettier finds the comment, because its `getLeftSide` goes into the operand of `!`, and writes
-/// parentheses around the argument. oxfmt stops at `!a`.
-fn left_edge_goes_on_in_operands(f: &Formatter<'_>) -> bool {
+/// `return !(// comment⏎a) && b;`: Prettier finds the comment because its `getLeftSide` descends into the operand of
+/// `!`, and wraps the argument in parentheses. oxfmt stops at `!a`.
+fn left_edge_descends_into_operands(f: &Formatter<'_>) -> bool {
     !f.options().flavor.is_oxfmt()
 }
 
-/// `return a⏎// comment⏎.b;`: for Prettier the comment leads `a.b`. For oxfmt it leads the name `b`, and counts all the same. Not
-/// after `yield`, which only oxfmt asks about.
+/// `return a⏎// comment⏎.b;`: in Prettier the comment leads `a.b`. In oxfmt it leads the name `b`, but still counts.
+/// Not after `yield`, where only oxfmt runs this check.
 fn own_line_comment_before_property_counts<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> bool {
     f.options().flavor.is_oxfmt() && !matches!(argument.ast_parent(), AstNodes::YieldExpression(_))
 }
@@ -178,14 +184,37 @@ fn has_own_line_comment_before_property<'a>(e: Expr<'a>, f: &Formatter<'a>) -> b
     })
 }
 
-/// Prettier's `returnArgumentHasLeadingComment`: whether a leading comment of `argument` ends its line or spans several, or a
-/// leading comment of anything down its left edge ends its line.
+/// Prettier's `returnArgumentHasLeadingComment`: true if a leading comment of `argument` ends its line or spans several
+/// lines, or a leading comment of anything down its left edge ends its line. Also true if
+/// [`has_comment_right_after_keyword`] is.
 pub(crate) fn has_argument_leading_comments<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> bool {
+    has_comment_on_left_edge(argument, true, f)
+}
+
+/// True if a comment would put a line break between the keyword and `argument`. That ends a `return` or a `yield` early
+/// and is a syntax error after `throw`. In `return (/* two⏎lines */ a).b;` Prettier misses the comment and drops the
+/// parentheses.
+pub(crate) fn has_comment_right_after_keyword<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> bool {
+    has_comment_on_left_edge(argument, false, f)
+}
+
+/// If `matches_prettier` is set, a comment that ends its line counts even if it isn't printed right after the keyword,
+/// like the one in `return a⏎// comment⏎.b();`.
+fn has_comment_on_left_edge<'a>(
+    argument: Expr<'a>,
+    matches_prettier: bool,
+    f: &Formatter<'a>,
+) -> bool {
+    let any_counts = |comments: CommentList<'a>, is_right_after_keyword: bool| {
+        comments.iter().any(|comment| {
+            (comment.has_newline_after() && (matches_prettier || is_right_after_keyword))
+                || (comment.is_multiline_block() && is_right_after_keyword)
+        })
+    };
     let is_cast = is_cast_target(argument, f);
     let has_leading_comment = match argument.tag() == ExprTag::Jsx && !is_cast {
         true => has_leading_own_line_comment(argument, f),
-        false => (comments_of_outermost_node(argument, f).leading.iter())
-            .any(|comment| comment.has_newline_after() || comment.is_multiline_block()),
+        false => any_counts(comments_of_outermost_node(argument, f).leading, true),
     };
     if has_leading_comment {
         return true;
@@ -193,36 +222,68 @@ pub(crate) fn has_argument_leading_comments<'a>(argument: Expr<'a>, f: &Formatte
     if is_cast || !has_naked_left_side(argument) {
         return false;
     }
-    let looks_at_properties = own_line_comment_before_property_counts(argument, f);
-    let has_own_line_comment = |e: Expr<'a>| {
+    let looks_at_properties =
+        matches_prettier && own_line_comment_before_property_counts(argument, f);
+    let has_comment = |e: Expr<'a>, is_right_after_keyword: bool| {
         let comments = f.comments().of_node(e.as_chain_element()).leading;
-        comments.iter().any(|comment| comment.has_newline_after())
+        any_counts(comments, is_right_after_keyword)
             || (looks_at_properties && has_own_line_comment_before_property(e, f))
     };
     // The member access or the call in a `ChainExpression`.
     if (is_chain_expression_without_comments(argument, f) || looks_at_properties)
-        && has_own_line_comment(argument)
+        && has_comment(argument, true)
     {
         return true;
     }
+    // A sequence or an assignment is printed in parentheses.
+    let mut is_right_after_keyword = !matches!(
+        argument.kind(),
+        ExprKind::Assign { .. }
+            | ExprKind::Binary {
+                op: BinOp::Comma,
+                ..
+            }
+    );
+    // The head of the member chain being walked. It's printed first. Every `.b`, `[b]`, `!` and `()` applied to it is
+    // printed after it, along with its comments.
+    let mut chain_head = None;
     let mut current = argument;
     while let Some(left) = left_side(current)
-        && (has_naked_left_side(current) || left_edge_goes_on_in_operands(f))
+        && (has_naked_left_side(current)
+            || (matches_prettier && left_edge_descends_into_operands(f)))
     {
-        // Every `ParenthesizedExpression` around it is a step of its own.
+        is_right_after_keyword &= has_naked_left_side(current);
+        if !is_right_after_keyword && !matches_prettier {
+            return false;
+        }
+        if is_right_after_keyword
+            && chain_head.is_none()
+            && let ExprKind::Call(call) = current.kind()
+            && is_printed_as_member_chain(current, call, f)
+        {
+            chain_head = head_of_member_chain(current, f);
+        }
+        if chain_head == Some(left) {
+            chain_head = None;
+        }
+        let is_printed_first = is_right_after_keyword && chain_head.is_none();
+        let is_cast = is_cast_target(left, f);
+        // Each `ParenthesizedExpression` around it is a separate step.
         let has_comment_before_parentheses = f.comments().has_type_cast_comments()
             && left.parens().any(|parentheses| {
                 let comments = f.comments().of_cast_parens(parentheses.start).leading;
-                comments.iter().any(|comment| comment.has_newline_after())
+                any_counts(comments, is_printed_first)
             });
         if has_comment_before_parentheses
             || match left.tag() {
                 ExprTag::Jsx => has_leading_own_line_comment(left, f),
-                _ => has_own_line_comment(left),
+                _ => has_comment(left, is_printed_first && !is_cast),
             }
         {
             return true;
         }
+        is_right_after_keyword =
+            is_right_after_keyword && !is_cast && !expression_needs_parentheses(left, f);
         current = left;
     }
     false

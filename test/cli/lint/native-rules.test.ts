@@ -88,10 +88,10 @@ async function listed() {
 
 /** Lists every core rule that has a typescript-eslint version, and whether that version needs type information. */
 function pairsOf(rules: Listed[]) {
-  const ofESLint = new Set(rules.filter(it => it.scope === "eslint").map(it => it.value));
+  const eslintRuleNames = new Set(rules.filter(it => it.scope === "eslint").map(it => it.value));
   const base = (name: string) => (name === "only-throw-error" ? "no-throw-literal" : name);
   return rules
-    .filter(it => it.scope === "typescript" && ofESLint.has(base(it.value)))
+    .filter(it => it.scope === "typescript" && eslintRuleNames.has(base(it.value)))
     .map(it => ({
       base: base(it.value),
       extension: `@typescript-eslint/${it.value}`,
@@ -125,12 +125,14 @@ describe.concurrent("every built-in rule", () => {
       bunfig(Object.fromEntries(rules.map(it => [`${it.scope}/${it.value}`, setting(it.value, "error")]))),
       "d.tsx",
     );
-    const ofHooks = (it: { scope: string; value: string }) =>
+    const isHooksRule = (it: { scope: string; value: string }) =>
       it.scope === "react" && asListed.has(`react-hooks/${it.value}`);
-    expect(rules.filter(ofHooks).map(it => it.value)).toContain("rules-of-hooks");
-    expect(rules.filter(ofHooks).map(it => it.value)).toContain("exhaustive-deps");
-    expect(rules.filter(ofHooks).map(it => it.value)).not.toContain("jsx-key");
-    const names = rules.map(it => spellings[ofHooks(it) ? "react-hooks" : it.scope].map(prefix => prefix + it.value));
+    expect(rules.filter(isHooksRule).map(it => it.value)).toContain("rules-of-hooks");
+    expect(rules.filter(isHooksRule).map(it => it.value)).toContain("exhaustive-deps");
+    expect(rules.filter(isHooksRule).map(it => it.value)).not.toContain("jsx-key");
+    const names = rules.map(it =>
+      spellings[isHooksRule(it) ? "react-hooks" : it.scope].map(prefix => prefix + it.value),
+    );
     const ids = names.map(it => it[0]).sort();
     const on = (found: Map<string, number>) =>
       [...found].flatMap(([id, severity]) => (severity === 2 ? [id] : [])).sort();
@@ -138,9 +140,9 @@ describe.concurrent("every built-in rule", () => {
     expect(on(asListed)).toEqual(runningOn("d.tsx"));
     await Promise.all(
       [0, 1, 2].map(async nth => {
-        const written = names.map(it => it[Math.min(nth, it.length - 1)]);
+        const chosenNames = names.map(it => it[Math.min(nth, it.length - 1)]);
         const found = await configured(
-          bunfig(Object.fromEntries(written.map(id => [id, setting(id, "error")]))),
+          bunfig(Object.fromEntries(chosenNames.map(id => [id, setting(id, "error")]))),
           "a.js",
         );
         expect(on(found)).toEqual(runningOn("a.js"));
@@ -235,8 +237,8 @@ describe.concurrent("core rules and their typescript-eslint versions never both 
       results.map(({ filePath, messages }) => {
         const name = basename(filePath);
         const own = pairs.find(it => it.base === name.slice(0, -3))!;
-        const ofPair = messages.filter(it => it.ruleId === own.base || it.ruleId === own.extension);
-        return [name, ofPair.map(it => `${it.severity} ${it.ruleId}`)];
+        const pairMessages = messages.filter(it => it.ruleId === own.base || it.ruleId === own.extension);
+        return [name, pairMessages.map(it => `${it.severity} ${it.ruleId}`)];
       }),
     );
     return { byFile, skipped: /Skipped (\d+) rules? that needs? type information/.exec(stderr)?.[1] };
@@ -486,7 +488,7 @@ describe.concurrent("core rules and their typescript-eslint versions never both 
       expect(stderr).not.toContain("error:");
       return problems(stdout);
     };
-    const ofESLint = ["a.js:1 max-params", "b.ts:1 max-params"];
+    const baseRuleOnly = ["a.js:1 max-params", "b.ts:1 max-params"];
     expect(
       await Promise.all([
         run({ "max-params": ["error", { max: 2 }] }),
@@ -495,7 +497,13 @@ describe.concurrent("core rules and their typescript-eslint versions never both 
         run({}, `/* eslint max-params: ["error", 2] */\n`),
         run({ "max-params": ["error", { max: 2 }] }, `/* eslint max-params: ["error", 2] */\n`),
       ]),
-    ).toEqual([["a.js:1 max-params", "b.ts:1 @typescript-eslint/max-params"], ofESLint, ofESLint, ofESLint, ofESLint]);
+    ).toEqual([
+      ["a.js:1 max-params", "b.ts:1 @typescript-eslint/max-params"],
+      baseRuleOnly,
+      baseRuleOnly,
+      baseRuleOnly,
+      baseRuleOnly,
+    ]);
   });
 
   test("eslint-disable works with either name and isn't reported as unused", async () => {
@@ -632,7 +640,7 @@ export function A({ list, on }: { list: any[]; on: Object }) {
   ];
   const expected = rules.flatMap(it => it[1]).sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
   const ids = new Set(expected.map(it => it.slice(it.indexOf(" ") + 1)));
-  const ofThese = (stdout: string) => problems(stdout).filter(it => ids.has(it.slice(it.indexOf(" ") + 1)));
+  const relevantProblems = (stdout: string) => problems(stdout).filter(it => ids.has(it.slice(it.indexOf(" ") + 1)));
 
   test("when set in [lint.rules]", async () => {
     const { stdout, exitCode } = await lint(
@@ -642,7 +650,7 @@ export function A({ list, on }: { list: any[]; on: Object }) {
       },
       ["-f", "json"],
     );
-    expect(ofThese(stdout)).toEqual(expected);
+    expect(relevantProblems(stdout)).toEqual(expected);
     expect(exitCode).toBe(1);
   });
 
@@ -653,14 +661,14 @@ export function A({ list, on }: { list: any[]; on: Object }) {
       "--rule",
       JSON.stringify(Object.fromEntries(rules.map(it => [it[0], "error"]))),
     ]);
-    expect(ofThese(stdout)).toEqual(expected);
+    expect(relevantProblems(stdout)).toEqual(expected);
     expect(exitCode).toBe(1);
   });
 
   test("but are off by default", async () => {
     const { stdout } = await lint(files, ["-f", "json"]);
     // no-explicit-any is on by default for TypeScript.
-    expect(ofThese(stdout)).toEqual(["view.tsx:2 @typescript-eslint/no-explicit-any"]);
+    expect(relevantProblems(stdout)).toEqual(["view.tsx:2 @typescript-eslint/no-explicit-any"]);
   });
 
   test("prettier/prettier works without prettier installed", async () => {
@@ -797,6 +805,98 @@ describe.concurrent("rule options", () => {
   });
 });
 
+describe.concurrent("react/jsx-newline", () => {
+  const id = "react/jsx-newline";
+  const component = (children: string) => `export const C = ({ time, now }) => (\n  <div>\n${children}\n  </div>\n);\n`;
+  const onOneLine = component("    took {time} at {now}");
+
+  test("only offers a fix when there's a line break to double", async () => {
+    const files = { "a.jsx": onOneLine, "b.jsx": component("    {time}\n    {now}"), ...bunfig({ [id]: "error" }) };
+    const { stdout } = await lint(files, ["-f", "json", "a.jsx", "b.jsx"]);
+    const results = JSON.parse(stdout) as { messages: { ruleId: string; line: number; fix?: { text: string } }[] }[];
+    expect(results.map(it => it.messages.filter(it => it.ruleId === id).map(it => [it.line, it.fix?.text]))).toEqual([
+      [[3, undefined]],
+      [[4, "\n\n    "]],
+    ]);
+  });
+
+  test("--fix doesn't claim to have fixed two expressions on one line", async () => {
+    const { stdout, stderr, exitCode } = await lint({ "a.jsx": onOneLine, ...bunfig({ [id]: "error" }) }, [
+      "--fix",
+      "-f",
+      "unix",
+      "a.jsx",
+    ]);
+    expect(stdout).toContain(`a.jsx:3:20: JSX element should start in a new line [Error/${id}]`);
+    expect(stderr).not.toContain("Circular fixes");
+    expect(stderr).not.toContain("Fixed");
+    expect(exitCode).toBe(1);
+  });
+});
+
+// oxlint renames in all of these cases, which merges two different variables into one.
+describe.concurrent("unicorn/catch-error-name only renames when `error` isn't already in use", () => {
+  const id = "unicorn/catch-error-name";
+  type Fix = { range: [number, number]; text: string };
+
+  /** Returns, for each report, `code` with its fix applied, or `null` if it has no fix. */
+  async function renamed(code: string) {
+    const { stdout } = await lint({ "a.mjs": code, ...bunfig({ [id]: "error" }) }, ["-f", "json", "a.mjs"]);
+    const [{ messages }] = JSON.parse(stdout) as { messages: { ruleId: string; fix?: Fix }[] }[];
+    return messages
+      .filter(it => it.ruleId === id)
+      .map(({ fix }) => (fix ? code.slice(0, fix.range[0]) + fix.text + code.slice(fix.range[1]) : null));
+  }
+
+  test.each([
+    ["the block assigns to an outer `error`", "let error;\ntry {\n  f();\n} catch (e) {\n  error = e;\n}\ng(error);\n"],
+    [
+      "a function in the block does",
+      "let error;\ntry {\n  f();\n} catch (e) {\n  g(() => (error = e));\n}\ng(error);\n",
+    ],
+    ["the function passed to .catch() does", "let error;\np.catch(e => {\n  error = e;\n});\ng(error);\n"],
+    ["the second function passed to .then() reads it", "let error;\np.then(undefined, e => g(e, error));\n"],
+    [
+      "the block reads the enclosing function's `error` parameter",
+      "function f(error) {\n  try {\n    g();\n  } catch (e) {\n    h(error, e);\n  }\n}\nf();\n",
+    ],
+    ["the block reads a global", "try {\n  f();\n} catch (e) {\n  g(e, error);\n}\n"],
+    [
+      "an inner block that uses the caught error declares `error`",
+      "try {\n  f();\n} catch (e) {\n  {\n    const error = 1;\n    g(e, error);\n  }\n}\n",
+    ],
+    [
+      "an inner function that uses the caught error has an `error` parameter",
+      "try {\n  f();\n} catch (e) {\n  g(error => h(e, error));\n}\n",
+    ],
+    ["the catch block declares `error`", "try {\n  f();\n} catch (e) {\n  const error = 1;\n  g(error);\n}\n"],
+    ["the function itself declares `error`", "p.catch(e => {\n  const error = g(e);\n  return error;\n});\n"],
+  ])("no fix: %s", async (_, code) => {
+    expect(await renamed(code)).toEqual([null]);
+  });
+
+  test.each([
+    [
+      "nothing else is named `error`",
+      "try {\n  f();\n} catch (e) {\n  g(e);\n}\n",
+      "try {\n  f();\n} catch (error) {\n  g(error);\n}\n",
+    ],
+    [
+      "an outer `error` isn't used in the block",
+      "function f(error) {\n  try {\n    g(error);\n  } catch (e) {\n    h(e);\n  }\n}\nf();\n",
+      "function f(error) {\n  try {\n    g(error);\n  } catch (error) {\n    h(error);\n  }\n}\nf();\n",
+    ],
+    [
+      "an inner `error` doesn't enclose a use of the caught error",
+      "try {\n  f();\n} catch (e) {\n  g(e);\n  h(error => error);\n}\n",
+      "try {\n  f();\n} catch (error) {\n  g(error);\n  h(error => error);\n}\n",
+    ],
+    ["`{ e }` keeps its key", "p.catch(e => g({ e }));\n", "p.catch(error => g({ e: error }));\n"],
+  ])("a fix: %s", async (_, code, fixed) => {
+    expect(await renamed(code)).toEqual([fixed]);
+  });
+});
+
 describe.concurrent("comments", () => {
   const rules = bunfig({
     "unicorn/no-null": "error",
@@ -807,8 +907,8 @@ describe.concurrent("comments", () => {
     "react/rules-of-hooks": "error",
   });
 
-  // Both tools' comments count when neither tool's config is there.
-  test.each(["eslint", "oxlint"])("%s-disable in every form", async tool => {
+  // Both tools' comments work when the project has neither tool's config.
+  test.each(["eslint", "oxlint"])("%s-disable works in every form", async tool => {
     const code = `// ${tool}-disable-next-line no-debugger
 debugger;
 debugger; // ${tool}-disable-line no-debugger
@@ -826,38 +926,44 @@ export const a: any = 1;
 debugger;
 `;
     const { stdout, exitCode } = await lint({ "a.ts": code, ...rules }, ["-f", "json"]);
-    // The last comment is for another rule, so it is unused.
+    // The last comment is for another rule, so it's unused.
     expect(problems(stdout)).toEqual(["a.ts:7 no-debugger", "a.ts:14 null", "a.ts:15 no-debugger"]);
     expect(exitCode).toBe(1);
   });
 
-  test.each(["eslint", "oxlint"])("// %s-disable is for the rest of the file, up to the next -enable", async tool => {
-    const code = `debugger;\n// ${tool}-disable no-debugger\ndebugger;\ndebugger;\n// ${tool}-enable no-debugger\ndebugger;\n`;
-    const { stdout } = await lint({ "a.js": code }, ["-f", "json"]);
-    expect(problems(stdout)).toEqual(["a.js:1 no-debugger", "a.js:6 no-debugger"]);
-  });
+  test.each(["eslint", "oxlint"])(
+    "// %s-disable applies to the rest of the file, up to the next -enable",
+    async tool => {
+      const code = `debugger;\n// ${tool}-disable no-debugger\ndebugger;\ndebugger;\n// ${tool}-enable no-debugger\ndebugger;\n`;
+      const { stdout } = await lint({ "a.js": code }, ["-f", "json"]);
+      expect(problems(stdout)).toEqual(["a.js:1 no-debugger", "a.js:6 no-debugger"]);
+    },
+  );
 
-  test.each(["eslint", "oxlint"])("an unused %s-disable comment is called what it is called", async tool => {
-    const files = {
-      "a.js": `// ${tool}-disable-next-line no-debugger\nexport const a = 1;\n/* ${tool}-enable no-debugger */\n`,
-    };
-    const { stdout, exitCode } = await lint(files, ["-f", "unix", "--report-unused-disable-directives"]);
-    expect(stdout).toContain(
-      `:1:1: Unused ${tool}-disable directive (no problems were reported from 'no-debugger'). [Error]`,
-    );
-    expect(stdout).toContain(
-      `:3:1: Unused ${tool}-enable directive (no matching ${tool}-disable directives were found for 'no-debugger'). [Error]`,
-    );
-    expect(exitCode).toBe(1);
-  });
+  test.each(["eslint", "oxlint"])(
+    "the message about an unused %s-disable comment uses the comment's own prefix",
+    async tool => {
+      const files = {
+        "a.js": `// ${tool}-disable-next-line no-debugger\nexport const a = 1;\n/* ${tool}-enable no-debugger */\n`,
+      };
+      const { stdout, exitCode } = await lint(files, ["-f", "unix", "--report-unused-disable-directives"]);
+      expect(stdout).toContain(
+        `:1:1: Unused ${tool}-disable directive (no problems were reported from 'no-debugger'). [Error]`,
+      );
+      expect(stdout).toContain(
+        `:3:1: Unused ${tool}-enable directive (no matching ${tool}-disable directives were found for 'no-debugger'). [Error]`,
+      );
+      expect(exitCode).toBe(1);
+    },
+  );
 
-  test("the comments of the two can be mixed", async () => {
+  test("eslint- and oxlint- comments can be mixed", async () => {
     const code = `/* oxlint-disable no-debugger */\ndebugger;\n/* eslint-enable no-debugger */\ndebugger;\n`;
     const { stdout } = await lint({ "a.js": code }, ["-f", "json"]);
     expect(problems(stdout)).toEqual(["a.js:4 no-debugger"]);
   });
 
-  test("the rules about comments pass over the comments of both", async () => {
+  test("rules about comments skip both tools' directive comments", async () => {
     const code = `// oxlint-disable-next-line no-debugger
 debugger;
 debugger; // oxlint-disable-line no-debugger
@@ -868,13 +974,13 @@ debugger; // eslint-disable-line no-debugger
 `;
     const rules = { "capitalized-comments": "error", "no-inline-comments": "error", "no-debugger": "error" } as const;
     const flat = { "eslint.config.mjs": `export default [{ rules: ${JSON.stringify(rules)} }];\n` };
-    const [alone, fixed, withEslint] = await Promise.all([
+    const [withBunfig, fixed, withEslint] = await Promise.all([
       lint({ "a.js": code, ...bunfig(rules) }, ["-f", "json"]),
-      // A capital letter would end what the comment does.
+      // Capitalizing a directive comment would break it.
       lint({ "a.js": code, ...bunfig(rules) }, ["-f", "json", "--fix-dry-run"]),
       lint({ "a.js": code, ...flat }, ["-f", "json"]),
     ]);
-    expect(problems(alone.stdout)).toEqual(["a.js:7 capitalized-comments"]);
+    expect(problems(withBunfig.stdout)).toEqual(["a.js:7 capitalized-comments"]);
     expect(JSON.parse(fixed.stdout)[0].output).toBe(code.replace("another", "Another"));
     expect(problems(withEslint.stdout)).toEqual([
       "a.js:1 capitalized-comments",
@@ -1080,11 +1186,11 @@ describe.concurrent("[lint.categories] and framework plugins", () => {
 
   test("a rule named in [lint.rules] runs whether or not the project uses its framework", async () => {
     const rules = `[lint.rules]\n"@next/next/no-img-element" = "warn"\n"jest/valid-expect" = "error"\n`;
-    const [alone, withCategories] = await Promise.all([
+    const [rulesOnly, withCategories] = await Promise.all([
       lint({ ...frameworkFiles, "package.json": dependsOn(), "bunfig.toml": rules }, ["-f", "json"]),
       lint({ ...project, "package.json": dependsOn(), "bunfig.toml": correctnessAndPerf + rules }, ["-f", "json"]),
     ]);
-    expect(problems(alone.stdout)).toEqual(sorted(next, jest));
+    expect(problems(rulesOnly.stdout)).toEqual(sorted(next, jest));
     expect(problems(withCategories.stdout)).toEqual(sorted(general, next, jest));
   });
 
@@ -1241,16 +1347,14 @@ describe.concurrent(`"plugin/*" = "off" turns off every rule of a plugin`, () =>
   test("react/* and react-hooks/* are separate plugins", async () => {
     const hooks = `export function App({ on }) {\n  if (on) useState(0);\n  return <div children="a" />;\n}\n`;
     const files = { "app.jsx": hooks, "package.json": dependsOn("react") };
-    const [ofHooks, ofReact] = ["app.jsx:2 react-hooks/rules-of-hooks", "app.jsx:3 react/no-children-prop"];
+    const [hooksProblem, reactProblem] = ["app.jsx:2 react-hooks/rules-of-hooks", "app.jsx:3 react/no-children-prop"];
     const correctness = `[lint.categories]\ncorrectness = "error"\n`;
-    const ofBoth = async (bunfig: string) => (await found(bunfig, [], files)).filter(it => it.includes(" react"));
-    const off = (name: string) => ofBoth(`${correctness}[lint.rules]\n"${name}/*" = "off"\n`);
-    expect(await Promise.all([ofBoth(correctness), off("react"), off("react-hooks"), off("react_hooks")])).toEqual([
-      [ofHooks, ofReact],
-      [ofHooks],
-      [ofReact],
-      [ofReact],
-    ]);
+    const reactProblems = async (bunfig: string) =>
+      (await found(bunfig, [], files)).filter(it => it.includes(" react"));
+    const off = (name: string) => reactProblems(`${correctness}[lint.rules]\n"${name}/*" = "off"\n`);
+    expect(
+      await Promise.all([reactProblems(correctness), off("react"), off("react-hooks"), off("react_hooks")]),
+    ).toEqual([[hooksProblem, reactProblem], [hooksProblem], [reactProblem], [reactProblem]]);
   });
 
   test("react/* leaves react/jsx-uses-react on, which only keeps no-unused-vars quiet about React", async () => {
@@ -1343,9 +1447,9 @@ describe.concurrent(`"plugin/*" = "off" turns off every rule of a plugin`, () =>
 export default { meta: { name: "demo" }, rules: { one: rule, two: rule } };\n`;
     const files = { "a.js": "export {};\n", "demo.js": plugin };
     const load = `[lint]\nplugins = ["./demo.js"]\nignorePatterns = ["demo.js"]\n[lint.rules]\n`;
-    const named = `${load}"demo/one" = "error"\n"demo/two" = "error"\n`;
-    expect(await found(named, [], files)).toEqual(["a.js:1 demo/one", "a.js:1 demo/two"]);
-    expect(await found(named, ["--rule", "demo/*: off"], files)).toEqual([]);
+    const listedByName = `${load}"demo/one" = "error"\n"demo/two" = "error"\n`;
+    expect(await found(listedByName, [], files)).toEqual(["a.js:1 demo/one", "a.js:1 demo/two"]);
+    expect(await found(listedByName, ["--rule", "demo/*: off"], files)).toEqual([]);
     expect(await found(`${load}"demo/*" = "off"\n"demo/two" = "error"\n`, [], files)).toEqual(["a.js:1 demo/two"]);
   });
 
@@ -1497,12 +1601,12 @@ describe.concurrent("[lint.settings]", () => {
       "eslint.config.mjs": `const rule = { create: context => ({ Program: node => context.report({ node, message: JSON.stringify(context.settings) }) }) };
 export default [{ files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } }, settings: { mine: 1 }, plugins: { p: { rules: { r: rule } } }, rules: { "p/r": "error" } }];\n`,
     };
-    const [ofOxlint, ofESLint] = await Promise.all([
+    const [withOxlint, withESLint] = await Promise.all([
       lint({ ...files, ...oxlint }, ["-f", "unix"]),
       lint({ ...files, ...eslint }, ["-f", "unix"]),
     ]);
-    expect(ofOxlint.stdout).toContain("[Error/jsx-a11y(alt-text)]");
-    expect(ofESLint.stdout).toContain(`{"mine":1,"jsx-a11y":{"components":{"Picture":"img"}}}`);
+    expect(withOxlint.stdout).toContain("[Error/jsx-a11y(alt-text)]");
+    expect(withESLint.stdout).toContain(`{"mine":1,"jsx-a11y":{"components":{"Picture":"img"}}}`);
   });
 });
 
@@ -1540,7 +1644,7 @@ describe.concurrent("unknown rules", () => {
       `Unknown rule "foo/bar-baz"\n  To use a rule from an ESLint plugin, add the plugin to plugins in [lint]`,
       `Unknown rule "foo/bar-baz"\n  To use a rule from an ESLint plugin, load the plugin with --plugin`,
     ],
-    // The plugin is there already.
+    // The plugin is already built in.
     [
       "react/only-in-the-package",
       `Unknown rule "react/only-in-the-package"\n  react is built in and has no rule of that name\n  To run a rule of the package, load it under another name in [lint]: plugins = [{ name = "react-js", specifier = "eslint-plugin-react" }]`,
@@ -1549,12 +1653,12 @@ describe.concurrent("unknown rules", () => {
       "typescript/only-in-the-package",
       `Unknown rule "typescript/only-in-the-package"\n  typescript is built in and has no rule of that name\n  To run a rule of the package, load it under another name in [lint]: plugins = [{ name = "typescript-js", specifier = "@typescript-eslint/eslint-plugin" }]`,
     ],
-    // No package has them.
+    // There's no package that could have these rules.
     ["bun/only-in-the-package", `Unknown rule "bun/only-in-the-package"`],
     ["oxc/only-in-the-package", `Unknown rule "oxc/only-in-the-package"`],
     ["eslint/only-in-the-package", `Unknown rule "eslint/only-in-the-package"`],
     ["perfectly-fine", `Unknown rule "perfectly-fine"`],
-    // Rules that bun lint leaves out on purpose.
+    // Rules that bun lint deliberately doesn't implement.
     ["indent", `"indent" is a formatting rule\n  bun fmt does that`],
     ["eslint/semi", `"eslint/semi" is a formatting rule\n  bun fmt does that`],
     ["@stylistic/quotes", `"@stylistic/quotes" is a formatting rule\n  bun fmt does that`],
@@ -1566,24 +1670,33 @@ describe.concurrent("unknown rules", () => {
       "vue/no-dupe-keys",
       `"vue/no-dupe-keys" is not supported\n  bun lint has no vue rules. To run eslint-plugin-vue, add it to plugins in [lint]`,
     ],
+    // --rules lists these, but only an ESLint config can specify which files are JSON or Markdown.
+    [
+      "json/no-duplicate-keys",
+      `"json/no-duplicate-keys" needs an ESLint config\n  Set language: "json/json" for the files in an eslint.config.js`,
+    ],
+    [
+      "markdown/no-empty-links",
+      `"markdown/no-empty-links" needs an ESLint config\n  Set language: "markdown/commonmark" for the files in an eslint.config.js`,
+    ],
   ];
 
-  test.each(cases)("%s is rejected", async (written, said, saidToFlag = said) => {
+  test.each(cases)("%s is rejected", async (key, message, flagMessage = message) => {
     const [inFile, byFlag] = await Promise.all([
       lint({
         ...source,
-        "bunfig.toml": `[lint.rules]\n"no-debugger" = "error"\n"${written}" = "error"\n`,
+        "bunfig.toml": `[lint.rules]\n"no-debugger" = "error"\n"${key}" = "error"\n`,
       }),
-      lint(source, ["--rule", JSON.stringify({ [written]: "error" })]),
+      lint(source, ["--rule", JSON.stringify({ [key]: "error" })]),
     ]);
     expect(inFile).toEqual({
       stdout: "",
-      stderr: `3 | "${written}" = "error"\n    ^\nerror: ${said}\n    at bunfig.toml:3:1\n`,
+      stderr: `3 | "${key}" = "error"\n    ^\nerror: ${message}\n    at bunfig.toml:3:1\n`,
       exitCode: 2,
     });
     expect(byFlag).toEqual({
       stdout: "",
-      stderr: `error: ${saidToFlag}\n`,
+      stderr: `error: ${flagMessage}\n`,
       exitCode: 2,
     });
   });
@@ -1676,14 +1789,14 @@ describe.concurrent("invalid rule settings", () => {
     [`"eqeqeq" = 3`, 12, `3 is not a valid severity for eqeqeq\n  Expected "off", "warn", or "error"`],
   ];
 
-  test.each(cases.filter(it => it[2] !== ""))("%s is rejected", async (line, column, said) => {
+  test.each(cases.filter(it => it[2] !== ""))("%s is rejected", async (line, column, message) => {
     const { stdout, stderr, exitCode } = await lint({
       ...source,
       "bunfig.toml": `[lint.rules]\n${line}\n`,
     });
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: "",
-      stderr: `2 | ${line}\n${" ".repeat(column + 3)}^\nerror: ${said}\n    at bunfig.toml:2:${column}\n`,
+      stderr: `2 | ${line}\n${" ".repeat(column + 3)}^\nerror: ${message}\n    at bunfig.toml:2:${column}\n`,
       exitCode: 2,
     });
   });
@@ -1694,12 +1807,31 @@ describe.concurrent("invalid rule settings", () => {
       lint(source, ["--rule", `eqeqeq: eror`]),
       lint({ ...source, ...bunfig({ eqeqeq: ["error", "smart"] }) }, ["--rule", `eqeqeq: [error, smrt]`]),
     ]);
-    const said = `error: "smrt" is not a valid option for eqeqeq\n  Expected "always", "smart", or "allow-null"\n`;
-    expect(options).toEqual({ stdout: "", stderr: said, exitCode: 2 });
-    expect(overBunfig).toEqual({ stdout: "", stderr: said, exitCode: 2 });
+    const expectedError = `error: "smrt" is not a valid option for eqeqeq\n  Expected "always", "smart", or "allow-null"\n`;
+    expect(options).toEqual({ stdout: "", stderr: expectedError, exitCode: 2 });
+    expect(overBunfig).toEqual({ stdout: "", stderr: expectedError, exitCode: 2 });
     expect(severity).toEqual({
       stdout: "",
       stderr: `error: "eror" is not a valid severity for eqeqeq\n  Expected "off", "warn", or "error"\n`,
+      exitCode: 2,
+    });
+  });
+
+  test.each(["eqeqeq:", "eqeqeq: ", "no-var: error, eqeqeq:", "eqeqeq: [, smart]", "", " ", "{}"])(
+    "--rule %j is rejected: it has a rule without a severity, or no rule",
+    async value => {
+      expect(await lint({ ...source, ...bunfig({ eqeqeq: "error" }) }, ["--rule", value])).toEqual({
+        stdout: "",
+        stderr: `error: Invalid value for option 'rule' - expected type Object, received value: ${value}.\nnote: run 'bun lint --help' for more information\n`,
+        exitCode: 2,
+      });
+    },
+  );
+
+  test("the error for a bad --rule doesn't point at the bunfig.toml line that sets the same rule", async () => {
+    expect(await lint({ ...source, ...bunfig({ eqeqeq: "warn" }) }, ["--rule", "eqeqeq: null"])).toEqual({
+      stdout: "",
+      stderr: `error: null is not a valid severity for eqeqeq\n  Expected "off", "warn", or "error"\n`,
       exitCode: 2,
     });
   });
@@ -1739,6 +1871,14 @@ describe.concurrent("ESLint and oxlint configs keep their own behavior", () => {
     expect(problems(inLegacy.stdout)).toEqual(["a.js:2 no-debugger", "a.js:4 no-debugger"]);
   });
 
+  test("with an ESLint config, eslint/no-var in a disable comment isn't treated as no-var", async () => {
+    const code =
+      "var a = 1; // eslint-disable-line eslint/no-var\nvar b = 2; // eslint-disable-line no-var\nexport { a, b };\n";
+    const { stdout } = await lint({ "a.js": code, ...flat({ "no-var": "error" }) }, ["-f", "json"]);
+    expect(problems(stdout)).toEqual(["a.js:1 eslint/no-var", "a.js:1 no-var"]);
+    expect(stdout).toContain("Definition for rule 'eslint/no-var' was not found.");
+  });
+
   test("an ESLint config still has to declare its plugins", async () => {
     const [inFile, inBunfig] = await Promise.all([
       lint({ ...source, ...flat({ "unicorn/no-null": "error" }) }),
@@ -1755,7 +1895,7 @@ describe.concurrent("ESLint and oxlint configs keep their own behavior", () => {
     }
   });
 
-  test("invalid options print ESLint's message under a line that names the file", async () => {
+  test("invalid options print ESLint's message under a line with the config file's name", async () => {
     const words = `Key "rules": Key "eqeqeq":\n\tValue "smrt" should be equal to one of the allowed values.`;
     const wrong = { eqeqeq: ["error", "smrt"] as Setting };
     const legacy = {

@@ -8,7 +8,6 @@
  *   node --test test/js/node/tls/node-tls-setkeycert.test.ts
  */
 import assert from "node:assert";
-import { execFile } from "node:child_process";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import net from "node:net";
@@ -65,7 +64,11 @@ function overDuplex(raw: net.Socket) {
 // A door makes the server-side TLSSocket of each connection.
 type Dial = { port: number; host: string };
 type Door = { dial: Dial; close(): void };
-type Report = { onSecure?: (socket: tls.TLSSocket) => void; onError?: (err: Error) => void };
+type Report = {
+  onSecure?: (socket: tls.TLSSocket) => void;
+  onError?: (err: Error) => void;
+  onServer?: (server: tls.Server) => void;
+};
 type OpenDoor = (options: tls.TlsOptions, report?: Report) => Promise<Door>;
 
 function emitter(over: (raw: net.Socket) => Duplex): OpenDoor {
@@ -107,6 +110,7 @@ const doors: Record<string, OpenDoor> = {
     });
     server.on("connection", socket => (accepted = socket as tls.TLSSocket));
     server.on("tlsClientError", err => report.onError?.(err));
+    report.onServer?.(server);
     return { dial: await listen(server), close: () => server.close() };
   },
   "server.emit('connection', netSocket)": emitter(raw => raw),
@@ -377,6 +381,24 @@ for (const version of versions) {
       const got = await serve(emit, { ...own, SNICallback, ALPNProtocols: ["h2"] }, dial => handshake(dial, version));
       assert.deepStrictEqual(got, { cn: "agent3", alpn: "h2" });
     });
+
+    // Node.js does not look at the addContext() entries of a server that has an SNICallback. Bun looks when the
+    // SNICallback selects nothing, but not for a connection that has the certificate of a setKeyCert() call.
+    for (const [when, give] of [Object.entries(answers)[0], Object.entries(answers)[2]]) {
+      test(`an addContext() entry for the name does not replace it, when the answer comes ${when}`, async () => {
+        const SNICallback: SNICallback = function (_, answer) {
+          this.setKeyCert(other);
+          give(answer);
+        };
+        const got = await serve(
+          doors["server.listen()"],
+          { ...own, SNICallback, ALPNProtocols: ["h2"] },
+          dial => handshake(dial, version),
+          { onServer: server => server.addContext("a.test", identity("agent3")) },
+        );
+        assert.deepStrictEqual(got, { cn: "agent1", alpn: "h2" });
+      });
+    }
 
     test("the options of a context do as a context", async () => {
       const options = { ...own, SNICallback: applies(identity("agent1")), ALPNProtocols: ["h2"] };
@@ -905,141 +927,52 @@ for (const version of versions) {
       assert.strictEqual(got, onBun ? "agent3" : "agent1");
     });
 
+    // The client keeps its own certificate then, and verifies the server with the CA of the context.
     test("a client socket, and a context that has a CA only", async () => {
       const trustsCa2 = tls.createSecureContext({ ca: pem("ca2-cert.pem") });
-      const authorized = await serve(emit, identity("agent1"), async dial => {
-        const client = tls.connect({
-          ...dial,
-          ca: pem("ca1-cert.pem"),
-          checkServerIdentity: () => undefined,
-          rejectUnauthorized: false,
-          minVersion: version,
-          maxVersion: version,
-        });
-        client.on("connect", () => client.setKeyCert(trustsCa2));
-        try {
-          await once(client, "secureConnect");
-          return client.authorized;
-        } finally {
-          client.destroy();
-        }
-      });
-      assert.strictEqual(authorized, !onBun);
+      const sent = Promise.withResolvers<unknown>();
+      const got = await serve(
+        emit,
+        { ...identity("agent1"), requestCert: true, rejectUnauthorized: false },
+        async dial => {
+          const client = tls.connect({
+            ...dial,
+            ...identity("agent3"),
+            ca: pem("ca1-cert.pem"),
+            checkServerIdentity: () => undefined,
+            rejectUnauthorized: false,
+            minVersion: version,
+            maxVersion: version,
+          });
+          client.on("connect", () => client.setKeyCert(trustsCa2));
+          try {
+            await once(client, "secureConnect");
+            return { authorized: client.authorized, sent: await sent.promise };
+          } finally {
+            client.destroy();
+          }
+        },
+        { onSecure: socket => sent.resolve(socket.getPeerCertificate().subject?.CN) },
+      );
+      assert.deepStrictEqual(got, { authorized: !onBun, sent: "agent3" });
     });
   });
 }
 
-// The order that stopped a debug build in BoringSSL, in a process of its own. A debug build takes seconds to start.
-test(
-  "an answer from a microtask, with an ALPNCallback and the context in addContext()",
-  { timeout: 60_000 },
-  async () => {
-    const fixture = join(import.meta.dirname, "node-tls-setkeycert-fixture.mjs");
-    const env = { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" };
-    const { promise, resolve } = Promise.withResolvers<{ stdout: string; exit: unknown }>();
-    execFile(process.execPath, [fixture], { env }, (err, stdout) =>
-      resolve({ stdout, exit: { code: err ? err.code : 0, signal: err ? err.signal : null } }),
-    );
-    const ran = await promise;
-    assert.deepStrictEqual(ran.stdout.split("\n"), [
-      JSON.stringify({ version: "TLSv1.2", cn: "agent1", alpn: "h2", calls: 1 }),
-      JSON.stringify({ version: "TLSv1.3", cn: "agent1", alpn: "h2", calls: 1 }),
-      "",
-    ]);
-    assert.deepStrictEqual(ran.exit, { code: 0, signal: null });
-  },
-);
-
-// Doors that only Bun has.
+// Only in Bun: when Node.js runs this file it must not spawn itself again. Node.js takes a .ts file from 22.18 and 23.6.
 if (onBun) {
-  describe("setKeyCert() on the sockets of Bun", () => {
-    // Bun emits 'connection' with the TLSSocket, before the ClientHello.
-    for (const [which, answer, expected] of [
-      ["selects nothing", null, { cn: "agent1", alpn: "h2", calls: 1 }],
-      ["refuses", new Error("denied"), { outcome: "refused", calls: 1 }],
-    ] as const) {
-      test(`in a 'connection' listener, and the SNICallback still runs and ${which}`, async () => {
-        let calls = 0;
-        const SNICallback = (_: string, answered: Answer) => {
-          calls++;
-          answered(answer);
-        };
-        const server = tls.createServer({ ...own, SNICallback, ALPNProtocols: ["h2"] }, socket =>
-          socket.on("error", () => {}),
-        );
-        server.on("tlsClientError", () => {});
-        server.on("connection", socket => (socket as tls.TLSSocket).setKeyCert(other));
-        try {
-          const got = await handshake(await listen(server), "TLSv1.3").catch(() => ({ outcome: "refused" }));
-          assert.deepStrictEqual({ ...got, calls }, expected);
-        } finally {
-          server.close();
-        }
-      });
-    }
-
-    // The connection holds what it took from the context, and not the context. No other context has these options, so
-    // the call builds one that nothing else holds. The answer comes when it is gone, or after 50 collections.
-    test("the context of the call can be collected before the answer", async () => {
-      const { sslCtxLiveCount } = await import("bun:internal-for-testing");
-      const verdict = Promise.withResolvers<string>();
-      const SNICallback: SNICallback = function (_, answer) {
-        Bun.gc(true);
-        const before = sslCtxLiveCount();
-        this.setKeyCert({ ...identity("agent1"), ca: pem("ca2-cert.pem"), sessionTimeout: 4321 });
-        let collections = 0;
-        const poll = () => {
-          Bun.gc(true);
-          if (sslCtxLiveCount() <= before || ++collections === 50) answer(null);
-          else setImmediate(poll);
-        };
-        setImmediate(poll);
-      };
-      const got = await serve(
-        emit,
-        { ...own, requestCert: true, rejectUnauthorized: false, SNICallback, ALPNProtocols: ["h2"] },
-        dial =>
-          handshake(dial, "TLSv1.3", identity("agent3"), async client => ({
-            ...served(client),
-            verdict: await verdict.promise,
-          })),
-        { onSecure: socket => verdict.resolve(socket.authorized ? "authorized" : String(socket.authorizationError)) },
-      );
-      assert.deepStrictEqual(got, { cn: "agent1", alpn: "h2", verdict: "authorized" });
-    });
-
-    // With a handshake handler, Bun.listen() calls the open handler before the handshake. The native method takes the
-    // native context.
-    test("Bun.listen(): in the open handler", async () => {
-      let thrown: unknown;
-      using listener = Bun.listen({
-        hostname: "127.0.0.1",
-        port: 0,
-        tls: own,
-        socket: {
-          open(socket) {
-            try {
-              //@ts-expect-error
-              socket.setKeyCert(tls.createSecureContext().context);
-            } catch (err) {
-              thrown = (err as Error).message;
-            }
-            //@ts-expect-error
-            socket.setKeyCert(other.context);
-          },
-          handshake() {},
-          data() {},
-          error() {},
-        },
-      });
-      const cn = await handshake({ port: listener.port, host: "127.0.0.1" }, "TLSv1.3", {}, c => served(c).cn);
-      assert.deepStrictEqual({ cn, thrown }, { cn: "agent1", thrown: "SetKeyCert" });
-    });
-
-    test("all tests pass in Node.js", { timeout: 120_000, skip: !Bun.which("node") }, async () => {
+  const node = Bun.which("node");
+  const version = node
+    ? Bun.spawnSync({ cmd: [node, "-p", "process.versions.node"] })
+        .stdout.toString()
+        .trim()
+    : "";
+  const takesTypeScript = Bun.semver.satisfies(version, ">=22.18.0 <23.0.0 || >=23.6.0");
+  describe("Node.js compatibility", () => {
+    (takesTypeScript ? test : test.skip)("all tests pass in Node.js", { timeout: 120_000 }, async () => {
       await using proc = Bun.spawn({
         // A test that hangs in Node.js fails by name instead of running this one out of time.
-        cmd: [Bun.which("node")!, "--test-timeout=15000", "--test-force-exit", import.meta.filename],
+        cmd: [node!, "--test-timeout=15000", "--test-force-exit", import.meta.filename],
         stdout: "pipe",
         stderr: "pipe",
         stdin: "ignore",

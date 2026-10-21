@@ -455,7 +455,7 @@ int us_ssl_ctx_reject_unauthorized(struct ssl_ctx_st *ctx);
 void us_socket_on_server_name(us_socket_r s);
 /* setKeyCert(): serves `ssl` with the identity of `ctx` and verifies its peer against the CA of `ctx`, without a
  * change of the connection's SSL_CTX. `sid` is the session id context of `ctx`. Returns 0 for a server when `ctx` has
- * no certificate with its key, and when BoringSSL refuses a step. */
+ * no certificate with its key, and when BoringSSL fails to allocate. */
 int us_ssl_use_ctx_identity(struct ssl_st *ssl, struct ssl_ctx_st *ctx, const unsigned char *sid, size_t sid_len);
 
 /* ── Connect ──────────────────────────────────────────────────────────────

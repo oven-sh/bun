@@ -3352,7 +3352,8 @@ static void us_ssl_use_ctx_client_ca_names(SSL *ssl, SSL_CTX *ctx) {
  * and the ALPN callback from that context (us_select_cert_cb, select_alpn_callback), so an SNICallback that has not
  * answered keeps the handshake parked and ALPN is still negotiated. `sid` is the session id context of `ctx`, which a
  * server takes with the identity (see us_ssl_apply_selected_ctx). Returns 0 for a server when `ctx` has no certificate
- * with its key, with the connection unchanged, and when BoringSSL refuses a step. A client takes what `ctx` has. */
+ * with its key: the connection is unchanged then. Also returns 0 when BoringSSL fails a step, which takes an allocation
+ * failure and can leave the connection without its certificates. A client takes what `ctx` has. */
 int us_ssl_use_ctx_identity(SSL *ssl, SSL_CTX *ctx, const uint8_t *sid, size_t sid_len) {
   us_ex_idx_ensure();
   const struct us_ssl_ctx_identities_t *identities = SSL_CTX_get_ex_data(ctx, us_ctx_identities_ex_idx);
@@ -3361,9 +3362,12 @@ int us_ssl_use_ctx_identity(SSL *ssl, SSL_CTX *ctx, const uint8_t *sid, size_t s
   for (int type = 0; identities != NULL && type < US_SSL_IDENTITY_TYPES; type++) {
     has_identity |= identities->identity[type] != NULL;
   }
-  /* Node refuses such a context on a server, and ignores every call on a client. */
+  /* Node refuses a context without an identity on a server, and ignores every call on a client. Here a client keeps
+   * its own certificates then, and takes the CA. */
   if (!has_identity && SSL_is_server(ssl)) return 0;
-  if (us_ssl_key_fits_handshake(ssl, key) && !us_ssl_use_ctx_certificates(ssl, ctx, key, identities)) return 0;
+  if (has_identity && us_ssl_key_fits_handshake(ssl, key) && !us_ssl_use_ctx_certificates(ssl, ctx, key, identities)) {
+    return 0;
+  }
   /* Node's SetCACerts: the store that the peer's certificate is verified against, and for a server the names above. */
   if (!SSL_set1_verify_cert_store(ssl, SSL_CTX_get_cert_store(ctx))) return 0;
   if (!SSL_is_server(ssl)) return 1;
@@ -3449,7 +3453,7 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
      * through to the static SNI tree below, exactly like a synchronous
      * resolver returning null - the resume must not skip the tree fallback
      * the sync path gets. */
-    if (names) {
+    if (names && !rare->has_key_cert) {
       /* Read the servername from the raw ClientHello, same as the first-call
        * path below: that is the read the early-callback contract guarantees
        * (SSL_get_servername happens to be populated by the resume re-drive
@@ -3520,8 +3524,10 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
   }
 
   /* No dynamic selection: fall back to the static SNI tree (the
-   * addContext() entries). An adopted socket has no tree. */
-  struct sni_node_t *node = us_server_names_find(names, hostname);
+   * addContext() entries). An adopted socket has no tree. A connection that
+   * has the identity of a setKeyCert() keeps it: Node does not look at the
+   * addContext() entries of a server with an SNICallback. */
+  struct sni_node_t *node = rare && rare->has_key_cert ? NULL : us_server_names_find(names, hostname);
   if (node) {
     us_ssl_apply_selected_ctx(ssl, node->ctx);
   }

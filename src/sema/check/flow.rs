@@ -94,6 +94,9 @@ impl PartialEq for Step {
 pub(super) struct Reference {
     file: FileId,
     root: Root,
+    /// The file of `Root::Pattern`. It isn't `file` if the pattern declares globals or exports of a
+    /// merged namespace.
+    pattern_file: FileId,
     path: SmallVec<[Step; 4]>,
     /// How many names in `path` are `AccessedName::Unresolved`.
     unresolved: std::cell::Cell<u32>,
@@ -126,6 +129,7 @@ impl Reference {
         Reference {
             file,
             root,
+            pattern_file: file,
             accesses: path.len(),
             path,
             unresolved: std::cell::Cell::new(0),
@@ -141,7 +145,10 @@ impl Reference {
 
 impl PartialEq for Reference {
     fn eq(&self, other: &Self) -> bool {
-        self.file == other.file && self.root == other.root && self.path == other.path
+        self.file == other.file
+            && self.root == other.root
+            && self.pattern_file == other.pattern_file
+            && self.path == other.path
     }
 }
 
@@ -1407,6 +1414,7 @@ impl<'p, 's> Checker<'p, 's> {
         Reference {
             file,
             root,
+            pattern_file: file,
             path,
             unresolved: std::cell::Cell::new(unresolved),
             at: e,
@@ -1978,16 +1986,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// `const k = x.kind`, `const { kind: k } = x`, a variable bound by the pattern that is the
     /// reference, or a parameter of the function that is the reference.
     fn discriminant_alias(&mut self, reference: &Reference, e: ExprId) -> Option<Access> {
-        let file = reference.file;
-        let hir = self.hir(file);
-        let bound = self.bound(file);
-        let symbol = bound.symbol_of_expr(e);
+        let mut file = reference.file;
+        let symbol = self.bound(file).symbol_of_expr(e);
         let pat = if symbol.is_some() {
             self.name_of_value_declaration(file, symbol)?
         } else {
             // `getResolvedSymbol`, for a pattern: one of its variables can be a global or an export
             // of a merged namespace. An alias of a property isn't found this way, see `note_chain`.
-            let ExprKind::Ident(name) = hir[e].kind else {
+            let ExprKind::Ident(name) = self.hir(file)[e].kind else {
                 return None;
             };
             if !matches!(reference.root, Root::Pattern(_)) {
@@ -1995,10 +2001,17 @@ impl<'p, 's> Checker<'p, 's> {
             }
             let resolved = self.symbol_of_identifier(file, e, name)?;
             match self.files().value_declaration(resolved) {
-                Some((decl_file, Decl::Var(pat))) if decl_file == file => pat,
+                Some((decl_file, Decl::Var(pat))) => {
+                    file = decl_file;
+                    pat
+                }
                 _ => return None,
             }
         };
+        if file != reference.pattern_file {
+            return None;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
         let plain = |name| {
             Some(Access {
                 name,
@@ -2196,7 +2209,7 @@ impl<'p, 's> Checker<'p, 's> {
             Root::This => true,
             Root::Symbol(s) => self.is_constant_name(file, s),
             Root::Global(name) => self.is_global_constant(name),
-            Root::Pattern(p) => self.is_constant_pattern(file, p),
+            Root::Pattern(p) => self.is_constant_pattern(reference.pattern_file, p),
             Root::Super | Root::ImportMeta | Root::NewTarget(_) | Root::Params(_) | Root::Other => {
                 false
             }
@@ -2288,16 +2301,18 @@ impl<'p, 's> Checker<'p, 's> {
     /// union was destructured.
     pub(super) fn narrow_binding(
         &mut self,
-        file: FileId,
+        at: FileId,
         e: ExprId,
-        symbol: SymbolId,
+        symbol: Sym,
         declared: TypeId,
     ) -> TypeId {
-        let hir = self.hir(file);
-        let bound = self.bound(file);
-        let Some(pat) = self.name_of_value_declaration(file, symbol) else {
+        let Some((file, Decl::Var(pat) | Decl::Param(pat))) =
+            self.files().value_declaration(symbol)
+        else {
             return declared;
         };
+        let hir = self.hir(file);
+        let bound = self.bound(file);
         let (parent, len) = match bound.pat_parent[pat.idx()] {
             PatParent::Param(p) => return self.narrow_dependent_parameter(file, e, p, declared),
             PatParent::Prop(parent, prop) if hir[prop].default.is_none() && !hir[prop].is_rest => {
@@ -2321,8 +2336,9 @@ impl<'p, 's> Checker<'p, 's> {
         // "Avoid declaration circularity without blocking binding defaults or nested callbacks."
         let root_initializer = bound.pat_parent[root.idx()].initializer(hir);
         if root_initializer.is_some()
+            && at == file
             && self.is_node_descendant_of(file, e, root_initializer)
-            && self.declaration_container(file, symbol)
+            && self.declaration_container(file, bound.pat_symbol[pat.idx()])
                 == Some(self.get_control_flow_container(file, bound.parent_of_expr(e)))
         {
             return declared;
@@ -2353,9 +2369,13 @@ impl<'p, 's> Checker<'p, 's> {
             return declared;
         }
         let node = hir.node(parent);
-        let reference = Reference::synthetic(file, Root::Pattern(parent), SmallVec::new(), node);
+        let reference = Reference {
+            pattern_file: file,
+            ..Reference::synthetic(at, Root::Pattern(parent), SmallVec::new(), node)
+        };
         let mut walk = Walk::new(reference, parent_ty, parent_ty, Crossing::Yes);
-        let narrowed = self.get_flow_type_of_reference(&mut walk, bound.flow_of_expr(e));
+        let flow = self.bound(at).flow_of_expr(e);
+        let narrowed = self.get_flow_type_of_reference(&mut walk, flow);
         if narrowed.is_never() {
             return TypeId::NEVER;
         }
@@ -4993,10 +5013,13 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `reportFlowControlError(f.reference)`. `check_flow_too_deep` reports 2563 from the tables.
     fn report_flow_control_error(&self, reference: &Reference) {
-        let file = reference.file;
         match reference.at.some() {
-            Some(e) => (self.p.flows_too_deep).insert(&self.task, (file, e), (), Stored::new()),
+            Some(e) => {
+                let at = (reference.file, e);
+                (self.p.flows_too_deep).insert(&self.task, at, (), Stored::new())
+            }
             None => {
+                let file = reference.pattern_file;
                 let block = self.function_or_module_block_of_node(file, reference.node);
                 let blocks = &self.p.blocks_too_large_for_flow_analysis;
                 blocks.insert(&self.task, (file, block), (), Stored::new());

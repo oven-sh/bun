@@ -2290,8 +2290,11 @@ impl<'p, 's> Checker<'p, 's> {
             declared
         };
         let flags = self.files().flags(sym);
-        let declared = if sym.file == file && flags.intersects(SymFlags::VARIABLE) {
-            self.narrow_binding(file, e, sym.id, declared)
+        // Of the variables of another file, only a `const` can come from a pattern that narrows it.
+        let declared = if flags.intersects(SymFlags::VARIABLE)
+            && (sym.file == file || flags.contains(SymFlags::CONST))
+        {
+            self.narrow_binding(file, e, sym, declared)
         } else {
             declared
         };

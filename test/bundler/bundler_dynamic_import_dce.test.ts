@@ -5433,6 +5433,28 @@ describe("bundler", () => {
     },
   });
 
+  // Such a read as a computed key becomes a plain key, as it does through an import.
+  itBundled("dynamic_import_dce/NamespaceLocalEnumComputedKey", {
+    files: {
+      "/entry.ts": /* ts */ `
+        async function main() {
+          const m = await import("./enums");
+          console.log(JSON.stringify({ [m.Color.Red]: "r", [m.Size.Big]: "b" }));
+        }
+        main();
+      `,
+      "/enums.ts": /* ts */ `
+        export enum Color { Red = 1 }
+        export const enum Size { Big = "big" }
+      `,
+    },
+    minifySyntax: true,
+    run: { stdout: '{"1":"r","big":"b"}' },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain('{ 1: "r", big: "b" }');
+    },
+  });
+
   // Only a read that the parser counted as a read of the enum member is
   // inlined. A read through an import, through a local that a pattern binds
   // or through two members prints the enum object, which a write needs.

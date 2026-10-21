@@ -4437,6 +4437,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     /// Every use in `part` with `symbol::Use::runs_namespace_read` prints as a binding.
+    #[cold]
     fn part_namespace_reads_are_bound(&self, part: &Part) -> bool {
         part.symbol_uses
             .keys()

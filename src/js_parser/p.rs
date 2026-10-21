@@ -2914,9 +2914,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::ExprData::EDot(mut e) => {
                     // The initializer of a namespace local must not move into its own marked read.
-                    if e.is_import_property_use
-                        && matches!(e.target.data, js_ast::ExprData::EIdentifier(id) if id.ref_.eql(r#ref))
-                    {
+                    if is_marked_read_off(&expr, r#ref) {
                         break 'outer;
                     }
 
@@ -3030,9 +3028,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::ExprData::EIndex(mut index) => {
                     // As for a dot access above.
-                    if index.is_import_property_use
-                        && matches!(index.target.data, js_ast::ExprData::EIdentifier(id) if id.ref_.eql(r#ref))
-                    {
+                    if is_marked_read_off(&expr, r#ref) {
                         break 'outer;
                     }
 
@@ -6218,16 +6214,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             js_ast::ExprData::EDot(ex) => {
-                return ex.can_be_removed_if_unused
-                    || (self.part_removal_assumes_namespace_reads_bind
-                        && ex.is_import_property_use
-                        && self.rely_on_namespace_read(expr));
+                return ex.can_be_removed_if_unused || self.rely_on_namespace_read(expr);
             }
-            js_ast::ExprData::EIndex(ex) => {
-                return self.part_removal_assumes_namespace_reads_bind
-                    && ex.is_import_property_use
-                    && self.rely_on_namespace_read(expr);
-            }
+            js_ast::ExprData::EIndex(_) => return self.rely_on_namespace_read(expr),
             js_ast::ExprData::EClass(ex) => return self.class_can_be_removed_if_unused(&**ex),
             js_ast::ExprData::EIdentifier(ex) => {
                 debug_assert!(!ex.ref_.is_source_contents_slice()); // was not visited
@@ -6721,8 +6710,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.namespace_local_import_item(id.ref_, name)
     }
 
-    /// Marks the part use of the item of `expr`, a marked read that runs with the part.
+    /// Marks the part use of the item of `expr`, a marked read. Only while `append_part` judges.
     fn rely_on_namespace_read(&mut self, expr: &Expr) -> bool {
+        if !self.part_removal_assumes_namespace_reads_bind {
+            return false;
+        }
         let Some(item) = self.namespace_local_read_item(expr) else {
             return false;
         };
@@ -7294,6 +7286,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         false
     }
+}
+
+/// `expr` is `ns.name` with `ns` the local `ref_`, marked as a read off a namespace local.
+fn is_marked_read_off(expr: &Expr, ref_: Ref) -> bool {
+    let target = match &expr.data {
+        js_ast::ExprData::EDot(dot) if dot.is_import_property_use => dot.target,
+        js_ast::ExprData::EIndex(index) if index.is_import_property_use => index.target,
+        _ => return false,
+    };
+    matches!(target.data, js_ast::ExprData::EIdentifier(id) if id.ref_.eql(ref_))
 }
 
 /// The unscoped npm package of a specifier (`react/x`) or path (`node_modules<sep>react<sep>x.js`).

@@ -1812,10 +1812,7 @@ pub(crate) mod __gated_printer {
                             }
                         }
                         // May print as `undefined` or as an inlined enum value.
-                        ExprData::EDot(left) if left.is_import_property_use => {
-                            v.left_level = Level::Call;
-                        }
-                        ExprData::EIndex(left) if left.is_import_property_use => {
+                        _ if e.left.is_import_property_use() => {
                             v.left_level = Level::Call;
                         }
                         _ => {}
@@ -2279,8 +2276,7 @@ pub(crate) mod __gated_printer {
 
                         if !self.is_stable_destructuring_target(*target_id, target_ref)
                             // A local bound like an import: its reads print as exports.
-                            || self.import_ref(target_e_dot.target).is_some()
-                            || self.has_import_member_bindings(target_id.ref_)
+                            || self.prints_as_import(target_e_dot.target)
                         {
                             break 'brk;
                         }
@@ -3671,20 +3667,20 @@ pub(crate) mod __gated_printer {
                         flags.insert(ExprFlag::HasNonOptionalChainParent);
 
                         // Inline cross-module TypeScript enum references here
-                        if let Some(inlined) = self.try_to_get_imported_enum_value(
-                            e.target,
-                            &e.name,
-                            e.is_import_property_use,
-                        ) {
+                        if let Some(inlined) =
+                            self.try_to_get_imported_enum_value(e.target, &e.name)
+                        {
                             self.print_inlined_enum(inlined, &e.name, level);
                             return;
                         }
-                        if e.is_import_property_use
-                            && let Some(binding) =
-                                self.import_member_binding(e.target, &e.name, Self::dot_name_loc(e))
-                        {
-                            self.print_expr(binding, level, flags);
-                            return;
+                        if e.is_import_property_use {
+                            if let Some(binding) = self.import_member_binding(expr) {
+                                self.print_expr(binding, level, flags);
+                                return;
+                            }
+                            if self.print_namespace_local_enum_member(expr, level) {
+                                return;
+                            }
                         }
                     } else {
                         if flags.contains(ExprFlag::HasNonOptionalChainParent) {
@@ -3732,25 +3728,22 @@ pub(crate) mod __gated_printer {
                         if let Some(str) = e.index.data.as_e_string() {
                             let str = str.flattened(self.bump);
                             if str.is_utf8() {
-                                if let Some(value) = self.try_to_get_imported_enum_value(
-                                    e.target,
-                                    str.slice8(),
-                                    e.is_import_property_use,
-                                ) {
+                                if let Some(value) =
+                                    self.try_to_get_imported_enum_value(e.target, str.slice8())
+                                {
                                     self.print_inlined_enum(value, str.slice8(), level);
                                     return;
                                 }
                             }
                         }
-                        if e.is_import_property_use
-                            && let Some(str) = e.index.unwrap_inlined().data.as_e_string()
-                            && let str = str.flattened(self.bump)
-                            && str.is_utf8()
-                            && let Some(binding) =
-                                self.import_member_binding(e.target, str.slice8(), e.index.loc)
-                        {
-                            self.print_expr(binding, level, flags);
-                            return;
+                        if e.is_import_property_use {
+                            if let Some(binding) = self.import_member_binding(expr) {
+                                self.print_expr(binding, level, flags);
+                                return;
+                            }
+                            if self.print_namespace_local_enum_member(expr, level) {
+                                return;
+                            }
                         }
                     } else {
                         if flags.contains(ExprFlag::HasNonOptionalChainParent) {
@@ -4876,11 +4869,7 @@ pub(crate) mod __gated_printer {
                     if let ExprData::EDot(dot) =
                         &item.key.as_ref().expect("infallible: prop has key").data
                     {
-                        if let Some(value) = self.try_to_get_imported_enum_value(
-                            dot.target,
-                            dot.name.slice(),
-                            dot.is_import_property_use,
-                        ) {
+                        if let Some(value) = self.computed_key_enum_value(dot) {
                             match value {
                                 js_ast::InlinedEnumValueDecoded::String(str) => {
                                     // Arena-owned `*const EString` (encoded non-null at NaN-box time);
@@ -6748,22 +6737,31 @@ pub(crate) mod __gated_printer {
         /// `X.name` where the linker bound the access straight to an export
         /// (`LinkerGraph::import_member_bindings`): the import identifier to
         /// print in its place.
-        fn import_member_binding(
-            &self,
-            target: Expr,
-            name: &[u8],
-            name_loc: bun_ast::Loc,
-        ) -> Option<Expr> {
+        fn import_member_binding(&self, read: Expr) -> Option<Expr> {
             let bindings = self.options.import_member_bindings?;
-            let (base, loc) = if let Some(import_ref) = self.import_ref(target) {
-                (import_ref, target.loc)
-            } else if let ExprData::EIdentifier(id) = &target.data {
-                (id.ref_, name_loc)
-            } else {
-                self.namespace_local_read_binding(target)?
+            let bound = |target: Expr, name: &[u8], name_loc: bun_ast::Loc| -> Option<Expr> {
+                let (base, loc) = if let Some(import_ref) = self.import_ref(target) {
+                    (import_ref, target.loc)
+                } else if let ExprData::EIdentifier(id) = &target.data {
+                    (id.ref_, name_loc)
+                } else {
+                    self.namespace_local_read_binding(target)?
+                };
+                let binding = *bindings.get(&base)?.get(name)?;
+                Some(Expr::init(E::ImportIdentifier::new(binding, false), loc))
             };
-            let binding = *bindings.get(&base)?.get(name)?;
-            Some(Expr::init(E::ImportIdentifier::new(binding, false), loc))
+            match &read.data {
+                ExprData::EDot(e) => bound(e.target, &e.name, Self::dot_name_loc(e)),
+                ExprData::EIndex(e) => {
+                    let key = e.index.unwrap_inlined().data.as_e_string()?;
+                    let key = key.flattened(self.bump);
+                    if !key.is_utf8() {
+                        return None;
+                    }
+                    bound(e.target, key.slice8(), e.index.loc)
+                }
+                _ => None,
+            }
         }
 
         /// The binding and the name location of `read`, a bound read off a namespace local.
@@ -6807,29 +6805,81 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// Some read off the namespace local `ref_` prints as the export it is bound to.
-        fn has_import_member_bindings(&self, ref_: Ref) -> bool {
+        /// A read off `target` prints as an export: `target` is an import or has a bound read.
+        #[inline]
+        fn prints_as_import(&self, target: Expr) -> bool {
+            if self.import_ref(target).is_some() {
+                return true;
+            }
+            let ExprData::EIdentifier(id) = &target.data else {
+                return false;
+            };
             self.options.has_dynamic_import_items
                 && self
                     .options
                     .import_member_bindings
-                    .is_some_and(|bindings| bindings.contains(&ref_))
+                    .is_some_and(|bindings| bindings.contains(&id.ref_))
         }
 
-        /// `is_import_property_use` is the flag of the `target.name` that is printed.
+        /// The member `name` of the enum that `target` names, a bound read off a namespace local.
+        fn namespace_local_enum_value(
+            &self,
+            target: Expr,
+            name: &[u8],
+        ) -> Option<js_ast::InlinedEnumValueDecoded> {
+            if !self.options.has_dynamic_import_items {
+                return None;
+            }
+            let (enum_ref, loc) = self.namespace_local_read_binding(target)?;
+            let enum_ = Expr::init(E::ImportIdentifier::new(enum_ref, false), loc);
+            self.try_to_get_imported_enum_value(enum_, name)
+        }
+
+        /// Prints the value of `read`, a marked `ns.Enum.Member`. False if it has none.
+        fn print_namespace_local_enum_member(&mut self, read: Expr, level: Level) -> bool {
+            match &read.data {
+                ExprData::EDot(e) => {
+                    let Some(value) = self.namespace_local_enum_value(e.target, &e.name) else {
+                        return false;
+                    };
+                    self.print_inlined_enum(value, &e.name, level);
+                }
+                ExprData::EIndex(e) => {
+                    let Some(key) = e.index.unwrap_inlined().data.as_e_string() else {
+                        return false;
+                    };
+                    let key = key.flattened(self.bump);
+                    if !key.is_utf8() {
+                        return false;
+                    }
+                    let Some(value) = self.namespace_local_enum_value(e.target, key.slice8())
+                    else {
+                        return false;
+                    };
+                    self.print_inlined_enum(value, key.slice8(), level);
+                }
+                _ => return false,
+            }
+            true
+        }
+
+        /// The enum value of the computed key `dot`, also through a namespace local when marked.
+        fn computed_key_enum_value(&self, dot: &E::Dot) -> Option<js_ast::InlinedEnumValueDecoded> {
+            if let Some(value) = self.try_to_get_imported_enum_value(dot.target, &dot.name) {
+                return Some(value);
+            }
+            if !dot.is_import_property_use {
+                return None;
+            }
+            self.namespace_local_enum_value(dot.target, &dot.name)
+        }
+
         pub(crate) fn try_to_get_imported_enum_value(
             &self,
             target: Expr,
             name: &[u8],
-            is_import_property_use: bool,
         ) -> Option<js_ast::InlinedEnumValueDecoded> {
-            let base = match self.import_ref(target) {
-                Some(base) => base,
-                None if is_import_property_use && self.options.has_dynamic_import_items => {
-                    self.namespace_local_read_binding(target)?.0
-                }
-                None => return None,
-            };
+            let base = self.import_ref(target)?;
             {
                 let ref_ = self.symbols().follow(base);
                 if let Some(symbol) = self.symbols().get_const(ref_) {

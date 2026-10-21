@@ -1386,6 +1386,10 @@ impl<'p, 's> Checker<'p, 's> {
             let Some(members) = self.structured_members(apparent) else {
                 return SmallVec::new();
             };
+            // The other members are only asked for the index signatures that the first one has.
+            if all.is_empty() && members.index_infos().is_empty() {
+                return SmallVec::new();
+            }
             all.push(members);
         }
         let mut infos = SmallVec::new();

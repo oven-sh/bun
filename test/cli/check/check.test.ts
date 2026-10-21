@@ -18864,13 +18864,22 @@ class F { x = ((v: ReturnType<() => F["x"]>) => true); y = 1 }
 
     test("reports TS2589 for a mapped type whose `as` clause reads the type that's being resolved", async () => {
       using dir = project({
-        "a.ts": `declare class D { static x: { [K in keyof typeof D as (typeof D)[K] & string]: 1 }; }
+        "a.ts": `declare class D { static x: { [K in "x" as (typeof D)[K] & string]: 1 }; }
+`,
+        // The constraint of \`(typeof E)[K]\` is the union \`E | { .. }\`. It lists no property, so none of \`string\` is looked
+        // up in it, and nothing needs the members of the mapped type until \`E.x\` is compared.
+        "b.ts": `declare class E { static x: { [K in keyof typeof E as (typeof E)[K] & string]: 1 }; }
+`,
+        "c.ts": `declare class F { static x: { [K in keyof typeof F as (typeof F)[K] & string]: 1 }; }
+export const v: never = F.x;
 `,
       });
       const { stdout, exitCode } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(
-        `"a.ts(1,29): error TS2589: Type instantiation is excessively deep and possibly infinite."`,
-      );
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(1,29): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        c.ts(2,14): error TS2322: Type '{ [x: ... & string]: 1; [x: string]: 1; }' is not assignable to type 'never'.
+        c.ts(2,14): error TS2589: Type instantiation is excessively deep and possibly infinite."
+      `);
       expect(exitCode).toBe(1);
     });
 
@@ -23007,6 +23016,26 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       using dir = project(files);
       const { stdout, exitCode } = await check(dir);
       expect(stdout.split("\n").sort()).toEqual(expected.sort());
+      expect(exitCode).toBe(1);
+    });
+
+    test("an intersection of mapped types over one object type isn't reduced to never", async () => {
+      using dir = project({
+        "a.ts": `type O = { a: 0; b: 0 };
+type X<T> = { [K in keyof T]: "x" };
+type Y<T> = { [K in keyof T]: "y" };
+export const sameObject: 0 = null! as X<O> & Y<O>;
+export const property: 0 = (null! as X<O> & Y<O>).a;
+export const throughConstraint: 0 = null! as Pick<O, "a"> & X<O> & Y<O>;
+export const otherObject: 0 = null! as X<O> & Y<{ a: 0; b: 0 }>;
+export const notMapped: 0 = null! as X<O> & { a: "y" };
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,14): error TS2322: Type 'X<O> & Y<O>' is not assignable to type '0'.
+        a.ts(6,14): error TS2322: Type 'Pick<O, "a"> & X<O> & Y<O>' is not assignable to type '0'."
+      `);
       expect(exitCode).toBe(1);
     });
 

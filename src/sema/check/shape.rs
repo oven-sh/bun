@@ -7800,10 +7800,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
         match unions[..] {
             [] => false,
-            [union] => seen.iter().any(|members| {
-                let mut props = members.shape().props.iter();
-                props.any(|prop| self.union_property(union, prop.name).is_some())
-            }),
+            // `somePropertyReducesToNever` counts the names that the union lists. It looks up none of the others' in it.
+            [union] => {
+                let listed = self.union_as_object(union);
+                self.members(listed).is_some_and(|listed| {
+                    let mut seen = seen.iter();
+                    seen.any(|members| members.resolved.shares_a_name_with(listed.resolved))
+                })
+            }
             _ => true,
         }
     }

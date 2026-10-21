@@ -81,7 +81,7 @@ pub(super) fn resolve_path(
     r: &mut bun_resolver::Resolver,
     path: &[u8],
 ) -> Result<Utf8Bytes<'static>, bun_resolver::Error> {
-    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
     let result = r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt)?;
     // No path: disabled, by a "browser" map for example.
     let text = result
@@ -129,7 +129,7 @@ impl Framework {
             .map(|rfr| bt::ReactFastRefresh {
                 import_source: rfr.import_source.as_ref().into(),
             });
-        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
         let client_page_dirs = self
             .file_system_router_types
             .iter()
@@ -149,7 +149,6 @@ impl Framework {
             built_in_modules,
             server_components,
             react_fast_refresh,
-            self.is_built_in_react,
             client_page_dirs,
         )
     }
@@ -181,15 +180,18 @@ impl Framework {
                 b"server components runtime",
             );
         }
-        for fsr in self.file_system_router_types.iter_mut() {
-            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-            fsr.root = Utf8Bytes::Owned(
-                bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(
-                    top_level_dir,
-                    &fsr.root,
-                )
-                .to_vec(),
-            );
+        for (i, fsr) in self.file_system_router_types.iter_mut().enumerate() {
+            match resolve_dir_option(&fsr.root) {
+                Some(root) => fsr.root = Utf8Bytes::Owned(root),
+                None => {
+                    bun_core::Output::err(
+                        "ENAMETOOLONG",
+                        "Failed to resolve 'fileSystemRouterTypes[{}].root' for framework",
+                        (i,),
+                    );
+                    had_errors = true;
+                }
+            }
             if let Some(entry_client) = &mut fsr.entry_client {
                 Self::resolve_helper(
                     &self.built_in_modules,
@@ -243,6 +245,18 @@ impl Framework {
             }
         }
     }
+}
+
+/// Joins a directory option onto the working directory.
+/// Returns `None` if the result is too long for `Resolver::read_dir_info`.
+pub(crate) fn resolve_dir_option(dir: &[u8]) -> Option<Vec<u8>> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let resolved = bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
+        bun_resolver::fs::FileSystem::get().top_level_dir(),
+        &mut buf[..bun_paths::MAX_PATH_BYTES - 1],
+        &[dir],
+    )?;
+    Some(bun_paths::string_paths::without_trailing_slash_windows_path(resolved).to_vec())
 }
 
 impl Framework {

@@ -340,7 +340,7 @@ pub trait LoaderExt: Copy {
     fn to_mime_type(self, paths: &[&[u8]]) -> bun_http_types::MimeType::MimeType;
     fn from_mime_type(mime_type: bun_http::MimeType) -> Loader;
 
-    // `fromJS` lives in `bun_bundler_jsc::options_jsc::loader_from_slice`
+    // `fromJS` lives in `bun_bundler_jsc::options_jsc::loader_from_js`
     // (PORTING.md "*_jsc alias" rule).
 
     // `is_type_script` / `is_java_script_like*` spelling-aliases

@@ -7618,6 +7618,41 @@ it("end() throws when statusCode is NaN", async () => {
   }
 });
 
+it.each([
+  ["chunk", 201, { ok: true }],
+  ["status code", null, "body"],
+])(
+  "end() that throws for its %s sends nothing, and the next end() sends the status and headers",
+  async (_, status, chunk) => {
+    const { promise, resolve } = Promise.withResolvers<unknown>();
+    const server = http.createServer((req, res) => {
+      // @ts-expect-error
+      res.statusCode = status;
+      res.setHeader("x-kept", "yes");
+      try {
+        // @ts-expect-error
+        res.end(chunk);
+      } catch {
+        resolve(res.headersSent);
+        res.statusCode = 201;
+        res.end("fallback");
+      }
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+      expect(await promise).toBe(false);
+      expect({ status: response.status, kept: response.headers.get("x-kept"), body: await response.text() }).toEqual({
+        status: 201,
+        kept: "yes",
+        body: "fallback",
+      });
+    } finally {
+      server.close();
+    }
+  },
+);
+
 it("addTrailers() and end() don't crash on the response of a request that was upgraded to a WebSocket", async () => {
   await using proc = Bun.spawn({
     cmd: [

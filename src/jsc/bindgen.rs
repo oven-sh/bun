@@ -490,6 +490,12 @@ impl<'a> JsBytes<'a> {
         }
     }
 
+    /// The argument itself.
+    #[inline]
+    pub fn value(self) -> JsLocal<'a> {
+        self.value
+    }
+
     /// `shared: "copied"` for `string: "asIs"`. Like [`get`](Self::get), but copies the bytes of a shared buffer into `copy` and returns those.
     #[inline]
     pub fn get_or_copy_if_shared<'heap>(
@@ -545,6 +551,21 @@ impl<'a> StringOrJsBytes<'a> {
             // SAFETY: forwarded.
             value: unsafe { JsLocal::from_extern(argument.value, heap) },
         })
+    }
+
+    /// # Safety
+    /// As [`from_extern`](Self::from_extern). C++ converts neither `undefined` nor `null`.
+    #[doc(hidden)]
+    #[inline]
+    pub unsafe fn from_extern_optional(
+        argument: extern_types::ExternWithValue<extern_types::ExternString>,
+        heap: &JsHeap<'a>,
+    ) -> Option<Self> {
+        if argument.value.is_undefined_or_null() {
+            return None;
+        }
+        // SAFETY: forwarded.
+        Some(unsafe { Self::from_extern(argument, heap) })
     }
 
     /// `held: "copied"`.

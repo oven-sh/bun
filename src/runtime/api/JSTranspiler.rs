@@ -6,11 +6,10 @@ use std::io::Write as _;
 
 use crate::Error;
 use crate::generated_bindgen::transpiler::{
-    LoaderOrMacroContext, TranspilerCode, TranspilerExternal, TranspilerMinify, TranspilerOptions,
-    TranspilerSourcemap,
+    TranspilerExternal, TranspilerMinify, TranspilerOptions, TranspilerSourcemap,
 };
 use crate::node::types::Buffer;
-use crate::node::{StringOrBuffer, ThreadIsolated};
+use crate::node::{Encoding, StringOrBuffer, ThreadIsolated};
 use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
 use bun_ast::Expr;
 use bun_ast::Loader;
@@ -23,7 +22,7 @@ use bun_js_parser::parser::Runtime;
 use bun_js_parser::parser::ScanPassResult;
 use bun_js_parser::{self as JSAst};
 use bun_js_printer as JSPrinter;
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper, StringOrJsBytes};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -111,32 +110,25 @@ impl Default for Config {
     }
 }
 
-use bun_bundler_jsc::options_jsc::loader_from_slice;
+use bun_bundler_jsc::options_jsc::loader_from_js;
 use bun_collections::index_sort;
 
 /// What `JSValue::get_truthy` gives for a member: `undefined`, `null` and `""` are absent.
-fn truthy_property_value(value: JSValue) -> Option<JSValue> {
-    if value.is_undefined_or_null() || (value.is_string() && !value.to_boolean()) {
-        return None;
-    }
-    Some(value)
-}
-
-/// Copies a buffer, unless the parser will reject its length: macros run JS that can write to, shrink or detach it.
+/// Reads the `code` argument. Copies a buffer because the loader's `toString()` and macros run JS that can
+/// write to, shrink or detach it. Skips the copy when the parser will reject the buffer for its length anyway.
 fn code_from_js(
     global: &JSGlobalObject,
-    value: TranspilerCode<'_>,
+    value: StringOrJsBytes<'_>,
 ) -> JsResult<StringOrBuffer<'static>> {
-    let buffer = match value {
-        TranspilerCode::Text(text) => {
-            return Ok(StringOrBuffer::String(text.into_utf8_with_string()));
-        }
-        TranspilerCode::Buffer(buffer) => Buffer::from_array_buffer(global, buffer.to_js()),
+    let mut parsed = StringOrBuffer::EMPTY;
+    StringOrBuffer::from_string_or_js_bytes_into(&mut parsed, global, value, Encoding::Utf8);
+    let StringOrBuffer::Buffer(buffer) = &parsed else {
+        return Ok(parsed);
     };
     if !buffer.buffer.can_change_under_borrow()
         && buffer.buffer.byte_len > bun_ast::Source::MAX_PARSEABLE_LEN
     {
-        return Ok(StringOrBuffer::Buffer(buffer));
+        return Ok(parsed);
     }
     match buffer.buffer.try_copy_bytes() {
         Some(copy) => Ok(StringOrBuffer::owned(copy)),
@@ -179,7 +171,7 @@ impl Config {
             return Ok(());
         };
 
-        if let Some(define) = truthy_property_value(object.define.to_js()) {
+        if let Some(define) = object.define.map(JsLocal::to_js) {
             'define: {
                 if define.is_undefined_or_null() {
                     break 'define;
@@ -252,16 +244,14 @@ impl Config {
             }
         }
 
-        if let Some(loader) = object.loader {
-            if let Some(resolved) = loader_from_slice(global, loader)? {
-                if !resolved.is_java_script_like() {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "only JavaScript-like loaders supported for now",
-                    )));
-                }
-
-                self.default_loader = resolved;
+        if let Some(resolved) = loader_from_js(global, object.loader.to_js())? {
+            if !resolved.is_java_script_like() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "only JavaScript-like loaders supported for now",
+                )));
             }
+
+            self.default_loader = resolved;
         }
 
         if let Some(target) = object.target {
@@ -308,7 +298,7 @@ impl Config {
 
         self.runtime.allow_runtime = false;
 
-        if let Some(macros) = truthy_property_value(object.r#macro.to_js()) {
+        if let Some(macros) = object.r#macro.map(JsLocal::to_js) {
             'macros: {
                 if macros.is_undefined_or_null() {
                     break 'macros;
@@ -394,13 +384,6 @@ impl Config {
                         self.minify_identifiers = syntax;
                     }
                 }
-                TranspilerMinify::String(minify) => {
-                    if !minify.is_empty() {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "Expected minify to be a boolean or an object",
-                        )));
-                    }
-                }
             }
         }
 
@@ -441,7 +424,7 @@ impl Config {
             let mut replacements = bun_ast::runtime::ReplaceableExportMap::default();
             // errdefer replacements.clearAndFree(allocator) → Drop on error path
 
-            if let Some(eliminate) = truthy_property_value(exports.eliminate.to_js()) {
+            if let Some(eliminate) = exports.eliminate.map(JsLocal::to_js) {
                 if !eliminate.js_type().is_array() {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "exports.eliminate must be an array",
@@ -504,7 +487,7 @@ impl Config {
                 }
             }
 
-            if let Some(replace) = truthy_property_value(exports.replace.to_js()) {
+            if let Some(replace) = exports.replace.map(JsLocal::to_js) {
                 let Some(replace_obj) = replace.get_object() else {
                     return Err(
                         global.throw_invalid_arguments(format_args!("replace must be an object"))
@@ -591,7 +574,7 @@ impl Config {
             self.runtime.replace_exports = replacements;
         }
 
-        if let Some(log_level) = object.log_level.filter(|level| !level.is_empty()) {
+        if let Some(log_level) = object.log_level {
             if let Some(level) = bun_ast::Level::MAP.get(log_level) {
                 self.log.level = *level;
             } else {
@@ -1247,20 +1230,15 @@ impl JSTranspiler {
     pub(crate) fn scan(
         &self,
         cx: &mut JsScope<'_>,
-        code_arg: TranspilerCode<'_>,
-        loader_arg: Option<&[u8]>,
+        code_arg: StringOrJsBytes<'_>,
+        loader_arg: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         jsc::mark_binding();
         let global = cx.global();
         let code_holder = code_from_js(global, code_arg)?;
         let code = code_holder.slice();
 
-        let loader: Option<Loader> = 'brk: {
-            if let Some(arg) = loader_arg {
-                break 'brk loader_from_slice(global, arg)?;
-            }
-            break 'brk None;
-        };
+        let loader: Option<Loader> = loader_from_js(global, loader_arg.to_js())?;
 
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
@@ -1321,36 +1299,31 @@ impl JSTranspiler {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        code_arg: TranspilerCode<'_>,
-        loader_arg: Option<&[u8]>,
+        code_arg: StringOrJsBytes<'_>,
+        loader_arg: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let cx = global.js_thread_of_caller_no_frame();
+        let js_thread = global.js_thread_of_caller_no_frame();
         jsc::mark_binding();
         let code = match code_arg {
-            TranspilerCode::Buffer(buffer) => {
-                let bytes = Buffer::from_array_buffer(global, buffer.to_js())
+            StringOrJsBytes::Bytes(buffer) => {
+                let bytes = Buffer::from_array_buffer(global, buffer.value().to_js())
                     .slice()
                     .to_vec();
                 global.vm().report_extra_memory(bytes.len());
                 StringOrBuffer::owned_isolated(bytes)
             }
-            TranspilerCode::Text(text) => StringOrBuffer::thread_isolated_string(global, text),
+            StringOrJsBytes::String(text) => StringOrBuffer::thread_isolated_string(global, text),
         };
 
-        let loader: Option<Loader> = 'brk: {
-            if let Some(arg) = loader_arg {
-                break 'brk loader_from_slice(global, arg)?;
-            }
-            break 'brk None;
-        };
+        let loader: Option<Loader> = loader_from_js(global, loader_arg.to_js())?;
 
         let default_loader = self.config.get().default_loader;
         Ok(TransformTask::schedule(
             self,
             this_value.to_js(),
             code,
-            &cx,
+            &js_thread,
             loader.unwrap_or(default_loader),
         ))
     }
@@ -1358,8 +1331,8 @@ impl JSTranspiler {
     pub(crate) fn transform_sync<'a>(
         &self,
         cx: &mut JsScope<'a>,
-        code_arg: TranspilerCode<'a>,
-        loader_or_context: LoaderOrMacroContext<'a>,
+        code_arg: StringOrJsBytes<'a>,
+        loader_or_context: JsLocal<'a>,
         context: JsLocal<'a>,
     ) -> JsResult<JSValue> {
         jsc::mark_binding();
@@ -1370,21 +1343,16 @@ impl JSTranspiler {
         let code = code_holder.slice();
 
         let mut js_ctx_value: JSValue = JSValue::ZERO;
-        let loader: Option<Loader> = match loader_or_context {
-            LoaderOrMacroContext::Loader(arg) => loader_from_slice(global, arg)?,
-            LoaderOrMacroContext::Context(arg) => {
-                let arg = arg.to_js();
-                if arg.is_number() {
-                    return Err(
-                        global.throw_invalid_arguments(format_args!("loader must be a string"))
-                    );
-                }
-
-                if arg.is_object() {
-                    js_ctx_value = arg;
-                }
-                None
+        let loader: Option<Loader> = 'brk: {
+            let arg = loader_or_context.to_js();
+            if arg.is_number() || arg.is_string() {
+                break 'brk loader_from_js(global, arg)?;
             }
+
+            if arg.is_object() {
+                js_ctx_value = arg;
+            }
+            break 'brk None;
         };
 
         let context = context.to_js();
@@ -1548,18 +1516,16 @@ impl JSTranspiler {
     pub(crate) fn scan_imports(
         &self,
         cx: &mut JsScope<'_>,
-        code_arg: TranspilerCode<'_>,
-        loader_arg: Option<&[u8]>,
+        code_arg: StringOrJsBytes<'_>,
+        loader_arg: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let code_holder = code_from_js(global, code_arg)?;
         let code = code_holder.slice();
 
         let mut loader: Loader = self.config.get().default_loader;
-        if let Some(arg) = loader_arg {
-            if let Some(l) = loader_from_slice(global, arg)? {
-                loader = l;
-            }
+        if let Some(l) = loader_from_js(global, loader_arg.to_js())? {
+            loader = l;
         }
 
         if !loader.is_java_script_like() {

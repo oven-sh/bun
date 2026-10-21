@@ -110,7 +110,7 @@ export const Element = b.class({
   proto: {
     after: contentOp(b.self.optional),
     append: contentOp(b.self.optional),
-    attributes: { getter: AttributeIterator.optional, capability: "heap" },
+    attributes: { getter: AttributeIterator.optional, capability: "js" },
     before: contentOp(b.self.optional),
     canHaveContent: { getter: b.bool.optional },
     getAttribute: { ...named, returns: b.string.utf8.nullable },
@@ -118,8 +118,8 @@ export const Element = b.class({
     namespaceURI: { getter: b.string.utf8.optional, cache: true },
     onEndTag: {
       ...chainable(b.self.nullable),
-      args: { handler: b.callable },
-      expected: { handler: "Expected a function" },
+      /** Not looked at once the element's handler has returned. */
+      args: { handler: b.any },
       capability: "js",
       throws: true,
     },

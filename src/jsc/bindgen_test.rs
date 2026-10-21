@@ -338,6 +338,20 @@ pub(crate) fn string_as_is_or_bytes<'a>(heap: &JsHeap<'a>, data: StringOrJsBytes
     }
 }
 
+pub(crate) fn string_as_is_or_bytes_if_any<'a>(
+    heap: &JsHeap<'a>,
+    data: Option<StringOrJsBytes<'a>>,
+) -> Option<Vec<u8>> {
+    data.map(|data| string_as_is_or_bytes(heap, data))
+}
+
+pub(crate) fn present_unless_empty_string(
+    number: Option<f64>,
+    value: Option<JsLocal<'_>>,
+) -> [bool; 2] {
+    [number.is_some(), value.is_some()]
+}
+
 pub(crate) fn bytes_of_are_same_memory(data: &[u8], again: &[u8]) -> bool {
     core::ptr::eq(data, again)
 }
@@ -431,20 +445,20 @@ impl TestCounter {
         self.increment(by)
     }
 
-    pub(crate) fn forget_tag<'a>(&self, this: JsWrapper<'a, Self>, heap: &JsHeap<'a>) {
+    pub(crate) fn forget_tag<'a>(&self, this_value: JsWrapper<'a, Self>, heap: &JsHeap<'a>) {
         // SAFETY: storing a value runs no JavaScript.
-        js_TestCounter::tag_set_cached(this.to_js(), unsafe { heap.global() }, JSValue::ZERO);
+        js_TestCounter::tag_set_cached(this_value.to_js(), unsafe { heap.global() }, JSValue::ZERO);
     }
 
     pub(crate) fn listen<'a>(
         &self,
-        this: JsWrapper<'a, Self>,
+        this_value: JsWrapper<'a, Self>,
         heap: &JsHeap<'a>,
         listener: JsLocal<'a>,
     ) {
         // SAFETY: storing a value runs no JavaScript.
         js_TestCounter::listener_set_cached(
-            this.to_js(),
+            this_value.to_js(),
             unsafe { heap.global() },
             listener.to_js(),
         );
@@ -550,24 +564,28 @@ impl TestRefCounted {
         self.value.set(value);
     }
 
-    pub(crate) fn get_listener(&self, this: JsWrapper<'_, Self>) -> JSValue {
-        js_TestRefCounted::listener_get_cached(this.to_js()).unwrap_or(JSValue::UNDEFINED)
+    pub(crate) fn get_listener(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
+        js_TestRefCounted::listener_get_cached(this_value.to_js()).unwrap_or(JSValue::UNDEFINED)
     }
 
     pub(crate) fn set_listener(
         &self,
-        this: JsWrapper<'_, Self>,
+        this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         value: JsLocal<'_>,
     ) {
-        js_TestRefCounted::listener_set_cached(this.to_js(), cx.global(), value.to_js());
+        js_TestRefCounted::listener_set_cached(this_value.to_js(), cx.global(), value.to_js());
     }
 
-    pub(crate) fn notify(&self, this: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<i32> {
-        if let Some(listener) = js_TestRefCounted::listener_get_cached(this.to_js())
+    pub(crate) fn notify(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+    ) -> JsResult<i32> {
+        if let Some(listener) = js_TestRefCounted::listener_get_cached(this_value.to_js())
             && listener.is_callable()
         {
-            listener.call(cx.global(), this.to_js(), &[])?;
+            listener.call(cx.global(), this_value.to_js(), &[])?;
         }
         Ok(self.value.get())
     }
@@ -583,9 +601,9 @@ impl TestRefCounted {
 
     pub(crate) fn or_undefined<'a>(
         &self,
-        this: JsWrapper<'a, Self>,
+        this_value: JsWrapper<'a, Self>,
     ) -> Option<JsWrapper<'a, Self>> {
-        (self.value.get() >= 0).then_some(this)
+        (self.value.get() >= 0).then_some(this_value)
     }
 
     pub(crate) fn is_same(&self, other: Option<&Self>) -> bool {

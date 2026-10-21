@@ -16,7 +16,7 @@ use bun_jsc::{
 use bun_jsc::virtual_machine::VirtualMachine;
 
 use bun_collections::ByteVecExt;
-use bun_jsc::bindgen::{self, Callable, JsHeap, JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_ptr::{BackRef, CellRefCounted, DetachablePtr, RawSlice, RefPtr};
 use bun_sys::Error as SysError;
 
@@ -2552,7 +2552,7 @@ fn create_lolhtml_error(global: &JSGlobalObject, message: &dyn core::fmt::Displa
     value
 }
 
-/// [`create_lolhtml_error`], for a member of `html_rewriter.bind.ts` to return.
+/// [`create_lolhtml_error`] as a `bindgen::Error`.
 #[cold]
 fn lolhtml_error<'a>(heap: &JsHeap<'a>, message: &dyn core::fmt::Display) -> bindgen::Error<'a> {
     // SAFETY: it makes an `Error` and a string, and defines `name`.
@@ -2572,7 +2572,7 @@ fn utf8_or_throw<'a>(global: &JSGlobalObject, bytes: &'a [u8]) -> JsResult<&'a s
     core::str::from_utf8(bytes).map_err(|e| global.throw_value(create_lolhtml_error(global, &e)))
 }
 
-/// [`utf8_or_throw`], for a member of `html_rewriter.bind.ts`.
+/// [`utf8_or_throw`] with a `bindgen::Error`.
 fn utf8_or_error<'a, 'b>(heap: &JsHeap<'a>, bytes: &'b [u8]) -> bindgen::Result<'a, &'b str> {
     core::str::from_utf8(bytes).map_err(|e| lolhtml_error(heap, &e))
 }
@@ -2877,7 +2877,6 @@ impl_wrapper_like!(EndTag, RawEndTag, end_tag, suspended_end_tag);
 // ───────────────────────── AttributeIterator ─────────────────────────────
 
 /// `AttributeIterator`, declared in `html_rewriter.bind.ts`.
-/// The JS `AttributeIterator` heap-boxes one of these over `Element::attributes`
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct AttributeIterator {
     // Intrusive RefCount; the JS wrapper holds one ref.
@@ -3004,12 +3003,18 @@ impl Element {
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        function: JsLocal<'a, Callable>,
+        function: JsLocal<'a>,
     ) -> bindgen::Result<'a, Option<JsWrapper<'a, Self>>> {
         let global_object = cx.global();
+        let function = function.to_js();
         let Some(el) = self.element.get_mut() else {
             return Ok(None);
         };
+        if function.is_undefined_or_null() || !function.is_callable() {
+            return Err(global_object
+                .throw_type_error(format_args!("Expected a function"))
+                .into());
+        }
 
         // Every matching `on()` handler gets this lol-html element: its user data keeps the slot.
         let replaced = el.user_data().downcast_ref::<EndTagSlot>().copied();
@@ -3023,7 +3028,7 @@ impl Element {
 
         // Only `invalidate()` clears `pipe`, and it detaches `element` in the same call.
         let pipe = self.pipe.get().expect("attached Element without its pipe");
-        let slot = pipe.hold_end_tag_callback(global_object, replaced, function.to_js())?;
+        let slot = pipe.hold_end_tag_callback(global_object, replaced, function)?;
         let (Some(slot), None) = (slot, replaced) else {
             // No end tag can come, or the earlier call's handler now reads the new callback.
             return Ok(Some(this_value));
@@ -3187,9 +3192,8 @@ impl Element {
         Some(self.element.get_mut()?.namespace_uri())
     }
 
-    pub(crate) fn get_attributes(&self, heap: &JsHeap<'_>) -> Option<JSValue> {
-        // SAFETY: making the iterator's object runs no JavaScript.
-        let global_object = unsafe { heap.global() };
+    pub(crate) fn get_attributes(&self, cx: &mut JsScope<'_>) -> Option<JSValue> {
+        let global_object = cx.global();
         if self.element.is_detached() {
             return None;
         }

@@ -26,7 +26,7 @@ export const AddrInfoHint = b.union({ label: b.string.utf8, number: b.f64 });
 
 export const LookupOptions = b.dictionary(
   {
-    port: b.f64.falsyAsNull,
+    port: b.f64.emptyStringAsNull,
     family: AddrInfoHint.nullable,
     socketType: { type: AddrInfoHint.nullable, rustName: "socktype", altNames: ["socktype"] },
     protocol: AddrInfoHint.nullable,

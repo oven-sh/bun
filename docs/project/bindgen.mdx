@@ -59,7 +59,7 @@ pub fn add<'a>(heap: &JsHeap<'a>, a: i32, b: i32) -> bindgen::Result<'a, i32> {
 `requiredAndOptionalArg` is `required_and_optional_arg` there. A `rustPath` key on
 a function gives its full path instead. `length` sets the function's `.length`,
 which is otherwise the number of arguments up to the last that is not written
-`.optional`, `.nullable`, `.falsyAsNull` or `.default()`. The ones after that are
+`.optional`, `.nullable`, `.falsyAsNull`, `.emptyStringAsNull` or `.default()`. The ones after that are
 the ones TypeScript lets a caller leave out.
 
 A function of a `node:*` module names what Node's own source expects of an argument:
@@ -123,8 +123,8 @@ and `&mut self` for its object, because nothing can invalidate either while it
 runs.
 
 The compiler holds a body to its capability as far as this API goes. The older API has
-other ways to a `&JSGlobalObject` (`VirtualMachine::get().global()`), and a body that
-takes one of those to run JavaScript has stepped around the check.
+other ways to a `&JSGlobalObject` (`VirtualMachine::get().global()`, a field of the struct), and a
+body that takes one of those to run JavaScript has stepped around the check.
 
 Much of the older API takes a `&JSGlobalObject` only to allocate or to throw. A `"heap"`
 function calls it with `heap.global()`, which is `unsafe`: nothing the global object is passed
@@ -228,6 +228,7 @@ These come last, in this order (`b.any` already takes `undefined` and `null`, so
 - `.optional`: `undefined` means absent; `Option<T>`.
 - `.nullable`: `null` or `undefined` means absent; `Option<T>`.
 - `.falsyAsNull`: every falsy value means absent; `Option<T>`.
+- `.emptyStringAsNull`: `undefined`, `null` or `""` means absent, as for `JSValue::get_truthy`; `Option<T>`.
 - `.default(value)`: what to use when absent; `T`. `.nullable.default(value)` also applies to `null`.
 
 As results, `b.string.utf8` is anything that is `AsRef<[u8]>` and `b.array(T)` anything that
@@ -461,8 +462,9 @@ An option that cannot apply is a build error: `refuse` of `undefined` or `null` 
 of a `String` object with it or where no string is taken, `string` where no
 string is taken, `shared` where no buffer is taken or `held: "copied"` copies it anyway. So is
 what no function needs yet, which is not written: `"asIs"` without `"handle"` or that copies a
-shared buffer, `"pinned"` that takes a `Blob` or copies a shared buffer, and a `"pinned"` argument
-next to another or next to a `"borrowed"` one.
+shared buffer, `"pinned"` that takes a `Blob` or copies a shared buffer, a `"pinned"` argument
+next to another or next to a `"borrowed"` one, and `.optional` or `.nullable` of `"copied"`, `"pinned"`
+or a `"handle"` that is not `"asIs"`.
 
 ## Values and lifetimes
 
@@ -521,11 +523,12 @@ impl Glob {
 | Parameter, in order                         | When                                                                |
 | ------------------------------------------- | ------------------------------------------------------------------- |
 | [the receiver](#the-receiver)               | not in `static` or `construct`                                      |
-| `this: JsWrapper<'a, Self>`                 | `passThis: true`                                                    |
+| `this_value: JsWrapper<'a, Self>`           | `passThis: true`                                                    |
 | `heap: &JsHeap<'a>`, `cx: &mut JsScope<'a>` | [`capability`](#what-a-function-may-do-capability) `"heap"`, `"js"` |
 | one for each of `args`                      |                                                                     |
 
-Arguments, results, `capability` and `throws` are those of a function.
+Arguments, results, `capability` and `throws` are those of a function. The generated code is in
+`crate::generated_bindgen`, so a member is at least `pub(crate)`.
 
 The struct, the _payload_, is stored **inside** the JS object, the _wrapper_, so the
 two have one lifetime and one allocation. It is dropped when the object is
@@ -556,19 +559,20 @@ A class that JavaScript names but cannot make, like `Crypto`, declares
 
 A property of `proto` is one of these.
 
-| Property                                    | What it is                                                                                 |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `{ args, returns, capability, throws, .. }` | a native function; `privateSymbol` keys it by a private name of `src/js`                   |
-| `{ getter: T, capability, throws }`         | an accessor; with `setter` it can be assigned                                              |
-| `{ getter: T, cache: true \| "field", .. }` | an accessor that returns an [internal field](#internalfields); no setter                   |
-| `{ internalField: "field", setter }`        | an accessor that reads the field, and with `setter` stores any value, without calling Rust |
-| `{ builtin: true, length }`                 | the export of that name in `src/js/builtins/<class name>.ts`                               |
-| `[{ rustName, args, .. }, ..]`              | a native function with [overloads](#overloads)                                             |
+| Property                                      | What it is                                                                                 |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `{ args, returns, capability, throws, .. }`   | a native function; `privateSymbol` keys it by a private name of `src/js`                   |
+| `{ getter: T, capability, throws, passThis }` | an accessor; with `setter` it can be assigned                                              |
+| `{ getter: T, cache: true \| "field", .. }`   | an accessor that returns an [internal field](#internalfields); no setter                   |
+| `{ internalField: "field", setter }`          | an accessor that reads the field, and with `setter` stores any value, without calling Rust |
+| `{ builtin: true, length }`                   | the export of that name in `src/js/builtins/<class name>.ts`                               |
+| `[{ rustName, args, .. }, ..]`                | a native function with [overloads](#overloads)                                             |
 
 The properties are in the order of the schema, which `for-in` and `Object.keys` show. The Rust
 function is named after the property, and `rustName` names it otherwise, which tells apart the
 overloads of a function, and two members of `proto` and `static` that share a name. Two keys can
-also have the same `rustName`. The getter of `x` is `get_x` and its setter is `set_x`.
+also have the same `rustName`. The getter of `x` is `get_x` and its setter is `set_x`, and a leading
+`_` of the property is dropped: `_idleStart` is `get_idle_start`.
 `setter: true` gives the setter the getter's `capability`, and `setter: { capability: "js" }` its own. An
 accessor of `static` ignores its receiver, so a subclass inherits it.
 
@@ -605,7 +609,7 @@ undefined behaviour, so it gets the wrapper instead and borrows the payload for 
 long as nothing else can run:
 
 ```rust
-fn notify<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> bindgen::Result<'a, i32> {
+pub(crate) fn notify<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> bindgen::Result<'a, i32> {
     if let Some(listener) = js_TestCounter::listener_get_cached(this.to_js())
         && let Some(listener) = JsLocal::new(&cx.heap, listener).as_callable()
     {
@@ -622,7 +626,7 @@ allocating or viewing a buffer inside the closure is fine.
 ### `internalFields`
 
 `internalFields: ["callback"]` on `CronJob` generates these in the module `js_CronJob`, next to the schema's types.
-`this_value` is the object: `this.to_js()` in a member with `passThis: true`.
+`this_value` is the object: `this_value.to_js()` in a member with `passThis: true`.
 
 | Function                                                 | What it does                        |
 | -------------------------------------------------------- | ----------------------------------- |

@@ -6200,7 +6200,7 @@ it("hexadecimal, octal and binary literals are rounded to the nearest double", (
   expect(BigInt(0xb3c8bf81fdf2247) - 0xb3c8bf81fdf2247n).toBe(57n);
 });
 
-it("transformSync, scan and scanImports read the code after loader.toString() detaches it", async () => {
+it("transformSync, scan and scanImports parse the original code when loader.toString() detaches it", async () => {
   const script = `
     const transpiler = new Bun.Transpiler({ loader: "js" });
     const size = 1 << 16;
@@ -6235,7 +6235,11 @@ it("transformSync, scan and scanImports read the code after loader.toString() de
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ results: stdout && JSON.parse(stdout), stderr }).toEqual({
-    results: { transformSync: "", scan: { exports: [], imports: [] }, scanImports: [] },
+    results: {
+      transformSync: 'import"original";\nexport const original = 1;\n',
+      scan: { exports: ["original"], imports: [{ path: "original", kind: "import-statement" }] },
+      scanImports: [{ path: "original", kind: "import-statement" }],
+    },
     stderr: "",
   });
   expect(exitCode).toBe(0);

@@ -3113,10 +3113,8 @@ it("a missing argument is treated as undefined", () => {
     code: "ERR_INVALID_ARG_TYPE",
     message: "Expected string",
   });
-  const notAFunction = { name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: "Expected a function" };
-  expect(missing["element.onEndTag()"]).toEqual(notAFunction);
-  expect(missing["detached.onEndTag()"]).toEqual(notAFunction);
-  expect(detached.onEndTag(() => {})).toBeNull();
+  expect(missing["element.onEndTag()"]).toEqual({ name: "TypeError", code: undefined, message: "Expected a function" });
+  expect(missing["detached.onEndTag()"]).toEqual({ returned: null });
 });
 
 describe("tagName, endTag.name, and comment.text setters", () => {

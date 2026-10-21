@@ -380,7 +380,7 @@ impl CryptoHasher {
 
     pub(crate) fn update_string<'a>(
         &mut self,
-        this: JsWrapper<'a, Self>,
+        this_value: JsWrapper<'a, Self>,
         heap: &JsHeap<'a>,
         input: &bun_core::String,
         encoding: Option<&'a [u8]>,
@@ -399,17 +399,17 @@ impl CryptoHasher {
             }
             encoding => self.update(heap, &input.encode(encoding))?,
         }
-        Ok(this)
+        Ok(this_value)
     }
 
     pub(crate) fn update_bytes<'a>(
         &mut self,
-        this: JsWrapper<'a, Self>,
+        this_value: JsWrapper<'a, Self>,
         heap: &JsHeap<'a>,
         input: &'a [u8],
     ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
         self.update(heap, input)?;
-        Ok(this)
+        Ok(this_value)
     }
 
     pub(crate) fn digest<'a>(
@@ -692,7 +692,7 @@ macro_rules! static_hasher {
 
             pub(crate) fn update<'a>(
                 &mut self,
-                this: JsWrapper<'a, Self>,
+                this_value: JsWrapper<'a, Self>,
                 heap: &JsHeap<'a>,
                 input: &'a [u8],
             ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
@@ -700,7 +700,7 @@ macro_rules! static_hasher {
                     return Err(already_digested(heap, stringify!($name), "update"));
                 }
                 self.hashing.update(input);
-                Ok(this)
+                Ok(this_value)
             }
 
             pub(crate) fn digest<'a>(

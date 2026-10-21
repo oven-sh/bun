@@ -520,7 +520,10 @@ describe("@types/bun integration test", () => {
             checker.getTypeOfSymbol(generated.getProperty(file)!),
           ).map(promise => `${file}: ${promise}`),
         ),
-    ).toEqual([]);
+    ).toEqual([
+      // Published, and nothing has ever read it.
+      "Transpiler.bind.ts: new Transpiler(options?: TranspilerOptions | undefined): Transpiler: options has no jsxOptimizationInline",
+    ]);
   });
 
   // The fixture depends on typescript@latest, so this is the current stable release:

@@ -3,11 +3,10 @@ use bun_jsc::virtual_machine::VirtualMachine;
 
 use super::{Kind, TimerObjectInternals};
 
-// Struct + `RefCounted`/`Default` impls + the
+// `Immediate`, declared in `Timer.bind.ts`. Struct + `RefCounted`/`Default` impls + the
 // forwarder host-fns (`to_primitive`/`do_ref`/`do_unref`/`has_ref`/
 // `get_destroyed`/`dispose`/`constructor`/`finalize`/`ref_`/`deref`/`deinit`/
 // `init_with`) — see `impl_timer_object!` in `super` (timer/mod.rs).
-// `Immediate`, declared in `Timer.bind.ts`.
 super::impl_timer_object!(ImmediateObject, ImmediateObject, "Immediate");
 
 impl ImmediateObject {

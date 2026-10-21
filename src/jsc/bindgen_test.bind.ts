@@ -197,6 +197,17 @@ export const stringAsIsOrBytes = b.fn({
   returns: b.array(b.u8),
   capability: "heap",
 });
+/** As `stringAsIsOrBytes`, or nothing. */
+export const stringAsIsOrBytesIfAny = b.fn({
+  args: { data: b.bytes({ from: ["string", "buffer"], string: "asIs", held: "handle" }).nullable },
+  returns: b.array(b.u8).nullable,
+  capability: "heap",
+});
+/** Which of the two are present. */
+export const presentUnlessEmptyString = b.fn({
+  args: { number: b.f64.emptyStringAsNull, value: b.any.emptyStringAsNull },
+  returns: b.array(b.bool),
+});
 export const asBigInt = b.fn({ args: { value: b.u64.allowBigInt }, returns: b.u64.asBigInt });
 
 export const TestFailure = b.enumeration(["type", "range", "plain", "code", "syscall", "outOfMemory", "value"]);

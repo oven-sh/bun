@@ -1,6 +1,8 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 
+use bun_jsc::bindgen::JsScope;
+
 use crate::generated_bindgen::js_my_sql_connection::js_MySQLConnection as js;
 use crate::jsc::{
     AutoFlush, CallFrame, EventLoopSqlExt as _, EventLoopTimerTag, GlobalRef, JSGlobalObject,
@@ -394,7 +396,7 @@ impl JSMySQLConnection {
         this.register_auto_flusher();
     }
 
-    pub fn do_close(this: &Self) {
+    pub fn do_close(this: &Self, _: &mut JsScope<'_>) {
         let _entered = this.entered_from_js();
         this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
     }
@@ -404,7 +406,7 @@ impl JSMySQLConnection {
         this.reset_connection_timeout();
     }
 
-    pub fn do_unhold(this: &Self) {
+    pub fn do_unhold(this: &Self, _: &mut JsScope<'_>) {
         let _entered = this.entered_from_js();
         this.timers.set_checked_out(false);
         this.on_queue_changed();

@@ -3592,7 +3592,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
       } catch (e) {
         releaseRenderedHeaders(renderedHeaders);
         // Mirror the old two-call flow's headersSent semantics: errors from
-        // the write-head phase (the batch's upfront gate, status validation,
+        // the write-head phase (the batch's upfront gate, argument validation,
         // headers-already-sent) leave the state unset; anything after that
         // point threw with headers already on the wire, exactly like
         // handle.end throwing after handle.writeHead succeeded.
@@ -3601,6 +3601,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
           code !== "ERR_STREAM_ALREADY_FINISHED" &&
           code !== "ERR_HTTP_HEADERS_SENT" &&
           code !== "ERR_INVALID_CHAR" &&
+          code !== "ERR_INVALID_ARG_TYPE" &&
           !(e instanceof RangeError)
         ) {
           this[headerStateSymbol] = sentState;

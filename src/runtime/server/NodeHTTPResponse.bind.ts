@@ -1,9 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
-export const Chunk = b.union({ text: b.string.allowStringObject, buffer: b.bufferSource.allowShared });
-/** `other`: a function is the callback, a falsy value is the default, and it is only checked if there is a chunk. */
-export const ChunkEncoding = b.union({ name: b.string.utf8, other: b.any });
-
 const eventHandler = { getter: b.any, setter: { capability: "js" }, passThis: true } as const;
 const head = {
   statusCode: b.i32.validateInteger(100, 999).default(200),
@@ -13,7 +9,11 @@ const head = {
 };
 const autoHeaders = { autoHeaderBits: b.u32.default(0), keepAliveTimeoutSecs: b.u32.default(0) };
 const method = { returns: b.any, capability: "js", throws: true } as const;
-const chunk = { chunk: Chunk.nullable, encoding: ChunkEncoding };
+const chunk = {
+  chunk: b.bytes({ from: ["string", "buffer"], string: "asIs", held: "handle" }).nullable,
+  /** Read only if there is a chunk. */
+  encoding: b.any,
+};
 const strictContentLength = b.f64.optional;
 const body = { ...chunk, callback: b.callable.optional, strictContentLength };
 
@@ -55,6 +55,7 @@ export const NodeHTTPResponse = b.class({
       ...method,
       args: { ...head, ...chunk, strictContentLength, ...autoHeaders },
       passThis: true,
+      length: 8,
     },
     writeInformational: { args: chunk, capability: "js", throws: true, length: 1 },
   },

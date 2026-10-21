@@ -18,6 +18,10 @@ template<typename IDL>
 struct IDLHumanReadableName<Bindgen::IDLFalsyAsNull<IDL>>
     : IDLHumanReadableName<WebCore::IDLNullable<IDL>> {};
 
+template<typename IDL>
+struct IDLHumanReadableName<Bindgen::IDLEmptyStringAsNull<IDL>>
+    : IDLHumanReadableName<WebCore::IDLNullable<IDL>> {};
+
 template<HasIDLHumanReadableName IDL>
 struct IDLHumanReadableName<Bindgen::IDLArray<IDL>> : BaseIDLHumanReadableName {
     static constexpr bool hasPreposition = true;
@@ -285,6 +289,28 @@ struct WebCore::Converter<Bun::Bindgen::IDLFalsyAsNull<IDL>>
     static ReturnType convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
     {
         if (!value.toBoolean(&globalObject))
+            return IDL::nullValue();
+        return Bun::convertIDL<IDL>(globalObject, value, ctx);
+    }
+};
+
+namespace Bun::Bindgen {
+inline bool isUndefinedOrNullOrEmptyString(JSC::JSValue value)
+{
+    return value.isUndefinedOrNull() || (value.isString() && !asString(value)->length());
+}
+}
+
+template<typename IDL>
+struct WebCore::Converter<Bun::Bindgen::IDLEmptyStringAsNull<IDL>>
+    : Bun::DefaultContextConverter<Bun::Bindgen::IDLEmptyStringAsNull<IDL>> {
+
+    using ReturnType = WebCore::Converter<WebCore::IDLNullable<IDL>>::ReturnType;
+
+    template<Bun::IDLConversionContext Ctx>
+    static ReturnType convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
+    {
+        if (Bun::Bindgen::isUndefinedOrNullOrEmptyString(value))
             return IDL::nullValue();
         return Bun::convertIDL<IDL>(globalObject, value, ctx);
     }

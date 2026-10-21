@@ -582,11 +582,14 @@ function cppDeclareConverted(
   ];
 }
 
-/** EnsureStillAliveScope is for a pointer a conversion takes out of the value. */
+/** EnsureStillAliveScope is for a pointer a conversion takes out of the value. A Rust type with no lifetime has none. */
 const cppHeldValue = (type: Type, variable: string) =>
-  type.isValueItself
+  type.returnsValueUnchanged || !(type.needsLifetime || type.borrowsCell || type.passesValue)
     ? { holder: "JSC::JSValue", value: variable }
     : { holder: "JSC::EnsureStillAliveScope", value: `${variable}.value()` };
+
+/** The C ABI copies an argument that does not fit two registers. */
+const isPassedByPointer = (type: Type) => type.layout().size > 16;
 
 /** Converts the arguments, then returns what `symbol(globalObject, ...leading, ...converted)` returns, or ends with the lines `finish` makes from that call. */
 function cppCallBody(
@@ -618,9 +621,12 @@ function cppCallBody(
   });
   lines.push(...readLast);
   const args = signature.args.map(({ type }, i) => {
-    return type.passesValue
+    const extern = type.passesValue
       ? `${externType(type)} { ${toExtern(`converted${i}`)}, JSC::JSValue::encode(argument${i}.value()) }`
       : toExtern(`converted${i}`);
+    if (!isPassedByPointer(type)) return extern;
+    lines.push(`auto extern${i} = ${extern};`);
+    return `&extern${i}`;
   });
   lines.push(...finish(`${symbol}(${["globalObject", ...leading, ...args].join(", ")})`));
   return lines.map(line => `    ${line}`).join("\n");
@@ -635,7 +641,7 @@ const cppExtern = (
   leading: readonly string[] = [],
   returns = "JSC::EncodedJSValue",
 ) =>
-  `extern "C" ${returns} ${symbol}(${["JSC::JSGlobalObject*", ...leading, ...signature.args.map(arg => externType(arg.type))].join(", ")});`;
+  `extern "C" ${returns} ${symbol}(${["JSC::JSGlobalObject*", ...leading, ...signature.args.map(arg => externType(arg.type) + (isPassedByPointer(arg.type) ? "*" : ""))].join(", ")});`;
 
 // ───────────────────────────── C++: classes ─────────────────────────────
 
@@ -676,7 +682,7 @@ function cppHeaderForClass(type: ClassType): string {
   const { name, refCounted } = type;
   const hasFields = type.internalFields.length > 0;
   return `
-extern "C" const size_t ${symbolName(type, refCounted ? "wrappedSize" : "payloadSize")};
+extern "C" const size_t ${symbolName(type, "structSize")};
 extern "C" void ${classSymbolName(type, "finalize")}(void*);
 namespace Bun::Bindgen::Generated {
 class JS${name} final : public JSC::JSDestructibleObject {
@@ -713,7 +719,7 @@ ${
     void* wrapped() const { return m_wrapped; }`
     : `    // The payload is uninitialized: the caller writes it before anything else can run.
     static JS${name}* create(JSC::VM&, JSC::Structure*);
-    static size_t allocationSize() { return sizeof(JS${name}) + ${symbolName(type, "payloadSize")}; }
+    static size_t allocationSize() { return sizeof(JS${name}) + ${symbolName(type, "structSize")}; }
     void* payload() { return this + 1; }`
 }
 
@@ -746,11 +752,11 @@ function cppSourceForCell(type: ClassType): string {
   const payload = refCounted ? "m_wrapped" : "payload()";
   return `
 const JSC::ClassInfo ${cpp}::s_info = { ${asciiLiteral(name)}, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${cpp}) };
-static_assert(sizeof(JSC::JSDestructibleObject) == ${offsetOfInternalFields} && sizeof(${cpp}) == ${offsetOfPayload(type) + (refCounted ? 8 : 0)});
-
+static_assert(sizeof(${cpp}) == ${offsetOfPayload(type) + (refCounted ? 8 : 0)});
+${type.internalFields.map((field, i) => `static_assert(OBJECT_OFFSETOF(${cpp}, m_${field}) == ${offsetOfInternalField(i)});\n`).join("")}
 ${cpp}* ${cpp}::create(JSC::VM& vm, JSC::Structure* structure${refCounted ? ", void* wrapped" : ""})
 {
-    auto* object = new (NotNull, JSC::allocateCell<${cpp}>(vm${refCounted ? "" : ", allocationSize()"})) ${cpp}(vm, structure${refCounted ? ", wrapped" : ""});
+${refCounted ? `    static_assert(OBJECT_OFFSETOF(${cpp}, m_wrapped) == ${offsetOfPayload(type)});\n` : ""}    auto* object = new (NotNull, JSC::allocateCell<${cpp}>(vm${refCounted ? "" : ", allocationSize()"})) ${cpp}(vm, structure${refCounted ? ", wrapped" : ""});
     object->finishCreation(vm);
     return object;
 }
@@ -765,7 +771,7 @@ ${
     ? `
 size_t ${cpp}::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 {
-    return Base::estimatedSize(cell, vm) + ${symbolName(type, "wrappedSize")};
+    return Base::estimatedSize(cell, vm) + ${symbolName(type, "structSize")};
 }
 `
     : ""
@@ -891,6 +897,7 @@ ${
 }
 `;
   if (getter.hasSetter) {
+    assert(!isPassedByPointer(getter.type), `${type.name}.${getter.name}: a setter takes what fits two registers`);
     const { holder, value } = cppHeldValue(getter.type, "assigned");
     text += `
 extern "C" bool ${setSymbol}(JSC::JSGlobalObject*, JSC::JSCell*, ${externType(getter.type)});
@@ -1067,8 +1074,8 @@ ${cppConstructorSignature(type)}
 }
 
 /** sizeof(JSC::JSDestructibleObject) */
-const offsetOfInternalFields = 24;
-const offsetOfPayload = (type: ClassType) => offsetOfInternalFields + 8 * type.internalFields.length;
+const offsetOfInternalField = (index: number) => 24 + 8 * index;
+const offsetOfPayload = (type: ClassType) => offsetOfInternalField(type.internalFields.length);
 
 /** Defines the host function `name`. `takeThis` declares `thisObject`, which is then the thunks' first argument. */
 function cppHostFunction(
@@ -1239,7 +1246,9 @@ function rustBorrow(type: Type) {
   return inner instanceof DictionaryType || isString ? "&" : "";
 }
 const rustExternParameters = (signature: Signature, scope: RustScope) =>
-  signature.args.map(arg => `${rustArgumentName(arg)}: ${arg.type.rustExternType(scope)}`);
+  signature.args.map(
+    arg => `${rustArgumentName(arg)}: ${isPassedByPointer(arg.type) ? "*mut " : ""}${arg.type.rustExternType(scope)}`,
+  );
 const rustArguments = (signature: Signature) =>
   signature.args.map(arg => `${rustBorrow(arg.type)}${rustArgumentName(arg)}`);
 /** Each argument gets the call's lifetime here: left to inference in the call, a body could ask for `'static`. */
@@ -1249,7 +1258,7 @@ function rustTakeArguments(args: readonly { name: string; type: Type }[], scope:
     .toSorted((a, b) => +a.type.rustFromExternThrows - +b.type.rustFromExternThrows)
     .flatMap(arg => {
       const name = rustArgumentName(arg);
-      const converted = arg.type.rustFromExtern(name, scope);
+      const converted = arg.type.rustFromExtern(isPassedByPointer(arg.type) ? `${name}.read()` : name, scope);
       if (arg.type.rustFromExternThrows)
         return [
           `let ${name} = match ${converted} {\n    Ok(value) => value,\n    Err(error) => return error.into_host_fn_return(cx),\n};\n`,
@@ -1459,7 +1468,7 @@ ${type.members.map(member => `            ${value(member)},`).join("\n")}
   return text;
 }
 
-/** The thunks call the struct's own methods, as those of a function call it by its path. */
+/** Thunks call the struct's inherent methods by path. */
 function rustForClass(type: ClassType, scope: RustScope): string {
   const { rustPath, refCounted } = type;
   const receiverArgument = {
@@ -1564,7 +1573,7 @@ unsafe impl bindgen::JsPayload for ${rustPath} {
 // A cell is at a multiple of 8, and so is the payload in it.
 const _: () = assert!(align_of::<${rustPath}>() <= 8);
 #[unsafe(no_mangle)]
-pub static ${symbolName(type, "payloadSize")}: usize = size_of::<${rustPath}>();
+pub static ${symbolName(type, "structSize")}: usize = size_of::<${rustPath}>();
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(payload: *mut ${rustPath}) {
     // SAFETY: the sweeper calls this once, on an initialized payload nothing refers to.
@@ -1581,7 +1590,7 @@ unsafe extern "C" {
     fn ${symbolName(type, "create")}(global: *mut JSGlobalObject, wrapped: *mut core::ffi::c_void) -> JSValue;
 }
 #[unsafe(no_mangle)]
-pub static ${symbolName(type, "wrappedSize")}: usize = size_of::<${rustPath}>();
+pub static ${symbolName(type, "structSize")}: usize = size_of::<${rustPath}>();
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(wrapped: *mut ${rustPath}) {
     // SAFETY: the sweeper calls this once, with the pointer the object holds a ref on.
@@ -1648,7 +1657,7 @@ ${
 }${type.internalFields
     .map((field, index) => {
       const id = snakeCase(field);
-      const offset = offsetOfInternalFields + 8 * index;
+      const offset = offsetOfInternalField(index);
       return `    /// \`None\` if the field is empty.
     #[inline]
     pub fn ${id}_get_cached(this_value: JSValue) -> Option<JSValue> {

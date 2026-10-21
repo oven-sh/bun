@@ -167,6 +167,10 @@ export abstract class Type {
   get falsyAsNull(): OptionalType {
     return new OptionalType(this, "falsyAsNull");
   }
+  /** `undefined`, `null` or `""` means absent, as for `JSValue::get_truthy`. */
+  get emptyStringAsNull(): OptionalType {
+    return new OptionalType(this, "emptyStringAsNull");
+  }
   /** Value to use when absent. Only for arguments and dictionary members. */
   default(value: unknown): DefaultType {
     return new DefaultType(this, value);
@@ -193,7 +197,7 @@ export abstract class Type {
   get refuses(): string | null {
     return null;
   }
-  /** Written `.optional`, `.nullable`, `.falsyAsNull` or `.default()`: as an argument with only such after it, it is one a caller leaves out. */
+  /** Written `.optional`, `.nullable`, `.falsyAsNull`, `.emptyStringAsNull` or `.default()`: as an argument with only such after it, it is one a caller leaves out. */
   get isOptional(): boolean {
     return false;
   }
@@ -213,8 +217,8 @@ export abstract class Type {
   get holdsJSValue(): boolean {
     return this.dependencies.some(type => type.holdsJSValue);
   }
-  /** What it converts a value to is that value, so the frame still holds it. */
-  get isValueItself(): boolean {
+  /** The conversion returns the value unchanged, so Rust holds the value itself. */
+  get returnsValueUnchanged(): boolean {
     return false;
   }
   /** Points into memory JavaScript can detach, resize or free: not for a function that can run it, and only for an argument, read once all are converted. */
@@ -825,6 +829,9 @@ export class BytesType extends Type {
   get borrowsHeap(): boolean {
     return this.#options.held === "borrowed";
   }
+  get canBeAbsent(): boolean {
+    return this.#options.held === "borrowed" || this.#options.string === "asIs";
+  }
   get nullRepresentation() {
     return "pointer" as const;
   }
@@ -882,6 +889,11 @@ export class BytesType extends Type {
   rustFromExtern(expr: string): string {
     return this.#rust(expr)[1];
   }
+  rustFromExternOptional(expr: string): string {
+    return this.#options.string === "asIs"
+      ? `bindgen::StringOrJsBytes::from_extern_optional(${expr}, heap)`
+      : `${expr}.get_optional(heap)`;
+  }
 }
 
 /** A typed array, `DataView` or `ArrayBuffer`, as a handle whose bytes are read through `with_bytes`. */
@@ -922,7 +934,7 @@ export class BufferSourceType extends Type {
   get holdsJSValue(): boolean {
     return true;
   }
-  get isValueItself(): boolean {
+  get returnsValueUnchanged(): boolean {
     return true;
   }
   layout(): Layout {
@@ -949,7 +961,7 @@ export class CallableType extends Type {
   get holdsJSValue(): boolean {
     return true;
   }
-  get isValueItself(): boolean {
+  get returnsValueUnchanged(): boolean {
     return true;
   }
   layout(): Layout {
@@ -975,7 +987,7 @@ export class AnyType extends Type {
   get holdsJSValue(): boolean {
     return true;
   }
-  get isValueItself(): boolean {
+  get returnsValueUnchanged(): boolean {
     return true;
   }
   get takesUndefined(): boolean {
@@ -1111,14 +1123,19 @@ export class ClassRefType extends Type {
 
 export class OptionalType extends Type {
   readonly inner: Type;
-  readonly modifier: "optional" | "nullable" | "falsyAsNull";
-  constructor(inner: Type, modifier: "optional" | "nullable" | "falsyAsNull") {
+  readonly modifier: "optional" | "nullable" | "falsyAsNull" | "emptyStringAsNull";
+  constructor(inner: Type, modifier: OptionalType["modifier"]) {
     super();
     assert(!(inner instanceof OptionalType), "already optional");
     assert(!(inner instanceof DefaultType), "put .default() last");
-    assert(!(inner instanceof AnyType), "b.any already accepts undefined and null");
-    assert(!inner.takesUndefined, `${inner.tsType} already takes undefined`);
-    assert(!(inner instanceof BytesType) || inner.borrowsHeap, 'only b.bytes that is held: "borrowed" can be absent');
+    if (!(inner instanceof AnyType && modifier === "emptyStringAsNull")) {
+      assert(!(inner instanceof AnyType), "b.any already accepts undefined and null");
+      assert(!inner.takesUndefined, `${inner.tsType} already takes undefined`);
+    }
+    assert(
+      !(inner instanceof BytesType) || inner.canBeAbsent,
+      'only b.bytes that is held: "borrowed" or string: "asIs" can be absent',
+    );
     this.inner = inner;
     this.modifier = modifier;
   }
@@ -1128,6 +1145,7 @@ export class OptionalType extends Type {
       optional: "WebCore::IDLOptional",
       nullable: "WebCore::IDLNullable",
       falsyAsNull: "Bun::Bindgen::IDLFalsyAsNull",
+      emptyStringAsNull: "Bun::Bindgen::IDLEmptyStringAsNull",
     }[this.modifier];
     return `${template}<${this.inner.idlType}>`;
   }
@@ -1141,7 +1159,7 @@ export class OptionalType extends Type {
     return true;
   }
   get valueKinds(): ValueKinds {
-    if (this.inner.valueKinds === "any" || this.modifier === "falsyAsNull") return "any";
+    if (this.inner.valueKinds === "any" || this.modifier.endsWith("AsNull")) return "any";
     return [...this.inner.valueKinds, "undefined", ...(this.modifier === "nullable" ? (["null"] as const) : [])];
   }
   get dependencies(): readonly Type[] {
@@ -1149,6 +1167,12 @@ export class OptionalType extends Type {
   }
   get convertsInPlace(): boolean {
     return this.inner.convertsInPlace;
+  }
+  get returnsValueUnchanged(): boolean {
+    return this.inner.returnsValueUnchanged;
+  }
+  get passesValue(): boolean {
+    return this.inner.passesValue;
   }
   cppReadLast(target: string, value: string): string[] {
     return this.inner.cppReadLast(target, value);
@@ -1160,6 +1184,7 @@ export class OptionalType extends Type {
       optional: `!${value}.isUndefined()`,
       nullable: `!${value}.isUndefinedOrNull()`,
       falsyAsNull: `${value}.toBoolean(globalObject)`,
+      emptyStringAsNull: `!Bun::Bindgen::isUndefinedOrNullOrEmptyString(${value})`,
     }[this.modifier];
     const convert = (slot: string) => this.inner.cppConvertInto(slot, value, ctx, name, check);
     const body = this.inner.nullRepresentation === "optional" ? cppEmplace(target, convert) : convert(target);
@@ -1195,7 +1220,8 @@ export class OptionalType extends Type {
       const inner = this.inner.rustFromExtern("value", scope);
       return inner === "value" ? `${expr}.get()` : `${expr}.get().map(|value| ${inner})`;
     }
-    if (this.inner instanceof Utf8Type || this.inner instanceof BytesType) return `${expr}.get_optional(heap)`;
+    if (this.inner instanceof BytesType) return this.inner.rustFromExternOptional(expr);
+    if (this.inner instanceof Utf8Type) return `${expr}.get_optional(heap)`;
     return `{ let value = ${expr}; if value.is_null() { None } else { Some(${this.inner.rustFromExtern("value", scope)}) } }`;
   }
   rustResultFieldType(scope: RustScope): string {
@@ -1762,8 +1788,8 @@ export class Signature {
   readonly throws: boolean;
   readonly rustPath: string | undefined;
   readonly length: number | undefined;
-  /** `givenThis`: the body is also handed its own JS object. */
-  constructor(options: SignatureOptions, givenThis = false) {
+  /** `hasThisValue`: the body is also handed its own JS object. */
+  constructor(options: SignatureOptions, hasThisValue = false) {
     this.length = options.length;
     const { args = {}, expected = {} } = options;
     this.args = Object.entries(args).map(([name, type]) => ({ name, type, expected: expected[name] }));
@@ -1798,7 +1824,7 @@ export class Signature {
     );
     assert(!(this.returns instanceof DefaultType), "a result has no default");
     assert(
-      !this.returns.holdsJSValue || this.capability !== "none" || givenThis,
+      !this.returns.holdsJSValue || this.capability !== "none" || hasThisValue,
       'returning a JS value takes capability: "heap" or "js"',
     );
   }
@@ -1897,7 +1923,7 @@ export interface FunctionField extends Omit<SignatureOptions, "rustPath"> {
 
 export interface GetterField {
   getter: Type;
-  /** Also generate a setter, which takes `&mut self` (or the wrapper, with `capability: "js"`). Its `capability` is the getter's unless it names its own. */
+  /** Also generate a setter, which takes `&mut self` (the wrapper with `capability: "js"`, `&self` in a `refCounted` class). Its `capability` is the getter's unless it names its own. */
   setter?: true | { capability: Capability };
   /** Returns an internal field, and computes it while that is empty. `true` declares one of the getter's name, a string names one declared elsewhere. */
   cache?: true | string;
@@ -1963,7 +1989,7 @@ function memberRustName(name: string): string {
 export class Method extends Signature {
   readonly name: string;
   readonly rustName: string;
-  readonly isNamedAfterProperty: boolean;
+  readonly hasDefaultRustName: boolean;
   readonly receiver: Receiver;
   readonly passThis: boolean;
   readonly invalidThis: "throw" | "undefined";
@@ -1973,7 +1999,7 @@ export class Method extends Signature {
     super(options, !isStatic && (!!options.passThis || (!refCounted && options.capability === "js")));
     this.name = name;
     this.rustName = memberRustName(options.rustName ?? snakeCase(memberIdentifier(name)));
-    this.isNamedAfterProperty = options.rustName === undefined;
+    this.hasDefaultRustName = options.rustName === undefined;
     assert(
       !(options.mutates && this.capability === "js"),
       `${name}: a method that can run JavaScript gets the wrapper, not &mut self`,
@@ -2167,7 +2193,7 @@ export class ClassType extends NamedType {
     assertDistinct(
       [
         "constructor",
-        ...this.methods.filter(method => method.isNamedAfterProperty).map(method => method.rustName),
+        ...this.methods.filter(method => method.hasDefaultRustName).map(method => method.rustName),
         ...[...getters, ...this.staticGetters].flatMap(getter => [
           getter.rustName,
           ...(getter.hasSetter ? [getter.setterRustName] : []),

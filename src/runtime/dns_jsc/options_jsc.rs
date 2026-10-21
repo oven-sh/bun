@@ -56,15 +56,11 @@ fn family_from_js(value: AddrInfoHint<'_>) -> Result<Family, FromJSError> {
             6 => Ok(Family::Inet6),
             _ => Err(FromJSError::InvalidFamily),
         },
-        AddrInfoHint::Label(label) => match FAMILY_MAP.get(label) {
-            Some(f) => Ok(*f),
-            None => {
-                if label.is_empty() {
-                    return Ok(Family::Unspecified);
-                }
-                Err(FromJSError::InvalidFamily)
-            }
-        },
+        AddrInfoHint::Label(b"") => Ok(Family::Unspecified),
+        AddrInfoHint::Label(label) => FAMILY_MAP
+            .get(label)
+            .copied()
+            .ok_or(FromJSError::InvalidFamily),
     }
 }
 
@@ -76,15 +72,11 @@ fn socket_type_from_js(value: AddrInfoHint<'_>) -> Result<SocketType, FromJSErro
             2 => Ok(SocketType::Dgram),
             _ => Err(FromJSError::InvalidSocketType),
         },
-        AddrInfoHint::Label(label) => match SOCKET_TYPE_MAP.get(label) {
-            Some(s) => Ok(*s),
-            None => {
-                if label.is_empty() {
-                    return Ok(SocketType::Unspecified);
-                }
-                Err(FromJSError::InvalidSocketType)
-            }
-        },
+        AddrInfoHint::Label(b"") => Ok(SocketType::Unspecified),
+        AddrInfoHint::Label(label) => SOCKET_TYPE_MAP
+            .get(label)
+            .copied()
+            .ok_or(FromJSError::InvalidSocketType),
     }
 }
 
@@ -96,28 +88,22 @@ fn protocol_from_js(value: AddrInfoHint<'_>) -> Result<Protocol, FromJSError> {
             17 => Ok(Protocol::Udp),
             _ => Err(FromJSError::InvalidProtocol),
         },
-        AddrInfoHint::Label(label) => match PROTOCOL_MAP.get(label) {
-            Some(p) => Ok(*p),
-            None => {
-                if label.is_empty() {
-                    return Ok(Protocol::Unspecified);
-                }
-                Err(FromJSError::InvalidProtocol)
-            }
-        },
+        AddrInfoHint::Label(b"") => Ok(Protocol::Unspecified),
+        AddrInfoHint::Label(label) => PROTOCOL_MAP
+            .get(label)
+            .copied()
+            .ok_or(FromJSError::InvalidProtocol),
     }
 }
 
 fn backend_from_js(label: &[u8]) -> Result<Backend, FromJSError> {
-    match BACKEND_LABEL.get(label) {
-        Some(b) => Ok(*b),
-        None => {
-            if label.is_empty() {
-                return Ok(Backend::default());
-            }
-            Err(FromJSError::InvalidBackend)
-        }
+    if label.is_empty() {
+        return Ok(Backend::default());
     }
+    BACKEND_LABEL
+        .get(label)
+        .copied()
+        .ok_or(FromJSError::InvalidBackend)
 }
 
 pub(crate) fn result_any_to_js(

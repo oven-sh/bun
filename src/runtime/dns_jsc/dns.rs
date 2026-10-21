@@ -37,7 +37,7 @@ use bun_wyhash::hash as wyhash;
 
 use super::cares_jsc::error_to_deferred;
 use crate::generated_bindgen::dns::LookupOptions;
-use crate::generated_bindgen::dns_internals::RecordTypeLabel;
+use crate::generated_bindgen::dns_internals::RecordTypeArgument;
 use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_cares_sys::c_ares_draft as c_ares;
@@ -4933,7 +4933,7 @@ impl Resolver {
     pub(crate) fn global_resolve(
         cx: &mut JsScope<'_>,
         name: &[u8],
-        record: RecordTypeLabel<'_>,
+        record: RecordTypeArgument<'_>,
     ) -> JsResult<JSValue> {
         global_resolver(cx.global()).resolve(cx, name, record)
     }
@@ -4942,27 +4942,22 @@ impl Resolver {
         &self,
         cx: &mut JsScope<'_>,
         name: &[u8],
-        record: RecordTypeLabel<'_>,
+        record: RecordTypeArgument<'_>,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
         let context = global_this.bun_vm().context_of_caller_no_frame().id();
-        let record_type: RecordType = 'brk: {
-            let RecordTypeLabel::Label(record_type_label) = record else {
-                break 'brk RecordType::DEFAULT;
-            };
-            if record_type_label.is_empty() {
-                break 'brk RecordType::DEFAULT;
-            }
-            match RECORD_TYPE_MAP.get(record_type_label) {
+        let record_type: RecordType = match record {
+            RecordTypeArgument::Ignored(_) | RecordTypeArgument::Label(b"") => RecordType::DEFAULT,
+            RecordTypeArgument::Label(label) => match RECORD_TYPE_MAP.get(label) {
                 Some(r) => *r,
                 None => {
                     return Err(global_this.throw_invalid_argument_property_value(
                         b"record",
                         Some("one of: A, AAAA, ANY, CAA, CNAME, MX, NAPTR, NS, PTR, SOA, SRV, TXT"),
-                        bun_string_jsc::create_utf8_for_js(global_this, record_type_label)?,
+                        bun_string_jsc::create_utf8_for_js(global_this, label)?,
                     ));
                 }
-            }
+            },
         };
 
         if name.is_empty() {

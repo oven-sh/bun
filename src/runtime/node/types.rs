@@ -6,7 +6,7 @@ use crate::jsc::{self, JSGlobalObject, JSValue, JsResult};
 use bun_core::WStr;
 use bun_core::ZStr;
 use bun_core::{self, Utf8Bytes, Utf8WithString, fmt as bun_fmt};
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::{JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{StringJsc as _, Utf8WithStringJsc as _};
 pub(crate) use bun_jsc::{ThreadIsolated, ThreadIsolatedArg};
@@ -354,7 +354,7 @@ impl StringOrBuffer<'static> {
     /// `Ok(true)` on success, `Ok(false)` if `value` is not a string/buffer
     /// type. `*out` is left untouched on `Ok(false)` / `Err`.
     ///
-    /// Hot callers should use this
+    /// Hot callers (e.g. `NodeHTTPResponse::write_or_end`) should use this
     /// directly — returning `JsResult<Option<StringOrBuffer>>` by value lowers
     /// to ~128B of `vmovups` stack-to-stack copies per call which the
     /// `Option<>`-returning wrappers below cannot always NRVO away.
@@ -504,15 +504,37 @@ impl StringOrBuffer<'static> {
                 return Self::from_js_maybe_async_into(out, global, value, flavor, string_objects);
             }
 
-            use crate::webcore::encoding::BunStringEncode as _;
-            let encoded = str.encode(encoding);
-            global.vm().report_extra_memory(encoded.len());
-
-            *out = Self::owned(encoded);
+            *out = Self::encoded(global, &str, encoding);
             return Ok(true);
         }
 
         Ok(false)
+    }
+
+    fn encoded(global: &JSGlobalObject, str: &bun_core::String, encoding: Encoding) -> Self {
+        use crate::webcore::encoding::BunStringEncode as _;
+        let encoded = str.encode(encoding);
+        global.vm().report_extra_memory(encoded.len());
+        Self::owned(encoded)
+    }
+
+    /// [`from_js_with_encoding_maybe_async_into`](Self::from_js_with_encoding_maybe_async_into) for a synchronous call, of a `b.bytes` argument.
+    #[inline]
+    pub(crate) fn from_string_or_js_bytes_into(
+        out: &mut Self,
+        global: &JSGlobalObject,
+        value: StringOrJsBytes<'_>,
+        encoding: Encoding,
+    ) {
+        *out = match value {
+            StringOrJsBytes::Bytes(bytes) => {
+                Self::Buffer(Buffer::from_array_buffer(global, bytes.value().to_js()))
+            }
+            StringOrJsBytes::String(str) if encoding == Encoding::Utf8 || str.is_empty() => {
+                Self::String(str.into_utf8_with_string())
+            }
+            StringOrJsBytes::String(str) => Self::encoded(global, &str, encoding),
+        };
     }
 
     #[inline]

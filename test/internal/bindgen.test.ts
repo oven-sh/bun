@@ -121,7 +121,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   }
   for (const held of ["handle", "copied", "pinned"] as const) {
     expect(() => b.bytes({ from: ["string", "buffer"], held }).optional).toThrow(
-      'only b.bytes that is held: "borrowed" can be absent',
+      'only b.bytes that is held: "borrowed" or string: "asIs" can be absent',
     );
   }
   expect(() => stringOrBuffer.default("")).toThrow("cannot have a default");
@@ -1329,7 +1329,36 @@ describe("b.callable", () => {
   });
 });
 
+describe(".emptyStringAsNull", () => {
+  it("takes undefined, null and the empty string as absent", () => {
+    for (const absent of [undefined, null, ""]) {
+      expect(bindgen.presentUnlessEmptyString(absent, absent)).toEqual([false, false]);
+    }
+  });
+
+  it("converts every other value", () => {
+    expect(bindgen.presentUnlessEmptyString(0, 0)).toEqual([true, true]);
+    expect(bindgen.presentUnlessEmptyString(NaN, false)).toEqual([true, true]);
+    expect(bindgen.presentUnlessEmptyString(1, new String(""))).toEqual([true, true]);
+    for (const value of [false, 0n, "1", new String("")]) {
+      expect(() => bindgen.presentUnlessEmptyString(value, 1)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: expect.stringContaining("number") }),
+      );
+    }
+  });
+});
+
 describe("a string or a buffer, as bytes", () => {
+  it("can be absent as a string that is not converted", () => {
+    expect(bindgen.stringAsIsOrBytesIfAny()).toBeNull();
+    expect(bindgen.stringAsIsOrBytesIfAny(null)).toBeNull();
+    expect(bindgen.stringAsIsOrBytesIfAny("")).toEqual([1]);
+    expect(bindgen.stringAsIsOrBytesIfAny("a")).toEqual([1, 97]);
+    expect(bindgen.stringAsIsOrBytesIfAny(new Uint8Array([7]))).toEqual([0, 7]);
+    expect(bindgen.stringAsIsOrBytesIfAny(new Uint8Array(0))).toEqual([0]);
+    expect(() => bindgen.stringAsIsOrBytesIfAny(1)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  });
+
   it("can be absent", () => {
     expect(bindgen.sumBytesIfAny()).toBe(-1);
     expect(bindgen.sumBytesIfAny(undefined)).toBe(-1);

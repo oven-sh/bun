@@ -7,15 +7,26 @@ use bun_options_types::compile_target::CompileTarget;
 
 use crate::{JSGlobalObject, JSValue, JsResult};
 
-pub fn loader_from_slice(
+pub fn loader_from_js(
     global: &JSGlobalObject,
-    slice: &[u8],
+    loader: JSValue,
 ) -> JsResult<Option<bun_ast::Loader>> {
-    if slice.is_empty() {
+    if loader.is_undefined_or_null() {
         return Ok(None);
     }
 
-    let Some(v) = bun_ast::Loader::from_string(slice) else {
+    if !loader.is_string() {
+        return Err(global.throw_invalid_arguments(format_args!("loader must be a string")));
+    }
+
+    let loader_str = loader.to_js_string_view(global)?;
+    if loader_str.is_empty() {
+        return Ok(None);
+    }
+
+    let slice = loader_str.to_utf8();
+
+    let Some(v) = bun_ast::Loader::from_string(slice.slice()) else {
         return Err(global.throw_invalid_arguments(format_args!(
             "invalid loader - must be js, jsx, tsx, ts, css, json, jsonc, json5, toml, yaml, xml, text, wasm, or md"
         )));
@@ -35,7 +46,7 @@ pub fn loader_from_slice(
     ) {
         return Err(global.throw_invalid_arguments(format_args!(
             "loader \"{}\" is not supported in Bun.Transpiler",
-            bstr::BStr::new(slice),
+            bstr::BStr::new(slice.slice()),
         )));
     }
     Ok(Some(v))

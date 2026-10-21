@@ -29,6 +29,10 @@ struct IDLStrictNull : WebCore::IDLType<std::nullptr_t> {};
 template<typename IDL>
 struct IDLFalsyAsNull : WebCore::IDLNullable<IDL> {};
 
+// Treats undefined, null and "" as null.
+template<typename IDL>
+struct IDLEmptyStringAsNull : WebCore::IDLNullable<IDL> {};
+
 enum class AllowBigInt : bool {
     No,
     Yes,

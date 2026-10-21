@@ -4,8 +4,8 @@ export default b.module({ rustPath: "crate::dns_jsc::Resolver" });
 
 export const getRuntimeDefaultResultOrderOption = b.fn({ returns: b.string });
 
-/** What is not a string is not converted: it is "A". */
-export const RecordTypeLabel = b.union({ label: b.string.utf8, ignored: b.any });
+/** A non-string means "A". */
+export const RecordTypeArgument = b.union({ label: b.string.utf8, ignored: b.any });
 
 const method = { capability: "js", throws: true } as const;
 
@@ -18,7 +18,7 @@ const query = {
 const getServers = { ...method, returns: b.any } as const;
 const resolve = {
   ...method,
-  args: { name: b.string.utf8, record: RecordTypeLabel },
+  args: { name: b.string.utf8, record: RecordTypeArgument },
   expected: { name: ["string"] },
   returns: b.any,
 } as const;
@@ -51,7 +51,7 @@ export const DNSResolver = b.class({
   },
 });
 
-// What `Bun.dns` has and the published types do not: the same functions, on the VM's global resolver.
+// The undocumented `Bun.dns.*` functions: the same queries on the VM's global resolver.
 export const getGlobalServers = b.fn(getServers);
 export const globalResolve = b.fn(resolve);
 export const globalResolveAny = b.fn(query);

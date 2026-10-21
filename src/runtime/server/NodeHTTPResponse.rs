@@ -9,14 +9,12 @@ use bun_collections::VecExt;
 use bun_core::scoped_log;
 use bun_http::Method as HttpMethod;
 use bun_jsc::JsCell;
-use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper, StringOrJsBytes};
 use bun_ptr::AsCtxPtr;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
-use crate::generated_bindgen::node_http_response::{
-    Chunk, ChunkEncoding, js_NodeHTTPResponse as js,
-};
+use crate::generated_bindgen::node_http_response::js_NodeHTTPResponse as js;
 use crate::node::{Encoding, StringOrBuffer};
 use crate::server::jsc::{
     self, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine,
@@ -868,7 +866,7 @@ fn handle_ended_if_necessary(state: uws::State, global_object: &JSGlobalObject) 
 }
 
 impl NodeHTTPResponse {
-    /// Shared body of `writeHead` (also the write-head phase of
+    /// `writeHead` (also the write-head phase of
     /// `writeHeadAndEnd`): args are (statusCode, statusMessage, headersArray),
     /// plus the auto-header bits + keep-alive timeout the C++ side renders
     /// natively (kAutoHeader* in NodeHTTP.cpp).
@@ -1011,8 +1009,8 @@ impl NodeHTTPResponse {
         status_code: i32,
         status_message: Option<&[u8]>,
         headers: JsLocal<'_>,
-        chunk: Option<Chunk<'_>>,
-        encoding: ChunkEncoding<'_>,
+        chunk: Option<StringOrJsBytes<'_>>,
+        encoding: JsLocal<'_>,
         strict_content_length: Option<f64>,
         auto_header_bits: u32,
         keep_alive_timeout_secs: u32,
@@ -1075,29 +1073,6 @@ impl NodeHTTPResponse {
     }
 }
 
-/// The bytes to send: a string as `encoding` says, a buffer where it is.
-#[inline]
-fn chunk_bytes(
-    global_object: &JSGlobalObject,
-    chunk: Chunk<'_>,
-    encoding: Encoding,
-) -> JsResult<StringOrBuffer<'static>> {
-    use crate::webcore::encoding::BunStringEncode as _;
-    match chunk {
-        Chunk::Buffer(buffer) => {
-            StringOrBuffer::buffer_from_js(global_object, buffer.to_js(), crate::node::Flavor::Sync)
-        }
-        Chunk::Text(text) if encoding == Encoding::Utf8 || text.is_empty() => {
-            Ok(StringOrBuffer::String(text.into_utf8_with_string()))
-        }
-        Chunk::Text(text) => {
-            let encoded = text.encode(encoding);
-            global_object.vm().report_extra_memory(encoded.len());
-            Ok(StringOrBuffer::owned(encoded))
-        }
-    }
-}
-
 fn write_head_internal(
     response: &uws::AnyResponse,
     global_object: &JSGlobalObject,
@@ -1155,18 +1130,29 @@ impl NodeHTTPResponse {
     pub(crate) fn write_informational(
         &self,
         cx: &mut JsScope<'_>,
-        chunk: Option<Chunk<'_>>,
-        encoding: ChunkEncoding<'_>,
+        chunk: Option<StringOrJsBytes<'_>>,
+        encoding: JsLocal<'_>,
     ) -> JsResult<()> {
         let global_object = cx.global();
         let Some(chunk) = chunk else {
             return Ok(());
         };
-        let encoding = match encoding {
-            ChunkEncoding::Name(name) => Encoding::from(name).unwrap_or(Encoding::Utf8),
-            ChunkEncoding::Other(_) => Encoding::Utf8,
+        let encoding_value = encoding.to_js();
+        let encoding = if encoding_value.is_string() {
+            Encoding::from_js(encoding_value, global_object)?.unwrap_or(Encoding::Utf8)
+        } else {
+            Encoding::Utf8
         };
-        let string_or_buffer = chunk_bytes(global_object, chunk, encoding)?;
+
+        let mut string_or_buffer = StringOrBuffer::EMPTY;
+        StringOrBuffer::from_string_or_js_bytes_into(
+            &mut string_or_buffer,
+            global_object,
+            chunk,
+            encoding,
+        );
+
+        // Response state is read only after the conversion above, which can run JS.
 
         if self.is_done() || self.is_socket_closed_or_closing() {
             return Ok(());
@@ -1803,57 +1789,67 @@ impl NodeHTTPResponse {
         &self,
         this_value: JSValue,
         global_object: &JSGlobalObject,
-        chunk: Option<Chunk<'_>>,
-        encoding: ChunkEncoding<'_>,
+        chunk: Option<StringOrJsBytes<'_>>,
+        encoding: JsLocal<'_>,
         callback: Option<JsLocal<'_, Callable>>,
         strict_content_length: Option<f64>,
     ) -> JsResult<JSValue> {
-        let (encoding, callback_value) = match encoding {
-            ChunkEncoding::Other(function) if function.to_js().is_callable() => {
-                (ChunkEncoding::Name(b""), function.to_js())
-            }
-            encoding => (
-                encoding,
-                callback.map_or(JSValue::UNDEFINED, |callback| callback.to_js()),
-            ),
-        };
+        let mut encoding_value = encoding.to_js();
+        let callback_value: JSValue =
+            if !encoding_value.is_undefined_or_null() && encoding_value.is_callable() {
+                core::mem::replace(&mut encoding_value, JSValue::UNDEFINED)
+            } else {
+                callback.map_or(JSValue::UNDEFINED, |callback| callback.to_js())
+            };
 
         let strict_content_length: Option<u64> =
             strict_content_length.map(|length| (length as i64).max(0) as u64);
 
         let input_value = match &chunk {
-            Some(Chunk::Buffer(buffer)) => buffer.to_js(),
+            Some(StringOrJsBytes::Bytes(bytes)) => bytes.value().to_js(),
             _ => JSValue::ZERO,
         };
+        // Construct in place — returning
+        // `JsResult<Option<StringOrBuffer>>` by value here lowered to ~128B of
+        // `vmovups` stack copies per `res.end()`; the `_into` out-param form
+        // writes straight into this slot.
         let mut string_or_buffer = StringOrBuffer::EMPTY;
         if let Some(chunk) = chunk {
+            let mut encoding = Encoding::Utf8;
             // Like Writable.prototype.write: a falsy encoding means the default.
-            let encoding = match encoding {
-                ChunkEncoding::Name([]) => Encoding::Utf8,
-                ChunkEncoding::Name(name) => match Encoding::from(name) {
-                    Some(encoding) => encoding,
+            if !encoding_value.is_falsey() {
+                let known = if encoding_value.is_string() {
+                    Encoding::from_js(encoding_value, global_object)?
+                } else {
+                    None
+                };
+                encoding = match known {
+                    Some(e) => e,
                     None => {
+                        let name = if encoding_value.is_string() {
+                            encoding_value.to_bun_string(global_object)?
+                        } else {
+                            JSGlobalObject::inspect_for_error_message(
+                                global_object,
+                                encoding_value,
+                            )?
+                        };
                         return Err(global_object
                             .err(
                                 ErrorCode::UNKNOWN_ENCODING,
-                                format_args!("Unknown encoding: {}", BStr::new(name)),
+                                format_args!("Unknown encoding: {}", name),
                             )
                             .throw());
                     }
-                },
-                ChunkEncoding::Other(value) if value.to_js().is_falsey() => Encoding::Utf8,
-                ChunkEncoding::Other(value) => {
-                    let name =
-                        JSGlobalObject::inspect_for_error_message(global_object, value.to_js())?;
-                    return Err(global_object
-                        .err(
-                            ErrorCode::UNKNOWN_ENCODING,
-                            format_args!("Unknown encoding: {}", name),
-                        )
-                        .throw());
-                }
-            };
-            string_or_buffer = chunk_bytes(global_object, chunk, encoding)?;
+                };
+            }
+
+            StringOrBuffer::from_string_or_js_bytes_into(
+                &mut string_or_buffer,
+                global_object,
+                chunk,
+                encoding,
+            );
         }
         // string_or_buffer drops at scope exit.
 
@@ -2213,8 +2209,8 @@ impl NodeHTTPResponse {
     pub(crate) fn write(
         &self,
         cx: &mut JsScope<'_>,
-        chunk: Option<Chunk<'_>>,
-        encoding: ChunkEncoding<'_>,
+        chunk: Option<StringOrJsBytes<'_>>,
+        encoding: JsLocal<'_>,
         callback: Option<JsLocal<'_, Callable>>,
         strict_content_length: Option<f64>,
     ) -> JsResult<JSValue> {
@@ -2291,8 +2287,8 @@ impl NodeHTTPResponse {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        chunk: Option<Chunk<'_>>,
-        encoding: ChunkEncoding<'_>,
+        chunk: Option<StringOrJsBytes<'_>>,
+        encoding: JsLocal<'_>,
         callback: Option<JsLocal<'_, Callable>>,
         strict_content_length: Option<f64>,
     ) -> JsResult<JSValue> {

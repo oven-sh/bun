@@ -700,6 +700,31 @@ devTest("a page recovers after the missing @import of a shared stylesheet is cre
     await c.style(".n").width.expect.toBe("2px");
   },
 });
+devTest("an error in a stylesheet reaches a page through an @import that another page links", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["main.css"] }),
+    "about.html": emptyHtmlFile({ styles: ["b.css"] }),
+    "main.css": `@import "./b.css";\n.m { width: 1px; }`,
+    "b.css": `@import "./c.css";\n.b { width: 1px; }`,
+    "c.css": `.c { width: 1px; }`,
+  },
+  async test(dev) {
+    // The status of the page, or the width of ".c" in its stylesheet.
+    const loadPage = async (url: string) => {
+      const page = await dev.fetch(url);
+      const html = await page.text();
+      if (page.status !== 200) return page.status;
+      const css = await dev.fetch(html.match(/\/_bun\/asset\/\w+\.css/)![0]).text();
+      return css.match(/\.c \{[^}]*width: (\w+)/)?.[1];
+    };
+    const load = async () => [await loadPage("/index"), await loadPage("/about")];
+    expect(await load()).toEqual(["1px", "1px"]);
+    await dev.write("c.css", `.c { width: 2px; }}}`, { errors: null });
+    expect(await load()).toEqual([500, 500]);
+    await dev.write("c.css", `.c { width: 3px; }`, { errors: null });
+    expect(await load()).toEqual(["3px", "3px"]);
+  },
+});
 devTest("css import before create", {
   files: {
     "index.html": emptyHtmlFile({

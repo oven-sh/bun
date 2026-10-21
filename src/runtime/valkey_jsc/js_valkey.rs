@@ -1862,7 +1862,11 @@ impl<const SSL: bool> SocketHandler<SSL> {
                     return Self::fail_handshake_with_altname_error(this, vm, hostname);
                 }
             }
+            this.client_mut().flags.tls_established = true;
             this.client_mut().start()?;
+        } else if this.client.get().flags.tls_established {
+            // uSockets reports a fatal error on an established session as a failed handshake.
+            return this.client_mut().on_tls_session_error(&ssl_error);
         } else if ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH {
             // The same check, made inside the handshake (`server_identity`).
             let hostname = Self::configured_hostname(this);

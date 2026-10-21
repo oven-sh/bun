@@ -448,6 +448,69 @@ describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
       }
     }
   });
+
+  // `breaks` is where the server sends bytes that are not a TLS record and closes. Every connection that gets as far as
+  // a GET answers it with its own number, so the last reply says which connection the client ended up on.
+  test.each([
+    { breaks: "in place of a reply", lost: true, brokenHello: 0, last: "2" },
+    { breaks: "while the connection is idle", lost: false, brokenHello: 0, last: "2" },
+    { breaks: "in place of a reply, then of the reply to the next HELLO", lost: true, brokenHello: 2, last: "3" },
+  ])(
+    "reconnects when the TLS session of a rediss:// connection breaks $breaks",
+    async ({ lost, brokenHello, last }) => {
+      const secureContext = tls.createSecureContext({ key: tlsCert.key, cert: tlsCert.cert });
+      const raws: net.Socket[] = [];
+      const breakSession = (raw: net.Socket) => raw.end("not a tls record at all\r\n");
+      const server = net.createServer(raw => {
+        const connection = raws.push(raw);
+        const socket = new tls.TLSSocket(raw, { isServer: true, secureContext });
+        for (const each of [raw, socket]) each.on("error", () => {});
+        const state = { buffer: Buffer.alloc(0) };
+        socket.on("data", chunk => {
+          state.buffer = Buffer.concat([state.buffer, chunk as Buffer]);
+          for (const [name, key] of readCommands(state)) {
+            if (name.toUpperCase() === "HELLO" ? connection === brokenHello : key === "lost") breakSession(raw);
+            else socket.write(name.toUpperCase() === "HELLO" ? "+OK\r\n" : `$1\r\n${connection}\r\n`);
+          }
+        });
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as net.AddressInfo;
+      const client = new RedisClient(`rediss://localhost:${port}`, { tls: { ca: tlsCert.cert } });
+      try {
+        const events: string[] = [];
+        const reconnected = Promise.withResolvers<void>();
+        // Only the idle row awaits it.
+        reconnected.promise.catch(() => {});
+        client.onconnect = () => void (events.push("connect") === 2 && reconnected.resolve());
+        client.onclose = error => void (events.push("close"), reconnected.reject(error));
+        const get = (key: string) => client.get(key).catch(e => `${e.code}: ${e.message}`);
+        const replies = [await get("key")];
+        if (lost) {
+          // The next GET follows at once: it waits for the new connection, as it does after a FIN.
+          replies.push(await get("lost"));
+        } else {
+          breakSession(raws[0]);
+          await reconnected.promise;
+        }
+        replies.push(await get("key"));
+        expect({ replies, events, connections: raws.length }).toEqual({
+          replies: [
+            "1",
+            ...(lost ? ["EPROTO: error:100000f7:SSL routines:OPENSSL_internal:WRONG_VERSION_NUMBER"] : []),
+            last,
+          ],
+          events: ["connect", "connect"],
+          connections: Number(last),
+        });
+      } finally {
+        client.close();
+        for (const raw of raws) raw.destroy();
+        await new Promise(closed => server.close(closed));
+      }
+    },
+  );
 });
 
 describe("Valkey: Recovering After fail()", () => {

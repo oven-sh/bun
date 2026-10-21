@@ -30,6 +30,8 @@ bun_output::define_scoped_log!(debug, Redis, visible);
 pub(crate) struct ConnectionFlags {
     pub(crate) is_manually_closed: bool,
     pub(crate) is_selecting_db_internal: bool,
+    /// The open socket's TLS handshake was accepted.
+    pub(crate) tls_established: bool,
     pub(crate) enable_offline_queue: bool,
     pub(crate) enable_auto_reconnect: bool,
     /// Set from the close that schedules a retry until the next accepted HELLO
@@ -60,6 +62,7 @@ impl Default for ConnectionFlags {
         Self {
             is_manually_closed: false,
             is_selecting_db_internal: false,
+            tls_established: false,
             enable_offline_queue: true,
             enable_auto_reconnect: true,
             is_reconnecting: false,
@@ -538,6 +541,22 @@ impl ValkeyClient {
 
         let global_this = self.global_object();
         let jsvalue = valkey_error_to_js(&global_this, message, err);
+        let mut entries = command::entry::Queue::new();
+        Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
+    }
+
+    /// The open socket's TLS session broke, and uSockets closes it next: what was sent over it
+    /// hears why, and the rest is `on_close`'s, like any lost connection. The caller enters no
+    /// event loop scope, so the rejections are only observed once `on_close` has run.
+    pub(crate) fn on_tls_session_error(
+        &mut self,
+        ssl_error: &uws::us_bun_verify_error_t,
+    ) -> JsResult<()> {
+        if self.in_flight.is_empty() {
+            return Ok(());
+        }
+        let global_this = self.global_object();
+        let jsvalue = crate::socket::uws_jsc::verify_error_to_js(ssl_error, &global_this);
         let mut entries = command::entry::Queue::new();
         Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
     }
@@ -1289,6 +1308,7 @@ impl ValkeyClient {
         // after a previous connection exhausted retries (#29925).
         self.flags.failed = false;
         self.flags.is_selecting_db_internal = false;
+        self.flags.tls_established = false;
         if matches!(self.socket, AnySocket::SocketTcp(_)) {
             // if is tcp, we need to start the connection process
             // if is tls, we need to wait for the handshake to complete

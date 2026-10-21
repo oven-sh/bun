@@ -1743,6 +1743,7 @@ pub(crate) mod command {
                 }
             }
         }
+        Output::stdout_is_the_result();
         completions.print();
         Ok(())
     }
@@ -2405,6 +2406,7 @@ pub(crate) fn print_version_and_exit() -> ! {
     // second `Vec<u8>`, all to print a ~10-byte constant. Write the bytes
     // straight to the buffered stdout writer instead. One `write_all` (the
     // `\n` is baked into the constant) → one syscall.
+    Output::stdout_is_the_result();
     let w = Output::writer();
     let _ = w.write_all(Global::package_json_version_nl.as_bytes());
     Output::flush();
@@ -2414,6 +2416,7 @@ pub(crate) fn print_version_and_exit() -> ! {
 #[cold]
 pub(crate) fn print_revision_and_exit() -> ! {
     // See `print_version_and_exit` — plain bytes, no `<tag>` rewrite needed.
+    Output::stdout_is_the_result();
     let w = Output::writer();
     let _ = w.write_all(Global::package_json_version_with_revision.as_bytes());
     let _ = w.write_all(b"\n");

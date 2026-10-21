@@ -172,12 +172,10 @@ impl InstallCompletionsCommand {
         Output::print_errorln("See https://github.com/oven-sh/bun/issues/8939");
     }
 
-    /// Exits, unless the write fails for another reason than a reader that left.
-    fn write_and_exit(stdout: &File, completions: &[u8]) -> Result<(), crate::Error> {
-        match stdout.write_all(completions) {
-            Err(err) if !bun_sys::reader_left(stdout.handle, err.get_errno()) => Err(err.into()),
-            _ => Global::exit(0),
-        }
+    fn write_and_exit(completions: &[u8]) -> ! {
+        Output::stdout_is_the_result();
+        let _ = Output::writer().write_all(completions);
+        Global::exit(0);
     }
 
     pub(crate) fn exec() -> Result<(), crate::Error> {
@@ -199,7 +197,7 @@ impl InstallCompletionsCommand {
                 if fail_exit_code == 1 && !bun_sys::isatty(stdout.handle) {
                     let completions = shell.completions();
                     if !completions.is_empty() {
-                        return Self::write_and_exit(&stdout, completions);
+                        Self::write_and_exit(completions);
                     }
                 }
 
@@ -241,7 +239,7 @@ impl InstallCompletionsCommand {
             if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false)
                 && !bun_sys::isatty(stdout.handle)
             {
-                return Self::write_and_exit(&stdout, shell.completions());
+                Self::write_and_exit(shell.completions());
             }
 
             let mut completions_dir: &[u8];

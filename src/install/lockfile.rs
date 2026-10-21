@@ -2020,10 +2020,10 @@ impl<'a> Printer<'a> {
             crate::lockfile::LoadResult::Ok(_) => {}
         }
 
+        Output::stdout_is_the_result();
         match printer::Yarn::print(&lockfile, Output::writer_buffered()) {
             Ok(()) => {}
             Err(crate::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
-            Err(crate::Error::WriteFailed) => return Ok(()),
             Err(e) => return Err(e),
         }
         Output::flush();

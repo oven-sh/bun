@@ -708,6 +708,15 @@ export function tempDirWithBunTypes(
 }
 
 /**
+ * A file descriptor that is open for reading only: every write to it fails with EBADF, on every platform.
+ * Pass `.fd` as the `stdout` of a spawned process to see what the process does when it cannot write its output.
+ */
+export function unwritableFd(): Disposable & { fd: number } {
+  const fd = openSync(import.meta.path, "r");
+  return { fd, [Symbol.dispose]: () => closeSync(fd) };
+}
+
+/**
  * Windows only. Makes `dir` the root of a new drive with `subst`, and removes the drive on dispose.
  * A test cannot write to the root of a real drive.
  */

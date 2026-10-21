@@ -1,7 +1,19 @@
 import { spawnSync } from "bun";
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isDebug, isLinux, isMacOS, isMusl, isWindows, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isCI,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isMusl,
+  isWindows,
+  tempDir,
+  unwritableFd,
+  type DirectoryTree,
+} from "harness";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -342,6 +354,23 @@ describe("bun", () => {
       expect(stdout).toBe("");
       expect(stderr).toContain("Could not get current working directory");
       expect(exitCode).toBe(1);
+    });
+
+    // `bun completions > _bun`: with a stdout that is not a terminal, the script is what the command prints.
+    test.concurrent.each(["bash", "zsh", "fish"])("prints the %s script when stdout is not a terminal", async shell => {
+      using home = tempDir("completions-print", {});
+      // With a bunx on PATH, the command does not put a link to itself next to the executable.
+      fs.symlinkSync(bunExe(), join(String(home), bunxName));
+      const env = {
+        HOME: String(home),
+        BUN_INSTALL: undefined,
+        SHELL: `/bin/${shell}`,
+        PATH: `${home}:${bunEnv.PATH}`,
+      };
+      await using proc = Bun.spawn({ cmd: [bunExe(), "completions"], env: { ...bunEnv, ...env }, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const script = fs.readFileSync(join(import.meta.dir, "..", "..", "completions", `bun.${shell}`), "utf8");
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: script, stderr: "", exitCode: 0 });
     });
 
     // IS_BUN_AUTO_UPDATE is what `bun upgrade` sets: the file is installed although stdout is a pipe.
@@ -688,5 +717,414 @@ describe("bun", () => {
       const failed = "error: Cannot write standard output: ENOTCONN: Transport endpoint is not connected\n";
       expect({ stderr, exitCode }).toEqual(isMacOS ? { stderr: "", exitCode: 0 } : { stderr: failed, exitCode: 2 });
     });
+  });
+
+  // A form that exists to print (a listing, a bundle on stdout, a dry run) declares that stdout holds its result.
+  // When stdout does not take it (a full disk behind `> file`), the form says so on stderr and exits 1.
+  // Help text, a log of work that bun did and the output of a script are not a result: their exit code stays.
+  describe.concurrent("a result that does not reach stdout", () => {
+    const dep = "github:example/repo#abc1234";
+    const files = {
+      "package.json": JSON.stringify({
+        name: "failed-stdout",
+        version: "1.2.3",
+        dependencies: { dep },
+        scripts: { a: "echo out-a && echo err-a 1>&2", b: "echo out-b && echo err-b 1>&2" },
+      }),
+      // A lockfile and a node_modules folder by hand: no command here installs or leaves the machine.
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "failed-stdout", dependencies: { dep } } },
+        packages: { dep: [`dep@${dep}`, {}, "example-repo-abc1234"] },
+      }),
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", license: "MIT" }),
+      "old/package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+      "new/package.json": JSON.stringify({ name: "x", version: "1.0.1" }),
+      "entry.js": `import "./shared.js";\nconsole.log("the bundle");\n`,
+      "other.js": `import "./shared.js";\nconsole.log("the other bundle");\n`,
+      "shared.js": `console.log("shared");\n`,
+      "entry.ts": `const n: number = 1;\nconsole.log(n);\n`,
+      // More than the 4096 bytes that stdout buffers: the bundle is written at once, not at exit.
+      "big.js": `console.log("${Buffer.alloc(8192, "x").toString()}");\n`,
+      "pass.test.ts": `import { test } from "bun:test";\ntest("passes", () => console.log("from the test"));\n`,
+      "doc.md": `# Title\n\nSome *text*.\n`,
+    };
+    // No dependency: `bun install` has nothing to fetch.
+    const noDependencies = { "package.json": JSON.stringify({ name: "failed-stdout", version: "1.2.3" }) };
+    const lockb = join(import.meta.dir, "..", "integration", "sharp", "bun.lockb");
+    const cannotWrite = (why: string) => `error: Cannot write standard output: ${why}\n`;
+    const reported = { stderr: cannotWrite("EBADF: Bad file descriptor"), exitCode: 1 };
+
+    async function run(
+      args: string[],
+      stdio: { stdin?: Buffer; stdout: number | Bun.BunFile; stderr?: number },
+      dir: string,
+      env?: Record<string, string | undefined>,
+    ) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        cwd: dir,
+        // `bun repl` and `bun completions` write below the home directory.
+        env: { ...bunEnv, HOME: dir, USERPROFILE: dir, ...env },
+        stdin: stdio.stdin ?? "ignore",
+        stdout: stdio.stdout,
+        stderr: stdio.stderr ?? "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([
+        stdio.stderr === undefined ? (proc.stderr as ReadableStream).text() : "",
+        proc.exited,
+      ]);
+      return { stderr, exitCode };
+    }
+
+    /** Runs `bun` with a stdout that rejects every write. */
+    async function unwritable(args: string[], tree: DirectoryTree = files, env?: Record<string, string | undefined>) {
+      using dir = tempDir("failed-stdout", tree);
+      using stdout = unwritableFd();
+      return await run(args, { stdout: stdout.fd }, String(dir), env);
+    }
+
+    const name = (args: string[]) => `bun ${args.join(" ").replace(lockb, "bun.lockb")}`;
+
+    for (const args of [
+      ["--version"],
+      ["--revision"],
+      ["build", "entry.js"],
+      ["build", "--no-bundle", "entry.ts"],
+      ["build", "big.js"],
+      ["doc.md"],
+      ["getcompletes"],
+      ["pm", "pkg", "get", "version"],
+      ["pm", "hash"],
+      ["pm", "hash-string"],
+      ["pm", "hash-print"],
+      ["pm", "bin"],
+      ["pm", "cache"],
+      ["pm", "ls"],
+      ["pm", "licenses"],
+      ["pm", "default-trusted"],
+      ["pm", "why", "dep"],
+      ["why", "dep"],
+      ["pm", "diff", "./old", "./new"],
+      [lockb],
+      [lockb, "--hash"],
+      // stdout is the name of the tarball and nothing else.
+      ["pm", "pack", "--quiet"],
+      ["pm", "pack", "--silent"],
+      // What a dry run prints is its result.
+      ["pm", "pack", "--dry-run"],
+      ["pm", "pack", "--dry-run", "--quiet"],
+      ["pm", "pkg", "set", "a=b", "--dry-run"],
+      ["pm", "version", "patch", "--dry-run"],
+      ["prune", "--check"],
+    ]) {
+      test(`${name(args)} reports it and exits 1`, async () => {
+        expect(await unwritable(args)).toEqual(reported);
+      });
+    }
+
+    test("bun install --dry-run reports it and exits 1", async () => {
+      expect(await unwritable(["install", "--dry-run"], noDependencies)).toEqual(reported);
+    });
+
+    test("dryRun in bunfig.toml makes bun pm pkg set a dry run, which reports it and exits 1", async () => {
+      const tree = { ...files, "bunfig.toml": "[install]\ndryRun = true\n" };
+      expect(await unwritable(["pm", "pkg", "set", "a=b"], tree)).toEqual(reported);
+    });
+
+    test("bun pm untrusted reports it and exits 1", async () => {
+      const { stderr, exitCode } = await unwritable(["pm", "untrusted"]);
+      // After the header that it prints on stderr.
+      expect(stderr).toEndWith("\n" + reported.stderr);
+      expect(exitCode).toBe(1);
+    });
+
+    test("bun pm scan reports it and exits 1", async () => {
+      const tree = {
+        ...files,
+        "bunfig.toml": `[install.security]\nscanner = "./scanner.js"\n`,
+        "scanner.js": `export const scanner = { version: "1", scan: async () => [] };\n`,
+      };
+      const { stderr, exitCode } = await unwritable(["pm", "scan"], tree);
+      // After the header that it prints on stderr.
+      expect(stderr).toEndWith("\n" + reported.stderr);
+      expect(exitCode).toBe(1);
+    });
+
+    // These ask the registry before they print. A registry in this process answers them.
+    async function withRegistry(args: string[]) {
+      const integrity =
+        "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==";
+      using registry = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const { origin, pathname } = new URL(req.url);
+          if (pathname === "/-/whoami") return Response.json({ username: "someone" });
+          // No advisory for any package.
+          if (pathname === "/-/npm/v1/security/advisories/bulk") return Response.json({});
+          if (pathname !== "/pkg") return new Response(null, { status: 404 });
+          const version = (version: string) => ({
+            name: "pkg",
+            version,
+            dist: { tarball: `${origin}/pkg/-/pkg-${version}.tgz`, integrity },
+          });
+          return Response.json({
+            name: "pkg",
+            "dist-tags": { latest: "2.0.0" },
+            versions: { "1.0.0": version("1.0.0"), "2.0.0": version("2.0.0") },
+          });
+        },
+      });
+      return await unwritable(args, {
+        "package.json": JSON.stringify({ name: "failed-stdout", version: "1.2.3", dependencies: { pkg: "^1.0.0" } }),
+        "bun.lock": JSON.stringify({
+          lockfileVersion: 1,
+          configVersion: 1,
+          workspaces: { "": { name: "failed-stdout", dependencies: { pkg: "^1.0.0" } } },
+          packages: { pkg: ["pkg@1.0.0", "", {}, integrity] },
+        }),
+        "bunfig.toml": Bun.TOML.stringify({
+          install: { cache: false, registry: { url: `http://localhost:${registry.port}`, token: "token" } },
+        }),
+      });
+    }
+
+    for (const args of [
+      ["pm", "whoami"],
+      ["pm", "view", "pkg", "version"],
+      ["info", "pkg", "version"],
+      ["outdated"],
+      ["audit"],
+      ["audit", "fix", "--dry-run", "--json"],
+    ]) {
+      test(`${name(args)} reports it and exits 1`, async () => {
+        expect(await withRegistry(args)).toEqual(reported);
+      });
+    }
+
+    // The HTTP thread ends the process here, while the main thread waits for the registry.
+    test("a thread that is not the main thread reports it", async () => {
+      expect(await withRegistry(["outdated", "--cafile=/nonexistent"])).toEqual({
+        stderr: "HTTPThread: could not find CA file: '/nonexistent'\n" + reported.stderr,
+        exitCode: 1,
+      });
+    });
+
+    test.skipIf(isWindows)("bun completions reports it and exits 1", async () => {
+      using dir = tempDir("failed-stdout", files);
+      // Without a bunx on PATH, the command puts a link to itself next to the executable.
+      const bin = join(String(dir), "bin");
+      fs.mkdirSync(bin);
+      fs.symlinkSync(bunExe(), join(bin, isDebug ? "bunx-debug" : "bunx"));
+      using stdout = unwritableFd();
+      const env = { SHELL: "/bin/bash", BUN_INSTALL: undefined, PATH: `${bin}:${bunEnv.PATH}` };
+      expect(await run(["completions"], { stdout: stdout.fd }, String(dir), env)).toEqual(reported);
+    });
+
+    test.skipIf(!isLinux)("a full disk is reported as ENOSPC", async () => {
+      using dir = tempDir("failed-stdout", files);
+      expect(await run(["build", "entry.js"], { stdout: Bun.file("/dev/full") }, String(dir))).toEqual({
+        stderr: cannotWrite("ENOSPC: No space left on device"),
+        exitCode: 1,
+      });
+    });
+
+    // The file size limit stands for a disk that fills up in the middle of the bundle.
+    test.skipIf(isWindows)("a bundle that is cut in the middle of the file is reported", async () => {
+      using dir = tempDir("failed-stdout-cut", {
+        "big.js": `console.log("${Buffer.alloc(200 * 1024, "x").toString()}");\n`,
+      });
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", 'ulimit -f 16 && exec "$0" build big.js > out.js', bunExe()],
+        cwd: String(dir),
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe(cannotWrite("EFBIG: File too large"));
+      const written = fs.statSync(join(String(dir), "out.js")).size;
+      expect(written).toBeGreaterThan(0);
+      expect(written).toBeLessThan(200 * 1024);
+      expect(exitCode).toBe(1);
+    });
+
+    // `bun build big.js | head -c 1`: the reader has what it wants.
+    test("a reader that hangs up is not an error", async () => {
+      using dir = tempDir("failed-stdout-hang-up", {
+        "big.js": `console.log("${Buffer.alloc(2 * 1024 * 1024, "x").toString()}");\n`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "big.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      // Take one chunk, then close the read end while most of the bundle is still to be written.
+      const reader = proc.stdout.getReader();
+      await reader.read();
+      await reader.cancel();
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    // Not every failed write to a pipe means that its reader left: this end is open for reading only.
+    test.skipIf(isWindows)("a pipe that is not open for writing is reported", async () => {
+      using dir = tempDir("failed-stdout-fifo", files);
+      const fifo = join(String(dir), "fifo");
+      expect(Bun.spawnSync(["mkfifo", fifo]).exitCode).toBe(0);
+      // Without O_NONBLOCK, open() waits for a writer.
+      const stdout = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      try {
+        expect(await run(["build", "entry.js"], { stdout }, String(dir))).toEqual(reported);
+      } finally {
+        fs.closeSync(stdout);
+      }
+    });
+
+    // `bun pm untrusted` prints its header on stderr and its result on stdout.
+    test("a failed write to stderr is not reported", async () => {
+      using dir = tempDir("failed-stdout", files);
+      using stderr = unwritableFd();
+      const out = join(String(dir), "out.txt");
+      const { exitCode } = await run(["pm", "untrusted"], { stdout: Bun.file(out), stderr: stderr.fd }, String(dir));
+      expect(fs.readFileSync(out, "utf8")).toContain("Found 0 untrusted dependencies");
+      expect(exitCode).toBe(0);
+    });
+
+    const silent = { stderr: expect.not.stringContaining("Cannot write"), exitCode: 0 };
+
+    for (const [args, stdin] of [
+      // stdout of a script belongs to the script. As in Node, a console.log that fails is not an exit code.
+      [["-e", "console.log('from the script')"]],
+      [["-p", "1 + 1"]],
+      [["-e", "alert('from the script')"]],
+      [["test", "pass.test.ts"]],
+      [["repl"], Buffer.from("1 + 1\n")],
+      // Help is not a result, and neither is the help of a form that declares.
+      [["--help"]],
+      [["run"]],
+      [["pm", "version"]],
+      [["build", "--help"]],
+      [["pm", "ls", "--help"]],
+      [["why", "--help"]],
+      [["info", "--help"]],
+      [["audit", "--help"]],
+      [["outdated", "--help"]],
+      [["outdated", "-h"]],
+      [["--help", "outdated"]],
+      [["install", "--dry-run", "--help"]],
+      [["pm", "--dry-run"]],
+      [["pm", "version", "--dry-run"]],
+      [["pm", "pkg", "--dry-run"]],
+      // A log of work that is done.
+      [["pm", "pack"]],
+      [["pm", "version", "patch", "--no-git-tag-version"]],
+    ] as [string[], Buffer?][]) {
+      test(`${name(args)} does not report it and exits 0`, async () => {
+        using dir = tempDir("failed-stdout", files);
+        using stdout = unwritableFd();
+        expect(await run(args, { stdin, stdout: stdout.fd }, String(dir))).toEqual(silent);
+      });
+    }
+
+    test("bun install does not report it and exits 0", async () => {
+      expect(await unwritable(["install"], noDependencies)).toEqual(silent);
+    });
+
+    test("bun audit fix does not report it and exits 0", async () => {
+      expect(await withRegistry(["audit", "fix"])).toEqual(silent);
+    });
+
+    // A dependency with a postinstall script that is not trusted yet.
+    const untrusted = {
+      ...files,
+      "node_modules/dep/package.json": JSON.stringify({
+        name: "dep",
+        version: "1.0.0",
+        scripts: { postinstall: "echo ran > ran" },
+      }),
+    };
+
+    test("bun pm trust --all --dry-run reports it and exits 1", async () => {
+      const { stderr, exitCode } = await unwritable(["pm", "trust", "--all", "--dry-run"], untrusted);
+      // After the header that it prints on stderr.
+      expect(stderr).toEndWith("\n" + reported.stderr);
+      expect(exitCode).toBe(1);
+    });
+
+    test("bun pm trust --all runs the script and exits 0", async () => {
+      using dir = tempDir("failed-stdout", untrusted);
+      using stdout = unwritableFd();
+      expect(await run(["pm", "trust", "--all"], { stdout: stdout.fd }, String(dir))).toEqual(silent);
+      expect(fs.existsSync(join(String(dir), "node_modules", "dep", "ran"))).toBe(true);
+    });
+
+    // A cache and a temporary directory of its own: the command also clears what bunx keeps there.
+    async function cacheRm(args: string[]) {
+      using dir = tempDir("failed-stdout", { ...files, cache: { "entry": "" }, tmp: {} });
+      using stdout = unwritableFd();
+      const tmp = join(String(dir), "tmp");
+      const env = { BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"), TMPDIR: tmp, TMP: tmp, TEMP: tmp };
+      const result = await run(["pm", "cache", "rm", ...args], { stdout: stdout.fd }, String(dir), env);
+      return { ...result, cleared: !fs.existsSync(join(String(dir), "cache", "entry")) };
+    }
+
+    test("bun pm cache rm --dry-run reports it and exits 1", async () => {
+      expect(await cacheRm(["--dry-run"])).toEqual({ ...reported, cleared: false });
+    });
+
+    test("bun pm cache rm does not report it and exits 0", async () => {
+      expect(await cacheRm([])).toEqual({ ...silent, cleared: true });
+    });
+
+    test("bun build --outdir writes every output file and exits 0", async () => {
+      using dir = tempDir("failed-stdout", files);
+      using stdout = unwritableFd();
+      const args = ["build", "./entry.js", "./other.js", "--outdir=out", "--splitting"];
+      expect(await run(args, { stdout: stdout.fd }, String(dir))).toEqual({ stderr: "", exitCode: 0 });
+      // Two entry points and the shared chunk.
+      const written = fs.readdirSync(join(String(dir), "out"));
+      expect(written).toHaveLength(3);
+      expect(written).toContain("entry.js");
+      expect(written).toContain("other.js");
+    });
+
+    test.each(["--parallel", "--sequential"])("bun run %s runs every script and exits 0", async mode => {
+      using dir = tempDir("failed-stdout", files);
+      using stdout = unwritableFd();
+      const env = { NO_COLOR: "1" };
+      const { stderr, exitCode } = await run(["run", mode, "a", "b"], { stdout: stdout.fd }, String(dir), env);
+      // Both scripts ran to their end and their status is on stderr.
+      expect(stderr).toContain("err-a");
+      expect(stderr).toContain("err-b");
+      expect(stderr.match(/Done in/g)).toHaveLength(2);
+      expect(stderr).not.toContain("Cannot write");
+      expect(exitCode).toBe(0);
+    });
+
+    for (const mode of [["--filter", "*"], ["--workspaces"]]) {
+      test(`bun run ${mode.join(" ")} runs the script and exits 0`, async () => {
+        using dir = tempDir("failed-stdout-workspace", {
+          "package.json": JSON.stringify({ name: "root", version: "1.0.0", workspaces: ["packages/*"] }),
+          "packages/one/package.json": JSON.stringify({
+            name: "one",
+            version: "1.0.0",
+            scripts: { a: "echo ran > ran" },
+          }),
+        });
+        using stdout = unwritableFd();
+        expect(await run(["run", ...mode, "a"], { stdout: stdout.fd }, String(dir))).toEqual(silent);
+        expect(fs.existsSync(join(String(dir), "packages", "one", "ran"))).toBe(true);
+      });
+    }
   });
 });

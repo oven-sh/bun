@@ -266,11 +266,8 @@ pub(crate) fn print(stdout: &[u8], stderr: &[u8], exit_code: u8) -> u8 {
     let _ = Output::error_writer().write_all(stderr);
     let exit_code = match write_result {
         Err(error) if !bun_sys::reader_left(bun_core::Fd::stdout(), error.get_errno()) => {
-            let why = error.msg().unwrap_or(b"unknown error");
-            Output::err_generic(
-                "Cannot write standard output: {}: {}",
-                (BStr::new(error.name()), BStr::new(why)),
-            );
+            Output::err_stdout_write_failed(i32::from(error.errno));
+            // Not the 1 of `Output::stdout_is_the_result`: 1 means findings here.
             2
         }
         _ => exit_code,

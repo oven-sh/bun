@@ -710,7 +710,7 @@ unsafe extern "C" {
     safe fn quick_exit(code: c_int) -> !;
 }
 
-/// Flushes stdout and stderr (in exit/quick_exit callback) and exits with the given code.
+/// Flushes stdout and stderr (in exit/quick_exit callback) and exits with the given code. A result that stdout lost turns 0 into 1.
 pub fn exit(code: u32) -> ! {
     IS_EXITING.store(true, Ordering::Relaxed);
     // MOVE_DOWN: bun_analytics::features → bun_core (move-in pass).
@@ -722,6 +722,7 @@ pub fn exit(code: u32) -> ! {
 
     // Flush output before exiting to ensure all messages are visible
     Output::flush();
+    let code = Output::exit_code_after_stdout_writes(code);
 
     #[cfg(target_os = "macos")]
     {

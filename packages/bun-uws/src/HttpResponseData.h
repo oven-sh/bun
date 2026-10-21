@@ -169,9 +169,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* node:http: the peer sent its FIN first (HTTP_NODE_RECEIVED_FIN only covers a
          * deferred close). onSocketClosed reports it so the JS socket emits 'end'. */
         HTTP_NODE_PEER_ENDED = 1 << 22,
-        /* node:http socket.end(): half-close when the queued outgoing bytes have flushed, also when the response in flight never ends. With none queued, the FIN leaves at once.
-         * It stays set behind that FIN: the connection still reads. With no response in flight at the flush, the connection closes there. */
-        HTTP_NODE_SHUTDOWN_AFTER_DRAIN = 1 << 25,
+        /* node:http socket.end() or destroySoon() ended the write side. Until the socket closes, the request in flight still gets its body. */
+        HTTP_NODE_HALF_CLOSED = 1 << 23,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
@@ -183,7 +182,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
             | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE
             | HTTP_NODE_CLOSE_AFTER_MESSAGE | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_NODE_PEER_ENDED
-            | HTTP_NODE_SHUTDOWN_AFTER_DRAIN,
+            | HTTP_NODE_HALF_CLOSED,
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is
@@ -305,15 +304,6 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
     bool headersCompleted = false;
     /* Timeout sweep already reported this message; reset when it completes. */
     bool requestTimeoutReported = false;
-
-    /* Behind the FIN of socket.end() no response can leave, so the connection reads no other request.
-     * A window opens: requestTimeout ends a connection that its peer does not end. */
-    void stopReadsBehindOwnFin() {
-        this->state |= HttpResponseData<SSL, false>::HTTP_NODE_PARSING_STOPPED;
-        lastMessageStartMs = nodeCompatMonotonicMs();
-        headersCompleted = true;
-        requestTimeoutReported = false;
-    }
 };
 
 /* Readable name for the IsNodeHttp=true specialization (used by the node:http

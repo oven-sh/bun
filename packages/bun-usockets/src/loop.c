@@ -595,7 +595,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->unclassified_send_failures = 0;
                         s->read_eof = 0;
                         s->hangup_closes_unsent = 0;
-                        s->end_after_shutdown = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -974,14 +973,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s = us_internal_socket_close_raw(s, LIBUS_ECONNRESET, NULL);
                         return;
                     }
-                    if (s->ssl && s->ssl_send_rejected) {
-                        s = us_internal_ssl_on_end_after_rejected_send(s);
-                        return;
-                    }
-                    if (s->end_after_shutdown && !s->read_eof) {
-                        s = s->ssl ? us_internal_ssl_on_end(s) : us_dispatch_end(s);
-                    }
-                    s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+                    s = s->ssl && s->ssl_send_rejected ? us_internal_ssl_on_end_after_rejected_send(s)
+                                                       : us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;
                 }
                 if (s->flags.allow_half_open && !hangup && s->read_eof) {

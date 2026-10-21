@@ -407,7 +407,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterPeerEnded, (JSC::JSGlobalOb
     return JSValue::encode(JSC::jsBoolean(thisObject->peer_ended));
 }
 
-// The FIN of this side has left: socket.end() with nothing queued, or the end of what it waited for.
+// The FIN of socket.end() has left. It waits for bytes that are still queued.
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterFinSent, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));

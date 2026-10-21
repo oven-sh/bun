@@ -39,7 +39,6 @@
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
 extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, struct us_socket_t *s);
-extern "C" void Bun__NodeHTTP__halfCloseAfterDrain(int ssl, struct us_socket_t *s);
 
 namespace uWS {
 
@@ -251,17 +250,6 @@ private:
         us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
     }
 
-    /* node:http socket.end() (HTTP_NODE_SHUTDOWN_AFTER_DRAIN) sends its FIN when the queued bytes are out, at once when there are none. The peer's FIN ends the connection. */
-    static bool readsBehindOwnFin(HttpResponseData<SSL> *httpResponseData) {
-        return (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN) != 0;
-    }
-
-    /* Behind that FIN the request in flight still gets the body that a handler takes. No other request is read (stopReadsBehindOwnFin). */
-    static bool readsBodyBehindOwnFin(HttpResponseData<SSL> *httpResponseData) {
-        return (httpResponseData->state & (HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN | HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED)) == HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN
-            && httpResponseData->inStream != nullptr;
-    }
-
     template <bool IsNodeHttp>
     static us_socket_t *onClose(us_socket_t *s, int code, void * /*reason*/) {
         ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
@@ -345,6 +333,12 @@ private:
         return us_socket_is_shut_down(s);
     }
 
+    /* Not for the body of an accepted Upgrade request: its last chunk starts a tunnel. */
+    static bool readsBodyBehindOwnFin(HttpResponseData<SSL> *httpResponseData) {
+        return (httpResponseData->state & (HttpResponseData<SSL>::HTTP_NODE_HALF_CLOSED | HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY)) == HttpResponseData<SSL>::HTTP_NODE_HALF_CLOSED
+            && httpResponseData->inStream != nullptr;
+    }
+
     template <bool IsNodeHttp>
     static us_socket_t *onData(us_socket_t *s, char *data, int length) {
         // ref the socket to make sure we process it entirely before it is closed
@@ -359,18 +353,14 @@ private:
         HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
         HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
 
-        /* Do not accept any data while in shutdown state. A node:http tunnel is half-open: it still reads after socket.end(). */
+        /* Do not accept any data while in shutdown state. node:http is half-open: a tunnel and the body of the request in flight still read after socket.end(). */
         bool isHalfOpenTunnel = false;
         if constexpr (IsNodeHttp) isHalfOpenTunnel = httpResponseData->isConnectRequest;
-        if (us_socket_is_shut_down((us_socket_t *) s) && !isHalfOpenTunnel) {
-            bool stillReads = false;
-            if constexpr (IsNodeHttp) stillReads = readsBodyBehindOwnFin(httpResponseData);
-            if (!stillReads) {
-                /* Balance the us_socket_ref above — every other return path
-                 * reaches the unref via returnedData. */
-                us_socket_unref(s);
-                return s;
-            }
+        if (us_socket_is_shut_down((us_socket_t *) s) && !isHalfOpenTunnel && !readsBodyBehindOwnFin(httpResponseData)) {
+            /* Balance the us_socket_ref above — every other return path
+             * reaches the unref via returnedData. */
+            us_socket_unref(s);
+            return s;
         }
 
         /* HTTP/2: a cleartext connection that opens with the prior-knowledge
@@ -494,8 +484,6 @@ private:
              * the parser there); abandon the rest of the buffer. */
             if constexpr (IsNodeHttp) {
                 if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED) {
-                    /* The socket stays open: balance the ref of onData, as its end does for a read that is parsed to the end. */
-                    us_socket_unref((us_socket_t *) s);
                     return nullptr;
                 }
             }
@@ -557,8 +545,7 @@ private:
                 httpResponseData->nodeHttpQueuedPipelinedCount++;
                 /* A connection that owes a queued response is not idle (see markDone). */
                 httpResponseData->isIdle = false;
-                /* Not behind this side's FIN (HTTP_NODE_SHUTDOWN_AFTER_DRAIN): what is buffered there never leaves, so nothing would end the pause. */
-                if (((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0 && !us_socket_is_shut_down((us_socket_t *) s)) {
+                if (((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0) {
                     /* Like Node, the rest of this read is still parsed: the pause holds from the next read. */
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
                     ((HttpResponse<SSL> *) s)->pause();
@@ -622,12 +609,8 @@ private:
             }
 
             /* We absolutely have to terminate parsing if shutdown */
-            if (isShutDownByOwner<IsNodeHttp>((us_socket_t *) s)) {
-                bool stillReads = false;
-                if constexpr (IsNodeHttp) stillReads = readsBodyBehindOwnFin(httpResponseData);
-                if (!stillReads) {
-                    return nullptr;
-                }
+            if (isShutDownByOwner<IsNodeHttp>((us_socket_t *) s) && !readsBodyBehindOwnFin(httpResponseData)) {
+                return nullptr;
             }
 
             /* node:http compat: the pipelined-dispatch marker is only meaningful
@@ -718,22 +701,14 @@ private:
                 }
 
                 /* We absolutely have to terminate parsing if shutdown */
-                if (isShutDownByOwner<IsNodeHttp>((us_socket_t *) user)) {
-                    bool stillReads = false;
-                    /* The tunnel of an Upgrade request starts behind the last chunk of its body. */
-                    if constexpr (IsNodeHttp) stillReads = fin ? switchToTunnelAfterThisChunk && readsBehindOwnFin(httpResponseData) : readsBodyBehindOwnFin(httpResponseData);
-                    if (!stillReads) {
-                        /* node:http: this socket can be a tunnel that still reads. Its bytes are not for a body that ended. */
-                        if constexpr (IsNodeHttp) {
-                            if (fin) {
-                                httpResponseData->inStream = nullptr;
-                                if (readsBehindOwnFin(httpResponseData) && !httpResponseData->isConnectRequest) {
-                                    ((HttpResponseData<SSL, true> *) httpResponseData)->stopReadsBehindOwnFin();
-                                }
-                            }
+                if (isShutDownByOwner<IsNodeHttp>((us_socket_t *) user) && (fin || !readsBodyBehindOwnFin(httpResponseData))) {
+                    /* node:http: this socket can be a tunnel that still reads. Its bytes are not for a body that ended. */
+                    if constexpr (IsNodeHttp) {
+                        if (fin) {
+                            httpResponseData->inStream = nullptr;
                         }
-                        return nullptr;
                     }
+                    return nullptr;
                 }
 
                 /* If we were given the last data chunk, reset data handler to ensure following
@@ -776,10 +751,7 @@ private:
              * parsing further requests on this connection. */
             if (IsNodeHttp && httpContextData->onClientError) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;
-                /* Not for the body of an Upgrade request behind this side's FIN: Node.js reports no parse error while parser.upgrade is set, and the peer's FIN closes this socket. */
-                if (!((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY) && us_socket_is_shut_down(s))) {
-                    httpContextData->onClientError(SSL, s, result.parserError, data, length);
-                }
+                httpContextData->onClientError(SSL, s, result.parserError, data, length);
                 if (!us_socket_is_closed(s)) {
                     /* Balance the parsing ref taken at the top of onData (the
                      * success path does this through returnedData). */
@@ -1031,20 +1003,6 @@ private:
                 if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_DRAIN) {
                     responseDone = true;
                 }
-                /* socket.end() issued while bytes were queued: Node half-closes
-                 * once they are out, whether or not the response in flight
-                 * ever ends. With no response pending, the close sites for a
-                 * connection marked to close own that state. */
-                if (!responseDone
-                    && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN)
-                    && httpResponseData->onWritable == nullptr
-                    && !us_socket_is_shut_down(s)
-                    && asyncSocket->hasFullyDrained()) {
-                    /* onData still parses behind this FIN, so onEnd has to see the peer's. */
-                    s->end_after_shutdown = 1;
-                    Bun__NodeHTTP__halfCloseAfterDrain(SSL, s);
-                    return s;
-                }
             }
             if (responseDone && asyncSocket->hasFullyDrained()) {
                 asyncSocket->shutdown();
@@ -1097,9 +1055,8 @@ private:
             }
 
             /* Before the body fin and onClientError below, whose listeners can destroy the socket. Not once this
-             * side shut down: TLS delivers the peer's answer to our close_notify here as an EOF. A socket.end()
-             * (HTTP_NODE_SHUTDOWN_AFTER_DRAIN) still reads behind its FIN, so that EOF is the peer's FIN. */
-            if (!us_socket_is_shut_down(s) || readsBehindOwnFin(httpResponseData)) {
+             * side shut down: TLS delivers the peer's answer to our close_notify here as an EOF. */
+            if (!us_socket_is_shut_down(s)) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PEER_ENDED;
             }
 

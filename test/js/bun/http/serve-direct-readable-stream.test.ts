@@ -2407,3 +2407,44 @@ describe("direct stream edge cases over Bun.serve", () => {
     expect(await (await fetch(server.url, { method: "POST", body: "again" })).text()).toBe("again");
   });
 });
+
+test("survives server.stop(true) called while a body chunk is converted to a string", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      let server;
+      const chunk = Object.assign(new String("x"), {
+        [Symbol.toPrimitive]() { server.stop(true); return "payload"; },
+      });
+      server = Bun.serve({
+        port: 0,
+        fetch: () => new Response(new ReadableStream({
+          async pull(controller) {
+            controller.enqueue("seed");
+            await new Promise(resolve => setImmediate(resolve));
+            controller.enqueue(chunk);
+            controller.close();
+          },
+        })),
+      });
+      try {
+        const res = await fetch(server.url);
+        console.log("status", res.status);
+        console.log("body", JSON.stringify(await res.text()));
+      } catch (e) {
+        console.log("read failed", e.code);
+      }
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // The connection can reset before or after the client reads the headers.
+  expect(stdout).toMatch(/^(status 200\n)?read failed ECONNRESET\n$/);
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});

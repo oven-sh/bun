@@ -3,6 +3,7 @@
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "BunString.h"
+#include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/SamplingProfiler.h>
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -10,6 +11,7 @@
 #include <JavaScriptCore/FunctionExecutable.h>
 #include <JavaScriptCore/SourceProvider.h>
 #include <wtf/Stopwatch.h>
+#include <wtf/StringPrintStream.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/JSONValues.h>
 #include <wtf/HashMap.h>
@@ -128,8 +130,11 @@ static WTF::String formatLocation(const WTF::String& url, int lineNumber)
     // Extract path from file:// URL using WTF::URL
     WTF::String path = url;
     WTF::URL parsedUrl { url };
-    if (parsedUrl.isValid() && parsedUrl.protocolIsFile())
-        path = parsedUrl.fileSystemPath();
+    if (parsedUrl.isValid() && parsedUrl.protocolIsFile()) {
+        // fileSystemPath() returns null if the percent-decoded path isn't valid UTF-8.
+        if (auto decoded = parsedUrl.fileSystemPath(); !decoded.isNull())
+            path = WTF::move(decoded);
+    }
 
     if (lineNumber >= 0) {
         WTF::StringBuilder sb;
@@ -944,4 +949,22 @@ extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString*
         *outJSON = Bun::toStringRef(jsonResult);
     if (outText)
         *outText = Bun::toStringRef(textResult);
+}
+
+// Returns the sampling profiler's text report: top functions, then top bytecodes.
+extern "C" void Bun__SamplingProfiler__report(JSC::VM* vm, BunString* out)
+{
+    JSC::SamplingProfiler* profiler = vm->samplingProfiler();
+    if (!profiler)
+        return;
+
+    WTF::StringPrintStream report;
+    {
+        JSC::JSLockHolder locker(*vm);
+        // A terminated Worker has a pending termination exception, and the report's DeferTermination asserts there isn't one.
+        JSC::SuspendExceptionScope suspendExceptions(*vm);
+        profiler->reportTopFunctions(report);
+        profiler->reportTopBytecodes(report);
+    }
+    *out = Bun::toStringRef(report.toString());
 }

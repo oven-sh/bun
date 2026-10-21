@@ -322,6 +322,38 @@ for (const [site, table] of [
   }
 }
 
+// request() rejects invalid headers one tick later, so the user's close() or destroy() runs first.
+describe("closing a request before its invalid headers are rejected keeps rstCode 0 and doesn't emit 'error'", () => {
+  const invalidHeaders = {
+    "a :path with a space": { ":path": "/a b" },
+    "content-length on a DELETE": { ":method": "DELETE", "content-length": "1" },
+  };
+  const nextTurn = () => new Promise(resolve => setImmediate(resolve));
+
+  for (const [name, headers] of Object.entries(invalidHeaders)) {
+    for (const call of ["close", "destroy"] as const) {
+      test(`${call}() with ${name}`, async () => {
+        const server = http2.createServer();
+        const client = http2.connect(`http://127.0.0.1:${await listen(server)}`);
+        try {
+          await new Promise(resolve => client.on("connect", resolve));
+          const events: string[] = [];
+          const req = client.request(headers);
+          req.on("close", () => events.push("close:" + req.rstCode));
+          req[call]();
+          // close() waits for 'ready' and then queues the RST_STREAM with setImmediate.
+          await nextTurn();
+          await nextTurn();
+          assert.deepStrictEqual(events, ["close:0"]);
+        } finally {
+          client.destroy();
+          server.close();
+        }
+      });
+    }
+  }
+});
+
 if (typeof Bun !== "undefined") {
   const node = Bun.which("node");
   // Alpine's node segfaults at a random point of this file (alpine 3.23 aarch64, on main too), and

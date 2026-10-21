@@ -93,6 +93,8 @@ pub struct InitOptions {
     /// `RuntimeHooks::init_runtime_state` so the high-tier `Transpiler::init`
     /// reuses the caller's env loader.
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
+    /// Overrides `env_loader`. The VM owns it and frees it with its runtime state.
+    pub owned_env_loader: Option<Box<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     /// `--install=...`; the resolver needs it before `configure_linker()` caches package.json.
     pub global_cache: bun_options_types::global_cache::GlobalCache,
@@ -119,6 +121,7 @@ impl Default for InitOptions {
             debugger: Default::default(),
             log: None,
             env_loader: None,
+            owned_env_loader: None,
             graph: None,
             global_cache: bun_options_types::global_cache::GlobalCache::disable,
             smol: false,
@@ -239,6 +242,8 @@ pub struct VirtualMachine {
     pub dns_result_order: u8,
     pub cpu_profiler_config: Option<crate::bun_cpu_profiler::CPUProfilerConfig>,
     pub heap_profiler_config: Option<crate::bun_heap_profiler::HeapProfilerConfig>,
+    /// Set by `BUN_JSC_samplingProfilerPath` or `bun:jsc`'s `startSamplingProfiler()`.
+    pub sampling_profiler_directory: Option<Box<[u8]>>,
     pub counters: Counters,
 
     /// `--hot` / `--watch` mode this VM runs under.
@@ -297,6 +302,8 @@ pub struct VirtualMachine {
 
     /// Used by bun:test to set global hooks for beforeAll, beforeEach, etc.
     pub is_in_preload: bool,
+    /// True if `load_preloads` kept the preload list for a reload that was deferred while it ran.
+    pub preloads_kept_for_reload: bool,
     pub has_patched_run_main: bool,
 
     pub transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore,
@@ -330,7 +337,7 @@ pub struct VirtualMachine {
     pub(crate) resolved_path_dups: Vec<Box<[u8]>>,
     pending_internal_promise: crate::strong::Optional,
     pub pending_internal_promise_reported_at: u32,
-    pub(crate) hot_reload_deferred: bool,
+    pub hot_reload_deferred: bool,
     pub entry_point_result: EntryPointResult,
 
     pub on_unhandled_rejection: OnUnhandledRejection,
@@ -346,6 +353,10 @@ pub struct VirtualMachine {
     pub on_print_error_zig_exception_ctx: *mut c_void,
     pub(crate) is_handling_uncaught_exception: bool,
     pub(crate) exit_on_uncaught_exception: bool,
+    /// An earlier `--hot` run ended with an unhandled error. Its `beforeExit` listeners are still registered.
+    hot_run_failed: bool,
+    /// The watcher's loop turned after an unhandled error, so that error did not stop the timers.
+    pub timers_ran_after_error: bool,
 
     pub modules: crate::async_module::Queue,
     pub aggressive_garbage_collection: GCLevel,
@@ -724,8 +735,8 @@ impl VMHolder {
     }
 
     /// Node parity: `process.kill(self, sig)` with no JS handler for `sig`
-    /// flushes the CPU and heap profiles before sending the (likely fatal)
-    /// signal, mirroring node's `Kill` binding. Idempotent via `Option::take`
+    /// flushes the profiles before sending the (likely fatal) signal,
+    /// mirroring node's `Kill` binding. Idempotent via `Option::take`
     /// (the compile cache is written again at a real exit; a bytecode order
     /// recording is written once and ends there). The recording is the main
     /// thread's to write: a Worker that sends the signal leaves none.
@@ -734,20 +745,7 @@ impl VMHolder {
         let Some(vm_ptr) = VM.get() else { return };
         // SAFETY: called on the JS thread that owns this VM (process._kill).
         let vm = unsafe { &mut *vm_ptr };
-        if let Some(config) = vm.cpu_profiler_config.take() {
-            if let Err(e) =
-                crate::bun_cpu_profiler::stop_and_write_profile(vm.jsc_vm_mut(), &config)
-            {
-                bun_core::Output::err(<&'static str>::from(e), "Failed to write CPU profile", ());
-            }
-        }
-        if let Some(config) = vm.heap_profiler_config.take() {
-            if let Err(e) =
-                crate::bun_heap_profiler::generate_and_write_profile(vm.jsc_vm_mut(), &config)
-            {
-                bun_core::Output::err(e, "Failed to write heap profile", ());
-            }
-        }
+        vm.write_profiles();
         // Node runs RunAtExit (incl. compile cache) on self-directed fatal signals. Non-latching:
         // the signal may prove non-fatal, and latching here would no-op the real exit's persist.
         // https://github.com/nodejs/node/blob/main/src/env.cc (AtExit(FlushCompileCache))
@@ -1025,9 +1023,10 @@ impl VirtualMachine {
         VM.get()
     }
 
-    /// The signal handler path (unix only) reaches the main VM through this.
+    /// Returns the main thread's VM. Callable from any thread. The VM is never freed, but other
+    /// threads may only touch its thread-safe state.
     #[cfg(unix)]
-    pub(crate) fn get_main_thread_vm() -> Option<*mut VirtualMachine> {
+    pub fn get_main_thread_vm() -> Option<*mut VirtualMachine> {
         let p = MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire);
         if p.is_null() { None } else { Some(p) }
     }
@@ -1548,6 +1547,29 @@ impl VirtualMachine {
         self.bun_watcher
     }
 
+    /// Shuts down the file watcher. Its thread reads this VM while handling a change, so this waits
+    /// for the current change to finish and prevents new ones.
+    fn stop_import_watcher(&mut self) {
+        use crate::hot_reloader::ImportWatcher;
+        if self.bun_watcher.is_null() {
+            return;
+        }
+        // SAFETY: `install_bun_watcher` leaked this box, and the other threads that read it have finished.
+        // Keep it installed until `shutdown` returns because the in-progress change still reads it.
+        if let ImportWatcher::Hot(w) | ImportWatcher::Watch(w) = unsafe { &mut *self.bun_watcher } {
+            // SAFETY: the box is the one `Watcher::init` returned.
+            unsafe { bun_watcher::Watcher::shutdown(&raw mut **w, false) };
+        }
+        self.transpiler.resolver.watcher = None;
+        let watcher = core::mem::replace(&mut self.bun_watcher, core::ptr::null_mut());
+        // SAFETY: as above.
+        let watcher = unsafe { bun_core::heap::take(watcher) };
+        if let ImportWatcher::Hot(w) | ImportWatcher::Watch(w) = *watcher {
+            // `shutdown` transferred ownership to the watcher thread.
+            let _ = Box::into_raw(w);
+        }
+    }
+
     /// `event_loop().enter()` now, `.exit()` on drop. Safe wrapper over
     /// [`EventLoop::enter_scope`] for the common `vm.event_loop()` case.
     #[inline]
@@ -1603,7 +1625,7 @@ impl VirtualMachine {
     /// allocated once during VM init and never freed.
     #[inline]
     pub fn top_level_dir(&self) -> &'static [u8] {
-        self.fs().top_level_dir
+        self.fs().top_level_dir()
     }
 
     /// Safe `&mut Debugger` accessor — the [`JsCell`] escape hatch applied to
@@ -1845,7 +1867,7 @@ impl VirtualMachine {
         Bun__emitHandledPromiseEvent(global_object, promise)
     }
 
-    pub(crate) fn default_on_unhandled_rejection(
+    pub fn default_on_unhandled_rejection(
         this: &mut VirtualMachine,
         _: &JSGlobalObject,
         value: JSValue,
@@ -2174,7 +2196,11 @@ impl VirtualMachine {
             // and exit, like node's fatal-exception path. Main thread only:
             // process_exit() RETURNS on a worker, so the panic would fire; a
             // worker falls through and exits 1 below (e.g. a beforeExit throw).
-            if self.exit_on_uncaught_exception && self.is_main_thread() {
+            // `--hot` and `--watch` stay to wait for the next save.
+            if self.exit_on_uncaught_exception
+                && self.is_main_thread()
+                && !self.is_watcher_enabled()
+            {
                 self.run_error_handler(err, None);
                 // `process_exit` emits `exit`, re-entering here if a listener
                 // throws. No handler is running, so drop the recursion guard or
@@ -2213,7 +2239,7 @@ impl VirtualMachine {
         // the hard-exit flag ourselves since we're skipping the dispatch that
         // would have set it, so a throw from an 'exit' listener still stops
         // subsequent listeners.
-        if self.unhandled_error_counter > 0 {
+        if self.unhandled_error_counter > 0 || self.hot_run_failed {
             self.exit_on_uncaught_exception = true;
             return;
         }
@@ -2252,6 +2278,37 @@ impl VirtualMachine {
         }
     }
 
+    /// Writes each configured profile once. The sampling report is written first because
+    /// `stopCPUProfiler` clears its traces.
+    pub fn write_profiles(&mut self) {
+        if let Some(directory) = self.sampling_profiler_directory.take() {
+            if let Err(e) = crate::bun_cpu_profiler::write_sampling_profiler_report(
+                self.jsc_vm_mut(),
+                &directory,
+            ) {
+                bun_core::Output::err(
+                    <&'static str>::from(e),
+                    "Failed to write sampling profiler report",
+                    (),
+                );
+            }
+        }
+        if let Some(config) = self.cpu_profiler_config.take() {
+            if let Err(e) =
+                crate::bun_cpu_profiler::stop_and_write_profile(self.jsc_vm_mut(), &config)
+            {
+                bun_core::Output::err(<&'static str>::from(e), "Failed to write CPU profile", ());
+            }
+        }
+        if let Some(config) = self.heap_profiler_config.take() {
+            if let Err(e) =
+                crate::bun_heap_profiler::generate_and_write_profile(self.jsc_vm_mut(), &config)
+            {
+                bun_core::Output::err(e, "Failed to write heap profile", ());
+            }
+        }
+    }
+
     pub fn on_exit(&mut self) {
         // Decide once whether the exit sequence may run script. It can be
         // entered with an exception pending: `process.exit()` from inside a
@@ -2274,25 +2331,8 @@ impl VirtualMachine {
             }
         }
 
-        // Write CPU profile if profiling was enabled - do this FIRST before any
-        // shutdown begins. Grab the config and null it out to make this
-        // idempotent.
-        if let Some(config) = self.cpu_profiler_config.take() {
-            if let Err(e) =
-                crate::bun_cpu_profiler::stop_and_write_profile(self.jsc_vm_mut(), &config)
-            {
-                bun_core::Output::err(<&'static str>::from(e), "Failed to write CPU profile", ());
-            }
-        }
-        // Write heap profile if profiling was enabled - do this after CPU
-        // profile but before shutdown.
-        if let Some(config) = self.heap_profiler_config.take() {
-            if let Err(e) =
-                crate::bun_heap_profiler::generate_and_write_profile(self.jsc_vm_mut(), &config)
-            {
-                bun_core::Output::err(e, "Failed to write heap profile", ());
-            }
-        }
+        // Write profiles before any shutdown begins.
+        self.write_profiles();
 
         ExitHandler::dispatch_on_exit(self);
 
@@ -2540,6 +2580,17 @@ impl VirtualMachine {
             (*this).release_queued_work();
             let _ = Self::stop_phase_sweep(this, kind);
         });
+        // Node-API finalizers that `NapiEnv::cleanup` held back for an `execute()` on the pool.
+        // SAFETY: fn contract (statement-scoped exclusive access).
+        unsafe {
+            if let Some(rare) = (*this).rare_data.as_deref_mut() {
+                let held_back = core::mem::take(&mut rare.cleanup_hooks_after_teardown_wait);
+                rare.cleanup_hooks.extend(held_back);
+            }
+            (*this).run_cleanup_hooks();
+        }
+        // SAFETY: fn contract (statement-scoped exclusive access).
+        unsafe { (*this).stop_import_watcher() };
         // The exiting main thread now parks the process-wide HTTP thread —
         // after the children it also served are joined and this VM's own
         // requests are back — so it cannot touch what process exit frees. If
@@ -2794,6 +2845,15 @@ pub struct WorkerExecArgvFlags {
     pub invalid: Option<usize>,
 }
 
+/// Which of its timers a `--hot` run takes with it.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum CancelHotRunTimers {
+    None,
+    /// A `setTimeout` may be the next step of an earlier run's loop.
+    Intervals,
+    All,
+}
+
 pub struct RuntimeHooks {
     /// `bun.api.Timer.All.init()` + `Body.Value.HiveAllocator.init()` +
     /// `configureDebugger()` — everything `init()` does that names a
@@ -2962,6 +3022,11 @@ pub struct RuntimeHooks {
     /// `only`: just the timers script of that context set (the context
     /// stopped; the VM keeps running).
     pub cancel_timers: unsafe fn(vm: *mut VirtualMachine, only: Option<crate::ContextId>),
+    /// A `--hot` run ends, before `hot_reload_counter` moves on. The timers of the runs before it are kept.
+    ///
+    /// # Safety
+    /// `vm` is the live per-thread VM, on the JS thread; `runtime_state` is installed.
+    pub end_hot_run_timers: unsafe fn(vm: *mut VirtualMachine, cancel: CancelHotRunTimers),
     /// Destroy the per-VM global DNS resolver's c-ares channel now, while JSC,
     /// the event loop, `RareData.file_polls`, and `runtime_state` are all
     /// live. `ares_destroy()` re-enters the resolver's socket-state and query
@@ -3274,6 +3339,7 @@ impl VirtualMachine {
             // explicitly.
             addr_of_mut!((*vm).cpu_profiler_config).write(None);
             addr_of_mut!((*vm).heap_profiler_config).write(None);
+            addr_of_mut!((*vm).sampling_profiler_directory).write(None);
             // `Option<bool>` uses the bool's invalid range (2) as the niche, so
             // all-zero bytes decode as `Some(false)` — for TLS that would
             // silently disable certificate verification. Write `None` explicitly.
@@ -4190,7 +4256,7 @@ unsafe extern "C" {
 
 extern "C" fn free_ref_string(str_: *mut crate::ref_string::RefString, _: *mut c_void, _: usize) {
     // SAFETY: `str_` is the `ctx` we passed to `String::create_external` in
-    // `ref_counted_string_with_was_new`; it points at a heap `RefString`.
+    // `ref_counted_string`; it points at a heap `RefString`.
     unsafe { crate::ref_string::RefString::destroy(str_) };
 }
 
@@ -4315,7 +4381,7 @@ impl VirtualMachine {
         // `&'static mut Loader` is independent of `&self`, so `map` may be held
         // across the `&mut self` writes below.
         let env = self.transpiler.env_mut();
-        let map = &mut env.map;
+        let map = &env.map;
 
         ensure_source_code_printer();
         // The runtime VM owns the printer from here on — even if a macro had
@@ -4332,23 +4398,14 @@ impl VirtualMachine {
             self.transpiler_store.enabled = false;
         }
 
-        if let Some(idx) = map.map.get_index(b"NODE_CHANNEL_FD") {
-            let (_, kv) = map.map.swap_remove_at(idx);
-            let fd_s = kv.value;
-            let advanced = map
-                .map
-                .get_index(b"NODE_CHANNEL_SERIALIZATION_MODE")
-                .map(|i| map.map.swap_remove_at(i).1)
-                .is_some_and(|v| &v.value[..] == b"advanced");
-            // Accept only
-            // non-negative values that fit in i31 (i.e. `0..=i32::MAX`).
-            // Parsing as `u32` then `as i32` would silently wrap values in
-            // `2^31..2^32` to a negative fd instead of taking the warn branch.
-            // The channel belongs to the process (its main thread). A worker
-            // sees the same inherited variables but must not open a second
-            // endpoint over the same fd (Node: no process.send() in workers).
-            if self.is_main_thread() {
-                match bun_core::fmt::parse_int::<i32>(&fd_s, 10)
+        // `Loader::load_process` skips these, so read them from the process environment.
+        // A worker has no process.send().
+        if self.is_main_thread() {
+            if let Some(fd_s) = bun_core::env_var::NODE_CHANNEL_FD.get() {
+                let advanced = bun_core::env_var::NODE_CHANNEL_SERIALIZATION_MODE
+                    .get()
+                    .is_some_and(|v| bun_core::strings::eql(v, b"advanced"));
+                match bun_core::fmt::parse_int::<i32>(fd_s, 10)
                     .ok()
                     .filter(|&n| n >= 0)
                 {
@@ -4360,7 +4417,7 @@ impl VirtualMachine {
                     }
                     None => bun_core::warn!(
                         "Failed to parse IPC channel number '{}'",
-                        bstr::BStr::new(&fd_s[..])
+                        bstr::BStr::new(fd_s)
                     ),
                 }
             }
@@ -4548,39 +4605,31 @@ impl VirtualMachine {
 
     /// After a hot reload, surfaces the entry-point promise's rejection (if any) and re-arms the watcher.
     pub fn report_exception_in_hot_reloaded_module_if_needed(&mut self) {
-        let promise = match self.pending_internal_promise() {
-            Some(p) => p,
-            None => {
-                self.add_main_to_watcher_if_needed();
-                return;
-            }
-        };
-        // SAFETY: `promise` is a live JSC heap cell tracked by the VM.
-        match crate::JSPromise::status_ptr(promise) {
-            crate::js_promise::Status::Pending => {
-                self.add_main_to_watcher_if_needed();
-                return;
-            }
-            crate::js_promise::Status::Rejected => {
-                if self.pending_internal_promise_reported_at != self.hot_reload_counter {
-                    self.pending_internal_promise_reported_at = self.hot_reload_counter;
-                    // `global()` is `&'static`, so it survives the `&mut self`
-                    // call below.
-                    let global_ref = self.global();
-                    // `JSPromise` is an `opaque_ffi!` ZST handle; `opaque_mut`
-                    // is the centralised non-null deref proof (live JSC heap
-                    // cell tracked by the VM's strong-ref slot).
-                    let result = crate::JSPromise::opaque_mut(promise).result(global_ref.vm());
-                    let promise_js = JSValue::from_cell(promise);
-                    self.unhandled_rejection(global_ref, result, promise_js);
-                    crate::JSPromise::opaque_mut(promise).set_handled();
+        while let Some(promise) = self.pending_internal_promise() {
+            // SAFETY: `promise` is a live JSC heap cell tracked by the VM.
+            match crate::JSPromise::status_ptr(promise) {
+                crate::js_promise::Status::Pending => break,
+                crate::js_promise::Status::Rejected => {
+                    if self.pending_internal_promise_reported_at != self.hot_reload_counter {
+                        self.pending_internal_promise_reported_at = self.hot_reload_counter;
+                        // `global()` is `&'static`, so it survives the `&mut self` call below.
+                        let global_ref = self.global();
+                        // `opaque_mut`: the VM's slot keeps this JSC heap cell alive.
+                        let result = crate::JSPromise::opaque_mut(promise).result(global_ref.vm());
+                        let promise_js = JSValue::from_cell(promise);
+                        self.unhandled_rejection(global_ref, result, promise_js);
+                        crate::JSPromise::opaque_mut(promise).set_handled();
+                    }
                 }
+                crate::js_promise::Status::Fulfilled => {}
             }
-            crate::js_promise::Status::Fulfilled => {}
-        }
 
-        if self.hot_reload_deferred {
+            if !self.hot_reload_deferred {
+                break;
+            }
             self.reload(None);
+            // This reload wasn't started by a task, so run its microtasks here before the loop sleeps.
+            self.tick();
         }
         self.add_main_to_watcher_if_needed();
     }
@@ -4696,6 +4745,12 @@ impl VirtualMachine {
             unreachable!("reload_process returns only when may_return is true");
         }
 
+        // Reloading while `load_preloads` ticks would clear the list it's iterating.
+        if self.is_in_preload {
+            self.hot_reload_deferred = true;
+            return;
+        }
+
         if let Some(p) = self.pending_internal_promise() {
             // SAFETY: `p` is a live JSC heap cell tracked by the VM.
             match crate::JSPromise::status_ptr(p) {
@@ -4733,16 +4788,59 @@ impl VirtualMachine {
         // `JSGlobalObject::reload` drains microtasks + collects async + clears
         // the JSC module loader registry.
         self.global().reload().expect("Failed to reload");
+        // An unhandled error stops all timers. The next run starts them again, without those of the failed run.
+        // libuv fires timers on Windows, error or not.
+        let timers_ran = core::mem::take(&mut self.timers_ran_after_error) || cfg!(windows);
+        let cancel = if core::mem::take(&mut self.unhandled_error_counter) == 0 {
+            CancelHotRunTimers::None
+        } else {
+            self.hot_run_failed = true;
+            self.exit_handler.exit_code = 0;
+            if timers_ran {
+                CancelHotRunTimers::Intervals
+            } else {
+                CancelHotRunTimers::All
+            }
+        };
+        if let Some(hooks) = runtime_hooks() {
+            // SAFETY: live per-thread VM on the JS thread; `runtime_state` stays installed.
+            unsafe { (hooks.end_hot_run_timers)(core::ptr::from_mut(self), cancel) };
+        }
         self.hot_reload_counter += 1;
-        // reload_entry_point() stores into pending_internal_promise on every return path.
+        // reload_entry_point() stores into pending_internal_promise whenever it returns a promise.
         let main = self.main;
         // Note: reshaped for borrowck — copy the `RawSlice` first to avoid
         // overlapping `&self`/`&mut self` borrows.
-        if self
-            .reload_entry_point(main.as_ref().map(|main| main.slice()))
-            .is_err()
-        {
-            panic!("Failed to reload");
+        if let Err(err) = self.reload_entry_point(main.as_ref().map(|main| main.slice())) {
+            self.reject_failed_reload(err);
+        }
+    }
+
+    /// Sets the entry promise to a rejected promise when `reload_entry_point` fails without returning one.
+    #[cold]
+    fn reject_failed_reload(&mut self, err: crate::CrateError) {
+        use crate::LogJsc as _;
+        let global = self.global();
+        let reason = if global.has_exception() {
+            Err(jsc::JsError::Thrown)
+        } else if let Some(log) = self.log_mut().filter(|log| log.has_errors()) {
+            let reason = log.to_js(global, format_args!("Failed to reload"));
+            log.reset();
+            reason
+        } else {
+            Ok(global.create_error_instance(format_args!(
+                "Error occurred loading entry point: {}",
+                err.name(),
+            )))
+        };
+        let rejected = match reason {
+            Ok(reason) => Ok(crate::JSPromise::rejected_promise(global, reason)),
+            Err(thrown) => crate::JSPromise::rejected_promise_with_caught_exception(global, thrown),
+        };
+        if let Ok(rejected) = rejected {
+            // The run loop reports the entry promise's rejection, so keep it out of the unhandled rejection tracker.
+            rejected.set_handled();
+            self.set_pending_internal_promise(Some(core::ptr::from_mut(rejected)));
         }
     }
 
@@ -4908,11 +5006,11 @@ impl VirtualMachine {
     }
 
     /// Stored as [`RefString::on_before_deinit`] (an unsafe-fn-ptr slot) in
-    /// [`ref_counted_string_with_was_new`]; only ever invoked from
+    /// [`Self::ref_counted_string`]; only ever invoked from
     /// `RefString::destroy` with the live `*mut RefString` being torn down.
     fn clear_ref_string(_: *mut c_void, ref_string: *mut crate::ref_string::RefString) {
         // SAFETY: only reachable via `RefString::destroy`, which passes the
-        // live heap `RefString` allocated in `ref_counted_string_with_was_new`;
+        // live heap `RefString` allocated in `ref_counted_string`;
         // safe-fn coerces to the unsafe-fn-ptr `Callback` slot type.
         let hash = unsafe { &*ref_string }.hash;
         // SAFETY: `get()` is the live per-thread VM.
@@ -4932,60 +5030,52 @@ impl VirtualMachine {
         specifier: &bun_core::String,
         source_url: &[u8],
         hash_: Option<u32>,
-    ) -> ResolvedSource {
+    ) -> Result<ResolvedSource, crate::ref_string::StringTooLong> {
         // refCountedString will panic if the code is empty
         if code.is_empty() {
-            return ResolvedSource {
+            return Ok(ResolvedSource {
                 source_url: specifier.create_if_different(source_url),
                 ..Default::default()
-            };
+            });
         }
-        let source = self.ref_counted_string::<true>(code, hash_);
-        // SAFETY: `ref_counted_string` returns a live `*mut RefString` held in
+        let source = self.ref_counted_string(code, hash_)?;
+        // SAFETY: `ref_counted_string` returns a live `RefString` held in
         // `self.ref_strings` until JSC calls the external-string finalizer.
-        let source_ref = unsafe { &*source };
+        let source_ref = unsafe { source.as_ref() };
 
-        ResolvedSource {
+        Ok(ResolvedSource {
             source_code: bun_core::String::retain_wtf_impl(source_ref.impl_),
             source_url: specifier.create_if_different(source_url),
             ..Default::default()
-        }
+        })
     }
 
-    fn ref_counted_string_with_was_new<const DUPE: bool>(
+    /// Interns `input_` in the VM's ref-string map and returns the ref-counted entry.
+    pub fn ref_counted_string(
         &mut self,
-        new: &mut bool,
         input_: &[u8],
         hash_: Option<u32>,
-    ) -> *mut crate::ref_string::RefString {
-        use crate::ref_string::RefString;
+    ) -> Result<NonNull<crate::ref_string::RefString>, crate::ref_string::StringTooLong> {
+        use crate::ref_string::{RefString, StringTooLong};
         use bun_collections::zig_hash_map::MapEntry as Entry;
         jsc::mark_binding();
         debug_assert!(!input_.is_empty());
         let hash = hash_.unwrap_or_else(|| RefString::compute_hash(input_));
-        // RAII guard releases on every
-        // exit (including the early-return `Occupied` arm).
         let _unlock = self.ref_strings_mutex.lock_guard();
         // Note: reshaped for borrowck — capture the back-pointer before
         // `ref_strings.entry()` takes its unique borrow on `self`.
         let self_ctx = NonNull::new(std::ptr::from_mut::<VirtualMachine>(self).cast::<c_void>());
 
         match self.ref_strings.entry(hash) {
-            Entry::Occupied(o) => {
-                *new = false;
-                *o.get()
-            }
+            Entry::Occupied(o) => Ok(*o.get()),
             Entry::Vacant(v) => {
-                // Dupe the input bytes when `DUPE`, otherwise
-                // adopt the caller's allocation (caller transferred ownership).
-                let (ptr, len) = if DUPE {
-                    let buf = Box::<[u8]>::from(input_);
-                    let len = buf.len();
-                    (bun_core::heap::into_raw(buf).cast::<u8>().cast_const(), len)
-                } else {
-                    (input_.as_ptr(), input_.len())
-                };
-                let ref_ = bun_core::heap::into_raw(Box::new(RefString {
+                if input_.len() > bun_core::String::max_length() {
+                    return Err(StringTooLong);
+                }
+                let buf = Box::<[u8]>::from(input_);
+                let len = buf.len();
+                let ptr = bun_core::heap::into_raw(buf).cast::<u8>().cast_const();
+                let ref_ = bun_core::heap::into_raw_nn(Box::new(RefString {
                     ptr,
                     len,
                     hash,
@@ -4993,7 +5083,8 @@ impl VirtualMachine {
                     // `*mut RefString` ctx pointer first.
                     impl_: core::ptr::null_mut(),
                     ctx: self_ctx,
-                    on_before_deinit: Some(VirtualMachine::clear_ref_string),
+                    // Set after `create_external` succeeds. If it fails, it runs `free_ref_string` while `v` still borrows the map.
+                    on_before_deinit: None,
                 }));
                 // SAFETY: `ref_` is the unique live `*mut RefString` (just
                 // boxed); `(ptr, len)` is its owned latin-1 buffer. The
@@ -5003,27 +5094,23 @@ impl VirtualMachine {
                 let s = bun_core::String::create_external::<*mut RefString>(
                     unsafe { bun_core::ffi::slice(ptr, len) },
                     true,
-                    ref_,
+                    ref_.as_ptr(),
                     free_ref_string,
                 );
-                // SAFETY: see above.
-                unsafe { (*ref_).impl_ = s.leak_wtf_impl() };
+                if s.tag() == bun_core::Tag::Dead {
+                    // `create_external` already freed `ref_`.
+                    return Err(StringTooLong);
+                }
+                // SAFETY: `s` owns the impl, so `free_ref_string` has not run
+                // and `ref_` is still the unique live `RefString`.
+                unsafe {
+                    (*ref_.as_ptr()).impl_ = s.leak_wtf_impl();
+                    (*ref_.as_ptr()).on_before_deinit = Some(VirtualMachine::clear_ref_string);
+                }
                 v.insert(ref_);
-                *new = true;
-                ref_
+                Ok(ref_)
             }
         }
-    }
-
-    /// Interns `input_` in the VM's ref-string map and returns the ref-counted entry.
-    pub fn ref_counted_string<const DUPE: bool>(
-        &mut self,
-        input_: &[u8],
-        hash_: Option<u32>,
-    ) -> *mut crate::ref_string::RefString {
-        debug_assert!(!input_.is_empty());
-        let mut was_new = false;
-        self.ref_counted_string_with_was_new::<DUPE>(&mut was_new, input_, hash_)
     }
 
     // Note: `flags` is a runtime arg —
@@ -5665,6 +5752,7 @@ impl VirtualMachine {
 
         drop(core::mem::take(&mut self.resolved_path_dups));
         drop(core::mem::take(&mut self.main_resolved_path));
+        drop(self.sampling_profiler_directory.take());
 
         self.overridden_main.deinit();
         self.bake_config_plugins.deinit();
@@ -5858,34 +5946,41 @@ impl VirtualMachine {
     }
 
     pub fn set_process_cwd(&mut self, to: &bun_core::ZStr) -> bun_sys::Result<()> {
-        let fs = self.transpiler.fs_mut();
+        let fs = self.fs();
         bun_sys::chdir(to)?;
         let mut buf = bun_paths::path_buffer_pool::get();
-        let into_cwd_len = match bun_sys::getcwd(&mut buf[..]) {
+        let mut len = match bun_sys::getcwd(&mut buf[..]) {
             bun_sys::Result::Ok(r) => r,
             bun_sys::Result::Err(err) => {
                 let mut rollback = bun_paths::path_buffer_pool::get();
-                let _ = bun_sys::chdir(bun_paths::resolve_path::z(fs.top_level_dir, &mut rollback));
+                let _ = bun_sys::chdir(bun_paths::resolve_path::z(
+                    fs.top_level_dir(),
+                    &mut rollback,
+                ));
                 return bun_sys::Result::Err(err);
             }
         };
-        fs.top_level_dir_buf[..into_cwd_len].copy_from_slice(&buf[..into_cwd_len]);
-        fs.top_level_dir_buf[into_cwd_len] = 0;
-        // SAFETY: `top_level_dir_buf` is a process-lifetime field of the
-        // FileSystem singleton, so the detached borrow never outlives its
-        // backing storage.
-        fs.top_level_dir =
-            unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..into_cwd_len]) };
-        let len = fs.top_level_dir.len();
-        if fs.top_level_dir_buf[len - 1] != bun_paths::SEP {
-            fs.top_level_dir_buf[len] = bun_paths::SEP;
-            fs.top_level_dir_buf[len + 1] = 0;
-            // SAFETY: see above.
-            fs.top_level_dir =
-                unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..len + 1]) };
+        if len > 0 && buf[len - 1] != bun_paths::SEP && len < buf.len() {
+            buf[len] = bun_paths::SEP;
+            len += 1;
         }
-        bun_core::set_top_level_dir(fs.top_level_dir);
+        fs.set_top_level_dir(Self::intern_cwd(fs, &buf[..len]));
         Ok(())
+    }
+
+    /// Returns a `'static` copy of `cwd`. Other threads keep slices of the cwd, so a published one
+    /// is never overwritten or freed.
+    fn intern_cwd(fs: &bun_resolver::fs::FileSystem, cwd: &[u8]) -> &'static [u8] {
+        static CACHE: bun_core::Mutex<Option<bun_collections::HashMap<&'static [u8], ()>>> =
+            bun_core::Mutex::new(None);
+        let mut cache = CACHE.lock();
+        let cache = cache.get_or_insert_default();
+        if let Some((&interned, ())) = cache.get_key_value(cwd) {
+            return interned;
+        }
+        let interned = bun_core::handle_oom(fs.dirname_store().append(cwd));
+        cache.insert(interned, ());
+        interned
     }
 
     /// Whether `group` outlives a test file under `--isolate`: the spawn-IPC pool (this process's
@@ -6160,7 +6255,20 @@ impl VirtualMachine {
                 let writer = unsafe { &mut *ctx.writer };
                 ctx.printed_member = true;
                 formatter.depth = formatter.depth.saturating_add(1);
-                if formatter.depth > formatter.error_chain_max_depth()
+                if next_value.is_cell()
+                    && next_value.js_type() == crate::JSType::ErrorInstance
+                    && formatter.visited_contains(next_value)
+                {
+                    let _ = if ctx.allow_ansi_color {
+                        writer.write_all(
+                            bun_core::pretty_fmt!("<r><cyan>[Circular]<r>\n", true).as_bytes(),
+                        )
+                    } else {
+                        writer.write_all(
+                            bun_core::pretty_fmt!("<r><cyan>[Circular]<r>\n", false).as_bytes(),
+                        )
+                    };
+                } else if formatter.depth > formatter.error_chain_max_depth()
                     || !formatter.stack_check.is_safe_to_recurse()
                 {
                     let _ = if ctx.allow_ansi_color {
@@ -6827,6 +6935,7 @@ impl VirtualMachine {
     ) -> crate::CrateResult<()> {
         let mut default_formatter = crate::console_object::Formatter::new(self.global());
         let f = formatter.unwrap_or(&mut default_formatter);
+        let mut recorded = false;
         self.print_error_instance_body(
             zig_exception,
             JSValue::ZERO,
@@ -6835,6 +6944,7 @@ impl VirtualMachine {
             writer,
             allow_ansi_color,
             allow_side_effects,
+            &mut recorded,
         )
         // `defer default_formatter.deinit()` → Drop.
     }
@@ -6862,8 +6972,7 @@ impl VirtualMachine {
         // re-check here with an extra `MAX_PATH_BYTES * 3` of slack on Windows
         // to cover the transpiler's nested path buffers — same parity-level
         // protection the Object path gets from C++ `forEachProperty`'s
-        // `vm.isSafeToRecurse()`. The formatter's `stack_check` was seated by
-        // the caller (`format2` / `Bun.inspect`).
+        // `vm.isSafeToRecurse()`.
         let extra_headroom: usize = if cfg!(windows) {
             // 3× PathBuffer ≈ 288 KB — empirically enough for the
             // `remap_zig_exception` → `transpile_source_code` chain on the
@@ -6880,6 +6989,18 @@ impl VirtualMachine {
             if formatter.can_throw_stack_overflow {
                 let _ = self.global().throw_stack_overflow();
             }
+            return Ok(());
+        }
+
+        if error_instance.is_cell()
+            && error_instance.js_type() == crate::JSType::ErrorInstance
+            && formatter.visited_contains(error_instance)
+        {
+            writer.write_all(if allow_ansi_color {
+                bun_core::pretty_fmt!("<r><cyan>[Circular]<r>", true).as_bytes()
+            } else {
+                bun_core::pretty_fmt!("<r><cyan>[Circular]<r>", false).as_bytes()
+            })?;
             return Ok(());
         }
 
@@ -6906,6 +7027,7 @@ impl VirtualMachine {
         );
         error_instance.ensure_still_alive();
 
+        let mut recorded = false;
         let result = self.print_error_instance_body(
             // SAFETY: see above.
             unsafe { &mut *exception },
@@ -6916,7 +7038,11 @@ impl VirtualMachine {
             writer,
             allow_ansi_color,
             allow_side_effects,
+            &mut recorded,
         );
+        if recorded {
+            formatter.visited_remove(error_instance);
+        }
 
         drop(source_code_slice);
         exception_holder.deinit(self);
@@ -6938,10 +7064,11 @@ impl VirtualMachine {
         writer: &mut bun_core::io::Writer,
         allow_ansi_color: bool,
         allow_side_effects: bool,
+        recorded: &mut bool,
     ) -> crate::CrateResult<()> {
         use crate::JSType;
         use crate::console_object::formatter::TagOptions;
-        use crate::console_object::{self, Tag, TagPayload};
+        use crate::console_object::{Tag, TagPayload};
 
         let prev_had_errors = self.had_errors;
         self.had_errors = true;
@@ -7281,7 +7408,9 @@ impl VirtualMachine {
                 }
 
                 let kind = value.js_type();
-                if kind == JSType::ErrorInstance && !prev_had_errors {
+                let circular = kind == JSType::ErrorInstance
+                    && (value == error_instance || formatter.visited_contains(value));
+                if kind == JSType::ErrorInstance && !prev_had_errors && !circular {
                     if field.eq_ascii(b"cause") {
                         saw_cause = true;
                     }
@@ -7292,6 +7421,12 @@ impl VirtualMachine {
                     || value.is_primitive()
                     || kind.is_string_like()
                 {
+                    if circular && field.eq_ascii(b"cause") {
+                        saw_cause = true;
+                    }
+                    if !*recorded && !value.is_primitive() {
+                        *recorded = formatter.visited_insert(error_instance);
+                    }
                     let prev_disable_inspect_custom = formatter.disable_inspect_custom;
                     let prev_quote_strings = formatter.quote_strings;
                     let prev_max_depth = formatter.max_depth;
@@ -7375,19 +7510,29 @@ impl VirtualMachine {
                 )?;
             }
 
-            if !is_first_property {
-                writer.write_all(b"\n")?;
-            }
-
             // "cause" is not enumerable, so the above loop won't see it.
             if !saw_cause {
                 let key = bun_core::String::static_("cause");
                 if let Some(cause) = error_instance.get_own(global_ref, &key)? {
                     if cause.is_cell() && cause.js_type() == JSType::ErrorInstance {
-                        cause.protect();
-                        errors_to_append.push(cause);
+                        if cause == error_instance || formatter.visited_contains(cause) {
+                            let pad_left = longest_name.saturating_sub(b"cause".len());
+                            is_first_property = false;
+                            splat_space(writer, pad_left as u64)?;
+                            pretty_write!(
+                                writer,
+                                " cause<r><d>:<r> <r><cyan>[Circular]<r><r><d>,<r>\n"
+                            )?;
+                        } else {
+                            cause.protect();
+                            errors_to_append.push(cause);
+                        }
                     }
                 }
+            }
+
+            if !is_first_property {
+                writer.write_all(b"\n")?;
             }
         } else if error_instance != JSValue::ZERO {
             // If you do `reportError([1,2,3])` we should still show something.
@@ -7397,11 +7542,11 @@ impl VirtualMachine {
                 TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
             )?;
             if !matches!(tag.tag, TagPayload::NativeCode) {
-                let _ = if allow_ansi_color {
-                    formatter.format::<true>(tag, writer, error_instance, global_ref)
+                if allow_ansi_color {
+                    formatter.format::<true>(tag, writer, error_instance, global_ref)?;
                 } else {
-                    formatter.format::<false>(tag, writer, error_instance, global_ref)
-                };
+                    formatter.format::<false>(tag, writer, error_instance, global_ref)?;
+                }
                 writer.write_all(b"\n")?;
             }
         }
@@ -7416,25 +7561,12 @@ impl VirtualMachine {
             )?;
         }
 
+        if !*recorded && !errors_to_append.is_empty() {
+            *recorded = formatter.visited_insert(error_instance);
+        }
+
         let mut exception_list = exception_list;
         for &err in &errors_to_append {
-            // Circular-ref guard for cause chains.
-            if formatter.map_node.is_none() {
-                let mut node = NonNull::new(console_object::formatter::visited::Pool::get_node())
-                    .expect("ObjectPool::get_node always returns a valid heap node");
-                let data = console_object::formatter::visited::node_data_mut(&mut node);
-                data.clear();
-                formatter.map = core::mem::take(data);
-                formatter.map_node = Some(node);
-            }
-
-            let entry = formatter.map.get_or_put(err).expect("unreachable");
-            if entry.found_existing {
-                writer.write_all(b"\n")?;
-                pretty_write!(writer, "<r><cyan>[Circular]<r>")?;
-                continue;
-            }
-
             writer.write_all(b"\n")?;
             let prev_depth = formatter.depth;
             formatter.depth = formatter.depth.saturating_add(1);
@@ -7452,7 +7584,6 @@ impl VirtualMachine {
                 )
             };
             formatter.depth = prev_depth;
-            let _ = formatter.map.remove(&err);
             result?;
         }
 
@@ -7569,7 +7700,7 @@ impl VirtualMachine {
         let frames = exception.stack.frames();
         let top_frame = frames.first();
         let dir = bun_core::env_var::GITHUB_WORKSPACE::get()
-            .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::instance().top_level_dir);
+            .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::instance().top_level_dir());
         bun_core::Output::flush();
 
         let writer = bun_core::Output::error_writer();

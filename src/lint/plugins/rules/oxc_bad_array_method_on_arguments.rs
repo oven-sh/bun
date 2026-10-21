@@ -27,7 +27,8 @@ impl Rule for BadArrayMethodOnArguments {
         if !member.object().is_some_and(|object| get_inner_expression(object).is_ident("arguments")) {
             return;
         }
-        // It is what is called or an argument. Parentheses and the whole of an optional chain are nodes in between for oxlint.
+        // It has to be the callee or an argument. In oxlint's AST parentheses and an optional chain are nodes in
+        // between.
         if !matches!(member.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Call)
             || member.is_parenthesized()
             || member.is_chain_root()

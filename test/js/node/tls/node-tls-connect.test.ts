@@ -176,24 +176,30 @@ it("should thow ECONNRESET if FIN is received before handshake", async () => {
   expect(error).toBeDefined();
   expect((error as NodeJS.ErrnoException).code as string).toBe("ECONNRESET");
 });
-it("write() and end() made before secureConnect call back when the connection is reset", async () => {
-  await using server = net.createServer(c => {
-    c.on("error", () => {});
-    c.once("data", () => c.resetAndDestroy());
-  });
-  await once(server.listen(0, "127.0.0.1"), "listening");
-  const raw = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
-  raw.on("error", () => {});
-  const socket = tls.connect({ socket: raw });
-  socket.on("error", () => {});
-  const closed = Promise.withResolvers<void>();
-  socket.on("close", () => closed.resolve());
-  const failed: string[] = [];
-  socket.write("a", err => void (err && failed.push("write")));
-  socket.end((err?: Error) => void (err && failed.push("end")));
-  await closed.promise;
-  expect(failed).toEqual(["write", "end"]);
-});
+it.each(["socket", "port"])(
+  "write() and end() made before secureConnect call back when the connection is reset ({ %s })",
+  async form => {
+    await using server = net.createServer(c => {
+      c.on("error", () => {});
+      c.once("data", () => c.resetAndDestroy());
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const port = (server.address() as AddressInfo).port;
+    const socket =
+      form === "socket"
+        ? tls.connect({ socket: net.connect(port, "127.0.0.1").on("error", () => {}) })
+        : tls.connect({ port, host: "127.0.0.1" });
+    const events: string[] = [];
+    socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+    const closed = Promise.withResolvers<void>();
+    socket.on("close", () => closed.resolve());
+    socket.write("a", (err?: NodeJS.ErrnoException | null) => events.push(`write ${err?.code}`));
+    socket.end((err?: NodeJS.ErrnoException) => events.push(`end ${err?.code}`));
+    await closed.promise;
+    // As in Node.
+    expect(events).toEqual(["error ECONNRESET", "write ECANCELED", "end ECONNRESET"]);
+  },
+);
 it("initializes authorizationError to null in the TLSSocket constructor", () => {
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L556
   // Node's onServerSocketSecure/onConnectSecure only assign on failure; a

@@ -518,6 +518,7 @@ test.skipIf(!isLinux)(
       stderr: "inherit",
     });
     expect(await clients.exited).toBe(0);
+    expect(requests).toBeGreaterThan(0);
     clientsLeft = true;
     if (ended === requests) allEnded.resolve();
     await allEnded.promise;

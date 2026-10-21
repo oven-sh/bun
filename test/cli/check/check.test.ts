@@ -22796,6 +22796,31 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(exitCode).toBe(1);
     });
 
+    test("reports a project reference without a valid `path` or with an invalid `circular`", async () => {
+      using dir = project({
+        "tsconfig.json": `{
+  "compilerOptions": { "lib": ["esnext"], "types": [], "noEmit": true },
+  "files": ["console.d.ts"],
+  "references": [
+    {},
+    { "path": 1 },
+    { "path": "" },
+    { "path": "./lib", "circular": "yes" }
+  ]
+}
+`,
+        "lib/tsconfig.json": `{ "compilerOptions": { "composite": true, "lib": ["esnext"], "types": [] }, "files": [] }`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "tsconfig.json(5,5): error TS5024: Compiler option 'reference.path' requires a value of type string.
+        tsconfig.json(6,15): error TS5024: Compiler option 'reference.path' requires a value of type string.
+        tsconfig.json(7,15): error TS18051: Compiler option 'reference.path' cannot be given an empty string.
+        tsconfig.json(8,36): error TS5024: Compiler option 'reference.circular' requires a value of type boolean."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("a file in `files` hides the files that `include` matches with the same name and a lesser extension", async () => {
       using dir = project({
         "tsconfig.json": `{ "compilerOptions": { "lib": ["esnext"], "types": [], "noEmit": true }, "files": ["a.ts", "./a.ts"], "include": ["a.*"] }`,

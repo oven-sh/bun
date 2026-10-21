@@ -926,7 +926,7 @@ pub fn load_overriding(
         return Err(errors);
     };
     let base = dirname::<Posix>(path);
-    let references = get_project_references(&raw.references, base);
+    let references = get_project_references(&raw.references, base, &mut Vec::new());
     let has_references = references.is_some_and(|list| !list.is_empty());
     merge_compiler_options(&mut raw.compiler, overrides(has_references), &[]);
     Ok(project_from_raw(host, session, path, base, raw, errors))
@@ -949,15 +949,34 @@ pub fn without_config(host: &dyn Host, dir: &[u8], compiler: Json, files: Vec<Ve
 }
 
 /// `getProjectReferences`. `None` is nil.
-fn get_project_references(references: &List, base: &[u8]) -> Option<Vec<ProjectReference>> {
-    let references = references.items.as_ref()?.iter();
-    // `parseProjectReference`
-    let references = references.filter_map(|reference| {
-        let path = reference.get(b"path").and_then(Json::as_str)?;
-        let circular = reference.get(b"circular").and_then(Json::as_bool) == Some(true);
-        (!path.is_empty()).then(|| ProjectReference {
+fn get_project_references(
+    references: &List,
+    base: &[u8],
+    problems: &mut Vec<Problem>,
+) -> Option<Vec<ProjectReference>> {
+    let references = references.items.as_ref()?.iter().enumerate();
+    let references = references.filter_map(|(index, reference)| {
+        // `parseProjectReference`
+        reference.as_object()?;
+        let mut report = |code, args: &[&[u8]], property: &'static [u8]| {
+            let at = ConfigLocation::ReferenceProperty(index, property);
+            problems.push(Problem::new(code, args, at));
+        };
+        let Some(path) = reference.get(b"path").and_then(Json::as_str) else {
+            report(5024, &[b"reference.path", b"string"], b"path");
+            return None;
+        };
+        if path.is_empty() {
+            report(18051, &[b"reference.path"], b"path");
+            return None;
+        }
+        let circular = reference.get(b"circular");
+        if circular.is_some_and(|circular| circular.as_bool().is_none()) {
+            report(5024, &[b"reference.circular", b"boolean"], b"circular");
+        }
+        Some(ProjectReference {
             path: join(base, path),
-            circular,
+            circular: circular.and_then(Json::as_bool) == Some(true),
         })
     });
     Some(references.collect())
@@ -1068,6 +1087,7 @@ fn project_from_raw(
         b"exclude",
         &mut problems,
     ));
+    let references = get_project_references(&raw.references, base, &mut problems);
     let outside_options = ConfigError::from_problems(host, session, config_path, &problems);
     errors.extend(outside_options.into_iter().map(|error| ConfigError {
         is_about_options: false,
@@ -1091,7 +1111,6 @@ fn project_from_raw(
         ));
     }
     options.files.clone_from(&files);
-    let references = get_project_references(&raw.references, base);
     Project {
         config_path: config_path.to_vec(),
         options,

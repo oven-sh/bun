@@ -595,6 +595,11 @@ impl<'s> TsConfigSourceFile<'s> {
         })
     }
 
+    /// `IsObjectLiteralExpression`
+    pub(crate) fn is_object_literal(&self, e: ExprId) -> bool {
+        matches!(self.hir[e].kind, ExprKind::Object(_)) && !is_parenthesized(&self.hir, e)
+    }
+
     pub fn initializer(&self, p: PropId) -> ExprId {
         self.hir[p].value
     }

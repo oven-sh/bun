@@ -173,6 +173,9 @@ pub enum ConfigLocation {
     /// `CreateDiagnosticAtReferenceSyntax`: at an element of `references`. No location if the index
     /// is out of range.
     Reference(usize),
+    /// `createDiagnosticAtProjectReferenceProperty`: at the value of a property of an element of `references`, or at
+    /// the element if it has no such property. No location if the element isn't an object.
+    ReferenceProperty(usize, &'static [u8]),
     /// `GetOptionsSyntaxByArrayElementValue`: at the string in the array that is the option's value.
     /// No location if the array doesn't contain it.
     Element(&'static [u8], Vec<u8>),
@@ -242,6 +245,12 @@ impl Problem {
             let list = value_of(root, b"references")?;
             return file.elements(list).nth(index).map(|e| file.span(e));
         }
+        if let ConfigLocation::ReferenceProperty(index, name) = self.at {
+            let list = value_of(root, b"references")?;
+            let reference = file.elements(list).nth(index)?;
+            let reference = Some(reference).filter(|&it| file.is_object_literal(it))?;
+            return Some(file.span(value_of(reference, name).unwrap_or(reference)));
+        }
         if let ConfigLocation::Top(name) | ConfigLocation::TopElement(name, _) = &self.at {
             let list = value_of(root, name)?;
             let ConfigLocation::TopElement(_, specified) = &self.at else {
@@ -271,6 +280,7 @@ impl Problem {
             | ConfigLocation::Top(_)
             | ConfigLocation::TopElement(..)
             | ConfigLocation::Reference(_)
+            | ConfigLocation::ReferenceProperty(..)
             | ConfigLocation::Element(..) => None,
             ConfigLocation::Key(name, other) => file
                 .property(options_object, name, Some(*other))

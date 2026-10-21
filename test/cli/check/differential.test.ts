@@ -2079,7 +2079,6 @@ differential("matches tsc on values that aren't valid JSON in tsconfig.json", as
     `["q", null, 1]`,
     "[]",
   ];
-  // A reference's `path` is left out, because TypeScript 7.0.2 crashes unless it's a string.
   const positions: ((value: string) => string)[] = [
     value => `{ "compilerOptions": { "strict": ${value} } }`,
     value => `{ "compilerOptions": { "target": ${value} } }`,
@@ -2113,12 +2112,14 @@ differential("matches tsc on values that aren't valid JSON in tsconfig.json", as
       `{ "compilerOptions": { "target": /* a */ /* b */${value} , "lib": [ /* c */ ${value} /* d */ , // e\n ${value} ] } }`,
     value => `{\r\n  "compilerOptions": {\r\n    "strict":\r\n\t${value}\r\n  }\r\n}`,
     value => value,
+    value => `{ "references": [{ "path": ${value} }] }`,
+    value => `{ "references": [{ "path": "../lib", "circular": ${value} }] }`,
   ];
   // Each case takes two processes, so only the diagonals are sampled. That still covers every position and every value,
   // except in a debug build.
   const step = isDebug || isASAN ? 280 : 12;
   const cases = positions.flatMap((position, i) => values.filter((_, j) => (i + j) % step === 0).map(position));
-  // The root is an array. TypeScript 7.0.2 uses the first object in it as the configuration, and only reports the array
+  // The root is an array. TypeScript uses the first object in it as the configuration, and only reports the array
   // (TS5092) if it contains no object.
   const implicit = (value: boolean) => `{ "compilerOptions": { "noImplicitAny": ${value} } }`;
   cases.push(

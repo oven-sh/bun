@@ -7179,13 +7179,18 @@ impl<'p, 's> Checker<'p, 's> {
             return known.clone();
         }
         let decls = self.decls_of(symbol);
-        // `isAmbientModuleSymbolName(symbol.Name)`
-        let ambient_name = match decls.first() {
-            Some(&(file, Decl::Module(m))) => match self.hir(file)[m].name {
+        let name_of_module = |&(file, decl): &(FileId, Decl)| match decl {
+            Decl::Module(m) => match self.hir(file)[m].name {
                 ModuleName::String(name) => Some(name),
                 _ => None,
             },
             _ => None,
+        };
+        // `core.Find(symbol.Declarations(), ast.IsModuleWithStringLiteralName)`. What `export =` refers to has the file
+        // (`getFileSymbolIfFileSymbolExportEqualsContainer`), unless it's a clone.
+        let ambient_name = match self.target_of_module_clone(symbol) == symbol {
+            true => decls.first().and_then(name_of_module),
+            false => decls.iter().find_map(name_of_module),
         };
         let mut target = None;
         let mut specifier = None;
@@ -7205,7 +7210,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let specifier = match (ambient_name, specifier, target) {
-            // Without a file, `StripQuotes(symbol.Name)`.
+            // Without a file, `declaration.Name().Text()`.
             (Some(name), _, None) => self.atoms().bytes(name).to_vec(),
             (_, Some(name), _) => name,
             (_, None, target) => match target.or_else(|| self.source_file_of_module(symbol)) {

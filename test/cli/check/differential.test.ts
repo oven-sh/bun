@@ -1575,7 +1575,7 @@ differential("matches tsc on an unread parameter property that's a binding patte
   }
 });
 
-// The target of `export =`, merged with what `declare module "m"` adds, is printed with the name of the file it's in.
+// The target of `export =`, merged with what `declare module "m"` adds, is printed as `import("m")`.
 // `@types/react-dom` augments "react" like this.
 differential("prints a module with `export =` like tsc, for every augmentation and kind of import", async () => {
   const exported = {

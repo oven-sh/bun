@@ -244,7 +244,9 @@ impl Checker<'_, '_> {
     /// `getSpecifierForModuleSymbol` without an enclosing file: the name of the symbol without its quotes.
     pub(super) fn specifier_of_module(&self, symbol: Sym) -> Vec<u8> {
         let files = self.files();
-        let decls = files.decls_of(symbol);
+        // A symbol that `cloneTypeAsModuleType` created has its target's declarations.
+        let target = files.target_of_module_clone(symbol);
+        let (decls, is_clone) = (files.decls_of(target.unwrap_or(symbol)), target.is_some());
         if let Some(&(file, _)) = decls.iter().find(|d| d.1 == Decl::File) {
             let file_name = displayed_path(files.module(file).file_name());
             return remove_file_extension(&file_name).to_owned();
@@ -256,14 +258,16 @@ impl Checker<'_, '_> {
             },
             _ => None,
         };
-        // `GetSourceFileOfModule(symbol).FileName()`: what `export =` names, with what
-        // `declare module "m"` adds to the module (`getCommonJSExportEquals`), has its own name.
-        if let Some(&(file, _)) = decls.iter().find(|it| ambient_name(it).is_none()) {
+        // `GetSourceFileOfModule(symbol).FileName()`: what `export =` refers to, with what `declare module "m"` adds to
+        // the module. `getFileSymbolIfFileSymbolExportEqualsContainer` doesn't find the file of a clone.
+        if !is_clone && let Some(&(file, _)) = decls.iter().find(|it| ambient_name(it).is_none()) {
             return displayed_path(files.module(file).file_name()).into_owned();
         }
-        match decls.iter().find_map(ambient_name) {
-            Some(name) => self.atom_text(name),
-            None => Vec::new(),
+        // `core.Find(symbol.Declarations(), ast.IsModuleWithStringLiteralName)`
+        match (decls.iter().find_map(ambient_name), decls.first()) {
+            (Some(name), _) => self.atom_text(name),
+            (None, Some(&(file, _))) => displayed_path(files.module(file).file_name()).into_owned(),
+            (None, None) => Vec::new(),
         }
     }
 
@@ -2585,10 +2589,10 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `symbolToTypeNode` with the meaning `SymbolFlagsValue`, for the symbol that
     /// `cloneTypeAsModuleType` created from `module` for `originating_import`.
     fn module_clone_to_type_node(&mut self, module: Sym, originating_import: Sym) -> Node {
-        let Some(at) = self.enclosing_declaration else {
-            return self.symbol_to_type_node(module, true, Vec::new());
-        };
         let clone = self.c.module_clone(originating_import);
+        let Some(at) = self.enclosing_declaration else {
+            return self.symbol_chain_to_type_node(module, &[clone], true, Vec::new());
+        };
         self.track_symbol(clone, SymFlags::VALUE);
         let yield_module_symbol = self.yield_module_symbol();
         let chain =

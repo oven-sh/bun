@@ -2429,6 +2429,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             B::Object {
                 properties: bun_ast::StoreSlice::from_bump(properties),
                 is_single_line: true,
+                close_brace_loc: bun_ast::Loc::EMPTY,
             },
             bun_ast::Loc::EMPTY,
         );
@@ -2712,6 +2713,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 B::Object {
                     properties: bun_ast::StoreSlice::from_bump(items_hmr),
                     is_single_line: false,
+                    close_brace_loc: bun_ast::Loc::EMPTY,
                 },
                 bun_ast::Loc::EMPTY,
             );
@@ -4053,6 +4055,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     B::Object {
                         properties: bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut()),
                         is_single_line: ex.is_single_line,
+                        close_brace_loc: ex.close_brace_loc,
                     },
                     expr.loc,
                 ));

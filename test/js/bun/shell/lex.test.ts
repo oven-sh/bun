@@ -902,22 +902,39 @@ describe("lex shell", () => {
       "if a; then\nif b; then\nc\nfi # note\nelse\nd\nfi",
       "if a; then\nif b; then\nc\nfi \nelse\nd\nfi",
     ],
+    ["after `then`", "if a; then # note\nb\nfi", "if a; then \nb\nfi"],
+    ["after `else`", "if a; then b\nelse # note\nc\nfi", "if a; then b\nelse \nc\nfi"],
+    ["after the `then` of an `elif`", "if a; then b\nelif c; then # note\nd\nfi", "if a; then b\nelif c; then \nd\nfi"],
     ["after `&&`", "echo a && # note\necho b", "echo a && \necho b"],
     ["after `||`", "echo a || # note\necho b", "echo a || \necho b"],
     ["after `|`", "echo a | # note\ncat", "echo a | \ncat"],
     ["after `[[`", "[[ # note\na == a ]]", "[[ \na == a ]]"],
     ["before `]]`", "[[ a == a # note\n]]", "[[ a == a \n]]"],
+    ["a comment line in a continued command", "echo a \\\n# note\nb", "echo a \\\n\nb"],
+    ["an indented comment line in a continued command", "echo a \\\n  # note\n  b", "echo a \\\n  \n  b"],
     ["in `( )`", "(echo a # note\n)", "(echo a \n)"],
     ["in `$( )`", "echo $(echo a # note\n)", "echo $(echo a \n)"],
+    ["in a quoted `$( )`", 'echo "$(echo a # note\n)"', 'echo "$(echo a \n)"'],
     ["`)` is comment text in `$( )`", "echo $(echo a # note)\n)", "echo $(echo a \n)"],
     ["in backquotes, before a newline", "echo `echo a # note\n`", "echo `echo a \n`"],
     ["in backquotes, before the closing backquote", "echo `echo a # note`", "echo `echo a `"],
+    ["in backquotes in `$( )`", "echo $(echo `echo a # note`)", "echo $(echo `echo a `)"],
     [
       "in backquotes on three lines",
       "echo `echo 1 # note`\necho `echo 2 # note`\necho `echo 3 # note`",
       "echo `echo 1 `\necho `echo 2 `\necho `echo 3 `",
     ],
+    ["CRLF in `( )`", "(echo a # note\r\necho b\n)", "(echo a \necho b\n)"],
+    ["CRLF in `$( )`", "echo $(echo a # note\r\necho b)", "echo $(echo a \necho b)"],
+    ["CRLF in backquotes", "echo `echo a # note\r\necho b`", "echo `echo a \necho b`"],
     ["backslash-newline ends the comment", "echo one # note \\\necho two", "echo one \necho two"],
+    ["backslash-newline ends the comment in `( )`", "(echo a # note \\\necho b\n)", "(echo a \necho b\n)"],
+    ["backslash-newline ends the comment in `$( )`", "echo $(echo a # note \\\necho b)", "echo $(echo a \necho b)"],
+    [
+      "backslash-newline ends the comment in a quoted `$( )`",
+      'echo "$(echo a # note \\\necho b)"',
+      'echo "$(echo a \necho b)"',
+    ],
     ["two backslashes, then a newline", "echo one # note \\\\\necho two", "echo one \necho two"],
     ["backslash-newline in backquotes continues the comment", "echo `echo a # note \\\nmore\n`", "echo `echo a \n`"],
     [
@@ -927,6 +944,7 @@ describe("lex shell", () => {
     ],
     ["escaped backquote in backquotes is comment text", "echo `echo a # note \\` more\n`", "echo `echo a \n`"],
     ["two backslashes, then the closing backquote", "echo `echo a # note \\\\`", "echo `echo a `"],
+    // bash ends the outer substitution at this backquote and rejects the script.
     [
       "backquote is comment text in `$( )` in backquotes",
       "echo `echo $(echo a # note ` more\n)`",
@@ -958,6 +976,14 @@ describe("lex shell", () => {
     ];
     expect(JSON.parse(lex({ raw: [backquoted] }))).toEqual(expected);
     expect(JSON.parse(lex({ raw: [dollarParen] }))).toEqual(expected);
+  });
+
+  test.each([
+    ["unquoted", "echo x`echo y`", "echo x$(echo y)"],
+    ["in double quotes", 'echo "x`echo y`"', 'echo "x$(echo y)"'],
+    ["after a comment that ends at a backquote", "echo `echo a # note`rm`echo b`", "echo $(echo a )rm$(echo b)"],
+  ])("text before a backquote substitution stays in its word: %s", (_name, backquoted, dollarParen) => {
+    expect(JSON.parse(lex({ raw: [backquoted] }))).toEqual(JSON.parse(lex({ raw: [dollarParen] })));
   });
 
   describe("errors", async () => {

@@ -1058,9 +1058,29 @@ describe("parse shell", () => {
       ["`&&`", "echo a # note\n&& echo b", 'expected a command or assignment but got: "DoubleAmpersand"'],
       ["`||`", "echo a # note\n|| echo b", 'expected a command or assignment but got: "DoublePipe"'],
       ["`|`", "echo a # note\n| cat", 'expected a command or assignment but got: "Pipe"'],
+      // bash runs this one. A line that starts with a redirection does not parse yet.
+      ["a redirection", "echo a # note\n> out.log echo b", 'expected a command or assignment but got: "Redirect"'],
     ])("%s cannot start the line after a comment", (_name, source, message) => {
       expect(error(source)).toBe(message);
       expect(error(source.replace(" # note", ""))).toBe(message);
+    });
+
+    // The body of a clause can be empty on one line (`then else`). bash rejects that.
+    // Line breaks and comments in the empty body give the same tree.
+    test.each([
+      ["`then`, a newline, `else`", "if a; then\nelse\n  b\nfi", "if a; then else b; fi"],
+      ["`then`, a comment, `else`", "if a; then # note\nelse\n  b\nfi", "if a; then else b; fi"],
+      ["`then`, a comment line, `else`", "if a; then\n  # note\nelse\n  b\nfi", "if a; then else b; fi"],
+      ["`then`, a comment, `fi`", "if a; then # note\nfi", "if a; then fi"],
+      ["`if`, a comment, `then`", "if # note\nthen b; fi", "if then b; fi"],
+      ["`else`, a comment, `fi`", "if a; then b\nelse # note\nfi", "if a; then b; else fi"],
+      [
+        "the `then` of an `elif`, a comment, `else`",
+        "if a; then b\nelif c; then # note\nelse\n  d\nfi",
+        "if a; then b; elif c; then else d; fi",
+      ],
+    ])("an empty body: %s", (_name, source, oneLine) => {
+      expect(tree(source)).toEqual(tree(oneLine));
     });
 
     test("a comment does not carry a redirection to the next line", () => {

@@ -1020,9 +1020,59 @@ ls`
       ],
       ["up to a closing backquote", "echo `echo 1 # note`\necho `echo 2 # note`\necho `echo 3 # note`", "1\n2\n3\n"],
       ["backslash-newline in backquotes", "echo `echo a # note \\\nb\n`", "a\n"],
+      [
+        "after each word of an `if` clause",
+        "if true # 1\nthen # 2\n  echo a # 3\nelif false # 4\nthen # 5\n  echo b\nelse # 6\n  echo c\nfi # 7\necho d",
+        "a\nd\n",
+      ],
+      ["a comment line in a continued command", "echo a \\\n# note\necho b", "a\nb\n"],
+      ["text before a backquote substitution", "echo x`echo y`", "xy\n"],
+      // bash rejects an empty clause body. Bun takes it on one line (`then else`), and the same over several lines.
+      ["an empty `then` body, condition true", "if true; then # note\nelse\n  echo no\nfi\necho tail", "tail\n"],
+      ["an empty `then` body, condition false", "if false; then # note\nelse\n  echo yes\nfi", "yes\n"],
+      ["an empty `then` body with a comment line", "if true; then\n  # note\nelse\n  echo no\nfi\necho tail", "tail\n"],
     ];
     for (const [name, script, stdout] of scripts) {
       TestBuilder.command`${{ raw: script }}`.stdout(stdout).runAsTest(name);
+    }
+
+    // bash and dash print the same. The second pair of backquotes runs `-rf build`, which is not a command.
+    TestBuilder.command`${{ raw: "echo `echo a # remove it with `rm` -rf build\n`\necho next" }}`
+      .ensureTempDir()
+      .file("build", "keep me\n")
+      .stdout("arm\nnext\n")
+      .stderr("bun: command not found: -rf\n")
+      .fileEquals("build", "keep me\n")
+      .runAsTest("a backquote in a backquoted comment ends the substitution");
+
+    TestBuilder.command`FOO=bar # note
+${BUN} -e ${"console.log(process.env.FOO)"}`
+      .stdout("undefined\n")
+      .runAsTest("an assignment before a comment is not a prefix of the command on the next line");
+
+    // bash prints `new`: FOO is in the environment, so the assignment reaches the child.
+    TestBuilder.command`FOO=new # note
+${BUN} -e ${"console.log(process.env.FOO)"}`
+      .env({ ...bunEnv, FOO: "old" })
+      .stdout("new\n")
+      .todo("an assignment to an exported name does not reach later commands (#32202)")
+      .runAsTest("an assignment to an exported name before a comment");
+
+    // What bash and dash print. These rules are not changed here.
+    const todo: [name: string, reason: string, script: string, stdout: string][] = [
+      [
+        "a line that starts with a redirection",
+        "it is a parse error",
+        "echo a # note\n> out.log echo b\ncat out.log",
+        "a\nb\n",
+      ],
+      ["`#` after `;`", "it runs a command named `#`", "echo a;# note\necho b", "a\nb\n"],
+      ["`#` after a tab", "a tab does not end a word", "echo a\t# note\necho b", "a\nb\n"],
+      ["`#` at the start of a substitution", "it runs a command named `#`", "echo `# note ; echo no\necho a\n`", "a\n"],
+      ["`#` after backslash-newline in a word", "it starts a comment", "echo a\\\n# note\necho b", "a# note\nb\n"],
+    ];
+    for (const [name, reason, script, stdout] of todo) {
+      TestBuilder.command`${{ raw: script }}`.ensureTempDir().stdout(stdout).todo(reason).runAsTest(name);
     }
   });
 

@@ -24,13 +24,15 @@ bool checkInMemoryBlob(JSGlobalObject& globalObject, JSValue value)
     return true;
 }
 
-std::span<const uint8_t> bytesOfBlobOrBuffer(JSValue value)
+static ALWAYS_INLINE std::span<const uint8_t> bytesAndIsShared(JSValue value, bool& isShared)
 {
     std::span<const uint8_t> bytes;
     if (auto* view = dynamicDowncast<JSArrayBufferView>(value)) {
         bytes = view->span();
+        isShared = view->isShared();
     } else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value)) {
         bytes = buffer->impl()->span();
+        isShared = buffer->impl()->isShared();
     } else {
         const uint8_t* data = nullptr;
         size_t length = 0;
@@ -43,31 +45,39 @@ std::span<const uint8_t> bytesOfBlobOrBuffer(JSValue value)
     return bytes;
 }
 
-static bool isSharedBuffer(JSValue value)
+std::span<const uint8_t> bytesOfBlobOrBuffer(JSValue value)
+{
+    bool isShared = false;
+    return bytesAndIsShared(value, isShared);
+}
+
+std::span<const uint8_t> bytesOfBlobOrBuffer(JSValue value, bool& isShared)
+{
+    return bytesAndIsShared(value, isShared);
+}
+
+bool isSharedBuffer(JSValue value)
 {
     if (auto* view = dynamicDowncast<JSArrayBufferView>(value))
         return view->isShared();
     if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value))
-        return buffer->isShared();
+        return buffer->impl()->isShared();
     return false;
 }
 
-void JSBytesView::copyIfShared(JSGlobalObject& globalObject, JSValue argument, MallocSpan<uint8_t>& copy)
+std::span<const uint8_t> copyBytes(JSGlobalObject& globalObject, std::span<const uint8_t> bytes, MallocSpan<uint8_t>& copy)
 {
-    if (!m_isBlobOrBuffer || !isSharedBuffer(argument))
-        return;
-    m_bytes = bytesOfBlobOrBuffer(argument);
-    if (m_bytes.empty())
-        return;
+    if (bytes.empty())
+        return bytes;
     // Not a Vector, which holds less than a buffer can.
-    copy = MallocSpan<uint8_t>::tryMalloc(m_bytes.size());
+    copy = MallocSpan<uint8_t>::tryMalloc(bytes.size());
     if (!copy) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(getVM(&globalObject));
         throwOutOfMemoryError(&globalObject, scope);
-        return;
+        return bytes;
     }
-    memcpySpan(copy.mutableSpan(), m_bytes);
-    m_bytes = copy.span();
+    memcpySpan(copy.mutableSpan(), bytes);
+    return copy.span();
 }
 
 }
@@ -76,4 +86,10 @@ extern "C" Bun::Bindgen::ExternBytes Bun__Bindgen__bytesOfBlobOrBuffer(JSC::Enco
 {
     auto bytes = Bun::Bindgen::bytesOfBlobOrBuffer(JSC::JSValue::decode(value));
     return { bytes.data(), bytes.size() };
+}
+
+extern "C" Bun::Bindgen::ExternBytes Bun__Bindgen__bytesOfBlobOrBufferAndIsShared(JSC::EncodedJSValue value, bool* isShared)
+{
+    *isShared = Bun::Bindgen::isSharedBuffer(JSC::JSValue::decode(value));
+    return Bun__Bindgen__bytesOfBlobOrBuffer(value);
 }

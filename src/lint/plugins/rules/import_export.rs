@@ -27,7 +27,7 @@ const MULTIPLE_EXPORTS: Message = Message::new("", "Multiple exports of name '{{
 
 const DEFAULT: &[u8] = b"default";
 
-/// `rootProgram`, where a `TSModuleDeclaration` is known by its start.
+/// Upstream's `rootProgram`. A `TSModuleDeclaration` parent is identified by its start offset instead.
 const ROOT_PROGRAM: u32 = u32::MAX;
 
 const EXPORTS: [StmtTag; 3] = [
@@ -36,7 +36,7 @@ const EXPORTS: [StmtTag; 3] = [
     StmtTag::ExportStar,
 ];
 
-/// What `export` can be before.
+/// Statement kinds that can follow `export`.
 const DECLARATIONS: [StmtTag; 8] = [
     StmtTag::Var,
     StmtTag::Fn,
@@ -55,8 +55,8 @@ fn get_parent(node: Stmt) -> u32 {
     }
 }
 
-/// `parent.type` of a node that exports a name, as far as it is asked for. An `ExportDefaultDeclaration` is asked for
-/// `declaration.type`, where only the overload counts.
+/// `parent.type` of a node that exports a name, limited to the types upstream checks for. For an
+/// `ExportDefaultDeclaration` upstream checks `declaration.type`, where only `TSDeclareFunction` matters.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ParentType {
     FunctionDeclaration,
@@ -69,34 +69,34 @@ enum ParentType {
 }
 
 impl ParentType {
-    /// As a member of [`types_of`].
+    /// This type's bit in the set that [`types_of`] returns.
     const fn bit(self) -> u8 {
         1 << self as u8
     }
 }
 
-/// A member of `nodes`.
+/// One entry of upstream's `nodes`.
 #[derive(Copy, Clone)]
-struct Place {
+struct ExportNode {
     at: Span,
     parent: ParentType,
 }
 
-/// A name, and its `nodes`.
-struct Named<'a> {
+/// An exported name and its `nodes`.
+struct NamedExport<'a> {
     name: &'a [u8],
-    nodes: SmallVec<[Place; 2]>,
+    nodes: SmallVec<[ExportNode; 2]>,
 }
 
 /// `new Set(Array.from(nodes, (node) => node.parent.type))`
-fn types_of(nodes: &[Place]) -> u8 {
+fn types_of(nodes: &[ExportNode]) -> u8 {
     nodes
         .iter()
         .fold(0, |types, node| types | node.parent.bit())
 }
 
-/// After `removeTypescriptFunctionOverloads`: there is no `TSDeclareFunction`.
-fn is_typescript_namespace_merging(nodes: &[Place]) -> bool {
+/// Runs after `removeTypescriptFunctionOverloads`, so `nodes` has no `TSDeclareFunction`.
+fn is_typescript_namespace_merging(nodes: &[ExportNode]) -> bool {
     let (types, namespace) = (types_of(nodes), ParentType::TsModuleDeclaration.bit());
     let no_namespace_nodes = nodes
         .iter()
@@ -108,9 +108,9 @@ fn is_typescript_namespace_merging(nodes: &[Place]) -> bool {
         || (is_with_class_or_enum && no_namespace_nodes.count() == 1)
 }
 
-impl Place {
-    /// Where nothing merges.
-    fn should_skip_typescript_namespace(self, nodes: &[Place]) -> bool {
+impl ExportNode {
+    /// The caller has already checked that `is_typescript_namespace_merging` is false.
+    fn should_skip_typescript_namespace(self, nodes: &[ExportNode]) -> bool {
         let merged_with = ParentType::TsEnumDeclaration.bit()
             | ParentType::ClassDeclaration.bit()
             | ParentType::FunctionDeclaration.bit();
@@ -118,19 +118,19 @@ impl Place {
     }
 }
 
-/// What `create` keeps.
+/// The local state of upstream's `create`.
 struct Exports<'a, 'c> {
     cx: &'c Cx<'a, Export>,
     is_oxlint: bool,
-    /// `namespace`: where in `named` a name is, by its parent and whether it is a type.
-    places: FxHashMap<(u32, bool, &'a [u8]), usize>,
-    named: Vec<Named<'a>>,
+    /// Upstream's `namespace`: the index in `named` for each (parent, is a type, name).
+    index_by_key: FxHashMap<(u32, bool, &'a [u8]), usize>,
+    named: Vec<NamedExport<'a>>,
     maps: Option<&'c ExportMaps<'a>>,
-    /// For oxlint: the modules that an `export *` has led to.
+    /// oxlint only: the modules already reached through an `export *`.
     visited: FxHashSet<ModuleId>,
-    /// Of oxlint: each `export *`, with the names that it brings.
+    /// oxlint only: each `export *` with the names it re-exports.
     all_export_names: Vec<(Span, FxHashSet<&'a [u8]>)>,
-    /// The order in which oxlint goes through them: they are in a table by their spans.
+    /// oxlint keeps those in a hash map keyed by span. This reproduces its iteration order.
     order: HashOrder<usize>,
 }
 
@@ -144,25 +144,28 @@ impl<'a> Exports<'a, '_> {
         is_type: bool,
     ) {
         let next = self.named.len();
-        let place = *self.places.entry((parent, is_type, name)).or_insert(next);
-        if place == next {
-            self.named.push(Named {
+        let named_index = *self
+            .index_by_key
+            .entry((parent, is_type, name))
+            .or_insert(next);
+        if named_index == next {
+            self.named.push(NamedExport {
                 name,
                 nodes: SmallVec::new(),
             });
         }
-        // A `Set`: an `export *` can bring a name twice.
-        if let Some(Named { nodes, .. }) = self.named.get_mut(place)
+        // Upstream's `nodes` is a `Set`, and one `export *` can add the same name twice.
+        if let Some(NamedExport { nodes, .. }) = self.named.get_mut(named_index)
             && nodes.last().is_none_or(|last| last.at != at)
         {
-            nodes.push(Place {
+            nodes.push(ExportNode {
                 at,
                 parent: parent_type,
             });
         }
     }
 
-    /// What the listeners do with a statement.
+    /// Does what upstream's listeners do for one statement.
     fn add_exports_of(&mut self, node: Stmt<'a>, parent: u32) {
         let (id, parent_type, is_type) = match node.kind() {
             StmtKind::ExportDefault(_) => {
@@ -181,7 +184,7 @@ impl<'a> Exports<'a, '_> {
                 }
                 return;
             }
-            // The `Literal` of `export * as "a" from "m"` has no `name`: it is taken for `export * from "m"`.
+            // The `Literal` in `export * as "a" from "m"` has no `name`, so upstream treats it as `export * from "m"`.
             StmtKind::ExportStar {
                 spec: Some(source),
                 alias,
@@ -211,7 +214,7 @@ impl<'a> Exports<'a, '_> {
                 for declaration in declarations {
                     let id = declaration.pat().span();
                     recursive_pattern_capture(declaration.pat(), &mut |v| {
-                        // typescript-eslint has the annotation as a part of the `Identifier`.
+                        // In typescript-eslint's AST the `Identifier` includes its type annotation.
                         let at = if v.span() == id {
                             declaration.binding_span()
                         } else {
@@ -256,7 +259,7 @@ impl<'a> Exports<'a, '_> {
         }
     }
 
-    /// oxlint goes by its record of the file, which is about the top level.
+    /// oxlint uses its module record, which only covers the top level.
     fn add_module_record(&mut self, module_record: &ModuleRecord<'a>) {
         let file = self.cx.file();
         for export_entry in module_record
@@ -287,7 +290,7 @@ impl<'a> Exports<'a, '_> {
                 self.export_all(star_export_entry.span, source, ROOT_PROGRAM);
             }
         }
-        // The parser comes to them in the order of the source.
+        // oxlint's parser adds them in source order.
         let mut exported_bindings: Vec<(Name<'a>, Span)> = module_record
             .exported_bindings
             .iter()
@@ -307,14 +310,14 @@ impl<'a> Exports<'a, '_> {
         }
     }
 
-    /// `ExportAllDeclaration`: `node`, and the value and the place of its `source`.
+    /// `ExportAllDeclaration`. `node` is its span, `source` is the value and span of its `source`.
     fn export_all(&mut self, node: Span, source: (&'a [u8], Span), parent: u32) {
         let (cx, mut any) = (self.cx, false);
         if self.is_oxlint {
             let Some(remote) = get_loaded_module(cx.file(), source.0) else {
                 return;
             };
-            // oxlint compares them with what the file exports when it has them all.
+            // oxlint compares these with the file's own exports once it has collected all of them.
             let names = walk_exported_recursive(remote, &mut self.visited);
             any = !names.is_empty();
             if any {
@@ -346,7 +349,7 @@ impl<'a> Exports<'a, '_> {
             });
         }
         if !any {
-            // oxlint ends it without a full stop.
+            // oxlint's message has no trailing period.
             let message = if self.is_oxlint {
                 OXLINT_NO_NAMED_EXPORT
             } else {
@@ -361,7 +364,7 @@ impl<'a> Exports<'a, '_> {
     /// `Program:exit`
     fn report(&mut self) {
         let (cx, is_oxlint) = (self.cx, self.is_oxlint);
-        for Named { name, nodes } in &mut self.named {
+        for NamedExport { name, nodes } in &mut self.named {
             // `removeTypescriptFunctionOverloads`
             nodes.retain(|node| node.parent != ParentType::TsDeclareFunction);
             let (name, nodes) = (*name, nodes.as_slice());
@@ -369,7 +372,7 @@ impl<'a> Exports<'a, '_> {
                 continue;
             };
             if is_oxlint {
-                // oxlint says it once, and only if one of them is in braces.
+                // oxlint reports it once, and only if one of them is in an `export { .. }` list.
                 if nodes
                     .iter()
                     .any(|node| node.parent == ParentType::ExportSpecifier)
@@ -413,7 +416,7 @@ impl Rule for Export {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        // oxlint asks the records of the other files, which are made of all files first.
+        // oxlint reads the other files' module records, which are complete only after every file has been read.
         (!file.language().is_oxlint || !is_waiting_for_modules(file)).then_some(())
     }
 
@@ -428,7 +431,7 @@ impl Rule for Export {
         let mut exports = Exports {
             cx,
             is_oxlint,
-            places: FxHashMap::default(),
+            index_by_key: FxHashMap::default(),
             named: Vec::new(),
             maps: maps.as_ref(),
             visited: FxHashSet::default(),
@@ -438,7 +441,7 @@ impl Rule for Export {
         if is_oxlint {
             exports.add_module_record(&ModuleRecord::new(file));
         } else {
-            // typescript-eslint lets them be in any block.
+            // typescript-eslint's parser accepts these in any block.
             let declarations = DECLARATIONS
                 .into_iter()
                 .flat_map(|tag| file.stmts_of_kind(tag));
@@ -455,9 +458,10 @@ impl Rule for Export {
     }
 }
 
-/// It is in braces.
+/// True if the export is a specifier in an `export { .. }` list.
 fn is_named_export_specifier<'a>(export_entry: &ExportEntry<'a>, file: &'a File<'a>) -> bool {
-    // What is made of an `import` and an `export { a }` has the place of the import, which can come later.
+    // An entry made from an `import` plus an `export { a }` has the import's span, which can be before the export
+    // statement.
     export_entry.statement_span.start > export_entry.span.start
         || find_next_token_within(
             file,
@@ -467,7 +471,8 @@ fn is_named_export_specifier<'a>(export_entry: &ExportEntry<'a>, file: &'a File<
         .is_some()
 }
 
-/// The names that `module` exports, with those that it gets by `export *`. Nothing of what is in `visited`, or in a `node_modules`.
+/// Returns the names that `module` exports, including through `export *`. Skips modules already in `visited` and
+/// anything in a `node_modules`.
 fn walk_exported_recursive<'m>(
     module: Loaded<'m>,
     visited: &mut FxHashSet<ModuleId>,

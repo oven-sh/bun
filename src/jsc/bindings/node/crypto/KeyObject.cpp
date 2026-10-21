@@ -1387,8 +1387,7 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
 
         MarkPopErrorOnReturn markPopError;
 
-        auto crvUtf8 = crvView->utf8();
-        int nid = Ec::GetCurveIdFromName(crvUtf8.legacyCStringPointer());
+        int nid = Ec::GetCurveIdFromName(crvView);
         if (nid == NID_undef) {
             ERR::CRYPTO_INVALID_CURVE(scope, globalObject);
             return {};
@@ -1412,9 +1411,10 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
 
         if (keyType != CryptoKeyType::Public) {
             auto* dBuf = decodeJwkString(globalObject, scope, dView, "key.d"_s);
+            RETURN_IF_EXCEPTION(scope, {});
             auto dBufSpan = dBuf->span();
             BignumPointer dBn = BignumPointer(dBufSpan.data(), dBufSpan.size());
-            if (!ec.setPrivateKey(dBn)) {
+            if (!ec.setPrivateKey(dBn) || !ec.checkKey()) {
                 ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK EC key"_s);
                 return {};
             }
@@ -1538,8 +1538,7 @@ KeyObject KeyObject::getKeyObjectHandleFromRaw(JSGlobalObject* globalObject, Thr
         }
         WTF::String curveStr = namedCurveValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        auto curveUtf8 = curveStr.utf8();
-        int curveNid = ncrypto::Ec::GetCurveIdFromName(curveUtf8.legacyCStringPointer());
+        int curveNid = ncrypto::Ec::GetCurveIdFromName(curveStr);
         if (curveNid == NID_undef) {
             ERR::CRYPTO_INVALID_CURVE(scope, globalObject);
             return {};
@@ -2131,24 +2130,23 @@ KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& 
             return {};
         }
 
-        Vector<uint8_t> copy;
-        copy.append(view->span());
-        return create(WTF::move(copy));
+        auto copy = copyArgumentBytes(globalObject, scope, view->span(), "key"_s);
+        if (!copy) return {};
+        return create(WTF::move(*copy));
     }
 
     // TODO(dylan-conway): avoid copying by keeping the buffer alive
     if (auto* view = dynamicDowncast<JSArrayBufferView>(keyValue)) {
-        Vector<uint8_t> copy;
-        copy.append(view->span());
-        return create(WTF::move(copy));
+        auto copy = copyArgumentBytes(globalObject, scope, view->span(), "key"_s);
+        if (!copy) return {};
+        return create(WTF::move(*copy));
     }
 
     // TODO(dylan-conway): avoid copying by keeping the buffer alive
     if (auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(keyValue)) {
-        auto* impl = arrayBuffer->impl();
-        Vector<uint8_t> copy;
-        copy.append(impl->span());
-        return create(WTF::move(copy));
+        auto copy = copyArgumentBytes(globalObject, scope, arrayBuffer->impl()->span(), "key"_s);
+        if (!copy) return {};
+        return create(WTF::move(*copy));
     }
 
     if (bufferOnly) {

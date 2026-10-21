@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tls } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:net";
+import { release } from "node:os";
 import { join } from "node:path";
 
 test("keepalive", async () => {
@@ -732,12 +733,14 @@ const idleInjections: [label: string, bytes: string][] = [
 ];
 // "Before" only holds when write() returns with the bytes already in the
 // peer's receive buffer. An AF_UNIX stream does that everywhere, and TCP
-// loopback does it on Linux and Windows. macOS hands a loopback segment to
-// the dlil input thread first, so it can land after the checkout, which no
-// client can tell from an answer: there only the unix-socket pool is checked.
-// fetch() does not pool unix sockets on Windows. Both pools check a socket
-// out through the same code.
-const idleTransports = [...(isMacOS ? [] : ["tcp"]), ...(isWindows ? [] : ["unix"])];
+// loopback does it on Linux and Windows 11. macOS hands a loopback segment to
+// the dlil input thread first, and Windows Server 2019 delivers it later too
+// while other loopback connections are busy. So it can land after the
+// checkout, which no client can tell from an answer: there only the
+// unix-socket pool is checked. fetch() does not pool unix sockets on Windows.
+// Both pools check a socket out through the same code.
+const lateLoopback = isMacOS || (isWindows && release() === "10.0.17763");
+const idleTransports = [...(lateLoopback ? [] : ["tcp"]), ...(isWindows ? [] : ["unix"])];
 
 test.concurrent.each(
   idleTransports.flatMap(transport => idleInjections.map(([label, bytes]) => [transport, label, bytes])),

@@ -152,6 +152,7 @@ export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") a
   panic: () => void;
   rootError: () => void;
   outOfMemory: () => void;
+  operatorNew: (nothrow?: boolean) => boolean | undefined;
   abort: () => void;
   fastfail: () => void;
   trap: () => void;
@@ -258,6 +259,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   stringEcho: $bindgen("bindgen_test.bind.ts", "stringEcho"),
   stringLength: $bindgen("bindgen_test.bind.ts", "stringLength"),
   expectedByNode: $bindgen("bindgen_test.bind.ts", "expectedByNode"),
+  expectedMessage: $bindgen("bindgen_test.bind.ts", "expectedMessage"),
   nextColor: $bindgen("bindgen_test.bind.ts", "nextColor"),
   optionsEcho: $bindgen("bindgen_test.bind.ts", "optionsEcho"),
   describeValue: $bindgen("bindgen_test.bind.ts", "describeValue"),
@@ -265,6 +267,11 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   overloaded: $bindgen("bindgen_test.bind.ts", "overloaded"),
   describeDefaults: $bindgen("bindgen_test.bind.ts", "describeDefaults"),
   names: $bindgen("bindgen_test.bind.ts", "names"),
+  bare: $bindgen("bindgen_test.bind.ts", "bare"),
+  dateOf: $bindgen("bindgen_test.bind.ts", "dateOf"),
+  latin1: $bindgen("bindgen_test.bind.ts", "latin1"),
+  textOrBytes: $bindgen("bindgen_test.bind.ts", "textOrBytes"),
+  positions: $bindgen("bindgen_test.bind.ts", "positions"),
   sumArray: $bindgen("bindgen_test.bind.ts", "sumArray"),
   range: $bindgen("bindgen_test.bind.ts", "range"),
   words: $bindgen("bindgen_test.bind.ts", "words"),
@@ -629,6 +636,10 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
 export const timerInternals = {
   timerClockMs: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.timerClockMs", 0),
   monotonicNowMs: $bindgen("Timer.bind.ts", "monotonicNowMs"),
+  // Sets the id of this thread's next timer. The counter can only move forward.
+  setNextTimerId: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.setNextTimerId", 1) as (
+    id: number,
+  ) => void,
 };
 
 // Raw datagram descriptor helpers for tests that need an unbound fd (which

@@ -1864,8 +1864,11 @@ impl<const SSL: bool> SocketHandler<SSL> {
             }
             this.client_mut().flags.tls_established = true;
             this.client_mut().start()?;
-        } else if this.client.get().flags.tls_established {
-            // uSockets reports a fatal error on an established session as a failed handshake.
+        } else if this.client.get().flags.tls_established
+            && this.client.get().flags.enable_auto_reconnect
+        {
+            // uSockets reports a fatal error on an established session as a failed handshake. With
+            // no reconnect to follow, it fails the client below: the queued commands hear why too.
             return this.client_mut().on_tls_session_error(&ssl_error);
         } else if ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH {
             // The same check, made inside the handshake (`server_identity`).

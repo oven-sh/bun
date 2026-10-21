@@ -163,6 +163,10 @@ unsafe extern "C" {
         global: *mut JSGlobalObject,
         index: u32,
     ) -> JSValue;
+    pub(super) fn Bun__Bindgen__exceptionMatches(
+        global: *mut JSGlobalObject,
+        result_is_empty: bool,
+    ) -> bool;
     pub(super) fn Bun__Bindgen__putRecordEntry(
         global: &JSGlobalObject,
         record: JSValue,

@@ -11,7 +11,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSClassConstructor, InternalFunction);
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSClassConstructor);
 static_assert(Counts::maxCellSize <= MarkedSpace::largeCutoff);
 
-GCClient::IsoSubspace* createSubspaceForClass(VM& vm, unsigned classIndex, size_t cellSize)
+NEVER_INLINE GCClient::IsoSubspace* createSubspaceForClass(VM& vm, unsigned classIndex, size_t cellSize)
 {
     return WebCore::subspaceForImplSlow(
         vm,

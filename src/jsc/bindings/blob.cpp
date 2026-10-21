@@ -33,7 +33,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlo
 
 size_t Blob::memoryCost() const
 {
-    return sizeof(Blob) + Bun__Bindgen__Blob__structSize + Bun__Bindgen__Blob__estimatedSize(impl());
+    return sizeof(Blob) + JSBlob::extraMemorySize(impl());
 }
 
 }

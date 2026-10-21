@@ -61,6 +61,12 @@ impl<'a> JsHeap<'a> {
         self.global_object().as_mut_ptr()
     }
 
+    /// For an assertion: an empty result has an exception pending, and any other has none but a termination.
+    fn exception_matches(&self, result_is_empty: bool) -> bool {
+        // SAFETY: the global object is live.
+        unsafe { extern_types::Bun__Bindgen__exceptionMatches(self.global_ptr(), result_is_empty) }
+    }
+
     #[inline]
     pub fn create_utf8_string(&self, utf8: &[u8]) -> Result<'a, JsLocal<'a, JSString>> {
         JsLocal::from_js_result(crate::bun_string_jsc::create_utf8_for_js(
@@ -662,10 +668,14 @@ pub unsafe trait JsPayload: Sized + 'static {
 
     /// As [`into_js`](Self::into_js), for code that has the global object and no capability.
     #[inline]
+    fn into_js_wrapper(self, global: &JSGlobalObject) -> JsWrapper<'_, Self> {
+        // SAFETY: a `JsHeap` is the global object.
+        self.into_js(unsafe { &*core::ptr::from_ref(global).cast::<JsHeap<'_>>() })
+    }
+
+    #[inline]
     fn into_js_value(self, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: a `JsHeap` is the global object, and the wrapper leaves as a `JSValue`.
-        let heap = unsafe { &*core::ptr::from_ref(global).cast::<JsHeap<'_>>() };
-        self.into_js(heap).to_js()
+        self.into_js_wrapper(global).to_js()
     }
 }
 
@@ -677,7 +687,7 @@ pub unsafe trait JsConstruct: Sized {
     /// The struct, or a ref on the struct of a `refCounted` class.
     type Contents;
     /// # Safety
-    /// `structure` is a Structure of this class's cell.
+    /// `structure` is a Structure of this class's cell. For a `refCounted` class it is the object, not yet filled.
     #[doc(hidden)]
     unsafe fn create_with_structure<'a>(
         heap: &JsHeap<'a>,
@@ -690,7 +700,7 @@ pub unsafe trait JsConstruct: Sized {
 pub struct JsStructure<'a, T>(*mut c_void, InvariantLifetime<'a>, PhantomData<*const T>);
 impl<'a, T: JsConstruct> JsStructure<'a, T> {
     /// # Safety
-    /// `structure` is a Structure of `T`'s cell that the call `heap` belongs to holds.
+    /// As [`JsConstruct::create_with_structure`], and the call `heap` belongs to holds `structure`.
     #[doc(hidden)]
     #[inline(always)]
     pub unsafe fn from_extern(structure: *mut c_void, _: &JsHeap<'a>) -> Self {
@@ -951,7 +961,7 @@ pub mod to_js {
         #[inline(always)]
         fn into_value(self, heap: &JsHeap<'a>) -> JsLocal<'a> {
             // A function of the older API returns the empty value after it threw.
-            debug_assert!(!self.is_empty() || heap.global_object().has_exception());
+            debug_assert!(!self.is_empty() || heap.exception_matches(true));
             JsLocal::from_raw(self)
         }
     }
@@ -1101,9 +1111,8 @@ pub fn host_fn_return<'a, T, E: IntoError<'a>>(
         };
         error.into_host_fn_return(cx)
     };
-    debug_assert_eq!(
-        value.is_empty(),
-        cx.heap.global_object().has_exception(),
+    debug_assert!(
+        cx.heap.exception_matches(value.is_empty()),
         "a body fails exactly when an exception is pending",
     );
     value

@@ -158,8 +158,7 @@ void JSBunRequest::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
 
-    auto size = Bun__Bindgen__Request__structSize + Bun__Bindgen__Request__estimatedSize(this->wrapped());
-    vm.heap.reportExtraMemoryAllocated(this, size);
+    vm.heap.reportExtraMemoryAllocated(this, extraMemorySize(wrapped()));
 }
 
 template<typename Visitor>

@@ -694,11 +694,15 @@ const setterHostFunctionName = (type: ClassType, getter: { name: string; isStati
 /** A C++ expression for the bytes `thisObject` owns outside its cell, or "" if none are known. */
 function cppSizeOutsideCell(type: ClassType, reader: "snapshot" | "collector"): string {
   const key = reader === "snapshot" && type.memoryCost ? "memoryCost" : type.estimatedSize ? "estimatedSize" : null;
+  if (type.refCounted && key === "estimatedSize") return `${type.cpp}::extraMemorySize(thisObject->wrapped())`;
   return [
     ...(type.refCounted ? [symbolName(type, "structSize")] : []),
-    ...(key ? [`${symbolName(type, key)}(thisObject->${type.refCounted ? "m_wrapped" : "payload()"})`] : []),
+    ...(key ? [`${symbolName(type, key)}(thisObject->${type.refCounted ? "wrapped()" : "payload()"})`] : []),
   ].join(" + ");
 }
+
+/** `new` makes the object first, and `JsStructure::create` stores the struct's address in it. */
+const constructorSetsWrapped = (type: ClassType) => type.refCounted && type.passStructure;
 
 /** The cell: JSDestructibleObject | the internal fields | the pointer to the struct of a refCounted class, or the struct itself. */
 function cppHeaderForClass(type: ClassType): string {
@@ -738,8 +742,14 @@ ${
   refCounted
     ? `    // Takes the caller's ref on \`wrapped\`.
     static JS${name}* create(JSC::VM&, JSC::Structure*, void* wrapped);
-    static constexpr size_t allocationSize() { return sizeof(JS${name}); }
-    void* wrapped() const { return m_wrapped; }`
+${constructorSetsWrapped(type) ? `    // \`m_wrapped\` is null until the constructor sets it. Nothing else can reach the object before that.\n    static JS${name}* createUninitialized(JSC::VM&, JSC::Structure*);\n` : ""}    static constexpr size_t allocationSize() { return sizeof(JS${name}); }
+    void* wrapped() const { return m_wrapped; }${
+      type.estimatedSize
+        ? `
+    // What the collector is told an object owns outside its cell.
+    static size_t extraMemorySize(void* wrapped) { return ${symbolName(type, "structSize")} + ${symbolName(type, "estimatedSize")}(wrapped); }`
+        : ""
+    }`
     : `    // The payload is uninitialized: the caller writes it before anything else can run.
     static JS${name}* create(JSC::VM&, JSC::Structure*);
     static size_t allocationSize() { return sizeof(JS${name}) + ${symbolName(type, "structSize")}; }
@@ -772,6 +782,7 @@ ${
 function cppSourceForCell(type: ClassType): string {
   const { name, refCounted, cpp } = type;
   const payload = refCounted ? "m_wrapped" : "payload()";
+  const initialized = (size: string) => (constructorSetsWrapped(type) ? `(thisObject->wrapped() ? ${size} : 0)` : size);
   return `
 const JSC::ClassInfo ${cpp}::s_info = { ${asciiLiteral(name)}, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${cpp}) };
 static_assert(sizeof(${cpp}) == ${offsetOfPayload(type) + (refCounted ? 8 : 0)});
@@ -788,18 +799,34 @@ ${
     : ""
 }    return object;
 }
-
+${
+  constructorSetsWrapped(type)
+    ? `
+${cpp}* ${cpp}::createUninitialized(JSC::VM& vm, JSC::Structure* structure)
+{
+    auto* object = new (NotNull, JSC::allocateCell<${cpp}>(vm)) ${cpp}(vm, structure, nullptr);
+    object->finishCreation(vm);
+    return object;
+}
+`
+    : ""
+}
 void ${cpp}::destroy(JSC::JSCell* cell)
 {
     STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(${cpp});
-    ${classSymbolName(type, "finalize")}(static_cast<${cpp}*>(cell)->${payload});
+    ${
+      constructorSetsWrapped(type)
+        ? `if (void* wrapped = static_cast<${cpp}*>(cell)->m_wrapped)
+        ${classSymbolName(type, "finalize")}(wrapped);`
+        : `${classSymbolName(type, "finalize")}(static_cast<${cpp}*>(cell)->${payload});`
+    }
 }
 ${
   cppSizeOutsideCell(type, "snapshot")
     ? `
 size_t ${cpp}::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 {
-    ${type.memoryCost || type.estimatedSize ? `auto* thisObject = uncheckedDowncast<${cpp}>(cell);\n    ` : ""}return Base::estimatedSize(cell, vm) + ${cppSizeOutsideCell(type, "snapshot")};
+    ${type.memoryCost || type.estimatedSize || constructorSetsWrapped(type) ? `auto* thisObject = uncheckedDowncast<${cpp}>(cell);\n    ` : ""}return Base::estimatedSize(cell, vm) + ${initialized(cppSizeOutsideCell(type, "snapshot"))};
 }
 `
     : ""
@@ -817,7 +844,7 @@ ${
     ? `    // Hidden: \`analyzeHeap\` reports them by name.
 ${type.internalFields.map(field => `    visitor.appendHidden(thisObject->m_${field});\n`).join("")}`
     : ""
-}${type.estimatedSize ? `    visitor.reportExtraMemoryVisited(${cppSizeOutsideCell(type, "collector")});\n` : ""}}
+}${type.estimatedSize ? `    visitor.reportExtraMemoryVisited(${initialized(cppSizeOutsideCell(type, "collector"))});\n` : ""}}
 
 DEFINE_VISIT_CHILDREN(${cpp});
 `
@@ -865,15 +892,8 @@ ${cppHostFunction(
 }
 
 function cppStaticGetter(type: ClassType, getter: Getter): string {
-  const get = getterHostFunctionName(type, getter);
-  const symbol = getterSymbolName(type, getter);
   return `
-extern "C" JSC::EncodedJSValue ${symbol}(JSC::JSGlobalObject*);
-static JSC_DECLARE_CUSTOM_GETTER(${get});
-JSC_DEFINE_CUSTOM_GETTER(${get}, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue, JSC::PropertyName))
-{
-    return ${symbol}(globalObject);
-}
+extern "C" JSC_DECLARE_CUSTOM_GETTER(${getterSymbolName(type, getter)});
 ${getter.hasSetter ? cppSetter(type, getter) : ""}`;
 }
 
@@ -986,7 +1006,7 @@ function cppSourceForClass(type: ClassType): string {
     return row(
       getter.name,
       `${assignable ? "" : "JSC::PropertyAttribute::ReadOnly | "}JSC::PropertyAttribute::CustomAccessor${type.forBind || (getter instanceof Getter && getter.isStatic) ? "" : " | JSC::PropertyAttribute::DOMAttribute"}${attributesOf(getter)}`,
-      `JSC::HashTableValue::GetterSetterType, ${getterHostFunctionName(type, getter)}, ${assignable ? setterHostFunctionName(type, getter) : "0"}`,
+      `JSC::HashTableValue::GetterSetterType, ${getter instanceof Getter && getter.isStatic ? getterSymbolName(type, getter) : getterHostFunctionName(type, getter)}, ${assignable ? setterHostFunctionName(type, getter) : "0"}`,
     );
   };
   const builtinRow = (builtin: Builtin) =>
@@ -1028,7 +1048,9 @@ ${
     ? `${
         type.refCounted && !type.passStructure
           ? cppExtern(classSymbolName(type, "construct"), construct, [], "void*")
-          : cppExtern(classSymbolName(type, "construct"), construct, ["JSC::Structure*"])
+          : cppExtern(classSymbolName(type, "construct"), construct, [
+              type.refCounted ? "JSC::JSCell*" : "JSC::Structure*",
+            ])
       }
 static JSC_DECLARE_HOST_FUNCTION(construct${name});
 JSC_DEFINE_HOST_FUNCTION(construct${name}, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1047,7 +1069,22 @@ ${
         "}",
         `RELEASE_AND_RETURN(scope, JSC::JSValue::encode(${type.cpp}::create(vm, structure, wrapped)));`,
       ])
-    : cppCallBody(construct, classSymbolName(type, "construct"), ["structure"])
+    : !type.refCounted
+      ? cppCallBody(construct, classSymbolName(type, "construct"), ["structure"])
+      : `    auto* thisObject = ${type.cpp}::createUninitialized(vm, structure);
+${cppCallBody(
+  construct,
+  classSymbolName(type, "construct"),
+  ["thisObject"],
+  type.estimatedSize
+    ? call => [
+        `JSC::EncodedJSValue result = ${call};`,
+        "if (thisObject->wrapped()) [[likely]]",
+        `    vm.heap.reportExtraMemoryAllocated(thisObject, ${cppSizeOutsideCell(type, "collector")});`,
+        "RELEASE_AND_RETURN(scope, result);",
+      ]
+    : undefined,
+)}`
 }
 }
 `
@@ -1096,18 +1133,10 @@ ${
 {
     return JSC::JSValue::encode(${type.cpp}::create(JSC::getVM(globalObject), globalObject->m_bindgenAdditions.m_classes[${type.classIndex}].get(globalObject), wrapped));
 }
-${
-  type.passStructure
-    ? `extern "C" JSC::JSCell* ${symbolName(type, "createWithStructure")}(JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* wrapped)
-{
-    return ${type.cpp}::create(JSC::getVM(globalObject), structure, wrapped);
-}
 `
-    : ""
-}`
-    : `extern "C" JSC::JSCell* ${symbolName(type, "create")}(JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+    : `extern "C" JSC::JSCell* ${symbolName(type, "create")}(Zig::GlobalObject* globalObject, JSC::Structure* structure)
 {
-    return ${type.cpp}::create(JSC::getVM(globalObject), structure ? structure : Bun::Bindgen::structureForClass(globalObject, ${type.classIndex}));
+    return ${type.cpp}::create(JSC::getVM(globalObject), structure ? structure : globalObject->m_bindgenAdditions.m_classes[${type.classIndex}].get(globalObject));
 }`
 }
 ${
@@ -1361,10 +1390,10 @@ const infallible = (call: string, throws: boolean, returns: Type | null = null) 
       ? `{ ${call}; Ok::<_, core::convert::Infallible>(()) }`
       : `Ok::<_, core::convert::Infallible>(${call})`;
 
-const rustThunk = (symbol: string, parameters: string[], returns: string, body: string) => `
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ${symbol}(${["global: *mut JSGlobalObject", ...parameters].join(", ")}) -> ${returns} {
-    // SAFETY: called by generated C++, whose frame holds what it passes until this returns.
+const rustThunk = (symbol: string, parameters: string[], returns: string, body: string, calledByJSC = false) => `
+${calledByJSC ? "#[bun_jsc::host_call]\n" : ""}#[unsafe(no_mangle)]
+pub ${calledByJSC ? "" : 'unsafe extern "C" '}fn ${symbol}(${["global: *mut JSGlobalObject", ...parameters].join(", ")}) -> ${returns} {
+    // SAFETY: called by ${calledByJSC ? "JSC" : "generated C++"}, whose frame holds what it passes until this returns.
     unsafe {
         bindgen::JsScope::with(global, |cx| {
 ${indent(body, 12)}
@@ -1615,10 +1644,12 @@ bindgen::host_fn_return(cx, result, |heap, value| ${method.returns.rustToJS("val
     const get = `<${rustPath}>::${getter.rustName}(${leading(getter.receiver, getter.passThis, getter.capability).join(", ")})`;
     thunks += rustThunk(
       getterSymbolName(type, getter),
-      getter.isStatic ? [] : ["this: *mut core::ffi::c_void"],
+      // The table of a constructor points at the thunk itself: a custom getter's receiver and property name follow.
+      getter.isStatic ? ["_: JSValue", "_: *const core::ffi::c_void"] : ["this: *mut core::ffi::c_void"],
       "JSValue",
       `${takeThis(getter.receiver, getter.passThis)}let result = ${infallible(get, getter.throws)};
 bindgen::host_fn_return(cx, result, |heap, value| ${getter.type.rustToJS("value", scope)})`,
+      getter.isStatic,
     );
     if (!getter.hasSetter) continue;
     const set = `<${rustPath}>::${getter.setterRustName}(${[...leading(getter.setterReceiver, getter.passThis, getter.setterCapability), "value"].join(", ")})`;
@@ -1645,22 +1676,16 @@ pub extern "C" fn ${symbolName(type, key)}(this: &${rustPath}) -> usize {
   )
   .join("")}${
     type.passStructure
-      ? `${
-          refCounted
-            ? `unsafe extern "C" {
-    fn ${symbolName(type, "createWithStructure")}(global: *mut JSGlobalObject, structure: *mut core::ffi::c_void, wrapped: *mut core::ffi::c_void) -> core::ptr::NonNull<core::ffi::c_void>;
-}
-`
-            : ""
-        }// SAFETY: \`create_with_structure\` makes an instance of this class.
+      ? `// SAFETY: \`create_with_structure\` makes an instance of this class.
 unsafe impl bindgen::JsConstruct for ${rustPath} {
     type Contents = ${refCounted ? "bun_ptr::RefPtr<Self>" : "Self"};
     #[inline]
     unsafe fn create_with_structure<'a>(heap: &bindgen::JsHeap<'a>, structure: *mut core::ffi::c_void, contents: Self::Contents) -> bindgen::JsWrapper<'a, Self> {
-        // SAFETY: forwarded.${refCounted ? " The object takes over the ref." : ""}
+        // SAFETY: ${refCounted ? "`structure` is the object `new` made, which takes over the ref." : "forwarded."}
         unsafe { ${
           refCounted
-            ? `bindgen::JsWrapper::from_extern(${symbolName(type, "createWithStructure")}(heap.global().as_mut_ptr(), structure, contents.into_raw().cast()), heap)`
+            ? `structure.byte_add(${offsetOfPayload(type)}).cast::<*mut Self>().write(contents.into_raw());
+            bindgen::JsWrapper::from_extern(core::ptr::NonNull::new_unchecked(structure), heap)`
             : "bindgen::JsWrapper::create_with_structure(heap, structure, contents)"
         } }
     }
@@ -1929,14 +1954,16 @@ ${indent(
 // ───────────────────────────── TypeScript ─────────────────────────────
 
 export function dts(files: readonly SchemaFile[]): string {
-  const parameters = (signature: Signature) =>
-    signature.args
+  const parameters = (signature: Signature) => {
+    const lastRequired = signature.args.findLastIndex(arg => !arg.type.takesUndefined);
+    return signature.args
       .map((arg, i) =>
         arg.type instanceof VariadicType
           ? `...${arg.name}: ${arg.type.tsType}`
-          : `${arg.name}${i < signature.requiredCount ? "" : "?"}: ${arg.type.tsType}`,
+          : `${arg.name}${i <= lastRequired ? "" : "?"}: ${arg.type.tsType}`,
       )
       .join(", ");
+  };
   /** A result that is absent is `null`, never `undefined` too. */
   const resultType = (type: Type) =>
     type instanceof OptionalType && type.modifier === "nullable" ? `${type.inner.tsType} | null` : type.tsType;

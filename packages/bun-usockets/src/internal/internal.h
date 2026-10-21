@@ -272,6 +272,8 @@ int us_internal_ssl_is_low_prio(us_socket_r s);
 int us_internal_ssl_is_handshake_finished(us_socket_r s);
 int us_internal_ssl_handshake_callback_has_fired(us_socket_r s);
 int us_internal_ssl_is_shut_down(us_socket_r s);
+/* A close of `s` waits: for the kernel to take the spill, or for the peer's close_notify. us_internal_ssl_on_timeout ends that wait. */
+int us_internal_ssl_close_waits(us_socket_r s);
 void us_internal_ssl_shutdown(us_socket_r s);
 int us_internal_ssl_write(us_socket_r s, const char *data, int length);
 int us_internal_ssl_writev(us_socket_r s, const struct us_iovec_t *iov, int count);

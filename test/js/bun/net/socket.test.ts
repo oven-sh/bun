@@ -1741,6 +1741,268 @@ it.each([
   });
 });
 
+// The wait of that end() is over with the peer's close_notify or FIN, a forced close or the deadline. Nothing else
+// that the owner of the socket does ends it: its end() is out, and to ask again says nothing new.
+describe("TLS end() while the peer is still sending", () => {
+  type Ender = {
+    /** What the ender writes ahead of its end(). Without it the ender writes until the kernel refuses some. */
+    size?: number;
+    /** The ender is the TLS half of an upgradeTLS() pair, and the accepted socket is its peer. */
+    upgraded?: boolean;
+    /** Ahead of the ender's first write. */
+    beforeWrite?: (socket: Socket) => void;
+    /** The ender's end(), in the callback of its last write. */
+    end?: (socket: Socket, raw?: Socket) => void;
+    /** In every data event of the ender after that. */
+    afterEnd?: (socket: Socket) => void;
+  };
+  // The peer sends until the ender has read some of it after its end(), and one more chunk after that: whatever the
+  // kernel's buffers are, the ender holds unread input at any close that comes ahead of the peer's own end().
+  async function endThenRead(ender: Ender) {
+    const { size, end = socket => void socket.end() } = ender;
+    const step = Buffer.alloc(256 * 1024, "a");
+    const done = Promise.withResolvers<void>();
+    const mine = { reported: 0, received: 0, events: [] as string[], ended: false, readsAfterEnd: 0, pumps: 0 };
+    const theirs = { reported: 0, received: 0, events: [] as string[], finished: false, tail: step.length };
+    const closed = (events: string[], error?: Error) => {
+      events.push(error ? `close: ${(error as NodeJS.ErrnoException).code}` : "close");
+      if (mine.events.at(-1)?.startsWith("close") && theirs.events.at(-1)?.startsWith("close")) done.resolve();
+    };
+    let raw: Socket | undefined;
+    let peer: Socket | undefined;
+    // The ciphertext that the ender's kernel refused stays unsent until the ender asked again: its peer reads nothing before that.
+    const peerWaits = size === undefined && ender.afterEnd !== undefined;
+    const enderPump = (socket: Socket) => {
+      if (mine.ended) return;
+      if (mine.pumps++ === 0) ender.beforeWrite?.(socket);
+      if (size === undefined) {
+        // The peer cannot read before this callback returns, so the writes end in a short one.
+        for (let wrote = step.length; wrote === step.length; mine.reported += Math.max(wrote, 0)) {
+          wrote = socket.write(step);
+        }
+      }
+      while (size !== undefined && mine.reported < size) {
+        const wrote = socket.write(step.subarray(0, Math.min(step.length, size - mine.reported)));
+        if (wrote <= 0) return;
+        mine.reported += wrote;
+      }
+      mine.ended = true;
+      end(socket, raw);
+    };
+    const enderHandlers = {
+      open: enderPump,
+      drain: enderPump,
+      data(socket: Socket, chunk: Buffer) {
+        mine.received += chunk.length;
+        if (!mine.ended) return;
+        mine.readsAfterEnd++;
+        ender.afterEnd?.(socket);
+        if (peerWaits) peer!.resume();
+      },
+      end: () => void mine.events.push("end"),
+      close: (_socket: Socket, error?: Error) => closed(mine.events, error),
+    };
+    const peerPump = (socket: Socket) => {
+      if (theirs.finished) return;
+      for (;;) {
+        const isTail = mine.readsAfterEnd > 0;
+        if (isTail && theirs.tail === 0) break;
+        const wrote = socket.write(isTail ? step.subarray(0, theirs.tail) : step);
+        if (wrote <= 0) return;
+        theirs.reported += wrote;
+        if (isTail) theirs.tail -= wrote;
+      }
+      theirs.finished = true;
+      if (theirs.events.includes("end")) socket.end();
+    };
+    const peerHandlers = {
+      open(socket: Socket) {
+        peer = socket;
+        if (peerWaits) socket.pause();
+        peerPump(socket);
+      },
+      drain: peerPump,
+      data: (_socket: Socket, chunk: Buffer) => void (theirs.received += chunk.length),
+      end(socket: Socket) {
+        theirs.events.push("end");
+        if (theirs.finished) socket.end();
+      },
+      close: (_socket: Socket, error?: Error) => closed(theirs.events, error),
+    };
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      allowHalfOpen: !!ender.upgraded,
+      socket: ender.upgraded ? peerHandlers : enderHandlers,
+    });
+    if (ender.upgraded) {
+      const tcp = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: { data() {}, close() {}, error() {} },
+      });
+      raw = tcp.upgradeTLS({ tls: { ca: tls.cert }, socket: enderHandlers } as any)[0] as Socket;
+    } else {
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { ca: tls.cert },
+        allowHalfOpen: true,
+        socket: peerHandlers,
+      });
+    }
+    await done.promise;
+    // The ender has ended: whether it hears of the peer's end ahead of the close is a matter of timing.
+    return {
+      readAfterEnd: mine.readsAfterEnd > 0,
+      pumps: mine.pumps,
+      peer: { missing: mine.reported - theirs.received, events: theirs.events },
+      ender: { missing: theirs.reported - mine.received, closed: mine.events.at(-1) },
+    };
+  }
+  const delivered = {
+    readAfterEnd: true,
+    pumps: expect.any(Number),
+    peer: { missing: 0, events: ["end", "close"] },
+    ender: { missing: 0, closed: "close" },
+  };
+  const secondAsk: [string, Ender][] = [
+    ["a second end()", { afterEnd: socket => void socket.end() }],
+    ["flush()", { afterEnd: socket => void socket.flush() }],
+    [
+      "end() of the raw half of an upgradeTLS() pair",
+      { upgraded: true, end: (socket, raw) => (socket.end(), raw!.end()) },
+    ],
+  ];
+
+  it.each<[string, Ender]>([
+    ...secondAsk,
+    ["[Symbol.dispose]()", { afterEnd: socket => socket[Symbol.dispose]() }],
+    [
+      "end() of both halves of an upgradeTLS() pair, raw first",
+      { upgraded: true, end: (socket, raw) => (raw!.end(), socket.end()) },
+    ],
+  ])("reads on after %s", async (_name, ender) => {
+    expect(await endThenRead({ size: 1024 * 1024, ...ender })).toEqual(delivered);
+  });
+
+  // pause() and resume() leave a poll for writable behind. Its event comes after an end() that no drain event ran,
+  // and the owner takes it for the end of its flush. An amount that any kernel takes at once keeps the end() there.
+  it("reads on after the writable event of a resume()", async () => {
+    const beforeWrite = (socket: Socket) => (socket.pause(), void socket.resume());
+    expect(await endThenRead({ size: 32 * 1024, beforeWrite })).toEqual({ ...delivered, pumps: 1 });
+  });
+
+  // Behind ciphertext that the kernel did not take, the close waits for the kernel first.
+  it.each(secondAsk)("behind unsent ciphertext sends it after %s", async (_name, ender) => {
+    expect(await endThenRead(ender)).toEqual(delivered);
+  });
+
+  // So does the peer's close_notify that the socket reads in that state: the peer ended, and still reads.
+  it.each(["data", "end"] as const)(
+    "behind unsent ciphertext sends it after the peer's close_notify, answered from %s()",
+    async answersFrom => {
+      const step = Buffer.alloc(64 * 1024, "a");
+      const bothClosed = Promise.withResolvers<void>();
+      const events: string[] = [];
+      let [reported, received, closes] = [0, 0, 0];
+      const closed = () => void (++closes === 2 && bothClosed.resolve());
+      const answer = (socket: Socket) => {
+        for (let wrote = step.length; wrote === step.length; reported += Math.max(wrote, 0)) wrote = socket.write(step);
+        socket.end();
+      };
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls,
+        socket: {
+          data: socket => void (answersFrom === "data" && answer(socket)),
+          end: socket => void (answersFrom === "end" && answer(socket)),
+          close: closed,
+        },
+      });
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { ca: tls.cert },
+        socket: {
+          // The request and its end: the close_notify, and no FIN ahead of the server's own.
+          open: socket => (socket.write("ping"), void socket.end()),
+          data: (_socket, chunk) => void (received += chunk.length),
+          end: () => void events.push("end"),
+          close(_socket, error) {
+            events.push(error ? `close: ${(error as NodeJS.ErrnoException).code}` : "close");
+            closed();
+          },
+        },
+      });
+      await bothClosed.promise;
+      expect({ missing: reported - received, events }).toEqual({ missing: 0, events: ["end", "close"] });
+    },
+  );
+
+  // stop(true) of the listener ends the wait as the deadline does, with a close and not a reset: what the kernel
+  // holds still leaves, and only the ciphertext that it refused (at most one flush unit) is lost.
+  it.each([
+    ["", 1024],
+    [" behind unsent ciphertext", undefined],
+  ])("and then stop(true) of the listener%s delivers what the kernel took", async (_name, size) => {
+    const step = Buffer.alloc(256 * 1024, "a");
+    const peerClosed = Promise.withResolvers<void>();
+    const events: string[] = [];
+    let [reported, received] = [0, 0];
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      socket: {
+        open(socket) {
+          // One small write, or writes until the kernel refuses some of one.
+          const chunk = step.subarray(0, size ?? step.length);
+          for (let wrote = step.length; wrote === step.length; reported += Math.max(wrote, 0)) {
+            wrote = socket.write(chunk);
+          }
+          socket.end();
+          server.stop(true);
+        },
+        data() {},
+      },
+    });
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      tls: { ca: tls.cert },
+      allowHalfOpen: true,
+      socket: {
+        data: (_socket, chunk) => void (received += chunk.length),
+        end(socket) {
+          events.push("end");
+          socket.end();
+        },
+        close(_socket, error) {
+          events.push(error ? `close: ${(error as NodeJS.ErrnoException).code}` : "close");
+          peerClosed.resolve();
+        },
+      },
+    });
+    await peerClosed.promise;
+    expect(events).toEqual(["end", "close"]);
+    expect(reported - received).toBeWithin(0, size ? 1 : 128 * 1024 + 1);
+  });
+
+  // The kernel refuses exactly one send(), of the first record, and takes it at the next try. The poll for writable
+  // that the refusal left has nothing to flush when its event comes, after the end().
+  it.skipIf(!socketFaultInjection.available())("reads on after a writable event with nothing to flush", async () => {
+    const result = await endThenRead({
+      size: 1024 * 1024,
+      beforeWrite: () => void socketFaultInjection.set({ syscall: "send", action: "zero" }),
+      end: socket => (socketFaultInjection.clear(), void socket.end()),
+    });
+    expect(result).toEqual(delivered);
+  });
+});
+
 // A close must not cut off ciphertext that write() already reported, so it waits for the kernel to take
 // it. The owner has let go by then: only the deadline (10 s on a 4 s tick) ends the wait for such a peer.
 it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", async () => {
@@ -1786,12 +2048,12 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
       },
     },
   });
-  const connected = (handshake: (socket: Socket) => void, close = () => {}) =>
+  const connected = (handshake: (socket: Socket) => void, close = () => {}, data = (_socket: Socket) => {}) =>
     Bun.connect({
       hostname: "127.0.0.1",
       port: server.port,
       tls: { ca: tls.cert },
-      socket: { handshake, close, data() {}, timeout: () => void timeouts++ },
+      socket: { handshake, close, data, timeout: () => void timeouts++ },
     });
   let timeouts = 0;
   const reported: number[] = [0];
@@ -1831,6 +2093,8 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
       lateFilled.resolve(socket);
     },
     () => lateClosed.resolve(performance.now()),
+    // Nor does an owner that asks for its close again, at each thing its peer sends.
+    socket => void socket.end(),
   );
   const late = await lateFilled.promise;
   const destroyed = tlsConnect({ port: server.port, host: "127.0.0.1", ca: tls.cert });

@@ -2132,7 +2132,24 @@ static int ssl_handle_shutdown(struct us_socket_t *s) {
 /* Seconds a close waits for the peer to take the spill (at most one flush unit, so 13 KB/s), then for its close_notify: Bun.serve's default idleTimeout. */
 #define US_SSL_CLOSE_AFTER_SPILL_TIMEOUT 10
 
+/* Our close_notify is out with no FIN behind it, and the peer's is not in: a graceful close of `s` reads on for it. */
+static int ssl_close_awaits_peer(struct us_socket_t *s) {
+  return us_internal_socket_can_raw_write(s) && SSL_get_shutdown(s_ssl(s)) == SSL_SENT_SHUTDOWN;
+}
+
+int us_internal_ssl_close_waits(struct us_socket_t *s) {
+  return !us_socket_is_closed(s) && (s->ssl_close_after_spill || ssl_close_awaits_peer(s));
+}
+
 struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void *reason) {
+  /* A graceful close that already waits, for the kernel to take the spill or for the peer's close_notify,
+   * is not over because it is asked for again: by its owner (a second end(), a flush, the other half of an
+   * upgradeTLS pair, a sweep), or from the read of the peer's close_notify while the spill is not out. The
+   * peer may still send, and a close over what it sent is a reset that drops what the kernel holds. */
+  if (code == LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN && !reason && s->ssl && !s->ssl_fatal_error &&
+      us_internal_ssl_close_waits(s)) {
+    return s;
+  }
   if (s->ssl && s->ssl_in_use) {
     /* A JS callback running from inside SSL_do_handshake/SSL_read (ALPN, SNI,
      * keylog, ...) destroyed this socket. Reaching ssl_set_loop_data /
@@ -2213,8 +2230,10 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
    * alive to receive the peer's close_notify/FIN; raw-closing here would let
    * the client resolve `close` before the server has even seen our Finished
    * under low-prio fan-out (connectionListener race). The actual raw-close
-   * happens via on_end/ZERO_RETURN re-entering this function with
-   * SSL_SENT_SHUTDOWN already set (ssl_handle_shutdown then returns 1). */
+   * happens via on_end/ZERO_RETURN re-entering this function with the
+   * peer's shutdown recorded too (ssl_handle_shutdown then returns 1), at
+   * the deadline, or from a close that does not wait: code 1 or 2,
+   * us_socket_close_now. Another code-0 close returns at the top. */
   if (code != LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN || ssl_handle_shutdown(s)) {
     return us_internal_socket_close_raw(s, code, reason);
   }

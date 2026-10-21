@@ -7674,6 +7674,46 @@ export class C { static readonly S: unique symbol = Symbol("s"); }
       expect(exitCode).toBe(1);
     });
 
+    test("TS7053 for an index into a parameter's binding element whose default is `{}`, in a function expression", async () => {
+      using dir = project({
+        "a.ts": `export const f1 = ({ q = {} }, k: string) => q[k];
+export const f2 = ([q = {}], k: string) => q[k];
+export const f3 = ({ q = {} }) => q["x"];
+export const f4 = function ({ q = {} }, k: string) { return q[k]; };
+export const f5 = { m({ q = {} }, k: string) { return q[k]; } };
+export const f6 = ({ q = [{}] }, k: string) => q[0][k];
+export const f7 = ({ p: { q = {} } = {} }, k: string) => q[k];
+export const f8 = ({ q = {} } = {}, k: string) => q[k];
+export const f9: (x: { q?: {} }) => void = ({ q = {} }) => q["x"];
+export const keys = ({ params = {} }) =>
+  Object.keys(params)
+    // @ts-expect-error
+    .filter(key => params[key]);
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(1,46): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(2,44): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(3,35): error TS7053: Element implicitly has an 'any' type because expression of type '"x"' can't be used to index type '{}'.
+          Property 'x' does not exist on type '{}'.
+        a.ts(4,61): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(5,55): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(6,48): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(7,58): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(8,51): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(9,60): error TS2339: Property 'x' does not exist on type '{}'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("qualifies two types that share a name with `import(...)` in the message", async () => {
       using dir = project({
         "a.ts": `import { use } from "one";

@@ -2815,7 +2815,14 @@ impl<'p, 's> Checker<'p, 's> {
         // `widenTypeInferredFromInitializer` of the union of both: a default that is one of the
         // existing literals isn't widened.
         let present = self.non_undefined_type(ty);
-        let whole = self.union_reduced(&[present, default_ty]);
+        // A pattern without a declared type gets `present` from `getTypeFromBindingElement`, which
+        // doesn't cache the type of the default. tsc creates that type again here, so it has the
+        // higher id of the two and `removeSubtypes` removes it.
+        let whole = if present == self.get_widened_type(default_ty) {
+            present
+        } else {
+            self.union_reduced(&[present, default_ty])
+        };
         self.widen_type_inferred_from_initializer(file, pat, whole)
     }
 

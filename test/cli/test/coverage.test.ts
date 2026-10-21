@@ -1106,6 +1106,64 @@ test("reports an uncalled function on the last line of a // @bun file without a 
   expect(exitCode).toBe(0);
 });
 
+// `braces.ts` in `source-positions-corpus.ts` has this for a file that Bun transpiles and reports by its source map.
+test.each(["// @bun", "// @bun with a source map", "coverageIgnoreSourcemaps"])(
+  "both braces of an object are listed and no brace of a block is: %s",
+  async mode => {
+    const lib = `export function f() {
+  {
+    globalThis.list = [
+      {
+        one: 1
+      }
+    ];
+  }
+  for (const item of globalThis.list) {
+    return item;
+  }
+}
+`;
+    using dir = tempDir("cov-braces", {
+      "lib.test.ts": `
+        import { expect, test } from "bun:test";
+        import { f } from "./lib.js";
+        test("f", () => { expect(f()).toEqual({ one: 1 }); });
+      `,
+      ...(mode === "// @bun"
+        ? { "lib.js": "// @bun\n" + lib }
+        : mode === "// @bun with a source map"
+          ? { "src/lib.js": lib }
+          : { "lib.js": lib, "bunfig.toml": "[test]\ncoverageIgnoreSourcemaps = true\n" }),
+    });
+    if (mode === "// @bun with a source map") {
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "./src/lib.js", "--target=bun", "--sourcemap=linked", "--outdir=."],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "inherit",
+      });
+      expect(await build.exited).toBe(0);
+      expect(readFileSync(path.join(String(dir), "lib.js"), "utf-8")).toStartWith("// @bun\n");
+    }
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    const exitCode = await proc.exited;
+
+    const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+    const record = lcov.split("end_of_record").find(r => r.includes("lib.js\n"));
+    expect(record).toBeDefined();
+    const above = mode === "// @bun" ? 1 : 0;
+    expect([2, 4, 6, 8, 11, 12].filter(line => record!.includes(`DA:${line + above},`))).toEqual([4, 6]);
+    expect(exitCode).toBe(0);
+  },
+);
+
 test("reports an error for a coverage directory longer than the path buffer", async () => {
   // A bunfig value can be longer than the buffer on every platform.
   using dir = tempDir("coverage-dir-too-long", {
@@ -1129,46 +1187,4 @@ test("reports an error for a coverage directory longer than the path buffer", as
   expect(stderr).toContain("(pass) covered");
   expect(stderr).toContain("ENAMETOOLONG: File name too long: Failed to write lcov.info");
   expect(exitCode).toBe(1);
-});
-
-test("the brace of a block is not listed after a comment or a number, in a file that Bun does not transpile", async () => {
-  using dir = tempDir("cov-brace-after-comment", {
-    "built.js": `// @bun
-export function f() {
-  // A comment that ends like a sentence.
-  {
-    globalThis.x = [
-      {
-        one: 1,
-      },
-    ];
-  }
-  globalThis.y = 1.
-  {
-    globalThis.y++;
-  }
-}
-`,
-    "built.test.ts": `
-      import { f } from "./built.js";
-      test("built", () => {
-        f();
-      });
-    `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov", "built.test.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "ignore",
-    stderr: "inherit",
-  });
-  const exitCode = await proc.exited;
-  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
-  const record = lcov.split("end_of_record").find(r => r.includes("SF:built.js"));
-  expect(record).toBeDefined();
-  expect(record).not.toContain("DA:4,");
-  expect(record).toContain("DA:6,");
-  expect(record).not.toContain("DA:12,");
-  expect(exitCode).toBe(0);
 });

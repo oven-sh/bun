@@ -1383,6 +1383,7 @@ impl<'a> Converter<'a, '_> {
                     test: self.expr(test)?,
                     yes: self.stmt(yes)?,
                     no: no.map(|it| self.stmt(it)).transpose()?,
+                    else_loc: Loc::EMPTY,
                 },
                 loc,
             ),

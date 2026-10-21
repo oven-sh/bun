@@ -223,6 +223,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     test,
                     yes,
                     no: None,
+                    else_loc: bun_ast::Loc::EMPTY,
                 },
                 current_loc,
             );
@@ -249,6 +250,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Ok(root_if.unwrap());
             }
 
+            current_if.unwrap().else_loc = p.lexer.loc();
             p.lexer.next()?;
 
             // Handle final else

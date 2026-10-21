@@ -349,6 +349,7 @@ pub(crate) fn codegen_function(
                     test: if_test,
                     yes: expr_stmt(call, Loc::EMPTY),
                     no: None,
+                    else_loc: Loc::EMPTY,
                 },
                 Loc::EMPTY,
             );
@@ -866,6 +867,7 @@ fn codegen_reactive_scope(
             test: test_condition,
             yes,
             no,
+            else_loc: Loc::EMPTY,
         },
         loc,
     );
@@ -901,6 +903,7 @@ fn codegen_reactive_scope(
                     loc,
                 ),
                 no: None,
+                else_loc: Loc::EMPTY,
             },
             loc,
         ));
@@ -1000,6 +1003,7 @@ fn codegen_terminal(
                     test: test_expr,
                     yes: body_stmt(consequent_block, stmt_loc),
                     no: alternate_stmt,
+                    else_loc: Loc::EMPTY,
                 },
                 stmt_loc,
             )))

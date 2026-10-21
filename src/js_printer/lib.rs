@@ -1346,6 +1346,9 @@ pub struct Options<'a> {
     pub minify_identifiers: bool,
     pub minify_syntax: bool,
     pub print_dce_annotations: bool,
+    /// `bun test --coverage` lists a line if the source map has something on it, so the map
+    /// leaves out what is not code: the braces of blocks and of class bodies.
+    pub code_coverage: bool,
 
     pub inline_require_and_import_errors: bool,
     /// A bundler renamer named every symbol. Those renamers reserve `NaN`,
@@ -1425,6 +1428,7 @@ impl<'a> Default for Options<'a> {
             minify_identifiers: false,
             minify_syntax: false,
             print_dce_annotations: true,
+            code_coverage: false,
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
             require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
@@ -2165,7 +2169,7 @@ pub(crate) mod __gated_printer {
             stmts: &[Stmt],
             close_brace_loc: Option<bun_ast::Loc>,
         ) {
-            self.add_source_mapping(loc);
+            self.add_source_mapping_for_block_brace(loc);
             self.print(b"{");
             if !stmts.is_empty() {
                 self.print_newline();
@@ -2176,7 +2180,7 @@ pub(crate) mod __gated_printer {
             }
             if let Some(cbl) = close_brace_loc {
                 if cbl.start > loc.start {
-                    self.add_source_mapping(cbl);
+                    self.add_source_mapping_for_block_brace(cbl);
                 }
             }
             self.print(b"}");
@@ -2432,6 +2436,12 @@ pub(crate) mod __gated_printer {
                 .add_source_mapping(location, self.writer.slice());
         }
 
+        pub(crate) fn add_source_mapping_for_block_brace(&mut self, location: bun_ast::Loc) {
+            if !self.options.code_coverage {
+                self.add_source_mapping(location);
+            }
+        }
+
         #[inline]
         pub(crate) fn add_source_mapping_for_name(
             &mut self,
@@ -2521,7 +2531,7 @@ pub(crate) mod __gated_printer {
 
             self.print_space();
 
-            self.add_source_mapping(class.body_loc);
+            self.add_source_mapping_for_block_brace(class.body_loc);
             self.print(b"{");
             self.print_newline();
             self.indent();
@@ -2552,7 +2562,7 @@ pub(crate) mod __gated_printer {
             self.unindent();
             self.print_indent();
             if class.close_brace_loc.start > class.body_loc.start {
-                self.add_source_mapping(class.close_brace_loc);
+                self.add_source_mapping_for_block_brace(class.close_brace_loc);
             }
             self.print(b"}");
         }
@@ -6611,7 +6621,7 @@ pub(crate) mod __gated_printer {
             if let Some(no_block) = &s.no {
                 self.print_semicolon_if_needed();
                 self.print_space_before_identifier();
-                self.add_source_mapping(no_block.loc);
+                self.add_source_mapping(s.else_loc.to_nullable().unwrap_or(no_block.loc));
                 self.print(b"else");
 
                 match &no_block.data {

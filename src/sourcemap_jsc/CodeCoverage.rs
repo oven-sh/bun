@@ -7,7 +7,7 @@ use bun_collections::VecExt;
 use bun_collections::bit_set::DynamicBitSet;
 use bun_core::{self, Utf8Bytes};
 use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
-use bun_sourcemap::{Ordinal, ParsedSourceMap};
+use bun_sourcemap::{Mapping, Ordinal, ParsedSourceMap};
 
 type LinesHits = Vec<u32>;
 type Bitset = DynamicBitSet;
@@ -608,8 +608,8 @@ pub struct BasicBlockRange {
 pub struct ByteRangeMapping {
     /// A bit for each code unit of the text JSC compiled, which is what JSC's offsets and the
     /// source map's generated columns count. Set if the unit can make its line executable:
-    /// not white space, a `}`, or a `{` that may be a block's. The text itself is only borrowed
-    /// while this is made.
+    /// not white space, and a `{` or a `}` only if the printer maps it. The text itself is only
+    /// borrowed while this is made.
     executable_units: Bitset,
     /// Code unit offset of the first unit of each line of the text.
     line_starts: Vec<u32>,
@@ -717,16 +717,7 @@ impl ByteRangeMapping {
         let mut lines = LineCounts::default();
 
         if let Some(source_map) = source_map.as_deref() {
-            let mut previous_original = None;
-            source_map.for_each_mapping(|mapping| {
-                // The printer repeats a mapping at column 0 of a line that starts without one.
-                let original = (
-                    mapping.original.lines.zero_based(),
-                    mapping.original.columns.zero_based(),
-                );
-                if previous_original.replace(original) == Some(original) {
-                    return;
-                }
+            for_each_distinct_mapping(source_map, |mapping| {
                 let (Ok(line), Some(offset)) = (
                     usize::try_from(mapping.original.lines.zero_based()),
                     self.offset_of(mapping.generated),
@@ -826,6 +817,110 @@ impl ByteRangeMapping {
             source_url,
         }
     }
+
+    /// With `js_printer::Options::code_coverage` the printer maps only code, so the brace of an
+    /// object and not the brace of a block.
+    fn set_mapped_units_executable(&mut self, text: &[u8], already_bundled: bool) {
+        if already_bundled {
+            // The printer did not print this text, so it is the original of what it prints now.
+            let Some(source_map) = print_for_coverage(text) else {
+                return;
+            };
+            for &original in source_map.mappings.original() {
+                if let Some(offset) = self.offset_of(original) {
+                    self.executable_units.set(offset as usize);
+                }
+            }
+        } else if let Some(source_map) = bun_jsc::VirtualMachine::VirtualMachine::get()
+            .as_mut()
+            .source_mappings()
+            .get(self.source_url.slice())
+        {
+            for_each_distinct_mapping(&source_map, |mapping| {
+                if let Some(offset) = self.offset_of(mapping.generated) {
+                    self.executable_units.set(offset as usize);
+                }
+            });
+        }
+    }
+}
+
+/// The printer repeats a mapping at column 0 of a line that starts without one.
+fn for_each_distinct_mapping(source_map: &ParsedSourceMap, mut each: impl FnMut(Mapping)) {
+    let mut previous_original = None;
+    source_map.for_each_mapping(|mapping| {
+        let original = (
+            mapping.original.lines.zero_based(),
+            mapping.original.columns.zero_based(),
+        );
+        if previous_original.replace(original) != Some(original) {
+            each(mapping);
+        }
+    });
+}
+
+/// The source map of what the printer makes of `text`.
+fn print_for_coverage(text: &[u8]) -> Option<ParsedSourceMap> {
+    struct Chunk(Option<bun_sourcemap::Chunk>);
+    impl bun_js_printer::OnSourceMapChunk for Chunk {
+        fn on_source_map_chunk(
+            &mut self,
+            chunk: bun_sourcemap::Chunk,
+            _: &bun_ast::Source,
+        ) -> bun_js_printer::Result<()> {
+            self.0 = Some(chunk);
+            Ok(())
+        }
+    }
+
+    let arena = bun_alloc::Arena::new();
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _ast_scope = ast_memory_allocator.enter();
+
+    let source = bun_ast::Source::init_path_string(b"", text);
+    let mut options = bun_js_parser::ParserOptions::init(Default::default(), bun_ast::Loader::Js);
+    options.features.dead_code_elimination = false;
+    options.features.no_macros = true;
+    options.features.top_level_await = true;
+    let define = bun_js_parser::Define::default();
+    let mut log = bun_ast::Log::init();
+    let parser = bun_js_parser::Parser::init(options, &mut log, &source, &define, &arena).ok()?;
+    let bun_js_parser::Result::Ast(mut ast) = parser.parse().ok()? else {
+        return None;
+    };
+
+    let symbols_arena = *ast.symbols.allocator();
+    let symbols = bun_ast::symbol::Map::init_with_one_list(
+        core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(symbols_arena))
+            .into_iter()
+            .collect(),
+    );
+    let mut chunk = Chunk(None);
+    bun_js_printer::print_ast::<_, false, true>(
+        &mut bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
+        &arena,
+        &ast,
+        symbols,
+        &source,
+        bun_js_printer::Options {
+            code_coverage: true,
+            require_ref: Some(ast.require_ref),
+            import_meta_ref: ast.import_meta_ref,
+            source_map_handler: Some(bun_js_printer::SourceMapHandler::for_(&mut chunk)),
+            ..Default::default()
+        },
+    )
+    .ok()?;
+    bun_sourcemap::mapping::parse(
+        chunk.0?.buffer.list.as_slice(),
+        None,
+        1,
+        bun_sourcemap::mapping::ParseOptions {
+            allow_names: false,
+            sort: false,
+        },
+    )
+    .ok()
 }
 
 /// `ByteRangeMapping::line_starts` and `executable_units`. Lines end where
@@ -834,35 +929,15 @@ fn scan(units: impl ExactSizeIterator<Item = u16>) -> (Vec<u32>, Bitset) {
     let mut starts = vec![0u32];
     let mut executable = bun_core::handle_oom(Bitset::init_empty(units.len()));
     let mut units = units.enumerate().peekable();
-    let mut previous = 0;
-    let mut seen_slashes = false;
     while let Some((i, unit)) = units.next() {
         match unit {
             0x0D if units.peek().is_some_and(|&(_, next)| next == 0x0A) => {}
-            0x0A | 0x0D | 0x2028 | 0x2029 => {
-                starts.push(u32::try_from(i + 1).expect("int cast"));
-                // The line may have ended in a comment, or in a number: `1.`
-                if core::mem::take(&mut seen_slashes) || previous == 0x2E {
-                    previous = 0;
-                }
-            }
+            0x0A | 0x0D | 0x2028 | 0x2029 => starts.push(u32::try_from(i + 1).expect("int cast")),
             _ => {}
         }
-        let is_executable = match unit {
-            0x09 | 0x0A | 0x0D | 0x20 => continue,
-            // No block starts after one of these. After a `:`, one can.
-            0x7B => matches!(
-                u8::try_from(previous),
-                Ok(b'(' | b'[' | b',' | b'=' | b'?' | b'|' | b'&' | b'.')
-            ),
-            0x7D => false,
-            _ => true,
-        };
-        if is_executable {
+        if !matches!(unit, 0x09 | 0x0A | 0x0D | 0x20 | 0x7B | 0x7D) {
             executable.set(i);
         }
-        seen_slashes |= unit == 0x2F && previous == 0x2F;
-        previous = unit;
     }
     (starts, executable)
 }
@@ -979,6 +1054,7 @@ extern "C" fn ByteRangeMapping__generate(
     str_: &bun_core::String,
     source_contents_str: &bun_core::String,
     source_id: i32,
+    already_bundled: bool,
 ) {
     // SAFETY: thread_map() returns a pointer into this thread's owned Box<HashMap>;
     // valid for the lifetime of the thread, and we are the only mutable accessor on
@@ -998,8 +1074,9 @@ extern "C" fn ByteRangeMapping__generate(
         return;
     }
 
-    let new_value =
+    let mut new_value =
         ByteRangeMapping::compute(source_contents_str, source_hash, source_id, source_url);
+    new_value.set_mapped_units_executable(source_contents.slice(), already_bundled);
     map.insert(hash, new_value);
 }
 

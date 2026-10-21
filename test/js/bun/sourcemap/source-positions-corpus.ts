@@ -138,7 +138,7 @@ export const cases: Record<string, Case> = {
  -|declare const d: number;
  1|export const e: B = {
  1|  a: 1,
- -|};
+ 1|};
  0|export function f(x: C): A | undefined {
  0|  return undefined;
  -|}
@@ -169,56 +169,71 @@ export const cases: Record<string, Case> = {
  0|];
 `,
   },
-  // A `{` is code only where no block can start: after `( [ , = ? | & .`. No `}` is.
+  // Both braces of an object are code. The braces of a block, of a body and of a class are not.
   "braces.ts": {
-    functions: "3/4",
+    functions: "6/7",
     lines: `
  2|const twice = (
  2|  n: number,
  2|): { x: number } => ({
  2|  x: n,
- -|});
+ 2|});
  1|const typed: {
  -|  v: number;
  1|} = {
  1|  v: 1,
- -|};
+ 1|};
  3|const thrice = () =>
  3|  ({
  3|    y: typed.v,
- -|  });
+ 3|  });
  1|export const never = () =>
  0|  ({
  0|    z: 1,
- -|  });
+ 0|  });
  1|const list = [
  1|  {
  1|    one: 1,
- -|  },
+ 1|  },
  1|  {
  1|    two: 2,
- -|  },
+ 1|  },
  1|];
  1|export const chosen = !typed.v
  0|  ? {
  0|      yes: 1,
- -|    }
- -|  : {
+ 0|    }
+ 1|  : {
  1|      no: 1,
- -|    };
- 1|export const either = !typed.v ||
- 1|  {
- 1|    or: 1,
- -|  };
+ 1|    };
  1|export const neither = !typed.v &&
  0|  {
  0|    and: 1,
- -|  };
- 1|export const spread = {
- 1|  ...{
- 1|    inner: 1,
+ 0|  };
+ 1|export const nested = {
+ 1|  inner:
+ 1|    {
+ 1|      ...{
+ 1|        deep: 1,
+ 1|      },
+ 1|    },
+ 1|};
+ 1|export const empty = {
+ 1|};
+ 1|function returned() {
+ 1|  return (
+ 1|    {
+ 1|      r: 1,
+ 1|    }
+ -|  );
+ -|}
+ 1|returned();
+ 1|const withMethod = {
+ 1|  method() {
+ 1|    return 1;
  -|  },
- -|};
+ 1|};
+ 1|withMethod.method();
  1|function pattern(
  -|  {
  1|    one,
@@ -229,12 +244,7 @@ export const cases: Record<string, Case> = {
  1|pattern(
  1|  {
  1|    one: 1,
- -|  },
- 1|);
- 1|Object.assign(["https://bun.com"],
- 1|  {
- 1|    url: 1,
- -|  },
+ 1|  },
  1|);
  2|for (const item of list) ({
  2|  two: item.two,
@@ -242,9 +252,28 @@ export const cases: Record<string, Case> = {
  1|for (const item of list) {
  2|  twice(item.one ?? 0);
  -|}
+ 1|function early() {
+ 1|  if (typed.v) {
+ 1|    return 1;
+ -|  }
+ 0|  return 2;
+ -|}
+ 1|early();
  1|if (typed.v)
  -|{
  1|  thrice();
+ -|}
+ 0|else
+ -|{
+ 0|  Object(0);
+ -|}
+ 1|if (!typed.v)
+ -|{
+ 0|  Object(0);
+ -|}
+ 1|else
+ -|{
+ 1|  Object(1);
  -|}
  1|switch (typed.v) {
  1|  case 1:

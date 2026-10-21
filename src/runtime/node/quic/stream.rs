@@ -980,7 +980,7 @@ impl QuicStream {
                 // stream that has no owner until the flush releases it.
                 s.want_read(false);
                 s.want_write(false);
-                session.defer_stream_abort(s.raw(), stop, reset, always_sent);
+                session.defer_stream_abort(s.id(), stop, reset, always_sent);
             }
             None => send_abort(s, stop, reset),
         }

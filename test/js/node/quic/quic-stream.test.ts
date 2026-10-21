@@ -1226,6 +1226,47 @@ describe("QuicStream.destroy before the first write", () => {
       });
     });
 
+    // lsquic frees a stream on the tick that finishes it. The peer can cause
+    // that while the frames of the destroy still wait for the handshake.
+    test("of a stream the peer ends first are dropped", async () => {
+      const refused = Promise.withResolvers<string>();
+      const { endpoint, sessions } = await echoServer(8, {
+        onsession(serverSession: any) {
+          if (sessions.length < 2) return;
+          const answer = serverSession.onstream;
+          serverSession.onstream = (stream: any) => {
+            // The client's STOP_SENDING opens this stream here. The destroy
+            // sends RESET_STREAM and STOP_SENDING back, which ends it at the
+            // client before its own held frames go out.
+            if (stream.id !== 0n) return answer(stream);
+            stream.closed.catch(() => {});
+            refused.resolve(String(stream.id));
+            stream.destroy(new Error("refused"));
+          };
+        },
+      });
+      await using server = endpoint;
+      const resumed = await resume(server);
+      const ended = await open(resumed);
+      const busy = await open(resumed);
+      ended.stopSending(7n);
+      // The data of `busy` makes the packet one the server can read.
+      busy.writer.writeSync(encoder.encode("data"));
+      busy.writer.endSync();
+      destroy(ended);
+      const echoed = [await readAll(busy)];
+      await resumed.opened;
+      const end = sessionEnd(resumed);
+      for (let i = 0; i < 2; i++) {
+        echoed.push(await Promise.race([fromTimer(() => echo(resumed, `request ${i}`)), end]));
+      }
+      resumed.close();
+      expect({ echoed, refused: await Promise.race([refused.promise, end]) }).toEqual({
+        echoed: ["data", "request 0", "request 1"],
+        refused: String(ended.id),
+      });
+    });
+
     test("the held frames leave with the flight that follows the handshake", async () => {
       const { endpoint } = await echoServer(4);
       await using server = endpoint;

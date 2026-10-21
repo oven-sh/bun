@@ -275,10 +275,10 @@ pub(super) struct HskSnapshot {
 }
 
 pub(super) struct DeferredAbort {
-    /// The raw lsquic stream — alive until the conn dies (entries are
-    /// cleared first) and only ever passed back to lsquic, never
-    /// dereferenced here.
-    ls: *mut lsquic::lsquic_stream,
+    /// Names the stream on the connection. lsquic frees a stream on the tick
+    /// that finishes it, which the peer can cause at any time, so the entry
+    /// holds no pointer: `settle_deferred_aborts` asks the conn for the id.
+    id: u64,
     reset: Option<u64>,
     stop: Option<u64>,
     /// The app stopped the stream itself, or holds its writer: these frames
@@ -691,14 +691,14 @@ impl QuicSession {
     }
     pub(super) fn defer_stream_abort(
         &self,
-        ls: *mut lsquic::lsquic_stream,
+        id: u64,
         stop: Option<u64>,
         reset: Option<u64>,
         always_sent: bool,
     ) {
         self.deferred_aborts.with_mut(|v| {
             v.push(DeferredAbort {
-                ls,
+                id,
                 reset,
                 stop,
                 always_sent,
@@ -726,13 +726,11 @@ impl QuicSession {
     /// no frame when it is `silent`, and when the connection closes.
     fn settle_deferred_aborts(&self, closing: bool) {
         let entries = self.deferred_aborts.with_mut(core::mem::take);
-        if self.conn.get().is_null() {
-            return;
-        }
+        let Some(conn) = self.conn() else { return };
         for e in entries {
-            // SAFETY: entries are cleared before the conn (and thus its
-            // streams) is freed, so `ls` is a live lsquic stream.
-            let Some(s) = (unsafe { lsquic::Stream::from_raw(e.ls) }) else {
+            // The peer can end a held stream itself (a RESET_STREAM and a
+            // STOP_SENDING finish it), and lsquic frees it on that tick.
+            let Some(s) = conn.stream_by_id(e.id) else {
                 continue;
             };
             if e.silent || (closing && !e.always_sent) {

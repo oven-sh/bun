@@ -137,6 +137,11 @@ export const lsquic: Dependency = {
     // lsquic_prq_destroy() only frees the free list. A stateless reset whose
     // send failed is on the returned list, so destroying the engine leaks it.
     "patches/lsquic/prq-free-returned-conns.patch",
+    // conn_iface carries a lookup of a stream by its ID that only gQUIC
+    // connections fill in. node:quic holds the frames of a destroyed stream
+    // until its session can send them, and lsquic frees a stream on the tick
+    // that finishes it, so those frames name the stream by ID.
+    "patches/lsquic/stream-by-id.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

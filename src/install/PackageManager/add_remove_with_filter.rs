@@ -26,6 +26,7 @@ use super::workspace_package_json_cache::{GetJSONOptions, GetResult, MapEntry};
 use super::workspace_selection::{self, Candidate, LinkTargets, RootSelection, WorkspaceGraph};
 use super::{
     Command, PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest, UpdateTargetWorkspace,
+    UpdateTargets,
 };
 
 #[derive(Clone)]
@@ -671,7 +672,7 @@ pub(super) fn update_filtered_workspaces_and_install(
     add_catalog::prepare(manager, &updates);
     let subcommand = manager.subcommand;
     let is_update = subcommand == Subcommand::Update;
-    let update_targets: Option<Box<[UpdateTargetWorkspace]>> = is_update.then(|| {
+    let update_targets: Option<UpdateTargets> = is_update.then(|| {
         targets
             .iter()
             .map(|t| UpdateTargetWorkspace {

@@ -973,13 +973,14 @@ fn warn_latest_names_no_version(
 /// yet.
 fn locked_repository(
     this: &PackageManager,
+    id: DependencyID,
     dependency: &Dependency,
     res: &Resolution,
 ) -> Option<PackageID> {
     if this.repins_tarball(
         dependency,
         this.lockfile.buffers.string_bytes.as_slice(),
-        true,
+        || crate::update_scope::UpdateScope::is_about_row(this, id, dependency),
     ) {
         return None;
     }
@@ -1324,17 +1325,25 @@ fn names_locked_for_folder(
 ) -> Vec<PackageNameHash> {
     use crate::lockfile_real::package::Diff;
     use crate::resolution::Tag;
+    use crate::update_scope::UpdateScope;
     let lockfile = &*this.lockfile;
-    if this.to_update {
-        return Vec::new();
-    }
     let resolutions = lockfile.packages.items_resolution();
     let lists = lockfile.packages.items_dependencies();
-    let locked_rows: Vec<usize> = (lockfile.packages_named(listed.package.name_hash).iter())
-        .filter(|&&id| {
+    let locked_ids = || {
+        (lockfile.packages_named(listed.package.name_hash).iter()).filter(|&&id| {
             id < lockfile.loaded_package_count
                 && matches!(resolutions[id as usize].tag, Tag::Workspace | Tag::Folder)
         })
+    };
+    // `bun update` resolves the dependencies it targets again, whatever bun.lock has for them.
+    let scope = UpdateScope::of_update(this);
+    let targets_all = scope.as_ref().is_some_and(|scope| {
+        locked_ids().all(|&id| scope.targets_all_of(this, lockfile, id as usize))
+    });
+    if targets_all {
+        return Vec::new();
+    }
+    let locked_rows: Vec<usize> = locked_ids()
         .flat_map(|&id| lists[id as usize].begin() as usize..lists[id as usize].end() as usize)
         .filter(|&row| lockfile.buffers.resolutions[row] != invalid_package_id)
         .collect();
@@ -1346,15 +1355,22 @@ fn names_locked_for_folder(
         .filter(|dependency| {
             locked_rows.iter().any(|&row| {
                 let locked = &lockfile.buffers.dependencies[row];
+                let locked_id = lockfile.buffers.resolutions[row];
                 locked.name_hash == dependency.name_hash
                     && (locked.version.literal.slice(buf)
                         == dependency.version.literal.slice(listed_buf)
                         || Diff::locked_version_satisfies(
-                            lockfile,
-                            lockfile.buffers.resolutions[row],
-                            dependency,
-                            listed_buf,
+                            lockfile, locked_id, dependency, listed_buf,
                         ))
+                    && !scope.as_ref().is_some_and(|scope| {
+                        let row = row as DependencyID;
+                        let owner = locked_ids().find(|&&id| lists[id as usize].contains(row));
+                        owner.is_some_and(|&owner| {
+                            scope.targets_row(
+                                this, lockfile, owner, row, dependency, listed_buf, locked_id,
+                            )
+                        })
+                    })
             })
         })
         .map(|dependency| dependency.name_hash)
@@ -2133,6 +2149,11 @@ fn bind_row_without_manifest(
 
     match version.tag {
         dependency::version::Tag::Git => {
+            // A dependency that kept its version isn't resolved again, so a branch stays on its commit.
+            if (resolution as usize) < this.lockfile.packages.len() {
+                success_fn(this, id, resolution);
+                return Ok(());
+            }
             let dep: Repository = *version.git();
             let res = Resolution::init(ResolutionTagged::Git(dep));
 
@@ -2140,7 +2161,7 @@ fn bind_row_without_manifest(
             if let Some(pkg_id) = this
                 .lockfile
                 .get_package_id(name_hash, None, &res)
-                .or_else(|| locked_repository(this, dependency, &res))
+                .or_else(|| locked_repository(this, id, dependency, &res))
             {
                 success_fn(this, id, pkg_id);
                 return Ok(());
@@ -2329,6 +2350,13 @@ fn bind_row_without_manifest(
             Ok(())
         }
         dependency::version::Tag::Github | dependency::version::Tag::Tarball => {
+            // As in the git arm. `locked_repository` decides for a tarball, which `--force` and `bun add` read again.
+            if version.tag == dependency::version::Tag::Github
+                && (resolution as usize) < this.lockfile.packages.len()
+            {
+                success_fn(this, id, resolution);
+                return Ok(());
+            }
             let res = Resolution::init(match version.tag {
                 dependency::version::Tag::Github => ResolutionTagged::Github(*version.github()),
                 _ => match &version.tarball().uri {
@@ -2355,7 +2383,7 @@ fn bind_row_without_manifest(
             if let Some(pkg_id) = this
                 .lockfile
                 .get_package_id(name_hash, None, &res)
-                .or_else(|| locked_repository(this, dependency, &res))
+                .or_else(|| locked_repository(this, id, dependency, &res))
             {
                 success_fn(this, id, pkg_id);
                 return Ok(());
@@ -3975,7 +4003,7 @@ fn picks_latest_tag(
 /// command runs in.
 fn update_target_declares(this: &mut PackageManager, dependency_id: DependencyID) -> bool {
     let lockfile: &Lockfile::Lockfile = &this.lockfile;
-    if let Some(targets) = this.update_target_workspaces.as_deref() {
+    if let Some(targets) = this.update_target_workspaces.as_ref() {
         return lockfile.is_dependency_of_workspace_in(targets, dependency_id);
     }
     let in_member = this.workspace_name_hash.is_some();

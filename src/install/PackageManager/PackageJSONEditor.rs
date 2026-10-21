@@ -689,6 +689,60 @@ pub(crate) fn steer_used_catalogs_to_latest(
     Ok(())
 }
 
+/// The dist-tags that the `dependencies` and `devDependencies` of the workspaces at `paths` ask for, as (package, tag) hashes.
+pub(crate) fn declared_tags(
+    manager: &mut PackageManager,
+    paths: &[Box<[u8]>],
+    to_latest: bool,
+) -> Vec<(PackageNameHash, u64)> {
+    // see note in `edit_update_no_args`: always avoid the store
+    let _guard = ExprDisabler::scope();
+    let log = manager.log_mut();
+    let package_json_cache = &mut manager.workspace_package_json_cache;
+    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let mut path_buf = path_buffer_pool::get();
+    let hash = semver::string::Builder::string_hash;
+    let mut tags = Vec::new();
+    for path in paths {
+        let Some(package_json_path) = bun_paths::resolve_path::join_abs_string_buf_checked::<
+            platform::Auto,
+        >(
+            top_level, &mut path_buf.0, &[path, b"package.json"]
+        ) else {
+            continue;
+        };
+        let options = GetJSONOptions {
+            init_reset_store: false,
+            ..Default::default()
+        };
+        let GetResult::Entry(entry) =
+            package_json_cache.get_with_path(log, package_json_path, options)
+        else {
+            continue;
+        };
+        for group in [DependencyGroup::DEPENDENCIES, DependencyGroup::DEV] {
+            let Some(dependencies) = entry.root.get(group.prop) else {
+                continue;
+            };
+            let _ = dependencies.try_for_each_property(|name, _, value| {
+                let literal = value.as_utf8_string_literal().map(dependency::trim_literal);
+                // `--latest` asks for `latest` in place of a range or a tag (`picks_latest_tag`).
+                let tag: Option<&[u8]> = match literal.map(literal_tag) {
+                    _ if literal.is_some_and(|literal| literal.starts_with(b"npm:")) => None,
+                    Some(dependency::Tag::Npm | dependency::Tag::DistTag) if to_latest => {
+                        Some(b"latest")
+                    }
+                    Some(dependency::Tag::DistTag) => literal,
+                    _ => None,
+                };
+                tags.extend(tag.map(|tag| (hash(name), hash(tag))));
+                Ok::<(), core::convert::Infallible>(())
+            });
+        }
+    }
+    tags
+}
+
 /// Runs on the loaded lockfile, before the differ, so that the summary can print a catalog entry's
 /// change as an update.
 pub(crate) fn record_catalog_originals(

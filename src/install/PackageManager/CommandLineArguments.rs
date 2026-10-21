@@ -1007,6 +1007,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
   <d>Update all dependencies to latest:<r>
   <b><green>bun update<r> <cyan>--latest<r>
 
+  <d>Update the dependencies of every workspace in a monorepo:<r>
+  <b><green>bun update<r> <cyan>-r<r>
+
   <d>Interactive update (select packages to update):<r>
   <b><green>bun update<r> <cyan>-i<r>
 

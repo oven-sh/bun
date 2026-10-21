@@ -8,46 +8,57 @@ use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, UnwrapOrOom as _, pretty, strings};
 use bun_semver::string::Builder as StringBuilder;
 
-use crate::dependency::Behavior;
+use crate::dependency::{self, Behavior, Dependency};
 use crate::lockfile::package::PackageColumns as _;
-use crate::lockfile::{Lockfile, reachable};
+use crate::lockfile::{Lockfile, Package, reachable};
 use crate::package_manager::Options::LogLevel;
-use crate::package_manager::UpdateTargetWorkspace;
 use crate::package_manager::workspace_selection::{self, RootSelection};
+use crate::package_manager::{UpdateTargetWorkspace, UpdateTargets};
 use crate::package_manager_real::command_line_arguments::UpdateGroups;
-use crate::package_manager_real::install_with_manager::loaded_lockfile_name;
+use crate::package_manager_real::install_with_manager::{
+    index_of_named_update, loaded_lockfile_name,
+};
 use crate::resolution::Tag as ResolutionTag;
 use crate::{DependencyID, PackageID, PackageManager, PackageNameHash, invalid_package_id};
 
 /// Which workspaces a `bun update` may re-resolve and rewrite; a non-workspace package's rows are in scope when one of those workspaces reaches it.
 pub struct UpdateScope<'a> {
-    pub targets: Option<&'a [UpdateTargetWorkspace]>,
+    pub targets: Option<&'a UpdateTargets>,
     pub invoking: Option<PackageNameHash>,
     whole_workspace: bool,
     /// `--depth 0`: only the dependencies of the root and of workspaces are in scope.
     direct_only: bool,
     /// Walked by `plan_named` before the differ invalidates rows; otherwise `reachable()` walks the lockfile it is given.
     planned: Option<&'a DynamicBitSet>,
+    /// The dist-tags that an update without names asks the registry for, as sorted (package, tag) hashes.
+    tags: &'a [(PackageNameHash, u64)],
     lazy: OnceCell<DynamicBitSet>,
 }
 
 impl<'a> UpdateScope<'a> {
     pub fn of(manager: &'a PackageManager) -> UpdateScope<'a> {
         UpdateScope::new(
-            manager.update_target_workspaces.as_deref(),
+            manager.update_target_workspaces.as_ref(),
             manager.workspace_name_hash,
             manager.options.filter_patterns.is_empty(),
             manager.options.do_.update_direct_only(),
             manager.named_update_reachable.as_ref(),
+            &manager.update_tags_in_scope,
         )
     }
 
+    /// The scope of the `bun update` that is running, and `None` for every other command.
+    pub(crate) fn of_update(manager: &'a PackageManager) -> Option<UpdateScope<'a>> {
+        manager.to_update.then(|| UpdateScope::of(manager))
+    }
+
     fn new(
-        targets: Option<&'a [UpdateTargetWorkspace]>,
+        targets: Option<&'a UpdateTargets>,
         invoking: Option<PackageNameHash>,
         no_filter: bool,
         direct_only: bool,
         planned: Option<&'a DynamicBitSet>,
+        tags: &'a [(PackageNameHash, u64)],
     ) -> UpdateScope<'a> {
         UpdateScope {
             targets,
@@ -58,6 +69,7 @@ impl<'a> UpdateScope<'a> {
             },
             direct_only,
             planned,
+            tags,
             lazy: OnceCell::new(),
         }
     }
@@ -73,10 +85,98 @@ pub fn plan_named(manager: &mut PackageManager) {
         scope.walk(&manager.lockfile)
     };
     manager.named_update_reachable = Some(reachable);
+    if manager.update_requests.is_empty() {
+        let to_latest = manager.options.do_.update_to_latest();
+        manager.update_tags_in_scope =
+            UpdateScope::of(manager).tags_in_scope(&manager.lockfile, to_latest);
+    }
+}
+
+/// Adds the dist-tags of the dependencies that a package.json in scope has and bun.lock doesn't have yet.
+pub fn add_declared_tags(manager: &mut PackageManager, parsed: &Lockfile, root: &Package) {
+    if !manager.update_requests.is_empty() {
+        return;
+    }
+    let paths: Vec<Box<[u8]>> = {
+        let scope = UpdateScope::of(manager);
+        if scope.is_whole_workspace() {
+            return;
+        }
+        let buf = parsed.buffers.string_bytes.as_slice();
+        let root_rows = root
+            .dependencies
+            .get(parsed.buffers.dependencies.as_slice());
+        let members = (root_rows.iter())
+            .filter(|row| {
+                row.behavior.is_workspace()
+                    && scope.contains_workspace(false, row.name_hash, row.name.slice(buf))
+            })
+            .filter_map(|row| parsed.workspace_paths.get(&row.name_hash))
+            .map(|path| Box::from(path.slice(buf)));
+        (scope
+            .contains_workspace(true, 0, b"")
+            .then(Box::default)
+            .into_iter())
+        .chain(members)
+        .collect()
+    };
+    let to_latest = manager.options.do_.update_to_latest();
+    let mut tags =
+        crate::package_manager_real::package_json_editor::declared_tags(manager, &paths, to_latest);
+    if tags.is_empty() {
+        return;
+    }
+    tags.extend_from_slice(&manager.update_tags_in_scope);
+    index_sort::sort_vec_unstable_by(&mut tags, |a, b| a.cmp(b));
+    tags.dedup();
+    manager.update_tags_in_scope = tags;
+}
+
+/// A peer, optional or bundled dependency is no source of a shared tag: the update doesn't have to request its manifest.
+fn shares_tag(behavior: Behavior) -> bool {
+    !behavior.is_peer() && !behavior.is_optional() && !behavior.is_bundled()
+}
+
+fn tag_hashes(package: &[u8], tag: &[u8]) -> (PackageNameHash, u64) {
+    (
+        StringBuilder::string_hash(package),
+        StringBuilder::string_hash(tag),
+    )
+}
+
+/// What `--latest` asks the registry for a range or a tag that a workspace in scope declares (`picks_latest_tag`).
+fn latest_of(dep: &Dependency, buf: &[u8]) -> Option<(PackageNameHash, u64)> {
+    let package = match dep.version.tag {
+        dependency::Tag::Npm => dep.version.npm().name,
+        dependency::Tag::DistTag => dep.version.dist_tag().name,
+        _ => return None,
+    };
+    Some(tag_hashes(package.slice(buf), b"latest"))
+}
+
+/// The package and dist-tag that dependency `dep_id` of `lockfile` asks for, after overrides and catalogs.
+fn asked_tag(
+    lockfile: &Lockfile,
+    dep_id: DependencyID,
+    dep: &Dependency,
+) -> Option<(PackageNameHash, u64)> {
+    let may_ask_for_tag = !lockfile.overrides.is_empty()
+        || matches!(
+            dep.version.tag,
+            dependency::Tag::DistTag | dependency::Tag::Catalog
+        );
+    if !may_ask_for_tag {
+        return None;
+    }
+    let version = crate::dedupe::effective_version(lockfile, dep_id, dep)?;
+    (version.tag == dependency::Tag::DistTag).then(|| {
+        let (asked, buf) = (version.dist_tag(), lockfile.buffers.string_bytes.as_slice());
+        tag_hashes(asked.name.slice(buf), asked.tag.slice(buf))
+    })
 }
 
 impl UpdateScope<'_> {
-    /// Root cwd without `--filter`, or `-r`: every package in bun.lock is in scope.
+    /// Root cwd without `--filter`, or `-r`: every non-workspace package in bun.lock is in scope. `contains_workspace` says which workspaces are.
     pub(crate) fn is_whole_workspace(&self) -> bool {
         self.whole_workspace
     }
@@ -128,7 +228,7 @@ impl UpdateScope<'_> {
         name: &[u8],
     ) -> bool {
         match self.targets {
-            Some(targets) => targets.iter().any(|t| t.matches(is_root, name_hash, name)),
+            Some(targets) => targets.contains(is_root, name_hash, name),
             None => match self.invoking {
                 None => is_root,
                 Some(hash) => !is_root && hash == name_hash,
@@ -151,6 +251,120 @@ impl UpdateScope<'_> {
                         || self.reachable(lockfile).is_set_allow_out_of_bound(id, true))
             }
         }
+    }
+
+    /// The dist-tags that an update without names asks the registry for, one per dependency of a package in scope.
+    fn tags_in_scope(&self, lockfile: &Lockfile, to_latest: bool) -> Vec<(PackageNameHash, u64)> {
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let pkg_res = lockfile.packages.items_resolution();
+        let deps = lockfile.buffers.dependencies.as_slice();
+        let mut tags = Vec::new();
+        for (owner, rows) in lockfile.packages.items_dependencies().iter().enumerate() {
+            if rows.len == 0 || !self.contains_package(lockfile, owner) {
+                continue;
+            }
+            let to_latest = to_latest
+                && matches!(
+                    pkg_res[owner].tag,
+                    ResolutionTag::Root | ResolutionTag::Workspace
+                );
+            for dep_id in rows.begin()..rows.end() {
+                let dep = &deps[dep_id as usize];
+                if !shares_tag(dep.behavior) {
+                    continue;
+                }
+                let replaced = || crate::dedupe::applied_override(lockfile, dep_id, dep).is_some();
+                tags.extend(match to_latest.then(|| latest_of(dep, buf)).flatten() {
+                    Some(latest) if !replaced() => Some(latest),
+                    _ => asked_tag(lockfile, dep_id, dep),
+                });
+            }
+        }
+        index_sort::sort_vec_unstable_by(&mut tags, |a, b| a.cmp(b));
+        tags.dedup();
+        tags
+    }
+
+    /// Returns true if an update without names resolves `dep` again although the package that declares it is out of scope.
+    pub(crate) fn reaches(
+        &self,
+        lockfile: &Lockfile,
+        dep_id: DependencyID,
+        dep: &Dependency,
+    ) -> bool {
+        // Catalogs belong to the root. A dist-tag names one version, whichever workspace asks for it.
+        self.whole_workspace
+            || dep.version.tag == dependency::Tag::Catalog
+            || (!self.tags.is_empty()
+                && !dep.behavior.is_bundled()
+                && asked_tag(lockfile, dep_id, dep)
+                    .is_some_and(|tag| self.tags.binary_search(&tag).is_ok()))
+    }
+
+    /// Returns true if the update resolves again dependency `dep_id` of the package `owner`, which is `locked` to a package.
+    pub(crate) fn targets_row(
+        &self,
+        manager: &PackageManager,
+        lockfile: &Lockfile,
+        owner: PackageID,
+        dep_id: DependencyID,
+        dep: &Dependency,
+        buf: &[u8],
+        locked: PackageID,
+    ) -> bool {
+        let here = self.contains_package(lockfile, owner as usize);
+        if manager.update_requests.is_empty() {
+            return here || self.reaches(lockfile, dep_id, dep);
+        }
+        here && index_of_named_update(manager, lockfile, dep, buf, locked).is_some()
+    }
+
+    /// Returns true if an update without names resolves every dependency of the package `id` again.
+    pub(crate) fn targets_all_of(
+        &self,
+        manager: &PackageManager,
+        lockfile: &Lockfile,
+        id: usize,
+    ) -> bool {
+        manager.update_requests.is_empty()
+            && (self.whole_workspace || self.contains_package(lockfile, id))
+    }
+
+    /// For `repins_tarball`: an update without names is about the packages in scope, a command with names about the package.json it edits.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn is_about(
+        manager: &PackageManager,
+        lockfile: &Lockfile,
+        package: &Package,
+    ) -> bool {
+        let scope = UpdateScope::of(manager);
+        if manager.to_update && manager.update_requests.is_empty() {
+            return scope.contains_package(lockfile, package.meta.id as usize);
+        }
+        scope.contains_workspace(
+            package.resolution.tag == ResolutionTag::Root,
+            package.name_hash,
+            package.name.slice(lockfile.buffers.string_bytes.as_slice()),
+        )
+    }
+
+    /// Like `is_about`, for a dependency that is being resolved: only `bun update` leaves a dependency out.
+    pub(crate) fn is_about_row(
+        manager: &PackageManager,
+        id: DependencyID,
+        dep: &Dependency,
+    ) -> bool {
+        let Some(scope) = UpdateScope::of_update(manager) else {
+            return true;
+        };
+        let lockfile = &manager.lockfile;
+        if !manager.update_requests.is_empty() {
+            return scope.contains_dependency(lockfile, id);
+        }
+        scope.reaches(lockfile, id, dep)
+            || (lockfile.get_parent_pkg_of_dependency(id))
+                .is_none_or(|owner| scope.contains_package(lockfile, owner as usize))
     }
 
     /// Rows owned by no package (orphans left by the differ) are in scope.
@@ -361,7 +575,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
     };
     let lockfile_name = exit_on_lockfile_load_failure(manager, &subject);
 
-    let selection: Option<Vec<UpdateTargetWorkspace>> = (manager.options.do_.recursive()
+    let selection: Option<UpdateTargets> = (manager.options.do_.recursive()
         || !manager.options.filter_patterns.is_empty())
     .then(|| {
         let lockfile = &*manager.lockfile;
@@ -394,11 +608,12 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
             .collect()
     });
     let scope = UpdateScope::new(
-        selection.as_deref(),
+        selection.as_ref(),
         manager.workspace_name_hash,
         manager.options.filter_patterns.is_empty(),
         direct_only,
         None,
+        &[],
     );
 
     let mut names: Vec<Box<[u8]>> = Vec::new();

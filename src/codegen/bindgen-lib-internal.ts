@@ -1833,7 +1833,11 @@ export class Signature {
   constructor(options: SignatureOptions, hasThisValue = false) {
     this.length = options.length;
     const { args = {}, expected = {} } = options;
-    this.args = Object.entries(args).map(([name, type]) => ({ name, type, expected: expected[name] }));
+    this.args = Object.entries(args).map(([name, type]) => ({
+      name,
+      type,
+      expected: Object.hasOwn(expected, name) ? expected[name] : undefined,
+    }));
     for (const [name, types] of Object.entries(expected)) {
       assert(name in args, `expected: ${name} is not an argument`);
       assert(types.length > 0, `expected: ${name} expects nothing`);
@@ -2115,6 +2119,7 @@ export class Getter {
   readonly isStatic: boolean;
   readonly rustName: string;
   readonly setterRustName: string;
+  readonly hasDefaultRustName: boolean;
   readonly receiver: Receiver;
   readonly setterReceiver: Receiver;
   readonly passThis: boolean;
@@ -2127,6 +2132,7 @@ export class Getter {
     const rustName = options.rustName ?? snakeCase(memberIdentifier(name));
     this.rustName = memberRustName(`get_${rustName}`);
     this.setterRustName = `set_${rustName}`;
+    this.hasDefaultRustName = options.rustName === undefined;
     this.type = options.getter;
     this.capability = options.capability ?? "none";
     this.setterCapability = typeof options.setter === "object" ? options.setter.capability : this.capability;
@@ -2352,10 +2358,9 @@ export class ClassType extends NamedType {
       [
         "constructor",
         ...this.methods.filter(method => method.hasDefaultRustName).map(method => method.rustName),
-        ...[...getters, ...this.staticGetters].flatMap(getter => [
-          getter.rustName,
-          ...(getter.hasSetter ? [getter.setterRustName] : []),
-        ]),
+        ...[...getters, ...this.staticGetters]
+          .filter(getter => getter.hasDefaultRustName)
+          .flatMap(getter => [getter.rustName, ...(getter.hasSetter ? [getter.setterRustName] : [])]),
       ],
       "members' Rust functions",
     );

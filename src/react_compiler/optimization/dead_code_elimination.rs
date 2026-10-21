@@ -177,15 +177,17 @@ fn reference_reassigned_variables(
     }
 }
 
+fn reassigns(value: &InstructionValue) -> bool {
+    matches!(
+        value,
+        InstructionValue::StoreLocal { lvalue, .. } | InstructionValue::StoreContext { lvalue, .. }
+            if lvalue.kind == InstructionKind::Reassign
+    )
+}
+
 /// Whether a handler can see `value` throw.
 fn may_throw_in_a_try(value: &InstructionValue, env: &Environment) -> bool {
-    match value {
-        InstructionValue::StoreLocal { lvalue, .. }
-        | InstructionValue::StoreContext { lvalue, .. } => {
-            env.config.reassignments_can_throw && lvalue.kind == InstructionKind::Reassign
-        }
-        _ => value_may_throw(value),
-    }
+    value_may_throw(value) || (env.config.reassignments_can_throw && reassigns(value))
 }
 
 /// What throws in a block that ends so goes to a handler.
@@ -297,8 +299,10 @@ pub(crate) fn find_semantic_only_caught_instructions(
     let mut candidates = Vec::new();
     for block in func.body.blocks.values() {
         if is_caught(&block.terminal) {
+            // A store too: it cannot throw, but it can be there only for what is kept for its throw.
             candidates.extend(block.instructions.iter().copied().filter(|instr_id| {
-                may_throw_in_a_try(&func.instructions[instr_id.0 as usize].value, env)
+                let value = &func.instructions[instr_id.0 as usize].value;
+                value_may_throw(value) || reassigns(value)
             }));
         }
     }

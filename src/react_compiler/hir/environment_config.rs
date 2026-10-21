@@ -109,9 +109,10 @@ pub struct EnvironmentConfig {
     /// For `validate_exhaustive_*_dependencies`: the dependencies that are inferred are in the order of their bytes.
     /// Upstream's are in that of `localeCompare`: `a`, `A`, `b`.
     pub dependencies_are_sorted_by_bytes: bool,
-    /// In a `try`, a reassignment counts as able to throw: one that nothing reads is kept, and what is kept for its
-    /// throw alone is not recorded as a write. oxc's compiler does so, and its reports depend on it. Upstream removes
-    /// such a reassignment, and a build has to: its output would hold a write that no memo block knows of.
+    /// In a `try`, a reassignment counts as able to throw, as in oxc's compiler: one that nothing reads stays, and
+    /// the function is compiled with it. `bun lint` has it so, because which functions compile decides what it
+    /// reports. A build has not: upstream removes such a reassignment, and the output of a build would hold a write
+    /// that no memo block knows of.
     pub reassignments_can_throw: bool,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,

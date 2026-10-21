@@ -31,6 +31,7 @@
 
 extern "C" void Bun__napi_register_cleanup_zig(napi_env env);
 extern "C" void Bun__napi_threadsafe_function_env_teardown(void* tsfn);
+extern "C" void Bun__napi_threadsafe_function_wake_blocked_calls(void* tsfn);
 extern "C" void Bun__napi_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
@@ -215,6 +216,12 @@ public:
         // error path escalates to napi_fatal_error. See #30286.
         clearExceptionsBetweenFinalizers();
 
+        // An execute() that is still running can use what a cleanup hook or a finalizer frees. Node settles its thread
+        // pool requests before it runs either. The VM is stopping, so work that has not started is cancelled, and a
+        // blocking napi_call_threadsafe_function inside execute() no longer waits for room in the queue.
+        wakeBlockedThreadSafeFunctionCalls();
+        waitForAsyncWorkOnThreadPool();
+
         while (!m_cleanupHooks.empty()) {
             drain();
         }
@@ -238,10 +245,6 @@ public:
         // hold the last Ref past GlobalObject teardown).
         m_cleanupHooks = Napi::HookSet();
         clearExceptionsBetweenFinalizers();
-
-        // An execute() that is still running can use what a finalizer frees. Node settles its thread pool requests
-        // before it cleans an environment up too. The VM is stopping, so work that has not started is cancelled.
-        waitForAsyncWorkOnThreadPool();
 
         m_isFinishingFinalizers = true;
         // A cleanup hook may itself have leaked an exception; the first
@@ -324,6 +327,18 @@ public:
     {
         WTF::Locker locker { m_threadSafeFunctionsLock };
         m_threadSafeFunctions.remove(tsfn);
+    }
+
+    void wakeBlockedThreadSafeFunctionCalls()
+    {
+        WTF::Vector<void*> tsfns;
+        {
+            WTF::Locker locker { m_threadSafeFunctionsLock };
+            tsfns = WTF::copyToVector(m_threadSafeFunctions);
+        }
+        for (void* tsfn : tsfns) {
+            Bun__napi_threadsafe_function_wake_blocked_calls(tsfn);
+        }
     }
 
     void abortThreadSafeFunctions()

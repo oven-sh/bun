@@ -198,27 +198,23 @@ impl ArrayBuffer {
     /// Returns the live non-shared `WebAssembly.Memory` that this is a view of and where the view starts in it.
     /// `grow()` detaches the view but keeps that offset valid.
     pub fn find_wasm_memory(&self) -> Option<(JSValue, usize)> {
-        if !JSC__JSValue__isNonSharedWasmMemory(self.value) {
-            return None;
-        }
         let mut view_offset = 0;
         let memory = JSC__JSValue__findWasmMemory(self.value, &mut view_offset);
         (!memory.is_empty()).then_some((memory, view_offset))
     }
 
     /// Copies as much of `bytes` as fits at `offset` in the current range of `target`, which is a
-    /// buffer, a view or a `WebAssembly.Memory`. Returns false if `target` is detached or out of bounds.
+    /// buffer, a view or a `WebAssembly.Memory`. Returns false if it copied nothing, which means that
+    /// `target` is detached or out of bounds, or ends at or before `offset`.
     pub fn write_to_live(target: JSValue, offset: usize, bytes: &[u8]) -> bool {
         let mut live = ArrayBuffer::default();
         JSC__JSValue__arrayBufferExtent(target, &mut live.ptr, &mut live.byte_len);
-        if live.is_detached() {
+        let Some(target) = live.byte_slice_mut().get_mut(offset..) else {
             return false;
-        }
-        if let Some(target) = live.byte_slice_mut().get_mut(offset..) {
-            let n = bytes.len().min(target.len());
-            target[..n].copy_from_slice(&bytes[..n]);
-        }
-        true
+        };
+        let n = bytes.len().min(target.len());
+        target[..n].copy_from_slice(&bytes[..n]);
+        n > 0
     }
 
     // require('buffer').kMaxLength.

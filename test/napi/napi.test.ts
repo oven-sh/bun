@@ -673,7 +673,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         "napi_throw: 23 exception pending: 0",
         "resolved to undefined",
       ]);
-    }, 30_000);
+    });
   });
 
   describe("status code alignment with Node.js", () => {
@@ -773,11 +773,11 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(output).toContain("success!");
       expect(output).not.toContain("failure!");
     });
-    it("worker.terminate() runs no finalizer while execute() runs", async () => {
+    it("worker.terminate() runs no finalizer and no cleanup hook while execute() runs", async () => {
       const output = await checkSameOutput("test_async_work_worker_terminate", []);
       expect(output.split(/\r?\n/)).toEqual([
         "terminate() resolved with 1",
-        "finalized during execute(): 0",
+        "during execute(): finalizer 0 cleanup hook 0",
         "resolved to undefined",
       ]);
     });

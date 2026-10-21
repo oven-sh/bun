@@ -1088,6 +1088,15 @@ it("params() between two writes changes the level for the second write", async (
   expect(compressed.length).toBeLessThan(b.length + 200);
 });
 
+it("params() after 'finish' calls back while the output is unread", async () => {
+  const gzip = zlib.createGzip({ level: 9 });
+  gzip.end("hello");
+  await new Promise(resolve => gzip.once("finish", resolve));
+  await new Promise(resolve => gzip.params(0, zlib.constants.Z_FILTERED, resolve));
+  expect(gzip._level).toBe(0);
+  expect(zlib.gunzipSync(Buffer.concat(await gzip.toArray())).toString()).toBe("hello");
+});
+
 describe("crc32", () => {
   it("rejects String objects", () => {
     expect(() => zlib.crc32(new String("abc"))).toThrow(TypeError);

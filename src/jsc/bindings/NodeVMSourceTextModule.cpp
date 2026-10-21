@@ -489,6 +489,7 @@ void NodeVMSourceTextModule::replaceUnlinkedRecords(JSGlobalObject* globalObject
             if (NodeVMSourceTextModule* importedModule = modules.get(imported))
                 imported = importedModule->m_moduleRecord.get();
             module->m_moduleRecord->setImportedModule(globalObject, request, imported);
+            RETURN_IF_EXCEPTION(scope, );
         }
     }
 }

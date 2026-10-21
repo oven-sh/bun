@@ -3585,12 +3585,13 @@ CPP_DECL bool JSC__JSValue__canBeFreedWhilePinned(JSC::EncodedJSValue v)
 }
 
 // Returns the WebAssembly.Memory that `v` is a view of and sets `out_offset` to where `v` starts in it.
-// Returns empty if that memory was collected. A fixed-length buffer doesn't point to its memory, so this checks every live one.
+// Returns empty if `v` isn't a view of a non-shared memory or that memory was collected.
+// A fixed-length buffer doesn't point to its memory, so this checks every live one.
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__findWasmMemory(JSC::EncodedJSValue v, size_t* out_offset)
 {
     auto value = JSC::JSValue::decode(v);
     auto* buf = existingArrayBuffer(value);
-    if (!buf)
+    if (!buf || !buf->isWasmMemory() || buf->isShared())
         return {};
     auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value);
     *out_offset = view ? view->byteOffset() : 0;

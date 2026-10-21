@@ -652,7 +652,7 @@ $toClass(Zlib, "Zlib", ZlibBase);
 // This callback is used by `.params()` to wait until a full flush happened before adjusting the parameters.
 // In particular, the call to the native `params()` function should not happen while a write is currently in progress on the threadpool.
 function paramsAfterFlushCallback(level, strategy, callback) {
-  $assert(this._handle, "zlib binding closed");
+  if (!this._handle) return;
   this._handle.params(level | 0, strategy | 0);
   if (!this.destroyed) {
     this._level = level;
@@ -667,8 +667,17 @@ Zlib.prototype.params = function params(level, strategy, callback) {
 
   if (this._level !== level || this._strategy !== strategy) {
     if (this.writableEnded) {
-      // 'finish' comes while the last chunk is still on the threadpool.
-      this.once("end", paramsAfterFlushCallback.bind(this, level, strategy, callback));
+      const apply = paramsAfterFlushCallback.bind(this, level, strategy, callback);
+      const handle = this._handle;
+      if (!this.writableFinished) {
+        this.once("end", apply);
+      } else if (handle?.buffer) {
+        // 'finish' comes while the last chunk is still on the threadpool.
+        const cb = handle.cb;
+        handle.cb = () => (cb(), apply());
+      } else {
+        process.nextTick(apply);
+      }
     } else {
       // A write callback runs after the next buffered chunk went to the handle, so processCallback() changes the parameters.
       const flush: Buffer & { [kFlushFlag]?: number; [kAfterFlush]?: () => void } = Buffer.alloc(0);

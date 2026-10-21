@@ -1,11 +1,11 @@
-//! Implicit `any` under `noImplicitAny`: 7010 7011 7012 7013 7020 7032 7033. The rest of `reportImplicitAny` is in
+//! Implicit `any` under `noImplicitAny`: 7010 7011 7013 7020 7032 7033. The rest of `reportImplicitAny` is in
 //! symbols.rs (`report_implicit_any_of_name`) and shape.rs (`report_implicit_any`).
 
 use super::*;
 use crate::bind::{FnOwner, MemberOwner, Parent};
 
 impl Checker<'_, '_> {
-    /// `checkSignatureDeclaration` (7013 7020), `checkFunctionOrMethodDeclaration` (7010 7011 7012),
+    /// `checkSignatureDeclaration` (7013 7020), `checkFunctionOrMethodDeclaration` (7010 7011),
     /// `getTypeOfAccessors` (7032 7033)
     pub(super) fn check_signature_implicitly_any(&mut self, file: FileId, func: FnId) {
         if !self.p.files.options.no_implicit_any {
@@ -81,11 +81,18 @@ impl Checker<'_, '_> {
                 // `reportImplicitAny`: an unnamed one gets the message of a function expression.
                 if decl.kind == FnKind::Decl && decl.name.is_none() {
                     self.error_at(node, 7011, &[any]);
-                } else if decl.flags.contains(Flags::REPARSED) {
-                    self.error_at(node, 7012, &[any]);
-                } else {
+                } else if !decl.flags.contains(Flags::REPARSED) {
                     let name = self.declaration_name_to_string(file, name);
                     self.error_at(node, 7010, &[Arg::Bytes(&name), any]);
+                } else if let FnOwner::Member(m) = owner {
+                    // The name of an `@overload` signature is a clone of the name of the method that follows.
+                    let mut after = (m.0 + 1..hir.members.len() as u32).map(MemberId);
+                    let method = after.find(|&it| !hir[it].flags.contains(Flags::REPARSED));
+                    let name = method.map_or(name, |method| hir.name(hir.node(method)));
+                    let name = self.declaration_name_to_string(file, name);
+                    self.error_at(node, 7010, &[Arg::Bytes(&name), any]);
+                } else {
+                    self.error_at(node, 7010, &[Arg::Atom(decl.name), any]);
                 }
             }
             _ => {}

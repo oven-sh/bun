@@ -203,7 +203,15 @@ describe("ReadStream", () => {
           const { ReadStream } = require("node:tty");
           Object.freeze(ReadStream);
           const input = new ReadStream(0);
-          console.log(input instanceof ReadStream, input.constructor === ReadStream, Object.isFrozen(ReadStream));
+          console.log(
+            JSON.stringify({
+              instance: input instanceof ReadStream,
+              constructor: input.constructor === ReadStream,
+              prototype: Object.getPrototypeOf(input) === ReadStream.prototype,
+              methods: [typeof input.setRawMode, typeof input.ref, typeof input.unref],
+              frozen: Object.isFrozen(ReadStream),
+            }),
+          );
           process.exit(0);
         `,
       ],
@@ -213,7 +221,34 @@ describe("ReadStream", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "true true true", stderr: "", exitCode: 0 });
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        instance: true,
+        constructor: true,
+        prototype: true,
+        methods: ["function", "function", "function"],
+        frozen: true,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+describe("WriteStream", () => {
+  // The prototype is the one of fs.WriteStream, and the first read of `prototype` installs it.
+  test("`prototype` has the attributes that a function declaration gives it", () => {
+    const prototype = WriteStream.prototype;
+    expect({
+      keys: Object.keys(WriteStream),
+      descriptor: Object.getOwnPropertyDescriptor(WriteStream, "prototype"),
+    }).toEqual({
+      keys: [],
+      descriptor: { value: prototype, writable: true, enumerable: false, configurable: false },
+    });
+    // The copy from https://github.com/oven-sh/bun/issues/32160
+    const copy = Object.defineProperties(function () {}, Object.getOwnPropertyDescriptors(WriteStream));
+    expect(copy.prototype).toBe(prototype);
   });
 });
 

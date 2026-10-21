@@ -1266,16 +1266,18 @@ describe("Object.prototype is hardened before node:events loads", () => {
     });
   });
 
-  // stderr is not compared: three of the modules print a deprecation warning. The timeout is for
-  // a debug build, which needs some seconds to load every module.
-  test.concurrent(
-    "Object.freeze(Object.prototype), then each built-in module loads",
-    async () => {
+  // Three children share the list of modules. stderr is not compared: three of the modules print a
+  // deprecation warning.
+  test.concurrent.each([1, 2, 3])(
+    "Object.freeze(Object.prototype), then each built-in module loads (part %d of 3)",
+    async part => {
+      const size = Math.ceil(builtinModules.length / 3);
+      const names = builtinModules.slice((part - 1) * size, part * size);
       const { stdout, exitCode } = await run([
         "-e",
         `${freeze}
         const failed = [];
-        for (const name of require("node:module").builtinModules) {
+        for (const name of ${JSON.stringify(names)}) {
           try {
             require(name);
           } catch (error) {
@@ -1286,7 +1288,6 @@ describe("Object.prototype is hardened before node:events loads", () => {
       ]);
       expect({ failed: JSON.parse(stdout), exitCode }).toEqual({ failed: [], exitCode: 0 });
     },
-    30_000,
   );
 
   // `node --disable-proto=delete` does this. Every stream gives the EventEmitter constructor a
@@ -1423,9 +1424,10 @@ describe("built-in constructors have the own properties of a function declaratio
   });
 
   // The copy that #32160 reports, for each function that a built-in module exports. It throws when
-  // `prototype` is configurable or an accessor. tty.WriteStream installs its prototype, which is
-  // the one of fs.WriteStream, on the first read.
-  test("only tty.WriteStream cannot be copied onto another function", () => {
+  // `prototype` is configurable or an accessor. tty.WriteStream has an accessor until the first
+  // read of `prototype`.
+  test("each function of a built-in module can be copied onto another function", () => {
+    expect(tty.WriteStream.prototype).toBeObject();
     const failed: string[] = [];
     const seen = new Set<unknown>();
     function visit(label: string, value: unknown, depth: number) {
@@ -1458,7 +1460,7 @@ describe("built-in constructors have the own properties of a function declaratio
       }
       visit(name, loaded, 0);
     }
-    expect(failed.sort()).toEqual(["tty.WriteStream"]);
+    expect(failed.sort()).toEqual([]);
   });
 
   // Bun.$.Shell shares the prototype object of an internal class, which keeps its `constructor`.

@@ -393,6 +393,9 @@ struct us_socket_t {
    * us_socket_write_check_error). Reset by any send that makes progress.
    * Lives in the pad-to-pointer gap before `group`, so it costs nothing. */
   unsigned char unclassified_send_failures;
+  /* Sweep ticks since the low-priority queue took this socket; us_internal_timer_sweep
+   * holds its timeouts back for MAX_LOW_PRIO_TICKS of them. In the same gap. */
+  unsigned char low_prio_ticks;
 
   struct us_socket_group_t *group;
   /* NULL for plain TCP. Direct BoringSSL `SSL*`; set by us_internal_ssl_attach

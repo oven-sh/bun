@@ -151,7 +151,8 @@ enum {
     LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE = 32,
     /* Ask the kernel to defer accept() until the client has sent data (TCP_DEFER_ACCEPT on
      * Linux, SO_ACCEPTFILTER "dataready" on FreeBSD). When set, accepted sockets are
-     * dispatched as readable immediately, skipping a round-trip through the event loop.
+     * dispatched as readable immediately, skipping a round-trip through the event loop
+     * (a TLS socket over the handshake budget only when it has input).
      * Safe for HTTP/TLS where the client always sends first; do not use for protocols where
      * the server sends the first bytes. */
     LIBUS_LISTEN_DEFER_ACCEPT = 64,

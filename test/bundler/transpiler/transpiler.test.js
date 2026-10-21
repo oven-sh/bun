@@ -922,6 +922,250 @@ describe("Bun.Transpiler", () => {
       expect(exitCode).toBe(0);
     }, 90_000);
 
+    describe("a type-argument attempt ends at text that is not a type", () => {
+      // The expression parser tries "<...>" as type arguments with errors
+      // suppressed, and keeps the attempt when the type skipper accepts the
+      // text. Where the skipper accepted text that is not a type, valid
+      // JavaScript such as "a << T > (b.c) > (c)" became the call "a(c)".
+      const printed = (loaders, code, out) => {
+        for (const loader of loaders) {
+          expect({ loader, code, out: transpiler.transformSync(code, loader) }).toEqual({ loader, code, out });
+        }
+      };
+      // Valid JavaScript: the TypeScript loaders print what the JavaScript loader prints.
+      const js = (code, out) => printed(["js", "ts", "tsx"], code, out);
+      const typeScript = (code, out) => printed(["ts", "tsx"], code, out);
+      const firstError = (code, loader, from = transpiler) => {
+        try {
+          from.transformSync(code, loader);
+        } catch (e) {
+          return (e instanceof AggregateError ? e.errors[0] : e).message;
+        }
+        return "<no error>";
+      };
+      const err = (code, message) => {
+        expect({ code, ts: firstError(code, "ts"), tsx: firstError(code, "tsx") }).toEqual({
+          code,
+          ts: message,
+          tsx: message,
+        });
+      };
+
+      it("a function type or a constructor type requires '=>'", () => {
+        // After "new" or type parameters, TypeScript's "parseFunctionOrConstructorType"
+        // parses a parameter list and "=>". A parenthesized type was accepted there too.
+
+        // TypeScript reads these as JavaScript, with no diagnostic.
+        js("x = a << T > (b.c) > (c);", "x = a << T > b.c > c;\n");
+        js("x = a << T > (b[0]) > (c);", "x = a << T > b[0] > c;\n");
+        js("x = a << T > (-1) > (c);", "x = a << T > -1 > c;\n");
+        js("x = a < new (b.c) > (c);", "x = a < new b.c > c;\n");
+        js(
+          "f(1 << n > (flags.a | flags.b), count > (limit ?? 0));",
+          "f(1 << n > (flags.a | flags.b), count > (limit ?? 0));\n",
+        );
+        // Without a "(" after the second ">" nothing threw. The first two
+        // printed "x = a;\nd;\n" and "x = a / re / g;\n".
+        js("x = a << T > (b.c) >\n d;", "x = a << T > b.c > d;\n");
+        js("x = a << T > (b.c) > /re/g;", "x = a << T > b.c > /re/g;\n");
+        js("x = a << T > (b.c) > as;", "x = a << T > b.c > as;\n");
+
+        // For these TypeScript keeps the call and reports TS1005 ('=>' expected).
+        // "bun -e" and stdin read plain JavaScript with this parser, so it
+        // takes the JavaScript meaning.
+        js("x = a << T > (b) > (c);", "x = a << T > b > c;\n");
+        js("x = f<<T>(b)>(c);", "x = f << T > b > c;\n");
+        js("f(a << T, U > (b) > (c));", "f(a << T, U > b > c);\n");
+        js("x = a << T > (b) > `c`;", "x = a << T > b > `c`;\n");
+        js("x = new Foo << T > (b) > (c);", "x = new Foo << T > b > c;\n");
+        js("x = a < new (b) > (c);", "x = a < new b > c;\n");
+        js("x = a < [new (b)] > (c);", "x = a < [new b] > c;\n");
+        js("x = a < T | new (b) > (c);", "x = a < T | new b > c;\n");
+        // Not JavaScript. "<T>(b)" is now a cast under "ts". Under "tsx" it
+        // starts a JSX element, as it does under "jsx".
+        printed(["ts"], "x = a < <T>(b) > (c);", "x = a < b > c;\n");
+        expect({
+          tsx: firstError("x = a < <T>(b) > (c);", "tsx"),
+          jsx: firstError("x = a < <T>(b) > (c);", "jsx"),
+        }).toEqual({ tsx: "Syntax Error", jsx: "Syntax Error" });
+
+        // With "=>" these are type arguments, as before. So is a parenthesized type.
+        typeScript("x = f<<T>(b) => c>(d);", "x = f(d);\n");
+        typeScript("x = f<new (b) => c>(d);", "x = f(d);\n");
+        typeScript("x = f<abstract new <T>(b: T) => c>(d);", "x = f(d);\n");
+        typeScript("x = a < (b) > (c);", "x = a(c);\n");
+        typeScript("let v: <T>(b: T) => T, w: new <T>(b: T) => T, x: abstract new () => Foo;", "let v, w, x;\n");
+
+        // In a type position the missing "=>" is an error.
+        err("let v: <T>(b) = 1;", 'Expected "=>" but found "="');
+        err("let v: new (b) = 1;", 'Expected "=>" but found "="');
+        err("let v: new <T>(b) = 1;", 'Expected "=>" but found "="');
+        err("let v: abstract new (b) = 1;", 'Expected "=>" but found "="');
+        err("let v: new () = 1;", 'Expected "=>" but found "="');
+        err("let v: new (a: number) = 1;", 'Expected "=>" but found "="');
+        err("type A = new (b)", 'Expected "=>" but found end of file');
+        err("x = y as <T>(b)", 'Expected "=>" but found end of file');
+        err("function f(): <T>(b) {}", 'Expected "=>" but found "{"');
+        err("type A = Foo<new (b)>", 'Expected "=>" but found ">"');
+        err("let v: A extends <T>(b) ? 1 : 2", 'Expected "=>" but found "?"');
+        // The decorator metadata of "new (String)" was String.
+        const metadata = new Bun.Transpiler({
+          loader: "ts",
+          tsconfig: { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } },
+        });
+        expect(firstError("class A { @d x: new (String); }", "ts", metadata)).toBe('Expected "=>" but found ";"');
+
+        // The parameters of these types were skipped with errors suppressed.
+        // TypeScript reports each of these.
+        for (const head of ["new ", "abstract new ", "<T>", "new <T>"]) {
+          err(`let v: ${head}(a: ) => void;`, "Unexpected )");
+        }
+        err("let v: new (a: [default: T]) => void;", "Unexpected default");
+        err("let v: new (a: {b: }) => void;", "Unexpected }");
+        err("let v: new (a: new (b: ) => c) => d;", "Unexpected )");
+        // A type that starts with "(" still skips its parameters that way.
+        typeScript("let v: (a: ) => void;", "let v;\n");
+        typeScript("let v: new (a: (b: ) => c) => d;", "let v;\n");
+
+        // A head with no "=>" inside a head with no "=>" is scanned once per level.
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        err("type A = " + fill(200, "new (a: ") + "0" + fill(200, ")"), 'Expected "=>" but found ")"');
+      });
+
+      it("a '.' continues a type only after a name", () => {
+        // TypeScript's "parseEntityName". A "." was taken after every type,
+        // so "this.b" and "o[i].v" were types.
+
+        // TypeScript reads these as JavaScript, with no diagnostic.
+        js("x = a < o[i].v > (c);", "x = a < o[i].v > c;\n");
+        js("f(i < arr[0].length, j > (0));", "f(i < arr[0].length, j > 0);\n");
+        js('x = a < T | "s".length > (c);', 'x = a < T | "s".length > c;\n');
+        js("function g() { return a < this.b > (c); }", "function g() {\n  return a < this.b > c;\n}\n");
+        js("function g() { return a < [this.b] > (c); }", "function g() {\n  return a < [this.b] > c;\n}\n");
+        js("function g() { f(i < this.n, j > (k)); }", "function g() {\n  f(i < this.n, j > k);\n}\n");
+
+        // A qualified name is a type, so these are type arguments, as before.
+        typeScript("x = a < b.c > (d);", "x = a(d);\n");
+        typeScript("x = a < b.c.d<e> > (f);", "x = a(f);\n");
+        typeScript('x = a < import("m").b.c > (d);', "x = a(d);\n");
+        typeScript("x = a < typeof b.c > (d);", "x = a(d);\n");
+        typeScript(
+          'let v: A.B.C<D>, w: import("m").a.b, u: typeof import("m").x, y: typeof this.b, z: never.x;',
+          "let v, w, u, y, z;\n",
+        );
+        typeScript("x = y as A.B;", "x = y;\n");
+        typeScript("x = y as const.z;", "x = y;\n");
+
+        // In a type position the "." is an error, as in TypeScript.
+        err("let v: this.b = 1;", 'Expected ";" but found "."');
+        err("let v: A[K].b = 1;", 'Expected ";" but found "."');
+        err("let v: (A).b = 1;", 'Expected ";" but found "."');
+        // Type arguments end the name.
+        err("let v: A<B>.c = 1;", 'Expected ";" but found "."');
+        err("let v: A.B<C>.d = 1;", 'Expected ";" but found "."');
+        err('y = x as "s".length;', 'Expected ";" but found "."');
+        // Not "y = x.map(f);\n".
+        err("y = x as string[].map(f);", 'Expected ";" but found "."');
+      });
+
+      it("a tuple rest element takes a keyword as its label", () => {
+        // TypeScript's "isTupleElementName" takes every keyword after "...".
+        // The parameters of a constructor type or a generic function type
+        // reported no error for one, because they were skipped with errors
+        // suppressed. These are the keywords that start no type.
+        const keywords = [
+          "break",
+          "case",
+          "catch",
+          "class",
+          "const",
+          "continue",
+          "debugger",
+          "default",
+          "delete",
+          "do",
+          "else",
+          "enum",
+          "export",
+          "extends",
+          "finally",
+          "for",
+          "if",
+          "in",
+          "instanceof",
+          "return",
+          "super",
+          "switch",
+          "throw",
+          "try",
+          "var",
+          "while",
+          "with",
+        ];
+        const sources = keywords.flatMap(keyword => [
+          `type A = [...${keyword}: string[]];`,
+          `type A = [a: number, ...${keyword}: string[]];`,
+          `type A = new (...a: [...${keyword}: string[]]) => X;`,
+          `type A = abstract new (...a: [...${keyword}: string[]]) => X;`,
+          `type A = <T>(...a: [...${keyword}: T[]]) => X;`,
+          `type A = (...a: [...${keyword}: string[]]) => X;`,
+        ]);
+        for (const loader of ["ts", "tsx"]) {
+          expect(sources.map(code => [code, transpiler.transformSync(code, loader)])).toEqual(
+            sources.map(code => [code, ""]),
+          );
+        }
+        // A keyword that starts a type was a label before.
+        typeScript("type A = [...new: string[], ...typeof: string[], ...function: string[]];", "");
+
+        // Only the first word after "..." is the label.
+        err("type A = [...default];", 'Expected ":" but found "]"');
+        err("type A = [...B | default: string[]];", "Unexpected default");
+        err("type A = [...| default: string[]];", "Unexpected default");
+        // Without "..." TypeScript reports TS1110.
+        err("type A = [default: string];", "Unexpected default");
+      });
+
+      it("runs the comparisons from the entry points that use a TypeScript loader", async () => {
+        const declarations = 'var a = 1, T = 2, b = { c: 3 }, c = 4, arr = ["abc"];';
+        const expression = "[a << T > (b.c) > (c), a < arr[0].length, c > (0)].join()";
+        const source = `${declarations} console.log(${expression});`;
+        using dir = tempDir("ts-type-argument-attempt", { "entry.ts": source });
+        const cases = {
+          "-e": { args: ["-e", source] },
+          "-p": { args: ["-p", `${declarations} ${expression}`] },
+          "stdin": { args: ["-"], stdin: source },
+          ".ts file": { args: ["entry.ts"] },
+          "build --no-bundle": { args: ["build", "--no-bundle", "entry.ts"] },
+        };
+        const results = await Promise.all(
+          Object.entries(cases).map(async ([name, { args, stdin }]) => {
+            await using proc = Bun.spawn({
+              cmd: [bunExe(), ...args],
+              env: bunEnv,
+              cwd: String(dir),
+              stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            return [name, { stdout, stderr, exitCode }];
+          }),
+        );
+        expect(Object.fromEntries(results)).toEqual({
+          "-e": { stdout: "false,true,true\n", stderr: "", exitCode: 0 },
+          "-p": { stdout: "false,true,true\n", stderr: "", exitCode: 0 },
+          "stdin": { stdout: "false,true,true\n", stderr: "", exitCode: 0 },
+          ".ts file": { stdout: "false,true,true\n", stderr: "", exitCode: 0 },
+          "build --no-bundle": {
+            stdout: `${declarations}\nconsole.log([a << T > b.c > c, a < arr[0].length, c > 0].join());\n`,
+            stderr: "",
+            exitCode: 0,
+          },
+        });
+      });
+    });
+
     it("type arguments in expression require a bare '>' closer", () => {
       // TypeScript's "parseTypeArgumentsInExpression" only accepts a bare ">"
       // to close the list, so a ">=" (or ">>", ">>>", ">>=", ">>>=") forces
@@ -5754,6 +5998,8 @@ it("deeply nested TypeScript types error instead of crashing the process", () =>
       { loader: "ts", code: n => "type A = " + repeat("[", n) + "0" + repeat("]", n) + ";" },
       // deeply nested destructuring pattern in a function type's arguments
       { loader: "ts", code: n => "type A = (" + repeat("[", n) + "a" + repeat("]", n) + ": any) => void;" },
+      // deeply nested constructor types, each one a parameter type of the one around it
+      { loader: "ts", code: n => "type A = " + repeat("new (a: ", n) + "0" + repeat(") => 0", n) + ";" },
     ];
     for (const { loader, code } of shapes) {
       for (const n of [4000, 20000, 100000]) {

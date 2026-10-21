@@ -421,11 +421,11 @@ export const cases: Record<string, Case> = {
  1|} catch {}
 `,
   },
-  // `case` and `default` ran as often as what follows them, not as often as they were compared.
+  // `case` and `default` ran as often as what follows them, not as often as a `case` was compared.
   "switch.ts": {
     functions: "6/7",
     lines: `
- 3|function last(x: number) {
+ 3|function defaultLast(x: number) {
  3|  switch (x) {
  1|    case
  1|      1:
@@ -435,10 +435,10 @@ export const cases: Record<string, Case> = {
  2|      at();
  -|  }
  -|}
- 1|last(1);
- 1|last(2);
- 1|last(2);
- 3|function first(x: number) {
+ 1|defaultLast(1);
+ 1|defaultLast(2);
+ 1|defaultLast(2);
+ 3|function defaultFirst(x: number) {
  3|  switch (x) {
  2|    default:
  2|      at();
@@ -446,9 +446,9 @@ export const cases: Record<string, Case> = {
  3|      at();
  -|  }
  -|}
- 1|first(1);
- 1|first(2);
- 1|first(2);
+ 1|defaultFirst(1);
+ 1|defaultFirst(2);
+ 1|defaultFirst(2);
  3|function blocks(x: number) {
  3|  switch (x) {
  1|    case 1: {
@@ -470,15 +470,15 @@ export const cases: Record<string, Case> = {
  -|  }
  -|}
  1|empty(1);
- 2|function neverCalled(x: unknown) {
+ 2|function uncalledArrow(x: unknown) {
  2|  switch (x) {
  2|    case 1:
  2|    case () => 1:
  2|      at();
  -|  }
  -|}
- 1|neverCalled(1);
- 1|neverCalled(1);
+ 1|uncalledArrow(1);
+ 1|uncalledArrow(1);
  3|function sameLine(x: number) {
  3|  switch (x) {
  2|    case 1: return; default:

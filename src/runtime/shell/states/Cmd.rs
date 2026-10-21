@@ -783,7 +783,7 @@ impl Cmd {
                     // SAFETY: `as_` returns a live JSC-owned `*mut Response`;
                     // `get_body_value` is `&self`.
                     let req = unsafe { &*req };
-                    req.get_body_value().to_blob_if_possible();
+                    req.get_body_value().to_blob_for_child_stdio();
                     if flags.stdin() {
                         let b = req.get_body_value().use_as_any_blob();
                         stdio[STDIN_NO].extract_blob(global, b, STDIN_NO as i32)?;

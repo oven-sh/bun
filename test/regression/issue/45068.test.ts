@@ -65,6 +65,36 @@ test.concurrent("Bun.stdin.stream() stays readable after spawnSync, spawn, and t
   expect(exitCode).toBe(0);
 });
 
+test.concurrent.each([
+  `new Response(Bun.stdin.stream())`,
+  `new Request("http://example.com", { method: "POST", body: Bun.stdin.stream() })`,
+])("process.stdin.resume() works after Bun.spawn took %s", async wrapper => {
+  const [stdout, stderr, exitCode] = await runWithStdin(`
+    const wrapper = ${wrapper};
+    const child = Bun.spawn(${cat}, { stdout: "inherit", stdin: wrapper });
+    await child.exited;
+    console.log(wrapper.bodyUsed);
+    process.stdin.resume();
+    console.log("resume ok");
+  `);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("from parent\ntrue\nresume ok\n");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("process.stdin.resume() works after a shell redirect took Bun.stdin.stream()", async () => {
+  const [stdout, stderr, exitCode] = await runWithStdin(`
+    const response = new Response(Bun.stdin.stream());
+    const script = "process.stdin.pipe(process.stdout)";
+    console.log(JSON.stringify(await Bun.$\`\${process.execPath} -e \${script} < \${response}\`.text()));
+    process.stdin.resume();
+    console.log("resume ok");
+  `);
+  expect(stderr).toBe("");
+  expect(stdout).toBe('"from parent\\n"\nresume ok\n');
+  expect(exitCode).toBe(0);
+});
+
 // A Response over the stdin Blob makes its own stream for `.body`. That one
 // is not shared, so spawn spends it like any other stream.
 test.concurrent("spawn spends a Response body stream over Bun.stdin, not the cached stream", async () => {

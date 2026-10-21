@@ -310,7 +310,7 @@ impl Stdio {
         body: &mut webcore::body::Value,
         is_sync: bool,
     ) -> JsResult<()> {
-        body.to_blob_if_possible();
+        body.to_blob_for_child_stdio();
 
         if let Some(blob) = body.try_use_as_any_blob() {
             return out_stdio.extract_blob(cx.global(), blob, i);

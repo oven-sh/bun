@@ -379,6 +379,8 @@ const kSetStreamId = Symbol("setStreamId");
 const kRequest = Symbol("request");
 const kHeadRequest = Symbol("headRequest");
 const kSessionDestroyError = Symbol("sessionDestroyError");
+// On a client session: destroy() for a teardown that the session starts itself. It cancels the requests that are still open.
+const kCancelAndDestroy = Symbol("cancelAndDestroy");
 // Set on a ServerHttp2Stream by respondWithFile(): the stream opened the descriptor itself and is
 // responsible for closing it exactly once. respondWithFD() descriptors belong to the caller.
 const kOwnsFd = Symbol("ownsFd");
@@ -2308,14 +2310,11 @@ function destroyStreamForSessionDestroy(error: Error | undefined, rstCode: numbe
   // listener would otherwise turn session.destroy(code) into an uncaught
   // exception (e.g. grpc-js forceShutdown destroying sessions with
   // NGHTTP2_CANCEL while unread UNIMPLEMENTED streams are still around).
+  const observed = error != null && stream.listenerCount("error") > 0;
+  // A stream that does not get the error must not read as cleanly closed. CANCEL raises no error in _destroy.
+  if (error != null && !observed && !stream.closed && !stream.rstCode) stream.rstCode = NGHTTP2_CANCEL;
   stream[bunHTTP2StreamStatus] |= StreamState.SessionDestroyed;
-  stream.destroy(error !== undefined && stream.listenerCount("error") > 0 ? error : undefined);
-}
-// Client counterpart, through emitStreamErrorNT for the deferred path's error and rstCode.
-function cancelStreamForSessionDestroy(session: ClientHttp2Session, rstCode: number, stream: Http2Stream) {
-  if (stream.destroyed || stream.closed) return;
-  stream[bunHTTP2StreamStatus] |= StreamState.SessionDestroyed;
-  emitStreamErrorNT(session, stream, rstCode, true, false);
+  stream.destroy(observed ? error : undefined);
 }
 interface Http2StreamReadableState {
   destroyed: boolean;
@@ -2629,7 +2628,9 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     // leave a retained stream pinning the store.
     this[bunHTTP2AsyncContextFrame] = undefined;
     const { ending } = this._writableState;
-    this.push(null);
+    // A stream that its session's destroy() ends: 'aborted' first, as in node, so finished() sees a premature close.
+    const sessionDestroyed = (this[bunHTTP2StreamStatus] & StreamState.SessionDestroyed) !== 0;
+    if (!sessionDestroyed) this.push(null);
     // A pushed stream's request was synthesized by the server, so its local (writable) half is
     // closed by definition — closing it is not an abort and nothing must be sent on the wire.
     if (!ending && !this[kPush]) {
@@ -2639,7 +2640,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         this[kAborted] = true;
         this.emit("aborted");
       }
-      if ((this[bunHTTP2StreamStatus] & StreamState.SessionDestroyed) !== 0) {
+      if (sessionDestroyed) {
         // destroyed stays set, so end() marks the writable ended and _final does not run.
         this.end();
       } else {
@@ -2650,6 +2651,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         this._writableState.destroyed = true;
       }
     }
+    if (sessionDestroyed) this.push(null);
 
     const session = this[bunHTTP2Session];
     assertSession(session);
@@ -3780,7 +3782,9 @@ function scheduleSettingsAckGraceNT(session) {
   session[kSettingsAckGraceTimer] = timer;
 }
 function destroyIfNotDestroyedNT(target) {
-  if (!target.destroyed) target.destroy();
+  if (target.destroyed) return;
+  if (target[kCancelAndDestroy] !== undefined) target[kCancelAndDestroy]();
+  else target.destroy();
 }
 function scheduleDestroyIfNotDestroyed(target) {
   if (!target.destroyed) {
@@ -3806,7 +3810,7 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
       // A destroyed stream that IS listened keeps the delivery below -
       // node's errorEmitted de-dupes the re-emission, and grpc's status
       // codes ride exactly this deferred path.
-      if (destroy_self) self.destroy();
+      if (destroy_self) destroyIfNotDestroyedNT(self);
       return;
     }
     if (typeof error === "number" && self != null && self[kSessionDestroyError] != null) {
@@ -3842,7 +3846,7 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
       }
     }
 
-    if (destroy_self) self.destroy();
+    if (destroy_self) destroyIfNotDestroyedNT(self);
   }
 }
 // Outbound guard: header values carrying code points above 0xFF (or raw CR/LF/NUL) cannot be
@@ -4133,6 +4137,8 @@ class ServerHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
       self.#connections--;
       if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
+      // destroy() destroyed this stream before its native sweep reported it here.
+      if (self.#destroying && stream.destroyed) return;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamEnd(self: ServerHttp2Session, stream: ServerHttp2Stream, state: number) {
@@ -4988,6 +4994,11 @@ function destroySelfOnEnd(this: Http2Stream) {
 function streamCancel(stream: Http2Stream) {
   stream.close(NGHTTP2_CANCEL);
 }
+// A session that ends itself with no error still fails the requests that it cuts. Only the caller's destroy() ends them as node does.
+function cancelOpenRequest(stream: Http2Stream) {
+  if (stream.closed) return;
+  destroyStreamForSessionDestroy(createPendingStreamCancelError(), NGHTTP2_CANCEL, stream);
+}
 
 // After the socket is gone a graceful close can never complete — the parser
 // is detached, so the stream's writable side has nothing left to flush
@@ -5021,6 +5032,7 @@ class ClientHttp2Session extends Http2Session {
   #closed: boolean = false;
   // One-shot destroy latch (Node: "if (this.destroyed) return;" opens destroy()).
   #destroying: boolean = false;
+  #cancelOpenRequests: boolean = false;
   /// closeCalled tracks whether close() specifically was called: `session.closed` only reports a
   /// graceful close() in node — destroy() leaves it false while `session.destroyed` flips to true.
   #closeCalled: boolean = false;
@@ -5136,6 +5148,8 @@ class ClientHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
 
       self.#connections--;
+      // destroy() destroyed this stream before its native sweep reported it here.
+      if (self.#destroying && stream.destroyed) return;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#closedWithNoStream());
     }),
     streamEnd: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) => {
@@ -5388,7 +5402,7 @@ class ClientHttp2Session extends Http2Session {
     },
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
-      self.destroy();
+      self[kCancelAndDestroy]();
     },
     altsvc(self: ClientHttp2Session, origin: string, value: string, streamId: number) {
       if (!self) return;
@@ -5529,11 +5543,11 @@ class ClientHttp2Session extends Http2Session {
     }
     this[bunHTTP2Socket] = null;
     if (this.#closed) {
-      this.destroy();
+      this[kCancelAndDestroy]();
       return;
     }
     if (isEconnresetAfterGoaway(this, error)) {
-      this.destroy();
+      this[kCancelAndDestroy]();
       return;
     }
     if (this.listenerCount("error") === 0 && (error as NodeJS.ErrnoException)?.code === "ECONNRESET") {
@@ -5542,10 +5556,15 @@ class ClientHttp2Session extends Http2Session {
       // still errors any remaining streams. Anything else (handshake
       // failure, ECONNREFUSED, ...) keeps Node's EventEmitter contract and
       // surfaces when unobserved.
-      this.destroy();
+      this[kCancelAndDestroy]();
       return;
     }
     this.destroy(error);
+  }
+  [kCancelAndDestroy]() {
+    if (this.#destroying) return;
+    this.#cancelOpenRequests = true;
+    this.destroy();
   }
   #onTimeout() {
     const parser = this.#parser;
@@ -5969,19 +5988,18 @@ class ClientHttp2Session extends Http2Session {
       }
       const parser = this.#parser;
       if (parser) {
-        // node cancels streams still open when their session is destroyed: each gets
-        // ERR_HTTP2_STREAM_CANCEL (or the session error when one was provided), with the CANCEL
-        // rst code.
-        if (this[kSessionDestroyError] == null && error == null) {
-          this[kSessionDestroyError] = createPendingStreamCancelError();
-        }
         // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
         // precedence over the destroy code when streams are torn down.
-        const streamRstCode = this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL);
+        const streamRstCode = this[kGoawayCode] || code || constants.NGHTTP2_NO_ERROR;
+        // node's destroy(null) leaves the session's code undefined, and each open stream fails with that code.
+        const streamError =
+          this[kSessionDestroyError] ??
+          (error === null && code === undefined ? $ERR_HTTP2_STREAM_ERROR(undefined) : undefined);
         // The native sweep throws on a non-numeric code: the retry must still find the streams.
         if (typeof streamRstCode === "number") {
+          if (this.#cancelOpenRequests) parser.forEachStream(cancelOpenRequest);
           parser.forEachStream(
-            FunctionPrototypeBind.$call(cancelStreamForSessionDestroy, undefined, this, streamRstCode),
+            FunctionPrototypeBind.$call(destroyStreamForSessionDestroy, undefined, streamError, streamRstCode),
           );
         }
         this[bunHTTP2SessionTeardownFrame] = $getInternalField($asyncContext, 0);

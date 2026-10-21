@@ -24,8 +24,8 @@
 
 import { Glob } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { basename, join } from "path";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { basename, join, matchesGlob } from "path";
 
 describe("Glob.match", () => {
   test("WTF", () => {
@@ -2882,6 +2882,211 @@ describe("Glob.match", () => {
     expect(glob.match(Buffer.alloc(10_001, "ab").toString())).toBeFalse();
     expect(glob.match(Buffer.alloc(9_999, "ab").toString())).toBeFalse();
     expect(glob.match(Buffer.alloc(9_999, "ab").toString() + "c")).toBeFalse();
+  });
+
+  // `<long>` is a literal of as many bytes as the test says, `<other>` differs from it in its last byte, `<text>` is
+  // its first bytes, and `<path>` is `<text>` with separators in it.
+  const longAlternatives: [pattern: string, path: string, expected: boolean][] = [
+    ["src/{<long>,zz}.js", "src/<long>.js", true],
+    ["src/{<long>,zz}.js", "src/<other>.js", false],
+    ["src/{<long>,zz}.js", "src/zz.js", true],
+    ["src/{<long>,zz}.js", "src/<long>.jsx", false],
+    ["src/{zz,<long>}.js", "src/<long>.js", true],
+    ["{<long>,zz}", "<long>", true],
+    ["{<long>,zz}", "<other>", false],
+    ["*{<long>,zz}.js", "x<long>.js", true],
+    ["*{<long>,zz}.js", "x<other>.js", false],
+    ["{<long>,zz}*.js", "<long>x.js", true],
+    ["{<long>,zz}*.js", "<other>x.js", false],
+    ["**/{<long>,zz}.js", "x/y/<long>.js", true],
+    ["**/{<long>,zz}.js", "x/y/<other>.js", false],
+    ["{<long>,zz}/**", "<long>/x/y.js", true],
+    ["src/{x<text>,yy<text>}.js", "src/yy<text>.js", true],
+    ["src/{x<text>,yy<text>}.js", "src/y<text>.js", false],
+    ["src/{<text>x,<text>yy,<text>zzz}.js", "src/<text>yy.js", true],
+    ["src/{<text>*,zz}.js", "src/<long>.js", true],
+    ["src/{<text>*d,zz}.js", "src/<long>.js", false],
+    ["src/{<text>?c,zz}.js", "src/<long>.js", true],
+    ["src/{<text>?d,zz}.js", "src/<long>.js", false],
+    ["src/{<text>[bx]c,zz}.js", "src/<long>.js", true],
+    ["src/{<text>[!b]c,zz}.js", "src/<long>.js", false],
+    ["src/{<long>,z{y,z}}.js", "src/<long>.js", true],
+    ["src/{<long>,z{y,z}}.js", "src/zy.js", true],
+    ["!src/{<long>,zz}.js", "src/<long>.js", false],
+    ["!src/{<long>,zz}.js", "src/<other>.js", true],
+    ["é{<long>,zz}?", "é<long>日", true],
+    ["{<text>é,zz}.js", "<text>é.js", true],
+    ["{<text>é,zz}.js", "<text>è.js", false],
+    ["{é<text>日本,zz<text>日本}.js", "zz<text>日本.js", true],
+    ["{é<text>日本,zz<text>日本}.js", "zz<text>日木.js", false],
+    ["@(<long>|zz).js", "<long>.js", true],
+    ["+(<long>|zz).js", "<long>zz<long>.js", true],
+    ["+(<long>|zz).js", "<long>z<long>.js", false],
+    ["*(<long>|zz)x.js", "zz<long>x.js", true],
+    ["*(<long>|zz)x.js", "zz<other>x.js", false],
+    ["!(<long>|zz).js", "<long>.js", false],
+    ["!(<long>|zz).js", "<other>.js", true],
+    ["{<long>,zz}{1..3}.js", "<long>2.js", true],
+    ["{<long>,zz}{1..3}.js", "<long>4.js", false],
+    ["src/{<path>bc,zz}.js", "src/<path>bc.js", true],
+    ["src/{<path>bc,zz}.js", "src/<path>bd.js", false],
+    ["src/{<path>bc,zz}.js", "src/<text>bc.js", false],
+    ["{x<path>,yy<path>}", "yy<path>", true],
+    ["{x<path>,yy<path>}", "y<path>", false],
+    ["{<path>/a.ts,<path>/b.ts,<path>/c.tsx}", "<path>/b.ts", true],
+    ["{<path>/a.ts,<path>/b.ts,<path>/c.tsx}", "<path>/c.ts", false],
+    ["{<path>/a,<path>/b}.{ts,tsx}", "<path>/b.tsx", true],
+    ["{<path>/a,<path>/b}.{ts,tsx}", "<path>/c.tsx", false],
+    ["**/{<path>/a,<path>/b}.ts", "x/<path>/a.ts", true],
+    ["{<path>/a,<path>/b}/*.ts", "<path>/b/c.ts", true],
+    ["{<path>/a,<path>/b}/*.ts", "<path>/b/c/d.ts", false],
+    ["{<long>,b,c,d,e,f}.js", "<long>.js", true],
+    ["{b,c,d,e,f,<long>}.js", "<other>.js", false],
+    // `<windows>` is `<path>` with `\` for each `/`, which is a separator in a path on Windows.
+    ["src/{<path>bc,zz}.js", "src\\<windows>bc.js", isWindows],
+    ["{x<path>,yy<path>}", "yy<windows>", isWindows],
+    ["{<path>/a,<path>/b}/*.ts", "<windows>\\b\\c.ts", isWindows],
+  ];
+
+  // A pattern is matched in another way from each of these lengths on. From 64 bytes an alternative is too long for
+  // the ways that don't need a program. From 248 bytes the program has more than four 64-node words, so a `Glob` that
+  // is asked often has no cache of its steps. From 1,016 bytes it has more than 16, so a walk keeps track of the words
+  // that are at work.
+  test.each([63, 64, 65, 247, 248, 1015, 1016])(
+    "a group with a literal alternative of %d bytes, however often it's asked",
+    length => {
+      const text = Buffer.alloc(length - 2, "a").toString();
+      const path = text.replace(/(.{6})./g, "$1/");
+      const write = (it: string) =>
+        it
+          .replaceAll("<long>", text + "bc")
+          .replaceAll("<other>", text + "bd")
+          .replaceAll("<text>", text)
+          .replaceAll("<path>", path)
+          .replaceAll("<windows>", path.replaceAll("/", "\\"));
+      const wrong = longAlternatives.filter(([pattern, path, expected]) => {
+        [pattern, path] = [write(pattern), write(path)];
+        const glob = new Glob(pattern);
+        const answers = [new Glob(pattern).match(path)];
+        // A `Glob` that has given 32 answers matches in another way. For a long pattern, a short path gets it there: a
+        // debug build checks each answer in a second way, which takes long.
+        for (let call = 0; call < 35; call++) {
+          if (length > 65 && call < 32) glob.match("x");
+          else answers.push(glob.match(path));
+        }
+        return answers.some(answer => answer !== expected);
+      });
+      expect(wrong).toEqual([]);
+    },
+  );
+
+  test("a long alternative on a path of 511 and of 512 bytes", () => {
+    // A path of 512 bytes is matched in another way than a shorter one, and so is the path that a `Glob` is asked
+    // about after 32 others.
+    const long = Buffer.alloc(300, "a").toString();
+    const cases: [pattern: string, start: string, end: string, expected: boolean][] = [
+      [`{${long},zz}/**/*.ts`, `${long}/`, "/x.ts", true],
+      [`{${long},zz}/**/*.ts`, `${long}/`, "/x.js", false],
+      [`**/{${long},zz}.ts`, "x/", `/${long}.ts`, true],
+      [`**/{${long},zz}.ts`, "x/", `/${long}b.ts`, false],
+      [`*{${long},zz}`, "", long, true],
+      [`*{${long},zz}`, "", `${long.slice(1)}b`, false],
+      [`{${long}*,zz*}.ts`, long, ".ts", true],
+      [`{${long}*,zz*}.ts`, long, ".js", false],
+    ];
+    for (const [pattern, start, end, expected] of cases) {
+      const glob = new Glob(pattern);
+      for (let call = 0; call < 36; call++) {
+        const answers = [511, 512].flatMap(length => {
+          const path = start + Buffer.alloc(length - start.length - end.length, "y").toString() + end;
+          return [path.length, glob.match(path), new Glob(pattern).match(path)];
+        });
+        expect([pattern, call, ...answers]).toEqual([pattern, call, 511, expected, expected, 512, expected, expected]);
+      }
+    }
+  });
+
+  test.each([
+    [12, 2000],
+    [70, 4000],
+  ])("%d long alternatives of %d bytes that are far from each other, on short paths", (count, length) => {
+    // The program of the first pattern has 376 words of 64 nodes: a walk keeps track of those that are at work with a
+    // mark for each. The second one has more than 4,096, which takes three levels of marks and two words of the
+    // middle one.
+    const long = Buffer.alloc(length, "a").toString();
+    const pattern = `src/{${Array.from({ length: count }, (_, index) => `${long}${index},x${index}`)}}*.ts`;
+    expect(pattern.length).toBeGreaterThan(count * length);
+    const last = count - 1;
+    const matches = [`src/x${last}.ts`, "src/x0.ts", `src/x${last}y.ts`, `src/${long}${last}.ts`, `src/${long}0z.ts`];
+    const others = ["src/y0.ts", "src/x.ts", "src/a0.ts", `src/x0.tsx`, `src/${long}.ts`, `src/a${long}0.ts`];
+    expect(matches.filter(path => !new Glob(pattern).match(path))).toEqual([]);
+    expect(others.filter(path => new Glob(pattern).match(path))).toEqual([]);
+    // A `Glob` that has given 32 answers matches in another way.
+    const glob = new Glob(pattern);
+    for (let call = 0; call < 32; call++) expect(glob.match("")).toBeFalse();
+    for (let round = 0; round < 3; round++) {
+      expect(matches.filter(path => !glob.match(path))).toEqual([]);
+      expect(others.filter(path => glob.match(path))).toEqual([]);
+    }
+  });
+
+  test("two groups, of which the second one has an alternative of 64 bytes or more", () => {
+    // The first group can end in two places of the path. Only one of them is right for the second group.
+    const [a, b] = ["a", "b"].map(byte => (length: number) => Buffer.alloc(length, byte).toString());
+    const cases = [
+      [`{?b,${b(64)}?}{${b(70)},bbbbbbbq}.js`, `${b(72)}q.js`],
+      [`{a,aa}{${a(63)}?,zz}`, `a${a(63)}x`],
+      [`{x*,q{${a(70)}?b,cc}y}.js`, `q${a(70)}zby.js`],
+    ];
+    for (const [pattern, path] of cases) {
+      const glob = new Glob(pattern);
+      const answers = Array.from({ length: 40 }, () => glob.match(path));
+      expect([pattern, new Glob(pattern).match(path), ...answers]).toEqual([pattern, true, ...answers.map(() => true)]);
+    }
+  });
+
+  test("scanSync and path.matchesGlob with a long alternative", () => {
+    // Each of them asks one `Glob` about many names.
+    const [long, other] = [Buffer.alloc(150, "a").toString(), Buffer.alloc(150, "b").toString()];
+    const names = [`${long}.ts`, `${long}b.ts`, `${other}.js`];
+    for (let index = 0; index < 80; index++) names.push(`f${index}.ts`);
+    using dir = tempDir("glob-long-alternative", Object.fromEntries(names.map(name => [name, ""])));
+    const pattern = `{${long},${other},f3,f38,f77}.ts`;
+    const expected = [`${long}.ts`, "f3.ts", "f38.ts", "f77.ts"];
+    expect([...new Glob(pattern).scanSync({ cwd: String(dir) })].sort()).toEqual(expected);
+    expect([...new Glob(`**/${pattern}`).scanSync({ cwd: String(dir) })].sort()).toEqual(expected);
+    expect(names.filter(name => matchesGlob(name, pattern)).sort()).toEqual(expected);
+  });
+
+  test("a group with a long alternative takes time in proportion to its length", () => {
+    // A walk went to every 64 bytes of the pattern for each byte of the path. With an alternative of 128 KB, each call
+    // below took about 0.4 s in a release build and about 16 s in a debug build. Now a walk goes only to the parts of
+    // the pattern that are at work, and a call takes about 3 ms and 30 ms.
+    const budgetMs = isDebug || isASAN ? 2000 : 200;
+    const text = Buffer.alloc(128 * 1024 - 2, "a").toString();
+    const [around, starred, twice] = [`src/{${text}bc,zz}.js`, `*{${text}bc,zz}.js`, `src/{x${text},yy${text}}.js`];
+    // A `Glob` that has given 32 answers matches in another way than a new one.
+    const [asked, askedTwice] = [new Glob(around), new Glob(twice)];
+    for (let call = 0; call < 33; call++) {
+      expect(asked.match("src/zz.js")).toBeTrue();
+      expect(askedTwice.match("src/zz.js")).toBeFalse();
+    }
+    const calls: [name: string, call: () => boolean][] = [
+      ["a new Glob", () => new Glob(around).match(`src/${text}bc.js`)],
+      ["a Glob that is asked again", () => asked.match(`src/${text}bc.js`)],
+      ["a `*` before the group", () => new Glob(starred).match(`x${text}bc.js`)],
+      ["two alternatives that end the same", () => askedTwice.match(`src/yy${text}.js`)],
+    ];
+    for (const [name, call] of calls) {
+      // The faster of two tries: a busy machine can stall one of them.
+      let fastest = Infinity;
+      for (let attempt = 0; attempt < 2 && fastest >= budgetMs; attempt++) {
+        const start = performance.now();
+        expect(call()).toBeTrue();
+        fastest = Math.min(fastest, performance.now() - start);
+      }
+      expect(Math.round(fastest), name).toBeLessThan(budgetMs);
+    }
   });
 
   // A `Glob` that is asked often, or about a long path, changes how it matches.

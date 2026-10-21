@@ -24,6 +24,7 @@
 
 use bun_collections::smallvec::SmallVec;
 use bun_core::{Once, strings};
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
@@ -182,7 +183,7 @@ struct Wildcard {
 /// Parentheses without a "?*+@!" prefix are literal, and so is an unclosed "[",
 /// "{" or "(".
 ///
-/// Groups can nest to any depth. Matching takes `O(glob.len() * path.len())` time and
+/// Groups can nest to any depth. Matching takes at most `O(glob.len() * path.len())` time and
 /// a constant amount of stack. See [`Program`].
 pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
     match_on::<{ cfg!(windows) }>(glob, path)
@@ -4240,7 +4241,7 @@ impl Nodes {
 /// The one step back in the pattern is from the end of an alternative of `*(a)` or `+(a)` to its start. It goes to a second
 /// set, "idle", for which no group repeats until a byte is taken. That set is settled first.
 ///
-/// So the time is `O(glob.len() * path.len())`, the memory is six sets, and nothing recurses.
+/// So the time is at most `O(glob.len() * path.len())`, the memory is six sets, and nothing recurses. See [`SparseWalk`].
 struct Program {
     masks: SmallVec<[Masks; 1]>,
     /// For each node, the nodes among the same 64 that match wherever it does.
@@ -4256,6 +4257,8 @@ struct Program {
     start: u32,
     /// How many walks it has been through without a cache.
     walks: AtomicU8,
+    /// See [`Program::kind_of`]. 0 until a walk needs it.
+    kind: AtomicU8,
     /// A small cache, and a large one for when that is full.
     caches: [Once<Option<Box<Cache>>>; 2],
 }
@@ -4443,6 +4446,7 @@ impl Program {
             sequences: Vec::new(),
             start: 0,
             walks: AtomicU8::new(0),
+            kind: AtomicU8::new(0),
             caches: [Once::new(), Once::new()],
         }
     }
@@ -4759,6 +4763,74 @@ impl Program {
         to.store(nodes.div_ceil(64), true);
     }
 
+    /// Which walk a program of more than one word gets. 0 is for not known yet.
+    const PLAIN: u8 = 1;
+    /// A literal of 8 nodes can be at work with no wildcard: a [`SparseWalk`] without marks takes it at once.
+    const RUNS: u8 = 2;
+    /// Few of its many words have anything but literals, so few are at work at a time: a [`SparseWalk`] with marks.
+    const WIDE: u8 = 3;
+
+    /// Says which of those it is.
+    #[cold]
+    #[inline(never)]
+    fn kind_of(&self) -> u8 {
+        let words = self.masks.len();
+        // A `**` is at work with every node before it, and a `*` with the nodes before it down to a separator.
+        let mut has_run = false;
+        let (mut run, mut is_blocked) = (0_u32, false);
+        for it in self.masks.iter().rev() {
+            let below = |at: u32| (1_u64 << at) - 1;
+            let after = |separators: u64| !below(63 - separators.leading_zeros()) << 1;
+            let mut blocked = 0;
+            if is_blocked {
+                blocked = match it.separators {
+                    0 => !0,
+                    separators => after(separators),
+                };
+                is_blocked = it.separators == 0;
+            }
+            let mut loops = it.loops;
+            while loops != 0 {
+                let at = 63 - loops.leading_zeros();
+                let separators = it.separators & below(at);
+                blocked |= match separators {
+                    0 => below(at),
+                    separators => below(at) & after(separators),
+                };
+                is_blocked |= separators == 0;
+                // This takes care of every `*` down to that separator.
+                loops &= match separators {
+                    0 => 0,
+                    separators => below(63 - separators.leading_zeros()),
+                };
+            }
+            if it.skips != 0 {
+                blocked |= below(63 - it.skips.leading_zeros());
+            }
+            let literal = (it.bytes | it.separators) & !it.unsettled & !blocked;
+            // Eight nodes that start in this word, or eight inside it.
+            let mut inside = literal & literal >> 1;
+            inside &= inside >> 2;
+            inside &= inside >> 4;
+            has_run |= run + literal.leading_ones() >= 8 || inside != 0;
+            run = match literal == !0 {
+                true => run + u64::BITS,
+                false => literal.trailing_ones(),
+            };
+            if it.skips != 0 {
+                break;
+            }
+        }
+        // A word that only has literals is at work for one alternative at a time.
+        let is_busy = |it: &&Masks| !(it.bytes | it.separators) != 0;
+        let is_sparse = words > 16 && self.masks.iter().filter(is_busy).count() * 8 <= words;
+        match (is_sparse, has_run && self.repeats.is_empty()) {
+            (true, _) => Program::WIDE,
+            (false, true) => Program::RUNS,
+            (false, false) => Program::PLAIN,
+        }
+    }
+
     /// `dots` is `Dots::Match` unless the path has a closed segment.
     #[inline(always)]
     fn on<'a>(
@@ -4879,8 +4951,52 @@ impl On<'_> {
     ) -> Result<(u32, usize), bool> {
         match self.masks.len() {
             1 => Walk::<[u64; 1]>::go(self, from, cache),
-            _ => Walk::<SmallVec<[u64; 4]>>::go(self, from, cache),
+            _ => match self.program.kind.load(Ordering::Relaxed) {
+                Program::PLAIN => Walk::<SmallVec<[u64; 4]>>::go(self, from, cache),
+                kind => self.go_sparsely(kind, from, cache),
+            },
         }
+    }
+
+    /// [`On::go`] for a program that a [`SparseWalk`] may be for.
+    #[inline(never)]
+    fn go_sparsely(
+        &self,
+        kind: u8,
+        from: Option<(usize, &[u64])>,
+        cache: Option<&Cache>,
+    ) -> Result<(u32, usize), bool> {
+        let kind = match kind {
+            0 => {
+                let kind = self.program.kind_of();
+                self.program.kind.store(kind, Ordering::Relaxed);
+                kind
+            }
+            kind => kind,
+        };
+        let words = self.masks.len();
+        let is_match = match kind {
+            // A sparse walk has no cache, and it starts at the end of the path.
+            _ if cache.is_some() || from.is_some() => {
+                return Walk::<SmallVec<[u64; 4]>>::go(self, from, cache);
+            }
+            Program::WIDE if words > Wide::WORDS && words <= Deep::WORDS => {
+                SparseWalk::<Deep>::go(self)
+            }
+            Program::WIDE => SparseWalk::<Wide>::go(self),
+            Program::RUNS if self.dots == Dots::Match => SparseWalk::<Runs>::go(self),
+            _ => return Walk::<SmallVec<[u64; 4]>>::go(self, from, cache),
+        };
+        // A sparse walk arrives where a walk over every word does. A debug build takes that one too, unless the path is long.
+        #[cfg(debug_assertions)]
+        if self.path.len() < Program::IS_LONG {
+            let plain = Walk::<SmallVec<[u64; 4]>>::go(self, None, None);
+            debug_assert!(
+                plain == Err(is_match),
+                "the sparse walk and the walk differ"
+            );
+        }
+        Err(is_match)
     }
 
     /// Returns true if `node`, an escape, a class or a digit, takes `byte` or `character`.
@@ -5287,6 +5403,666 @@ impl<S: Set> Walk<S> {
             }
         }
         Err(walk.sets[0].words()[0] & 1 != 0)
+    }
+}
+
+/// How the sets of a [`SparseWalk`] know which of their words have nodes.
+trait Marked {
+    const HAS_MARKS: bool = true;
+    /// How many words the marks of a set of `words` words take.
+    fn len(words: usize) -> usize;
+    fn set(marks: &mut [u64], word: usize, is_marked: bool);
+    /// The first marked word at or after `from`.
+    fn next(marks: &[u64], from: usize) -> Option<usize>;
+    /// The last marked word before `to`, which is a word of the set.
+    fn previous(marks: &[u64], to: usize) -> Option<usize>;
+    /// Whether `set` has no nodes. With marks, a step after the last node is lost finds that out.
+    fn has_nothing(set: &[u64], marks: &[u64]) -> bool;
+    /// Whether the marks are as they have to be for `set`.
+    #[cfg(debug_assertions)]
+    fn is_sound(set: &[u64], marks: &[u64]) -> bool;
+}
+
+/// No marks: a step goes to every word, as in a [`Walk`]. Such a walk only differs from that one by its literal steps.
+struct Runs;
+
+impl Marked for Runs {
+    const HAS_MARKS: bool = false;
+    #[inline(always)]
+    fn len(_: usize) -> usize {
+        0
+    }
+    #[inline(always)]
+    fn set(_: &mut [u64], _: usize, _: bool) {}
+    #[inline(always)]
+    fn next(_: &[u64], _: usize) -> Option<usize> {
+        None
+    }
+    #[inline(always)]
+    fn previous(_: &[u64], _: usize) -> Option<usize> {
+        None
+    }
+    #[inline(always)]
+    fn has_nothing(set: &[u64], _: &[u64]) -> bool {
+        set.iter().all(|it| *it == 0)
+    }
+    #[cfg(debug_assertions)]
+    fn is_sound(_: &[u64], _: &[u64]) -> bool {
+        true
+    }
+}
+
+/// One mark bit for each word. Every word that has nodes has its mark, and a step of a [`SparseWalk`] only goes to marked words.
+struct Wide;
+
+impl Wide {
+    /// With more words than this, a search through the marks takes too long: see [`Deep`].
+    const WORDS: usize = 512;
+}
+
+impl Marked for Wide {
+    #[inline(always)]
+    fn len(words: usize) -> usize {
+        words.div_ceil(64)
+    }
+    #[inline(always)]
+    fn set(marks: &mut [u64], word: usize, is_marked: bool) {
+        let it = &mut marks[word / 64];
+        *it = *it & !(1 << (word % 64)) | u64::from(is_marked) << (word % 64);
+    }
+    #[inline(always)]
+    fn next(marks: &[u64], from: usize) -> Option<usize> {
+        let mut at = from / 64;
+        let mut bits = *marks.get(at)? & !0 << (from % 64);
+        while bits == 0 {
+            at += 1;
+            bits = *marks.get(at)?;
+        }
+        Some(at * 64 + bits.trailing_zeros() as usize)
+    }
+    #[inline(always)]
+    fn previous(marks: &[u64], to: usize) -> Option<usize> {
+        let mut at = to / 64;
+        let mut bits = marks[at] & !(!0 << (to % 64));
+        while bits == 0 {
+            at = at.checked_sub(1)?;
+            bits = marks[at];
+        }
+        Some(at * 64 + 63 - bits.leading_zeros() as usize)
+    }
+    #[inline(always)]
+    fn has_nothing(_: &[u64], marks: &[u64]) -> bool {
+        marks.iter().all(|it| *it == 0)
+    }
+    #[cfg(debug_assertions)]
+    fn is_sound(set: &[u64], marks: &[u64]) -> bool {
+        let is_marked =
+            |(word, nodes): (usize, &u64)| *nodes == 0 || Wide::next(marks, word) == Some(word);
+        set.iter().enumerate().all(is_marked)
+    }
+}
+
+/// The marks of [`Wide`] under two more levels: one bit for each word of marks that has a mark, and one for each word of those.
+struct Deep;
+
+impl Deep {
+    /// Where the middle level and the marks start. The top level is one word, so that is enough for `WORDS` words.
+    const MIDDLE: usize = 1;
+    const MARKS: usize = 1 + 64;
+    const WORDS: usize = 64 * 64 * 64;
+
+    /// The first marked word in the words of marks from `from` on.
+    #[inline(never)]
+    fn next_far(levels: &[u64], from: usize) -> Option<usize> {
+        let mut middle = from / 64;
+        let mut bits = *levels[Deep::MIDDLE..Deep::MARKS].get(middle)? & !0 << (from % 64);
+        if bits == 0 {
+            let above = levels[0] & !(!0 >> (63 - middle));
+            middle = above.trailing_zeros() as usize;
+            bits = *levels[Deep::MIDDLE..Deep::MARKS].get(middle)?;
+        }
+        let at = middle * 64 + bits.trailing_zeros() as usize;
+        Some(at * 64 + levels[Deep::MARKS + at].trailing_zeros() as usize)
+    }
+
+    /// The last marked word in the words of marks before `to`.
+    #[inline(never)]
+    fn previous_far(levels: &[u64], to: usize) -> Option<usize> {
+        let mut middle = to / 64;
+        let mut bits = levels[Deep::MIDDLE + middle] & !(!0 << (to % 64));
+        if bits == 0 {
+            let below = levels[0] & !(!0 << middle);
+            middle = 63_usize.checked_sub(below.leading_zeros() as usize)?;
+            bits = levels[Deep::MIDDLE + middle];
+        }
+        let at = middle * 64 + 63 - bits.leading_zeros() as usize;
+        Some(at * 64 + 63 - levels[Deep::MARKS + at].leading_zeros() as usize)
+    }
+}
+
+impl Marked for Deep {
+    #[inline(always)]
+    fn len(words: usize) -> usize {
+        Deep::MARKS + words.div_ceil(64)
+    }
+    #[inline(always)]
+    fn set(levels: &mut [u64], word: usize, is_marked: bool) {
+        let at = word / 64;
+        let was = levels[Deep::MARKS + at];
+        let now = was & !(1 << (word % 64)) | u64::from(is_marked) << (word % 64);
+        levels[Deep::MARKS + at] = now;
+        // The word of marks has got its first mark, or has lost its last one.
+        if (was == 0) != (now == 0) {
+            let middle = &mut levels[Deep::MIDDLE + at / 64];
+            *middle = *middle & !(1 << (at % 64)) | u64::from(now != 0) << (at % 64);
+            let has_marks = u64::from(*middle != 0);
+            levels[0] = levels[0] & !(1 << (at / 64)) | has_marks << (at / 64);
+        }
+    }
+    #[inline(always)]
+    fn next(levels: &[u64], from: usize) -> Option<usize> {
+        let at = from / 64;
+        let bits = *levels.get(Deep::MARKS + at)? & !0 << (from % 64);
+        match bits {
+            0 => Deep::next_far(levels, at + 1),
+            _ => Some(at * 64 + bits.trailing_zeros() as usize),
+        }
+    }
+    #[inline(always)]
+    fn previous(levels: &[u64], to: usize) -> Option<usize> {
+        let at = to / 64;
+        let bits = levels[Deep::MARKS + at] & !(!0 << (to % 64));
+        match bits {
+            0 => Deep::previous_far(levels, at),
+            _ => Some(at * 64 + 63 - bits.leading_zeros() as usize),
+        }
+    }
+    #[inline(always)]
+    fn has_nothing(_: &[u64], levels: &[u64]) -> bool {
+        levels[0] == 0
+    }
+    #[cfg(debug_assertions)]
+    fn is_sound(set: &[u64], levels: &[u64]) -> bool {
+        let bit = |word: &u64, at: usize| *word >> (at % 64) & 1 != 0;
+        let (top, middle, marks) = (
+            levels[0],
+            &levels[Deep::MIDDLE..Deep::MARKS],
+            &levels[Deep::MARKS..],
+        );
+        let is_marked = |(word, nodes): (usize, &u64)| *nodes == 0 || bit(&marks[word / 64], word);
+        let is_above = |(at, marks): (usize, &u64)| (*marks != 0) == bit(&middle[at / 64], at);
+        let is_top = |(at, middle): (usize, &u64)| (*middle != 0) == bit(&top, at);
+        set.iter().enumerate().all(is_marked)
+            && marks.iter().enumerate().all(is_above)
+            && middle.iter().enumerate().all(is_top)
+    }
+}
+
+/// Takes at once the steps for which every node at work, and the nodes before it, are literal. Returns false if no node is left.
+#[inline(never)]
+fn take_literal_steps<S: Marked>(
+    on: &On<'_>,
+    set: &mut [u64],
+    marks: &mut [u64],
+    index: usize,
+) -> (usize, bool) {
+    // The steps one by one need the set for each byte of a character, so these start and end between characters.
+    let is_inside = |at: usize| matches!(on.path.get(at), Some(0x80..=0xBF));
+    if is_inside(index) {
+        return (index, true);
+    }
+    let literal = |word: usize| on.masks[word].bytes | on.masks[word].separators;
+    // The first word at or after `from` that can have nodes.
+    let next = |set: &[u64], marks: &[u64], from: usize| match S::HAS_MARKS {
+        true => S::next(marks, from),
+        false => Some(from + set.get(from..)?.iter().position(|it| *it != 0)?),
+    };
+    // Most often some other node is at work, which is found here at once.
+    let mut first = None;
+    let mut word = next(set, marks, 0);
+    while let Some(at) = word {
+        let nodes = set[at];
+        if nodes & !literal(at) != 0 {
+            return (index, true);
+        }
+        match nodes {
+            // A mark that is left from a word that has lost its nodes.
+            0 => S::set(marks, at, false),
+            _ => first = first.or(Some(at)),
+        }
+        word = next(set, marks, at + 1);
+    }
+    let Some(first) = first else {
+        return (index, true);
+    };
+    // As many steps as every node has such nodes before it.
+    let mut len = index - on.first;
+    let mut word = Some(first);
+    while let Some(at) = word {
+        let mut todo = set[at];
+        while todo != 0 {
+            let bit = todo.isolate_lowest_one();
+            todo ^= bit;
+            let others = !(literal(at) & !on.masks[at].unsettled) & (bit - 1);
+            let mut run = (bit.trailing_zeros() - (u64::BITS - others.leading_zeros())) as usize;
+            // The run goes on in the words before this one.
+            let mut before = at;
+            while others == 0 && run < len && before > 0 {
+                before -= 1;
+                let more = !(literal(before) & !on.masks[before].unsettled);
+                run += more.leading_zeros() as usize;
+                if more != 0 {
+                    break;
+                }
+            }
+            len = len.min(run);
+        }
+        if len == 0 {
+            return (index, true);
+        }
+        word = next(set, marks, at + 1);
+    }
+    while is_inside(index - len) {
+        len -= 1;
+    }
+    if len == 0 {
+        return (index, true);
+    }
+    let found = &on.path[index - len..index];
+    // Whether the path goes on with what the `len` nodes before `node` take. With `is_windows`, a separator also takes a `\`.
+    let is_found = |node: usize| {
+        let first = node - len;
+        let is_separator = |at: usize| on.masks[at / 64].separators >> (at % 64) & 1 != 0;
+        let takes = |(at, found): (usize, &u8)| {
+            *found == on.pattern[first + at] || *found == b'\\' && is_separator(first + at)
+        };
+        *found == on.pattern[first..node] || on.is_windows && found.iter().enumerate().all(takes)
+    };
+    let mut is_left = false;
+    let mut word = Some(first);
+    while let Some(at) = word {
+        let mut todo = std::mem::take(&mut set[at]);
+        S::set(marks, at, false);
+        while todo != 0 {
+            let node = at * 64 + todo.trailing_zeros() as usize;
+            todo &= todo - 1;
+            if is_found(node) {
+                let node = node - len;
+                set[node / 64] |= 1 << (node % 64);
+                S::set(marks, node / 64, true);
+                is_left = true;
+            }
+        }
+        word = next(set, marks, at + 1);
+    }
+    (index - len, is_left)
+}
+
+/// A [`Walk`] over all of the path, without a [`Cache`], whose steps only go to the words that have nodes at work.
+struct SparseWalk<'a, S: Marked> {
+    /// Each is the words of a set and then its marks. Which set is for which index is as in a [`Walk`].
+    sets: [&'a mut [u64]; 5],
+    idle: &'a mut [u64],
+    index: usize,
+    marked: PhantomData<S>,
+}
+
+impl<S: Marked> SparseWalk<'_, S> {
+    /// After literal steps that take next to nothing, up to this many steps are taken one by one before they are tried again.
+    const RESTS: u32 = 16;
+
+    /// [`Walk::take_byte`].
+    #[inline(always)]
+    fn take_byte(on: &On<'_>, byte: u8, is_closed: bool, set: &mut [u64], marks: &mut [u64]) {
+        let is_separator = byte == b'/' || on.is_windows && byte == b'\\';
+        let mut below = 0;
+        let mut all = on.masks.iter().enumerate();
+        while let Some((word, masks)) = all.next() {
+            let after = set[word];
+            let before = after >> 1 | set.get(word + 1).map_or(0, |it| it << 63);
+            if before | after | below == 0 {
+                // On to the next marked word, or to the one before it: a node takes the byte for the node after it.
+                if S::HAS_MARKS {
+                    S::set(marks, word, false);
+                    let Some(next) = S::next(marks, word + 1) else {
+                        break;
+                    };
+                    let skipped =
+                        next - word - 1 - usize::from(next > word + 1 && set[next] & 1 != 0);
+                    if skipped > 0 {
+                        all.nth(skipped - 1);
+                    }
+                }
+                continue;
+            }
+            let mut found = match is_separator {
+                true => before & masks.separators | (after << 1 | below) & masks.skips,
+                false => before & masks.anys | after & (masks.skips | masks.loops),
+            };
+            below = after >> 63;
+            let mut bytes = before & masks.bytes;
+            while bytes != 0 {
+                let node = bytes.trailing_zeros() as usize;
+                if on.pattern[word * 64 + node] == byte {
+                    found |= 1 << node;
+                }
+                bytes &= bytes - 1;
+            }
+            let mut others = before & (masks.escapes | masks.digits | masks.classes);
+            while others != 0 {
+                let node = others.trailing_zeros() as usize;
+                if on.takes(word * 64 + node, byte, u32::from(byte)) {
+                    found |= 1 << node;
+                }
+                others &= others - 1;
+            }
+            if is_closed {
+                found &= !masks.wildcards;
+            }
+            set[word] = found;
+            // This is the word before one that has its first node, or the word after one that has its last node.
+            if S::HAS_MARKS && after == 0 && found != 0 {
+                S::set(marks, word, true);
+            }
+        }
+    }
+
+    /// [`Walk::take_character`].
+    #[cold]
+    #[inline(never)]
+    fn take_character(&mut self, on: &On<'_>, is_closed: bool) {
+        let words = on.masks.len();
+        self.sets.rotate_right(1);
+        let byte = on.path[self.index];
+        let (character, len) = decode_rune_at(on.path, self.index);
+        let [now, later @ ..] = &mut self.sets;
+        let (now, marks) = now.split_at_mut(words);
+        // What's left of the set that this was. Without marks, every word is written below.
+        while let Some(word) = S::next(marks, 0) {
+            now[word] = 0;
+            S::set(marks, word, false);
+        }
+        let (after_byte, byte_marks) = later[0].split_at(words);
+        let (after_character, character_marks) = later[len as usize - 1].split_at(words);
+        // The first word at or after `from` that has nodes in one of the two.
+        let next = |from: usize| {
+            if !S::HAS_MARKS {
+                return (from < words).then_some(from);
+            }
+            match (S::next(byte_marks, from), S::next(character_marks, from)) {
+                (Some(one), Some(other)) => Some(one.min(other)),
+                (one, other) => one.or(other),
+            }
+        };
+        let mut word = 0;
+        loop {
+            let masks = &on.masks[word];
+            let before = |set: &[u64]| set[word] >> 1 | set.get(word + 1).map_or(0, |it| it << 63);
+            let mut found = before(after_character) & masks.anys
+                | after_byte[word] & masks.skips
+                | after_character[word] & masks.loops;
+            let mut others = before(after_byte) & (masks.bytes | masks.escapes)
+                | before(after_character) & masks.classes;
+            while others != 0 {
+                let node = others.trailing_zeros() as usize;
+                if match masks.bytes & 1 << node != 0 {
+                    true => on.pattern[word * 64 + node] == byte,
+                    false => on.takes(word * 64 + node, byte, character),
+                } {
+                    found |= 1 << node;
+                }
+                others &= others - 1;
+            }
+            if is_closed {
+                found &= !masks.wildcards;
+            }
+            now[word] = found;
+            if S::HAS_MARKS && found != 0 {
+                S::set(marks, word, true);
+            }
+            // A node takes the byte or the character for the node after it, which can be the first node of the next word.
+            word = match next(word + 1) {
+                Some(next) => next - usize::from(next > word + 1),
+                None => break,
+            };
+        }
+    }
+
+    /// Marks the words of the list that `list` starts with that have nodes in `set`.
+    #[cold]
+    #[inline(never)]
+    fn mark(list: &[Nodes], set: &[u64], marks: &mut [u64]) {
+        for it in list {
+            if set[it.word()] != 0 {
+                S::set(marks, it.word(), true);
+            }
+            if it.word & Nodes::IS_LAST != 0 {
+                break;
+            }
+        }
+    }
+
+    /// [`Walk::settle`].
+    #[inline(always)]
+    fn settle(on: &On<'_>, index: usize, is_closed: bool, set: &mut [u64], marks: &mut [u64]) {
+        let is_at_end = index == on.path.len();
+        let mut all = on.masks.iter().enumerate().rev();
+        while let Some((word, masks)) = all.next() {
+            if set[word] == 0 {
+                // On to the word before this one that has nodes.
+                if S::HAS_MARKS {
+                    let Some(previous) = S::previous(marks, word) else {
+                        break;
+                    };
+                    if word - previous > 1 {
+                        all.nth(word - previous - 2);
+                    }
+                }
+                continue;
+            }
+            let mut allowed = !0;
+            if is_closed {
+                allowed = !masks.wildcards;
+            }
+            if is_at_end {
+                allowed &= !masks.not_at_end;
+            }
+            let mut now = set[word];
+            let mut todo = now & masks.unsettled;
+            while todo != 0 {
+                let at = 63 - todo.leading_zeros() as usize;
+                let bit = 1 << at;
+                todo ^= bit;
+                if (masks.nots | masks.sequences | masks.listed) & bit != 0 {
+                    set[word] = now;
+                    let before = |mask: u64| (mask & (bit - 1)).count_ones();
+                    if masks.nots & bit != 0 {
+                        let any = on.pattern.len()
+                            + 1
+                            + (masks.nots_before + before(masks.nots)) as usize;
+                        if set[any / 64] & 1 << (any % 64) != 0 {
+                            now ^= bit;
+                            continue;
+                        }
+                    } else if masks.sequences & bit != 0 {
+                        let number = masks.sequences_before + before(masks.sequences);
+                        if !on.has_sequence(index, set, word * 64 + at, number) {
+                            now ^= bit;
+                            continue;
+                        }
+                    }
+                    if masks.listed & bit != 0 {
+                        let list = (masks.listed_before + before(masks.listed)) as usize;
+                        let list = &on.program.far[on.program.lists[list] as usize..];
+                        let place = Place {
+                            is_closed,
+                            is_at_end,
+                        };
+                        on.add(list, place, set);
+                        if S::HAS_MARKS {
+                            Self::mark(list, set, marks);
+                        }
+                        now = set[word];
+                        todo |= now & masks.unsettled & (bit - 1);
+                    }
+                }
+                let implied = on.implied[word * 64 + at] & allowed;
+                now |= implied;
+                todo |= implied & masks.unsettled;
+            }
+            set[word] = now;
+        }
+    }
+
+    /// [`Walk::settle_idle`].
+    #[inline(never)]
+    fn settle_idle(&mut self, on: &On<'_>, is_closed: bool) {
+        let words = on.masks.len();
+        let (idle, idle_marks) = self.idle.split_at_mut(words);
+        let (set, marks) = self.sets[0].split_at_mut(words);
+        match S::HAS_MARKS {
+            false => idle.copy_from_slice(set),
+            true => {
+                while let Some(word) = S::next(idle_marks, 0) {
+                    idle[word] = 0;
+                    S::set(idle_marks, word, false);
+                }
+                let mut next = S::next(marks, 0);
+                while let Some(word) = next {
+                    idle[word] = set[word];
+                    S::set(idle_marks, word, true);
+                    next = S::next(marks, word + 1);
+                }
+            }
+        }
+        Self::settle(on, self.index, is_closed, idle, idle_marks);
+        let mut all = on.masks.iter().enumerate();
+        while let Some((word, masks)) = all.next() {
+            if S::HAS_MARKS && idle[word] == 0 {
+                // On to the next word that has nodes.
+                let Some(next) = S::next(idle_marks, word + 1) else {
+                    break;
+                };
+                if next > word + 1 {
+                    all.nth(next - word - 2);
+                }
+                continue;
+            }
+            let mut repeated = idle[word] & masks.repeats;
+            while repeated != 0 {
+                let bit = repeated.isolate_lowest_one();
+                repeated ^= bit;
+                let number = masks.repeats_before + (masks.repeats & (bit - 1)).count_ones();
+                let list = &on.program.ends[on.program.repeats[number as usize] as usize..];
+                let anywhere = Place {
+                    is_closed: false,
+                    is_at_end: false,
+                };
+                on.add(list, anywhere, set);
+                if S::HAS_MARKS {
+                    Self::mark(list, set, marks);
+                }
+            }
+        }
+    }
+
+    /// [`Walk::go`] from the end of the path and without a cache: returns the answer.
+    #[inline(never)]
+    fn go(on: &On<'_>) -> bool {
+        let words = on.masks.len();
+        // The six sets are one piece of memory, which is on the stack for a program of up to four words.
+        let len = words + S::len(words);
+        let mut room: SmallVec<[u64; 24]> = SmallVec::from_elem(0, 6 * len);
+        let (sets, idle) = room.split_at_mut(5 * len);
+        let mut sets = sets.chunks_exact_mut(len);
+        let mut walk = SparseWalk::<S> {
+            sets: std::array::from_fn(|_| sets.next().unwrap_or_default()),
+            idle,
+            index: on.path.len() + 1,
+            marked: PhantomData,
+        };
+        let has_repeats = !on.program.repeats.is_empty();
+        let is_simple = !has_repeats && on.dots == Dots::Match;
+        // How many steps to take one by one before the literal steps are tried again, and how many are left of those.
+        let (mut rest, mut rests) = (0, 2);
+        while walk.index > on.first {
+            if rests > 0 {
+                rests -= 1;
+            } else if is_simple && walk.index <= on.path.len() {
+                let before = walk.index;
+                let (set, marks) = walk.sets[0].split_at_mut(words);
+                let is_left;
+                (walk.index, is_left) = take_literal_steps::<S>(on, set, marks, before);
+                if !is_left {
+                    return false;
+                }
+                if walk.index == on.first {
+                    break;
+                }
+                rest = match before - walk.index < 8 {
+                    true => (rest * 2 + 1).min(Self::RESTS),
+                    false => 0,
+                };
+                rests = rest;
+            }
+            walk.index -= 1;
+            let is_closed = on.is_closed_at(walk.index);
+            let byte = on.path.get(walk.index).copied();
+            match byte {
+                Some(byte @ ..128) => {
+                    let (set, marks) = walk.sets[0].split_at_mut(words);
+                    Self::take_byte(on, byte, is_closed, set, marks);
+                }
+                Some(_) => walk.take_character(on, is_closed),
+                None => {
+                    let end = on.pattern.len();
+                    let (set, marks) = walk.sets[0].split_at_mut(words);
+                    set[end / 64] |= 1 << (end % 64);
+                    S::set(marks, end / 64, true);
+                }
+            }
+            if has_repeats {
+                walk.settle_idle(on, is_closed);
+            }
+            let (set, marks) = walk.sets[0].split_at_mut(words);
+            Self::settle(on, walk.index, is_closed, set, marks);
+            if byte.is_none() {
+                let mut carry = 0;
+                let mut all = set.iter_mut().zip(on.masks).enumerate();
+                while let Some((word, (nodes, masks))) = all.next() {
+                    let globstars = *nodes << 1 | carry;
+                    carry = *nodes >> 63;
+                    *nodes |= globstars & masks.trailing_skips;
+                    if !S::HAS_MARKS {
+                        continue;
+                    }
+                    if *nodes != 0 {
+                        S::set(marks, word, true);
+                        continue;
+                    }
+                    // On to the next word that has nodes.
+                    let Some(next) = S::next(marks, word + 1) else {
+                        break;
+                    };
+                    if next > word + 1 {
+                        all.nth(next - word - 2);
+                    }
+                }
+            }
+            #[cfg(debug_assertions)]
+            if on.path.len() < Program::IS_LONG {
+                let is_sound = |it: &[u64]| S::is_sound(&it[..words], &it[words..]);
+                debug_assert!(walk.sets.iter().all(|it| is_sound(it)) && is_sound(walk.idle));
+            }
+            // As in a [`Walk`]: inside a character, one that starts further ahead may still go on with an earlier set.
+            let starts_character = !matches!(byte, Some(0x80..=0xBF));
+            let sets = if starts_character { 1 } else { 4 };
+            let has_nothing = |it: &&mut [u64]| S::has_nothing(&it[..words], &it[words..]);
+            if walk.sets[..sets].iter().all(has_nothing) {
+                return false;
+            }
+        }
+        walk.sets[0][0] & 1 != 0
     }
 }
 

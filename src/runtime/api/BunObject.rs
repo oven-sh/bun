@@ -266,7 +266,6 @@ pub(crate) mod bun_object {
         BunObject_lazyPropCb_Archive => super::get_archive_constructor,
         BunObject_lazyPropCb_FFI => crate::ffi::ffi_object_draft::getter,
         BunObject_lazyPropCb_FetchSession => super::get_fetch_session_constructor,
-        BunObject_lazyPropCb_Image => super::get_image_constructor,
         BunObject_lazyPropCb_markdown => super::get_markdown_object,
         BunObject_lazyPropCb_argv => super::get_argv,
         BunObject_lazyPropCb_cron => super::get_cron_object,
@@ -1517,10 +1516,6 @@ fn get_markdown_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 
 fn get_archive_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     jsc::codegen::js::get_constructor::<crate::api::archive::Archive>(global_this)
-}
-
-fn get_image_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::image::Image>(global_this)
 }
 
 fn get_s3_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

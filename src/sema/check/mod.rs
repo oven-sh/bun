@@ -3266,10 +3266,28 @@ impl<'p, 's> Checker<'p, 's> {
     /// Returns `UNRESOLVED` where the recursion here isn't evidence of recursion in tsgo: after a
     /// rejection, and more than 60 levels of `instantiate` deep under a conditional type.
     pub(super) fn excessively_deep(&mut self) -> TypeId {
+        if !self.is_limit_in_tsgo() {
+            return TypeId::UNRESOLVED;
+        }
+        self.error_at_current_node(2589);
+        TypeId::ERROR
+    }
+
+    /// `excessively_deep` for `tailCount == 1000` in `getConditionalType`. Every call counts from 0, so the result is
+    /// the same at any depth, and the queries in progress store theirs. The next request finds the error type in
+    /// `root.instantiations` and reports nothing.
+    pub(super) fn too_many_tail_calls(&mut self) -> TypeId {
+        if !self.is_limit_in_tsgo() {
+            return TypeId::UNRESOLVED;
+        }
+        self.report_at_current_node(2589);
+        TypeId::ERROR
+    }
+
+    fn is_limit_in_tsgo(&mut self) -> bool {
         self.note_gave_up();
         // Only the call right after a rejected `enter` sees the rejection.
-        let is_limit_in_tsgo = match std::mem::replace(&mut self.last_enter, EnterOutcome::Entered)
-        {
+        match std::mem::replace(&mut self.last_enter, EnterOutcome::Entered) {
             EnterOutcome::Rejected => false,
             // `getConditionalType` loops where `conditional_type` recurses, so a tail call costs one
             // level of `instantiate` here and none in tsgo. `instantiate` allows at least 60 levels.
@@ -3277,12 +3295,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.instantiation_depth <= 60
                     || !self.stack.iter().any(|q| matches!(q, Query::Cond(..)))
             }
-        };
-        if !is_limit_in_tsgo {
-            return TypeId::UNRESOLVED;
         }
-        self.error_at_current_node(2589);
-        TypeId::ERROR
     }
 
     /// `instantiateTypeWithAlias`: `instantiationDepth == 100`. `instantiation_depth` counts what tsgo counts under a
@@ -3341,6 +3354,29 @@ impl<'p, 's> Checker<'p, 's> {
     /// program, so which task reaches the limit, and at which node, is too.
     #[cold]
     fn error_at_current_node(&mut self, code: u32) {
+        if !self.report_at_current_node(code) {
+            return;
+        }
+        // A query that began under an instantiation had less depth left than the same query has
+        // from depth 0, where a finite type doesn't reach the limit. tsgo stores its result
+        // regardless, and which types that breaks depends on the order in which it checks files.
+        if let Some(from) = self.frames.iter().position(|frame| frame.entry_depth > 0) {
+            self.mark_tainted_from(from);
+            // That doesn't apply to an infinite type (`is_runaway`), that is, a type node that's in
+            // progress several times.
+            for i in from..self.stack.len() {
+                let q = self.stack[i];
+                if matches!(q, Query::TypeNode(..))
+                    && (self.stack[..i].contains(&q) || self.stack[i + 1..].contains(&q))
+                {
+                    self.frames[i].tainted = false;
+                }
+            }
+        }
+    }
+
+    /// Returns false if there's no node to report at. Nothing in progress is stored then.
+    fn report_at_current_node(&mut self, code: u32) -> bool {
         self.note_gave_up();
         // Under `eager`, tsgo evaluates this later or never, with another `currentNode`.
         let is_reported = self.eager.is_empty();
@@ -3363,29 +3399,15 @@ impl<'p, 's> Checker<'p, 's> {
                 self.ran_out_of_stack.set(true);
             }
             self.note_limit();
-            return self.mark_tainted_from(0);
+            self.mark_tainted_from(0);
+            return false;
         };
         // Past the limit of 5,000,000, every further instantiation in the statement reports the same error.
         // `sort_and_deduplicate_diagnostics` would keep only one, so don't accumulate millions until then.
         if !self.is_last_diagnostic_of_task(at, code) {
             self.add_diagnostic_of(None, Reported::bare(at, code));
         }
-        // A query that began under an instantiation had less depth left than the same query has
-        // from depth 0, where a finite type doesn't reach the limit. tsgo stores its result
-        // regardless, and which types that breaks depends on the order in which it checks files.
-        if let Some(from) = self.frames.iter().position(|frame| frame.entry_depth > 0) {
-            self.mark_tainted_from(from);
-            // That doesn't apply to an infinite type (`is_runaway`), that is, a type node that's in
-            // progress several times.
-            for i in from..self.stack.len() {
-                let q = self.stack[i];
-                if matches!(q, Query::TypeNode(..))
-                    && (self.stack[..i].contains(&q) || self.stack[i + 1..].contains(&q))
-                {
-                    self.frames[i].tainted = false;
-                }
-            }
-        }
+        true
     }
 
     /// 2859 in `checkTypeRelatedToEx` without an error node: `errorNode = c.currentNode`.

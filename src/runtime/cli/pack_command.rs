@@ -351,6 +351,7 @@ impl Drop for WalkedDir {
 fn iterate_included_project_tree(
     pack_queue: &mut PackQueue,
     bins: &[BinInfo],
+    required: &RequiredFiles<'_>,
     includes: &[Pattern],
     excludes: &[Pattern],
     root_dir: &Dir,
@@ -427,7 +428,9 @@ fn iterate_included_project_tree(
             }
 
             if entry.kind == bun_sys::FileKind::File {
-                if included && !is_listed_bin(bins, BinType::File, &entry_subpath) {
+                if (included || required.has(entry_subpath.as_bytes()))
+                    && !is_listed_bin(bins, BinType::File, &entry_subpath)
+                {
                     pack_queue.add(PackQueueItem {
                         path: entry_subpath,
                     })?;
@@ -453,6 +456,7 @@ fn iterate_included_project_tree(
         iterate_project_tree(
             pack_queue,
             bins,
+            required,
             Some(excludes),
             included_dir_info,
             log_level,
@@ -855,6 +859,8 @@ fn add_bundled_dep(
 
     // `is_excluded` only treats depth 1, the project root, specially. Any other depth works.
     const PACKAGE_DEPTH: usize = 2;
+    // No rule of the copy's own package.json applies here, so neither does its `main`.
+    let no_required = RequiredFiles::default();
     let mut dirs = vec![DirInfo(dir, subpath.clone(), PACKAGE_DEPTH)];
 
     while let Some(DirInfo(dir, dir_subpath, dir_depth)) = dirs.pop() {
@@ -872,7 +878,7 @@ fn add_bundled_dep(
             }
 
             if let Exclusion::Excluded(pattern, kind) =
-                is_excluded(&entry, &entry_subpath_, dir_depth, &[], &None)
+                is_excluded(&entry, &entry_subpath_, dir_depth, &[], &None, &no_required)
             {
                 print_ignored(log_level, kind, pattern, &entry_subpath_, entry.kind);
                 continue;
@@ -979,6 +985,7 @@ fn find_dependencies_to_bundle(
 fn iterate_project_tree(
     pack_queue: &mut PackQueue,
     bins: &[BinInfo],
+    required: &RequiredFiles<'_>,
     files_excludes: Option<&[Pattern]>,
     root_dir: DirInfo,
     log_level: LogLevel,
@@ -1033,15 +1040,22 @@ fn iterate_project_tree(
                 continue;
             }
 
-            let entries_inherit: InheritedIgnore =
-                match is_excluded(&entry, &entry_subpath_, dir_depth, &ignores, &inherited) {
-                    Exclusion::Included => None,
-                    Exclusion::WalkOnly(pattern, kind) => Some((pattern.into(), kind)),
-                    Exclusion::Excluded(pattern, kind) => {
-                        print_ignored(log_level, kind, pattern, &entry_subpath_, entry.kind);
-                        continue;
-                    }
-                };
+            let verdict = is_excluded(
+                &entry,
+                &entry_subpath_,
+                dir_depth,
+                &ignores,
+                &inherited,
+                required,
+            );
+            let entries_inherit: InheritedIgnore = match verdict {
+                Exclusion::Included => None,
+                Exclusion::WalkOnly(pattern, kind) => Some((pattern.into(), kind)),
+                Exclusion::Excluded(pattern, kind) => {
+                    print_ignored(log_level, kind, pattern, &entry_subpath_, entry.kind);
+                    continue;
+                }
+            };
 
             if entry.kind == bun_sys::FileKind::File {
                 if !is_listed_bin(bins, BinType::File, &entry_subpath_) {
@@ -1235,6 +1249,47 @@ fn is_package_bin(bins: &[BinInfo], maybe_bin_path: &[u8]) -> bool {
     })
 }
 
+/// The files `main` and a string `browser` name. Like npm, no `files` or ignore rule drops them.
+#[derive(Default)]
+struct RequiredFiles<'a>([Option<&'a [u8]>; 2]);
+
+impl<'a> RequiredFiles<'a> {
+    fn from_package_json(json: &Expr, bump: &'a bun_alloc::Arena) -> Self {
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let mut path_spill: Vec<u8> = Vec::new();
+        let mut subpath_of = |field: &[u8]| -> Option<&'a [u8]> {
+            let value = json.get(field)?.as_string(bump)?;
+            // `bin_subpath` reads `../index.js` as `index.js`. npm packs nothing for such a `main`.
+            if bun_install::bin::path_climbs_out(value) {
+                return None;
+            }
+            let subpath = bin_subpath(value, BinType::File, &mut path_buf, &mut path_spill)?;
+            // Normalizing mostly removes a leading `./`, which leaves the end of `value`: no copy.
+            if value.ends_with(subpath) {
+                return Some(&value[value.len() - subpath.len()..]);
+            }
+            Some(bump.alloc_slice_copy(subpath))
+        };
+        RequiredFiles([subpath_of(b"main"), subpath_of(b"browser")])
+    }
+
+    /// Without case, as in npm. The walk packs the file under the name it has on disk.
+    fn has(&self, subpath: &[u8]) -> bool {
+        (self.0.iter().flatten())
+            .any(|file| strings::eql_case_insensitive_ascii_check_length(file, subpath))
+    }
+
+    /// Whether one of the files is below the directory `dir_subpath`.
+    fn has_below(&self, dir_subpath: &[u8]) -> bool {
+        self.0.iter().flatten().any(|file| {
+            (file.split_at_checked(dir_subpath.len())).is_some_and(|(dir, below)| {
+                below.starts_with(b"/")
+                    && strings::eql_case_insensitive_ascii_check_length(dir, dir_subpath)
+            })
+        })
+    }
+}
+
 /// Default ignores that nothing (including an explicit `"files"` entry) can
 /// re-include: the root lockfiles and the `can_override == false` patterns.
 fn is_unconditionally_excluded(
@@ -1257,7 +1312,7 @@ enum Exclusion<'a> {
     Included,
     Excluded(&'a [u8], IgnorePatternsKind),
     /// An excluded directory that has a negated pattern below it. Unlike in npm, its entries stay
-    /// excluded.
+    /// excluded. A directory above a required file is walked the same way.
     WalkOnly(&'a [u8], IgnorePatternsKind),
 }
 
@@ -1270,6 +1325,7 @@ fn is_excluded<'a>(
     dir_depth: usize,
     ignores: &'a [IgnorePatterns],
     inherited: &'a InheritedIgnore,
+    required: &RequiredFiles<'_>,
 ) -> Exclusion<'a> {
     let entry_name = entry.name.slice_u8();
 
@@ -1356,9 +1412,10 @@ fn is_excluded<'a>(
         }
     }
 
-    if !ignored {
+    let is_dir = entry.kind == bun_sys::FileKind::Directory;
+    if !ignored || (!is_dir && required.has(entry_subpath.as_bytes())) {
         Exclusion::Included
-    } else if walk_only {
+    } else if walk_only || (is_dir && required.has_below(entry_subpath.as_bytes())) {
         Exclusion::WalkOnly(ignore_pattern, ignore_kind)
     } else {
         Exclusion::Excluded(ignore_pattern, ignore_kind)
@@ -1402,6 +1459,7 @@ fn file_kind_tag(kind: bun_core::FileKind) -> &'static str {
 
 /// Everything `bun pm pack` would put in the tarball besides package.json: bins, then either the `files` list or
 /// the whole tree minus ignores. Shared with `bun pm diff`, whose local side is "what would be published".
+/// Either way, the walks keep the files that `main` and a string `browser` name.
 /// `root_path` is the path `root_dir` was opened from.
 pub(crate) fn published_files(
     root_dir: &Dir,
@@ -1412,6 +1470,7 @@ pub(crate) fn published_files(
 ) -> Result<(PackQueue, Vec<BinInfo>), AllocError> {
     let mut pack_queue = PackQueue::default();
     let bins = get_package_bins(json_root);
+    let required = RequiredFiles::from_package_json(json_root, bump);
 
     for bin in &bins {
         let kind = bin_kind_without_following_symlinks(root_path, bin.path.as_bytes());
@@ -1426,6 +1485,7 @@ pub(crate) fn published_files(
                     iterate_project_tree(
                         &mut pack_queue,
                         &[],
+                        &required,
                         None,
                         DirInfo(bin_dir, bin.path.as_bytes().into(), 2),
                         log_level,
@@ -1440,6 +1500,7 @@ pub(crate) fn published_files(
         iterate_project_tree(
             &mut pack_queue,
             &bins,
+            &required,
             None,
             DirInfo(Dir::from_fd(root_dir.fd), Box::default(), 1),
             log_level,
@@ -1452,14 +1513,16 @@ pub(crate) fn published_files(
         Output::err_generic("expected `files` to be an array of string values", ());
         Global::crash();
     }
-    let Some(mut files_array) = files.as_array() else {
+    if !files.is_array() {
         fail_files();
-    };
+    }
+    // `None` for an empty array, which includes nothing: only what is always packed goes in.
+    let mut files_array = files.as_array();
     let mut includes: Vec<Pattern> = Vec::new();
     let mut excludes: Vec<Pattern> = Vec::new();
     let mut path_buf = bun_paths::path_buffer_pool::get();
     let mut path_spill: Vec<u8> = Vec::new();
-    while let Some(files_entry) = files_array.next() {
+    while let Some(files_entry) = files_array.as_mut().and_then(|files| files.next()) {
         let Some(file_entry_str) = files_entry.as_string(bump) else {
             fail_files();
         };
@@ -1478,6 +1541,7 @@ pub(crate) fn published_files(
     iterate_included_project_tree(
         &mut pack_queue,
         &bins,
+        &required,
         &includes,
         &excludes,
         root_dir,

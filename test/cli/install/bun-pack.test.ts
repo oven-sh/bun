@@ -79,6 +79,14 @@ async function sortedNames(dir: string): Promise<string[]> {
   return (await readdir(dir)).sort();
 }
 
+// The paths of the `packed <size> <path>` lines that `bun pm pack` and `bun publish` print.
+function packedPaths(out: string): string[] {
+  return out
+    .split("\n")
+    .filter(line => line.startsWith("packed "))
+    .map(line => line.slice(line.indexOf(" ", "packed ".length) + 1));
+}
+
 const indexJs = "console.log('hello ./index.js')";
 
 test.concurrent("basic", async () => {
@@ -3080,6 +3088,51 @@ describe.concurrent("bundledDependencies", () => {
     expect(JSON.parse(tarball.entries.at(-1)!.contents).dependencies).toEqual({ lib: "1.0.0", y: "1.0.0" });
   });
 
+  // Skipped on Windows like the test above: the links in node_modules are made as on POSIX.
+  test.skipIf(isWindows)(
+    'the "main" of a bundled workspace is packed whatever its files and .npmignore say',
+    async () => {
+      using dir = tempDir("pack-bundled-main", {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/lib/package.json": JSON.stringify({
+          name: "lib",
+          version: "1.0.0",
+          dependencies: { util: "workspace:*", other: "workspace:*" },
+          bundledDependencies: ["util", "other"],
+        }),
+        "packages/util/package.json": JSON.stringify({
+          name: "util",
+          version: "1.0.0",
+          main: "index.js",
+          files: ["dist"],
+        }),
+        "packages/util/index.js": indexJs,
+        "packages/util/dist/a.js": indexJs,
+        "packages/other/package.json": JSON.stringify({ name: "other", version: "1.0.0", main: "./build/index.js" }),
+        "packages/other/build/index.js": indexJs,
+        "packages/other/build/other.js": indexJs,
+        "packages/other/.npmignore": "build\n",
+        "node_modules": {},
+      });
+      for (const name of ["lib", "util", "other"]) {
+        await symlink(join("..", "packages", name), join(dir, "node_modules", name));
+      }
+      const lib = join(dir, "packages", "lib");
+
+      const { err, exitCode } = await runPack(lib);
+      expect(err).toBe("");
+      expect(tarballEntries(join(lib, "lib-1.0.0.tgz"))).toEqual([
+        "package/package.json",
+        "package/node_modules/other/build/index.js",
+        "package/node_modules/other/package.json",
+        "package/node_modules/util/dist/a.js",
+        "package/node_modules/util/index.js",
+        "package/node_modules/util/package.json",
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test.each([
     ["does not parse", '{ "name": "fixture", oops'],
     ["has the same name", JSON.stringify({ name: "app", version: "9.0.0" })],
@@ -3820,6 +3873,120 @@ describe.concurrent("files", () => {
     ]);
     expect(exitCode).toBe(0);
   });
+
+  // npm: "Certain files are always included, regardless of settings: [...] The file in the "main" field".
+  // npm-packlist does the same for a string "browser".
+  describe('the files that "main" and a string "browser" name are packed whatever "files" says', () => {
+    const folder = (manifest: object) => ({
+      "package.json": JSON.stringify({ name: "pack-files-main", version: "1.0.0", files: ["lib"], ...manifest }),
+      "index.js": "x",
+      "browser.js": "x",
+      "other.js": "x",
+      "lib/a.js": "x",
+      "lib/index.js": "x",
+      "lib/sub/index.js": "x",
+      "lib/sub/other.js": "x",
+      "src/deep/entry.js": "x",
+      "src/deep/other.js": "x",
+      "yarn.lock": "x",
+      ".npmrc": "# nothing",
+      "node_modules/dep/index.js": "x",
+      "1": "x",
+    });
+    async function packed(manifest: object) {
+      using dir = tempDir("pack-files-main", folder(manifest));
+      const { err, exitCode } = await runPack(dir);
+      expect(err).toBe("");
+      expect(exitCode).toBe(0);
+      return tarballEntries(join(dir, "pack-files-main-1.0.0.tgz")).map(entry => entry.slice("package/".length));
+    }
+    const lib = ["lib/a.js", "lib/index.js", "lib/sub/index.js", "lib/sub/other.js"];
+
+    test.each([
+      [{ main: "index.js" }, ["index.js", ...lib]],
+      [{ browser: "browser.js" }, ["browser.js", ...lib]],
+      [{ main: "index.js", browser: "src/deep/entry.js" }, ["index.js", ...lib, "src/deep/entry.js"]],
+      // A path counts from the package root, as a bin's does. npm takes "main" as written, so it leaves out
+      // one that starts with "./" (npm/cli#7799).
+      [{ main: "./index.js", browser: "./src/deep/entry.js" }, ["index.js", ...lib, "src/deep/entry.js"]],
+      [{ main: "src/../index.js", browser: "src//deep/entry.js" }, ["index.js", ...lib, "src/deep/entry.js"]],
+      // Like npm, the field matches without case. The file keeps the name it has on disk.
+      [{ main: "INDEX.JS", browser: "src\\deep\\Entry.js" }, ["index.js", ...lib, "src/deep/entry.js"]],
+      // a negated entry does not take it out
+      [{ main: "index.js", files: ["*.js", "!index.js"] }, ["browser.js", "index.js", "other.js"]],
+      [{ main: "lib/index.js", files: ["lib", "!lib/index.js", "!lib/sub"] }, ["lib/a.js", "lib/index.js"]],
+      // and of a directory that is left out, only the file comes back
+      [{ main: "lib/sub/index.js", files: ["lib", "!lib/sub"] }, ["lib/a.js", "lib/index.js", "lib/sub/index.js"]],
+      [
+        { main: "src/deep/entry.js", files: ["**/*.js", "!src/**"] },
+        ["browser.js", "index.js", ...lib, "other.js", "src/deep/entry.js"],
+      ],
+      // an empty "files" includes nothing else
+      [{ main: "index.js", files: [] }, ["index.js"]],
+      // it is packed once
+      [{ main: "index.js", browser: "./index.js" }, ["index.js", ...lib]],
+      [{ main: "lib/a.js", browser: "browser.js" }, ["browser.js", ...lib]],
+      // a "browser" object names no file
+      [{ main: "index.js", browser: { "./other.js": "./browser.js" } }, ["index.js", ...lib]],
+    ])("%j", async (manifest, expected) => {
+      expect(await packed(manifest)).toEqual(["package.json", ...expected]);
+    });
+
+    // Only a regular file of the package that the field names exactly. npm reads "main" as a glob, and packs
+    // .npmrc, a lockfile or a file of node_modules when "main" names it. "browser" is there to fail without the rule.
+    test.each(
+      [
+        "index",
+        "src",
+        "missing.js",
+        "*.js",
+        ".",
+        "/index.js",
+        "../index.js",
+        "package.json",
+        "yarn.lock",
+        ".npmrc",
+        "node_modules/dep/index.js",
+        1,
+        ["index.js"],
+      ].map(main => [main]),
+    )('"main" of %j adds nothing', async main => {
+      expect(await packed({ main, browser: "browser.js" })).toEqual(["package.json", "browser.js", ...lib]);
+    });
+
+    // As in npm. And "index.js" is not packed as the default of "main".
+    test('"module", "types" and "exports" add nothing', async () => {
+      const fields = { module: "other.js", types: "other.js", exports: "./other.js" };
+      expect(await packed({ ...fields, browser: "browser.js" })).toEqual(["package.json", "browser.js", ...lib]);
+    });
+
+    test("--dry-run lists the file once and counts it", async () => {
+      using dir = tempDir("pack-files-main", folder({ main: "index.js", browser: "./index.js" }));
+      const { out, err, exitCode } = await runPack(dir, ["--dry-run"]);
+      expect(err).toBe("");
+      expect(packedPaths(out)).toEqual(["package.json", "index.js", ...lib]);
+      expect(out).toContain("Total files: 6");
+      expect(exitCode).toBe(0);
+    });
+
+    // A folder with an empty "files" is read as pack publishes it too, not as the whole folder.
+    test('bun pm diff with an empty "files"', async () => {
+      const a = folder({ main: "index.js", files: [] });
+      using dir = tempDir("pack-files-main-diff", { a, b: { ...a, "index.js": "y", "other.js": "y" } });
+      await using proc = spawn({
+        cmd: [bunExe(), "pm", "diff", "./a", "./b", "--name-only"],
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        env: bunEnv,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.split("\n").filter(line => /^[AMD] /.test(line))).toEqual(["M index.js"]);
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 describe.concurrent(".gitignore/.npmignore", () => {
@@ -4185,6 +4352,8 @@ describe.concurrent(".gitignore/.npmignore", () => {
       [name]: "node_modules\ndist\n",
       "packages/m/package.json": JSON.stringify({ name: "m", version: "1.0.0", main: "dist/index.js" }),
       "packages/m/dist/index.js": indexJs,
+      // "main" does not name this one, so only the rule can keep it out
+      "packages/m/dist/util.js": indexJs,
       "packages/m/src/index.ts": indexJs,
     });
     const member = join(dir, "packages", "m");
@@ -4194,9 +4363,238 @@ describe.concurrent(".gitignore/.npmignore", () => {
     expect(tarballEntries(join(member, "m-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/dist/index.js",
+      "package/dist/util.js",
       "package/src/index.ts",
     ]);
     expect(exitCode).toBe(0);
+  });
+
+  describe('the files that "main" and a string "browser" name are packed whatever the ignore files say', () => {
+    const tree = {
+      "index.js": "x",
+      "dist/index.js": "x",
+      "dist/b.js": "x",
+      "dist/other.js": "x",
+      "a/b/c/index.js": "x",
+      "a/b/other.js": "x",
+    };
+    // `added` holds the ignore files, and any other file that a case needs beside `tree`.
+    async function packed(manifest: object, added: Record<string, string>, files: object = tree) {
+      using dir = tempDir("pack-ignore-main", {
+        "package.json": JSON.stringify({ name: "pack-ignore-main", version: "1.0.0", ...manifest }),
+        ...files,
+        ...added,
+      });
+      const { err, exitCode } = await runPack(dir);
+      expect(err).toBe("");
+      expect(exitCode).toBe(0);
+      return tarballEntries(join(dir, "pack-ignore-main-1.0.0.tgz")).map(entry => entry.slice("package/".length));
+    }
+    const a = ["a/b/c/index.js", "a/b/other.js"];
+    const dist = ["dist/b.js", "dist/index.js", "dist/other.js"];
+
+    test.each([
+      // the rule matches the file, and the files of that name in other directories stay out
+      [
+        { main: "index.js" },
+        { ".npmignore": "index.js\n" },
+        ["a/b/other.js", "dist/b.js", "dist/other.js", "index.js"],
+      ],
+      [{ main: "dist/index.js" }, { ".gitignore": "dist/index.js\n" }, [...a, ...dist, "index.js"]],
+      // https://github.com/oven-sh/bun/issues/15602: npm's list there has the file that "main" names
+      [{ main: "dist/index.js" }, { ".npmignore": "*\n" }, ["dist/index.js"]],
+      [{ main: "dist/index.js", browser: "./dist/b.js" }, { ".npmignore": "*.js\n" }, ["dist/b.js", "dist/index.js"]],
+      [{ main: "dist/index.js" }, { ".npmignore": "dist/**\n" }, [...a, "dist/index.js", "index.js"]],
+      // The rule matches a directory above the file, and not the files in it. npm packs the whole directory then.
+      // The directory is walked as it is for a negation: the file is packed, and the rest of it stays out.
+      [{ main: "dist/index.js" }, { ".gitignore": "dist\n" }, [...a, "dist/index.js", "index.js"]],
+      [{ browser: "dist/b.js" }, { ".gitignore": "dist\n" }, [...a, "dist/b.js", "index.js"]],
+      [{ main: "./dist/index.js" }, { ".npmignore": "dist/\n" }, [...a, "dist/index.js", "index.js"]],
+      [{ main: "Dist/Index.js" }, { ".npmignore": "/dist\n" }, [...a, "dist/index.js", "index.js"]],
+      [{ main: "a/b/c/index.js" }, { ".npmignore": "a\n" }, ["a/b/c/index.js", ...dist, "index.js"]],
+      [{ main: "a/b/c/index.js" }, { ".npmignore": "a/b\ndist\n" }, ["a/b/c/index.js", "index.js"]],
+      // A negation brings back what it names in a directory that is walked. That is so for one without a slash,
+      // and for one in the directory's own ignore file, also when the field names a file that is not there.
+      [
+        { main: "dist/index.js" },
+        { ".npmignore": "dist\n!dist/other.js\n" },
+        [...a, "dist/index.js", "dist/other.js", "index.js"],
+      ],
+      [
+        { main: "dist/index.js" },
+        { ".gitignore": "dist\n!other.js\n" },
+        [...a, "dist/index.js", "dist/other.js", "index.js"],
+      ],
+      [
+        { main: "dist/index.js" },
+        { ".npmignore": "dist\n", "dist/.npmignore": "!other.js\n" },
+        [...a, "dist/index.js", "dist/other.js", "index.js"],
+      ],
+      [{ main: "dist/missing.js" }, { ".gitignore": "dist\n!other.js\n" }, [...a, "dist/other.js", "index.js"]],
+      // The ignore file of a subdirectory does not take the file out. In npm it does.
+      [{ main: "dist/index.js" }, { "dist/.npmignore": "index.js\n" }, [...a, ...dist, "index.js"]],
+      [{ main: "dist/index.js" }, { "dist/.gitignore": "*\n" }, [...a, "dist/index.js", "index.js"]],
+      // a file with the name of the directory that the field's path starts with stays out
+      [
+        { main: "build/index.js", browser: "dist/b.js" },
+        { ".npmignore": "build\ndist\n", "build": "x" },
+        [...a, "dist/b.js", "index.js"],
+      ],
+    ])("%j with %j", async (manifest, added, expected) => {
+      expect(await packed(manifest, added)).toEqual(["package.json", ...expected]);
+    });
+
+    // Only a directory above the file is opened. Here that would show: the directory's own ignore file brings
+    // other.js back once the directory is walked. npm packs the whole directory for "dist". "browser" is there to
+    // fail without the rule.
+    test.each(["dist.js", "dist", "dist/"])('"main" of %j opens no directory', async main => {
+      const added = { ".npmignore": "dist\na\n", "dist/.npmignore": "!other.js\n" };
+      expect(await packed({ main, browser: "a/b/other.js" }, added)).toEqual([
+        "package.json",
+        "a/b/other.js",
+        "index.js",
+      ]);
+    });
+
+    // Nothing re-includes `.git` and `.npmrc`, however the field spells them. npm packs them for "main".
+    // "browser" is there to fail without the rule.
+    test.each(["conf/.npmrc", "conf/.NPMRC", "conf/.git/config", "node_modules/dep/index.js"])(
+      '"main" of %j stays out',
+      async main => {
+        const files = {
+          "index.js": "x",
+          "dist/b.js": "x",
+          "conf/.npmrc": "//registry.example/:_authToken=secret",
+          "conf/.git/config": "[remote]",
+          "node_modules/dep/index.js": "x",
+        };
+        const added = { ".npmignore": "conf\ndist\n" };
+        expect(await packed({ main, browser: "dist/b.js" }, added, files)).toEqual([
+          "package.json",
+          "dist/b.js",
+          "index.js",
+        ]);
+      },
+    );
+
+    // The file would come from outside the package. "browser" is there to fail without the rule.
+    test.each([
+      ["link.js", {}],
+      ["linked/secret.js", {}],
+      ["junction/secret.js", {}],
+      ["link.js", { files: ["lib"] }],
+    ])('"main" of %j, which a link leads to, is not packed (%j)', async (main, fields) => {
+      using dir = tempDir("pack-ignore-main-link", {
+        "outside/secret.js": "outside the package",
+        "pkg/package.json": JSON.stringify({
+          name: "pack-ignore-main",
+          version: "1.0.0",
+          main,
+          browser: "real.js",
+          ...fields,
+        }),
+        "pkg/.npmignore": "link.js\nlinked\njunction\nreal.js\n",
+        "pkg/real.js": "x",
+        "pkg/lib/a.js": "x",
+      });
+      const [outside, pkgDir] = [join(dir, "outside"), join(dir, "pkg")];
+      await Promise.all([
+        symlink(join("..", "outside", "secret.js"), join(pkgDir, "link.js"), "file"),
+        symlink(join("..", "outside"), join(pkgDir, "linked"), "dir"),
+        // A junction on Windows. Elsewhere, "junction" is ignored and a plain symlink is created.
+        symlink(outside, join(pkgDir, "junction"), "junction"),
+      ]);
+
+      const { err, exitCode } = await runPack(pkgDir);
+      expect(err).toBe("");
+      expect(tarballEntries(join(pkgDir, "pack-ignore-main-1.0.0.tgz"))).toEqual([
+        "package/package.json",
+        "package/lib/a.js",
+        "package/real.js",
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    const ignoredMain = {
+      "package.json": JSON.stringify({ name: "pack-ignore-main", version: "1.0.0", main: "dist/index.js" }),
+      ".gitignore": "dist\n",
+      "dist/index.js": "x",
+      "dist/other.js": "x",
+      "index.js": "x",
+    };
+
+    // The directory is not reported as ignored, because one of its files is packed.
+    test("--dry-run --verbose", async () => {
+      using dir = tempDir("pack-ignore-main-verbose", ignoredMain);
+      const { out, err, exitCode } = await runPack(dir, ["--dry-run", "--verbose"]);
+      expect(err).toBe("");
+      expect(out.split("\n").filter(line => line.startsWith("ignore "))).toEqual([
+        "ignore [default:.gitignore] .gitignore",
+        "ignore [.gitignore:dist] dist/other.js",
+      ]);
+      expect(packedPaths(out)).toEqual(["package.json", "dist/index.js", "index.js"]);
+      expect(out).toContain("Total files: 3");
+      expect(exitCode).toBe(0);
+    });
+
+    test("bun publish --dry-run and bun pm diff", async () => {
+      using dir = tempDir("pack-ignore-main-publish", { a: ignoredMain, b: { ...ignoredMain, "dist/index.js": "y" } });
+
+      await using publish = spawn({
+        cmd: [bunExe(), "publish", "--dry-run"],
+        cwd: join(dir, "a"),
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        // `bun publish` stops early when it has no credentials. Nothing listens on port 1.
+        env: { ...bunEnv, npm_config_registry: "http://user:password@127.0.0.1:1/" },
+      });
+      const [out, err, exitCode] = await Promise.all([publish.stdout.text(), publish.stderr.text(), publish.exited]);
+      expect(err).toBe("");
+      expect(packedPaths(out)).toEqual(["package.json", "dist/index.js", "index.js"]);
+      expect(exitCode).toBe(0);
+
+      await using diff = spawn({
+        cmd: [bunExe(), "pm", "diff", "./a", "./b", "--name-only"],
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        env: bunEnv,
+      });
+      const [stdout, stderr, diffExitCode] = await Promise.all([diff.stdout.text(), diff.stderr.text(), diff.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.split("\n").filter(line => /^[AMD] /.test(line))).toEqual(["M dist/index.js"]);
+      expect(diffExitCode).toBe(0);
+    });
+
+    // The fields are read after the scripts, and the walk finds the file they made.
+    test("a prepack script that builds the file and names it", async () => {
+      using dir = tempDir("pack-ignore-main-prepack", {
+        "package.json": JSON.stringify({
+          name: "pack-ignore-main",
+          version: "1.0.0",
+          main: "src/index.js",
+          scripts: { prepack: `${bunExe()} build.js` },
+        }),
+        ".npmignore": "dist\nsrc\nbuild.js\n",
+        "src/index.js": "x",
+        "build.js": `
+          const fs = require("fs");
+          fs.mkdirSync("dist");
+          fs.writeFileSync("dist/index.js", "x");
+          const manifest = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          fs.writeFileSync("package.json", JSON.stringify({ ...manifest, main: "dist/index.js" }));
+        `,
+      });
+
+      const { exitCode } = await runPack(dir);
+      expect(tarballEntries(join(dir, "pack-ignore-main-1.0.0.tgz"))).toEqual([
+        "package/package.json",
+        "package/dist/index.js",
+      ]);
+      expect(exitCode).toBe(0);
+    });
   });
 });
 
@@ -4862,6 +5260,73 @@ describe.concurrent("bins", () => {
     expect(stdout.split("\n").filter(line => /^[AMD] /.test(line))).toEqual(["M index.js"]);
     expect(diffExitCode).toBe(0);
   });
+
+  test.each([
+    [{ main: "index.js" }, false],
+    [{ main: "index.js", bin: "./index.js" }, true],
+  ])('%j: "main" is packed with the mode it has, and once when it is a bin too', async (fields, executable) => {
+    using dir = tempDir("pack-bins-main", {
+      "package.json": JSON.stringify({ name: "pack-bins-main", version: "1.0.0", files: ["lib"], ...fields }),
+      "index.js": indexJs,
+    });
+
+    await pack(dir, bunEnv);
+    const tarball = readTarball(join(dir, "pack-bins-main-1.0.0.tgz"));
+    expect(
+      tarball.entries.map(entry => ({ pathname: entry.pathname, executable: (entry.perm & 0o111) !== 0 })),
+    ).toEqual([
+      { pathname: "package/package.json", executable: false },
+      { pathname: "package/index.js", executable },
+    ]);
+  });
+
+  // npm packs a root lockfile, and a file below node_modules, for a bin and for "main" alike. Here a bin is packed
+  // by its path, and "main" by the walks, which never pack those.
+  test.each([
+    [
+      { bin: { a: "yarn.lock", b: "node_modules/dep/index.js", c: "lib/node_modules/x/index.js" } },
+      ["lib/a.js", "lib/node_modules/x/index.js", "node_modules/dep/index.js", "yarn.lock"],
+    ],
+    [{ main: "lib/node_modules/x/index.js", browser: "browser.js" }, ["browser.js", "lib/a.js"]],
+  ])('a bin and "main" do not pack the same paths: %j', async (fields, expected) => {
+    using dir = tempDir("pack-bins-main-paths", {
+      "package.json": JSON.stringify({ name: "pack-bins-main-paths", version: "1.0.0", files: ["lib"], ...fields }),
+      "browser.js": "x",
+      "yarn.lock": "x",
+      "lib/a.js": "x",
+      "lib/node_modules/x/index.js": "x",
+      "node_modules/dep/index.js": "x",
+    });
+
+    await pack(dir, bunEnv);
+    expect(tarballEntries(join(dir, "pack-bins-main-paths-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      ...expected.map(path => `package/${path}`),
+    ]);
+  });
+
+  // The bin directory is packed by its own walk, which starts without the rules of the package root.
+  test('"main" in "directories.bin" is packed whatever the ignore file of that directory says', async () => {
+    using dir = tempDir("pack-bins-dir-main", {
+      "package.json": JSON.stringify({
+        name: "pack-bins-dir-main",
+        version: "1.0.0",
+        main: "bins/main.js",
+        directories: { bin: "bins" },
+      }),
+      "bins/.npmignore": "main.js\nother.js\n",
+      "bins/cli.js": "x",
+      "bins/main.js": "x",
+      "bins/other.js": "x",
+    });
+
+    await pack(dir, bunEnv);
+    expect(tarballEntries(join(dir, "pack-bins-dir-main-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/bins/cli.js",
+      "package/bins/main.js",
+    ]);
+  });
 });
 
 // `chmod 000` keeps the user that packs out of one entry that the scan looks for. The entry is
@@ -4984,6 +5449,13 @@ describe.concurrent.skipIf(isWindows)("an entry that exists but can't be opened"
     locked: "b/bin",
     message: 'EACCES: Permission denied: failed to stat file: "bin/cli.js" (lstat)',
   };
+  // The walk has to open the directory to find the file, and a tarball without it is not what was asked for.
+  const mainBelowLocked = {
+    what: 'the directory of "main"',
+    fields: { main: "bin/cli.js" },
+    locked: "b/bin",
+    message: 'EACCES: failed to open directory "bin" for packing',
+  };
   const pmPack = { command: "pm pack", cwd: "b", banner: "bun pack <version> (<revision>)" };
   const pmPackDryRun = { ...pmPack, command: "pm pack --dry-run" };
   const publish = { command: "publish", cwd: "b", banner: "bun publish <version> (<revision>)" };
@@ -4993,10 +5465,11 @@ describe.concurrent.skipIf(isWindows)("an entry that exists but can't be opened"
     ...[pmPack, pmPackDryRun, publishDryRun, pmDiff].map(command => ({ ...binDirectory, ...command })),
     ...[pmPack, publish].map(command => ({ ...binFile, ...command })),
     ...[pmPack, pmPackDryRun, publishDryRun, pmDiff].map(command => ({ ...binBelowLocked, ...command })),
+    ...[pmPack, pmPackDryRun, publishDryRun, pmDiff].map(command => ({ ...mainBelowLocked, ...command })),
   ])("$what, bun $command", async ({ fields, locked, message, command, cwd, banner }) => {
     const folder = {
       "package.json": manifest("pack-locked", fields),
-      // keeps the walk of the package out of the directory, so only the bin leads there
+      // keeps the walk of the package out of the directory, so only the bin or "main" leads there
       ".npmignore": "bin\n",
       "index.js": indexJs,
       "bin/cli.js": "#!/usr/bin/env bun\n",

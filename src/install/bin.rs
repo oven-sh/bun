@@ -784,7 +784,7 @@ pub fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
 
 /// Returns true if `target` is absolute, or if its `..` components lead above the directory it
 /// starts in.
-pub(crate) fn path_climbs_out(target: &[u8]) -> bool {
+pub fn path_climbs_out(target: &[u8]) -> bool {
     if path::is_absolute(target) {
         return true;
     }

@@ -2918,6 +2918,28 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
     return JSValue::encode(jsUndefined());
 }
 
+enum class InheritsClass : int32_t {
+#include "js_classes+enum.h"
+};
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionInherits, (JSGlobalObject*, CallFrame* callFrame))
+{
+    JSValue value = callFrame->argument(1);
+    switch (static_cast<InheritsClass>(callFrame->uncheckedArgument(0).asInt32())) {
+    case InheritsClass::Blob:
+        return JSValue::encode(jsBoolean(value.inherits<JSBlob>()));
+    case InheritsClass::ReadableStream:
+        return JSValue::encode(jsBoolean(value.inherits<JSReadableStream>()));
+    case InheritsClass::WritableStream:
+        return JSValue::encode(jsBoolean(value.inherits<JSWritableStream>()));
+    case InheritsClass::TransformStream:
+        return JSValue::encode(jsBoolean(value.inherits<JSTransformStream>()));
+    case InheritsClass::ArrayBuffer:
+        return JSValue::encode(jsBoolean(value.inherits<JSArrayBuffer>()));
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
 {
     auto& vm = this->vm();

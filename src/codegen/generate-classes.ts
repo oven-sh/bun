@@ -3,7 +3,6 @@ import { existsSync, readFileSync } from "fs";
 import { createRequire } from "module";
 import path from "path";
 import { inspect } from "util";
-import jsclasses from "./../jsc/bindings/js_classes.ts";
 import { type ClassDefinition, type Field } from "./class-definitions.ts";
 import { writeIfNotChanged } from "./helpers.ts";
 
@@ -2108,12 +2107,6 @@ const GENERATED_CLASSES_HEADER = [
 
 #include "root.h"
 
-namespace Zig {
-
-JSC_DECLARE_HOST_FUNCTION(jsFunctionInherits);
-
-}
-
 #include "JSDOMWrapper.h"
 #include <wtf/NeverDestroyed.h>
 #include "SerializedScriptValue.h"
@@ -2220,30 +2213,6 @@ const GENERATED_CLASSES_IMPL_FOOTER = `
 } // namespace WebCore
 
 `;
-
-function jsInheritsCppImpl() {
-  return `
-${jsclasses
-  .map(v => v[1])
-  .filter(v => v?.length > 0)
-  .map((v, i) => `#include "${v}"`)
-  .join("\n")}
-
-JSC_DEFINE_HOST_FUNCTION(Zig::jsFunctionInherits, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto id = callFrame->argument(0).toInt32(globalObject);
-    auto value = callFrame->argument(1);
-    if (!value.isCell()) return JSValue::encode(jsBoolean(false));
-    auto cell = value.asCell();
-    switch (id) {
-${jsclasses
-  .map(v => v[0])
-  .map((v, i) => `    case ${i}: return JSValue::encode(jsBoolean(dynamicDowncast<WebCore::JS${v}>(cell) != nullptr));`)
-  .join("\n")}
-    }
-    return JSValue::encode(jsBoolean(false));
-}`;
-}
 
 function isTransferableCppImpl() {
   return `
@@ -2483,7 +2452,6 @@ function writeCppSerializers() {
     allImpls.join("\n"),
     writeCppSerializers(classes),
     GENERATED_CLASSES_IMPL_FOOTER,
-    jsInheritsCppImpl(),
     isTransferableCppImpl(),
   ]);
 

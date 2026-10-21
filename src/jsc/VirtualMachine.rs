@@ -2111,11 +2111,6 @@ impl VirtualMachine {
         !self.bun_watcher.is_null()
     }
 
-    /// `--hot` and `--watch` print an unhandled error and keep running until the next reload.
-    fn unhandled_errors_are_fatal(&self) -> bool {
-        !self.is_watcher_enabled()
-    }
-
     /// Thin setter so callers don't need `.with` plumbing on the thread-local.
     #[inline]
     pub fn set_is_main_thread_vm(value: bool) {
@@ -2197,9 +2192,10 @@ impl VirtualMachine {
             // and exit, like node's fatal-exception path. Main thread only:
             // process_exit() RETURNS on a worker, so the panic would fire; a
             // worker falls through and exits 1 below (e.g. a beforeExit throw).
+            // `--hot` and `--watch` stay to wait for the next save.
             if self.exit_on_uncaught_exception
                 && self.is_main_thread()
-                && self.unhandled_errors_are_fatal()
+                && !self.is_watcher_enabled()
             {
                 self.run_error_handler(err, None);
                 // `process_exit` emits `exit`, re-entering here if a listener
@@ -2211,9 +2207,7 @@ impl VirtualMachine {
                 panic!("made it past process.exit()");
             }
             // TODO maybe we want a separate code path for uncaught exceptions
-            if self.unhandled_errors_are_fatal() {
-                self.unhandled_error_counter += 1;
-            }
+            self.unhandled_error_counter += 1;
             self.exit_handler.exit_code = 1;
             (self.on_unhandled_rejection)(self, global_object, err);
         }
@@ -4444,7 +4438,7 @@ impl VirtualMachine {
         }
     }
 
-    /// Routes an unhandled promise rejection to the configured handler.
+    /// Routes an unhandled promise rejection to the configured handler, bumping the unhandled-error counter.
     pub fn unhandled_rejection(
         &mut self,
         global_object: &JSGlobalObject,
@@ -4563,9 +4557,7 @@ impl VirtualMachine {
                 }
             }
         }
-        if self.unhandled_errors_are_fatal() {
-            self.unhandled_error_counter += 1;
-        }
+        self.unhandled_error_counter += 1;
         (self.on_unhandled_rejection)(self, global_object, reason);
     }
 
@@ -4770,6 +4762,14 @@ impl VirtualMachine {
         // the JSC module loader registry.
         self.global().reload().expect("Failed to reload");
         self.hot_reload_counter += 1;
+        // An unhandled error stopped the timers of the run it ended. This run starts without them.
+        if self.unhandled_error_counter > 0 {
+            self.unhandled_error_counter = 0;
+            if let Some(hooks) = runtime_hooks() {
+                // SAFETY: live per-thread VM on the JS thread; `runtime_state` stays installed.
+                unsafe { (hooks.cancel_timers)(core::ptr::from_mut(self), None) };
+            }
+        }
         // reload_entry_point() stores into pending_internal_promise whenever it returns a promise.
         let main = self.main;
         // Note: reshaped for borrowck — copy the `RawSlice` first to avoid

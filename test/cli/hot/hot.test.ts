@@ -1241,9 +1241,12 @@ it.each(["--hot", "--watch"])("%s keeps running and reloading after uncaught exc
         },
       });
       (async () => {
-        for (let i = 1; i <= 3; i++) await fetch(new URL("/" + i, server.url));
-        setTimeout(() => console.log("timer fired"), 1);
+        for (let i = 1; i <= 2; i++) await fetch(new URL("/" + i, server.url));
+        console.log("still running");
       })();
+      // The timers of a run stop at its first uncaught exception. On Windows, libuv goes on firing them.
+      if (process.platform !== "win32") setTimeout(() => process.exit(1), 1);
+      throw new Error("from the entry point");
     `,
   });
   await using runner = spawn({
@@ -1256,10 +1259,13 @@ it.each(["--hot", "--watch"])("%s keeps running and reloading after uncaught exc
   });
   const stdout = follow(runner.stdout);
   const stderr = follow(runner.stderr);
-  expect(await stdout("timer fired")).toBe(true);
-  expect(await stderr("error: from /3")).toBe(true);
+  expect(await stdout("still running")).toBe(true);
+  expect(await stderr("error: from /2")).toBe(true);
 
-  writeFileSync(join(String(dir), "main.js"), `console.log("reloaded");\nprocess.exit(0);\n`);
-  expect(await stdout("reloaded")).toBe(true);
+  writeFileSync(
+    join(String(dir), "main.js"),
+    `setTimeout(() => {\n  console.log("timer fired");\n  process.exit(0);\n}, 1);\n`,
+  );
+  expect(await stdout("timer fired")).toBe(true);
   expect(await runner.exited).toBe(0);
 });

@@ -1843,6 +1843,7 @@ describe("backpressure", () => {
       const NET_SOCKET = "server.emit('connection', socket) with a net.Socket";
       const ALLOW_HTTP1 = "http2.createSecureServer({ allowHTTP1: true }) with an HTTP/1.1 client";
       const RAW_SOCKET_HTTP2 = "http2.createSecureServer({ allowHTTP1: true }).emit('connection', socket)";
+      const DUPLEX_PAIR = "server.emit('connection', duplex) with a stream.duplexPair() side";
       const withSocketTimeout = doorsWhere(door => !door.native && !door.noSocketTimeout);
 
       const turn = () => new Promise<void>(resolve => setImmediate(resolve));
@@ -2022,6 +2023,36 @@ describe("backpressure", () => {
           await withinTenTurns(second.promise);
           // The end of the message restarts the socket, after the listener returned.
           expect(seen).toEqual(["/first", "finish, socket paused: false", "/second"]);
+        } finally {
+          socket.destroy();
+        }
+      });
+
+      // Node's connectionListenerInternal clears the mark of the pipelining read gate (socket._paused). A socket can
+      // come with the mark: the socket of a CONNECT tunnel that is given to a server again.
+      it("reads a body on a socket that an earlier connection left marked as held by the read gate", async () => {
+        const HWM = 64 * 1024;
+        const socket = scriptedSocket() as Duplex & { _paused?: boolean };
+        let read = -1;
+        const ended = Promise.withResolvers<void>();
+        const server = http.createServer(req => {
+          // The listener reads once the body has stopped the socket.
+          req.socket.once("pause", () => {
+            let total = 0;
+            req.on("data", (chunk: Buffer) => (total += chunk.byteLength));
+            req.on("end", () => {
+              read = total;
+              ended.resolve();
+            });
+          });
+        });
+        socket._paused = true;
+        server.emit("connection", socket);
+        try {
+          socket.push(`POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${4 * HWM}\r\n\r\n`);
+          for (let pieces = 0; pieces < 4; pieces++) socket.push(Buffer.alloc(HWM, "b"));
+          await withinTenTurns(ended.promise);
+          expect(read).toBe(4 * HWM);
         } finally {
           socket.destroy();
         }
@@ -2415,6 +2446,27 @@ describe("backpressure", () => {
             }
           },
         );
+
+        // A Duplex has no destroySoon(). Node ends it and leaves it: the client's FIN stays parked behind the body.
+        it("is not needed behind a `Connection: close` response on a Duplex without destroySoon(): it is destroyed once it has finished", async () => {
+          const closed = Promise.withResolvers<void>();
+          const connection = await connectTo(
+            DUPLEX_PAIR,
+            (req, res) => {
+              req.socket.once("close", () => closed.resolve());
+              abandonBody(req, res);
+            },
+            { keepAliveTimeout: 0 },
+          );
+          try {
+            writeBody(connection.client, "/abandoned", "Connection: close\r\n");
+            await connection.receive("too large;");
+            await withinTenTurns(closed.promise);
+            expect(connection.serverSide()?.destroyed).toBe(!!process.versions.bun);
+          } finally {
+            connection.close();
+          }
+        });
       });
 
       // Bun serves this door through a Duplex in the place of the TLS socket. It has no timer, and its close does not

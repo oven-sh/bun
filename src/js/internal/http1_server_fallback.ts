@@ -63,6 +63,12 @@ function hasReader(req: Http1FallbackRequest) {
   return req.readableFlowing === true || req._readableState.pipes.length > 0 || req.listenerCount("readable") > 0;
 }
 
+// net.Socket#destroySoon() for a stream that has none.
+function destroyOnceFinished(socket: import("node:stream").Duplex) {
+  if (socket.writableFinished) socket.destroy();
+  else socket.once("finish", socket.destroy);
+}
+
 // Node's socketOnTimeout with no response in flight: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L891-L900
 function onHttp1KeepAliveTimeout(this: Http1FallbackSocket) {
   const reqTimeout = this[kHttp1KeepAliveRequest]!.emit("timeout", this);
@@ -420,6 +426,8 @@ function connectionListenerHTTP1(server, socket, options) {
   connections.add(socket);
   socket[kHttp1ActiveRequests] = 0;
   socket[kHttp1MessageOpen] = false;
+  // Node's connectionListenerInternal: a read-gate mark that an earlier connection left on the socket would keep readStart() off it.
+  socket._paused = false;
   // Node's parser is an async resource made here. Else a reader whose _read() restarts the socket lends its context to the next request.
   const connectionFrame = AsyncContextFrame.current();
   // Node's parser consumes a socket with a handle, so all that its bytes lead to runs in that context, not only the parser's callbacks.
@@ -566,8 +574,10 @@ function connectionListenerHTTP1(server, socket, options) {
       ) {
         if (typeof socket.destroySoon === "function") {
           socket.destroySoon();
-        } else if (!socket.writableEnded) {
-          socket.end();
+        } else {
+          if (!socket.writableEnded) socket.end();
+          // Without destroySoon() the socket closes at the client's FIN, and a body that nothing reads keeps that FIN parked.
+          if (!finishedReq.complete && !hasReader(finishedReq)) destroyOnceFinished(socket);
         }
         return;
       }

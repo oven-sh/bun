@@ -157,7 +157,7 @@ impl ArrayBuffer {
         self.ptr.is_null()
     }
 
-    /// Releases the pin taken by [`JSValue::as_pinned_arraybuffer`], if it took one.
+    /// Releases the pin taken by [`JSValue::as_pinned_arraybuffer`]; a no-op on a value from [`JSValue::as_array_buffer`].
     pub fn unpin(&self) {
         if self.pinned {
             self.value.unpin_array_buffer();

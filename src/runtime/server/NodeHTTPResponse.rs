@@ -364,7 +364,7 @@ fn any_server_from_packed(packed: u64) -> AnyServer {
 /// being copied into the uWS backpressure std::string. The bytes are kept
 /// valid by `pending_pinned_write_owner` (WTFStringImpl ref / borrowed
 /// ArrayBuffer / owned encoded slice); the JS cell is GC-rooted via the
-/// `pendingWriteBuffer` cached slot; for ArrayBuffer-backed inputs the
+/// `pendingWriteBuffer` cached slot; for buffer inputs the
 /// backing store is additionally `pin()`ed so `transfer()` copies instead of
 /// detaching.
 #[derive(Clone, Copy)]

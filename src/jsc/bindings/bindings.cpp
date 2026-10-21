@@ -3494,7 +3494,7 @@ bool JSC__JSValue__asArrayBuffer(
 // `port.postMessage(v, [ab])` each return normally, give the destination an
 // independent copy, and leave `ab` attached; the bytes being read never move.
 //
-// A view with no ArrayBuffer yet gets one here: the pin count lives on it, so one JS made later by reading `.buffer` would be unpinned.
+// A view with no ArrayBuffer yet gets one here: the pin count lives on the ArrayBuffer, and one made later by reading `.buffer` would start unpinned.
 static bool pinStorage(JSC::JSValue value)
 {
     JSC::ArrayBuffer* buf = nullptr;

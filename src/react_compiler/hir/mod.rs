@@ -427,6 +427,8 @@ pub enum Terminal {
         block: BlockId,
         handler_binding: Option<Place>,
         handler: BlockId,
+        handler_loc: Option<SourceLocation>,
+        handler_body_loc: Option<SourceLocation>,
         fallthrough: BlockId,
         id: EvaluationOrder,
         loc: Option<SourceLocation>,

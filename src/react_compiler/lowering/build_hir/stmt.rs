@@ -1521,6 +1521,8 @@ fn lower_statement(
                     block: try_block,
                     handler_binding: handler_binding_info.map(|(place, _)| place),
                     handler: handler_block,
+                    handler_loc,
+                    handler_body_loc: convert_loc(handler_clause.body_loc),
                     fallthrough: continuation_id,
                     id: EvaluationOrder(0),
                     loc,

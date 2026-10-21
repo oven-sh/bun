@@ -2,9 +2,8 @@
 //!
 //! This module provides transformations for REPL mode:
 //! - Wraps the last expression in { value: expr } for result capture
+//! - Wraps code with await in an async IIFE, strict code or a top-level return in a sync IIFE
 //! - Hoists declarations for variable persistence across REPL lines
-//! - Wraps code with await or an import in an async IIFE, and strict code or code
-//!   with a top-level return in a sync one. Other code stays the statements of a script.
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
@@ -20,12 +19,9 @@ use crate::p::P;
 /// The function that the statements of a REPL input run in.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ReplWrapper {
-    /// No function: the statements are the script. A function is then the variable of
-    /// its name, and the engine gives a direct `eval` the global scope to declare in.
+    /// No function: the statements are the script, so a direct `eval` declares globally.
     None,
-    /// `(() => { ... })()`. A `return` needs a function. A strict input needs one to hold
-    /// its directive: the hoisted `var`s must stay sloppy code, because a strict script
-    /// that runs through an indirect `eval` keeps what it declares to itself.
+    /// `(() => { ... })()`, for strict input and for a top-level `return`.
     Arrow,
     /// `(async () => { ... })()`, for top-level await and imports.
     AsyncArrow,
@@ -94,6 +90,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         let wrapper = if has_top_level_await {
             ReplWrapper::AsyncArrow
         } else if is_strict || all_stmts.iter().any(|stmt| self.repl_has_return(*stmt)) {
+            // A strict script run by an indirect eval keeps its `var`s, so they stay outside of it.
             ReplWrapper::Arrow
         } else {
             ReplWrapper::None
@@ -102,8 +99,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         self.repl_transform_with_hoisting(parts, all_stmts, bump, wrapper)
     }
 
-    /// Whether `stmt` is or holds a `return` of the input itself. The walk enters no
-    /// function, class or expression: a `return` there is not one of the input.
+    /// Whether `stmt` is or holds a `return` of the input itself, outside of every function.
     fn repl_has_return(&self, stmt: Stmt) -> bool {
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             self.report_stack_overflow(stmt.loc);
@@ -714,8 +710,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         Ok(())
     }
 
-    /// Wrap the last expression: `return { value: expr }` in a wrapper, and the
-    /// statement `void 0, { value: expr }` with no wrapper
+    /// Wrap the last expression in `return { value: expr }`, or in `void 0, { value: expr }`
     fn repl_wrap_last_expression<'bump>(
         &mut self,
         inner_stmts: &mut BumpVec<'bump, Stmt>,
@@ -732,8 +727,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     StmtData::SExpr(expr_data) => {
                         let wrapped = self.repl_wrap_expr_in_value_object(expr_data.value, bump);
                         inner_stmts[last_idx] = if wrapper == ReplWrapper::None {
-                            // An object literal that starts a statement needs parentheses.
-                            // After `void 0,` it needs none.
+                            // `void 0,` first: an object literal cannot start a statement.
                             let value = self.repl_void_0(last_stmt.loc).join_with_comma(wrapped);
                             self.s(
                                 S::SExpr {
@@ -758,8 +752,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
 
         if wrapper == ReplWrapper::None {
-            // A script evaluates to the value of its last statement that has one, which
-            // can be any earlier statement. Only { value: expr } may be the value of an input.
+            // Without this, the script evaluates to the value of an earlier statement.
             let value = self.repl_void_0(bun_ast::Loc::EMPTY);
             inner_stmts.push(self.s(
                 S::SExpr {

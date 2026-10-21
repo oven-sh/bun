@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { tempDir } from "harness";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -201,6 +202,28 @@ describe("opendirSync string encoding shorthand", () => {
     } finally {
       fs.rmSync(dirname, { recursive: true, force: true });
     }
+  });
+});
+
+// Node's getOptions() returns the defaults for a function in the `options` slot:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/dir.js#L358
+describe("opendirSync options slot", () => {
+  it("takes a function as the default options", () => {
+    using root = tempDir("opendir-function-options", { "a.txt": "", "sub/b.txt": "" });
+    // Each property changes the outcome if the constructor reads it.
+    const options = Object.assign(() => {}, { encoding: "nope", bufferSize: 0, recursive: true });
+    using dir = fs.opendirSync(String(root), options as any);
+    const names: string[] = [];
+    let entry: fs.Dirent | null;
+    while ((entry = dir.readSync())) names.push(entry.name);
+    expect(names.sort()).toEqual(["a.txt", "sub"]);
+  });
+
+  it.each([5, 0, true, false, 5n, Symbol("s")])("still rejects %p", value => {
+    using root = tempDir("opendir-bad-options", {});
+    expect(() => fs.opendirSync(String(root), value as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
   });
 });
 

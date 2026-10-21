@@ -154,14 +154,6 @@ macro_rules! impl_timer_object {
                 js_value
             }
 
-            pub(crate) fn constructor(
-                cx: &mut ::bun_jsc::bindgen::JsScope<'_>,
-            ) -> ::bun_jsc::JsResult<*mut Self> {
-                Err(cx
-                    .global()
-                    .throw(format_args!(concat!($js_name, " is not constructible"))))
-            }
-
             pub(crate) fn to_primitive(this: &Self) -> ::bun_jsc::JsResult<u64> {
                 this.internals.to_primitive()
             }

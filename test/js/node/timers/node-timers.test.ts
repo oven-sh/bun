@@ -350,6 +350,18 @@ describe("_idleStart", () => {
   });
 });
 
+it.each([
+  ["Timeout", () => setTimeout(() => {}, 1000)],
+  ["Immediate", () => setImmediate(() => {})],
+] as const)("new %s() throws", (name, create) => {
+  const timer = create();
+  clearTimeout(timer as NodeJS.Timeout);
+  clearImmediate(timer as NodeJS.Immediate);
+  expect(timer.constructor.name).toBe(name);
+  // @ts-expect-error
+  expect(() => new timer.constructor()).toThrow(`${name} is not constructible`);
+});
+
 describe("symbol-keyed methods", () => {
   const timeout = setTimeout(() => {}, 1000);
   const immediate = setImmediate(() => {});

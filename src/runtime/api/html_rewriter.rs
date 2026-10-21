@@ -8,6 +8,7 @@ use std::rc::Rc;
 use bun_jsc::{
     self as jsc, CallFrame, CommonAbortReason, CommonAbortReasonExt as _, GlobalRef,
     JSGlobalObject, JSPromise, JSValue, JsCell, JsCellRefExt as _, JsRef, JsResult, SystemError,
+    bun_string_jsc,
 };
 // Note: `bun_jsc::VirtualMachine` is a *module* re-export
 // (`pub use self::virtual_machine as VirtualMachine;`). The struct lives at
@@ -2586,20 +2587,17 @@ fn setter_utf8_arg(global: &JSGlobalObject, value: JSValue) -> JsResult<String> 
     Ok(utf8_or_throw(global, slice.slice())?.to_owned())
 }
 
-fn string_to_js<'a>(s: &str, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
-    bindgen::to_js::utf8(heap, s)
+fn string_to_js(s: &str, global: &JSGlobalObject) -> JsResult<JSValue> {
+    bun_string_jsc::create_utf8_for_js(global, s.as_bytes())
 }
 
 /// lol-html's optional getters (`get_attribute`, `Doctype` name/ids) return
 /// `None` for "absent" and `Some("")` for present-but-empty. Map only the
 /// former to `null` so `<div a="">` reads as `""`, not `null`.
-fn opt_string_to_js_or_null<'a>(
-    s: Option<String>,
-    heap: &JsHeap<'a>,
-) -> bindgen::Result<'a, JsLocal<'a>> {
+fn opt_string_to_js_or_null(s: Option<String>, global: &JSGlobalObject) -> JsResult<JSValue> {
     match s {
-        None => Ok(JsLocal::NULL),
-        Some(s) => string_to_js(&s, heap),
+        None => Ok(JSValue::NULL),
+        Some(s) => string_to_js(&s, global),
     }
 }
 
@@ -2675,25 +2673,25 @@ impl DocType {
     }
 
     /// The doctype name.
-    pub(crate) fn get_name<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+    pub(crate) fn get_name(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let Some(dt) = self.doctype.get_mut() else {
-            return Ok(JsLocal::UNDEFINED);
+            return Ok(JSValue::UNDEFINED);
         };
-        opt_string_to_js_or_null(dt.name(), heap)
+        opt_string_to_js_or_null(dt.name(), cx.global())
     }
 
-    pub(crate) fn get_system_id<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+    pub(crate) fn get_system_id(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let Some(dt) = self.doctype.get_mut() else {
-            return Ok(JsLocal::UNDEFINED);
+            return Ok(JSValue::UNDEFINED);
         };
-        opt_string_to_js_or_null(dt.system_id(), heap)
+        opt_string_to_js_or_null(dt.system_id(), cx.global())
     }
 
-    pub(crate) fn get_public_id<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+    pub(crate) fn get_public_id(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let Some(dt) = self.doctype.get_mut() else {
-            return Ok(JsLocal::UNDEFINED);
+            return Ok(JSValue::UNDEFINED);
         };
-        opt_string_to_js_or_null(dt.public_id(), heap)
+        opt_string_to_js_or_null(dt.public_id(), cx.global())
     }
 
     pub(crate) fn remove<'a>(
@@ -2774,11 +2772,11 @@ impl Comment {
         Some(this_value)
     }
 
-    pub(crate) fn get_text<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+    pub(crate) fn get_text(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let Some(comment) = self.comment.get_mut() else {
-            return Ok(JsLocal::NULL);
+            return Ok(JSValue::NULL);
         };
-        string_to_js(&comment.text(), heap)
+        string_to_js(&comment.text(), cx.global())
     }
 
     pub(crate) fn set_text(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<()> {
@@ -2851,11 +2849,11 @@ impl EndTag {
         Some(this_value)
     }
 
-    pub(crate) fn get_name<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+    pub(crate) fn get_name(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let Some(end_tag) = self.end_tag.get_mut() else {
-            return Ok(JsLocal::UNDEFINED);
+            return Ok(JSValue::UNDEFINED);
         };
-        string_to_js(&end_tag.name(), heap)
+        string_to_js(&end_tag.name(), cx.global())
     }
 
     pub(crate) fn set_name(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<()> {
@@ -3154,11 +3152,11 @@ impl Element {
         Some(this_value)
     }
 
-    pub(crate) fn get_tag_name<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+    pub(crate) fn get_tag_name(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let Some(el) = self.element.get_mut() else {
-            return Ok(JsLocal::UNDEFINED);
+            return Ok(JSValue::UNDEFINED);
         };
-        string_to_js(&el.tag_name(), heap)
+        string_to_js(&el.tag_name(), cx.global())
     }
 
     pub(crate) fn set_tag_name(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<()> {

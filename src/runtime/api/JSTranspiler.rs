@@ -113,15 +113,13 @@ impl Default for Config {
 use bun_bundler_jsc::options_jsc::loader_from_js;
 use bun_collections::index_sort;
 
-/// What `JSValue::get_truthy` gives for a member: `undefined`, `null` and `""` are absent.
 /// Reads the `code` argument. Copies a buffer because the loader's `toString()` and macros run JS that can
 /// write to, shrink or detach it. Skips the copy when the parser will reject the buffer for its length anyway.
 fn code_from_js(
     global: &JSGlobalObject,
     value: StringOrJsBytes<'_>,
 ) -> JsResult<StringOrBuffer<'static>> {
-    let mut parsed = StringOrBuffer::EMPTY;
-    StringOrBuffer::from_string_or_js_bytes_into(&mut parsed, global, value, Encoding::Utf8);
+    let parsed = StringOrBuffer::from_string_or_js_bytes(global, value, Encoding::Utf8);
     let StringOrBuffer::Buffer(buffer) = &parsed else {
         return Ok(parsed);
     };
@@ -1307,7 +1305,7 @@ impl JSTranspiler {
         jsc::mark_binding();
         let code = match code_arg {
             StringOrJsBytes::Bytes(buffer) => {
-                let bytes = Buffer::from_array_buffer(global, buffer.value().to_js())
+                let bytes = Buffer::from_array_buffer(global, buffer.to_js())
                     .slice()
                     .to_vec();
                 global.vm().report_extra_memory(bytes.len());

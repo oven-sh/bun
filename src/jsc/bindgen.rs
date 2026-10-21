@@ -490,10 +490,9 @@ impl<'a> JsBytes<'a> {
         }
     }
 
-    /// The argument itself.
     #[inline]
-    pub fn value(self) -> JsLocal<'a> {
-        self.value
+    pub fn to_js(self) -> JSValue {
+        self.value.to_js()
     }
 
     /// `shared: "copied"` for `string: "asIs"`. Like [`get`](Self::get), but copies the bytes of a shared buffer into `copy` and returns those.
@@ -554,7 +553,7 @@ impl<'a> StringOrJsBytes<'a> {
     }
 
     /// # Safety
-    /// As [`from_extern`](Self::from_extern). C++ converts neither `undefined` nor `null`.
+    /// As [`from_extern`](Self::from_extern), of a `.nullable` argument: C++ converts neither `undefined` nor `null`.
     #[doc(hidden)]
     #[inline]
     pub unsafe fn from_extern_optional(

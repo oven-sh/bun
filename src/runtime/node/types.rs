@@ -354,7 +354,7 @@ impl StringOrBuffer<'static> {
     /// `Ok(true)` on success, `Ok(false)` if `value` is not a string/buffer
     /// type. `*out` is left untouched on `Ok(false)` / `Err`.
     ///
-    /// Hot callers (e.g. `NodeHTTPResponse::write_or_end`) should use this
+    /// Hot callers should use this
     /// directly — returning `JsResult<Option<StringOrBuffer>>` by value lowers
     /// to ~128B of `vmovups` stack-to-stack copies per call which the
     /// `Option<>`-returning wrappers below cannot always NRVO away.
@@ -518,23 +518,22 @@ impl StringOrBuffer<'static> {
         Self::owned(encoded)
     }
 
-    /// [`from_js_with_encoding_maybe_async_into`](Self::from_js_with_encoding_maybe_async_into) for a synchronous call, of a `b.bytes` argument.
+    /// For a synchronous call: a string encoded as `encoding`, a buffer borrowed.
     #[inline]
-    pub(crate) fn from_string_or_js_bytes_into(
-        out: &mut Self,
+    pub(crate) fn from_string_or_js_bytes(
         global: &JSGlobalObject,
         value: StringOrJsBytes<'_>,
         encoding: Encoding,
-    ) {
-        *out = match value {
+    ) -> Self {
+        match value {
             StringOrJsBytes::Bytes(bytes) => {
-                Self::Buffer(Buffer::from_array_buffer(global, bytes.value().to_js()))
+                Self::Buffer(Buffer::from_array_buffer(global, bytes.to_js()))
             }
             StringOrJsBytes::String(str) if encoding == Encoding::Utf8 || str.is_empty() => {
                 Self::String(str.into_utf8_with_string())
             }
             StringOrJsBytes::String(str) => Self::encoded(global, &str, encoding),
-        };
+        }
     }
 
     #[inline]

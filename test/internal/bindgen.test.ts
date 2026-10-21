@@ -121,7 +121,12 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   }
   for (const held of ["handle", "copied", "pinned"] as const) {
     expect(() => b.bytes({ from: ["string", "buffer"], held }).optional).toThrow(
-      'only b.bytes that is held: "borrowed" or string: "asIs" can be absent',
+      'b.bytes can be absent if it is held: "borrowed", and .nullable if it is string: "asIs"',
+    );
+  }
+  for (const modifier of ["optional", "falsyAsNull", "emptyStringAsNull"] as const) {
+    expect(() => b.bytes({ from: ["string", "buffer"], string: "asIs", held: "handle" })[modifier]).toThrow(
+      'b.bytes can be absent if it is held: "borrowed", and .nullable if it is string: "asIs"',
     );
   }
   expect(() => stringOrBuffer.default("")).toThrow("cannot have a default");
@@ -1349,7 +1354,7 @@ describe(".emptyStringAsNull", () => {
 });
 
 describe("a string or a buffer, as bytes", () => {
-  it("can be absent as a string that is not converted", () => {
+  it('string: "asIs" can be absent', () => {
     expect(bindgen.stringAsIsOrBytesIfAny()).toBeNull();
     expect(bindgen.stringAsIsOrBytesIfAny(null)).toBeNull();
     expect(bindgen.stringAsIsOrBytesIfAny("")).toEqual([1]);

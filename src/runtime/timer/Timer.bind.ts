@@ -5,7 +5,6 @@ export default b.module({ rustPath: "crate::timer::timer::internal_bindings" });
 export const monotonicNowMs = b.fn({ returns: b.f64 });
 
 const chainable = { returns: b.self, passThis: true, invalidThis: "undefined" } as const;
-const construct = { capability: "js", throws: true } as const;
 const destroyed = { getter: b.bool } as const;
 const hasRef = { returns: b.bool, invalidThis: "undefined" } as const;
 const ref = { ...chainable, rustName: "do_ref" } as const;
@@ -18,7 +17,7 @@ export const Timeout = b.class({
   refCounted: true,
   finalize: true,
   configurable: false,
-  construct,
+  construct: "throws",
   internalFields: ["arguments", "callback", "idleTimeout", "repeat", "idleStart"],
   proto: {
     _destroyed: destroyed,
@@ -41,7 +40,7 @@ export const Immediate = b.class({
   refCounted: true,
   finalize: true,
   configurable: false,
-  construct,
+  construct: "throws",
   internalFields: ["arguments", "callback"],
   proto: {
     _destroyed: destroyed,

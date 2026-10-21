@@ -929,11 +929,6 @@ impl NodeHTTPResponse {
             }
         }
 
-        // The status message coercion above can run JS that destroys the socket.
-        if self.is_socket_closed_or_closing() {
-            return Ok(());
-        }
-
         'do_it: {
             if status_message_bytes.is_empty() {
                 if let Some(status_message) =
@@ -1052,8 +1047,8 @@ impl NodeHTTPResponse {
                     this_value.to_js(),
                     cx.global(),
                     chunk,
-                    encoding,
-                    None,
+                    encoding.to_js(),
+                    JSValue::UNDEFINED,
                     strict_content_length,
                 )
             };
@@ -1144,15 +1139,8 @@ impl NodeHTTPResponse {
             Encoding::Utf8
         };
 
-        let mut string_or_buffer = StringOrBuffer::EMPTY;
-        StringOrBuffer::from_string_or_js_bytes_into(
-            &mut string_or_buffer,
-            global_object,
-            chunk,
-            encoding,
-        );
-
-        // Response state is read only after the conversion above, which can run JS.
+        let string_or_buffer =
+            StringOrBuffer::from_string_or_js_bytes(global_object, chunk, encoding);
 
         if self.is_done() || self.is_socket_closed_or_closing() {
             return Ok(());
@@ -1790,29 +1778,24 @@ impl NodeHTTPResponse {
         this_value: JSValue,
         global_object: &JSGlobalObject,
         chunk: Option<StringOrJsBytes<'_>>,
-        encoding: JsLocal<'_>,
-        callback: Option<JsLocal<'_, Callable>>,
+        mut encoding_value: JSValue,
+        callback: JSValue,
         strict_content_length: Option<f64>,
     ) -> JsResult<JSValue> {
-        let mut encoding_value = encoding.to_js();
         let callback_value: JSValue =
             if !encoding_value.is_undefined_or_null() && encoding_value.is_callable() {
                 core::mem::replace(&mut encoding_value, JSValue::UNDEFINED)
             } else {
-                callback.map_or(JSValue::UNDEFINED, |callback| callback.to_js())
+                callback
             };
 
         let strict_content_length: Option<u64> =
             strict_content_length.map(|length| (length as i64).max(0) as u64);
 
-        let input_value = match &chunk {
-            Some(StringOrJsBytes::Bytes(bytes)) => bytes.value().to_js(),
-            _ => JSValue::ZERO,
+        let buffer_value = match &chunk {
+            Some(StringOrJsBytes::Bytes(bytes)) => Some(bytes.to_js()),
+            _ => None,
         };
-        // Construct in place — returning
-        // `JsResult<Option<StringOrBuffer>>` by value here lowered to ~128B of
-        // `vmovups` stack copies per `res.end()`; the `_into` out-param form
-        // writes straight into this slot.
         let mut string_or_buffer = StringOrBuffer::EMPTY;
         if let Some(chunk) = chunk {
             let mut encoding = Encoding::Utf8;
@@ -1844,12 +1827,8 @@ impl NodeHTTPResponse {
                 };
             }
 
-            StringOrBuffer::from_string_or_js_bytes_into(
-                &mut string_or_buffer,
-                global_object,
-                chunk,
-                encoding,
-            );
+            string_or_buffer =
+                StringOrBuffer::from_string_or_js_bytes(global_object, chunk, encoding);
         }
         // string_or_buffer drops at scope exit.
 
@@ -1982,8 +1961,6 @@ impl NodeHTTPResponse {
             // the unwritten tail into the uWS backpressure std::string.
             let bytes_len = bytes.len();
             if bytes_len > PINNED_WRITE_THRESHOLD && bytes_len <= c_uint::MAX as usize {
-                let is_buffer = matches!(string_or_buffer, StringOrBuffer::Buffer(_));
-
                 scoped_log!(NodeHTTPResponse, "tryWriteBody({} bytes)", bytes_len);
                 let consumed = raw_response.try_write_body(bytes, true);
                 if consumed >= bytes_len {
@@ -1998,17 +1975,16 @@ impl NodeHTTPResponse {
                 );
                 // For buffers, pin so `transfer()` copies instead of detaching.
                 // If a pin can't keep the bytes mapped, copy them into the backpressure buffer instead.
-                let pinned_value = if is_buffer && input_value.is_cell() {
-                    match input_value.as_pinned_arraybuffer(global_object) {
+                let pinned_value = match buffer_value {
+                    Some(buffer_value) => match buffer_value.as_pinned_arraybuffer(global_object) {
                         Some(ab) if ab.can_be_freed_while_pinned() => {
                             ab.unpin();
                             None
                         }
-                        Some(ab) if ab.pinned => Some(input_value),
+                        Some(ab) if ab.pinned => Some(buffer_value),
                         Some(_) | None => Some(JSValue::ZERO),
-                    }
-                } else {
-                    Some(JSValue::ZERO)
+                    },
+                    None => Some(JSValue::ZERO),
                 };
                 if let Some(pinned_value) = pinned_value {
                     let remaining = ptr::slice_from_raw_parts(
@@ -2027,8 +2003,8 @@ impl NodeHTTPResponse {
                         remaining,
                         pinned_value,
                     });
-                    if input_value.is_cell() {
-                        js::pending_write_buffer_set_cached(js_this, global_object, input_value);
+                    if let Some(buffer_value) = buffer_value {
+                        js::pending_write_buffer_set_cached(js_this, global_object, buffer_value);
                     }
                 } else {
                     raw_response.spill_body(&bytes[consumed..]);
@@ -2218,8 +2194,8 @@ impl NodeHTTPResponse {
             JSValue::ZERO,
             cx.global(),
             chunk,
-            encoding,
-            callback,
+            encoding.to_js(),
+            callback.map_or(JSValue::UNDEFINED, JsLocal::to_js),
             strict_content_length,
         )
     }
@@ -2298,8 +2274,8 @@ impl NodeHTTPResponse {
             this_value.to_js(),
             cx.global(),
             chunk,
-            encoding,
-            callback,
+            encoding.to_js(),
+            callback.map_or(JSValue::UNDEFINED, JsLocal::to_js),
             strict_content_length,
         )
     }

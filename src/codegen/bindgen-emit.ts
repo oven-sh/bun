@@ -838,6 +838,13 @@ JSC_DEFINE_CUSTOM_GETTER(${get}, (JSC::JSGlobalObject * globalObject, JSC::Encod
 `;
 }
 
+const cppSetterThis = (type: ClassType) => `${cppPrologue}
+    auto* thisObject = dynamicDowncast<${type.cpp}>(JSC::JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        JSC::throwDOMAttributeSetterTypeError(globalObject, scope, ${type.cpp}::info(), attributeName);
+        return false;
+    }`;
+
 function cppInternalFieldAccessor(type: ClassType, accessor: InternalFieldAccessor): string {
   const field = `thisObject->m_${accessor.internalField}`;
   let text = `
@@ -855,12 +862,7 @@ JSC_DEFINE_CUSTOM_GETTER(${getterHostFunctionName(type, accessor)}, (JSC::JSGlob
 static JSC_DECLARE_CUSTOM_SETTER(${setterHostFunctionName(type, accessor)});
 JSC_DEFINE_CUSTOM_SETTER(${setterHostFunctionName(type, accessor)}, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName attributeName))
 {
-${cppPrologue}
-    auto* thisObject = dynamicDowncast<${type.cpp}>(JSC::JSValue::decode(thisValue));
-    if (!thisObject) [[unlikely]] {
-        JSC::throwDOMAttributeSetterTypeError(globalObject, scope, ${type.cpp}::info(), attributeName);
-        return false;
-    }
+${cppSetterThis(type)}
     ${field}.set(vm, thisObject, JSC::JSValue::decode(encodedValue));
     return true;
 }
@@ -904,12 +906,7 @@ extern "C" bool ${setSymbol}(JSC::JSGlobalObject*, JSC::JSCell*, ${externType(ge
 static JSC_DECLARE_CUSTOM_SETTER(${set});
 JSC_DEFINE_CUSTOM_SETTER(${set}, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName attributeName))
 {
-${cppPrologue}
-    auto* thisObject = dynamicDowncast<${type.cpp}>(JSC::JSValue::decode(thisValue));
-    if (!thisObject) [[unlikely]] {
-        JSC::throwDOMAttributeSetterTypeError(globalObject, scope, ${type.cpp}::info(), attributeName);
-        return false;
-    }
+${cppSetterThis(type)}
     JSC::EnsureStillAliveScope ensureThisStillAlive { thisObject };
     ${holder} assigned { JSC::JSValue::decode(encodedValue) };
     ${cppStaticContext("ctx", `LiteralConversionContext { ${asciiLiteral(`${type.name}.${getter.name}`)} }`)}
@@ -972,28 +969,32 @@ ${[...type.functions, ...type.staticFunctions].map(fn => cppMethod(type, fn)).jo
 ${
   construct
     ? `${
-        type.refCounted
-          ? cppExtern(classSymbolName(type, "construct"), construct, [], "void*")
-          : cppExtern(classSymbolName(type, "construct"), construct, ["JSC::Structure*"])
+        type.constructThrows
+          ? ""
+          : type.refCounted
+            ? cppExtern(classSymbolName(type, "construct"), construct, [], "void*")
+            : cppExtern(classSymbolName(type, "construct"), construct, ["JSC::Structure*"])
       }
 static JSC_DECLARE_HOST_FUNCTION(construct${name});
 JSC_DEFINE_HOST_FUNCTION(construct${name}, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
 ${cppPrologue}
-    JSC::Structure* structure = Bun::Bindgen::structureForNewTarget(globalObject, callFrame, ${type.classIndex});
+    ${type.constructThrows ? "" : "JSC::Structure* structure = "}Bun::Bindgen::structureForNewTarget(globalObject, callFrame, ${type.classIndex});
     RETURN_IF_EXCEPTION(scope, {});
 ${
-  type.refCounted
-    ? cppCallBody(construct, classSymbolName(type, "construct"), [], call => [
-        `void* wrapped = ${call};`,
-        "// Not RETURN_IF_EXCEPTION: it handles traps, and a termination thrown there would leak `wrapped`.",
-        "if (!wrapped) [[unlikely]] {",
-        "    EXCEPTION_ASSERT(scope.exception());",
-        "    return {};",
-        "}",
-        `RELEASE_AND_RETURN(scope, JSC::JSValue::encode(${type.cpp}::create(vm, structure, wrapped)));`,
-      ])
-    : cppCallBody(construct, classSymbolName(type, "construct"), ["structure"])
+  type.constructThrows
+    ? `    return JSC::throwVMError(globalObject, scope, JSC::createError(globalObject, ${asciiLiteral(`${name} is not constructible`)}));`
+    : type.refCounted
+      ? cppCallBody(construct, classSymbolName(type, "construct"), [], call => [
+          `void* wrapped = ${call};`,
+          "// Not RETURN_IF_EXCEPTION: it handles traps, and a termination thrown there would leak `wrapped`.",
+          "if (!wrapped) [[unlikely]] {",
+          "    EXCEPTION_ASSERT(scope.exception());",
+          "    return {};",
+          "}",
+          `RELEASE_AND_RETURN(scope, JSC::JSValue::encode(${type.cpp}::create(vm, structure, wrapped)));`,
+        ])
+      : cppCallBody(construct, classSymbolName(type, "construct"), ["structure"])
 }
 }
 `
@@ -1073,7 +1074,7 @@ ${cppConstructorSignature(type)}
 }`;
 }
 
-/** sizeof(JSC::JSDestructibleObject) */
+/** The fields follow the `JSC::JSDestructibleObject`, which is 24 bytes. */
 const offsetOfInternalField = (index: number) => 24 + 8 * index;
 const offsetOfPayload = (type: ClassType) => offsetOfInternalField(type.internalFields.length);
 
@@ -1478,22 +1479,12 @@ function rustForClass(type: ClassType, scope: RustScope): string {
     static: [],
   };
   type Receiver = keyof typeof receiverArgument;
-  const takeThis = (receiver: Receiver, passThis: boolean) =>
-    (receiver === "static"
-      ? []
-      : [
-          ...(refCounted
-            ? [
-                `let wrapped = bindgen::class_ref_from_extern::<${rustPath}>(*this.byte_add(${offsetOfPayload(type)}).cast(), &cx.heap);\n`,
-              ]
-            : []),
-          ...(passThis || !refCounted
-            ? [
-                `let this = bindgen::JsWrapper::<${rustPath}>::from_extern(core::ptr::NonNull::new_unchecked(this), &cx.heap);\n`,
-              ]
-            : []),
-        ]
-    ).join("");
+  const takeThis = (receiver: Receiver, passThis: boolean) => {
+    if (receiver === "static") return "";
+    const wrapped = `let wrapped = bindgen::class_ref_from_extern::<${rustPath}>(*this.byte_add(${offsetOfPayload(type)}).cast(), &cx.heap);\n`;
+    const wrapper = `let this = bindgen::JsWrapper::<${rustPath}>::from_extern(core::ptr::NonNull::new_unchecked(this), &cx.heap);\n`;
+    return (refCounted ? wrapped : "") + (passThis || !refCounted ? wrapper : "");
+  };
   const leading = (receiver: Receiver, passThis: boolean, capability: Capability) => [
     ...receiverArgument[receiver],
     ...(passThis && receiver !== "wrapper" ? ["this"] : []),
@@ -1501,7 +1492,7 @@ function rustForClass(type: ClassType, scope: RustScope): string {
   ];
   let thunks = "";
 
-  if (type.construct) {
+  if (type.construct && !type.constructThrows) {
     const signature = type.construct;
     const call = `${rustPath}::constructor(${[...capabilityArgument[signature.capability], ...rustArguments(signature)].join(", ")})`;
     thunks += rustThunk(
@@ -1552,7 +1543,10 @@ bindgen::host_fn_return(cx, result, |heap, value| ${getter.type.rustToJS("value"
     );
   }
 
-  return `${refCounted ? rustForRefCounted(type) : rustForPayload(type)}${rustForModule(type)}${thunks}`;
+  return `${refCounted ? rustForRefCounted(type) : rustForPayload(type)}
+#[unsafe(no_mangle)]
+pub static ${symbolName(type, "structSize")}: usize = size_of::<${rustPath}>();
+${rustForModule(type)}${thunks}`;
 }
 
 function rustForPayload(type: ClassType): string {
@@ -1573,8 +1567,6 @@ unsafe impl bindgen::JsPayload for ${rustPath} {
 // A cell is at a multiple of 8, and so is the payload in it.
 const _: () = assert!(align_of::<${rustPath}>() <= 8);
 #[unsafe(no_mangle)]
-pub static ${symbolName(type, "structSize")}: usize = size_of::<${rustPath}>();
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(payload: *mut ${rustPath}) {
     // SAFETY: the sweeper calls this once, on an initialized payload nothing refers to.
     unsafe { core::ptr::drop_in_place(payload) }
@@ -1589,8 +1581,6 @@ function rustForRefCounted(type: ClassType): string {
 unsafe extern "C" {
     fn ${symbolName(type, "create")}(global: *mut JSGlobalObject, wrapped: *mut core::ffi::c_void) -> JSValue;
 }
-#[unsafe(no_mangle)]
-pub static ${symbolName(type, "structSize")}: usize = size_of::<${rustPath}>();
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(wrapped: *mut ${rustPath}) {
     // SAFETY: the sweeper calls this once, with the pointer the object holds a ref on.

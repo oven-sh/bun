@@ -829,8 +829,8 @@ export class BytesType extends Type {
   get borrowsHeap(): boolean {
     return this.#options.held === "borrowed";
   }
-  get canBeAbsent(): boolean {
-    return this.#options.held === "borrowed" || this.#options.string === "asIs";
+  canBe(modifier: OptionalType["modifier"]): boolean {
+    return this.#options.held === "borrowed" || (this.#options.string === "asIs" && modifier === "nullable");
   }
   get nullRepresentation() {
     return "pointer" as const;
@@ -1128,13 +1128,14 @@ export class OptionalType extends Type {
     super();
     assert(!(inner instanceof OptionalType), "already optional");
     assert(!(inner instanceof DefaultType), "put .default() last");
-    if (!(inner instanceof AnyType && modifier === "emptyStringAsNull")) {
-      assert(!(inner instanceof AnyType), "b.any already accepts undefined and null");
+    if (inner instanceof AnyType) {
+      assert(modifier === "emptyStringAsNull", "b.any already accepts undefined and null");
+    } else {
       assert(!inner.takesUndefined, `${inner.tsType} already takes undefined`);
     }
     assert(
-      !(inner instanceof BytesType) || inner.canBeAbsent,
-      'only b.bytes that is held: "borrowed" or string: "asIs" can be absent',
+      !(inner instanceof BytesType) || inner.canBe(modifier),
+      'b.bytes can be absent if it is held: "borrowed", and .nullable if it is string: "asIs"',
     );
     this.inner = inner;
     this.modifier = modifier;
@@ -1159,7 +1160,8 @@ export class OptionalType extends Type {
     return true;
   }
   get valueKinds(): ValueKinds {
-    if (this.inner.valueKinds === "any" || this.modifier.endsWith("AsNull")) return "any";
+    if (this.inner.valueKinds === "any" || this.modifier === "falsyAsNull" || this.modifier === "emptyStringAsNull")
+      return "any";
     return [...this.inner.valueKinds, "undefined", ...(this.modifier === "nullable" ? (["null"] as const) : [])];
   }
   get dependencies(): readonly Type[] {
@@ -1909,7 +1911,7 @@ export class FunctionDefinition {
 export interface FunctionField extends Omit<SignatureOptions, "rustPath"> {
   /** `&mut self` instead of `&self`. Not with `capability: "js"`, which gets the wrapper. */
   mutates?: boolean;
-  /** Also pass the wrapper, `this: JsWrapper<'a, Self>`. A method whose receiver is the wrapper already has it. */
+  /** Also pass the wrapper, `this_value: JsWrapper<'a, Self>`. A method whose receiver is the wrapper already has it. */
   passThis?: boolean;
   /** When `this` is not an instance: `"throw"` (the default) throws `ERR_INVALID_THIS`, `"undefined"` returns `undefined`. */
   invalidThis?: "throw" | "undefined";
@@ -1960,8 +1962,8 @@ export interface ClassOptions {
   refCounted?: boolean;
   /** With `refCounted`: call `fn finalize(&self)` when the object is collected, before its ref is dropped. */
   finalize?: boolean;
-  /** Absent: JavaScript cannot construct one, and there is no constructor object. */
-  construct?: Omit<SignatureOptions, "rustPath" | "returns">;
+  /** Absent: JavaScript cannot construct one, and there is no constructor object. `"throws"`: there is one, and `new` on it throws. */
+  construct?: Omit<SignatureOptions, "rustPath" | "returns"> | "throws";
   /** Properties of the prototype. */
   proto?: Record<string, Field>;
   /** Properties of the constructor. */
@@ -2106,6 +2108,7 @@ export class ClassType extends NamedType {
   readonly refCounted: boolean;
   readonly finalize: boolean;
   readonly construct: Signature | null;
+  readonly constructThrows: boolean;
   /** The native functions of the prototype. The signatures of each are `Method`s. */
   readonly functions: readonly FunctionDefinition[];
   readonly getters: readonly Getter[];
@@ -2136,7 +2139,10 @@ export class ClassType extends NamedType {
       args: Object.fromEntries(Object.entries(signature.args ?? {}).map(([name, type]) => [name, own(type)])),
       ...(signature.returns ? { returns: own(signature.returns) } : {}),
     });
-    this.construct = options.construct ? new Signature(resolve(options.construct)) : null;
+    this.constructThrows = options.construct === "throws";
+    this.construct = options.construct
+      ? new Signature(options.construct === "throws" ? {} : resolve(options.construct))
+      : null;
     const members = (fields: Record<string, Field>, isStatic: boolean) =>
       Object.entries(fields).map(([name, field]): ClassMember => {
         assert(

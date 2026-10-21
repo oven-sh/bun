@@ -14,8 +14,12 @@ const chunk = {
   /** Read only if there is a chunk. */
   encoding: b.any,
 };
+const expected = { chunk: ["string", "Buffer", "Uint8Array"] } as const;
 const strictContentLength = b.f64.optional;
-const body = { ...chunk, callback: b.callable.optional, strictContentLength };
+const body = {
+  args: { ...chunk, callback: b.callable.optional, strictContentLength },
+  expected: { ...expected, callback: ["function"] },
+} as const;
 
 /** The native handle shared by a `node:http` `ServerResponse` and its `IncomingMessage`: `kHandle` in `src/js/internal/http.ts`. */
 export const NodeHTTPResponse = b.class({
@@ -29,7 +33,7 @@ export const NodeHTTPResponse = b.class({
     aborted: { getter: b.bool },
     bufferedAmount: { getter: b.u64 },
     cork: { ...method, args: { callback: b.callable } },
-    end: { ...method, args: body, passThis: true, length: 2 },
+    end: { ...method, ...body, passThis: true, length: 2 },
     finished: { getter: b.bool },
     flags: { getter: b.i32 },
     flushHeaders: {},
@@ -48,15 +52,16 @@ export const NodeHTTPResponse = b.class({
     takeRequestTrailers: { ...method, args: { useInsecureHTTPParser: b.bool.default(false) }, length: 0 },
     unref: { rustName: "js_unref" },
     upgraded: { getter: b.bool },
-    write: { ...method, args: body, length: 3 },
+    write: { ...method, ...body, length: 3 },
     writeContinue: { capability: "js", throws: true },
     writeHead: { args: { ...head, ...autoHeaders }, capability: "js", throws: true, length: 3 },
     writeHeadAndEnd: {
       ...method,
       args: { ...head, ...chunk, strictContentLength, ...autoHeaders },
+      expected,
       passThis: true,
       length: 8,
     },
-    writeInformational: { args: chunk, capability: "js", throws: true, length: 1 },
+    writeInformational: { args: chunk, expected, capability: "js", throws: true, length: 1 },
   },
 });

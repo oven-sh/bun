@@ -7619,11 +7619,11 @@ it("end() throws when statusCode is NaN", async () => {
 });
 
 it.each([
-  ["chunk", 201, { ok: true }],
-  ["status code", null, "body"],
+  { invalid: "chunk", status: 201, chunk: { ok: true } },
+  { invalid: "status code", status: null, chunk: "body" },
 ])(
-  "end() that throws for its %s sends nothing, and the next end() sends the status and headers",
-  async (_, status, chunk) => {
+  "end() that throws for its $invalid sends nothing, and the next end() sends the status and headers",
+  async ({ status, chunk }) => {
     const { promise, resolve } = Promise.withResolvers<unknown>();
     const server = http.createServer((req, res) => {
       // @ts-expect-error
@@ -7632,6 +7632,7 @@ it.each([
       try {
         // @ts-expect-error
         res.end(chunk);
+        resolve("did not throw");
       } catch {
         resolve(res.headersSent);
         res.statusCode = 201;

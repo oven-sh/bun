@@ -19,7 +19,7 @@ const contentOp = (returns: b.Type) =>
   }) as const;
 
 /** `b.any`: an accessor has one type, and the getter gives a string or nothing where the setter takes `ToString` of any value. */
-const assignable = { getter: b.any, setter: { capability: "js" }, capability: "heap", throws: true } as const;
+const assignable = { getter: b.any, setter: true, capability: "js", throws: true } as const;
 
 export const TextChunk = b.class({
   rustPath: "crate::api::html_rewriter::TextChunk",
@@ -37,7 +37,7 @@ export const TextChunk = b.class({
 });
 
 /** `b.any`: a string, `null` if the doctype has none, `undefined` after the handler returns. */
-const doctypeField = { getter: b.any, cache: true, capability: "heap", throws: true } as const;
+const doctypeField = { getter: b.any, cache: true, capability: "js", throws: true } as const;
 
 export const DocType = b.class({
   rustPath: "crate::api::html_rewriter::DocType",
@@ -118,7 +118,7 @@ export const Element = b.class({
     namespaceURI: { getter: b.string.utf8.optional, cache: true },
     onEndTag: {
       ...chainable(b.self.nullable),
-      /** Not looked at once the element's handler has returned. */
+      /** `b.any`: a detached element returns `null` without checking it. */
       args: { handler: b.any },
       capability: "js",
       throws: true,

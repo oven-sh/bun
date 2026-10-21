@@ -1,7 +1,7 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
 const flag = b.bool.loose.optional;
-/** A `String` object's `toString()` runs once the code is copied. */
+/** `b.any`: a `String` object's `toString()` has to run after the code is copied. */
 const loader = b.any;
 
 export const TranspilerExternal = b.union({
@@ -29,7 +29,7 @@ export const TranspilerOptions = b.dictionary(
   {
     define: b.any.emptyStringAsNull,
     external: TranspilerExternal.nullable,
-    loader,
+    loader: b.any,
     target: b.string.utf8.optional,
     tsconfig: b.any,
     macro: b.any.emptyStringAsNull,

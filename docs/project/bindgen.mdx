@@ -223,7 +223,7 @@ types: each is called what it is exported as, and has to be exported. It is used
 schemas of the crate it is generated into. A member or an alternative also names a C++
 field, so one that is a C++ keyword is refused: a member takes a `rustName`.
 
-These come last, in this order (`b.any` already takes `undefined` and `null`, so none applies to it):
+These come last, in this order (`b.any` already takes `undefined` and `null`, so only `.emptyStringAsNull` applies to it):
 
 - `.optional`: `undefined` means absent; `Option<T>`.
 - `.nullable`: `null` or `undefined` means absent; `Option<T>`.
@@ -455,16 +455,16 @@ and comes back. JSC's `sort` copies for the same reason. With `string: "asIs"` t
 
 The kind of the value is checked, and a string converted, in the order of the arguments. The
 bytes of a buffer are read, copied or pinned after every argument is converted. It is not a
-member of a dictionary, a union or an array. Only `held: "borrowed"` can be `.optional` or
-`.nullable`: an `Option<&'a [u8]>`.
+member of a dictionary, a union or an array. `held: "borrowed"` can be `.optional` or
+`.nullable`: an `Option<&'a [u8]>`. `string: "asIs"` can be `.nullable`: an `Option<StringOrJsBytes<'a>>`.
 
 An option that cannot apply is a build error: `refuse` of `undefined` or `null` without `"toString"`,
 of a `String` object with it or where no string is taken, `string` where no
 string is taken, `shared` where no buffer is taken or `held: "copied"` copies it anyway. So is
 what no function needs yet, which is not written: `"asIs"` without `"handle"` or that copies a
 shared buffer, `"pinned"` that takes a `Blob` or copies a shared buffer, a `"pinned"` argument
-next to another or next to a `"borrowed"` one, and `.optional` or `.nullable` of `"copied"`, `"pinned"`
-or a `"handle"` that is not `"asIs"`.
+next to another or next to a `"borrowed"` one, and an absent `"copied"`, `"pinned"` or `"handle"` other
+than `.nullable` of `"asIs"`.
 
 ## Values and lifetimes
 
@@ -539,16 +539,16 @@ outside the object.
 If a timer, another thread or a C library can still point at the struct after its JS object
 is collected, make the class [`refCounted`](#refcounted).
 
-| Key              | What it declares                                                                               |
-| ---------------- | ---------------------------------------------------------------------------------------------- |
-| `rustPath`       | the struct                                                                                     |
-| `refCounted`     | the struct is a separate allocation that [can outlive the object](#refcounted)                 |
-| `finalize`       | with `refCounted`: call `fn finalize(&self)` when the object is collected                      |
-| `construct`      | `new Name(..)`. Without it JavaScript cannot make one; Rust can, with `payload.into_js(heap)`. |
-| `proto`          | properties of the prototype                                                                    |
-| `static`         | properties of the constructor: native functions and accessors without `setter` or `cache`      |
-| `internalFields` | JS values the object holds                                                                     |
-| `configurable`   | `false` makes the native properties non-configurable                                           |
+| Key              | What it declares                                                                                                                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rustPath`       | the struct                                                                                                                                                                            |
+| `refCounted`     | the struct is a separate allocation that [can outlive the object](#refcounted)                                                                                                        |
+| `finalize`       | with `refCounted`: call `fn finalize(&self)` when the object is collected                                                                                                             |
+| `construct`      | `new Name(..)`. Without it JavaScript cannot make one; Rust can, with `payload.into_js(heap)`. `"throws"`: there is a constructor, and `new` on it throws `Name is not constructible` |
+| `proto`          | properties of the prototype                                                                                                                                                           |
+| `static`         | properties of the constructor: native functions and accessors without `setter` or `cache`                                                                                             |
+| `internalFields` | JS values the object holds                                                                                                                                                            |
+| `configurable`   | `false` makes the native properties non-configurable                                                                                                                                  |
 
 Code that has the global object and no capability makes one with
 `payload.into_js_value(global)`, which returns a `JSValue`.
@@ -703,4 +703,4 @@ thread when the work completes.
 ## Tests
 
 - `test/internal/bindgen.test.ts`: conversions with hostile inputs, through `src/jsc/bindgen_test.bind.ts`. A schema named `*_test.bind.ts` is only part of a build with assertions (a debug build, CI's ASAN lane), so nothing it binds ships; `$bindgen` of one is `undefined` elsewhere, and its Rust module is `#[cfg(debug_assertions)]`. What that schema does not use is covered by the suites of the APIs that do.
-- `test/integration/bun-types/bun-types.test.ts`: `packages/bun-types` promises nothing that a schema breaks. Every call the published types allow has arguments the schema takes, every result they name is one it gives, and no object has a member that the schema's dictionary or class lacks. A new schema file is listed in `PUBLISHED_AS` there, with what the published types call its exports.
+- `test/integration/bun-types/bun-types.test.ts`: `packages/bun-types` promises nothing that a schema breaks. Every call the published types allow has arguments the schema takes, every result they name is one it gives, and no object has a member that the schema's dictionary or class lacks, but for those the test lists. A new schema file is listed in `PUBLISHED_AS` there, with what the published types call its exports.

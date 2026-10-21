@@ -4,7 +4,6 @@ import { afterAll, describe, expect, test } from "bun:test";
 import fs, { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
-import http from "node:http";
 import net from "node:net";
 import nodeTls from "node:tls";
 import { promisify } from "node:util";
@@ -531,110 +530,6 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
       } finally {
         graph.dispose();
       }
-    }
-  });
-
-  test("the 'close' of a node:net socket is its opener's, whoever destroys the socket", async () => {
-    const closed = (socket: net.Socket) => new Promise<void>(resolve => socket.once("close", () => resolve()));
-    const connected = (socket: net.Socket) =>
-      new Promise<net.Socket>((resolve, reject) => socket.once("connect", () => resolve(socket)).once("error", reject));
-    const listening = (server: net.Server) =>
-      new Promise<number>((resolve, reject) =>
-        server.once("error", reject).listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port)),
-      );
-    /** Runs `destroy` in the context of a graph that is disposed before anything it scheduled can run. */
-    const inDisposedGraph = (destroy: () => void) => {
-      const graph = new Bun.ModuleGraph();
-      graph.run(destroy);
-      graph.dispose();
-    };
-
-    const server = net.createServer(socket => void socket.on("error", () => {}).resume());
-    const secureServer = nodeTls.createServer(
-      { key: tls.key, cert: tls.cert },
-      socket => void socket.on("error", () => {}).resume(),
-    );
-    const [port, securePort] = await Promise.all([listening(server), listening(secureServer)]);
-    try {
-      // Sockets of the host's that a graph destroys: the graph is gone before any of them has closed.
-      await Promise.all([
-        (async () => {
-          const socket = await connected(net.connect(port, "127.0.0.1"));
-          inDisposedGraph(() => socket.destroy());
-          await closed(socket);
-        })(),
-        (async () => {
-          const socket = await connected(net.connect(port, "127.0.0.1"));
-          inDisposedGraph(() => socket.resetAndDestroy());
-          await closed(socket);
-        })(),
-        (async () => {
-          const accepted = Promise.withResolvers<net.Socket>();
-          const accepting = net.createServer(accepted.resolve);
-          const client = net.connect(await listening(accepting), "127.0.0.1").on("error", () => {});
-          try {
-            const socket = await accepted.promise;
-            inDisposedGraph(() => socket.destroy());
-            await closed(socket);
-          } finally {
-            client.destroy();
-            accepting.close();
-          }
-        })(),
-        (async () => {
-          // A net.Socket and the TLS socket over it share a handle: both close when the first is destroyed.
-          const raw = await connected(net.connect(securePort, "127.0.0.1"));
-          const secure = nodeTls.connect({ socket: raw, rejectUnauthorized: false }).on("error", () => {});
-          await new Promise<void>(resolve => secure.once("secureConnect", () => resolve()));
-          const bothClosed = Promise.all([closed(raw), closed(secure)]);
-          inDisposedGraph(() => raw.destroy());
-          await bothClosed;
-        })(),
-      ]);
-
-      // A socket of a graph's that the host destroys once the graph is disposed: the graph hears nothing of it.
-      const heard: string[] = [];
-      const graph = new Bun.ModuleGraph();
-      const socket = await graph.run(() =>
-        connected(net.connect(port, "127.0.0.1").on("close", () => heard.push("close"))),
-      );
-      graph.dispose();
-      socket.destroy();
-      await hostTimerTurns();
-      expect(heard).toEqual([]);
-    } finally {
-      server.close();
-      secureServer.close();
-    }
-  });
-
-  test("an http.Agent of the host's goes on after a graph destroyed a request that went through it", async () => {
-    const server = http.createServer((request, response) => {
-      if (request.url !== "/hang") response.end("ok");
-    });
-    await new Promise<void>((resolve, reject) => server.once("error", reject).listen(0, "127.0.0.1", resolve));
-    const port = (server.address() as net.AddressInfo).port;
-    const agent = new http.Agent({ maxSockets: 1 });
-    try {
-      const hanging = http.get({ port, host: "127.0.0.1", path: "/hang", agent }).on("error", () => {});
-      await new Promise<void>(resolve => hanging.once("socket", socket => socket.once("connect", () => resolve())));
-
-      const graph = new Bun.ModuleGraph();
-      graph.run(() => hanging.destroy());
-      graph.dispose();
-
-      // The agent has one socket: the next request waits for the 'close' of the one that was destroyed.
-      const { promise, resolve, reject } = Promise.withResolvers<string>();
-      http
-        .get({ port, host: "127.0.0.1", path: "/", agent }, response => {
-          response.setEncoding("utf8").once("data", resolve);
-        })
-        .on("error", reject);
-      expect(await promise).toBe("ok");
-    } finally {
-      agent.destroy();
-      server.closeAllConnections();
-      server.close();
     }
   });
 

@@ -157,11 +157,12 @@ extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue AsyncContextFrame__curren
     return JSValue::encode(globalObject->m_asyncContextData.get()->getInternalField(0));
 }
 
-// The frame that entered the Bun.ModuleGraph context `stored` (what withAsyncContextIfNeeded() returned)
-// was handed over in; undefined when that was in no graph's.
+// The frame that entered the Bun.ModuleGraph context `stored` (what withAsyncContextIfNeeded() returned,
+// or empty) was handed over in; undefined when that was in no graph's.
 extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue AsyncContextFrame__graphFrameOf(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue stored)
 {
-    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(JSValue::decode(stored))) {
+    JSValue callback = JSValue::decode(stored);
+    if (auto* wrapper = callback ? dynamicDowncast<AsyncContextFrame>(callback) : nullptr) {
         if (auto* frame = Bun::moduleGraphFrameOf(defaultGlobalObject(globalObject), wrapper->context.get()))
             return JSValue::encode(frame);
     }

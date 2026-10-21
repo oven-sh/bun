@@ -536,65 +536,13 @@ impl Pending {
         self.state = PendingState::Pending;
         prom
     }
-
-    pub(crate) fn run_on_next_tick(&mut self) {
-        if self.state != PendingState::Pending {
-            return;
-        }
-        // SAFETY: VirtualMachine::get() returns the per-thread singleton VM; sole
-        // `&`-borrow on this thread, outlives this call.
-        let vm = VirtualMachine::get();
-        let clone = Box::new(core::mem::take(self));
-        // `mem::take` resets `state`/`result`/`future` via `Default`;
-        // no reader observes `future` after this.
-        // VM event loop is a singleton; temporary `&mut` is the sole borrow
-        // for the duration of `enqueue_task` (no re-entry into Rust).
-        // `Task::from_boxed` owns the `Box → *mut` leak; the matching
-        // `heap::take` lives in `run_from_js_thread` (the dispatch arm).
-        vm.event_loop_ref()
-            .enqueue_task(bun_event_loop::Task::from_boxed(clone));
-    }
-
-    /// # Safety
-    /// `this` must be a valid, uniquely-owned pointer previously produced by
-    /// `bun_core::heap::into_raw` (via `Task::from_boxed` in `run_on_next_tick`).
-    pub(crate) fn run_from_js_thread(this: *mut Pending) {
-        // SAFETY: this was heap-allocated in run_on_next_tick
-        let mut boxed = unsafe { bun_core::heap::take(this) };
-        boxed.run();
-    }
-
-    /// The loop refused the deferred fulfilment (VM teardown): nobody awaits
-    /// the read any more, so drop the promise's root and the parked result.
-    pub(crate) fn release_without_running(this: *mut Pending) {
-        // SAFETY: heap-allocated in run_on_next_tick; refused, so we own it.
-        let mut boxed = unsafe { bun_core::heap::take(this) };
-        boxed.state = PendingState::Used;
-        if let PendingFuture::Promise { promise, .. } = &boxed.future {
-            JSPromise::opaque_ref(*promise).to_js().unprotect();
-        }
-        drop(boxed);
-    }
-}
-
-impl bun_event_loop::Taskable for Pending {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::StreamPending;
-    /// Deferred out of a finalizer or a late completion: do the script-free
-    /// part of what the dispatch would have done.
-    unsafe fn release_unrun(this: *mut Self) {
-        Pending::release_without_running(this);
-    }
-    /// `Pending::run` checks the context whose script is reading: most sources call it from their
-    /// own completion, not through this task.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
-        bun_event_loop::ContextId::NONE
-    }
 }
 
 pub(crate) enum PendingFuture {
     Promise {
-        // JSC_BORROW: raw `*mut JSPromise`, GC-rooted via protect/unprotect (protected when
-        // stored, unprotected when the future is fulfilled or deinitialized).
+        // JSC_BORROW: not a GC root. The `pendingPromise` slot of the wrapper of the source that
+        // parked the pull holds it (`NewSource::hold_waiting_read`), so it is valid for as long
+        // as that wrapper is alive: settle it through `NewSource::take_parked_pull`.
         promise: *mut JSPromise,
         // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
         global_this: BackRef<JSGlobalObject>,
@@ -690,10 +638,6 @@ impl StreamResult {
         // `&mut` the re-entered JS path materializes through `vm.event_loop()` or the
         // same promise. `event_loop_ref()` is the audited safe accessor that forms a
         // fresh temporary `&mut EventLoop` per call so no two `&mut` are live at once.
-        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-        // Adopt the caller's outstanding protect(); Drop unprotects on all paths.
-        let _unprotect = jsc::js_value::Protected::adopt(JSPromise::opaque_ref(promise).to_js());
-
         // A completion for a VM that no longer runs script settles nothing: `release()` frees
         // `.owned`/`.owned_and_done` and unprotects `.err` instead of leaking them.
         if !vm.script_allowed() {
@@ -769,9 +713,7 @@ impl StreamResult {
                 // classification; exclusive borrow scoped to the call.
                 let promise = unsafe { (**pending).promise(cx) };
                 // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-                let promise_js = JSPromise::opaque_ref(promise).to_js();
-                promise_js.protect();
-                Ok(promise_js)
+                Ok(JSPromise::opaque_ref(promise).to_js())
             }
             StreamResult::Err(err) => {
                 let js_err = err.to_js(cx.global());
@@ -1124,6 +1066,27 @@ impl SourceHandle {
             | SourceHandle::ShellWritable(_)
             | SourceHandle::HTMLRewriter(_)
             | SourceHandle::TestingCancelOnDrain(_) => {}
+        }
+    }
+
+    /// Whether the wrapper of this producer's stream is a GC root while a read waits on it
+    /// (`NewSource::hold_waiting_read`). `true`: work that the collector does not own (a socket)
+    /// settles the read whatever script drops. `false`: only the collector keeps the producer
+    /// alive, so what feeds it reaches the stream, and a root would keep both for a read that
+    /// nothing can settle.
+    pub fn roots_waiting_read(self) -> bool {
+        match self {
+            SourceHandle::FetchResponseBody(_)
+            | SourceHandle::S3DownloadBody(_)
+            | SourceHandle::ServerRequestBody(_) => true,
+            SourceHandle::HTMLRewriter(p) => p.roots_output_read(),
+            SourceHandle::None
+            | SourceHandle::JSController(_)
+            | SourceHandle::ByteStream(_)
+            | SourceHandle::FileReader(_)
+            | SourceHandle::Subprocess(_)
+            | SourceHandle::ShellWritable(_)
+            | SourceHandle::TestingCancelOnDrain(_) => false,
         }
     }
 
@@ -2723,7 +2686,9 @@ pub(crate) type NetworkSinkJSSink = crate::webcore::sink::JSSink<NetworkSink>;
 
 pub(crate) struct BufferAction {
     tag: BufferActionTag,
-    promise: JSPromiseStrong,
+    // JSC_BORROW: not a GC root, as `PendingFuture::Promise`: the `pendingPromise` slot of the
+    // stream's source wrapper holds it until the read is settled.
+    promise: *mut JSPromise,
     /// The context whose script asked (as `PendingFuture::Promise`).
     context: bun_jsc::ContextId,
 }
@@ -2742,7 +2707,7 @@ impl BufferAction {
     pub(crate) fn new(tag: BufferActionTag, cx: &bun_jsc::JsThread<'_>) -> Self {
         Self {
             tag,
-            promise: JSPromiseStrong::init(cx.global()),
+            promise: std::ptr::from_mut(JSPromise::create(cx.global())),
             context: cx.context().id(),
         }
     }
@@ -2753,10 +2718,10 @@ impl BufferAction {
 
     /// Settle the buffered `text()`/`json()`/`bytes()`/`blob()` promise.
     /// Terminal like the other settle primitives (`Pending::run`).
-    pub(crate) fn fulfill(&mut self, global: &JSGlobalObject, blob: &mut AnyBlob) {
+    pub(crate) fn fulfill(self, global: &JSGlobalObject, blob: &mut AnyBlob) {
         let entered = global.bun_vm().enter_context(self.context);
         let settled = blob.wrap(
-            jsc::AnyPromise::Normal(self.swap()),
+            jsc::AnyPromise::Normal(self.promise),
             &global.js_thread(entered.context()),
             self.tag(),
         );
@@ -2764,24 +2729,18 @@ impl BufferAction {
     }
 
     /// Terminal like [`fulfill`](Self::fulfill).
-    pub(crate) fn reject(&mut self, global: &JSGlobalObject, err: &StreamError) {
+    pub(crate) fn reject(self, global: &JSGlobalObject, err: &StreamError) {
         let _context = global.bun_vm().enter_context(self.context);
         // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-        let settled = JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js(global)));
+        let settled = JSPromise::opaque_mut(self.promise).reject(global, Ok(err.to_js(global)));
         crate::dispatch::fold(settled);
     }
 
     pub(crate) fn value(&self) -> JSValue {
-        self.promise.value()
-    }
-
-    pub(crate) fn swap(&mut self) -> *mut JSPromise {
-        std::ptr::from_mut(self.promise.swap())
+        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+        JSPromise::opaque_ref(self.promise).to_js()
     }
 }
-
-// JSPromiseStrong implements Drop, so the struct drops it automatically — no explicit
-// `impl Drop for BufferAction` needed.
 
 // ──────────────────────────────────────────────────────────────────────────
 // ReadResult

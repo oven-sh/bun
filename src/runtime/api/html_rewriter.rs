@@ -973,6 +973,38 @@ impl RewriterPipe {
             .is_some_and(|stream| webcore::readable_stream::is_locked_value(stream, &self.global))
     }
 
+    /// For [`SourceHandle::roots_waiting_read`]: whether a read that waits on the output stream
+    /// is a GC root. Only while a handler is parked, on this rewrite or on one that feeds it: the
+    /// abandonment of that handler rejects the read, and has to find it. At any other time what
+    /// feeds the rewrite reaches the read through the cell, and when nothing does, nothing can
+    /// settle the read.
+    pub(crate) fn roots_output_read(&self) -> bool {
+        self.is_suspended() || self.upstream().is_some_and(|rewrite| rewrite.roots_output_read())
+    }
+
+    /// The rewrite whose output stream is wired to this one as its input.
+    fn upstream(&self) -> Option<BackRef<RewriterPipe>> {
+        let SourceHandle::ByteStream(input) = self.input_source.get() else {
+            return None;
+        };
+        match input.parent_const().producer.get() {
+            SourceHandle::HTMLRewriter(rewrite) => Some(rewrite),
+            _ => None,
+        }
+    }
+
+    /// A handler parked or resumed: [`Self::roots_output_read`] has a new answer for a read that
+    /// waits on the output stream, or on the output of the rewrite that this one feeds.
+    fn sync_output_read_root(&self) {
+        let Some(out) = self.output.get() else {
+            return;
+        };
+        match *out.sink.get() {
+            SinkHandle::HTMLRewriter(downstream) => downstream.sync_output_read_root(),
+            _ => out.sync_waiting_read_root(),
+        }
+    }
+
     /// An observed reader has fallen behind: hold the input until its drain
     /// signal (`resume()`).
     fn output_backpressured(&self) -> bool {
@@ -1870,6 +1902,7 @@ impl RewriterPipe {
             &self.global,
             JSValue::UNDEFINED,
         );
+        self.sync_output_read_root();
     }
 
     /// The suspension begun by `begin_suspension` is over: the settle reaction or the abandonment
@@ -2080,6 +2113,7 @@ fn on_handler_resolve(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     pipe.end_suspension();
     // Runs the rest of the transform: more handlers (script), sink writes, stream delivery.
     pipe.resume_rewrite();
+    pipe.sync_output_read_root();
     // Balances the `ref_()` in `begin_suspension`.
     RewriterPipe::deref_nn(pipe.into());
     // Handler errors are captured into the stream by the pipe; what can still be pending here is

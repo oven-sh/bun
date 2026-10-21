@@ -2,7 +2,10 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { Readable } from "node:stream";
+import { text as readableToText } from "node:stream/consumers";
 import type { ReadableStreamDefaultReader } from "node:stream/web";
+import { Lifetimes } from "../bun/module-graph/module-graph-lifetimes";
 
 // `wire_input`'s materialized-body path transfers the body's `+1` (a
 // `WTFStringImpl` for an all-ASCII `new Response("...")`) into an `AnyBlob`
@@ -796,6 +799,552 @@ test("never-settling handler promises with a realized body release their parked 
 
   expect(results.every(m => m.includes("will never settle"))).toBe(true);
   expect(after - before).toBeLessThan(N / 3);
+});
+
+// A read of a transformed Response through its stream (`.body`, and every reader of it) waited
+// on a promise that the stream's native source made a GC root: the gcProtect()ed promise of a
+// parked pull with a Strong on the pull's buffer, or the Strong of a whole-body read. Nothing but
+// its input keeps a rewrite alive, so once script dropped an input that had not ended nothing
+// could settle the read, and the root kept it, the rewrite and all that their reactions reached
+// for the life of the process. The source's wrapper now holds a waiting read in visited slots,
+// and it is a root only while work that the collector does not own settles the read: for a
+// rewrite, while a handler is parked.
+describe("a read that waits on the output stream of a rewrite", () => {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  const turn = () => new Promise<void>(resolve => setImmediate(resolve));
+  // The document is a JSON string and a form with one name, so that every reader below takes it.
+  const parts = ['"<b>x', 'y</b>"'] as const;
+  const rewritten = '"<u>xy</u>"';
+  const headers = { "content-type": "application/x-www-form-urlencoded" };
+  // An input that has delivered `parts`, is still open, and that nothing keeps.
+  const open = (...parts: string[]) =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          for (const part of parts) controller.enqueue(encoder.encode(part));
+        },
+      }),
+      { headers },
+    );
+  // A stream with its controller, for an input that script goes on feeding.
+  const fed = () => {
+    let controller!: ReadableStreamDefaultController;
+    const input = new ReadableStream({ start: c => void (controller = c) });
+    return { controller, input: new Response(input, { headers }) };
+  };
+  const untouched = () => new HTMLRewriter().on("b", { element() {} });
+  const renaming = () => new HTMLRewriter().on("b", { element: element => void (element.tagName = "u") });
+  const drain = async (stream: ReadableStream<Uint8Array>) => {
+    let text = "";
+    const reader = stream.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return text + decoder.decode();
+      text += decoder.decode(value, { stream: true });
+    }
+  };
+  type Read = (output: Response) => Promise<string>;
+  // Every way to read a transformed Response through its stream. Each gives the document's text.
+  // These read it in chunks: a pull of the native stream parks until the rewrite has output.
+  const pulling: Record<string, Read> = {
+    "a reader": output => drain(output.body!),
+    "for await": async output => {
+      let text = "";
+      for await (const chunk of output.body!) text += decoder.decode(chunk, { stream: true });
+      return text;
+    },
+    "pipeTo()": async output => {
+      let text = "";
+      await output.body!.pipeTo(
+        new WritableStream({ write: chunk => void (text += decoder.decode(chunk, { stream: true })) }),
+      );
+      return text;
+    },
+    "pipeThrough()": output => drain(output.body!.pipeThrough(new TransformStream())),
+    "tee()": output => drain(output.body!.tee()[0]),
+    "clone()": output => drain(output.clone().body!),
+    "Readable.fromWeb()": output => readableToText(Readable.fromWeb(output.body as any)),
+    "textStream()": async output => {
+      let text = "";
+      for await (const chunk of (output as any).textStream()) text += chunk;
+      return text;
+    },
+  };
+  // These ask the native stream for the whole body at once.
+  const buffering: Record<string, Read> = {
+    "body.text()": output => (output.body as any).text(),
+    "new Response(body).text()": output => new Response(output.body).text(),
+    "Bun.readableStreamToText()": output => Bun.readableStreamToText(output.body!),
+    "Bun.readableStreamToArrayBuffer()": async output =>
+      decoder.decode(await Bun.readableStreamToArrayBuffer(output.body!)),
+    "Bun.readableStreamToBytes()": async output => decoder.decode(await Bun.readableStreamToBytes(output.body!)),
+    "Bun.readableStreamToBlob()": async output => (await Bun.readableStreamToBlob(output.body!)).text(),
+    "Bun.readableStreamToJSON()": async output => JSON.stringify(await Bun.readableStreamToJSON(output.body!)),
+    "body, then text()": output => (void output.body, output.text()),
+    "body, then json()": async output => (void output.body, JSON.stringify(await output.json())),
+    "body, then bytes()": async output => (void output.body, decoder.decode(await output.bytes())),
+    "body, then arrayBuffer()": async output => (void output.body, decoder.decode(await output.arrayBuffer())),
+    "body, then blob()": async output => (void output.body, (await output.blob()).text()),
+    "body, then formData()": async output => (void output.body, [...(await output.formData()).keys()].join()),
+  };
+  const through = { ...pulling, ...buffering };
+  const ways = Object.keys(through);
+  const byWay = <T>(values: T[]) => Object.fromEntries(ways.map((way, i) => [way, values[i]]));
+  const everyWay = <T>(value: T) => byWay(ways.map(() => value));
+
+  // The GC roots that a waiting read had: the pull's promise and buffer, or the whole-body promise.
+  // The stream and its source are here for a root that would only have moved.
+  const rootTypes = ["Promise", "Uint8Array", "ReadableStream", "BytesInternalReadableStreamSource"] as const;
+  const roots = () => {
+    const counts = heapStats().protectedObjectTypeCounts;
+    return rootTypes.map(type => counts[type] ?? 0);
+  };
+  // Only what was added: a collection in between can take the roots of an earlier test away.
+  const rootsSince = (before: number[]) =>
+    Object.fromEntries(roots().flatMap((count, i) => (count > before[i] ? [[rootTypes[i], count - before[i]]] : [])));
+
+  describe("is not a GC root while the input can never end", () => {
+    type Waits = { output?: Response };
+    // Starts something that `waits` waits for. It can give a promise for when it has come to rest.
+    type Begin = (waits: Waits) => unknown;
+    // Unfixed: every begin() of a group adds a root, which keeps its `waits`.
+    const abandoned = async (groups: Record<string, Record<string, Begin>>) => {
+      const lifetimes = new Lifetimes();
+      const names: string[] = [];
+      const added: Record<string, object> = {};
+      // bun:test roots the promise of this test at its first await.
+      await turn();
+      for (const [group, begins] of Object.entries(groups)) {
+        const before = roots();
+        const atRest: unknown[] = [];
+        (() => {
+          for (const [name, begin] of Object.entries(begins)) {
+            names.push(`${group}: ${name}`);
+            atRest.push(begin(lifetimes.track(`${group}: ${name}`, {})));
+          }
+        })();
+        await Promise.all(atRest);
+        await turn();
+        added[group] = rootsSince(before);
+      }
+      expect(added).toEqual(Object.fromEntries(Object.keys(groups).map(group => [group, {}])));
+      expect(await lifetimes.stillAlive(...names)).toEqual([]);
+    };
+    // What waits for a read is what its reactions reach.
+    const waitFor = (waits: Waits, read: Promise<unknown>) =>
+      void read.then(
+        () => waits,
+        () => waits,
+      );
+    // Each of `reads`, once alone and once with a `waits` that also reaches the output, and through it its own rewrite.
+    const each = (reads: Record<string, Read>, rewrite: (resumed: () => void) => Response) =>
+      Object.fromEntries(
+        Object.entries(reads).flatMap(([way, read]) =>
+          [false, true].map(reachesOutput => [
+            reachesOutput ? `${way}, and the output` : way,
+            (waits: Waits) => {
+              const resumed = Promise.withResolvers<void>();
+              const output = rewrite(resumed.resolve);
+              if (reachesOutput) waits.output = output;
+              waitFor(waits, read(output));
+              return resumed.promise;
+            },
+          ]),
+        ),
+      );
+    const both = { "a reader": pulling["a reader"], "body, then text()": buffering["body, then text()"] };
+    const pullAndWholeBody = (reads: Record<string, Read>, rewrite: (resumed: () => void) => Response) => ({
+      "a parked pull": each(Object.fromEntries(Object.entries(reads).filter(([way]) => way in pulling)), rewrite),
+      "a whole-body read": each(Object.fromEntries(Object.entries(reads).filter(([way]) => way in buffering)), rewrite),
+    });
+
+    test("however it is read", async () => {
+      await abandoned(
+        pullAndWholeBody(through, resumed => {
+          resumed();
+          return untouched().transform(open(parts[0]));
+        }),
+      );
+    });
+
+    // The stream's controller pulls ahead of its reader: these park a pull that no read() asked for.
+    test("when nothing was read at all", async () => {
+      const unread: Record<string, (output: Response) => unknown> = {
+        "getReader()": output => void output.body!.getReader(),
+        "tee()": output => void output.body!.tee(),
+        "values()": output => void output.body!.values(),
+        "clone()": output => void output.clone(),
+        "a read, then releaseLock()": async output => {
+          const reader = output.body!.getReader();
+          await reader.read();
+          reader.releaseLock();
+        },
+      };
+      await abandoned({
+        "a pull ahead": Object.fromEntries(
+          Object.entries(unread).map(([name, touch]) => [
+            name,
+            (waits: Waits) => {
+              // The rewrite holds its output Response, and that one holds `waits`.
+              const output = untouched().transform(open(...(name.startsWith("a read") ? [parts[0]] : [])));
+              (output as any).waits = waits;
+              return touch(output);
+            },
+          ]),
+        ),
+      });
+    });
+
+    test("through a rewrite of a rewrite", async () => {
+      await abandoned(
+        pullAndWholeBody(both, resumed => {
+          resumed();
+          return untouched().transform(untouched().transform(open(parts[0])));
+        }),
+      );
+    });
+
+    // A parked handler makes the read a root. Once it has resumed, the read waits for input like any other.
+    describe("once a handler that parked has resumed", () => {
+      const parking = (resumed: () => void) =>
+        new HTMLRewriter().on("b", {
+          async element() {
+            await turn();
+            resumed();
+          },
+        });
+
+      test("and the read began before it parked", async () => {
+        await abandoned(
+          pullAndWholeBody(both, resumed => {
+            const { controller, input } = fed();
+            const output = parking(resumed).transform(input);
+            // After the read has begun: this function returns first.
+            queueMicrotask(() => controller.enqueue(encoder.encode(parts[0])));
+            return output;
+          }),
+        );
+      });
+
+      test("and the read began while it was parked", async () => {
+        await abandoned(pullAndWholeBody(both, resumed => parking(resumed).transform(open(parts[0]))));
+      });
+
+      test("and it is a handler of the rewrite that feeds this one", async () => {
+        await abandoned(
+          pullAndWholeBody(both, resumed => {
+            const { controller, input } = fed();
+            const output = untouched().transform(parking(resumed).transform(input));
+            queueMicrotask(() => controller.enqueue(encoder.encode(parts[0])));
+            return output;
+          }),
+        );
+      });
+    });
+  });
+
+  // The other half: whatever can still end the rewrite has to find the read, with the output
+  // Response, its stream and the read's own promise dropped.
+  describe("is still settled", () => {
+    // How a read settles.
+    const settle = (read: Promise<unknown>) =>
+      read.then(
+        value => "fulfilled: " + value,
+        error => "rejected: " + error.message,
+      );
+    // What each of those gave within a bounded number of collections, or "pending".
+    const outcomes = async (settled: Promise<string>[]) => {
+      let seen: (string | undefined)[] = [];
+      for (let i = 0; i < 100 && seen.filter(Boolean).length < settled.length; i++) {
+        Bun.gc(true);
+        await turn();
+        seen = await Promise.all(settled.map(read => Promise.race([read, Promise.resolve(undefined)])));
+      }
+      return seen.map(outcome => outcome ?? "pending");
+    };
+    const collections = async () => {
+      for (let i = 0; i < 5; i++) {
+        await turn();
+        Bun.gc(true);
+      }
+    };
+
+    test("by an input that only script holds, when it ends and when it fails", async () => {
+      const controllers: ReadableStreamDefaultController[] = [];
+      const reads: Promise<string>[] = [];
+      (() => {
+        for (const way of ways)
+          for (let i = 0; i < 2; i++) {
+            const { controller, input } = fed();
+            controllers.push(controller);
+            controller.enqueue(encoder.encode(parts[0]));
+            reads.push(settle(through[way](renaming().transform(input))));
+          }
+      })();
+      await collections();
+      for (const [i, controller] of controllers.entries()) {
+        if (i % 2) controller.error(new Error("the input failed"));
+        else {
+          controller.enqueue(encoder.encode(parts[1]));
+          controller.close();
+        }
+      }
+
+      const seen = await outcomes(reads);
+      expect({
+        ends: byWay(ways.map((_, i) => seen[2 * i])),
+        fails: byWay(ways.map((_, i) => seen[2 * i + 1])),
+      }).toEqual({
+        ends: everyWay("fulfilled: " + rewritten),
+        fails: everyWay("rejected: the input failed"),
+      });
+    });
+
+    test("by a handler that parked and resumed while the read waited", async () => {
+      const controllers: ReadableStreamDefaultController[] = [];
+      const resumed: Promise<void>[] = [];
+      const reads: Promise<string>[] = [];
+      (() => {
+        for (const way of ways) {
+          const { controller, input } = fed();
+          const { promise, resolve } = Promise.withResolvers<void>();
+          controllers.push(controller);
+          resumed.push(promise);
+          reads.push(
+            settle(
+              through[way](
+                new HTMLRewriter()
+                  .on("b", {
+                    async element(element) {
+                      await turn();
+                      element.tagName = "u";
+                      resolve();
+                    },
+                  })
+                  .transform(input),
+              ),
+            ),
+          );
+          controller.enqueue(encoder.encode(parts[0]));
+        }
+      })();
+      await Promise.all(resumed);
+      await collections();
+      for (const controller of controllers) {
+        controller.enqueue(encoder.encode(parts[1]));
+        controller.close();
+      }
+
+      expect(byWay(await outcomes(reads))).toEqual(everyWay("fulfilled: " + rewritten));
+    });
+
+    test("by a file that nothing else holds", async () => {
+      const html = `"<b>${Buffer.alloc(300_000, "x").toString()}</b>"`;
+      using dir = tempDir("hr-stream-read-file", { "in.html": html });
+      const reads: Promise<string>[] = [];
+      (() => {
+        for (const way of ways)
+          reads.push(
+            settle(
+              through[way](renaming().transform(new Response(Bun.file(join(String(dir), "in.html")), { headers }))).then(
+                text => (text === html.replaceAll("b>", "u>") ? "the file" : `${text.length} characters`),
+              ),
+            ),
+          );
+      })();
+
+      expect(byWay(await outcomes(reads))).toEqual(everyWay("fulfilled: the file"));
+    });
+
+    test("by a fetch() in flight that nothing else holds", async () => {
+      const rest = Promise.withResolvers<void>();
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue(encoder.encode(parts[0]));
+                await rest.promise;
+                controller.enqueue(encoder.encode(parts[1]));
+                controller.close();
+              },
+            }),
+            { headers },
+          ),
+      });
+      const seen: Promise<void>[] = [];
+      const reads: Promise<string>[] = [];
+      (() => {
+        for (const way of ways) {
+          const { promise, resolve } = Promise.withResolvers<void>();
+          seen.push(promise);
+          reads.push(
+            fetch(server.url).then(response =>
+              settle(
+                through[way](
+                  new HTMLRewriter()
+                    .on("b", {
+                      element(element) {
+                        element.tagName = "u";
+                        resolve();
+                      },
+                    })
+                    .transform(response),
+                ),
+              ),
+            ),
+          );
+        }
+      })();
+      await Promise.all(seen);
+      await collections();
+      rest.resolve();
+
+      expect(byWay(await outcomes(reads))).toEqual(everyWay("fulfilled: " + rewritten));
+    });
+
+    test("when one of the rewrite's own handlers begins it", async () => {
+      const controllers: ReadableStreamDefaultController[] = [];
+      const reads: Promise<string>[] = [];
+      (() => {
+        for (const way of ways) {
+          const begun = Promise.withResolvers<string>();
+          const { controller, input } = fed();
+          controllers.push(controller);
+          const output = new HTMLRewriter()
+            .on("b", {
+              element(element) {
+                element.tagName = "u";
+                begun.resolve(settle(through[way](output)));
+              },
+            })
+            .transform(input);
+          reads.push(begun.promise);
+          controller.enqueue(encoder.encode(parts[0]));
+        }
+      })();
+      await collections();
+      for (const controller of controllers) {
+        controller.enqueue(encoder.encode(parts[1]));
+        controller.close();
+      }
+
+      expect(byWay(await outcomes(reads))).toEqual(everyWay("fulfilled: " + rewritten));
+    });
+
+    // A failing rewrite cancels its input, and that `cancel()` is script: the read it begins is settled by the same failure.
+    test("when the input's cancel() begins it while the rewrite fails", async () => {
+      const reads: Promise<string>[] = [];
+      (() => {
+        for (const way of ways) {
+          const begun = Promise.withResolvers<string>();
+          let controller!: ReadableStreamDefaultController;
+          const output = new HTMLRewriter()
+            .on("b", {
+              element() {
+                throw new Error("boom");
+              },
+            })
+            .transform(
+              new Response(
+                new ReadableStream({
+                  start: c => void (controller = c),
+                  cancel: () => void begun.resolve(settle(through[way](output))),
+                }),
+                { headers },
+              ),
+            );
+          reads.push(begun.promise);
+          controller.enqueue(encoder.encode(parts[0]));
+        }
+      })();
+
+      expect(byWay(await outcomes(reads))).toEqual(everyWay("rejected: boom"));
+    });
+
+    // Nothing is held but what waits for the read: the read has to outlive the collection that
+    // finds the handler's promise dead, for the abandonment to reject it.
+    describe("by the abandonment of a parked handler", () => {
+      const never = () => new Promise<void>(() => {});
+      const neverSettles = "rejected: HTMLRewriter content handler returned a Promise that will never settle";
+      const abandon = async (begin: (way: string) => Promise<string>) => {
+        const reads: Promise<string>[] = [];
+        (() => {
+          for (const way of ways) reads.push(begin(way));
+        })();
+        expect(byWay(await outcomes(reads))).toEqual(everyWay(neverSettles));
+      };
+
+      test("that parked after the read began", async () => {
+        await abandon(way => {
+          const { controller, input } = fed();
+          const read = settle(through[way](new HTMLRewriter().on("b", { element: never }).transform(input)));
+          controller.enqueue(encoder.encode(parts[0]));
+          return read;
+        });
+      });
+
+      test("that parked before the read began", async () => {
+        await abandon(way =>
+          settle(
+            through[way](
+              new HTMLRewriter().on("b", { element: never }).transform(new Response(parts.join(""), { headers })),
+            ),
+          ),
+        );
+      });
+
+      // The first handler's resume made the read an ordinary one again. The second park makes it a root again.
+      test("that parked after another one resumed", async () => {
+        await abandon(way => {
+          const { controller, input } = fed();
+          let calls = 0;
+          const read = settle(
+            through[way](
+              new HTMLRewriter().on("b", { element: () => (++calls === 1 ? turn() : never()) }).transform(input),
+            ),
+          );
+          controller.enqueue(encoder.encode('"<b>x</b><b>y</b>"'));
+          return read;
+        });
+      });
+
+      // The read waits on the outer rewrite, and the handler that is abandoned is the inner one's.
+      test.each([
+        ["after", false],
+        ["before", true],
+      ])("of the rewrite that feeds this one, which parked %s the read began", async (_, parkedFirst) => {
+        await abandon(way => {
+          const { controller, input } = fed();
+          const inner = new HTMLRewriter().on("b", { element: never }).transform(input);
+          if (parkedFirst) controller.enqueue(encoder.encode(parts[0]));
+          const read = settle(through[way](untouched().transform(inner)));
+          if (!parkedFirst) controller.enqueue(encoder.encode(parts[0]));
+          return read;
+        });
+      });
+    });
+
+    test("by its own cancel(), and then it is no root", async () => {
+      await turn();
+      const before = roots();
+      const reads: Promise<string>[] = [];
+      const cancelled: Promise<unknown>[] = [];
+      for (let i = 0; i < 4; i++) {
+        const reader = untouched().transform(open()).body!.getReader();
+        reads.push(settle(reader.read().then(({ done }) => "done: " + done)));
+        cancelled.push(reader.cancel());
+      }
+      await Promise.all(cancelled);
+
+      expect({ reads: await outcomes(reads), roots: rootsSince(before) }).toEqual({
+        reads: reads.map(() => "fulfilled: done: true"),
+        roots: {},
+      });
+    });
+  });
 });
 
 // Abandoning a transform whose JS-pump input stream never closes makes the

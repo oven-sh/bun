@@ -86,7 +86,6 @@ use crate::webcore::file_sink::Poll as FileSinkPoll;
 use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 use crate::webcore::s3::multipart::WriterCollected as S3UploadWriterCollected;
 use crate::webcore::s3::simple_request::S3HttpSimpleTask;
-use crate::webcore::streams::Pending as StreamPending;
 
 use crate::api::bun_subprocess::Subprocess;
 #[cfg(not(windows))]
@@ -639,10 +638,6 @@ pub(crate) fn run_task(
         task_tag::FlushPendingFileSinkTask => unsafe {
             FlushPendingFileSinkTask::run_from_js_thread(cast_ptr!(FlushPendingFileSinkTask));
         },
-        // `cast_ptr!` yields the heap-allocated task; sole owner.
-        task_tag::StreamPending => {
-            StreamPending::run_from_js_thread(cast_ptr!(StreamPending));
-        }
 
         _ => {
             // A value outside `task_tag::COUNT` is a producer bug, but it's
@@ -752,7 +747,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 86,
+    task_tag::COUNT == 85,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1517,7 +1512,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::StatWatcherHop => release!(crate::node::node_fs_stat_watcher::StatWatcher),
         task_tag::AsyncCpTask => release!(crate::node::fs::AsyncCpTask),
         task_tag::ShellAsyncCpTask => release!(crate::node::fs::ShellAsyncCpTask),
-        task_tag::StreamPending => release!(StreamPending),
         task_tag::ThreadSafeFunction => release!(ThreadSafeFunction),
         task_tag::UvLoopDispatch => {
             #[cfg(unix)]

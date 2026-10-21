@@ -67,8 +67,6 @@ unsafe extern "C" {
 // ============================================================================
 
 const MAX_HISTORY_SIZE: usize = 1000;
-/// Only the tail of a larger history file is read at startup.
-const MAX_HISTORY_FILE_BYTES: usize = 4 * 1024 * 1024;
 const HISTORY_FILENAME: &[u8] = b".bun_repl_history";
 
 // ANSI escape codes
@@ -208,55 +206,39 @@ impl History {
         ) else {
             return Ok(());
         };
+        let file = Self::open_file(path.as_bytes(), sys::O::RDONLY);
+        let content: Box<[u8]> = match file.and_then(|file| file.read_to_end()) {
+            sys::Result::Ok(bytes) => bytes.into(),
+            // No history yet: `save` creates the file.
+            sys::Result::Err(err) if err.get_errno() == sys::E::ENOENT => Box::default(),
+            // `file_path` stays unset, so `save` does not replace what was not read.
+            sys::Result::Err(_) => return Ok(()),
+        };
         self.file_path = Some(Box::<[u8]>::from(path.as_bytes()));
 
-        let Some(file) = Self::open_file(path.as_bytes(), sys::O::RDONLY) else {
-            return Ok(());
-        };
-        let Ok(size) = file.get_end_pos() else {
-            return Ok(());
-        };
-        let offset = size.saturating_sub(MAX_HISTORY_FILE_BYTES);
-        let mut content = vec![0u8; size - offset];
-        let Ok(len) = file.pread_all(&mut content, offset as u64) else {
-            return Ok(());
-        };
-
-        // Newest entries are at the end of the file, so walk it backwards and
-        // stop once MAX_HISTORY_SIZE entries are collected.
-        let mut rest = &content[..len];
-        let mut newest_first: Vec<Box<[u8]>> = Vec::new();
-        loop {
-            let (before, line) = match strings::rsplit_once_char(rest, b'\n') {
-                Some(split) => split,
-                // A tail read starts somewhere inside an older entry.
-                None if offset > 0 => break,
-                None => (&[][..], rest),
-            };
+        for line in strings::split(&content, b"\n") {
             if !line.is_empty() {
-                newest_first.push(Box::<[u8]>::from(line));
+                self.entries.push(Box::<[u8]>::from(line));
             }
-            if before.is_empty() || newest_first.len() == MAX_HISTORY_SIZE {
-                break;
-            }
-            rest = before;
         }
-        newest_first.reverse();
-        self.entries = newest_first;
+
+        // Trim to max size
+        let excess = self.entries.len().saturating_sub(MAX_HISTORY_SIZE);
+        self.entries.drain(..excess);
 
         self.position = self.entries.len();
         Ok(())
     }
 
-    /// Without `O_NONBLOCK`, opening a FIFO left at the history path waits for a
-    /// peer and hangs the REPL before it prints anything. The flag has no effect
-    /// on the regular file this accepts.
-    fn open_file(path: &[u8], flags: i32) -> Option<sys::File> {
-        let flags = flags | sys::O::NONBLOCK | sys::O::NOCTTY | sys::O::CLOEXEC;
-        let file = sys::File::openat(Fd::cwd(), path, flags, 0o600).ok()?;
-        match file.kind() {
-            Ok(sys::FileKind::File) => Some(file),
-            _ => None,
+    /// Opens the history file. Only a regular file is accepted, and a FIFO must not block the open.
+    fn open_file(path: &[u8], flags: i32) -> sys::Result<sys::File> {
+        // On Windows, `O_NONBLOCK` makes the handle asynchronous, and `write` fails on it.
+        let without_waiting = if cfg!(unix) { sys::O::NONBLOCK } else { 0 };
+        let flags = flags | without_waiting | sys::O::NOCTTY | sys::O::CLOEXEC;
+        let file = sys::File::openat(Fd::cwd(), path, flags, 0o600)?;
+        match file.kind()? {
+            sys::FileKind::File => Ok(file),
+            _ => Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open)),
         }
     }
 
@@ -281,14 +263,15 @@ impl History {
             content.push(b'\n');
         }
 
-        let Some(file) = Self::open_file(path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC)
-        else {
-            return;
+        let file = match Self::open_file(path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC) {
+            sys::Result::Ok(file) => file,
+            sys::Result::Err(_) => return,
         };
         #[cfg(unix)]
         let _ = sys::fchmod(file.fd(), 0o600);
-        if file.write_all(&content).is_err() {
-            return;
+        match file.write_all(&content) {
+            sys::Result::Ok(()) => {}
+            sys::Result::Err(_) => return,
         }
 
         self.modified = false;

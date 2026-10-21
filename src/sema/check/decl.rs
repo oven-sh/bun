@@ -3416,7 +3416,6 @@ impl<'p, 's> Checker<'p, 's> {
             spec,
             name,
             is_typeof,
-            mode,
             ..
         } = hir[node].kind
         else {
@@ -3427,8 +3426,7 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             SymFlags::TYPE
         };
-        let mode = files.mode_of_import(file, mode);
-        let inner_module_symbol = files.module_of_specifier_as(file, spec, mode)?;
+        let inner_module_symbol = files.module_of_import_type(file, node)?;
         let module_symbol = self.resolve_external_module_symbol(inner_module_symbol);
         if name.is_empty() {
             let flags = match module_symbol {

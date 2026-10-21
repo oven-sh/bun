@@ -2879,7 +2879,17 @@ impl<'f, 's> Binder<'f, 's> {
         let container = self.b.container_scope(self.scope);
         let is_in_file = matches!(self.b.scopes[container.idx()].kind, ScopeKind::File);
         let is_global = is_in_file && !self.f.has_module_syntax;
+        // `TryParsePattern`
+        let is_pattern = matches!(decl.name, ModuleName::String(name) if name.is_some()
+            && self.atoms.bytes(name).iter().filter(|&&c| c == b'*').count() == 1);
         let symbol = match decl.name {
+            // `getDeclarationName`: every pattern with import attributes has a name that nothing else has.
+            // `mergePatternAmbientModules` merges those whose attributes are the same.
+            ModuleName::String(name)
+                if is_pattern && decl.attributes.is_some() && !is_augmentation =>
+            {
+                self.bind_anonymous_declaration(Decl::Module(m), flags, name)
+            }
             ModuleName::String(name)
                 if is_in_file || self.enclosing_ambient_module(container).is_some() =>
             {
@@ -2922,16 +2932,16 @@ impl<'f, 's> Binder<'f, 's> {
                 self.declare_symbol_and_add_to_symbol_table(Decl::Module(m), flags, excludes)
             }
         };
-        // `bindModuleDeclaration`, `TryParsePattern`
+        // `bindModuleDeclaration`
         if let ModuleName::String(name) = decl.name
             && !is_augmentation
-            && name.is_some()
-            && (self.atoms.bytes(name).iter())
-                .filter(|&&c| c == b'*')
-                .count()
-                == 1
+            && is_pattern
         {
             self.b.pattern_ambient_modules.push((name, symbol));
+        }
+        // Names in the attributes don't resolve to what the module declares.
+        if decl.attributes.is_some() {
+            self.ty(decl.attributes);
         }
         // `collectModuleReferences`: anywhere else it augments nothing. 2669
         if decl.name == ModuleName::Global

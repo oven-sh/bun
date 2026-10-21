@@ -510,11 +510,7 @@ impl Checker<'_, '_> {
                         ask(0, whole, IMPORT_STAR);
                         continue;
                     }
-                    let mode = files.mode_of_import(file, import.mode);
-                    if files
-                        .module_of_specifier_as(file, import.spec, mode)
-                        .is_some()
-                    {
+                    if files.module_of_import(file, &import).is_some() {
                         for spec in import.named.iter() {
                             let named = hir[spec];
                             if named.imported == known::default {

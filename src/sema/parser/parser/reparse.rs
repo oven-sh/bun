@@ -471,6 +471,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 } else {
                     Flags::REPARSED
                 },
+                attributes: TypeNodeId::NONE,
                 body: self.f.list(&[statement]),
                 has_body: true,
                 specifies_module: false,

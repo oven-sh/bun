@@ -1303,18 +1303,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// The module that `getTargetOfNamespaceImport` or `getTargetOfNamespaceExport` passes to
     /// `resolveESModuleSymbol` for `alias`: `import * as ns`, `export * as ns`.
     fn module_of_namespace_import_or_export(&self, alias: Sym) -> Option<Sym> {
-        let (file, files) = (alias.file, self.files());
-        let hir = self.hir(file);
+        let files = self.files();
         let mut declarations = files.symbol(alias).decls.iter();
-        let (spec, mode) = declarations.find_map(|&decl| match decl {
-            Decl::ImportNamespace(import) => Some((hir[import].spec, hir[import].mode)),
-            Decl::ExportStarAs(statement) => match hir[statement].kind {
-                StmtKind::ExportStar { spec, mode, .. } => Some((spec, mode)),
-                _ => None,
-            },
-            _ => None,
-        })?;
-        files.module_of_specifier_as(file, spec, files.mode_of_import(file, mode))
+        let is_namespace =
+            |it: &&Decl| matches!(it, Decl::ImportNamespace(_) | Decl::ExportStarAs(_));
+        files.module_of_alias_declaration(alias.file, *declarations.find(is_namespace)?)
     }
 
     /// `resolveESModuleSymbol` for `alias`, which refers to `module`, if the result is a symbol
@@ -1360,10 +1353,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.hir(file).is_in_jsdoc(import.namespace_pos) {
             return None;
         }
-        let mode = self.files().mode_of_import(file, import.mode);
-        let module = self
-            .files()
-            .module_of_specifier_as(file, import.spec, mode)?;
+        let module = self.files().module_of_import(file, import)?;
         let symbol = self.resolve_external_module_symbol(module);
         let ty = self.type_of_alias_target(symbol);
         let files = self.files();
@@ -1476,20 +1466,15 @@ impl<'p, 's> Checker<'p, 's> {
     /// returns a module with an `export =` whose properties the tables don't have.
     fn module_of_default_import(&self, alias: Sym) -> Option<Sym> {
         let (file, files) = (alias.file, self.files());
-        let hir = self.hir(file);
         let mut declarations = files.symbol(alias).decls.iter();
-        let (spec, mode) = declarations.find_map(|&decl| match decl {
-            Decl::ImportDefault(import) => {
-                let mode = files.mode_of_import(file, hir[import].mode);
-                Some((hir[import].spec, mode))
-            }
-            Decl::ImportSpec(_) | Decl::ExportSpec(_) => {
-                let (spec, mode, name) = files.external_module_member_of(file, decl)?;
-                (name == known::default).then_some((spec, mode))
-            }
-            _ => None,
-        })?;
-        let module = files.module_of_specifier_as(file, spec, mode)?;
+        let is_default = |decl: &&Decl| match **decl {
+            Decl::ImportDefault(_) => true,
+            Decl::ImportSpec(_) | Decl::ExportSpec(_) => (files
+                .external_module_member_of(file, **decl))
+            .is_some_and(|it| it.2 == known::default),
+            _ => false,
+        };
+        let module = files.module_of_alias_declaration(file, *declarations.find(is_default)?)?;
         files.export(module, known::export_equals)?;
         let needs_type_lookup = SymFlags::VARIABLE | SymFlags::PROPERTY | SymFlags::ALIAS;
         let value = files.module_value(module);
@@ -1692,14 +1677,14 @@ impl<'p, 's> Checker<'p, 's> {
         let file = sym.file;
         let files = self.files();
         for &decl in files.symbol(sym).decls {
-            let Some((spec, mode, name)) = files.external_module_member_of(file, decl) else {
+            let Some((.., name)) = files.external_module_member_of(file, decl) else {
                 continue;
             };
             // `{ default as d }` is the default import by another spelling, but not in a binding pattern.
             if name == known::default && !matches!(decl, Decl::Require(_)) {
                 continue;
             }
-            let Some(module) = files.module_of_specifier_as(file, spec, mode) else {
+            let Some(module) = files.module_of_alias_declaration(file, decl) else {
                 continue;
             };
             if files.module_value(module) == module {

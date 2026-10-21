@@ -1648,6 +1648,8 @@ impl<'s> Checker<'_, 's> {
             }
             StmtKind::Module(module) => {
                 self.check_function_or_module_block(file, hir[module].body);
+                // `checkImportAttributesType`
+                self.check_type_node(file, hir[module].attributes);
                 // `checkGrammarModuleElementContext`
                 if matches!(bound.parent_of_stmt(s), Parent::File | Parent::Module(_)) {
                     if let ModuleName::Ident(name) = hir[module].name {

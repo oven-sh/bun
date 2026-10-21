@@ -10,6 +10,7 @@ use super::infer::Inference;
 use super::shape::{Access, Found};
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId};
+use crate::program::{ImportAttribute, ImportAttributes};
 use smallvec::SmallVec;
 use std::ops::ControlFlow;
 
@@ -1998,7 +1999,13 @@ impl<'p, 's> Checker<'p, 's> {
         let module = match hir[specifier].kind {
             // `resolveExternalModuleName`: `IsStringLiteralLike(moduleReferenceExpression)`
             ExprKind::String(text) if !is_parenthesized(hir, specifier) => {
-                files.module_of_specifier_as(file, text, mode)
+                let attributes = match hir[e].kind {
+                    ExprKind::ImportCall { args } if args.len() > 1 => {
+                        self.attributes_of_import_call(file, hir.id_at(args, 1))
+                    }
+                    _ => ImportAttributes::new(),
+                };
+                files.module_of_specifier_with(file, text, mode, &attributes)
             }
             _ => None,
         };
@@ -2048,6 +2055,32 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         self.create_promise_return_type(node, true, ty)
+    }
+
+    /// `getTypeOfPropertyOfType(checkExpressionCached(options), "with")`, where `options` is the second argument of
+    /// `import()`.
+    pub(super) fn attributes_of_import_call(
+        &mut self,
+        file: FileId,
+        options: ExprId,
+    ) -> ImportAttributes {
+        let options_type = self.type_of_expr(file, options);
+        let Some(attributes_type) = self.type_of_property_of_type(options_type, known::with) else {
+            return ImportAttributes::new();
+        };
+        let mut attributes = ImportAttributes::new();
+        for property in self.properties_of_type(attributes_type) {
+            let value = self.type_of_prop(property, MapperId::IDENTITY);
+            let value = match *self.data(value) {
+                TypeData::StringLit { value, .. } => Some(value),
+                _ => None,
+            };
+            attributes.push(ImportAttribute {
+                name: property.name,
+                value,
+            });
+        }
+        attributes
     }
 
     // ───────────────────────────── names ─────────────────────────────

@@ -48,6 +48,8 @@ pub(super) struct SpecifierSite {
     pub(super) is_for_augmentation: bool,
     /// `moduleNotFoundError == nil`: the name of an augmentation in an ambient context.
     pub(super) is_not_validated: bool,
+    /// The second argument of `import()`.
+    pub(super) import_call_options: Option<ExprId>,
 }
 
 /// `directivesByLine` of a file that has comment directives.
@@ -413,22 +415,16 @@ impl Checker<'_, '_> {
     /// True if the target of an alias in `file` is looked up in `getExportsOfModule(module)`, either by
     /// `getExternalModuleMember` or by `resolveESModuleSymbol` for `import * as ns`.
     fn has_alias_from_exports_of_module(&self, file: FileId, module: Sym) -> bool {
-        let (files, hir) = (self.files(), self.hir(file));
+        let files = self.files();
         let aliases = self.bound(file).symbols.with_flags(SymFlags::ALIAS);
         aliases.flat_map(|symbol| symbol.decls.iter()).any(|&decl| {
-            let specifier = match decl {
-                Decl::ImportNamespace(import) => {
-                    let import = &hir[import];
-                    Some((import.spec, files.mode_of_import(file, import.mode)))
-                }
+            let reads_exports = match decl {
+                Decl::ImportNamespace(_) => true,
                 // `{ default as d }` is another syntax for the default import, except in a binding pattern.
                 _ => (files.external_module_member_of(file, decl))
-                    .filter(|it| it.2 != known::default || matches!(decl, Decl::Require(_)))
-                    .map(|it| (it.0, it.1)),
+                    .is_some_and(|it| it.2 != known::default || matches!(decl, Decl::Require(_))),
             };
-            specifier.is_some_and(|(spec, mode)| {
-                files.module_of_specifier_as(file, spec, mode) == Some(module)
-            })
+            reads_exports && files.module_of_alias_declaration(file, decl) == Some(module)
         })
     }
 
@@ -1104,13 +1100,22 @@ impl Checker<'_, '_> {
         if let Some(without_prefix) = text.strip_prefix(b"@types/") {
             self.error_at(at, 6137, &[Arg::Bytes(without_prefix), Arg::Atom(spec)]);
         }
-        // A module that isn't a file comes from `tryFindAmbientModule`, or there's no file and it's one of
-        // `patternAmbientModules`.
-        let found = files.module_of_specifier_as(file, spec, mode);
-        if found.is_some_and(|m| !self.modules_is_a_file(m)) {
+        let attributes = match site.import_call_options {
+            Some(options) => self.attributes_of_import_call(file, options),
+            None => {
+                let attributes = self.hir(file).attributes_after_specifier(start);
+                files.import_attributes(file, attributes)
+            }
+        };
+        let found = files.module_of_specifier_with(file, spec, mode, &attributes);
+        let target = importing.imports.get(&key);
+        // A module that isn't a file comes from `tryFindAmbientModule`, or it's one of `patternAmbientModules`, which
+        // are looked at after the file.
+        if found.is_some_and(|m| !self.modules_is_a_file(m))
+            && (target.is_none() || files.try_find_ambient_module(spec).is_some())
+        {
             return true;
         }
-        let target = importing.imports.get(&key);
         // `ResolvedFileName`, looked up in a table that only has it for some specifiers.
         let resolved_file_name_in = |table: &[(Atom, ResolutionMode, Atom)]| {
             let mut table = table.iter();
@@ -1216,6 +1221,9 @@ impl Checker<'_, '_> {
                 }
             }
             if !target.is_module() {
+                if found.is_some() {
+                    return true;
+                }
                 if !is_side_effect && !site.is_not_validated {
                     self.error_at(at, 2306, &[Arg::Path(resolved_file_name)]);
                 }

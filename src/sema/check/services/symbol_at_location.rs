@@ -117,9 +117,8 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                 // `getTargetOfModuleDefault`: a synthesized default is
                 // `resolveExternalModuleSymbol(moduleSymbol, dontResolveAlias)`, which stops at the
                 // module's `export =`.
-                if let Some((specifier, mode, known::default)) =
-                    files.external_module_member_of(file, decl)
-                    && let Some(module) = files.module_of_specifier_as(file, specifier, mode)
+                if let Some((.., known::default)) = files.external_module_member_of(file, decl)
+                    && let Some(module) = files.module_of_alias_declaration(file, decl)
                     && let Some(equals) = files.export(module, known::export_equals)
                     && files.alias_target(symbol) == Some(files.module_value(module))
                 {
@@ -278,11 +277,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
             // `getTypeFromImportTypeNode`: the identifiers of the qualifier.
             VisitedKind::ImportTypeQualifierName(node, index) => {
                 let TypeNodeKind::Import {
-                    spec,
-                    name,
-                    is_typeof,
-                    mode,
-                    ..
+                    name, is_typeof, ..
                 } = hir[node].kind
                 else {
                     return None;
@@ -290,8 +285,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                 if bound.type_scope[node.idx()].is_none() {
                     return None;
                 }
-                let module =
-                    files.module_of_specifier_as(file, spec, files.mode_of_import(file, mode))?;
+                let module = files.module_of_import_type(file, node)?;
                 let mut found = files.module_value(module);
                 // `getTypeFromImportTypeNode`, `isTypeOf`: each name is a property of the type of
                 // the preceding part.
@@ -580,7 +574,17 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
             }
             // `resolveExternalModuleName`
             ExprKind::ImportCall { args, .. } if hir.id_at(args, 0) == e => {
-                specifier(files.mode_of_import_call(file))
+                let ExprKind::String(text) = hir[e].kind else {
+                    return None;
+                };
+                let attributes = match hir.ids(args).nth(1) {
+                    Some(options) => self.c.attributes_of_import_call(file, options),
+                    None => Default::default(),
+                };
+                let mode = files.mode_of_import_call(file);
+                files
+                    .module_of_specifier_with(file, text, mode, &attributes)
+                    .map(Found::Symbol)
             }
             // `IsVariableDeclarationInitializedToRequire`
             ExprKind::Call(_)
@@ -780,9 +784,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                         let declarations = &files.symbol(*originating_import).decls;
                         declarations.iter().find_map(|decl| match *decl {
                             Decl::ImportNamespace(import) => {
-                                let import = &self.c.hir(at)[import];
-                                let mode = files.mode_of_import(at, import.mode);
-                                files.module_of_specifier_as(at, import.spec, mode)
+                                files.module_of_import(at, &self.c.hir(at)[import])
                             }
                             _ => None,
                         })
@@ -1074,7 +1076,16 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         // An import or export specifier resolves to the module.
         if at.part() == Some(Part::Specifier) {
             let specifier = Some(hir.text(at)).filter(|text| text.is_some())?;
-            let module = files.module_of_specifier(file, specifier)?;
+            let module = match hir.data(at.row()) {
+                NodeData::Stmt(s) => match hir[s].kind {
+                    StmtKind::Import(import) => files.module_of_import(file, &hir[import]),
+                    StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } => {
+                        files.module_of_export(file, s)
+                    }
+                    _ => files.module_of_specifier(file, specifier),
+                },
+                _ => files.module_of_specifier(file, specifier),
+            }?;
             return Some(self.symbol(module));
         }
         // The literal in `T["name"]` resolves to the property.

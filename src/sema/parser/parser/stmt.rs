@@ -1102,6 +1102,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     fn module_declaration(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
         let flags = self.ambient() | flags & Flags::EXPORT;
         let (name, name_pos, specifies_module);
+        let mut attributes = TypeNodeId::NONE;
         match self.token() {
             // `parseAmbientExternalModuleDeclaration`
             T::Global => {
@@ -1134,6 +1135,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 (name, name_pos) = (ModuleName::String(self.lx.atom), self.pos());
                 specifies_module = false;
                 self.next_after_string();
+                // New in TypeScript 7.1. The other parsers report the `with`.
+                if self.token() == T::With && self.options.dialect == Default::default() {
+                    self.next();
+                    attributes = self.type_literal();
+                }
             }
         }
         let (body, has_body) = match self.token() {
@@ -1147,6 +1153,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             name,
             name_pos,
             flags,
+            attributes,
             body,
             has_body,
             specifies_module,
@@ -1205,6 +1212,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             name: ModuleName::Ident(name),
             name_pos,
             flags,
+            attributes: TypeNodeId::NONE,
             body,
             has_body: true,
             specifies_module,

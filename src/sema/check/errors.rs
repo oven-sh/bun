@@ -4,7 +4,7 @@
 //! The codes are the TypeScript compiler's. An error that depends on something the resolver couldn't resolve isn't
 //! reported. A false negative is better than a false positive.
 
-use super::enclosing_declaration::Enclosing;
+use super::enclosing_declaration::{Enclosing, EnclosingModuleSpecifier};
 use super::errors_aliases::Directives;
 use super::errors_names_and_exports::fully_qualified_name;
 use super::errors_operators::has_empty_object_intersection;
@@ -535,6 +535,7 @@ impl Checker<'_, '_> {
                 let site = SpecifierSite {
                     is_emittable: true,
                     is_ambient,
+                    import_call_options: hir.ids(args).nth(1),
                     ..Default::default()
                 };
                 self.resolve_external_module(file, specifier_use, site);
@@ -651,10 +652,10 @@ impl Checker<'_, '_> {
             }
             _ => files.external_module_member_of(file, decl),
         };
-        let Some((spec, mode, name)) = member.filter(|it| it.2.is_some()) else {
+        let Some((_, mode, name)) = member.filter(|it| it.2.is_some()) else {
             return;
         };
-        let Some(module) = files.module_of_specifier_as(file, spec, mode) else {
+        let Some(module) = files.module_of_alias_declaration(file, decl) else {
             return;
         };
         // `node.PropertyNameOrName()`, and the specifier's `getEmitSyntaxForModuleSpecifierExpression`.
@@ -724,10 +725,13 @@ impl Checker<'_, '_> {
             return;
         }
         let (code, other) = self.missing_module_member_error(from, module, target, name, start);
-        self.enclosing_module_specifier_mode = specifier_mode;
+        self.enclosing_module_specifier = specifier_mode.map(|mode| EnclosingModuleSpecifier {
+            mode,
+            attributes: None,
+        });
         let containing_location = Some(Enclosing::at_scope(from, ScopeId(0)));
         let module_name = fully_qualified_name(self, module, containing_location);
-        self.enclosing_module_specifier_mode = None;
+        self.enclosing_module_specifier = None;
         // `DeclarationNameToString`: a string literal name keeps its quotes.
         let name_text = match self.hir(from).text.get(start as usize) {
             Some(b'"' | b'\'') => word_at(self, from, start),
@@ -787,9 +791,9 @@ impl Checker<'_, '_> {
                     _ => continue,
                 };
                 for s in hir.ids(body) {
-                    if let StmtKind::ExportStar { spec, alias, .. } = hir[s].kind
+                    if let StmtKind::ExportStar { alias, .. } = hir[s].kind
                         && alias.is_none()
-                        && let Some(target) = files.module_of_specifier(part.file, spec)
+                        && let Some(target) = files.module_of_export(part.file, s)
                         && files.export(target, known::default).is_some()
                     {
                         return Some((part.file, hir[s].start, self.end_of_stmt(part.file, s)));

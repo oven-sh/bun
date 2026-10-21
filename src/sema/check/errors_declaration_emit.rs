@@ -1546,8 +1546,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !files.module(file).is_module() {
             return false;
         }
-        let mode = files.mode_of_import(file, import.mode);
-        let Some(module) = files.module_of_specifier_as(file, import.spec, mode) else {
+        let Some(module) = files.module_of_import(file, import) else {
             return false;
         };
         // `GetExternalModuleFileFromDeclaration`
@@ -2139,9 +2138,10 @@ impl<'p, 's> Checker<'p, 's> {
         // `resolveExternalModuleName(enclosingDeclaration, importRef)`: the module is resolved in the mode of the import
         // or export that contains the location, or else in the file's default mode. An import that was resolved in
         // another mode (`module: commonjs` with `bundler`) isn't found.
-        let mode = self
-            .enclosing_module_specifier_mode
-            .unwrap_or_else(|| files.default_resolution_mode_for_file(at.file));
+        let mode = match self.enclosing_module_specifier {
+            Some(specifier) => specifier.mode,
+            None => files.default_resolution_mode_for_file(at.file),
+        };
         if let Some(known) = self
             .emit_resolver_links
             .containing_modules
@@ -4288,10 +4288,13 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 let source_quote = hir.text.get(module.name_pos as usize).copied();
                 let quote = source_quote.filter(|&it| it == b'\'').unwrap_or(b'"');
                 let name = super::print::quoted(self.name(name), quote, false);
-                (
-                    StatementKind::AmbientModule,
-                    [b"module ", &name[..]].concat(),
-                )
+                let mut head = [b"module ", &name[..]].concat();
+                if module.attributes.is_some() {
+                    self.visit_type(module.attributes, false);
+                    head.extend_from_slice(b" with ");
+                    head.extend_from_slice(&self.text_of(ReusedNode::Type(module.attributes)));
+                }
+                (StatementKind::AmbientModule, head)
             }
             // `emitNestedModuleName`: it follows its parent's name.
             ModuleName::Ident(name) if is_nested => {
@@ -4353,7 +4356,10 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         (self.needs_scope_fix_marker, self.result_has_scope_marker) = saved;
         // `rangeEndIsOnSameLineAsRangeStart` for the block, which starts after the name and ends the declaration.
         let is_on_one_line = || {
-            let after_name = self.c.end_of_name_at(self.file(), module.name_pos);
+            let after_name = match module.attributes.is_some() {
+                true => hir[module.attributes].end,
+                false => self.c.end_of_name_at(self.file(), module.name_pos),
+            };
             let open = self.c.skip_trivia_from(self.file(), after_name) as usize;
             positions_are_on_same_line(&hir.text[..], hir[s].loc.end as usize, open)
         };
@@ -6139,8 +6145,8 @@ impl<'p, 's> Checker<'p, 's> {
         if mode != ResolutionMode::None {
             return mode;
         }
-        if let Some(mode) = self.enclosing_module_specifier_mode {
-            return mode;
+        if let Some(specifier) = self.enclosing_module_specifier {
+            return specifier.mode;
         }
         // `TryGetModuleSpecifierFromDeclaration` for a variable declaration.
         let (hir, files) = (self.hir(at.file), self.files());

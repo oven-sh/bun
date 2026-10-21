@@ -2,8 +2,11 @@
 //! import resolves to, which declarations in different files merge into one symbol, what an alias
 //! resolves to.
 
+mod ambient_patterns;
 mod explain_files;
 
+use self::ambient_patterns::{AmbientPattern, PatternAugmentation};
+pub use self::ambient_patterns::{ImportAttribute, ImportAttributes, ModuleAttribute};
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{self, Bound, Decl, ScopeId, ScopeKind, SymFlags, Symbol, SymbolId};
 use crate::check::errors::{SuggestionLookup, is_close};
@@ -450,15 +453,14 @@ pub struct Files<'s> {
     /// Shared by all classes.
     pub prototype_symbol: Sym,
     ambient_modules: ArenaHashMap<'s, Atom, Sym>,
-    /// `declare module "*.svg"`
-    ambient_patterns: ArenaVec<'s, (&'s [u8], &'s [u8], Sym)>,
+    /// `c.patternAmbientModules`
+    ambient_patterns: ArenaVec<'s, AmbientPattern<'s>>,
     /// Indexes into `ambient_patterns`, bucketed by the last byte of the text after the `*`. Bucket 256 is for patterns
     /// that end with the `*`. A specifier ending in byte `b` can only match patterns in buckets `b` and 256. Empty
     /// until all patterns are known.
     ambient_patterns_by_end: &'s [&'s [u32]],
-    /// `patternAmbientModuleAugmentations`: keyed by the declared name, the symbol that `declare
-    /// module "a.svg"` in a module creates from `declare module "*.svg"`.
-    pattern_augmentations: ArenaHashMap<'s, Atom, Sym>,
+    /// Keyed by the declared name, what `declare module "a.svg"` in a module creates from `declare module "*.svg"`.
+    pattern_augmentations: ArenaHashMap<'s, Atom, PatternAugmentation>,
     /// `mergedSymbols`
     merged_symbols: ArenaHashMap<'s, Sym, Sym>,
     /// `symbol.Declarations` of a transient symbol: the binder symbols that hold them, in merge
@@ -1641,17 +1643,10 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         // `ExportCollisionTable`: the `export *` that exported the name first.
         let mut lookup_table: FxHashMap<Atom, (FileId, StmtId)> = FxHashMap::default();
         for node in self.export_stars_of(symbol) {
-            let StmtKind::ExportStar {
-                spec,
-                type_only,
-                mode,
-                ..
-            } = self.hir(node.0)[node.1].kind
-            else {
+            let StmtKind::ExportStar { type_only, .. } = self.hir(node.0)[node.1].kind else {
                 continue;
             };
-            let mode = self.mode_of_import(node.0, mode);
-            let resolved_module = self.module_of_specifier_as(node.0, spec, mode);
+            let resolved_module = self.module_of_export(node.0, node.1);
             let is_type_only = is_type_only || type_only;
             let Some(exported) =
                 self.visit_exports(resolved_module, Some(node), is_type_only, visit)
@@ -2137,9 +2132,9 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         let hir = self.hir(file);
         let bound = self.bound(file);
         // `getTargetOfImportSpecifier`, `getTargetOfExportSpecifier`
-        if let Some((spec, mode, name)) = self.external_module_member_of(file, decl) {
+        if let Some((.., name)) = self.external_module_member_of(file, decl) {
             let target = self
-                .module_of_specifier_as(file, spec, mode)
+                .module_of_alias_declaration(file, decl)
                 .and_then(|module| {
                     // `{ default as d }` is another syntax for the default import, but not in a
                     // binding pattern.
@@ -2169,21 +2164,12 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         let target = match decl {
             // `getTargetOfImportClause`: without the module nothing is marked.
             Decl::ImportDefault(import) => {
-                let module = self.module_of_specifier_as(
-                    file,
-                    hir[import].spec,
-                    self.mode_of_import(file, hir[import].mode),
-                )?;
+                let module = self.module_of_import(file, &hir[import])?;
                 self.default_of_module(file, module)
             }
             // `getTargetOfNamespaceImport`
-            Decl::ImportNamespace(import) => self
-                .module_of_specifier_as(
-                    file,
-                    hir[import].spec,
-                    self.mode_of_import(file, hir[import].mode),
-                )
-                .map(|module| {
+            Decl::ImportNamespace(import) => {
+                self.module_of_import(file, &hir[import]).map(|module| {
                     // The `JSImportDeclaration` of an `@import` tag isn't an `ImportDeclaration`.
                     let is_import_declaration = !hir.is_in_jsdoc(hir[import].namespace_pos);
                     let import_in = is_import_declaration.then_some(file);
@@ -2194,7 +2180,8 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                         return found;
                     }
                     symbol
-                }),
+                })
+            }
             Decl::ImportEquals(import) => match hir[import].target {
                 ImportEqualsTarget::Require(spec) => self
                     .module_of_specifier_as(file, spec, self.mode_of_require(file))
@@ -2264,13 +2251,9 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                 Some(export_equals.map_or(module, |it| self.canonical(it)))
             }
             // `getTargetOfNamespaceExport`
-            Decl::ExportStarAs(stmt) => {
-                let StmtKind::ExportStar { spec, mode, .. } = hir[stmt].kind else {
-                    return None;
-                };
-                self.module_of_specifier_as(file, spec, self.mode_of_import(file, mode))
-                    .map(|module| self.resolve_es_module_symbol(module, None, type_only))
-            }
+            Decl::ExportStarAs(stmt) => self
+                .module_of_export(file, stmt)
+                .map(|module| self.resolve_es_module_symbol(module, None, type_only)),
             // `getTargetOfImportEqualsDeclaration`: the whole required module.
             Decl::Require(pat) => {
                 let (spec, _) = bound.required_by(hir, pat)?;
@@ -6950,19 +6933,7 @@ impl<'s> Files<'s> {
         let mut augmentations: Vec<(FileId, Atom, Sym)> = Vec::new();
         for &id in declaring {
             let file = id.idx();
-            // `c.patternAmbientModules`
-            for &(name, symbol) in self.modules[file].bound.pattern_ambient_modules.iter() {
-                let text = self.atoms.bytes(name);
-                if let Some(star) = strings::index_of_char_usize(text, b'*') {
-                    let prefix = slice_in(&text[..star], self.arena);
-                    let suffix = slice_in(&text[star + 1..], self.arena);
-                    let sym = Sym {
-                        file: id,
-                        id: symbol,
-                    };
-                    self.ambient_patterns.push((prefix, suffix, sym));
-                }
-            }
+            self.add_pattern_ambient_modules(id);
             let mut collected: Option<Vec<ModuleId>> = None;
             for at in 0..self.modules[file].bound.ambient_modules.len() {
                 let (name, symbol, is_global) = self.modules[file].bound.ambient_modules[at];
@@ -6990,16 +6961,7 @@ impl<'s> Files<'s> {
                 self.ambient_modules.insert(name, merged);
             }
         }
-        if !self.ambient_patterns.is_empty() {
-            let mut by_end: Vec<Vec<u32>> = vec![Vec::new(); 257];
-            for (at, pattern) in self.ambient_patterns.iter().enumerate() {
-                let end = pattern.1.last().map_or(256, |&end| usize::from(end));
-                by_end[end].push(at as u32);
-            }
-            let arena = self.arena;
-            let by_end = by_end.iter().map(|patterns| slice_in(patterns, arena));
-            self.ambient_patterns_by_end = arena.alloc_slice_fill_iter(by_end);
-        }
+        self.merge_pattern_ambient_modules();
         for (file, name, sym) in augmentations {
             match self.module_of_specifier_as(file, name, self.module(file).default_mode) {
                 // An augmentation of a module that is `export = ns` is merged into `ns`.
@@ -7014,11 +6976,14 @@ impl<'s> Files<'s> {
                     // `mergeModuleAugmentation`: an augmentation of `a.svg`, which only the pattern
                     // `*.svg` declares, isn't merged into the pattern. Instead the contents of the
                     // pattern are merged into the augmentation, which is registered under its own
-                    // name. A pattern that several scripts declare isn't the symbol of any of them
-                    // (`mainModule == module.Symbol`), and is augmented like any module.
-                    if self.ambient_patterns.iter().any(|p| p.2 == main_module) {
+                    // name.
+                    if self.is_pattern_ambient_module(main_module) {
                         let merged = self.merge_symbol(sym, main_module, true);
-                        self.pattern_augmentations.insert(name, merged);
+                        let augmentation = PatternAugmentation {
+                            merged,
+                            target: main_module,
+                        };
+                        self.pattern_augmentations.insert(name, augmentation);
                         continue;
                     }
                     // An augmentation of a name that the module only re-exports with `export *` is
@@ -7276,9 +7241,7 @@ impl<'s> Files<'s> {
             }
             let import = self.declaration_of_alias_symbol(at);
             if let Some((file, Decl::ImportNamespace(import))) = import {
-                let import = &self.hir(file)[import];
-                let mode = self.mode_of_import(file, import.mode);
-                let imported = self.module_of_specifier_as(file, import.spec, mode);
+                let imported = self.module_of_import(file, &self.hir(file)[import]);
                 // `hasSignatures(typ) || getPropertyOfType(typ, "default") != nil || isEsmCjsRef`
                 if !self
                     .flags(value)
@@ -7310,13 +7273,13 @@ impl<'s> Files<'s> {
             return None;
         }
         let (file, decl) = self.declaration_of_alias_symbol(alias)?;
-        let (spec, mode, name) = self.external_module_member_of(file, decl)?;
+        let (.., name) = self.external_module_member_of(file, decl)?;
         // `{ default as d }` is another syntax for the default import, but not in a binding
         // pattern.
         if name == known::default && !matches!(decl, Decl::Require(_)) {
             return None;
         }
-        let module = self.module_of_specifier_as(file, spec, mode)?;
+        let module = self.module_of_alias_declaration(file, decl)?;
         // `getExportOfModule` ends in `resolveSymbol`: `namespace N { export { I as name } }`.
         let type_symbol = self.resolve_symbol(self.module_export(module, name)?)?;
         let type_symbol = self.canonical(type_symbol);
@@ -7328,8 +7291,8 @@ impl<'s> Files<'s> {
     /// Doesn't resolve any alias.
     fn export_equals_module_of_named_import(&self, sym: Sym) -> Option<Sym> {
         let (file, decl) = self.declaration_of_alias_symbol(sym)?;
-        let (spec, mode, _) = self.external_module_member_of(file, decl)?;
-        let module = self.module_of_specifier_as(file, spec, mode)?;
+        self.external_module_member_of(file, decl)?;
+        let module = self.module_of_alias_declaration(file, decl)?;
         self.export(module, known::export_equals).map(|_| module)
     }
 
@@ -7351,19 +7314,19 @@ impl<'s> Files<'s> {
     fn transient_candidates_of(&self, file: FileId) -> Vec<TransientCandidate<'s>> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut found = Vec::new();
-        let has_export_equals = |specifier: Atom, mode: ResolutionMode| {
-            self.module_of_specifier_as(file, specifier, mode)
-                .is_some_and(|m| self.export(m, known::export_equals).is_some())
+        let has_export_equals = |module: Option<Sym>| {
+            module.is_some_and(|m| self.export(m, known::export_equals).is_some())
         };
         // Most files don't have a candidate, so skip the scan of their symbols. `hir.imports` and `hir.exports` have
         // the declarations that make an alias a candidate, anywhere in the file. `bound.specifiers` doesn't: it omits
         // an import in the body of an ambient module. `require` only declares an alias in JavaScript.
-        let mode_of = |specified_mode: ResolutionMode| self.mode_of_import(file, specified_mode);
         let may_have_one = hir.is_js
-            || (hir.imports.iter())
-                .any(|it| it.namespace.is_some() || has_export_equals(it.spec, mode_of(it.mode)))
-            || (hir.exports.iter())
-                .any(|it| it.has_module_specifier && has_export_equals(it.spec, mode_of(it.mode)));
+            || (hir.imports.iter()).any(|it| {
+                it.namespace.is_some() || has_export_equals(self.module_of_import(file, it))
+            })
+            || (hir.exports.iter()).any(|it| {
+                it.has_module_specifier && has_export_equals(self.module_of_export(file, it.stmt))
+            });
         if !may_have_one {
             return found;
         }
@@ -7383,8 +7346,7 @@ impl<'s> Files<'s> {
                 }
                 continue;
             };
-            let mode = self.mode_of_import(file, import.mode);
-            let Some(module) = self.module_of_specifier_as(file, import.spec, mode) else {
+            let Some(module) = self.module_of_import(file, import) else {
                 continue;
             };
             if self.export(module, known::export_equals).is_some() {
@@ -7412,8 +7374,7 @@ impl<'s> Files<'s> {
         let import = self.namespace_import_of(alias);
         let target = match import {
             Some(import) => {
-                let mode = self.mode_of_import(file, import.mode);
-                let module = self.module_of_specifier_as(file, import.spec, mode);
+                let module = self.module_of_import(file, import);
                 module.map(|module| self.module_value(module))
             }
             None => self.type_symbol_to_combine(alias),
@@ -8502,69 +8463,93 @@ impl<'s> Files<'s> {
         (!is_relative(self.atoms.bytes(spec))).then(|| self.canonical(ambient))
     }
 
-    /// `resolveExternalModule`: the module that `spec` resolves to in `file` in `mode`.
+    /// `resolveExternalModule`: the module that `spec` resolves to in `file` in `mode`, without import attributes.
     pub fn module_of_specifier_as(
         &self,
         file: FileId,
         spec: Atom,
         mode: ResolutionMode,
     ) -> Option<Sym> {
+        self.module_of_specifier_with(file, spec, mode, &[])
+    }
+
+    /// `resolveExternalModule`: the module that `spec` resolves to in `file` in `mode`, where `attributes` is
+    /// `importAttributesType`.
+    pub fn module_of_specifier_with(
+        &self,
+        file: FileId,
+        spec: Atom,
+        mode: ResolutionMode,
+        attributes: &[ImportAttribute],
+    ) -> Option<Sym> {
         // The specifier isn't a string literal (1141). No ambient pattern may match it.
         if spec.is_none() {
             return None;
         }
-        if let Some(ambient) = self.try_find_ambient_module(spec) {
-            return Some(ambient);
-        }
-        // A file that isn't a module still ends the search.
-        if let Some(&target) = self.module(file).imports.get(&(spec, mode)) {
-            return self
-                .module(target)
-                .is_module()
-                .then(|| self.file_symbol(target));
-        }
-        if self.ambient_patterns.is_empty() {
-            return None;
-        }
-        let pattern = self.best_ambient_pattern(spec)?;
-        let augmented = self.pattern_augmentations.get(&spec).copied();
-        Some(self.canonical(augmented.unwrap_or(pattern)))
-    }
-
-    /// `FindBestPatternMatch` over `c.patternAmbientModules`: the longest prefix wins, and on a tie the earliest
-    /// pattern.
-    fn best_ambient_pattern(&self, spec: Atom) -> Option<Sym> {
-        let all = 0..self.ambient_patterns.len() as u32;
-        let Some((ending_with_the_star, by_end)) = self.ambient_patterns_by_end.split_last() else {
-            return self.best_ambient_pattern_among(spec, all);
+        let resolved = match self.try_find_ambient_module(spec) {
+            Some(ambient) => Some(ambient),
+            None => (self.module(file).imports.get(&(spec, mode)))
+                .filter(|&&target| self.module(target).is_module())
+                .map(|&target| self.file_symbol(target)),
         };
-        let end = self.atoms.bytes(spec).last();
-        let same_ending = end.map_or(&[][..], |&end| by_end[usize::from(end)]);
-        let candidates = same_ending.iter().chain(*ending_with_the_star).copied();
-        self.best_ambient_pattern_among(spec, candidates)
+        // `tryResolvePatternAmbientModule`: "If a resolved symbol from regular module resolution exists and we have an
+        // empty import attributes type, we prefer the resolved symbol."
+        if resolved.is_some() && attributes.is_empty() {
+            return resolved;
+        }
+        self.pattern_ambient_module(spec, attributes).or(resolved)
     }
 
-    /// `best_ambient_pattern`, when only the patterns at `candidates` can match. These are indexes into
-    /// `ambient_patterns`, in any order.
-    fn best_ambient_pattern_among(
-        &self,
-        spec: Atom,
-        candidates: impl Iterator<Item = u32>,
-    ) -> Option<Sym> {
-        let text = self.atoms.bytes(spec);
-        // (prefix length, index in `ambient_patterns`)
-        let mut best: Option<(usize, u32)> = None;
-        for at in candidates {
-            let (prefix, suffix, _) = self.ambient_patterns[at as usize];
-            if best.is_none_or(|b| prefix.len() > b.0 || prefix.len() == b.0 && at < b.1)
-                && text.len() >= prefix.len() + suffix.len()
-                && text.starts_with(prefix)
-                && text.ends_with(suffix)
-            {
-                best = Some((prefix.len(), at));
+    /// `resolveExternalModuleName(node, node.ModuleSpecifier(), ..)` for an import declaration of `file`.
+    pub fn module_of_import(&self, file: FileId, import: &Import) -> Option<Sym> {
+        let mode = self.mode_of_import(file, import.mode);
+        let attributes = self.hir(file).attributes_of_statement(import.stmt);
+        let attributes = self.import_attributes(file, attributes);
+        self.module_of_specifier_with(file, import.spec, mode, &attributes)
+    }
+
+    /// `resolveExternalModuleName(node, node.ModuleSpecifier(), ..)` for the export declaration `s` of `file`, which
+    /// is `export { .. } from` or `export * from`.
+    pub fn module_of_export(&self, file: FileId, s: StmtId) -> Option<Sym> {
+        let hir = self.hir(file);
+        let (spec, mode) = match hir[s].kind {
+            StmtKind::ExportNamed(export) => (hir[export].spec, hir[export].mode),
+            StmtKind::ExportStar { spec, mode, .. } => (spec, mode),
+            _ => return None,
+        };
+        let attributes = self.import_attributes(file, hir.attributes_of_statement(s));
+        self.module_of_specifier_with(file, spec, self.mode_of_import(file, mode), &attributes)
+    }
+
+    /// The module that the alias declaration `decl` of `file` imports from or requires.
+    pub fn module_of_alias_declaration(&self, file: FileId, decl: Decl) -> Option<Sym> {
+        let hir = self.hir(file);
+        match decl {
+            Decl::ImportDefault(import) | Decl::ImportNamespace(import) => {
+                self.module_of_import(file, &hir[import])
             }
+            Decl::ImportSpec(specifier) => self.module_of_import(file, &hir[hir[specifier].import]),
+            Decl::ExportSpec(specifier) => {
+                self.module_of_export(file, hir[hir[specifier].export].stmt)
+            }
+            Decl::ExportStarAs(s) => self.module_of_export(file, s),
+            Decl::Require(pat) => {
+                let (spec, _) = self.bound(file).required_by(hir, pat)?;
+                self.module_of_specifier_as(file, spec, self.mode_of_require(file))
+            }
+            _ => None,
         }
-        best.map(|(_, at)| self.ambient_patterns[at as usize].2)
+    }
+
+    /// `resolveExternalModuleName(node, n.Argument.AsLiteralTypeNode().Literal, ..)` for the import type `node` of
+    /// `file`.
+    pub fn module_of_import_type(&self, file: FileId, node: TypeNodeId) -> Option<Sym> {
+        let hir = self.hir(file);
+        let TypeNodeKind::Import { spec, mode, .. } = hir[node].kind else {
+            return None;
+        };
+        let attributes = self.import_attributes(file, hir.attributes_of_import_type(node));
+        self.module_of_specifier_with(file, spec, self.mode_of_import(file, mode), &attributes)
     }
 
     /// `core.Some(symbol.Declarations, isSyntacticDefault)`

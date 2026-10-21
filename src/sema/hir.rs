@@ -1777,6 +1777,8 @@ pub struct Module {
     pub name: ModuleName,
     pub name_pos: u32,
     pub flags: Flags,
+    /// The `{ type: "css" }` of `declare module "*.css" with { type: "css" } { }`, a `TypeNodeKind::Object`.
+    pub attributes: TypeNodeId,
     pub body: IdList<StmtId>,
     /// `declare module "m";` has none.
     pub has_body: bool,
@@ -2654,6 +2656,24 @@ impl<S: Storage> FileIn<S> {
         };
         let mut all = self.import_attributes.iter();
         all.find(|of| of.0 > argument_end).map(|of| of.1)
+    }
+    /// `GetImportAttributes` for the import or export declaration `s`, an `ExprKind::Object`.
+    pub fn attributes_of_statement(&self, s: StmtId) -> Option<ExprId> {
+        let within = self[s].loc;
+        let mut all = self.import_attributes.iter();
+        all.find(|of| (within.pos..within.end).contains(&of.0))
+            .map(|of| of.1)
+    }
+    /// `GetImportAttributes` for the declaration or the import type whose module specifier is at `pos`. Its attributes
+    /// come after that specifier and before the next one.
+    pub fn attributes_after_specifier(&self, pos: u32) -> Option<ExprId> {
+        if self.import_attributes.is_empty() {
+            return None;
+        }
+        let later = self.specifier_uses.iter().map(|it| it.pos);
+        let end = later.filter(|&it| it > pos).min().unwrap_or(u32::MAX);
+        let mut all = self.import_attributes.iter();
+        all.find(|of| (pos..end).contains(&of.0)).map(|of| of.1)
     }
     /// Sets the kind of `stmt` to `kind`, and records `stmt` in the declaration it holds.
     pub fn set_stmt_kind(&mut self, stmt: StmtId, kind: StmtKind) {

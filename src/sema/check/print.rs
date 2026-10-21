@@ -10,6 +10,7 @@ use crate::util::SharedSort;
 
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, ScopeId, ScopeKind, SymbolId};
+use crate::program::{ImportAttribute, ImportAttributes};
 use crate::resolve::{displayed_path, remove_file_extension};
 use crate::verify::is_identifier_text;
 use bun_core::fmt::{ItoaBuf, VecWriter, digit_count, itoa};
@@ -2516,15 +2517,17 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         if self.c.is_external_module_symbol(chain[0]) {
             let non_root_parts =
                 (last > 0).then(|| self.create_access_from_symbol_chain(chain, last, 1));
-            let (specifier, attributes) = self.import_type_specifier(chain[0]);
+            let (specifier, mode) = self.import_type_specifier(chain[0]);
             if self.flags & ALLOW_NODE_MODULES_RELATIVE_PATHS == 0
-                && attributes.is_empty()
+                && mode.is_none()
                 && bun_core::strings::contains(&specifier, b"/node_modules/")
             {
                 self.encountered_error = true;
                 let name = self.symbol_name(symbol).to_vec();
                 self.report(Report::LikelyUnsafeImportRequired(specifier.clone(), name));
             }
+            let attributes =
+                self.import_attributes_for_module_specifier(chain[0], &specifier, mode);
             self.approximate_length += specifier.len() + 10;
             let query: &[u8] = if is_type_of { b"typeof " } else { b"" };
             let specifier = self.string_literal(&specifier, b'"');
@@ -2715,8 +2718,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// `getSpecifierForModuleSymbol`, and the import attributes `symbolToTypeNode` emits after it.
-    fn import_type_specifier(&mut self, module: Sym) -> (Vec<u8>, Vec<u8>) {
+    /// `getSpecifierForModuleSymbol`, and `importModeOverride` of `symbolToTypeNode`.
+    fn import_type_specifier(&mut self, module: Sym) -> (Vec<u8>, Option<&'static [u8]>) {
         if let Some(at) = self.enclosing_declaration {
             let allows_node_modules_relative_paths =
                 self.flags & ALLOW_NODE_MODULES_RELATIVE_PATHS != 0;
@@ -2727,16 +2730,79 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             );
             // It's empty if `paths` or `rootDirs` may affect it, which isn't computed.
             if !specifier.is_empty() {
-                let attributes = match mode {
-                    Some(mode) => {
-                        cat! { b", { with: { \"resolution-mode\": \"", mode, b"\" } }" }
-                    }
-                    None => Vec::new(),
-                };
-                return (specifier, attributes);
+                return (specifier, mode);
             }
         }
-        (self.c.specifier_of_module(module), Vec::new())
+        (self.c.specifier_of_module(module), None)
+    }
+
+    /// `importAttributesType` of the result of `getSpecifierForModuleSymbol` for `module`, whose specifier is
+    /// `specifier`.
+    fn import_attributes_of_module_specifier(
+        &self,
+        module: Sym,
+        specifier: &[u8],
+    ) -> ImportAttributes {
+        let files = self.c.files();
+        // `moduleSpecifierResolvesToSymbol` with `originalImportAttributesType`
+        if let Some(at) = self.enclosing_declaration
+            && let Some(original) = self.c.enclosing_module_specifier
+            && original.attributes.is_some()
+        {
+            let attributes = files.import_attributes(at.file, original.attributes);
+            let specifier = self.c.atoms().intern(specifier);
+            let resolved =
+                files.module_of_specifier_with(at.file, specifier, original.mode, &attributes);
+            if resolved == Some(files.canonical(module)) {
+                return attributes;
+            }
+        }
+        let attributes = files.attributes_of_module(module).iter();
+        let attributes = attributes.map(|it| ImportAttribute {
+            name: it.name,
+            value: match *it.values {
+                [value] => Some(value),
+                _ => None,
+            },
+        });
+        attributes.collect()
+    }
+
+    /// `createImportAttributesForModuleSpecifier`: what follows `specifier` in an import type of `module`.
+    fn import_attributes_for_module_specifier(
+        &mut self,
+        module: Sym,
+        specifier: &[u8],
+        mode: Option<&[u8]>,
+    ) -> Vec<u8> {
+        let mut attributes: Vec<Vec<u8>> = Vec::new();
+        if let Some(mode) = mode {
+            attributes.push(cat!(b"\"resolution-mode\": \"", mode, b"\""));
+            self.approximate_length += b"resolution-mode".len() + mode.len() + 6;
+        }
+        let mut properties = self.import_attributes_of_module_specifier(module, specifier);
+        properties.sort_unstable_by_key(|it| self.c.atoms().bytes(it.name));
+        for property in properties {
+            // `propertyType.flags&TypeFlagsStringLiteral`
+            let Some(value) = property.value else {
+                continue;
+            };
+            let (name, value) = (self.text(property.name), self.text(value));
+            self.approximate_length += name.len() + value.len() + 4;
+            let name = match is_identifier_text(&name) {
+                true => name,
+                false => {
+                    self.approximate_length += 2;
+                    self.string_literal(&name, b'"')
+                }
+            };
+            attributes.push(cat!(name, b": ", self.string_literal(&value, b'"')));
+        }
+        if attributes.is_empty() {
+            return Vec::new();
+        }
+        self.approximate_length += 16 + 2 * (attributes.len() - 1);
+        cat!(b", { with: { ", attributes.join(&b", "[..]), b" } }")
     }
 
     // ───────────────────────────── lists of types ─────────────────────────────
@@ -4601,6 +4667,10 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                     }
                     _ => self.symbol_to_text(*symbol),
                 };
+            }
+            // It has neither a declaration nor a `nameType`.
+            PropSource::Type(_) if !self.c.atoms().is_symbol_name(prop.name) => {
+                return self.c.written_name(prop.name).to_vec();
             }
             _ => {}
         }

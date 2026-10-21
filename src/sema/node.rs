@@ -943,6 +943,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
             StmtKind::Enum(e) => self.one(node.with(Part::Name)) || self.span(file[e].members),
             StmtKind::Module(m) => {
                 self.one(node.with(Part::Name))
+                    || self.one(file[m].attributes)
                     || match file.nested_namespace(m) {
                         Some(nested) => self.one(nested),
                         None => self.part(node, Part::Body, file[m].has_body),

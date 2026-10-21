@@ -2024,7 +2024,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// `parseTypeLiteral`
-    fn type_literal(&mut self) -> TypeNodeId {
+    pub(super) fn type_literal(&mut self) -> TypeNodeId {
         let start = self.pos();
         let members = self.object_type_members();
         self.finish_type(TypeNodeKind::Object(members), start)

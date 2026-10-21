@@ -12174,13 +12174,14 @@ export const all: never[] = [null! as typeof a, null! as typeof b, null! as D, n
       );
       expect(stdout).toMatchInlineSnapshot(`
         "augments.ts(2,13): error TS2614: Module '"*.svg"' has no exported member 'added'. Did you mean to use 'import added from "*.svg"' instead?
+        augments.ts(4,10): error TS2305: Module '"twice/*"' has no exported member 'third'.
         augments.ts(7,30): error TS2322: Type '"*.svg"' is not assignable to type 'never'.
         augments.ts(7,33): error TS2322: Type '"added to a.svg"' is not assignable to type 'never'.
         augments.ts(7,40): error TS2322: Type '"*.svg"' is not assignable to type 'never'.
         augments.ts(7,43): error TS2322: Type 'any' is not assignable to type 'never'.
         augments.ts(7,52): error TS2322: Type '1' is not assignable to type 'never'.
         augments.ts(7,59): error TS2322: Type '3' is not assignable to type 'never'.
-        augments.ts(7,66): error TS2322: Type '3' is not assignable to type 'never'.
+        augments.ts(7,66): error TS2322: Type 'any' is not assignable to type 'never'.
         imports.ts(7,15): error TS2307: Cannot find module 'aba' or its corresponding type declarations.
         imports.ts(15,15): error TS2307: Cannot find module 'svg' or its corresponding type declarations.
         imports.ts(18,30): error TS2322: Type '"*.svg"' is not assignable to type 'never'.

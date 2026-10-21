@@ -943,7 +943,7 @@ impl<'s> Program<'s> {
             cycle_at: 0,
             limit_at: 0,
             rejected_at: 0,
-            enclosing_module_specifier_mode: None,
+            enclosing_module_specifier: None,
             emit_resolver_links: Default::default(),
             exporting_modules: None,
             expected: Requested::All,
@@ -1810,9 +1810,9 @@ pub struct Checker<'p, 's> {
     cycle_at: u64,
     limit_at: u64,
     rejected_at: u64,
-    /// `GetModeForUsageLocation` of `TryGetModuleSpecifierFromDeclaration(enclosingDeclaration)`,
-    /// while the name of an import or an export is printed.
-    enclosing_module_specifier_mode: Option<ResolutionMode>,
+    /// `TryGetModuleSpecifierFromDeclaration(enclosingDeclaration)`, while the name of an import or an export is
+    /// printed.
+    enclosing_module_specifier: Option<enclosing_declaration::EnclosingModuleSpecifier>,
     emit_resolver_links: errors_declaration_emit::EmitResolverLinks,
     /// See `Checker::modules_that_export`. Unlike `emit_resolver_links`, it's the same for every file.
     exporting_modules: Option<std::rc::Rc<errors_declaration_emit::ExportingModules>>,

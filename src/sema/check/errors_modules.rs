@@ -1,7 +1,7 @@
 //! Modules, namespaces, imports and exports that are misplaced, unresolved or incompatible with the options:
 //!
-//! * `bindModuleDeclaration`: 2668 5061; `bindNamespaceExportDeclaration`: 1184 1314 1315 1316
-//! * `checkModuleDeclaration`: 1035 1280 1287 1540 2435 2436 2669 2670;
+//! * `bindModuleDeclaration`: 1550 2668 5061; `bindNamespaceExportDeclaration`: 1184 1314 1315 1316
+//! * `checkModuleDeclaration`: 1035 1280 1287 1540 1551 2435 2436 2669 2670;
 //!   `checkModuleAugmentationElement`: 2666 2667
 //! * `mergeModuleAugmentation`, and the errors `resolveExternalModule` reports on its behalf: 2306
 //!   2664 2665 2671 2732 2834 2835
@@ -9,7 +9,7 @@
 //! * `collectModuleReferences`, via `resolveExternalModule`: 2307 2580 2591 2732 2882, reported or
 //!   removed
 //! * `checkImportAttributes`, `getTypeFromImportAttributes`, `checkImportType`,
-//!   `getResolutionModeOverride`: 1453 1454 2322 2823 2856
+//!   `getResolutionModeOverride`: 1453 1454 2322 2823 2856; `checkImportAttributesType`: 1552 to 1558 2322
 //! * `checkImportEqualsDeclaration`: 1202 1392 2437 2438; `checkExportDeclaration`: 1194 2498;
 //!   `checkClassDeclaration`: 1211
 //! * `checkExportAssignment`: 1063 1319 1282 1283 1284 1285 1289 1290 1291 1292
@@ -20,7 +20,7 @@
 //!   18060
 //! * `reportFlowControlError`: 2563
 //!
-//! All in TypeScript 7.0.2's checker.go, flow.go, grammarchecks.go, binder.go and parser/references.go. Only
+//! All in TypeScript 7.1's checker.go, flow.go, grammarchecks.go, binder.go and parser/references.go. Only
 //! `check_import_attributes` requests types.
 //!
 //! A few things the HIR doesn't store are read from the source text, starting at a position the HIR does have: whether
@@ -358,16 +358,24 @@ impl Checker<'_, '_> {
                 self.error_at((cx.file, start, 0), 2668, &[]);
             }
             // `TryParsePattern`
-            if !is_augmentation
-                && let ModuleName::String(name) = module.name
-                && bun_core::strings::count_char(files.atoms.bytes(name), b'*') > 1
-            {
-                self.error_at((cx.file, name_pos, 0), 5061, &[Arg::Atom(name)]);
+            if !is_augmentation && let ModuleName::String(name) = module.name {
+                match bun_core::strings::count_char(files.atoms.bytes(name), b'*') {
+                    0 if module.attributes.is_some() => {
+                        self.error_at((cx.file, name_pos, 0), 1550, &[]);
+                    }
+                    0 | 1 => {}
+                    _ => {
+                        self.error_at((cx.file, name_pos, 0), 5061, &[Arg::Atom(name)]);
+                    }
+                }
             }
         }
 
         if is_global && !is_ambient {
             self.error_at((cx.file, name_pos, 0), 2670, &[]);
+        }
+        if module.attributes.is_some() {
+            self.check_import_attributes_type(cx, module.attributes);
         }
         let context_error = if is_ambient_module { 1234 } else { 1235 };
         if self.check_grammar_module_element_context(cx, s, container, context_error) {
@@ -410,6 +418,10 @@ impl Checker<'_, '_> {
             return;
         }
         if is_augmentation {
+            if module.attributes.is_some() {
+                let attributes = hir[module.attributes];
+                self.error_at((cx.file, attributes.pos, attributes.end), 1551, &[]);
+            }
             if let ModuleName::String(name) = module.name {
                 self.modules_merge_augmentation(cx, m, name, container);
             }
@@ -932,13 +944,12 @@ impl Checker<'_, '_> {
                     return false;
                 }
                 let hir = self.hir(other);
-                let is_from_module = |spec: Atom| files.module_of_specifier(other, spec) == module;
                 hir.imports.iter().any(|import| {
                     import.named.iter().any(|s| is_requested(hir[s].imported))
-                        && is_from_module(import.spec)
+                        && files.module_of_import(other, import) == module
                 }) || hir.exports.iter().any(|export| {
                     export.items.iter().any(|s| is_requested(hir[s].local))
-                        && is_from_module(export.spec)
+                        && files.module_of_export(other, export.stmt) == module
                 })
             })
     }
@@ -972,11 +983,8 @@ impl Checker<'_, '_> {
                 && (ModuleKind::Node18..=ModuleKind::NodeNext).contains(&files.options.module)
                 && let Some(specifier_use) = cx.specifier(pos, import.spec)
                 && specifier_use.kind != SpecifierKind::SideEffect
-                && let Some(module) = self.resolve_external_module_name_ignoring_errors(
-                    cx.file,
-                    import.spec,
-                    files.mode_of_import(cx.file, import.mode),
-                )
+                && let Some(module) =
+                    self.resolve_external_module_name_ignoring_errors(cx.file, &import)
                 && files.is_only_importable_as_default(cx.file, module)
                 && !self
                     .modules_get_import_attributes(cx.file, hir[s].loc)
@@ -1064,18 +1072,19 @@ impl Checker<'_, '_> {
         self.check_alias_symbol(cx.file, &cx.aliases, decl, is_ambient);
     }
 
-    /// `resolveExternalModuleName(usage, usage, true /*ignoreErrors*/)` for the specifier `spec` in `file`. Without an
-    /// `errorNode` there's no `resolutionDiagnostic`, so a file that only needs `allowArbitraryExtensions` is found, if
-    /// the program has it for another reason.
+    /// `resolveExternalModuleName(usage, usage, true /*ignoreErrors*/, ..)` for the specifier of `import` in `file`.
+    /// Without an `errorNode` there's no `resolutionDiagnostic`, so a file that only needs `allowArbitraryExtensions`
+    /// is found, if the program has it for another reason.
     fn resolve_external_module_name_ignoring_errors(
         &self,
         file: FileId,
-        spec: Atom,
-        mode: ResolutionMode,
+        import: &Import,
     ) -> Option<Sym> {
         let (files, importing) = (self.files(), self.files().module(file));
-        if let Some(ambient_module) = files.try_find_ambient_module(spec) {
-            return Some(ambient_module);
+        let (spec, mode) = (import.spec, files.mode_of_import(file, import.mode));
+        let found = files.module_of_import(file, import);
+        if found.is_some_and(|module| !self.modules_is_a_file(module)) {
+            return found;
         }
         let mut arbitrary = importing.arbitrary_extension_imports.iter();
         let source_file = arbitrary
@@ -1089,7 +1098,7 @@ impl Checker<'_, '_> {
             Some(source_file) if files.module(source_file).is_module() => {
                 Some(files.file_symbol(source_file))
             }
-            _ => files.module_of_specifier_as(file, spec, mode),
+            _ => found,
         }
     }
 
@@ -1443,7 +1452,7 @@ impl Checker<'_, '_> {
         }
         if self.modules_is_in_valid_position(cx, s, spec, true, container) {
             if !self.modules_module_is_missing(cx, s, spec, container)
-                && let Some(module) = files.module_of_specifier(cx.file, spec)
+                && let Some(module) = files.module_of_export(cx.file, s)
             {
                 // `hasExportAssignmentSymbol`
                 if files.export(module, known::export_equals).is_some() {
@@ -1463,7 +1472,7 @@ impl Checker<'_, '_> {
             // `checkModuleExportName` for the name in `export * as name`, unless only 2498 is reported.
             if alias.is_some()
                 && !files
-                    .module_of_specifier(cx.file, spec)
+                    .module_of_export(cx.file, s)
                     .is_some_and(|module| files.export(module, known::export_equals).is_some())
             {
                 self.modules_module_export_name(cx, alias_pos);
@@ -1667,6 +1676,58 @@ impl Checker<'_, '_> {
         self.error_at(node, code, &[]);
     }
 
+    /// `checkImportAttributesType` for the type literal after `declare module "*" with`.
+    fn check_import_attributes_type(&mut self, cx: &Cx<'_>, attributes: TypeNodeId) {
+        if cx.grammar {
+            self.check_grammar_import_attributes_type(cx, attributes);
+        }
+        let name = self.atoms().intern(b"ImportAttributes");
+        if let Some(sym) = self.get_global_type(name, 0) {
+            let node = self.hir(cx.file)[attributes];
+            let source = self.type_from_node(cx.file, attributes);
+            let target = self.declared_type(sym);
+            let node = (cx.file, node.pos, node.end);
+            self.check_type_assignable_to(source, target, Some(node), None);
+        }
+    }
+
+    /// `checkGrammarImportAttributesType`
+    fn check_grammar_import_attributes_type(&mut self, cx: &Cx<'_>, attributes: TypeNodeId) {
+        let hir = self.hir(cx.file);
+        let TypeNodeKind::Object(members) = hir[attributes].kind else {
+            return;
+        };
+        for member in members.iter().map(|it| hir[it]) {
+            let whole = (member.start, member.loc.end);
+            let name = member.key.name().unwrap_or(Atom::NONE);
+            let first = cx.text.get(member.name_pos as usize);
+            let is_identifier_or_string = matches!(member.key, PropKey::Name(_))
+                && !matches!(first, Some(b'[' | b'.' | b'0'..=b'9'));
+            let ((start, end), code) = if member.kind != MemberKind::Property {
+                (whole, 1552)
+            } else if let Some(at) = hir.find_modifier(member.modifiers, Flags::READONLY) {
+                ((at, 0), 1558)
+            } else if member.ty.is_none() {
+                (whole, 1553)
+            } else if member.flags.contains(Flags::OPTIONAL) {
+                (whole, 1556)
+            } else if !is_identifier_or_string {
+                ((member.name_pos, 0), 1554)
+            } else if self.atoms().bytes(name) == b"resolution-mode" {
+                ((member.name_pos, 0), 1557)
+            // A template without substitutions is a `StringLit` too.
+            } else if !matches!(hir[member.ty].kind, TypeNodeKind::StringLit(_))
+                || cx.text.get(hir[member.ty].pos as usize) == Some(&b'`')
+            {
+                ((hir[member.ty].pos, hir[member.ty].end), 1555)
+            } else {
+                continue;
+            };
+            self.error_at((cx.file, start, end), code, &[Arg::Atom(name)]);
+            return;
+        }
+    }
+
     /// The start of `checkImportAttributes`: the attributes `object`, located at `node`, have to be assignable to the
     /// global `ImportAttributes`.
     fn check_type_of_import_attributes(&mut self, node: super::related::FileSpan, object: ExprId) {
@@ -1720,24 +1781,19 @@ impl Checker<'_, '_> {
     }
 
     /// `HasResolutionModeOverride` for the declaration or the import type whose module specifier is `specifier_use`.
-    /// Its attributes, if any, come after that specifier and before the next one.
     pub(super) fn has_resolution_mode_override(
         &mut self,
         file: FileId,
         specifier_use: SpecifierUse,
     ) -> bool {
-        let later = self.hir(file).specifier_uses.iter().map(|u| u.pos);
-        let within = TextRange {
-            pos: specifier_use.pos,
-            end: later
-                .filter(|&pos| pos > specifier_use.pos)
-                .min()
-                .unwrap_or(u32::MAX),
-        };
-        self.modules_get_import_attributes(file, within)
-            .is_some_and(|(.., attributes)| {
+        let hir = self.hir(file);
+        let attributes = hir.attributes_after_specifier(specifier_use.pos);
+        match attributes.map(|it| hir[it].kind) {
+            Some(ExprKind::Object(attributes)) => {
                 self.get_resolution_mode_override(file, attributes, false)
-            })
+            }
+            _ => false,
+        }
     }
 
     /// `getTypeFromImportAttributes`. Returns `None` if a value's type is unknown.

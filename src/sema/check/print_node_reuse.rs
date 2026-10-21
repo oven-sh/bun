@@ -1004,7 +1004,7 @@ impl<'p> Printer<'_, 'p, '_> {
         else {
             return None;
         };
-        let target = files.module_of_specifier_as(file, spec, files.mode_of_import(file, mode))?;
+        let target = files.module_of_import_type(file, node)?;
         // `tryGetResolvedSymbolFromTypeNode`
         let mut resolved = Some(files.module_value(target));
         for part in hir.texts(name) {

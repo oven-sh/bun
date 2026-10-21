@@ -23,6 +23,9 @@ The files in `../conformance` run them all and compare byte for byte. CI limits 
 
 TypeScript also has `.js.map` and `.sourcemap.txt` baselines. They aren't in the bundle.
 
+One test is skipped. `deprecatedReferenceInEnumComputedNameNoFlake` expects TS6385, "'oldValue' is deprecated". That's a
+suggestion for editors, which `tsc` doesn't print, and `bun check` makes no suggestions about deprecated declarations.
+
 ```sh
 bun bd test test/cli/check/conformance
 # One test, or all whose path contains the text

@@ -2102,7 +2102,10 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                     // Its larger file commits before its end. The recheck finds those comparisons answered and
                     // explains one error differently.
                     let differs_if_rechecked = base == "complexRecursiveCollections.ts";
+                    // It expects TS6385, a suggestion. `bun check` makes no suggestions about deprecated declarations.
+                    let expects_deprecation = base == "deprecatedReferenceInEnumComputedNameNoFlake.ts";
                     if SKIPPED.contains(&base)
+                        || expects_deprecation
                         || setup.discards_first_visits && differs_if_rechecked
                         || setup.only.is_some_and(|only| !contains(path, only))
                         || i % setup.every.max(1) != setup.first

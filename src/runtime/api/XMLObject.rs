@@ -48,8 +48,14 @@ pub(crate) fn parse<'a>(
     let mut utf16 = None;
     let (bytes, encoding): (&[u8], _) = match input {
         StringOrJsBytes::Bytes(bytes) => {
-            // The parser reads a byte more than once, and the result's strings are made from the input.
-            let bytes = bytes.get_or_copy_if_shared(&cx.heap, &mut copy)?;
+            // The parser reads a byte more than once, and the result's strings are made from the input, so it reads a
+            // copy of bytes that another thread or process can write. A longer input than `i32::MAX` is a RangeError
+            // before the parser reads a byte of it.
+            let bytes = bytes.get_or_copy_if_written_concurrently(
+                &cx.heap,
+                &mut copy,
+                i32::MAX as usize,
+            )?;
             (bytes, xml::InputEncoding::Bytes)
         }
         StringOrJsBytes::String(string) => {

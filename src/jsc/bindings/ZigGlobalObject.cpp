@@ -1580,9 +1580,11 @@ extern "C" JSC::EncodedJSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSG
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(reinterpret_cast<char*>(ptr) + byteOffset), byteLength }, createSharedTask<void(void*)>([ptr, totalLength](void* p) {
+    // Not ArrayBufferExternalWriters::Yes: the mapping is private, and the memfd is a Blob's, which nothing writes.
+    ArrayBufferDestructorFunction destructor = createSharedTask<void(void*)>([ptr, totalLength](void* p) {
         munmap(ptr, totalLength);
-    }));
+    });
+    auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(reinterpret_cast<char*>(ptr) + byteOffset), byteLength }, WTF::move(destructor), ArrayBufferExternalWriters::No);
 
     if (type == JSC::Uint8ArrayType) {
         auto uint8array = JSC::JSUint8Array::create(globalObject, globalObject->m_typedArrayUint8.get(globalObject), WTF::move(buffer), 0, byteLength);
@@ -1681,7 +1683,7 @@ extern "C" JSC::EncodedJSValue Bun__makeArrayBufferWithBytesNoCopy(JSC::JSGlobal
     return JSValue::encode(jsBuffer);
 }
 
-extern "C" JSC::EncodedJSValue Bun__makeTypedArrayWithBytesNoCopy(JSC::JSGlobalObject* globalObject, TypedArrayType ty, const void* ptr, size_t len, JSTypedArrayBytesDeallocator deallocator, void* deallocatorContext)
+static JSC::EncodedJSValue makeTypedArrayWithBytesNoCopy(JSC::JSGlobalObject* globalObject, TypedArrayType ty, const void* ptr, size_t len, JSTypedArrayBytesDeallocator deallocator, void* deallocatorContext, ArrayBufferExternalWriters externalWriters)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1689,9 +1691,10 @@ extern "C" JSC::EncodedJSValue Bun__makeTypedArrayWithBytesNoCopy(JSC::JSGlobalO
     if (Bun::rejectBytesNoCopyAboveArrayBufferLimit(globalObject, scope, ptr, len, deallocator, deallocatorContext)) [[unlikely]]
         return {};
 
-    auto buffer_ = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, createSharedTask<void(void*)>([=](void* p) {
+    ArrayBufferDestructorFunction destructor = createSharedTask<void(void*)>([=](void* p) {
         if (deallocator) deallocator(p, deallocatorContext);
-    }));
+    });
+    auto buffer_ = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, WTF::move(destructor), externalWriters);
     RefPtr<ArrayBuffer>&& buffer = WTF::move(buffer_);
     if (!buffer) {
         throwOutOfMemoryError(globalObject, scope);
@@ -1715,6 +1718,18 @@ extern "C" JSC::EncodedJSValue Bun__makeTypedArrayWithBytesNoCopy(JSC::JSGlobalO
     }
 
     return {};
+}
+
+extern "C" JSC::EncodedJSValue Bun__makeTypedArrayWithBytesNoCopy(JSC::JSGlobalObject* globalObject, TypedArrayType ty, const void* ptr, size_t len, JSTypedArrayBytesDeallocator deallocator, void* deallocatorContext)
+{
+    return makeTypedArrayWithBytesNoCopy(globalObject, ty, ptr, len, deallocator, deallocatorContext, ArrayBufferExternalWriters::No);
+}
+
+// `Bun.mmap`. Another process that maps or writes the file changes these bytes at any time, so the buffer says that
+// it has external writers: what reads a byte twice copies such bytes first, as it does those of a SharedArrayBuffer.
+extern "C" JSC::EncodedJSValue Bun__makeUint8ArrayOverFileMapping(JSC::JSGlobalObject* globalObject, const void* ptr, size_t len, JSTypedArrayBytesDeallocator deallocator, void* deallocatorContext)
+{
+    return makeTypedArrayWithBytesNoCopy(globalObject, TypeUint8, ptr, len, deallocator, deallocatorContext, ArrayBufferExternalWriters::Yes);
 }
 
 extern "C" JSC::EncodedJSValue Bun__createTypedArrayForCopy(JSC::JSGlobalObject* globalObject, TypedArrayType ty, const void* ptr, size_t byteLength)

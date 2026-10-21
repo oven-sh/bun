@@ -158,8 +158,8 @@ export const bytesOfThen = bytesOfThenWith({}, "bytes_of_then");
 export const bytesOfThenCopyingShared = bytesOfThenWith({ shared: "copied" }, "bytes_of_then");
 export const bytesOfThenCopied = bytesOfThenWith({ held: "copied" }, "bytes_of_then_copied");
 /** Given one value twice: whether both are its own memory, and not a copy each. */
-const bytesOfAreSameMemoryWith = (shared: BytesOptions["shared"]) => {
-  const data = b.bytes({ from: ["string", "buffer", "blob"], shared });
+const bytesOfAreSameMemoryWith = (shared: BytesOptions["shared"], mapped?: BytesOptions["mapped"]) => {
+  const data = b.bytes({ from: ["string", "buffer", "blob"], shared, mapped });
   return b.fn({
     args: { data, again: data },
     returns: b.bool,
@@ -168,6 +168,7 @@ const bytesOfAreSameMemoryWith = (shared: BytesOptions["shared"]) => {
 };
 export const bytesOfAreSameMemory = bytesOfAreSameMemoryWith("borrowed");
 export const bytesOfAreSameMemoryCopyingShared = bytesOfAreSameMemoryWith("copied");
+export const bytesOfAreSameMemoryCopyingSharedNotMapped = bytesOfAreSameMemoryWith("copied", "borrowed");
 /** The bytes before `callback` runs, then after it. */
 const bytesBeforeAndAfterCallbackWith = (shared: BytesOptions["shared"]) =>
   b.fn({

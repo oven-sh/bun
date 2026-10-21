@@ -126,6 +126,13 @@ unsafe extern "C" {
         dealloc: JSTypedArrayBytesDeallocator,
         ctx: *mut c_void,
     ) -> JSValue;
+    fn Bun__makeUint8ArrayOverFileMapping(
+        global: &JSGlobalObject,
+        ptr: *mut c_void,
+        len: usize,
+        dealloc: JSTypedArrayBytesDeallocator,
+        ctx: *mut c_void,
+    ) -> JSValue;
     fn Bun__createTypedArrayForCopy(
         global: *const JSGlobalObject,
         ty: TypedArrayType,
@@ -143,6 +150,7 @@ unsafe extern "C" {
     // safe: by-value `JSValue`; false for non-buffer values.
     safe fn JSC__JSValue__isNonSharedWasmMemory(v: JSValue) -> bool;
     safe fn JSC__JSValue__canBeFreedWhilePinned(v: JSValue) -> bool;
+    safe fn JSC__JSValue__canBeWrittenConcurrently(v: JSValue) -> bool;
     // safe: by-value `JSValue`; empty for non-buffer values.
     safe fn JSC__JSValue__findWasmMemory(v: JSValue, out_offset: &mut usize) -> JSValue;
     // safe: by-value `JSValue`; the callee always fills both out-params.
@@ -168,10 +176,12 @@ impl ArrayBuffer {
         }
     }
 
-    /// Returns true if another thread can write to the bytes (`SharedArrayBuffer`) or JS that runs
-    /// during the call can unmap them with `resize()`.
+    /// Returns true if another thread can write to the bytes (`SharedArrayBuffer`), another process can
+    /// (a file mapping: `Bun.mmap`), or JS that runs during the call can unmap them with `resize()`.
+    ///
+    /// The mapping is a call and not a field, for the reason [`can_be_freed_while_pinned`](Self::can_be_freed_while_pinned) is one.
     pub fn can_change_under_borrow(&self) -> bool {
-        self.shared || self.resizable
+        self.shared || self.resizable || JSC__JSValue__canBeWrittenConcurrently(self.value)
     }
 
     /// Returns a private copy of the bytes, or `None` if allocation fails. Never inlined, so the
@@ -1225,6 +1235,33 @@ pub unsafe fn make_typed_array_with_bytes_no_copy(
                 deallocator,
                 deallocator_context,
             )
+        }
+    })
+}
+
+/// Wrap a file mapping in a JS `Uint8Array` without copying, as
+/// [`make_typed_array_with_bytes_no_copy`] does. Another process that maps or
+/// writes the file changes these bytes at any time, and the buffer records
+/// that: whatever reads a byte twice and counts on what it was copies them
+/// first, as it does for a `SharedArrayBuffer` (see
+/// [`ArrayBuffer::can_change_under_borrow`]). JavaScript still sees an ordinary
+/// `ArrayBuffer`, and a transfer of it keeps the record.
+///
+/// # Safety
+///
+/// Same contract as [`make_array_buffer_with_bytes_no_copy`].
+pub unsafe fn make_uint8_array_over_file_mapping(
+    global: &JSGlobalObject,
+    ptr: *mut c_void,
+    len: usize,
+    deallocator: JSTypedArrayBytesDeallocator,
+    deallocator_context: *mut c_void,
+) -> JsResult<JSValue> {
+    crate::host_fn::from_js_host_call(global, || {
+        // SAFETY: forwarded verbatim; the caller upholds this function's
+        // contract (`ptr` valid for `len` bytes until `deallocator` runs).
+        unsafe {
+            Bun__makeUint8ArrayOverFileMapping(global, ptr, len, deallocator, deallocator_context)
         }
     })
 }

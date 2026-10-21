@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, gcTick, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { statSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "path";
 
@@ -337,5 +337,87 @@ console.log(JSON.stringify(out));`,
     expect(() => {
       Bun.mmap(path, { offset: undefined });
     }).not.toThrow();
+  });
+
+  it("a parser refuses a mapped file that is too long for it without a copy of the file", async () => {
+    using dir = tempDir("mmap-too-long", {});
+    const file = join(String(dir), "long.bin");
+    // Sparse: the mapping costs address space, not memory or disk.
+    writeFileSync(file, "");
+    truncateSync(file, 2 ** 31 + 4096);
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const view = Bun.mmap(${JSON.stringify(file)});
+const before = process.memoryUsage.rss();
+const errors = [Bun.XML.parse, Bun.TOML.parse, Bun.YAML.parse].map(parse => {
+  try {
+    parse(view);
+    return "no error";
+  } catch (error) {
+    return error.name;
+  }
+});
+console.log(JSON.stringify({ errors, grewByAGigabyte: process.memoryUsage.rss() - before > 2 ** 30 }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+      out: { errors: ["RangeError", "RangeError", "RangeError"], grewByAGigabyte: false },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Whatever else has the file open writes the bytes of a mapping, so what reads a byte twice reads a copy of them, as
+  // it does of a SharedArrayBuffer. The fixture says what each of these does with a byte that changes in between.
+  // One at a time: each fixture keeps two cores busy, and a debug build's own threads use the rest.
+  describe("a mapping that another thread writes", () => {
+    // A debug build that reads the mapping in place fails within a quarter of these calls.
+    it.each([
+      ["Bun.XML.parse", 300, "view"],
+      ["Bun.TOML.parse", 200, "view"],
+      ["Bun.YAML.parse", 100, "view"],
+      ["Bun.markdown.html", 500, "view"],
+      ["UTF-8 decoders", 60, "view"],
+      // `transfer()` moves the mapping to another ArrayBuffer.
+      ["UTF-8 decoders", 60, "transferred"],
+      // A private mapping shows what another process writes to the file, on Linux until this process writes the page.
+      ...(isLinux ? [["Bun.YAML.parse", 100, "private"]] : []),
+    ])(
+      "%s reads a copy of it (%i calls, %s)",
+      async (consumer, calls, held) => {
+        using dir = tempDir("mmap-racing-writer", {});
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            join(import.meta.dir, "mmap-racing-writer-fixture.ts"),
+            consumer,
+            join(String(dir), "mapped.bin"),
+            String(calls),
+            held,
+          ],
+          env: {
+            ...bunEnv,
+            // System malloc: a sanitizer does not see an overflow in memory that JavaScriptCore's own allocator gave out.
+            Malloc: "1",
+            // symbolize=0: symbolizing a sanitizer report takes longer than the test timeout.
+            // detect_leaks=0: the fixture exits while its worker runs.
+            ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "done", stderr: "", exitCode: 0 });
+      },
+      // A debug ASAN build takes about 3s just to start the worker.
+      20_000,
+    );
   });
 });

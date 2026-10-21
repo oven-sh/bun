@@ -120,10 +120,10 @@ pub struct ExternWithValue<T: Copy> {
 unsafe extern "C" {
     /// `value` is a `BufferSource`, or holds a `Blob` whose bytes are in memory.
     pub(super) safe fn Bun__Bindgen__bytesOfBlobOrBuffer(value: JSValue) -> ExternBytes;
-    /// As above. Always sets `is_shared`.
-    pub(super) safe fn Bun__Bindgen__bytesOfBlobOrBufferAndIsShared(
+    /// As above. Always sets `can_be_written_concurrently`: a shared buffer, or one over a file mapping.
+    pub(super) safe fn Bun__Bindgen__bytesOfBlobOrBufferAndCanBeWrittenConcurrently(
         value: JSValue,
-        is_shared: &mut bool,
+        can_be_written_concurrently: &mut bool,
     ) -> ExternBytes;
     pub(super) fn Bun__Bindgen__constructArrayFromValues(
         global: *mut JSGlobalObject,

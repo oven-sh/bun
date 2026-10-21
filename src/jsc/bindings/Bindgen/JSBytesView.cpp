@@ -24,15 +24,25 @@ bool checkInMemoryBlob(JSGlobalObject& globalObject, JSValue value)
     return bytes == WebCore::BlobBytes::InMemory;
 }
 
-static ALWAYS_INLINE std::span<const uint8_t> bytesAndIsShared(JSValue value, bool& isShared)
+template<CopiedBuffers Copied, typename Buffer>
+static ALWAYS_INLINE bool isCopied(Buffer* buffer)
+{
+    if constexpr (Copied == CopiedBuffers::Shared)
+        return buffer->isShared();
+    else
+        return buffer->canBeWrittenConcurrently();
+}
+
+template<CopiedBuffers Copied>
+static ALWAYS_INLINE std::span<const uint8_t> bytesAndIsCopied(JSValue value, bool& copied)
 {
     std::span<const uint8_t> bytes;
     if (auto* view = dynamicDowncast<JSArrayBufferView>(value)) {
         bytes = view->span();
-        isShared = view->isShared();
+        copied = isCopied<Copied>(view);
     } else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value)) {
         bytes = buffer->impl()->span();
-        isShared = buffer->impl()->isShared();
+        copied = isCopied<Copied>(buffer->impl());
     } else {
         const uint8_t* data = nullptr;
         size_t length = 0;
@@ -47,23 +57,29 @@ static ALWAYS_INLINE std::span<const uint8_t> bytesAndIsShared(JSValue value, bo
 
 std::span<const uint8_t> bytesOfBlobOrBuffer(JSValue value)
 {
-    bool isShared = false;
-    return bytesAndIsShared(value, isShared);
+    bool copied = false;
+    return bytesAndIsCopied<CopiedBuffers::Shared>(value, copied);
 }
 
-std::span<const uint8_t> bytesOfBlobOrBuffer(JSValue value, bool& isShared)
+template<CopiedBuffers Copied>
+std::span<const uint8_t> bytesOfBlobOrBuffer(JSValue value, bool& copied)
 {
-    return bytesAndIsShared(value, isShared);
+    return bytesAndIsCopied<Copied>(value, copied);
 }
+template std::span<const uint8_t> bytesOfBlobOrBuffer<CopiedBuffers::Shared>(JSValue, bool&);
+template std::span<const uint8_t> bytesOfBlobOrBuffer<CopiedBuffers::SharedAndMapped>(JSValue, bool&);
 
-bool isSharedBuffer(JSValue value)
+template<CopiedBuffers Copied>
+bool isCopiedBuffer(JSValue value)
 {
     if (auto* view = dynamicDowncast<JSArrayBufferView>(value))
-        return view->isShared();
+        return isCopied<Copied>(view);
     if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value))
-        return buffer->impl()->isShared();
+        return isCopied<Copied>(buffer->impl());
     return false;
 }
+template bool isCopiedBuffer<CopiedBuffers::Shared>(JSValue);
+template bool isCopiedBuffer<CopiedBuffers::SharedAndMapped>(JSValue);
 
 std::span<const uint8_t> copyBytes(JSGlobalObject& globalObject, std::span<const uint8_t> bytes, MallocSpan<uint8_t>& copy)
 {
@@ -88,8 +104,8 @@ extern "C" Bun::Bindgen::ExternBytes Bun__Bindgen__bytesOfBlobOrBuffer(JSC::Enco
     return { bytes.data(), bytes.size() };
 }
 
-extern "C" Bun::Bindgen::ExternBytes Bun__Bindgen__bytesOfBlobOrBufferAndIsShared(JSC::EncodedJSValue value, bool* isShared)
+extern "C" Bun::Bindgen::ExternBytes Bun__Bindgen__bytesOfBlobOrBufferAndCanBeWrittenConcurrently(JSC::EncodedJSValue value, bool* canBeWrittenConcurrently)
 {
-    *isShared = Bun::Bindgen::isSharedBuffer(JSC::JSValue::decode(value));
+    *canBeWrittenConcurrently = Bun::Bindgen::isCopiedBuffer<Bun::Bindgen::CopiedBuffers::SharedAndMapped>(JSC::JSValue::decode(value));
     return Bun__Bindgen__bytesOfBlobOrBuffer(value);
 }

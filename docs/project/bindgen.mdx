@@ -411,6 +411,8 @@ fn gzip_sync<'a>(heap: &JsHeap<'a>, data: &[u8], options: &ZlibCompressionOption
 | `refuse`    | `"stringObject"`                                     | with `"throw"`: `"string"` is only a string                            |
 | `string`    | **`"utf8"`**, `"asIs"`                               | a string is its UTF-8, or stays a `bun_core::String`                   |
 | `shared`    | **`"borrowed"`**, `"copied"`                         | the bytes of a shared buffer                                           |
+| `mapped`    | **as `shared`**, `"borrowed"`                        | the bytes of a `Bun.mmap` view                                         |
+| `longest`   | a length                                             | with `shared: "copied"`: a longer buffer is not copied                 |
 | `held`      | **`"borrowed"`**, `"handle"`, `"copied"`, `"pinned"` | what the body gets                                                     |
 
 `"string"` is a string or a `String` object. `"buffer"` is a typed array, `DataView`,
@@ -451,7 +453,17 @@ thread.
 another thread that writes it during the call changes what the body reads. `shared: "copied"` is
 for a body that reads a byte again and counts on what it was, such as a parser that scans ahead
 and comes back. JSC's `sort` copies for the same reason. With `string: "asIs"` the body calls
-`JsBytes::get_or_copy_if_shared` instead.
+`JsBytes::get_or_copy_if_written_concurrently` instead.
+
+**A `Bun.mmap` view** is an ordinary `ArrayBuffer` over a file mapping. Another process that writes
+the file changes its bytes during the call, and JSC's `canBeWrittenConcurrently()` says so.
+`shared: "copied"` copies such a view too. `mapped: "borrowed"` leaves it where it is, for a body
+whose writes stay in bounds whatever it reads: `Bun.gzipSync` compresses a mapped file without a
+second copy of it in memory.
+
+`longest` is the longest input the body reads. A body that refuses a longer one by its length,
+before it reads a byte, says so here, and the longer one is not copied: `Bun.TOML.parse` of a
+mapped file of 3 GiB throws its `RangeError` at once.
 
 The kind of the value is checked, and a string converted, in the order of the arguments. The
 bytes of a buffer are read, copied or pinned after every argument is converted. It is not a
@@ -460,7 +472,8 @@ member of a dictionary, a union or an array. `held: "borrowed"` can be `.optiona
 
 An option that cannot apply is a build error: `refuse` of `undefined` or `null` without `"toString"`,
 of a `String` object with it or where no string is taken, `string` where no
-string is taken, `shared` where no buffer is taken or `held: "copied"` copies it anyway. So is
+string is taken, `shared` where no buffer is taken or `held: "copied"` copies it anyway, `mapped: "copied"`
+or `longest` without `shared: "copied"`. So is
 what no function needs yet, which is not written: `"asIs"` without `"handle"` or that copies a
 shared buffer, `"pinned"` that takes a `Blob` or copies a shared buffer, a `"pinned"` argument
 next to another or next to a `"borrowed"` one, and an absent `"copied"`, `"pinned"` or `"handle"` other

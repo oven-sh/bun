@@ -1491,9 +1491,8 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
         // unmaps it exactly once via `munmap_dealloc` with the full mapping
         // length stuffed into the ctx pointer.
         unsafe {
-            jsc::array_buffer::make_typed_array_with_bytes_no_copy(
+            jsc::array_buffer::make_uint8_array_over_file_mapping(
                 global_this,
-                jsc::TypedArrayType::TypeUint8,
                 view_ptr.cast_mut().cast::<c_void>(),
                 view_len,
                 Some(munmap_dealloc),

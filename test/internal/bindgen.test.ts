@@ -1,10 +1,12 @@
 import { bindgen as bindings } from "bun:internal-for-testing";
 import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { describe as describeAlways, expect, it as itAlways } from "bun:test";
-import { runWithError, tempDir } from "harness";
+import { isWindows, runWithError, tempDir } from "harness";
+import { readFile } from "node:fs/promises";
 import { BlockList, SocketAddress } from "node:net";
 import { join } from "node:path";
 import vm from "node:vm";
+import { Worker } from "node:worker_threads";
 import { rustIdent } from "../../src/codegen/bindgen-lib-internal.ts";
 import * as b from "../../src/codegen/bindgen-lib.ts";
 
@@ -1645,6 +1647,89 @@ describe("a string or a buffer, as bytes", () => {
     for (const buffer of buffers([], SharedArrayBuffer))
       expect(bindgen.bytesOfThenCopyingShared(buffer, 0)).toEqual([]);
   });
+
+  // Whatever else has the file open writes the bytes of a mapping. JavaScript sees an ordinary ArrayBuffer.
+  itAlways.skipIf(!bindings || isWindows)(
+    'shared: "copied" copies a Bun.mmap view too, whichever buffer has the mapping',
+    async () => {
+      using dir = tempDir("bindgen-mmap", { "mapped.bin": new Uint8Array(eight) });
+      const path = join(String(dir), "mapped.bin");
+      const isCopied = (data: ArrayBufferLike | ArrayBufferView) =>
+        !bindgen.bytesOfAreSameMemoryCopyingShared(data, data);
+
+      const view = Bun.mmap(path);
+      expect(view.buffer).toBeInstanceOf(ArrayBuffer);
+      const views = [
+        view,
+        view.buffer,
+        view.subarray(2, 6),
+        new DataView(view.buffer, 1),
+        new Uint16Array(view.buffer, 2, 2),
+        Buffer.from(view.buffer),
+        Bun.mmap(path, { shared: false }),
+        Bun.mmap(path, { offset: 1, size: 4 }),
+      ];
+      for (const mapped of views) {
+        expect(isCopied(mapped)).toBe(true);
+        // Without shared: "copied" it is borrowed, as a shared buffer is.
+        expect(bindgen.bytesOfAreSameMemory(mapped, mapped)).toBe(true);
+      }
+      expect(bindgen.bytesOfThenCopyingShared(view, 0)).toEqual(eight);
+      for (const mapped of [view, view.buffer]) {
+        const overwrite = () => void Bun.mmap(path).fill(2);
+        expect(bindgen.bytesBeforeAndAfterCallbackCopyingShared(mapped, overwrite)).toEqual([eight, eight]);
+        view.set(eight);
+      }
+
+      // `mapped: "borrowed"` leaves the view where it is, and still copies a shared buffer.
+      for (const mapped of views) expect(bindgen.bytesOfAreSameMemoryCopyingSharedNotMapped(mapped, mapped)).toBe(true);
+      for (const buffer of buffers(eight, SharedArrayBuffer))
+        expect(bindgen.bytesOfAreSameMemoryCopyingSharedNotMapped(buffer, buffer)).toBe(false);
+
+      // A copy of the bytes is the caller's own memory. So is what reads the file.
+      const copies = [
+        view.slice(),
+        new Uint8Array(view),
+        Buffer.from(view),
+        structuredClone(view),
+        view.buffer.slice(0),
+        Bun.mmap(path).buffer.transfer(4),
+        await Bun.file(path).bytes(),
+        await Bun.file(path).arrayBuffer(),
+        await readFile(path),
+      ];
+      for (const copy of copies) expect(isCopied(copy)).toBe(false);
+
+      // A transfer gives the mapping itself to another ArrayBuffer.
+      const transferred = Bun.mmap(path).buffer.transfer();
+      expect(isCopied(transferred)).toBe(true);
+      const fixedLength = transferred.transferToFixedLength();
+      expect(transferred.detached).toBe(true);
+      expect(isCopied(fixedLength)).toBe(true);
+      const cloned = structuredClone(fixedLength, { transfer: [fixedLength] });
+      expect(fixedLength.detached).toBe(true);
+      expect(isCopied(cloned)).toBe(true);
+      expect([...new Uint8Array(cloned)]).toEqual(eight);
+
+      const worker = new Worker(
+        `const { parentPort } = require("node:worker_threads");
+         const { bindgen } = require("bun:internal-for-testing");
+         parentPort.once("message", buffer => {
+           parentPort.postMessage(!bindgen.bytesOfAreSameMemoryCopyingShared(buffer, buffer));
+         });`,
+        { eval: true },
+      );
+      const copiedInWorker = Promise.withResolvers<boolean>();
+      worker.once("message", copiedInWorker.resolve);
+      worker.once("error", copiedInWorker.reject);
+      worker.postMessage(cloned, [cloned]);
+      expect(await copiedInWorker.promise).toBe(true);
+      expect(cloned.detached).toBe(true);
+      await worker.terminate();
+    },
+    // A debug ASAN build takes about 3s just to start the worker.
+    20_000,
+  );
 
   describe('held: "handle", in a function that can run JavaScript', () => {
     it.each(["bytesBeforeAndAfterCallback", "bytesBeforeAndAfterCallbackCopyingShared"] as const)(

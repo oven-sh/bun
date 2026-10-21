@@ -10,6 +10,8 @@ export const YAML = b.namespace({
         from: ["string", "buffer", "blob"],
         otherwise: "toString",
         shared: "copied",
+        /** A longer input is a RangeError before the parser reads a byte of it. */
+        longest: 2 ** 31 - 1,
         held: "handle",
       }),
     },

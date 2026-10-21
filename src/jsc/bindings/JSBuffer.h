@@ -47,8 +47,9 @@ std::optional<size_t> byteLength(JSC::JSString* str, JSC::JSGlobalObject* lexica
 // RangeError `new ArrayBuffer(length)` would throw, and returns true.
 bool rejectBytesNoCopyAboveArrayBufferLimit(JSC::JSGlobalObject*, JSC::ThrowScope&, const void* bytes, size_t length, JSTypedArrayBytesDeallocator, void* deallocatorContext);
 
-// Copies bytes out of a SharedArrayBuffer. Another thread can write to it between the UTF-8 decoders'
-// two passes, so they decode the copy. Throws OutOfMemoryError if the copy fails.
+// Copies bytes that something else can write (`canBeWrittenConcurrently()`): those of a SharedArrayBuffer, which
+// another thread writes, and of a `Bun.mmap` view, which another process writes. A write between the UTF-8 decoders'
+// two passes changes what the second one reads, so they decode the copy. Throws OutOfMemoryError if the copy fails.
 WTF::MallocSpan<uint8_t> copySharedBytes(JSC::JSGlobalObject*, JSC::ThrowScope&, std::span<const uint8_t> bytes);
 
 namespace Buffer {

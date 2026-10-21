@@ -489,24 +489,29 @@ impl<'a> JsBytes<'a> {
         self.value.to_js()
     }
 
-    /// `shared: "copied"` for `string: "asIs"`. Like [`get`](Self::get), but copies the bytes of a shared buffer into `copy` and returns those.
+    /// `shared: "copied"` for `string: "asIs"`. Like [`get`](Self::get), but copies the bytes that something else can write during the call
+    /// (those of a shared buffer, and of one over a file mapping) into `copy` and returns those.
+    ///
+    /// `longest` is the longest input the caller reads. It refuses a longer one by its length, so that one is not copied.
     #[inline]
-    pub fn get_or_copy_if_shared<'heap>(
+    pub fn get_or_copy_if_written_concurrently<'heap>(
         self,
         heap: &'heap JsHeap<'a>,
         copy: &'heap mut Vec<u8>,
+        longest: usize,
     ) -> crate::JsResult<&'heap [u8]> {
         if let Some(bytes) = self.stable {
             return Ok(bytes);
         }
-        let mut is_shared = false;
-        let bytes = extern_types::Bun__Bindgen__bytesOfBlobOrBufferAndIsShared(
+        let mut can_be_written_concurrently = false;
+        let bytes = extern_types::Bun__Bindgen__bytesOfBlobOrBufferAndCanBeWrittenConcurrently(
             self.value.0,
-            &mut is_shared,
+            &mut can_be_written_concurrently,
         );
-        if !is_shared {
-            // SAFETY: as in `get`.
-            return Ok(unsafe { bytes.get(heap) });
+        // SAFETY: as in `get`.
+        let bytes = unsafe { bytes.get(heap) };
+        if !can_be_written_concurrently || bytes.len() > longest {
+            return Ok(bytes);
         }
         let global = heap.global_object();
         let buffer = self.value.0.as_array_buffer(global);

@@ -5397,6 +5397,10 @@ declare module "bun" {
    * - It does not support empty files. It throws a `SystemError` with `EINVAL`
    * - Usage on shared/networked filesystems is discouraged. It is very slow.
    * - Deleting or truncating the file crashes Bun with a segmentation fault.
+   * - Another process can write the file while Bun reads the array. A parser or a UTF-8 decoder
+   *   (`Bun.XML.parse`, `Bun.TOML.parse`, `Bun.YAML.parse`, `Bun.markdown`, `TextDecoder`,
+   *   `StringDecoder`, `buffer.toString()`) therefore reads a private copy of the array it is
+   *   given. Pass `array.subarray(start, end)` to copy only that part of the file.
    *
    * ---
    *

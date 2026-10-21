@@ -2157,7 +2157,7 @@ JSC::EncodedJSValue jsBufferToString(JSC::JSGlobalObject* lexicalGlobalObject, T
     }
 
     auto bytes = castedThis->span().subspan(offset, length);
-    if (castedThis->isShared() && encoding == BufferEncodingType::utf8) [[unlikely]] {
+    if (castedThis->canBeWrittenConcurrently() && encoding == BufferEncodingType::utf8) [[unlikely]] {
         auto copy = Bun::copySharedBytes(lexicalGlobalObject, scope, bytes);
         RETURN_IF_EXCEPTION(scope, {});
         return jsBufferToStringFromBytes(lexicalGlobalObject, scope, copy.span(), encoding);
@@ -2658,9 +2658,11 @@ extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject* globalObjec
 
     auto* structure = globalObject->JSBufferSubclassStructure();
 
-    auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), length }, createSharedTask<void(void*)>([lengthAsContext](void* p) {
+    // Not ArrayBufferExternalWriters::Yes: whatever wrote this mapping is done when JavaScript gets it.
+    ArrayBufferDestructorFunction destructor = createSharedTask<void(void*)>([lengthAsContext](void* p) {
         unmapBufferBytes(p, lengthAsContext);
-    }));
+    });
+    auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), length }, WTF::move(destructor), ArrayBufferExternalWriters::No);
 
     auto* view = JSC::JSUint8Array::create(globalObject, structure, WTF::move(buffer), 0, length);
     RETURN_IF_EXCEPTION(scope, {});

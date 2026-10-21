@@ -1081,12 +1081,12 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
         if (!view->isDetached()) {
             bytes = view->span();
-            isShared = view->isShared();
+            isShared = view->canBeWrittenConcurrently();
         }
     } else if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
         if (buffer->impl() && !buffer->impl()->isDetached()) {
             bytes = buffer->impl()->span();
-            isShared = buffer->impl()->isShared();
+            isShared = buffer->impl()->canBeWrittenConcurrently();
         }
     } else {
         auto* error = createTypeError(globalObject, "Body.textStream() received a chunk that is not a BufferSource"_s);

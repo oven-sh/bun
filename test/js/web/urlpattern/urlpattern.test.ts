@@ -168,6 +168,8 @@ describe("URLPattern", () => {
     describe.each([
       ["a negated class that holds an empty class string", "([^\\q{}])"],
       ["a count that JavaScriptCore's RegExp offsets cannot hold", "(x{4294967295})"],
+      // Not a class of the `v` grammar: it has no operator after operands with nothing between them.
+      ["an operator after a union", "([a\\d--5]+)"],
     ])("a regexp group with %s", (_, group) => {
       const long = Buffer.alloc(70, "a").toString();
       const refused = "TypeError: Unable to create RegExp object regular expression from provided URLPattern string.";
@@ -200,6 +202,15 @@ describe("URLPattern", () => {
       const pattern = new URLPattern({ pathname: "/" + long + "/:id([^\\q{a}])" });
       expect(pattern.test({ pathname: "/" + long + "/b" })).toBe(true);
       expect(pattern.test({ pathname: "/" + long + "/a" })).toBe(false);
+    });
+
+    // In the `v` grammar a nested class is a class of its own, whatever is before it in the class around it.
+    test.each([
+      ["short", ""],
+      ["long", "/" + Buffer.alloc(70, "a").toString()],
+    ])("a %s pathname with a nested class after a range in a regexp group", (_, prefix) => {
+      const pattern = new URLPattern({ pathname: prefix + "/:id([a-f[\\d--5]]+)" });
+      expect(["/a4", "/a5", "/g"].map(id => pattern.test({ pathname: prefix + id }))).toEqual([true, false, false]);
     });
   });
 

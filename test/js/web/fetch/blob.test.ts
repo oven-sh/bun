@@ -197,6 +197,13 @@ test("new Blob(new Uint8Array()) is supported", async () => {
   expect(await blob.text()).toBe("1234");
 });
 
+test("the memory of a File is counted as that of a Blob is", () => {
+  const { estimateShallowMemoryUsageOf } = require("bun:jsc");
+  expect(estimateShallowMemoryUsageOf(new File(["1234"], "file.txt"))).toBeGreaterThanOrEqual(
+    estimateShallowMemoryUsageOf(new Blob(["1234"])),
+  );
+});
+
 // https://github.com/oven-sh/bun/issues/13049
 test("new File(new Uint8Array()) is supported", async () => {
   const blob = new File(Buffer.from("1234") as any, "file.txt");

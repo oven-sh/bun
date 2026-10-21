@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, runCommandMaxRSS, tempDir, withoutAsanQuarantine } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { SourceMapConsumer } from "source-map";
 import { itBundled, type BundlerTestInput } from "../expectBundled";
 
 // The React Compiler emits `import { c as _c } from "react/compiler-runtime"` and
@@ -3524,6 +3525,56 @@ describe("bundler", () => {
   // The fbt transform rejects a variable in place of a nested fbt.param()
   // call, so the call stays inside the fbt() call. The value given to
   // fbt.param() can be a variable, and it keeps its place ahead of a statement.
+  itBundled("react-compiler/SourceMapOfCatch", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Comp({ a }) {
+          let y;
+          try {
+            y = [a()];
+          } catch {
+            y = null;
+          }
+          let z;
+          try {
+            z = [a()];
+          } catch (e) {
+            z = [e];
+          }
+          return <div>{y}{z}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    outdir: "/out",
+    sourceMap: "external",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    async onAfterBundle(api) {
+      const source = api.readFile("/entry.jsx").split("\n");
+      expect(api.readFile("/out/entry.js")).toMatch(/\b_c\(\d+\)/);
+      await SourceMapConsumer.with(JSON.parse(api.readFile("/out/entry.js.map")), null, map => {
+        const original = (line: number, column: number, length: number) => {
+          const position = map.originalPositionFor({ line: line + 1, column });
+          return source[position.line! - 1].slice(position.column!, position.column! + length);
+        };
+        const words = api
+          .readFile("/out/entry.js")
+          .split("\n")
+          .flatMap((text, line) =>
+            Array.from(text.matchAll(/\bcatch(?: \([\w$]+\))? \{/g), ({ 0: clause, index }) => [
+              original(line, index, "catch".length),
+              original(line, index + clause.length - 1, 1),
+            ]),
+          );
+        expect(words).toEqual([
+          ["catch", "{"],
+          ["catch", "{"],
+        ]);
+      });
+    },
+  });
+
   itBundled("react-compiler/MacroOperandStaysInsideTheMacroCall", {
     files: {
       "/entry.jsx": /* jsx */ `

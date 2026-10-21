@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, runCommandMaxRSS, tempDir, withoutAsanQuarantine } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled, type BundlerTestInput } from "../expectBundled";
@@ -850,6 +850,46 @@ describe("bundler", () => {
     onAfterBundle(api) {
       expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
     },
+  });
+
+  // A `try` body that can't throw loses its handler and `try` terminal, but the code after the `try` must be kept.
+  itBundled("react-compiler/DeadTryBodyKeepsTheCodeAfterIt", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const report = () => {};
+        function Branches(props) { try { const unused = 1; } catch (e) { if (props.debug) report(e); } return <div>{props.a}</div>; }
+        function Guard(props) {
+          try {
+            const isProduction = process.env.NODE_ENV === "production";
+            if (isProduction) report(props);
+          } catch (e) {
+            props.onError?.(e);
+          }
+          return <div>{props.a}</div>;
+        }
+        function Inner(props) {
+          let a;
+          try {
+            try { const unused = 1; } catch (e) { report(e); }
+            a = props.f();
+          } catch {
+            a = "caught";
+          }
+          return <div>{a}</div>;
+        }
+        const rendered = [Branches({ a: 1 }), Guard({ a: 2 }), Inner({ f: () => 3 })];
+        console.log(rendered.map(it => it?.p.children).join(", "));
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    define: { "process.env.NODE_ENV": '"development"' },
+    run: { stdout: "1, 2, 3" },
   });
 
   // `c` is assigned in a scope that lies in the scope of `d`. Only the inner one had it as an output, so a render in which
@@ -3611,25 +3651,17 @@ test("react-compiler memory does not grow with the square of the size of a compo
   });
 
   const peakMB = async (entry: string) => {
-    await using proc = Bun.spawn({
+    const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
       cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
-      env: {
-        ...bunEnv,
-        // ASAN's quarantine keeps freed blocks resident, which hides the difference.
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
-          .filter(Boolean)
-          .join(":"),
-      },
+      // ASAN's quarantine keeps freed blocks resident, which hides the difference.
+      env: withoutAsanQuarantine(bunEnv),
       cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     // The component compiled, or there is no component.
     expect(stdout.includes("react/compiler-runtime")).toBe(entry !== "empty.jsx");
     expect(exitCode).toBe(0);
-    return proc.resourceUsage()!.maxRSS / 1024 / 1024;
+    return maxRSS / 1024 / 1024;
   };
 
   const [empty, chain, pattern] = await Promise.all([peakMB("empty.jsx"), peakMB("chain.jsx"), peakMB("pattern.jsx")]);
@@ -3774,14 +3806,20 @@ test("react-compiler does not end the process on a try in which nothing but a re
 });
 
 test("react-compiler time does not grow with the cube of a chain of functions", async () => {
-  const source = (n: number) => `
-    import { useState } from "react";
-    export default function App() {
+  // The CPU time of a process on Windows (GetProcessTimes) is a count of 1/64 s ticks, whatever the resolution of
+  // timers is. In a release build one component of n functions takes a tick or two.
+  const components = isWindows && !isDebug ? 8 : 1;
+  const component = (name: string, n: number) => `
+    export function ${name}() {
       const [s] = useState(0);
       const f0 = () => s;
       ${Array.from({ length: n }, (_, i) => `const f${i + 1} = () => f${i};`).join("\n")}
       return <div onClick={f${n}} />;
     }
+  `;
+  const source = (n: number) => `
+    import { useState } from "react";
+    ${Array.from({ length: components }, (_, i) => component("App" + i, n)).join("\n")}
   `;
   const n = isDebug || isASAN ? 80 : 200;
   using dir = tempDir("react-compiler-chain-of-functions", { "n.jsx": source(n), "2n.jsx": source(2 * n) });
@@ -3825,17 +3863,13 @@ test("react-compiler keeps one copy of each dependency of a phi", async () => {
   });
 
   const build = async (entry: string) => {
-    await using proc = Bun.spawn({
+    const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
       cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
-      env: bunEnv,
       cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-    return { memoized: /\b_c\(\d+\)/.test(stdout), peakMB: proc.resourceUsage()!.maxRSS / 1024 / 1024 };
+    return { memoized: /\b_c\(\d+\)/.test(stdout), peakMB: maxRSS / 1024 / 1024 };
   };
 
   const [empty, ladder] = await Promise.all([build("empty.jsx"), build("ladder.jsx")]);

@@ -154,7 +154,7 @@ pub(crate) fn run_as_coordinator(
         files: sorted,
         costs,
         // SAFETY: FileSystem singleton is initialized before any test runner code runs.
-        cwd: FileSystem::get().top_level_dir,
+        cwd: FileSystem::get().top_level_dir(),
         argv,
         envps,
         // Coordinator borrows the workers slice while each Worker holds a raw
@@ -385,7 +385,7 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
         bun_core::CodeGenerationFromStrings::DisallowedLikeNode => {
             argv.push(lit(b"--disallow-code-generation-from-strings\0"));
         }
-        bun_core::CodeGenerationFromStrings::Disallowed => {
+        bun_core::CodeGenerationFromStrings::Strict => {
             argv.push(lit(b"--disallow-code-generation-from-strings=strict\0"));
         }
     }
@@ -672,15 +672,17 @@ pub(crate) fn run_as_worker(
     worker_flush_aggregates(wloop.reporter, vm_ref, ctx, &mut wloop.cmds);
     // Drain any backpressure-buffered frames before exit so the coordinator
     // sees repeat_bufs / coverage_file.
-    while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done.get() {
-        // SAFETY: event_loop pointer is valid while vm lives.
-        unsafe { (*vm_ref.event_loop()).tick() };
-        if !wloop.cmds.channel.has_pending_writes() || wloop.cmds.channel.done.get() {
-            break;
+    vm_ref.run_with_api_lock(|| {
+        while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done.get() {
+            // SAFETY: event_loop pointer is valid while vm lives.
+            unsafe { (*vm_ref.event_loop()).tick() };
+            if !wloop.cmds.channel.has_pending_writes() || wloop.cmds.channel.done.get() {
+                break;
+            }
+            // SAFETY: event_loop pointer is valid while vm lives.
+            unsafe { (*vm_ref.event_loop()).auto_tick() };
         }
-        // SAFETY: event_loop pointer is valid while vm lives.
-        unsafe { (*vm_ref.event_loop()).auto_tick() };
-    }
+    });
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
     vm_ref.exit_handler.exit_code = 0;

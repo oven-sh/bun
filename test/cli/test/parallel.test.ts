@@ -1116,6 +1116,37 @@ test("--parallel: a test writing garbage to fd 3 gets its worker killed and the 
   expect(exitCode).toBe(1);
 });
 
+// About 1 MB of todo lines overflows the socketpair send buffer, so the worker sends its
+// final RepeatBufs frame from its exit drain loop.
+test("--parallel: worker drains a backpressured final frame under the JSC API lock", async () => {
+  using dir = tempDir("parallel-drain-lock", {
+    "big.test.js": `import {test} from "bun:test";
+      import {socketFaultInjection as fault} from "bun:internal-for-testing";
+      // Short sends on the IPC fd guarantee a backlog on the builds where JSC asserts.
+      if (fault.available()) fault.set({ syscall: "send", action: "short", bytes: 65536, repeat: -1, fd: 3 });
+      const pad = Buffer.alloc(340, "t").toString();
+      for (let i = 0; i < 3000; i++) test.todo(pad + "-" + i);
+      for (let i = 0; i < 25; i++) test("p" + i, () => {});`,
+    "other.test.js": `import {test,expect} from "bun:test"; test("b1",()=>expect(1).toBe(1));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  // The last todo line is streamed live and printed again in the repeat section built from the frame.
+  expect(stderr).toContain("3000 tests todo:");
+  expect(stderr.split("-2999").length - 1).toBe(2);
+  expect(stderr).toContain("3000 todo");
+  expect(stderr).toContain("26 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
 test("--parallel --randomize without --seed is reproducible via the printed seed", async () => {
   const mk = (tag: string) =>
     `import {test,expect} from "bun:test";\n` +
@@ -1428,8 +1459,9 @@ test.skipIf(isWindows)(
     // The grandchild is orphaned when the worker dies, so a zombie could still
     // answer kill(pid, 0). It records its own termination instead. A shell
     // keeps its startup out of the timing; the trap is armed before the pid
-    // is logged.
-    const grandchild = `trap 'echo terminated=$$ >> "$PIDS"; exit 0' TERM; echo grandchild=$$ >> "$PIDS"; while :; do sleep 60; done`;
+    // is logged. It blocks in `wait`, which a trapped signal interrupts: a
+    // foreground `sleep` would put the trap off until it ends.
+    const grandchild = `trap 'echo terminated=$$ >> "$PIDS"; exit 0' TERM; sleep 60 & echo grandchild=$$ >> "$PIDS"; wait`;
     const crasher = (how: string) => `
     import { test } from "bun:test";
     test("spawn then die", async () => {

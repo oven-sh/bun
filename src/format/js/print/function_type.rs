@@ -1,12 +1,10 @@
-//! Function types, and the signatures of interfaces and type literals that have parameters.
+//! Function types, and the interface and type literal signatures that have parameters.
 
-use super::function::should_group_function_parameters;
+use super::function::write_parameters_and_return_type;
 use super::parameters::FormatFormalParameters;
 use super::type_parameters::type_parameters;
 use crate::js::format::{FormatReturnTypeOfFunctionType, FormatTypeAnnotation};
-use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::object::format_computed_or_property_key;
-use crate::js::utils::typescript::end_of_line_comments;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -63,127 +61,63 @@ pub(crate) fn write_ts_method_signature<'a>(
         if let Some(key) = member.key() {
             format_computed_or_property_key(key, AstNodes::TSMethodSignature(member), f);
         }
-        if func.type_params().is_empty() {
-            write!(f, FormatCommentsAroundParenthesis(func));
-        }
         write!(f, member.flags().contains(Flags::OPTIONAL).then_some("?"));
 
-        let format_type_parameters = FormatTypeParameters(func).memoized();
-        let format_parameters = FormatFormalParameters(func).memoized();
-        format_type_parameters.inspect(f);
-        format_parameters.inspect(f);
-        let format_return_type = FormatReturnType(func).memoized();
-
-        match should_group_function_parameters(func, &format_return_type, f) {
-            true => write!(
-                f,
-                group(&format_args!(format_type_parameters, format_parameters))
-            ),
-            false => write!(f, [format_type_parameters, format_parameters]),
-        }
-        write!(f, group(&format_return_type));
+        let format_return_type = format_with(|f| write!(f, group(&FormatReturnType(func))));
+        write_parameters_and_return_type(
+            func,
+            &FormatAllParameters(func).memoized(),
+            &format_return_type.memoized(),
+            f,
+        );
     });
     write!(f, group(&format_inner));
 }
 
-/// The type parameters, the parameters and the return type of a function type or of a signature
-/// without a name.
+/// The type parameters, parameters and return type of a function type or an unnamed signature.
 fn format_grouped_parameters_with_return_type<'a>(
     func: Func<'a>,
     is_function_or_constructor_type: bool,
     f: &mut Formatter<'a>,
 ) {
     group(&format_with(|f| {
-        let format_type_parameters = FormatTypeParameters(func).memoized();
-        let format_parameters = FormatFormalParameters(func).memoized();
-        let return_type = func.return_type().map(|_| FormatReturnType(func));
-        let format_return_type = return_type
-            .as_ref()
-            .map(FormatNodeWithoutTrailingComments)
-            .memoized();
-
-        format_type_parameters.inspect(f);
-        format_parameters.inspect(f);
-
-        match should_group_function_parameters(func, &format_return_type, f) {
-            true => write!(
+        let format_return_type = format_with(|f| {
+            write!(
                 f,
-                group(&format_args!(format_type_parameters, format_parameters))
-            ),
-            false => write!(f, [format_type_parameters, format_parameters]),
-        }
-        write!(
+                [
+                    is_function_or_constructor_type.then_some(space()),
+                    FormatReturnType(func)
+                ]
+            )
+        });
+        write_parameters_and_return_type(
+            func,
+            &FormatAllParameters(func).memoized(),
+            &format_return_type.memoized(),
             f,
-            [
-                is_function_or_constructor_type.then_some(space()),
-                format_return_type
-            ]
         );
     }))
     .fmt(f);
 }
 
-/// The type parameters of a signature, with the comments after them.
-struct FormatTypeParameters<'a>(Func<'a>);
+/// `<T>(a: A)`
+struct FormatAllParameters<'a>(Func<'a>);
 
-impl<'a> Format<'a> for FormatTypeParameters<'a> {
+impl<'a> Format<'a> for FormatAllParameters<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        let params = self.0.type_params();
-        if !params.is_empty() {
-            write!(
-                f,
-                [
-                    type_parameters(params, Node::Func(self.0)),
-                    FormatCommentsAroundParenthesis(self.0)
-                ]
-            );
-        }
+        let type_parameters = type_parameters(self.0.type_params(), Node::Func(self.0));
+        write!(f, [type_parameters, FormatFormalParameters(self.0)]);
     }
 }
 
-/// The comments that trail what is before the `(` of a signature: a name or type parameters.
-///
-/// - If there are no parameters, those before the `(`, which there is nothing for to lead.
-/// - Those after the `(` on the same line, if nothing else follows on that line.
-struct FormatCommentsAroundParenthesis<'a>(Func<'a>);
-
-impl<'a> Format<'a> for FormatCommentsAroundParenthesis<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        let Some(span) = self.0.params_span().filter(|_| !f.is_quiet()) else {
-            return;
-        };
-        let comments = match self.0.this_param().or_else(|| self.0.params().first()) {
-            // For oxfmt the parentheses are a node, and the comments in it lead the first parameter.
-            Some(_) if f.options().flavor.is_oxfmt() => return,
-            Some(first) => end_of_line_comments(f.comments().comments_before(first.span().start)),
-            None => f.comments().comments_before(span.start),
-        };
-        write!(f, FormatTrailingComments::Comments(comments));
-    }
-}
-
-/// `: R`, `=> R`. Prettier's `printTypeAnnotationProperty`: there is a space between the `)` and the
-/// comments before a `:`.
+/// `: R`, `=> R`
 struct FormatReturnType<'a>(Func<'a>);
-
-impl Spanned for FormatReturnType<'_> {
-    fn span(&self) -> Span {
-        self.0
-            .return_type()
-            .map(TypeNode::annotation_span)
-            .unwrap_or_default()
-    }
-}
 
 impl<'a> Format<'a> for FormatReturnType<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let Some(return_type) = self.0.return_type() else {
             return;
         };
-        let has_comment = !f.is_quiet()
-            && f.comments()
-                .has_comment_before(return_type.annotation_span().start);
-        write!(f, has_comment.then_some(space()));
         match self.0.owner() {
             Node::Type(_) => write!(f, FormatReturnTypeOfFunctionType(return_type)),
             _ => write!(f, FormatTypeAnnotation(return_type)),

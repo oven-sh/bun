@@ -14,7 +14,7 @@
 //! | `visitRegExpAST(node, { onXEnter, onXLeave })` | [`Node::visit`] with a [`Visitor`], or a loop over [`Node::descendants`] when only `Enter` handlers are used |
 //! | `max: Infinity` | [`INFINITY`] |
 //!
-//! The nodes are in one vector, a [`Node`] is a reference to the [`Ast`] and an index.
+//! All nodes live in one vector. A [`Node`] is a reference to the [`Ast`] plus an index.
 //!
 //! Without the `u` or `v` flag a character outside the BMP is two [`Kind::Character`]s, a lead and
 //! a trail surrogate, as in regexpp. The first covers the first two of its four bytes and the
@@ -39,7 +39,7 @@ impl NodeId {
     }
 }
 
-/// A run of `Ast::lists` or of `Ast::text`.
+/// A slice of `Ast::lists` or of `Ast::text`.
 #[derive(Copy, Clone, Default, Debug)]
 pub(super) struct Run {
     pub(super) start: u32,
@@ -261,22 +261,22 @@ impl NodeType {
 pub struct Ast<'s> {
     pub(super) source: &'s [u8],
     pub(super) nodes: Vec<NodeData>,
-    /// The children of the nodes that have a list of them.
+    /// The children of nodes that have a list of children.
     pub(super) lists: Vec<NodeId>,
-    /// Names that are not written as such in the source.
+    /// Names that don't appear verbatim in the source.
     pub(super) text: Vec<u8>,
     pub(super) root: NodeId,
     pub(super) utf16: OnceCell<wtf8::Utf16Index>,
 }
 
 impl<'s> Ast<'s> {
-    /// What was parsed.
+    /// The text that was parsed.
     #[inline]
     pub fn source(&self) -> &'s [u8] {
         self.source
     }
 
-    /// [`utf16_index`](super::utf16_index) in the source, in constant time after the first time.
+    /// [`utf16_index`](super::utf16_index) in the source, in constant time after the first call.
     fn utf16_index(&self, offset: u32) -> u32 {
         let index = self
             .utf16
@@ -302,7 +302,7 @@ impl<'s> Ast<'s> {
         }
     }
 
-    /// The capturing groups, in the order of their `(`.
+    /// The capturing groups, ordered by their `(`.
     pub fn capturing_groups(&self) -> impl Iterator<Item = Node<'_>> {
         self.root()
             .descendants()
@@ -332,7 +332,7 @@ impl std::fmt::Debug for Node<'_> {
     }
 }
 
-/// What a node is, with its fields.
+/// A node's type and fields.
 #[derive(Copy, Clone, Debug)]
 pub enum Kind<'a> {
     /// `/pattern/flags`
@@ -343,7 +343,7 @@ pub enum Kind<'a> {
     Pattern {
         alternatives: Nodes<'a>,
     },
-    /// What is between two `|`.
+    /// The part between two `|`.
     Alternative {
         elements: Nodes<'a>,
     },
@@ -397,7 +397,7 @@ pub enum Kind<'a> {
     ClassStringDisjunction {
         alternatives: Nodes<'a>,
     },
-    /// What is between two `|` in `\q{}`.
+    /// The part between two `|` in `\q{}`.
     StringAlternative {
         elements: Nodes<'a>,
     },

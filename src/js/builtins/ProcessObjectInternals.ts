@@ -90,8 +90,8 @@ export function getStdioWriteStream(
   stream._isStdio = true;
   stream.fd = fd;
 
+  // This is undefined if a FileSink couldn't be opened for the fd. The stream then writes through node:fs.
   const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
-  $assert(underlyingSink);
   return [stream, underlyingSink];
 }
 
@@ -598,7 +598,7 @@ export function windowsEnv(
 
 export function getChannel() {
   const EventEmitter = require("node:events");
-  const setRef = $newRustFunction("node_cluster_binding.rs", "setRef", 1);
+  const setRef = $bindgen("node_cluster_binding.bind.ts", "setRef");
   return new (class Control extends EventEmitter {
     constructor() {
       super();

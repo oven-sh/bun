@@ -261,7 +261,7 @@ describe.concurrent("bun add --catalog", () => {
       expect((await dir.lock()).catalog).toStrictEqual({ "a-dep": "^1.0.10", "no-deps": "^2.0.0" });
     });
 
-    for (const flag of ["--catalog=", "--catalog= "]) {
+    for (const flag of ["--catalog=", "--catalog= ", "--save-catalog"]) {
       test(`${JSON.stringify(flag)} is the default catalog`, async () => {
         const dir = await createDir(workspacesObject());
 
@@ -277,17 +277,6 @@ describe.concurrent("bun add --catalog", () => {
         await dir.installSavesNothing();
       });
     }
-
-    test("pnpm's --save-catalog is ignored and the package is added directly", async () => {
-      const root = pretty(workspacesObject({ catalog: {} }));
-      const dir = await createDir(root);
-
-      expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--save-catalog"));
-
-      expect((await dir.pkg1()).dependencies).toStrictEqual({ "no-deps": "^2.0.0" });
-      expect(await dir.rootText()).toBe(root);
-      expect((await dir.lock()).workspaces["packages/pkg1"].dependencies).toStrictEqual({ "no-deps": "^2.0.0" });
-    });
   });
 
   describe("catalog literal", () => {
@@ -295,6 +284,7 @@ describe.concurrent("bun add --catalog", () => {
       { args: ["no-deps@1.0.0", "--catalog"], entry: "1.0.0", installed: "1.0.0" },
       { args: ["no-deps@^1.0.0", "--catalog"], entry: "^1.0.0", installed: "1.1.0" },
       { args: ["no-deps", "--catalog", "--exact"], entry: "2.0.0", installed: "2.0.0" },
+      { args: ["no-deps@^1.0.0", "--catalog", "--exact"], entry: "1.1.0", installed: "1.1.0" },
     ]) {
       test(`bun add ${args.join(" ")} writes ${JSON.stringify(entry)}`, async () => {
         const dir = await createDir(workspacesObject({ catalog: {} }));
@@ -700,8 +690,17 @@ describe.concurrent("bun add --catalog", () => {
       const plainPkg1 = await plain.pkg1();
       const catalogPkg1 = await catalog.pkg1();
       expect(Object.keys(catalogPkg1)).toStrictEqual(Object.keys(plainPkg1));
-      expect(plainPkg1).toStrictEqual({ name: "pkg1", peerDependencies: { "no-deps": "^2.0.0" } });
-      expect(catalogPkg1).toStrictEqual({ name: "pkg1", peerDependencies: { "no-deps": "catalog:" } });
+      // The peer entry isn't changed. --dev adds a devDependencies entry next to it.
+      expect(plainPkg1).toStrictEqual({
+        name: "pkg1",
+        peerDependencies: { "no-deps": ">=1" },
+        devDependencies: { "no-deps": "^2.0.0" },
+      });
+      expect(catalogPkg1).toStrictEqual({
+        name: "pkg1",
+        peerDependencies: { "no-deps": ">=1" },
+        devDependencies: { "no-deps": "catalog:" },
+      });
     });
 
     test("--peer", async () => {
@@ -822,6 +821,55 @@ describe.concurrent("bun add --catalog", () => {
       expect((await dir.installed("no-deps")).version).toBe("1.0.0");
       expect((await dir.lock()).catalogs).toStrictEqual({ legacy: { "no-deps": "1.0.0" } });
 
+      await dir.installSavesNothing();
+    });
+  });
+
+  describe("leading whitespace in a package.json value", () => {
+    test("the target's named reference stays in that catalog", async () => {
+      const pkg1 = pretty({ name: "pkg1", dependencies: { "no-deps": " catalog:testing" } });
+      const dir = await createDir(workspacesObject({ catalogs: { testing: { "no-deps": "1.0.0" } } }), pkg1);
+      await dir.install();
+
+      expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog"));
+
+      expect((await dir.root()).workspaces).toStrictEqual({
+        packages: ["packages/*"],
+        catalogs: { testing: { "no-deps": "1.0.0" } },
+      });
+      expect(await dir.pkg1Text()).toBe(pkg1);
+      expect((await dir.installed("no-deps")).version).toBe("1.0.0");
+      await dir.installSavesNothing();
+    });
+
+    test("another member's reference is named when the entry is replaced", async () => {
+      const dir = await createDir(
+        workspacesObject({ catalog: { "no-deps": "^2.0.0" } }),
+        { name: "pkg1", dependencies: { "no-deps": "catalog:" } },
+        withPkg2({ name: "pkg2", dependencies: { "no-deps": "\tcatalog:" } }),
+      );
+      await dir.install();
+
+      const result = await dir.add(dir.pkg1Dir, "no-deps@1.0.0", "--catalog");
+      expect(result.stderr).toContain(
+        'note: catalog entry no-deps changed from "^2.0.0" to "1.0.0" (also used by pkg2)\n',
+      );
+      expectOk(result);
+    });
+
+    test("a tarball url the target declares is cataloged without it", async () => {
+      const tarball = `${registry.registryUrl()}no-deps/-/no-deps-1.0.0.tgz`;
+      const dir = await createDir(workspacesObject({ catalog: {} }), {
+        name: "pkg1",
+        dependencies: { "no-deps": ` ${tarball}` },
+      });
+      await dir.install();
+
+      expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog"));
+
+      expect(await dir.pkg1()).toStrictEqual({ name: "pkg1", dependencies: { "no-deps": "catalog:" } });
+      expect((await dir.root()).workspaces.catalog).toStrictEqual({ "no-deps": tarball });
+      expect((await dir.installed("no-deps")).version).toBe("1.0.0");
       await dir.installSavesNothing();
     });
   });

@@ -1,8 +1,9 @@
-//! The scopes of a file, as ESLint has them.
+//! A file's scopes, matching ESLint's.
 //!
 //! A scope is a range of the source text, so the tree follows from the positions of the nodes that
-//! create scopes: these are listed, sorted by position, and swept with a stack. Scopes are numbered
-//! in the order they start, which makes the scopes inside a scope a contiguous range of numbers.
+//! create scopes. Those nodes are listed, sorted by position, and swept with a stack. Scopes are
+//! numbered in the order they start, which makes a scope's nested scopes a contiguous range of
+//! numbers.
 
 use super::ScopeKind;
 use crate::ast::{File, ImportAttributes};
@@ -21,7 +22,7 @@ pub(crate) enum Block {
     Stmt(hir::StmtId),
     Fn(hir::FnId),
     Class(hir::ClassId),
-    /// The initializer of a class field.
+    /// A class field's initializer.
     Expr(hir::ExprId),
     Type(hir::TypeNodeId),
 }
@@ -35,16 +36,16 @@ pub(crate) struct ScopeData {
     /// The last scope inside it, or itself.
     pub(crate) last: u32,
     pub(crate) variable_scope: u32,
-    /// For a function with a body, where that starts. 0 for every other scope.
+    /// For a function with a body, the body's start. 0 for every other scope.
     pub(crate) body_start: u32,
-    /// The range of the text that it is.
+    /// Its range in the text.
     start: u32,
     end: u32,
 }
 
-/// A part of the node that creates a scope that is outside that scope: the discriminant of a
-/// `switch`, the object of a `with`, the decorators of a class, the false branch of a conditional
-/// type. ESLint's `getScope` for a node here is that scope all the same.
+/// A part of a scope-creating node that's outside the scope: a `switch`'s discriminant, a `with`'s
+/// object, a class's decorators, a conditional type's false branch. ESLint's `getScope` still
+/// returns that scope for a node here.
 #[derive(Copy, Clone)]
 struct Zone {
     start: u32,
@@ -52,57 +53,59 @@ struct Zone {
     scope: u32,
 }
 
-/// A range of the text with what ESLint's `getScope` says for a node in it, unless the node is in a
-/// region inside it.
+/// A text range with the scope that ESLint's `getScope` returns for a node in it, unless the node
+/// is in a nested region.
 #[derive(Copy, Clone, Debug)]
 struct Region {
     start: u32,
     end: u32,
-    /// The region around it. The first region is its own parent.
+    /// The enclosing region. The first region is its own parent.
     parent: u32,
     get: u32,
 }
 
 pub(crate) struct ScopeTree {
     pub(crate) scopes: Vec<ScopeData>,
-    /// By `FnId`.
-    pub(crate) of_fn: Vec<u32>,
-    /// By `ClassId`.
-    pub(crate) of_class: Vec<u32>,
+    /// Indexed by `FnId`.
+    pub(crate) scope_of_fn: Vec<u32>,
+    /// Indexed by `ClassId`.
+    pub(crate) scope_of_class: Vec<u32>,
     /// The `export as namespace N` statements.
     pub(crate) namespace_exports: Vec<hir::StmtId>,
-    /// What typescript-eslint does not visit, so that there are no scopes, no variables and no references in it: the types of
-    /// the parameters of `catch` clauses, the options of import types. oxc visits them.
+    /// The ranges that typescript-eslint doesn't visit, which therefore contain no scopes,
+    /// variables or references: the types of `catch` parameters and the options of import types.
+    /// oxc visits them.
     pub(crate) unvisited: Vec<(u32, u32)>,
-    /// Each position from which on what is written belongs to another scope. Sorted. Of those at one
-    /// position the last counts.
+    /// Each position where the text starts to belong to a different scope. Sorted. If several have
+    /// the same position, the last one counts.
     changes: Vec<Change>,
     zones: Vec<Zone>,
     /// Sorted by start. A region comes after the regions that contain it. Computed on demand.
     regions: OnceCell<Vec<Region>>,
-    /// Where each of `zones` starts, sorted, and where the last ends of those up to it. Computed on demand.
+    /// The start of each of `zones`, sorted, with the highest end among the zones up to it.
+    /// Computed on demand.
     zone_ends: OnceCell<Vec<(u32, u32)>>,
-    /// A part of a scope is evaluated in the scope around it. A scope in such a part has that one as its `parent`, not the
-    /// scope whose range it is in.
+    /// True if some part of a scope is evaluated in the enclosing scope. A scope in such a part has
+    /// that enclosing scope as its `parent`, not the scope whose range it's in.
     has_lifted_parts: bool,
 }
 
 #[derive(Copy, Clone)]
 struct Change {
     pos: u32,
-    /// The scope that what is written from `pos` on belongs to: ESLint's `reference.from`.
+    /// The scope that the text from `pos` on belongs to: ESLint's `reference.from`.
     from: u32,
     step: Step,
 }
 
-/// What happens at a [`Change`] to the scopes that `pos` is in the range of.
+/// The effect of a [`Change`] on the scopes whose range contains `pos`.
 #[derive(Copy, Clone)]
 pub(crate) enum Step {
-    /// The range of the scope starts.
+    /// The scope's range starts.
     Enter(u32),
     /// It ends.
     Leave(u32),
-    /// A part of the range of the scope starts that is evaluated in the scope around it.
+    /// A part of the scope's range starts that's evaluated in the enclosing scope.
     Suspend(u32),
     /// It ends.
     Resume(u32),
@@ -111,7 +114,7 @@ pub(crate) enum Step {
 #[derive(Copy, Clone)]
 enum What {
     Scope(ScopeKind, Block, u32),
-    /// A part of a scope that is evaluated in the scope around that one.
+    /// A part of a scope that's evaluated in the enclosing scope.
     Lifted,
 }
 
@@ -119,7 +122,7 @@ enum What {
 struct Proto {
     start: u32,
     end: u32,
-    /// Among ranges that are equal, the lower contains the higher.
+    /// Among equal ranges, the lower rank contains the higher.
     rank: u8,
     what: What,
 }
@@ -136,14 +139,15 @@ fn rank_of(kind: ScopeKind, block: Block) -> u8 {
     }
 }
 
-/// Whether the file is analyzed as `eslint-scope` does it. Otherwise as
-/// `@typescript-eslint/scope-manager` does, which is what oxlint hands its JavaScript plugins for every file.
+/// True if the file is analyzed the way `eslint-scope` does it. Otherwise it's analyzed like
+/// `@typescript-eslint/scope-manager`, which is what oxlint gives its JavaScript plugins for every
+/// file.
 #[inline]
 pub(crate) fn is_javascript_mode(file: &File) -> bool {
     let language = file.language();
     file.is_javascript()
         && language.parser != Parser::TypeScript
-        && (!language.is_oxlint || file.has_scopes_of_oxc())
+        && (!language.is_oxlint || file.has_oxc_scopes())
 }
 
 /// ESLint's `scopeManager.isGlobalReturn()`.
@@ -152,7 +156,7 @@ pub(crate) fn has_top_level_function(file: &File) -> bool {
     file.language().has_function_scope_at_top_level()
 }
 
-/// What kind of scope a function creates.
+/// The kind of scope that a function creates.
 pub(crate) fn kind_of_function(file: &File, f: usize) -> Option<ScopeKind> {
     let is_signature = || {
         matches!(file.bound.fns.get(f).map(|it| it.owner), Some(FnOwner::Member(m))
@@ -176,8 +180,8 @@ pub(crate) fn kind_of_function(file: &File, f: usize) -> Option<ScopeKind> {
     })
 }
 
-/// Whether the scope is strict for oxc, in a file that is no module: it is in a class, or below a `"use strict"`.
-/// [`ScopeData::is_strict`] takes every file for a module there.
+/// True if the scope is strict for oxc, in a file that isn't a module: it's in a class or under a
+/// `"use strict"`. [`ScopeData::is_strict`] treats every file as a module there.
 pub(crate) fn is_strict_for_oxc<'a>(file: &'a File<'a>, tree: &ScopeTree, scope: u32) -> bool {
     let mut at = tree.scopes.get(scope as usize);
     while let Some(it) = at {
@@ -201,7 +205,7 @@ pub(crate) fn is_strict_for_oxc<'a>(file: &'a File<'a>, tree: &ScopeTree, scope:
     false
 }
 
-/// The statements start with a `"use strict"` directive.
+/// True if the statements start with a `"use strict"` directive.
 fn has_use_strict(file: &File, statements: impl Iterator<Item = hir::StmtId>) -> bool {
     let hir = &file.hir;
     for s in statements {
@@ -220,17 +224,17 @@ fn has_use_strict(file: &File, statements: impl Iterator<Item = hir::StmtId>) ->
         else {
             return false;
         };
-        let written = hir
+        let raw_text = hir
             .text
             .get(*pos as usize..*end as usize)
             .unwrap_or_default();
-        // A template, or a string in parentheses, is no directive.
-        if !matches!(written.first(), Some(b'"' | b'\''))
+        // A template or a parenthesized string isn't a directive.
+        if !matches!(raw_text.first(), Some(b'"' | b'\''))
             || hir.parens.binary_search_by_key(&e.0, |it| it.0.0).is_ok()
         {
             return false;
         }
-        if written.get(1..written.len() - 1) == Some(b"use strict") {
+        if raw_text.get(1..raw_text.len() - 1) == Some(b"use strict") {
             return true;
         }
     }
@@ -257,8 +261,8 @@ impl ScopeTree {
         let supports_strict = !is_javascript_mode(file) || language.ecma_version >= 5;
         let mut tree = ScopeTree {
             scopes: Vec::with_capacity(protos.len()),
-            of_fn: vec![NONE; file.hir.fns.len()],
-            of_class: vec![NONE; file.hir.classes.len()],
+            scope_of_fn: vec![NONE; file.hir.fns.len()],
+            scope_of_class: vec![NONE; file.hir.classes.len()],
             namespace_exports,
             unvisited,
             changes: Vec::with_capacity(protos.len() * 2),
@@ -268,8 +272,8 @@ impl ScopeTree {
             has_lifted_parts: false,
         };
         let mut scope_of_proto = vec![NONE; if zones.is_empty() { 0 } else { protos.len() }];
-        // What is open: where it ends, the scope that what is written in it belongs to, and what
-        // happens at its end.
+        // The open ranges: each one's end, the scope that the text in it belongs to, and the step
+        // at its end.
         let mut stack: Vec<(u32, u32, Step)> = Vec::new();
         for &key in &order {
             let index = key as u32;
@@ -287,9 +291,9 @@ impl ScopeTree {
                     step,
                 });
             }
-            let (around_end, outer) = stack.last().map_or((u32::MAX, NONE), |it| (it.0, it.1));
+            let (enclosing_end, outer) = stack.last().map_or((u32::MAX, NONE), |it| (it.0, it.1));
             // After a syntax error ranges can overlap.
-            let end = proto.end.min(around_end);
+            let end = proto.end.min(enclosing_end);
             match proto.what {
                 What::Lifted => {
                     tree.has_lifted_parts = true;
@@ -310,9 +314,9 @@ impl ScopeTree {
                     }
                     match block {
                         Block::Fn(f) if kind != ScopeKind::FunctionExpressionName => {
-                            tree.of_fn[f.idx()] = id;
+                            tree.scope_of_fn[f.idx()] = id;
                         }
-                        Block::Class(c) => tree.of_class[c.idx()] = id,
+                        Block::Class(c) => tree.scope_of_class[c.idx()] = id,
                         _ => {}
                     }
                     let parent = tree.scopes.get(outer as usize).copied();
@@ -418,7 +422,7 @@ impl ScopeTree {
         }
     }
 
-    /// ESLint's `reference.from` for what is written at `pos`.
+    /// ESLint's `reference.from` for the text at `pos`.
     pub(crate) fn scope_at(&self, pos: u32) -> u32 {
         let after = self.changes.partition_point(|it| it.pos <= pos);
         self.changes
@@ -453,11 +457,11 @@ impl ScopeTree {
                     stack.pop();
                 }
                 let region = regions.len() as u32;
-                let around = stack.last().copied();
+                let enclosing_region = stack.last().copied();
                 regions.push(Region {
                     start,
-                    end: around.map_or(end, |it| end.min(regions[it as usize].end)),
-                    parent: around.unwrap_or(region),
+                    end: enclosing_region.map_or(end, |it| end.min(regions[it as usize].end)),
+                    parent: enclosing_region.unwrap_or(region),
                     get,
                 });
                 stack.push(region);
@@ -466,7 +470,7 @@ impl ScopeTree {
         })
     }
 
-    /// Whether `pos` is in one of `zones`.
+    /// True if `pos` is in one of `zones`.
     fn is_in_zone(&self, pos: u32) -> bool {
         let ends = self.zone_ends.get_or_init(|| {
             let zones = self.zones.iter();
@@ -483,15 +487,16 @@ impl ScopeTree {
         (after.checked_sub(1).and_then(|it| ends.get(it))).is_some_and(|it| pos < it.1)
     }
 
-    /// `scope_of_node` for a node that starts in none of `zones`, in a file without lifted parts: no zone is around it, and
-    /// without the zones the regions are the scopes, which are in that order, each with the one around it as its `parent`.
-    fn scope_of_node_in_no_zone(&self, start: u32, end: u32, block: Option<Block>) -> u32 {
+    /// `scope_of_node` for a node that starts outside all `zones`, in a file without lifted parts.
+    /// No zone encloses it then, and without zones the regions are exactly the scopes, in the same
+    /// order, each with the enclosing one as its `parent`.
+    fn scope_of_node_outside_zones(&self, start: u32, end: u32, block: Option<Block>) -> u32 {
         let after = self.scopes.partition_point(|it| it.start <= start);
         let mut at = after.saturating_sub(1);
         while let Some(scope) = self.scopes.get(at) {
-            let is_around =
+            let encloses_node =
                 end.max(start + 1) <= scope.end && (scope.start, scope.end) != (start, end);
-            if Some(scope.block) == block || is_around || scope.parent == NONE {
+            if Some(scope.block) == block || encloses_node || scope.parent == NONE {
                 break;
             }
             at = scope.parent as usize;
@@ -499,15 +504,15 @@ impl ScopeTree {
         at as u32
     }
 
-    /// ESLint's `getScope` for a node with this range. `block`: the node, if a node of its sort
-    /// can create a scope.
+    /// ESLint's `getScope` for a node with this range. `block` is the node, if its sort of node can
+    /// create a scope.
     pub(crate) fn scope_of_node(&self, start: u32, end: u32, block: Option<Block>) -> u32 {
-        // A debug build goes the short way wherever it can be gone, and compares.
+        // A debug build takes the fast path wherever it's valid, and compares the results.
         if (cfg!(debug_assertions) || self.regions.get().is_none())
             && !self.has_lifted_parts
             && !self.is_in_zone(start)
         {
-            let scope = self.scope_of_node_in_no_zone(start, end, block);
+            let scope = self.scope_of_node_outside_zones(start, end, block);
             debug_assert_eq!(scope, self.scope_of_node_by_regions(start, end, block));
             return scope;
         }
@@ -523,17 +528,17 @@ impl ScopeTree {
             if block.is_some() && self.scopes.get(region.get as usize).map(|it| it.block) == block {
                 return region.get;
             }
-            // What has the range of the node is created by something in the node.
-            let is_around =
+            // A region with the node's exact range is created by something inside the node.
+            let encloses_node =
                 end.max(start + 1) <= region.end && (region.start, region.end) != (start, end);
-            if is_around || region.parent as usize == at {
+            if encloses_node || region.parent as usize == at {
                 return region.get;
             }
             at = region.parent as usize;
         }
     }
 
-    /// Finds the scopes of positions that do not decrease.
+    /// A cursor that finds the scopes of non-decreasing positions.
     pub(crate) fn cursor(&self) -> Cursor<'_> {
         Cursor {
             changes: self.changes.iter(),
@@ -543,7 +548,7 @@ impl ScopeTree {
         }
     }
 
-    /// Whether `inner` is `outer` or inside it.
+    /// True if `inner` is `outer` or inside it.
     #[inline]
     pub(crate) fn contains(&self, outer: u32, inner: u32) -> bool {
         outer <= inner
@@ -555,7 +560,7 @@ impl ScopeTree {
 }
 
 pub(crate) struct Cursor<'t> {
-    /// Those of `ScopeTree::changes` after `until`.
+    /// The entries of `ScopeTree::changes` after `until`.
     changes: std::slice::Iter<'t, Change>,
     /// `ScopeTree::scope_at` for the positions from the last one up to `until`.
     from: u32,
@@ -565,23 +570,23 @@ pub(crate) struct Cursor<'t> {
 }
 
 impl Cursor<'_> {
-    /// `ScopeTree::scope_at` for `pos`, which is not less than in the call before.
+    /// `ScopeTree::scope_at` for `pos`, which must not be lower than in the previous call.
     #[inline]
     pub(crate) fn seek(&mut self, pos: u32) -> u32 {
         self.seek_by_steps(pos, |_| {})
     }
 
-    /// The same. `take` is called with every step on the way, in order.
+    /// Same. `take` is called with every step along the way, in order.
     #[inline(always)]
     pub(crate) fn seek_by_steps(&mut self, pos: u32, take: impl FnMut(Step)) -> u32 {
         if pos >= self.until {
-            self.go_on_to(pos, take);
+            self.advance_to(pos, take);
         }
         self.from
     }
 
     #[inline(never)]
-    fn go_on_to(&mut self, pos: u32, mut take: impl FnMut(Step)) {
+    fn advance_to(&mut self, pos: u32, mut take: impl FnMut(Step)) {
         while pos >= self.until {
             if let Some(change) = self.then {
                 self.from = change.from;
@@ -596,8 +601,7 @@ impl Cursor<'_> {
     }
 }
 
-/// Lists every scope of the file, and the parts of the nodes that create them that are outside
-/// them.
+/// Lists all of the file's scopes, and the parts of their nodes that are outside them.
 struct Collector<'f, 'a> {
     file: &'f File<'a>,
     is_javascript: bool,
@@ -639,15 +643,15 @@ impl<'f, 'a> Collector<'f, 'a> {
         if file.language().scope_source_type() == SourceType::Module && all.has_block_scopes {
             all.scope(ScopeKind::Module, Block::File, 0, u32::MAX);
         }
-        all.what_the_tree_has();
-        all.leave_out_what_is_not_visited();
+        all.collect_from_tree();
+        all.remove_unvisited();
         all
     }
 
     /// `TypeVisitor.TSImportType` visits the type arguments and nothing else. `PatternVisitor.TSTypeAnnotation` visits nothing.
-    fn leave_out_what_is_not_visited(&mut self) {
+    fn remove_unvisited(&mut self) {
         let hir = &self.file.hir;
-        if self.is_javascript || self.file.has_scopes_of_oxc() {
+        if self.is_javascript || self.file.has_oxc_scopes() {
             self.unvisited.clear();
             return;
         }
@@ -665,25 +669,25 @@ impl<'f, 'a> Collector<'f, 'a> {
         }
         let unvisited = &self.unvisited;
         let is_visited = |pos: u32| !unvisited.iter().any(|it| (it.0..it.1).contains(&pos));
-        // Where each of `protos` is afterwards.
-        let mut kept = 0;
-        let places: Vec<Option<u32>> = (self.protos.iter())
+        // The new index of each of `protos`.
+        let mut retained_count = 0;
+        let new_indexes: Vec<Option<u32>> = (self.protos.iter())
             .map(|it| {
                 is_visited(it.start).then(|| {
-                    kept += 1;
-                    kept - 1
+                    retained_count += 1;
+                    retained_count - 1
                 })
             })
             .collect();
         self.protos.retain(|it| is_visited(it.start));
         self.zones.retain_mut(|it| {
-            let place = places.get(it.scope as usize).copied().flatten();
-            it.scope = place.unwrap_or(it.scope);
-            place.is_some()
+            let new_index = new_indexes.get(it.scope as usize).copied().flatten();
+            it.scope = new_index.unwrap_or(it.scope);
+            new_index.is_some()
         });
     }
 
-    fn what_the_tree_has(&mut self) {
+    fn collect_from_tree(&mut self) {
         let hir = &self.file.hir;
         (0..hir.stmts.len()).for_each(|i| self.statement(i));
         (0..hir.fns.len()).for_each(|i| self.function(i));
@@ -723,7 +727,7 @@ impl<'f, 'a> Collector<'f, 'a> {
         });
     }
 
-    /// Adds the scope, and `[start, inside)` as a part of its node that is outside it.
+    /// Adds the scope, and `[start, inside)` as a part of its node that's outside it.
     #[inline]
     fn scope_from(&mut self, kind: ScopeKind, block: Block, start: u32, inside: u32, end: u32) {
         if start < inside {
@@ -751,7 +755,7 @@ impl<'f, 'a> Collector<'f, 'a> {
                 | StmtKind::Try { .. }
                 | StmtKind::ExportAsNamespace(_)
         );
-        if !is_scope || matches!(bound.stmt_parent.get(i), None | Some(Parent::None)) {
+        if !is_scope || matches!(bound.parent_of_stmt(hir::StmtId(i as u32)), Parent::None) {
             return;
         }
         let declares_lexically = |head: hir::StmtId| {
@@ -827,7 +831,7 @@ impl<'f, 'a> Collector<'f, 'a> {
         let block = Block::Fn(hir::FnId(i as u32));
         // After the name.
         let from_params = match hir.type_params.get(func.type_params.start as usize) {
-            // Not those of a `@template` tag.
+            // Not a `@template` tag's.
             Some(first) if !func.type_params.is_empty() && !self.is_synthetic(first.start) => {
                 first.start
             }
@@ -844,7 +848,7 @@ impl<'f, 'a> Collector<'f, 'a> {
                 self.scope(ScopeKind::FunctionExpressionName, block, whole_start, end);
                 self.scope(kind, block, from_params, end);
             }
-            // The block of a method signature is the member.
+            // A method signature's block is the member.
             _ if kind == ScopeKind::FunctionType => {
                 self.scope_from(kind, block, whole_start, from_params, end)
             }
@@ -868,7 +872,7 @@ impl<'f, 'a> Collector<'f, 'a> {
         {
             *slot = body_start;
         }
-        // The decorators of the parameters of a method are evaluated in the scope of the class.
+        // A method's parameter decorators are evaluated in the class's scope.
         if !hir.modifiers_of_params.is_empty()
             && matches!(
                 bound.fns.get(i).map(|it| it.owner),
@@ -940,7 +944,7 @@ impl<'f, 'a> Collector<'f, 'a> {
         self.scope_from(ScopeKind::Class, block, class.start, inside, end);
     }
 
-    /// The initializer of a field of a class.
+    /// A class field's initializer.
     #[inline]
     fn member(&mut self, i: usize) {
         let (hir, bound) = (&self.file.hir, &self.file.bound);
@@ -999,10 +1003,7 @@ impl<'f, 'a> Collector<'f, 'a> {
 
     fn declaration(&mut self, kind: ScopeKind, s: hir::StmtId, name_pos: u32) {
         if let Some(stmt) = self.file.hir.stmts.get(s.idx())
-            && !matches!(
-                self.file.bound.stmt_parent.get(s.idx()),
-                None | Some(Parent::None)
-            )
+            && !matches!(self.file.bound.parent_of_stmt(s), Parent::None)
             && !self.is_synthetic(name_pos)
         {
             self.scope_from(kind, Block::Stmt(s), stmt.start, name_pos + 1, stmt.loc.end);
@@ -1032,7 +1033,7 @@ impl<'f, 'a> Collector<'f, 'a> {
             return;
         };
         // `namespace A.B.C { }` is one declaration, which the HIR stores as three.
-        if self.file.has_scopes_of_oxc() {
+        if self.file.has_oxc_scopes() {
             self.declaration(ScopeKind::TsModule, it.stmt, it.name_pos);
         } else if !is_after_dot(self.file, it) {
             self.declaration(ScopeKind::TsModule, it.stmt, last_name_pos(self.file, it));
@@ -1051,7 +1052,7 @@ pub(crate) fn is_with_statement(file: &File, stmt: &hir::Stmt) -> bool {
             .is_some_and(|it| it.starts_with(b"with"))
 }
 
-/// Whether `module` is the `B` of `namespace A.B`.
+/// True if `module` is the `B` in `namespace A.B`.
 pub(crate) fn is_after_dot(file: &File, module: &hir::Module) -> bool {
     file.hir
         .stmts
@@ -1060,7 +1061,7 @@ pub(crate) fn is_after_dot(file: &File, module: &hir::Module) -> bool {
         && matches!(module.name, hir::ModuleName::Ident(_))
 }
 
-/// The `B` of the `A` of `namespace A.B`.
+/// Given the `A` in `namespace A.B`, returns the `B`.
 pub(crate) fn after_dot<'a>(file: &File<'a>, module: &hir::Module) -> Option<&'a hir::Module> {
     if module.body.len() != 1 {
         return None;

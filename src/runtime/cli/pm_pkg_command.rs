@@ -1,10 +1,12 @@
 use std::io::Write as _;
 
 use crate::Error;
+use crate::cli::cli_arena;
 use crate::cli::command::Context;
-use bun_ast::{E, Expr, ExprData, G};
+use bun_ast::{E, Expr, ExprData};
 use bun_ast::{Loc, Log, Source};
 use bun_collections::{StringArrayHashMap, VecExt};
+use bun_core::fmt::quote;
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::PackageManager;
@@ -14,15 +16,6 @@ use bun_paths as path;
 
 pub(crate) struct PmPkgCommand;
 
-/// Process-lifetime arena for `E::Object::put()` / `json::parse` calls.
-/// Route through the shared CLI arena (`MimallocArena` is `Sync`, so this is
-/// just a `LazyLock` borrow).
-#[inline]
-fn dummy_bump() -> &'static bun_alloc::Arena {
-    crate::cli::cli_arena()
-}
-
-// `bun_ast::Indentation` and `bun_js_printer::Indentation` are now the same
 #[derive(Copy, Clone, PartialEq, Eq, strum::EnumString, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 enum SubCommand {
@@ -33,18 +26,35 @@ enum SubCommand {
     Help,
 }
 
-impl SubCommand {
-    fn from_string(str: &[u8]) -> Option<SubCommand> {
-        // strum's `FromStr` needs `&str`; CLI sub-command names are pure-ASCII.
-        bun_core::fmt::parse_ascii(str)
-    }
-}
-
 struct PackageJson {
+    path: Box<[u8]>,
     root: Expr,
     contents: Box<[u8]>,
     source: Source,
     indentation: bun_ast::Indentation,
+}
+
+/// One step of a key path such as `contributors[0].name` or `keywords[]`.
+#[derive(Clone, Copy)]
+struct Segment<'a> {
+    /// An index when applied to an array, else a property name. Empty only for `[]` (append).
+    name: &'a [u8],
+    /// True for `a[b]`, false for `a.b`. `files[0]=x` and `files[]=x` create an array, and
+    /// `config.0=x` creates an object.
+    bracketed: bool,
+    /// The offset just past this segment in the key. Errors refer to a value as `&key[..end]`.
+    end: usize,
+}
+
+impl Segment<'_> {
+    fn is_append(self) -> bool {
+        self.name.is_empty()
+    }
+
+    fn creates_array(self) -> bool {
+        self.bracketed
+            && (self.is_append() || bun_core::fmt::parse_decimal::<usize>(self.name).is_some())
+    }
 }
 
 impl PmPkgCommand {
@@ -59,7 +69,7 @@ impl PmPkgCommand {
             return Ok(());
         }
 
-        let Some(subcommand) = SubCommand::from_string(positionals[1]) else {
+        let Some(subcommand) = bun_core::fmt::parse_ascii::<SubCommand>(positionals[1]) else {
             Output::err_generic(
                 "Unknown subcommand: {s}",
                 (bstr::BStr::new(positionals[1]),),
@@ -69,7 +79,7 @@ impl PmPkgCommand {
         };
 
         match subcommand {
-            SubCommand::Get => Self::exec_get(ctx, pm, &positionals[2..], cwd)?,
+            SubCommand::Get => Self::exec_get(ctx, &positionals[2..], cwd)?,
             SubCommand::Set => Self::exec_set(ctx, pm, &positionals[2..], cwd)?,
             SubCommand::Delete => Self::exec_delete(ctx, pm, &positionals[2..], cwd)?,
             SubCommand::Fix => Self::exec_fix(ctx, pm, cwd)?,
@@ -105,7 +115,9 @@ impl PmPkgCommand {
   <d>$<r> <b><green>bun pm pkg<r> <cyan>set<r> <blue>config='{"port":3000,"debug":true}'<r> <cyan>--json<r>
   <d>$<r> <b><green>bun pm pkg<r> <cyan>set<r> <blue>scripts.test="bun test"<r>
   <d>$<r> <b><green>bun pm pkg<r> <cyan>set<r> <blue>bin.mycli=cli.js<r>
+  <d>$<r> <b><green>bun pm pkg<r> <cyan>set<r> <blue>'keywords[]=cli' 'files[0]=dist'<r>
   <d>$<r> <b><green>bun pm pkg<r> <cyan>delete<r> <blue>scripts.test devDependencies.webpack<r>
+  <d>$<r> <b><green>bun pm pkg<r> <cyan>delete<r> <blue>'keywords[0]'<r>
   <d>$<r> <b><green>bun pm pkg<r> <cyan>fix<r>
 
 <b>More info<r>: <magenta>https://bun.com/docs/cli/pm#pkg<r>
@@ -116,7 +128,7 @@ impl PmPkgCommand {
         Output::flush();
     }
 
-    fn find_package_json(cwd: &[u8]) -> Result<Box<[u8]>, Error> {
+    fn find_package_json(cwd: &[u8]) -> Box<[u8]> {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let mut current_dir = cwd;
 
@@ -127,7 +139,7 @@ impl PmPkgCommand {
                 &[b"package.json"],
             );
             if bun_sys::exists_z(pkg_path) {
-                return Ok(Box::<[u8]>::from(pkg_path.as_bytes()));
+                return Box::<[u8]>::from(pkg_path.as_bytes());
             }
 
             let parent = path::resolve_path::dirname::<path::platform::Auto>(current_dir);
@@ -141,8 +153,10 @@ impl PmPkgCommand {
         Global::exit(1);
     }
 
-    fn load_package_json(ctx: &Context, path: &[u8]) -> Result<PackageJson, Error> {
-        let contents: Box<[u8]> = match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
+    /// The nearest package.json at or above `cwd`. Its root is an object.
+    fn load_package_json(ctx: &Context, cwd: &[u8]) -> PackageJson {
+        let path = Self::find_package_json(cwd);
+        let contents: Box<[u8]> = match bun_sys::File::read_from(bun_sys::Fd::cwd(), &path) {
             Ok(b) => b.into(),
             Err(e) => {
                 Output::err_generic(
@@ -153,13 +167,8 @@ impl PmPkgCommand {
             }
         };
 
-        let source = Source::init_path_string(path, &contents[..]);
-        // Use the process-lifetime CLI arena
-        // so the returned `Expr` (which may reference arena-owned nodes)
-        // outlives this frame. CLI is one-shot.
-        let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
-        // SAFETY: CLI dispatch is single-threaded; no other borrow of
-        // `ctx.log` is live while `log` is passed to the JSON parser below.
+        let source = Source::init_path_string(&path[..], &contents[..]);
+        // SAFETY: CLI dispatch is single-threaded; no other borrow of `ctx.log` is live.
         let log: &mut Log = unsafe { ctx.log_mut() };
         let result = match json::parse_package_json_utf8_with_opts(
             json::JSONOptions {
@@ -169,7 +178,7 @@ impl PmPkgCommand {
             },
             &source,
             log,
-            bump,
+            cli_arena(),
         ) {
             Ok(r) => r,
             Err(e) => {
@@ -178,96 +187,65 @@ impl PmPkgCommand {
             }
         };
 
-        Ok(PackageJson {
-            root: result.root,
-            contents,
-            source,
-            indentation: result.indentation,
-        })
-    }
-
-    fn exec_get(
-        ctx: &Context,
-        _pm: &mut PackageManager,
-        args: &[&[u8]],
-        cwd: &[u8],
-    ) -> Result<(), Error> {
-        let path = Self::find_package_json(cwd)?;
-
-        let pkg = Self::load_package_json(ctx, &path)?;
-
-        if !matches!(pkg.root.data, ExprData::EObject(_)) {
+        if !matches!(result.root.data, ExprData::EObject(_)) {
             Output::err_generic("package.json root must be an object", ());
             Global::exit(1);
         }
 
+        PackageJson {
+            path,
+            root: result.root,
+            contents,
+            source,
+            indentation: result.indentation,
+        }
+    }
+
+    fn exec_get(ctx: &Context, args: &[&[u8]], cwd: &[u8]) -> Result<(), Error> {
+        let pkg = Self::load_package_json(ctx, cwd);
+
         if args.is_empty() {
-            let formatted = Self::format_json(pkg.root, None)?;
+            let formatted = Self::format_json(pkg.root)?;
             Output::println(format_args!("{}", bstr::BStr::new(&formatted)));
             return Ok(());
         }
 
-        let mut results: StringArrayHashMap<Box<[u8]>> = StringArrayHashMap::new();
-
+        let mut found: StringArrayHashMap<Expr> = StringArrayHashMap::new();
         for &key in args {
-            match Self::get_json_value(
-                pkg.root,
-                key,
-                if args.len() > 1 { Some(4) } else { Some(2) },
-            ) {
-                Ok(value) => {
-                    if args.len() > 1 {
-                        if let Some(last_index) = strings::last_index_of_char(&value, b'}') {
-                            let mut new_value = Vec::with_capacity(value.len() + 2);
-                            write!(
-                                &mut new_value,
-                                "{}  {}",
-                                bstr::BStr::new(&value[..last_index]),
-                                bstr::BStr::new(&value[last_index..])
-                            )
-                            .map_err(|_| crate::Error::WriteFailed)?;
-                            results.put(key, new_value.into_boxed_slice())?;
-                            continue;
-                        }
-                    }
-                    results.put(key, value)?;
+            if let Err(e) = Self::query(pkg.root, key, &mut found) {
+                if matches!(e, crate::Error::InvalidPath) && strings::index_of(key, b"[]").is_some()
+                {
+                    Output::err_generic(Self::EMPTY_BRACKETS, ());
+                    Global::exit(1);
                 }
-                Err(e) => {
-                    if matches!(e, crate::Error::InvalidPath) {
-                        if strings::index_of(key, b"[]").is_some() {
-                            Output::err_generic(
-                                "Empty brackets are not valid syntax for retrieving values.",
-                                (),
-                            );
-                            Global::exit(1);
-                        }
-                    }
-                    if !matches!(e, crate::Error::NotFound) {
-                        return Err(e);
-                    }
-                }
+                return Err(e);
             }
         }
 
-        if results.count() == 0 {
-            Output::println(format_args!("{{}}"));
-        } else if results.count() == 1 {
-            let value = &results.values()[0];
-            Output::println(format_args!("{}", bstr::BStr::new(value)));
-        } else {
-            Output::println(format_args!("{{"));
-            let count = results.count();
-            for (i, (key, value)) in results.keys().iter().zip(results.values()).enumerate() {
-                let comma = if i == count - 1 { "" } else { "," };
-                Output::println(format_args!(
-                    "  \"{}\": {}{}",
-                    bstr::BStr::new(key),
-                    bstr::BStr::new(value),
-                    comma
-                ));
+        let value = match found.values() {
+            [] => {
+                Output::println(format_args!("{{}}"));
+                return Ok(());
             }
-            Output::println(format_args!("}}"));
-        }
+            [value] => *value,
+            values => {
+                let mut object = E::Object::default();
+                for (key, value) in found.keys().iter().zip(values) {
+                    // `put` borrows the label. print_json writes ill-formed UTF-8 as `\x00`.
+                    let label: &[u8] = match bstr::ByteSlice::to_str_lossy(&key[..]) {
+                        std::borrow::Cow::Borrowed(valid) => valid.as_bytes(),
+                        std::borrow::Cow::Owned(replaced) => {
+                            cli_arena().alloc_slice_copy(replaced.as_bytes())
+                        }
+                    };
+                    object.put(cli_arena(), label, *value)?;
+                }
+                Expr::init(object, Loc::EMPTY)
+            }
+        };
+
+        let formatted = Self::format_json(value)?;
+        Output::println(format_args!("{}", bstr::BStr::new(&formatted)));
         Ok(())
     }
 
@@ -287,17 +265,9 @@ impl PmPkgCommand {
 
         let parse_json = pm.options.json_output;
 
-        let path = Self::find_package_json(cwd)?;
-
-        let pkg = Self::load_package_json(ctx, &path)?;
-
+        let pkg = Self::load_package_json(ctx, cwd);
         let mut root = pkg.root;
-        if !matches!(root.data, ExprData::EObject(_)) {
-            Output::err_generic("package.json root must be an object", ());
-            Global::exit(1);
-        }
 
-        let mut modified = false;
         for &arg in args {
             let Some(eq_pos) = strings::index_of(arg, b"=") else {
                 Output::err_generic(
@@ -321,18 +291,15 @@ impl PmPkgCommand {
             }
 
             Self::set_value(&mut root, key, value, parse_json)?;
-            modified = true;
         }
 
-        if modified {
-            Self::save_package_json(&path, root, &pkg)?;
-        }
+        Self::save_package_json(root, &pkg, pm.options.dry_run);
         Ok(())
     }
 
     fn exec_delete(
         ctx: &Context,
-        _pm: &mut PackageManager,
+        pm: &mut PackageManager,
         args: &[&[u8]],
         cwd: &[u8],
     ) -> Result<(), Error> {
@@ -341,498 +308,416 @@ impl PmPkgCommand {
             Global::exit(1);
         }
 
-        let path = Self::find_package_json(cwd)?;
-
-        let pkg = Self::load_package_json(ctx, &path)?;
-
+        let pkg = Self::load_package_json(ctx, cwd);
         let mut root = pkg.root;
-        if !matches!(root.data, ExprData::EObject(_)) {
-            Output::err_generic("package.json root must be an object", ());
-            Global::exit(1);
-        }
 
         let mut modified = false;
         for &key in args {
-            match Self::delete_value(&mut root, key) {
-                Ok(deleted) => {
-                    if deleted {
-                        modified = true;
-                    }
-                }
-                Err(e) => {
-                    if !matches!(e, crate::Error::NotFound) {
-                        return Err(e);
-                    }
-                }
-            }
+            modified |= Self::delete_in_container(&mut root, &Self::parse_key_path(key)?);
         }
 
         if modified {
-            Self::save_package_json(&path, root, &pkg)?;
+            Self::save_package_json(root, &pkg, pm.options.dry_run);
         }
         Ok(())
     }
 
-    fn exec_fix(ctx: &Context, _pm: &mut PackageManager, cwd: &[u8]) -> Result<(), Error> {
-        let path = Self::find_package_json(cwd)?;
-
-        let pkg = Self::load_package_json(ctx, &path)?;
-
+    fn exec_fix(ctx: &Context, pm: &mut PackageManager, cwd: &[u8]) -> Result<(), Error> {
+        let pkg = Self::load_package_json(ctx, cwd);
         let mut root = pkg.root;
-        if !matches!(root.data, ExprData::EObject(_)) {
-            Output::err_generic("package.json root must be an object", ());
-            Global::exit(1);
-        }
 
         let mut modified = false;
 
-        if let Some(name_prop) = root.get(b"name") {
-            if let ExprData::EString(str) = &name_prop.data {
-                let name_str = str.slice8();
-                let lowercase: Vec<u8> = name_str.iter().map(|b| b.to_ascii_lowercase()).collect();
+        if let Some(name_prop) = root.get(b"name")
+            && let ExprData::EString(str) = &name_prop.data
+        {
+            let name_str = str.slice8();
+            let lowercase: Vec<u8> = name_str.iter().map(|b| b.to_ascii_lowercase()).collect();
 
-                if !strings::eql(name_str, &lowercase) {
-                    Self::set_value(&mut root, b"name", &lowercase, false)?;
-                    modified = true;
-                }
+            if !strings::eql(name_str, &lowercase) {
+                Self::set_value(&mut root, b"name", &lowercase, false)?;
+                modified = true;
             }
         }
 
-        if let Some(bin_prop) = root.get(b"bin") {
-            if let ExprData::EObject(obj) = &bin_prop.data {
-                let props = obj.properties.slice();
-                for prop in props {
-                    let Some(value) = &prop.value else { continue };
+        if let Some(bin_prop) = root.get(b"bin")
+            && let ExprData::EObject(obj) = &bin_prop.data
+        {
+            for prop in obj.properties.slice() {
+                let Some(value) = &prop.value else { continue };
+                let ExprData::EString(str) = &value.data else {
+                    continue;
+                };
+                let bin_path = str.slice8();
+                let mut pkg_dir = path::resolve_path::dirname::<path::platform::Auto>(&pkg.path);
+                if pkg_dir.is_empty() {
+                    pkg_dir = cwd;
+                }
+                let mut buf = bun_paths::path_buffer_pool::get();
+                // A path that's too long can't exist.
+                let full_path = path::resolve_path::join_abs_string_buf_z_checked::<
+                    path::platform::Auto,
+                >(pkg_dir, &mut buf[..], &[bin_path]);
 
-                    if let ExprData::EString(str) = &value.data {
-                        let bin_path = str.slice8();
-                        let mut pkg_dir =
-                            path::resolve_path::dirname::<path::platform::Auto>(&path);
-                        if pkg_dir.is_empty() {
-                            pkg_dir = cwd;
-                        }
-                        let mut buf = bun_paths::path_buffer_pool::get();
-                        let full_path = path::resolve_path::join_abs_string_buf_z::<
-                            path::platform::Auto,
-                        >(pkg_dir, &mut buf, &[bin_path]);
-
-                        if !bun_sys::exists_z(full_path) {
-                            bun_core::warn!("No bin file found at {}", bstr::BStr::new(bin_path));
-                        }
-                    }
+                if !full_path.is_some_and(bun_sys::exists_z) {
+                    bun_core::warn!(
+                        "No bin file found at {}",
+                        bun_core::fmt::EscapeControlChars(bstr::BStr::new(bin_path))
+                    );
                 }
             }
         }
 
         if modified {
-            Self::save_package_json(&path, root, &pkg)?;
+            Self::save_package_json(root, &pkg, pm.options.dry_run);
         }
         Ok(())
     }
 
-    fn format_json(expr: Expr, initial_indent: Option<usize>) -> Result<Box<[u8]>, Error> {
-        match &expr.data {
-            ExprData::EBoolean(b) => Ok(Box::<[u8]>::from(if b.value {
-                &b"true"[..]
-            } else {
-                &b"false"[..]
-            })),
-            ExprData::ENumber(n) => {
-                let mut v = Vec::new();
-                if n.value().floor() == n.value() {
-                    write!(&mut v, "{:.0}", n.value()).map_err(|_| crate::Error::WriteFailed)?;
-                } else {
-                    write!(&mut v, "{}", n.value()).map_err(|_| crate::Error::WriteFailed)?;
-                }
-                Ok(v.into_boxed_slice())
-            }
-            ExprData::ENull(_) => Ok(Box::<[u8]>::from(&b"null"[..])),
-            _ => {
-                let buffer_writer = js_printer::BufferWriter::init();
-                let mut printer = js_printer::BufferPrinter::init(buffer_writer);
+    fn format_json(expr: Expr) -> Result<Box<[u8]>, Error> {
+        let buffer_writer = js_printer::BufferWriter::init();
+        let mut printer = js_printer::BufferPrinter::init(buffer_writer);
 
-                js_printer::print_json(
-                    &mut printer,
-                    expr,
-                    &Source::init_empty_file(b"expression.json"),
-                    js_printer::PrintJsonOptions {
-                        mangled_props: None,
-                        indent: match initial_indent {
-                            Some(indent) => bun_ast::Indentation {
-                                scalar: indent,
-                                count: 0,
-                                ..Default::default()
-                            },
-                            None => bun_ast::Indentation {
-                                scalar: 2,
-                                count: 0,
-                                ..Default::default()
-                            },
-                        },
-                        ..Default::default()
-                    },
-                )?;
+        js_printer::print_json(
+            &mut printer,
+            expr,
+            &Source::init_empty_file(b"expression.json"),
+            js_printer::PrintJsonOptions {
+                mangled_props: None,
+                indent: bun_ast::Indentation {
+                    scalar: 2,
+                    count: 0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )?;
 
-                let written = printer.ctx.get_written();
-                Ok(Box::<[u8]>::from(written))
-            }
-        }
+        Ok(Box::<[u8]>::from(printer.ctx.get_written()))
     }
 
-    fn get_json_value(
+    pub(crate) const EMPTY_BRACKETS: &'static str =
+        "Empty brackets are not valid syntax for retrieving values.";
+
+    /// Like in npm, a name that's applied to an array (`maintainers.name`) returns
+    /// `maintainers[0].name`, and so on.
+    pub(crate) fn query(
         root: Expr,
         key: &[u8],
-        initial_indent: Option<usize>,
-    ) -> Result<Box<[u8]>, Error> {
-        let expr = Self::resolve_path(root, key)?;
-        Self::format_json(expr, initial_indent)
+        out: &mut StringArrayHashMap<Expr>,
+    ) -> Result<(), Error> {
+        let path = Self::parse_key_path(key)?;
+        if path.iter().any(|segment| segment.is_append()) {
+            return Err(crate::Error::InvalidPath);
+        }
+        Self::query_in(root, &path, key, &mut Vec::new(), false, out)
     }
 
-    fn resolve_path(root: Expr, key: &[u8]) -> Result<Expr, Error> {
-        if !matches!(root.data, ExprData::EObject(_)) {
-            return Err(crate::Error::NotFound);
+    /// `label` is the path walked so far. Once an array was `expanded`, the value is labeled with
+    /// it instead of `key`.
+    fn query_in(
+        value: Expr,
+        path: &[Segment<'_>],
+        key: &[u8],
+        label: &mut Vec<u8>,
+        expanded: bool,
+        out: &mut StringArrayHashMap<Expr>,
+    ) -> Result<(), Error> {
+        let [segment, rest @ ..] = path else {
+            out.put(if expanded { label.as_slice() } else { key }, value)?;
+            return Ok(());
+        };
+        let label_len = label.len();
+        match &value.data {
+            ExprData::EArray(array) => match bun_core::fmt::parse_decimal::<usize>(segment.name) {
+                Some(index) => {
+                    if let Some(item) = array.items.slice().get(index) {
+                        let _ = write!(label, "[{index}]");
+                        Self::query_in(*item, rest, key, label, expanded, out)?;
+                    }
+                }
+                None => {
+                    for (index, item) in array.items.slice().iter().enumerate() {
+                        let _ = write!(label, "[{index}]");
+                        Self::query_in(*item, path, key, label, true, out)?;
+                        label.truncate(label_len);
+                    }
+                }
+            },
+            ExprData::EObject(_) => {
+                if let Some(next) = value.get(segment.name) {
+                    if segment.bracketed {
+                        label.push(b'[');
+                    } else if label_len > 0 {
+                        label.push(b'.');
+                    }
+                    label.extend_from_slice(segment.name);
+                    if segment.bracketed {
+                        label.push(b']');
+                    }
+                    Self::query_in(next, rest, key, label, expanded, out)?;
+                }
+            }
+            _ => {}
         }
+        label.truncate(label_len);
+        Ok(())
+    }
 
-        let mut parts = strings::tokenize(key, b".");
-        let mut current = root;
+    /// `[...]` holds one literal name, dots included. `E::Object::put` keeps the slices of `key`.
+    fn parse_key_path(key: &[u8]) -> Result<Vec<Segment<'_>>, Error> {
+        let mut segments: Vec<Segment<'_>> = Vec::new();
 
-        while let Some(part) = parts.next() {
-            if let Some(first_bracket) = strings::index_of(part, b"[") {
-                let mut remaining_part = part;
-
-                if first_bracket > 0 {
-                    let prop_name = &part[..first_bracket];
-                    if !matches!(current.data, ExprData::EObject(_)) {
-                        return Err(crate::Error::NotFound);
-                    }
-                    current = current.get(prop_name).ok_or(crate::Error::NotFound)?;
-                    remaining_part = &part[first_bracket..];
-                }
-
-                while let Some(bracket_start) = strings::index_of(remaining_part, b"[") {
-                    let bracket_end = strings::index_of(&remaining_part[bracket_start..], b"]")
-                        .ok_or(crate::Error::InvalidPath)?;
-                    let actual_bracket_end = bracket_start + bracket_end;
-                    let index_str = &remaining_part[bracket_start + 1..actual_bracket_end];
-
-                    if index_str.is_empty() {
-                        return Err(crate::Error::InvalidPath);
-                    }
-
-                    if let Some(index) = bun_core::fmt::parse_decimal::<usize>(index_str) {
-                        let ExprData::EArray(arr) = &current.data else {
-                            return Err(crate::Error::NotFound);
-                        };
-
-                        if index >= arr.items.len_u32() as usize {
-                            return Err(crate::Error::NotFound);
-                        }
-
-                        current = arr.items.slice()[index];
-                    } else {
-                        if !matches!(current.data, ExprData::EObject(_)) {
-                            return Err(crate::Error::NotFound);
-                        }
-                        current = current.get(index_str).ok_or(crate::Error::NotFound)?;
-                    }
-
-                    remaining_part = &remaining_part[actual_bracket_end + 1..];
-                    if remaining_part.is_empty() {
-                        break;
-                    }
-                }
-            } else {
-                if let Some(index) = bun_core::fmt::parse_decimal::<usize>(part) {
-                    match &current.data {
-                        ExprData::EArray(arr) => {
-                            if index >= arr.items.len_u32() as usize {
-                                return Err(crate::Error::NotFound);
-                            }
-                            current = arr.items.slice()[index];
-                        }
-                        ExprData::EObject(_) => {
-                            current = current.get(part).ok_or(crate::Error::NotFound)?;
-                        }
-                        _ => return Err(crate::Error::NotFound),
-                    }
-                } else {
-                    if !matches!(current.data, ExprData::EObject(_)) {
-                        return Err(crate::Error::NotFound);
-                    }
-                    current = current.get(part).ok_or(crate::Error::NotFound)?;
-                }
+        let mut start = 0;
+        while start < key.len() {
+            let end = strings::index_of_any(&key[start..], b".[").map_or(key.len(), |i| start + i);
+            if end > start {
+                segments.push(Segment {
+                    name: &key[start..end],
+                    bracketed: false,
+                    end,
+                });
+            }
+            start = end + 1;
+            if key.get(end) == Some(&b'[') {
+                let Some(close) = strings::index_of_char_usize(&key[start..], b']') else {
+                    return Err(crate::Error::InvalidPath);
+                };
+                let close = start + close;
+                segments.push(Segment {
+                    name: &key[start..close],
+                    bracketed: true,
+                    end: close + 1,
+                });
+                start = close + 1;
             }
         }
 
-        Ok(current)
-    }
-
-    /// Splits `a.b[0][c]` into `["a", "b", "0", "c"]`. Segments are sub-slices
-    /// of `key`: `E::Object::put` stores keys by reference (no copy into the
-    /// AST arena), so they must outlive the `Expr` tree, which `key` (an argv
-    /// slice) does. Returning owned buffers here would leave dangling keys.
-    fn parse_key_path(key: &[u8]) -> Result<Vec<&[u8]>, Error> {
-        let mut path_parts: Vec<&[u8]> = Vec::new();
-
-        let mut parts = strings::tokenize(key, b".");
-
-        while let Some(part) = parts.next() {
-            if let Some(first_bracket) = strings::index_of(part, b"[") {
-                let mut remaining_part = part;
-
-                if first_bracket > 0 {
-                    path_parts.push(&part[..first_bracket]);
-                    remaining_part = &part[first_bracket..];
-                }
-
-                while let Some(bracket_start) = strings::index_of(remaining_part, b"[") {
-                    let Some(bracket_end) =
-                        strings::index_of(&remaining_part[bracket_start..], b"]")
-                    else {
-                        return Err(crate::Error::InvalidPath);
-                    };
-                    let actual_bracket_end = bracket_start + bracket_end;
-                    let index_str = &remaining_part[bracket_start + 1..actual_bracket_end];
-
-                    if index_str.is_empty() {
-                        return Err(crate::Error::InvalidPath);
-                    }
-
-                    path_parts.push(index_str);
-
-                    remaining_part = &remaining_part[actual_bracket_end + 1..];
-                    if remaining_part.is_empty() {
-                        break;
-                    }
-                }
-            } else {
-                path_parts.push(part);
-            }
-        }
-
-        Ok(path_parts)
+        Ok(segments)
     }
 
     fn set_value(root: &mut Expr, key: &[u8], value: &[u8], parse_json: bool) -> Result<(), Error> {
-        if !matches!(root.data, ExprData::EObject(_)) {
-            return Err(crate::Error::InvalidRoot);
-        }
-
-        let path_parts = Self::parse_key_path(key)?;
-
-        if path_parts.is_empty() {
+        let path = Self::parse_key_path(key)?;
+        if path.is_empty() {
             return Err(crate::Error::EmptyKey);
         }
 
-        if path_parts.len() == 1 {
-            let expr = Self::parse_value(value, parse_json)?;
-
-            root.data
-                .e_object_mut()
-                .unwrap()
-                .put(dummy_bump(), path_parts[0], expr)?;
-
-            return Ok(());
-        }
-
-        Self::set_nested(root, &path_parts, value, parse_json)
+        let expr = Self::parse_value(key, value, parse_json);
+        Self::set_in_container(root, b"package.json", key, &path, expr)
     }
 
-    fn set_nested(
-        root: &mut Expr,
-        path: &[&[u8]],
-        value: &[u8],
-        parse_json: bool,
+    /// Like in npm, only the final segment may replace a value. Any other value in the way is an
+    /// error.
+    fn set_in_container(
+        container: &mut Expr,
+        container_name: &[u8],
+        key: &[u8],
+        path: &[Segment<'_>],
+        value: Expr,
     ) -> Result<(), Error> {
-        if path.is_empty() {
+        let [segment, rest @ ..] = path else {
             return Ok(());
-        }
-
-        let current_key = path[0];
-        let remaining_path = &path[1..];
-
-        if remaining_path.is_empty() {
-            let expr = Self::parse_value(value, parse_json)?;
-
-            root.data
-                .e_object_mut()
-                .unwrap()
-                .put(dummy_bump(), current_key, expr)?;
-
-            return Ok(());
-        }
-
-        let mut nested_obj = root.get(current_key);
-        if nested_obj.is_none()
-            || !matches!(nested_obj.as_ref().unwrap().data, ExprData::EObject(_))
-        {
-            let new_obj = Expr::init(E::Object::default(), Loc::EMPTY);
-
-            root.data
-                .e_object_mut()
-                .unwrap()
-                .put(dummy_bump(), current_key, new_obj)?;
-
-            nested_obj = root.get(current_key);
-        }
-
-        if !matches!(nested_obj.as_ref().unwrap().data, ExprData::EObject(_)) {
-            return Err(crate::Error::ExpectedObject);
-        }
-
-        let mut nested = nested_obj.unwrap();
-        Self::set_nested(&mut nested, remaining_path, value, parse_json)
-    }
-
-    fn parse_value(value: &[u8], parse_json: bool) -> Result<Expr, Error> {
-        if parse_json {
-            if value == b"true" {
-                return Ok(Expr::init(E::Boolean { value: true }, Loc::EMPTY));
-            } else if value == b"false" {
-                return Ok(Expr::init(E::Boolean { value: false }, Loc::EMPTY));
-            } else if value == b"null" {
-                return Ok(Expr::init(E::Null {}, Loc::EMPTY));
-            }
-
-            if let Some(int_val) = bun_core::fmt::parse_decimal::<i64>(value) {
-                return Ok(Expr::init(E::Number::new(int_val as f64), Loc::EMPTY));
-            }
-
-            if let Some(float_val) = parse_f64(value) {
-                return Ok(Expr::init(E::Number::new(float_val), Loc::EMPTY));
-            }
-
-            let temp_source = Source::init_path_string(b"package.json", value);
-            let mut temp_log = Log::init();
-            if let Ok(json_expr) =
-                json::parse_package_json_utf8(&temp_source, &mut temp_log, dummy_bump())
-            {
-                return Ok(json_expr);
-            } else {
-                let data: &[u8] = dummy_bump().alloc_slice_copy(value);
-                return Ok(Expr::init(E::String::init(data), Loc::EMPTY));
-            }
-        } else {
-            let data: &[u8] = dummy_bump().alloc_slice_copy(value);
-            Ok(Expr::init(E::String::init(data), Loc::EMPTY))
-        }
-    }
-
-    fn delete_value(root: &mut Expr, key: &[u8]) -> Result<bool, Error> {
-        if !matches!(root.data, ExprData::EObject(_)) {
-            return Ok(false);
-        }
-
-        let mut path_parts: Vec<&[u8]> = Vec::new();
-        for part in strings::tokenize(key, b".") {
-            path_parts.push(part);
-        }
-
-        if path_parts.is_empty() {
-            return Ok(false);
-        }
-
-        if path_parts.len() == 1 {
-            let exists = root.get(path_parts[0]).is_some();
-            if exists {
-                return Self::remove_property(root, path_parts[0]);
-            }
-            return Ok(false);
-        }
-
-        Self::delete_nested(root, &path_parts)
-    }
-
-    fn delete_nested(root: &mut Expr, path: &[&[u8]]) -> Result<bool, Error> {
-        if path.is_empty() {
-            return Ok(false);
-        }
-
-        let current_key = path[0];
-        let remaining_path = &path[1..];
-
-        if remaining_path.is_empty() {
-            let exists = root.get(current_key).is_some();
-            if exists {
-                return Self::remove_property(root, current_key);
-            }
-            return Ok(false);
-        }
-
-        let nested_obj = root.get(current_key);
-        if nested_obj.is_none()
-            || !matches!(nested_obj.as_ref().unwrap().data, ExprData::EObject(_))
-        {
-            return Ok(false);
-        }
-
-        let mut nested = nested_obj.unwrap();
-        let deleted = Self::delete_nested(&mut nested, remaining_path)?;
-
-        if deleted {
-            root.data
-                .e_object_mut()
-                .unwrap()
-                .put(dummy_bump(), current_key, nested)?;
-        }
-
-        Ok(deleted)
-    }
-
-    fn remove_property(obj: &mut Expr, key: &[u8]) -> Result<bool, Error> {
-        let ExprData::EObject(e_obj) = &mut obj.data else {
-            return Ok(false);
         };
+        let slot_name = &key[..segment.end];
 
-        let old_props = e_obj.properties.slice();
-        let mut found = false;
-        for prop in old_props {
-            if let Some(k) = &prop.key {
-                if let ExprData::EString(s) = &k.data {
-                    if strings::eql(&s.data, key) {
-                        found = true;
-                        break;
-                    }
+        if let Some(array) = container.data.e_array_mut() {
+            let len = array.items.len();
+            let index = match bun_core::fmt::parse_decimal::<usize>(segment.name) {
+                _ if segment.is_append() => len,
+                Some(index) if index <= len => index,
+                Some(index) => {
+                    Output::err_generic(
+                        "{s}: index {s} is out of range for {s} (length {s})",
+                        (quote(key), index, quote(container_name), len),
+                    );
+                    bun_core::note!(
+                        "{}[] appends to the end of the array",
+                        bstr::BStr::new(container_name)
+                    );
+                    Global::exit(1);
                 }
-            }
-        }
-
-        if !found {
-            return Ok(false);
-        }
-        let old_len = old_props.len();
-        // G::Property is !Copy/!Clone: take the
-        // old list, ptr::read kept entries into the new list, then forget the
-        // old buffer (CLI is one-shot — leak is intentional, see
-        // load_package_json).
-        let old = core::mem::ManuallyDrop::new(bun_alloc::AstAlloc::take(&mut e_obj.properties));
-        let mut new_props: G::PropertyList = G::PropertyList::init_capacity(old_len - 1);
-        for prop in old.slice() {
-            if let Some(k) = &prop.key {
-                if let ExprData::EString(s) = &k.data {
-                    if strings::eql(&s.data, key) {
-                        continue;
-                    }
+                None => {
+                    Output::err_generic(
+                        "{s}: {s} is an array, so {s} must be an index or []",
+                        (quote(key), quote(container_name), quote(segment.name)),
+                    );
+                    Global::exit(1);
                 }
+            };
+            if index == len {
+                array.push(cli_arena(), Expr::init(E::Null {}, Loc::EMPTY))?;
             }
-            // SAFETY: `old` is wrapped in `ManuallyDrop` so each Property is
-            // moved (not duplicated) into `new_props`.
-            new_props.append_assume_capacity(unsafe { core::ptr::read(prop) });
+            let Some(next) = rest.first() else {
+                array.items[index] = value;
+                return Ok(());
+            };
+            let mut child = Self::child_container(Some(array.items[index]), *next, key, slot_name);
+            array.items[index] = child;
+            return Self::set_in_container(&mut child, slot_name, key, rest, value);
         }
-        e_obj.properties = new_props;
 
-        Ok(true)
+        if segment.is_append() {
+            Output::err_generic(
+                "{s}: cannot append to {s} because it is not an array",
+                (quote(key), quote(container_name)),
+            );
+            Global::exit(1);
+        }
+        let name = segment.name;
+        let object = container
+            .data
+            .e_object_mut()
+            .expect("set_value checks the root and child_container only returns arrays or objects");
+        let Some(next) = rest.first() else {
+            object.put(cli_arena(), name, value)?;
+            return Ok(());
+        };
+        let mut child = Self::child_container(object.get(name), *next, key, slot_name);
+        object.put(cli_arena(), name, child)?;
+        Self::set_in_container(&mut child, slot_name, key, rest, value)
     }
 
-    fn save_package_json(path: &[u8], root: Expr, pkg: &PackageJson) -> Result<(), Error> {
-        let preserve_newline =
-            !pkg.contents.is_empty() && pkg.contents[pkg.contents.len() - 1] == b'\n';
+    /// A missing or `null` slot gets a new container shaped for `next`.
+    fn child_container(
+        existing: Option<Expr>,
+        next: Segment<'_>,
+        key: &[u8],
+        slot_name: &[u8],
+    ) -> Expr {
+        match existing {
+            Some(expr) if matches!(expr.data, ExprData::EArray(_) | ExprData::EObject(_)) => expr,
+            Some(expr) if !matches!(expr.data, ExprData::ENull(_)) => {
+                Output::err_generic(
+                    "{s}: {s} already exists and is not an object or array",
+                    (quote(key), quote(slot_name)),
+                );
+                Global::exit(1);
+            }
+            _ if next.creates_array() => Expr::init(E::Array::default(), Loc::EMPTY),
+            _ => Expr::init(E::Object::default(), Loc::EMPTY),
+        }
+    }
+
+    /// With `--json` a value that is not JSON is an error, as in `npm pkg set --json`.
+    fn parse_value(key: &[u8], value: &[u8], parse_json: bool) -> Expr {
+        let data: &[u8] = cli_arena().alloc_slice_copy(value);
+        if !parse_json {
+            return Expr::init(E::String::init(data), Loc::EMPTY);
+        }
+
+        let source = Source::init_path_string(key, data);
+        let mut log = Log::init();
+        match json::parse_utf8_impl::<true>(&source, &mut log, cli_arena()) {
+            Ok(expr) if Self::has_only_json_literals(expr, data) => expr,
+            _ => {
+                let reason: &[u8] = log
+                    .msgs
+                    .iter()
+                    .find(|msg| msg.kind == bun_ast::Kind::Err)
+                    .map_or(b"Syntax Error", |msg| &msg.data.text);
+                Output::err_generic(
+                    "Invalid JSON value for <b>\"{s}\"<r>: {s}",
+                    (bstr::BStr::new(key), bstr::BStr::new(reason)),
+                );
+                bun_core::note!(
+                    "--json parses each value as JSON. To store the text as a string, drop --json."
+                );
+                Global::exit(1);
+            }
+        }
+    }
+
+    /// The JSON parser also accepts JavaScript literals that are not valid JSON, which this
+    /// rejects: `010` (parsed as 8), `0x10`, `1_000`, `.5`, `5.`, `'text'`.
+    fn has_only_json_literals(root: Expr, source: &[u8]) -> bool {
+        let mut pending = vec![root];
+        while let Some(expr) = pending.pop() {
+            let text = &source[expr.loc.i()..];
+            let is_json = match &expr.data {
+                ExprData::EString(_) => text.starts_with(b"\""),
+                ExprData::ENumber(_) => {
+                    let end = strings::index_of_any(text, b",]} \t\r\n").unwrap_or(text.len());
+                    let text = text[..end].strip_prefix(b"-").unwrap_or(&text[..end]);
+                    let digits = text.iter().take_while(|c| c.is_ascii_digit()).count();
+                    let (int, rest) = text.split_at(digits);
+                    (int == b"0" || int.first().is_some_and(|&c| c != b'0'))
+                        && matches!(rest, [] | [b'e' | b'E', ..] | [b'.', b'0'..=b'9', ..])
+                        && !strings::contains_char(rest, b'_')
+                }
+                ExprData::EArray(array) => {
+                    pending.extend_from_slice(array.items.slice());
+                    true
+                }
+                ExprData::EObject(object) => {
+                    for prop in object.properties.slice() {
+                        pending.extend(prop.key.iter().chain(&prop.value));
+                    }
+                    true
+                }
+                _ => true,
+            };
+            if !is_json {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Splices out an array element or removes a property. Returns true if anything was removed.
+    fn delete_in_container(container: &mut Expr, path: &[Segment<'_>]) -> bool {
+        let [segment, rest @ ..] = path else {
+            return false;
+        };
+        let name = segment.name;
+        if segment.is_append() {
+            Output::err_generic(
+                "Empty brackets are not valid syntax for deleting values.",
+                (),
+            );
+            Global::exit(1);
+        }
+
+        let mut child = if let Some(array) = container.data.e_array_mut() {
+            let Some(index) = bun_core::fmt::parse_decimal::<usize>(name)
+                .filter(|&index| index < array.items.len())
+            else {
+                return false;
+            };
+            if rest.is_empty() {
+                array.items.remove(index);
+                return true;
+            }
+            array.items[index]
+        } else {
+            if rest.is_empty() {
+                return Self::remove_property(container, name);
+            }
+            let Some(child) = container.get(name) else {
+                return false;
+            };
+            child
+        };
+        Self::delete_in_container(&mut child, rest)
+    }
+
+    fn remove_property(obj: &mut Expr, key: &[u8]) -> bool {
+        let ExprData::EObject(e_obj) = &mut obj.data else {
+            return false;
+        };
+        let old_len = e_obj.properties.len();
+        e_obj.properties.retain(|prop| {
+            !prop.key.as_ref().is_some_and(
+                |k| matches!(&k.data, ExprData::EString(s) if strings::eql(&s.data, key)),
+            )
+        });
+        e_obj.properties.len() != old_len
+    }
+
+    fn save_package_json(root: Expr, pkg: &PackageJson, dry_run: bool) {
+        let preserve_newline = pkg.contents.last() == Some(&b'\n');
 
         let mut buffer_writer = js_printer::BufferWriter::init();
-        buffer_writer
-            .buffer
-            .list
-            .reserve((pkg.contents.len() + 1).saturating_sub(buffer_writer.buffer.list.len()));
+        buffer_writer.buffer.list.reserve(pkg.contents.len() + 1);
         buffer_writer.append_newline = preserve_newline;
 
         let mut writer = js_printer::BufferPrinter::init(buffer_writer);
@@ -852,7 +737,15 @@ impl PmPkgCommand {
         }
 
         let content = writer.ctx.written_without_trailing_zero();
-        let path_z = bun_core::ZBox::from_bytes(path);
+        if dry_run {
+            let _ = Output::writer().write_all(content);
+            if !preserve_newline {
+                let _ = Output::writer().write_all(b"\n");
+            }
+            Output::flush();
+            return;
+        }
+        let path_z = bun_core::ZBox::from_bytes(&pkg.path);
         if let Err(e) = bun_sys::File::write_file(bun_sys::Fd::cwd(), path_z.as_zstr(), content) {
             Output::err_generic(
                 "Failed to write package.json: {s}",
@@ -860,10 +753,5 @@ impl PmPkgCommand {
             );
             Global::exit(1);
         }
-        Ok(())
     }
 }
-
-// ───── helpers ────────────────────────────────────────────────────────────
-
-use bun_core::fmt::parse_f64;

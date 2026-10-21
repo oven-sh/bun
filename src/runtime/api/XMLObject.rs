@@ -1,4 +1,4 @@
-//! `Bun.XML` — `parse()` and `stringify()` host functions.
+//! `Bun.XML` — `parse()` and `stringify()`.
 //!
 //! `parse` builds one of two shapes from `bun_parsers::xml` (see bun.d.ts
 //! for the user-facing description): the compact object (default) —
@@ -14,24 +14,19 @@ use bun_collections::HashMap;
 use bun_core::String as BunString;
 use bun_core::{StackCheck, strings};
 use bun_js_parser_jsc::ExprJsc;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, wtf};
+use bun_jsc::bindgen::{JsLocal, JsScope, StringOrJsBytes};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::xml::{self, XML};
 
-pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
-    bun_jsc::create_host_function_object(
-        global,
-        &[
-            ("parse", __jsc_host_parse, 2),
-            ("stringify", __jsc_host_stringify, 3),
-        ],
-    )
-}
-
-#[bun_jsc::host_fn]
-pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn parse<'a>(
+    cx: &mut JsScope<'a>,
+    input: StringOrJsBytes<'a>,
+    options: JsLocal<'a>,
+) -> JsResult<JSValue> {
+    let global = cx.global();
     // A function here is reserved for a reviver; reject it rather than read
     // it as an options object with no keys.
-    let options = frame.argument(1);
+    let options = options.to_js();
     let compact = if options.is_undefined_or_null() {
         true
     } else if options.is_object() && !options.is_callable() {
@@ -47,79 +42,88 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
     // Bytes (TypedArray, ArrayBuffer, DataView, Blob) go through BOM /
     // UTF-16 / declared-encoding detection. A string is already-decoded text
     // whose encoding declaration must not be acted upon: a Latin-1 string is
-    // parsed byte-per-character as is, anything else re-encoded as UTF-8.
-    super::with_text_format_source_encoded(
-        global,
-        frame,
-        b"input.xml",
-        super::BlobOrBufferInput::Bytes,
-        super::NullishInput::Throw,
-        super::StringInput::AsIs,
-        |arena, log, source, source_encoding| {
-            let encoding = match source_encoding {
-                super::SourceEncoding::Bytes => xml::InputEncoding::Bytes,
-                super::SourceEncoding::Utf8Text => xml::InputEncoding::Text,
-                super::SourceEncoding::Latin1Text => xml::InputEncoding::Latin1,
-                super::SourceEncoding::Utf16Text => xml::InputEncoding::Text,
-            };
-            bun_core::analytics::Features::xml_parse_inc();
-            let options = xml::Options { compact, encoding };
-            let mut result = if source_encoding == super::SourceEncoding::Utf16Text {
-                // The scaffold hands the string's code units over as bytes.
-                let units: &[u16] = bytemuck::cast_slice(&source.contents);
-                XML::parse_utf16(source, units, log, arena, options)
+    // parsed byte-per-character as is, a UTF-16 one by its code units.
+    let text;
+    let mut copy = Vec::new();
+    let mut utf16 = None;
+    let (bytes, encoding): (&[u8], _) = match input {
+        StringOrJsBytes::Bytes(bytes) => {
+            // The parser reads a byte more than once, and the result's strings are made from the input.
+            let bytes = bytes.get_or_copy_if_shared(&cx.heap, &mut copy)?;
+            (bytes, xml::InputEncoding::Bytes)
+        }
+        StringOrJsBytes::String(string) => {
+            text = string;
+            if text.is_8bit() {
+                (text.latin1(), xml::InputEncoding::Latin1)
             } else {
-                XML::parse(source, log, arena, options)
-            };
-            let utf8;
-            let utf8_source;
-            if matches!(result, Err(bun_parsers::Error::NeedsWiderEncoding)) {
-                // A character reference the Latin-1 result cannot hold: once
-                // more, over the same text as UTF-8.
-                utf8 = strings::allocate_latin1_into_utf8(&source.contents)
-                    .map_err(|_| JsError::OutOfMemory)?;
-                utf8_source = bun_ast::Source::init_path_string(b"input.xml", &utf8[..]);
-                *log = bun_ast::Log::init();
-                let options = xml::Options {
-                    compact,
-                    encoding: xml::InputEncoding::Text,
-                };
-                result = XML::parse(&utf8_source, log, arena, options);
+                let units = text.utf16();
+                utf16 = Some(units);
+                (bytemuck::cast_slice(units), xml::InputEncoding::Text)
             }
-            let root = match result {
-                Ok(root) => root,
-                Err(bun_parsers::Error::StackOverflow) => {
-                    return Err(global.throw_stack_overflow());
-                }
-                Err(bun_parsers::Error::Alloc(_)) => {
-                    return Err(JsError::OutOfMemory);
-                }
-                Err(_) => {
-                    if let Some(first_msg) = log.msgs.first() {
-                        return Err(global.throw_value(global.create_syntax_error_instance(
-                            format_args!(
-                                "XML Parse error: {}",
-                                bstr::BStr::new(&first_msg.data.text),
-                            ),
-                        )));
-                    }
+        }
+    };
+    // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are primitives, and its properties are
+    // defined and not set. What throws returns without reading `input` again.
+    let global = unsafe { cx.heap.global() };
+
+    super::with_text_format_source(global, bytes, b"input.xml", |arena, log, source| {
+        bun_core::analytics::Features::xml_parse_inc();
+        let options = xml::Options { compact, encoding };
+        let mut result = match utf16 {
+            Some(units) => XML::parse_utf16(source, units, log, arena, options),
+            None => XML::parse(source, log, arena, options),
+        };
+        let utf8;
+        let utf8_source;
+        if matches!(result, Err(bun_parsers::Error::NeedsWiderEncoding)) {
+            // A character reference the Latin-1 result cannot hold: once
+            // more, over the same text as UTF-8.
+            utf8 = strings::allocate_latin1_into_utf8(&source.contents)
+                .map_err(|_| JsError::OutOfMemory)?;
+            utf8_source = bun_ast::Source::init_path_string(b"input.xml", &utf8[..]);
+            *log = bun_ast::Log::init();
+            let options = xml::Options {
+                compact,
+                encoding: xml::InputEncoding::Text,
+            };
+            result = XML::parse(&utf8_source, log, arena, options);
+        }
+        let root = match result {
+            Ok(root) => root,
+            Err(bun_parsers::Error::StackOverflow) => {
+                return Err(global.throw_stack_overflow());
+            }
+            Err(bun_parsers::Error::Alloc(_)) => {
+                return Err(JsError::OutOfMemory);
+            }
+            Err(_) => {
+                if let Some(first_msg) = log.msgs.first() {
                     return Err(global.throw_value(global.create_syntax_error_instance(
-                        format_args!("XML Parse error: Unable to parse XML"),
+                        format_args!("XML Parse error: {}", bstr::BStr::new(&first_msg.data.text),),
                     )));
                 }
-            };
+                return Err(
+                    global.throw_value(global.create_syntax_error_instance(format_args!(
+                        "XML Parse error: Unable to parse XML"
+                    ))),
+                );
+            }
+        };
 
-            root.to_js(global)
-                .map_err(|e| bun_js_parser_jsc::to_js_error(e, global))
-        },
-    )
+        root.to_js(global)
+            .map_err(|e| bun_js_parser_jsc::to_js_error(e, global))
+    })
 }
 
-#[bun_jsc::host_fn]
-fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [value, replacer, space_value] = frame.arguments_as_array::<3>();
-
-    value.ensure_still_alive();
+pub(crate) fn stringify<'a>(
+    cx: &mut JsScope<'a>,
+    value: JsLocal<'a>,
+    replacer: JsLocal<'a>,
+    space: JsLocal<'a>,
+) -> JsResult<JSValue> {
+    let global = cx.global();
+    let (value, replacer, space_value) = (value.to_js(), replacer.to_js(), space.to_js());
 
     if skipped(value) {
         return Ok(JSValue::UNDEFINED);

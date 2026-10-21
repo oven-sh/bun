@@ -1,55 +1,59 @@
-//! What only Flow has. Prettier's `print/flow.js`, and what the printers that it shares with
-//! TypeScript do for the nodes of Flow.
+//! Flow-only syntax. Covers Prettier's `print/flow.js`, plus what the printers it shares with TypeScript do for Flow
+//! nodes.
 //!
-//! The tree has the nodes of TypeScript (`flow.rs` of `bun_sema_parser` has the table), so most of a
-//! file of Flow is written by the functions for those. They call these where `File::is_flow`.
+//! The tree represents Flow syntax with TypeScript nodes (`flow.rs` in `bun_sema_parser` has the mapping table), so
+//! most of a Flow file is written by the TypeScript functions. They call into this module when `File::is_flow` is true.
 
-use super::class::FormatClassImplements;
+use super::class::dangling_comments_with_marker;
 use super::function::FormatFunctionBody;
 use super::function_type::{write_ts_call_signature_declaration, write_ts_method_signature};
 use super::import_declaration::FormatStringLiteral;
 use super::object_like::ObjectLike;
 use super::parameters::FormatFormalParameters;
 use super::semicolon::OptionalSemicolon;
-use super::ts_types::{
-    comments_after_property_name, write_ts_interface_signatures, write_ts_signatures,
-};
+use super::ts_types::{write_ts_interface_signatures, write_ts_signatures};
 use super::type_parameters::{type_arguments, type_parameters};
+use crate::js::attach::Marker;
 use crate::js::format::{
-    ExprOptions, FormatTypeAnnotation, format_node, identifier, write_expression,
+    ExprOptions, FormatTypeAnnotation, format_name, format_node, identifier, name_without_comments,
+    write_expression,
 };
+use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::object::{format_computed_or_property_key, key_requires_quotes};
 use crate::js::utils::typescript::is_simple_type;
 use crate::prelude::*;
 use crate::{format_args, write};
-use bun_lint::tokens::skip_trivia;
 use smallvec::SmallVec;
 
 // ───────────────────────────── modifiers ─────────────────────────────
 
-/// `static`, `proto`, `readonly`, `+`: as they are written, in the order of the source.
+/// `static`, `proto`, `readonly`, `+`: copied from the source, in source order.
 struct FormatModifiers<'a>(List<'a, Modifier<'a>>);
 
 impl<'a> Format<'a> for FormatModifiers<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         for modifier in self.0.iter() {
             let span = modifier.token_span();
-            write!(f, [source_text(span), (span.len() > 1).then_some(space())]);
+            format_name(span, f, |f| write!(f, source_text(span)));
+            write!(f, (span.len() > 1).then_some(space()));
         }
     }
 }
 
-/// The `+` or `-` of a property of a class.
+/// `+`, `-`, `in`, `out`: Flow's `Variance`, which is a node for Prettier.
+pub(crate) fn is_variance(modifier: Modifier<'_>) -> bool {
+    modifier.flag().intersects(Flags::IN | Flags::OUT)
+}
+
+/// Writes the `+` or `-` of a class property.
 pub(crate) fn write_variance_sign<'a>(modifiers: List<'a, Modifier<'a>>, f: &mut Formatter<'a>) {
-    for modifier in modifiers
-        .iter()
-        .filter(|it| it.flag().intersects(Flags::IN | Flags::OUT))
-    {
-        write!(f, source_text(modifier.token_span()));
+    for modifier in modifiers.iter().filter(|it| is_variance(*it)) {
+        let span = modifier.token_span();
+        format_name(span, f, |f| write!(f, source_text(span)));
     }
 }
 
-/// Whether the word `word`, which TypeScript has no flag for, is among `modifiers`.
+/// True if `modifiers` contains the keyword `word`, which TypeScript has no flag for.
 fn has_word<'a>(modifiers: List<'a, Modifier<'a>>, word: &[u8], f: &Formatter<'a>) -> bool {
     has_word_in(f.file(), modifiers, word)
 }
@@ -64,19 +68,19 @@ fn is_declared<'a>(modifiers: List<'a, Modifier<'a>>) -> bool {
     modifiers.iter().any(|it| it.flag() == Flags::AMBIENT)
 }
 
-/// `declare export`: the `declare` has no flag, so that what is exported is written without it.
+/// `declare export`: the `declare` has no flag, so the exported declaration is written without it.
 pub(crate) fn is_declare_export<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
     has_word(statement.modifiers(), b"declare", f)
 }
 
-/// The same, for a statement of any file.
+/// Same, for a statement in any file.
 pub(crate) fn is_flow_declare_export(statement: Stmt<'_>) -> bool {
     statement.file().is_flow() && has_word_in(statement.file(), statement.modifiers(), b"declare")
 }
 
-/// What Prettier's `isJsSourceElement` leaves out: the type parameters of Flow, and what is in
+/// True for the nodes that Prettier's `isJsSourceElement` excludes: Flow's type parameters, and the content of
 /// `declare export`.
-pub(crate) fn is_no_source_element(node: AstNodes<'_>) -> bool {
+pub(crate) fn is_not_js_source_element(node: AstNodes<'_>) -> bool {
     match node {
         AstNodes::TSTypeParameterDeclaration(owner) => owner.file().is_flow(),
         AstNodes::ExportNamedDeclaration(_)
@@ -93,6 +97,7 @@ pub(crate) fn is_no_source_element(node: AstNodes<'_>) -> bool {
 // ───────────────────────────── expressions ─────────────────────────────
 
 /// `(e: T)`
+#[inline(never)]
 pub(crate) fn write_type_cast_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     if let ExprKind::As { expr, ty } = e.kind() {
         write!(f, ["(", expr, FormatTypeAnnotation(ty), ")"]);
@@ -106,9 +111,12 @@ pub(crate) fn is_interface_type(ty: TypeNode<'_>) -> bool {
     ty.tag() == TypeTag::Intersection && ty.first_token() == b"interface"
 }
 
-/// `hook` or `component`, if the function type `ty` starts with the word.
-fn keyword_of_function_type<'a>(ty: TypeNode<'a>, func: Func<'a>) -> Option<&'static str> {
-    // In `hook => void` it is the type of the parameter.
+/// Returns `hook` or `component` if the function type `ty` starts with that keyword.
+pub(crate) fn keyword_of_function_type<'a>(
+    ty: TypeNode<'a>,
+    func: Func<'a>,
+) -> Option<&'static str> {
+    // In `hook => void` it's the type of the parameter.
     if func.open_paren() == Some(ty.span().start) {
         return None;
     }
@@ -119,7 +127,7 @@ fn keyword_of_function_type<'a>(ty: TypeNode<'a>, func: Func<'a>) -> Option<&'st
     }
 }
 
-/// Whether `ty` is an `OptionalIndexedAccessType`: `A?.[B]`, or the `A?.[B][C]` around it.
+/// True if `ty` is an `OptionalIndexedAccessType`: `A?.[B]`, or the `A?.[B][C]` around it.
 fn is_optional_indexed_access(mut ty: TypeNode<'_>) -> bool {
     while let TypeKind::IndexedAccess { obj, .. } = ty.kind() {
         if ty.has_flow_optional_token(obj) {
@@ -133,26 +141,43 @@ fn is_optional_indexed_access(mut ty: TypeNode<'_>) -> bool {
     false
 }
 
-/// A parameter of a function type, of a signature or of a function that is declared: Flow's
-/// `FunctionTypeParam`, as opposed to a pattern with a type annotation.
-fn is_function_type_param(param: Param<'_>) -> bool {
+/// True for a parameter of a function type, a signature or a declared function. That's Flow's `FunctionTypeParam`, as
+/// opposed to a pattern with a type annotation.
+pub(crate) fn is_function_type_param(param: Param<'_>) -> bool {
     param
         .func()
         .is_some_and(|func| !func.has_body() && !func.is_arrow())
 }
 
-/// Prettier's `includesFunctionTypeInObjectType`. `is_in_object_type`: `node` is.
+/// True if `ty` is the return type or a parameter type of a function type, a signature or a declared function. In
+/// Flow's tree it's directly in the function type or the `FunctionTypeParam`: no `TypeAnnotation` starts at the `=>` or
+/// the `:`.
+pub(crate) fn is_directly_in_function_type(ty: TypeNode<'_>) -> bool {
+    match ty.parent() {
+        Node::Func(func) => !func.has_body() && !func.is_arrow(),
+        Node::Param(param) => is_function_type_param(param),
+        _ => false,
+    }
+}
+
+/// Prettier's `includesFunctionTypeInObjectType`. `is_in_object_type` means `node` is inside an object type.
 fn includes_function_type_in_object_type(node: Node<'_>, is_in_object_type: bool) -> bool {
-    // What is in it and has not been looked at.
+    // Nested nodes still to visit.
     let mut rest = vec![(node, is_in_object_type)];
     while let Some((node, is_in_object_type)) = rest.pop() {
         let (is_function_type, is_object_type, operand) = match node {
             Node::Type(ty) => (
-                ty.tag() == TypeTag::Fn,
+                // A hook type and a component type are separate node kinds.
+                matches!(ty.kind(), TypeKind::Fn(func) if keyword_of_function_type(ty, func).is_none()),
                 ty.tag() == TypeTag::Object,
                 ty.flow_nullable_operand(),
             ),
-            Node::Func(_) => (true, false, None),
+            // The value of a method, an accessor or a call property is a function type. An indexer has none.
+            Node::Func(func) => (
+                matches!(func.owner(), Node::Member(_)) && func.kind() != FnKind::IndexSignature,
+                false,
+                None,
+            ),
             _ => (false, false, None),
         };
         if is_function_type && is_in_object_type {
@@ -167,19 +192,33 @@ fn includes_function_type_in_object_type(node: Node<'_>, is_in_object_type: bool
     false
 }
 
-/// Prettier's `needsParentheses` for the types of Flow.
+/// `T %checks`, which is a predicate around the `T` in the tree.
+fn is_checks_predicate(ty: TypeNode<'_>) -> bool {
+    matches!(ty.kind(), TypeKind::Predicate { param, .. } if param.is("%checks"))
+}
+
+/// True if `ty` is the return type of an arrow function. For `T %checks`, Prettier's return type is the `T`.
+fn is_return_type_of_arrow(ty: TypeNode<'_>) -> bool {
+    let outer = match ty.parent() {
+        Node::Type(parent) if is_checks_predicate(parent) => parent,
+        _ => ty,
+    };
+    matches!(outer.parent(), Node::Func(owner) if owner.is_arrow() && owner.return_type() == Some(outer))
+}
+
+/// Prettier's `needsParentheses` for Flow types.
 pub(crate) fn needs_parentheses(ty: TypeNode<'_>) -> bool {
+    // The `=>` of a function type in an object type would be parsed as the arrow function's `=>`. Prettier also prints
+    // `(): (a is { b: () => void }) => c`, which is a syntax error.
+    if ty.tag() != TypeTag::Predicate
+        && is_return_type_of_arrow(ty)
+        && !ty.flow_nullable_operand().is_some_and(needs_parentheses)
+        && includes_function_type_in_object_type(Node::Type(ty), false)
+    {
+        return true;
+    }
     let parent = match ty.parent() {
         Node::Type(parent) => Some(parent),
-        // The `=>` of a function type in an object type would be taken for that of the arrow function.
-        Node::Func(owner)
-            if owner.is_arrow()
-                && owner.return_type() == Some(ty)
-                && !ty.flow_nullable_operand().is_some_and(needs_parentheses)
-                && includes_function_type_in_object_type(Node::Type(ty), false) =>
-        {
-            return true;
-        }
         _ => None,
     };
     let parent_tag = parent.map(TypeNode::tag);
@@ -243,14 +282,13 @@ fn function_type_needs_parentheses<'a>(ty: TypeNode<'a>, func: Func<'a>) -> bool
         Some(_) if func.return_type().is_none() => return false,
         _ => {}
     }
-    let is_return_type_of_arrow = |it: TypeNode<'a>| matches!(it.parent(), Node::Func(owner) if owner.is_arrow() && owner.return_type() == Some(it));
     if is_return_type_of_arrow(ty) {
         return true;
     }
     let parent = ty.parent();
     let mut ancestor = parent;
     if let Node::Type(parent) = parent {
-        // The inner `=>` would be taken for that of the arrow function.
+        // The inner `=>` would be parsed as the arrow function's `=>`.
         if matches!(parent.tag(), TypeTag::JSDoc | TypeTag::Predicate)
             && is_return_type_of_arrow(parent)
         {
@@ -289,7 +327,7 @@ fn function_type_needs_parentheses<'a>(ty: TypeNode<'a>, func: Func<'a>) -> bool
     }
 }
 
-/// Writes `content`, which is `ty` without parentheses, in those that it needs.
+/// Writes `content`, which is `ty` without parentheses, adding parentheses if `ty` needs them.
 fn write_in_parentheses<'a>(ty: TypeNode<'a>, content: &impl Format<'a>, f: &mut Formatter<'a>) {
     match needs_parentheses(ty) {
         true => write!(f, ["(", content, ")"]),
@@ -299,7 +337,7 @@ fn write_in_parentheses<'a>(ty: TypeNode<'a>, content: &impl Format<'a>, f: &mut
 
 // ───────────────────────────── types ─────────────────────────────
 
-/// `?T`, `renders T`. Returns whether `ty` is one of them.
+/// `?T`, `renders T`. Returns true if `ty` is one of them.
 pub(crate) fn write_nullable_type_or_type_operator<'a>(
     ty: TypeNode<'a>,
     f: &mut Formatter<'a>,
@@ -337,18 +375,30 @@ pub(crate) fn write_indexed_access_type<'a>(
     write_in_parentheses(ty, &format_args!(obj, optional, "[", index, "]"), f);
 }
 
-/// `: T %checks` as a return type. Returns whether the predicate `ty` is that.
+/// `: T %checks` as a return type. Returns true if the predicate `ty` is one.
 pub(crate) fn write_checks_predicate<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) -> bool {
     match ty.kind() {
-        TypeKind::Predicate { param, ty, .. } if param.is("%checks") => {
-            write!(f, [ty, ty.map(|_| space()), "%checks"]);
+        TypeKind::Predicate {
+            param, ty: checked, ..
+        } if param.is("%checks") => {
+            // `% /* comment */ checks`, which Prettier doesn't parse.
+            let comments = f.comments().of_node(ty.as_ast_nodes()).dangling;
+            write!(
+                f,
+                [
+                    checked,
+                    checked.map(|_| space()),
+                    "%checks",
+                    FormatTrailingComments::Comments(comments)
+                ]
+            );
             true
         }
         _ => false,
     }
 }
 
-/// `implies`, if the predicate `ty` starts with it, in place of `asserts`.
+/// Returns `implies` instead of `asserts` if the predicate `ty` starts with it.
 pub(crate) fn predicate_prefix(ty: TypeNode<'_>) -> &'static str {
     match ty.first_token() {
         b"implies" => "implies ",
@@ -356,29 +406,35 @@ pub(crate) fn predicate_prefix(ty: TypeNode<'_>) -> &'static str {
     }
 }
 
-/// `: T %checks(e)` as a return type. Returns whether the type query `ty` is that. Of a function
-/// that is only declared, the `T` is written: the rest is not part of the signature.
-pub(crate) fn write_declared_predicate<'a>(
-    ty: TypeNode<'a>,
-    expr: Expr<'a>,
-    args: List<'a, TypeNode<'a>>,
-    f: &mut Formatter<'a>,
-) -> bool {
-    if ty.first_token() == b"typeof" {
-        return false;
+/// Returns the `T` and the `e` of the return type `T %checks(e)`, which is a type query with `T` as its type argument
+/// in the tree.
+pub(crate) fn as_declared_predicate(ty: TypeNode<'_>) -> Option<(Option<TypeNode<'_>>, Expr<'_>)> {
+    match ty.kind() {
+        TypeKind::Typeof { expr, args, .. } if ty.first_token() != b"typeof" => {
+            Some((args.first(), expr))
+        }
+        _ => None,
     }
-    write!(f, args.first());
-    let is_of_declared_function = matches!(
+}
+
+/// `: T %checks(e)` as a return type. Returns true if the type query `ty` is one. For a function that's only declared,
+/// just the `T` is written, because the rest isn't part of the signature.
+pub(crate) fn write_declared_predicate<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) -> bool {
+    let Some((return_type, expr)) = as_declared_predicate(ty) else {
+        return false;
+    };
+    write!(f, return_type);
+    let belongs_to_declared_function = matches!(
         ty.parent(),
         Node::Func(func) if !func.has_body() && matches!(func.owner(), Node::Stmt(_))
     );
-    if !is_of_declared_function {
-        write!(f, [args.first().map(|_| space()), "%checks(", expr, ")"]);
+    if !belongs_to_declared_function {
+        write!(f, [return_type.map(|_| space()), "%checks(", expr, ")"]);
     }
     true
 }
 
-/// `interface { }`, `interface extends A, B { }`. `parts`: `A`, `B` and the object type.
+/// `interface { }`, `interface extends A, B { }`. `parts` are `A`, `B` and the object type.
 pub(crate) fn write_interface_type<'a>(parts: List<'a, TypeNode<'a>>, f: &mut Formatter<'a>) {
     let count = parts.len().saturating_sub(1);
     let extends = format_with(|f| {
@@ -405,8 +461,8 @@ pub(crate) fn write_interface_type<'a>(parts: List<'a, TypeNode<'a>>, f: &mut Fo
     write!(f, [space(), parts.last()]);
 }
 
-/// `hook (A) => B` starts with the word. `component(a: A) renders B` is written here: returns
-/// whether `ty` is one.
+/// For `hook (A) => B`, writes only the keyword. `component(a: A) renders B` is written here in full, and this returns
+/// true for it.
 pub(crate) fn write_function_type_keyword<'a>(
     ty: TypeNode<'a>,
     func: Func<'a>,
@@ -414,13 +470,6 @@ pub(crate) fn write_function_type_keyword<'a>(
 ) -> bool {
     match keyword_of_function_type(ty, func) {
         Some("hook") => {
-            // Those between the word and the `(` lead the type.
-            if !f.is_quiet()
-                && let Some(open) = func.open_paren()
-            {
-                let comments = f.comments().comments_before(open);
-                write!(f, FormatLeadingComments::Comments(comments));
-            }
             write!(f, "hook ");
             false
         }
@@ -461,8 +510,8 @@ pub(crate) fn is_component<'a>(func: Func<'a>, f: &Formatter<'a>) -> bool {
     }
 }
 
-/// Writes a parameter without a name, which is a type, and returns true. Of any other parameter it
-/// writes what only Flow has before it: the `a as` of a component.
+/// Writes a parameter without a name, which is just a type, and returns true. For any other parameter it only writes
+/// the Flow-specific prefix: the `a as` of a component parameter.
 pub(crate) fn write_parameter_start<'a>(param: Param<'a>, f: &mut Formatter<'a>) -> bool {
     let is_unnamed = param.pat().tag() == PatTag::Missing;
     let outer_name = match param.modifiers().is_empty() {
@@ -472,16 +521,10 @@ pub(crate) fn write_parameter_start<'a>(param: Param<'a>, f: &mut Formatter<'a>)
         false => None,
     };
     if let Some(span) = outer_name {
-        match f.source_text().text_for(&span).first() {
-            Some(b'"' | b'\'') => write!(
-                f,
-                FormatStringLiteral {
-                    span,
-                    parent: param.as_ast_nodes()
-                }
-            ),
+        format_name(span, f, |f| match f.source_text().text_for(&span).first() {
+            Some(b'"' | b'\'') => write!(f, FormatStringLiteral { span }),
             _ => write!(f, source_text(span)),
-        }
+        });
         match is_unnamed {
             true => write!(f, [param.is_optional().then_some("?"), ": "]),
             false => write!(f, " as "),
@@ -500,9 +543,9 @@ pub(crate) fn write_parameter_start<'a>(param: Param<'a>, f: &mut Formatter<'a>)
     false
 }
 
-/// Prettier has no node between the last parameter of a function type and the type behind the `=>`:
-/// a comment before the `=>` trails the parameter. Where the `=>` is, if `func` is such a type.
-pub(crate) fn arrow_behind_parameters(func: Func<'_>) -> Option<u32> {
+/// Returns the offset of the `=>` if `func` is a function type with parameters. Prettier has no node between the last
+/// parameter and the type after the `=>`, so a comment before the `=>` trails the parameter.
+pub(crate) fn arrow_after_parameters(func: Func<'_>) -> Option<u32> {
     let is_function_type = func.file().is_flow()
         && func.kind() == FnKind::FunctionType
         && !func.params().is_empty()
@@ -513,8 +556,8 @@ pub(crate) fn arrow_behind_parameters(func: Func<'_>) -> Option<u32> {
     }
 }
 
-/// Prettier's `isFlowShorthandWithOneArg`: `A => B`, where it is written without a place to break
-/// at, and with parentheses only if arrow functions have them.
+/// Prettier's `isFlowShorthandWithOneArg`: `A => B`, in the positions where it's printed without a possible line break,
+/// and with parentheses only if arrow functions get them.
 pub(crate) fn is_shorthand_function_type(func: Func<'_>) -> bool {
     let (Node::Type(ty), Some(only)) = (func.owner(), func.params().first()) else {
         return false;
@@ -544,8 +587,8 @@ pub(crate) fn is_shorthand_function_type(func: Func<'_>) -> bool {
     }
 }
 
-/// Prettier's `shouldIndentUnionType`, what it says about the parameters of function types: whether
-/// the union `ty` is written without an indentation of its own.
+/// The part of Prettier's `shouldIndentUnionType` that deals with function type parameters. True if the union `ty` is
+/// printed without its own indentation.
 pub(crate) fn is_union_indented_by_parameters(ty: TypeNode<'_>) -> bool {
     let Node::Param(param) = ty.parent() else {
         return false;
@@ -565,7 +608,7 @@ pub(crate) fn is_union_indented_by_parameters(ty: TypeNode<'_>) -> bool {
             && matches!(owner.parent(), Node::Member(member) if !member.is_static()))
 }
 
-/// The parameter of a function type for which [`is_shorthand_function_type`] holds.
+/// Writes the parameter of a function type for which [`is_shorthand_function_type`] is true.
 pub(crate) fn write_shorthand_parameter<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
     let is_hook =
         matches!(func.owner(), Node::Type(ty) if keyword_of_function_type(ty, func).is_some());
@@ -580,18 +623,19 @@ pub(crate) fn write_shorthand_parameter<'a>(func: Func<'a>, f: &mut Formatter<'a
     );
 }
 
-/// The modifiers of a type parameter: `const`, `+`, `in`.
+/// Writes the modifiers of a type parameter: `const`, `+`, `in`.
 pub(crate) fn write_type_parameter_modifiers<'a>(param: TypeParam<'a>, f: &mut Formatter<'a>) {
     write!(f, FormatModifiers(param.modifiers()));
 }
 
-/// `: Bound`, ` extends Bound`. Babel's tree does not say which it is: `T extends A` is `T: A` for `babel-flow`.
+/// `: Bound` or ` extends Bound`, whichever the source has. Babel's tree doesn't record which one it is, so with
+/// `babel` and `babel-flow` Prettier prints `T: A` for `T extends A`.
 pub(crate) fn write_type_parameter_bound<'a>(
     param: TypeParam<'a>,
     bound: TypeNode<'a>,
     f: &mut Formatter<'a>,
 ) {
-    match param.flow_token_after_name() == b":" || goes_to_babel(f.options(), f.file().path()) {
+    match param.flow_token_after_name() == b":" {
         true => write!(f, FormatTypeAnnotation(bound)),
         false => write!(f, [" extends ", bound]),
     }
@@ -605,13 +649,14 @@ pub(crate) fn write_tuple_element<'a>(element: TupleElem<'a>, f: &mut Formatter<
         write!(f, [source_text(span), (span.len() > 1).then_some(space())]);
     }
     if let Some(label) = label {
-        let label = identifier(label, AstNodes::TSNamedTupleMember(element));
+        let label = identifier(label);
         write!(f, [label, element.is_optional().then_some("?"), ": "]);
     }
     write!(f, element.flow_type());
 }
 
-/// `[...]`: the comments in it dangle, and are written behind the dots. Returns whether `ty` is that.
+/// `[...]`. The comments dangle in the tuple type, and Prettier's `printArray` prints them after the dots. Returns true
+/// if `ty` is one.
 pub(crate) fn write_tuple_of_unknown_elements<'a>(
     ty: TypeNode<'a>,
     elements: List<'a, TupleElem<'a>>,
@@ -620,30 +665,38 @@ pub(crate) fn write_tuple_of_unknown_elements<'a>(
     if elements.len() != 1 || !is_inexact_tuple(elements) {
         return false;
     }
-    let comments = f.comments().comments_before(ty.span().end);
-    let has_line_comment = comments.iter().any(|it| it.is_line());
-    let content = format_args!("...", format_dangling_comments(ty.span()));
+    let comments = f.comments().of_node(ty.as_ast_nodes()).dangling;
+    let format_comments = FormatDanglingComments::Comments {
+        comments,
+        indent: DanglingIndentMode::None,
+    };
     write!(
         f,
-        group(&format_args!("[", soft_block_indent(&content), "]")).should_expand(has_line_comment)
+        group(&format_args!(
+            "[",
+            soft_block_indent(&format_args!("...", format_comments)),
+            "]"
+        ))
+        .should_expand(comments.iter().any(|comment| comment.is_line()))
     );
     true
 }
 
-/// The `...` that ends an inexact tuple type, after which there is no comma.
+/// True if the tuple ends with the `...` of an inexact tuple type, which has no comma after it.
 pub(crate) fn is_inexact_tuple<'a>(elements: List<'a, TupleElem<'a>>) -> bool {
     elements.last().is_some_and(|it| it.flow_type().is_none())
 }
 
 // ───────────────────────────── object types ─────────────────────────────
 
-/// The `...` that ends an inexact object type, after which there is no comma.
+/// True for the `...` that ends an inexact object type, which has no comma after it.
 pub(crate) fn is_inexact_mark(member: Member<'_>) -> bool {
     member.is_flow_spread() && member.ty().is_none()
 }
 
-/// `{ a: A }`, `{| a: A |}`, `{ a: A, ... }`. Prettier's `printClassBody` for an object type that is
-/// not the body of an interface or a class.
+/// `{ a: A }`, `{| a: A |}`, `{ a: A, ... }`. Prettier's `printClassBody` for an object type that isn't the body of an
+/// interface or a class.
+#[inline(never)]
 pub(crate) fn write_object_type<'a>(
     ty: TypeNode<'a>,
     members: List<'a, Member<'a>>,
@@ -658,15 +711,16 @@ pub(crate) fn write_object_type<'a>(
     match members.first() {
         None => write!(
             f,
-            format_dangling_comments(ty.span()).with_soft_block_indent()
+            dangling_comments(ty.as_ast_nodes()).with_soft_block_indent()
         ),
-        // Prettier has no node for the `...`: the comments dangle.
+        // `{ /* comment */ ... }`
         Some(first)
-            if is_inexact_mark(first) && f.comments().has_comment_before(first.span().start) =>
+            if is_inexact_mark(first)
+                && !(f.comments().of_node(ty.as_ast_nodes()).dangling).is_empty() =>
         {
-            let comments = f.comments().comments_before(first.span().start);
-            let has_line_comment = comments.iter().any(|it| it.is_line());
-            let ends_line = comments.last().is_some_and(|it| it.followed_by_newline());
+            let comments = f.comments().of_node(ty.as_ast_nodes()).dangling;
+            let has_line_comment = comments.iter().any(|comment| comment.is_line());
+            let ends_line = comments.last().is_some_and(|it| it.has_newline_after());
             let content = format_with(|f| {
                 write!(
                     f,
@@ -695,15 +749,19 @@ pub(crate) fn write_object_type<'a>(
                 soft_block_indent_with_maybe_space(&content, f.options().bracket_spacing.value());
             match ObjectLike::TSTypeLiteral(ty, members).should_hug(f) {
                 true => write!(f, inner),
-                false => write!(f, group(&inner).should_expand(should_expand)),
+                false => write!(
+                    f,
+                    group(&inner)
+                        .should_expand(should_expand)
+                        .stays_expanded(f.options().expand == Expand::Auto)
+                ),
             }
         }
     }
     write!(f, [close, needs_parentheses.then_some(")")]);
 }
 
-/// A member of an object type, of an interface or of a class that is declared, without the
-/// separator after it.
+/// Writes a member of an object type, an interface or a declared class, without the separator after it.
 pub(crate) fn write_object_type_member<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     if member.is_flow_spread() {
         return write!(f, ["...", member.ty()]);
@@ -723,13 +781,17 @@ pub(crate) fn write_object_type_member<'a>(member: Member<'a>, f: &mut Formatter
                 ]
             );
         }
-        (MemberKind::CallSignature, Some(func)) => write_ts_call_signature_declaration(func, f),
+        (MemberKind::CallSignature, Some(func)) => {
+            // `static /* comment */ (): void`
+            write!(f, leading_comments(AstNodes::FormalParameters(func)));
+            write_ts_call_signature_declaration(func, f);
+        }
         (_, Some(func)) => match (
             member.flow_internal_slot(),
             member.key().map(|it| it.kind()),
         ) {
             (Some(slot), _) => {
-                write!(f, ["[[", identifier(slot, node), "]]"]);
+                write!(f, ["[[", identifier(slot), "]]"]);
                 write_ts_call_signature_declaration(func, f);
             }
             (None, Some(KeyKind::Ident(name))) if name.bytes().starts_with(b"@@") => {
@@ -743,7 +805,7 @@ pub(crate) fn write_object_type_member<'a>(member: Member<'a>, f: &mut Formatter
                 return write_mapped_type_property(mapped, f);
             }
             match (member.flow_internal_slot(), member.key()) {
-                (Some(slot), _) => write!(f, ["[[", identifier(slot, node), "]]"]),
+                (Some(slot), _) => write!(f, ["[[", identifier(slot), "]]"]),
                 (None, Some(key)) => match key.kind() {
                     KeyKind::Ident(name) if name.bytes().starts_with(b"@@") => {
                         write!(f, text(name.bytes()));
@@ -751,14 +813,6 @@ pub(crate) fn write_object_type_member<'a>(member: Member<'a>, f: &mut Formatter
                     _ => format_computed_or_property_key(key, node, f),
                 },
                 (None, None) => {}
-            }
-            if !f.is_quiet()
-                && let Some(ty) = member.ty()
-            {
-                write!(
-                    f,
-                    FormatTrailingComments::Comments(comments_after_property_name(ty, f))
-                );
             }
             write!(f, [optional, ": ", member.ty()]);
         }
@@ -768,7 +822,7 @@ pub(crate) fn write_object_type_member<'a>(member: Member<'a>, f: &mut Formatter
 /// `[K in T]?: V`. Prettier's `printFlowMappedTypeProperty`.
 fn write_mapped_type_property<'a>(mapped: Mapped<'a>, f: &mut Formatter<'a>) {
     let param = mapped.param();
-    let name = identifier(param.name(), AstNodes::TSTypeParameter(param));
+    let name = identifier(param.name());
     let key = format_args!(name, " in ", param.constraint());
     let optional = match mapped.optional() {
         MappedModifier::None => "",
@@ -789,29 +843,34 @@ fn write_mapped_type_property<'a>(mapped: Mapped<'a>, f: &mut Formatter<'a>) {
 
 // ───────────────────────────── declarations ─────────────────────────────
 
-/// Whether the interface `statement` stands for `opaque type A = B`.
+/// True if the interface `statement` represents `opaque type A = B`.
 pub(crate) fn is_opaque_type<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
     has_word(statement.modifiers(), b"opaque", f)
 }
 
+/// Same, for a statement in any file.
+pub(crate) fn is_flow_opaque_type(statement: Stmt<'_>) -> bool {
+    statement.file().is_flow() && has_word_in(statement.file(), statement.modifiers(), b"opaque")
+}
+
 /// `opaque type A<T>: B = C`, `opaque type A super B extends C = D`
+#[inline(never)]
 pub(crate) fn write_opaque_type<'a>(
     statement: Stmt<'a>,
     interface: Interface<'a>,
     f: &mut Formatter<'a>,
 ) {
-    let node = AstNodes::TSInterfaceDeclaration(statement);
     write!(
         f,
         [
             is_declared(statement.modifiers()).then_some("declare "),
             "opaque type ",
-            identifier(interface.name(), node),
+            identifier(interface.name()),
             type_parameters(interface.type_params(), Node::Stmt(statement))
         ]
     );
     let (bounds, file) = (interface.extends(), f.file());
-    // What is before a bound: `:`, `super` or `extends`.
+    // Checks the token before a bound: `:`, `super` or `extends`.
     let follows = |bound: TypeNode<'a>, word: &[u8]| {
         let end = file.end_of_token_before(bound.outer_span().start) as usize;
         file.text().get(..end).is_some_and(|it| it.ends_with(word))
@@ -847,9 +906,9 @@ pub(crate) fn write_opaque_type<'a>(
     write!(f, OptionalSemicolon);
 }
 
-/// `declare module.exports: T`, and the `T` of `declare export default T`. Returns whether the type
-/// alias stands for one of them.
-pub(crate) fn write_what_is_no_type_alias<'a>(
+/// `declare module.exports: T`, and the `T` of `declare export default T`. Returns true if the type alias represents
+/// one of them.
+pub(crate) fn write_pseudo_type_alias<'a>(
     statement: Stmt<'a>,
     alias: Alias<'a>,
     f: &mut Formatter<'a>,
@@ -872,13 +931,14 @@ pub(crate) fn write_what_is_no_type_alias<'a>(
     false
 }
 
-/// Whether `class` is `declare class`, whose members are those of an object type.
+/// True if `class` is `declare class`, whose members are those of an object type.
 #[inline]
 pub(crate) fn is_declared_class(class: Class<'_>) -> bool {
     class.flags().contains(Flags::AMBIENT) && class.file().is_flow()
 }
 
-/// Writes `declare class` and `record`. Returns whether `class` is one of them.
+/// Writes `declare class` and `record`. Returns true if `class` is one of them.
+#[inline(never)]
 pub(crate) fn write_class<'a>(class: Class<'a>, f: &mut Formatter<'a>) -> bool {
     let is_record = is_record(class, f);
     if is_record || is_declared_class(class) {
@@ -888,6 +948,16 @@ pub(crate) fn write_class<'a>(class: Class<'a>, f: &mut Formatter<'a>) -> bool {
     false
 }
 
+/// `A, B`: the types after `mixins` or `implements`.
+struct FormatHeritageClauses<'a>(List<'a, TypeNode<'a>>);
+
+impl<'a> Format<'a> for FormatHeritageClauses<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        f.join_with(soft_line_break_or_space())
+            .entries_with_trailing_separator(self.0.iter(), ",", TrailingSeparator::Disallowed);
+    }
+}
+
 /// `declare class A<T> extends B<T> mixins C implements D { }`, `record A<T> implements B { }`.
 /// Prettier's `printClass`.
 fn write_declared_class_or_record<'a>(class: Class<'a>, is_record: bool, f: &mut Formatter<'a>) {
@@ -895,66 +965,75 @@ fn write_declared_class_or_record<'a>(class: Class<'a>, is_record: bool, f: &mut
     let (mixins, implements) = (class.flow_mixins(), class.implements());
     let count = usize::from(class.extends().is_some()) + mixins.len() + implements.len();
     let has_multiple_heritage = count > 1;
-    // The first is `A.B` without type arguments.
+    let name_comments = class
+        .name()
+        .map(|name| f.comments().of_name(name.span().start));
+    let type_parameters_node = AstNodes::TSTypeParameterDeclaration(Node::Class(class));
+    // True if `ty` is `A.B` without type arguments.
     let is_qualified = |ty: TypeNode<'a>| matches!(ty.kind(), TypeKind::Ref { name, args } if name.len() > 1 && args.is_empty());
+    // Prettier's `shouldPrintClassInGroupMode`
     let group_mode = has_multiple_heritage
+        || name_comments.is_some_and(|comments| !comments.trailing.is_empty())
+        || !(f.comments().of_node(type_parameters_node).trailing).is_empty()
         || match (class.extends(), mixins.first()) {
             (Some(extends), _) => extends.tag() == ExprTag::Dot && class.extends_args().is_empty(),
             (None, Some(first)) => is_qualified(first),
             (None, None) => false,
         };
-    // Where what is after `extends`, `mixins` and `implements` starts.
-    let starts = [
-        class.extends().map(|it| it.span().start),
-        mixins.first().map(|it| it.span().start),
-        implements.first().map(|it| it.span().start),
-    ];
-    // A comment trails the name or the type parameters.
-    let group_mode = group_mode
-        || (!f.is_quiet()
-            && starts
-                .iter()
-                .flatten()
-                .next()
-                .is_some_and(|&start| f.comments().has_comment_before(start)));
 
     let format_extends = format_with(|f| {
-        let mut names: SmallVec<[Ident<'a>; 4]> = SmallVec::new();
+        // `A.B.C`, from the outside in: each `A.B` and its `B`.
+        let mut qualified_names: SmallVec<[(AstNodes<'a>, Ident<'a>); 4]> = SmallVec::new();
         let mut leftmost = class.extends();
-        while let Some(ExprKind::Dot { obj, name, .. }) = leftmost.map(|it| it.kind()) {
-            names.push(name);
+        while let Some(e) = leftmost
+            && let ExprKind::Dot { obj, name, .. } = e.kind()
+        {
+            qualified_names.push((e.as_chain_element(), name));
             leftmost = Some(obj);
         }
+        for &(node, _) in qualified_names.iter() {
+            write!(f, leading_comments(node));
+        }
         write!(f, leftmost);
-        for &name in names.iter().rev() {
-            write!(f, [".", identifier(name, node)]);
+        for &(node, name) in qualified_names.iter().rev() {
+            write!(f, [".", identifier(name), trailing_comments(node)]);
         }
         write!(f, type_arguments(class.extends_args(), Node::Class(class)));
     });
     let (format_mixins, format_implements) = (
-        FormatClassImplements(mixins),
-        FormatClassImplements(implements),
+        FormatHeritageClauses(mixins),
+        FormatHeritageClauses(implements),
     );
+    // Prettier's `printHeritageClauses`
     let clauses = format_with(|f| {
-        let clauses: [(&'static str, &dyn Format<'a>); 3] = [
-            ("extends", &format_extends),
-            ("mixins", &format_mixins),
-            ("implements", &format_implements),
+        let clauses: [(&'static str, Marker, bool, &dyn Format<'a>); 3] = [
+            (
+                "extends",
+                Marker::Extends,
+                class.extends().is_some(),
+                &format_extends,
+            ),
+            ("mixins", Marker::Mixins, !mixins.is_empty(), &format_mixins),
+            (
+                "implements",
+                Marker::Implements,
+                !implements.is_empty(),
+                &format_implements,
+            ),
         ];
-        for ((keyword, list), start) in clauses.into_iter().zip(starts) {
-            let Some(start) = start else {
-                continue;
+        for (keyword, marker, _, list) in clauses.into_iter().filter(|clause| clause.2) {
+            let comments = dangling_comments_with_marker(node, marker, f);
+            let format_comments = FormatDanglingComments::Comments {
+                comments,
+                indent: DanglingIndentMode::None,
             };
-            // The comments before a keyword trail what is before it.
-            if !f.is_quiet() {
-                let comments = f.comments().comments_before(start);
-                write!(f, FormatTrailingComments::Comments(comments));
-            }
             match (has_multiple_heritage, group_mode) {
                 (true, _) => write!(
                     f,
                     [
                         soft_line_break_or_space(),
+                        format_comments,
+                        (!comments.is_empty()).then_some(hard_line_break()),
                         keyword,
                         group(&soft_line_indent_or_space(list))
                     ]
@@ -963,18 +1042,34 @@ fn write_declared_class_or_record<'a>(class: Class<'a>, is_record: bool, f: &mut
                     f,
                     [
                         soft_line_break_or_space(),
-                        group(&format_args!(keyword, space(), list))
+                        group(&format_args!(keyword, space(), format_comments, list))
                     ]
                 ),
-                (false, false) => write!(f, [space(), keyword, space(), list]),
+                (false, false) => write!(f, [space(), keyword, space(), format_comments, list]),
             }
         }
     });
-    let head = format_args!(
-        space(),
-        class.name().map(|name| identifier(name, node)),
-        type_parameters(class.type_params(), Node::Class(class))
-    );
+    let head = format_with(|f| {
+        if let (Some(name), Some(comments)) = (class.name(), name_comments) {
+            write!(
+                f,
+                [
+                    space(),
+                    FormatLeadingComments::Comments(comments.leading),
+                    name_without_comments(name.span()),
+                    indent(&FormatTrailingComments::Comments(comments.trailing))
+                ]
+            );
+        }
+        let type_parameters = type_parameters(class.type_params(), Node::Class(class));
+        write!(
+            f,
+            [
+                FormatNodeWithoutTrailingComments(&type_parameters),
+                indent(&trailing_comments(type_parameters_node))
+            ]
+        );
+    });
 
     let keyword = if is_record { "record" } else { "class" };
     write!(
@@ -1003,23 +1098,9 @@ fn write_declared_class_or_record<'a>(class: Class<'a>, is_record: bool, f: &mut
     } else {
         write!(f, [head, clauses, space()]);
     }
-    // `Class::body_span` knows nothing of `mixins`.
-    let body_span = match (mixins.last(), implements.is_empty()) {
-        (Some(last), true) => Span::new(
-            skip_trivia(f.file().text(), last.span().end),
-            class.span().end,
-        ),
-        _ => class.body_span(),
-    };
-    match class.members().is_empty() {
-        true => write!(
-            f,
-            [
-                "{",
-                format_dangling_comments(body_span).with_block_indent(),
-                "}"
-            ]
-        ),
+    let body = AstNodes::ClassBody(class);
+    format_node(body, f, |f| match class.members().is_empty() {
+        true => write!(f, ["{", dangling_comments(body).with_block_indent(), "}"]),
         false if is_record => write_record_body(class, f),
         false => {
             write!(
@@ -1034,17 +1115,17 @@ fn write_declared_class_or_record<'a>(class: Class<'a>, is_record: bool, f: &mut
                 ]
             );
         }
-    }
-    // Prettier's `shouldOmitSemicolon` does not know records.
+    });
+    // Prettier's `shouldOmitSemicolon` doesn't know about records.
     if is_record && matches!(class.owner(), Node::Stmt(statement) if statement.is_default_export())
     {
         write!(f, OptionalSemicolon);
     }
 }
 
-/// `hook` or `function`: what the declaration of `func` starts with. A component, and a function
-/// that is only declared, which is written like a function type, are written here: then it is
-/// `None`.
+/// Returns the keyword that `func`'s declaration starts with, `hook` or `function`. A component, and a function that's
+/// only declared (which is written like a function type), are written here in full, and then this returns `None`.
+#[inline(never)]
 pub(crate) fn write_component_or_keyword<'a>(
     func: Func<'a>,
     f: &mut Formatter<'a>,
@@ -1062,31 +1143,31 @@ pub(crate) fn write_component_or_keyword<'a>(
         if func.has_body() {
             return Some(keyword);
         }
-        let name = func
-            .name()
-            .map(|name| identifier(name, AstNodes::Function(func)));
+        let name = func.name().map(|name| identifier(name));
         write!(
             f,
             [
                 is_declared(modifiers).then_some("declare "),
                 keyword,
                 space(),
-                name
+                name,
+                // `f/* comment */ (): void`
+                leading_comments(AstNodes::FormalParameters(func))
             ]
         );
         write_ts_call_signature_declaration(func, f);
-        if let Some(ty) = func.return_type()
-            && let TypeKind::Typeof { expr, .. } = ty.kind()
-            && ty.first_token() != b"typeof"
-        {
-            write!(f, [" %checks(", expr, ")"]);
-        }
-        // Those before the `;` trail the return type.
-        if !f.is_quiet()
-            && let Some(semicolon) = statement.semicolon()
-        {
-            let comments = f.comments().comments_before(semicolon.start);
-            write!(f, FormatTrailingComments::Comments(comments));
+        if let Some((_, expr)) = func.return_type().and_then(as_declared_predicate) {
+            // `%checks(a) /* comment */`
+            let comments = f.comments().of_node(AstNodes::Function(func)).dangling;
+            write!(
+                f,
+                [
+                    " %checks(",
+                    expr,
+                    ")",
+                    FormatTrailingComments::Comments(comments)
+                ]
+            );
         }
         write!(f, OptionalSemicolon);
         return None;
@@ -1097,8 +1178,7 @@ pub(crate) fn write_component_or_keyword<'a>(
             is_declared(modifiers).then_some("declare "),
             func.is_async().then_some("async "),
             "component ",
-            func.name()
-                .map(|name| identifier(name, AstNodes::Function(func))),
+            func.name().map(|name| identifier(name)),
             type_parameters(func.type_params(), Node::Func(func))
         ]
     );
@@ -1117,13 +1197,12 @@ pub(crate) fn write_explicit_type_of_enum<'a>(declaration: Enum<'a>, f: &mut For
     }
 }
 
-/// The `...` that ends an enum with unknown members, after which there is no comma.
+/// True for the `...` that ends an enum with unknown members, which has no comma after it.
 pub(crate) fn is_unknown_members_mark(member: EnumMember<'_>) -> bool {
     member.text() == b"..."
 }
 
-/// `typeof ` or `type `: how the import, or the specifier, that starts at `start` after its `import`
-/// is written.
+/// Returns `typeof ` or `type `, whichever the import (after its `import` keyword) or the specifier has at `start`.
 pub(crate) fn import_kind(start: u32, f: &Formatter<'_>) -> &'static str {
     match f
         .file()
@@ -1138,8 +1217,45 @@ pub(crate) fn import_kind(start: u32, f: &Formatter<'_>) -> &'static str {
 
 // ───────────────────────────── match ─────────────────────────────
 
-/// `match (a) { }` and `R { a: 1 }` are `new` expressions in the tree, which do not start with
-/// `new`. Returns whether `e` is one of them, which is written.
+/// `match (a) { .. }` as an expression is a `new` expression in the tree, which doesn't start with `new`. Returns the
+/// `match (a)`, which is a call, and the `{ .. }`, which is an object.
+pub(crate) fn as_match_expression(e: Expr<'_>) -> Option<(Expr<'_>, Expr<'_>)> {
+    let ExprKind::New(call) = e.kind() else {
+        return None;
+    };
+    let (head, braces) = (call.callee(), call.args().first()?);
+    (head.span().start == e.span().start
+        && head.tag() == ExprTag::Call
+        && braces.tag() == ExprTag::Object)
+        .then_some((head, braces))
+}
+
+/// True for the `{ .. }` of a match expression.
+pub(crate) fn is_braces_of_match(braces: Expr<'_>) -> bool {
+    matches!(braces.parent(), Node::Expr(e)
+        if as_match_expression(e).is_some_and(|(_, it)| it == braces))
+}
+
+/// True for `pattern => body` in a match expression, which is a property in the tree. For Prettier the body isn't in a
+/// property.
+pub(crate) fn is_match_expression_case(case: Prop<'_>) -> bool {
+    case.file().is_flow()
+        && matches!(case.parent(), Node::Expr(braces) if is_braces_of_match(braces))
+}
+
+/// `match (a) { .. }` as a statement is a `switch` statement in the tree, which doesn't start with `switch`. Returns
+/// the `match (a)`, which is a call.
+pub(crate) fn head_of_match_statement(statement: Stmt<'_>) -> Option<Expr<'_>> {
+    match statement.kind() {
+        StmtKind::Switch { expr, .. } => Some(expr).filter(|head| {
+            head.tag() == ExprTag::Call && head.span().start == statement.span().start
+        }),
+        _ => None,
+    }
+}
+
+/// `match (a) { }` and `R { a: 1 }` are `new` expressions in the tree, which don't start with `new`. If `e` is one of
+/// them, writes it and returns true.
 pub(crate) fn write_expression_with_braces<'a>(
     e: Expr<'a>,
     call: Call<'a>,
@@ -1157,25 +1273,14 @@ pub(crate) fn write_expression_with_braces<'a>(
                 let mut join = f.join_nodes_with_hardline();
                 for case in cases.iter() {
                     let content = format_with(|f| {
-                        format_node(
-                            case.span(),
-                            || AstNodes::ObjectExpression(braces),
-                            f,
-                            |f| {
-                                write_match_expression_case(case, f);
-                            },
-                        );
+                        format_node(case.as_ast_nodes(), f, |f| {
+                            write_match_expression_case(case, f);
+                        });
                     });
                     join.entry(case.span(), &content);
                 }
             });
-            write_match(
-                head,
-                braces.span().start,
-                cases.is_empty(),
-                &format_cases,
-                f,
-            );
+            write_match(head, cases.is_empty(), &format_cases, f);
         }
         _ => {
             let type_args = call.type_args();
@@ -1196,18 +1301,17 @@ pub(crate) fn write_expression_with_braces<'a>(
     true
 }
 
-/// A match statement is a `switch` statement in the tree, which does not start with `switch`.
-/// Returns whether `statement` is one, which is written.
+/// A match statement is a `switch` statement in the tree, which doesn't start with `switch`. If `statement` is one,
+/// writes it and returns true.
 pub(crate) fn write_match_statement<'a>(
     statement: Stmt<'a>,
     head: Expr<'a>,
     cases: List<'a, Case<'a>>,
     f: &mut Formatter<'a>,
 ) -> bool {
-    let head_end = head.span().end;
     let Some(head) = head
         .as_call()
-        .filter(|_| head.span().start == statement.span().start)
+        .filter(|_| head_of_match_statement(statement) == Some(head))
     else {
         return false;
     };
@@ -1215,48 +1319,31 @@ pub(crate) fn write_match_statement<'a>(
         let mut join = f.join_nodes_with_hardline();
         for case in cases.iter() {
             let content = format_with(|f| {
-                format_node(
-                    case.span(),
-                    || AstNodes::SwitchStatement(statement),
-                    f,
-                    |f| {
-                        write_match_pattern_and_guard(case.test(), f);
-                        let body = case.body().first();
-                        let is_empty = body.is_some_and(|it| {
-                            matches!(it.kind(), StmtKind::Block(statements) if statements.is_empty())
-                                && !f.comments().has_comment_in_span(it.span())
-                        });
-                        match is_empty {
-                            true => write!(f, " => {}"),
-                            false => write!(f, [" => ", body]),
+                format_node(AstNodes::SwitchCase(case), f, |f| {
+                    write_match_pattern_and_guard(case.test(), f);
+                    write!(f, " => ");
+                    match case.body().first() {
+                        // An empty block in a `case` of a `switch` is printed differently.
+                        Some(block) if block.as_block().is_some_and(|it| it.is_empty()) => {
+                            let node = block.as_ast_nodes();
+                            format_node(node, f, |f| {
+                                write!(f, ["{", dangling_comments(node).with_block_indent(), "}"]);
+                            });
                         }
-                    },
-                );
+                        body => write!(f, body),
+                    }
+                });
             });
             join.entry(case.span(), &content);
         }
     });
-    let open_brace = skip_trivia(f.file().text(), head_end);
-    write_match(head, open_brace, cases.is_empty(), &format_cases, f);
+    write_match(head, cases.is_empty(), &format_cases, f);
     true
 }
 
-/// Prettier's `printMatch`. `head`: the `match (a)`. `open_brace`: where the `{` is.
-fn write_match<'a>(
-    head: Call<'a>,
-    open_brace: u32,
-    is_empty: bool,
-    cases: &impl Format<'a>,
-    f: &mut Formatter<'a>,
-) {
-    let argument = format_with(|f| {
-        write!(f, head.args().first());
-        // What is behind the `{` on its line trails the argument.
-        if !f.is_quiet() {
-            let comments = f.comments().end_of_line_comments_after(open_brace + 1);
-            write!(f, FormatTrailingComments::Comments(comments));
-        }
-    });
+/// Prettier's `printMatch`. `head` is the `match (a)`.
+fn write_match<'a>(head: Call<'a>, is_empty: bool, cases: &impl Format<'a>, f: &mut Formatter<'a>) {
+    let argument = head.args().first();
     write!(
         f,
         [
@@ -1283,14 +1370,11 @@ fn write_match_pattern_and_guard<'a>(pattern: Option<Expr<'a>>, f: &mut Formatte
             right,
         } => {
             write_match_pattern(left, PatternParent::Case, f);
-            // It is in no `&&`.
+            // The guard isn't really an operand of `&&`, so it's written without the parentheses check.
             let guard = format_with(|f| {
-                format_node(
-                    right.span(),
-                    || right.ast_parent(),
-                    f,
-                    |f| write_expression(right, ExprOptions::None, f),
-                );
+                format_node(right.as_ast_nodes(), f, |f| {
+                    write_expression(right, ExprOptions::None, f)
+                });
             });
             write!(
                 f,
@@ -1326,14 +1410,14 @@ fn write_match_expression_case<'a>(case: Prop<'a>, f: &mut Formatter<'a>) {
     );
 }
 
-/// What a pattern is directly in.
+/// A pattern's direct parent.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum PatternParent {
     Case,
-    /// With that many elements, the rest not counted.
+    /// The number of elements, not counting a rest element.
     Array(usize),
     Property,
-    /// It is the left side.
+    /// The pattern is the left side.
     As,
     Other,
 }
@@ -1371,15 +1455,12 @@ fn write_match_pattern<'a>(pattern: Expr<'a>, parent: PatternParent, f: &mut For
     if is_leaf {
         return write!(f, pattern);
     }
-    format_node(
-        pattern.span(),
-        || pattern.ast_parent(),
-        f,
-        |f| write_match_pattern_that_has_parts(pattern, parent, f),
-    );
+    format_node(pattern.as_ast_nodes(), f, |f| {
+        write_compound_match_pattern(pattern, parent, f)
+    });
 }
 
-fn write_match_pattern_that_has_parts<'a>(
+fn write_compound_match_pattern<'a>(
     pattern: Expr<'a>,
     parent: PatternParent,
     f: &mut Formatter<'a>,
@@ -1429,6 +1510,7 @@ fn write_match_pattern_that_has_parts<'a>(
                 if !has_rest {
                     write!(f, if_group_breaks(&","));
                 }
+                write!(f, dangling_comments(pattern.as_ast_nodes()));
             });
             write!(
                 f,
@@ -1444,18 +1526,14 @@ fn write_match_pattern_that_has_parts<'a>(
                     if index > 0 {
                         write!(f, [",", soft_line_break_or_space()]);
                     }
-                    format_node(
-                        property.span(),
-                        || AstNodes::ObjectExpression(pattern),
-                        f,
-                        |f| {
-                            write_match_object_pattern_property(property, f);
-                        },
-                    );
+                    format_node(property.as_ast_nodes(), f, |f| {
+                        write_match_object_pattern_property(property, f);
+                    });
                 }
                 if !has_rest {
                     write!(f, if_group_breaks(&","));
                 }
+                write!(f, dangling_comments(pattern.as_ast_nodes()));
             });
             write!(
                 f,
@@ -1482,15 +1560,11 @@ fn write_match_object_pattern_property<'a>(property: Prop<'a>, f: &mut Formatter
         return write_match_pattern(value, PatternParent::Other, f);
     };
     let span = key.span(f.file());
-    let format_key = format_with(|f| match key.kind() {
-        KeyKind::String(_) => write!(
-            f,
-            FormatStringLiteral {
-                span,
-                parent: AstNodes::ObjectProperty(property)
-            }
-        ),
-        _ => write!(f, source_text(span)),
+    let format_key = format_with(|f| {
+        format_name(span, f, |f| match key.kind() {
+            KeyKind::String(_) => write!(f, FormatStringLiteral { span }),
+            _ => write!(f, source_text(span)),
+        });
     });
     let format_value = format_with(|f| write_match_pattern(value, PatternParent::Property, f));
     write!(
@@ -1515,6 +1589,21 @@ fn is_simple_match_pattern(pattern: Expr<'_>) -> bool {
         | ExprTag::String => true,
         ExprTag::Unary => pattern.unary_op() != Some(UnOp::Void),
         _ => false,
+    }
+}
+
+/// One of the patterns of `a | b`.
+struct FormatAlternative<'a>(Expr<'a>);
+
+impl<'a> Format<'a> for FormatAlternative<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        write_match_pattern(self.0, PatternParent::Other, f);
+    }
+}
+
+impl Spanned for FormatAlternative<'_> {
+    fn span(&self) -> Span {
+        self.0.span()
     }
 }
 
@@ -1552,12 +1641,22 @@ fn write_match_or_pattern<'a>(pattern: Expr<'a>, parent: PatternParent, f: &mut 
             if index > 0 {
                 write!(f, [soft_line_break_or_space(), "| "]);
             }
+            // The pattern is aligned without its comments:
+            //
+            //     | a
+            //     // comment
+            //     | b
+            let node = it.as_chain_element();
             write!(
                 f,
-                align(
-                    2,
-                    &format_with(|f| write_match_pattern(it, PatternParent::Other, f))
-                )
+                [
+                    leading_comments(node),
+                    align(
+                        2,
+                        &FormatNodeWithoutTrailingComments(&FormatAlternative(it))
+                    ),
+                    trailing_comments(node)
+                ]
             );
         }
     });
@@ -1592,9 +1691,14 @@ fn write_match_or_pattern<'a>(pattern: Expr<'a>, parent: PatternParent, f: &mut 
 
 // ───────────────────────────── records ─────────────────────────────
 
-/// Whether `class` is `record A { }`.
+/// True if `class` is `record A { }`.
 fn is_record<'a>(class: Class<'a>, f: &Formatter<'a>) -> bool {
     has_word(class.modifiers(), b"record", f)
+}
+
+/// Same, for a class in any file.
+pub(crate) fn is_flow_record(class: Class<'_>) -> bool {
+    class.file().is_flow() && has_word_in(class.file(), class.modifiers(), b"record")
 }
 
 /// The `{ }` of a record that has members. Prettier's `printClassBody`.
@@ -1634,45 +1738,40 @@ impl<'a> Format<'a> for FormatRecordProperty<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let member = self.0;
         let node = member.as_ast_nodes();
-        format_node(
-            member.span(),
-            || node.parent(),
-            f,
-            |f| {
-                write!(f, member.is_static().then_some("static "));
-                if let Some(key) = member.key() {
-                    format_computed_or_property_key(key, node, f);
-                }
-                write!(f, member.ty().map(FormatTypeAnnotation));
-                if let Some(value) = member.init() {
-                    write!(f, [" = ", value]);
-                }
-            },
-        );
+        format_node(node, f, |f| {
+            write!(f, member.is_static().then_some("static "));
+            if let Some(key) = member.key() {
+                format_computed_or_property_key(key, node, f);
+            }
+            write!(f, member.ty().map(FormatTypeAnnotation));
+            if let Some(value) = member.init() {
+                write!(f, [" = ", value]);
+            }
+        });
     }
 }
 
 // ───────────────────────────── comment types ─────────────────────────────
 
-/// Which of Prettier's two parsers reads a file of Flow at `path`: `babel-flow`, as opposed to
-/// `flow`, which somebody has to ask for, by name or with `.js.flow`.
-pub fn goes_to_babel(options: &FormatOptions, path: &[u8]) -> bool {
+/// True if Prettier parses the Flow file at `path` with `babel-flow` instead of `flow`. `flow` has to be requested
+/// explicitly, with the `parser` option or a `.js.flow` extension.
+pub fn is_parsed_by_babel_flow(options: &FormatOptions, path: &[u8]) -> bool {
     let name = options.filepath.as_deref().filter(|it| !it.is_empty());
     let is_flow_by_name =
         crate::text::ends_with_ignore_ascii_case(name.unwrap_or(path), b".js.flow");
     options.parser.as_deref() != Some(b"flow") && !is_flow_by_name
 }
 
-/// Whether `text` has something that looks like a comment for which [`uncommented`] is there.
+/// True if `text` contains something that looks like a comment that [`uncommented`] handles.
 pub fn may_have_comment_types(text: &[u8]) -> bool {
     let mut rest = text;
     while let Some(at) = bun_core::strings::index_of(rest, b"/*") {
         rest = rest.get(at + 2..).unwrap_or_default();
-        let blanks = rest
+        let indent_len = rest
             .iter()
             .take_while(|b| matches!(b, b' ' | b'\t'))
             .count();
-        let code = rest.get(blanks..).unwrap_or_default();
+        let code = rest.get(indent_len..).unwrap_or_default();
         if code.starts_with(b":") || code.starts_with(b"flow-include") {
             return true;
         }
@@ -1680,9 +1779,9 @@ pub fn may_have_comment_types(text: &[u8]) -> bool {
     false
 }
 
-/// Babel's plugin `flowComments`, which `babel-flow` has and `flow` has not: what is in `/*:: */`,
-/// `/*flow-include */` and `/*: */` is code, and Prettier prints it as such. Returns the text that
-/// has to be parsed and formatted in place of `file`, if it has such a comment.
+/// Babel's `flowComments` plugin, which `babel-flow` enables and `flow` doesn't. The content of `/*:: */`,
+/// `/*flow-include */` and `/*: */` is code, and Prettier prints it as code. Returns the text to parse and format in
+/// place of `file`, if it has such a comment.
 pub fn uncommented<'a>(file: &'a File<'a>) -> Option<Vec<u8>> {
     let text = file.text();
     let mut out: Option<Vec<u8>> = None;
@@ -1696,11 +1795,11 @@ pub fn uncommented<'a>(file: &'a File<'a>) -> Option<Vec<u8>> {
         else {
             continue;
         };
-        let blanks = inner
+        let indent_len = inner
             .iter()
             .take_while(|b| matches!(b, b' ' | b'\t'))
             .count();
-        let code = inner.get(blanks..).unwrap_or_default();
+        let code = inner.get(indent_len..).unwrap_or_default();
         let code = match code {
             [b':', b':', code @ ..] => code,
             [b':', ..] => code,
@@ -1709,38 +1808,38 @@ pub fn uncommented<'a>(file: &'a File<'a>) -> Option<Vec<u8>> {
                 None => continue,
             },
         };
-        // The length of the line that `rest` starts with, if there are only blanks on it.
+        // Returns the length of the line that `rest` starts with, if it contains only spaces and tabs.
         let blank_line = |rest: &[u8]| {
-            let blanks = rest
+            let indent_len = rest
                 .iter()
                 .take_while(|b| matches!(b, b' ' | b'\t'))
                 .count();
-            match rest.get(blanks..) {
-                Some([b'\r', b'\n', ..]) => Some(blanks + 2),
-                Some([b'\r' | b'\n', ..]) => Some(blanks + 1),
+            match rest.get(indent_len..) {
+                Some([b'\r', b'\n', ..]) => Some(indent_len + 2),
+                Some([b'\r' | b'\n', ..]) => Some(indent_len + 1),
                 _ => None,
             }
         };
         let out = out.get_or_insert_with(|| Vec::with_capacity(text.len()));
         out.extend_from_slice(text.get(copied..span.start as usize).unwrap_or_default());
-        // A `/*::` that is alone on its line leaves no line behind.
-        let blanks_before = out.get(out.trim_ascii_end().len()..).unwrap_or_default();
-        let is_at_start_of_line = blanks_before.len() == out.len()
-            || bun_core::strings::index_of_any(blanks_before, b"\r\n").is_some();
+        // A `/*::` that's alone on its line doesn't leave an empty line behind.
+        let whitespace_before = out.get(out.trim_ascii_end().len()..).unwrap_or_default();
+        let is_at_start_of_line = whitespace_before.len() == out.len()
+            || bun_core::strings::index_of_any(whitespace_before, b"\r\n").is_some();
         let code = match blank_line(code).filter(|_| is_at_start_of_line) {
             Some(line) => code.get(line..).unwrap_or_default(),
             None => code,
         };
         out.extend_from_slice(code);
         copied = span.end as usize;
-        // For Prettier no empty line follows what ends before a `*/`.
+        // For Prettier, code that ends right before a `*/` is never followed by an empty line.
         let rest = text.get(copied..).unwrap_or_default();
         let Some(line) = blank_line(rest) else {
             continue;
         };
-        // A `*/` that starts its line leaves no line behind.
-        let blanks_at_the_end = code.get(code.trim_ascii_end().len()..).unwrap_or_default();
-        let starts_line = bun_core::strings::index_of_any(blanks_at_the_end, b"\r\n").is_some();
+        // A `*/` that starts its line doesn't leave an empty line behind.
+        let trailing_whitespace = code.get(code.trim_ascii_end().len()..).unwrap_or_default();
+        let starts_line = bun_core::strings::index_of_any(trailing_whitespace, b"\r\n").is_some();
         if !starts_line {
             out.extend_from_slice(rest.get(..line).unwrap_or_default());
         }

@@ -6,29 +6,51 @@ use crate::options::TrailingSeparator;
 use crate::prelude::*;
 use crate::write;
 
-/// oxfmt sees no empty line in `a: 1\n\n, b: 2`.
-fn comma_ends_the_search_for_line_breaks(f: &Formatter<'_>) -> bool {
+/// oxfmt doesn't see an empty line in `a: 1\n\n, b: 2`.
+fn line_break_search_stops_at_comma(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
 impl<'a> Formatter<'a> {
-    /// The number of line breaks before the node at `span`, or before the comments that lead up
-    /// to it.
+    /// Returns the number of line breaks before the node at `span`, or before its leading comments.
     #[inline]
     pub(crate) fn lines_before(&self, span: Span) -> usize {
-        let looks_past_comma = !comma_ends_the_search_for_line_breaks(self);
+        let looks_past_comma = !line_break_search_stops_at_comma(self);
+        if self.is_quiet() {
+            return (self.source_text()).get_lines_before(span, None, looks_past_comma);
+        }
+        self.lines_before_node_or_its_comments(span, looks_past_comma)
+    }
+
+    fn lines_before_node_or_its_comments(&self, span: Span, looks_past_comma: bool) -> usize {
+        let directly_before = self.comments().first_leading_comment_before(span.start);
+        // `a\n\n// comment\n, b`: the comment leads `b` too.
+        let end_of_token_before = match directly_before {
+            Some(comment) => comment.prev_token_end() as usize,
+            None => {
+                let before = self.source_text().as_bytes().get(..span.start as usize);
+                before.unwrap_or_default().trim_ascii_end().len()
+            }
+        };
+        let before_comma = (self.source_text().as_bytes().get(..end_of_token_before))
+            .and_then(|before| before.strip_suffix(b","))
+            .and_then(|before| {
+                self.comments()
+                    .first_leading_comment_before(before.len() as u32)
+            });
+        let first_leading_comment = before_comma.or(directly_before);
         self.source_text().get_lines_before(
             span,
-            self.comments().first_unprinted_span(),
+            first_leading_comment.map(|comment| comment.span()),
             looks_past_comma,
         )
     }
 
-    /// Whether nothing has been written since the start of a group but what the group starts a
-    /// line with if it breaks.
+    /// True if nothing has been written since the start of a group except the indent and soft line break that a broken
+    /// group starts with.
     ///
-    /// All that a group with nothing but text in it does is that the printer measures again from
-    /// there on, as it does from the start of any group. So here such a group makes no difference.
+    /// The only effect of a group that contains nothing but text is that the printer measures again from there, as it
+    /// does at the start of any group. So adding such a group here makes no difference.
     pub(crate) fn is_at_start_of_group(&self) -> bool {
         let is_indentation = |it: &&FormatElement| {
             matches!(
@@ -62,12 +84,9 @@ impl<'a> Formatter<'a> {
         JoinNodesBuilder::new(space(), self)
     }
 
-    /// Formats `content` only to see whether it breaks. The comments in it are not marked as
-    /// printed.
+    /// Formats `content` only to see whether it breaks. The comments in it aren't marked as printed.
     pub(crate) fn speculate_will_break(&mut self, content: &(impl Format<'a> + Spanned)) -> bool {
         let snapshot = self.comments().snapshot();
-        self.comments_mut()
-            .skip_comments_before(content.span().start);
         let will_break = match self.intern(content) {
             Some(element) => element.will_break(self),
             None => false,
@@ -78,8 +97,7 @@ impl<'a> Formatter<'a> {
 }
 
 impl<'a, Separator: Format<'a>> JoinBuilder<'_, 'a, Separator> {
-    /// Writes `separator` after each entry. Whether it is written after the last depends on
-    /// `trailing_separator`.
+    /// Writes `separator` after each entry. `trailing_separator` decides whether it's written after the last one.
     pub(crate) fn entries_with_trailing_separator<F: Format<'a> + Spanned>(
         &mut self,
         entries: impl IntoIterator<Item = F>,
@@ -112,24 +130,29 @@ impl<'fmt, 'a, Separator: Format<'a>> JoinNodesBuilder<'fmt, 'a, Separator> {
         }
     }
 
-    /// `span`: of the node that `content` writes.
+    /// `span` is the span of the node that `content` writes.
     pub(crate) fn entry(&mut self, span: Span, content: &(impl Format<'a> + ?Sized)) {
         self.separator_no_entry(span);
         self.has_elements = true;
         content.fmt(self.fmt);
     }
 
-    /// [`JoinNodesBuilder::entry`], before which an empty line is not kept.
+    /// [`JoinNodesBuilder::entry`], with an empty line before it.
+    pub(crate) fn entry_after_empty_line(&mut self, content: &(impl Format<'a> + ?Sized)) {
+        if self.has_elements {
+            write!(self.fmt, empty_line());
+        }
+        self.has_elements = true;
+        content.fmt(self.fmt);
+    }
+
+    /// [`JoinNodesBuilder::entry`], but without keeping an empty line before it.
     pub(crate) fn entry_without_empty_line(&mut self, content: &(impl Format<'a> + ?Sized)) {
         if self.has_elements {
             self.separator.fmt(self.fmt);
         }
         self.has_elements = true;
         content.fmt(self.fmt);
-    }
-
-    pub(crate) fn has_comment_before(&self, start: u32) -> bool {
-        self.fmt.comments().has_comment_before(start)
     }
 
     pub(crate) fn separator_no_entry(&mut self, span: Span) {
@@ -166,7 +189,7 @@ impl<'fmt, 'a, Separator: Format<'a>> JoinNodesBuilder<'fmt, 'a, Separator> {
         self
     }
 
-    /// Whether there is an empty line before the node at `span`.
+    /// True if there's an empty line before the node at `span`.
     pub(crate) fn has_lines_before(&self, span: Span) -> bool {
         self.fmt.lines_before(span) > 1
     }
@@ -236,8 +259,7 @@ impl<I: Iterator<Item = E>, E> FormatSeparatedIter<I, E> {
         self
     }
 
-    /// The group that decides whether an allowed trailing separator is written. By default, the
-    /// enclosing one.
+    /// Sets the group that decides whether an allowed trailing separator is written. Defaults to the enclosing group.
     #[must_use]
     pub(crate) fn with_group_id(mut self, group_id: Option<GroupId>) -> Self {
         self.options.group_id = group_id;

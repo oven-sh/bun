@@ -21,6 +21,8 @@
 #include <JavaScriptCore/JSTypedArrays.h>
 #include <JavaScriptCore/TypedArrayType.h>
 #include <cmath>
+#include <wtf/StackPointer.h>
+#include <wtf/StdLibExtras.h>
 
 namespace Bun {
 namespace WebStreams {
@@ -169,6 +171,17 @@ void queueStreamsMicrotask(JSGlobalObject* globalObject, JSFunction* handler, JS
 {
     QueuedTask task { nullptr, InternalMicrotask::BunInvokeJobWithArguments, 0, globalObject, handler, value, context };
     globalObject->vm().queueMicrotask(WTF::move(task));
+}
+
+bool streamLinkMustDefer(JSC::VM& vm)
+{
+    // Leave room for the source's pull() or cancel() at the end of a chain. A JS call throws RangeError at the soft limit.
+#if ASAN_ENABLED
+    static constexpr size_t headroom = 384 * KB;
+#else
+    static constexpr size_t headroom = 128 * KB;
+#endif
+    return reinterpret_cast<uintptr_t>(currentStackPointer()) < reinterpret_cast<uintptr_t>(vm.softStackLimit()) + headroom;
 }
 
 bool canTransferArrayBuffer(JSC::ArrayBuffer& buffer)
@@ -367,24 +380,8 @@ QueuingStrategyDict convertQueuingStrategyDict(JSGlobalObject* globalObject, JSV
 // For values that are provably not thenables (undefined, internal arrays/objects we
 // created): fulfill directly instead of running the observable resolve machinery.
 StreamAsyncContextScope::StreamAsyncContextScope(JSGlobalObject* globalObject, JSReadableStream* stream)
-    : m_vm(globalObject->vm())
+    : AsyncContextScope(globalObject, stream->m_asyncContext.get())
 {
-    JSValue snapshot = stream->m_asyncContext.get();
-    if (!snapshot || snapshot.isUndefinedOrNull())
-        return;
-    auto* asyncContextData = globalObject->m_asyncContextData.get();
-    JSValue current = asyncContextData->getInternalField(0);
-    m_asyncContextData = asyncContextData;
-    m_previous = current;
-    if (snapshot == current)
-        return;
-    asyncContextData->putInternalField(m_vm, 0, snapshot);
-}
-
-StreamAsyncContextScope::~StreamAsyncContextScope()
-{
-    if (m_asyncContextData)
-        m_asyncContextData->putInternalField(m_vm, 0, m_previous);
 }
 
 // obj.name(args...) with obj as |this|; the EMPTY value if `name` is not callable.
@@ -479,6 +476,19 @@ void rejectPromise(JSGlobalObject* globalObject, JSPromise* promise, JSValue rea
 void markPromiseAsHandled(VM&, JSPromise* promise)
 {
     promise->markAsHandled();
+}
+
+void rejectPromiseAsHandled(JSGlobalObject* globalObject, JSPromise* promise, JSValue reason)
+{
+    promise->rejectAsHandled(getVM(globalObject), reason);
+}
+
+JSPromise* promiseRejectedWithAsHandled(JSGlobalObject* globalObject, JSValue reason)
+{
+    auto& vm = getVM(globalObject);
+    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    promise->rejectAsHandled(vm, reason);
+    return promise;
 }
 
 // The stream-level closed promise. The Pending guard makes every settle site unconditionally

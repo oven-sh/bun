@@ -1,12 +1,16 @@
+use super::class::dangling_comments_with_marker;
 use super::decorators::FormatDecorators;
-use crate::js::format::{FormatTypeAnnotation, format_node_without_comments};
+use crate::js::attach::Marker;
+use crate::js::format::{FormatTypeAnnotation, format_node};
 use crate::js::utils::call_expression::{
     is_angular_test_wrapper, is_test_call_expression_in_flavor,
 };
+use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
+use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 use crate::{format_args, write};
 
-/// The `( .. )` of a function, with the `this` parameter.
+/// A function's `( .. )`, including the `this` parameter.
 #[derive(Copy, Clone)]
 pub(crate) struct FormatFormalParameters<'a>(pub(crate) Func<'a>);
 
@@ -18,16 +22,7 @@ impl Spanned for FormatFormalParameters<'_> {
 
 impl<'a> Format<'a> for FormatFormalParameters<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        let func = self.0;
-        if f.is_quiet() {
-            return write_formal_parameters(func, f);
-        }
-        format_node_without_comments(
-            self.span(),
-            || func.as_ast_nodes(),
-            f,
-            |f| write_formal_parameters(func, f),
-        );
+        write_formal_parameters(self.0, f);
     }
 }
 
@@ -35,33 +30,35 @@ fn has_modifier(param: Param<'_>) -> bool {
     param.modifiers().iter().any(|it| it.decorator().is_none())
 }
 
+/// Prettier's `printFunctionParameters`.
 fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
-    let has_parameters = func.params_with_this().next().is_some();
-    if f.is_quiet() {
-        return match has_parameters {
-            true => write_parameters_in_parentheses(func, Span::default(), f),
-            false => write!(f, "()"),
-        };
-    }
-    let span = FormatFormalParameters(func).span();
-    let comments = f.comments().comments_before(span.start);
-    if !comments.is_empty() {
-        let count = comments_trailing_the_name(func, has_parameters, comments, f.options().flavor);
-        if count > 0 {
-            write!(
+    // Comments attached to the parentheses. oxfmt prints `class A { b ⏎// comment⏎ () {} }` as `b () {}⏎// comment`,
+    // and `b /* prettier-ignore */ ( c ) {}` as `b/* prettier-ignore */ ( c ) {}`. Prettier only has such comments in
+    // Flow: `declare function a /* comment */ (): void`
+    if !f.is_quiet() {
+        let node = AstNodes::FormalParameters(func);
+        let owned = f.comments().of_node(node);
+        if owned.is_ignored {
+            return write!(
                 f,
                 [
-                    space(),
-                    FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default())
+                    FormatLeadingComments::Comments(owned.leading),
+                    FormatSuppressedNode(node.span())
                 ]
             );
         }
+        if !owned.leading.is_empty() {
+            write!(
+                f,
+                [space(), FormatTrailingComments::Comments(owned.leading)]
+            );
+        }
     }
-    write_parameters_in_parentheses(func, span, f);
-}
-
-/// `span`: of the parentheses. It is only looked at if there are no parameters.
-fn write_parameters_in_parentheses<'a>(func: Func<'a>, span: Span, f: &mut Formatter<'a>) {
+    if func.params().is_empty() && func.this_param().is_none() {
+        write!(f, "(");
+        write_dangling_comments_in_parentheses(func, f);
+        return write!(f, ")");
+    }
     if f.file().is_flow() && super::flow::is_shorthand_function_type(func) {
         return super::flow::write_shorthand_parameter(func, f);
     }
@@ -73,11 +70,9 @@ fn write_parameters_in_parentheses<'a>(func: Func<'a>, span: Span, f: &mut Forma
     let can_hug = should_hug_function_parameters(func, parentheses_not_needed, f)
         && !has_any_decorated_parameter;
 
-    let layout = if func.params().is_empty() && func.this_param().is_none() {
-        ParameterLayout::NoParameters
-    } else if can_hug
-        // The callback of a test. Not that of `inject`, `async`, `fakeAsync` and `waitForAsync`,
-        // whose parameters can break.
+    let layout = if can_hug
+        // A test's callback. Not the callbacks of `inject`, `async`, `fakeAsync` and `waitForAsync`, whose parameters
+        // can break.
         || matches!(
             func.owner(),
             Node::Expr(function) if matches!(
@@ -86,8 +81,7 @@ fn write_parameters_in_parentheses<'a>(func: Func<'a>, span: Span, f: &mut Forma
                     && is_test_call_expression_in_flavor(call, f)
                     && !is_angular_test_wrapper(call)
             )
-        )
-    {
+        ) {
         ParameterLayout::Hug
     } else {
         ParameterLayout::Default
@@ -97,47 +91,6 @@ fn write_parameters_in_parentheses<'a>(func: Func<'a>, span: Span, f: &mut Forma
         write!(f, "(");
     }
     match layout {
-        // Prettier takes a comment before the `=>` for one between the parentheses, finds none
-        // there, and is left with the line breaks around it. The empty text is what makes the
-        // second one count.
-        ParameterLayout::NoParameters
-            if !f.is_quiet()
-                && !f.comments().has_comment_in_span(span)
-                && func.arrow_span().is_some_and(|token| {
-                    let start = func.return_type().map_or(span.end, |ty| ty.span().end);
-                    f.comments().has_comment_in_range(start, token.start)
-                }) =>
-        {
-            write!(
-                f,
-                [
-                    indent(&format_args!(soft_line_break(), "")),
-                    soft_line_break()
-                ]
-            );
-        }
-        // What is left of the comments before the `(` leads what follows the `)`.
-        ParameterLayout::NoParameters
-            if f.is_quiet() || !f.comments().has_comment_in_span(span) => {}
-        // Prettier's `printDanglingCommentsInList`: they break along with the rest of the signature.
-        ParameterLayout::NoParameters => {
-            let ends_with_line_comment = f
-                .comments()
-                .comments_before(span.end)
-                .last()
-                .is_some_and(|it| it.is_line());
-            write!(
-                f,
-                indent(&format_args!(
-                    soft_line_break(),
-                    format_dangling_comments(span)
-                ))
-            );
-            match ends_with_line_comment {
-                true => write!(f, hard_line_break()),
-                false => write!(f, soft_line_break()),
-            }
-        }
         ParameterLayout::Hug => write!(f, ParameterList::with_layout(func, layout)),
         ParameterLayout::Default => write!(
             f,
@@ -149,77 +102,91 @@ fn write_parameters_in_parentheses<'a>(func: Func<'a>, span: Span, f: &mut Forma
     }
 }
 
-/// How many of `comments`, which are before the `(` of `func`, trail what is before them. The others
-/// lead what follows: the first parameter, the return type or the body.
-///
-/// Prettier's `handleFunctionNameComments`, and what it does with any comment: on a line of its own
-/// it leads what follows, at the end of a line it trails what is before.
-fn comments_trailing_the_name(
-    func: Func<'_>,
-    has_parameters: bool,
-    comments: &[Comment],
-    flavor: Flavor,
-) -> usize {
-    match func.kind() {
-        FnKind::Decl | FnKind::Expr | FnKind::Arrow if func.has_body() => {
-            if !follows_name_or_type_parameters(func) {
-                return 0;
-            }
-            // There is no such rule for an arrow function: with nothing but a `(` between it and the
-            // first parameter, the comment leads that.
-            let leads_parameter = func.is_arrow() && has_parameters;
-            (comments.iter())
-                .take_while(|it| {
-                    !it.preceded_by_newline() && (!leads_parameter || it.followed_by_newline())
-                })
-                .count()
-        }
-        _ if has_parameters && !matches!(func.as_ast_nodes(), AstNodes::Function(_)) => 0,
-        // Babel has no node for the function of a method: on a line of its own the comment is between the key and
-        // the first parameter, which it leads. oxfmt has that node.
-        FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor
-            if has_parameters && func.file().is_javascript() && !flavor.is_oxfmt() =>
-        {
-            (comments.iter())
-                .take_while(|it| !it.preceded_by_newline())
-                .count()
-        }
-        _ => comments.len(),
+/// The node whose parameters Prettier prints for `func`. It owns the comments in empty parentheses. Babel has no
+/// `FunctionExpression` in a method, so there it's the method.
+fn function_node<'a>(func: Func<'a>, f: &Formatter<'a>) -> AstNodes<'a> {
+    let node = func.as_ast_nodes();
+    if !matches!(node, AstNodes::Function(_)) || !f.context().has_babel_tree() {
+        return node;
+    }
+    match func.owner() {
+        Node::Member(member) => member.as_ast_nodes(),
+        Node::Expr(function) => match function.parent() {
+            Node::Prop(property) if property.func() == Some(func) => property.as_ast_nodes(),
+            _ => node,
+        },
+        _ => node,
     }
 }
 
-/// Whether Prettier has a node before the `(` of `func`, in the node that the parameters are in. The
-/// function of a method with a body starts at the type parameters or the `(`.
-pub(crate) fn follows_name_or_type_parameters(func: Func<'_>) -> bool {
-    !func.type_params().is_empty()
-        || match func.kind() {
-            FnKind::Decl | FnKind::Expr => func.name().is_some(),
-            FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor => {
-                !func.has_body()
-            }
-            _ => false,
-        }
-}
-
-/// The comments in `span`, whether they are printed or not. For what is asked several times while
-/// a node is written, and has to get the same answer.
-pub(crate) fn comments_between<'a>(
-    span: Span,
-    f: &Formatter<'a>,
-) -> impl Iterator<Item = &'a Comment> + use<'a> {
-    let Span { start, end } = span;
-    let printed = f
-        .comments()
-        .printed_comments()
+/// `function f(/* comment */) {}`: Prettier's `printDanglingCommentsInList`.
+fn write_dangling_comments_in_parentheses<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
+    if f.is_quiet() {
+        return;
+    }
+    let node = function_node(func, f);
+    let all_dangling_comments = f.comments().of_node(node).dangling;
+    if all_dangling_comments.is_empty() {
+        return;
+    }
+    // `() /* comment */ => a`: Prettier means to skip the comment before the `=>`, but misspells `comment.marker`, so
+    // it prints the line breaks even with no comment between them. The empty text keeps the printer from merging the
+    // two line breaks.
+    let comments = dangling_comments_with_marker(node, Marker::None, f);
+    let format_comments = FormatDanglingComments::Comments {
+        comments,
+        indent: DanglingIndentMode::None,
+    };
+    write!(
+        f,
+        indent(&format_args!(
+            soft_line_break(),
+            comments.is_empty().then_some(""),
+            format_comments
+        ))
+    );
+    match all_dangling_comments
         .iter()
-        .rev()
-        .take_while(move |c| c.start() >= start);
-    printed
-        .chain(f.comments().comments_before_iter(end))
-        .filter(move |c| c.start() >= start && c.end() <= end)
+        .any(|comment| comment.is_line())
+    {
+        true => write!(f, hard_line_break()),
+        false => write!(f, soft_line_break()),
+    }
 }
 
-/// The modifiers of a parameter, in the order that they are written in.
+/// Prettier's `hasComment(parameter)`. In ESTree a parameter without a default value is the same node as its pattern.
+///
+/// The parameter's pattern and type also call this while they're printed, so [`Formatter::is_quiet`] can't be used as a
+/// shortcut here.
+fn parameter_has_comment<'a>(param: Param<'a>, f: &Formatter<'a>) -> bool {
+    let comments = f.comments();
+    (comments.is_owner(Node::Param(param)) && comments.has_comments(param.as_ast_nodes()))
+        || (comments.is_owner(Node::Pat(param.pat()))
+            && param.default().is_none()
+            && !hugs_pattern_with_comments(f)
+            && comments.has_comments(param.pat().as_ast_nodes()))
+}
+
+/// ```js
+/// function a(          function a({
+///   {                    // comment
+///     // comment       }) {}
+///   },
+/// ) {}
+/// ```
+///
+/// Prettier is on the left, oxfmt on the right.
+fn hugs_pattern_with_comments(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// oxfmt prints `function a({ b } // comment⏎ = {}) {}` as `function a({⏎  b,⏎} = {}) {} // comment`, Prettier as
+/// `function a({ b } = {}) {} // comment`.
+fn comment_after_pattern_breaks_it(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// A parameter's modifiers, in print order.
 const MODIFIERS: [(Flags, &str); 6] = [
     (Flags::PUBLIC, "public"),
     (Flags::PROTECTED, "protected"),
@@ -248,61 +215,72 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
         return match has_decorators {
             true => write!(
                 f,
-                group(&format_args!(FormatDecorators::of_param(param), content))
+                group(&format_args!(FormatDecorators::from_param(param), content))
             ),
             false => write!(f, content),
         };
     }
 
+    let pattern = param.pat();
+    let type_annotation = param.ty().map(FormatTypeAnnotation);
+    let is_group = !matches!(pattern.kind(), PatKind::Ident(_)) || every_parameter_is_a_group(f);
     let content = format_with(|f| {
-        let left = format_with(|f| {
-            let modifiers = param.modifiers();
-            let keywords: &[_] = match modifiers.is_empty() {
-                true => &[],
-                false => &MODIFIERS,
-            };
-            for &(flag, keyword) in keywords {
-                if modifiers.iter().any(|it| it.flag() == flag) {
-                    write!(f, [keyword, space()]);
-                }
+        let modifiers = param.modifiers();
+        let keywords: &[_] = match modifiers.is_empty() {
+            true => &[],
+            false => &MODIFIERS,
+        };
+        for &(flag, keyword) in keywords {
+            if modifiers.iter().any(|it| it.flag() == flag) {
+                write!(f, [keyword, space()]);
             }
-            write!(f, [param.pat(), param.is_optional().then_some("?")]);
-            if let Some(type_annotation) = param.ty().map(FormatTypeAnnotation) {
-                if !f.is_quiet()
-                    && f.comments()
-                        .has_comment_before(type_annotation.span().start)
-                {
-                    write!(f, space());
-                }
-                write!(f, type_annotation);
+        }
+        let left = format_with(|f| {
+            let optional = param.is_optional().then_some("?");
+            match param
+                .default()
+                .filter(|_| !comment_after_pattern_breaks_it(f))
+            {
+                Some(_) => write!(
+                    f,
+                    [
+                        FormatNodeWithoutTrailingComments(&pattern),
+                        optional,
+                        (type_annotation.as_ref()).map(FormatNodeWithoutTrailingComments)
+                    ]
+                ),
+                None => write!(f, [pattern, optional, type_annotation]),
             }
         });
 
-        if let Some(initializer) = param.default() {
-            let left = (&left).memoized();
-            // So that the comments in it are not taken for comments before the `=`.
-            left.inspect(f);
-            let leading_comments = f
-                .comments()
-                .own_line_comments_before(initializer.span().start);
-            write!(
+        let Some(initializer) = param.default() else {
+            return write!(f, left);
+        };
+        let write_assignment_pattern = |f: &mut Formatter<'a>| {
+            // `({ a } // comment⏎ = {}) => {}`: the comment doesn't break the pattern.
+            match is_group {
+                true => write!(f, group(&left)),
+                false => write!(f, left),
+            }
+            write!(f, trailing_comments(pattern.as_ast_nodes()));
+            if let Some(ty) = param.ty() {
+                write!(f, trailing_comments(AstNodes::TSTypeAnnotation(ty)));
+            }
+            write!(f, [space(), "=", space(), initializer]);
+        };
+        // `private a = 1`: the `AssignmentPattern` in a `TSParameterProperty` is its own node, except in oxfmt.
+        match param.is_parameter_property() && !f.options().flavor.is_oxfmt() {
+            true => format_node(
+                AstNodes::AssignmentPattern(Node::Param(param)),
                 f,
-                [
-                    FormatLeadingComments::Comments(leading_comments),
-                    group(&left),
-                    space(),
-                    "=",
-                    space(),
-                    initializer
-                ]
-            );
-        } else {
-            write!(f, left);
+                write_assignment_pattern,
+            ),
+            false => write_assignment_pattern(f),
         }
     });
 
-    // A group makes no difference to what has no place to break at.
-    if !has_decorators && cannot_break(param, f) {
+    // A group makes no difference if nothing inside can break.
+    if !has_decorators && (!is_group || cannot_break(param, f)) {
         return write!(f, content);
     }
 
@@ -315,16 +293,16 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
         write!(f, content);
     } else if !has_decorators {
         write!(f, group(&content));
-    } else if decorators_of_parameter_are_a_group_of_their_own(f) {
+    } else if parameter_decorators_get_their_own_group(f) {
         write!(
             f,
-            [group(&FormatDecorators::of_param(param)), group(&content)]
+            [group(&FormatDecorators::from_param(param)), group(&content)]
         );
     } else {
         write!(
             f,
             group(&format_args!(
-                FormatDecorators::of_param(param),
+                FormatDecorators::from_param(param),
                 group(&content)
             ))
         );
@@ -337,12 +315,26 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
 ///                            | undefined,
 /// ```
 ///
-/// Prettier on the left: what does not fit breaks after the decorators first. oxfmt on the right.
-fn decorators_of_parameter_are_a_group_of_their_own(f: &Formatter<'_>) -> bool {
+/// Prettier is on the left: if it doesn't fit, the line after the decorators breaks first. oxfmt is on the right.
+fn parameter_decorators_get_their_own_group(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// Whether `param` is a name, and its type a keyword or a name.
+/// ```ts
+/// constructor(               constructor(
+///   private a: /* comment */   private a: /* comment */ B,
+///   B,                         c,
+///   c,                       ) {}
+/// ) {}
+/// ```
+///
+/// Prettier is on the left, for `a: /* comment */⏎B`: only a pattern is a group, so the line break after the comment
+/// breaks with the parameters. oxfmt is on the right.
+fn every_parameter_is_a_group(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// True if `param` is a plain name and its type is a keyword or a name.
 fn cannot_break<'a>(param: Param<'a>, f: &Formatter<'a>) -> bool {
     f.is_quiet()
         && param.default().is_none()
@@ -354,16 +346,14 @@ fn cannot_break<'a>(param: Param<'a>, f: &Formatter<'a>) -> bool {
         })
 }
 
-pub(crate) struct ParameterList<'a> {
+struct ParameterList<'a> {
     func: Func<'a>,
     layout: ParameterLayout,
 }
 
 #[derive(Debug, Copy, Clone)]
-pub(crate) enum ParameterLayout {
-    /// `()`
-    NoParameters,
-    /// The only parameter is written right after the `(`, even if it breaks:
+enum ParameterLayout {
+    /// The only parameter is printed right after the `(`, even if it breaks:
     ///
     /// ```javascript
     /// function test({
@@ -372,12 +362,12 @@ pub(crate) enum ParameterLayout {
     /// }) {}
     /// ```
     Hug,
-    /// On one line if they fit, otherwise each on its own line.
+    /// All on one line if they fit, otherwise each on its own line.
     Default,
 }
 
 impl<'a> ParameterList<'a> {
-    pub(crate) fn with_layout(func: Func<'a>, layout: ParameterLayout) -> Self {
+    fn with_layout(func: Func<'a>, layout: ParameterLayout) -> Self {
         Self { func, layout }
     }
 }
@@ -386,7 +376,7 @@ impl<'a> Format<'a> for ParameterList<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let params = self.func.params_with_this();
         match self.layout {
-            ParameterLayout::Default | ParameterLayout::NoParameters => {
+            ParameterLayout::Default => {
                 // Nothing can follow a rest parameter, not even a comma.
                 let trailing_separator = match self.func.params().last().is_some_and(Param::is_rest)
                 {
@@ -411,7 +401,7 @@ impl<'a> Format<'a> for ParameterList<'a> {
     }
 }
 
-/// `a => a`: whether the options ask for it and the parameters allow it.
+/// `a => a`: true if the options ask for it and the parameters allow it. Prettier's `shouldPrintParamsWithoutParens`.
 pub(crate) fn can_avoid_parentheses<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> bool {
     f.options().arrow_parentheses.is_as_needed()
         && arrow.params().len() == 1
@@ -424,10 +414,9 @@ pub(crate) fn can_avoid_parentheses<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> b
                 && !param.is_optional()
                 && param.default().is_none()
                 && matches!(param.pat().kind(), PatKind::Ident(_))
+                && !parameter_has_comment(param, f)
         })
-        && !f
-            .comments()
-            .has_comment_before(arrow.arrow_span().map_or(0, |token| token.start))
+        && (f.comments().of_node(arrow.as_ast_nodes()).dangling).is_empty()
 }
 
 /// Prettier's `shouldHugTheOnlyFunctionParameter`.
@@ -440,45 +429,12 @@ pub(crate) fn should_hug_function_parameters<'a>(
     if list.len() > 1 || list.last().is_some_and(Param::is_rest) {
         return false;
     }
-    // Not if there are comments around the only parameter. Those before the `(` that do not trail
-    // the name lead it.
-    let has_comments_around = |param: Param<'a>| {
-        let span = FormatFormalParameters(func).span();
-        let start = match func.kind() {
-            FnKind::Decl | FnKind::Expr | FnKind::Arrow if func.has_body() => {
-                (func.type_params().angle_brackets_span())
-                    .or_else(|| func.name().map(|it| it.span()))
-                    .map_or_else(|| func.span().start, |it| it.end)
-            }
-            _ => span.start,
-        };
-        let mut comments = comments_between(Span::new(start, span.end), f).peekable();
-        if comments.peek().is_none() {
-            return false;
-        }
-        let follows_name = follows_name_or_type_parameters(func);
-        let leads_parameter = |comment: &Comment| {
-            if !follows_name || comment.preceded_by_newline() {
-                return true;
-            }
-            match comment.start() >= span.start || func.is_arrow() {
-                // At the end of the line it trails the name.
-                true => !comment.followed_by_newline(),
-                false => false,
-            }
-        };
-        comments.any(|comment| {
-            comment.start() >= param.span().end
-                || (comment.end() <= param.span().start && leads_parameter(comment))
-        })
-    };
-
     if let Some(this_param) = func.this_param() {
         return list.is_empty()
             && this_param
                 .ty()
                 .is_some_and(|ty| matches!(ty.kind(), TypeKind::Object(_) | TypeKind::Mapped(_)))
-            && !has_comments_around(this_param);
+            && !parameter_has_comment(this_param, f);
     }
     let Some(only_parameter) = list.first() else {
         return false;
@@ -498,10 +454,10 @@ pub(crate) fn should_hug_function_parameters<'a>(
     is_huggable
         && !has_modifier(only_parameter)
         && !(f.file().is_flow() && super::flow::is_component(func, f))
-        && !has_comments_around(only_parameter)
+        && !parameter_has_comment(only_parameter, f)
 }
 
-/// Whether all parameters are plain names, without default values. A rest parameter is not.
+/// True if all parameters are plain names without default values. A rest parameter doesn't qualify.
 pub(crate) fn has_only_simple_parameters(func: Func<'_>, allow_type_annotations: bool) -> bool {
     func.params_with_this().all(|parameter| {
         !parameter.is_rest()

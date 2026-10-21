@@ -1,8 +1,8 @@
-//! oxfmt's `jsdoc` option: JSDoc comments are formatted the way
-//! [prettier-plugin-jsdoc](https://github.com/hosseinmd/prettier-plugin-jsdoc) does it.
+//! oxfmt's `jsdoc` option: formats JSDoc comments the way
+//! [prettier-plugin-jsdoc](https://github.com/hosseinmd/prettier-plugin-jsdoc) does.
 //!
-//! This follows `oxc_formatter`'s `formatter/jsdoc`, which is under the MIT license. The comments are read by
-//! `File::jsdoc`, descriptions are parsed by the parser for Markdown of this crate.
+//! This follows `oxc_formatter`'s `formatter/jsdoc`, which is under the MIT license. `File::jsdoc` parses the comments,
+//! and this crate's Markdown parser parses the descriptions.
 
 mod embedded;
 mod imports;
@@ -24,9 +24,9 @@ use crate::write;
 use bun_core::strings;
 use bun_lint::ast::jsdoc::JSDoc;
 
-/// Writes `comment` formatted, if the `jsdoc` option is set and it is a JSDoc comment that formatting changes.
-/// Returns whether it has been written.
-pub(crate) fn write_comment<'a>(comment: &Comment, f: &mut Formatter<'a>) -> bool {
+/// Writes the formatted `comment` if the `jsdoc` option is set and it's a JSDoc comment that formatting changes.
+/// Returns true if it wrote it.
+pub(crate) fn write_comment<'a>(comment: Comment<'_>, f: &mut Formatter<'a>) -> bool {
     let Some(options) = f.options().jsdoc else {
         return false;
     };
@@ -37,24 +37,24 @@ pub(crate) fn write_comment<'a>(comment: &Comment, f: &mut Formatter<'a>) -> boo
 }
 
 fn write_formatted<'a>(
-    comment: &Comment,
+    comment: Comment<'_>,
     options: &JsdocOptions,
     stack: &Stack,
     f: &mut Formatter<'a>,
 ) -> bool {
-    let content = f.source_text().text_for(&comment.span);
+    let content = f.source_text().text_for(&comment.span());
     if !content.starts_with(b"/**") {
         return false;
     }
     let docs = f.file().jsdoc();
-    // `/*****/` is none.
+    // `/*****/` isn't a JSDoc comment.
     let Some(first) = docs
-        .at(comment.span.start)
+        .at(comment.span().start)
         .filter(|doc| !doc.is_all_asterisks())
     else {
         return false;
     };
-    let before = f.source_text().text_for(&Span::before(0, comment.span));
+    let before = f.source_text().text_for(&Span::before(0, comment.span()));
     let tab_width = f.options().indent_width.value() as usize;
     let indent: usize = before
         .iter()
@@ -64,7 +64,8 @@ fn write_formatted<'a>(
         .sum();
     let available_width = (f.options().line_width.value() as usize).saturating_sub(indent);
     let write_lines = |lines: &[u8], f: &mut Formatter<'a>| {
-        write!(f, "/**");
+        // See `Comment::fmt`. Without the boundary, a pending line suffix comment would be printed after the `/**`.
+        write!(f, [line_suffix_boundary(), "/**"]);
         for line in strings::split(lines, b"\n") {
             write!(f, [hard_line_break(), " *"]);
             if !line.is_empty() {
@@ -74,7 +75,7 @@ fn write_formatted<'a>(
         }
         write!(f, [hard_line_break(), " */"]);
     };
-    // An escape or a blank that is gone would end the comment early.
+    // Removing an escape or a space could produce a `*/`, which would end the comment early.
     let format = |doc: JSDoc<'a>, f: &Formatter<'a>| {
         format_jsdoc_comment(doc, f.file(), options, f.options(), available_width, stack).filter(
             |formatted| match formatted {
@@ -85,27 +86,6 @@ fn write_formatted<'a>(
             },
         )
     };
-
-    // Comments that directly follow each other have been made one. Each is formatted by itself, and they go on
-    // following each other directly if each has several lines.
-    if first.comment_span().end < comment.span.end {
-        let mut formatted = Vec::new();
-        let mut start = comment.span.start;
-        while start < comment.span.end {
-            let Some(doc) = docs.at(start) else {
-                return false;
-            };
-            match format(doc, f) {
-                Some(FormattedJsdoc::MultiLine(lines)) => formatted.push(lines),
-                _ => return false,
-            }
-            start = doc.comment_span().end;
-        }
-        for lines in &formatted {
-            write_lines(lines, f);
-        }
-        return true;
-    }
 
     match format(first, f) {
         None => return false,

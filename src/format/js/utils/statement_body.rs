@@ -1,15 +1,23 @@
 use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
-use crate::js::trivia::{comments_stay_between_head_and_body, write_head_body_separator};
+use crate::js::trivia::comments_stay_between_head_and_body;
 use crate::prelude::*;
 use crate::{format_args, write};
 
-/// Prettier's `printClause`: the body of an `if`, an `else`, a loop or a `with`. After a space if
-/// it is a block, otherwise on the next line if it does not fit.
-///
-/// The comments between the head of the statement and the body lead the body.
+/// Prettier's `printClause`: the body of an `if`, `else`, loop or `with`. A block goes after a space. Anything else
+/// goes on the next line if it doesn't fit.
 pub(crate) struct FormatStatementBody<'a> {
     body: Stmt<'a>,
     force_space: bool,
+    trailing_comments: TrailingComments,
+}
+
+/// Which of a body's trailing comments are printed with it. The caller prints the others.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum TrailingComments {
+    All,
+    /// The ones on the line where the body ends.
+    OnSameLine,
+    None,
 }
 
 impl<'a> FormatStatementBody<'a> {
@@ -17,6 +25,7 @@ impl<'a> FormatStatementBody<'a> {
         Self {
             body,
             force_space: false,
+            trailing_comments: TrailingComments::All,
         }
     }
 
@@ -25,44 +34,64 @@ impl<'a> FormatStatementBody<'a> {
         self.force_space = forced;
         self
     }
+
+    pub(crate) fn with_trailing_comments(mut self, trailing_comments: TrailingComments) -> Self {
+        self.trailing_comments = trailing_comments;
+        self
+    }
 }
 
 impl<'a> Format<'a> for FormatStatementBody<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
+        if !f.is_quiet() {
+            return self.fmt_with_comments(f);
+        }
         let body = self.body;
-        let content = FormatBodyAndItsComments(body);
-        if comments_stay_between_head_and_body(f)
-            && matches!(body.kind(), StmtKind::Empty | StmtKind::Block(_))
-        {
-            if !matches!(body.kind(), StmtKind::Empty)
-                || f.comments().has_comment_before(body.span().start)
-            {
-                write_head_body_separator(body.span().start, f);
+        match body.kind() {
+            StmtKind::Empty => write!(f, body),
+            StmtKind::Block(_) => write!(f, [space(), body]),
+            _ if self.force_space => write!(f, [space(), body]),
+            _ => write!(f, soft_line_indent_or_space(&body)),
+        }
+    }
+}
+
+impl<'a> FormatStatementBody<'a> {
+    /// Not inlined: `if (a) if (b) ..` is nested, and inlining would add this function's stack use to every level.
+    #[inline(never)]
+    fn fmt_with_comments(&self, f: &mut Formatter<'a>) {
+        let body = self.body;
+        let content = format_with(|f| {
+            if f.is_quiet() || self.trailing_comments == TrailingComments::All {
+                return write!(f, body);
             }
+            write!(f, FormatNodeWithoutTrailingComments(&body));
+            if self.trailing_comments == TrailingComments::OnSameLine {
+                let (same_line, _) =
+                    split_at_first_own_line(f.comments().of_node(body.as_ast_nodes()).trailing);
+                write!(f, FormatTrailingComments::Comments(same_line));
+            }
+        });
+        let first_leading_comment = match f.is_quiet() {
+            true => None,
+            false => f.comments().of_node(body.as_ast_nodes()).leading.first(),
+        };
+        let is_empty = matches!(body.kind(), StmtKind::Empty);
+        let is_block = matches!(body.kind(), StmtKind::Block(_));
+        if first_leading_comment.is_some()
+            && (is_empty || is_block)
+            && comments_stay_between_head_and_body(f)
+        {
+            write_space_before_body(body.as_ast_nodes(), f);
             return write!(f, content);
         }
-        if matches!(body.kind(), StmtKind::Empty) {
-            // Not `is_quiet`: to the statement that this is the body of, a `;` at its end and the
-            // comments before that are not part of it.
-            let has_comments = f.comments().has_comment_before(body.span().start);
-            return write!(
-                f,
-                [
-                    maybe_space(has_comments),
-                    format_leading_comments(body.span()),
-                    content
-                ]
-            );
+        if is_empty {
+            return write!(f, [maybe_space(first_leading_comment.is_some()), content]);
         }
 
-        let first_comment = match f.is_quiet() {
-            true => None,
-            false => f.comments().comments_before(body.span().start).first(),
-        };
-        let is_block = matches!(body.kind(), StmtKind::Block(_));
         // Prettier's `shouldPrintLeadingHardline`
-        if first_comment
-            .is_some_and(|comment| comment.is_multiline_block() || comment.preceded_by_newline())
+        if first_leading_comment
+            .is_some_and(|comment| comment.is_multiline_block() || comment.has_newline_before())
         {
             match is_block {
                 true => write!(f, [hard_line_break(), content]),
@@ -79,117 +108,122 @@ impl<'a> Format<'a> for FormatStatementBody<'a> {
     }
 }
 
-/// `if (a) b() // comment⏎;[c].d()`: the `;` ends `b()`, so the comment is in the statement. oxfmt writes it behind the
-/// `;`, and what it is in breaks. Not after `return` and `throw`, which write such a comment themselves.
+/// `if (a) b() // comment⏎;[c].d()`: the `;` ends `b()`. oxfmt prints the comment after the `;`, and the statement
+/// whose body is `b()` breaks. Not after `return` and `throw`.
 fn has_line_comment_before_semicolon<'a>(body: Stmt<'a>, f: &Formatter<'a>) -> bool {
-    if !f.options().flavor.is_oxfmt()
-        || f.is_quiet()
+    if f.is_quiet()
+        || !f.options().flavor.is_oxfmt()
         || matches!(body.kind(), StmtKind::Return(_) | StmtKind::Throw(_))
     {
         return false;
     }
     let span = body.span();
-    let mut end = span.end.saturating_sub(1);
-    if f.source_text().text_for(&Span::new(end, span.end)) != b";" {
-        return false;
-    }
-    for comment in f.comments().comments_in(span).iter().rev() {
-        let between = f
-            .source_text()
-            .text_for(&Span::new(comment.end().min(end), end));
-        if !between.trim_ascii().is_empty() {
-            return false;
-        }
-        if comment.is_line() && !comment.preceded_by_newline() {
-            return true;
-        }
-        end = comment.start();
-    }
-    false
+    f.file().without_semicolon(span).end < span.end
+        && (f.comments().comments_directly_before(span.end - 1).iter())
+            .any(|comment| comment.is_line() && !comment.has_newline_before())
 }
 
-struct FormatBodyAndItsComments<'a>(Stmt<'a>);
-
-impl<'a> Format<'a> for FormatBodyAndItsComments<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        let body = self.0;
-        if f.is_quiet() {
-            return write!(f, body);
-        }
-        let alternate = match body.ast_parent() {
-            AstNodes::IfStatement(parent) if parent.consequent() == Some(body) => {
-                parent.alternate()
-            }
-            _ => None,
-        };
-        let Some(alternate) = alternate else {
-            return write!(f, body);
-        };
-
-        //     if (condition)
-        //       statement; // comment1
-        //     // comment2
-        //     else {}
-        //
-        // `comment1` trails the statement, `comment2` is left for the `else`.
-        if matches!(body.kind(), StmtKind::Block(_)) {
-            return write!(f, FormatNodeWithoutTrailingComments(&body));
-        }
-        let end = f.comments().without_semicolon(body.span()).end;
-        // `statement; // prettier-ignore` has to see its comment.
-        // The `;` can be behind the comment.
-        let limit = match [body.span().end, end]
-            .into_iter()
-            .find(|&at| f.comments().has_trailing_suppression_comment(at))
-        {
-            Some(at) => f
-                .comments()
-                .end_of_line_comments_after(at)
-                .last()
-                .map_or(end, |last| last.span.end),
-            None => end,
-        };
-        let previous_limit = f.comments_mut().limit_comments_up_to(limit);
-        write!(f, body);
-        f.comments_mut().restore_view_limit(previous_limit);
-        // They are written before the `else`, outside of the group that this is in.
-        if comments_stay_between_head_and_body(f) {
-            return;
-        }
-        let comments = comments_before_else(body, alternate, f);
-        let count = comments
-            .iter()
-            .take_while(|comment| {
-                !comment.is_multiline_block()
-                    && !f
-                        .source_text()
-                        .contains_newline(Span::before(end, comment.span))
-            })
-            .count();
-        write!(
-            f,
-            FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default())
-        );
-    }
-}
-
-/// The comments that are not printed yet between `consequent` and the `else` after it.
-pub(crate) fn comments_before_else<'a>(
-    consequent: Stmt<'a>,
-    alternate: Stmt<'a>,
-    f: &Formatter<'a>,
-) -> &'a [Comment] {
-    let comments = f.comments().comments_before(alternate.span().start);
-    let mut position = consequent.span().end;
-    let count = comments
+/// Splits `comments`, which follow something, into those on its line and the rest.
+fn split_at_first_own_line(comments: CommentList<'_>) -> (CommentList<'_>, CommentList<'_>) {
+    let same_line_count = comments
         .iter()
-        .take_while(|comment| {
-            let gap = f
-                .source_text()
-                .text_for(&Span::before(position, comment.span));
-            position = comment.span.end;
-            !bun_core::strings::contains(gap, b"else")
-        })
+        .take_while(|comment| !comment.has_newline_before())
         .count();
-    comments.get(..count).unwrap_or_default()
+    comments.split_at(same_line_count)
+}
+
+/// Prints an empty line if there's one before `comment`, which starts its line. Otherwise a line break.
+fn write_line_break_before(comment: Comment<'_>, f: &mut Formatter<'_>) {
+    let start = comment.span().start as usize;
+    match crate::text::is_previous_line_empty(f.source_text().as_bytes(), start) {
+        true => write!(f, empty_line()),
+        false => write!(f, hard_line_break()),
+    }
+}
+
+/// See [`comments_stay_between_head_and_body`]. Prints the separator between a head and `body`: a line break if the
+/// body's first leading comment starts its line, otherwise a space.
+///
+/// ```js
+/// while (a)
+/// // comment
+/// {}
+/// ```
+pub(crate) fn write_space_before_body<'a>(body: AstNodes<'a>, f: &mut Formatter<'a>) {
+    let starts_on_new_line = !f.is_quiet()
+        && comments_stay_between_head_and_body(f)
+        && (f.comments().of_node(body).leading.first())
+            .is_some_and(|comment| comment.has_newline_before());
+    match starts_on_new_line {
+        true => write!(f, hard_line_break()),
+        false => write!(f, space()),
+    }
+}
+
+/// See [`comments_stay_between_head_and_body`]. Prints the comments between the end of a block or statement and the
+/// keyword that continues it (`else`, `catch`, `finally`, `while`). The ones on the block's line trail it, and the
+/// others keep their lines. Returns true if the caller still has to separate the keyword from what's before it.
+///
+/// `trailing` is the block's trailing comments. `others` is the comments after them, which another node owns.
+///
+/// ```js
+/// if (a) {
+/// } // comment
+/// // comment
+/// else {
+/// }
+/// ```
+pub(crate) fn write_comments_before_keyword<'a>(
+    trailing: CommentList<'a>,
+    others: CommentList<'a>,
+    f: &mut Formatter<'a>,
+) -> bool {
+    let needs_separator = write_run_of_comments_before_keyword(trailing, f);
+    match others.is_empty() {
+        true => needs_separator,
+        false => write_run_of_comments_before_keyword(others, f),
+    }
+}
+
+fn write_run_of_comments_before_keyword<'a>(
+    comments: CommentList<'a>,
+    f: &mut Formatter<'a>,
+) -> bool {
+    let (same_line, own_line) = split_at_first_own_line(comments);
+    write!(f, FormatTrailingComments::Comments(same_line));
+    if let Some(first) = own_line.first() {
+        write_line_break_before(first, f);
+        write!(f, FormatLeadingComments::Comments(own_line));
+        false
+    } else if same_line.last().is_some_and(|comment| comment.is_line()) {
+        write!(f, hard_line_break());
+        false
+    } else {
+        true
+    }
+}
+
+/// See [`comments_stay_between_head_and_body`]. Prints `comments`, which come before a `;` or `:` that the caller
+/// prints next. The ones on the line of the preceding code trail it, and the others keep their lines. Returns true if a
+/// line break has to follow the token because a line comment is waiting for the end of the line.
+///
+/// ```js
+/// case a
+/// // comment
+/// : {
+/// }
+/// ```
+pub(crate) fn write_comments_before_token<'a>(
+    comments: CommentList<'a>,
+    f: &mut Formatter<'a>,
+) -> bool {
+    let (same_line, own_line) = split_at_first_own_line(comments);
+    write!(f, FormatTrailingComments::Comments(same_line));
+    for comment in own_line {
+        if f.comments_mut().mark_printed(comment) {
+            write_line_break_before(comment, f);
+            write!(f, [comment, comment.is_line().then_some(hard_line_break())]);
+        }
+    }
+    own_line.is_empty() && same_line.last().is_some_and(|comment| comment.is_line())
 }

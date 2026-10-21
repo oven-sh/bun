@@ -6,14 +6,12 @@ use crate::types::{SyntaxKind, Type};
 /// `ConstraintTypeInfo`
 #[derive(Copy, Clone, Debug)]
 pub struct ConstraintTypeInfo<'a> {
-    /// The type itself if it is no type parameter. `None` for a type parameter without a
-    /// constraint.
+    /// The type itself if it isn't a type parameter. `None` for a type parameter without a constraint.
     pub constraint_type: Option<Type<'a>>,
     pub is_type_parameter: bool,
 }
 
-/// `getConstraintInfo(checker, type)`: whether the type is a type parameter, and what its
-/// constraint is.
+/// `getConstraintInfo(checker, type)`: whether the type is a type parameter, and its constraint.
 pub fn get_constraint_info(ty: Type<'_>) -> ConstraintTypeInfo<'_> {
     match is_type_parameter(ty) {
         true => ConstraintTypeInfo {
@@ -27,8 +25,7 @@ pub fn get_constraint_info(ty: Type<'_>) -> ConstraintTypeInfo<'_> {
     }
 }
 
-/// `checker.getConstraintOfTypeParameter(type)`: the constraint as it is declared, which can be a
-/// type parameter itself.
+/// `checker.getConstraintOfTypeParameter(type)`: the constraint as declared, which can itself be a type parameter.
 pub fn get_constraint_of_type_parameter(ty: Type<'_>) -> Option<Type<'_>> {
     if !is_type_parameter(ty) {
         return None;

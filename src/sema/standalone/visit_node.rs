@@ -1,7 +1,7 @@
-//! The nodes TypeScript's test harness writes a line for in `.types` and `.symbols` baselines
+//! The nodes that TypeScript's test harness writes a line for in `.types` and `.symbols` baselines
 //! (`typeWriterWalker.visitNode`).
 //!
-//! A [`VisitedNode`] holds the source position of such a node and its counterpart in the HIR.
+//! A [`VisitedNode`] holds such a node's source position and its HIR counterpart.
 
 use super::enclosing_declaration::or_file_scope;
 use super::services::visited::VisitedKind;
@@ -29,8 +29,7 @@ impl Checker<'_, '_> {
         let (mut work, mut children) = (vec![Node::FILE], Vec::new());
         while let Some(node) = work.pop() {
             let start = hir.start(node);
-            // Nodes reparsed from a JSDoc comment are omitted, and a comment is not a child of a
-            // node.
+            // Nodes reparsed from a JSDoc comment are skipped, and a comment isn't a child of a node.
             if node != Node::FILE && hir.is_in_jsdoc(start) {
                 continue;
             }
@@ -56,9 +55,9 @@ impl Checker<'_, '_> {
                             kind,
                         });
                     }
-                // `createMissingNode`: a node without text, at the end of the previous token. The
-                // harness places it on the line of the next token (`SkipTrivia`). Only
-                // `parseThrowStatement` reports nothing for its missing identifier.
+                // `createMissingNode` makes a node without text at the end of the previous token. The
+                // harness puts it on the next token's line (`SkipTrivia`). Only `parseThrowStatement`
+                // doesn't report an error for its missing identifier.
                 } else if hir.has_parse_diagnostics
                     || hir.kind(hir.parent(node)) == Kind::ThrowStatement
                 {
@@ -77,8 +76,8 @@ impl Checker<'_, '_> {
             });
             work.extend(children.drain(..).rev());
         }
-        // A stray decorator is a statement before the one it is written in
-        // (`note_stray_decorators`). In TypeScript's tree it is where it is written.
+        // The HIR turns a stray decorator into a statement before the one that contains it
+        // (`note_stray_decorators`). TypeScript's tree keeps it in place.
         for &(start, end) in hir.stray_decorators.iter() {
             let is_in_it = |it: &VisitedNode| start <= it.start && it.end <= end;
             let Some(first) = nodes.iter().position(is_in_it) else {
@@ -92,8 +91,8 @@ impl Checker<'_, '_> {
         nodes
     }
 
-    /// `node.Parent`, as the scope from which names are resolved when a type or a symbol is printed
-    /// for the node.
+    /// Returns `node.Parent` as a scope. Names are resolved from it when a type or a symbol is
+    /// printed for the node.
     pub(super) fn enclosing_scope_of_visited_node(
         &self,
         file: FileId,
@@ -139,7 +138,7 @@ impl Checker<'_, '_> {
             VisitedKind::ImportEqualsName(import, _) => {
                 self.enclosing_scope_of_declaration(file, Decl::ImportEquals(import))
             }
-            VisitedKind::Label(s) => or_file_scope(bound.stmt_scope[s.idx()]),
+            VisitedKind::Label(s) => or_file_scope(bound.scope_of_stmt(s)),
             VisitedKind::LiteralInBindingPropertyName(_)
             | VisitedKind::BindingPropertyName(_)
             | VisitedKind::JsxNamespacedNamePart => ScopeId(0),

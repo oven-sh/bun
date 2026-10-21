@@ -6,9 +6,10 @@ use std::time::Instant;
 use crate::Error;
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
-use bun_core::{self as bun, Global, Output, UnwrapOrOom};
+use bun_core::{self as bun, Global, Output, UnwrapOrOom, ZStr};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
+use bun_install::lifecycle_script_runner::ScriptArgv;
 use bun_install::package_manager::workspace_selection;
 use bun_io::BufferedReader;
 use bun_paths as path;
@@ -143,17 +144,10 @@ impl<'a> ProcessHandle<'a> {
         let state = unsafe { &mut *self.state.cast_mut() };
         state.remaining_scripts += 1;
 
-        // Null-terminated argv array, as required by spawnProcess.
-        let argv: [*const c_char; 4] = [
-            state.shell_bin.as_ptr().cast::<c_char>(),
-            if cfg!(unix) {
-                c"-c".as_ptr()
-            } else {
-                c"exec".as_ptr()
-            },
-            self.config.command.as_ptr().cast::<c_char>(),
-            ptr::null(),
-        ];
+        let argv = ScriptArgv::new(
+            state.shell_bin,
+            ZStr::from_slice_with_nul(&self.config.command),
+        )?;
 
         let start_time = Instant::now();
         let envp;
@@ -174,8 +168,8 @@ impl<'a> ProcessHandle<'a> {
                 &self.config.cwd,
                 |env| env.map.create_null_delimited_env_map(),
             )?;
-            // SAFETY: `argv`/`envp` are local null-terminated C-string arrays
-            // with argv[0] non-null; valid for this call.
+            // SAFETY: `argv` and `envp` are null-terminated C-string arrays
+            // (argv[0] non-null) owned by locals that outlive this call.
             unsafe {
                 spawn::spawn_process(
                     &self.options,
@@ -356,8 +350,8 @@ struct State<'a> {
     event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
     max_label_len: usize,
-    // NUL-terminated (last byte is 0) for argv[0].
-    shell_bin: Box<[u8]>,
+    /// The POSIX shell that the scripts run under. `None` on Windows (see `ScriptArgv`).
+    shell_bin: Option<&'static ZStr>,
     aborted: bool,
     no_exit_on_error: bool,
     env: *mut DotEnvLoader,
@@ -743,6 +737,11 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
     } else {
         Box::from(raw_name)
     };
+    // The label is only ever printed, never used to look up a script, so escaping it is safe.
+    let label: Box<[u8]> = bun_core::fmt::escape_control_chars(&label)
+        .to_string()
+        .into_bytes()
+        .into();
 
     let script_content = scripts_map.and_then(|sm| sm.get(raw_name));
 
@@ -899,7 +898,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     )?;
     // SAFETY: `configure_env_for_run` fully writes the slot on the success path.
     let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
-    let cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
 
     // SAFETY: transpiler.env is a process-lifetime *mut Loader set in init.
     let env_ptr: *mut DotEnvLoader = this_transpiler.env;
@@ -917,22 +916,13 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     bun_io::ParentDeathWatchdog::install_on_event_loop(event_loop_handle_to_ctx(
         EventLoopHandle::init_mini(event_loop),
     ));
-    // shell_bin is NUL-terminated ([:0]const u8) for argv use.
-    let shell_bin: Box<[u8]> = if cfg!(unix) {
+    let shell_bin: Option<&'static ZStr> = if cfg!(unix) {
         // SAFETY: env_ptr is the process-lifetime DotEnv loader; the &mut borrow passed to
         // init_global above has been released, so this read does not alias a live &mut.
         let path_env = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
-        Box::from(
-            RunCommand::find_shell(path_env, cwd)
-                .ok_or(crate::Error::MissingShell)?
-                .as_bytes_with_nul(),
-        )
+        Some(RunCommand::find_shell(path_env, cwd).ok_or(crate::Error::MissingShell)?)
     } else {
-        Box::from(
-            bun::self_exe_path()
-                .map_err(|_| crate::Error::MissingShell)?
-                .as_bytes_with_nul(),
-        )
+        None
     };
 
     // Build ScriptConfigs and ProcessHandles
@@ -966,10 +956,9 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             }
 
             let run_in_bun = ctx.debug.run_in_bun;
-            let pkg_path_env = RunCommand::configure_path_for_run_with_package_json_dir(
-                ctx,
+            let pkg_path_env = RunCommand::path_for_run(
+                this_transpiler.env_mut(),
                 &package.dir,
-                this_transpiler,
                 None,
                 &package.dir,
                 run_in_bun,
@@ -1049,14 +1038,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     } else {
         // Single-package mode: use the root package.json
         let run_in_bun = ctx.debug.run_in_bun;
-        let path_env = RunCommand::configure_path_for_run_with_package_json_dir(
-            ctx,
-            b"",
-            this_transpiler,
-            None,
-            cwd,
-            run_in_bun,
-        )?;
+        let path_env =
+            RunCommand::path_for_run(this_transpiler.env_mut(), b"", None, cwd, run_in_bun)?;
 
         // Load package.json scripts
         let root_dir_info = match this_transpiler.resolver.read_dir_info(cwd) {

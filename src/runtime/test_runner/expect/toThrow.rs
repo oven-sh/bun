@@ -189,16 +189,29 @@ pub(crate) fn to_throw(
         }
 
         let expected_class = expected_value.get_class_name(global)?;
-        let received_message: JSValue = result
-            .fast_get(global, bun_jsc::BuiltinName::Message)?
-            .unwrap_or(JSValue::UNDEFINED);
+        // `Symbol.hasInstance` can accept a thrown value that isn't an object.
+        let received_message = if result.is_object() {
+            result.fast_get(global, bun_jsc::BuiltinName::Message)?
+        } else {
+            None
+        };
+        if let Some(received_message) = received_message {
+            return throw!(
+                this,
+                global,
+                signature,
+                "\n\nExpected constructor: not <green>{}<r>\n\nReceived message: <red>{}<r>\n",
+                expected_class,
+                received_message.to_fmt(&mut formatter),
+            );
+        }
         return throw!(
             this,
             global,
             signature,
-            "\n\nExpected constructor: not <green>{}<r>\n\nReceived message: <red>{}<r>\n",
+            "\n\nExpected constructor: not <green>{}<r>\n\nReceived value: <red>{}<r>\n",
             expected_class,
-            received_message.to_fmt(&mut formatter),
+            result.to_fmt(&mut formatter),
         );
     }
 

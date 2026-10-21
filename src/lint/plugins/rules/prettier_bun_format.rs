@@ -1,10 +1,11 @@
 use crate::prettier::Settings;
-use bun_lint::formats::Like;
+use bun_lint::formats::FormatterKind;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
-/// Report what `bun fmt` prints otherwise. The options and the messages are those of `prettier/prettier`, and no `prettier`
-/// has to be installed. `PRETTIER`: that rule, which reports what Prettier prints otherwise.
+/// Report code that `bun fmt` would print differently. It has the options and messages of `prettier/prettier`, and
+/// doesn't need `prettier` installed. `PRETTIER`: the `prettier/prettier` rule itself, which reports code that Prettier
+/// would print differently.
 pub struct Format<const PRETTIER: bool = false>(Settings);
 
 impl<const PRETTIER: bool> Rule for Format<PRETTIER> {
@@ -24,9 +25,9 @@ impl<const PRETTIER: bool> Rule for Format<PRETTIER> {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         self.0.check(
             if PRETTIER {
-                Like::InstalledPrettier
+                FormatterKind::InstalledPrettier
             } else {
-                Like::BunFormat
+                FormatterKind::BunFormat
             },
             cx,
         );

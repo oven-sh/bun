@@ -18,8 +18,8 @@ const ASSIGNMENT_TO_FUNCTION_PARAM_PROP: Message = Message::new(
     "Assignment to property of function parameter '{{name}}'.",
 );
 
-/// Whether ESLint's node for `func` is none of those that end the search: a `TSFunctionType`, a
-/// `TSConstructorType`, a `TSMethodSignature`, a `TSIndexSignature`.
+/// True if ESLint's node for `func` doesn't end the search: a `TSFunctionType`, `TSConstructorType`,
+/// `TSMethodSignature` or `TSIndexSignature`.
 fn is_part_of_a_type(func: Func) -> bool {
     match func.kind() {
         FnKind::FunctionType | FnKind::ConstructorType | FnKind::IndexSignature => true,
@@ -30,13 +30,12 @@ fn is_part_of_a_type(func: Func) -> bool {
     }
 }
 
-/// Whether what is at `identifier` is read in order to modify a property of its value.
-/// A name in a type counts as well: `(a as typeof b).c = 1`.
+/// True if `identifier` is read in order to modify a property of its value. A name in a type counts too:
+/// `(a as typeof b).c = 1`.
 fn is_modifying_prop<'a>(identifier: Node<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
     let found = known.find(identifier, |node, parent| match parent {
         Node::Expr(parent) => match parent.kind() {
-            // A default value in a destructuring target is part of the left side of the
-            // assignment around it.
+            // A default value in a destructuring target is part of the enclosing assignment's left side.
             ExprKind::Assign { target, .. } => Some(Node::Expr(target) == node || is_assignment_target(parent)),
             ExprKind::Unary {
                 op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec | UnOp::Delete,
@@ -59,7 +58,7 @@ fn is_modifying_prop<'a>(identifier: Node<'a>, known: &mut AncestorMemo<'a, bool
         }),
         Node::Func(func) if is_part_of_a_type(func) => None,
         Node::Param(_) if matches!(node, Node::Type(_)) => None,
-        // The others are in a `TSTypeParameterDeclaration`.
+        // Other type parameters are inside a `TSTypeParameterDeclaration`, which ends the search.
         Node::TypeParam(_) if matches!(parent.parent(), Node::Type(_)) => None,
         Node::Type(_) | Node::TupleElem(_) | Node::Class(_) | Node::Member(_) => None,
         _ => Some(false),
@@ -80,13 +79,13 @@ impl NoParamReassign {
         if !self.props && !symbol.has_modifying_references() {
             return;
         }
-        // ESLint defines the parameters before everything else in the scope of the function.
-        // Once for `function f(a, a) {}`.
+        // ESLint defines the parameters before everything else in the function's scope. Check `function f(a, a) {}`
+        // only once.
         let is_parameter = |it: &Declaration<'a>| matches!(it, Declaration::Param(_));
         if !matches!(symbol.declarations().find(is_parameter), Some(Declaration::Param(first)) if first == pat) {
             return;
         }
-        // ESLint comes to the variable from each function that declares it:
+        // ESLint visits the variable once for each function that declares it:
         // `function f(a) { function a() {} }`.
         let redeclarations = symbol.declarations().filter(|it| matches!(it, Declaration::Fn(func) if func.has_body()));
         for _ in 0..=redeclarations.count() {
@@ -118,7 +117,7 @@ impl NoParamReassign {
 impl Rule for NoParamReassign {
     const META: Meta = Meta::eslint("no-param-reassign", Kind::Suggestion).reports_on_exit();
     const ON: On = On::new().params();
-    /// `is_modifying_prop`
+    /// Memo for `is_modifying_prop`.
     type State<'a> = AncestorMemo<'a, bool>;
 
     fn new(options: &Options) -> Self {
@@ -143,7 +142,7 @@ impl Rule for NoParamReassign {
     }
 
     fn param<'a>(&self, param: Param<'a>, cx: &mut Cx<'a, Self>) {
-        // oxlint does not look at a rest parameter.
+        // oxlint skips rest parameters.
         if param.func().is_some_and(Func::has_body) && !(param.is_rest() && cx.language().is_oxlint) {
             match param.pat() {
                 name if name.tag() == PatTag::Ident => self.check_variable(name, cx),

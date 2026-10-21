@@ -38,7 +38,7 @@ export const timingSafeEqual = b.fn(equal);
 export const Crypto = b.class({
   rustPath: "crate::webcore::crypto::Crypto",
   configurable: false,
-  construct: { capability: "heap", throws: true },
+  construct: "illegal",
   proto: {
     /** What is not an integer typed array throws WebCrypto's `TypeMismatchError`, which no type here throws. */
     getRandomValues: { args: { array: b.any }, returns: b.any, capability: "js", throws: true },

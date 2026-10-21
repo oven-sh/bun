@@ -31,7 +31,7 @@ impl Rule for PreferClassFields {
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
-        // An overload counts: a class that has some is left alone.
+        // An overload signature counts as the constructor, so a class with overloads is skipped.
         let Some(constructor) = class.members().iter().find(|it| it.is_constructor()) else {
             return;
         };

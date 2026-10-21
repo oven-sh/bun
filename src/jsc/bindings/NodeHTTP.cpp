@@ -419,7 +419,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     const bool isCurrent = !isPipelinedDispatch || !httpResponseData->socketData;
 
     bool hasBody = false;
-    WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = uncheckedDowncast<WebCore::JSNodeHTTPResponse>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, isCurrent, nodeHttpResponsePtr)));
+    JSNodeHTTPResponse* nodeHTTPResponseObject = uncheckedDowncast<JSNodeHTTPResponse>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, isCurrent, nodeHttpResponsePtr)));
     if (!flatHeaders.isEmpty()) {
         NodeHTTPResponse__adoptRawRequestHeaders(*nodeHttpResponsePtr, flatHeaders.span().data(), flatHeaders.size());
     }
@@ -648,12 +648,12 @@ static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHe
 {
     if (autoHeaderBits & kAutoHeaderDate) {
         auto line = cachedDateHeaderLine();
-        response->uWS::template AsyncSocket<isSSL>::write(line.data(), (int)line.length());
+        response->uWS::template AsyncSocket<isSSL>::write(line.data(), line.length());
     }
     if (autoHeaderBits & kAutoHeaderConnKeepAlive) {
         if (autoHeaderBits & kAutoHeaderKeepAliveTimeout) {
             auto blob = keepAliveHeaderBlob(keepAliveTimeoutSecs);
-            response->uWS::template AsyncSocket<isSSL>::write(blob.data(), (int)blob.length());
+            response->uWS::template AsyncSocket<isSSL>::write(blob.data(), blob.length());
         } else {
             static constexpr const char ka[] = "Connection: keep-alive\r\n";
             response->uWS::template AsyncSocket<isSSL>::write(ka, sizeof(ka) - 1);

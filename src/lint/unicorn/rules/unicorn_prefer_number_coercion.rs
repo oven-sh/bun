@@ -55,7 +55,8 @@ impl Rule for PreferNumberCoercion {
     }
 }
 
-/// Whether `parseInt` is called, or else `parseFloat`: the global, or that of the global `Number`.
+/// Returns `true` for a call of `parseInt` and `false` for `parseFloat`, either the global function
+/// or the global `Number`'s method.
 fn parse_target(callee: Expr) -> Option<bool> {
     let (name, global) = match callee.kind() {
         ExprKind::Ident(name) => (name, callee),

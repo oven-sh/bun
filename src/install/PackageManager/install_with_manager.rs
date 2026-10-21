@@ -2348,7 +2348,7 @@ fn clean_lockfile(
     // The resolver keeps a registry package's dependency on a workspace as an npm range. Loading
     // a lockfile turns such a row into a workspace dependency, so the same is done here.
     (manager.lockfile).tag_workspace_links(manager.options.link_workspace_packages);
-    let new_lockfile = {
+    let (new_lockfile, package_id_mapping) = {
         let mgr: *mut PackageManager = manager;
         // SAFETY: `lockfile`, `update_requests`, and `*log` are disjoint storage
         // within `*mgr`; `clean_with_logger` only reads `manager` for option flags
@@ -2366,6 +2366,7 @@ fn clean_lockfile(
         }
     };
     let mut before_clean = core::mem::replace(&mut manager.lockfile, new_lockfile);
+    manager.rebase_ids_after_clean(&package_id_mapping);
     // `reresolve_rows_outside_overrides` needs these, and the copy only has what's saved in the
     // lockfile.
     manager.lockfile.package_extensions.rules =

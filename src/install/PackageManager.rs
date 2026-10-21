@@ -1038,6 +1038,89 @@ impl PackageManager {
         self.root_package_id.id = None;
     }
 
+    /// `clean_lockfile` has replaced the lockfile with a copy that has only the packages that are
+    /// still used. The copy numbers its packages and their dependencies again. `mapping` has the
+    /// new id of each old package, or `INVALID_PACKAGE_ID` for a package that was not copied.
+    /// What the manager holds by an id of the old lockfile is brought up to date here, because a
+    /// resolve or a download can follow the clean. A reload of bun.lock does not come through here.
+    #[inline(never)]
+    pub(crate) fn rebase_ids_after_clean(&mut self, mapping: &[PackageID]) {
+        let rebased = |old: PackageID| {
+            (mapping.get(old as usize).copied()).filter(|&id| id != bun_install::INVALID_PACKAGE_ID)
+        };
+
+        if !self.appended_task_packages.is_empty() {
+            let mut dropped: Vec<Task::Id> = Vec::new();
+            for (task_id, package_id) in self.appended_task_packages.iter_mut() {
+                match rebased(*package_id) {
+                    Some(id) => *package_id = id,
+                    None => dropped.push(*task_id),
+                }
+            }
+            for task_id in dropped {
+                let _ = self.appended_task_packages.remove(&task_id);
+                // Its package is gone, so the next dependency on it fetches the package again.
+                let _ = run_tasks::forget_task(self, task_id);
+            }
+        }
+
+        // The root is always in the map, and its id stays 0.
+        debug_assert_eq!(mapping.first(), Some(&0));
+        if self.folders.len() > 1 {
+            let mut dropped: Vec<FolderResolutionKey> = Vec::new();
+            for (key, entry) in self.folders.iter_mut() {
+                let FolderResolution::PackageId(old) = entry.resolution else {
+                    continue;
+                };
+                match rebased(old) {
+                    Some(id) => entry.resolution = FolderResolution::PackageId(id),
+                    None => dropped.push(*key),
+                }
+            }
+            for key in dropped {
+                // The next dependency on the folder reads its package.json again.
+                let _ = self.folders.remove(&key);
+            }
+        }
+
+        if let Some(reachable) = &self.named_update_reachable {
+            let mut in_new_ids = bun_core::handle_oom(bun_collections::DynamicBitSet::init_empty(
+                self.lockfile.packages.len(),
+            ));
+            for (old, &id) in mapping.iter().enumerate() {
+                // A package past the end was added for a dependency in scope: `UpdateScope`.
+                if id != bun_install::INVALID_PACKAGE_ID
+                    && reachable.is_set_allow_out_of_bound(old, true)
+                {
+                    in_new_ids.set(id as usize);
+                }
+            }
+            self.named_update_reachable = Some(in_new_ids);
+        }
+
+        // What names a dependency of the old lockfile is dropped, because nothing resolves that
+        // dependency after the clean. `index_peer_askers` builds its lists again. A deferred peer
+        // is only left by a resolve that ended with an error.
+        self.peer_askers = None;
+        let deferred_peers = self.peer_dependencies.readable_length();
+        if deferred_peers > 0 {
+            self.peer_dependencies.discard(deferred_peers);
+            self.look_ahead.deferred_peers_seen = 0;
+        }
+        // No task is pending, so no dependency still waits for one. A package that waited for its
+        // turn would name strings of the old lockfile.
+        debug_assert_eq!(self.pending_task_count(), 0);
+        debug_assert!(self.remote_packages.arrived.is_empty());
+        for waiters in self.task_queue.values_mut() {
+            waiters.retain(|waiter| {
+                !matches!(
+                    waiter,
+                    TaskCallbackContext::Dependency(_) | TaskCallbackContext::RootDependency(_)
+                )
+            });
+        }
+    }
+
     /// Reshaped for borrowck — `Lockfile::load_from_cwd` takes the manager as
     /// a separate argument while the receiver borrows `self.lockfile`, which
     /// is a self-referential split borrow. Encapsulated here so callers stay

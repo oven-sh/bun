@@ -592,6 +592,74 @@ it("a tarball that cannot be downloaded fails the command", async () => {
   expect(exitCode).toBe(1);
 });
 
+// The download does not resolve, but it reads the package.json of what it extracts. The tarball `t` that bun.lock pins is
+// another package now, `t2`, and depends on the tarball `u`. The resolve before the download fetched `u` for z@2.0.0 and
+// then dropped both: `b` takes z@1.0.5 and `a` moves to it.
+it("--no-verify gets through a pinned tarball that is another package now", async () => {
+  const pack = (json: object) =>
+    new Bun.Archive({ "package/package.json": JSON.stringify(json) }, { compress: "gzip" }).bytes();
+  let t = await pack({ name: "t", version: "1.0.0" });
+  await using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const { pathname, origin } = new URL(req.url);
+      const registry: Record<string, Record<string, object>> = {
+        a: { "1.0.0": { dependencies: { z: "*" } } },
+        b: { "1.0.0": { dependencies: { z: "~1.0.0" } } },
+        z: { "1.0.0": {}, "1.0.5": {}, "2.0.0": { dependencies: { u: `${origin}/u.tgz` } } },
+      };
+      if (pathname === "/t.tgz") return new Response(t);
+      if (pathname === "/u.tgz") return new Response(await pack({ name: "u", version: "1.0.0" }));
+      const [, name, version] = /^\/(\w+)-([\d.]+)\.tgz$/.exec(pathname) ?? [];
+      if (registry[name]?.[version]) return new Response(await pack({ name, version, ...registry[name][version] }));
+      const versions = registry[pathname.slice(1)];
+      if (!versions) return new Response(null, { status: 404 });
+      return Response.json({
+        name: pathname.slice(1),
+        "dist-tags": { latest: "2.0.0" },
+        versions: Object.fromEntries(
+          Object.entries(versions).map(([version, declares]) => [
+            version,
+            { name: pathname.slice(1), version, dist: { tarball: `${origin}${pathname}-${version}.tgz` }, ...declares },
+          ]),
+        ),
+      });
+    },
+  });
+  const origin = server.url.origin;
+  const dependencies = { t: `${origin}/t.tgz` };
+  using dir = tempDir("pm-fetch-changed-tarball", {
+    "bunfig.toml": `[install]\nregistry = "${origin}/"\n`,
+    "package.json": JSON.stringify({ name: "project", dependencies }),
+  });
+  const bun = async (cache: string, ...args: string[]) => {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), cache) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: normalizeBunSnapshot(stdout.replace(/^Cache: .*$/m, "Cache: <cache>")), stderr, exitCode };
+  };
+  expect(await bun("other-cache", "install", "--lockfile-only")).toMatchObject({ exitCode: 0 });
+
+  t = await pack({ name: "t2", version: "1.0.0", dependencies: { u: `${origin}/u.tgz` } });
+  await writeFile(
+    join(String(dir), "package.json"),
+    JSON.stringify({ name: "project", dependencies: { a: "1.0.0", b: "1.0.0", ...dependencies } }),
+  );
+
+  const { stdout, stderr, exitCode } = await bun("cache", "pm", "fetch", "--no-verify");
+  // What the download fetches for `t2` is not a contract, so the count stays open.
+  expect({ stdout: stdout.replace(/Fetched \d+ packages/, "Fetched <n> packages"), exitCode }).toEqual({
+    stdout: summary("Fetched <n> packages into cache"),
+    exitCode: 0,
+  });
+  expect(stderr).toEndWith("Fetching packages\n");
+});
+
 // Nothing is linked or run, so the scan is left to the install. --verbose says so.
 it("does not run the security scanner", async () => {
   await using fixture = await projectWith("npm", `[install.security]\nscanner = "./scanner.ts"\n`);

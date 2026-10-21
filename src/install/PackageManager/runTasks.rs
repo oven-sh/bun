@@ -1886,6 +1886,12 @@ fn forget_failed_git_task(
     name: &[u8],
 ) -> TaskCallbackList {
     fail_update_requests(this, task_id, name, None, false);
+    forget_task(this, task_id)
+}
+
+/// Makes `task_id` a task that was never started, so that the next dependency that needs it starts
+/// it. Returns the waiters that it had.
+pub(crate) fn forget_task(this: &mut PackageManager, task_id: Task::Id) -> TaskCallbackList {
     let _ = this.network_dedupe_map.remove(&task_id);
     this.task_queue.remove(&task_id).unwrap_or_default()
 }

@@ -271,6 +271,498 @@ test.concurrent("overrides do not apply to workspaces", async () => {
   await expectLockfileStable(dir, lock);
 });
 
+// `bun install` resolves a second time when the first resolve leaves an entry that its rule does not allow. In most of
+// these tests bun.lock records the rule `r: 2.0.0` and still has r@1.0.0, as after the merge in "a merge took the rule of
+// one branch and the entry of the other" below. The second resolve runs after the unused packages are removed from the
+// lockfile, which numbers the packages and their dependencies again. What the first resolve remembers by those numbers
+// has to follow.
+describe("the entry that a rule replaces is resolved after the lockfile is cleaned", () => {
+  type Packages = Record<string, Record<string, object>>;
+  type Served = { hold?: string; until?: string; latest?: Record<string, string> };
+
+  const pack = (json: object) =>
+    new Bun.Archive({ "package/package.json": JSON.stringify(json) }, { compress: "gzip" }).bytes();
+
+  /**
+   * A registry for `packages`. `/<name>.tgz` is the package `<name>@1.0.0`, for a dependency on that URL. The answer to
+   * `hold` waits for a request for `until`. `latest` has the `latest` tag of a package where that is not its newest
+   * version.
+   */
+  function serve(packages: (origin: string) => Packages, { hold, until, latest = {} }: Served = {}) {
+    const archives = new Map<string, Promise<Uint8Array>>();
+    const requests: string[] = [];
+    const gate = Promise.withResolvers<void>();
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        requests.push(pathname);
+        if (pathname === until) gate.resolve();
+        if (pathname === hold) await gate.promise;
+        const registry = packages(origin);
+        const [, name, version] = /^\/(\w+?)(?:-([\d.]+))?\.tgz$/.exec(pathname) ?? [];
+        const declares = version ? registry[name]?.[version] : name && {};
+        if (declares) {
+          // One archive per URL: bun.lock pins its bytes.
+          if (!archives.has(pathname)) archives.set(pathname, pack({ name, version: version ?? "1.0.0", ...declares }));
+          return new Response(await archives.get(pathname));
+        }
+        const named = pathname.slice(1);
+        const versions = registry[named];
+        if (!versions) return new Response(null, { status: 404 });
+        const tarball = (version: string) => `${origin}${pathname}-${version}.tgz`;
+        return Response.json({
+          name: named,
+          "dist-tags": { latest: latest[named] ?? Object.keys(versions).sort(Bun.semver.order).at(-1) },
+          versions: Object.fromEntries(
+            Object.entries(versions).map(([version, declares]) => [
+              version,
+              { name: named, version, dist: { tarball: tarball(version) }, ...declares },
+            ]),
+          ),
+        });
+      },
+    });
+    const bunfig = `[install]\nregistry = "${server.url.href}"\nlinker = "hoisted"\n`;
+    return { origin: server.url.origin, bunfig, requests, [Symbol.dispose]: () => void server.stop(true) };
+  }
+
+  /** A project for `registry` that has `packageJson`. */
+  async function created(registry: { bunfig: string }, packageJson: object, files: Record<string, string> = {}) {
+    const dir = await project({ name: "foo", ...packageJson }, files);
+    await write(join(dir, "bunfig.toml"), registry.bunfig);
+    return dir;
+  }
+
+  async function install(dir: string) {
+    const { stderr, exitCode } = await bun(dir, "install");
+    expect({ stderr, exitCode }).toEqual({ stderr: "Saved lockfile", exitCode: 0 });
+  }
+
+  /** A project that has installed `packageJson` from `registry`. */
+  async function installed(registry: { bunfig: string }, packageJson: object, files: Record<string, string> = {}) {
+    const dir = await created(registry, packageJson, files);
+    await install(dir);
+    return dir;
+  }
+
+  /** package.json becomes `packageJson` with the rule for `r`. bun.lock gets the rule only, and keeps r@1.0.0. */
+  async function mergeRule(dir: string, packageJson: { overrides?: object; [group: string]: unknown }, rule = "2.0.0") {
+    const overrides = { ...packageJson.overrides, r: rule };
+    await write(join(dir, "package.json"), JSON.stringify({ name: "foo", ...packageJson, overrides }));
+    const lock = await lockfile(dir);
+    const line = `    "r": "${rule}",\n`;
+    await write(
+      join(dir, "bun.lock"),
+      lock.includes(`  "overrides": {\n`)
+        ? lock.replace(`  "overrides": {\n`, `  "overrides": {\n${line}`)
+        : lock.replace(`  "packages": {`, `  "overrides": {\n${line}  },\n  "packages": {`),
+    );
+    type Lock = { overrides?: Record<string, string>; packages: Record<string, [string]> };
+    const merged = Bun.JSONC.parse(await lockfile(dir)) as Lock;
+    expect({ rule: merged.overrides?.r, entry: merged.packages.r[0] }).toEqual({ rule, entry: "r@1.0.0" });
+  }
+
+  /** Runs `bun <args>` as `bun()` does. `resolves` is how many times the command resolved. */
+  async function run(dir: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: dir,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") },
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return {
+      stderr: normalizeBunSnapshot(stderr.replace(progressLine, ""), dir),
+      exitCode,
+      resolves: stderr.match(/^Resolving dependencies/gm)?.length ?? 0,
+    };
+  }
+  /** The second resolve ran, and the command saved what it resolved. */
+  const saved = { stderr: "Saved lockfile", exitCode: 0, resolves: 2 };
+
+  /** What bun.lock has for each key: `<name>@<resolution>`. */
+  async function locked(dir: string) {
+    const { packages } = Bun.JSONC.parse(await lockfile(dir)) as { packages: Record<string, [string]> };
+    return Object.fromEntries(Object.entries(packages).map(([key, [id]]) => [key, id]));
+  }
+
+  /** What `nodeModulesPackages` returns when `node_modules` has exactly these folders, each with its package. */
+  const inNodeModules = (...packages: string[]) => packages.map(path => `node_modules/${path}`).join("\n");
+
+  /** Makes `<dir>/repo` a git repository of the package `name`, with one commit that has the tag v1. */
+  async function repository(dir: string, name: string) {
+    const repo = join(dir, "repo");
+    await write(join(repo, "package.json"), JSON.stringify({ name, version: "1.0.0" }));
+    const author = { GIT_AUTHOR_NAME: "T", GIT_AUTHOR_EMAIL: "t@example.com" };
+    const committer = { GIT_COMMITTER_NAME: "T", GIT_COMMITTER_EMAIL: "t@example.com" };
+    let stdout = "";
+    for (const args of [
+      "init -q",
+      "add package.json",
+      "commit -q -m first --no-gpg-sign",
+      "tag v1",
+      "rev-parse HEAD",
+    ]) {
+      await using git = Bun.spawn({
+        cmd: ["git", ...args.split(" ")],
+        cwd: repo,
+        env: { ...bunEnv, ...author, ...committer, GIT_CONFIG_NOSYSTEM: "1" },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, stderr, exitCode] = await Promise.all([git.stdout.text(), git.stderr.text(), git.exited]);
+      expect({ args, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ args, stderr: "", exitCode: 0 });
+      stdout = out;
+    }
+    const url = `git+${Bun.pathToFileURL(repo)}`;
+    return { specifier: `${url}#v1`, locked: `${name}@${url}#${stdout.trim()}` };
+  }
+
+  const plain = { "1.0.0": {} };
+  /** r@2.0.0 is the version that the rule asks for. */
+  const r = (dependencies: Record<string, string>) => ({ "1.0.0": {}, "2.0.0": { dependencies } });
+  /** Each of `names` at 1.0.0, for a group of dependencies. */
+  const pinned = (names: string[]) => Object.fromEntries(names.map(name => [name, "1.0.0"]));
+
+  describe.each(["update t", "install --force"])("bun %s reads the tarball of the project once", command => {
+    test.concurrent.each([
+      // The clean numbers the packages again even when it removes none.
+      { title: "no dependency is removed", removed: [] },
+      { title: "a dependency is removed", removed: ["a"] },
+      // The number that `t` had is past the end of the lockfile then.
+      { title: "two dependencies are removed", removed: ["a", "b"] },
+    ])("$title: r@2.0.0 uses the package of that tarball", async ({ removed }) => {
+      using registry = serve(origin => ({ a: plain, b: plain, r: r({ t: `${origin}/t.tgz` }) }));
+      const t = `${registry.origin}/t.tgz`;
+      const dependencies = { r: "^1.0.0", t };
+      const dir = await installed(registry, { dependencies: { ...pinned(removed), ...dependencies } });
+      await mergeRule(dir, { dependencies });
+      registry.requests.length = 0;
+
+      expect(await run(dir, ...command.split(" "))).toEqual(saved);
+      expect(await locked(dir)).toEqual({ r: "r@2.0.0", t: `t@${t}` });
+      expect(nodeModulesPackages(dir)).toBe(inNodeModules("r/r@2.0.0", "t/t@1.0.0"));
+      expect(registry.requests.filter(pathname => pathname === "/t.tgz")).toEqual(["/t.tgz"]);
+    });
+  });
+
+  // Nobody edits bun.lock in these. The rule for `r` is the range of `p`, which `bun update --latest` moves to ^2.0.0.
+  describe("bun update --latest moves the dependency that the rule $p refers to", () => {
+    test.concurrent("r@2.0.0 uses the package of the tarball of the project", async () => {
+      using registry = serve(origin => ({ p: { ...plain, "2.0.0": {} }, r: r({ t: `${origin}/t.tgz` }) }));
+      const t = `${registry.origin}/t.tgz`;
+      const dir = await installed(registry, { dependencies: { p: "^1.0.0", r: "*", t }, overrides: { r: "$p" } });
+      expect(await locked(dir)).toEqual({ p: "p@1.0.0", r: "r@1.0.0", t: `t@${t}` });
+
+      expect(await run(dir, "update", "--latest")).toEqual(saved);
+      expect(await locked(dir)).toEqual({ p: "p@2.0.0", r: "r@2.0.0", t: `t@${t}` });
+      expect(nodeModulesPackages(dir)).toBe(inNodeModules("p/p@2.0.0", "r/r@2.0.0", "t/t@1.0.0"));
+    });
+
+    // bun.lockb is loaded in the order of the last clean. p@1.0.0 brings `q`, so this clean moves `a` all the same.
+    test.concurrent("with bun.lockb", async () => {
+      using registry = serve(origin => ({
+        p: { "1.0.0": { dependencies: { q: "1.0.0" } }, "2.0.0": {} },
+        q: plain,
+        r: r({ a: `${origin}/a.tgz` }),
+      }));
+      const dependencies = { a: `${registry.origin}/a.tgz`, p: "^1.0.0", r: "*" };
+      const dir = await created(registry, { dependencies, overrides: { r: "$p" } });
+      await write(join(dir, "bunfig.toml"), `${registry.bunfig}saveTextLockfile = false\n`);
+      await install(dir);
+      registry.requests.length = 0;
+
+      expect(await run(dir, "update", "--latest")).toEqual(saved);
+      expect(nodeModulesPackages(dir)).toBe(inNodeModules("a/a@1.0.0", "p/p@2.0.0", "r/r@2.0.0"));
+      expect(registry.requests.filter(pathname => pathname === "/a.tgz")).toEqual(["/a.tgz"]);
+    });
+
+    // `w` links the workspace once its range is ^2.0.0. That cleans the lockfile once more, before the rule is checked.
+    test.concurrent("in a workspace, where a dependency starts to link another workspace", async () => {
+      using registry = serve(origin => ({
+        p: { ...plain, "2.0.0": {} },
+        w: { ...plain, "2.0.0": {} },
+        r: r({ t: `${origin}/t.tgz` }),
+      }));
+      const t = `${registry.origin}/t.tgz`;
+      const app = { name: "app", version: "1.0.0", dependencies: { p: "^1.0.0", r: "*", t, w: "^1.0.0" } };
+      const dir = await installed(
+        registry,
+        { workspaces: ["packages/*"], overrides: { r: "$p" } },
+        {
+          "packages/app/package.json": JSON.stringify(app),
+          "packages/w/package.json": JSON.stringify({ name: "w", version: "2.0.0" }),
+        },
+      );
+
+      expect(await run(join(dir, "packages", "app"), "update", "--latest")).toEqual(saved);
+      expect(await locked(dir)).toEqual({
+        app: "app@workspace:packages/app",
+        p: "p@2.0.0",
+        r: "r@2.0.0",
+        t: `t@${t}`,
+        w: "w@workspace:packages/w",
+      });
+    });
+  });
+
+  test.concurrent.skipIf(!Bun.which("git"))("bun update g: r@2.0.0 uses the package of the repository", async () => {
+    let g = "";
+    using registry = serve(() => ({ r: r({ g }) }));
+    const dir = await created(registry, {});
+    const repo = await repository(dir, "g");
+    g = repo.specifier;
+    const dependencies = { g, r: "^1.0.0" };
+    await write(join(dir, "package.json"), JSON.stringify({ name: "foo", dependencies }));
+    await install(dir);
+    expect(await locked(dir)).toEqual({ g: repo.locked, r: "r@1.0.0" });
+    await mergeRule(dir, { dependencies });
+
+    expect(await run(dir, "update", "g")).toEqual(saved);
+    expect(await locked(dir)).toEqual({ g: repo.locked, r: "r@2.0.0" });
+    expect(nodeModulesPackages(dir)).toBe(`${inNodeModules("g/g@1.0.0", "r/r@2.0.0")}\nrepo/g@1.0.0`);
+  });
+
+  // The hoist binds the peer of `y` to the x@1.0.5 that `v` brings. x@1.0.0 is then unused, and the clean runs again.
+  test.concurrent("bun update t: the clean runs twice", async () => {
+    using registry = serve(origin => ({
+      x: { ...plain, "1.0.5": {} },
+      w: { "1.0.0": { dependencies: { x: "1.0.0" } } },
+      v: { "1.0.0": { dependencies: { x: "1.0.5" } } },
+      y: { "1.0.0": { peerDependencies: { x: "^1.0.0" } } },
+      r: r({ t: `${origin}/t.tgz` }),
+    }));
+    const t = `${registry.origin}/t.tgz`;
+    const dir = await installed(registry, { dependencies: { r: "^1.0.0", t, w: "1.0.0", y: "1.0.0" } });
+    expect(await locked(dir)).toEqual({ r: "r@1.0.0", t: `t@${t}`, w: "w@1.0.0", x: "x@1.0.0", y: "y@1.0.0" });
+    await mergeRule(dir, { dependencies: { r: "^1.0.0", t, v: "1.0.0", y: "1.0.0" } });
+    registry.requests.length = 0;
+
+    expect(await run(dir, "update", "t")).toEqual(saved);
+    expect(await locked(dir)).toEqual({ r: "r@2.0.0", t: `t@${t}`, v: "v@1.0.0", x: "x@1.0.5", y: "y@1.0.0" });
+    expect(registry.requests.filter(pathname => pathname === "/t.tgz")).toEqual(["/t.tgz"]);
+  });
+
+  // `a` and `b` are new. `a` takes z@2.0.0, which depends on `d`. `b` then takes z@1.0.5, and `a` moves to it. The clean
+  // removes z@2.0.0 and `d`, and r@2.0.0 asks for `d` again.
+  describe("the clean removes the package that the first resolve fetched", () => {
+    const packages = (d: string): Packages => ({
+      d: plain,
+      a: { "1.0.0": { dependencies: { z: "*" } } },
+      b: { "1.0.0": { dependencies: { z: "~1.0.0" } } },
+      z: { ...plain, "1.0.5": {}, "2.0.0": { dependencies: { d } } },
+      r: r({ d }),
+    });
+    const dependencies = { a: "1.0.0", b: "1.0.0", r: "^1.0.0" };
+    const kept = { a: "a@1.0.0", b: "b@1.0.0", r: "r@2.0.0", z: "z@1.0.5" };
+
+    test.concurrent("bun install downloads a tarball again", async () => {
+      using registry = serve(origin => packages(`${origin}/d.tgz`));
+      const dir = await installed(registry, { dependencies: { r: "^1.0.0" } });
+      await mergeRule(dir, { dependencies });
+      registry.requests.length = 0;
+
+      expect(await run(dir, "install")).toEqual(saved);
+      expect(await locked(dir)).toEqual({ ...kept, d: `d@${registry.origin}/d.tgz` });
+      expect(nodeModulesPackages(dir)).toBe(
+        inNodeModules("a/a@1.0.0", "b/b@1.0.0", "d/d@1.0.0", "r/r@2.0.0", "z/z@1.0.5"),
+      );
+      expect(registry.requests.filter(pathname => pathname === "/d.tgz")).toEqual(["/d.tgz", "/d.tgz"]);
+    });
+
+    test.concurrent.skipIf(!Bun.which("git"))("bun install checks a repository out again", async () => {
+      let d = "";
+      using registry = serve(() => packages(d));
+      const dir = await created(registry, { dependencies: { r: "^1.0.0" } });
+      const repo = await repository(dir, "d");
+      d = repo.specifier;
+      await install(dir);
+      await mergeRule(dir, { dependencies });
+
+      expect(await run(dir, "install")).toEqual(saved);
+      expect(await locked(dir)).toEqual({ ...kept, d: repo.locked });
+    });
+
+    test.concurrent("bun install reads a folder again", async () => {
+      using registry = serve(() => packages("^1.0.0"));
+      const overrides = { d: "file:./vendor/d" };
+      const files = { "vendor/d/package.json": JSON.stringify({ name: "d", version: "1.0.0" }) };
+      const dir = await installed(registry, { dependencies: { r: "^1.0.0" }, overrides }, files);
+      await mergeRule(dir, { dependencies, overrides });
+
+      expect(await run(dir, "install")).toEqual(saved);
+      expect(await locked(dir)).toEqual({ ...kept, "r/d": "d@file:vendor/d" });
+    });
+
+    test.concurrent("bun install reads a tarball of the project again", async () => {
+      using registry = serve(() => packages("^1.0.0"));
+      const overrides = { d: "file:./d.tgz" };
+      const dir = await created(registry, { dependencies: { r: "^1.0.0" }, overrides });
+      await write(join(dir, "d.tgz"), await pack({ name: "d", version: "1.0.0" }));
+      await install(dir);
+      await mergeRule(dir, { dependencies, overrides });
+
+      expect(await run(dir, "install")).toEqual(saved);
+      expect(await locked(dir)).toEqual({ ...kept, d: "d@./d.tgz" });
+    });
+  });
+
+  // The peer of the project takes z@1.0.5, the `latest` of z. That version brings the tarball `d`, and `k`, which needs
+  // z@2.0.0. The hoist binds the peer to z@2.0.0, so the clean runs again and removes z@1.0.5, `k` and `d`.
+  test.concurrent("bun install downloads a tarball again when the second run of the clean removed it", async () => {
+    using registry = serve(
+      origin => ({
+        z: { "1.0.5": { dependencies: { d: `${origin}/d.tgz`, k: "1.0.0" } }, "2.0.0": {} },
+        k: { "1.0.0": { dependencies: { z: "2.0.0" } } },
+        r: r({ d: `${origin}/d.tgz` }),
+      }),
+      { latest: { z: "1.0.5" } },
+    );
+    const dependencies = { r: "^1.0.0" };
+    const dir = await installed(registry, { dependencies });
+    await mergeRule(dir, { dependencies, peerDependencies: { z: ">=1.0.0" } });
+    registry.requests.length = 0;
+
+    expect(await run(dir, "install")).toEqual(saved);
+    expect(await locked(dir)).toEqual({ d: `d@${registry.origin}/d.tgz`, r: "r@2.0.0", z: "z@2.0.0" });
+    expect(registry.requests.filter(pathname => pathname === "/d.tgz")).toEqual(["/d.tgz", "/d.tgz"]);
+  });
+
+  // The rule for `d` sends the `d` of `q` and of r@2.0.0 to one folder. `q` is new, so the first resolve reads the folder.
+  test.concurrent.each([
+    { title: "a dependency is removed", removed: ["a"] },
+    { title: "two dependencies are removed", removed: ["a", "b"] },
+  ])("bun install, $title: r@2.0.0 uses the folder that the first resolve read", async ({ removed }) => {
+    const needsD = { dependencies: { d: "^1.0.0" } };
+    using registry = serve(() => ({ a: plain, b: plain, d: plain, q: { "1.0.0": needsD }, r: r(needsD.dependencies) }));
+    const overrides = { d: "file:./vendor/d" };
+    const files = { "vendor/d/package.json": JSON.stringify({ name: "d", version: "1.0.0" }) };
+    const dir = await installed(registry, { dependencies: { ...pinned(removed), r: "^1.0.0" }, overrides }, files);
+    await mergeRule(dir, { dependencies: { q: "1.0.0", r: "^1.0.0" }, overrides });
+
+    expect(await run(dir, "install")).toEqual(saved);
+    const folder = "d@file:vendor/d";
+    expect(await locked(dir)).toEqual({ q: "q@1.0.0", r: "r@2.0.0", "q/d": folder, "r/d": folder });
+  });
+
+  // `x` and `y` are new, and the first resolve lists who asks for their peer `p`. r@2.0.0 asks for it too.
+  test.concurrent("bun install resolves the peer of r@2.0.0 after the peers of the first resolve", async () => {
+    const peer = { peerDependencies: { p: "^1.0.0" } };
+    using registry = serve(() => ({
+      ...{ a: plain, b: plain, c: plain, d: plain, p: plain, s: plain },
+      x: { "1.0.0": peer },
+      y: { "1.0.0": peer },
+      r: { "1.0.0": {}, "2.0.0": { dependencies: { s: "1.0.0" }, ...peer } },
+    }));
+    const dir = await installed(registry, {
+      dependencies: { ...pinned(["a", "b", "c", "d"]), p: "^1.0.0", r: "^1.0.0" },
+    });
+    await mergeRule(dir, { dependencies: { r: "^1.0.0", x: "1.0.0", y: "1.0.0" } });
+
+    expect(await run(dir, "install")).toEqual(saved);
+    expect(await locked(dir)).toEqual({ p: "p@1.0.0", r: "r@2.0.0", s: "s@1.0.0", x: "x@1.0.0", y: "y@1.0.0" });
+  });
+
+  // The tarball of `bad` is missing, so the first resolve ends with an error and does not resolve the peer of `x`. The
+  // manifest of `x` waits for that download. The second resolve must not take the peer for one of its own dependencies.
+  describe("the first resolve fails and leaves a peer", () => {
+    test.concurrent.each([
+      { title: "a registry package", peer: () => "^1.0.0", needs: () => ({}) },
+      // The second resolve downloads the tarball that the peer waited for.
+      {
+        title: "a tarball",
+        peer: (origin: string) => `${origin}/p.tgz`,
+        needs: (origin: string) => ({ p: `${origin}/p.tgz` }),
+      },
+    ])("the peer is $title: bun install reports the download", async ({ peer, needs }) => {
+      using registry = serve(
+        origin => ({
+          ...{ a: plain, b: plain, c: plain, d: plain, p: plain, s: plain },
+          x: { "1.0.0": { peerDependencies: { p: peer(origin) } } },
+          bad: { "1.0.0": { dist: { tarball: `${origin}/bad-0.0.0.tgz` } } },
+          r: r({ s: "1.0.0", ...needs(origin) }),
+        }),
+        { hold: "/x", until: "/bad-0.0.0.tgz" },
+      );
+      const dir = await installed(registry, {
+        dependencies: { ...pinned(["a", "b", "c", "d"]), p: "^1.0.0", r: "^1.0.0" },
+      });
+      await mergeRule(dir, { dependencies: { bad: "1.0.0", p: "^1.0.0", r: "^1.0.0", x: "1.0.0" } });
+      const merged = await lockfile(dir);
+
+      expect(await run(dir, "install")).toEqual({
+        stderr: `error: GET ${registry.origin}/bad-0.0.0.tgz - 404`,
+        exitCode: 1,
+        resolves: 2,
+      });
+      expect(await lockfile(dir)).toBe(merged);
+    });
+  });
+
+  // The registry has no `o`. The first resolve notes which dependency of the project asked for it. r@2.0.0 asks for it
+  // too, and that must not look like a failure of the dependency that the command names.
+  test.concurrent("bun update z when the registry does not have an optional dependency", async () => {
+    using registry = serve(() => ({
+      z: { ...plain, "1.0.1": {} },
+      r: { "1.0.0": {}, "2.0.0": { optionalDependencies: { o: "^1.0.0" } } },
+    }));
+    const dir = await installed(registry, { dependencies: { r: "^1.0.0", z: "1.0.0" } });
+    const optionalDependencies = { o: "^1.0.0" };
+    await mergeRule(dir, { dependencies: { r: "^1.0.0", z: "^1.0.0" }, optionalDependencies });
+
+    const missing = `warn: GET ${registry.origin}/o - 404`;
+    expect(await run(dir, "update", "z")).toEqual({ ...saved, stderr: `${missing}\nSaved lockfile` });
+    expect(await locked(dir)).toEqual({ r: "r@2.0.0", z: "z@1.0.1" });
+  });
+
+  // `bun update <name>` in the workspace `m`, or with `--filter m`, updates the dependencies that `m` reaches, and those
+  // of the packages that the update adds. Which packages those are must not depend on what else the install removes.
+  describe.each([
+    { how: "in the workspace m", at: "m", filter: [] },
+    { how: "with --filter m", at: "", filter: ["--filter", "m"] },
+  ])("bun update $how", ({ at, filter }) => {
+    // r@2.0.0 is added, so its `x` takes the newest version of its range. The x@2.0.0 of `m` is not in that range.
+    test.concurrent.each([
+      { title: "a dependency is removed", removed: ["a"] },
+      { title: "two dependencies are removed", removed: ["a", "b"] },
+    ])("$title: the x of r@2.0.0 is the newest in its range", async ({ removed }) => {
+      using registry = serve(() => ({
+        a: plain,
+        b: plain,
+        x: { ...plain, "1.0.5": {}, "2.0.0": {} },
+        r: { "1.0.0": { dependencies: { x: "1.0.0" } }, "2.0.0": { dependencies: { x: "^1.0.0" } } },
+      }));
+      const root = { workspaces: ["m"] };
+      const files = { "m/package.json": JSON.stringify({ name: "m", version: "1.0.0", dependencies: { x: "2.0.0" } }) };
+      const dir = await installed(registry, { ...root, dependencies: { ...pinned(removed), r: "^1.0.0" } }, files);
+      await mergeRule(dir, { ...root, dependencies: { r: "^1.0.0" } });
+
+      expect(await run(join(dir, at), "update", "x", ...filter)).toEqual(saved);
+      expect(await locked(dir)).toEqual({ m: "m@workspace:m", r: "r@2.0.0", x: "x@2.0.0", "r/x": "x@1.0.5" });
+    });
+
+    // `m` reaches the package r only as `r2`, which the rule does not replace. `q` is outside of its scope, so the r
+    // of `q` takes the r@2.0.0 that bun.lock has, not the newest. That needs no request, so only one resolve is printed.
+    test.concurrent("a package that m does not reach is not updated", async () => {
+      using registry = serve(() => ({
+        r: { ...plain, "2.0.0": {}, "2.1.0": {} },
+        q: { "1.0.0": { dependencies: { r: "^1.0.0" } } },
+      }));
+      const root = { workspaces: ["m"], dependencies: { q: "1.0.0" } };
+      const m = { name: "m", version: "1.0.0", dependencies: { r2: "npm:r@~2.0.0" } };
+      const dir = await installed(registry, root, { "m/package.json": JSON.stringify(m) });
+      await mergeRule(dir, root, "^2.0.0");
+
+      expect(await run(join(dir, at), "update", "r", ...filter)).toEqual({ ...saved, resolves: 1 });
+      expect(await locked(dir)).toEqual({ m: "m@workspace:m", q: "q@1.0.0", r: "r@2.0.0", r2: "r@2.0.0" });
+    });
+  });
+});
+
 // "resolutions" is read only when package.json has no "overrides", so an upgrade leaves bun.lock as it is.
 describe("a bun.lock written by Bun 1.4", () => {
   const dependencies = { "one-dep": "1.0.0", "a-dep": "^1.0.1" };

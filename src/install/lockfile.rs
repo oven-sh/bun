@@ -1230,6 +1230,9 @@ impl Lockfile {
     // — update-request binding (`bind_update_requests`), verbose timer
     // reporting, and the patched-dependency migration — are outlined so a
     // no-change `bun install` (install/fastify bench) does not page them in.
+    //
+    // Returns the new lockfile, and for each package of `self` its id in the new lockfile, or
+    // `invalid_package_id` if it was not copied.
     #[inline(never)]
     pub(crate) fn clean_with_logger(
         &mut self,
@@ -1237,7 +1240,7 @@ impl Lockfile {
         updates: &mut [UpdateRequest],
         log: &mut bun_ast::Log,
         log_level: LogLevel,
-    ) -> Result<Box<Lockfile>, BunError> {
+    ) -> Result<(Box<Lockfile>, Vec<PackageID>), BunError> {
         let old: &mut Lockfile = self;
         let timer: Option<Timer> = if log_level.is_verbose() {
             Some(clean_verbose_timer_start()?)
@@ -1414,7 +1417,9 @@ impl Lockfile {
                 // The second pass removes nothing else: a weak peer keeps the package it is bound
                 // to.
                 new.held_at_load = DynamicBitSet::init_empty(new.packages.len())?;
-                return new.clean_with_logger(manager, updates, log, log_level);
+                let (cleaned, second) = new.clean_with_logger(manager, updates, log, log_level)?;
+                compose_package_id_mappings(&mut package_id_mapping, &second);
+                return Ok((cleaned, package_id_mapping));
             }
         }
 
@@ -1430,7 +1435,7 @@ impl Lockfile {
             clean_verbose_report_cold(old, &new, timer.as_ref());
         }
 
-        Ok(new)
+        Ok((new, package_id_mapping))
     }
 }
 
@@ -1445,6 +1450,20 @@ impl Lockfile {
 #[inline(never)]
 fn clean_verbose_timer_start() -> Result<Timer, BunError> {
     Ok(Timer::start()?)
+}
+
+/// The clean ran twice. `first` maps the ids of the old lockfile to the ids of the copy that the
+/// second run cleaned, and `second` maps those to the ids of the result. Makes `first` map the ids
+/// of the old lockfile to the ids of the result.
+#[cold]
+#[inline(never)]
+fn compose_package_id_mappings(first: &mut [PackageID], second: &[PackageID]) {
+    for id in first {
+        *id = second
+            .get(*id as usize)
+            .copied()
+            .unwrap_or(invalid_package_id);
+    }
 }
 
 #[cold]

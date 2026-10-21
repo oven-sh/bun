@@ -11,7 +11,6 @@
 import assert from "node:assert";
 import { createPrivateKey } from "node:crypto";
 import { createSocket } from "node:dgram";
-import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { connect, listen, QuicEndpoint } from "node:quic";

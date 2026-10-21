@@ -1483,11 +1483,12 @@ describe.concurrent("start() on an open writer", () => {
     const { join } = require("node:path");
     const dir = join(process.argv[1], "files");
     fs.mkdirSync(dir);
-    function openFilesInDir() {
+    function openFiles() {
       if (process.platform !== "linux") return 0;
       return fs.readdirSync("/proc/self/fd").filter(fd => {
         try {
-          return fs.readlinkSync("/proc/self/fd/" + fd).includes(dir);
+          const path = fs.readlinkSync("/proc/self/fd/" + fd);
+          return path.includes(dir) || path === "/dev/ptmx";
         } catch {
           return false;
         }
@@ -1504,8 +1505,8 @@ describe.concurrent("start() on an open writer", () => {
           await Bun.sleep(1);
         }
       }
-      while (openFilesInDir() > 0 && Date.now() < deadline) await Bun.sleep(1);
-      return openFilesInDir() === 0 ? "all" : "open: " + openFilesInDir();
+      while (openFiles() > 0 && Date.now() < deadline) await Bun.sleep(1);
+      return openFiles() === 0 ? "all" : "open: " + openFiles();
     }
     function read(path) {
       return fs.readFileSync(path, "utf8");
@@ -1539,26 +1540,36 @@ describe.concurrent("start() on an open writer", () => {
     expect(result).toEqual({ target: "short", initial: "", closed: "all" });
   });
 
-  // /dev/ptmx is a TTY that opens by path with no terminal attached, and /proc/self/fd shows whether it was closed.
+  // /dev/ptmx is a TTY that opens by path with no terminal attached, and `closed()` sees it on Linux.
   it.skipIf(!isLinux)("start({ path }) moves a writer from a TTY to a regular file", async () => {
     const result = await run(`
       const target = join(dir, "target.txt");
       const writer = Bun.file("/dev/ptmx").writer();
       writer.start({ path: target });
-      const ttys = fs.readdirSync("/proc/self/fd").filter(fd => {
-        try {
-          return fs.readlinkSync("/proc/self/fd/" + fd) === "/dev/ptmx";
-        } catch {
-          return false;
-        }
-      }).length;
       writer.write("short");
       const buffered = read(target);
       await writer.end();
-      const out = { ttys, buffered, target: read(target) };
+      const out = { buffered, target: read(target) };
       console.log(JSON.stringify({ ...out, closed: await closed() }));
     `);
-    expect(result).toEqual({ ttys: 0, buffered: "", target: "short", closed: "all" });
+    expect(result).toEqual({ buffered: "", target: "short", closed: "all" });
+  });
+
+  it.skipIf(!isLinux)("a TTY writer still writes synchronously after start({ path }) fails", async () => {
+    const result = await run(`
+      const writer = Bun.file("/dev/ptmx").writer();
+      let code;
+      try {
+        writer.start({ path: join(dir, "missing", "target.txt") });
+      } catch (e) {
+        code = e.code;
+      }
+      writer.write("short");
+      const buffered = writer.flush();
+      await writer.end();
+      console.log(JSON.stringify({ code, buffered, closed: await closed() }));
+    `);
+    expect(result).toEqual({ code: "ENOENT", buffered: 0, closed: "all" });
   });
 
   it("start({ path }) settles a queued write and flushes it to the new path", async () => {

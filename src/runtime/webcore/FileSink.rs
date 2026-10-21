@@ -741,13 +741,6 @@ impl FileSink {
         self.pollable.set(pollable_out);
         self.is_socket.set(is_socket_out);
         self.nonblocking.set(nonblocking_out);
-        #[cfg(unix)]
-        {
-            // TTY writes are synchronous, as in Node.
-            let force_sync = self.force_sync.get() || is_tty_out;
-            // SAFETY(JsCell): single-field write; does not call into JS.
-            self.writer.with_mut(|w| w.force_sync = force_sync);
-        }
 
         let fd = match result {
             sys::Result::Err(err) => {
@@ -755,6 +748,14 @@ impl FileSink {
             }
             sys::Result::Ok(fd) => fd,
         };
+
+        #[cfg(unix)]
+        {
+            // TTY writes are synchronous, as in Node.
+            let force_sync = self.force_sync.get() || is_tty_out;
+            // SAFETY(JsCell): single-field write; does not call into JS.
+            self.writer.with_mut(|w| w.force_sync = force_sync);
+        }
 
         if matches!(options.input_path, PathOrFileDescriptor::Path(_)) {
             self.close_with_graph(context);

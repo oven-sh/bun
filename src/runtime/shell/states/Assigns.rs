@@ -4,7 +4,7 @@
 use crate::shell::ast;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
 use crate::shell::states::base::Base;
-use crate::shell::states::expansion::Expansion;
+use crate::shell::states::expansion::{Expansion, WordContext};
 use crate::shell::yield_::Yield;
 use crate::shell::{EnvStr, ExitCode};
 
@@ -72,7 +72,8 @@ impl Assigns {
                         continue;
                     }
                     let atom: *const ast::Atom = &raw const assigns[idx as usize].value;
-                    let child = Expansion::init(interp, shell, atom, this, true);
+                    let child =
+                        Expansion::init(interp, shell, atom, this, WordContext::AssignValue);
                     return Expansion::start(interp, child);
                 }
                 AssignsState::Done => {

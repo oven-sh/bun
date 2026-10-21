@@ -11,7 +11,7 @@ use crate::shell::io::{IO, OutKind as IoOutKind};
 use crate::shell::shell_body::subproc::{Readable, ShellSubprocess, StdioKind};
 use crate::shell::states::assigns::{AssignCtx, Assigns};
 use crate::shell::states::base::Base;
-use crate::shell::states::expansion::Expansion;
+use crate::shell::states::expansion::{Expansion, WordContext};
 use crate::shell::subproc::{ShellIO, SpawnArgs};
 use crate::shell::util::{OutKind, Stdio};
 use crate::shell::yield_::Yield;
@@ -265,7 +265,8 @@ impl Cmd {
                     match &n.redirect_file {
                         Some(ast::Redirect::Atom(atom)) if idx == 0 => {
                             let atom: *const ast::Atom = atom;
-                            let child = Expansion::init(interp, shell, atom, this, false);
+                            let child =
+                                Expansion::init(interp, shell, atom, this, WordContext::Fields);
                             return Expansion::start(interp, child);
                         }
                         // JsBuf redirects don't need expansion; nor does the
@@ -281,11 +282,16 @@ impl Cmd {
                         interp.as_cmd_mut(this).state = CmdState::Exec;
                         continue;
                     }
-                    let assign_ctx = idx > 0
+                    let ctx = if idx > 0
                         && is_declaration_utility(&args[0])
-                        && is_assignment_word(&args[idx as usize]);
+                        && is_assignment_word(&args[idx as usize])
+                    {
+                        WordContext::AssignValue
+                    } else {
+                        WordContext::Fields
+                    };
                     let atom: *const ast::Atom = &raw const args[idx as usize];
-                    let child = Expansion::init(interp, shell, atom, this, assign_ctx);
+                    let child = Expansion::init(interp, shell, atom, this, ctx);
                     return Expansion::start(interp, child);
                 }
                 CmdState::Exec => {

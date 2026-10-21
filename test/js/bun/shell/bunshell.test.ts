@@ -2712,6 +2712,141 @@ describe("condexprs", () => {
   TestBuilder.command`LOL=; [[ $LOl == $LOL ]] && echo yes!`.stdout("yes!\n").runAsTest("== empty");
   TestBuilder.command`LOL=; [[ $LOl != $LOL ]] && echo yes!`.exitCode(1).runAsTest("!= empty");
 
+  // bash does no word splitting, brace expansion or pathname expansion on the
+  // words between `[[` and `]]`.
+  describe("an operand expands to exactly one word", () => {
+    // The expected branch of each row is the one bash 5.2 takes.
+    const rows: [condition: string, expected: boolean][] = [
+      // An unquoted command substitution keeps its blanks.
+      [`[[ $(echo a b) == "a b" ]]`, true],
+      [`[[ "a b" == $(echo a b) ]]`, true],
+      [`[[ $(echo a b) != "a b" ]]`, false],
+      [`[[ "a b" != $(echo a b) ]]`, false],
+      [`[[ $(echo a b) == ab ]]`, false],
+      [`[[ $(echo a b) != ab ]]`, true],
+      [`[[ $(echo a b) == $(echo ab) ]]`, false],
+      [`[[ $(echo a b) == $(echo a b) ]]`, true],
+      [`[[ -f $(echo my file.txt) ]]`, true],
+      [`[[ -d $(echo my dir) ]]`, true],
+      [`[[ x$(echo a b)y == "xa by" ]]`, true],
+      [`[[ $(echo a b)$(echo c d) == "a bc d" ]]`, true],
+      [`[[ $(echo "a  b") == "a  b" ]]`, true],
+      [`[[ $(echo "  a") == "  a" ]]`, true],
+      [`[[ $(echo a && echo b) == "a\nb" ]]`, true],
+      [`[[ $(echo a && echo b) == "a b" ]]`, false],
+      // Braces are text.
+      [`[[ {a,b} == "{a,b}" ]]`, true],
+      [`[[ "{a,b}" == {a,b} ]]`, true],
+      [`[[ a{b,c} == "a{b,c}" ]]`, true],
+      [`[[ -f {a,b}.txt ]]`, true],
+      // `*` is text in every operand that is not a pattern.
+      [`[[ a*.txt == "a*.txt" ]]`, true],
+      [`[[ * == "*" ]]`, true],
+      [`[[ -f a*.txt ]]`, false],
+      [`[[ -n *.nomatch ]]`, true],
+      [`[[ -z *.nomatch ]]`, false],
+      [`[[ *.nomatch == x ]]`, false],
+      [`[[ *.nomatch != x ]]`, true],
+      // A quoted or escaped `*` in the right operand is text too.
+      [`[[ a.txt == "*.txt" ]]`, false],
+      [`[[ "*.txt" == "*.txt" ]]`, true],
+      [`[[ a.txt == \\*.txt ]]`, false],
+      [`[[ "$(echo a b)" == "a b" ]]`, true],
+      [`[[ -z $(echo) ]]`, true],
+      [`[[ -n $(echo) ]]`, false],
+      [`[[ $(echo) == "" ]]`, true],
+      // The quoted and the unquoted substitution give the same text.
+      [`[[ "$(echo "a ")" == $(echo "a ") ]]`, true],
+      [`[[ $(echo "a ") == "$(echo "a ")" ]]`, true],
+      [`n="       3"; [[ $(echo $(echo $n)) == 3 ]]`, true],
+      // A `~` that is not at the start of the operand is text.
+      [`[[ "a"~ == "a~" ]]`, true],
+      [`x=1; [[ $x~ == "1~" ]]`, true],
+    ];
+    for (const [condition, expected] of rows) {
+      TestBuilder.command`${{ raw: condition }} && echo yes!`
+        .file("my file.txt", "x")
+        .directory("my dir")
+        .file("a.txt", "x")
+        .file("b.txt", "x")
+        .file("{a,b}.txt", "x")
+        .stdout(expected ? "yes!\n" : "")
+        .stderr("")
+        .exitCode(expected ? 0 : 1)
+        .runAsTest(condition.replaceAll("\n", "\\n"));
+    }
+
+    TestBuilder.command`V="a b"; [[ $V == "a b" ]] && echo yes!`.stdout("yes!\n").runAsTest("a variable with a blank");
+    TestBuilder.command`[[ ${"a b"} == "a b" ]] && echo yes!`.stdout("yes!\n").runAsTest("an interpolated blank");
+
+    TestBuilder.command`if [[ $(echo a b) == "a b" ]]; then echo same; else echo different; fi`
+      .stdout("same\n")
+      .runAsTest("in an if condition");
+    TestBuilder.command`echo $([[ $(echo a b) == "a b" ]] && echo inner)`
+      .stdout("inner\n")
+      .runAsTest("inside a command substitution");
+    TestBuilder.command`([[ $(echo a b) == "a b" ]] && echo yes!)`.stdout("yes!\n").runAsTest("inside a subshell");
+    TestBuilder.command`true | [[ $(echo a b) == "a b" ]] && echo yes!`
+      .stdout("yes!\n")
+      .runAsTest("as the last member of a pipeline");
+    TestBuilder.command`[[ $(echo a b) == ab ]] || echo no`.stdout("no\n").runAsTest("left of ||");
+  });
+
+  describe("still different from bash", () => {
+    // Each row has the branch that bash 5.2 takes.
+    const rows: [condition: string, expected: boolean][] = [
+      // A substitution whose text is kept whole loses its trailing blanks:
+      // https://github.com/oven-sh/bun/pull/45339
+      [`[[ -z $(echo " ") ]]`, false],
+      [`[[ -n $(echo " ") ]]`, true],
+      [`[[ $(echo "a ") == "a " ]]`, true],
+      // The same trim. When the substitution was field split, this row took the bash branch.
+      [`[[ $(echo " a ") == " a" ]]`, false],
+      // `$n` is not field split, so `echo` prints the blanks. Before, the field split of the substitution hid that.
+      [`n="       3"; [[ $(echo $n) == 3 ]]`, true],
+      // bash matches `?` and `[...]` as a pattern also when the operand has no `*`.
+      [`[[ a == ? ]]`, true],
+      [`[[ a == [abc] ]]`, true],
+    ];
+    for (const [condition, expected] of rows) {
+      const builder = TestBuilder.command`${{ raw: condition }} && echo yes!`
+        .ensureTempDir()
+        .stdout(expected ? "yes!\n" : "")
+        .exitCode(expected ? 0 : 1);
+      test.failing(condition, () => builder.run());
+    }
+  });
+
+  // `bun check.sh` runs the shell on the mini event loop, with no JS VM.
+  test("in a script file", async () => {
+    using dir = tempDir("condexpr-script", {
+      "greeting.txt": "hello world\n",
+      "version.txt": "v1.2.3 stable\n",
+      "my file.txt": "x\n",
+      "check.sh": [
+        `if [[ $(cat greeting.txt) == "hello world" ]]; then echo "1 same"; else echo "1 DIFFERENT"; fi`,
+        `if [[ "$(cat greeting.txt)" == "hello world" ]]; then echo "2 same"; else echo "2 DIFFERENT"; fi`,
+        `if [[ $(cat greeting.txt) == helloworld ]]; then echo "3 EQUAL TO helloworld"; else echo "3 not helloworld"; fi`,
+        `if [[ $(cat version.txt) != "v1.2.3 stable" ]]; then echo "4 WOULD UPGRADE"; else echo "4 up to date"; fi`,
+        `if [[ -f $(echo my file.txt) ]]; then echo "5 found"; else echo "5 MISSING"; fi`,
+        "",
+      ].join("\n"),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "check.sh"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "1 same\n2 same\n3 not helloworld\n4 up to date\n5 found\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   describe.todo("ported from GNU bash", () => {
     TestBuilder.command`
     [[ foo > bar && $PWD -ef . ]]

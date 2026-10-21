@@ -5,7 +5,7 @@ use crate::shell::ast;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
-use crate::shell::states::expansion::Expansion;
+use crate::shell::states::expansion::{Expansion, WordContext};
 use crate::shell::yield_::Yield;
 
 pub(crate) struct CondExpr {
@@ -66,7 +66,17 @@ impl CondExpr {
                         return Self::command_impl_start(interp, this, n.op);
                     }
                     let atom: *const ast::Atom = n.args.get_const(idx as usize);
-                    let child = Expansion::init(interp, shell, atom, this, false);
+                    // bash matches the right operand as a pattern. That test keeps the argv expansion.
+                    let has_pattern =
+                        matches!(n.op, ast::CondExprOp::EqEq | ast::CondExprOp::NotEq)
+                            && n.args.len() == 2
+                            && n.args.get_const(1).has_glob_expansion();
+                    let ctx = if has_pattern {
+                        WordContext::Fields
+                    } else {
+                        WordContext::CondOperand
+                    };
+                    let child = Expansion::init(interp, shell, atom, this, ctx);
                     return Expansion::start(interp, child);
                 }
                 CondExprState::WaitingStat => return Yield::suspended(),

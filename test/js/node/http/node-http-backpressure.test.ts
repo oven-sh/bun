@@ -2136,6 +2136,79 @@ describe("backpressure", () => {
         child.kill();
       }
     });
+
+    // The socket fails the callbacks of the writes that it did not send. The last one throws: nothing of Node.js is behind it.
+    it("a write() callback that throws when the client went away is reported, and the response still emits 'close'", async () => {
+      const count = 8;
+      const child = spawn(
+        process.execPath,
+        [
+          "-e",
+          `const events = [];
+          const report = () => {
+            if (!events.includes("close") || !events.includes("uncaughtException: from the last callback")) return;
+            console.log(JSON.stringify(events));
+            process.exit(0);
+          };
+          process.on("uncaughtException", err => {
+            events.push("uncaughtException: " + err.message);
+            report();
+          });
+          // More than the kernel buffers for a client that reads nothing.
+          const chunk = Buffer.alloc(4 << 20, "a");
+          const server = require("node:http").createServer((req, res) => {
+            res.on("close", () => {
+              events.push("close");
+              report();
+            });
+            res.setHeader("Content-Length", ${count} * chunk.length);
+            for (let i = 0; i < ${count}; i++) {
+              res.write(chunk, () => {
+                events.push("callback " + i);
+                if (i === ${count - 1}) throw new Error("from the last callback");
+              });
+            }
+            // By then the socket has started its write. Node.js does not destroy a socket whose first write fails into a callback that throws.
+            setImmediate(() => console.log("wrote"));
+          });
+          const listener = require("node:net").createServer(socket => server.emit("connection", socket));
+          listener.listen(0, "127.0.0.1", () => console.log(listener.address().port));`,
+        ],
+        { stdio: ["ignore", "pipe", "inherit"] },
+      );
+      const client = new net.Socket();
+      client.on("error", () => {});
+      try {
+        const exited = once(child, "close");
+        let stdout = "";
+        const wrote = Promise.withResolvers<void>();
+        const listening = Promise.withResolvers<number>();
+        child.stdout!.setEncoding("utf8").on("data", chunk => {
+          stdout += chunk;
+          const lines = stdout.split("\n");
+          if (lines.length > 1) listening.resolve(parseInt(lines[0]));
+          if (lines.length > 2) wrote.resolve();
+        });
+        const early = exited.then(([code, signal]) => {
+          throw new Error(`server exited early: code ${code}, signal ${signal}`);
+        });
+        early.catch(() => {});
+        const port = await Promise.race([listening.promise, early]);
+        await new Promise<void>(resolve => client.connect(port, "127.0.0.1", resolve));
+        client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        await Promise.race([wrote.promise, early]);
+        client.resetAndDestroy();
+        expect(await exited).toEqual([0, null]);
+        const events: string[] = JSON.parse(stdout.split("\n")[2]);
+        expect({ callbacks: events.slice(0, count), rest: events.slice(count).sort() }).toEqual({
+          callbacks: Array.from({ length: count }, (_, i) => `callback ${i}`),
+          rest: ["close", "uncaughtException: from the last callback"],
+        });
+      } finally {
+        client.destroy();
+        child.kill();
+      }
+    });
   });
 
   // Request-body direction: once the handler stops reading the body (req.pause(),
@@ -3279,6 +3352,31 @@ describe("backpressure", () => {
       }
     });
 
+    // The server has ended the socket, which still flushes what it holds. A write from here on goes nowhere, in
+    // Node.js too, so it does not report the bytes that the socket holds.
+    it("a small write() after the client's FIN returns true while the socket holds its high water mark", async () => {
+      const wrote = Promise.withResolvers<http.ServerResponse>();
+      const connection = await pair((req, res) => {
+        res.write(CHUNK);
+        res.write(CHUNK);
+        wrote.resolve(res);
+      });
+      const client = await connection.connect();
+      try {
+        client.end("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        const res = await wrote.promise;
+        await connection.turn();
+        const socket = res.socket!;
+        expect({
+          ended: socket.writableEnded,
+          overTheMark: socket.writableLength >= socket.writableHighWaterMark,
+          returned: res.write("x"),
+        }).toEqual({ ended: true, overTheMark: true, returned: true });
+      } finally {
+        client.destroy();
+      }
+    });
+
     // The socket can still hold the previous response's bytes when the next
     // request arrives. The next response has not written anything, so it does
     // not need a 'drain': pipe() waits for one whenever writableNeedDrain says
@@ -4286,6 +4384,32 @@ describe("backpressure", () => {
       },
     );
 
+    // The socket took every byte, so nothing of it is left to wait for when the turn of the writes ends.
+    it("a response that gave away a socket that took every byte of its refused writes gets no 'drain'", async () => {
+      const events: string[] = [];
+      const wrote = Promise.withResolvers<boolean[]>();
+      const socket = onBudgetSocket((req, res, socket) => {
+        const mark = socket.writableHighWaterMark;
+        res.setHeader("Content-Length", 2 * mark);
+        socket.budget = Infinity;
+        res.on("drain", () => events.push("drain"));
+        const returned = [res.write(Buffer.alloc(mark, "a")), res.write(Buffer.alloc(mark, "a"))];
+        res.detachSocket(socket);
+        wrote.resolve(returned);
+      });
+      try {
+        expect(await wrote.promise).toEqual([false, false]);
+        await turn();
+        await turn();
+        expect({ events, taken: socket.taken >= 2 * socket.writableHighWaterMark }).toEqual({
+          events: [],
+          taken: true,
+        });
+      } finally {
+        socket.destroy();
+      }
+    });
+
     // Node.js gives the callback of a write() to the socket with the chunk.
     it("each write() callback runs when the socket has written its chunk, while the socket holds the chunks behind it", async () => {
       const ran: number[] = [];
@@ -5092,6 +5216,51 @@ describe("backpressure", () => {
           await turn();
           returned.push(res.write(""));
           expect(returned).toEqual([false, false]);
+        } finally {
+          socket.destroy();
+        }
+      });
+
+      // Two turns, so that the count of a turn stays under the mark: the second chunk fills the socket to its mark.
+      it("a write() that fills the socket to its high water mark returns false", async () => {
+        const returned: boolean[] = [];
+        const started = Promise.withResolvers<http.ServerResponse>();
+        let mark = 0;
+        const socket = onBudgetSocket((req, res, socket) => {
+          mark = socket.writableHighWaterMark;
+          socket.budget = Infinity;
+          res.setHeader("Content-Length", mark);
+          res.flushHeaders();
+          started.resolve(res);
+        });
+        try {
+          const res = await started.promise;
+          await turn();
+          socket.budget = 0;
+          returned.push(res.write(Buffer.alloc(mark / 2, "a")));
+          await turn();
+          returned.push(res.write(Buffer.alloc(mark / 2, "a")));
+          expect({ returned, held: socket.writableLength }).toEqual({ returned: [true, false], held: mark });
+        } finally {
+          socket.destroy();
+        }
+      });
+
+      it("an empty write() to a socket with a high water mark of 0 that holds nothing returns true", async () => {
+        const started = Promise.withResolvers<http.ServerResponse>();
+        const socket = onBudgetSocket(
+          (req, res, socket) => {
+            socket.budget = Infinity;
+            res.flushHeaders();
+            started.resolve(res);
+          },
+          GET,
+          0,
+        );
+        try {
+          const res = await started.promise;
+          await turn();
+          expect({ returned: res.write(""), held: socket.writableLength }).toEqual({ returned: true, held: 0 });
         } finally {
           socket.destroy();
         }

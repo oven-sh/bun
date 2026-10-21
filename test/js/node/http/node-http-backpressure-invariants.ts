@@ -671,8 +671,8 @@ async function runPlan(
       await turn();
       if (plan.end.cb && endCallbacks !== 1) violation(`end() callback ran ${endCallbacks} times`);
       if (afterEof) {
-        // The socket sends what it had when the peer ended its side.
-        const got = bodyTaken(await T.wire(() => true), heads);
+        // The socket sends what it had when the peer ended its side. A kernel can still have some of it.
+        const got = bodyTaken(await T.wire(wire => bodyTaken(wire, heads) >= bodyAtEof), heads);
         if (!foreign && !tornDown && got < bodyAtEof) {
           violation(`the wire has ${got} body bytes, ${bodyAtEof} were written before the peer ended its side`);
         }

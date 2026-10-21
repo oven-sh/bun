@@ -15,10 +15,7 @@ function rethrowUncaught(err) {
   throw err;
 }
 
-// Node fails the write callbacks that a destroyed socket still holds before it emits 'close' (Writable's errorBuffer).
-function failPendingWriteCallbacks(res, err) {
-  const callbacks = res[kPendingCallbacks];
-  res[kPendingCallbacks] = [];
+function failEach(callbacks, err) {
   for (let i = 0; i < callbacks.length; i++) {
     try {
       callbacks[i](err);
@@ -27,6 +24,13 @@ function failPendingWriteCallbacks(res, err) {
       process.nextTick(rethrowUncaught, e);
     }
   }
+}
+
+// Node fails the write callbacks that a destroyed socket still holds before it emits 'close' (Writable's errorBuffer).
+function failPendingWriteCallbacks(res, err) {
+  const callbacks = res[kPendingCallbacks];
+  res[kPendingCallbacks] = [];
+  failEach(callbacks, err);
 }
 
 interface HeldCallback {
@@ -41,7 +45,7 @@ interface HeldCallbacks {
   frame: unknown;
 }
 
-// Takes the callback of `entry` out, once: node:net calls a callback again when a later one threw while it destroyed the socket.
+// Takes the callback of `entry` out, once. The 'close' of the socket can have failed it, and node:net calls a callback again when a later one threw while it destroyed the socket.
 function takeHeldCallback(held: HeldCallbacks, entry: HeldCallback) {
   const callback = entry.callback;
   if (callback === null) return null;
@@ -64,15 +68,12 @@ function runHeldCallback(frame, callback, err) {
 // node:net drops the callbacks of its queued writes when the peer resets the connection (https://github.com/oven-sh/bun/pull/43250), and a stream of user code can drop them in destroy(). The 'close' of the socket fails what is left.
 function failHeldCallbacks(held: HeldCallbacks, err) {
   const frame = held.frame;
+  const callbacks: ((err?: Error | null) => void)[] = [];
   for (let entry = held.oldest; entry !== null; entry = entry.next) {
     const callback = takeHeldCallback(held, entry);
-    if (callback === null) continue;
-    try {
-      runHeldCallback(frame, callback, err);
-    } catch (e) {
-      process.nextTick(rethrowUncaught, e);
-    }
+    if (callback !== null) callbacks.push(callback);
   }
+  runHeldCallback(frame, failEach.bind(undefined, callbacks), err);
 }
 
 type IncomingMessage = import("node:http").IncomingMessage;
@@ -102,6 +103,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
   // What waits until the socket holds none of the response's bytes, and its async context (native's onwritable slot).
   let onwritable: ((...args: unknown[]) => void) | null | undefined = null;
   let onwritableFrame;
+  const mark = socket.writableHighWaterMark;
 
   function writeHeadToSocket(contentLength) {
     if (headWritten) return;
@@ -310,13 +312,13 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       if (this.ended) return;
       onwritable = callback;
       onwritableFrame = callback ? AsyncContextFrame.current() : undefined;
-      // A socket under its high water mark emits no 'drain'. The response refused the writes of a turn, as the socket of Node.js does under the cork of a tick: like that socket, this one owes its 'drain' from here on.
+      // A socket under its high water mark emits no 'drain', so it is made to owe one. That is the state of the socket of Node.js after the cork of a tick refused a write.
       const state = callback && socket._writableState;
       if (state) state.needDrain = true;
     },
-    // What the socket holds: the response has the socket to itself until the bytes of end() have left. A socket that owes its 'drain' is not empty yet. readable-stream@3 has no getter for that flag.
+    // What the socket holds: the response has the socket to itself until the bytes of end() have left. A socket that owes its 'drain' is not empty yet.
     get bufferedAmount() {
-      return socket.writableLength || ((socket.writableNeedDrain ?? socket._writableState?.needDrain) ? 1 : 0);
+      return socket.writableLength || (socket.writableNeedDrain ? 1 : 0);
     },
     // True while the socket can take a chunk: then write() gives it the callback of the chunk.
     get [kTakesWriteCallback]() {
@@ -329,11 +331,6 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     // The socket finished, so no 'drain' comes: `fn` runs, and the waiting callback never does.
     socketEnded(fn) {
       if (onwritable) settleWaiting(fn);
-    },
-    // The socket closed: `fn` fails the write callbacks that the response still holds, in the place of the waiting callback when there is one.
-    socketClosed(fn) {
-      if (onwritable) settleWaiting(fn);
-      else fn();
     },
     // Runs once, from flushed(). ServerResponse#end()'s `onwritable` stays unused: its 'finish' comes a tick later, after a closing socket's 'close'.
     onflushed: null as (() => void) | null,
@@ -388,8 +385,9 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
         else process.nextTick(onWritten);
       }
       // Node's rule: the socket's own write() reports the backpressure, which is a buffer at or over its high water mark. It says so for an empty chunk too. A discarded chunk (HEAD, 204, 304) is null.
+      if (buf === null) return length;
       const holds = socket.writableLength;
-      if (buf === null || socket.writableEnded || !holds || holds < socket.writableHighWaterMark) return length;
+      if (!holds || holds < mark || socket.writableEnded) return length;
       // Like native write_or_end: a negative result, and the callback waits for the drain.
       if (callback) this.onwritable = callback;
       // An empty write has no length to negate.
@@ -781,9 +779,7 @@ function connectionListenerHTTP1(server, socket, options) {
     const handle = inflight?.[kHttp1ResponseHandle];
     if (!handle) return;
     if (inflight[kPendingCallbacks].length !== 0) {
-      handle.socketClosed(() =>
-        failPendingWriteCallbacks(inflight, socket.errored ?? inflight.errored ?? $ERR_STREAM_DESTROYED("write")),
-      );
+      failPendingWriteCallbacks(inflight, socket.errored ?? inflight.errored ?? $ERR_STREAM_DESTROYED("write"));
     }
     handle.flushed();
   });

@@ -18,7 +18,7 @@ import path from "node:path";
 
 let resolved: string | null | undefined;
 
-function findCurlH3(): string | null {
+export function findCurlH3(): string | null {
   if (resolved !== undefined) return resolved;
   for (const candidate of [process.env.CURL_HTTP3, "curl-h3", "curl"]) {
     if (!candidate) continue;

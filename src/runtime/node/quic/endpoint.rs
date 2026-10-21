@@ -111,6 +111,10 @@ const PREFERRED_ADDRESS_USE: u64 = 1;
 /// Node's `DEFAULT_MAX_IDLE_TIMEOUT` (node/src/quic/transportparams.h), in the
 /// seconds unit `transportParams.maxIdleTimeout` uses.
 const DEFAULT_MAX_IDLE_TIMEOUT_SECS: u64 = 10;
+/// The `initial_max_streams_uni` lsquic's HTTP/3 client advertises whatever
+/// the setting says: the server's control stream and its two QPACK streams
+/// (`ietf_full_conn_init`, patches/lsquic/peer-stream-limits.patch).
+const H3_CLIENT_MAX_STREAMS_UNI: u64 = 3;
 pub(super) const MS_PER_SEC: u64 = 1_000;
 
 /// Copy a sockaddr sized by its family (sockaddr_in = 16, sockaddr_in6 = 28)
@@ -2040,6 +2044,9 @@ impl QuicEndpoint {
         }
         let mut local_tp = lsquic::NqTransportParams::default();
         apply_transport_params(global, &mut settings, options, &mut local_tp)?;
+        if is_http && !is_server {
+            local_tp.initial_max_streams_uni = H3_CLIENT_MAX_STREAMS_UNI;
+        }
         if let Some(app) = options
             .get(global, "application")?
             .filter(|v| v.is_object())

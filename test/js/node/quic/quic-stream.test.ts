@@ -6,7 +6,8 @@ import { bunEnv, bunExe, tempDir, withoutAsanQuarantine } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { connect, listen, type QuicEndpoint, type SessionOptions } from "node:quic";
+import { connect, listen, QuicEndpoint, type SessionOptions } from "node:quic";
+import { fetchH3, findCurlH3 } from "../../bun/http/fetch-h3";
 
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
@@ -620,3 +621,403 @@ test("a stream that reuses a destroyed stream's allocation doesn't get its queue
   expect(stdout).toBe(JSON.stringify({ opened: 16, delivered: 16, closedBeforeSent: [] }) + "\n");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// The limit an endpoint enforces for the streams its peer opens, and the
+// window it sizes MAX_STREAMS credit from, must be the limit it advertises in
+// `initialMaxStreamsBidi` / `initialMaxStreamsUni`.
+describe("limits for the streams the peer opens", () => {
+  const encoder = new TextEncoder();
+
+  // One server session and one client session. The client gets an endpoint of
+  // its own: lsquic settings are per engine, so a reused endpoint keeps the
+  // transport parameters of its first connect(). Both sides time out after a
+  // second without packets, so a stream that never opens ends the test
+  // through `closed` and not through the test timeout.
+  async function connectPair(
+    clientParams: object,
+    serverParams: object = {},
+    alpn = "quic-test",
+    listenOptions: object = {},
+  ) {
+    const accepted = Promise.withResolvers<any>();
+    const server = await listen(
+      (session: any) => {
+        session.onerror = () => {};
+        session.closed.catch(() => {});
+        accepted.resolve(session);
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        alpn: [alpn],
+        transportParams: { maxIdleTimeout: 1, ...serverParams },
+        ...listenOptions,
+      },
+    );
+    const endpoint = new QuicEndpoint();
+    const closeEndpoints = () => Promise.all([endpoint.close(), server.close()]);
+    try {
+      const client: any = await connect(server.address!, {
+        endpoint,
+        alpn,
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams: { maxIdleTimeout: 1, ...clientParams },
+        onerror() {},
+      } as SessionOptions);
+      const closed: Promise<string> = client.closed.then(
+        () => "client closed",
+        (err: any) => `client closed: ${err?.code}`,
+      );
+      await client.opened;
+      const serverSession = await accepted.promise;
+      await serverSession.opened;
+      return {
+        client,
+        serverSession,
+        closed,
+        async [Symbol.asyncDispose]() {
+          client.destroy();
+          serverSession.destroy();
+          await closeEndpoints();
+        },
+      };
+    } catch (err) {
+      await closeEndpoints();
+      throw err;
+    }
+  }
+
+  const streamLimits = (params: any) => ({ bidi: params.initialMaxStreamsBidi, uni: params.initialMaxStreamsUni });
+
+  async function readAll(stream: any) {
+    const chunks: Uint8Array[] = [];
+    for await (const batch of stream) chunks.push(...batch);
+    return Buffer.concat(chunks).toString();
+  }
+
+  test.each([
+    { kind: "bidi", limit: 1, ids: ["1", "5", "9", "13", "17", "21"] },
+    { kind: "bidi", limit: 2, ids: ["1", "5", "9", "13", "17", "21"] },
+    { kind: "uni", limit: 1, ids: ["3", "7", "11", "15", "19", "23"] },
+    { kind: "uni", limit: 2, ids: ["3", "7", "11", "15", "19", "23"] },
+  ] as const)(
+    "a client that allows $limit $kind stream(s) lets the server open six, one after another",
+    async ({ kind, limit, ids }) => {
+      await using pair = await connectPair(
+        kind === "bidi" ? { initialMaxStreamsBidi: limit } : { initialMaxStreamsUni: limit },
+      );
+      const { client, serverSession } = pair;
+      const advertised = streamLimits(serverSession.remoteTransportParams)[kind];
+
+      // The client reads each stream to its end. On a bidirectional stream it
+      // then echoes the body and ends its own side. Credit comes back only for
+      // a stream that is closed in both directions.
+      const received: string[] = [];
+      let readByClient: PromiseWithResolvers<void>;
+      client.onstream = async (stream: any) => {
+        stream.closed.catch(() => {});
+        const body = await readAll(stream);
+        if (kind === "bidi") {
+          stream.writer.writeSync(encoder.encode(body));
+          stream.writer.endSync();
+        }
+        received.push(`${stream.id}:${body}`);
+        readByClient.resolve();
+      };
+
+      const echoes: string[] = [];
+      const openSix = async () => {
+        for (let i = 0; i < ids.length; i++) {
+          readByClient = Promise.withResolvers<void>();
+          const body = encoder.encode(`s${i}`);
+          const stream =
+            kind === "bidi"
+              ? await serverSession.createBidirectionalStream({ body })
+              : await serverSession.createUnidirectionalStream({ body });
+          stream.closed.catch(() => {});
+          if (kind === "bidi") echoes.push(await readAll(stream));
+          await readByClient.promise;
+        }
+        return "opened all";
+      };
+
+      expect({
+        outcome: await Promise.race([openSix().catch(err => `server failed: ${err?.code ?? err}`), pair.closed]),
+        advertised,
+        received,
+        echoes,
+      }).toEqual({
+        outcome: "opened all",
+        advertised: BigInt(limit),
+        received: ids.map((id, i) => `${id}:s${i}`),
+        echoes: kind === "bidi" ? ids.map((_, i) => `s${i}`) : [],
+      });
+    },
+  );
+
+  // The six-in-a-row case has one stream open at a time, so it passes with any
+  // credit window. Here the opener asks for six at once and the accepting side
+  // holds each one until the one before it is closed. A window above the limit
+  // lets more than `limit` streams in after the first close. The server rows
+  // pass without the fix. They pin the same window for the other role.
+  test.each([
+    { advertiser: "client", limit: 1 },
+    { advertiser: "client", limit: 2 },
+    { advertiser: "server", limit: 1 },
+    { advertiser: "server", limit: 2 },
+  ] as const)(
+    "a $advertiser that allows $limit bidi stream(s) never holds more when its peer asks for six at once",
+    async ({ advertiser, limit }) => {
+      const params = { initialMaxStreamsBidi: limit };
+      await using pair = await connectPair(
+        advertiser === "client" ? params : {},
+        advertiser === "server" ? params : {},
+      );
+      const [accepting, opening] =
+        advertiser === "client" ? [pair.client, pair.serverSession] : [pair.serverSession, pair.client];
+      const bodies = ["s0", "s1", "s2", "s3", "s4", "s5"];
+
+      const parked = bodies.map(() => Promise.withResolvers<any>());
+      let arrived = 0;
+      let released = 0;
+      let mostHeld = 0;
+      accepting.onstream = (stream: any) => {
+        stream.closed.catch(() => {});
+        mostHeld = Math.max(mostHeld, arrived + 1 - released);
+        parked[arrived++].resolve(stream);
+      };
+
+      const pending: boolean[] = [];
+      const echoOf = new Map<string, Promise<string>>();
+      for (const body of bodies) {
+        const stream = await opening.createBidirectionalStream({ body: encoder.encode(body) });
+        stream.closed.catch(() => {});
+        pending.push(stream.pending);
+        echoOf.set(body, readAll(stream));
+      }
+      for (const echo of echoOf.values()) echo.catch(() => {});
+
+      const releaseInTurn = async () => {
+        // Every stream the first limit allows is held before the first release.
+        await parked[limit - 1].promise;
+        const echoes: string[] = [];
+        for (const slot of parked) {
+          const stream = await slot.promise;
+          const body = await readAll(stream);
+          released++;
+          stream.writer.writeSync(encoder.encode(body));
+          stream.writer.endSync();
+          echoes.push(await echoOf.get(body)!);
+        }
+        return echoes.sort().join(",");
+      };
+
+      expect({
+        outcome: await Promise.race([releaseInTurn().catch(err => `failed: ${err?.code ?? err}`), pair.closed]),
+        pending,
+        mostHeld,
+      }).toEqual({
+        outcome: bodies.join(","),
+        pending: bodies.map((_, i) => i >= limit),
+        mostHeld: limit,
+      });
+    },
+  );
+
+  test("a client accepts every stream its limit allows when the limit is above 100", async () => {
+    const limit = 101;
+    // This test does a second of work in one thread for both sessions, so it
+    // does not use the one-second idle timeout. An unfixed client ends it
+    // with a transport error.
+    const idle = { maxIdleTimeout: 30 };
+    await using pair = await connectPair({ ...idle, initialMaxStreamsBidi: limit }, idle);
+    const { client, serverSession } = pair;
+
+    let arrived = 0;
+    const allArrived = Promise.withResolvers<string>();
+    client.onstream = (stream: any) => {
+      stream.closed.catch(() => {});
+      if (++arrived === limit) allArrived.resolve("arrived");
+    };
+
+    // The client does not end its side, so every stream stays open and the
+    // server gets no new credit. The last stream is one over the limit.
+    const pending: boolean[] = [];
+    for (let i = 0; i <= limit; i++) {
+      const stream = await serverSession.createBidirectionalStream({ body: encoder.encode("x") });
+      stream.closed.catch(() => {});
+      pending.push(stream.pending);
+    }
+
+    expect({
+      outcome: await Promise.race([allArrived.promise, pair.closed]),
+      arrived,
+      firstPending: pending.indexOf(true),
+    }).toEqual({ outcome: "arrived", arrived: limit, firstPending: limit });
+  });
+
+  // 2**30 streams is 2**32 as a stream ID, the first limit that does not fit in
+  // the 32 bits lsquic computed it in.
+  test.each(["client", "server"] as const)(
+    "a %s that allows 2**30 streams accepts the first stream of each kind",
+    async advertiser => {
+      const huge = { initialMaxStreamsBidi: 2 ** 30, initialMaxStreamsUni: 2 ** 30 };
+      await using pair = await connectPair(advertiser === "client" ? huge : {}, advertiser === "server" ? huge : {});
+      const [accepting, opening] =
+        advertiser === "client" ? [pair.client, pair.serverSession] : [pair.serverSession, pair.client];
+      const advertised = streamLimits(opening.remoteTransportParams);
+
+      const bodies: string[] = [];
+      const bothRead = Promise.withResolvers<string>();
+      accepting.onstream = async (stream: any) => {
+        stream.closed.catch(() => {});
+        bodies.push(await readAll(stream));
+        if (bodies.length === 2) bothRead.resolve("accepted");
+      };
+      const bidi = await opening.createBidirectionalStream({ body: encoder.encode("bidi") });
+      bidi.closed.catch(() => {});
+      const uni = await opening.createUnidirectionalStream({ body: encoder.encode("uni") });
+      uni.closed.catch(() => {});
+
+      expect({
+        outcome: await Promise.race([bothRead.promise, pair.closed]),
+        advertised,
+        bodies: bodies.sort(),
+      }).toEqual({
+        outcome: "accepted",
+        advertised: { bidi: 2n ** 30n, uni: 2n ** 30n },
+        bodies: ["bidi", "uni"],
+      });
+    },
+  );
+
+  test("a client's unidirectional limit does not follow its bidirectional limit", async () => {
+    await using pair = await connectPair({ initialMaxStreamsBidi: 0, initialMaxStreamsUni: 2 });
+    const { client, serverSession } = pair;
+
+    const pending: boolean[] = [];
+    for (const kind of ["bidi", "uni", "uni", "uni"]) {
+      const stream =
+        kind === "bidi"
+          ? await serverSession.createBidirectionalStream()
+          : await serverSession.createUnidirectionalStream();
+      stream.closed.catch(() => {});
+      pending.push(stream.pending);
+    }
+
+    expect({
+      local: streamLimits(client.localTransportParams),
+      remote: streamLimits(serverSession.remoteTransportParams),
+      pending,
+    }).toEqual({
+      local: { bidi: 0n, uni: 2n },
+      remote: { bidi: 0n, uni: 2n },
+      pending: [true, false, false, true],
+    });
+  });
+
+  // lsquic's HTTP/3 client advertises three unidirectional streams (the
+  // server's control stream and its two QPACK streams) whatever the option says.
+  test.each([
+    { label: "by default", clientParams: {} },
+    { label: "with initialMaxStreamsUni set", clientParams: { initialMaxStreamsUni: 7 } },
+  ])("an HTTP/3 client reports the unidirectional limit it advertises, $label", async ({ clientParams }) => {
+    await using pair = await connectPair(clientParams, {}, "h3");
+    expect({
+      local: pair.client.localTransportParams.initialMaxStreamsUni,
+      remote: pair.serverSession.remoteTransportParams.initialMaxStreamsUni,
+    }).toEqual({ local: 3n, remote: 3n });
+  });
+
+  // The three-stream rule is for an HTTP/3 client only. An HTTP/3 server keeps
+  // the limit it advertises. The client's control stream and its two QPACK
+  // streams are 2, 6 and 10, so the streams it opens here start at 14. The row
+  // for 5 passes without the fix. It pins the server half of the moved seed.
+  test.each([
+    { label: "5", limit: 5, streams: ["14", "18", "pending"] },
+    { label: "2**30", limit: 2 ** 30, streams: ["14", "18", "22"] },
+  ])(
+    "an HTTP/3 server that allows $label unidirectional streams accepts the ones past the third",
+    async ({ limit, streams }) => {
+      // A failure ends through a transport error, not through the idle timer.
+      const idle = { maxIdleTimeout: 30 };
+      await using pair = await connectPair(idle, { ...idle, initialMaxStreamsUni: limit }, "h3", {
+        onheaders(this: any) {
+          this.sendHeaders({ ":status": "200" }, { terminal: true });
+        },
+      });
+      const { client, serverSession } = pair;
+      serverSession.onstream = (stream: any) => stream.closed.catch(() => {});
+      const advertised = {
+        local: serverSession.localTransportParams.initialMaxStreamsUni,
+        remote: client.remoteTransportParams.initialMaxStreamsUni,
+      };
+
+      const opened: string[] = [];
+      for (let i = 0; i < streams.length; i++) {
+        // 0x21 is a reserved HTTP/3 stream type. The server ignores the stream.
+        const stream = await client.createUnidirectionalStream({ body: new Uint8Array([0x21, 1, 2, 3]) });
+        stream.closed.catch(() => {});
+        opened.push(stream.pending ? "pending" : String(stream.id));
+      }
+
+      // The request is behind every unidirectional stream on the wire.
+      const status = Promise.withResolvers<string>();
+      const request = await client.createBidirectionalStream({
+        headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+        onheaders(headers: Record<string, any>) {
+          status.resolve(`status ${headers[":status"]}`);
+        },
+      });
+      request.closed.catch(() => {});
+
+      expect({ advertised, opened, outcome: await Promise.race([status.promise, pair.closed]) }).toEqual({
+        advertised: { local: BigInt(limit), remote: BigInt(limit) },
+        opened: streams,
+        outcome: "status 200",
+      });
+    },
+  );
+
+  // Every other case here has lsquic on both ends. curl's HTTP/3 client is
+  // ngtcp2. Its first stream is a unidirectional one.
+  test.skipIf(!findCurlH3())("an HTTP/3 listener that allows 2**30 streams answers curl", async () => {
+    await using server = await listen(
+      (session: any) => {
+        session.onerror = () => {};
+        session.closed.catch(() => {});
+        session.onstream = (stream: any) => stream.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { initialMaxStreamsBidi: 2 ** 30, initialMaxStreamsUni: 2 ** 30 },
+        onheaders(this: any) {
+          this.sendHeaders({ ":status": "200" });
+          this.writer.writeSync(encoder.encode("from node:quic"));
+          this.writer.endSync();
+        },
+      },
+    );
+    const response = await fetchH3(`https://127.0.0.1:${server.address!.port}/`);
+    expect({ status: response.status, body: await response.text() }).toEqual({ status: 200, body: "from node:quic" });
+  });
+
+  // lsquic encodes a client's transport parameters into a 128-byte buffer.
+  // These values give the longest encoding node:quic can ask for.
+  test("a client connects with every numeric transport parameter at its largest encoding", async () => {
+    const max = 2 ** 32 - 1;
+    await using pair = await connectPair({
+      maxIdleTimeout: max,
+      initialMaxData: max,
+      initialMaxStreamDataBidiLocal: max,
+      initialMaxStreamDataBidiRemote: max,
+      initialMaxStreamDataUni: max,
+      initialMaxStreamsBidi: max,
+      initialMaxStreamsUni: max,
+      maxUdpPayloadSize: 65535,
+      maxDatagramFrameSize: 65535,
+      disableActiveMigration: true,
+    });
+    expect(streamLimits(pair.serverSession.remoteTransportParams)).toEqual({ bidi: BigInt(max), uni: BigInt(max) });
+  });
+});

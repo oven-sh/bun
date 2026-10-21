@@ -2173,10 +2173,8 @@ impl<'p, 's> Checker<'p, 's> {
         results
     }
 
-    /// Returns the modules in which `alias_for_symbol_in_container` finds `symbol`, in the order of
-    /// `c.program.SourceFiles()`. tsgo searches every module's exports for each symbol that no import of the file
-    /// exports, which is quadratic in a program whose files mention types they don't import. Here the first search
-    /// builds an index of the exports.
+    /// `getExternalModuleContainers`: the modules in which `alias_for_symbol_in_container` finds `symbol`, in the order
+    /// of `c.program.SourceFiles()`.
     fn modules_that_export(&mut self, symbol: Sym) -> Vec<Sym> {
         let files = self.files();
         let index = self.exporting_modules();
@@ -2222,7 +2220,7 @@ impl<'p, 's> Checker<'p, 's> {
         modules
     }
 
-    /// The first call builds the index.
+    /// `buildExternalModuleContainerIndex`, on the first call.
     fn exporting_modules(&mut self) -> Rc<ExportingModules> {
         if let Some(index) = &self.exporting_modules {
             return Rc::clone(index);

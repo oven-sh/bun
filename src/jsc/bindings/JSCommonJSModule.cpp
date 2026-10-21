@@ -108,9 +108,9 @@ static bool canPerformFastEnumeration(Structure* s)
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
-extern "C" bool Bun__VM__specifierIsEntryPoint(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
 extern "C" void Bun__VM__noteCommonJSEvaluation(void*, EncodedJSValue);
+extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_main(JSC::JSGlobalObject*);
 
 // The module a require() function is bound to.
 static JSCommonJSModule* requirerOf(JSValue require)
@@ -239,8 +239,6 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         // exit 0 silently. Use the out-param overload and rethrow.
         WTF::NakedPtr<JSC::Exception> returnedException;
         JSValue result = JSC::evaluate(globalObject, code, jsUndefined(), returnedException);
-        if (moduleObject->isEntryPoint)
-            globalObject->armNextTickQueueCheckAfterEntryPoint();
         if (returnedException) [[unlikely]] {
             scope.throwException(globalObject, returnedException.get());
             return false;
@@ -313,8 +311,6 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     //    fn(exports, require, module, __filename, __dirname) { /* code */ }(exports, require, module, __filename, __dirname)
     //
     JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args);
-    if (moduleObject->isEntryPoint)
-        globalObject->armNextTickQueueCheckAfterEntryPoint();
     RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
@@ -1648,8 +1644,6 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     }
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
-    // A graph has no entry point.
-    moduleObject->isEntryPoint = !graph && moduleObject->filename().isString() && Bun__VM__specifierIsEntryPoint(globalObject->bunVM(), JSValue::encode(moduleObject->filename()));
 
     return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
 }
@@ -1683,12 +1677,22 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 if (entry) {
                     if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
                         if (!moduleObject->hasEvaluated) {
+                            // Bun.main opens the file, so it is read only when something that ran before this module (a preload) made the queue.
+                            bool shouldArmNextTickQueueCheck = false;
+                            if (!graph.get() && globalObject->m_nextTickQueue) {
+                                JSValue main = JSValue::decode(BunObject_getter_main(globalObject));
+                                RETURN_IF_EXCEPTION(scope, void());
+                                shouldArmNextTickQueueCheck = JSValue::strictEqual(globalObject, keyValue, main);
+                                RETURN_IF_EXCEPTION(scope, void());
+                            }
                             evaluateCommonJSModuleOnce(
                                 vm,
                                 globalObject,
                                 moduleObject,
                                 moduleObject->m_dirname.get(),
                                 moduleObject->m_filename.get());
+                            if (shouldArmNextTickQueueCheck)
+                                globalObject->armNextTickQueueCheckAfterEntryPoint();
                             if (auto exception = scope.exception()) {
                                 if (vm.hasPendingTerminationException()) [[unlikely]]
                                     return;
@@ -1765,8 +1769,6 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     }
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
-    // A graph has no entry point.
-    moduleObject->isEntryPoint = !graph && moduleObject->filename().isString() && Bun__VM__specifierIsEntryPoint(globalObject->bunVM(), JSValue::encode(moduleObject->filename()));
 
     return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
 }

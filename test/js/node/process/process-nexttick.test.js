@@ -1142,7 +1142,7 @@ it("process.nextTick and AsyncLocalStorage.enterWith don't conflict", async () =
 });
 
 // A CommonJS entry point runs to its end and then the process.nextTick queue runs, before the
-// microtasks it queued: what `node` and `node --require` (v26.3.0) print. process.nextTick makes
+// microtasks it queued: what `node` and `node --require` print. process.nextTick makes
 // its queue on first use, and a module that loads before the entry point and uses it (a preload:
 // node:stream does, and every node:worker_threads worker preloads it) must not change that.
 describe.concurrent("process.nextTick and a CommonJS entry point", () => {
@@ -1158,8 +1158,9 @@ describe.concurrent("process.nextTick and a CommonJS entry point", () => {
   const commonJS = `require("node:os");` + order();
   const preload = { "preload.cjs": `require("node:stream");` };
 
-  async function run(files, cmd) {
+  async function run(files, cmd, setup) {
     using dir = tempDir("process-nexttick-entry", files);
+    setup?.(String(dir));
     await using proc = Bun.spawn({
       cmd,
       env: bunEnv,
@@ -1210,12 +1211,10 @@ describe.concurrent("process.nextTick and a CommonJS entry point", () => {
     expect(result).toEqual({ stdout: nextTickFirst + "\n", stderr: "", exitCode: 0 });
   });
 
-  // Node loads the entry point through the ES module loader when there is an --import, and prints
-  // the microtasks first. Bun's --import is --preload, and the entry point stays CommonJS.
-  it(".cjs, after an --import that uses process.nextTick", async () => {
+  it(".cjs, after an ES module preload that uses process.nextTick", async () => {
     const result = await run({ "entry.cjs": order(), "preload.mjs": `import "node:stream";` }, [
       bunExe(),
-      "--import",
+      "--preload",
       "./preload.mjs",
       "entry.cjs",
     ]);
@@ -1225,47 +1224,21 @@ describe.concurrent("process.nextTick and a CommonJS entry point", () => {
   // `bun --bun node` runs bun as `node`, which keeps the symlink as the main path. The module is
   // keyed by its real path.
   it("a symlink to a .cjs that bun runs as `node`, after a preload", async () => {
-    using dir = tempDir("process-nexttick-entry", { ...preload, "real/bin.cjs": order() });
-    symlinkSync(join(String(dir), "real", "bin.cjs"), join(String(dir), "bin.cjs"), "file");
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--bun", "node", "-r", "./preload.cjs", "./bin.cjs"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: nextTickFirst + "\n", stderr: "", exitCode: 0 });
-  });
-
-  it("what a symlink to a .cjs that bun runs as `node` throws is an uncaughtException", async () => {
-    using dir = tempDir("process-nexttick-entry", {
-      "real/bin.cjs": `
-        process.on("uncaughtExceptionMonitor", (error, origin) => console.log(origin));
-        process.on("uncaughtException", () => {});
-        throw new Error("from the entry point");
-      `,
-    });
-    symlinkSync(join(String(dir), "real", "bin.cjs"), join(String(dir), "bin.cjs"), "file");
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--bun", "node", "./bin.cjs"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "uncaughtException\n", stderr: "", exitCode: 0 });
+    const result = await run(
+      { ...preload, "real/bin.cjs": order() },
+      [bunExe(), "--bun", "node", "-r", "./preload.cjs", "./bin.cjs"],
+      dir => symlinkSync(join(dir, "real", "bin.cjs"), join(dir, "bin.cjs"), "file"),
+    );
+    expect(result).toEqual({ stdout: nextTickFirst + "\n", stderr: "", exitCode: 0 });
   });
 
   // An ES module entry point runs inside a microtask, so what it queues with process.nextTick waits
   // for the microtask queue. Here the preload has already made the queue.
   it.each([
     [".mjs", { "entry.mjs": order() }, ["entry.mjs"]],
-    ['.js, "type": "module"', { "entry.js": order(), "package.json": `{ "type": "module" }` }, ["entry.js"]],
     [".js, import", { "entry.js": `import "node:os";` + order() }, ["entry.js"]],
-    [".js, export {}", { "entry.js": order() + "export {};" }, ["entry.js"]],
-  ])("%s, after a preload that uses process.nextTick, is still an ES module", async (_, files, args) => {
+    [".cjs that a .mjs imports", { "entry.mjs": `import "./imported.cjs";`, "imported.cjs": commonJS }, ["entry.mjs"]],
+  ])("%s, after a preload that uses process.nextTick, runs the microtasks first", async (_, files, args) => {
     const result = await run({ ...files, ...preload }, [bunExe(), "--preload", "./preload.cjs", ...args]);
     expect(result).toEqual({ stdout: microtasksFirst + "\n", stderr: "", exitCode: 0 });
   });

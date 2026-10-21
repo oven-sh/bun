@@ -44,10 +44,6 @@ function getSourceLine(file: string, line: number): string | null {
   return lines === null ? null : (lines[line - 1] ?? null);
 }
 
-// NOTE: every regex below is built with `new RegExp(<string>)` instead of a
-// regex literal — the builtin-bundler's source slicer (codegen/builtin-parser
-// sliceSourceCode) miscounts brackets inside regex-literal character classes
-// and silently truncates the module.
 const RE_SAFE_KEY = new RegExp("^[A-Za-z0-9_]+$");
 const RE_IN_OP = new RegExp("\\bin\\b");
 const RE_SPREAD_MEMBER = new RegExp("\\.\\.\\.\\s*[\\w$]+(?:\\s*\\.\\s*[\\w$]+)+");

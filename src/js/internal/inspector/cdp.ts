@@ -27,8 +27,6 @@ function toCdpUrl(url: string): string {
   return url;
 }
 
-// Written without a regex literal: the builtin-module bundler's scanner cannot
-// parse a character class that escapes both `]` and `\`.
 const REGEX_SPECIAL_CHARACTERS = "\\^$.*+?()[]{}|";
 function escapeRegex(text: string): string {
   let escaped = "";

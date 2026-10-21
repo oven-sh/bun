@@ -2836,8 +2836,13 @@ fn unlink_removed_dependencies(store: &Dir) {
 /// A dangling link is kept while its package is still installed, because the package's build step
 /// creates the file. Returns true if a link was removed.
 pub(crate) fn prune_bins(node_modules: &Dir) -> bool {
+    prune_bins_except(node_modules, &mut |_| false)
+}
+
+/// `prune_bins` that also keeps a link if `keeps` its target, a path from `node_modules`.
+pub(crate) fn prune_bins_except(node_modules: &Dir, keeps: &mut dyn FnMut(&[u8]) -> bool) -> bool {
     open_real_subdir(node_modules, b".bin")
-        .is_some_and(|bin| remove_dangling_bins(&bin, node_modules, None))
+        .is_some_and(|bin| remove_dangling_bins(&bin, node_modules, None, keeps))
 }
 
 /// Returns true if the package that should contain `path` exists. `path` is relative to
@@ -2871,12 +2876,22 @@ pub(crate) fn prune_global_bins(bin_path: &[u8], global_node_modules: &[u8]) {
         return;
     };
     if let Ok(bin) = parent.open_at(bun_paths::basename(bin_path)) {
-        remove_dangling_bins(&bin, &parent, Some((bin_path, global_node_modules)));
+        remove_dangling_bins(
+            &bin,
+            &parent,
+            Some((bin_path, global_node_modules)),
+            &mut |_| false,
+        );
     }
 }
 
 #[cfg(not(windows))]
-fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>) -> bool {
+fn remove_dangling_bins(
+    bin: &Dir,
+    parent: &Dir,
+    global: Option<(&[u8], &[u8])>,
+    keeps: &mut dyn FnMut(&[u8]) -> bool,
+) -> bool {
     let mut link = bun_paths::path_buffer_pool::get();
     let mut dangling: Vec<Box<[u8]>> = Vec::new();
     let mut iter = sys::iterate_dir(bin.fd());
@@ -2902,7 +2917,7 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>)
             let z = ZStr::from_slice_with_nul(&z);
             if let Ok(len) = sys::readlinkat(bin.fd(), z, link.as_mut_slice())
                 && (link[..len].strip_prefix(b"../"))
-                    .is_some_and(|path| leads_into_package(parent, path))
+                    .is_some_and(|path| leads_into_package(parent, path) || keeps(path))
             {
                 continue;
             }
@@ -2920,7 +2935,12 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>)
 // For the `.bunx` layout, see windows-shim/BinLinkingShim.rs. Only Bun writes these files,
 // including in the global folder.
 #[cfg(windows)]
-fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>) -> bool {
+fn remove_dangling_bins(
+    bin: &Dir,
+    parent: &Dir,
+    global: Option<(&[u8], &[u8])>,
+    keeps: &mut dyn FnMut(&[u8]) -> bool,
+) -> bool {
     let mut shims: Vec<Box<[u8]>> = Vec::new();
     let mut iter = sys::iterate_dir(bin.fd());
     while let Ok(Some(entry)) = iter.next() {
@@ -2944,7 +2964,7 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>)
         };
         let target = strings::to_utf8_alloc_from_le_bytes(&shim[..target_len * 2]);
         if !is_dangling(parent, &target)
-            || (global.is_none() && leads_into_package(parent, &target))
+            || (global.is_none() && (leads_into_package(parent, &target) || keeps(&target)))
         {
             continue;
         }

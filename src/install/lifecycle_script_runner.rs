@@ -1064,6 +1064,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     signal_code.fmt(Output::enable_ansi_colors_stderr()),
                 );
                 self.discard_packages_with_unfinished_scripts();
+                // The signal ends the process without its exit callbacks.
+                crate::package_installer::restore_retired();
 
                 Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(signal));
             }

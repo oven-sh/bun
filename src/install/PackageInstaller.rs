@@ -108,6 +108,11 @@ pub struct PackageInstaller<'a> {
     pub(crate) trees: Box<[TreeContext]>,
 
     pub(crate) seen_bin_links: StringHashMap<()>,
+
+    /// Each dependency whose turn ended without its package, with its tree: `finish_unplaced`.
+    pub(crate) unplaced: Vec<(lockfile::tree::Id, DependencyID)>,
+    /// False for `--filter` and a partial install, which don't see every dependent of a folder.
+    pub(crate) retires: bool,
 }
 
 use bun_core::UnwrapOrOom;
@@ -146,6 +151,12 @@ pub(crate) enum DeferredEvent {
         tree_id: lockfile::tree::Id,
         dependency_id: DependencyID,
         needs_verify: bool,
+    },
+    /// See `PackageInstaller::finish_unplaced`.
+    Unplaced {
+        tree_id: lockfile::tree::Id,
+        dependency_id: DependencyID,
+        fails: bool,
     },
 }
 
@@ -454,6 +465,8 @@ pub struct TreeContext {
     pub(crate) inside_replaced_folder: bool,
     /// See `PackageInstaller::set_outlived_root`.
     pub(crate) outlived_root: bool,
+    /// This tree is inside the folder of an `unplaced` dependency. Nothing is placed in it.
+    pub(crate) inside_unplaced: bool,
 }
 
 type TreeContextId = lockfile::tree::Id;
@@ -535,9 +548,10 @@ pub(crate) fn remove_placed_package(
     alias: &[u8],
 ) {
     let string_buf = lockfile.buffers.string_bytes.as_slice();
-    let Some(Ok(node_modules)) =
-        abs_node_modules_path(lockfile, string_buf, tree_id).map(|path| Dir::open(path.slice()))
-    else {
+    let Some(path) = abs_node_modules_path(lockfile, string_buf, tree_id) else {
+        return;
+    };
+    let Ok(node_modules) = Dir::open(path.slice()) else {
         return;
     };
     // Rename first: a delete can stop midway, and a half-deleted package must not pass `verify`.
@@ -549,14 +563,142 @@ pub(crate) fn remove_placed_package(
     if let Some(old) = moved {
         let _ = node_modules.delete_tree(old.as_bytes());
     } else {
-        // If the rename fails, delete the files `verify` reads first.
-        if let Some(package) = crate::prune::descend(&node_modules, alias) {
-            let _ = package.delete_tree(b"package.json");
-            let _ = package.delete_tree(package_install::BUN_TAG);
-        }
-        let _ = node_modules.delete_tree(alias);
+        delete_in_place(&node_modules, alias);
     }
-    crate::prune::prune_bins(&node_modules);
+    prune_bins_beside_retired(&node_modules, path.slice());
+}
+
+/// For a folder that could not be renamed first: deletes the files `verify` reads before the rest.
+fn delete_in_place(node_modules: &Dir, alias: &[u8]) {
+    if let Some(package) = crate::prune::descend(node_modules, alias) {
+        let _ = package.delete_tree(b"package.json");
+        let _ = package.delete_tree(package_install::BUN_TAG);
+    }
+    let _ = node_modules.delete_tree(alias);
+}
+
+/// A folder that `finish_unplaced` took out of its place until the install ends.
+struct Retired {
+    /// The absolute path of its `node_modules`.
+    node_modules: Box<[u8]>,
+    alias: Box<[u8]>,
+    /// Its name now. `None`: still in its place, as overlayfs can't rename a lower layer's folder.
+    aside: Option<bun_core::ZBox>,
+}
+
+/// A static, because a lifecycle script that fails exits the process from inside the install.
+static RETIRED: bun_core::Mutex<Vec<Retired>> = bun_core::Mutex::new(Vec::new());
+
+/// Returns true if there was a folder to take out of its place.
+fn retire(node_modules: &[u8], alias: &[u8]) -> bool {
+    let Ok(dir) = Dir::open(node_modules) else {
+        return false;
+    };
+    // Only a directory, and not through a link at `@scope`.
+    if crate::prune::descend(&dir, alias).is_none() {
+        return false;
+    }
+    let renamed = package_install::rename_aside(
+        &dir,
+        &bun_core::ZBox::from_bytes(alias),
+        bun_core::fast_random(),
+    );
+    let aside = match renamed {
+        Ok(aside) => Some(aside),
+        Err(err) if err.get_errno() == bun_sys::E::EXDEV => None,
+        // It has to stay, as in `move_aside`.
+        Err(_) => return false,
+    };
+    let mut retired = RETIRED.lock();
+    if retired.is_empty() {
+        Global::add_exit_callback(restore_retired_at_exit);
+    }
+    retired.push(Retired {
+        node_modules: node_modules.into(),
+        alias: alias.into(),
+        aside,
+    });
+    true
+}
+
+/// The install succeeded without the packages that bun.lock has there, and bun.lock is saved.
+pub(crate) fn remove_retired(manager: &PackageManager) {
+    let retired = core::mem::take(&mut *RETIRED.lock());
+    for (index, entry) in retired.iter().enumerate() {
+        let Ok(node_modules) = Dir::open(&entry.node_modules) else {
+            continue;
+        };
+        match &entry.aside {
+            Some(aside) => {
+                let _ = node_modules.delete_tree(aside.as_bytes());
+            }
+            None => delete_in_place(&node_modules, &entry.alias),
+        }
+        if let Some((scope, _)) = strings::split_once_char(&entry.alias, b'/') {
+            // Fails unless that was its last package.
+            let _ = bun_sys::rmdirat(node_modules.fd(), &bun_core::ZBox::from_bytes(scope));
+        }
+        // The links into the folders dangle now. Once per `node_modules`, after its last folder.
+        if !(retired[index + 1..].iter()).any(|later| later.node_modules == entry.node_modules) {
+            crate::prune::prune_bins(&node_modules);
+        }
+    }
+    if manager.options.global && !retired.is_empty() {
+        let mut global_node_modules =
+            strings::without_trailing_slash(FileSystem::instance().top_level_dir()).to_vec();
+        global_node_modules.push(SEP);
+        global_node_modules.extend_from_slice(b"node_modules");
+        crate::prune::prune_global_bins(manager.options.bin_path.as_bytes(), &global_node_modules);
+    }
+}
+
+/// The install failed. Like every failed install, it keeps the folders that it did not replace.
+pub(crate) fn restore_retired() {
+    let retired = core::mem::take(&mut *RETIRED.lock());
+    for entry in retired.iter().rev() {
+        let (Some(aside), Ok(node_modules)) = (&entry.aside, Dir::open(&entry.node_modules)) else {
+            continue;
+        };
+        let alias = bun_core::ZBox::from_bytes(&entry.alias);
+        let _ = bun_sys::renameat(node_modules.fd(), aside, node_modules.fd(), &alias);
+    }
+}
+
+extern "C" fn restore_retired_at_exit() {
+    restore_retired();
+}
+
+/// `prune_bins` that keeps the links into the folders that are aside, for `restore_retired`.
+fn prune_bins_beside_retired(node_modules: &Dir, node_modules_path: &[u8]) {
+    let retired = RETIRED.lock();
+    if retired.is_empty() {
+        drop(retired);
+        crate::prune::prune_bins(node_modules);
+        return;
+    }
+    use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal, join_abs_string_buf_checked};
+    let mut target_buf = bun_paths::path_buffer_pool::get();
+    let mut folder_buf = bun_paths::path_buffer_pool::get();
+    crate::prune::prune_bins_except(node_modules, &mut |target: &[u8]| {
+        let Some(target) = join_abs_string_buf_checked::<platform::Auto>(
+            node_modules_path,
+            target_buf.as_mut_slice(),
+            &[target],
+        ) else {
+            return false;
+        };
+        retired.iter().any(|entry| {
+            entry.aside.is_some()
+                && join_abs_string_buf_checked::<platform::Auto>(
+                    &entry.node_modules,
+                    folder_buf.as_mut_slice(),
+                    &[&entry.alias],
+                )
+                .is_some_and(|folder| {
+                    matches!(is_parent_or_equal(folder, target), ParentEqual::Parent)
+                })
+        })
+    });
 }
 
 /// Only checks the path rules. Used for the name of the project itself, of a workspace, or of a
@@ -703,9 +845,148 @@ impl<'a> PackageInstaller<'a> {
         self.run_available_scripts(log_level);
     }
 
-    fn fail(&mut self, is_pending_package_install: bool, log_level: Options::LogLevel) {
+    fn fail(
+        &mut self,
+        dependency_id: DependencyID,
+        is_pending_package_install: bool,
+        log_level: Options::LogLevel,
+    ) {
         self.summary.fail += 1;
+        self.finish_unplaced(dependency_id, true, is_pending_package_install, log_level);
+    }
+
+    /// Ends the turn of a dependency without its package. `fails`: the install fails with it.
+    #[cold]
+    #[inline(never)]
+    fn finish_unplaced(
+        &mut self,
+        dependency_id: DependencyID,
+        fails: bool,
+        is_pending_package_install: bool,
+        log_level: Options::LogLevel,
+    ) {
+        let tree_id = self.current_tree_id;
+        if self.defer_event(|| DeferredEvent::Unplaced {
+            tree_id,
+            dependency_id,
+            fails,
+        }) {
+            return;
+        }
+
+        let lockfile = self.lockfile();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let alias = dependencies[dependency_id as usize].name.slice(string_buf);
+        let tree = &self.trees[tree_id as usize];
+        let is_inside = tree.inside_unplaced;
+        // A package of an earlier install can be there. Inside another folder, it goes with that.
+        if !fails
+            && !is_inside
+            && !tree.inside_replaced_folder
+            && (!self.skip_delete || tree.outlived_root)
+        {
+            let package_id = lockfile.buffers.resolutions.as_slice()[dependency_id as usize];
+            if self.skip_verify_installed_version_number
+                && self.is_in_place(dependency_id, package_id)
+            {
+                // `--force` could not replace the folder, and it has the package of bun.lock.
+                self.summary.skipped += 1;
+                if self.bins[package_id as usize].tag != bin::Tag::None {
+                    self.trees[tree_id as usize]
+                        .binaries
+                        .add(dependency_id)
+                        .unwrap_or_oom();
+                }
+                return self.increment_tree_install_count(is_pending_package_install, log_level);
+            }
+            if self.retires
+                && self.manager().options.do_.install_packages()
+                && retire(self.node_modules.path.as_slice(), alias)
+            {
+                self.summary.retired = true;
+            }
+        }
+
+        self.unplaced.push((tree_id, dependency_id));
+        if !is_inside {
+            // A parent tree comes before its children.
+            let trees = lockfile.buffers.trees.as_slice();
+            let hoisted = lockfile.buffers.hoisted_dependencies.as_slice();
+            for child in &trees[tree_id as usize + 1..] {
+                let parent = self.trees.get(child.parent as usize);
+                if parent.is_some_and(|parent| parent.inside_unplaced)
+                    || (child.parent == tree_id
+                        && child.folder_name(dependencies, string_buf) == alias
+                        && !child.is_unlinked_member(trees, hoisted, dependencies))
+                {
+                    self.trees[child.id as usize].inside_unplaced = true;
+                }
+            }
+        }
         self.increment_tree_install_count(is_pending_package_install, log_level);
+    }
+
+    /// Whether the folder has the package of bun.lock. For a folder that `verify` did not see.
+    #[cold]
+    fn is_in_place(&self, dependency_id: DependencyID, package_id: PackageID) -> bool {
+        let lockfile = self.lockfile();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let dependency = &lockfile.buffers.dependencies.as_slice()[dependency_id as usize];
+        let resolution = &self.resolutions[package_id as usize];
+        let mut version_buf = [0u8; 512];
+        let mut version_spill = Vec::new();
+        let package_version = print_package_version(
+            &mut version_buf,
+            &mut version_spill,
+            format_args!("{}", resolution.fmt(string_buf, PathSep::Posix)),
+        );
+        let destination_dir_subpath = bun_core::ZBox::from_bytes(dependency.name.slice(string_buf));
+        let mut installer = PackageInstall {
+            cache_dir: Fd::INVALID,
+            cache_dir_subpath: ZStr::EMPTY,
+            destination_dir_subpath: &destination_dir_subpath,
+            package_name: self.names[package_id as usize],
+            package_version,
+            patch: None,
+            node_modules: &self.node_modules,
+            lockfile,
+        };
+        installer.verify(
+            resolution,
+            &self.metas[package_id as usize].integrity,
+            self.manager().skips_verify(resolution.tag),
+            &self.root_node_modules_folder,
+        )
+    }
+
+    /// The counterpart of `install_enqueued_packages_after_extraction` for a failed download.
+    #[cold]
+    pub(crate) fn on_download_failed(
+        &mut self,
+        waiters: &[TaskCallbackContext],
+        is_required: bool,
+    ) {
+        let log_level = self.manager().options.log_level;
+        let prev_node_modules = core::mem::take(&mut self.node_modules);
+        let prev_tree_id = self.current_tree_id;
+        for waiter in waiters {
+            let TaskCallbackContext::DependencyInstallContext(context) = waiter else {
+                continue;
+            };
+            self.node_modules.tree_id = context.tree_id;
+            self.node_modules.path.clone_from(&context.path);
+            self.current_tree_id = context.tree_id;
+            let is_pending_package_install = false;
+            self.finish_unplaced(
+                context.dependency_id,
+                is_required,
+                is_pending_package_install,
+                log_level,
+            );
+        }
+        self.node_modules = prev_node_modules;
+        self.current_tree_id = prev_tree_id;
     }
 
     fn link_tree_bins(
@@ -731,6 +1012,7 @@ impl<'a> PackageInstaller<'a> {
         let pkg_names = pkgs.items_name();
 
         let completed_trees = &self.completed_trees;
+        let unplaced = self.unplaced.as_slice();
         let tree = &mut self.trees[tree_id as usize];
         let mut deferred: Vec<DependencyID> = Vec::new();
 
@@ -814,6 +1096,16 @@ impl<'a> PackageInstaller<'a> {
                                 ) else {
                                     break 'native_binlink_optimization;
                                 };
+
+                                // What is in that folder is not the platform package.
+                                if unplaced.iter().any(|&(unplaced_tree, unplaced_dep)| {
+                                    unplaced_tree == target_tree_id
+                                        && lockfile.buffers.resolutions.as_slice()
+                                            [unplaced_dep as usize]
+                                            == replacement_pkg_id
+                                }) {
+                                    break 'native_binlink_optimization;
+                                }
 
                                 if target_tree_id != tree_id {
                                     if pass == BinPass::TreeDone
@@ -1446,8 +1738,9 @@ impl<'a> PackageInstaller<'a> {
                 job.result.into_inner().expect("linked").report(),
             );
             while let Some((_, event)) = events.next_if(|(after, _)| *after == index + 1) {
-                let (DeferredEvent::Count(tree_id) | DeferredEvent::Install { tree_id, .. }) =
-                    event;
+                let (DeferredEvent::Count(tree_id)
+                | DeferredEvent::Install { tree_id, .. }
+                | DeferredEvent::Unplaced { tree_id, .. }) = event;
                 if self.current_tree_id != tree_id {
                     self.enter_tree(tree_id);
                 }
@@ -1470,6 +1763,18 @@ impl<'a> PackageInstaller<'a> {
                             &resolutions[package_id as usize],
                             needs_verify,
                             is_pending_package_install,
+                        );
+                    }
+                    DeferredEvent::Unplaced {
+                        dependency_id,
+                        fails,
+                        ..
+                    } => {
+                        self.finish_unplaced(
+                            dependency_id,
+                            fails,
+                            is_pending_package_install,
+                            log_level,
                         );
                     }
                 }
@@ -1765,7 +2070,7 @@ impl<'a> PackageInstaller<'a> {
                     bun_core::fmt::for_terminal(bstr::BStr::new(alias.slice(string_buf!()))),
                 );
             }
-            return self.fail(is_pending_package_install, log_level);
+            return self.fail(dependency_id, is_pending_package_install, log_level);
         }
 
         // Nothing is installed ahead of the packages that are waiting for their files.
@@ -1847,7 +2152,7 @@ impl<'a> PackageInstaller<'a> {
                         bun_core::fmt::quote(patchdep.path.slice(string_buf!())),
                     );
                 }
-                return self.fail(is_pending_package_install, log_level);
+                return self.fail(dependency_id, is_pending_package_install, log_level);
             };
             (
                 Some(patch_contents_hash),
@@ -1911,7 +2216,7 @@ impl<'a> PackageInstaller<'a> {
                             (bstr::BStr::new(pkg_name.slice(string_buf!())),),
                         );
                     }
-                    return self.fail(is_pending_package_install, log_level);
+                    return self.fail(dependency_id, is_pending_package_install, log_level);
                 }
                 if is_transitive
                     && bin::bin_target_escapes_package_dir(folder)
@@ -1924,7 +2229,7 @@ impl<'a> PackageInstaller<'a> {
                             bun_core::fmt::escape_control_chars(folder),
                         );
                     }
-                    return self.fail(is_pending_package_install, log_level);
+                    return self.fail(dependency_id, is_pending_package_install, log_level);
                 }
 
                 // Handle when a package depends on itself: "mineflayer": "file:."
@@ -1958,7 +2263,7 @@ impl<'a> PackageInstaller<'a> {
                             crate::dependency::LINK_PATH_RULE,
                         );
                     }
-                    return self.fail(is_pending_package_install, log_level);
+                    return self.fail(dependency_id, is_pending_package_install, log_level);
                 }
 
                 if matches!(folder, b"" | b".") {
@@ -1986,7 +2291,7 @@ impl<'a> PackageInstaller<'a> {
                                 (bstr::BStr::new(pkg_name.slice(string_buf!())),),
                             );
                         }
-                        return self.fail(is_pending_package_install, log_level);
+                        return self.fail(dependency_id, is_pending_package_install, log_level);
                     }
                     let buf = self.folder_path_buf.as_mut_slice();
                     buf[..global_link_dir.len()].copy_from_slice(global_link_dir);
@@ -2041,6 +2346,16 @@ impl<'a> PackageInstaller<'a> {
         }
 
         if needs_install {
+            if self.trees[self.current_tree_id as usize].inside_unplaced {
+                let fails = false;
+                return self.finish_unplaced(
+                    dependency_id,
+                    fails,
+                    is_pending_package_install,
+                    log_level,
+                );
+            }
+
             if resolution.tag.can_enqueue_install_task()
                 && installer.package_missing_from_cache(
                     self.manager_mut(),
@@ -2056,7 +2371,7 @@ impl<'a> PackageInstaller<'a> {
                             bstr::BStr::new(alias.slice(string_buf!())),
                         );
                     }
-                    return self.fail(is_pending_package_install, log_level);
+                    return self.fail(dependency_id, is_pending_package_install, log_level);
                 }
 
                 let context =
@@ -2125,21 +2440,29 @@ impl<'a> PackageInstaller<'a> {
                     Ok(()) => {}
                     Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
                     Err(ForTarballError::InvalidURL) => {
-                        self.fail(is_pending_package_install, log_level)
+                        self.fail(dependency_id, is_pending_package_install, log_level)
                     }
                     // Reported by whoever saw the download fail, or by `report_offline_misses`.
                     Err(ForTarballError::AlreadyFailed | ForTarballError::Offline) => {
-                        if self.manager().options.offline
+                        // `report_offline_misses` decides later whether a miss fails the install.
+                        let fails = if self.manager().options.offline
                             == crate::package_manager_real::options::OfflineMode::Offline
                         {
                             self.summary.offline_misses.push(package_id);
+                            false
                         } else {
                             let required = self
                                 .manager()
                                 .is_package_required(dependency_id, package_id);
                             self.summary.fail += required as u32;
-                        }
-                        self.increment_tree_install_count(is_pending_package_install, log_level);
+                            required
+                        };
+                        self.finish_unplaced(
+                            dependency_id,
+                            fails,
+                            is_pending_package_install,
+                            log_level,
+                        );
                     }
                 }
 
@@ -2210,7 +2533,7 @@ impl<'a> PackageInstaller<'a> {
                             ),
                         );
                     }
-                    return self.fail(is_pending_package_install, log_level);
+                    return self.fail(dependency_id, is_pending_package_install, log_level);
                 }
             };
             let destination_dir = Dir::borrow(&destination_fd);
@@ -2638,7 +2961,7 @@ impl<'a> PackageInstaller<'a> {
 
                 // A failed package still counts toward its tree. This comes last, because the work
                 // it unblocks closes `destination_fd`.
-                self.fail(is_pending_package_install, log_level);
+                self.fail(dependency_id, is_pending_package_install, log_level);
             }
         }
     }

@@ -226,6 +226,27 @@ impl ErasedCallbacks {
         unsafe { &mut *ctx.cast() }
     }
 
+    /// Removes the waiters of a failed task: a later enqueue would join them and wait forever.
+    fn release_waiters(
+        &self,
+        manager: &mut PackageManager,
+        ctx: *mut (),
+        task_id: Task::Id,
+        is_required: bool,
+    ) {
+        if let Some(waiters) = manager.task_queue.remove(&task_id) {
+            self.end_waiters(ctx, &waiters, is_required);
+        }
+    }
+
+    /// The hoisted installer counts every dependency of a tree, the ones it could not place too.
+    fn end_waiters(&self, ctx: *mut (), waiters: &TaskCallbackList, is_required: bool) {
+        if self.is_package_installer {
+            self.package_installer(ctx)
+                .on_download_failed(waiters, is_required);
+        }
+    }
+
     /// Marks the task as failed, so that a later enqueue fails fast. Returns `Some(is_required)` if
     /// the caller has to report the error.
     fn dispatch_tarball_error(
@@ -1044,7 +1065,7 @@ fn run_tasks_erased(
                         is_required,
                     );
 
-                    let _ = manager.task_queue.remove(&task.task_id);
+                    cb.release_waiters(manager, extract_ctx, task.task_id, is_required);
 
                     continue;
                 };
@@ -1107,7 +1128,7 @@ fn run_tasks_erased(
                         is_required,
                     );
 
-                    let _ = manager.task_queue.remove(&task.task_id);
+                    cb.release_waiters(manager, extract_ctx, task.task_id, is_required);
 
                     continue;
                 }
@@ -1342,7 +1363,7 @@ fn run_tasks_erased(
                     // Void-callback fallback (resolve phase): drain the
                     // `task_queue` entry too so a later install-phase
                     // `enqueuePackageForDownload` doesn't wedge on `found_existing`.
-                    let _ = manager.task_queue.remove(&task.id);
+                    cb.release_waiters(manager, extract_ctx, task.id, is_required);
 
                     continue;
                 }
@@ -1422,7 +1443,7 @@ fn run_tasks_erased(
                         continue;
                     }
 
-                    if cb.is_store_installer {
+                    if cb.is_store_installer || cb.is_package_installer {
                         // The isolated installer queued its entry contexts
                         // under `checkout_id`, not `clone_id`. A failed clone
                         // never reaches checkout, so drain every waiting
@@ -1442,7 +1463,10 @@ fn run_tasks_erased(
                                 manager.lockfile.str(&git.repo),
                                 manager.lockfile.str(&git.resolved),
                             );
-                            if is_required {
+                            if cb.is_package_installer {
+                                // The hoisted installer queues under `checkout_id` too.
+                                cb.release_waiters(manager, extract_ctx, checkout_id, is_required);
+                            } else if is_required {
                                 (cb.on_package_download_error_store)(
                                     extract_ctx,
                                     checkout_id,
@@ -1629,7 +1653,9 @@ fn run_tasks_erased(
                             err.name(),
                             bun_core::fmt::for_terminal(bstr::BStr::new(alias.slice())),
                         );
-                        let _ = forget_failed_git_task(manager, task.id, alias.slice());
+                        let waiters = forget_failed_git_task(manager, task.id, alias.slice());
+                        // It is logged as an error, so the install fails.
+                        cb.end_waiters(extract_ctx, &waiters, true);
                     }
 
                     continue;

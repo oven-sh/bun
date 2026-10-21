@@ -448,12 +448,15 @@ pub(crate) fn install_hoisted_packages(
                             replaced: Vec::new(),
                             inside_replaced_folder: false,
                             outlived_root: false,
+                            inside_unplaced: false,
                         });
                     }
                     break 'trees trees.into_boxed_slice();
                 },
                 trusted_dependencies_from_update_requests: trusted_deps,
                 seen_bin_links: StringHashMap::<()>::default(),
+                unplaced: Vec::new(),
+                retires: packages_to_install.is_none() && workspace_filters.is_empty(),
                 destination_dir_subpath_buf: bun_paths::PathBuffer::ZEROED,
                 folder_path_buf: bun_paths::PathBuffer::ZEROED,
                 current_tree_id: tree::INVALID_ID,

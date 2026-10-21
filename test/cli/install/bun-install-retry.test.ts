@@ -1,10 +1,11 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
-import { lstatSync, readdirSync, rmSync } from "fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync } from "fs";
 import { access, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
+  isWindows,
   readdirSorted,
   tempDir,
   tls,
@@ -1501,5 +1502,383 @@ describe.concurrent("a failed download that several dependencies share", () => {
       p.loseTarball("baz", "1.0.0");
       expect(await p.install(root)).toEqual(leftOut);
     });
+  });
+});
+
+// The hoisted linker gives each dependency one folder. A package from an earlier install must not
+// stay in the folder of a package that the install leaves out, and it must stay when the install
+// fails.
+describe.concurrent("hoisted: an older package in the folder of a package that cannot be placed", () => {
+  type Pkg = { name: string; version: string; files?: Record<string, string> } & Record<string, unknown>;
+  /** An HTTP status, a host that ends every connection, or half of the tarball. */
+  type Fault = 404 | "dropped connection" | "corrupt";
+
+  async function project(packages: Pkg[], files: Record<string, string> = {}) {
+    const faults = new Map<string, Fault>();
+    const tarballs = new Map<string, Uint8Array>();
+    for (const { files = {}, ...pkg } of packages) {
+      const entries: Record<string, string> = { "package/package.json": JSON.stringify(pkg) };
+      for (const [path, contents] of Object.entries(files)) entries[`package/${path}`] = contents;
+      tarballs.set(`/${pkg.name}-${pkg.version}.tgz`, await new Bun.Archive(entries, { compress: "gzip" }).bytes());
+    }
+    const hangsUp = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { open: socket => void socket.end(), data() {} },
+    });
+    const registry = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        const tarball = tarballs.get(pathname);
+        if (tarball) {
+          const fault = faults.get(pathname);
+          if (fault === undefined) return new Response(tarball);
+          if (fault === "corrupt") return new Response(tarball.slice(0, tarball.length >> 1));
+          return new Response("unavailable", { status: 404 });
+        }
+        const versions = packages.filter(pkg => pkg.name === decodeURIComponent(pathname.slice(1)));
+        if (versions.length === 0) return new Response("unexpected", { status: 404 });
+        // A manifest names the host of each tarball.
+        const host = (path: string) =>
+          faults.get(path) === "dropped connection" ? `http://127.0.0.1:${hangsUp.port}` : origin;
+        return Response.json({
+          name: versions[0].name,
+          "dist-tags": { latest: versions.at(-1)!.version },
+          versions: Object.fromEntries(
+            versions.map(({ files, ...pkg }) => {
+              const path = `/${pkg.name}-${pkg.version}.tgz`;
+              return [pkg.version, { ...pkg, dist: { tarball: host(path) + path } }];
+            }),
+          ),
+        });
+      },
+    });
+    const dir = tempDir("hoisted-unplaced", {
+      ...files,
+      "bunfig.toml": Bun.TOML.stringify({
+        install: { cache: "./.bun-cache", registry: registry.url.href, linker: "hoisted" },
+      }),
+    });
+    const root = String(dir);
+    return {
+      dir: root,
+      /** From now on the tarball cannot be downloaded. */
+      lose(name: string, version: string, fault: Fault = 404) {
+        faults.set(`/${name}-${version}.tgz`, fault);
+      },
+      serve(name: string, version: string) {
+        faults.delete(`/${name}-${version}.tgz`);
+      },
+      has: (...path: string[]) => lstatSync(join(root, ...path), { throwIfNoEntry: false }) !== undefined,
+      version(...path: string[]): string | null {
+        try {
+          return JSON.parse(readFileSync(join(root, ...path, "package.json"), "utf8")).version;
+        } catch {
+          return null;
+        }
+      },
+      /** Folders that the linker moved aside, and neither removed nor moved back. */
+      leftovers: (...path: string[]) => readdirSync(join(root, ...path)).filter(name => name.startsWith(".old-")),
+      async run(...args: string[]) {
+        await using proc = spawn({
+          cmd: [bunExe(), ...args],
+          cwd: root,
+          env: { ...env, BUN_INSTALL_CACHE_DIR: undefined, BUN_CONFIG_HTTP_RETRY_COUNT: "0" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const lines = err.split(/\r?\n/);
+        return {
+          errors: lines.filter(line => line.startsWith("error:")).length,
+          warnings: lines.filter(line => line.startsWith("warn:")).length,
+          noChanges: out.includes("(no changes)"),
+          exitCode,
+        };
+      },
+      /** `manifest` replaces package.json. */
+      async install(manifest: object | null, ...args: string[]) {
+        if (manifest) {
+          await writeFile(join(root, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1", ...manifest }));
+        }
+        return this.run("install", ...args);
+      },
+      [Symbol.dispose]() {
+        registry.stop(true);
+        hangsUp.stop(true);
+        dir[Symbol.dispose]();
+      },
+    };
+  }
+
+  const versions = (name: string, rest: object = {}): Pkg[] => [
+    { name, version: "1.0.0", ...rest },
+    { name, version: "2.0.0", ...rest },
+  ];
+  const good = { name: "good", version: "1.0.0" };
+  const optional = (version: string) => ({ optionalDependencies: { opt: version } });
+  /** `good` stays in its folder, so an install that places nothing prints "(no changes)". */
+  const goodAndOptional = (version: string) => ({ dependencies: { good: "1.0.0" }, ...optional(version) });
+  const installed = { errors: 0, warnings: 0, noChanges: false, exitCode: 0 };
+  const leftOut = { errors: 0, warnings: 1, noChanges: false, exitCode: 0 };
+
+  describe("an optional dependency is left out and the older package leaves its folder", () => {
+    it.each([404, "dropped connection", "corrupt"] as const)("tarball fault %p", async fault => {
+      using p = await project([good, ...versions("opt")]);
+      expect(await p.install(goodAndOptional("1.0.0"))).toEqual(installed);
+
+      // bun.lock is behind package.json: the tarball is asked for while the dependencies are resolved.
+      p.lose("opt", "2.0.0", fault);
+      expect(await p.install(goodAndOptional("2.0.0"))).toMatchObject({ errors: 0, warnings: 1, exitCode: 0 });
+      expect([p.has("node_modules", "opt"), p.leftovers("node_modules")]).toEqual([false, []]);
+
+      // bun.lock is current: the linker asks for the tarball.
+      expect(await p.install(null)).toEqual({ ...leftOut, noChanges: true });
+      expect([p.has("node_modules", "opt"), p.leftovers("node_modules")]).toEqual([false, []]);
+
+      // bun.lock has the host that ends every connection.
+      if (fault === "dropped connection") return;
+      p.serve("opt", "2.0.0");
+      expect(await p.install(null)).toEqual(installed);
+      expect(p.version("node_modules", "opt")).toBe("2.0.0");
+    });
+
+    it("bun.lock is current", async () => {
+      using p = await project(versions("opt"));
+      expect(await p.install(optional("1.0.0"))).toEqual(installed);
+      expect(await p.install(optional("2.0.0"), "--lockfile-only")).toMatchObject({ errors: 0, exitCode: 0 });
+      expect(p.version("node_modules", "opt")).toBe("1.0.0");
+
+      p.lose("opt", "2.0.0");
+      expect(await p.install(null)).toEqual(leftOut);
+      expect([p.has("node_modules", "opt"), p.leftovers("node_modules")]).toEqual([false, []]);
+    });
+
+    it("--offline", async () => {
+      using p = await project([good, ...versions("opt")]);
+      expect(await p.install(goodAndOptional("1.0.0"))).toEqual(installed);
+      expect(await p.install(goodAndOptional("2.0.0"), "--lockfile-only")).toMatchObject({ errors: 0, exitCode: 0 });
+
+      expect(await p.install(null, "--offline")).toMatchObject({ errors: 0, warnings: 0, exitCode: 0 });
+      expect([p.has("node_modules", "opt"), p.leftovers("node_modules")]).toEqual([false, []]);
+      expect(await p.install(null, "--offline")).toEqual({ ...leftOut, warnings: 0, noChanges: true });
+      expect(p.has("node_modules", "opt")).toBe(false);
+    });
+
+    it("--force", async () => {
+      using p = await project(versions("opt"));
+      expect(await p.install(optional("1.0.0"))).toEqual(installed);
+      p.lose("opt", "2.0.0");
+      expect(await p.install(optional("2.0.0"), "--force")).toEqual(leftOut);
+      expect([p.has("node_modules", "opt"), p.leftovers("node_modules")]).toEqual([false, []]);
+    });
+
+    it("a scoped name", async () => {
+      using p = await project(versions("@scope/opt"));
+      expect(await p.install({ optionalDependencies: { "@scope/opt": "1.0.0" } })).toEqual(installed);
+      p.lose("@scope/opt", "2.0.0");
+      expect(await p.install({ optionalDependencies: { "@scope/opt": "2.0.0" } })).toEqual(leftOut);
+      expect([p.has("node_modules", "@scope", "opt"), p.leftovers("node_modules")]).toEqual([false, []]);
+    });
+
+    // `child@1.0.0` cannot hoist, so it is in the folder of `opt`.
+    it("with the dependencies in its folder", async () => {
+      const needsChild = { dependencies: { child: "1.0.0" } };
+      using p = await project([...versions("opt", needsChild), ...versions("child")]);
+      const root = (version: string) => ({ dependencies: { child: "2.0.0" }, ...optional(version) });
+      expect(await p.install(root("1.0.0"))).toEqual(installed);
+      expect(p.version("node_modules", "opt", "node_modules", "child")).toBe("1.0.0");
+
+      p.lose("opt", "2.0.0");
+      expect(await p.install(root("2.0.0"))).toMatchObject({ errors: 0, warnings: 1, exitCode: 0 });
+      expect([p.has("node_modules", "opt"), p.leftovers("node_modules")]).toEqual([false, []]);
+      expect(p.version("node_modules", "child")).toBe("2.0.0");
+
+      // The same in a new node_modules: no folder is made for the dependencies of a package that is not there.
+      rmSync(join(p.dir, "node_modules"), { recursive: true });
+      expect(await p.install(null)).toEqual(leftOut);
+      expect(p.has("node_modules", "opt")).toBe(false);
+      expect(p.version("node_modules", "child")).toBe("2.0.0");
+    });
+  });
+
+  // The script of `host` lists node_modules. It runs while the install is not finished.
+  it.each(["bun.lock is behind package.json", "bun.lock is current"])(
+    "the script of another dependency does not find the older package, %s",
+    async phase => {
+      using p = await project([
+        ...versions("host", { scripts: { postinstall: "ls .. > listing.txt" } }),
+        ...versions("opt"),
+      ]);
+      const root = (version: string) => ({
+        dependencies: { host: version },
+        ...optional(version),
+        trustedDependencies: ["host"],
+      });
+      expect(await p.install(root("1.0.0"))).toEqual(installed);
+      if (phase === "bun.lock is current") {
+        expect(await p.install(root("2.0.0"), "--lockfile-only")).toMatchObject({ errors: 0, exitCode: 0 });
+      }
+      p.lose("opt", "2.0.0");
+      expect(await p.install(root("2.0.0"))).toEqual(leftOut);
+      const listing = readFileSync(join(p.dir, "node_modules", "host", "listing.txt"), "utf8").split(/\r?\n/);
+      expect([p.version("node_modules", "host"), listing.includes("host"), listing.includes("opt")]).toEqual([
+        "2.0.0",
+        true,
+        false,
+      ]);
+    },
+  );
+
+  // `bun add` saves nothing when the package that it names cannot be downloaded.
+  it("bun add of a version that cannot be downloaded keeps the older package", async () => {
+    using p = await project(versions("opt"));
+    expect(await p.install(optional("1.0.0"))).toEqual(installed);
+    p.lose("opt", "2.0.0");
+    expect(await p.run("add", "--optional", "opt@2.0.0")).toMatchObject({ exitCode: 1 });
+    expect([p.version("node_modules", "opt"), p.leftovers("node_modules")]).toEqual(["1.0.0", []]);
+  });
+
+  // `--force` does not compare a folder with bun.lock before it replaces it.
+  it("--force keeps the package of bun.lock when it cannot be downloaded again", async () => {
+    using p = await project(versions("opt"));
+    expect(await p.install(optional("2.0.0"))).toEqual(installed);
+    rmSync(join(p.dir, ".bun-cache"), { recursive: true });
+    p.lose("opt", "2.0.0");
+    expect(await p.install(null, "--force")).toMatchObject({ errors: 0, warnings: 1, exitCode: 0 });
+    expect([p.version("node_modules", "opt"), p.leftovers("node_modules")]).toEqual(["2.0.0", []]);
+  });
+
+  describe("the install fails and the older packages stay", () => {
+    const root = (version: string) => ({ dependencies: { req: version }, ...optional(version) });
+    const both = ["1.0.0", "1.0.0", []];
+
+    it.each(["bun.lock is behind package.json", "bun.lock is current"])(
+      "a dependency cannot be downloaded, %s",
+      async phase => {
+        using p = await project([...versions("req"), ...versions("opt")]);
+        expect(await p.install(root("1.0.0"))).toEqual(installed);
+        if (phase === "bun.lock is current") {
+          expect(await p.install(root("2.0.0"), "--lockfile-only")).toMatchObject({ errors: 0, exitCode: 0 });
+        }
+        p.lose("req", "2.0.0");
+        p.lose("opt", "2.0.0");
+        expect(await p.install(root("2.0.0"))).toMatchObject({ errors: 1, exitCode: 1 });
+        expect([
+          p.version("node_modules", "req"),
+          p.version("node_modules", "opt"),
+          p.leftovers("node_modules"),
+        ]).toEqual(both);
+      },
+    );
+
+    it("--offline and a dependency is not in the cache", async () => {
+      using p = await project([...versions("req"), ...versions("opt")]);
+      expect(await p.install(root("1.0.0"))).toEqual(installed);
+      expect(await p.install(root("2.0.0"), "--lockfile-only")).toMatchObject({ errors: 0, exitCode: 0 });
+      expect(await p.install(null, "--offline")).toMatchObject({ errors: 1, exitCode: 1 });
+      expect([p.version("node_modules", "req"), p.version("node_modules", "opt"), p.leftovers("node_modules")]).toEqual(
+        both,
+      );
+    });
+
+    // The script runs after the folder of `opt` was moved aside, and its failure ends the process.
+    it("the script of a dependency fails", async () => {
+      using p = await project([
+        { name: "req", version: "1.0.0" },
+        { name: "req", version: "2.0.0", scripts: { postinstall: "exit 1" } },
+        ...versions("@scope/opt"),
+      ]);
+      const root = (version: string) => ({
+        dependencies: { req: version },
+        optionalDependencies: { "@scope/opt": version },
+        trustedDependencies: ["req"],
+      });
+      expect(await p.install(root("1.0.0"))).toEqual(installed);
+      p.lose("@scope/opt", "2.0.0");
+      expect(await p.install(root("2.0.0"))).toMatchObject({ exitCode: 1 });
+      expect([p.version("node_modules", "@scope", "opt"), p.leftovers("node_modules")]).toEqual(["1.0.0", []]);
+    });
+
+    // The failed script of `bad` removes `bad` and the dangling links of `.bin`. The folder of `opt` is
+    // aside at that moment, and comes back with its link.
+    it("with the links into them", async () => {
+      using p = await project([
+        ...versions("req"),
+        ...versions("opt", { bin: { optbin: "bin.js" }, files: { "bin.js": "#!/usr/bin/env node\n" } }),
+        { name: "bad", version: "1.0.0" },
+        { name: "bad", version: "2.0.0", scripts: { postinstall: "exit 1" } },
+      ]);
+      const root = (version: string) => ({
+        dependencies: { req: version },
+        optionalDependencies: { bad: version, opt: version },
+        trustedDependencies: ["bad"],
+      });
+      const linked = () => existsSync(join(p.dir, "node_modules", ".bin", isWindows ? "optbin.bunx" : "optbin"));
+      expect(await p.install(root("1.0.0"))).toEqual(installed);
+      expect(linked()).toBe(true);
+
+      p.lose("req", "2.0.0");
+      p.lose("opt", "2.0.0");
+      expect(await p.install(root("2.0.0"))).toMatchObject({ exitCode: 1 });
+      expect([
+        p.version("node_modules", "opt"),
+        linked(),
+        p.has("node_modules", "bad"),
+        p.leftovers("node_modules"),
+      ]).toEqual(["1.0.0", true, false, []]);
+    });
+
+    it.skipIf(isWindows)("the script of a dependency is killed by a signal", async () => {
+      using p = await project([
+        { name: "req", version: "1.0.0" },
+        { name: "req", version: "2.0.0", scripts: { postinstall: "kill -9 $$" } },
+        ...versions("opt"),
+      ]);
+      const root = (version: string) => ({
+        dependencies: { req: version },
+        ...optional(version),
+        trustedDependencies: ["req"],
+      });
+      expect(await p.install(root("1.0.0"))).toEqual(installed);
+      p.lose("opt", "2.0.0");
+      expect((await p.install(root("2.0.0"))).exitCode).not.toBe(0);
+      expect([p.version("node_modules", "opt"), p.leftovers("node_modules")]).toEqual(["1.0.0", []]);
+    });
+  });
+
+  // `node_modules/@scope` is a link that came with the project. What is behind it is not moved.
+  it.skipIf(isWindows)("keeps a folder that is behind a link at its scope", async () => {
+    using p = await project(versions("@scope/opt"));
+    expect(await p.install({ optionalDependencies: { "@scope/opt": "1.0.0" } })).toEqual(installed);
+    renameSync(join(p.dir, "node_modules", "@scope"), join(p.dir, "outside"));
+    symlinkSync(join(p.dir, "outside"), join(p.dir, "node_modules", "@scope"));
+
+    p.lose("@scope/opt", "2.0.0");
+    expect(await p.install({ optionalDependencies: { "@scope/opt": "2.0.0" } })).toEqual(leftOut);
+    expect([p.version("outside", "opt"), p.leftovers("node_modules"), p.leftovers("outside")]).toEqual([
+      "1.0.0",
+      [],
+      [],
+    ]);
+  });
+
+  // `--filter` leaves out workspaces that can require the package.
+  it("--filter keeps the older package", async () => {
+    using p = await project(versions("opt"), {
+      "packages/a/package.json": JSON.stringify({ name: "a", version: "0.0.1", ...optional("1.0.0") }),
+      "packages/b/package.json": JSON.stringify({ name: "b", version: "0.0.1" }),
+    });
+    expect(await p.install({ workspaces: ["packages/*"] })).toEqual(installed);
+    expect(p.version("node_modules", "opt")).toBe("1.0.0");
+
+    await writeFile(
+      join(p.dir, "packages", "a", "package.json"),
+      JSON.stringify({ name: "a", version: "0.0.1", ...optional("2.0.0") }),
+    );
+    p.lose("opt", "2.0.0");
+    expect(await p.install(null, "--filter", "a")).toMatchObject({ errors: 0, exitCode: 0 });
+    expect([p.version("node_modules", "opt"), p.leftovers("node_modules")]).toEqual(["1.0.0", []]);
   });
 });

@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { chmodSync, existsSync, lstatSync, readFileSync, realpathSync, statSync, symlinkSync } from "fs";
+import { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync, symlinkSync } from "fs";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join, sep } from "path";
@@ -681,6 +681,282 @@ describe.concurrent("native binlink altpath", () => {
       });
     }
   }
+});
+
+// test-postinstall-skip@N has the optional platform package test-postinstall-skip-native@N. The
+// bin of the first prints "shim vN", the bin of the platform package prints "native vN".
+//
+// When an upgrade cannot place the new platform package, the previous one must not stay in its
+// folder and take the link. The install goes on without the platform package, as it does in a new
+// node_modules.
+describe.concurrent("a platform package that an upgrade cannot place (hoisted)", () => {
+  const platformTarball = "/test-postinstall-skip-native-2.0.0.tgz";
+
+  async function project() {
+    let status: number | undefined;
+    const registry = new TestRegistry({
+      intercept: request =>
+        status !== undefined && request.url.endsWith(platformTarball)
+          ? new Response("unavailable", { status })
+          : undefined,
+    });
+    await registry.start();
+    const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"), BUN_CONFIG_HTTP_RETRY_COUNT: "0" };
+    const nodeModules = join(packageDir, "node_modules");
+    const version = (name: string): string | null => {
+      try {
+        return JSON.parse(readFileSync(join(nodeModules, name, "package.json"), "utf8")).version;
+      } catch {
+        return null;
+      }
+    };
+
+    return {
+      packageDir,
+      env,
+      registry,
+      /** The platform tarball answers with this status from now on. `undefined` serves it again. */
+      answer(code: number | undefined) {
+        status = code;
+      },
+      async install(toolVersion: string, ...args: string[]) {
+        await writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "test-app",
+            version: "1.0.0",
+            dependencies: { "test-postinstall-skip": toolVersion },
+            nativeDependencies: ["test-postinstall-skip"],
+            trustedDependencies: ["test-postinstall-skip"],
+          }),
+        );
+        await using proc = spawn({
+          cmd: [bunExe(), "install", ...args],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const lines = stderr.split(/\r?\n/);
+        return {
+          errors: lines.filter(line => line.startsWith("error:")),
+          warnings: lines.filter(line => line.startsWith("warn:")).length,
+          noChanges: stdout.includes("(no changes)"),
+          exitCode,
+        };
+      },
+      /** What is in node_modules, and what the command prints. */
+      async state() {
+        await using proc = spawn({
+          cmd: [binEntry(join(nodeModules, ".bin"), "skip-test-cmd")],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        return {
+          tool: version("test-postinstall-skip"),
+          platform: version("test-postinstall-skip-native"),
+          prints: stdout.trim(),
+          exitCode,
+          // A folder that the linker moved aside and did not remove or move back.
+          leftovers: readdirSync(nodeModules).filter(name => name.startsWith(".old-")),
+        };
+      },
+      [Symbol.dispose]() {
+        registry.stop();
+      },
+    };
+  }
+
+  const withPlatform = (v: string) => ({ tool: v, platform: v, prints: `native v${v}`, exitCode: 0, leftovers: [] });
+  const withoutPlatform = { tool: "2.0.0", platform: null, prints: "shim v2.0.0", exitCode: 0, leftovers: [] };
+
+  test("the tarball of the new platform package answers 404", async () => {
+    using p = await project();
+    expect(await p.install("1.0.0")).toMatchObject({ errors: [], exitCode: 0 });
+    expect(await p.state()).toEqual(withPlatform("1.0.0"));
+
+    // bun.lock is behind package.json: the tarball is asked for while the dependencies are resolved.
+    p.answer(404);
+    expect(await p.install("2.0.0")).toEqual({ errors: [], warnings: 1, noChanges: false, exitCode: 0 });
+    expect(await p.state()).toEqual(withoutPlatform);
+
+    // bun.lock is current: the linker asks for the tarball.
+    expect(await p.install("2.0.0")).toEqual({ errors: [], warnings: 1, noChanges: true, exitCode: 0 });
+    expect(await p.state()).toEqual(withoutPlatform);
+
+    p.answer(undefined);
+    expect(await p.install("2.0.0")).toMatchObject({ errors: [], warnings: 0, exitCode: 0 });
+    expect(await p.state()).toEqual(withPlatform("2.0.0"));
+  });
+
+  test("bun.lock is current and the tarball of the new platform package answers 404", async () => {
+    using p = await project();
+    expect(await p.install("1.0.0")).toMatchObject({ errors: [], exitCode: 0 });
+    expect(await p.install("2.0.0", "--lockfile-only")).toMatchObject({ errors: [], exitCode: 0 });
+    expect(await p.state()).toEqual(withPlatform("1.0.0"));
+
+    p.answer(404);
+    expect(await p.install("2.0.0")).toMatchObject({ errors: [], warnings: 1, exitCode: 0 });
+    expect(await p.state()).toEqual(withoutPlatform);
+  });
+
+  test("--offline and the new platform package is not in the cache", async () => {
+    using p = await project();
+    expect(await p.install("1.0.0")).toMatchObject({ errors: [], exitCode: 0 });
+    expect(await p.state()).toEqual(withPlatform("1.0.0"));
+
+    // Another project puts test-postinstall-skip@2.0.0 into the cache, without its platform package.
+    using other = tempDir("binlink-offline-cache", {
+      "package.json": JSON.stringify({ name: "other", dependencies: { "test-postinstall-skip": "2.0.0" } }),
+    });
+    await p.registry.writeBunfig(String(other), { linker: "hoisted" });
+    await using cached = spawn({
+      cmd: [bunExe(), "install", "--omit=optional"],
+      cwd: String(other),
+      stdout: "ignore",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: p.env,
+    });
+    expect(await cached.stderr.text()).not.toContain("error:");
+    expect(await cached.exited).toBe(0);
+
+    expect(await p.install("2.0.0", "--offline")).toEqual({ errors: [], warnings: 0, noChanges: false, exitCode: 0 });
+    expect(await p.state()).toEqual(withoutPlatform);
+    expect(await p.install("2.0.0", "--offline")).toEqual({ errors: [], warnings: 0, noChanges: true, exitCode: 0 });
+    expect(await p.state()).toEqual(withoutPlatform);
+
+    expect(await p.install("2.0.0")).toMatchObject({ errors: [], warnings: 0, exitCode: 0 });
+    expect(await p.state()).toEqual(withPlatform("2.0.0"));
+  });
+
+  // `--force` does not compare the folder with bun.lock before it replaces it.
+  test("--force and the tarball of the new platform package answers 404", async () => {
+    using p = await project();
+    expect(await p.install("1.0.0")).toMatchObject({ errors: [], exitCode: 0 });
+    p.answer(404);
+    expect(await p.install("2.0.0", "--force")).toMatchObject({ errors: [], warnings: 1, exitCode: 0 });
+    expect(await p.state()).toEqual(withoutPlatform);
+  });
+
+  // The link of a global package is in the global bin folder.
+  describe("bun add -g", () => {
+    async function globalProject() {
+      const gone = new Set<string>();
+      const registry = new TestRegistry({
+        intercept: request =>
+          gone.has(request.url.slice(request.url.lastIndexOf("/") + 1))
+            ? new Response("gone", { status: 404 })
+            : undefined,
+      });
+      await registry.start();
+      const home = tempDir("binlink-global-home", {});
+      const globalDir = join(String(home), ".bun", "install", "global");
+      const binDir = join(String(home), ".bun", "bin");
+      const cacheDir = join(String(home), ".bun-cache");
+      const env = {
+        ...bunEnv,
+        HOME: String(home),
+        BUN_INSTALL: join(String(home), ".bun"),
+        BUN_INSTALL_GLOBAL_DIR: globalDir,
+        BUN_INSTALL_BIN: binDir,
+        BUN_INSTALL_CACHE_DIR: cacheDir,
+        BUN_CONFIG_HTTP_RETRY_COUNT: "0",
+      };
+      await mkdir(globalDir, { recursive: true });
+      await writeFile(
+        join(globalDir, "package.json"),
+        JSON.stringify({
+          nativeDependencies: ["test-postinstall-skip"],
+          trustedDependencies: ["test-postinstall-skip"],
+        }),
+      );
+      const platformDir = join(globalDir, "node_modules", "test-postinstall-skip-native");
+      return {
+        cacheDir,
+        platformDir,
+        /** The tarball of this version of the platform package is a 404 from now on. */
+        lose(version: string) {
+          gone.add(`test-postinstall-skip-native-${version}.tgz`);
+        },
+        async add(spec: string) {
+          await using proc = spawn({
+            cmd: [bunExe(), "add", "-g", `--registry=${registry.registryUrl()}`, "--linker=hoisted", spec],
+            cwd: String(home),
+            stdout: "pipe",
+            stdin: "ignore",
+            stderr: "pipe",
+            env,
+          });
+          const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+          return { errors: stderr.split(/\r?\n/).filter(line => line.startsWith("error:")), exitCode };
+        },
+        async state() {
+          await using proc = spawn({
+            cmd: [binEntry(binDir, "skip-test-cmd")],
+            cwd: String(home),
+            stdout: "pipe",
+            stdin: "ignore",
+            stderr: "pipe",
+            env,
+          });
+          const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+          return { prints: stdout.trim(), exitCode, platform: existsSync(platformDir) };
+        },
+        [Symbol.dispose]() {
+          registry.stop();
+          home[Symbol.dispose]();
+        },
+      };
+    }
+
+    test("of the new version", async () => {
+      using p = await globalProject();
+      expect(await p.add("test-postinstall-skip@1.0.0")).toEqual({ errors: [], exitCode: 0 });
+      expect(await p.state()).toEqual({ prints: "native v1.0.0", exitCode: 0, platform: true });
+
+      p.lose("2.0.0");
+      expect(await p.add("test-postinstall-skip@2.0.0")).toEqual({ errors: [], exitCode: 0 });
+      expect(await p.state()).toEqual({ prints: "shim v2.0.0", exitCode: 0, platform: false });
+    });
+
+    // A command that names another package does not link the bins of this one again. Its link
+    // into the older platform package must not be left dangling.
+    test("of another package, over an older platform package", async () => {
+      using p = await globalProject();
+      expect(await p.add("test-postinstall-skip@1.0.0")).toEqual({ errors: [], exitCode: 0 });
+      expect(await p.state()).toEqual({ prints: "native v1.0.0", exitCode: 0, platform: true });
+
+      // What an earlier install left: the folder has another version than bun.lock.
+      const manifest = join(p.platformDir, "package.json");
+      await writeFile(manifest, readFileSync(manifest, "utf8").replace('"1.0.0"', '"0.9.0"'));
+      await rm(p.cacheDir, { recursive: true, force: true });
+      p.lose("1.0.0");
+
+      expect(await p.add("no-deps@1.0.0")).toEqual({ errors: [], exitCode: 0 });
+      expect(await p.state()).toEqual({ prints: "shim v1.0.0", exitCode: 0, platform: false });
+    });
+  });
+
+  // The platform package of bun.lock is in its folder, and `--force` cannot download it again
+  // (the cache is gone). The folder stays, and so does the link into it.
+  test("--force keeps a platform package that matches bun.lock", async () => {
+    using p = await project();
+    expect(await p.install("2.0.0")).toMatchObject({ errors: [], exitCode: 0 });
+    expect(await p.state()).toEqual(withPlatform("2.0.0"));
+
+    await rm(join(p.packageDir, ".bun-cache"), { recursive: true, force: true });
+    p.answer(404);
+    expect(await p.install("2.0.0", "--force")).toMatchObject({ errors: [], warnings: 1, exitCode: 0 });
+    expect(await p.state()).toEqual(withPlatform("2.0.0"));
+  });
 });
 
 // The bin linker must not create a `node_modules/.bin` entry (nor chmod or rewrite the

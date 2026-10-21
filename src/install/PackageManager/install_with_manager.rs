@@ -1068,6 +1068,14 @@ pub fn install_with_manager(
     } else if removes_collapsed_copies {
         crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
     }
+    // Likewise the folders that the hoisted linker took out of their places.
+    if install_summary.retired {
+        if install_summary.fail == 0 {
+            crate::package_installer::remove_retired(manager);
+        } else {
+            crate::package_installer::restore_retired();
+        }
+    }
     let runs_root_scripts =
         manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global;
     // `skipped > 0` means part of an earlier install is still on disk.

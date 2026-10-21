@@ -69,6 +69,9 @@ pub struct Summary {
     pub(crate) places: Vec<(u64, PackageID)>,
 
     pub(crate) offline_misses: OfflineMisses,
+
+    /// The hoisted linker took a folder out of its place: see `package_installer::Retired`.
+    pub(crate) retired: bool,
 }
 
 /// Only used with `--offline`. Has one entry per folder. `report_offline_misses` decides which ones
@@ -2106,17 +2109,16 @@ impl PackageFiles<'_> {
     }
 }
 
-/// The prefix of the names that `move_aside` creates. If Bun is killed, these folders stay until
+/// The prefix of the names that `rename_aside` creates. If Bun is killed, these folders stay until
 /// `bun prune`.
 pub(crate) const MOVED_ASIDE_PREFIX: &str = ".old-";
 
-/// Renames `subpath`, if it exists, to a name in `destination_dir` that's derived from `random`.
-/// Can run on any thread.
-pub(crate) fn move_aside(
+/// Renames `subpath` to a name that's derived from `random`. Can run on any thread.
+pub(crate) fn rename_aside(
     destination_dir: &Dir,
     subpath: &ZStr,
     random: u64,
-) -> Option<bun_core::ZBox> {
+) -> sys::Maybe<bun_core::ZBox> {
     let old = bun_core::ZBox::from_vec(
         format!(
             "{MOVED_ASIDE_PREFIX}{}",
@@ -2124,8 +2126,17 @@ pub(crate) fn move_aside(
         )
         .into_bytes(),
     );
-    match sys::renameat(destination_dir.fd(), subpath, destination_dir.fd(), &old) {
-        Ok(()) => Some(old),
+    sys::renameat(destination_dir.fd(), subpath, destination_dir.fd(), &old).map(|()| old)
+}
+
+/// `rename_aside` for a folder that leaves for good. `None`: nothing was renamed.
+pub(crate) fn move_aside(
+    destination_dir: &Dir,
+    subpath: &ZStr,
+    random: u64,
+) -> Option<bun_core::ZBox> {
+    match rename_aside(destination_dir, subpath, random) {
+        Ok(old) => Some(old),
         // overlayfs can't rename a directory from a lower layer. Delete it instead, so the new
         // files don't mix with the old ones.
         Err(err) if err.get_errno() == sys::E::EXDEV => {

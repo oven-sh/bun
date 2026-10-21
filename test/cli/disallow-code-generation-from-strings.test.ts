@@ -3,7 +3,7 @@
 // `bun`, which BUN_OPTIONS adds or which stands before the command.
 // What each level refuses in a program is in test/js/node/disallow-code-generation-from-strings.test.ts.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -58,7 +58,7 @@ async function run(files: Record<string, string>, cmd: readonly string[], env: R
     exitCode,
     // What eval() did in the macro, if the macro ran.
     macro: existsSync(marker) ? readFileSync(marker, "utf8") : null,
-    // What `bun create <component>` writes first.
+    // One of the files that `bun create <component>` writes.
     created: existsSync(join(cwd, "App.html")),
   };
 }
@@ -152,9 +152,11 @@ describe.concurrent.skipIf(builtStrict)("a command that bundles", () => {
     });
   });
 
-  // `--` ends the flags of `bun create`.
+  // `--` ends the flags of `bun create`. On Windows the command fails after its bundle, where it writes `App.build.ts`.
   test("bun create <component> -- =strict runs a macro", async () => {
-    expect(await bundle(["create", "./App.tsx", "--", strict])).toMatchObject({ macro: "made 2" });
+    expect(await bundle(["create", "./App.tsx", "--", strict])).toMatchObject(
+      isWindows ? { macro: "made 2" } : { macro: "made 2", created: true },
+    );
   });
 
   // What follows the name of a template from npm goes to the template, which this registry does not have.

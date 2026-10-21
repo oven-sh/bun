@@ -815,8 +815,7 @@ pub(crate) const fn reads_runtime_flags(cmd: CommandTag) -> bool {
     )
 }
 
-/// The flags of `bun` among the arguments of this process, with their values, for a command that [`parse`] does not
-/// read them for: those that `BUN_OPTIONS` adds, and those that stand before the command.
+/// The flags of `bun` for `cmd`, with their values: the arguments that `BUN_OPTIONS` adds, and those before the command.
 pub(crate) fn flags_of_bun(cmd: CommandTag) -> &'static [&'static bun_core::ZStr] {
     let argv = bun_core::argv().as_slice();
     let from_env = 1 + bun_core::bun_options_argc();
@@ -830,8 +829,7 @@ pub(crate) fn flags_of_bun(cmd: CommandTag) -> &'static [&'static bun_core::ZStr
                 | CommandTag::CreateCommand
         );
     let end = if takes_typed {
-        // `command::which` finds the command after the arguments that start with `-`, or further on, after the values
-        // of those that take one. Whichever is further: no flag before the command is left out.
+        // `command::which` finds the command after the arguments that start with `-`, or after their values too. The further one.
         let is_flag = |arg: &&&bun_core::ZStr| {
             let arg = arg.as_bytes();
             !arg.is_empty() && arg[0] == b'-' && !(arg.len() > 1 && arg[1] == b'e')
@@ -851,8 +849,7 @@ pub(crate) fn flags_of_bun(cmd: CommandTag) -> &'static [&'static bun_core::ZStr
     &argv[1.min(argv.len())..end.min(argv.len())]
 }
 
-/// Raises the level to what the last `--disallow-code-generation-from-strings` among `flags` gives, as [`parse`] does
-/// for the commands that it reads the flag for. `--` ends the flags.
+/// Raises the level to what the last `--disallow-code-generation-from-strings` among `flags` gives. `--` ends `flags`.
 #[cold]
 #[inline(never)]
 pub(crate) fn disallow_code_generation_from_strings_among(flags: &[&bun_core::ZStr]) {

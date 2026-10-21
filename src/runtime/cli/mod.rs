@@ -954,8 +954,7 @@ pub(crate) mod command {
     /// borrow at the time of return; callers thread it down via the `ctx`
     /// parameter rather than re-deriving.
     ///
-    /// `#[inline(never)]`: this is the first step of the `bun run <script>`
-    /// dispatch chain (`exec_auto_or_run → create_context_data → RunCommand::exec_with_cfg`)
+    /// `#[inline(never)]`: this is the first step of the `bun run <script>` dispatch chain (`exec_auto_or_run` calls it)
     /// and must stay a concrete symbol so `src/startup.order` can place it —
     /// and the argv→Context parsing it pulls in — contiguously. `#[track_caller]`
     /// would otherwise make it an inlining candidate, scattering those callees.
@@ -979,8 +978,6 @@ pub(crate) mod command {
     }
 
     /// [`create_context_data`], and then the flags of `bun` that `arguments::parse` does not read for `cmd`.
-    ///
-    /// `#[cold]`: `bun <file>` and `bun run` do not come here. They call `create_context_data`.
     #[cold]
     #[inline(never)]
     #[track_caller]
@@ -1809,8 +1806,7 @@ To create a project with the official Next.js scaffolding tool, run
                 || strings::starts_with_char(template_name, b'@'))
             && example_tag != ExampleTag::LocalFolder;
 
-        // After `create`, `bun create` takes a flag wherever it stands. What follows the name of a template that bunx
-        // runs is the template's.
+        // `bun create` takes the flag anywhere after `create`. What follows the name of a bunx template is the template's.
         arguments::disallow_code_generation_from_strings_among(match use_bunx {
             true => &args[after_create..template_name_start],
             false => &args[after_create..],

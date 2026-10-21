@@ -318,7 +318,7 @@ describe("HTTP/3 header blocks with no field lines", () => {
   const getSubject = (client: any) => streamEvents(client, request("/subject"));
   const helloOnly = { events: ["headers 200", "data hello", "end"], trailers: [] };
 
-  describe("are not sent for trailers or hints", () => {
+  describe("as trailers or hints", () => {
     test.each([
       ["{}", {}],
       ["{ name: undefined }", { "x-none": undefined }],

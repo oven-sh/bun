@@ -157,22 +157,7 @@ pub(crate) trait BlobExt {
         cx: &bun_jsc::JsThread<'_>,
     );
     fn get_content_type(&self) -> Option<Utf8Bytes<'_>>;
-    fn _on_structured_clone_serialize<W: bun_io::Write>(&self, writer: &mut W)
-    -> crate::Result<()>;
-    fn on_structured_clone_serialize(
-        &self,
-        _global_this: &JSGlobalObject,
-        ctx: *mut c_void,
-        write_bytes: crate::generated_classes::WriteBytesFn,
-    );
-    /// `Ok(None)`: the bytes are not a valid record (the deserializer reports its usual error).
-    fn on_structured_clone_deserialize(
-        global_this: &JSGlobalObject,
-        ptr: *mut *mut u8,
-        end: *const u8,
-    ) -> JsResult<Option<JSValue>>
-    where
-        Self: Sized;
+    fn on_structured_clone_serialize<W: bun_io::Write>(&self, writer: &mut W) -> crate::Result<()>;
     fn from_url_search_params(
         global_this: &JSGlobalObject,
         search_params: &mut jsc::URLSearchParams,
@@ -681,10 +666,7 @@ impl BlobExt for Blob {
         }
         None
     }
-    fn _on_structured_clone_serialize<W: bun_io::Write>(
-        &self,
-        writer: &mut W,
-    ) -> crate::Result<()> {
+    fn on_structured_clone_serialize<W: bun_io::Write>(&self, writer: &mut W) -> crate::Result<()> {
         let is_memory_backed = if let Some(store) = self.store.get() {
             matches!(store.data, store::Data::Bytes(_))
         } else {
@@ -749,51 +731,6 @@ impl BlobExt for Blob {
             }
         }
         Ok(())
-    }
-
-    fn on_structured_clone_serialize(
-        &self,
-        _global_this: &JSGlobalObject,
-        ctx: *mut c_void,
-        write_bytes: crate::generated_classes::WriteBytesFn,
-    ) {
-        let mut writer = StructuredCloneWriter {
-            ctx,
-            impl_: write_bytes,
-        };
-        let _ = self._on_structured_clone_serialize(&mut writer);
-    }
-
-    fn on_structured_clone_deserialize(
-        global_this: &JSGlobalObject,
-        ptr: *mut *mut u8,
-        end: *const u8,
-    ) -> JsResult<Option<JSValue>> {
-        // SAFETY: codegen passes a live `*mut *mut u8` cursor (C++:
-        // `(uint8_t**)&ptr`) and a one-past-the-end `*const u8`; both are
-        // non-null and `[*ptr, end)` is the serialized byte range owned by
-        // SerializedScriptValue for the duration of this call.
-        let start = unsafe { *ptr };
-        let total_length: usize = (end as usize) - (start as usize);
-        // SAFETY: `[start, end)` spans `total_length` bytes owned by the
-        // SerializedScriptValue for the duration of this call (see fn contract).
-        let mut buffer_stream =
-            bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(start, total_length) });
-
-        let result = match on_structured_clone_deserialize(global_this, &mut buffer_stream) {
-            Ok(v) => v,
-            Err(e) if e.name() == "OutOfMemory" => {
-                return Err(global_this.throw_out_of_memory());
-            }
-            Err(_) => return Ok(None),
-        };
-
-        // Advance the caller's cursor by the number of bytes consumed.
-        // SAFETY: `ptr` is the live cursor (fn contract); `pos <= total_length` by
-        // construction, so the advanced pointer stays within `[start, end]`.
-        unsafe { *ptr = start.add(buffer_stream.pos) };
-
-        Ok(Some(result))
     }
     fn from_url_search_params(
         global_this: &JSGlobalObject,
@@ -3725,28 +3662,40 @@ impl FormDataContext<'_> {
 // Structured clone serialize / deserialize
 // ──────────────────────────────────────────────────────────────────────────
 
-struct StructuredCloneWriter {
-    ctx: *mut c_void,
-    // JSC host-fn calling convention: codegen `WriteBytesFn` cfg-splits to
-    // `"sysv64"` on Windows-x64, `"C"` elsewhere.
-    impl_: crate::generated_classes::WriteBytesFn,
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Blob__onStructuredCloneSerialize(
+    this: &Blob,
+    serializer: &mut bun_jsc::CloneSerializer,
+) {
+    let _ = this.on_structured_clone_serialize(serializer);
 }
 
-impl StructuredCloneWriter {
-    fn write(&self, bytes: &[u8]) -> usize {
-        // SAFETY: ctx and impl_ are supplied by C++ SerializedScriptValue and valid
-        // for the duration of on_structured_clone_serialize.
-        unsafe { (self.impl_)(self.ctx, bytes.as_ptr(), bytes.len() as u32) };
-        bytes.len()
-    }
-}
+/// Empty with nothing pending: the bytes are not a valid record (the deserializer reports its usual error).
+///
+/// # Safety
+/// `[*ptr, end)` is the unread part of the `SerializedScriptValue`'s buffer.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn Blob__onStructuredCloneDeserialize(
+    global_this: &JSGlobalObject,
+    ptr: &mut *const u8,
+    end: *const u8,
+) -> JSValue {
+    let start = *ptr;
+    let total_length: usize = (end as usize) - (start as usize);
+    // SAFETY: `[start, end)` spans `total_length` bytes (fn contract).
+    let mut buffer_stream =
+        bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(start, total_length) });
 
-// Implement `bun_io::Write` so `write_int_le` / `write_all` work directly.
-impl bun_io::Write for StructuredCloneWriter {
-    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
-        StructuredCloneWriter::write(self, bytes);
-        Ok(())
-    }
+    let result = match on_structured_clone_deserialize(global_this, &mut buffer_stream) {
+        Ok(v) => v,
+        Err(e) if e.name() == "OutOfMemory" => return global_this.throw_out_of_memory_value(),
+        Err(_) => return JSValue::ZERO,
+    };
+
+    // SAFETY: `pos <= total_length`, so the advanced cursor stays within `[start, end]`.
+    *ptr = unsafe { start.add(buffer_stream.pos) };
+
+    result
 }
 
 // Only ever called with f64 (Blob.last_modified). A concrete impl

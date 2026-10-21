@@ -196,7 +196,6 @@ export class ClassDefinition {
 
   configurable?: boolean;
   enumerable?: boolean;
-  structuredClone?: { transferable: boolean; tag: number; storable: boolean };
   inspectCustom?: boolean;
 
   constructor(options: Partial<ClassDefinition>) {
@@ -221,7 +220,6 @@ export function define(
     estimatedSize = false,
     call = false,
     construct = false,
-    structuredClone,
     inspectCustom = false,
     ...rest
   } = {} as Partial<ClassDefinition>,
@@ -242,7 +240,6 @@ export function define(
     overridesToJS,
     construct,
     estimatedSize,
-    structuredClone,
     values,
     klass: Object.fromEntries(Object.entries(klass).sort(([a], [b]) => a.localeCompare(b))),
     proto: Object.fromEntries(Object.entries(proto).sort(([a], [b]) => a.localeCompare(b))),

@@ -134,3 +134,11 @@ for (const testType of testTypes) {
     }
   }
 }
+
+test("an S3 file is serialized as a Blob", () => {
+  const file = new Bun.S3Client({ accessKeyId: "test", secretAccessKey: "test", bucket: "bucket" }).file("key.txt");
+  const blobTag = new Uint8Array(serialize(new Blob(["x"])))[4];
+  expect(new Uint8Array(serialize(file))[4]).toBe(blobTag);
+  // Like any Blob, another process gets a plain object in its place.
+  expect(Object.getPrototypeOf(structuredCloneAdvanced(file, [], true, false, "default"))).toBe(Object.prototype);
+});

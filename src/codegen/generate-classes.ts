@@ -211,20 +211,6 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
     }
   }
 
-  if (obj.structuredClone) {
-    externs +=
-      `extern JSC_CALLCONV void JSC_HOST_CALL_ATTRIBUTES ${symbolName(
-        typeName,
-        "onStructuredCloneSerialize",
-      )}(void*, JSC::JSGlobalObject*, WebCore::CloneSerializer*, SYSV_ABI void (*) (WebCore::CloneSerializer*, const uint8_t*, uint32_t));` +
-      "\n";
-
-    externs +=
-      `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${symbolName(
-        typeName,
-        "onStructuredCloneDeserialize",
-      )}(JSC::JSGlobalObject*, uint8_t**, const uint8_t*);` + "\n";
-  }
   if (obj.finalize) {
     externs +=
       `extern JSC_CALLCONV void JSC_HOST_CALL_ATTRIBUTES ${classSymbolName(typeName, "finalize")}(void*);` + "\n";
@@ -1711,7 +1697,6 @@ function generateRust(
     memoryCost,
     values = [],
     hasPendingActivity = false,
-    structuredClone = false,
     rustPath,
     sharedThis = true,
   } = {} as ClassDefinition,
@@ -1909,32 +1894,6 @@ function generateRust(
     }
   }
 
-  // ── structuredClone ──────────────────────────────────────────────────────
-  if (structuredClone) {
-    thunk(
-      symbolName(typeName, "onStructuredCloneSerialize"),
-      `(this: ${recv}, global: &JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn) -> ()`,
-      `    ${T}::on_structured_clone_serialize(this, global, ctx, write_bytes)`,
-    );
-    if (typeof structuredClone === "object" && structuredClone.transferable) {
-      thunk(
-        symbolName(typeName, "onStructuredCloneTransfer"),
-        `(this: ${recv}, global: &JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn) -> ()`,
-        `    ${T}::on_structured_clone_transfer(this, global, ctx, write_bytes)`,
-      );
-    }
-    thunk(
-      symbolName(typeName, "onStructuredCloneDeserialize"),
-      `(global: &JSGlobalObject, ptr: *mut *mut u8, end: *const u8) -> JSValue`,
-      `    // Empty with nothing pending: the record was malformed (CloneDeserializer::readTerminal → fail()).
-    match ${T}::on_structured_clone_deserialize(global, ptr, end) {
-        Ok(Some(value)) => value,
-        Ok(None) => JSValue::ZERO,
-        Err(err) => host_fn::host_call_error_value(global, err),
-    }`,
-    );
-  }
-
   // ── C++→Rust extern imports + safe wrappers ──────────────────────────────
   // Emitted as free functions in a per-class `js_${T}` sub-module so they
   // don't collide with inherent `from_js`/`to_js` already defined on the
@@ -2054,14 +2013,6 @@ use core::ffi::c_void;
 #[allow(dead_code, unreachable_pub, unused)]
 use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 
-/// \`SYSV_ABI void (*)(CloneSerializer*, const uint8_t*, uint32_t)\`
-#[allow(dead_code, unreachable_pub, unused)]
-#[cfg(all(windows, target_arch = "x86_64"))]
-pub type WriteBytesFn = unsafe extern "sysv64" fn(*mut c_void, *const u8, u32);
-#[allow(dead_code, unreachable_pub, unused)]
-#[cfg(not(all(windows, target_arch = "x86_64")))]
-pub type WriteBytesFn = unsafe extern "C" fn(*mut c_void, *const u8, u32);
-
 /// \`JSC::PropertyName\` — opaque pointer-sized handle (UniquedStringImpl*).
 #[allow(dead_code, unreachable_pub, unused)]
 #[repr(transparent)]
@@ -2109,7 +2060,6 @@ const GENERATED_CLASSES_HEADER = [
 
 #include "JSDOMWrapper.h"
 #include <wtf/NeverDestroyed.h>
-#include "SerializedScriptValue.h"
 `,
 
   `
@@ -2317,82 +2267,9 @@ for (const obj of classes) {
 
 const GENERATED_CLASSES_FOOTER = `
 
-typedef SYSV_ABI void (*CppStructuredCloneableSerializeFunction)(CloneSerializer*, const uint8_t*, uint32_t);
-typedef SYSV_ABI void (*ZigStructuredCloneableSerializeFunction)(void*, JSC::JSGlobalObject*, CloneSerializer*, CppStructuredCloneableSerializeFunction);
-
-class StructuredCloneableSerialize {
-  public:
-    CppStructuredCloneableSerializeFunction cppWriteBytes;
-    ZigStructuredCloneableSerializeFunction zigFunction;
-
-    uint8_t tag = 0;
-
-    // the type from zig
-    void* impl = nullptr;
-
-    bool isForTransfer = false;
-    bool isForStorage = false;
-
-    static std::optional<StructuredCloneableSerialize> fromJS(JSC::JSValue);
-    void write(CloneSerializer* serializer, JSC::JSGlobalObject* globalObject)
-    {
-      zigFunction(impl, globalObject, serializer, cppWriteBytes);
-    }
-};
-
-class StructuredCloneableDeserialize {
-  public:
-    static std::optional<JSC::EncodedJSValue> fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject*, const uint8_t*&, const uint8_t*);
-};
-
 }
 
 `;
-
-function writeCppSerializers() {
-  var output = ``;
-
-  var structuredClonable = classes
-    .filter(a => a.structuredClone)
-    .sort((a, b) => a.structuredClone.tag < b.structuredClone.tag);
-
-  function fromJSForEachClass(klass) {
-    return `
-    if (auto* result = dynamicDowncast<${className(klass.name)}>(value)) {
-      return StructuredCloneableSerialize { .cppWriteBytes = SerializedScriptValue::writeBytesForBun, .zigFunction = ${symbolName(
-        klass.name,
-        "onStructuredCloneSerialize",
-      )}, .tag = ${klass.structuredClone.tag}, .impl = result->wrapped(), .isForTransfer = ${!!klass.structuredClone.transferable}, .isForStorage = ${!!klass.structuredClone.storable} };
-    }
-    `;
-  }
-
-  function fromTagDeserializeForEachClass(klass) {
-    return `
-    if (tag == ${klass.structuredClone.tag}) {
-      return ${symbolName(klass.name, "onStructuredCloneDeserialize")}(globalObject, (uint8_t**)&ptr, end);
-    }
-    `;
-  }
-
-  output += `
-  std::optional<StructuredCloneableSerialize> StructuredCloneableSerialize::fromJS(JSC::JSValue value)
-  {
-    ${structuredClonable.map(fromJSForEachClass).join("\n").trim()}
-    return std::nullopt;
-  }
-  `;
-
-  output += `
-  std::optional<JSC::EncodedJSValue> StructuredCloneableDeserialize::fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject* globalObject, const uint8_t*& ptr, const uint8_t* end)
-  {
-    ${structuredClonable.map(fromTagDeserializeForEachClass).join("\n").trim()}
-    return std::nullopt;
-  }
-  `;
-
-  return output;
-}
 
 // ── Rust output: per-class thunks ──────────────────────────────────────────
 {
@@ -2431,7 +2308,6 @@ function writeCppSerializers() {
     externs.trim(),
     GENERATED_CLASSES_IMPL_HEADER_POST,
     allImpls.join("\n"),
-    writeCppSerializers(classes),
     GENERATED_CLASSES_IMPL_FOOTER,
   ]);
 

@@ -46,6 +46,8 @@ pub use bun_jsc_macros::{JsAffine, JsClass, codegen_cached_accessors, host_call,
 // ──────────────────────────────────────────────────────────────────────────
 pub mod error;
 pub use error::{Error as CrateError, Result as CrateResult};
+#[path = "CloneSerializer.rs"]
+pub(crate) mod clone_serializer;
 #[path = "CommonAbortReason.rs"]
 pub mod common_abort_reason;
 #[path = "CustomGetterSetter.rs"]
@@ -373,6 +375,7 @@ pub use self::common_strings::{CommonStrings, CommonStringsForRust as CommonStri
 pub use self::dom_url::DOMURL;
 pub use self::js_big_int::JSBigInt;
 
+pub use self::clone_serializer::CloneSerializer;
 pub use self::common_abort_reason::{CommonAbortReason, CommonAbortReasonExt};
 pub(crate) use self::custom_getter_setter::CustomGetterSetter;
 /// Some drafts spell this `jsc::ErrCode` — keep both until call-sites converge.

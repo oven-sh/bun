@@ -1,29 +1,5 @@
 use core::ffi::c_void;
 
-// ─── non-JSC helpers (real) ───────────────────────────────────────────────
-// `Rule` and the IP-compare helpers depend on `sockaddr` from the sibling
-// `socket_address` module (lives in `crate::socket`, not `super::`), so they
-// stay gated below. Only the structured-clone byte-shuffling is JSC-free and
-// dependency-free.
-
-struct StructuredCloneWriter {
-    ctx: *mut c_void,
-    // callconv(jsc.conv) → codegen `WriteBytesFn` typedef (cfg-splits to
-    // `"sysv64"` on Windows-x64).
-    impl_: crate::generated_classes::WriteBytesFn,
-}
-
-impl bun_io::Write for StructuredCloneWriter {
-    #[inline]
-    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
-        // SAFETY: `ctx` and `impl_` were supplied together by the C++
-        // SerializedScriptValue writer; the callback only reads `len` bytes
-        // from `ptr`, both of which we derive from a single `&[u8]`.
-        unsafe { (self.impl_)(self.ctx, bytes.as_ptr(), bytes.len() as u32) };
-        Ok(())
-    }
-}
-
 // ─── JsClass payload + host fns ───────────────────────────────────────────
 // `BlockList` is the `m_ctx` payload for a `.classes.ts` wrapper; every method
 // is a `#[bun_jsc::host_fn]` and the struct itself carries `#[bun_jsc::JsClass]`.
@@ -32,7 +8,9 @@ use core::cmp::Ordering;
 use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 use bun_core::{String as BunString, ZStr};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _};
+use bun_jsc::{
+    CallFrame, CloneSerializer, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _,
+};
 use bun_threading::{Guarded, Mutex};
 
 /// `(serialize_nonce, address)` of `BlockList` instances currently embedded in
@@ -403,100 +381,75 @@ impl BlockList {
         }
         Ok(array)
     }
-
-    pub(crate) fn on_structured_clone_serialize(
-        this: &Self,
-        _global: &JSGlobalObject,
-        ctx: *mut c_void,
-        // codegen `WriteBytesFn` typedef (jsc.conv).
-        write_bytes: crate::generated_classes::WriteBytesFn,
-    ) {
-        use bun_io::Write as _;
-        let _guard = this.mutex.lock_guard();
-        this.ref_();
-        let addr = std::ptr::from_ref::<Self>(this) as usize;
-        SERIALIZED_REFS.lock().push((this.serialize_nonce, addr));
-        let mut writer = StructuredCloneWriter {
-            ctx,
-            impl_: write_bytes,
-        };
-        // The writer is infallible, so no `?` needed.
-        // Only the nonce is serialized; deserialize maps it back to `*mut Self`
-        // through `SERIALIZED_REFS` and never forms `&mut Self` (only `ref_()` +
-        // `to_js_ptr`, both `&self`/raw-ptr), so `from_ref` provenance is fine.
-        _ = writer.write_int_le(this.serialize_nonce);
-    }
-
-    /// `Ok(None)`: the bytes are not a valid record (the deserializer reports its usual error).
-    pub(crate) fn on_structured_clone_deserialize(
-        global: &JSGlobalObject,
-        ptr: *mut *mut u8,
-        end: *const u8,
-    ) -> JsResult<Option<JSValue>> {
-        // SAFETY: `*ptr` and `end` bound a contiguous byte buffer owned by the
-        // caller (C++ SerializedScriptValue); `end >= *ptr`. `ptr` itself is a
-        // non-null out-param the caller expects us to advance.
-        let start: *mut u8 = unsafe { *ptr };
-        let total_length: usize = (end as usize) - (start as usize);
-        // SAFETY: `start` through `end` is the contiguous C++-owned deserialization
-        // buffer (see above); `total_length = end - start`, so the resulting slice
-        // is exactly that buffer and stays valid for the lifetime of `r`.
-        let mut r =
-            bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(start, total_length) });
-
-        let Ok(nonce) = r.read_int_le::<u64>() else {
-            return Ok(None);
-        };
-
-        // Advance the caller's cursor by the number of bytes consumed
-        // SAFETY: `r.pos <= total_length` (`read_exact` bounds-checks via
-        // `checked_add`); `ptr` is the caller's live out-param (see above).
-        unsafe { *ptr = start.add(r.pos) };
-
-        // A single SerializedScriptValue can be deserialized multiple times
-        // (e.g. BroadcastChannel fan-out), so each wrapper must own its own ref
-        // instead of adopting the one taken in serialize. The serialize ref is
-        // what keeps the backing alive while its entry sits in `SERIALIZED_REFS`
-        // and is released by `~SerializedScriptValue` via the destroy hook below.
-        let this: *mut Self = {
-            let refs = SERIALIZED_REFS.lock();
-            let Some(addr) = refs.iter().find_map(|&(n, a)| (n == nonce).then_some(a)) else {
-                return Ok(None);
-            };
-            let this = addr as *mut Self;
-            // SAFETY: the entry was pushed by `on_structured_clone_serialize`
-            // from a live `*mut Self` whose ref was bumped at serialize time
-            // (paired `ref_()`/`deref()`); that ref is only released by the
-            // destroy hook after it takes this lock and removes the entry, so
-            // `this` is live while the guard is held and we ref it first.
-            unsafe { (*this).ref_() };
-            this
-        };
-        // SAFETY: ownership of the ref taken above transfers to the C++ wrapper
-        // (released via `finalize` → `deref`). `to_js_ptr` is the
-        // `#[bun_jsc::JsClass]`-generated `${T}__create` shim.
-        Ok(Some(unsafe { Self::to_js_ptr(this, global) }))
-    }
 }
 
-bun_jsc::jsc_host_abi! {
-    /// Called from `~SerializedScriptValue` for each BlockList pointer that was
-    /// written into the wire buffer. Releases the `+1` taken by
-    /// [`BlockList::on_structured_clone_serialize`].
-    #[unsafe(no_mangle)]
-    pub(crate) unsafe fn BlockList__onStructuredCloneDestroy(ptr: *mut c_void) -> () {
-        let addr = ptr as usize;
-        {
-            let mut refs = SERIALIZED_REFS.lock();
-            if let Some(i) = refs.iter().position(|&(_, a)| a == addr) {
-                refs.swap_remove(i);
-            }
+/// Takes the `+1` that [`BlockList__onStructuredCloneDestroy`] releases.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn BlockList__onStructuredCloneSerialize(
+    this: &BlockList,
+    serializer: &mut CloneSerializer,
+) {
+    use bun_io::Write as _;
+    let _guard = this.mutex.lock_guard();
+    this.ref_();
+    let addr = std::ptr::from_ref::<BlockList>(this) as usize;
+    SERIALIZED_REFS.lock().push((this.serialize_nonce, addr));
+    // Deserialize only calls `ref_()` and `to_js_ptr` on `addr`, so `from_ref` provenance is fine.
+    _ = serializer.write_int_le(this.serialize_nonce);
+}
+
+/// Empty: the bytes are not a valid record (the deserializer reports its usual error).
+///
+/// # Safety
+/// `[*ptr, end)` is the unread part of the `SerializedScriptValue`'s buffer.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn BlockList__onStructuredCloneDeserialize(
+    global: &JSGlobalObject,
+    ptr: &mut *const u8,
+    end: *const u8,
+) -> JSValue {
+    let start = *ptr;
+    let total_length: usize = (end as usize) - (start as usize);
+    // SAFETY: `[start, end)` spans `total_length` bytes (fn contract).
+    let mut r =
+        bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(start, total_length) });
+
+    let Ok(nonce) = r.read_int_le::<u64>() else {
+        return JSValue::ZERO;
+    };
+
+    // SAFETY: `r.pos <= total_length`, so the advanced cursor stays within `[start, end]`.
+    *ptr = unsafe { start.add(r.pos) };
+
+    // One SerializedScriptValue can be deserialized many times (BroadcastChannel): a ref per wrapper.
+    let this: *mut BlockList = {
+        let refs = SERIALIZED_REFS.lock();
+        let Some(addr) = refs.iter().find_map(|&(n, a)| (n == nonce).then_some(a)) else {
+            return JSValue::ZERO;
+        };
+        let this = addr as *mut BlockList;
+        // SAFETY: the destroy hook removes this entry under the lock before it drops the serialize ref.
+        unsafe { (*this).ref_() };
+        this
+    };
+    // SAFETY: the ref taken above transfers to the wrapper, whose `finalize` releases it.
+    unsafe { BlockList::to_js_ptr(this, global) }
+}
+
+/// Called from `~SerializedScriptValue` for each BlockList pointer that was
+/// written into the wire buffer. Releases the `+1` taken by
+/// [`BlockList__onStructuredCloneSerialize`].
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn BlockList__onStructuredCloneDestroy(ptr: *mut c_void) {
+    let addr = ptr as usize;
+    {
+        let mut refs = SERIALIZED_REFS.lock();
+        if let Some(i) = refs.iter().position(|&(_, a)| a == addr) {
+            refs.swap_remove(i);
         }
-        // SAFETY: `ptr` is the same `*mut BlockList` passed to
-        // `on_structured_clone_serialize`; it stayed alive because that path
-        // bumped the refcount. Dropping that ref here may free the box.
-        unsafe { BlockList::deref(ptr.cast::<BlockList>()) };
     }
+    // SAFETY: `ptr` is the `&BlockList` serialize was given, kept alive by the ref it took.
+    unsafe { BlockList::deref(ptr.cast::<BlockList>()) };
 }
 
 pub(crate) enum Rule {

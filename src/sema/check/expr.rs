@@ -2901,6 +2901,88 @@ impl<'p, 's> Checker<'p, 's> {
         None
     }
 
+    /// `ty`, the type of an expression that a `checkObjectLiteral` call of the kind `created_by`
+    /// has checked, with that call as the one that created each of its object literal types. The
+    /// type of the parent's check (`ForParent`) is unchanged, since `type_of_expr` caches it. A
+    /// literal in a member of a union, or in an element of an array literal, is checked again by
+    /// the same call, so those are mapped too.
+    pub(super) fn type_of_separate_object_literal_check(
+        &mut self,
+        ty: TypeId,
+        created_by: ObjectLiteralCheck,
+    ) -> TypeId {
+        match self.data(ty) {
+            &TypeData::Anon {
+                origin:
+                    Origin::ObjectLiteral(
+                        file,
+                        literal,
+                        is_js_literal,
+                        in_const_context,
+                        ObjectLiteralCheck::ForParent,
+                        object_flags,
+                        is_fresh,
+                    ),
+                mapper,
+            } => self.intern(TypeData::Anon {
+                origin: Origin::ObjectLiteral(
+                    file,
+                    literal,
+                    is_js_literal,
+                    in_const_context,
+                    created_by,
+                    object_flags,
+                    is_fresh,
+                ),
+                mapper,
+            }),
+            TypeData::Union(members) => {
+                let mapped: SmallVec<[TypeId; 8]> = members
+                    .iter()
+                    .map(|&m| self.type_of_separate_object_literal_check(m, created_by))
+                    .collect();
+                if mapped[..] == members[..] {
+                    ty
+                } else {
+                    self.union(&mapped)
+                }
+            }
+            TypeData::Ref {
+                target,
+                args: TypeArguments::Given(args),
+            } if self.types().is_array_literal(ty) => {
+                let mapped: SmallVec<[TypeId; 8]> = args
+                    .iter()
+                    .map(|&a| self.type_of_separate_object_literal_check(a, created_by))
+                    .collect();
+                if mapped[..] == args[..] {
+                    return ty;
+                }
+                let reference = self.intern_key(TypeKey::Ref {
+                    target: *target,
+                    args: &mapped,
+                });
+                self.create_array_literal_type(reference)
+            }
+            TypeData::Tuple {
+                elems: TypeArguments::Given(elems),
+                flags,
+                readonly,
+            } if self.types().is_array_literal(ty) => {
+                let mapped: SmallVec<[TypeId; 8]> = elems
+                    .iter()
+                    .map(|&e| self.type_of_separate_object_literal_check(e, created_by))
+                    .collect();
+                if mapped[..] == elems[..] {
+                    return ty;
+                }
+                let tuple = self.tuple(&mapped, flags, *readonly);
+                self.create_array_literal_type(tuple)
+            }
+            _ => ty,
+        }
+    }
+
     /// `checkExpressionCached(containingLiteral)` in `getContextualThisParameterType(func)`. It has
     /// no re-entrancy guard, and when calls nest, the outermost one assigns `links.resolvedType`
     /// last. `node` is the `this` expression it's requested for, if any.
@@ -3097,7 +3179,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// True if `type_of_expr` has `e`'s type cached.
-    fn has_type_of_expr(&mut self, file: FileId, e: ExprId) -> bool {
+    pub(super) fn has_type_of_expr(&mut self, file: FileId, e: ExprId) -> bool {
         if self.is_rechecking() {
             self.rechecked_exprs.contains_key(&(file, e))
         } else {

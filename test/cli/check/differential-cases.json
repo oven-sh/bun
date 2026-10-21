@@ -18724,5 +18724,13 @@
       "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./lib\" }, { \"path\": \"./app\" }] }\n"
     },
     "build": true
+  },
+  "destructured-parameter-with-an-object-literal-default": {
+    "files": {
+      "a.ts": "declare const c: boolean;\ndeclare const o: {};\nexport const f1 = ({ q = {} }, k: string) => q[k];\nexport const f2 = ([q = {}], k: string) => q[k];\nexport const f3 = ({ q = {} }) => q[\"x\"];\nexport const f4 = function ({ q = {} }, k: string) { return q[k]; };\nexport const o1 = { m({ q = {} }, k: string) { return q[k]; } };\nexport const f5 = async ({ q = {} }, k: string) => q[k];\nexport const f6 = ({ r: q = {} }, k: string) => q[k];\nexport const f7 = ({ a: { q = {} } }, k: string) => q[k];\nexport const f8 = ({ a: { q = {} } = {} }, k: string) => q[k];\nexport const f9 = ({ q = {} } = {}, k: string) => q[k];\nexport const f10 = ([[q = {}]], k: string) => q[k];\nexport const f11 = ({ q = [{}] }, k: string) => q[0][k];\nexport const f12 = ({ q = [{}] as const }, k: string) => q[0][k];\nexport const f13 = ({ q = c ? {} : null }, k: string) => q![k];\nexport const f14 = ({ q = c || {} }, k: string) => q[k];\nexport const f15 = ({ q = { ...o } }, k: string) => q[k];\nexport const f16 = ({ q = {} }, k: string) => { q = { x: 1 }; return q; };\nexport const f17 = ({ q = { a: 1 } }, k: string) => q[k];\nexport const f18 = ({ q = {} }, k: string) => Object.keys(q).filter(key => q[key]);\n",
+      "b.ts": "export function f1({ q = {} }, k: string) { return q[k]; }\nexport const f2 = ({ q = {} }: { q?: {} }, k: string) => q[k];\ndeclare const o: { q?: {} };\nconst { q = {} } = o;\nexport const f3 = (k: string) => q[k];\nexport const f4 = (n: typeof q2, { q2 = {} }, k: string) => q2[k];\nexport const f5 = (({ q = {} }, k: string) => q[k])({ q: {} }, \"x\");\n",
+      "c.ts": "const getFilteredQueryParams = ({ queryParams = {} }) =>\n  Object.keys(queryParams)\n    // @ts-expect-error TS(7053)\n    .filter(key => queryParams[key])\n    .join(\"&\");\nexport default getFilteredQueryParams;\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"esnext\"], \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\" } }\n"
+    }
   }
 }

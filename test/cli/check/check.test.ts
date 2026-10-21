@@ -7646,6 +7646,102 @@ export class C { static readonly S: unique symbol = Symbol("s"); }
       expect(exitCode).toBe(1);
     });
 
+    // Issue #46181. `assignParameterType` widens the type the pattern implies, and `q` gets the union of the widened
+    // `{}` and the default, reduced to the widened one: tsgo checks the default again for the parent, so that type is
+    // younger than the widened one.
+    test("a destructured parameter of a function expression with a default of `{}` isn't an object literal type", async () => {
+      using dir = project({
+        "a.ts": `declare const c: boolean;
+declare const o: {};
+export const f1 = ({ q = {} }, k: string) => q[k];
+export const f2 = ([q = {}], k: string) => q[k];
+export const f3 = ({ q = {} }) => q["x"];
+export const f4 = function ({ q = {} }, k: string) { return q[k]; };
+export const o1 = { m({ q = {} }, k: string) { return q[k]; } };
+export const f5 = async ({ q = {} }, k: string) => q[k];
+export const f6 = ({ r: q = {} }, k: string) => q[k];
+export const f7 = ({ a: { q = {} } }, k: string) => q[k];
+export const f8 = ({ a: { q = {} } = {} }, k: string) => q[k];
+export const f9 = ({ q = {} } = {}, k: string) => q[k];
+export const f10 = ([[q = {}]], k: string) => q[k];
+export const f11 = ({ q = [{}] }, k: string) => q[0][k];
+export const f12 = ({ q = [{}] as const }, k: string) => q[0][k];
+export const f13 = ({ q = c ? {} : null }, k: string) => q![k];
+export const f14 = ({ q = c || {} }, k: string) => q[k];
+export const f15 = ({ q = { ...o } }, k: string) => q[k];
+export const f16 = ({ q = {} }, k: string) => { q = { x: 1 }; return q; };
+export const f17 = ({ q = { a: 1 } }, k: string) => q[k];
+export const f18 = ({ q = {} }, k: string) => Object.keys(q).filter(key => q[key]);
+`,
+        // The same before the fix. A function declaration, an annotated parameter and a `const` widen the element's
+        // type once it's computed. A parameter that an earlier one refers to has the default's type, checked for the
+        // parent before the pattern is widened. The parameters of an immediately invoked function have the types of
+        // its arguments.
+        "b.ts": `export function f1({ q = {} }, k: string) { return q[k]; }
+export const f2 = ({ q = {} }: { q?: {} }, k: string) => q[k];
+declare const o: { q?: {} };
+const { q = {} } = o;
+export const f3 = (k: string) => q[k];
+export const f4 = (n: typeof q2, { q2 = {} }, k: string) => q2[k];
+export const f5 = (({ q = {} }, k: string) => q[k])({ q: {} }, "x");
+`,
+        "c.ts": `const getFilteredQueryParams = ({ queryParams = {} }) =>
+  Object.keys(queryParams)
+    // @ts-expect-error TS(7053)
+    .filter(key => queryParams[key])
+    .join("&");
+export default getFilteredQueryParams;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(3,46): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(4,44): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(5,35): error TS7053: Element implicitly has an 'any' type because expression of type '"x"' can't be used to index type '{}'.
+          Property 'x' does not exist on type '{}'.
+        a.ts(6,61): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(7,55): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(8,52): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(9,49): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(10,53): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(11,58): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(12,51): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(13,47): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(14,49): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(15,58): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(16,58): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(17,52): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(18,53): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        a.ts(20,53): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{ a: number; }'.
+          No index signature with a parameter of type 'string' was found on type '{ a: number; }'.
+        a.ts(21,76): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        b.ts(1,52): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        b.ts(2,58): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'.
+        b.ts(5,34): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+          No index signature with a parameter of type 'string' was found on type '{}'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+
     test("qualifies two types that share a name with `import(...)` in the message", async () => {
       using dir = project({
         "a.ts": `import { use } from "one";

@@ -383,6 +383,10 @@ pub enum ObjectLiteralCheck {
     ForParent,
     /// `checkExpressionForMutableLocation`, for `getAssignmentDeclarationInitializerType`.
     ForAssignmentDeclaration,
+    /// `checkExpressionWithContextualType`, for `getTypeFromBindingElement`: the default of a binding element, checked
+    /// for the type its pattern implies. `checkExpressionCached` doesn't store it, so the type the parent later gets
+    /// for the default (`ForParent`) is a second, younger type.
+    ForBindingElement,
     /// `checkExpressionCached`, for `getContextualThisParameterType`, where the parent has left no `links.resolvedType`.
     ForThis,
     /// The same for the `this` parameter of this member, or for a type query of `this` in its signature. Both are

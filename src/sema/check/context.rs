@@ -520,13 +520,24 @@ impl<'p, 's> Checker<'p, 's> {
                     if let PatParent::Param(root) = root {
                         self.note_checked_with_contextual_type(file, root, default);
                     }
-                    self.check_expression_with_contextual_type(
+                    let ty = self.check_expression_with_contextual_type(
                         file,
                         default,
                         contextual_type,
                         None,
                         CheckMode::empty(),
-                    )
+                    );
+                    // Not `checkExpressionCached`. Unless the parent's check has stored its type
+                    // already, that check creates a second type, after the type this one implies
+                    // has been widened.
+                    if self.has_type_of_expr(file, default) {
+                        ty
+                    } else {
+                        self.type_of_separate_object_literal_check(
+                            ty,
+                            ObjectLiteralCheck::ForBindingElement,
+                        )
+                    }
                 }
             };
             let ty = match root {

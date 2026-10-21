@@ -2579,7 +2579,8 @@ impl<'p, 's> Checker<'p, 's> {
                     })
             }
         };
-        // The `checkObjectLiteral` calls for one literal, in the order they return.
+        // The `checkObjectLiteral` calls for one literal, in the order they return. The types
+        // created from a call's type, by `creation_step`, come before the next call's.
         let check_of_literal = |t: TypeId| match *self.data(t) {
             TypeData::Anon {
                 origin:
@@ -2589,12 +2590,15 @@ impl<'p, 's> Checker<'p, 's> {
             } => match created_by {
                 // The call for a member contains those for the members after it.
                 ObjectLiteralCheck::ForThisParameter(member) => (0u8, !member.0),
+                // A pattern's type is implied, and widened, before its element's default is
+                // checked for the parent.
+                ObjectLiteralCheck::ForBindingElement => (1, 0),
                 ObjectLiteralCheck::ForParent | ObjectLiteralCheck::ForAssignmentDeclaration => {
-                    (1, 0)
+                    (2, 0)
                 }
-                ObjectLiteralCheck::ForThis => (2, 0),
+                ObjectLiteralCheck::ForThis => (3, 0),
             },
-            _ => (1, 0),
+            _ => (2, 0),
         };
         by_structure
             .then_with(|| check_of_literal(a).cmp(&check_of_literal(b)))

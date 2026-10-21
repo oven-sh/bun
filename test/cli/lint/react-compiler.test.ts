@@ -175,6 +175,8 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     expect(diagnostics).toEqual(expected.reports.fork.diagnostics);
     // The other files compile without diagnostics.
     expect(Object.keys(diagnostics)).toEqual([
+      "arguments-in-functions.jsx",
+      "arguments-not-reached.jsx",
       "arguments.jsx",
       "captured-target.jsx",
       "catch.jsx",
@@ -608,6 +610,8 @@ describe.concurrent(
           "react-hooks/todo 5:8-5:18 Todo: Support duplicate fbt tags",
           "react-hooks/todo 25:8-25:18 Todo: Support duplicate fbt tags",
         ],
+        // Nothing for `arguments`.
+        "arguments.jsx": ["react-hooks/refs 3:17-3:28 Error: Cannot access refs during render"],
         "disabled.jsx": [],
         // All three are reported at the first write.
         "writes.jsx": Array(3).fill("react-hooks/immutability 5:3-5:4 Error: This value cannot be modified"),

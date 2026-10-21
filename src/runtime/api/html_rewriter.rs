@@ -707,8 +707,8 @@ pub struct RewriterPipe {
 
     // ── output side ──────────────────────────────────────────────────────
     /// Set by [`Self::on_readable_stream_available`]; `None` until JS reads
-    /// `.body` on the output Response. Kept alive by the cell's
-    /// `outputConsumer` slot.
+    /// `.body` on the output Response. Kept alive by the cell's `outputConsumer`
+    /// slot.
     output: Cell<Option<bun_ptr::BackRef<ByteStream>>>,
     /// lol-html output of the current `write`/`end`/`resume` call; flushed to
     /// `output` when the call returns, or kept here until the output stream
@@ -845,8 +845,7 @@ impl RewriterPipe {
         Self::deref_nn(pipe.into());
     }
 
-    /// For `PendingValue::set_promise`: `true` when the cell keeps `promise`, which a read of the
-    /// pending body waits on, in `outputConsumer`. The body then has an `action` and no `promise`.
+    /// For `PendingValue::set_promise`: `true` when the cell holds `promise` in `outputConsumer`.
     pub(crate) fn hold_read_promise(&self, promise: JSValue) -> bool {
         // A settle under way, or the abandonment of a parked handler, takes it from the body.
         if self.phase.get() == RewritePhase::Done || self.is_suspended() {

@@ -210,8 +210,7 @@ impl Body {
 // ────────────────────────────────────────────────────────────────────────────
 
 pub struct PendingValue {
-    /// A GC root. `None` while a read waits if `producer` holds the promise instead
-    /// ([`streams::SourceHandle::hold_read_promise`]).
+    /// A GC root. `None` when `producer` holds it: [`streams::SourceHandle::hold_read_promise`].
     pub(crate) promise: Option<JSValue>,
     pub(crate) readable: webcore::readable_stream::Strong,
     // writable: webcore::Sink

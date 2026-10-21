@@ -1127,9 +1127,7 @@ impl SourceHandle {
         }
     }
 
-    /// `true`: the producer keeps `promise`, which a read waits on, alive for as long as it can
-    /// settle the pending body. A producer that only the collector keeps alive has to: a root
-    /// would outlive it. `false`: the body roots it.
+    /// `true` if the producer holds the read's `promise`, so that the body does not root it.
     #[must_use]
     pub fn hold_read_promise(self, promise: JSValue) -> bool {
         match self {

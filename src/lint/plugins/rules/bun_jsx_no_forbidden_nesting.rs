@@ -1,12 +1,12 @@
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
-/// Disallow a JSX element of one name anywhere inside an element of another name.
+/// Disallow a JSX element with one name anywhere inside an element with another name.
 ///
-/// By default what the HTML Standard rules out for `a` and `button` (no interactive content among the descendants), and
-/// for `form` and `label` (none of their own kind).
+/// The defaults are what the HTML Standard forbids for `a` and `button` (no interactive descendants), and for `form`
+/// and `label` (no descendants of the same kind).
 pub struct JsxNoForbiddenNesting {
-    /// The name of the outer element and that of the inner one.
+    /// The outer element's name and the inner element's name.
     pairs: Box<[(Box<[u8]>, Box<[u8]>)]>,
 }
 
@@ -15,7 +15,7 @@ const FORBIDDEN_NESTING: Message = Message::new("forbiddenNesting", "`<{{inner}}
 const HTML: [(&str, &str); 6] =
     [("a", "a"), ("a", "button"), ("button", "a"), ("button", "button"), ("form", "form"), ("label", "label")];
 
-/// The name of an element, whose text is the name as it is written: `a`, `A.B`, `a-b`.
+/// An element's tag. Its text is the name as written: `a`, `A.B`, `a-b`.
 fn tag_of(node: Node<'_>) -> Option<Expr<'_>> {
     match node.as_expr()?.kind() {
         ExprKind::Jsx(jsx) => jsx.tag(),
@@ -26,17 +26,17 @@ fn tag_of(node: Node<'_>) -> Option<Expr<'_>> {
 impl Rule for JsxNoForbiddenNesting {
     const META: Meta = Meta::plugin(Plugin::Bun, "jsx-no-forbidden-nesting", Kind::Problem);
     const ON: On = On::new().enter(NodeTags::new().exprs(&[ExprTag::Jsx])).exit(NodeTags::new().exprs(&[ExprTag::Jsx]));
-    /// For each of the pairs: how many of the outer elements the walk is in.
+    /// For each pair, how many of its outer elements currently enclose the walk.
     type State<'a> = Vec<u32>;
 
     fn new(options: &Options) -> Self {
         let config = options.object(0);
-        let written = config.array("pairs").iter().filter_map(|it| {
+        let configured = config.array("pairs").iter().filter_map(|it| {
             let pair = Object::of(Some(it));
             Some((pair.str("outer")?.as_bytes().into(), pair.str("inner")?.as_bytes().into()))
         });
         let html = HTML.iter().map(|it| (it.0.as_bytes().into(), it.1.as_bytes().into()));
-        JsxNoForbiddenNesting { pairs: if config.has("pairs") { written.collect() } else { html.collect() } }
+        JsxNoForbiddenNesting { pairs: if config.has("pairs") { configured.collect() } else { html.collect() } }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Vec<u32>> {

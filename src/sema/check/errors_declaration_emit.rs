@@ -929,6 +929,13 @@ impl<'c, 'p, 's> DeclarationEmit<'c, 'p, 's> {
     }
 }
 
+/// What `getAlternativeContainingModules` returned for a symbol and a file.
+struct ContainingModules {
+    modules: Rc<Vec<Sym>>,
+    /// The mode in which no import of the file resolved to a module that exports the symbol. `None` if one did.
+    missed_in: Option<ResolutionMode>,
+}
+
 /// The memos of `isDeclarationVisible`, `getAccessibleSymbolChain`, `getAlternativeContainingModules`,
 /// `getExportsOfSymbol`, `getSymbolTableAliases` and `getSpecifierForModuleSymbol`.
 #[derive(Default)]
@@ -938,7 +945,7 @@ pub(super) struct EmitResolverLinks {
 
     // `symbolContainerLinks`, `symbolTableAliasCache`
     chains: FxHashMap<(Sym, FileId, ScopeId, Meaning), Rc<Vec<Sym>>>,
-    containing_modules: FxHashMap<(Sym, FileId), Rc<Vec<Sym>>>,
+    containing_modules: FxHashMap<(Sym, FileId), ContainingModules>,
     variable_matches: FxHashMap<(Sym, FileId, ScopeId), Rc<Vec<Sym>>>,
     exports: FxHashMap<Sym, Rc<Vec<(Atom, Sym)>>>,
     global_aliases: Option<Rc<Vec<(Atom, Sym)>>>,
@@ -2128,19 +2135,22 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getAlternativeContainingModules`
     fn alternative_containing_modules(&mut self, symbol: Sym, at: Enclosing) -> Rc<Vec<Sym>> {
+        let files = self.files();
+        // `resolveExternalModuleName(enclosingDeclaration, importRef)`: the module is resolved in the mode of the import
+        // or export that contains the location, or else in the file's default mode. An import that was resolved in
+        // another mode (`module: commonjs` with `bundler`) isn't found.
+        let mode = self
+            .enclosing_module_specifier_mode
+            .unwrap_or_else(|| files.default_resolution_mode_for_file(at.file));
         if let Some(known) = self
             .emit_resolver_links
             .containing_modules
             .get(&(symbol, at.file))
+            && known.missed_in.is_none_or(|missed_in| missed_in == mode)
         {
-            return Rc::clone(known);
+            return Rc::clone(&known.modules);
         }
-        let files = self.files();
         let mut results = Vec::new();
-        // `resolveExternalModuleName(enclosingDeclaration, importRef)`: the location isn't a specifier, so the module
-        // is resolved in the file's default mode. An import that was resolved in another mode (`module: commonjs` with
-        // `bundler`) isn't found.
-        let mode = self.files().default_resolution_mode_for_file(at.file);
         for &specifier in &self.bound(at.file).specifiers {
             if let Some(module) = files.module_of_specifier_as(at.file, specifier, mode)
                 && self.alias_for_symbol_in_container(module, symbol).is_some()
@@ -2148,13 +2158,18 @@ impl<'p, 's> Checker<'p, 's> {
                 results.push(module);
             }
         }
+        let missed_in = results.is_empty().then_some(mode);
         if results.is_empty() {
             results = self.modules_that_export(symbol);
         }
         let results = Rc::new(results);
+        let known = ContainingModules {
+            modules: Rc::clone(&results),
+            missed_in,
+        };
         self.emit_resolver_links
             .containing_modules
-            .insert((symbol, at.file), Rc::clone(&results));
+            .insert((symbol, at.file), known);
         results
     }
 

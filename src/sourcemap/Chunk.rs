@@ -380,8 +380,6 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
     pub line_starts_with_mapping: bool,
     pub cover_lines_without_mappings: bool,
 
-    pub approximate_input_line_count: usize,
-
     /// When generating sourcemappings for bun, we store a count of how many mappings there were
     pub prepend_count: bool,
 }
@@ -402,7 +400,6 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
             line_offset_table_first_non_ascii: RawSlice::EMPTY,
             line_starts_with_mapping: false,
             cover_lines_without_mappings: false,
-            approximate_input_line_count: 0,
             prepend_count: false,
         }
     }
@@ -463,12 +460,10 @@ impl NewBuilder<'_, VLQSourceMap> {
         // `get_buffer`, to satisfy the borrow checker.
         if self.prepend_count {
             let count = self.source_map.get_count();
-            let approx = self.approximate_input_line_count;
             let buffer = self.source_map.get_buffer();
             let len = buffer.list.len();
             buffer.list[0..8].copy_from_slice(&(len as u64).to_ne_bytes());
             buffer.list[8..16].copy_from_slice(&(count as u64).to_ne_bytes());
-            buffer.list[16..24].copy_from_slice(&(approx as u64).to_ne_bytes());
         } else {
             // Finalize the internal builder eagerly; `take_buffer()` below
             // also finalizes, so the effect is preserved.
@@ -619,6 +614,13 @@ impl NewBuilder<'_, VLQSourceMap> {
             .expect("unreachable");
         self.prev_state = current_state;
         self.has_prev_state = true;
+    }
+
+    /// VLQ has nowhere to keep a mark.
+    pub fn mark_object_brace(&mut self) {
+        if let Some(internal) = &mut self.source_map.ctx.internal {
+            internal.mark_object_brace(&self.prev_state);
+        }
     }
 
     #[inline(never)]

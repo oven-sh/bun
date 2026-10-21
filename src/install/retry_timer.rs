@@ -11,7 +11,8 @@ use crate::package_manager_real::run_tasks::download_outcome;
 use crate::package_manager_real::{self, enqueue, package_manager_options::LogLevel};
 use crate::{NetworkTask, PackageManager};
 
-/// Install thread only. Its tasks are not in `pending_tasks`: `pending_task_count` adds `len()`.
+/// Only used on the install thread. Its tasks aren't counted in `pending_tasks`, so
+/// `pending_task_count` adds `len()`.
 #[derive(Default)]
 pub(crate) struct RetryQueue {
     waiting: Vec<(Instant, *mut NetworkTask)>,
@@ -121,8 +122,8 @@ impl PackageManager {
     }
 }
 
-/// Returns how long to wait before retry number `attempt`, and whether the registry asked for
-/// that wait. Zero means that the retry starts at once.
+/// Returns how long to wait before retry number `attempt`, and whether the registry asked for that
+/// wait. Zero means the retry starts immediately.
 fn wait_before(
     manager: &PackageManager,
     attempt: u16,
@@ -171,7 +172,7 @@ static TIMER: Guarded<Timer> = Guarded::new(Timer {
 });
 static CHANGED: Condition = Condition::new();
 
-/// False when the thread could not be started: nothing would end the wait.
+/// Returns false if the thread couldn't be started, because nothing would end the wait then.
 fn wake_at(deadline: Instant) -> bool {
     let mut timer = TIMER.lock();
     if timer.thread.is_none() {

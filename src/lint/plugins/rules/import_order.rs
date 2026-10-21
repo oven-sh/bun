@@ -4,7 +4,7 @@ use bun_core::strings;
 use bun_lint::language::Parser;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use bun_lint::utils::sort::sort_indices;
+use bun_lint::utils::sort::merge_sort_indices;
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -13,16 +13,16 @@ use std::cmp::Ordering;
 pub struct Order {
     newlines_between: Newlines,
     newlines_between_types: Newlines,
-    /// `pathGroupsExcludedImportTypes`: a bit for each [`ImportType`].
+    /// `pathGroupsExcludedImportTypes`, with one bit per [`ImportType`].
     excluded: u16,
-    /// `sortTypesGroup`, if `type` is among the groups.
+    /// `sortTypesGroup`, if `type` is one of the groups.
     sorts_types_group: bool,
     consolidates_islands: bool,
     named: Named,
     alphabetize: Alphabetize,
     distinct_group: bool,
     warn_on_unassigned_imports: bool,
-    /// The rank of each [`ImportType`] but the last.
+    /// The rank of every [`ImportType`] except the last.
     groups: [f64; 9],
     is_type_in_groups: bool,
     path_groups: Vec<PathGroup>,
@@ -79,9 +79,9 @@ enum ImportKind {
     Type,
 }
 
-/// The `type` of an entry.
+/// An entry's `type`.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Written {
+enum EntryType {
     Import,
     /// `import a = b.c`
     ImportObject,
@@ -97,16 +97,16 @@ enum Category {
 }
 
 struct Entry<'a> {
-    /// What is reported.
+    /// The span to report.
     node: Span,
     /// `findRootNode(node)`
     root: Span,
-    /// Where the root is in its block.
+    /// The root's index in its block.
     index: usize,
     value: Cow<'a, [u8]>,
     display_name: Cow<'a, [u8]>,
     alias: Option<&'a [u8]>,
-    written: Written,
+    entry_type: EntryType,
     /// `node.importKind`
     import_kind: ImportKind,
     /// `node.exportKind === "type"`
@@ -140,8 +140,8 @@ const NO_EMPTY_LINES_BETWEEN_SINGLE_LINES: Message = Message::new(
     "There should be no empty lines between this single-line import and the single-line import that follows it",
 );
 
-fn newlines_of(written: Option<&str>) -> Option<Newlines> {
-    Some(match written? {
+fn newlines_of(setting: Option<&str>) -> Option<Newlines> {
+    Some(match setting? {
         "always" => Newlines::Always,
         "always-and-inside-groups" => Newlines::AlwaysAndInsideGroups,
         "never" => Newlines::Never,
@@ -149,8 +149,8 @@ fn newlines_of(written: Option<&str>) -> Option<Newlines> {
     })
 }
 
-fn direction_of(written: Option<&str>) -> Direction {
-    match written {
+fn direction_of(setting: Option<&str>) -> Direction {
+    match setting {
         Some("asc") => Direction::Asc,
         Some("desc") => Direction::Desc,
         _ => Direction::Ignore,
@@ -158,10 +158,10 @@ fn direction_of(written: Option<&str>) -> Direction {
 }
 
 /// `convertPathGroupsForRanks`
-fn path_groups_of(written: &[Json]) -> (Vec<PathGroup>, f64) {
+fn path_groups_of(path_group_options: &[Json]) -> (Vec<PathGroup>, f64) {
     let (mut after, mut before) = ([0u32; 10], [0u32; 10]);
-    let mut groups = Vec::with_capacity(written.len());
-    for it in written {
+    let mut groups = Vec::with_capacity(path_group_options.len());
+    for it in path_group_options {
         let it = Object::of(Some(it));
         let Some(group) = it
             .str("group")
@@ -174,7 +174,7 @@ fn path_groups_of(written: &[Json]) -> (Vec<PathGroup>, f64) {
                 after[group as usize] += 1;
                 f64::from(after[group as usize])
             }
-            // How many there are after it is not known yet.
+            // The number of groups after this one isn't known yet, so this is fixed up below.
             Some("before") => {
                 before[group as usize] += 1;
                 -f64::from(before[group as usize])
@@ -182,7 +182,7 @@ fn path_groups_of(written: &[Json]) -> (Vec<PathGroup>, f64) {
             _ => 0.0,
         };
         groups.push(PathGroup {
-            glob: Glob::of_path_group(it),
+            glob: Glob::for_path_group(it),
             group,
             position,
         });
@@ -224,7 +224,7 @@ impl Rule for Order {
                 .filter_map(ImportType::named)
                 .collect()
         };
-        let written: Vec<Vec<ImportType>> = match options.has("groups") {
+        let configured_groups: Vec<Vec<ImportType>> = match options.has("groups") {
             true => options.array("groups").iter().map(types_of).collect(),
             false => {
                 use ImportType::{Builtin, External, Index, Parent, Sibling};
@@ -234,7 +234,7 @@ impl Rule for Order {
             }
         };
         let mut groups = [f64::NAN; 9];
-        for (index, group) in written.iter().enumerate() {
+        for (index, group) in configured_groups.iter().enumerate() {
             for it in group {
                 if let Some(rank) = groups.get_mut(*it as usize) {
                     *rank = (index * 2) as f64;
@@ -243,10 +243,10 @@ impl Rule for Order {
         }
         let is_type_in_groups = !groups[ImportType::Type as usize].is_nan();
         for rank in groups.iter_mut().filter(|it| it.is_nan()) {
-            *rank = (written.len() * 2) as f64;
+            *rank = (configured_groups.len() * 2) as f64;
         }
         let excluded = match options.get("pathGroupsExcludedImportTypes") {
-            Some(written) => types_of(written),
+            Some(excluded_option) => types_of(excluded_option),
             None => vec![
                 ImportType::Builtin,
                 ImportType::External,
@@ -255,11 +255,11 @@ impl Rule for Order {
         };
         let named = options.object("named");
         let is_named = |key: &str| {
-            let of_all = || named.bool("enabled");
+            let enabled_for_all = || named.bool("enabled");
             options
                 .bool("named")
                 .or_else(|| named.bool(key))
-                .or_else(of_all)
+                .or_else(enabled_for_all)
                 .unwrap_or(false)
         };
         let alphabetize = options.object("alphabetize");
@@ -351,8 +351,8 @@ fn is_require_expression(e: Expr) -> bool {
     }
 }
 
-/// The `require("a")` for which `getRequireBlock` finds the statement that `init` is in: `require("a")`,
-/// `require("a").b.c`, `require("a")()`. With its argument.
+/// Returns the `require("a")` for which `getRequireBlock` finds the statement that contains `init`, with its argument:
+/// `require("a")`, `require("a").b.c`, `require("a")()`.
 fn static_require_in<'a>(init: Expr<'a>) -> Option<(Expr<'a>, Name<'a>)> {
     let mut e = init;
     loop {
@@ -376,7 +376,7 @@ fn can_be_crossed(statement: Stmt) -> bool {
         StmtKind::Import(import) => {
             import.default().is_some() || import.namespace().is_some() || !import.named().is_empty()
         }
-        // With `export` before it, it is in an `ExportNamedDeclaration`.
+        // With an `export` in front it's inside an `ExportNamedDeclaration`.
         StmtKind::ImportEquals(import) => {
             !statement.is_exported() && matches!(import.target(), ImportEqualsTarget::Require(_))
         }
@@ -419,7 +419,7 @@ fn is_comment_on_line(file: &File, token: Token, line: u32) -> bool {
         && file.line_of(token.end()) == line
 }
 
-/// Where the last of the comments ends that follow `root` on its last line.
+/// Returns the end of the last comment that follows `root` on its last line.
 fn end_with_comments<'a>(file: &'a File<'a>, root: Span) -> u32 {
     let line = file.line_of(root.end);
     let after = file.tokens_after(root).with_comments().take(100);
@@ -445,7 +445,7 @@ fn start_of_line_with_comments<'a>(file: &'a File<'a>, root: Span) -> u32 {
     let before = file.tokens_before(root).with_comments().take(100);
     let comments = before.take_while(|it| is_comment_on_line(file, *it, line));
     let mut start = comments.last().map_or(root.start, |it| it.start());
-    // The first character of the text is never looked at.
+    // Upstream never looks at the first character of the text.
     let first = file.line_span(1).start + 1;
     while start > first && matches!(file.text().get(start as usize - 1), Some(b' ' | b'\t')) {
         start -= 1;
@@ -453,7 +453,7 @@ fn start_of_line_with_comments<'a>(file: &'a File<'a>, root: Span) -> u32 {
     start
 }
 
-/// `findOutOfOrder`: where they are.
+/// `findOutOfOrder`, returning indices.
 fn find_out_of_order(ranks: &[f64]) -> Vec<usize> {
     let mut max = ranks.first().copied().unwrap_or(0.0);
     let is_out_of_order = |rank: f64| {
@@ -467,15 +467,15 @@ fn find_out_of_order(ranks: &[f64]) -> Vec<usize> {
 
 /// `makeImportDescription`
 fn description_of(entry: &Entry) -> &'static str {
-    match (entry.written, entry.is_type_export, entry.import_kind) {
-        (Written::Export, true, _) => "type export",
-        (Written::Export, false, _) => "export",
+    match (entry.entry_type, entry.is_type_export, entry.import_kind) {
+        (EntryType::Export, true, _) => "type export",
+        (EntryType::Export, false, _) => "export",
         (_, _, ImportKind::Type) => "type import",
         _ => "import",
     }
 }
 
-/// The `name` of a name in the braces of an import or an export. One in quotes is a `Literal`, which has none.
+/// The `name` of a name inside an import's or export's braces. A quoted one is a `Literal`, which has no `name`.
 fn name_of(name: Ident<'_>) -> &[u8] {
     if name.is_string() {
         b"undefined"
@@ -484,7 +484,7 @@ fn name_of(name: Ident<'_>) -> &[u8] {
     }
 }
 
-/// The `name` of a key that is an `Identifier`, in brackets or not.
+/// The `name` of a key that's an `Identifier`, in brackets or not.
 fn identifier_of(key: Key<'_>) -> Option<&[u8]> {
     match key.kind() {
         KeyKind::Ident(name) => Some(name.bytes()),
@@ -493,7 +493,7 @@ fn identifier_of(key: Key<'_>) -> Option<&[u8]> {
     }
 }
 
-/// The object and the name of a `MemberExpression` whose `property` is an `Identifier`.
+/// Returns the object and the property name of a `MemberExpression` whose `property` is an `Identifier`.
 fn member_of<'a>(e: Expr<'a>) -> Option<(Expr<'a>, &'a [u8])> {
     match e.kind() {
         ExprKind::Dot { obj, name, .. } if !name.bytes().starts_with(b"#") => {
@@ -536,7 +536,7 @@ fn named_cjs_export(target: Expr) -> Option<Vec<u8>> {
     (!names.is_empty()).then(|| names.join(&b"."[..]))
 }
 
-/// `findRootNode` of what is in `statement`.
+/// `findRootNode` for a node inside `statement`.
 fn root_of(mut statement: Stmt) -> Span {
     // An `if` and a `switch` have no `body`.
     loop {
@@ -561,33 +561,33 @@ impl Order {
         }
     }
 
-    /// `computeRank`. `None`: it is not registered.
+    /// `computeRank`. Returns `None` if the import isn't registered.
     fn rank_of(
         &self,
         value: &[u8],
-        written: Written,
+        entry_type: EntryType,
         is_type_only: bool,
         types: &ImportTypes,
     ) -> Option<f64> {
         let is_excluded = |it: ImportType| self.excluded & (1 << (it as u16)) != 0;
-        let is_of_types = is_type_only && self.is_type_in_groups;
-        let import_type = match written {
-            Written::ImportObject => ImportType::Object,
-            _ if is_of_types && !self.sorts_types_group => ImportType::Type,
-            _ => types.of_name(value, written == Written::Require),
+        let is_in_type_group = is_type_only && self.is_type_in_groups;
+        let import_type = match entry_type {
+            EntryType::ImportObject => ImportType::Object,
+            _ if is_in_type_group && !self.sorts_types_group => ImportType::Type,
+            _ => types.of_name(value, entry_type == EntryType::Require),
         };
-        let of_path = || {
+        let path_group_rank = || {
             let group = self.path_groups.iter().find(|it| it.glob.matches(value))?;
             Some(self.groups.get(group.group as usize)? + group.position / self.max_position)
         };
         let has_path_rank =
-            !is_excluded(import_type) && !(is_of_types && is_excluded(ImportType::Type));
-        let of_path = if has_path_rank { of_path() } else { None };
-        let mut rank = of_path.or_else(|| self.groups.get(import_type as usize).copied())?;
+            !is_excluded(import_type) && !(is_in_type_group && is_excluded(ImportType::Type));
+        let path_group_rank = if has_path_rank { path_group_rank() } else { None };
+        let mut rank = path_group_rank.or_else(|| self.groups.get(import_type as usize).copied())?;
         if is_type_only && self.sorts_types_group {
             rank = self.groups[ImportType::Type as usize] + rank / 10.0;
         }
-        if written == Written::Require {
+        if entry_type == EntryType::Require {
             rank += 100.0;
         }
         (rank != -1.0).then_some(rank)
@@ -609,7 +609,7 @@ impl Order {
         }
     }
 
-    /// The imports of a `Program` or a `TSModuleBlock`.
+    /// Checks the imports of a `Program` or a `TSModuleBlock`.
     fn check_block<'a>(
         &self,
         body: List<'a, Stmt<'a>>,
@@ -622,17 +622,17 @@ impl Order {
         let is_multiline = |span: Span| file.line_of(span.start) != file.line_of(span.end);
         for (index, statement) in body.iter().enumerate() {
             let root = statement.span();
-            // `whole`: of which it is asked whether it is on several lines.
+            // `whole`: the span that decides whether the entry is multiline.
             let mut register = |(node, whole): (Span, Span),
                                 name: &'a [u8],
-                                written: Written,
+                                entry_type: EntryType,
                                 kind: ImportKind| {
-                let value = if written == Written::ImportObject {
+                let value = if entry_type == EntryType::ImportObject {
                     &b""[..]
                 } else {
                     name
                 };
-                if let Some(rank) = self.rank_of(value, written, kind == ImportKind::Type, types) {
+                if let Some(rank) = self.rank_of(value, entry_type, kind == ImportKind::Type, types) {
                     imported.push(Entry {
                         node,
                         root,
@@ -640,7 +640,7 @@ impl Order {
                         value: Cow::Borrowed(value),
                         display_name: Cow::Borrowed(name),
                         alias: None,
-                        written,
+                        entry_type,
                         import_kind: kind,
                         is_type_export: false,
                         rank,
@@ -656,7 +656,7 @@ impl Order {
                     register(
                         (root, root),
                         name,
-                        Written::Import,
+                        EntryType::Import,
                         Self::kind_of(cx, import.is_type_only()),
                     );
                     if self.named.import {
@@ -666,7 +666,7 @@ impl Order {
                             self.named_entry(
                                 it.span(),
                                 (name_of(it.imported()), alias),
-                                Written::Import,
+                                EntryType::Import,
                                 kind,
                             )
                         });
@@ -677,14 +677,14 @@ impl Order {
                     let kind = Self::kind_of(cx, import.flags().contains(Flags::TYPE_ONLY));
                     match import.target() {
                         ImportEqualsTarget::Require(Some(name)) => {
-                            register((root, root), name.bytes(), Written::Import, kind);
+                            register((root, root), name.bytes(), EntryType::Import, kind);
                         }
                         ImportEqualsTarget::Entity(entity) => {
                             if let Some((first, last)) =
                                 entity.parts().next().zip(entity.parts().next_back())
                             {
                                 let entity = file.slice(Span::new(first.start(), last.span().end));
-                                register((root, root), entity, Written::ImportObject, kind);
+                                register((root, root), entity, EntryType::ImportObject, kind);
                             }
                         }
                         ImportEqualsTarget::Require(None) => {}
@@ -698,7 +698,7 @@ impl Order {
                             register(
                                 (call.span(), whole),
                                 name.bytes(),
-                                Written::Require,
+                                EntryType::Require,
                                 ImportKind::Undefined,
                             );
                         }
@@ -734,11 +734,11 @@ impl Order {
             let has_empty_lines = lines.any(|it| strings::is_all_js_whitespace(file.line_text(it)));
             let is_start_of_distinct_group = current.rank - 1.0 >= previous.rank;
             let is_type_only = current.import_kind == ImportKind::Type;
-            let is_beside_other_kind =
+            let is_next_to_other_kind =
                 is_type_only != (previous.import_kind == ImportKind::Type) && sorts_types;
             let is_type_only = is_type_only && sorts_types;
             let is_either_multiline = previous.is_multiline || current.is_multiline;
-            // Where they want the opposite, `consolidateIslands` wins.
+            // If the two options conflict, `consolidateIslands` wins.
             let between = match self.newlines_between {
                 Never if sorts_types && consolidates && is_either_multiline => {
                     AlwaysAndInsideGroups
@@ -749,7 +749,7 @@ impl Order {
                 Never
                     if sorts_types
                         && consolidates
-                        && (is_beside_other_kind || is_either_multiline) =>
+                        && (is_next_to_other_kind || is_either_multiline) =>
                 {
                     AlwaysAndInsideGroups
                 }
@@ -759,7 +759,7 @@ impl Order {
             if own == Ignore {
                 continue;
             }
-            let applies = if is_type_only || is_beside_other_kind {
+            let applies = if is_type_only || is_next_to_other_kind {
                 between_types
             } else {
                 between
@@ -794,7 +794,7 @@ impl Order {
                     is_reported = false;
                 }
             } else if has_empty_lines
-                && (!sorts_types || !is_beside_other_kind || between_types == Never)
+                && (!sorts_types || !is_next_to_other_kind || between_types == Never)
             {
                 remove(NO_EMPTY_LINE_BETWEEN_GROUPS);
             } else {
@@ -813,22 +813,22 @@ impl Order {
         }
     }
 
-    /// `getSorter`. It is no order where a name that starts with `./` meets one that starts with `../`.
+    /// `getSorter`. It isn't a consistent ordering when one name starts with `./` and the other with `../`.
     fn compare(&self, a: (&[u8], ImportKind), b: (&[u8], ImportKind)) -> Ordering {
         let is_relative = |it: &[u8]| matches!(it, b"." | b"..");
-        let (mut of_a, mut of_b) = (strings::split(a.0, b"/"), strings::split(b.0, b"/"));
+        let (mut segments_a, mut segments_b) = (strings::split(a.0, b"/"), strings::split(b.0, b"/"));
         let mut is_first = true;
         let by_name = loop {
-            match (of_a.next(), of_b.next()) {
+            match (segments_a.next(), segments_b.next()) {
                 (Some(x), Some(y)) if is_first && is_relative(x) && is_relative(y) && x != y => {
-                    // By how many names they have.
-                    let (names_of_a, names_of_b) = (
+                    // Compare by number of segments.
+                    let (segment_count_a, segment_count_b) = (
                         strings::count_char(a.0, b'/'),
                         strings::count_char(b.0, b'/'),
                     );
-                    break match (names_of_a, names_of_b) == (0, 0) {
+                    break match (segment_count_a, segment_count_b) == (0, 0) {
                         true => strings::order_utf16(a.0, b.0),
-                        false => names_of_a.cmp(&names_of_b),
+                        false => segment_count_a.cmp(&segment_count_b),
                     };
                 }
                 (Some(x), Some(y)) => match strings::order_utf16(x, y) {
@@ -844,7 +844,7 @@ impl Order {
             Direction::Desc => ordering.reverse(),
             _ => ordering,
         };
-        // "type" comes before "value", which is also what stands for none.
+        // "type" sorts before "value", and a missing kind counts as "value".
         let rank = |it: ImportKind| it != ImportKind::Type;
         in_direction(by_name, self.alphabetize.order).then_with(|| {
             match self.alphabetize.order_import_kind {
@@ -870,7 +870,7 @@ impl Order {
             let key = |at: u32| Some((imported.get(at as usize)?, &**normalized.get(at as usize)?));
             let mut order: Vec<u32> = (0..imported.len() as u32).collect();
             let rank = |at: u32| key(at).map_or(0.0, |it| it.0.rank);
-            sort_indices(&mut order, &mut |a, b| {
+            merge_sort_indices(&mut order, &mut |a, b| {
                 rank(a).partial_cmp(&rank(b)).unwrap_or(Ordering::Equal)
             });
             let is_before = |a: u32, b: u32| match (key(a), key(b)) {
@@ -879,14 +879,15 @@ impl Order {
                 }
                 _ => false,
             };
-            // Each group as `Array.prototype.sort` sorts it, which what is no order depends on.
+            // Sort each group exactly like `Array.prototype.sort`, because the result of an inconsistent ordering
+            // depends on the algorithm.
             for group in order
                 .chunk_by_mut(|a, b| rank(*a) == rank(*b))
                 .filter(|it| it.len() > 1)
             {
                 utils::array_sort_by(group, &is_before);
             }
-            // What has the same name and the same kind gets the rank of the last of them.
+            // Entries with the same name and kind all get the rank of the last one.
             let mut ranks: FxHashMap<(&[u8], ImportKind), f64> = FxHashMap::default();
             for (new_rank, it) in order
                 .iter()
@@ -910,7 +911,8 @@ impl Order {
             .for_each(|(it, rank)| it.rank = rank);
     }
 
-    /// `makeOutOfOrderReport`. `body`: the block, where whole statements are moved that cannot cross everything.
+    /// `makeOutOfOrderReport`. `body`: the block, if whole statements are being moved, since those can't cross every
+    /// statement.
     fn report_out_of_order<'a>(
         &self,
         mut imported: Vec<Entry<'a>>,
@@ -923,7 +925,7 @@ impl Order {
         if out_of_order.is_empty() {
             return;
         }
-        // The direction in which less is reported.
+        // Pick the direction that produces fewer reports.
         let reversed: Vec<f64> = ranks.iter().rev().map(|it| -it).collect();
         let reversed_out_of_order = find_out_of_order(&reversed);
         let is_reversed = reversed_out_of_order.len() < out_of_order.len();
@@ -931,7 +933,7 @@ impl Order {
             imported.reverse();
             (ranks, out_of_order) = (reversed, reversed_out_of_order);
         }
-        // How many of the statements before each cannot be crossed.
+        // For each statement, the number of statements before it that can't be crossed.
         let uncrossable: Vec<u32> = body.map_or_else(Vec::new, |body| {
             let counts = body.iter().scan(0, |count, it| {
                 *count += u32::from(!can_be_crossed(it));
@@ -947,7 +949,7 @@ impl Order {
             };
             from >= to || uncrossable.get(from) == uncrossable.get(to)
         };
-        // The highest rank so far: the first that is higher than a rank is where this gets higher than it.
+        // The running maximum rank. It's sorted, so a binary search finds the first entry that ranks above a given one.
         let highest: Vec<f64> = ranks
             .iter()
             .scan(f64::NEG_INFINITY, |highest, it| {
@@ -1003,17 +1005,17 @@ impl Order {
             .data("firstKind", description_of(first))
             .data("first", first.display_name.clone());
         if category == Category::Named {
-            // The names are looked at where the declaration is entered.
+            // Upstream checks the names when it enters the declaration.
             let report = report.on_exit(false);
             // `findSpecifierStart`, `findSpecifierEnd`
-            let around = |it: &Entry| {
+            let specifier_bounds = |it: &Entry| {
                 Some((
                     file.token_before(it.node)?.end(),
                     file.token_after(it.node)?.start(),
                 ))
             };
             let Some(((first_start, first_end), (second_start, second_end))) =
-                around(first).zip(around(second))
+                specifier_bounds(first).zip(specifier_bounds(second))
             else {
                 return;
             };
@@ -1052,6 +1054,22 @@ impl Order {
             return;
         }
         report.fix(|fixer| {
+            // The fix doesn't move the comment lines above a declaration, so a directive or doc comment would end up
+            // above other code.
+            if fixer.has_directive_or_doc_before(second.root)
+                || !is_after && fixer.has_directive_or_doc_before(first.root)
+            {
+                return None;
+            }
+            // After the move, a different statement precedes the code that follows. Bail out if that code would
+            // continue it.
+            let (previous, next) = match is_after {
+                false => (file.token_before(second.root), file.token_after(second.root)),
+                true => (file.last_token(second.root), file.token_after(first.root)),
+            };
+            if previous.zip(next).is_some_and(|it| ast_utils::continues_statement(file, it.0, it.1)) {
+                return None;
+            }
             let lines_of = |it: &Entry| {
                 (
                     start_of_line_with_comments(file, it.root),
@@ -1080,12 +1098,12 @@ impl Order {
         });
     }
 
-    /// An element of what `makeNamedOrderReport` is called with.
+    /// Builds one element of the list passed to `makeNamedOrderReport`.
     fn named_entry<'a>(
         &self,
         node: Span,
         (name, alias): (&'a [u8], Option<&'a [u8]>),
-        written: Written,
+        entry_type: EntryType,
         kind: ImportKind,
     ) -> Entry<'a> {
         let is_type = kind == ImportKind::Type;
@@ -1096,13 +1114,13 @@ impl Order {
             value: Cow::Owned([name, b":", alias.unwrap_or_default()].concat()),
             display_name: Cow::Borrowed(name),
             alias,
-            written,
-            import_kind: if written == Written::Import {
+            entry_type,
+            import_kind: if entry_type == EntryType::Import {
                 kind
             } else {
                 ImportKind::Undefined
             },
-            is_type_export: written == Written::Export && is_type,
+            is_type_export: entry_type == EntryType::Export && is_type,
             rank: match self.named.types {
                 NamedTypes::Mixed => 0.0,
                 NamedTypes::First => f64::from(!is_type),
@@ -1139,7 +1157,7 @@ impl Order {
             Some(self.named_entry(
                 it.span(),
                 (name, alias),
-                Written::Require,
+                EntryType::Require,
                 ImportKind::Undefined,
             ))
         });
@@ -1160,7 +1178,7 @@ impl Order {
             self.named_entry(
                 it.span(),
                 (name_of(it.local()), alias),
-                Written::Export,
+                EntryType::Export,
                 kind,
             )
         });
@@ -1190,7 +1208,7 @@ impl Order {
                     Some(self.named_entry(
                         it.span(),
                         (name, alias),
-                        Written::Export,
+                        EntryType::Export,
                         ImportKind::Undefined,
                     ))
                 });
@@ -1211,7 +1229,7 @@ impl Order {
                     value: Cow::Owned(name.clone()),
                     display_name: Cow::Owned(name),
                     alias: None,
-                    written: Written::Export,
+                    entry_type: EntryType::Export,
                     import_kind: ImportKind::Undefined,
                     is_type_export: false,
                     rank: 0.0,
@@ -1222,7 +1240,7 @@ impl Order {
         if self.alphabetize.order == Direction::Ignore {
             return;
         }
-        for (_, mut exported) in utils::sort::in_order_of(blocks, |it| it.0) {
+        for (_, mut exported) in utils::sort::collect_sorted_by_key(blocks, |it| it.0) {
             utils::sort::sort_by_key(&mut exported, |it| it.node.start);
             self.alphabetize(&mut exported);
             self.report_out_of_order(exported, Category::Exports, None, cx);

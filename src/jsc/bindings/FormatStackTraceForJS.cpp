@@ -434,14 +434,11 @@ WTF::String formatStackTrace(
 
         if (!sourceURLForFrame.isEmpty()) {
             sb.append(sourceURLForFrame);
-            if (displayLine.zeroBasedInt() > 0 || displayColumn.zeroBasedInt() > 0) {
+            if (frame.hasLineAndColumnInfo()) {
                 sb.append(':');
                 sb.append(displayLine.oneBasedInt());
-
-                if (displayColumn.zeroBasedInt() > 0) {
-                    sb.append(':');
-                    sb.append(displayColumn.oneBasedInt());
-                }
+                sb.append(':');
+                sb.append(displayColumn.oneBasedInt());
             }
         }
 
@@ -741,6 +738,11 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
         return {};
     }
 
+    // appendVector() can't append a vector to itself, and the clear() below would drop the trace.
+    if (source == destination) {
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
     // A destination that is materialized, or is being formatted right now, never renders frames again.
     if (destination->hasMaterializedErrorInfo()) {
         return JSC::JSValue::encode(jsUndefined());
@@ -840,7 +842,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue objectArg = callFrame->argument(0);
-    if (!objectArg.isObject()) {
+    // A WebAssembly GC object can't get a property and its Structure has no global object. V8 rejects it too.
+    if (!objectArg.isObject() || objectArg.asCell()->type() == JSC::JSType::WebAssemblyGCObjectType) {
         return JSC::JSValue::encode(throwTypeError(lexicalGlobalObject, scope, "invalid_argument"_s));
     }
 

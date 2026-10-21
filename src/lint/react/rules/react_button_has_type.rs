@@ -21,14 +21,14 @@ pub struct ButtonHasType {
 }
 
 pub struct State<'a> {
-    /// oxlint knows none.
+    /// Unused for oxlint, which has no pragma setting.
     pragma: &'a [u8],
-    /// What is reported as upstream does.
+    /// The reports for an ESLint config, emitted in `finish`.
     found: Vec<Found<'a>>,
 }
 
 struct Found<'a> {
-    /// The element or the call whose listener reports it.
+    /// The element or call whose listener reports it.
     node: Span,
     at: Span,
     message: Message,
@@ -66,7 +66,7 @@ impl Rule for ButtonHasType {
         if file.mentions("createElement") {
             on = on.calls_named(&["createElement"]);
         }
-        // oxlint has no two reports at one place.
+        // oxlint never has two reports at the same location, so it doesn't need the sort in `finish`.
         if !file.language().is_oxlint {
             on = on.finish();
         }
@@ -75,7 +75,7 @@ impl Rule for ButtonHasType {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         let is_oxlint = file.language().is_oxlint;
-        // oxlint looks only at files that can have JSX.
+        // oxlint only checks files that can contain JSX.
         if !file.mentions("button") || (is_oxlint && !is_jsx(file)) {
             return None;
         }
@@ -93,7 +93,7 @@ impl Rule for ButtonHasType {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut found = std::mem::take(&mut cx.state.found);
-        // The listener of a node runs before those of what is in it.
+        // A node's listener runs before the listeners of the nodes inside it.
         utils::sort::sort_by_key(&mut found, |it| (it.node.start, Reverse(it.node.end)));
         for Found { at, message, value, .. } in found {
             match value {
@@ -113,7 +113,7 @@ impl ButtonHasType {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
-        // oxlint does not look into `{...{ type: .. }}`.
+        // oxlint doesn't look into `{...{ type: .. }}`.
         let Some(type_prop) = (if is_oxlint { has_jsx_prop_ignore_case(jsx, "type") } else { get_prop(jsx) }) else {
             report_missing(e, identifier.span(), cx);
             return;
@@ -122,7 +122,7 @@ impl ButtonHasType {
             // `<button type />`
             None => Some(Cow::Borrowed(&b"true"[..])),
             Some(value) if value.jsx_container_span().is_some() => None,
-            // oxlint reads `&amp;` as it is written, and nothing but a string.
+            // oxlint keeps `&amp;` as written, and only accepts a string.
             Some(_) if is_oxlint => Some(Cow::Borrowed(get_string_literal_prop_value(type_prop).unwrap_or_default())),
             Some(value) => get_literal_prop_value(value, type_prop.is_jsx_attribute()),
         };
@@ -142,13 +142,13 @@ impl ButtonHasType {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
-        // oxlint has a node for parentheses.
-        let is_seen = |it: &Expr<'a>| !is_oxlint || !it.is_parenthesized();
+        // oxlint's AST has a node for parentheses.
+        let is_plain = |it: &Expr<'a>| !is_oxlint || !it.is_parenthesized();
         let arguments = call.args();
-        if !arguments.first().filter(is_seen).and_then(Expr::as_string).is_some_and(|it| it.is("button")) {
+        if !arguments.first().filter(is_plain).and_then(Expr::as_string).is_some_and(|it| it.is("button")) {
             return;
         }
-        // oxlint takes the `createElement` of everything but `document`.
+        // oxlint accepts any `createElement` except `document.createElement`.
         let is_creation = match is_oxlint {
             true => is_create_element_call(call),
             false => is_create_element(e, cx.state.pragma),
@@ -156,12 +156,12 @@ impl ButtonHasType {
         if !is_creation {
             return;
         }
-        let Some((object, ExprKind::Object(properties))) = arguments.get(1).filter(is_seen).map(|it| (it, it.kind()))
+        let Some((object, ExprKind::Object(properties))) = arguments.get(1).filter(is_plain).map(|it| (it, it.kind()))
         else {
             report_missing(e, e.span(), cx);
             return;
         };
-        // oxlint: also `"type"`, and not `[type]`.
+        // oxlint also accepts `"type"`, but not `[type]`.
         let is_type = |key: Key<'a>| match is_oxlint {
             true => static_name(key).is_some_and(|name| name.is("type")),
             false => name_of_key(key).is_some_and(|name| name == b"type"),
@@ -190,7 +190,7 @@ impl ButtonHasType {
 
     /// `type_prop`: the attribute or the property.
     fn report<'a>(&self, found: Found<'a>, type_prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
-        // oxlint has one text for all that can be wrong with a value, and points at `type_prop`.
+        // oxlint has a single message for every kind of bad value, and reports `type_prop`.
         if cx.language().is_oxlint {
             cx.report(type_prop, INVALID_TYPE_PROP).data("allowed_types", self.allowed_types_message());
         } else {
@@ -198,7 +198,7 @@ impl ButtonHasType {
         }
     }
 
-    /// upstream's `checkExpression`: a value, or `a ? b : c` of such.
+    /// upstream's `checkExpression`: checks a value, or the branches of `a ? b : c`.
     fn check_expression<'a>(
         &self,
         node: Expr<'a>,
@@ -214,7 +214,7 @@ impl ButtonHasType {
                     pending.extend([no, yes]);
                     continue;
                 }
-                // oxlint takes the value, upstream what is written.
+                // oxlint uses the cooked value, upstream the raw text.
                 ExprKind::Template(template) if is_oxlint => template.as_static().map(|it| Cow::Borrowed(it.bytes())),
                 ExprKind::Template(template) if !template.exprs().is_empty() => None,
                 // In espree's `raw` every line break is a line feed.
@@ -227,7 +227,7 @@ impl ButtonHasType {
             let found = match value {
                 Some(value) => self.check_value(node, value, is_oxlint),
                 None => {
-                    // A `JSXEmptyExpression` is all that is between the braces.
+                    // A `JSXEmptyExpression` spans everything between the braces.
                     let braces = expression.jsx_container_span().filter(|_| expression.is_missing());
                     let at = braces.map_or_else(|| expression.span(), |it| it.shrink(1, 1));
                     Some(Found { node: node.span(), at, message: COMPLEX_TYPE, value: None })
@@ -235,7 +235,7 @@ impl ButtonHasType {
             };
             if let Some(found) = found {
                 self.report(found, type_prop, cx);
-                // oxlint says it once.
+                // oxlint reports it once.
                 if is_oxlint {
                     return;
                 }
@@ -243,13 +243,13 @@ impl ButtonHasType {
         }
     }
 
-    /// upstream's `checkValue`: what it reports.
+    /// upstream's `checkValue`. Returns what it reports.
     fn check_value<'a>(&self, node: Expr<'a>, value: Cow<'a, [u8]>, is_oxlint: bool) -> Option<Found<'a>> {
         let configured = match &*value {
             b"button" => Some(self.button),
             b"submit" => Some(self.submit),
             b"reset" => Some(self.reset),
-            // `value in configuration` is also true of what `Object.prototype` has. oxlint compares.
+            // `value in configuration` is also true for `Object.prototype`'s properties. oxlint compares names.
             name => (!is_oxlint && is_in_object_prototype(name)).then_some(true),
         };
         let message = match configured {
@@ -261,7 +261,7 @@ impl ButtonHasType {
     }
 }
 
-/// upstream's `reportMissing`. `oxlint_at`: where oxlint points.
+/// upstream's `reportMissing`. `oxlint_at`: the span oxlint reports.
 fn report_missing<'a>(node: Expr<'a>, oxlint_at: Span, cx: &mut Cx<'a, ButtonHasType>) {
     if cx.language().is_oxlint {
         cx.report(oxlint_at, MISSING_TYPE_PROP);
@@ -270,7 +270,7 @@ fn report_missing<'a>(node: Expr<'a>, oxlint_at: Span, cx: &mut Cx<'a, ButtonHas
     }
 }
 
-/// `getProp(attributes, "type")` of jsx-ast-utils: the attribute, or the property of an object literal that is spread.
+/// jsx-ast-utils' `getProp(attributes, "type")`: returns the attribute, or the property of a spread object literal.
 fn get_prop(jsx: Jsx<'_>) -> Option<Prop<'_>> {
     let is_prop_to_find = |name: Option<&[u8]>| name.is_some_and(|it| it.eq_ignore_ascii_case(b"type"));
     jsx.attrs().iter().find_map(|attribute| match attribute.kind() {
@@ -284,8 +284,8 @@ fn get_prop(jsx: Jsx<'_>) -> Option<Prop<'_>> {
     })
 }
 
-/// `String(getLiteralPropValue(prop))` of jsx-ast-utils, for a `value` that is not in braces. `None`: the value of a
-/// property that is no `Literal`, which `getProp` puts into braces.
+/// jsx-ast-utils' `String(getLiteralPropValue(prop))`, for a `value` that isn't in braces. Returns `None` for a
+/// property value that isn't a `Literal`, which `getProp` wraps in braces.
 fn get_literal_prop_value(value: Expr<'_>, is_attribute: bool) -> Option<Cow<'_, [u8]>> {
     match value.kind() {
         ExprKind::Jsx(jsx) if is_attribute && jsx.is_fragment() => {
@@ -296,7 +296,7 @@ fn get_literal_prop_value(value: Expr<'_>, is_attribute: bool) -> Option<Cow<'_,
         ExprKind::Jsx(_) if is_attribute => Some(Cow::Borrowed(&b"null"[..])),
         _ if ast_utils::is_literal(value) => {
             let value = ast_utils::get_static_string_value(value)?;
-            // `"TRUE"` is `true`.
+            // `"TRUE"` becomes `true`.
             let boolean = [&b"true"[..], b"false"].into_iter().find(|it| value.eq_ignore_ascii_case(it));
             Some(boolean.map_or(value, Cow::Borrowed))
         }
@@ -304,7 +304,8 @@ fn get_literal_prop_value(value: Expr<'_>, is_attribute: bool) -> Option<Cow<'_,
     }
 }
 
-/// `extractValueFromJSXFragment` and `extractValueFromJSXElement` of jsx-ast-utils. What is in braces is not evaluated.
+/// jsx-ast-utils' `extractValueFromJSXFragment` and `extractValueFromJSXElement`. Expressions in braces aren't
+/// evaluated.
 fn extract_value_from_jsx<'a>(jsx: Jsx<'a>, file: &'a File<'a>, extracted: &mut Vec<u8>) {
     // `openingElement.name.name`
     let tag: &[u8] = match jsx.tag().map(Expr::kind) {

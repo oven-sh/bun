@@ -15,6 +15,15 @@ export const escapePowershell = (code: string) => fmtBinding(code, "escape-power
 
 export const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
 
+// Process-wide additions to the public keys no certificate chain may hold (blocked_spkis.cpp). `hash` is the SHA-256 of
+// a DER SubjectPublicKeyInfo.
+export const addBlockedSPKIForTesting: (hash: ArrayBufferView) => void = $newCppFunction(
+  "NodeTLS.cpp",
+  "addBlockedSPKIForTesting",
+  1,
+);
+export const clearBlockedSPKIsForTesting: () => void = $newCppFunction("NodeTLS.cpp", "clearBlockedSPKIsForTesting", 0);
+
 // Runtime-dispatched SIMD xxHash3 kernel (src/jsc/bindings/xxhash3.cpp), driven
 // directly so tests can exercise the Highway path independent of Bun.hash.
 export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) => bigint = $newCppFunction(
@@ -151,6 +160,7 @@ export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") a
   panic: () => void;
   rootError: () => void;
   outOfMemory: () => void;
+  operatorNew: (nothrow?: boolean) => boolean | undefined;
   abort: () => void;
   fastfail: () => void;
   trap: () => void;
@@ -257,6 +267,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   stringEcho: $bindgen("bindgen_test.bind.ts", "stringEcho"),
   stringLength: $bindgen("bindgen_test.bind.ts", "stringLength"),
   expectedByNode: $bindgen("bindgen_test.bind.ts", "expectedByNode"),
+  expectedMessage: $bindgen("bindgen_test.bind.ts", "expectedMessage"),
   nextColor: $bindgen("bindgen_test.bind.ts", "nextColor"),
   optionsEcho: $bindgen("bindgen_test.bind.ts", "optionsEcho"),
   describeValue: $bindgen("bindgen_test.bind.ts", "describeValue"),
@@ -264,6 +275,11 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   overloaded: $bindgen("bindgen_test.bind.ts", "overloaded"),
   describeDefaults: $bindgen("bindgen_test.bind.ts", "describeDefaults"),
   names: $bindgen("bindgen_test.bind.ts", "names"),
+  bare: $bindgen("bindgen_test.bind.ts", "bare"),
+  dateOf: $bindgen("bindgen_test.bind.ts", "dateOf"),
+  latin1: $bindgen("bindgen_test.bind.ts", "latin1"),
+  textOrBytes: $bindgen("bindgen_test.bind.ts", "textOrBytes"),
+  positions: $bindgen("bindgen_test.bind.ts", "positions"),
   sumArray: $bindgen("bindgen_test.bind.ts", "sumArray"),
   range: $bindgen("bindgen_test.bind.ts", "range"),
   words: $bindgen("bindgen_test.bind.ts", "words"),
@@ -273,9 +289,13 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   fillBuffer: $bindgen("bindgen_test.bind.ts", "fillBuffer"),
   stringOrObjectEcho: $bindgen("bindgen_test.bind.ts", "stringOrObjectEcho"),
   sumBeforeAndAfterCallback: $bindgen("bindgen_test.bind.ts", "sumBeforeAndAfterCallback"),
+  callOr: $bindgen("bindgen_test.bind.ts", "callOr"),
+  stringAsIsOrBytesIfAny: $bindgen("bindgen_test.bind.ts", "stringAsIsOrBytesIfAny"),
+  presentUnlessEmptyString: $bindgen("bindgen_test.bind.ts", "presentUnlessEmptyString"),
   fail: $bindgen("bindgen_test.bind.ts", "fail"),
   TestCounter: $bindgen("bindgen_test.bind.ts", "TestCounter"),
   TestHolder: $bindgen("bindgen_test.bind.ts", "TestHolder"),
+  TestRefCounted: $bindgen("bindgen_test.bind.ts", "TestRefCounted"),
   makeToken: $bindgen("bindgen_test.bind.ts", "makeToken"),
   bytesOf: $bindgen("bindgen_test.bind.ts", "bytesOf"),
   bytesOfOrToString: $bindgen("bindgen_test.bind.ts", "bytesOfOrToString"),
@@ -628,6 +648,10 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
 export const timerInternals = {
   timerClockMs: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.timerClockMs", 0),
   monotonicNowMs: $bindgen("Timer.bind.ts", "monotonicNowMs"),
+  // Sets the id of this thread's next timer. The counter can only move forward.
+  setNextTimerId: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.setNextTimerId", 1) as (
+    id: number,
+  ) => void,
 };
 
 // Raw datagram descriptor helpers for tests that need an unbound fd (which
@@ -747,6 +771,19 @@ export const namedPipeInternals = {
    * one per accepted pipe client. Always 0 on other platforms.
    */
   liveCount: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsNamedPipeContextLiveCount", 0) as () => number,
+};
+
+export const duplexTLSInternals = {
+  /**
+   * Live native contexts behind TLS sockets that run over a JS stream
+   * (`tls.connect({ socket: duplex })`, `new tls.TLSSocket(duplex)`): one per
+   * socket, until the task that frees it after the close has run.
+   */
+  liveCount: $newRustFunction(
+    "runtime/socket/socket.rs",
+    "TestingAPIs.jsDuplexUpgradeContextLiveCount",
+    0,
+  ) as () => number,
 };
 type SerializationContext = "worker" | "window" | "postMessage" | "default";
 export const structuredCloneAdvanced: (

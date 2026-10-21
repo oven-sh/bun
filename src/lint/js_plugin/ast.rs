@@ -1,16 +1,15 @@
-//! The ESTree of a file as arrays of numbers.
+//! A file's ESTree as arrays of numbers.
 //!
-//! The nodes are numbered in the order in which ESLint comes to them: a node before what is in it,
-//! the fields in the order of the visitor keys. The `Program` is 0. For each node there is its type,
-//! its range, its parent, and one word for each field that the table of [`crate::estree`] has for
-//! the type in the dialect of the file, in the order of the table. So where the words of a node
-//! are follows from the types of the nodes before it.
+//! The nodes are numbered in ESLint's traversal order: a node before its children, the fields in visitor key order. The
+//! `Program` is 0. Each node has its type, its range, its parent, and one word for each field that the table in
+//! [`crate::estree`] lists for the type in the file's dialect, in table order. So the position of a node's words
+//! follows from the types of the nodes before it.
 //!
-//! A word is a [`Tag`] in its low 4 bits and a number above them. Most strings are in the text of
-//! the file, and are sent as where.
+//! A word is a [`Tag`] in its low 4 bits and a number above them. Most strings are slices of the file's text and are
+//! sent as offsets.
 //!
-//! The message: [`HEADER`] words with the lengths of the parts, then the parts in the order of the
-//! fields of [`Tree`]: the 8-byte numbers first, the bytes last.
+//! The message is [`HEADER`] words with the lengths of the parts, then the parts in the order of [`Tree`]'s fields: the
+//! 8-byte numbers first, the bytes last.
 
 use super::wire;
 use crate::ast::File;
@@ -20,32 +19,32 @@ use crate::selector::{EsNode, Selector};
 use crate::span::Span;
 use bun_core::strings::Utf16OffsetTable;
 
-/// What the number in a word is.
+/// The meaning of the number in a word.
 #[derive(Copy, Clone)]
 #[repr(u32)]
 enum Tag {
     /// One of the constants below.
     Constant = 0,
     Node = 1,
-    /// Where in `lists` a list of nodes is: its length, then the nodes. 0 is a hole.
+    /// The offset in `lists` of a list of nodes: its length, then the nodes. 0 is a hole.
     List = 2,
     /// The index of a pair in `strings`.
     String = 3,
     /// The index of one of [`STRINGS`].
     Known = 4,
-    /// Itself.
+    /// The integer itself.
     Integer = 5,
-    /// An index in `numbers`.
+    /// An index into `numbers`.
     Number = 6,
-    /// Where in `lists` the length and the UTF-16 code units of a string are.
+    /// The offset in `lists` of a string's length and UTF-16 code units.
     Units = 7,
-    /// Where in `lists` two words are: the pattern and the flags of a `RegExp`.
+    /// The offset in `lists` of two words: a `RegExp`'s pattern and flags.
     RegExp = 8,
     /// The same for `{ pattern, flags }`.
     RegExpParts = 9,
     /// The same for `{ cooked, raw }`.
     Template = 10,
-    /// Where in `lists` a word is: the digits of a `bigint`.
+    /// The offset in `lists` of one word: a `bigint`'s digits.
     BigInt = 11,
 }
 
@@ -58,12 +57,12 @@ const UNDEFINED: u32 = word(Tag::Constant, 0);
 const NULL: u32 = word(Tag::Constant, 1);
 const FALSE: u32 = word(Tag::Constant, 2);
 const TRUE: u32 = word(Tag::Constant, 3);
-/// The text of the node.
+/// The node's text.
 const TEXT: u32 = word(Tag::Constant, 4);
-/// The text of the node without its first and its last character.
+/// The node's text without its first and last characters.
 const INNER_TEXT: u32 = word(Tag::Constant, 5);
 
-/// Strings that are frequent and not where their node starts. Sorted.
+/// Frequent strings that aren't at the start of their node. Sorted.
 pub(super) const STRINGS: &[&str] = &[
     "!",
     "!=",
@@ -136,10 +135,10 @@ pub(super) const STRINGS: &[&str] = &[
     "~",
 ];
 
-/// The numbered nodes of a file. Later requests about the same tree read it.
+/// A file's numbered nodes. Later requests about the same tree read them.
 pub(super) struct Numbered<'a> {
     pub(super) nodes: Vec<VNode<'a>>,
-    /// [`NodeType`](crate::estree::NodeType) of each node.
+    /// Each node's [`NodeType`](crate::estree::NodeType).
     pub(super) types: Vec<u8>,
     pub(super) parents: Vec<u32>,
     /// See [`Tree::twice`].
@@ -147,7 +146,7 @@ pub(super) struct Numbered<'a> {
 }
 
 const HEADER: usize = 8;
-/// In the start of a pair of `strings`: it is in `extra`.
+/// Set in the start of a `strings` pair if the string is in `extra`.
 const IN_EXTRA: u32 = 1 << 31;
 
 #[derive(Default)]
@@ -158,29 +157,30 @@ struct Tree {
     parents: Vec<u32>,
     fields: Vec<u32>,
     lists: Vec<u32>,
-    /// Pairs: where a string starts and ends, in the text of the file or in `extra`.
+    /// Pairs: a string's start and end, in the file's text or in `extra`.
     strings: Vec<u32>,
-    /// The nodes that are in two fields of their parent, which ESLint comes to twice. Not in the message: `calls.rs` reads it.
+    /// The nodes that are in two fields of their parent, which ESLint visits twice. It isn't part of the message:
+    /// `calls.rs` reads it.
     twice: Vec<u32>,
     types: Vec<u8>,
     /// UTF-8.
     extra: Vec<u8>,
 }
 
-/// Where the number of a node goes.
+/// The slot that a node's number gets written to.
 #[derive(Copy, Clone)]
 enum Slot {
-    /// Nowhere: it is the `Program`.
+    /// Nowhere: it's the `Program`.
     None,
-    /// An index in [`Tree::fields`].
+    /// An index into [`Tree::fields`].
     Field(u32),
-    /// Two of them: it is in two fields of its parent.
+    /// Two such indices: the node is in two fields of its parent.
     Fields(u32, u32),
-    /// An index in [`Tree::lists`].
+    /// An index into [`Tree::lists`].
     List(u32),
 }
 
-/// A node that is still to be written.
+/// A node that hasn't been written yet.
 struct Pending<'a> {
     node: VNode<'a>,
     parent: u32,
@@ -199,16 +199,16 @@ pub(super) struct Writer<'a, 's> {
     tree: Tree,
     /// The length of [`Tree::extra`] in UTF-16 code units.
     extra_units: u32,
-    /// The last is the next.
+    /// A stack: the last entry is written next.
     open: Vec<Pending<'a>>,
 }
 
-/// Writes the fields of a node.
+/// Writes a node's fields.
 struct Fields<'w, 'a, 's> {
     writer: &'w mut Writer<'a, 's>,
     id: u32,
     span: Span,
-    /// How many were [`Writer::open`] before.
+    /// The length of [`Writer::open`] before this node.
     open_before: usize,
 }
 
@@ -251,7 +251,7 @@ impl<'a> Sink<'a> for Fields<'_, 'a, '_> {
     fn node(&mut self, node: VNode<'a>) {
         let at = self.writer.tree.fields.len() as u32;
         self.put(UNDEFINED);
-        // For espree both names of `import { a }` are one node.
+        // In espree, both names of `import { a }` are the same node.
         if let Some(last) = self.writer.open[self.open_before..].last_mut()
             && let Slot::Field(first) = last.to
             && last.node == node
@@ -325,7 +325,7 @@ impl<'a> Writer<'a, '_> {
         }
     }
 
-    /// Writes `node`, and notes what is in it. Returns its number.
+    /// Writes `node` and queues its children. Returns its number.
     fn write_node(&mut self, node: VNode<'a>, parent: u32) -> u32 {
         let id = self.tree.types.len() as u32;
         let (node_type, span) = node.type_and_span();
@@ -355,7 +355,7 @@ impl<'a> Writer<'a, '_> {
                 open_before,
             },
         );
-        // The first of them is the next.
+        // The first child has to be popped first.
         self.open[open_before..].reverse();
         id
     }
@@ -467,7 +467,7 @@ impl<'a> Writer<'a, '_> {
         word(Tag::String, self.tree.strings.len() / 2 - 1)
     }
 
-    /// The word for a string that is not valid UTF-8, because it has half of a surrogate pair.
+    /// The word for a string that isn't valid UTF-8 because it has an unpaired surrogate.
     fn units(&mut self, value: &[u8]) -> u32 {
         let at = self.tree.lists.len();
         self.tree.lists.push(0);
@@ -495,17 +495,17 @@ impl<'a> Writer<'a, '_> {
     }
 }
 
-/// Whether the fields that only TypeScript can fill in aren't written for the types that [`is_short`] lists. With oxlint a node of
-/// a JavaScript file has them all the same: an `Identifier` has `decorators`, `optional` and `typeAnnotation`. There they are
-/// always `[]`, `false` and `null`, which `layouts.rs` says once for the type.
+/// True if the fields that only TypeScript can fill in aren't written for the types that [`is_short`] lists. In oxlint,
+/// a node of a JavaScript file has them anyway: an `Identifier` has `decorators`, `optional` and `typeAnnotation`.
+/// There they're always `[]`, `false` and `null`, which `layouts.rs` sends once per type.
 pub(super) fn shortens_nodes(file: &File) -> bool {
     file.language().is_oxlint && file.is_javascript()
 }
 
-/// The types whose TypeScript-only fields are the same in every node of a JavaScript file, because what would change one is a syntax
-/// error there, for oxlint and here. That isn't so for every type: JavaScript has decorators on classes and their members and
-/// `import defer`, and both parsers let `class C { m?() {} p?; }` pass. None of these types has a field that only espree has,
-/// which `emit_fields` would write for them.
+/// The types whose TypeScript-only fields are the same in every node of a JavaScript file, because anything that would
+/// change one is a syntax error there, both in oxlint and in Bun. That doesn't hold for every type: JavaScript has
+/// decorators on classes and their members and `import defer`, and both parsers accept `class C { m?() {} p?; }`. None
+/// of these types has an espree-only field, which `emit_fields` would write for them.
 pub(super) fn is_short(node_type: NodeType) -> bool {
     matches!(
         node_type,
@@ -532,7 +532,7 @@ pub(super) fn is_short(node_type: NodeType) -> bool {
     )
 }
 
-/// Goes through the tree of `file`, numbers the nodes, and notes which match `selectors`.
+/// Walks `file`'s tree, numbers the nodes, and records which ones match `selectors`.
 pub(super) fn walk<'a, 's>(
     file: &'a File<'a>,
     offsets: &'s Utf16OffsetTable,
@@ -562,7 +562,7 @@ pub(super) fn walk<'a, 's>(
 }
 
 impl Writer<'_, '_> {
-    /// Appends the tree. `alternates`: see `layouts.rs`.
+    /// Appends the tree. For `alternates`, see `layouts.rs`.
     pub(super) fn append(&self, alternates: &[u32], out: &mut Vec<u8>) {
         let tree = &self.tree;
         let header: [u32; HEADER] = [

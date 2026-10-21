@@ -405,7 +405,6 @@ nativeTests.test_get_all_property_names_throwing_proxy_traps = () => {
       napi_key_keep_numbers,
     ),
   );
-
 };
 
 nativeTests.test_get_all_property_names_get_prototype_throws_in_descriptor_walk = () => {
@@ -1948,6 +1947,38 @@ nativeTests.test_ungated_calls_worker_terminate = async () => {
     });
     console.log("terminate() resolved with", await worker.terminate());
   }
+};
+
+nativeTests.test_async_work_worker_terminate = async () => {
+  const { Worker } = require("node:worker_threads");
+  const path = require("node:path");
+  const report = new Int32Array(new SharedArrayBuffer(8));
+  const worker = new Worker(
+    `globalThis.buffer = require(${JSON.stringify(path.join(__dirname, "build/Debug/napitests.node"))})
+      .async_work_with_external_buffer(require("node:worker_threads").workerData);`,
+    { eval: true, workerData: report },
+  );
+  const { promise: failed, reject } = Promise.withResolvers();
+  worker.once("error", reject);
+  while (Atomics.load(report, 0) === 0) await Promise.race([failed, new Promise(resolve => setImmediate(resolve))]);
+  console.log("terminate() resolved with", await worker.terminate());
+  console.log("finalized during execute():", report[1]);
+};
+
+nativeTests.test_gated_calls_worker_terminate = async () => {
+  const { Worker } = require("node:worker_threads");
+  const path = require("node:path");
+  const report = new Int32Array(new SharedArrayBuffer(12));
+  const worker = new Worker(
+    `require(${JSON.stringify(path.join(__dirname, "build/Debug/napitests.node"))})
+      .gated_calls_until_terminated(require("node:worker_threads").workerData);`,
+    { eval: true, workerData: report },
+  );
+  const { promise: failed, reject } = Promise.withResolvers();
+  worker.once("error", reject);
+  while (Atomics.load(report, 0) === 0) await Promise.race([failed, new Promise(resolve => setImmediate(resolve))]);
+  console.log("terminate() resolved with", await worker.terminate());
+  console.log("napi_throw:", report[1], "exception pending:", report[2]);
 };
 
 // See ungated_calls_through_timeout in standalone_tests.cpp: 600ms of ungated

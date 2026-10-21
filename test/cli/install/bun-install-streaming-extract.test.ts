@@ -958,8 +958,8 @@ test("buffered extract does not hold the decompressed local tarball in memory", 
   // in memory is negligible relative to PAYLOAD_SIZE.
   expect(statSync(tgzPath).size).toBeLessThan(8 * 1024 * 1024);
 
-  // Not runInstall: the maxRSS of a process this test runner spawns directly
-  // also counts the runner's own peak (see runCommandMaxRSS).
+  // Doesn't use runInstall, because the maxRSS of a process that this test runner spawns directly also includes the
+  // runner's own peak (see runCommandMaxRSS).
   const { stderr, exitCode, maxRSS } = await runCommandMaxRSS({
     cmd: installCmd,
     cwd: String(dir),
@@ -1049,8 +1049,9 @@ test.concurrent.each([
   const wideMode = Buffer.from([0x80, 0, 0, 0, 0x80, 0, 0x01, 0xed]);
   const root = "owner-repo-abc1234";
   const index = Buffer.from("module.exports = 'ok';\n");
-  // So the body spans many reads and streaming commits.
-  const bulk = incompressible(256 * 1024, 1);
+  // More than one read of the client holds (LIBUS_RECV_BUFFER_LENGTH): a body that is all there at the first read is
+  // not streamed.
+  const bulk = incompressible(1024 * 1024, 1);
   const tgz = gzipSync(
     Buffer.concat([
       tarHeader(`${root}/`, 0, "5"),
@@ -1206,7 +1207,7 @@ describe.concurrent("buffered extract: failed extraction", () => {
 // the ustar header alone: a file of that name, with all that is stored.
 // -------------------------------------------------------------------
 type SparseChunk = { offset: number; data: Buffer };
-// What npm leaves at `name`: nothing, or a file.
+// What npm leaves at `name`, which is either nothing or a file.
 type SparseMember = { name: string; file?: Buffer };
 
 function sparseMap(realSize: number, chunks: SparseChunk[]): [number, number][] {
@@ -1278,7 +1279,7 @@ function paxSparseMember(name: string, realSize: number, chunks: SparseChunk[]):
   ];
 }
 
-// A package of sparse members: both formats, each given size, each layout.
+// Builds a package of sparse members, with both formats, each given size and each layout.
 function sparsePackage(sizes: number[]) {
   const layouts = (size: number): Record<string, SparseChunk[]> => {
     const lastBlock = Math.floor((size - 1) / 512) * 512;
@@ -1353,7 +1354,7 @@ describe.concurrent("sparse tar members", () => {
   // The members of the second size claim 4 GiB each and store 1.5 KB at most.
   const pkg = sparsePackage([300_000, 2 ** 32]);
 
-  test("buffered extract leaves of each member what npm leaves", async () => {
+  test("buffered extract writes the same files as npm for each member", async () => {
     using dir = tempDir("sparse-buffered", {
       "package.json": JSON.stringify({
         name: "app",
@@ -1371,7 +1372,7 @@ describe.concurrent("sparse tar members", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("streaming extract leaves of each member what npm leaves", async () => {
+  test("streaming extract writes the same files as npm for each member", async () => {
     const { tgz, firstPiece, members, integrity } = pkg;
 
     using dir = tempDir("sparse-streamed", {
@@ -1608,8 +1609,8 @@ async function installStreamPkg(
       ...(path === "buffered" ? { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" } : {}),
     });
     results.push({
-      // A line of the verbose log, from another thread, can come before the end of this one.
-      error: stderr.match(/^error: .*$/m)?.[0].replace(/\[stream-pkg\] Extract .*$/, ""),
+      // What another thread writes to the verbose log can come anywhere in this line.
+      error: stderr.replace(/\[stream-pkg\] Extract .*\n(libarchive error: .*\n)?/g, "").match(/^error: .*$/m)?.[0],
       streamed: stderr.includes("Streamed "),
       installed: existsSync(join(String(dir), "node_modules", "stream-pkg")),
       cached: readdirSync(join(String(dir), ".cache")).filter(name => /^(stream-pkg@|@T@)/.test(name)).length,
@@ -1618,7 +1619,7 @@ async function installStreamPkg(
       ...(files ? { files: readFiles(join(String(dir), "node_modules", "stream-pkg")) } : {}),
     });
   }
-  // They read `tmp`, which goes with `dir`.
+  // They read `tmp`, which is deleted together with `dir`.
   await Promise.all(waits);
   return results;
 }
@@ -1672,7 +1673,7 @@ describe.concurrent("gzip trailer", () => {
   const paths = ["libdeflate", "libarchive", "streaming"] as const;
   const install = async (path: (typeof paths)[number], tgz: Buffer) => (await installStreamPkg(path, tgz))[0];
 
-  test.each(paths)("a sound tarball installs (%s)", async path => {
+  test.each(paths)("a valid tarball installs (%s)", async path => {
     expect(await install(path, good)).toEqual({
       error: undefined,
       streamed: path === "streaming",
@@ -1897,7 +1898,7 @@ describe.concurrent("entries that npm skips or names differently", () => {
     ],
     // Go's archive/tar leaves the field for the target empty when the target has no ASCII character.
     ...["1", "2"].map((type): [string, Buffer, Record<string, string>] => [
-      `a link of type ${type} whose target is in the pax header alone`,
+      `a link of type ${type} whose target is only in the pax header`,
       tarball(...pax("linkpath", "日本"), ...entry("package/link", Buffer.alloc(0), type), ...other),
       { "other.js": "second" },
     ]),
@@ -1953,7 +1954,7 @@ describe.concurrent("entries that npm skips or names differently", () => {
 
   // Two cases that do not follow npm, which loses files of archives that real tar writers make.
   // Old writers repeat the size of the file in the header of a hard link. npm takes what follows for its body.
-  test.each(paths)("the entries behind a hard link whose header states a size are extracted (%s)", async path => {
+  test.each(paths)("the entries after a hard link whose header has a size are extracted (%s)", async path => {
     const tgz = tarball(tarHeader("package/link", 5000, "1", undefined, target), ...other);
     expect((await installStreamPkg(path, tgz, { files: true }))[0]).toMatchObject({
       files: { "package.json": packageJson, "lib/index.js": "first", "other.js": "second" },
@@ -1961,9 +1962,9 @@ describe.concurrent("entries that npm skips or names differently", () => {
     });
   });
 
-  // npm lays the file behind such a link under the link's name.
+  // npm writes the file that such a link points to under the link's name.
   test.each(paths)(
-    "the file behind a link whose name and target are in the pax header alone keeps its name (%s)",
+    "the file that a link points to keeps its name if the link's name and target are only in the pax header (%s)",
     async path => {
       const records = Buffer.concat([pax("path", "package/日")[1], pax("linkpath", "本")[1]]);
       const tgz = tarball(...entry("PaxHeader", records, "x"), ...entry("package/", Buffer.alloc(0), "2"), ...other);

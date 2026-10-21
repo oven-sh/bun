@@ -214,6 +214,9 @@ enum HTTPUpgradeState {
 #[derive(Clone, Copy)]
 pub struct Flags {
     pub(crate) disable_timeout: bool,
+    /// No HTTP/1.1 keep-alive for the rest of the request. Only ever raised:
+    /// `connect` and `on_connect` read it before `build_request` parses the
+    /// headers.
     pub(crate) disable_keepalive: bool,
     /// Whether this request stays out of the keep-alive pool. See `PoolBypass`.
     pub(crate) pool_bypass: PoolBypass,
@@ -2016,11 +2019,8 @@ impl<'a> HTTPClient<'a> {
         // bare SO_KEEPALIVE without the delay would be ineffective; 60 here sets
         // TCP_KEEPIDLE=60s.
         //
-        // `disable_keepalive` is set when fetch is called with `keepalive: false`,
-        // which is what `node:http`/`node:https` pass through from
-        // `agent.keepAlive` (see _http_client.ts) — so requests through
-        // `http.globalAgent` (`keepAlive: true`) get TCP keepalive and requests
-        // through a non-keepalive Agent or `agent: false` skip it, matching Node.
+        // `disable_keepalive` skips it, as the `options.keepAlive` guard does at
+        // that link: fetch's `keepalive: false` also turns TCP keepalive off.
         //
         // TCP options do not apply to a unix socket.
         if !self.flags.disable_keepalive && self.unix_socket_path.is_empty() {
@@ -2512,7 +2512,6 @@ impl<'a> HTTPClient<'a> {
         let mut override_accept_header = false;
         let mut override_host_header = false;
         let mut override_connection_header = false;
-        let mut connection_close_requested = false;
         let mut override_user_agent = false;
         let mut original_content_length: Option<&[u8]> = None;
 
@@ -2545,11 +2544,7 @@ impl<'a> HTTPClient<'a> {
                         override_connection_header = true;
                         match connection_header_keep_alive(self.header_str(header_values[i])) {
                             Some(false) => {
-                                connection_close_requested = true;
                                 self.flags.disable_keepalive = true;
-                            }
-                            Some(true) if !connection_close_requested => {
-                                self.flags.disable_keepalive = false;
                             }
                             _ => {}
                         }

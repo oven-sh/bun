@@ -330,17 +330,18 @@ describe("yield", async () => {
       test.concurrent("the killed member is gone after the rejection", async () => {
         using dir = tempDir("shell-failed-pipeline-pid", {});
         const bun = process.execPath;
-        const writePid = 'require("fs").writeFileSync("pid", String(process.pid)); setTimeout(() => {}, 100_000)';
-        const waitForPid =
-          'while (!require("fs").existsSync("pid")) Bun.sleepSync(5); process.stdout.write("--version")';
+        // By its full path: `dir` is nobody's working directory, which Windows does not let go of until some time
+        // after `kill(pid, 0)` stops finding the process.
+        const pidFile = join(String(dir), "pid");
+        const writePid = `require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => {}, 100_000)`;
+        // For its content: the file is there before the pid is in it.
+        const waitForPid = `const pid = () => { try { return require("fs").readFileSync(${JSON.stringify(pidFile)}, "utf8"); } catch { return ""; } }; while (!pid()) Bun.sleepSync(5); process.stdout.write("--version")`;
         expect(
           await rejectionOf(
-            $`${bun} -e ${writePid} | ${bun} $(${bun} -e ${waitForPid}) > ${new Response("r")}`
-              .cwd(String(dir))
-              .quiet(),
+            $`${bun} -e ${writePid} | ${bun} $(${bun} -e ${waitForPid}) > ${new Response("r")}`.quiet(),
           ),
         ).toMatchObject({ message: "Blobs are immutable, and cannot be used for stdout/stderr" });
-        const pid = Number(await Bun.file(join(String(dir), "pid")).text());
+        const pid = Number(await Bun.file(pidFile).text());
         expect(pid).toBeGreaterThan(0);
         // The kill is sent before the promise rejects. The shell reaps the
         // child when its exit reaches the event loop, so poll for that.
@@ -355,6 +356,28 @@ describe("yield", async () => {
         };
         for (let i = 0; i < 1000 && alive(); i++) await Bun.sleep(10);
         expect(alive()).toBe(false);
+      });
+
+      // `expect().resolves` turns the event loop, so the killed member exits while the catch block runs.
+      test.concurrent("a catch block that turns the event loop", async () => {
+        await using proc = Bun.spawn({
+          cmd: child(`
+            import { expect } from "bun:test";
+            try {
+              await $\`\${bun} --version; ${sleeper} | echo hi > \${new Blob(["x"])}\`.quiet();
+            } catch (error) {
+              await expect(Bun.sleep(50).then(() => "turned")).resolves.toBe("turned");
+              console.log("rejected " + error.constructor.name + ": " + error.message);
+            }
+          `),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect({ result: stdout.trim(), stderr, exitCode }).toEqual({ result: builtin, stderr: "", exitCode: 0 });
       });
 
       test.concurrent("two members fail: the first error rejects, the shell stays usable", async () => {

@@ -1,5 +1,4 @@
-//! What a listener of a rule is given besides the node: the file, the state of the rule, and the
-//! means to report.
+//! The context passed to a rule's listeners along with the node: the file, the rule's state, and the reporting API.
 
 use crate::ast::{File, Ident, Name, Node, Packed};
 use crate::fix::{Fix, Fixer, IntoFix, SuggestionKind};
@@ -18,7 +17,7 @@ pub enum Severity {
     Error,
 }
 
-/// What a rule has found, as ESLint's `LintMessage`.
+/// A rule's finding, modeled on ESLint's `LintMessage`.
 #[derive(Clone, Debug)]
 pub struct Diagnostic {
     /// The index of the rule among those that run on the file.
@@ -27,29 +26,29 @@ pub struct Diagnostic {
     pub message_id: &'static str,
     pub message: Vec<u8>,
     pub span: Span,
-    /// The node that was reported, or the one that [`Report::called_with`] or [`Report::listened_on`] was given. `None`: it was a
-    /// token, a name or a span.
+    /// The reported node, or the one passed to [`Report::called_with`] or [`Report::listened_on`]. `None` if a token, a
+    /// name or a span was reported.
     pub node: Option<Packed>,
-    /// `node` is not what was reported.
-    pub states_node: bool,
-    /// ESLint was given a position, not a range: it reports no `endLine` and `endColumn`.
+    /// True if `node` was set explicitly by [`Report::called_with`] and the like, rather than being what was reported.
+    pub has_explicit_node: bool,
+    /// True if ESLint was given a position instead of a range, so it reports no `endLine` or `endColumn`.
     pub has_no_end: bool,
     pub when: When,
     pub details: Option<Box<Details>>,
-    /// What oxlint says besides the message, where `details` does not say it. What of it has values is in `details` once the report
-    /// is complete.
+    /// oxlint's extra texts (help, label, note), unless `details` already has them. The ones with placeholders are
+    /// filled in and written to `details` once the report is complete.
     pub constant_help: Option<Help>,
     pub fix: Option<Fix>,
     pub suggestions: Vec<Suggestion>,
 }
 
-/// What few diagnostics have: what one of oxlint has besides its message and its place, where a text that is empty is not there,
-/// and a place that is not that of `span`.
+/// Fields that few diagnostics need: what an oxlint diagnostic has besides its message and position (an empty text
+/// means it's absent), and positions that override `span`.
 #[derive(Clone, Debug, Default)]
 pub struct Details {
-    /// The start that is reported in place of that of `span`: [`Report::start_at`].
+    /// The start to report instead of `span`'s. See [`Report::start_at`].
     pub start_position: Option<Position>,
-    /// The end that is reported in place of that of `span`: [`Report::end_at`].
+    /// The end to report instead of `span`'s. See [`Report::end_at`].
     pub end_position: Option<Position>,
     /// [`Report::comments_apply_at`]
     pub comments_apply_at: Option<Span>,
@@ -57,21 +56,21 @@ pub struct Details {
     pub(crate) claim: Option<Claim>,
     /// [`Report::listened_on`]
     pub listened_on: Option<Span>,
-    /// What is said at the place of the report.
+    /// The label at the reported position.
     pub first_label: Cow<'static, str>,
-    /// The other places that are marked, and what is said at each.
+    /// The other labeled spans, each with its text.
     pub labels: Vec<(Span, Cow<'static, str>)>,
     pub help: Cow<'static, str>,
     pub note: Cow<'static, str>,
 }
 
 impl Details {
-    /// What is said at the place of the report.
+    /// Sets the label at the reported position.
     pub fn first(&mut self, text: impl Into<Cow<'static, str>>) {
         self.first_label = text.into();
     }
 
-    /// One more place that is marked, and what is said there.
+    /// Adds another labeled span.
     pub fn push(&mut self, at: impl Spanned, text: impl Into<Cow<'static, str>>) {
         self.labels.push((at.span(), text.into()));
     }
@@ -81,50 +80,51 @@ impl Details {
 pub struct Suggestion {
     pub message_id: &'static str,
     pub message: Vec<u8>,
-    /// What the placeholders of the message stand for, which ESLint passes on with a suggestion.
+    /// The values of the message's placeholders, which ESLint includes with a suggestion.
     pub data: Vec<(&'static str, Vec<u8>)>,
     pub fix: Fix,
     pub kind: SuggestionKind,
 }
 
-/// Collects what the rules report about one file.
+/// Collects the rules' reports for one file.
 #[derive(Default)]
 pub(crate) struct Sink {
     pub(crate) diagnostics: RefCell<Vec<Diagnostic>>,
-    /// Whether anything reads `Diagnostic::fix` and `Diagnostic::suggestions`. If not, they are
-    /// not computed.
+    /// True if anything reads `Diagnostic::fix` and `Diagnostic::suggestions`. Otherwise they aren't computed.
     pub(crate) wants_fixes: Cell<bool>,
-    /// Nothing reads [`Fix::text`]: what can be fixed is only counted. A fix often has the text of its node, so those of n nodes
-    /// that are in each other have n² bytes.
-    pub(crate) drops_texts_of_fixes: Cell<bool>,
-    /// Whether anything reads the help of oxlint. If not, it is not looked up.
+    /// True if nothing reads [`Fix::text`] because fixable problems are only counted. A fix often contains its node's
+    /// text, so the fixes of n nested nodes add up to O(n²) bytes.
+    pub(crate) drops_fix_texts: Cell<bool>,
+    /// True if anything reads oxlint's help. Otherwise it isn't looked up.
     pub(crate) wants_help: Cell<bool>,
-    /// Nothing reads [`Diagnostic::message`] and [`Suggestion::message`]: what is found is only counted. They are empty.
+    /// True if nothing reads [`Diagnostic::message`] and [`Suggestion::message`] because problems are only counted.
+    /// They're left empty.
     pub(crate) drops_messages: Cell<bool>,
-    /// What a rule has thrown: of all the first in the text, which ESLint comes to first.
+    /// The error a rule threw. If several threw, it's the one earliest in the text, which ESLint reaches first.
     pub(crate) thrown: RefCell<Option<Thrown>>,
-    /// [`File::calls_in_turns`]
-    pub(crate) calls_in_turns: OnceCell<Box<[(Span, u32)]>>,
-    /// A rule has asked for [`File::modules`]: the file may be linted again.
-    pub(crate) asks_about_modules: Cell<bool>,
-    /// The rules of the [pairs](crate::rule_set::Pairs) that are at work on the file, by [`CxBase::rule`], each with the number
-    /// of its pair in the file and whether it is the rule with types.
+    /// [`File::jest_calls_in_oxlint_order`]
+    pub(crate) jest_calls_in_oxlint_order: OnceCell<Box<[(Span, u32)]>>,
+    /// True if a rule has requested [`File::modules`], so the file may be linted again.
+    pub(crate) has_requested_modules: Cell<bool>,
+    /// The rules of the [pairs](crate::rule_set::Pairs) active on the file. Each entry is the rule's [`CxBase::rule`],
+    /// its pair's number in the file, and whether it's the type-aware rule.
     pub(crate) paired: RefCell<SmallVec<[(u16, u8, bool); 8]>>,
 }
 
-/// The node that a rule of a [pair](crate::rule_set::Pairs) reports a problem in, by its span. Nodes in each other can start
-/// at the same place or end at the same place: `a.filter(f)[0].filter(f)`, `async () => async () => 1`.
+/// The node in which a rule of a [pair](crate::rule_set::Pairs) reports a problem, identified by its span. Both ends
+/// are needed because nested nodes can share a start or an end: `a.filter(f)[0].filter(f)`,
+/// `async () => async () => 1`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Claim {
     start: u32,
     end: u32,
     pair: u8,
-    /// The report is of the rule with types.
+    /// True if the report comes from the type-aware rule.
     pub(crate) with_types: bool,
 }
 
 impl Claim {
-    /// What the report of the rule with types has for the same node.
+    /// The claim that the type-aware rule's report has for the same node.
     pub(crate) fn with_types(self) -> Claim {
         Claim {
             with_types: true,
@@ -134,8 +134,9 @@ impl Claim {
 }
 
 impl Sink {
-    /// `rule`: [`CxBase::rule`]. `None`: it is not the rule with types, or the one without, of a pair that is at work on the
-    /// file. So code that both rules of a pair run can claim and report unless claimed.
+    /// `rule` is a [`CxBase::rule`]. `None` if it isn't the type-aware rule (or, with `with_types` false, the untyped
+    /// rule) of a pair active on the file. That lets code shared by both rules of a pair call both `claims` and
+    /// `unless_claimed`.
     fn claim_of(&self, rule: u16, with_types: bool, node: Span) -> Option<Claim> {
         let paired = self.paired.borrow();
         let pair = paired
@@ -153,20 +154,20 @@ impl Sink {
 }
 
 impl File<'_> {
-    /// For a rule that oxlint calls with the calls of Jest, when it reports under a configuration of oxlint. oxlint goes through
-    /// these calls after the nodes, in an order of its own. `calls` is asked once per file: the calls by where they start, the
-    /// longer first, each with the how manyth it is for oxlint.
+    /// For a rule that oxlint runs on Jest calls, when it reports under an oxlint config. oxlint visits these calls
+    /// after the nodes, in its own order. `calls` runs once per file and returns the calls sorted by start, longer ones
+    /// first, each with its index in oxlint's order.
     #[inline]
-    pub fn calls_in_turns(&self, calls: impl FnOnce() -> Box<[(Span, u32)]>) {
-        self.sink.calls_in_turns.get_or_init(calls);
+    pub fn jest_calls_in_oxlint_order(&self, calls: impl FnOnce() -> Box<[(Span, u32)]>) {
+        self.sink.jest_calls_in_oxlint_order.get_or_init(calls);
     }
 }
 
 /// [`Cx::throw`], [`Cx::throw_for_selector`]
 pub(crate) struct Thrown {
-    /// As `Diagnostic::rule`.
+    /// Same as `Diagnostic::rule`.
     pub(crate) rule: u16,
-    /// `None`: before ESLint comes to a node, and not in the rule.
+    /// `None` if it's thrown before ESLint reaches any node, outside the rule's code.
     pub(crate) at: Option<u32>,
     /// `error.name`
     pub(crate) name: &'static str,
@@ -174,21 +175,21 @@ pub(crate) struct Thrown {
     pub(crate) message: Vec<u8>,
 }
 
-/// The context of the rule `R` in the file that is linted. It dereferences to the [`File`].
+/// The context of the rule `R` for the file being linted. It dereferences to the [`File`].
 pub struct Cx<'a, R: Rule> {
-    /// What [`Rule::register`] returned.
+    /// The value [`Rule::register`] returned.
     pub state: R::State<'a>,
     pub(crate) base: CxBase<'a>,
 }
 
-/// What of a [`Cx`] is the same for all rules, so that what is done with it is compiled once and not for each rule.
+/// The part of a [`Cx`] that's the same for all rules, so code that uses it is compiled once instead of once per rule.
 pub(crate) struct CxBase<'a> {
     pub(crate) file: &'a File<'a>,
     pub(crate) meta: &'static Meta,
     pub(crate) rule: u16,
     pub(crate) severity: Severity,
-    /// [`oxlint_messages::of_rule`], from the first report on.
-    pub(crate) said_by_oxlint: OnceCell<[&'static [Message]; 2]>,
+    /// [`oxlint_messages::of_rule`], computed on the first report.
+    pub(crate) oxlint_rule_messages: OnceCell<[&'static [Message]; 2]>,
 }
 
 impl<'a, R: Rule> std::ops::Deref for Cx<'a, R> {
@@ -207,7 +208,7 @@ impl<'a, R: Rule> Cx<'a, R> {
 
     /// Reports `message` at a node, a token, a comment or a [`Span`].
     ///
-    /// What is returned adds to the report, which is made when it goes out of scope:
+    /// The returned builder adds to the report, which is submitted when the builder is dropped:
     ///
     /// ```ignore
     /// cx.report(ident, UNUSED)
@@ -219,23 +220,26 @@ impl<'a, R: Rule> Cx<'a, R> {
         self.base.report(at.span(), at.packed_node(), message)
     }
 
-    /// Does what `throw new Error(message)` does in a JavaScript rule. It's for a rule that can't do its job, for example because
-    /// a file named in its options is missing. `name` is the class of the error, and `at` is the node whose listener throws.
+    /// Does what `throw new Error(message)` does in a JavaScript rule. It's for a rule that can't do its job, for
+    /// example because a file named in its options is missing. `name` is the class of the error, and `at` is the node
+    /// whose listener throws.
     ///
-    /// The severity of the rule doesn't matter. With an oxlint config, the file gets one error that has no rule name and that no
-    /// comment disables. The rest is what oxlint does when a rule of a JavaScript plugin throws. The findings of the rules that
-    /// oxlint has itself stay. Those of every other rule for the file go: this rule's, the JavaScript plugins', and those of the
-    /// other native rules that oxlint doesn't have, which it could only run as rules of a JavaScript plugin. With an ESLint
-    /// config, or with none, the run ends with exit code 2.
+    /// The rule's severity doesn't matter. With an oxlint config, the file gets one error that has no rule name and
+    /// that no comment can disable. The rest matches what oxlint does when a JavaScript plugin rule throws. Findings
+    /// from oxlint's built-in rules are kept. Findings from every other rule for the file are dropped: this rule's, the
+    /// JavaScript plugins', and those of the other native rules that oxlint doesn't have, which it could only run as
+    /// JavaScript plugin rules. With an ESLint config, or with none, the run ends with exit code 2.
     ///
-    /// Only one throw per file counts, so it's fine to call this for every node. The call returns, so `return` after it.
+    /// Only one throw per file counts, so it's fine to call this for every node. The call returns, so `return` after
+    /// it.
     #[inline]
     pub fn throw(&self, at: impl Spanned, name: &'static str, message: impl Into<Vec<u8>>) {
         self.base.throw(at.span().start, name, message.into());
     }
 
-    /// How often `" ".repeat(count)` of JavaScript repeats. `None`: it throws, and so does the rule: see [`Cx::throw`]. `at`: the
-    /// node that ESLint is at. The rules that oxlint has itself do not throw. The text itself: [`Fixer::repeat`].
+    /// The repeat count that JavaScript's `" ".repeat(count)` would use. `None` if it would throw, in which case the
+    /// rule throws too (see [`Cx::throw`]). `at` is the node ESLint is visiting. oxlint's built-in rules don't throw.
+    /// Use [`Fixer::repeat`] for the text itself.
     pub fn repeat_count(&self, count: f64, at: impl Spanned) -> Option<u64> {
         match self.base.repeat_count(count) {
             Ok(count) => Some(count),
@@ -246,8 +250,8 @@ impl<'a, R: Rule> Cx<'a, R> {
         }
     }
 
-    /// A selector that the rule listens for cannot be matched. ESLint throws when it reads the selectors, before it comes to
-    /// a node: that ends the run.
+    /// Call it when a selector the rule listens for can't be matched. ESLint throws when it reads the selectors, before
+    /// it visits any node, which ends the run.
     #[cold]
     pub fn throw_for_selector(&self, error: &crate::selector::Error) {
         *self.base.file.sink.thrown.borrow_mut() = Some(Thrown {
@@ -258,22 +262,22 @@ impl<'a, R: Rule> Cx<'a, R> {
         });
     }
 
-    /// [`Cx::throw_for_selector`] has been called for this file: nothing that is found in it is reported.
+    /// True if [`Cx::throw_for_selector`] has been called for this file, so none of its findings are reported.
     #[inline]
     pub fn has_thrown_for_selector(&self) -> bool {
         let thrown = self.base.file.sink.thrown.borrow();
         thrown.as_ref().is_some_and(|it| it.at.is_none())
     }
 
-    /// Reports `message` at a position: where ESLint's `loc` is a `{ line, column }` and not a
-    /// range.
+    /// Reports `message` at a position, for when ESLint's `loc` is a `{ line, column }` instead of a range.
     #[inline]
     pub fn report_at(&self, offset: u32, message: Message) -> Report<'a> {
         self.base.report_at(offset, message)
     }
 
-    /// Reports `message` about the file as a whole, at no place in it: a diagnostic of oxlint without a label. Where a format
-    /// wants numbers it has line 0 and column 0, and there is no excerpt. With no config it's at the start of the file.
+    /// Reports `message` about the file as a whole, with no position, like an oxlint diagnostic without a label.
+    /// Formats that need numbers print line 0 and column 0, and there's no code excerpt. With no config it's reported
+    /// at the start of the file.
     #[inline]
     pub fn report_file(&self, message: Message) -> Report<'a> {
         let nowhere = Position {
@@ -289,18 +293,18 @@ impl<'a> CxBase<'a> {
     #[inline(never)]
     fn report(&self, span: Span, node: Option<Packed>, message: Message) -> Report<'a> {
         let (language, sink) = (self.file.language(), &self.file.sink);
-        // The rules of `bun:test` say what those of oxlint say, whatever the configuration.
+        // The `bun:test` rules use oxlint's texts whatever the configuration.
         let has_help =
             language.is_oxlint || self.meta.follows_oxlint || self.meta.plugin == Plugin::BunTest;
         let wants_help = has_help && sink.wants_help.get();
         let wants_text = !sink.drops_messages.get();
         let message = match language.is_oxlint {
-            // What oxlint says has the same id.
+            // oxlint's message has the same id.
             true if !wants_text && !wants_help => message,
             true => {
-                let said =
-                    (self.said_by_oxlint).get_or_init(|| oxlint_messages::of_rule(self.meta));
-                oxlint_messages::of(said, message)
+                let oxlint_texts =
+                    (self.oxlint_rule_messages).get_or_init(|| oxlint_messages::of_rule(self.meta));
+                oxlint_messages::of(oxlint_texts, message)
             }
             false if language.eslint_8.is_some() => {
                 crate::linter::config::eslint8::message_of(self.meta, message)
@@ -318,7 +322,7 @@ impl<'a> CxBase<'a> {
             message: Vec::new(),
             span,
             node,
-            states_node: false,
+            has_explicit_node: false,
             has_no_end: false,
             when: self.meta.reports,
             details: None,
@@ -336,7 +340,7 @@ impl<'a> CxBase<'a> {
         }
     }
 
-    /// `Err`: the message of the `RangeError`.
+    /// `Err` has the `RangeError`'s message.
     fn repeat_count(&self, count: f64) -> Result<u64, Vec<u8>> {
         // `ToIntegerOrInfinity`
         let whole = if count.is_nan() { 0.0 } else { count.trunc() };
@@ -349,7 +353,7 @@ impl<'a> CxBase<'a> {
             _ => return Ok(whole as u64),
         };
         let name = self.meta.name.as_bytes();
-        match self.file.language().is_oxlint && crate::linter::config::is_rule_of_oxlint(name) {
+        match self.file.language().is_oxlint && crate::linter::config::is_oxlint_rule(name) {
             true => Ok(whole.max(0.0) as u64),
             false => Err(message),
         }
@@ -384,27 +388,27 @@ impl<'a> CxBase<'a> {
 
 type Data<'a> = SmallVec<[(&'static str, Cow<'a, [u8]>); 2]>;
 
-/// A report in the making. See [`Cx::report`].
+/// A report being built. See [`Cx::report`].
 pub struct Report<'a> {
     file: &'a File<'a>,
     message: Message,
     data: Data<'a>,
-    /// A text is made of `data`.
+    /// True if some text is built from `data`.
     reads_data: bool,
-    /// Whether hints are shown. See [`Report::hint`].
+    /// True if hints are shown. See [`Report::hint`].
     reads_hints: bool,
     diagnostic: Option<Diagnostic>,
 }
 
 impl<'a> Report<'a> {
-    /// What `{{name}}` in the message stands for.
+    /// Sets the value for `{{name}}` in the message.
     #[inline]
     pub fn data(mut self, name: &'static str, value: impl IntoText<'a>) -> Self {
         value.put_into(&mut self, name);
         self
     }
 
-    /// What of [`Report::data`] is the same for all values.
+    /// The part of [`Report::data`] that doesn't depend on the value's type.
     #[inline(never)]
     fn push_data(&mut self, name: &'static str, value: Cow<'a, [u8]>) {
         if self.reads_data {
@@ -412,8 +416,8 @@ impl<'a> Report<'a> {
         }
     }
 
-    /// Reports `start` as the start, for the rare rule whose `loc.start` is a line and a column that are not in the text: some
-    /// report what concerns the configuration at line 0.
+    /// Reports `start` as the start, for the rare rule whose `loc.start` is a line and column that aren't in the text.
+    /// Some rules report configuration problems at line 0.
     pub fn start_at(mut self, start: Position) -> Self {
         if let Some(details) = self.details() {
             details.start_position = Some(start);
@@ -421,8 +425,8 @@ impl<'a> Report<'a> {
         self
     }
 
-    /// Reports `end` as the end, for the rare rule whose `loc.end` is a line and a column that are not in the text. ESLint's
-    /// column -1 is `u32::MAX`.
+    /// Reports `end` as the end, for the rare rule whose `loc.end` is a line and column that aren't in the text.
+    /// ESLint's column -1 is `u32::MAX`.
     pub fn end_at(mut self, end: Position) -> Self {
         if let Some(details) = self.details() {
             details.end_position = Some(end);
@@ -430,14 +434,14 @@ impl<'a> Report<'a> {
         self
     }
 
-    /// For a rule with types that has a [pair](crate::rule_set::Pairs): the problem is in `node`. While this report is shown, what
-    /// the rule without types reports [about `node`](Report::unless_claimed) is not. Both name the same node. See
-    /// [`LintMessage::hide_claimed`](crate::linter::LintMessage::hide_claimed).
+    /// For a type-aware rule that has a [pair](crate::rule_set::Pairs): marks `node` as the node with the problem.
+    /// While this report is shown, the untyped rule's report [about `node`](Report::unless_claimed) is hidden. Both
+    /// have to pass the same node. See [`LintMessage::hide_claimed`](crate::linter::LintMessage::hide_claimed).
     pub fn claims(self, node: impl Spanned) -> Self {
         self.claim(true, node.span())
     }
 
-    /// For a rule without types that has a [pair](crate::rule_set::Pairs): see [`Report::claims`].
+    /// For an untyped rule that has a [pair](crate::rule_set::Pairs). See [`Report::claims`].
     pub fn unless_claimed(self, node: impl Spanned) -> Self {
         self.claim(false, node.span())
     }
@@ -453,8 +457,8 @@ impl<'a> Report<'a> {
         self
     }
 
-    /// For a port of a rule of oxlint whose diagnostic has several labels. oxlint prints where the first is, which is what is
-    /// reported. Whether a comment disables the rule there it decides by the primary label: `primary`.
+    /// For a port of an oxlint rule whose diagnostic has several labels. oxlint prints the first label's position,
+    /// which is the reported one, but uses the primary label, `primary`, to decide whether a comment disables the rule.
     pub fn comments_apply_at(mut self, primary: impl Spanned) -> Self {
         if let Some(details) = self.details() {
             details.comments_apply_at = Some(primary.span());
@@ -462,43 +466,46 @@ impl<'a> Report<'a> {
         self
     }
 
-    /// The original reports this from the listener of `node`, which is not what is reported but is around it: an element for
-    /// its child, a tag for its attribute or a token. ESLint has it where that listener is called among what starts at one place.
+    /// The original rule reports this from the listener for `node`, which isn't the reported node but contains it: an
+    /// element for its child, a tag for its attribute or a token. Among reports that start at the same position, ESLint
+    /// orders it by when that listener is called.
     pub fn listened_on(mut self, node: impl Spanned) -> Self {
         if let Some(details) = self.details() {
             details.listened_on = Some(node.span());
         }
         if let Some(diagnostic) = &mut self.diagnostic {
             diagnostic.node = node.packed_node();
-            diagnostic.states_node = true;
+            diagnostic.has_explicit_node = true;
         }
         self
     }
 
-    /// oxlint calls its rule with `node`, or with something around it, when it reports this. It prints what it reports in the order
-    /// in which it comes to the nodes, and what it reports about one node in the order in which the rule reports. To be said where
-    /// what is reported is not in that node, where a node in between is of a kind that oxlint also calls the rule with, and
-    /// where many tokens or names are reported, for which the node is searched otherwise. It means nothing to ESLint.
+    /// Records that oxlint is running its rule on `node`, or on something that contains it, when it reports this.
+    /// oxlint prints reports in the order it visits the nodes, and reports from one node in the order the rule makes
+    /// them. Call this when the reported span isn't inside that node, when a node in between is of a kind that oxlint
+    /// also runs the rule on, or when many tokens or names are reported, since otherwise the node has to be searched
+    /// for. It has no effect with ESLint.
     #[inline]
     pub fn called_with(mut self, node: impl Into<Node<'a>>) -> Self {
         if let Some(diagnostic) = &mut self.diagnostic {
             diagnostic.node = Some(node.into().packed());
-            diagnostic.states_node = true;
+            diagnostic.has_explicit_node = true;
         }
         self
     }
 
-    /// [`Report::called_with`] where oxlint calls its rule with just what is reported, which is no node here: a name.
+    /// [`Report::called_with`] for when oxlint runs its rule on exactly what's reported, but that's a name, which isn't
+    /// a node here.
     #[inline]
-    pub fn called_with_the_name(mut self) -> Self {
+    pub fn called_with_name(mut self) -> Self {
         if let Some(diagnostic) = &mut self.diagnostic {
             diagnostic.node = None;
-            diagnostic.states_node = true;
+            diagnostic.has_explicit_node = true;
         }
         self
     }
 
-    /// [`Meta::reports_on_exit`](crate::rule::Meta::reports_on_exit), for a rule of which only some listeners are called on
+    /// Like [`Meta::reports_on_exit`](crate::rule::Meta::reports_on_exit), for a rule where only some listeners run on
     /// leaving a node.
     pub fn on_exit(mut self, is_on_exit: bool) -> Self {
         if let Some(diagnostic) = &mut self.diagnostic {
@@ -510,8 +517,8 @@ impl<'a> Report<'a> {
         self
     }
 
-    /// [`Meta::reports_at_the_end`](crate::rule::Meta::reports_at_the_end), for a rule of which only some listeners are called
-    /// when the program ends.
+    /// Like [`Meta::reports_at_the_end`](crate::rule::Meta::reports_at_the_end), for a rule where only some listeners
+    /// run when the program ends.
     pub fn at_the_end(mut self) -> Self {
         if let Some(diagnostic) = &mut self.diagnostic {
             diagnostic.when = When::AtTheEnd;
@@ -519,8 +526,8 @@ impl<'a> Report<'a> {
         self
     }
 
-    /// The original listens with a selector that says more than a kind of node. On one node ESLint calls such a listener after
-    /// those for the kind alone, wherever their rules stand.
+    /// The original rule listens with a selector that's more specific than a node kind. For a given node, ESLint calls
+    /// such a listener after the ones for the bare kind, regardless of rule order.
     pub fn by_selector(mut self) -> Self {
         if let Some(diagnostic) = &mut self.diagnostic {
             diagnostic.when = When::EnteringBySelector;
@@ -528,7 +535,7 @@ impl<'a> Report<'a> {
         self
     }
 
-    /// Of what the rule reports at one start, this comes with the shorter first.
+    /// Among the rule's reports that start at the same position, orders this one shorter first.
     pub fn shorter_first(mut self) -> Self {
         if let Some(diagnostic) = &mut self.diagnostic {
             diagnostic.when = When::EnteringShorterFirst;
@@ -541,8 +548,8 @@ impl<'a> Report<'a> {
         Some(&mut **diagnostic.details.get_or_insert_default())
     }
 
-    /// For a port of a rule of oxlint: what oxlint says at the place of the report. Like [`Report::label`], [`Report::help`]
-    /// and [`Report::note`] it is shown by the formats that oxlint has, and by those that show the code.
+    /// For a port of an oxlint rule: oxlint's label at the reported position. Like [`Report::label`], [`Report::help`]
+    /// and [`Report::note`], it's shown by oxlint's formats and by the formats that show code.
     pub fn first_label(mut self, text: impl Into<Cow<'static, str>>) -> Self {
         if self.file.sink.wants_help.get()
             && let Some(details) = self.details()
@@ -552,7 +559,7 @@ impl<'a> Report<'a> {
         self
     }
 
-    /// One more place that oxlint marks, and what it says there.
+    /// Another span that oxlint labels, with its text.
     pub fn label(mut self, at: impl Spanned, text: impl Into<Cow<'static, str>>) -> Self {
         if self.file.sink.wants_help.get() {
             self.push_label(at.span(), text.into());
@@ -567,8 +574,8 @@ impl<'a> Report<'a> {
         }
     }
 
-    /// The labels of oxlint where a place has to be looked for or a text has to be made, and in a rule that ESLint has as well:
-    /// `labels` is called at once, and only with a configuration of oxlint and a format that shows labels.
+    /// oxlint's labels, for when a span has to be searched for or a text has to be built, and for a rule that ESLint
+    /// has too. `labels` runs immediately, and only with an oxlint config and a format that shows labels.
     pub fn labels_with(mut self, labels: impl FnOnce(&mut Details)) -> Self {
         if let Some(details) = self.details_for_labels() {
             labels(details);
@@ -601,7 +608,7 @@ impl<'a> Report<'a> {
         }
     }
 
-    /// The same for a text that has to be made. `text` is called at once, and only if the help is read.
+    /// Like [`Report::help`], for text that has to be built. `text` runs right away, and only if the help is read.
     pub fn help_with(mut self, text: impl FnOnce() -> String) -> Self {
         if self.file.sink.wants_help.get() && self.diagnostic.is_some() {
             self.set_help(Cow::Owned(text()));
@@ -610,7 +617,8 @@ impl<'a> Report<'a> {
     }
 
     /// Adds Bun's own sentence under an ESLint message that doesn't say what's wrong or what to do. It replaces
-    /// [`Report::help`] and is never shown with an oxlint config. The rule must set [`Meta::hints`]. Empty means no hint.
+    /// [`Report::help`] and is never shown with an oxlint config. The rule must set [`Meta::hints`]. Empty means no
+    /// hint.
     pub fn hint(mut self, text: &'static str) -> Self {
         if self.reads_hints && !text.is_empty() {
             self.set_help(Cow::Borrowed(text));
@@ -638,10 +646,10 @@ impl<'a> Report<'a> {
         self
     }
 
-    /// How to fix it, as ESLint's `fix`. `fix` returns a [`Fix`], an `Option` of one, or several
-    /// in an array or a `Vec`, which must not overlap and are applied together.
+    /// The fix, like ESLint's `fix`. `fix` returns a [`Fix`], an `Option` of one, or several in an array or a `Vec`,
+    /// which must not overlap and are applied together.
     ///
-    /// It is called only if the fix is going to be applied or shown, or if oxlint makes its help of it.
+    /// It's only called if the fix will be applied or shown, or if oxlint derives its help from it.
     pub fn fix<F: IntoFix>(mut self, fix: impl FnOnce(Fixer<'a>) -> F) -> Self {
         if self.reads_fixes() {
             let fix = fix(Fixer::new(self.file));
@@ -653,7 +661,7 @@ impl<'a> Report<'a> {
 
     #[inline(never)]
     fn set_fix(&mut self, fix: Option<Fix>) {
-        let fix = fix.map(|it| self.as_it_is_read(it));
+        let fix = fix.map(|it| self.without_unread_text(it));
         if self.file.sink.wants_fixes.get()
             && let Some(diagnostic) = &mut self.diagnostic
         {
@@ -663,48 +671,50 @@ impl<'a> Report<'a> {
 
     #[inline(never)]
     fn reads_fixes(&self) -> bool {
-        self.diagnostic.is_some() && (self.file.sink.wants_fixes.get() || self.makes_help_of_fix())
+        self.diagnostic.is_some()
+            && (self.file.sink.wants_fixes.get() || self.derives_help_from_fix())
     }
 
     #[inline]
-    fn as_it_is_read(&self, mut fix: Fix) -> Fix {
-        if self.file.sink.drops_texts_of_fixes.get() {
+    fn without_unread_text(&self, mut fix: Fix) -> Fix {
+        if self.file.sink.drops_fix_texts.get() {
             fix.text = Vec::new();
         }
         fix
     }
 
     #[inline]
-    fn makes_help_of_fix(&self) -> bool {
+    fn derives_help_from_fix(&self) -> bool {
         let help = self.diagnostic.as_ref().and_then(|it| it.constant_help);
-        help.is_some_and(Help::is_of_the_fix)
+        help.is_some_and(Help::is_fix_description)
     }
 
-    /// [`IntoFix::into_fix`], and the help that oxlint makes of the fix.
+    /// [`IntoFix::into_fix`], plus the help that oxlint derives from the fix.
     #[inline(never)]
     fn merged<F: IntoFix>(&mut self, fix: F) -> Option<Fix> {
-        if !self.makes_help_of_fix() {
+        if !self.derives_help_from_fix() {
             return fix.into_fix(self.file);
         }
-        self.take_help_of(fix.first_fix(), Edits::First);
+        self.set_help_from_fix(fix.first_fix(), Edits::First);
         let fix = fix.into_fix(self.file);
-        self.take_help_of(fix.as_ref(), Edits::All);
+        self.set_help_from_fix(fix.as_ref(), Edits::All);
         fix
     }
 
-    /// `LintContext::finish_create_fix` of oxlint: a diagnostic without a help takes what `RuleFixer` says about the fix. `fix` does
-    /// what `of` of its edits do.
+    /// oxlint's `LintContext::finish_create_fix`: a diagnostic without a help gets `RuleFixer`'s description of the
+    /// fix. `of` tells whether `fix` is the first edit or all of them.
     #[inline(never)]
-    fn take_help_of(&mut self, fix: Option<&Fix>, of: Edits) {
+    fn set_help_from_fix(&mut self, fix: Option<&Fix>, of: Edits) {
         let help = self.diagnostic.as_ref().and_then(|it| it.constant_help);
-        let Some(Found::OfTheFix { removes, edits }) = help.map(|it| it.found(Part::Help)) else {
+        let Some(Found::FixDescription { removes, edits }) = help.map(|it| it.found(Part::Help))
+        else {
             return;
         };
         let Some(fix) = fix.filter(|_| edits == of) else {
             return;
         };
         // `possibly_truncate_snippet`
-        let shown = |text: &[u8]| -> Vec<u8> {
+        let truncated = |text: &[u8]| -> Vec<u8> {
             if text.len() <= 256 {
                 return text.to_vec();
             }
@@ -712,7 +722,7 @@ impl<'a> Report<'a> {
             let end = characters.nth(256).map_or(text.len(), |it| it.0);
             [text.get(..end).unwrap_or(text), b"..."].concat()
         };
-        let (before, after) = (shown(self.file.slice(fix.span)), shown(&fix.text));
+        let (before, after) = (truncated(self.file.slice(fix.span)), truncated(&fix.text));
         let help = match (fix.span.is_empty(), fix.text.is_empty()) {
             (true, _) => [b"Insert `", &after[..], b"`"].concat(),
             (false, true) if removes => [b"Remove `", &before[..], b"`."].concat(),
@@ -726,12 +736,12 @@ impl<'a> Report<'a> {
         }
     }
 
-    /// A change that an editor can offer, as an element of ESLint's `suggest`.
+    /// A change an editor can offer, like an element of ESLint's `suggest`.
     pub fn suggest<F: IntoFix>(self, message: Message, fix: impl FnOnce(Fixer<'a>) -> F) -> Self {
         self.suggest_with(message, &[], fix)
     }
 
-    /// The same for a message with `{{placeholders}}`.
+    /// Like [`Report::suggest`], for a message with `{{placeholders}}`.
     pub fn suggest_with<F: IntoFix>(
         self,
         message: Message,
@@ -741,26 +751,43 @@ impl<'a> Report<'a> {
         self.suggest_as(SuggestionKind::Suggestion, message, data, fix)
     }
 
-    /// A suggestion that changes what the program does, or whether it type checks. It's an ordinary suggestion to ESLint and to an
-    /// editor. With no config file `--fix-suggestions` leaves it alone, because it applies everything at once with nobody looking,
-    /// and only `--fix-dangerously` makes it.
-    pub fn suggest_change_of_behavior<F: IntoFix>(
+    /// A suggestion that changes the program's behavior or whether it type checks. ESLint and editors treat it as an
+    /// ordinary suggestion. With no config file, `--fix-suggestions` skips it, because that flag applies everything in
+    /// one go without review, and only `--fix-dangerously` applies it.
+    pub fn suggest_behavior_change<F: IntoFix>(
         self,
         message: Message,
         data: &[(&'static str, &[u8])],
         fix: impl FnOnce(Fixer<'a>) -> F,
     ) -> Self {
-        let kind = match self.file.language().stands_alone {
+        let kind = match self.file.language().has_no_foreign_config {
             true => SuggestionKind::DangerousSuggestion,
             false => SuggestionKind::Suggestion,
         };
         self.suggest_as(kind, message, data, fix)
     }
 
-    /// oxlint's `diagnostic_with_dangerous_fix`. It is a suggestion that says what the report says.
+    /// oxlint's `diagnostic_with_dangerous_fix`. It's a suggestion with the same message as the report.
     pub fn fix_dangerously<F: IntoFix>(self, fix: impl FnOnce(Fixer<'a>) -> F) -> Self {
-        // The text is there when the report is made.
+        // The message is copied in when the report is submitted.
         self.suggest_as(SuggestionKind::DangerousFix, Message::new("", ""), &[], fix)
+    }
+
+    /// Attaches a fix that's only correct for some code: [`Report::fix`] if `is_safe` returns true, otherwise
+    /// [`Report::fix_dangerously`]. `--fix` must not change a program's behavior or break type checking, whatever the
+    /// original tool's `--fix` does. `is_safe` is only called if the fix is read, so it can afford to look at scopes.
+    pub fn fix_where_safe<F: IntoFix>(
+        self,
+        is_safe: impl FnOnce() -> bool,
+        fix: impl FnOnce(Fixer<'a>) -> F,
+    ) -> Self {
+        if !self.reads_fixes() {
+            return self;
+        }
+        match is_safe() {
+            true => self.fix(fix),
+            false => self.fix_dangerously(fix),
+        }
     }
 
     /// oxlint's `diagnostic_with_dangerous_suggestion`.
@@ -787,7 +814,7 @@ impl<'a> Report<'a> {
         self
     }
 
-    /// What of [`Report::suggest_as`] is the same for all closures.
+    /// The part of [`Report::suggest_as`] that doesn't depend on the closure.
     #[inline(never)]
     fn push_suggestion(
         &mut self,
@@ -799,7 +826,7 @@ impl<'a> Report<'a> {
         let Some(fix) = fix.filter(|_| self.file.sink.wants_fixes.get()) else {
             return;
         };
-        let fix = self.as_it_is_read(fix);
+        let fix = self.without_unread_text(fix);
         let wants_text = !self.file.sink.drops_messages.get();
         if let Some(diagnostic) = &mut self.diagnostic {
             diagnostic.suggestions.push(Suggestion {
@@ -834,11 +861,11 @@ impl Drop for Report<'_> {
                 (Part::FirstLabel, &mut details.first_label),
                 (Part::Note, &mut details.note),
             ];
-            for (part, said) in parts {
-                if let (Found::WithData(text), true) = (texts.found(part), said.is_empty()) {
+            for (part, slot) in parts {
+                if let (Found::WithData(text), true) = (texts.found(part), slot.is_empty()) {
                     let text = interpolate_text(text, data);
                     let text = std::str::from_utf8(&text).unwrap_or_default();
-                    *said = Cow::Owned(text.to_owned());
+                    *slot = Cow::Owned(text.to_owned());
                 }
             }
         }
@@ -852,8 +879,8 @@ impl Drop for Report<'_> {
     }
 }
 
-/// ESLint's `interpolate`: replaces each `{{ name }}` by `data(name)`, and leaves it if there is none. A name has no braces in it,
-/// so `{{{name}}}` is `{`, the value, `}`.
+/// ESLint's `interpolate`: replaces each `{{ name }}` with `data(name)`, or leaves it alone if that's `None`. A name
+/// can't contain braces, so `{{{name}}}` becomes `{`, the value, `}`.
 fn interpolate<'d>(message: Message, data: impl Fn(&str) -> Option<&'d [u8]>) -> Vec<u8> {
     match message.may_have_placeholders {
         true => interpolate_text(message.text, data),
@@ -861,7 +888,8 @@ fn interpolate<'d>(message: Message, data: impl Fn(&str) -> Option<&'d [u8]>) ->
     }
 }
 
-/// The same for a text that is not known before: where a rule puts a part of its options into its message.
+/// Like `interpolate`, for text that isn't known at compile time, as when a rule puts part of its options into its
+/// message.
 pub fn interpolate_text<'d>(text: &str, data: impl Fn(&str) -> Option<&'d [u8]>) -> Vec<u8> {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(text.len() + 16);
@@ -906,7 +934,7 @@ pub fn interpolate_text<'d>(text: &str, data: impl Fn(&str) -> Option<&'d [u8]>)
     out
 }
 
-/// What can be put into a message or a fix.
+/// A value that can be inserted into a message or a fix.
 pub trait IntoText<'a>: Sized {
     fn into_text(self) -> Cow<'a, [u8]>;
 

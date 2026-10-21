@@ -29,13 +29,13 @@ const NOT_MATCH_PRIVATE: Message = Message::new(
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// Whether each name that has been seen fails to match.
+    /// For each name seen so far, whether it fails to match.
     is_invalid: ByName<bool>,
-    /// The key and the value of `{ a }` are two identifiers at the same place.
+    /// The key and value of `{ a }` are two identifiers at the same location.
     reported: FxHashSet<Span>,
-    /// `File::unresolved_references`, once a name in a type may be one of them.
+    /// `File::unresolved_references`, built the first time a name in a type might be one of them.
     unresolved: Option<Vec<Reference<'a>>>,
-    /// What is in an object pattern.
+    /// Caches the nodes that are inside an object pattern.
     object_patterns: AncestorMemo<'a, ()>,
 }
 
@@ -49,8 +49,8 @@ fn is_inside_object_pattern<'a>(node: Node<'a>, state: &mut State<'a>) -> bool {
     state.object_patterns.find(node, |_, it| is_object_pattern(it).then_some(())).is_some()
 }
 
-/// Whether `member`, an `a.b` or an `a[b]`, is a side of an assignment expression that assigns to a
-/// property named `name`.
+/// True if `member`, an `a.b` or `a[b]`, is either side of an assignment expression that assigns to a property named
+/// `name`.
 fn is_in_assignment_to_property(member: Expr<'_>, name: &[u8]) -> bool {
     if is_chain_root(member) {
         return false;
@@ -64,7 +64,7 @@ fn is_in_assignment_to_property(member: Expr<'_>, name: &[u8]) -> bool {
     if op.is_none() && is_assignment_target(parent) {
         return false;
     }
-    // oxlint looks only at what is assigned to.
+    // oxlint only looks at the assignment target.
     if member.file().language().is_oxlint {
         return target == member;
     }
@@ -80,7 +80,7 @@ fn is_in_assignment_to_property(member: Expr<'_>, name: &[u8]) -> bool {
 
 /// `node.type === "PropertyDefinition"`
 fn is_property_definition(member: Member<'_>) -> bool {
-    // For oxlint an abstract field and an `accessor` are fields like the others.
+    // oxlint treats an abstract field and an `accessor` like any other field.
     let others = match member.file().language().is_oxlint {
         true => Flags::empty(),
         false => Flags::ABSTRACT | Flags::ACCESSOR,
@@ -88,8 +88,8 @@ fn is_property_definition(member: Member<'_>) -> bool {
     member.kind() == MemberKind::Property && !member.is_signature() && !member.flags().intersects(others)
 }
 
-/// Whether the key `name` of `prop`, a property of `object`, is left alone as the key of an import attribute. In the
-/// options of an `import()` those are for oxlint only `with`, and the keys of the object that is its value.
+/// True if the key `name` of `prop`, a property of `object`, is skipped because it's an import attribute key. In the
+/// options of an `import()`, oxlint only counts `with` and the keys of the object that's its value.
 fn is_key_of_import_attribute<'a>(prop: Prop<'a>, name: Name<'a>, object: Expr<'a>) -> bool {
     let is_key = is_import_attribute_key(prop);
     if !is_key || !prop.file().language().is_oxlint {
@@ -105,7 +105,7 @@ fn is_key_of_import_attribute<'a>(prop: Prop<'a>, name: Name<'a>, object: Expr<'
     }
 }
 
-/// Whether `reference`, which nothing in the file declares, resolves to `global`.
+/// True if `reference`, which nothing in the file declares, resolves to `global`.
 fn resolves_to(reference: Reference<'_>, global: &GlobalVariable<'_>) -> bool {
     reference.symbol().is_none()
         && (!global.is_only_in_lib
@@ -145,14 +145,14 @@ impl IdMatch {
         cx.report(at, message).data("name", name).data("pattern", self.pattern.clone());
     }
 
-    /// An `Identifier` that is reported whatever is around it.
+    /// Checks an `Identifier` that's reported whatever surrounds it.
     fn check_name<'a>(&self, name: Ident<'a>, cx: &mut Cx<'a, Self>) {
         if !name.is_string() && self.is_invalid(name.name(), cx) {
             self.report(name.span(), name.bytes(), cx);
         }
     }
 
-    /// The same for a name that is a reference and not an expression: in a type, in an export.
+    /// Same for a name that's a reference but not an expression: in a type or an export.
     // TODO(api): replace the search by semantic::File::reference_at(offset)
     fn check_referencing_name<'a>(&self, name: Ident<'a>, cx: &mut Cx<'a, Self>) {
         if name.is_string() || !self.is_invalid(name.name(), cx) {
@@ -172,7 +172,7 @@ impl IdMatch {
         self.report(name.span(), name.bytes(), cx);
     }
 
-    /// A key that is an `Identifier` or a `PrivateIdentifier`.
+    /// Checks a key that's an `Identifier` or a `PrivateIdentifier`.
     fn check_key<'a>(&self, key: Key<'a>, cx: &mut Cx<'a, Self>) {
         if let KeyKind::Ident(name) | KeyKind::Private(name) = key.kind()
             && self.is_invalid(name, cx)
@@ -181,14 +181,14 @@ impl IdMatch {
         }
     }
 
-    /// Whether the `left` of an `AssignmentPattern` is checked.
+    /// True if the `left` of an `AssignmentPattern` is checked.
     fn checks_target_with_default<'a>(&self, target: Node<'a>, state: &mut State<'a>) -> bool {
         self.checks_properties
             && !self.only_declarations
             && !(self.ignores_destructuring && is_inside_object_pattern(target, state))
     }
 
-    /// Whether `e`, named `name`, is checked as the computed key or the value of `prop`.
+    /// True if `e`, named `name`, is checked as the computed key or the value of `prop`.
     fn checks_in_property<'a>(&self, prop: Prop<'a>, e: Expr<'a>, name: Name<'a>, state: &mut State<'a>) -> bool {
         let (Node::Expr(object), Some(key)) = (prop.parent(), prop.key()) else {
             return !self.only_declarations;
@@ -197,7 +197,7 @@ impl IdMatch {
             return !self.only_declarations;
         }
         if is_assignment_target(object) {
-            // oxlint checks a computed key there as it does elsewhere.
+            // oxlint checks a computed key there like anywhere else.
             if e.file().language().is_oxlint && matches!(key.kind(), KeyKind::Computed(it) if it == e) {
                 return !self.only_declarations;
             }
@@ -208,16 +208,16 @@ impl IdMatch {
                 false => key_equals_value && !self.ignores_destructuring,
             };
         }
-        // The key of `{ a }` is at the same place, and `check_property` reports it.
+        // The key of `{ a }` has the same location, and `check_property` reports it.
         prop.kind() != PropKind::Shorthand
             && (self.checks_properties || key.is_computed())
             && !self.only_declarations
             && !(self.ignores_destructuring && is_inside_object_pattern(e.into(), state))
     }
 
-    /// Whether the identifier `e`, named `name`, is checked where it is.
+    /// True if the identifier `e`, named `name`, is checked in its position.
     fn checks_reference<'a>(&self, e: Expr<'a>, name: Name<'a>, state: &mut State<'a>) -> bool {
-        // oxlint sees through what only concerns types: `a as T`, `a!`.
+        // oxlint looks through type-only wrappers: `a as T`, `a!`.
         let is_oxlint = e.file().language().is_oxlint;
         let mut e = e;
         while is_oxlint
@@ -246,7 +246,7 @@ impl IdMatch {
                 _ => !self.only_declarations,
             },
             Node::Prop(prop) => self.checks_in_property(prop, e, name, state),
-            // oxlint checks a computed key there as it does elsewhere.
+            // oxlint checks a computed key there like anywhere else.
             Node::PatProp(prop)
                 if is_oxlint && matches!(prop.key().map(Key::kind), Some(KeyKind::Computed(key)) if key == e) =>
             {
@@ -273,7 +273,7 @@ impl IdMatch {
     fn check_reference<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(name) = e.as_ident()
             && self.is_invalid(name, cx)
-            // For oxc the `A` of `<A />` and of `<A.b />` is a reference, and `A.b` is no member expression.
+            // For oxc the `A` of `<A />` and `<A.b />` is a reference, and `A.b` isn't a member expression.
             && match (e.is_jsx_tag_name(), cx.language().is_oxlint) {
                 (true, true) => !self.only_declarations,
                 (true, false) => false,
@@ -285,7 +285,7 @@ impl IdMatch {
         }
     }
 
-    /// The `b` of `a.b`.
+    /// Checks the `b` of `a.b`.
     fn check_property_name<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Dot { obj, name, .. } = e.kind() else {
             return;
@@ -323,7 +323,7 @@ impl IdMatch {
             return;
         }
         let is_checked = match pat.parent() {
-            // For oxlint the parameter of an index signature has no name.
+            // For oxlint an index signature's parameter has no name.
             Node::Param(param)
                 if cx.language().is_oxlint && param.func().is_some_and(|it| it.kind() == FnKind::IndexSignature) =>
             {
@@ -355,14 +355,13 @@ impl IdMatch {
             _ => !self.only_declarations,
         };
         if is_checked {
-            // For oxlint the type annotation is not part of it.
-            let place = if cx.language().is_oxlint { pat.span() } else { estree_span(pat.into()) };
-            self.report(place, name.bytes(), cx);
+            // For oxlint the type annotation isn't part of the span.
+            let report_span = if cx.language().is_oxlint { pat.span() } else { estree_span(pat.into()) };
+            self.report(report_span, name.bytes(), cx);
         }
     }
 
-    /// The keys of an object pattern in a declaration. That of `{ a }` is at the same place as the
-    /// value.
+    /// Checks the keys of an object pattern in a declaration. The key of `{ a }` has the same location as the value.
     fn check_keys_of_pattern<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
         let PatKind::Object(props) = pat.kind() else {
             return;
@@ -380,7 +379,7 @@ impl IdMatch {
         }
     }
 
-    /// The key of a property of an object literal, which can be a pattern in an assignment.
+    /// Checks the key of an object literal's property. The literal can also be a pattern in an assignment.
     fn check_property<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
         let Some(key) = prop.key() else {
             return;
@@ -428,7 +427,7 @@ impl IdMatch {
         }
     }
 
-    /// The names in statements that are reported unless only declarations are.
+    /// Checks the names in statements that are reported unless `onlyDeclarations` is on.
     fn check_statement<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         match statement.kind() {
             StmtKind::Labeled { .. } | StmtKind::Break(_) | StmtKind::Continue(_) => {
@@ -471,7 +470,7 @@ impl IdMatch {
         }
     }
 
-    /// `a.b.c` where ESLint has `TSQualifiedName`s.
+    /// Checks `a.b.c` where ESLint has `TSQualifiedName`s.
     fn check_entity_name<'a>(&self, name: EntityName<'a>, cx: &mut Cx<'a, Self>) {
         for (i, part) in name.parts().enumerate() {
             match i {
@@ -481,8 +480,8 @@ impl IdMatch {
         }
     }
 
-    /// The keys of `{ with: { key: "" } }` in `import("m", { with: { key: "" } })`, which ESLint has
-    /// as an object literal.
+    /// Checks the keys of `{ with: { key: "" } }` in `import("m", { with: { key: "" } })`, which is an object literal
+    /// in ESLint.
     fn check_options_of_import_type<'a>(&self, attributes: ImportAttributes<'a>, cx: &mut Cx<'a, Self>) {
         let keyword = attributes.keyword_span();
         let name = cx.file().slice(keyword);
@@ -496,7 +495,8 @@ impl IdMatch {
 
     fn check_type<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         match ty.kind() {
-            // The `a.b` of `extends a.b` and `implements a.b` is a `MemberExpression`. For oxlint it is as in any type.
+            // The `a.b` of `extends a.b` and `implements a.b` is a `MemberExpression`. oxlint treats it like any other
+            // type.
             TypeKind::Ref { name, .. }
                 if name.len() > 1
                     && !cx.language().is_oxlint
@@ -629,7 +629,7 @@ impl Rule for IdMatch {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        // The default takes every name: none is empty, and none has a line break in it.
+        // The default pattern matches every name, since no name is empty or contains a line break.
         (self.regex.is_some() && self.pattern != "^.+$").then(State::default)
     }
 

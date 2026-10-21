@@ -1,5 +1,5 @@
-//! The tree that `svelte/compiler` makes of a component with `parse(text, { modern: true })`, as far as
-//! `prettier-plugin-svelte` looks at it. Of JavaScript it has where it is.
+//! The AST that `svelte/compiler` returns from `parse(text, { modern: true })`, limited to what
+//! `prettier-plugin-svelte` reads. JavaScript is stored only as spans.
 
 use std::borrow::Cow;
 
@@ -26,13 +26,12 @@ impl Span {
     }
 }
 
-/// What kind of node of ESTree an expression is, where somebody asks.
+/// An expression's ESTree node type. Only the types that some code checks get their own variant.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum ExpressionKind {
     Identifier,
-    /// A string.
     StringLiteral,
-    /// The text of `this="a"`, for which Svelte has a string.
+    /// The text of `this="a"`, which Svelte turns into a string literal.
     Text,
     /// `null`, a number, `true`, a regular expression ..
     OtherLiteral,
@@ -42,19 +41,19 @@ pub(crate) enum ExpressionKind {
     Other,
 }
 
-/// An expression: the node without the parentheses around it.
+/// An expression. `span` is the node without its surrounding parentheses.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct Expression {
     pub(crate) span: Span,
     pub(crate) kind: ExpressionKind,
-    /// Where the first of its `leadingComments` starts, or else the node.
+    /// Start of the first of its `leadingComments`, or of the node if it has none.
     pub(crate) from: u32,
-    /// With the parentheses around it, and the comments before, between and behind those.
+    /// The node with its surrounding parentheses, plus the comments before, between and after them.
     pub(crate) outer: Span,
 }
 
 impl Expression {
-    /// One with nothing around it.
+    /// An expression without parentheses or comments around it.
     pub(crate) fn new(span: Span, kind: ExpressionKind) -> Expression {
         Expression {
             span,
@@ -68,16 +67,16 @@ impl Expression {
 /// A pattern, with its type annotation.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct Pattern {
-    /// Up to the end of the annotation, unless it is a name.
+    /// Extends to the end of the annotation, unless the pattern is an identifier.
     pub(crate) span: Span,
-    /// `typeAnnotation.typeAnnotation`, from the first comment behind the `:` on.
+    /// `typeAnnotation.typeAnnotation`, starting at the first comment after the `:`.
     pub(crate) annotation: Option<Span>,
-    /// In the pattern or in the annotation.
+    /// True for comments in the pattern or in the annotation.
     pub(crate) has_comments: bool,
 }
 
 impl Pattern {
-    /// With the annotation, which the span of a name does not have.
+    /// The span including the annotation, which an identifier's `span` excludes.
     pub(crate) fn with_annotation(self) -> Span {
         Span {
             start: self.span.start,
@@ -112,7 +111,7 @@ pub(crate) enum DirectiveKind {
     Class,
     On,
     Let,
-    /// `in:`, `out:`, `transition:`: `intro` and `outro`.
+    /// `in:`, `out:` or `transition:`. The fields are `intro` and `outro`.
     Transition(bool, bool),
 }
 
@@ -141,7 +140,7 @@ pub(crate) enum Value {
 }
 
 impl Value {
-    /// The texts and tags that it is made of.
+    /// Its `Text` and `ExpressionTag` nodes.
     pub(crate) fn parts(&self) -> &[Id] {
         match self {
             Value::True => &[],
@@ -159,15 +158,16 @@ pub(crate) struct Element<'a> {
     pub(crate) fragment: FragmentId,
     /// `expression` of `<svelte:component this={..}>`, `tag` of `<svelte:element this={..}>`.
     pub(crate) this: Option<Expression>,
-    /// The attribute `this`, if `this` is the first part of its value and there are more: `this="h{level}"`.
-    pub(crate) this_with_more: Option<Span>,
-    /// Where the `>` or the `/>` of the start tag is.
+    /// The span of the `this` attribute, if its value has several parts and `this` above is only the first:
+    /// `this="h{level}"`.
+    pub(crate) multipart_this_attribute: Option<Span>,
+    /// Offset of the start tag's `>` or `/>`.
     pub(crate) start_tag_end: u32,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) enum Kind<'a> {
-    /// The printer trims it, and puts two together.
+    /// The printer trims it and merges adjacent text nodes.
     Text {
         raw: Cow<'a, [u8]>,
     },
@@ -229,14 +229,14 @@ pub(crate) enum Kind<'a> {
     SnippetBlock {
         /// The name.
         expression: Span,
-        /// Behind the `)` of the parameters.
+        /// Just past the parameters' `)`.
         end_of_parameters: u32,
         body: FragmentId,
     },
     Script {
         is_module: bool,
         attributes: Vec<Id>,
-        /// What is in it.
+        /// The text between the tags.
         content: Span,
     },
     StyleSheet {
@@ -265,15 +265,15 @@ pub(crate) struct Tree<'a> {
     pub(crate) fragments: Vec<Vec<Id>>,
     /// `root.fragment`
     pub(crate) fragment: FragmentId,
-    /// `<svelte:options>`, which is not in the fragment.
+    /// `<svelte:options>`, which isn't in the fragment.
     pub(crate) options: Option<Id>,
     pub(crate) module: Option<Id>,
     pub(crate) instance: Option<Id>,
     pub(crate) css: Option<Id>,
-    /// Those between attributes.
+    /// Only the comments between attributes.
     pub(crate) comments: Vec<Comment>,
-    /// `_svelte_ts` of the plugin: a `<script>` or a `<style>` says `lang="ts"`. Or `ts` of Svelte.
-    pub(crate) says_typescript: bool,
+    /// The plugin's `_svelte_ts` (a `<script>` or `<style>` has `lang="ts"`), or Svelte's `ts`.
+    pub(crate) uses_typescript: bool,
 }
 
 impl<'a> Tree<'a> {

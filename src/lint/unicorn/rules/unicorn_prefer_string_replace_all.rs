@@ -36,7 +36,8 @@ fn is_reg_exp_with_global_flag(e: Expr) -> bool {
     strings::contains_char(flags, b'g')
 }
 
-/// The string that the regular expression `e` matches, if it is a literal that matches only one.
+/// The string that the regular expression `e` matches, if it's a literal that matches only one
+/// string.
 fn get_pattern_replacement(e: Expr) -> Option<Vec<u8>> {
     let ExprKind::Regex(literal) = e.kind() else {
         return None;
@@ -48,7 +49,7 @@ fn get_pattern_replacement(e: Expr) -> Option<Vec<u8>> {
     {
         return None;
     }
-    let ast = regex::parse_pattern(pattern, regex::Mode::of_flags(flags), regex::Options::default()).ok()?;
+    let ast = regex::parse_pattern(pattern, regex::Mode::from_flags(flags), regex::Options::default()).ok()?;
     let RegexKind::Pattern { alternatives } = ast.pattern().kind() else {
         return None;
     };
@@ -62,7 +63,7 @@ fn get_pattern_replacement(e: Expr) -> Option<Vec<u8>> {
         };
         match char::from_u32(value) {
             Some(c) => result.push(c),
-            // Half of a surrogate pair: oxlint takes the pattern as it is written then.
+            // For a lone surrogate, oxlint uses the pattern's source text.
             None => return Some(pattern.to_vec()),
         }
     }

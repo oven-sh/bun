@@ -7,7 +7,7 @@ pub struct NoEmptyPattern {
 
 const UNEXPECTED: Message = Message::new("unexpected", "Unexpected empty {{type}} pattern.");
 
-/// `{}` or `{} = {}` as a parameter of a function.
+/// True for `{}` or `{} = {}` as a function parameter.
 fn is_allowed_parameter(pat: Pat) -> bool {
     let Node::Param(param) = pat.parent() else {
         return false;
@@ -25,9 +25,9 @@ fn is_allowed_parameter(pat: Pat) -> bool {
     }
 }
 
-/// `is_of_property` means the pattern is a property's value, after the `:`.
-fn report<'a>(at: Span, kind: &'static str, is_of_property: bool, cx: &Cx<'a, NoEmptyPattern>) {
-    let report = cx.report(at, UNEXPECTED).data("type", kind).hint(match (is_of_property, kind) {
+/// `is_property_value` means the pattern is a property's value, after the `:`.
+fn report<'a>(at: Span, kind: &'static str, is_property_value: bool, cx: &Cx<'a, NoEmptyPattern>) {
+    let report = cx.report(at, UNEXPECTED).data("type", kind).hint(match (is_property_value, kind) {
         (false, _) => "It declares no variables.",
         (true, "array") => "It declares no variables. For a default value, write = [] instead of : [].",
         (true, _) => "It declares no variables. For a default value, write = {} instead of : {}.",
@@ -81,7 +81,7 @@ impl Rule for NoEmptyPattern {
             ExprTag::Array if e.as_array().is_some_and(List::is_empty) => "array",
             _ => return,
         };
-        // oxlint looks at what declares only.
+        // oxlint only looks at declarations.
         if !cx.language().is_oxlint && utils::is_assignment_target(e) {
             report(e.span(), kind, matches!(e.parent(), Node::Prop(_)), cx);
         }

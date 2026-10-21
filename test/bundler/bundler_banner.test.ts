@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { chmodSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled, type BundlerTestBundleAPI } from "./expectBundled";
 
@@ -10,6 +10,14 @@ const twoEntryPointsAndSharedModule = {
   "/b.js": `import { shared } from "./shared.js"; console.log("b ok", shared());`,
   "/shared.js": `console.log("shared evaluated"); export function shared() { return "shared-value"; }`,
 };
+
+// Whether the file system keeps an execute bit in the mode of a file.
+const hasExecuteBit = (() => {
+  using dir = tempDir("banner-execute-bit", { "file": "" });
+  const path = join(String(dir), "file");
+  chmodSync(path, 0o755);
+  return (statSync(path).mode & 0o111) !== 0;
+})();
 
 // The `.js` files of the output directory in name order. `file` has the content hash of a chunk name replaced.
 function outputFiles(api: BundlerTestBundleAPI) {
@@ -213,8 +221,8 @@ module.exports = 1;`,
       files: twoEntryPointsAndSharedModule,
       onAfterBundle(api) {
         expect(outputHeaders(api, header.length)).toEqual([
-          { file: "a.js", lines: [...header], executable: !isWindows },
-          { file: "b.js", lines: [...header], executable: !isWindows },
+          { file: "a.js", lines: [...header], executable: hasExecuteBit },
+          { file: "b.js", lines: [...header], executable: hasExecuteBit },
           { file: "chunk-[hash].js", lines: [...header], executable: false },
         ]);
       },
@@ -286,12 +294,12 @@ module.exports = 1;`,
         {
           file: "a.js",
           lines: ["#!/usr/bin/env node", "// Additional banner content", "import {"],
-          executable: !isWindows,
+          executable: hasExecuteBit,
         },
         {
           file: "b.js",
           lines: ["#!/usr/bin/env node", "// Additional banner content", "import {"],
-          executable: !isWindows,
+          executable: hasExecuteBit,
         },
         {
           file: "chunk-[hash].js",
@@ -398,12 +406,12 @@ export const value = "dynamic-value";`,
         {
           file: "a.js",
           lines: ["#!/usr/bin/env bun", "// @bun", "// Additional banner content"],
-          executable: !isWindows,
+          executable: hasExecuteBit,
         },
         {
           file: "chunk-[hash].js",
           lines: ["#!/usr/bin/env node", "// @bun", "// Additional banner content"],
-          executable: !isWindows,
+          executable: hasExecuteBit,
         },
       ]);
     },
@@ -434,12 +442,12 @@ export const a = "a-value"; console.log("a evaluated");`,
         {
           file: "a.js",
           lines: ["#!/usr/bin/env node", "// @bun", "// Additional banner content"],
-          executable: !isWindows,
+          executable: hasExecuteBit,
         },
         {
           file: "b.js",
           lines: ["#!/usr/bin/env bun", "// @bun", "// Additional banner content"],
-          executable: !isWindows,
+          executable: hasExecuteBit,
         },
         {
           file: "chunk-[hash].js",

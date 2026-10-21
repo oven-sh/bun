@@ -954,8 +954,8 @@ pub(crate) mod command {
     /// borrow at the time of return; callers thread it down via the `ctx`
     /// parameter rather than re-deriving.
     ///
-    /// `#[inline(never)]`: this is the `init` step of the `bun run <script>`
-    /// dispatch chain (`exec_auto_or_run → init → RunCommand::exec_with_cfg`)
+    /// `#[inline(never)]`: this is the first step of the `bun run <script>`
+    /// dispatch chain (`exec_auto_or_run → create_context_data → RunCommand::exec_with_cfg`)
     /// and must stay a concrete symbol so `src/startup.order` can place it —
     /// and the argv→Context parsing it pulls in — contiguously. `#[track_caller]`
     /// would otherwise make it an inlining candidate, scattering those callees.
@@ -977,7 +977,24 @@ pub(crate) mod command {
 
         Ok(ctx)
     }
-    pub(crate) use create_context_data as init;
+
+    /// [`create_context_data`], and then the flags of `bun` that `arguments::parse` does not read for `cmd`.
+    ///
+    /// `#[cold]`: `bun <file>` and `bun run` do not come here. They call `create_context_data`.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    pub(crate) fn init(
+        cmd: Tag,
+        log: &mut bun_ast::Log,
+    ) -> crate::Result<&'static mut ContextData> {
+        let ctx = create_context_data(cmd, log)?;
+        // `bun build` reads what stands before it, and what `BUN_OPTIONS` adds, with its own flags.
+        if !arguments::reads_runtime_flags(cmd) && cmd != Tag::BuildCommand {
+            arguments::disallow_code_generation_from_strings_among(arguments::flags_of_bun(cmd));
+        }
+        Ok(ctx)
+    }
 
     /// Full subcommand dispatch.
     ///
@@ -1110,7 +1127,7 @@ pub(crate) mod command {
         // NOTE: an earlier shim used to scan all of `argv` here for
         // `--version`/`--help`/`--revision` and short-circuit, because
         // `Arguments::parse` was gated. That shim is removed now that
-        // `arguments::parse` (called via `init` → `create_context_data`) is
+        // `arguments::parse` (called from `create_context_data`) is
         // live and honours `stop_after_positional_at = 1` — the shim broke
         // `bun <bin> --version` by intercepting the flag meant for `<bin>`.
 
@@ -1251,7 +1268,8 @@ pub(crate) mod command {
     #[inline(never)]
     fn exec_auto_or_run(tag: Tag, log: &mut bun_ast::Log) -> CmdResult {
         // Bare `bun` help is served by the empty-positionals fallthrough.
-        let ctx = init(tag, log)?;
+        // Not `init`: `arguments::parse` reads every flag of `bun` for these two tags.
+        let ctx = create_context_data(tag, log)?;
         ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
 
         // Scripts have no entry point to start from: the project is checked, as by `bun check`.
@@ -1786,6 +1804,13 @@ To create a project with the official Next.js scaffolding tool, run
             && (!strings::contains(template_name, b"/")
                 || strings::starts_with_char(template_name, b'@'))
             && example_tag != ExampleTag::LocalFolder;
+
+        // `bun create` takes a flag wherever it stands. What follows the name of a template that bunx runs is the
+        // template's.
+        arguments::disallow_code_generation_from_strings_among(match use_bunx {
+            true => &args[1..template_name_start],
+            false => &args[1..],
+        });
 
         if use_bunx {
             let mut bunx_args: Vec<&ZStr> =

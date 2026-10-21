@@ -54,6 +54,23 @@ A `Worker` whose own `execArgv` contains the flag throws `ERR_WORKER_INVALID_EXE
 - With the flag and no value, the `Worker` starts, as in Node.js. `eval()` and `new Function()` throw inside it.
 - With `=strict`, the `Worker` constructor throws the `EvalError`. Put the Worker's code in a file and pass the file's path or URL.
 
+### Commands other than `bun <file>`
+
+`bun run`, `bun test` and `bun repl` read the flag as `bun <file>` does. The other commands do not have the flag among their own. For them it is a flag of `bun`:
+
+- `bun create`, `bun lint`, `bun fmt` and `bun check` read it in `BUN_OPTIONS` and before the command.
+- `bun install`, `bun add`, the other package manager commands and `bunx` read it in `BUN_OPTIONS` only. On their command line the flag is an error: `bun install has no --disallow-code-generation-from-strings flag.`
+- `bun build` does not read it. To bundle at the level, call `Bun.build()` in a program that runs with the flag.
+
+```bash icon="terminal" terminal
+bun --disallow-code-generation-from-strings=strict create ./App.tsx
+BUN_OPTIONS="--disallow-code-generation-from-strings=strict" bun install --analyze ./index.ts
+```
+
+`bun install --analyze` and `bun create <component>` bundle your files, and a bundle calls [macros](/bundler/macros). With `=strict`, these commands fail at the first macro call.
+
+`bun create` also takes the flag after `create`, up to `--`. What follows the name of a template from npm goes to the template.
+
 ## What each level refuses
 
 | A string becomes code through                                                                         | Flag    | `=strict` |
@@ -233,5 +250,5 @@ The option is on in the builds of Bun that we publish.
 - **The executable file.** Whoever can replace or edit a compiled executable decides what is embedded in it.
 - **`BUN_BE_BUN`.** With `BUN_BE_BUN=1`, a compiled executable runs as the `bun` CLI. The embedded program does not start, and the flags embedded with it do not apply.
 - **The process's own memory.** A program that can write to its own memory can change anything, including the embedded modules and Bun itself. On Linux, writing to `/proc/self/mem` with `node:fs` does that. Native code can do it everywhere.
-- **Native code.** A native addon, or a library loaded with `bun:ffi`, can do what native code can do. `--no-addons` refuses `process.dlopen()` and `cc()` from `bun:ffi`, and `--no-ffi-cc` refuses `cc()`. Neither one refuses `dlopen()`, `linkSymbols()` or `CFunction()` from `bun:ffi`.
+- **Native code.** A native addon, or a library loaded with `bun:ffi`, can do what native code can do. `--no-addons` refuses `process.dlopen()` and `cc()` from `bun:ffi`, and `--no-ffi-cc` refuses `cc()`. Neither one refuses `dlopen()`, `linkSymbols()` or `CFunction()` from `bun:ffi`. Only `bun <file>`, `bun run`, `bun test` and `bun repl` read these two flags.
 - **Child processes.** A process that the program spawns has its own flags.

@@ -17,9 +17,10 @@ describe("bun exec", () => {
     .runAsTest("it works on command fail");
 
   // Without a POSIX shell (always on Windows), lifecycle scripts and `--filter`
-  // run a script as `bun exec --no-env-file <script>`.
+  // run a script as `bun exec --no-env-file <script>`. The command in front of
+  // the open quote does not run.
   for (const flags of [[], ["--no-env-file"]]) {
-    TestBuilder.command`${BUN} exec ${flags} ${'echo "start; touch MARKER; echo done'}`
+    TestBuilder.command`${BUN} exec ${flags} ${'touch MARKER; echo "start'}`
       .env(bunEnv)
       .ensureTempDir()
       .stdout("")

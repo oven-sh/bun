@@ -38,10 +38,11 @@ describe.concurrent("run-shell", () => {
     expect(stderr).toBe("error: Failed to run script.sh due to error Unexpected ')'\n");
   });
 
+  // Each script has a complete command in front of the open quote. Nothing of the script runs.
   test.each([
     {
       name: "a shell file",
-      files: { "script.sh": `echo "start; touch MARKER; echo done` },
+      files: { "script.sh": `touch MARKER\necho "start` },
       args: ["script.sh"],
       expectedStderr: "error: Failed to run script.sh due to error Unclosed double quote\n",
     },
@@ -50,12 +51,12 @@ describe.concurrent("run-shell", () => {
       files: {
         "package.json": JSON.stringify({
           name: "unclosed-quote",
-          scripts: { apostrophe: "echo it's done && touch MARKER" },
+          scripts: { apostrophe: "touch MARKER && echo it's done" },
         }),
       },
       args: ["run", "--shell=bun", "apostrophe"],
       expectedStderr:
-        "$ echo it's done && touch MARKER\n" +
+        "$ touch MARKER && echo it's done\n" +
         "error: Failed to run script apostrophe due to error Unclosed single quote\n",
     },
   ])("$name that ends inside an open quote is refused", async ({ files, args, expectedStderr }) => {
@@ -68,16 +69,18 @@ describe.concurrent("run-shell", () => {
       stdout: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, ranPastTheQuote: existsSync(join(String(dir), "MARKER")), exitCode }).toEqual({
+    expect({ stdout, stderr, ran: existsSync(join(String(dir), "MARKER")), exitCode }).toEqual({
       stdout: "",
       stderr: expectedStderr,
-      ranPastTheQuote: false,
+      ran: false,
       exitCode: 1,
     });
   });
 
   // On Windows these commands have no POSIX shell and no `--shell` switch: they run the script
-  // as `bun exec --no-env-file <script>`. On every other platform `sh` refuses the same script.
+  // as `bun exec --no-env-file <script>`, which exits 1. On every other platform `sh` refuses
+  // the same script and exits 2.
+  const refusalExitCode = isWindows ? 1 : 2;
   test.each([
     {
       name: "bun run --filter",
@@ -85,13 +88,13 @@ describe.concurrent("run-shell", () => {
         dep0: {
           "package.json": JSON.stringify({
             name: "dep0",
-            scripts: { apostrophe: "echo it's done && touch MARKER" },
+            scripts: { apostrophe: "touch MARKER && echo it's done" },
           }),
         },
       },
       args: ["run", "--filter", "*", "apostrophe"],
       marker: join("dep0", "MARKER"),
-      expected: /dep0 apostrophe: Exited with code [12]/,
+      expected: `dep0 apostrophe: Exited with code ${refusalExitCode}`,
     },
     {
       name: "bun install (root lifecycle script)",
@@ -99,12 +102,12 @@ describe.concurrent("run-shell", () => {
         "package.json": JSON.stringify({
           name: "unclosed-quote",
           version: "1.0.0",
-          scripts: { postinstall: "echo it's done && touch MARKER" },
+          scripts: { postinstall: "touch MARKER && echo it's done" },
         }),
       },
       args: ["install"],
       marker: "MARKER",
-      expected: /error: postinstall script from "unclosed-quote" exited with [12]/,
+      expected: `error: postinstall script from "unclosed-quote" exited with ${refusalExitCode}`,
     },
   ])("$name fails on a script that ends inside an open quote", async ({ files, args, marker, expected }) => {
     using dir = tempDir("run-shell-unclosed-quote", files);
@@ -118,9 +121,8 @@ describe.concurrent("run-shell", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const output = stdout + stderr;
     if (isWindows) expect(output).toContain("Unclosed single quote");
-    expect(output).toMatch(expected);
-    expect(existsSync(join(String(dir), marker))).toBe(false);
-    expect([1, 2]).toContain(exitCode);
+    expect(output).toContain(expected);
+    expect({ ran: existsSync(join(String(dir), marker)), exitCode }).toEqual({ ran: false, exitCode: refusalExitCode });
   });
 
   // The Bun shell refuses a script that ends inside an open quote, so the quotes that `bun run`

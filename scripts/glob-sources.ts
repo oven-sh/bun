@@ -34,7 +34,7 @@ interface SourcePattern {
 const patterns = {
   /** `packages/bun-error/*` — error overlay page */
   bunError: {
-    paths: ["packages/bun-error/*.{json,ts,tsx,css}", "packages/bun-error/img/*"],
+    paths: ["packages/bun-error/*.{json,ts,tsx,css}"],
   },
   /** `*.string-map.ts` — input to generate-string-map codegen */
   stringMaps: {
@@ -52,33 +52,32 @@ const patterns = {
   js: {
     paths: ["src/js/**/*.{js,ts}", "src/install/PackageManager/scanner-entry.ts"],
   },
+  /** one page per lint rule, read by generate-lint-docs.ts */
+  lintRuleDocs: {
+    paths: ["docs/lint/rules/*/**/*.mdx"],
+  },
   /** the codegen scripts themselves */
   jsCodegen: {
     paths: ["src/codegen/*.ts"],
   },
   /** server-rendering runtime bundled into binary */
   bakeRuntime: {
-    // dev_server/mod.rs is read by bake-codegen.ts to derive the
+    // dev_server/protocol.rs is read by bake-codegen.ts to derive the
     // MessageId/IncomingMessageId const-enums in generated.ts.
-    paths: ["src/runtime/bake/*.ts", "src/runtime/bake/*/*.{ts,css}", "src/runtime/bake/dev_server/mod.rs"],
+    paths: ["src/runtime/bake/*.ts", "src/runtime/bake/*/*.{ts,css}", "src/runtime/bake/dev_server/protocol.rs"],
     exclude: ["src/runtime/bake/generated.ts"],
   },
-  /** legacy bindgen input */
+  /** bindgen input */
   bindgen: {
     paths: ["src/**/*.bind.ts"],
   },
-  /** v2 bindgen input */
-  bindgenV2: {
-    paths: ["src/**/*.bindv2.ts"],
-  },
-  /** bindgen v2 generator code */
-  bindgenV2Internal: {
-    paths: ["src/codegen/bindgenv2/**/*.ts"],
+  /** bindgen generator code */
+  bindgenCodegen: {
+    paths: ["src/codegen/bindgen*.ts", "src/codegen/helpers.ts"],
   },
   /**
    * all `*.rs` + workspace manifests — implicit inputs to the cargo step.
-   * `rust-toolchain.toml` is included so a nightly bump invalidates the
-   * staticlib (cargo's own fingerprinting then forces a full rebuild).
+   * `rust-toolchain.toml` is included so a nightly bump re-plans the crate graph.
    * `.html` under `src/runtime/` is embedded with `include_bytes!` (e.g. the
    * dev error page template), so edits to it must re-run cargo too.
    */
@@ -98,11 +97,11 @@ const patterns = {
       "src/io/*.cpp",
       "src/jsc/modules/*.cpp",
       "src/jsc/bindings/*.cpp",
+      "src/jsc/bindings/Bindgen/*.cpp",
       "src/jsc/bindings/webcore/*.cpp",
       "src/jsc/bindings/webcore/streams/*.cpp",
       "src/jsc/bindings/sqlite/*.cpp",
       "src/jsc/bindings/webcrypto/*.cpp",
-      "src/jsc/bindings/webcrypto/*/*.cpp",
       "src/jsc/bindings/node/*.cpp",
       "src/jsc/bindings/node/crypto/*.cpp",
       "src/jsc/bindings/node/http/*.cpp",
@@ -121,11 +120,9 @@ const patterns = {
     paths: [
       "packages/bun-usockets/src/*.c",
       "packages/bun-usockets/src/eventing/*.c",
-      "packages/bun-usockets/src/internal/*.c",
       "packages/bun-usockets/src/crypto/*.c",
       "src/jsc/bindings/uv-posix-polyfills.c",
       "src/jsc/bindings/uv-posix-stubs.c",
-      "src/*.c",
       "src/jsc/bindings/node/http/llhttp/*.c",
     ],
   },

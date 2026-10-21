@@ -1,81 +1,6 @@
-import { define, InvalidThisBehavior } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 export default [
-  define({
-    name: "DNSResolver",
-    rustPath: "crate::dns_jsc::Resolver",
-    construct: false,
-    noConstructor: true,
-    finalize: true,
-    configurable: false,
-    klass: {},
-    proto: {
-      setServers: {
-        fn: "setServers",
-        length: 1,
-      },
-      getServers: {
-        fn: "getServers",
-        length: 0,
-      },
-      resolve: {
-        fn: "resolve",
-        length: 3,
-      },
-      resolveSrv: {
-        fn: "resolveSrv",
-        length: 1,
-      },
-      resolveTxt: {
-        fn: "resolveTxt",
-        length: 1,
-      },
-      resolveSoa: {
-        fn: "resolveSoa",
-        length: 1,
-      },
-      resolveNaptr: {
-        fn: "resolveNaptr",
-        length: 1,
-      },
-      resolveMx: {
-        fn: "resolveMx",
-        length: 1,
-      },
-      resolveCaa: {
-        fn: "resolveCaa",
-        length: 1,
-      },
-      resolveNs: {
-        fn: "resolveNs",
-        length: 1,
-      },
-      resolvePtr: {
-        fn: "resolvePtr",
-        length: 1,
-      },
-      resolveCname: {
-        fn: "resolveCname",
-        length: 1,
-      },
-      resolveAny: {
-        fn: "resolveAny",
-        length: 1,
-      },
-      setLocalAddress: {
-        fn: "setLocalAddress",
-        length: 1,
-      },
-      cancel: {
-        fn: "cancel",
-        length: 0,
-      },
-      reverse: {
-        fn: "reverse",
-        length: 1,
-      },
-    },
-  }),
   define({
     name: "FSWatcher",
     construct: false,
@@ -94,152 +19,12 @@ export default [
         fn: "doUnref",
         length: 0,
       },
-      hasRef: {
-        fn: "hasRef",
-        length: 0,
-      },
       close: {
         fn: "doClose",
         length: 0,
       },
     },
     values: ["listener"],
-  }),
-  define({
-    name: "StatWatcher",
-    construct: false,
-    noConstructor: true,
-    finalize: true,
-    configurable: false,
-    klass: {},
-    JSType: "0b11101110",
-    proto: {
-      ref: {
-        fn: "doRef",
-        length: 0,
-      },
-      unref: {
-        fn: "doUnref",
-        length: 0,
-      },
-      close: {
-        fn: "doClose",
-        length: 0,
-      },
-    },
-    values: ["listener", "prevStat"],
-  }),
-  define({
-    name: "Timeout",
-    rustPath: "crate::timer::TimeoutObject",
-    construct: true,
-    finalize: true,
-    sharedThis: true,
-    configurable: false,
-    klass: {},
-    JSType: "0b11101110",
-    proto: {
-      ref: {
-        fn: "doRef",
-        length: 0,
-        invalidThisBehavior: InvalidThisBehavior.NoOp,
-      },
-      refresh: {
-        fn: "doRefresh",
-        length: 0,
-        invalidThisBehavior: InvalidThisBehavior.NoOp,
-      },
-      unref: {
-        fn: "doUnref",
-        length: 0,
-        invalidThisBehavior: InvalidThisBehavior.NoOp,
-      },
-      hasRef: {
-        fn: "hasRef",
-        length: 0,
-        invalidThisBehavior: InvalidThisBehavior.NoOp,
-      },
-      ["@@toPrimitive"]: {
-        fn: "toPrimitive",
-        length: 1,
-        invalidThisBehavior: InvalidThisBehavior.NoOp,
-      },
-      _destroyed: {
-        getter: "getDestroyed",
-      },
-      close: {
-        fn: "close",
-        length: 0,
-        invalidThisBehavior: InvalidThisBehavior.NoOp,
-      },
-      _onTimeout: {
-        getter: "get_onTimeout",
-        setter: "set_onTimeout",
-        this: true,
-      },
-      _idleTimeout: {
-        getter: "get_idleTimeout",
-        setter: "set_idleTimeout",
-        this: true,
-      },
-      _repeat: {
-        getter: "get_repeat",
-        setter: "set_repeat",
-        this: true,
-      },
-      _idleStart: {
-        getter: "get_idleStart",
-        setter: "set_idleStart",
-        this: true,
-      },
-      ["@@dispose"]: {
-        fn: "dispose",
-        length: 0,
-        invalidThisBehavior: InvalidThisBehavior.NoOp,
-      },
-    },
-    values: ["arguments", "callback", "idleTimeout", "repeat", "idleStart"],
-  }),
-  define({
-    name: "Immediate",
-    rustPath: "crate::timer::ImmediateObject",
-    construct: true,
-    finalize: true,
-    sharedThis: true,
-    configurable: false,
-    klass: {},
-    JSType: "0b11101110",
-    proto: {
-      ref: {
-        fn: "doRef",
-        length: 0,
-        invalidThisBehavior: InvalidThisBehavior.NoOp,
-      },
-      unref: {
-        fn: "doUnref",
-        length: 0,
-        invalidThisBehavior: InvalidThisBehavior.NoOp,
-      },
-      hasRef: {
-        fn: "hasRef",
-        length: 0,
-        invalidThisBehavior: InvalidThisBehavior.NoOp,
-      },
-      ["@@toPrimitive"]: {
-        fn: "toPrimitive",
-        length: 1,
-        invalidThisBehavior: InvalidThisBehavior.NoOp,
-      },
-      _destroyed: {
-        getter: "getDestroyed",
-      },
-      ["@@dispose"]: {
-        fn: "dispose",
-        length: 0,
-        invalidThisBehavior: InvalidThisBehavior.NoOp,
-      },
-    },
-    values: ["arguments", "callback"],
   }),
   define({
     name: "NodeJSFS",
@@ -325,7 +110,6 @@ export default [
       symlinkSync: { async: false, fn: "symlinkSync", length: 3 },
       truncate: { async: true, fn: "truncate", length: 3 },
       truncateSync: { async: false, fn: "truncateSync", length: 2 },
-      unwatchFile: { async: true, fn: "unwatchFile", length: 2 },
       unlink: { async: true, fn: "unlink", length: 2 },
       unlinkSync: { async: false, fn: "unlinkSync", length: 1 },
       utimes: { async: true, fn: "utimes", length: 4 },
@@ -340,6 +124,48 @@ export default [
       writevSync: { async: false, fn: "writevSync", length: 3 },
       realpathNative: { async: true, fn: "realpathNative", length: 3 },
       realpathNativeSync: { async: false, fn: "realpathNativeSync", length: 3 },
+      // The callback arm of each async operation: argument 0 is the callback.
+      accessCb: { fn: "accessCb", length: 4 },
+      appendFileCb: { fn: "appendFileCb", length: 5 },
+      closeCb: { fn: "closeCb", length: 2 },
+      copyFileCb: { fn: "copyFileCb", length: 5 },
+      existsCb: { fn: "existsCb", length: 3 },
+      chownCb: { fn: "chownCb", length: 5 },
+      chmodCb: { fn: "chmodCb", length: 4 },
+      fchmodCb: { fn: "fchmodCb", length: 4 },
+      fchownCb: { fn: "fchownCb", length: 5 },
+      fstatCb: { fn: "fstatCb", length: 2 },
+      fsyncCb: { fn: "fsyncCb", length: 3 },
+      ftruncateCb: { fn: "ftruncateCb", length: 2 },
+      futimesCb: { fn: "futimesCb", length: 5 },
+      lchmodCb: { fn: "lchmodCb", length: 4 },
+      lchownCb: { fn: "lchownCb", length: 5 },
+      linkCb: { fn: "linkCb", length: 4 },
+      lstatCb: { fn: "lstatCb", length: 2 },
+      mkdirCb: { fn: "mkdirCb", length: 4 },
+      mkdtempCb: { fn: "mkdtempCb", length: 4 },
+      openCb: { fn: "openCb", length: 5 },
+      readCb: { fn: "readCb", length: 7 },
+      writeCb: { fn: "writeCb", length: 7 },
+      readFileCb: { fn: "readFileCb", length: 4 },
+      writeFileCb: { fn: "writeFileCb", length: 5 },
+      readlinkCb: { fn: "readlinkCb", length: 4 },
+      rmCb: { fn: "rmCb", length: 4 },
+      rmdirCb: { fn: "rmdirCb", length: 4 },
+      realpathCb: { fn: "realpathCb", length: 4 },
+      realpathNativeCb: { fn: "realpathNativeCb", length: 4 },
+      renameCb: { fn: "renameCb", length: 4 },
+      statCb: { fn: "statCb", length: 2 },
+      statfsCb: { fn: "statfsCb", length: 3 },
+      symlinkCb: { fn: "symlinkCb", length: 5 },
+      truncateCb: { fn: "truncateCb", length: 4 },
+      unlinkCb: { fn: "unlinkCb", length: 3 },
+      utimesCb: { fn: "utimesCb", length: 5 },
+      lutimesCb: { fn: "lutimesCb", length: 5 },
+      writevCb: { fn: "writevCb", length: 5 },
+      readvCb: { fn: "readvCb", length: 5 },
+      fdatasyncCb: { fn: "fdatasyncCb", length: 3 },
+      readdirCb: { fn: "readdirCb", length: 4 },
       Dirent: { getter: "getDirent" },
       Stats: { getter: "getStats" },
     },

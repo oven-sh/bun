@@ -6,12 +6,13 @@ use crate::JSGlobalObject;
 use bun_core::String as BunString;
 use bun_paths::resolve_path;
 
+/// The C++ caller `transferToWTFString()`s the result.
 #[unsafe(no_mangle)]
 extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
     global_object: &JSGlobalObject,
-    input: BunString,
+    input: &BunString,
 ) -> BunString {
-    let str = input.to_utf8_without_ref();
+    let str = input.to_utf8();
 
     // The cwd is the FileSystem singleton's top_level_dir (resolver_jsc.rs
     // uses the same backing storage).

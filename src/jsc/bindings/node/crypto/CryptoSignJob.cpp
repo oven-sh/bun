@@ -286,8 +286,8 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
     auto dataView = getArrayBufferOrView2(globalObject, scope, dataValue, "data"_s, jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
 
-    Vector<uint8_t> data;
-    data.append(std::span { dataView->data(), dataView->size() });
+    auto data = copyArgumentBytes(globalObject, scope, std::span { dataView->data(), dataView->size() }, "data"_s);
+    if (!data) return std::nullopt;
 
     if (mode == Mode::Sign) {
         if (keyValue.pureToBoolean() == TriState::False) {
@@ -321,7 +321,9 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
     if (mode == Mode::Verify) {
         auto signatureView = getArrayBufferOrView2(globalObject, scope, signatureValue, "signature"_s, jsUndefined(), true);
         RETURN_IF_EXCEPTION(scope, {});
-        signatureData.append(std::span { signatureView->data(), signatureView->size() });
+        auto copy = copyArgumentBytes(globalObject, scope, std::span { signatureView->data(), signatureView->size() }, "signature"_s);
+        if (!copy) return std::nullopt;
+        signatureData = WTF::move(*copy);
     }
 
     auto prepareResult = mode == Mode::Verify
@@ -391,22 +393,26 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         //              return 0;
         //      }
         //
+        //    EC and DSA providers do the same thing:
+        //    - providers/implementations/keymgmt/ec_kmgmt.c returns "SHA256"
+        //    - providers/implementations/keymgmt/dsa_kmgmt.c returns DSA_DEFAULT_MD ("SHA256")
+        //
         // BoringSSL Difference:
         // =====================
         // BoringSSL (used by Bun) does not have this automatic default mechanism.
-        // When NULL is passed as the digest to EVP_DigestVerifyInit for RSA keys,
+        // When NULL is passed as the digest to EVP_DigestVerifyInit for RSA/EC/DSA keys,
         // BoringSSL returns error 0x06000077 (NO_DEFAULT_DIGEST).
         //
         // This Fix:
         // =========
         // To achieve Node.js/OpenSSL compatibility, we explicitly set SHA256 as the
-        // default digest for RSA keys when no algorithm is specified, matching the
-        // OpenSSL behavior documented above.
+        // default digest for RSA, EC, and DSA keys when no algorithm is specified,
+        // matching the OpenSSL behavior documented above.
         //
         // For Ed25519/Ed448 keys (one-shot variants), we intentionally leave digest
         // as null since these algorithms perform their own hashing internally and
         // don't require a separate digest algorithm.
-        if (keyObject.asymmetricKey().isRsaVariant()) {
+        if (keyObject.asymmetricKey().isRsaVariant() || keyObject.asymmetricKey().isSigVariant()) {
             digest = Digest::FromName("SHA256"_s);
         }
     }
@@ -428,7 +434,7 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         return SignJobCtx(
             mode,
             keyObject.data(),
-            WTF::move(data),
+            WTF::move(*data),
             digest,
             padding,
             pssSaltLength,
@@ -440,7 +446,7 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
     return SignJobCtx(
         mode,
         keyObject.data(),
-        WTF::move(data),
+        WTF::move(*data),
         digest,
         padding,
         pssSaltLength,

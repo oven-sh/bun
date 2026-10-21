@@ -6,7 +6,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 extern "C" fn Timer_enableEventLoopDelayMonitoring(
     vm: *mut VirtualMachine,
     histogram: JSValue,
-    resolution_ms: i32,
+    resolution_ms: f64,
 ) {
     // SAFETY: vm is a valid non-null pointer passed from C++.
     let vm = unsafe { &mut *vm };
@@ -23,10 +23,8 @@ extern "C" fn Timer_enableEventLoopDelayMonitoring(
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn Timer_disableEventLoopDelayMonitoring(vm: *mut VirtualMachine) {
-    // SAFETY: vm is a valid non-null pointer passed from C++.
-    let vm = unsafe { &mut *vm };
+extern "C" fn Timer_disableEventLoopDelayMonitoring() {
     let state = crate::jsc_hooks::runtime_state();
     // SAFETY: see `Timer_enableEventLoopDelayMonitoring`.
-    unsafe { (*state).timer.event_loop_delay.disable(vm) };
+    unsafe { (*state).timer.event_loop_delay.disable() };
 }

@@ -1,53 +1,13 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 export default [
-  define({
-    name: "ResourceUsage",
-    construct: true,
-    noConstructor: true,
-    finalize: true,
-    configurable: false,
-    hasPendingActivity: false,
-    klass: {},
-    JSType: "0b11101110",
-    proto: {
-      maxRSS: {
-        getter: "getMaxRSS",
-      },
-      shmSize: {
-        getter: "getSharedMemorySize",
-      },
-      swapCount: {
-        getter: "getSwapCount",
-      },
-      messages: {
-        getter: "getMessages",
-      },
-      signalCount: {
-        getter: "getSignalCount",
-      },
-      contextSwitches: {
-        getter: "getContextSwitches",
-        cache: true,
-      },
-      cpuTime: {
-        getter: "getCPUTime",
-        cache: true,
-      },
-      ops: {
-        getter: "getOps",
-        cache: true,
-      },
-    },
-    values: [],
-  }),
   define({
     name: "Subprocess",
     // R-2 Phase 2: user impls take `&self`; emit `this: &T` shims.
     sharedThis: true,
     construct: true,
     noConstructor: true,
-    finalize: true,
+    refCounted: true,
     configurable: false,
     memoryCost: true,
     klass: {},

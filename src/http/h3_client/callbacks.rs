@@ -16,7 +16,9 @@ use super::client_context::ClientContext;
 use super::client_session::{ClientSession, session_mut, stream_mut, stream_ref};
 use super::encode;
 use super::stream::Stream;
-use crate::h2_client::dispatch::{is_malformed_response_field, is_malformed_response_value};
+use crate::h2_client::dispatch::{
+    is_malformed_response_field, is_malformed_response_value, trim_response_value,
+};
 use crate::h3_client as H3;
 use bun_picohttp as picohttp;
 
@@ -243,7 +245,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         }
         stream
             .decoded_headers
-            .push(picohttp::Header::new(name, value));
+            .push(picohttp::Header::new(name, trim_response_value(value)));
         i += 1;
     }
     if status == 0 {

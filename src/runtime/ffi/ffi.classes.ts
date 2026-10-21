@@ -1,4 +1,4 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 export default [
   define({
@@ -18,6 +18,6 @@ export default [
         getter: "getSymbols",
       },
     },
-    values: ["symbolsValue"],
+    values: ["symbolsValue", "functionsValue"],
   }),
 ];

@@ -63,7 +63,6 @@ describe("bundler", () => {
     ],
   });
   itBundled("loader/File", {
-    todo: process.platform === "win32", // TODO
     files: {
       "/entry.js": `
         import path from 'path';
@@ -84,7 +83,6 @@ describe("bundler", () => {
     },
   });
   itBundled("loader/FileMultipleNoCollision", {
-    todo: process.platform === "win32", // TODO
     files: {
       "/entry.js": /* js */ `
         import path from 'path';
@@ -110,7 +108,6 @@ describe("bundler", () => {
     },
   });
   itBundled("loader/FileMultipleNoCollisionAssetNames", {
-    todo: process.platform === "win32", // TODO
     files: {
       "/entry.js": /* js */ `
         import path from 'path';

@@ -432,6 +432,9 @@ void us_nq_settings_init(struct lsquic_engine_settings *s, int is_server,
      * grant while that stream has unsent data (lsquic_qdh_arm_if_unsent). */
     s->es_qpack_enc_max_size = 0;
     s->es_qpack_enc_max_blocked = 0;
+    /* lsquic then parses nothing past an unclaimed header block. A client's
+     * default of 2 lets the body reach JS ahead of the `onheaders` before it. */
+    s->es_max_header_sets = 1;
 }
 
 #define NQ_SET(field, ctype) \

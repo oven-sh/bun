@@ -1,6 +1,6 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
-import { describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
 import {
   blackholePortSource,
   bunEnv,
@@ -10,8 +10,10 @@ import {
   gc,
   isASAN,
   isDebug,
+  isLinux,
   isMusl,
   isWindows,
+  runtimesWithNode,
   tempDir,
   tls as tlsCert,
   tmpdirSync,
@@ -2011,6 +2013,282 @@ describe("paused socket whose peer sends RST", () => {
       server.close();
     }
     expect(errors.map(e => e.code)).not.toContain("ENOEXEC");
+  });
+});
+
+// libuv cancels a write that is still in flight when its handle closes. Node gives
+// the callback UV_ECANCELED, after 'error' and before 'close'.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L86-L90
+describe("socket torn down with a write still in flight", () => {
+  // What `holder` reports after each teardown, in order, up to 'close'. The same for a client
+  // socket and for an accepted socket.
+  const teardowns: Record<string, string[]> = {
+    // Linux only. Which comes first, the reset or a writable event, is only known there: a loopback
+    // RST arrives before the close() that sends it returns. On Windows the writable event wins and
+    // the write path settles the write.
+    // The holder reads. For one that does not, Node fails the write with the errno of its own send (#43381).
+    "peer reset": ["error ECONNRESET read", "write ECANCELED write", "queued ECONNRESET read", "close true"],
+    "destroy()": ["write ECANCELED write", "queued ECANCELED write", "close false"],
+    "destroy(err)": ["error EBOOM", "write ECANCELED write", "queued EBOOM", "close true"],
+    // The write is canceled when the handle closes, behind what the caller of destroy() queues.
+    "destroy(err), then a tick and a microtask": [
+      "error EBOOM",
+      "tick",
+      "microtask",
+      "write ECANCELED write",
+      "queued EBOOM",
+      "close true",
+    ],
+    // The stream swallows the throw before it queues 'error'. The writes still settle.
+    "destroy(err, cb) with a cb that throws": ["write ECANCELED write", "queued EBOOM", "close true"],
+    // A corked batch reaches the socket through _writev. Both of its chunks report.
+    "destroy() with a corked batch in flight": [
+      "write ECANCELED write",
+      "write ECANCELED write",
+      "queued ECANCELED write",
+      "close false",
+    ],
+    "resetAndDestroy()": ["write ECANCELED write", "queued ECANCELED write", "close false"],
+    // A destroyed stream gets no EOF, so there is no 'end'.
+    "destroy() with no write in flight": ["close false"],
+  };
+  // Bun only. A holder that connects again at once reports up to the answer of its new connection.
+  // The cancel belongs to the connection that was given up, as the cancel of a connect request does
+  // ("a socket destroyed while connecting ... can connect again at once"). Node fails the new
+  // connection with it. The 'close' is the one of the connection that was given up.
+  const reconnects: Record<string, string[]> = {
+    "destroy(), then connect()": ["write ECANCELED write", "queued ECANCELED write", "close false", "data again"],
+    // connect() still dials. Node reports the throw when it cancels the write, which is later.
+    "destroy(), then connect(), with a write callback that throws": [
+      "write ECANCELED write",
+      "queued ERR_STREAM_DESTROYED",
+      "uncaught from the write callback",
+      "close false",
+      "data again",
+    ],
+    "peer reset, then connect() in the 'error' listener": [
+      "error ECONNRESET read",
+      "write ECANCELED write",
+      "queued ECONNRESET read",
+      "close true",
+      "data again",
+    ],
+  };
+  // Bun only, Linux only. With no 'error' listener an accepted socket closes without an error, and
+  // the write keeps the error of that close. Node fails the write with EPIPE and throws it.
+  const quietCloses: Record<string, string[]> = {
+    "peer ends, then closes, and nothing listens for 'error'": [
+      "end",
+      "write EPIPE read",
+      "queued EPIPE read",
+      "close false",
+    ],
+  };
+  // node:http completes a request from the callbacks of its socket writes: a cancel ahead of 'error'
+  // would emit 'finish' for this one. Not on Windows, where one 64 MB write does not stay in flight.
+  const httpRequest = {
+    "http request: destroy(err) with its body in flight": ["error EBOOM", "write ECANCELED write", "close"],
+  };
+  const linuxOnly = (name: string) => name.includes("peer reset") || name.includes("peer ends");
+
+  // Runs the cases named in CASES ("<side>: <teardown>"), one after the other, each on a new pair of
+  // sockets. `holder` writes to a peer that never reads until the kernel stops taking the bytes, and
+  // queues one more write behind that one. Then the teardown runs. Prints { case: events of `holder` }.
+  const fixture = /* js */ `
+    const net = require("node:net");
+    const http = require("node:http");
+    const shape = err => (err ? [err.code, err.syscall].filter(Boolean).join(" ") : "ok");
+    const boom = Object.assign(new Error("boom"), { code: "EBOOM" });
+    // It is 64 MB so that the kernel cannot finish it: libuv sends two times inside one write(),
+    // and on macOS the second send can take the rest of a 1 MB chunk before the teardown runs.
+    const chunk = Buffer.alloc(64 * 1024 * 1024);
+    const half = chunk.subarray(0, chunk.length / 2);
+    const teardowns = {
+      "peer reset": (holder, peer) => peer.resetAndDestroy(),
+      "destroy()": holder => holder.destroy(),
+      "destroy(err)": holder => holder.destroy(boom),
+      "destroy(err), then a tick and a microtask": (holder, peer, events) => {
+        holder.destroy(boom);
+        process.nextTick(() => events.push("tick"));
+        queueMicrotask(() => events.push("microtask"));
+      },
+      "destroy(err, cb) with a cb that throws": holder =>
+        holder.destroy(boom, () => {
+          throw new Error("from the destroy callback");
+        }),
+      "destroy() with a corked batch in flight": holder => holder.destroy(),
+      "resetAndDestroy()": holder => holder.resetAndDestroy(),
+      "destroy() with no write in flight": holder => holder.destroy(),
+      "destroy(), then connect()": (holder, peer, events, connectAgain) => {
+        holder.destroy();
+        connectAgain();
+      },
+      "destroy(), then connect(), with a write callback that throws": (holder, peer, events, connectAgain) => {
+        holder.destroy();
+        connectAgain();
+      },
+      "peer reset, then connect() in the 'error' listener": (holder, peer, events, connectAgain) => {
+        holder.once("error", connectAgain);
+        peer.resetAndDestroy();
+      },
+      "peer ends, then closes, and nothing listens for 'error'": (holder, peer) => {
+        holder.once("end", () => setImmediate(() => peer.destroy()));
+        peer.end();
+      },
+    };
+
+    let events;
+    process.on("uncaughtException", err => events.push("uncaught " + err.message));
+
+    const runCase = (side, teardown) =>
+      new Promise(resolve => {
+        let client, accepted, ready = 0, again = false;
+        // A write made inside the 'connect' or 'connection' dispatch is flushed on another native path (#43026).
+        const onReady = () => ++ready === 2 && setImmediate(run);
+        const server = net.createServer(socket => {
+          if (accepted) return void socket.end("again");
+          accepted = socket;
+          onReady();
+        });
+        server.listen(0, "127.0.0.1", () => {
+          client = net.connect(server.address().port, "127.0.0.1", onReady);
+        });
+
+        function run() {
+          const [holder, peer] = side === "client" ? [client, accepted] : [accepted, client];
+          events = [];
+          let reported = false;
+          const report = () => {
+            reported = true;
+            resolve(events.slice());
+            holder.destroy();
+            peer.destroy();
+            server.close();
+          };
+          peer.on("error", () => {});
+          if (!teardown.includes("nothing listens for 'error'")) {
+            holder.on("error", err => {
+              const failedAgain = again;
+              events.push("error " + shape(err));
+              if (failedAgain) report();
+            });
+          }
+          holder.on("end", () => events.push("end"));
+          // A holder that connects again still gets the 'close' of the connection that it gave up.
+          holder.on("close", hadError => {
+            if (reported) return;
+            events.push("close " + hadError);
+            if (!again) report();
+          });
+          holder.on("data", data => {
+            events.push("data " + data);
+            report();
+          });
+          // A plain TCP write that the kernel takes whole is done when write() returns, so
+          // writableLength stays 0 until one write, or one corked batch, is left in flight: the last one.
+          const batch = teardown.includes("corked batch");
+          let writes = 0;
+          while (!teardown.includes("no write in flight") && writes < 8 && holder.writableLength === 0) {
+            const nth = ++writes;
+            const callback = err => {
+              if (nth !== writes) return;
+              events.push("write " + shape(err));
+              if (teardown.includes("write callback that throws")) throw new Error("from the write callback");
+            };
+            if (!batch) {
+              holder.write(chunk, callback);
+              continue;
+            }
+            holder.cork();
+            holder.write(half, callback);
+            holder.write(half, callback);
+            holder.uncork();
+          }
+          if (writes > 0) {
+            if (holder.writableLength === 0) throw new Error("no write stayed in flight");
+            holder.write("b", err => events.push("queued " + shape(err)));
+          }
+          teardowns[teardown](holder, peer, events, () => {
+            again = true;
+            holder.connect(server.address().port, "127.0.0.1");
+          });
+        }
+      });
+
+    const httpRequest = () =>
+      new Promise(resolve => {
+        events = [];
+        let peer;
+        const server = net.createServer(socket => (peer = socket).on("error", () => {}));
+        server.listen(0, "127.0.0.1", () => {
+          const req = http.request({ port: server.address().port, host: "127.0.0.1", method: "POST", agent: false });
+          req.on("finish", () => events.push("finish"));
+          req.on("error", err => events.push("error " + shape(err)));
+          req.on("close", () => {
+            events.push("close");
+            resolve(events.slice());
+            peer.destroy();
+            server.close();
+          });
+          req.write(chunk, err => events.push("write " + shape(err)));
+          req.end();
+          req.once("socket", socket =>
+            socket.once("connect", () =>
+              setImmediate(() => {
+                if (events.length > 0) throw new Error("the body did not stay in flight: " + events);
+                req.destroy(boom);
+              }),
+            ),
+          );
+        });
+      });
+
+    (async () => {
+      const report = {};
+      for (const name of JSON.parse(process.env.CASES)) {
+        const side = name.slice(0, name.indexOf(": "));
+        report[name] = await (side === "http request" ? httpRequest() : runCase(side, name.slice(side.length + 2)));
+      }
+      console.log(JSON.stringify(report));
+    })();
+  `;
+
+  // Node 22.0 still called a canceled write's callback without an error, so only Node 24 or later is a reference.
+  // Not on Windows: there a 64 MB write to a peer that never reads completes, and a write that is still
+  // pending when write() returns can complete a moment later, so Node cannot pin a write in flight.
+  describe.each(runtimesWithNode(24, { nodeOnWindows: false }))("%s", (runtime, exe) => {
+    const expected: Record<string, string[]> = {};
+    for (const side of ["client", "server"]) {
+      for (const teardown in teardowns) expected[`${side}: ${teardown}`] = teardowns[teardown];
+    }
+    Object.assign(expected, httpRequest);
+    if (runtime === "bun") {
+      for (const teardown in reconnects) expected[`client: ${teardown}`] = reconnects[teardown];
+      for (const teardown in quietCloses) expected[`server: ${teardown}`] = quietCloses[teardown];
+    }
+    const cases = Object.keys(expected).filter(
+      name => (isLinux || !linuxOnly(name)) && !(isWindows && name in httpRequest),
+    );
+
+    // One process runs every case of a runtime, in a hook: a debug build takes seconds for it.
+    let run: { report: Record<string, string[]>; stderr: string; exitCode: number };
+    beforeAll(async () => {
+      await using proc = Bun.spawn({
+        cmd: [exe, "-e", fixture],
+        env: { ...bunEnv, CASES: JSON.stringify(cases) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      run = { report: stdout.trim() ? JSON.parse(stdout) : {}, stderr, exitCode };
+    }, 30_000);
+
+    for (const name in expected) {
+      it.skipIf(!cases.includes(name))(name, () => {
+        const { report, stderr, exitCode } = run;
+        expect({ events: report[name], stderr, exitCode }).toEqual({ events: expected[name], stderr: "", exitCode: 0 });
+      });
+    }
   });
 });
 

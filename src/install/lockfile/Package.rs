@@ -1153,6 +1153,7 @@ impl Diff {
                     && !from_dep.behavior.is_peer()
                     && from_deps.iter().any(is_optional_twin)
                     && to_deps!().iter().any(is_optional_twin)
+                    && Self::is_still_in_root_manifest(pm, log, from_dep, from_buf!())
                 {
                     summary.second_entries.push(i as u32);
                     continue;
@@ -1727,6 +1728,40 @@ impl Diff {
         resolution.tag == ResolutionTag::Npm
             && (npm.name).eql(packages.items_name()[locked as usize], to_buf, from_buf)
             && (npm.version).satisfies(resolution.npm().version, to_buf, from_buf)
+    }
+
+    /// The parsed root has no row for a dependency that is also in `optionalDependencies`, so this
+    /// reads package.json: does the group of `dep` still have it, with the same text?
+    #[cold]
+    fn is_still_in_root_manifest(
+        pm: &mut PackageManager,
+        log: &mut bun_ast::Log,
+        dep: &Dependency,
+        buf: &[u8],
+    ) -> bool {
+        let group: &[u8] = if dep.behavior.is_dev() {
+            b"devDependencies"
+        } else {
+            b"dependencies"
+        };
+        let Some(path) = lockfile::join_top_level_dir(&[b"package.json"]) else {
+            return false;
+        };
+        let Ok(entry) = pm
+            .workspace_package_json_cache
+            .get_with_path(log, path.slice(), Default::default())
+            .unwrap()
+        else {
+            return false;
+        };
+        let bump = bun_alloc::Arena::new();
+        (entry.root.get(group))
+            .and_then(|rows| rows.get(dep.name.slice(buf)))
+            .and_then(|written| written.as_utf8(&bump))
+            .is_some_and(|written| {
+                dependency::trim_literal(written)
+                    == dependency::trim_literal(dep.version.literal.slice(buf))
+            })
     }
 
     /// Returns true for a range of registry versions of the package that `member` is the name of.

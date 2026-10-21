@@ -1407,8 +1407,21 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         let name_end = strings::index_of_char_usize(arg, b'=').unwrap_or(arg.len());
         let has_value = name_end < arg.len();
         let value_is_next_arg = if let Some(name) = arg[..name_end].strip_prefix(b"--") {
-            // These files can name another registry.
-            if matches!(name, b"userconfig" | b"globalconfig") {
+            // These choose a registry, its certificates or its credentials.
+            let setting = name.strip_prefix(b"config.").unwrap_or(name);
+            if matches!(
+                setting,
+                b"userconfig"
+                    | b"globalconfig"
+                    | b"npmrc-auth-file"
+                    | b"use-yarnrc"
+                    | b"replace-registry-host"
+                    | b"pnpr-server"
+                    | b"ca"
+                    | b"cafile"
+            ) || setting.starts_with(b"//")
+                || setting.ends_with(b":registry")
+            {
                 return None;
             }
             let is_own_flag = |name: &[u8]| {

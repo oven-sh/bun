@@ -224,8 +224,9 @@ impl Options {
                     }
                     opts.minimum_release_age = Some(age);
                 } else if let Some(url) = Self::flag_value(argv, &mut i, "--registry")
-                    // npm's short name for it.
+                    // The names that npm and pnpm also have for it.
                     .or_else(|| Self::flag_value(argv, &mut i, "--reg"))
+                    .or_else(|| Self::flag_value(argv, &mut i, "--config.registry"))
                 {
                     opts.registry = Some(url);
                 } else if let Some(ca) = Self::flag_value(argv, &mut i, "--ca") {

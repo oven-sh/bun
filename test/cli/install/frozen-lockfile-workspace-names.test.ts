@@ -650,13 +650,8 @@ ${packages.map(row => `    ${row}\n`).join("\n")}  }
       });
     });
 
-    test.concurrent("by a tag, in bun.lockb", async () => {
-      const dir = await project(
-        linker,
-        { "": root({ dependencies: { "no-deps": "latest" } }), "packages/no-deps": member },
-        "saveTextLockfile = false\n",
-      );
-      const written = await file(join(import.meta.dir, "fixtures", "workspace-name-dist-tag.lockb")).bytes();
+    async function writeLockb(dir: string, fixture: string) {
+      const written = await file(join(import.meta.dir, "fixtures", fixture)).bytes();
       // Strings are stored by offset and length.
       const host = new URL(registry.registryUrl()).host;
       expect(host).toHaveLength("localhost:39073".length);
@@ -664,6 +659,67 @@ ${packages.map(row => `    ${row}\n`).join("\n")}  }
         join(dir, "bun.lockb"),
         Buffer.from(Buffer.from(written).toString("latin1").replaceAll("localhost:39073", host), "latin1"),
       );
+    }
+
+    // package.json names the workspace twice no longer, or not as the lockfile has it: an edit like any other.
+    describe.each([
+      {
+        optional: "workspace:*",
+        dev: "^1.0.0",
+        fixture: "workspace-name-optional-link.lockb",
+        before: "1.1.0",
+        after: "3.0.0",
+      },
+      {
+        optional: "^1.0.0",
+        dev: "workspace:*",
+        fixture: "workspace-name-optional-range.lockb",
+        before: "3.0.0",
+        after: "1.1.0",
+      },
+    ])("in optionalDependencies ($optional) and in devDependencies ($dev), in bun.lockb", row => {
+      const setUp = async (devDependencies?: PackageJson) => {
+        const dir = await project(
+          linker,
+          {
+            "": root({ optionalDependencies: { "no-deps": row.optional }, devDependencies }),
+            "packages/no-deps": member,
+          },
+          "saveTextLockfile = false\n",
+        );
+        await writeLockb(dir, row.fixture);
+        return dir;
+      };
+
+      test.concurrent("nothing changed", async () => {
+        const dir = await setUp({ "no-deps": row.dev });
+        await expectAccepted(dir, "bun.lockb", "kept", async () => {
+          expect(await seenFrom(dir, ".", "no-deps")).toBe(row.before);
+        });
+      });
+
+      test.concurrent.each([
+        ["is removed", undefined],
+        ["changes", { "no-deps": row.dev === "^1.0.0" ? "~1.0.0" : "workspace:^" }],
+      ])("the one in devDependencies %s", async (_, devDependencies) => {
+        const dir = await setUp(devDependencies);
+        const written = await file(join(dir, "bun.lockb")).bytes();
+
+        await ok(dir, "install");
+        expect(await seenFrom(dir, ".", "no-deps")).toBe(row.after);
+        expect(await file(join(dir, "bun.lockb")).bytes()).not.toEqual(written);
+        await ok(dir, "install", "--frozen-lockfile");
+        expect(await seenFrom(dir, ".", "no-deps")).toBe(row.after);
+      });
+    });
+
+    test.concurrent("by a tag, in bun.lockb", async () => {
+      const dir = await project(
+        linker,
+        { "": root({ dependencies: { "no-deps": "latest" } }), "packages/no-deps": member },
+        "saveTextLockfile = false\n",
+      );
+      await writeLockb(dir, "workspace-name-dist-tag.lockb");
 
       // The two linkers of Bun 1.4 differed here.
       await expectAccepted(dir, "bun.lockb", "kept", async () => {

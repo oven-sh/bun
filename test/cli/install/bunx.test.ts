@@ -2706,6 +2706,9 @@ describe("flags", () => {
     [["-w", "hello"]],
     [["--userconfig", "hello"]],
     [["--userconfig=.npmrc"]],
+    [["--npmrc-auth-file", "hello"]],
+    [["--config.@hello:registry=http://localhost:1"]],
+    [["--config.//localhost:1/:_authToken=hello"]],
     [["--trust=true"]],
     [["-"]],
   ])("a flag bunx does not have is an error: %j", async flags => {
@@ -2767,7 +2770,7 @@ describe("flags", () => {
     });
   });
 
-  it.concurrent.each([[["--registry"]], [["--registry="]], [["--reg="]]])(
+  it.concurrent.each([[["--registry"]], [["--registry="]], [["--reg="]], [["--config.registry="]]])(
     "%j installs from that registry, into a tree of its own",
     async ([flag]) => {
       using registry = await localRegistry(fixturePackage("hello", "1.0.0", "hello"));

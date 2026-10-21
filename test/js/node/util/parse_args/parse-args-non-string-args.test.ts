@@ -19,7 +19,7 @@ describe("parseArgs: args elements that are not strings", () => {
   // One process runs every case of the fixture. It is not this process, because a second
   // conversion made parseArgs abort the process in all cases but the first two.
   let lines: { case: string; kind?: string }[] = [];
-  let exitCode: number | undefined;
+  let exit: { stderr: string; exitCode: number } | undefined;
   beforeAll(async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "parse-args-non-string-args-fixture.ts")],
@@ -27,12 +27,12 @@ describe("parseArgs: args elements that are not strings", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    exit = { stderr, exitCode };
     lines = stdout
-      .split("\n")
+      .split(/\r?\n/)
       .filter(line => line.length > 0)
       .map(line => JSON.parse(line));
-    exitCode = await proc.exited;
   });
 
   test.each([
@@ -55,8 +55,9 @@ describe("parseArgs: args elements that are not strings", () => {
     expect(fromElements).toEqual(kinds.map(kind => ({ ...fromString, kind, conversions: 1 })));
   });
 
-  test("the process that ran the cases exits with code 0", () => {
-    expect(exitCode).toBe(0);
+  // After an abort, this is the test that shows the panic message.
+  test("the process that ran the cases prints no error and exits with code 0", () => {
+    expect(exit).toEqual({ stderr: "", exitCode: 0 });
   });
 
   // The raw name of a lone option is not cut out of a string. Node gives the element too.

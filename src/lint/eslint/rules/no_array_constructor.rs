@@ -14,18 +14,18 @@ const USE_LITERAL_AFTER_SEMICOLON: Message = Message::new(
     "Replace with an array literal, add preceding semicolon.",
 );
 
-/// The call, if `e` calls or constructs something that is named `Array`, without type arguments.
+/// Returns the call if `e` calls or constructs something named `Array`, without type arguments.
 pub fn as_array_call(e: Expr<'_>) -> Option<Call<'_>> {
     let call = e.as_call().or_else(|| e.as_new())?;
     let callee = call.callee();
-    // As it is written the name starts with an `A`, or with an escape.
+    // The name's source text starts with an `A` or with an escape.
     let can_be_array = callee.tag() == ExprTag::Ident
         && matches!(e.file().text().get(callee.span().start as usize), Some(b'A' | b'\\'));
     (can_be_array && callee.is_ident("Array") && call.type_args().is_empty()).then_some(call)
 }
 
-/// Whether oxlint reports `call`, which [calls `Array`](as_array_call): the name is not in parentheses and nothing
-/// declares it, the call is not optional, and it has not one argument, or ends with `...a`.
+/// True if oxlint reports `call`, which [calls `Array`](as_array_call): the name isn't parenthesized and nothing
+/// declares it, the call isn't optional, and it either doesn't have exactly one argument or ends with `...a`.
 pub fn is_reported_by_oxlint(call: Call) -> bool {
     let ends_with_spread = call.args().last().is_some_and(|it| it.tag() == ExprTag::Spread);
     is_global_reference_name(call.callee(), "Array")
@@ -33,8 +33,7 @@ pub fn is_reported_by_oxlint(call: Call) -> bool {
         && (call.args().len() != 1 || ends_with_spread)
 }
 
-/// ESLint's `getArgumentsText`: the text between the calling parentheses of `e`, which is `call`.
-/// Empty if there are none.
+/// ESLint's `getArgumentsText`: the text between the call parentheses of `e`, which is `call`. Empty if there are none.
 pub fn get_arguments_text<'a>(e: Expr<'a>, call: Call<'a>) -> &'a [u8] {
     let file = e.file();
     let Some(last_token) = file.last_token(e).filter(ast_utils::is_closing_paren_token) else {
@@ -47,7 +46,7 @@ pub fn get_arguments_text<'a>(e: Expr<'a>, call: Call<'a>) -> &'a [u8] {
     }
 }
 
-/// ESLint's `hasCommentsInArrayConstructor`: before the arguments.
+/// ESLint's `hasCommentsInArrayConstructor`: only looks before the arguments.
 fn has_comments_in_array_constructor<'a>(e: Expr<'a>, call: Call<'a>) -> bool {
     let file = e.file();
     let (Some(first_token), Some(last_token), Some(mut last_relevant_token)) =
@@ -70,7 +69,7 @@ enum Change {
     Suggestion { is_after_semicolon: bool },
 }
 
-/// The replacement of `e` by an array literal, if it is to be made as a `change`.
+/// Replaces `e` with an array literal, if that should be done as a `change`.
 fn replace_with_literal<'a>(fixer: Fixer<'a>, e: Expr<'a>, call: Call<'a>, change: Change) -> Option<Fix> {
     let args = call.args();
     let non_spread_count = args.iter().filter(|arg| arg.tag() != ExprTag::Spread).count();
@@ -90,15 +89,15 @@ fn replace_with_literal<'a>(fixer: Fixer<'a>, e: Expr<'a>, call: Call<'a>, chang
     Some(fixer.replace(e, [open, get_arguments_text(e, call), b"]"].concat()))
 }
 
-/// oxlint's fix: all from the first argument on. None for `Array(...a)` and `Array(a, ...b)`.
+/// oxlint's fix: keeps everything from the first argument on. No fix for `Array(...a)` and `Array(a, ...b)`.
 pub fn replace_as_oxlint<'a>(fixer: Fixer<'a>, e: Expr<'a>, call: Call<'a>) -> Option<Fix> {
     let args = call.args();
     if args.len() <= 2 && args.last().is_some_and(|it| it.tag() == ExprTag::Spread) {
         return None;
     }
     let open: &[u8] = if could_be_asi_hazard(e) { b";[" } else { b"[" };
-    let written = args.first().map(|first| Span::new(first.outer_span().start, e.span().end - 1));
-    Some(fixer.replace(e, [open, fixer.file().slice(written.unwrap_or_default()), b"]"].concat()))
+    let arguments_span = args.first().map(|first| Span::new(first.outer_span().start, e.span().end - 1));
+    Some(fixer.replace(e, [open, fixer.file().slice(arguments_span.unwrap_or_default()), b"]"].concat()))
 }
 
 impl Rule for NoArrayConstructor {

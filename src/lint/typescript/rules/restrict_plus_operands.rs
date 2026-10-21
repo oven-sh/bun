@@ -48,14 +48,14 @@ fn is_named_reg_exp(ty: Type) -> bool {
 
 impl RestrictPlusOperands {
     fn report_invalid<'a>(&self, cx: &Cx<'a, Self>, base_node: Expr<'a>, ty: Type<'a>) {
-        // tsgolint points at the parentheses too.
-        let place = if cx.language().is_oxlint { base_node.outer_span() } else { base_node.span() };
-        cx.report(place, INVALID)
+        // tsgolint's span includes the parentheses.
+        let report_span = if cx.language().is_oxlint { base_node.outer_span() } else { base_node.span() };
+        cx.report(report_span, INVALID)
             .data("type", ty.to_text())
             .data("stringLike", self.string_like.clone());
     }
 
-    /// Whether it had a complaint.
+    /// Returns true if it reported the operand.
     fn check_operand<'a>(
         &self,
         cx: &Cx<'a, Self>,
@@ -82,7 +82,7 @@ impl RestrictPlusOperands {
                 false => (!self.allow_any && is_type_any_type(sub_base_type)) || is_deeply_object_type(sub_base_type),
             };
             if is_invalid {
-                // tsgolint reports an operand once, with the whole of its type.
+                // tsgolint reports an operand once, with its whole type.
                 if cx.language().is_oxlint {
                     self.report_invalid(cx, base_node, base_type);
                     return true;
@@ -112,8 +112,8 @@ impl RestrictPlusOperands {
             return;
         }
 
-        // oxlint points at the left side.
-        let place = if cx.language().is_oxlint { left.outer_span() } else { node.span() };
+        // oxlint reports the left side.
+        let report_span = if cx.language().is_oxlint { left.outer_span() } else { node.span() };
         let labels = |labels: &mut Details| {
             labels.first(format!("Type: {}", bstr::BStr::new(&left_type.to_text())));
             labels.push(right.outer_span(), format!("Type: {}", bstr::BStr::new(&right_type.to_text())));
@@ -124,7 +124,7 @@ impl RestrictPlusOperands {
                 && is_type_flag_set(base_type, TypeFlags::STRING_LIKE)
                 && is_type_flag_set(other_type, TypeFlags::NUMBER_LIKE | TypeFlags::BIG_INT_LIKE)
             {
-                cx.report(place, MISMATCHED)
+                cx.report(report_span, MISMATCHED)
                     .comments_apply_at(node.span())
                     .data("left", left_type.to_text())
                     .data("right", right_type.to_text())
@@ -135,7 +135,7 @@ impl RestrictPlusOperands {
             if is_type_flag_set(base_type, TypeFlags::NUMBER_LIKE)
                 && is_type_flag_set(other_type, TypeFlags::BIG_INT_LIKE)
             {
-                cx.report(place, BIGINT_AND_NUMBER)
+                cx.report(report_span, BIGINT_AND_NUMBER)
                     .comments_apply_at(node.span())
                     .data("left", left_type.to_text())
                     .data("right", right_type.to_text())
@@ -193,7 +193,8 @@ impl Rule for RestrictPlusOperands {
         On::new().enter(kinds)
     }
 
-    // The outer one first, as upstream: a sum that is an operand can be reported twice at one place.
+    // Visits the outer sum first, like upstream, because a sum that's an operand can be reported twice at the same
+    // location.
     fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let Node::Expr(node) = node else {
             return;

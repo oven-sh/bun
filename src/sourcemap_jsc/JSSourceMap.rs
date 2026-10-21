@@ -113,7 +113,8 @@ impl JSSourceMap {
         // Parse the payload to create a proper sourcemap
 
         // Extract mappings string from payload
-        let Some(mappings_value) = payload_arg.get_stringish(global, b"mappings")? else {
+        let Some(mappings_value) = payload_arg.get_stringish_allow_empty(global, b"mappings")?
+        else {
             return Err(
                 global.throw_invalid_arguments(format_args!("payload 'mappings' must be a string"))
             );
@@ -145,7 +146,6 @@ impl JSSourceMap {
             mappings_str.slice(),
             None,                                            // estimated_mapping_count
             i32::try_from(sources.len()).expect("int cast"), // sources_count
-            i32::MAX as usize,
             mapping::ParseOptions {
                 allow_names: true,
                 sort: true,

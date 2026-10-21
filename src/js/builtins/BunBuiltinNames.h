@@ -87,6 +87,8 @@ using namespace JSC;
     macro(filename) \
     macro(flush) \
     macro(format) \
+    macro(globScan) \
+    macro(globScanSync) \
     macro(handleEvent) \
     macro(headers) \
     macro(highWaterMark) \
@@ -157,6 +159,7 @@ using namespace JSC;
     macro(relative) \
     macro(removeAbortAlgorithmFromSignal) \
     macro(require) \
+    macro(requireCommonJS) \
     macro(requireESM) \
     macro(requireMap) \
     macro(requireNativeModule) \

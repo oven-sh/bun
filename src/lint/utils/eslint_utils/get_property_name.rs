@@ -5,7 +5,7 @@ use crate::ast::{ExprKind, Key, KeyKind, MemberKind, Node};
 use crate::semantic::Scope;
 use std::borrow::Cow;
 
-/// The name that `key` stands for. `None` for `#a`, and for a computed key that is not constant.
+/// The property name of `key`. `None` for `#a`, and for a computed key that isn't constant.
 pub fn property_name_of_key<'a>(key: Key<'a>, scope: Option<Scope<'a>>) -> Option<Cow<'a, [u8]>> {
     match key.kind() {
         KeyKind::Ident(name)
@@ -19,9 +19,9 @@ pub fn property_name_of_key<'a>(key: Key<'a>, scope: Option<Scope<'a>>) -> Optio
 }
 
 /// eslint-utils' `getPropertyName`: the name of the property that `node` accesses or defines.
-/// `node` is a member access (an `Expr` that is a `Dot` or an `Index`), a `Prop`, a `PatProp` or a
+/// `node` is a member access (an `Expr` that's a `Dot` or an `Index`), a `Prop`, a `PatProp` or a
 /// `Member`. `None` for anything else, for a private name, for a spread, and for a computed name
-/// that [`get_string_if_constant`] does not know.
+/// that [`get_string_if_constant`] can't evaluate.
 ///
 /// With a `scope`, identifiers in a computed name are resolved.
 pub fn get_property_name<'a>(

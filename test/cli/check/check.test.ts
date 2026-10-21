@@ -1723,9 +1723,9 @@ export function lastInAnObject() { ({ ...x6 } = o); }
     expect(exitCode).toBe(1);
   });
 
-  // A mapped type's property has no declaration of its own, so if only one constituent declares the property, that
-  // declaration's modifiers apply. The expected output is tsc's.
-  test("keeps `readonly`, `private` and `protected` on a property shared with a mapped type in an intersection or union", async () => {
+  // The constituents' properties decide, not the modifiers of the one declaration they have: a mapped type's property has
+  // that declaration too, without the modifiers. The expected output is tsc's.
+  test("drops `readonly`, `private` and `protected` from a property shared with a mapped type in an intersection or union", async () => {
     using dir = tempDir("bun-check", {
       "tsconfig.json": JSON.stringify({
         compilerOptions: {
@@ -1794,14 +1794,8 @@ u.balance
     });
     const { stdout, exitCode } = await check(dir);
     expect(stdout.split("\n")).toEqual([
-      `index.ts(9,3): error TS2540: Cannot assign to 'id' because it is a read-only property.`,
-      `protected.ts(8,3): error TS2445: Property 'balance' is protected and only accessible within class 'Account' and its subclasses.`,
-      `protected.ts(9,3): error TS2341: Property 'pin' is private and only accessible within class 'Account'.`,
-      `readers.ts(7,8): error TS2704: The operand of a 'delete' operator cannot be a read-only property.`,
-      `readers.ts(8,5): error TS2540: Cannot assign to 'id' because it is a read-only property.`,
-      `readers.ts(10,14): error TS2322: Type '{ readonly id?: string | undefined; }' is not assignable to type 'never'.`,
-      `swapped.ts(7,3): error TS2540: Cannot assign to 'id' because it is a read-only property.`,
-      `union.ts(8,3): error TS2445: Property 'balance' is protected and only accessible within class 'Account' and its subclasses.`,
+      `readers.ts(10,14): error TS2322: Type '{ id?: string | undefined; }' is not assignable to type 'never'.`,
+      `swapped.ts(8,1): error TS2578: Unused '@ts-expect-error' directive.`,
     ]);
     expect(exitCode).toBe(1);
   });
@@ -16936,7 +16930,6 @@ export const wrong: 0 = withSpread.p
       expect(stdout).toMatchInlineSnapshot(`
         "never.ts(7,14): error TS2322: Type '2' is not assignable to type '0'.
         private.ts(9,14): error TS2322: Type '"kind"' is not assignable to type '0'.
-        spread.ts(7,12): error TS2540: Cannot assign to 'p' because it is a read-only property.
         spread.ts(9,10): error TS2540: Cannot assign to 'p' because it is a read-only property.
         spread.ts(11,8): error TS2540: Cannot assign to 'p' because it is a read-only property.
         spread.ts(12,14): error TS2322: Type 'number' is not assignable to type '0'.

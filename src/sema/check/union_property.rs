@@ -720,7 +720,11 @@ impl<'p, 's> Checker<'p, 's> {
         if prop_set.is_empty()
             || (prop_set.len() > 1 || is_partial)
                 && flags.intersects(access)
-                && !(prop_set.len() > 1 && Self::has_common_declaration(&prop_set, self.arena))
+                && !(prop_set.len() > 1
+                    && Self::has_common_declaration(
+                        &prop_set.iter().collect::<SmallVec<[&Prop; 4]>>(),
+                        self.arena,
+                    ))
         {
             return None;
         }
@@ -751,10 +755,12 @@ impl<'p, 's> Checker<'p, 's> {
         {
             flags |= PropFlags::STRING_NAME;
         }
-        // `getDeclarationModifierFlagsFromSymbol`: private if any is private, else public if any is public, else
-        // protected.
-        if flags.contains(PropFlags::PRIVATE) || is_public {
-            flags.remove(PropFlags::PROTECTED);
+        // `getDeclarationModifierFlagsFromSymbol`: public if any is public, else protected if any is protected, else
+        // private.
+        if is_public {
+            flags.remove(access);
+        } else if flags.contains(PropFlags::PROTECTED) {
+            flags.remove(PropFlags::PRIVATE);
         }
         prop_set.extend(index_types.into_iter().map(|t| Prop {
             name,
@@ -763,15 +769,13 @@ impl<'p, 's> Checker<'p, 's> {
             mapper: MapperId::IDENTITY,
             name_type: TypeId::UNRESOLVED,
         }));
-        let mut result = Prop {
+        Some(Prop {
             name,
             flags,
             source: PropSource::Intersected(containing_type, self.list_of(prop_set)),
             mapper: MapperId::IDENTITY,
             name_type: TypeId::UNRESOLVED,
-        };
-        self.set_modifiers_of_value_declaration(&mut result);
-        Some(result)
+        })
     }
 
     /// `compareProperties(sourceProp, targetProp, compareTypesEqual)`
@@ -804,8 +808,8 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `hasCommonDeclaration`
-    fn has_common_declaration(props: &[Prop], arena: &'s Arena) -> bool {
-        let mut common = Self::declared_properties(&[&props[0]], arena);
+    pub(super) fn has_common_declaration(props: &[&Prop], arena: &'s Arena) -> bool {
+        let mut common = Self::declared_properties(&[props[0]], arena);
         for prop in &props[1..] {
             let other = Self::declared_properties(&[prop], arena);
             common.retain(|declared| other.iter().any(|it| it.source == declared.source));

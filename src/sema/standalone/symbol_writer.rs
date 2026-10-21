@@ -488,28 +488,16 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
         at: ScopeId,
     ) -> (String, Vec<(FileId, Declaration)>) {
         let mut declarations = Vec::new();
-        let mut first_value_declaration = None;
-        let mut has_non_uniform_value_declaration = false;
         for prop in props {
             let own = self.declarations_of_property(prop, 0);
-            match (first_value_declaration, own.first()) {
-                (None, Some(&first)) => first_value_declaration = Some(first),
-                (Some(known), Some(&first)) if known != first => {
-                    has_non_uniform_value_declaration = true;
-                }
-                _ => {}
-            }
             append_if_unique(&mut declarations, own);
         }
         let Some(first) = props.first() else {
             return (String::new(), declarations);
         };
         let name = crate::messages::text(&self.c.prop_to_string(first));
-        let parent = if has_non_uniform_value_declaration {
-            None
-        } else {
-            self.parent_of_property(first)
-        };
+        let declared = Checker::prop_with_shared_value_declaration(props.iter().copied());
+        let parent = declared.and_then(|declared| self.parent_of_property(declared));
         (self.qualified_by_parent(parent, name, at), declarations)
     }
 

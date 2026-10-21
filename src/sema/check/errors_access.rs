@@ -1264,6 +1264,12 @@ impl<'p> Checker<'p, '_> {
         writing: bool,
     ) -> Flags {
         match (Self::value_declaration(prop), &prop.source) {
+            (_, &PropSource::Intersected(of, ref parts)) => {
+                // `propSet`, without the types of index signatures.
+                let is_property = |part: &&Prop| !part.flags.contains(PropFlags::WRITE_PARTIAL);
+                let parts: SmallVec<[&Prop; 4]> = parts.iter().filter(is_property).collect();
+                self.modifier_flags_of_synthetic_property(of, &parts, writing)
+            }
             (Some(&PropSource::Symbol(sym)), _) => {
                 let flags = match self.files().value_declaration(sym) {
                     Some((f, Decl::ParameterProperty(p))) => self.hir(f)[p].flags,
@@ -1297,31 +1303,39 @@ impl<'p> Checker<'p, '_> {
                     flags
                 }
             }
-            (None, PropSource::Intersected(_, parts)) => {
-                let parts: SmallVec<[&Prop; 4]> = parts.iter().collect();
-                self.modifier_flags_of_synthetic_property(&parts)
-            }
             _ => Flags::empty(),
         }
     }
 
-    /// `getDeclarationModifierFlagsFromSymbolEx` under `CheckFlagsSynthetic`: private if one of `parts` is, else public
-    /// if one is, else protected. Static if one is.
-    fn modifier_flags_of_synthetic_property(&mut self, parts: &[&Prop]) -> Flags {
+    /// `getDeclarationModifierFlagsFromSymbolEx` under `CheckFlagsSynthetic`, for the property that
+    /// `createUnionOrIntersectionProperty` combines from `parts`. It's as accessible as the most accessible of them,
+    /// except that a union's property is only as writable as the least writable of them, unless they have a declaration
+    /// in common. Static if one is.
+    fn modifier_flags_of_synthetic_property(
+        &mut self,
+        containing: TypeId,
+        parts: &[&Prop],
+        writing: bool,
+    ) -> Flags {
         let (mut some, mut is_public) = (Flags::empty(), false);
         for part in parts {
-            let modifiers = self.get_declaration_modifier_flags_from_symbol_ex(part, false);
+            let modifiers = self.get_declaration_modifier_flags_from_symbol_ex(part, writing);
             some |= modifiers;
             is_public |= !modifiers.intersects(Flags::PRIVATE | Flags::PROTECTED);
         }
-        let access = if some.contains(Flags::PRIVATE) {
-            Flags::PRIVATE
+        let by_reach = [Flags::PROTECTED, Flags::PRIVATE];
+        let access = if writing
+            && self.is_union(containing)
+            && some.intersects(Flags::PRIVATE | Flags::PROTECTED)
+            && !(parts.len() > 1 && Self::has_common_declaration(parts, self.arena))
+        {
+            by_reach.into_iter().rfind(|&access| some.contains(access))
         } else if is_public {
-            Flags::empty()
+            None
         } else {
-            Flags::PROTECTED
+            by_reach.into_iter().find(|&access| some.contains(access))
         };
-        access | (some & Flags::STATIC)
+        access.unwrap_or_default() | (some & Flags::STATIC)
     }
 
     /// `getPropertyOfObjectType`
@@ -1406,14 +1420,15 @@ impl<'p> Checker<'p, '_> {
             self.mark_property_as_referenced(file, containing, name, node_for_check_write_only);
         }
         let hidden = Flags::PRIVATE | Flags::PROTECTED;
-        // If they all share one declaration, its modifiers and its parent are used.
+        // If those that have a declaration share it, its parent is used. If they all do, so are its modifiers.
         let declared = Self::prop_with_shared_value_declaration(constituents.iter().copied());
         let is_declared_once = parts.len() == 1 || declared.is_some();
         let first = declared.unwrap_or(first);
-        let flags = if is_declared_once {
+        let is_declared = |prop: &&Prop| Self::value_declaration(prop).is_some();
+        let flags = if is_declared_once && constituents.iter().all(is_declared) {
             self.get_declaration_modifier_flags_from_symbol_ex(first, writing)
         } else {
-            self.modifier_flags_of_synthetic_property(&constituents)
+            self.modifier_flags_of_synthetic_property(containing, &constituents, writing)
         };
         let is_static = flags.contains(Flags::STATIC);
         if is_super {
@@ -1479,14 +1494,23 @@ impl<'p> Checker<'p, '_> {
             .into_iter()
             .map(|c| self.class_sym(file, c))
             .collect();
+        // For `a.b` the caller passes `getApparentType`. For a pattern it passes the destructured
+        // type. If an intersection has members with a `this` type, its apparent type is a new
+        // intersection without an alias, but `apparent_type` returns the original intersection.
+        let is_apparent_type =
+            matches!(at, Parent::Expr(e) if e.is_some() && hir.node(e) == location);
+        // `getDeclaringClass`: a property synthesized from several declarations has no parent.
+        let declaring_class = self.declaring_class(first).filter(|_| is_declared_once);
+        let declaring_class_or_containing_type = |c: &mut Self| match declaring_class {
+            Some(class) => c.declared_type(class),
+            None if is_apparent_type => c.apparent_type_of_intersection(containing),
+            None => containing,
+        };
         if flags.contains(Flags::PRIVATE) {
-            // With several declarations, it reduces an intersection to `never` and isn't a property of a union.
-            let declaring = self.declaring_class(first).filter(|_| is_declared_once);
-            let Some(declaring) = declaring.filter(|declaring| !enclosing.contains(declaring))
-            else {
+            if declaring_class.is_some_and(|declaring| enclosing.contains(&declaring)) {
                 return true;
-            };
-            let class = self.declared_type(declaring);
+            }
+            let class = declaring_class_or_containing_type(self);
             return self.report_inaccessible(error_node, 2341, first, &[class]);
         }
         if is_super {
@@ -1542,19 +1566,8 @@ impl<'p> Checker<'p, '_> {
                 enclosing_class = Some(target);
             }
         }
-        // For `a.b` the caller passes `getApparentType`. For a pattern it passes the destructured
-        // type. If an intersection has members with a `this` type, its apparent type is a new
-        // intersection without an alias, but `apparent_type` returns the original intersection.
-        let is_apparent_type =
-            matches!(at, Parent::Expr(e) if e.is_some() && hir.node(e) == location);
         let Some(enclosing_class) = enclosing_class else {
-            // `getDeclaringClass`: a property synthesized from several declarations has no parent.
-            let class = self.declaring_class(first).filter(|_| is_declared_once);
-            let class = match class {
-                Some(class) => self.declared_type(class),
-                None if is_apparent_type => self.apparent_type_of_intersection(containing),
-                None => containing,
-            };
+            let class = declaring_class_or_containing_type(self);
             return self.report_inaccessible(error_node, 2445, first, &[class]);
         };
         if is_static {

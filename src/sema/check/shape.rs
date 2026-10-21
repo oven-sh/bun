@@ -5056,12 +5056,19 @@ impl<'p, 's> Checker<'p, 's> {
                 prop.flags
                     .set(PropFlags::READONLY, every(PropFlags::READONLY));
                 prop.flags.set(PropFlags::METHOD, every(PropFlags::METHOD));
-                // Private if one is, else public if one is, else protected (`getDeclarationModifierFlagsFromSymbol`).
-                let private = list.iter().any(|p| p.flags.contains(PropFlags::PRIVATE));
-                prop.flags.set(PropFlags::PRIVATE, private);
+                // Public if one is, else protected if one is, else private (`getDeclarationModifierFlagsFromSymbol`).
+                // `isConflictingPrivateProperty`: one that's private in some constituent and declared in several
+                // places reduces the intersection to `never`, and `PRIVATE` says so.
+                let some = |flag: PropFlags| list.iter().any(|p| p.flags.contains(flag));
+                let is_private = some(PropFlags::PRIVATE)
+                    && (every(PropFlags::PRIVATE)
+                        || Self::prop_with_shared_value_declaration(list.iter()).is_none());
+                prop.flags.set(PropFlags::PRIVATE, is_private);
+                let hidden = PropFlags::PRIVATE | PropFlags::PROTECTED;
+                let is_hidden = list.iter().all(|p| p.flags.intersects(hidden));
                 prop.flags.set(
                     PropFlags::PROTECTED,
-                    !private && every(PropFlags::PROTECTED),
+                    !is_private && is_hidden && some(PropFlags::PROTECTED),
                 );
                 // An accessor only if all are, and all have the same combination of getter and
                 // setter.
@@ -5080,7 +5087,6 @@ impl<'p, 's> Checker<'p, 's> {
                 self.forget_separate_key(prop);
                 prop.source = PropSource::Intersected(whole, list.into());
                 prop.mapper = MapperId::IDENTITY;
-                self.set_modifiers_of_value_declaration(prop);
             }
         }
         b.shape
@@ -7469,23 +7475,6 @@ impl<'p, 's> Checker<'p, 's> {
         let first = declared.next()?;
         let is_same = |other| Self::value_declaration(other) == Self::value_declaration(first);
         declared.all(is_same).then_some(first)
-    }
-
-    /// `getDeclarationModifierFlagsFromSymbol` and `isReadonlySymbol` for a property created by
-    /// `createUnionOrIntersectionProperty`. If it has a `ValueDeclaration`, that declaration's modifiers count, not the
-    /// constituents'. A mapped type's property has none.
-    pub(super) fn set_modifiers_of_value_declaration(&mut self, prop: &mut Prop<'s>) {
-        if Self::value_declaration(prop).is_none() {
-            return;
-        }
-        let modifiers = self.get_declaration_modifier_flags_from_symbol_ex(prop, false);
-        let is = |modifier| modifiers.contains(modifier);
-        prop.flags.set(PropFlags::PRIVATE, is(Flags::PRIVATE));
-        prop.flags.set(PropFlags::PROTECTED, is(Flags::PROTECTED));
-        // The modifier only counts on a `SymbolFlagsProperty`.
-        if is(Flags::READONLY) && !prop.flags.contains(PropFlags::ACCESSOR) {
-            prop.flags |= PropFlags::READONLY;
-        }
     }
 
     /// The source of a property of type `ty` that has the `Declarations` of the properties `of`,

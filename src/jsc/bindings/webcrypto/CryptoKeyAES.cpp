@@ -38,7 +38,7 @@
 
 namespace WebCore {
 
-static inline bool lengthIsValid(size_t length)
+bool CryptoKeyAES::lengthIsValid(size_t length)
 {
     return (length == CryptoKeyAES::s_length128) || (length == CryptoKeyAES::s_length192) || (length == CryptoKeyAES::s_length256);
 }

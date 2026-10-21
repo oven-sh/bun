@@ -33,6 +33,10 @@
 #include "CryptoAlgorithmAES_CTR.h"
 #include "CryptoAlgorithmAES_GCM.h"
 #include "CryptoAlgorithmAES_KW.h"
+#include "CryptoAlgorithmAeadParams.h"
+#include "CryptoAlgorithmAesCbcCfbParams.h"
+#include "CryptoAlgorithmAesCtrParams.h"
+#include "CryptoAlgorithmAesGcmParams.h"
 #include "CryptoAlgorithmChaCha20Poly1305.h"
 #include "CryptoAlgorithmECDH.h"
 #include "CryptoAlgorithmECDSA.h"
@@ -88,6 +92,39 @@ void CryptoAlgorithmRegistry::platformRegisterAlgorithms()
     registerAlgorithm<CryptoAlgorithmMLDSA87>();
     registerAlgorithm<CryptoAlgorithmMLKEM768>();
     registerAlgorithm<CryptoAlgorithmMLKEM1024>();
+}
+
+bool CryptoAlgorithmRegistry::acceptsCipherParameters(const CryptoAlgorithmParameters& parameters)
+{
+    switch (parameters.identifier) {
+    case CryptoAlgorithmIdentifier::AES_CBC:
+        if (auto* aesParameters = dynamicDowncast<CryptoAlgorithmAesCbcCfbParams>(parameters))
+            return CryptoAlgorithmAES_CBC::ivLengthIsValid(aesParameters->iv.length());
+        break;
+    case CryptoAlgorithmIdentifier::AES_CFB:
+        if (auto* aesParameters = dynamicDowncast<CryptoAlgorithmAesCbcCfbParams>(parameters))
+            return CryptoAlgorithmAES_CFB::ivLengthIsValid(aesParameters->iv.length());
+        break;
+    case CryptoAlgorithmIdentifier::AES_CTR:
+        if (auto* aesParameters = dynamicDowncast<CryptoAlgorithmAesCtrParams>(parameters)) {
+            return CryptoAlgorithmAES_CTR::counterSizeIsValid(aesParameters->counter.length())
+                && CryptoAlgorithmAES_CTR::counterLengthIsValid(aesParameters->length);
+        }
+        break;
+    case CryptoAlgorithmIdentifier::AES_GCM:
+        if (auto* aesParameters = dynamicDowncast<CryptoAlgorithmAesGcmParams>(parameters))
+            return CryptoAlgorithmAES_GCM::tagLengthIsValid(aesParameters->tagLength);
+        break;
+    case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
+        if (auto* aeadParameters = dynamicDowncast<CryptoAlgorithmAeadParams>(parameters)) {
+            return CryptoAlgorithmChaCha20Poly1305::tagLengthIsValid(aeadParameters->tagLength)
+                && CryptoAlgorithmChaCha20Poly1305::ivLengthIsValid(aeadParameters->iv.length());
+        }
+        break;
+    default:
+        break;
+    }
+    return true;
 }
 
 } // namespace WebCore

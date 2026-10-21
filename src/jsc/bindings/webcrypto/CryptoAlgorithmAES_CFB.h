@@ -40,6 +40,9 @@ public:
     static constexpr CryptoAlgorithmIdentifier s_identifier = CryptoAlgorithmIdentifier::AES_CFB;
     static Ref<CryptoAlgorithm> create();
 
+    // The step of encrypt and decrypt that needs neither the key nor the data. SubtleCrypto.supports runs it too.
+    static bool ivLengthIsValid(size_t);
+
 private:
     CryptoAlgorithmAES_CFB() = default;
     CryptoAlgorithmIdentifier identifier() const final;

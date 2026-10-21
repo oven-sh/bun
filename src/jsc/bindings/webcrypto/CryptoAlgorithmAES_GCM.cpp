@@ -51,7 +51,7 @@ static inline bool usagesAreInvalidForCryptoAlgorithmAES_GCM(CryptoKeyUsageBitma
     return usages & (CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits | CryptoKeyUsageKemMask);
 }
 
-static inline bool tagLengthIsValid(uint8_t tagLength)
+bool CryptoAlgorithmAES_GCM::tagLengthIsValid(uint8_t tagLength)
 {
     using namespace CryptoAlgorithmAES_GCMInternal;
     for (size_t i = 0; i < sizeof(ValidTagLengths); i++) {
@@ -59,6 +59,12 @@ static inline bool tagLengthIsValid(uint8_t tagLength)
             return true;
     }
     return false;
+}
+
+bool CryptoAlgorithmAES_GCM::tagLengthIsValid(std::optional<uint8_t> tagLength)
+{
+    using namespace CryptoAlgorithmAES_GCMInternal;
+    return tagLengthIsValid(tagLength.value_or(DefaultTagLength));
 }
 
 Ref<CryptoAlgorithm> CryptoAlgorithmAES_GCM::create()

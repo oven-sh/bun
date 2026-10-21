@@ -68,6 +68,10 @@ public:
     static constexpr CryptoAlgorithmIdentifier s_identifier = CryptoAlgorithmIdentifier::AES_CTR;
     static Ref<CryptoAlgorithm> create();
 
+    // The steps of encrypt and decrypt that need neither the key nor the data. SubtleCrypto.supports runs them too.
+    static bool counterSizeIsValid(size_t counterSize);
+    static bool counterLengthIsValid(size_t counterLength);
+
 private:
     CryptoAlgorithmAES_CTR() = default;
     CryptoAlgorithmIdentifier identifier() const final;

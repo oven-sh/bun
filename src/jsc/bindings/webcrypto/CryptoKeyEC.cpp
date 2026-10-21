@@ -209,6 +209,12 @@ bool CryptoKeyEC::isValidECAlgorithm(CryptoAlgorithmIdentifier algorithm)
     return algorithm == CryptoAlgorithmIdentifier::ECDSA || algorithm == CryptoAlgorithmIdentifier::ECDH;
 }
 
+bool CryptoKeyEC::namedCurveIsSupported(const String& curve)
+{
+    auto namedCurve = toNamedCurve(curve);
+    return namedCurve && platformSupportedCurve(*namedCurve);
+}
+
 auto CryptoKeyEC::algorithm() const -> KeyAlgorithm
 {
     CryptoEcKeyAlgorithm result;

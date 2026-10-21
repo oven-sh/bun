@@ -73,6 +73,8 @@ public:
     String namedCurveString() const;
     PlatformECKey platformKey() const { return m_platformKey.get(); }
     static bool isValidECAlgorithm(CryptoAlgorithmIdentifier);
+    // The step of generatePair and of each import that needs only the curve name. SubtleCrypto.supports runs it too.
+    static bool namedCurveIsSupported(const String& curve);
     static RefPtr<CryptoKeyEC> platformImportSpki(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap, bool* keyTypeMismatch, bool* curveMismatch);
     static RefPtr<CryptoKeyEC> platformImportPkcs8(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap, bool* keyTypeMismatch, bool* curveMismatch);
 

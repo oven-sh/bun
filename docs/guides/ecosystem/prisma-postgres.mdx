@@ -17,13 +17,13 @@ mode: center
     </Step>
 
     <Step title="Create a Prisma Postgres database">
-    	Create a database with `create-db`, which needs no account and prints a `postgres://` connection string together with a claim URL. An unclaimed database is deleted after 24 hours, so open that URL if you want to keep it. Any other PostgreSQL 15 or newer connection string works too.
+    	Create a database with `create-db`, which needs no account and prints a `postgres://` connection string together with a claim URL. An unclaimed database is deleted after 24 hours, so open that URL if you want to keep it. The connection string of any other empty PostgreSQL 15 or newer database works too.
 
     	```bash terminal icon="terminal"
     	bunx create-db
     	```
 
-    	Put the connection string in a `.env` file, changing `sslmode=require` to `sslmode=verify-full` because with `require` the `pg` driver prints a security warning on every connection.
+    	Put the connection string in a `.env` file. The string from `create-db` ends in `sslmode=require`, which makes the `pg` driver print a security warning on every connection, so change it to `sslmode=verify-full`, the mode Prisma Postgres supports. Leave the SSL settings of another provider as its documentation gives them.
 
     	```ini .env icon="settings"
     	DATABASE_URL="postgres://USER:PASSWORD@db.prisma.io:5432/postgres?sslmode=verify-full"
@@ -130,6 +130,15 @@ mode: center
     	bun add -d @types/bun
     	```
 
+    	```json tsconfig.json icon="file-json"
+    	{
+    	  "compilerOptions": {
+    	    "types": ["node"] // [!code --]
+    	    "types": ["node", "bun"] // [!code ++]
+    	  }
+    	}
+    	```
+
     	Start the server and request the users:
 
     	```bash terminal icon="terminal"
@@ -141,7 +150,11 @@ mode: center
     	```
 
     	```json
-    	[{ "id": 1, "email": "john-0.5967@example.com", "name": "John Dough" }, ...]
+    	[
+    	  { "id": 1, "email": "john-0.5967@example.com", "name": "John Dough" },
+    	  { "id": 2, "email": "john-0.5315@example.com", "name": "John Dough" },
+    	  { "id": 3, "email": "john-0.5720@example.com", "name": "John Dough" }
+    	]
     	```
     </Step>
 

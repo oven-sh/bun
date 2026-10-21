@@ -69,12 +69,11 @@ test("captured timeouts use the real clock when fake time is reset", async () =>
   const earlierTimer = capturedSetTimeout(() => {
     firstTimer = "earlier";
     resolveFirstTimer();
-  }, 10);
+  }, 1);
 
   vi.useFakeTimers();
   setSystemTime(0);
 
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
   let resolveLaterTimer!: () => void;
   const laterTimerDone = new Promise<void>(resolve => (resolveLaterTimer = resolve));
   const laterTimer = capturedSetTimeout(() => {
@@ -92,7 +91,7 @@ test("captured timeouts use the real clock when fake time is reset", async () =>
 });
 
 test("captured real intervals rearm against the real clock when fake time is reset", async () => {
-  const capturedSetTimeout = globalThis.setTimeout.bind(globalThis);
+  const capturedSetImmediate = globalThis.setImmediate.bind(globalThis);
   const capturedSetInterval = globalThis.setInterval.bind(globalThis);
   const capturedClearInterval = globalThis.clearInterval.bind(globalThis);
 
@@ -109,7 +108,7 @@ test("captured real intervals rearm against the real clock when fake time is res
     }
   }, 25);
   await firstTick;
-  await new Promise<void>(resolve => capturedSetTimeout(resolve, 0));
+  await new Promise<void>(resolve => capturedSetImmediate(resolve));
   expect(intervalTicks).toBe(1);
   capturedClearInterval(interval);
   vi.useRealTimers();

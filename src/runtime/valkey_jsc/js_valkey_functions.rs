@@ -1,4 +1,4 @@
-use crate::node::{BlobOrStringOrBuffer as JSArgument, FileBlobs};
+use crate::node::{BlobOrStringOrBuffer as JSArgument, FileBlobs, StringOrBuffer};
 use bun_collections::VecExt as _;
 use bun_jsc::{
     self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue,
@@ -68,6 +68,16 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
         // Allow numbers to be passed as strings.
         let str = value.to_js_string(global)?;
         return JSArgument::from_js_maybe_file(global, str.to_js(), FileBlobs::Reject);
+    }
+
+    // Copy the bytes. A later argument's `toString()` can detach this buffer before the command is serialized.
+    if let Some(buffer) = value.as_array_buffer(global) {
+        let Some(copy) = buffer.try_copy_bytes() else {
+            return Err(global.throw_out_of_memory());
+        };
+        return Ok(Some(JSArgument::StringOrBuffer(StringOrBuffer::owned(
+            copy,
+        ))));
     }
 
     JSArgument::from_js_maybe_file(global, value, FileBlobs::Allow)
@@ -168,7 +178,7 @@ pub(crate) mod compile {
 macro_rules! cmd_noargs {
     ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
         #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
+        pub(crate) fn $fn_name(
             this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
@@ -192,7 +202,7 @@ macro_rules! cmd_noargs {
 macro_rules! cmd_key {
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $state:ident) => {
         #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
+        pub(crate) fn $fn_name(
             this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
@@ -224,7 +234,7 @@ macro_rules! cmd_key {
 macro_rules! cmd_key_varargs {
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $state:ident) => {
         #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
+        pub(crate) fn $fn_name(
             this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
@@ -270,7 +280,7 @@ macro_rules! cmd_key_varargs {
 macro_rules! cmd_key_value {
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $arg1_name:literal, $state:ident) => {
         #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
+        pub(crate) fn $fn_name(
             this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
@@ -309,7 +319,7 @@ macro_rules! cmd_key_value {
 macro_rules! cmd_key_value_value2 {
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $arg1_name:literal, $arg2_name:literal, $state:ident) => {
         #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
+        pub(crate) fn $fn_name(
             this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
@@ -358,7 +368,7 @@ macro_rules! cmd_strings_varargs {
     };
     ($fn_name:ident, $name:literal, $command:literal, $state:ident, $meta:expr) => {
         #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
+        pub(crate) fn $fn_name(
             this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
@@ -395,7 +405,7 @@ macro_rules! cmd_strings_varargs {
 macro_rules! cmd_key_value_varargs {
     ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
         #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
+        pub(crate) fn $fn_name(
             this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
@@ -484,7 +494,11 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn get(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"get")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
@@ -2078,9 +2092,8 @@ impl JSValkeyClient {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let _ = frame;
-
-        let new_client_ptr = this.clone_without_connecting(global)?;
+        // The duplicate is the calling script's, whoever made the original.
+        let new_client_ptr = this.clone_without_connecting(&global.js_thread_of_caller(frame))?;
         // SAFETY: clone_without_connecting returns a freshly allocated, leaked
         // JSValkeyClient (heap::alloc); valid for the rest of this scope.
         let new_client: &JSValkeyClient = unsafe { &*new_client_ptr };

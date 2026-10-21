@@ -279,6 +279,12 @@ impl PosixLoop {
         unsafe { c::us_internal_free_closed_sockets(self) };
     }
 
+    /// Runs the uWS pre handler, which flushes queued `publish()` batches and leftover corks.
+    pub fn flush_pending_writes(&mut self) {
+        // SAFETY: self is a valid loop pointer
+        unsafe { c::uws_loop_flush_pending_writes(self) };
+    }
+
     /// `us_socket_group_close_all()` on every group currently linked to this
     /// loop — covers Listener/App-owned groups that `RareData`'s static field
     /// list doesn't enumerate. Returns whether any group was linked.
@@ -315,6 +321,7 @@ pub struct WindowsLoop {
     pub is_default: c_int,
     pub pre: *mut uv::uv_prepare_t,
     pub check: *mut uv::uv_check_t,
+    pub idle_sweep_timer: *mut crate::Timer,
 }
 
 #[cfg(windows)]
@@ -453,6 +460,11 @@ impl WindowsLoop {
         unsafe { c::us_internal_free_closed_sockets(self) };
     }
 
+    pub fn flush_pending_writes(&mut self) {
+        // SAFETY: self is a valid loop pointer
+        unsafe { c::uws_loop_flush_pending_writes(self) };
+    }
+
     pub fn close_all_groups(&mut self) -> bool {
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_loop_close_all_groups(self) != 0 }
@@ -483,7 +495,6 @@ pub type Loop = PosixLoop;
 
 type LoopCb = unsafe extern "C" fn(*mut Loop);
 
-#[allow(non_snake_case)]
 mod c {
     use super::*;
 
@@ -521,6 +532,7 @@ mod c {
         #[cfg(windows)]
         pub(super) fn uws_get_loop_with_native(native: *mut c_void) -> *mut WindowsLoop;
         pub(super) fn uws_loop_date_header_timer_update(loop_: *mut Loop);
+        pub(super) fn uws_loop_flush_pending_writes(loop_: *mut Loop);
     }
 }
 // Re-exported raw externs for cross-thread callers (e.g. bun_http's

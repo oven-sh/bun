@@ -1,8 +1,5 @@
 use crate::api::bun::process as bun_process;
-use crate::api::bun::process::SignalCodeExt as _;
 use crate::api::bun::process::sync as spawn_sync;
-use crate::cli::Command;
-use crate::cli::create_command::ExampleTag;
 use bun_ast::Source as LoggerSource;
 use bun_bundler::ResolvedExports;
 use bun_bundler::bundle_v2::BundleV2;
@@ -20,8 +17,7 @@ use bun_sys::{self, Fd};
 
 // Generate project files based on the entry point and dependencies
 pub(crate) fn generate(
-    _ctx: &Command::Context,
-    _example: ExampleTag,
+    overwrite: bool,
     entry_point: &[u8],
     result: &mut DependenciesScannerResult,
 ) -> Result<(), crate::Error> {
@@ -36,9 +32,9 @@ pub(crate) fn generate(
             b"\n\
               Please add an export to your file. For example:\n\
               \n\
-              \x20  export default function MyApp() {{\n\
+              \x20  export default function MyApp() {\n\
               \x20    return <div>Hello World</div>;\n\
-              \x20  }};\n\
+              \x20  }\n\
               \n",
         )?;
 
@@ -46,35 +42,21 @@ pub(crate) fn generate(
         Global::crash();
     };
 
-    // Check if Tailwind is already in dependencies
     let has_tailwind_in_dependencies = result.dependencies.contains(b"tailwindcss")
         || result.dependencies.contains(b"bun-plugin-tailwind");
-    let mut needs_to_inject_tailwind = false;
-    if !has_tailwind_in_dependencies {
-        // Scan source files for Tailwind classes if not already in dependencies
-        needs_to_inject_tailwind =
-            has_any_tailwind_classes_in_source_files(result.bundle_v2, result.reachable_files);
-    }
+    let needs_to_inject_tailwind = !has_tailwind_in_dependencies
+        && has_any_tailwind_classes_in_source_files(result.bundle_v2, result.reachable_files);
 
-    // Get any shadcn components used in the project
-    let shadcn = if ENABLE_SHADCN_UI {
-        get_shadcn_components(result.bundle_v2, result.reachable_files)?
-    } else {
-        StringSet::new()
-    };
+    let shadcn = get_shadcn_components(result.bundle_v2, result.reachable_files)?;
     let needs_to_inject_shadcn_ui = !shadcn.keys().is_empty();
 
-    // Add Tailwind dependencies if needed
     if needs_to_inject_tailwind {
         result.dependencies.insert(b"tailwindcss")?;
         result.dependencies.insert(b"bun-plugin-tailwind")?;
     }
 
-    // Add shadcn-ui dependencies if needed
     if needs_to_inject_shadcn_ui {
         // https://ui.shadcn.com/docs/installation/manual
-        // This will probably be tricky to keep updated.
-        // but hopefully the dependency scanning will just handle it for us.
         result.dependencies.insert(b"tw-animate-css")?;
         result.dependencies.insert(b"class-variance-authority")?;
         result.dependencies.insert(b"clsx")?;
@@ -84,10 +66,7 @@ pub(crate) fn generate(
 
     let uses_tailwind = has_tailwind_in_dependencies || needs_to_inject_tailwind;
 
-    // We are JSX-only for now.
-    // The versions of react & react-dom need to match up, and it's SO easy to mess that up.
-    // So we have to be a little opinionated here.
-    // Add react-dom if react is used
+    // JSX-only for now. The versions of react & react-dom need to match up.
     let _ = result.dependencies.swap_remove(b"react");
     let _ = result.dependencies.swap_remove(b"react-dom");
     result.dependencies.insert(b"react-dom@19")?;
@@ -95,38 +74,55 @@ pub(crate) fn generate(
 
     let dev_dependencies: &[&[u8]] = &[b"@types/bun", b"@types/react@19", b"@types/react-dom@19"];
 
-    // Choose template based on dependencies and example type
-    let template: Template = 'brk: {
-        if needs_to_inject_shadcn_ui {
-            break 'brk Template::ReactShadcnSpa { components: shadcn };
-        } else if uses_tailwind {
-            break 'brk Template::ReactTailwindSpa;
-        } else {
-            break 'brk Template::ReactSpa;
-        }
+    let template = if needs_to_inject_shadcn_ui {
+        Template::ReactShadcnSpa { components: shadcn }
+    } else if uses_tailwind {
+        Template::ReactTailwindSpa
+    } else {
+        Template::ReactSpa
     };
 
-    // Generate project files from template
     generate_files(
         entry_point,
         result.dependencies.keys(),
         dev_dependencies,
         &template,
         react_component_export,
+        overwrite,
     )?;
 
     Global::exit(0);
 }
 
-// Create a file with given contents, returns if file was newly created
-fn create_file(filename: &[u8], contents: &[u8]) -> bun_sys::Result<bool> {
-    // Check if file exists and has same contents
-    if let Ok(source_contents) = bun_sys::File::read_from(Fd::cwd(), filename) {
-        // `source_contents` is a Vec<u8>; freed on drop.
-        if strings::eql_long(&source_contents, contents, true) {
-            return bun_sys::Result::Ok(false);
+enum Written {
+    Yes,
+    AlreadyThere,
+    /// Something else is at that path and `Existing` says it stays.
+    Kept,
+}
+
+fn create_file(filename: &[u8], contents: &[u8], existing: Existing) -> bun_sys::Result<Written> {
+    let flags = match bun_sys::File::read_from(Fd::cwd(), filename) {
+        Ok(on_disk) => {
+            let holds = |body: &[u8]| strings::eql_long(&on_disk, body, true);
+            if holds(contents) {
+                return Ok(Written::AlreadyThere);
+            }
+            let replace = match existing {
+                Existing::Keep => false,
+                Existing::ReplaceOwn(own_bodies) => own_bodies.iter().any(|body| holds(body)),
+                Existing::Regenerate => true,
+            };
+            if !replace {
+                return Ok(Written::Kept);
+            }
+            bun_sys::O::WRONLY | bun_sys::O::TRUNC
         }
-    }
+        Err(err) if matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {
+            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::EXCL
+        }
+        Err(err) => return Err(err),
+    };
 
     // Create parent directories if needed
     let dirname = resolve_path::dirname::<path::platform::Auto>(filename);
@@ -134,16 +130,14 @@ fn create_file(filename: &[u8], contents: &[u8]) -> bun_sys::Result<bool> {
         let _ = bun_sys::Dir::cwd().make_path(dirname);
     }
 
-    // Open file for writing
-    let fd = bun_sys::openat_a(
-        Fd::cwd(),
-        filename,
-        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-        0o644,
-    )?;
-    match bun_sys::File::from_fd(fd).write_all(contents) {
-        bun_sys::Result::Ok(()) => bun_sys::Result::Ok(true),
-        bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
+    match bun_sys::File::openat(Fd::cwd(), filename, flags, 0o644) {
+        Ok(file) => {
+            file.write_all(contents)?;
+            Ok(Written::Yes)
+        }
+        // The read saw nothing, yet something is there: a dangling symlink.
+        Err(err) if err.get_errno() == bun_sys::E::EEXIST => Ok(Written::Kept),
+        Err(err) => Err(err),
     }
 }
 
@@ -153,36 +147,35 @@ fn string_with_replacements(
     basename: &[u8],
     relative_name: &[u8],
     react_component_export: &[u8],
-) -> Result<Vec<u8>, bun_alloc::AllocError> {
+) -> Vec<u8> {
     let mut input: Vec<u8> = original_input.to_vec();
-
-    if strings::contains(&input, b"REPLACE_ME_WITH_YOUR_REACT_COMPONENT_EXPORT") {
-        input = strings::replace_owned(
-            &input,
-            b"REPLACE_ME_WITH_YOUR_REACT_COMPONENT_EXPORT",
+    for (placeholder, value) in [
+        (
+            b"REPLACE_ME_WITH_YOUR_REACT_COMPONENT_EXPORT".as_slice(),
             react_component_export,
-        );
+        ),
+        (b"REPLACE_ME_WITH_YOUR_APP_BASE_NAME".as_slice(), basename),
+        (
+            b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME".as_slice(),
+            relative_name,
+        ),
+    ] {
+        input = strings::replace_owned(&input, placeholder, value);
     }
-
-    if strings::contains(&input, b"REPLACE_ME_WITH_YOUR_APP_BASE_NAME") {
-        input = strings::replace_owned(&input, b"REPLACE_ME_WITH_YOUR_APP_BASE_NAME", basename);
-    }
-
-    if strings::contains(&input, b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME") {
-        input =
-            strings::replace_owned(&input, b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME", relative_name);
-    }
-
-    Ok(input)
+    input
 }
 
-fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), crate::Error> {
-    Output::command_out(Output::CommandArgv::List(argv.as_slice()));
+fn print_and_run_bun(argv: &mut [&[u8]], failure: &str) -> Result<(), crate::Error> {
+    Output::command_out(Output::CommandArgv::List(argv));
     Output::flush();
+    run_bun(argv, failure)
+}
 
+/// Runs `argv` with this executable as `argv[0]`. When that fails, exits the way it did.
+fn run_bun(argv: &mut [&[u8]], failure: &str) -> Result<(), crate::Error> {
     argv[0] = bun_core::self_exe_path()?;
 
-    let process = match spawn_sync::spawn(&spawn_sync::Options {
+    let status = match spawn_sync::spawn(&spawn_sync::Options {
         argv: argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
         envp: None,
         cwd: Box::<[u8]>::from(FileSystem::instance().top_level_dir()),
@@ -199,56 +192,48 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), crate::Error> {
         },
         ..Default::default()
     }) {
-        Ok(p) => p,
+        Ok(Ok(spawn_result)) => spawn_result.status,
+        Ok(Err(err)) => {
+            Output::err(err, failure, ());
+            Global::crash();
+        }
         Err(err) => {
-            Output::err(err, "failed to install dependencies", ());
+            Output::err(err, failure, ());
             Global::crash();
         }
     };
 
-    match process {
-        bun_sys::Result::Err(err) => {
-            Output::err(err, "failed to install dependencies", ());
-            Global::crash();
+    if !status.is_ok() {
+        if let Some(signal) = status.signal() {
+            Global::exit(signal.to_exit_code() as u32);
         }
-        bun_sys::Result::Ok(spawn_result) => {
-            if !spawn_result.status.is_ok() {
-                if let Some(signal) = spawn_result.status.signal_code() {
-                    if let Some(exit_code) = signal.to_exit_code() {
-                        Global::exit(exit_code as u32);
-                    }
-                }
-
-                if let bun_process::Status::Exited(exited) = spawn_result.status {
-                    Global::exit(exited.code as u32);
-                }
-
-                Global::crash();
-            }
+        if let bun_process::Status::Exited(exited) = status {
+            Global::exit(exited.code as u32);
         }
+        Global::crash();
     }
 
     Ok(())
 }
 
-// Generate all project files from template
-pub(crate) fn generate_files(
+fn generate_files(
     entry_point: &[u8],
     dependencies: &[Box<[u8]>],
     dev_dependencies: &[&[u8]],
     template: &Template,
     react_component_export: &[u8],
+    overwrite: bool,
 ) -> Result<(), crate::Error> {
-    let mut log = template.logger();
-    let mut basename = path::basename(entry_point);
+    let mut log = Logger {
+        template: template.tag(),
+        has_written_initial_message: false,
+    };
+    let basename = path::basename(entry_point);
     let extension = path::extension(basename);
-    if !extension.is_empty() {
-        basename = &basename[0..basename.len() - extension.len()];
-    }
+    let basename = &basename[0..basename.len() - extension.len()];
 
-    // Normalize file paths
     let mut normalized_buf = bun_paths::path_buffer_pool::get();
-    let mut normalized_name: &[u8] = if bun_paths::is_absolute(entry_point) {
+    let normalized_name: &[u8] = if bun_paths::is_absolute(entry_point) {
         resolve_path::relative_normalized_buf::<path::platform::Loose, true>(
             &mut normalized_buf,
             FileSystem::instance().top_level_dir(),
@@ -257,58 +242,50 @@ pub(crate) fn generate_files(
     } else {
         resolve_path::normalize_buf::<path::platform::Loose>(entry_point, &mut normalized_buf)
     };
+    let normalized_name = &normalized_name[0..normalized_name.len() - extension.len()];
 
-    if !extension.is_empty() {
-        normalized_name = &normalized_name[0..normalized_name.len() - extension.len()];
-    }
+    let mut max_filename_len: usize = 0;
+    let mut created: Vec<(&TemplateFile, Vec<u8>)> = Vec::new();
+    let mut kept: Vec<Vec<u8>> = Vec::new();
 
-    // Generate files based on template type
-    // Route through `Tag::files()` and use heap Vecs sized at runtime.
-    {
-        let files: &'static [TemplateFile] = template.tag().files();
-
-        let mut max_filename_len: usize = 0;
-        // A single
-        // Vec<Option<Vec<u8>>> owns the names; Some(_) doubles as the created flag.
-        let mut filenames: Vec<Option<Vec<u8>>> = vec![None; files.len()];
-
-        // Create all template files
-        for index in 0..files.len() {
-            let file = &files[index];
-            let file_name = string_with_replacements(
-                file.name,
-                basename,
-                normalized_name,
-                react_component_export,
-            )?;
-            if file.overwrite || !exists(&file_name) {
-                let content = string_with_replacements(
-                    file.content,
-                    basename,
-                    normalized_name,
-                    react_component_export,
-                )?;
-                match create_file(&file_name, &content) {
-                    bun_sys::Result::Ok(new) => {
-                        if new {
-                            max_filename_len = max_filename_len.max(file_name.len());
-                            filenames[index] = Some(file_name);
-                        }
-                    }
-                    bun_sys::Result::Err(err) => {
-                        Output::err(err, "failed to create {}", (bstr::BStr::new(&file_name),));
-                        Global::crash();
-                    }
+    for file in template.tag().files() {
+        let replaced = |input: &[u8]| {
+            string_with_replacements(input, basename, normalized_name, react_component_export)
+        };
+        let file_name = replaced(file.name);
+        let existing = if overwrite {
+            Existing::Regenerate
+        } else {
+            file.existing
+        };
+        match create_file(&file_name, &replaced(file.content), existing) {
+            // Two rows of a template can name one path.
+            Ok(Written::Yes) => {
+                kept.retain(|name| *name != file_name);
+                max_filename_len = max_filename_len.max(file_name.len());
+                created.push((file, file_name));
+            }
+            Ok(Written::AlreadyThere) => {}
+            Ok(Written::Kept) => {
+                if !kept.contains(&file_name) {
+                    kept.push(file_name);
                 }
             }
-        }
-
-        debug_assert_eq!(files.len(), filenames.len());
-        for (file, filename) in files.iter().zip(filenames.iter()) {
-            if let Some(filename) = filename {
-                log.file(file, filename, max_filename_len);
+            Err(err) => {
+                Output::err(err, "failed to create {}", (bstr::BStr::new(&file_name),));
+                Global::crash();
             }
         }
+    }
+
+    for (file, filename) in &created {
+        log.file(file, filename, max_filename_len);
+    }
+    for filename in &kept {
+        bun_core::prettyln!(
+            " ○ <r><yellow>{}<r> (already exists, skipping)",
+            bstr::BStr::new(filename),
+        );
     }
 
     if !dependencies.is_empty() || !dev_dependencies.is_empty() {
@@ -324,26 +301,19 @@ pub(crate) fn generate_files(
     if !dependencies.is_empty() {
         let mut argv: Vec<&[u8]> = vec![b"bun", b"--only-missing", b"install", b"--"];
         argv.extend(dependencies.iter().map(|d| &d[..]));
-        run_install(&mut argv)?;
+        print_and_run_bun(&mut argv, "failed to install dependencies")?;
     }
 
     if !dev_dependencies.is_empty() {
         let mut argv: Vec<&[u8]> = vec![b"bun", b"--only-missing", b"add", b"-d"];
         argv.extend_from_slice(dev_dependencies);
-        run_install(&mut argv)?;
+        print_and_run_bun(&mut argv, "failed to install dependencies")?;
     }
-
-    // Show success message and start dev server
 
     match &template {
         Template::ReactShadcnSpa { components } => {
             if !components.keys().is_empty() {
-                // Add shadcn components
-                let mut shadcn_argv: Vec<&[u8]> = Vec::with_capacity(10);
-                shadcn_argv.push(b"bun");
-                shadcn_argv.push(b"x");
-                shadcn_argv.push(b"shadcn@canary");
-                shadcn_argv.push(b"add");
+                let mut shadcn_argv: Vec<&[u8]> = vec![b"bun", b"x", b"shadcn@canary", b"add"];
                 if strings::contains(normalized_name, b"/src") {
                     shadcn_argv.push(b"--src-dir");
                 }
@@ -351,58 +321,8 @@ pub(crate) fn generate_files(
                 shadcn_argv.push(b"--");
                 shadcn_argv.extend(components.keys().iter().map(|k| &k[..]));
 
-                // print "bun" but use bun.selfExePath()
                 bun_core::prettyln!("\n<r>😎 <b>Setting up shadcn/ui components<r>");
-                Output::command_out(Output::CommandArgv::List(&shadcn_argv));
-                Output::flush();
-                shadcn_argv[0] = bun_core::self_exe_path()?;
-
-                // Now we need to run shadcn to add the components to the project
-                let shadcn_process = match spawn_sync::spawn(&spawn_sync::Options {
-                    argv: shadcn_argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
-                    envp: None,
-                    cwd: Box::<[u8]>::from(FileSystem::instance().top_level_dir()),
-                    stderr: spawn_sync::SyncStdio::Inherit,
-                    stdout: spawn_sync::SyncStdio::Inherit,
-                    stdin: spawn_sync::SyncStdio::Inherit,
-
-                    #[cfg(windows)]
-                    windows: bun_process::WindowsOptions {
-                        loop_: bun_jsc::EventLoopHandle::init_mini(
-                            bun_event_loop::MiniEventLoop::init_global(None, None),
-                        ),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }) {
-                    Ok(p) => p,
-                    Err(err) => {
-                        Output::err(err, "failed to add shadcn components", ());
-                        Global::crash();
-                    }
-                };
-
-                match shadcn_process {
-                    bun_sys::Result::Err(err) => {
-                        Output::err(err, "failed to add shadcn components", ());
-                        Global::crash();
-                    }
-                    bun_sys::Result::Ok(spawn_result) => {
-                        if !spawn_result.status.is_ok() {
-                            if let Some(signal) = spawn_result.status.signal_code() {
-                                if let Some(exit_code) = signal.to_exit_code() {
-                                    Global::exit(exit_code as u32);
-                                }
-                            }
-
-                            if let bun_process::Status::Exited(exited) = spawn_result.status {
-                                Global::exit(exited.code as u32);
-                            }
-
-                            Global::crash();
-                        }
-                    }
-                }
+                print_and_run_bun(&mut shadcn_argv, "failed to add shadcn components")?;
 
                 Output::print(format_args!("\n"));
 
@@ -417,54 +337,7 @@ pub(crate) fn generate_files(
     Output::flush();
 
     // Start dev server
-    let start = match spawn_sync::spawn(&spawn_sync::Options {
-        argv: vec![
-            Box::<[u8]>::from(bun_core::self_exe_path()?.as_bytes()),
-            Box::<[u8]>::from(&b"dev"[..]),
-        ],
-        envp: None,
-        cwd: Box::<[u8]>::from(FileSystem::instance().top_level_dir()),
-        stderr: spawn_sync::SyncStdio::Inherit,
-        stdout: spawn_sync::SyncStdio::Inherit,
-        stdin: spawn_sync::SyncStdio::Inherit,
-
-        #[cfg(windows)]
-        windows: bun_process::WindowsOptions {
-            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
-            )),
-            ..Default::default()
-        },
-        ..Default::default()
-    }) {
-        Ok(p) => p,
-        Err(err) => {
-            Output::err(err, "failed to start app", ());
-            Global::crash();
-        }
-    };
-
-    match start {
-        bun_sys::Result::Err(err) => {
-            Output::err(err, "failed to start app", ());
-            Global::crash();
-        }
-        bun_sys::Result::Ok(spawn_result) => {
-            if !spawn_result.status.is_ok() {
-                if let Some(signal) = spawn_result.status.signal_code() {
-                    if let Some(exit_code) = signal.to_exit_code() {
-                        Global::exit(exit_code as u32);
-                    }
-                }
-
-                if let bun_process::Status::Exited(exited) = spawn_result.status {
-                    Global::exit(exited.code as u32);
-                }
-
-                Global::crash();
-            }
-        }
-    }
+    run_bun(&mut [b"bun".as_slice(), b"dev"], "failed to start app")?;
 
     Global::exit(0);
 }
@@ -524,7 +397,6 @@ fn has_any_tailwind_classes_in_source_files(
                                 continue;
                             };
                             let class_name = &source_code[0..end_quote as usize];
-                            // search for tailwind patterns
                             for pattern in COMMON_TAILWIND_PATTERNS {
                                 if bun_core::index_of(class_name, pattern).is_some() {
                                     return true;
@@ -535,45 +407,6 @@ fn has_any_tailwind_classes_in_source_files(
                             source_code = &source_code[1..];
                         }
                     }
-                }
-            }
-            bun_ast::Loader::Html => {
-                let source: &LoggerSource = &sources[file.get() as usize];
-                let source_code: &[u8] = &source.contents;
-
-                // Look for class=" or class='
-                let mut i: usize = 0;
-                while i < source_code.len() {
-                    if i + 7 >= source_code.len() {
-                        break;
-                    }
-
-                    if source_code.starts_with(b"class") {
-                        // Skip whitespace
-                        let mut j = i + 5;
-                        while j < source_code.len()
-                            && (source_code[j] == b' ' || source_code[j] == b'=')
-                        {
-                            j += 1;
-                        }
-                        if j < source_code.len()
-                            && (source_code[j] == b'"' || source_code[j] == b'\'')
-                        {
-                            // Found a class attribute, now check for Tailwind patterns
-                            for pattern in COMMON_TAILWIND_PATTERNS {
-                                if bun_core::index_of(
-                                    &source_code[j..(j + 1000).min(source_code.len())],
-                                    pattern,
-                                )
-                                .is_some()
-                                {
-                                    return true;
-                                }
-                            }
-                        }
-                        i = j;
-                    }
-                    i += 1;
                 }
             }
             _ => {}
@@ -593,27 +426,20 @@ fn get_shadcn_components(
     let all = bundler.graph.ast.items_import_records();
     let mut icons = StringSet::new();
     for file in reachable_files {
-        match loaders[file.get() as usize] {
-            bun_ast::Loader::Tsx | bun_ast::Loader::Jsx => {
-                let import_records = &all[file.get() as usize];
-                for import_record in import_records.as_slice() {
-                    if import_record.path.text.starts_with(b"@/components/ui/") {
-                        icons.insert(&import_record.path.text[b"@/components/ui/".len()..])?;
-                    }
-                }
+        if !matches!(
+            loaders[file.get() as usize],
+            bun_ast::Loader::Tsx | bun_ast::Loader::Jsx
+        ) {
+            continue;
+        }
+        for import_record in all[file.get() as usize].as_slice() {
+            if import_record.path.text.starts_with(b"@/components/ui/") {
+                icons.insert(&import_record.path.text[b"@/components/ui/".len()..])?;
             }
-            _ => {}
         }
     }
 
     Ok(icons)
-}
-
-// Local wrapper for `bun.sys.exists([]const u8)` — bun_sys currently exposes
-// only `exists_z(&ZStr)`, so NUL-terminate via `resolve_path::z`.
-fn exists(path: &[u8]) -> bool {
-    let mut buf = bun_paths::path_buffer_pool::get();
-    bun_sys::exists_z(resolve_path::z(path, &mut buf))
 }
 
 fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]> {
@@ -653,83 +479,52 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
 
             // 2. Prioritize the export matching the filename with an uppercase first letter
             // such as export const App = () => { ... }
-            if filename[0] >= b'A' && filename[0] <= b'Z' {
-                if js_lexer::is_identifier(filename) {
-                    if exports.contains(filename) {
-                        return Some(filename);
-                    }
-                }
+            if filename[0].is_ascii_uppercase()
+                && js_lexer::is_identifier(filename)
+                && exports.contains(filename)
+            {
+                return Some(filename);
             }
 
-            if filename[0] >= b'a' && filename[0] <= b'z' {
-                // Route through the process-
-                // lifetime CLI arena to match the returned-slice lifetime.
+            if filename[0].is_ascii_lowercase() {
                 let duped: &'static mut [u8] = crate::cli::cli_arena().alloc_slice_copy(filename);
                 duped[0] -= 32;
-                if js_lexer::is_identifier(duped) {
-                    if exports.contains(duped) {
-                        return Some(duped);
-                    }
+                if js_lexer::is_identifier(duped) && exports.contains(duped) {
+                    return Some(duped);
                 }
 
-                {
-                    // Extremely naive pascal case conversion
-                    // - Does not handle unicode.
-                    let mut input_index: usize = 0;
-                    let mut output_index: usize = 0;
-                    let mut capitalize_next = false;
-                    while input_index < duped.len() {
-                        if duped[input_index] == b' '
-                            || duped[input_index] == b'-'
-                            || duped[input_index] == b'_'
-                            || (output_index == 0
-                                && !js_lexer::is_identifier_start(duped[input_index] as i32))
-                        {
-                            capitalize_next = true;
-                            input_index += 1;
-                            continue;
-                        }
-                        if output_index == 0 || capitalize_next {
-                            if duped[input_index] >= b'a' && duped[input_index] <= b'z' {
-                                duped[output_index] = duped[input_index] - 32;
-                            } else {
-                                duped[output_index] = duped[input_index];
-                            }
-                            capitalize_next = false;
-                            output_index += 1;
-                        } else {
-                            duped[output_index] = duped[input_index];
-                            output_index += 1;
-                        }
-                        input_index += 1;
+                // Extremely naive pascal case conversion: does not handle unicode.
+                let mut output_index: usize = 0;
+                let mut capitalize_next = false;
+                for input_index in 0..duped.len() {
+                    if matches!(duped[input_index], b' ' | b'-' | b'_')
+                        || (output_index == 0
+                            && !js_lexer::is_identifier_start(duped[input_index] as i32))
+                    {
+                        capitalize_next = true;
+                        continue;
                     }
+                    duped[output_index] = if output_index == 0 || capitalize_next {
+                        duped[input_index].to_ascii_uppercase()
+                    } else {
+                        duped[input_index]
+                    };
+                    capitalize_next = false;
+                    output_index += 1;
+                }
 
-                    // Try the pascal case version
-                    // - "my-app" -> "MyApp"
-                    // - "my_app" -> "MyApp"
-                    // - "My-App" -> "MyApp"
-                    if exports.contains(&duped[0..output_index]) {
-                        return Some(&duped[0..output_index]);
-                    }
+                // "my-app", "my_app", "My-App" -> "MyApp"
+                if exports.contains(&duped[0..output_index]) {
+                    return Some(&duped[0..output_index]);
+                }
 
-                    // Okay that didn't work. Try the version that's the current
-                    // filename with the first letter capitalized
-                    // - "my-app" -> "Myapp"
-                    // - "My-App" -> "Myapp"
-                    if output_index > 1 {
-                        for c in &mut duped[1..output_index] {
-                            match *c {
-                                b'A'..=b'Z' => {
-                                    *c += 32;
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
+                // "my-app", "My-App" -> "Myapp"
+                if output_index > 1 {
+                    duped[1..output_index].make_ascii_lowercase();
+                }
 
-                    if exports.contains(&duped[0..output_index]) {
-                        return Some(&duped[0..output_index]);
-                    }
+                if exports.contains(&duped[0..output_index]) {
+                    return Some(&duped[0..output_index]);
                 }
             }
 
@@ -737,54 +532,66 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                 return None;
             };
             if exports.contains(&name_to_try) {
-                // Route through the
-                // process-lifetime CLI arena.
                 return Some(crate::cli::cli_dupe(&name_to_try));
             }
 
-            // Okay we really have no idea now.
-            // Let's just pick one that looks like a react component I guess.
+            // No idea now: one that looks like a react component, else the first one.
             for export_name in export_names {
-                if !export_name.is_empty() && export_name[0] >= b'A' && export_name[0] <= b'Z' {
+                if !export_name.is_empty() && export_name[0].is_ascii_uppercase() {
                     return Some(&export_name[..]);
                 }
             }
-
-            // Okay now we just have to pick one.
-            if !export_names.is_empty() {
-                return Some(&export_names[0][..]);
-            }
+            return Some(&export_names[0][..]);
         }
     }
 
     None
 }
 
-// Disabled until Tailwind v4 is supported.
-const ENABLE_SHADCN_UI: bool = true;
+/// What a template row does when another file is already at its path. `--force` regenerates every row.
+#[derive(Clone, Copy)]
+pub(crate) enum Existing {
+    Keep,
+    /// Replaced only when it holds one of these bodies, each of which `bun create` itself writes.
+    ReplaceOwn(&'static [&'static [u8]]),
+    Regenerate,
+}
 
-pub struct TemplateFile {
+pub(crate) struct TemplateFile {
     pub name: &'static [u8],
     pub(crate) content: &'static [u8],
     pub reason: Reason,
-    pub(crate) overwrite: bool,
+    pub(crate) existing: Existing,
 }
 
 impl TemplateFile {
-    const fn new(name: &'static [u8], content: &'static [u8], reason: Reason) -> Self {
+    const fn keep(name: &'static [u8], content: &'static [u8], reason: Reason) -> Self {
         Self {
             name,
             content,
             reason,
-            overwrite: true,
+            existing: Existing::Keep,
         }
     }
-    const fn new_no_overwrite(name: &'static [u8], content: &'static [u8], reason: Reason) -> Self {
+    const fn replace_own(
+        name: &'static [u8],
+        content: &'static [u8],
+        reason: Reason,
+        own_bodies: &'static [&'static [u8]],
+    ) -> Self {
         Self {
             name,
             content,
             reason,
-            overwrite: false,
+            existing: Existing::ReplaceOwn(own_bodies),
+        }
+    }
+    const fn regenerate(name: &'static [u8], content: &'static [u8], reason: Reason) -> Self {
+        Self {
+            name,
+            content,
+            reason,
+            existing: Existing::Regenerate,
         }
     }
 }
@@ -806,30 +613,40 @@ pub(crate) mod react_tailwind_spa {
     use super::*;
 
     pub(crate) const FILES: &[TemplateFile] = &[
-        TemplateFile::new(
+        TemplateFile::regenerate(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
             SHARED_BUILD_TS,
             Reason::Build,
         ),
-        TemplateFile::new(
+        // SHADCN_CSS stays out: after `shadcn add`, later runs pick this template and must keep that stylesheet.
+        TemplateFile::replace_own(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css",
-            include_bytes!("projects/react-tailwind-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css"),
+            TAILWIND_CSS,
             Reason::Css,
+            &[REACT_CSS, SHADCN_INDEX_CSS],
         ),
-        TemplateFile::new(
+        TemplateFile::regenerate(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html",
             SHARED_HTML,
             Reason::Html,
         ),
-        TemplateFile::new(
+        TemplateFile::regenerate(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx",
             SHARED_CLIENT_TSX,
             Reason::Bun,
         ),
-        TemplateFile::new_no_overwrite(b"bunfig.toml", SHARED_BUNFIG_TOML, Reason::Bun),
-        TemplateFile::new_no_overwrite(b"package.json", SHARED_PACKAGE_JSON, Reason::Npm),
+        TemplateFile::keep(b"bunfig.toml", SHARED_BUNFIG_TOML, Reason::Bun),
+        TemplateFile::keep(b"package.json", SHARED_PACKAGE_JSON, Reason::Npm),
     ];
 }
+
+const REACT_CSS: &[u8] =
+    include_bytes!("projects/react-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css");
+const TAILWIND_CSS: &[u8] =
+    include_bytes!("projects/react-tailwind-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css");
+const SHADCN_CSS: &[u8] =
+    include_bytes!("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css");
+const SHADCN_INDEX_CSS: &[u8] = include_bytes!("projects/react-shadcn-spa/styles/index.css");
 
 const SHARED_BUILD_TS: &[u8] =
     include_bytes!("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts");
@@ -845,27 +662,27 @@ pub(crate) mod react_spa {
     use super::*;
 
     pub(crate) const FILES: &[TemplateFile] = &[
-        TemplateFile::new(
+        TemplateFile::regenerate(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
             SHARED_BUILD_TS,
             Reason::Build,
         ),
-        TemplateFile::new_no_overwrite(
+        TemplateFile::keep(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css",
-            include_bytes!("projects/react-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css"),
+            REACT_CSS,
             Reason::Css,
         ),
-        TemplateFile::new(
+        TemplateFile::regenerate(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html",
             SHARED_HTML,
             Reason::Html,
         ),
-        TemplateFile::new(
+        TemplateFile::regenerate(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx",
             SHARED_CLIENT_TSX,
             Reason::Bun,
         ),
-        TemplateFile::new_no_overwrite(
+        TemplateFile::keep(
             b"package.json",
             include_bytes!("projects/react-spa/package.json"),
             Reason::Npm,
@@ -878,49 +695,49 @@ pub(crate) mod react_shadcn_spa {
     use super::*;
 
     pub(crate) const FILES: &[TemplateFile] = &[
-        TemplateFile::new(
+        TemplateFile::keep(
             b"lib/utils.ts",
             include_bytes!("projects/react-shadcn-spa/lib/utils.ts"),
             Reason::Shadcn,
         ),
-        TemplateFile::new(
-            b"index.css",
-            include_bytes!("projects/react-shadcn-spa/styles/index.css"),
-            Reason::Shadcn,
-        ),
-        TemplateFile::new(
+        // For `./index.tsx` this is also the path of the `.css` rows, which therefore list SHADCN_INDEX_CSS.
+        TemplateFile::keep(b"index.css", SHADCN_INDEX_CSS, Reason::Shadcn),
+        TemplateFile::regenerate(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
             SHARED_BUILD_TS,
             Reason::Bun,
         ),
-        TemplateFile::new(
+        TemplateFile::regenerate(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx",
             SHARED_CLIENT_TSX,
             Reason::Bun,
         ),
-        TemplateFile::new(
+        TemplateFile::replace_own(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css",
-            include_bytes!("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css"),
+            SHADCN_CSS,
             Reason::Css,
+            &[REACT_CSS, TAILWIND_CSS, SHADCN_INDEX_CSS],
         ),
-        TemplateFile::new(
+        TemplateFile::regenerate(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html",
             SHARED_HTML,
             Reason::Html,
         ),
-        TemplateFile::new(
+        // For `./styles/globals.tsx` the `.css` row above has just written SHADCN_CSS to this path.
+        TemplateFile::replace_own(
             b"styles/globals.css",
             include_bytes!("projects/react-shadcn-spa/styles/globals.css"),
             Reason::Shadcn,
+            &[SHADCN_CSS],
         ),
-        TemplateFile::new_no_overwrite(b"bunfig.toml", SHARED_BUNFIG_TOML, Reason::Bun),
-        TemplateFile::new_no_overwrite(b"package.json", SHARED_PACKAGE_JSON, Reason::Npm),
-        TemplateFile::new_no_overwrite(
+        TemplateFile::keep(b"bunfig.toml", SHARED_BUNFIG_TOML, Reason::Bun),
+        TemplateFile::keep(b"package.json", SHARED_PACKAGE_JSON, Reason::Npm),
+        TemplateFile::keep(
             b"tsconfig.json",
             include_bytes!("projects/react-shadcn-spa/tsconfig.json"),
             Reason::Tsc,
         ),
-        TemplateFile::new_no_overwrite(
+        TemplateFile::keep(
             b"components.json",
             include_bytes!("projects/react-shadcn-spa/components.json"),
             Reason::Shadcn,
@@ -931,14 +748,14 @@ pub(crate) mod react_shadcn_spa {
 // Template type to handle different project types
 #[derive(bun_core::EnumTag)]
 #[enum_tag(existing = Tag)]
-pub enum Template {
+pub(crate) enum Template {
     ReactTailwindSpa,
     ReactSpa,
     ReactShadcnSpa { components: StringSet },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Tag {
+pub(crate) enum Tag {
     ReactTailwindSpa,
     ReactSpa,
     ReactShadcnSpa,
@@ -962,16 +779,7 @@ impl Tag {
     }
 }
 
-impl Template {
-    fn logger(&self) -> Logger {
-        Logger {
-            template: self.tag(),
-            has_written_initial_message: false,
-        }
-    }
-}
-
-pub struct Logger {
+pub(crate) struct Logger {
     pub(crate) has_written_initial_message: bool,
     pub(crate) template: Tag,
 }
@@ -981,11 +789,8 @@ impl Logger {
         self.has_written_initial_message = true;
         bun_core::pretty!(" <green>create<r>  ");
         bun_core::pretty!("{}", bstr::BStr::new(name));
-        let name_len = name.len();
-        let mut padding: usize = max_name_len - name_len;
-        while padding > 0 {
+        for _ in name.len()..max_name_len {
             bun_core::pretty!(" ");
-            padding -= 1;
         }
         bun_core::prettyln!("   <d>{}<r>", <&'static str>::from(template_file.reason));
     }

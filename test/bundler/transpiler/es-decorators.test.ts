@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 
 // ES standard decorators are used for .js files (always) and for .ts files
 // when experimentalDecorators is NOT set in tsconfig.
@@ -993,6 +993,70 @@ describe("ES Decorators", () => {
     });
   });
 
+  // After the visit pass, a second walk rewrites every access to a decorated `#private` member.
+  describe("long chains in a class with a decorated #private member", () => {
+    const ok = { stdout: "ok\n", stderr: "", exitCode: 0, signalCode: null };
+
+    async function inChild(script: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr: filterStderr(stderr), exitCode, signalCode: proc.signalCode };
+    }
+
+    test.concurrent("lowers a long chain of additions", async () => {
+      const result = await inChild(`
+        const n = ${isDebug ? 5000 : 100000};
+        const source = "class A { @d #p = 1; m() { return " + "this.#p+".repeat(n) + "1 } }";
+        const output = new Bun.Transpiler({ loader: "ts" }).transformSync(source);
+        if (output.includes("this.#p") || output.split(" + ").length - 1 !== n) throw new Error("dropped or missed a read of #p");
+        console.log("ok");
+      `);
+      expect(result).toEqual(ok);
+    });
+
+    test.concurrent("throws a stack overflow error for a long chain of calls in a field initializer", async () => {
+      const result = await inChild(`
+        const source = "class A { @d #p() {} x = a" + Buffer.alloc(200000, "()").toString() + "; }";
+        let message = "no error";
+        try {
+          new Bun.Transpiler({ loader: "ts" }).transformSync(source);
+        } catch (e) {
+          message = e.message;
+        }
+        if (message !== "Maximum call stack size exceeded") throw new Error(message);
+        console.log("ok");
+      `);
+      expect(result).toEqual(ok);
+    });
+
+    test.concurrent("rewrites each operand of a chain once, in source order", async () => {
+      const links = Array.from({ length: 200 }, (_, i) => `this.id(${i + 1}).#q(${i + 1})`);
+      const chain = `${links[0]} + (${links[1]} + ${links[2]}) + ${links.slice(3).join(" + ")}`;
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value) { return value; }
+        const order = [];
+        class C {
+          @dec #q(n) { order.push("q" + n); return n; }
+          @dec #y = 1;
+          id(n) { order.push("id" + n); return this; }
+          sum() { return (this.#y = 10) + ${chain} + this.#y; }
+          has(o) { return #y in o && #q in o && o.#y; }
+        }
+        const c = new C();
+        console.log(JSON.stringify([c.sum(), order.join(), c.has(c), C.prototype.has.call(c, {})]));
+      `);
+      const order = Array.from({ length: 200 }, (_, i) => `id${i + 1},q${i + 1}`).join();
+      expect(stderr).toBe("");
+      expect(stdout).toBe(JSON.stringify([10 + (200 * 201) / 2 + 10, order, 10, false]) + "\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("private member calls in lowered classes", () => {
     // When a class is lowered for standard decorators, `recv.#m(...)` becomes
     // `__privateGet(recv, _m).call(recv, ...)`. The receiver must be evaluated
@@ -1751,6 +1815,33 @@ describe("ES Decorators", () => {
       const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(filterStderr(rawStderr)).toBe("");
       expect(stdout).toBe("undefined\nworld\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("class statement placement", () => {
+    // The runtime hoists a class statement to the top of the module when the
+    // class has no side effects. A static auto-accessor initializer is a side
+    // effect like a static field initializer, so the class must stay where it
+    // was written or the initializer runs before the bindings it reads exist.
+    test("static accessor initializer keeps the class in place", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        let order = [];
+        order.push("top");
+        function sideEffect(name, value) {
+          order.push(name);
+          return value;
+        }
+        class C {
+          accessor m = sideEffect("m", 1);
+          static accessor s = sideEffect("s", 2);
+        }
+        order.push("after class");
+        const c = new C();
+        console.log(order.join(","), C.s, c.m);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("top,s,after class,m 2 1\n");
       expect(exitCode).toBe(0);
     });
   });

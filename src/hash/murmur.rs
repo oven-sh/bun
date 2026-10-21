@@ -1,7 +1,7 @@
 //! MurmurHash family.
 //!
 //! `HashObject.rs` exposes
-//! these via `hash_wrap`, which dispatches to `hash_with_seed(str, seed)` (the
+//! these through `hash_with_seed(str, seed)` (the
 //! `(bytes, seed)` argument order — note the seed comes *second*, unlike
 //! XxHash). The default seed is `0xc70f6907`.
 //!

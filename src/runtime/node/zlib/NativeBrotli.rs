@@ -8,12 +8,12 @@ type Op = c::BrotliEncoderOperation;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub union LastResult {
+pub(crate) union LastResult {
     pub(crate) e: c_int,
     pub d: c::BrotliDecoderResult,
 }
 
-pub struct Context {
+pub(crate) struct Context {
     pub(crate) mode: bun_zlib::NodeMode,
     pub(crate) state: Option<NonNull<c_void>>,
 
@@ -75,7 +75,7 @@ mod _impl {
     // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
     #[bun_jsc::JsClass]
     #[derive(bun_ptr::CellRefCounted)]
-    pub struct NativeBrotli {
+    pub(crate) struct NativeBrotli {
         pub(crate) ref_count: Cell<u32>,
         // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
         // centralises the single unsafe deref so the trait impl is safe.
@@ -89,6 +89,8 @@ mod _impl {
         pub write_in_progress: Cell<bool>,
         /// bit 0: the pending input's ArrayBuffer is pinned; bit 1: the pending output's. A held bufferless view sets neither.
         pub pinned_buffers: Cell<u8>,
+        /// Copy of the pending `write()`'s input, if a pin can't keep the input mapped.
+        pub input_copy: JsCell<crate::node::node_zlib_binding::InputCopy>,
         pub pending_close: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
@@ -152,6 +154,7 @@ mod _impl {
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
                 pinned_buffers: Cell::new(0),
+                input_copy: JsCell::new(Default::default()),
                 pending_close: Cell::new(false),
                 closed: Cell::new(false),
                 // .callback = undefined — overwritten before WorkPool::schedule()
@@ -484,7 +487,7 @@ mod _impl {
             }
         }
 
-        pub fn reset(&mut self) -> Error {
+        pub(crate) fn reset(&mut self) -> Error {
             // Matches node's `BrotliContext::ResetStream()`, which calls `Init()`
             // with its default (empty) dictionary — a reset drops the dictionary.
             // `init` frees the previous state and dictionary itself.
@@ -506,7 +509,7 @@ mod _impl {
             self.state = None;
         }
 
-        pub fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
+        pub(crate) fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
             self.next_in = in_.map_or(ptr::null(), |p| p.as_ptr());
             self.avail_in = in_.map_or(0, |p| p.len());
             // Reshaped for borrowck — compute ptr/len before consuming `out`.
@@ -522,11 +525,11 @@ mod _impl {
             }
         }
 
-        pub fn flush_value_is_valid(flush: u32) -> bool {
+        pub(crate) fn flush_value_is_valid(flush: u32) -> bool {
             flush <= 3
         }
 
-        pub fn set_flush(&mut self, flush: c_int) {
+        pub(crate) fn set_flush(&mut self, flush: c_int) {
             // Caller passes a valid BrotliEncoderOperation discriminant (Node
             // zlib constants 0..=3). Exhaustive match — `Op` is `#[repr(u32)]`
             // so the prior `c_int` bit-cast was a width hazard anyway. Out-of-
@@ -540,7 +543,7 @@ mod _impl {
             };
         }
 
-        pub fn do_work(&mut self) {
+        pub(crate) fn do_work(&mut self) {
             // A handle driven before `init()` has no encoder/decoder state;
             // brotli dereferences the state pointer unconditionally.
             if self.state.is_none() {
@@ -596,12 +599,12 @@ mod _impl {
             }
         }
 
-        pub fn update_write_result(&self, avail_in: &mut u32, avail_out: &mut u32) {
+        pub(crate) fn update_write_result(&self, avail_in: &mut u32, avail_out: &mut u32) {
             *avail_in = u32::try_from(self.avail_in).expect("int cast");
             *avail_out = u32::try_from(self.avail_out).expect("int cast");
         }
 
-        pub fn get_error_info(&self) -> Error {
+        pub(crate) fn get_error_info(&self) -> Error {
             match self.mode {
                 bun_zlib::NodeMode::BROTLI_ENCODE => {
                     // SAFETY: e is the active field after an encode do_work().
@@ -637,7 +640,7 @@ mod _impl {
             }
         }
 
-        pub fn close(&mut self) {
+        pub(crate) fn close(&mut self) {
             // Idempotent: a handle that was never (successfully) initialized,
             // or that was already closed, has no encoder/decoder to free.
             if self.state.is_some() {
@@ -734,4 +737,4 @@ mod _impl {
     crate::__compression_stream_mixin_reexports!(NativeBrotli);
 } // mod _impl
 
-pub use _impl::NativeBrotli;
+pub(crate) use _impl::NativeBrotli;

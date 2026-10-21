@@ -21,9 +21,8 @@
 #include "WebSocketProtocol.h"
 #include "AsyncSocketData.h"
 #include "PerMessageDeflate.h"
+#include "ReceiveBuffer.h"
 #include "TopicTree.h"
-
-#include <string>
 
 namespace uWS {
 
@@ -32,12 +31,15 @@ struct WebSocketData : AsyncSocketData<false>, WebSocketState<true> {
     template <bool, bool, typename> friend struct WebSocketContext;
     template <bool, typename> friend struct WebSocketContextData;
     template <bool, bool, typename> friend struct WebSocket;
-    template <bool> friend struct HttpContext;
 private:
-    std::string fragmentBuffer;
+    ReceiveBuffer fragmentBuffer;
     unsigned int controlTipLength = 0;
     bool isShuttingDown = 0;
+    /* Set together with isShuttingDown, except in a wsPackage context: there isShuttingDown waits for the peer's close frame */
+    bool closeFrameSent = false;
     bool hasTimedOut = false;
+    /* send() returned BACKPRESSURE and the drain handler hasn't run with an empty buffer since */
+    bool needsDrainEvent = false;
     
     enum CompressionStatus : char {
         DISABLED,
@@ -53,7 +55,7 @@ private:
     /* We could be a subscriber */
     Subscriber *subscriber = nullptr;
 public:
-    using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
+    using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket, int readError, bool peerEnded);
     void *socketData = nullptr;
     /* node http compatibility callbacks */
     OnSocketClosedCallback onSocketClosed = nullptr;

@@ -5,7 +5,7 @@ use bun_jsc::{
     ArrayBuffer, CallFrame, JSGlobalObject, JSValue, Job, JobContext, JsResult, JsThread, Strong,
 };
 
-use crate::node::{Flavor, StringObjects, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg};
+use crate::node::{Flavor, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg};
 
 use crate::crypto::evp::{self, Algorithm};
 
@@ -53,11 +53,7 @@ impl PBKDF2 {
             )
         };
 
-        if rc <= 0 {
-            return false;
-        }
-
-        true
+        rc > 0
     }
 
     /// The second element is the validated callback on the `Async` flavor and
@@ -177,12 +173,7 @@ impl PBKDF2 {
             length: keylen,
             algorithm,
         };
-        out.salt = match StringOrBuffer::from_js_maybe_async(
-            global_this,
-            arg1,
-            flavor,
-            StringObjects::Allow,
-        )? {
+        out.salt = match StringOrBuffer::from_js(global_this, arg1)? {
             Some(v) => v,
             None => {
                 return Err(global_this.throw_invalid_argument_type_value(
@@ -197,12 +188,7 @@ impl PBKDF2 {
             return Err(global_this.throw_invalid_arguments(format_args!("salt is too long")));
         }
 
-        out.password = match StringOrBuffer::from_js_maybe_async(
-            global_this,
-            arg0,
-            flavor,
-            StringObjects::Allow,
-        )? {
+        out.password = match StringOrBuffer::from_js(global_this, arg0)? {
             Some(v) => v,
             None => {
                 return Err(global_this.throw_invalid_argument_type_value(
@@ -215,12 +201,6 @@ impl PBKDF2 {
 
         if out.password.slice().len() > i32::MAX as usize {
             return Err(global_this.throw_invalid_arguments(format_args!("password is too long")));
-        }
-
-        if flavor == Flavor::Sync {
-            if let StringOrBuffer::Buffer(buffer) = &mut out.salt {
-                buffer.buffer = ArrayBuffer::from_typed_array(global_this, buffer.buffer.value);
-            }
         }
 
         let callback = match flavor {
@@ -237,6 +217,19 @@ impl PBKDF2 {
             Flavor::Sync => JSValue::UNDEFINED,
         };
 
+        // Re-read the salt because a String-object password's `toString` can resize or detach it.
+        match flavor {
+            Flavor::Sync => {
+                if let StringOrBuffer::Buffer(buffer) = &mut out.salt {
+                    buffer.buffer = ArrayBuffer::from_typed_array(global_this, buffer.buffer.value);
+                }
+            }
+            Flavor::Async => {
+                out.salt.make_thread_isolated_copy(global_this)?;
+                out.password.make_thread_isolated_copy(global_this)?;
+            }
+        }
+
         Ok((out, callback))
     }
 
@@ -246,7 +239,7 @@ impl PBKDF2 {
         call_frame: &CallFrame,
     ) -> JsResult<(ThreadIsolated<PBKDF2>, JSValue)> {
         let (data, callback) = Self::from_js(global_this, call_frame, Flavor::Async)?;
-        // SAFETY: parsed with `Flavor::Async`.
+        // SAFETY: `Flavor::Async` copied the buffers and thread-isolated the strings.
         Ok((unsafe { ThreadIsolated::new(data) }, callback))
     }
 }
@@ -293,7 +286,13 @@ impl JobContext for Pbkdf2Job {
         let callback = js.callback.get();
         if this.err {
             let err = global_this.create_error_instance(format_args!("PBKDF2 derivation failed"));
-            event_loop.run_callback(callback, global_this, JSValue::UNDEFINED, &[err]);
+            event_loop.run_callback(
+                bun_event_loop::ContextId::NONE,
+                callback,
+                global_this,
+                JSValue::UNDEFINED,
+                &[err],
+            );
             return Ok(());
         }
 
@@ -302,6 +301,7 @@ impl JobContext for Pbkdf2Job {
         // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator → mimalloc free).
         match JSValue::create_buffer(global_this, output_slice.leak()) {
             Ok(buffer_value) => event_loop.run_callback(
+                bun_event_loop::ContextId::NONE,
                 callback,
                 global_this,
                 JSValue::UNDEFINED,
@@ -310,6 +310,7 @@ impl JobContext for Pbkdf2Job {
             // The result could not be built (allocation failure): that is this
             // derivation's error.
             Err(err) => event_loop.run_callback(
+                bun_event_loop::ContextId::NONE,
                 callback,
                 global_this,
                 JSValue::UNDEFINED,
@@ -322,13 +323,12 @@ impl JobContext for Pbkdf2Job {
 
 /// Schedule the derivation on the work pool; `callback` was validated by `from_js_async`.
 pub(crate) fn create_job(
-    global_this: &JSGlobalObject,
+    cx: &bun_jsc::JsThread<'_>,
     data: ThreadIsolated<PBKDF2>,
     callback: JSValue,
 ) {
-    let cx = global_this.js_thread();
     Job::<Pbkdf2Job>::schedule(
-        &cx,
+        cx,
         Pbkdf2Job {
             pbkdf2: data,
             output: Vec::new(),
@@ -336,8 +336,8 @@ pub(crate) fn create_job(
         },
         Pbkdf2Js {
             callback: Strong::create(
-                callback.with_async_context_if_needed(global_this),
-                global_this,
+                callback.with_async_context_if_needed(cx.global()),
+                cx.global(),
             ),
         },
     );

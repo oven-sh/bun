@@ -165,7 +165,7 @@ template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSGlobalObje
         if (!iterable) {
             auto inspected = Bun__inspect_singleline(defaultGlobalObject(&lexicalGlobalObject), portsValue).transferToWTFString();
             RETURN_IF_EXCEPTION(throwScope, {});
-            throwTypeError(&lexicalGlobalObject, throwScope, makeString("MessageEvent constructor: eventInitDict.ports ("_s, inspected, ") is not iterable."_s));
+            Bun::throwTypeErrorOrOutOfMemory(&lexicalGlobalObject, throwScope, tryMakeString("MessageEvent constructor: eventInitDict.ports ("_s, inspected, ") is not iterable."_s));
             return {};
         }
         unsigned i = 0;
@@ -175,7 +175,7 @@ template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSGlobalObje
             if (!wrapped) {
                 auto inspected = Bun__inspect_singleline(defaultGlobalObject(&g), item).transferToWTFString();
                 RETURN_IF_EXCEPTION(scope, );
-                throwTypeError(&g, scope, makeString("MessageEvent constructor: Expected eventInitDict.ports["_s, i, "] (\""_s, inspected, "\") to be an instance of MessagePort."_s));
+                Bun::throwTypeErrorOrOutOfMemory(&g, scope, tryMakeString("MessageEvent constructor: Expected eventInitDict.ports["_s, i, "] (\""_s, inspected, "\") to be an instance of MessagePort."_s));
                 return;
             }
             result.ports.append(wrapped);
@@ -196,7 +196,7 @@ template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSGlobalObje
             auto inspected = Bun__inspect_singleline(defaultGlobalObject(&lexicalGlobalObject), sourceValue).transferToWTFString();
             if (throwScope.exception()) [[unlikely]]
                 return;
-            throwTypeError(&lexicalGlobalObject, throwScope, makeString("MessageEvent constructor: Expected eventInitDict.source (\""_s, inspected, "\") to be an instance of MessagePort."_s));
+            Bun::throwTypeErrorOrOutOfMemory(&lexicalGlobalObject, throwScope, tryMakeString("MessageEvent constructor: Expected eventInitDict.source (\""_s, inspected, "\") to be an instance of MessagePort."_s));
         });
         RETURN_IF_EXCEPTION(throwScope, {});
     } else {
@@ -266,15 +266,15 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageEventDOMConstru
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto eventInitDict = convert<IDLDictionary<MessageEvent::Init>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
+    auto* structure = structureForNewTarget<MessageEvent>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = MessageEvent::create(WTF::move(type), WTF::move(eventInitDict));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<MessageEvent>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<MessageEvent>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, structure, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
-    setSubclassStructureIfNeeded<MessageEvent>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSMessageEventDOMConstructorConstruct, JSMessageEventDOMConstructor::construct);

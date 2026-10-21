@@ -35,13 +35,13 @@
   Buffer                          GlobalObject::m_JSBufferClassStructure               ClassStructure
   BuildError                      GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSBuildMessage]                       ClassStructure
   BuildMessage                    GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSBuildMessage]                       ClassStructure
-  Crypto                          GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSCrypto]                             ClassStructure
+  Crypto                          Bun::Bindgen::Generated::Crypto::getCryptoConstructor PropertyCallback
   HTMLRewriter                    GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSHTMLRewriter]                       ClassStructure
   Request                         GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSRequest]                            ClassStructure
   ResolveError                    GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSResolveMessage]                     ClassStructure
   ResolveMessage                  GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSResolveMessage]                     ClassStructure
   Response                        GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSResponse]                           ClassStructure
-  TextDecoder                     GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSTextDecoder]                        ClassStructure
+  TextDecoder                     Bun::Bindgen::Generated::TextDecoder::getTextDecoderConstructor PropertyCallback
 
   AbortController                 AbortControllerConstructorCallback                   PropertyCallback
   AbortSignal                     AbortSignalConstructorCallback                       PropertyCallback

@@ -1,5 +1,4 @@
 #![feature(allocator_api)]
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 //! `bun_sourcemap` — source map parsing, encoding, and lookup.
 //!
@@ -167,6 +166,8 @@ impl LineColumnOffset {
         while let Some(i) = strings::index_of_newline_or_non_ascii(input, offset) {
             debug_assert!(i >= offset);
             debug_assert!((i as usize) < input.len());
+
+            this.columns = this.columns.add_scalar((i - offset) as i32);
 
             let iter = strings::CodepointIterator::init(input);
             let mut cursor = strings::Cursor {
@@ -685,7 +686,13 @@ pub mod SerializedSourceMap {
         pub(crate) fn source_file_contents(&self, index: usize) -> Option<&[u8]> {
             let decompressed = self.decompressed_files[index].get_or_init(|| {
                 let sp = self.map.compressed_source_file_at(index);
-                let compressed_file = sp.slice(self.map.bytes);
+                let start = sp.offset as usize;
+                let Some(compressed_file) = start
+                    .checked_add(sp.length as usize)
+                    .and_then(|end| self.map.bytes.get(start..end))
+                else {
+                    return Vec::new();
+                };
                 bun_zstd::decompress_alloc(compressed_file).unwrap_or_else(|err| {
                     bun_core::warn!("Source map decompression error: {}", err);
                     Vec::new()
@@ -874,7 +881,9 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
 
     // the allocator given to the JS parser is not respected for all parts
     // of the parse, so we need to remember to reset the ast store on entry
-    // and on every exit path.
+    // and on every exit path. A source map may be parsed lazily from a thread that never ran the parser (a stack trace
+    // remapped from a collector thread's end phase), so make sure this thread has the stores at all.
+    bun_ast::initialize_store();
     let _store_scope = DataStoreScope::new();
     bun_core::scoped_log!(SourceMapLog, "parse (JSON, {} bytes)", source.len());
     let parsed = match bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log) {
@@ -943,7 +952,6 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
             mappings_vlq,
             None,
             i32::MAX,
-            i32::MAX as usize,
             mapping::ParseOptions {
                 allow_names: matches!(
                     hint,

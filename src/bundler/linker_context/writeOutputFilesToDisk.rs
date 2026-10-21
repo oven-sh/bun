@@ -25,8 +25,7 @@ use bun_sys::{
     write_file_with_path_buffer,
 };
 
-/// Bytecode output file extension (also defined in `generateChunksInParallel.rs`).
-const BYTECODE_EXTENSION: &str = ".jsc";
+use crate::bytecode_sidecar::EXTENSION as BYTECODE_EXTENSION;
 
 pub(crate) fn write_output_files_to_disk(
     c: &mut LinkerContext,
@@ -386,14 +385,7 @@ pub(crate) fn write_output_files_to_disk(
 
         let bytecode_output_file: Option<OutputFile> = 'brk: {
             if c.options.generate_bytecode_cache {
-                let loader: Loader = if chunk.entry_point.is_entry_point() {
-                    parse_graph.input_files.items_loader()
-                        [chunk.entry_point.source_index() as usize]
-                } else {
-                    Loader::Js
-                };
-
-                if loader.is_javascript_like() {
+                if c.chunk_gets_bytecode(chunk) {
                     let mut fdpath = bun_paths::path_buffer_pool::get();
                     let source_provider_url = BunString::create_format(format_args!(
                         "{}{}",
@@ -409,6 +401,7 @@ pub(crate) fn write_output_files_to_disk(
                         c.options.optimize_bytecode,
                         None,
                     ) {
+                        let bytecode = crate::bytecode_sidecar::frame(bytecode);
                         let source_provider_url_str = source_provider_url.to_utf8();
                         debug!(
                             "Bytecode cache generated {}: {}",
@@ -535,6 +528,7 @@ pub(crate) fn write_output_files_to_disk(
 
         let output_kind = c.chunk_output_kind(chunk);
 
+        chunk.final_output_size = code_result.buffer.len();
         let chunk_index = output_files.insert_for_chunk(OutputFile::init(OutputFileInit {
             output_path: chunk.final_rel_path.clone(),
             input_path,

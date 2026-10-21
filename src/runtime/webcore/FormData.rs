@@ -11,13 +11,13 @@ use crate::webcore::BlobExt as _;
 
 declare_scope!(FormData, visible);
 
-pub struct FormData {}
+pub(crate) struct FormData {}
 
-pub use bun_core::form_data::{AsyncFormData, Encoding};
+pub(crate) use bun_core::form_data::{AsyncFormData, Encoding};
 
 /// JSC-touching extension on `AsyncFormData` (lives in this crate because it
 /// needs `JSGlobalObject` + `AnyPromise`).
-pub trait AsyncFormDataExt {
+pub(crate) trait AsyncFormDataExt {
     fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()>;
 }
 
@@ -40,6 +40,10 @@ impl AsyncFormDataExt for AsyncFormData {
 
         let js_value = match FormData::to_js(global, data, &self.encoding) {
             Ok(v) => v,
+            Err(crate::Error::JSError) => {
+                promise.reject(global, global.take_error(JsError::Thrown))?;
+                return Ok(());
+            }
             Err(e) => {
                 scoped_log!(FormData, "AsnycFormData.toJS -> failed ");
                 promise.reject(
@@ -57,7 +61,7 @@ impl AsyncFormDataExt for AsyncFormData {
 /// Raw slice into the input buffer. Not using `bun.Semver.String` because
 /// file bodies are binary data that can contain null bytes, which
 /// Semver.String's inline storage treats as terminators.
-pub struct Field<'a> {
+pub(crate) struct Field<'a> {
     /// Borrows into the caller-owned input buffer (binary body slice).
     pub value: &'a [u8],
     pub(crate) filename: bun_semver::String,
@@ -79,7 +83,7 @@ impl Default for Field<'_> {
 }
 
 impl FormData {
-    pub fn to_js(
+    pub(crate) fn to_js(
         global: &JSGlobalObject,
         input: &[u8],
         encoding: &Encoding,
@@ -163,10 +167,15 @@ pub(crate) fn to_js_from_multipart_data(
     struct Wrapper<'a> {
         global: &'a JSGlobalObject,
         form: &'a mut DOMFormData,
+        /// True after an append throws. The remaining entries are skipped.
+        threw: bool,
     }
 
     impl<'a> Wrapper<'a> {
         fn on_entry(wrap: &mut Self, name: bun_semver::String, field: &Field<'_>, buf: &[u8]) {
+            if wrap.threw {
+                return;
+            }
             let value_str: &[u8] = field.value;
             let key = EncodedSlice::utf8(name.slice(buf));
 
@@ -202,7 +211,7 @@ pub(crate) fn to_js_from_multipart_data(
                     }
                 }
 
-                wrap.form.append_blob(
+                let result = wrap.form.append_blob(
                     wrap.global,
                     &key,
                     (&raw mut blob).cast::<c_void>(),
@@ -210,6 +219,7 @@ pub(crate) fn to_js_from_multipart_data(
                 );
                 // `append_blob` dupes the content type; release this stack-local.
                 blob.detach();
+                wrap.threw = result.is_err();
             } else {
                 let value = EncodedSlice::utf8(
                     // > Each part whose `Content-Disposition` header does not
@@ -221,15 +231,23 @@ pub(crate) fn to_js_from_multipart_data(
                     // > `charset` parameter.
                     strings::without_utf8_bom(value_str),
                 );
-                wrap.form.append(&key, &value);
+                wrap.threw = wrap.form.append(wrap.global, &key, &value).is_err();
             }
         }
     }
 
     {
-        let mut wrap = Wrapper { global, form };
+        let mut wrap = Wrapper {
+            global,
+            form,
+            threw: false,
+        };
 
-        if let Err(e) = for_each_multipart_entry(input, boundary, &mut wrap, Wrapper::on_entry) {
+        let parsed = for_each_multipart_entry(input, boundary, &mut wrap, Wrapper::on_entry);
+        if wrap.threw {
+            return Err(crate::Error::JSError);
+        }
+        if let Err(e) = parsed {
             scoped_log!(FormData, "failed to parse multipart data");
             return Err(e);
         }

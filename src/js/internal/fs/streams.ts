@@ -44,7 +44,6 @@ const kIoDone = Symbol("kIoDone");
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
 const kFs = Symbol("kFs");
-const openUnwatchedTerminal = $bindgen("FileSink.bind.ts", "openUnwatchedTerminal");
 
 const {
   read: fileHandlePrototypeRead,
@@ -467,7 +466,7 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
     } catch {
       fastPath = false;
       // A terminal is written synchronously, so it needs no watch. kqueue refuses /dev/tty (#24158).
-      unwatchedSink = openUnwatchedTerminal(fd);
+      unwatchedSink = $bindgen("FileSink.bind.ts", "openUnwatchedTerminal")(fd);
     }
   }
 

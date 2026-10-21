@@ -259,9 +259,17 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
                 self.declarations_of_member(*file, Decl::Property(*property))
             }
             PropSource::Symbol(symbol) => self.declarations_of_symbol(*symbol),
-            PropSource::Intersected(_, parts)
-            | PropSource::Copy(_, parts, _)
-            | PropSource::ReverseMapped(_, parts) => {
+            PropSource::Intersected(_, parts) => {
+                let mut declarations = Vec::new();
+                for part in parts.iter() {
+                    append_if_unique(
+                        &mut declarations,
+                        self.declarations_of_property(part, depth),
+                    );
+                }
+                declarations
+            }
+            PropSource::Copy(_, parts, _) | PropSource::ReverseMapped(_, parts) => {
                 let mut declarations = Vec::new();
                 for part in parts.iter() {
                     declarations.extend(self.declarations_of_property(part, depth));
@@ -491,7 +499,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
                 }
                 _ => {}
             }
-            declarations.extend(own);
+            append_if_unique(&mut declarations, own);
         }
         let Some(first) = props.first() else {
             return (String::new(), declarations);
@@ -572,6 +580,18 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
             }
         }
         name
+    }
+}
+
+/// `core.AppendIfUnique` for each of `more`.
+fn append_if_unique(
+    declarations: &mut Vec<(FileId, Declaration)>,
+    more: Vec<(FileId, Declaration)>,
+) {
+    for declaration in more {
+        if !declarations.contains(&declaration) {
+            declarations.push(declaration);
+        }
     }
 }
 

@@ -7440,10 +7440,22 @@ impl<'p, 's> Checker<'p, 's> {
         fn add_declared<'s>(prop: &Prop, arena: &'s Arena, declared: &mut SmallVec<[Prop<'s>; 2]>) {
             match &prop.source {
                 PropSource::Type(_) => {}
-                PropSource::Copy(_, parts, _)
-                | PropSource::Intersected(_, parts)
-                | PropSource::ReverseMapped(_, parts) => {
+                PropSource::Copy(_, parts, _) | PropSource::ReverseMapped(_, parts) => {
                     (parts.iter()).for_each(|part| add_declared(part, arena, declared));
+                }
+                // `createUnionOrIntersectionProperty` adds each declaration once.
+                PropSource::Intersected(_, parts) => {
+                    let start = declared.len();
+                    (parts.iter()).for_each(|part| add_declared(part, arena, declared));
+                    let mut kept = start;
+                    for at in start..declared.len() {
+                        let is_repeated = |known: &Prop| known.source == declared[at].source;
+                        if !declared[start..kept].iter().any(is_repeated) {
+                            declared.swap(kept, at);
+                            kept += 1;
+                        }
+                    }
+                    declared.truncate(kept);
                 }
                 PropSource::Mapped(..) => {
                     let declaring = prop.declared_by_modifiers_property();

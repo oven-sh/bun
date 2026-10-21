@@ -330,17 +330,18 @@ describe("yield", async () => {
       test.concurrent("the killed member is gone after the rejection", async () => {
         using dir = tempDir("shell-failed-pipeline-pid", {});
         const bun = process.execPath;
-        const writePid = 'require("fs").writeFileSync("pid", String(process.pid)); setTimeout(() => {}, 100_000)';
-        const waitForPid =
-          'while (!require("fs").existsSync("pid")) Bun.sleepSync(5); process.stdout.write("--version")';
+        // By its full path: `dir` is nobody's working directory, which Windows does not let go of until some time
+        // after `kill(pid, 0)` stops finding the process.
+        const pidFile = join(String(dir), "pid");
+        const writePid = `require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => {}, 100_000)`;
+        // For its content: the file is there before the pid is in it.
+        const waitForPid = `const pid = () => { try { return require("fs").readFileSync(${JSON.stringify(pidFile)}, "utf8"); } catch { return ""; } }; while (!pid()) Bun.sleepSync(5); process.stdout.write("--version")`;
         expect(
           await rejectionOf(
-            $`${bun} -e ${writePid} | ${bun} $(${bun} -e ${waitForPid}) > ${new Response("r")}`
-              .cwd(String(dir))
-              .quiet(),
+            $`${bun} -e ${writePid} | ${bun} $(${bun} -e ${waitForPid}) > ${new Response("r")}`.quiet(),
           ),
         ).toMatchObject({ message: "Blobs are immutable, and cannot be used for stdout/stderr" });
-        const pid = Number(await Bun.file(join(String(dir), "pid")).text());
+        const pid = Number(await Bun.file(pidFile).text());
         expect(pid).toBeGreaterThan(0);
         // The kill is sent before the promise rejects. The shell reaps the
         // child when its exit reaches the event loop, so poll for that.

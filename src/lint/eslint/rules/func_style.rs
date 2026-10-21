@@ -24,18 +24,18 @@ const DECLARATION: Message = Message::new("declaration", "Expected a function de
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// The arrow functions that should be declarations, unless they use `this` or `super`, each
-    /// with its declarator.
+    /// The arrow functions that should be declarations unless they use `this` or `super`, each with its declarator.
     candidates: Vec<(Func<'a>, VarDecl<'a>)>,
     /// The arrow functions that are the innermost function around a `this` or a `super`.
     with_this_or_super: IdSet<Func<'a>>,
     functions: AncestorMemo<'a, Func<'a>>,
-    /// The overload signatures of the file, once a function declaration asks: what has the list of
-    /// statements it is in, its name, and whether it is exported.
+    /// The file's overload signatures, built the first time a function declaration needs them: the owner of the
+    /// statement list, the name, and whether it's exported.
     overloads: Option<FxHashSet<(Node<'a>, Name<'a>, bool)>>,
 }
 
-/// What has the list of statements that `statement` is in. All clauses of a `switch` are one list.
+/// Returns the node that owns the statement list containing `statement`. All the clauses of a `switch` count as one
+/// list.
 fn statement_list_owner(statement: Stmt<'_>) -> Option<Node<'_>> {
     match statement.parent() {
         parent @ (Node::File(_) | Node::Func(_)) => Some(parent),
@@ -63,8 +63,8 @@ fn overloads<'a>(file: &'a File<'a>) -> FxHashSet<(Node<'a>, Name<'a>, bool)> {
     signatures.collect()
 }
 
-/// Whether one of the statements next to the function declaration `statement` is an overload
-/// signature of the same name, exported in the same way.
+/// True if a sibling of the function declaration `statement` is an overload signature with the same name, exported the
+/// same way.
 fn is_overloaded_function<'a>(
     statement: Stmt<'a>,
     func: Func<'a>,
@@ -91,7 +91,7 @@ impl FuncStyle {
         let Node::VarDecl(declarator) = e.parent() else {
             return;
         };
-        // For oxlint parentheses are between the two.
+        // For oxlint, parentheses are a node between the two.
         if cx.language().is_oxlint && e.is_parenthesized() {
             return;
         }
@@ -112,7 +112,7 @@ impl FuncStyle {
     }
 
     fn check_this_or_super<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        // A static block and the initializer of a property are not functions to ESLint.
+        // ESLint doesn't treat a static block or a property initializer as a function.
         let function = cx
             .state
             .functions
@@ -204,7 +204,8 @@ impl Rule for FuncStyle {
             Some(style) if is_exported => style == Style::Expression,
             _ => !self.enforce_declarations,
         };
-        // oxlint leaves alone what is declared more than once: with a namespace, an interface, a type of the same name.
+        // oxlint skips a function that's declared more than once: merged with a namespace, interface or type of the
+        // same name.
         let is_merged =
             cx.language().is_oxlint && func.symbol().is_some_and(|it| it.declaration_count() > 1);
         if expects_expression

@@ -8,14 +8,14 @@ pub struct NoElseReturn {
 
 const UNEXPECTED: Message = Message::new("unexpected", "Unnecessary 'else' after 'return'.");
 
-/// ESLint's `isSafeToDeclare`: whether `names` can be declared in `scope` without a conflict and
-/// without capturing a reference.
+/// ESLint's `isSafeToDeclare`: true if `names` can be declared in `scope` without a conflict and without capturing a
+/// reference.
 fn is_safe_to_declare<'a>(names: &[Name<'a>], scope: Scope<'a>) -> bool {
     if names.is_empty() {
         return true;
     }
     let function_scope = scope.variable_scope();
-    // What is declared here, and the `arguments` that is used.
+    // Names that are declared here, or `arguments` if it's used.
     let is_taken = |symbol: Symbol<'a>| {
         names.contains(&symbol.name())
             && (symbol.declarations().next().is_some() || symbol.references().next().is_some())
@@ -33,7 +33,7 @@ fn is_safe_to_declare<'a>(names: &[Name<'a>], scope: Scope<'a>) -> bool {
     if scope.through().any(|it| names.contains(&it.name())) {
         return false;
     }
-    // A `var` in this block, which is hoisted out of it.
+    // A `var` in this block is hoisted out of it.
     if scope != function_scope {
         let block = scope.span();
         let is_declared_in_block = |symbol: Symbol<'a>| {
@@ -50,11 +50,10 @@ fn is_safe_to_declare<'a>(names: &[Name<'a>], scope: Scope<'a>) -> bool {
     true
 }
 
-/// ESLint's `isSafeFromNameCollisions`: whether what `else_node` declares can be declared in
-/// `scope`, which is around it.
+/// ESLint's `isSafeFromNameCollisions`: true if `else_node`'s declarations can be moved to `scope`, which encloses it.
 fn is_safe_from_name_collisions<'a>(else_node: Stmt<'a>, scope: Scope<'a>) -> bool {
     match else_node.kind() {
-        // How a function that is declared conditionally is hoisted differs between engines.
+        // Engines differ in how they hoist a conditionally declared function.
         StmtKind::Fn(_) => return false,
         StmtKind::Block(_) => {}
         _ => return true,
@@ -67,7 +66,7 @@ fn is_safe_from_name_collisions<'a>(else_node: Stmt<'a>, scope: Scope<'a>) -> bo
     is_safe_to_declare(&names, scope)
 }
 
-/// It could continue the statement before it, if that does not end with a `;`.
+/// True if `token` could continue the previous statement, if that doesn't end with a `;`.
 fn can_continue_statement(token: Token) -> bool {
     matches!(
         token.text().first(),
@@ -75,7 +74,7 @@ fn can_continue_statement(token: Token) -> bool {
     )
 }
 
-/// `consequent`: that of the `if` whose `else` is `else_node`.
+/// `consequent` is the consequent of the `if` whose `else` is `else_node`.
 fn fix<'a>(fixer: Fixer<'a>, else_node: Stmt<'a>, consequent: Stmt<'a>) -> Option<Fix> {
     let file = fixer.file();
     if !is_safe_from_name_collisions(else_node, else_node.parent().scope()) {
@@ -111,7 +110,7 @@ fn fix<'a>(fixer: Fixer<'a>, else_node: Stmt<'a>, consequent: Stmt<'a>) -> Optio
         true => file.slice(else_node.span().shrink(1, 1)),
         false => else_node.text(),
     };
-    // The whole function, so that nothing else is moved into the same scope in the same pass.
+    // The fix covers the whole function, so nothing else is moved into the same scope in the same pass.
     Some(
         FixTracker::new(fixer)
             .retain_enclosing_function(else_node)
@@ -122,22 +121,22 @@ fn fix<'a>(fixer: Fixer<'a>, else_node: Stmt<'a>, consequent: Stmt<'a>) -> Optio
     )
 }
 
-/// The fix of oxlint 1.87. It replaces all that is after `consequent`, so what is around the `else` goes too. It looks
-/// for the names that the block declares only among those of the scope that the `if` is in, and where ESLint has no fix
-/// because two statements would become one, it adds a line break or a `;`.
+/// oxlint 1.87's fix. It replaces everything after `consequent`, so whatever surrounds the `else` is removed too. It
+/// only looks for the block's declared names in the scope that contains the `if`. Where ESLint has no fix because two
+/// statements would merge, it adds a line break or a `;`.
 fn fix_as_oxlint<'a>(fixer: Fixer<'a>, else_node: Stmt<'a>, consequent: Stmt<'a>) -> Option<Fix> {
     let file = fixer.file();
-    let (kept, last) = match else_node.kind() {
+    let (moved_span, last) = match else_node.kind() {
         StmtKind::Fn(_) => return None,
         StmtKind::Block(body) => {
             let (scope, else_scope) = (else_node.parent().scope(), Node::Stmt(else_node).scope());
-            // For oxc nothing declares `arguments`, and the parameter of a `catch` is in the scope of its block.
-            let of_catch = scope.parent().filter(|it| it.kind() == ScopeKind::Catch);
+            // For oxc nothing declares `arguments`, and a `catch` parameter is in its block's scope.
+            let catch_scope = scope.parent().filter(|it| it.kind() == ScopeKind::Catch);
             let is_taken = |name: Name<'a>| {
                 scope
                     .get_name(name)
                     .is_some_and(|it| !it.is_implicit_arguments())
-                    || of_catch.is_some_and(|it| it.get_name(name).is_some())
+                    || catch_scope.is_some_and(|it| it.get_name(name).is_some())
             };
             if else_scope.node() == Node::Stmt(else_node)
                 && else_scope.symbols().any(|it| is_taken(it.name()))
@@ -162,7 +161,7 @@ fn fix_as_oxlint<'a>(fixer: Fixer<'a>, else_node: Stmt<'a>, consequent: Stmt<'a>
         is_open && next.is_some_and(|it| !matches!(it, b'\n' | b'\r' | b'}' | b';'));
     let newline: &[u8] = if needs_newline { b"\n" } else { b"" };
     let semicolon: &[u8] = if needs_semicolon { b";" } else { b"" };
-    let text = [newline, file.slice(kept), semicolon];
+    let text = [newline, file.slice(moved_span), semicolon];
     Some(fixer.replace(Span::new(start, end), text.concat()))
 }
 
@@ -170,7 +169,7 @@ fn is_return(statement: Stmt) -> bool {
     statement.tag() == StmtTag::Return
 }
 
-/// ESLint's `naiveHasReturn`: it is a `return`, or a block that ends with one.
+/// ESLint's `naiveHasReturn`: a `return`, or a block that ends with one.
 fn naive_has_return(statement: Stmt) -> bool {
     match statement.as_block() {
         Some(body) => body.last().is_some_and(is_return),
@@ -194,7 +193,7 @@ fn always_returns(statement: Stmt) -> bool {
     }
 }
 
-/// The statement for which [`always_returns`] holds.
+/// Returns the statement that makes [`always_returns`] true.
 fn returning_statement(statement: Stmt<'_>) -> Option<Stmt<'_>> {
     match statement.kind() {
         StmtKind::Block(body) => body.iter().find(|it| check_for_return_or_if(*it)),
@@ -220,8 +219,8 @@ impl Rule for NoElseReturn {
             Some((_, yes, Some(no))) if always_returns(yes) => (yes, no),
             _ => return,
         };
-        // Not the `if` of an `else if`, and not where removing the `else` would change what the
-        // statement after it belongs to.
+        // Skip the `if` of an `else if`, and places where removing the `else` would change what the following statement
+        // belongs to.
         if !ast_utils::is_statement_list_parent(statement.parent()) {
             return;
         }
@@ -233,7 +232,7 @@ impl Rule for NoElseReturn {
                 (consequent, else_node) = (yes, no);
             }
         }
-        // oxlint prints where the statement is that returns. Comments go by what is between the branches.
+        // oxlint reports at the statement that returns. Disable comments apply to the span between the branches.
         let report = match returning_statement(consequent).filter(|_| cx.language().is_oxlint) {
             Some(returning) => {
                 let (start, end) = (consequent.span().end, else_node.span().start);

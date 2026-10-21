@@ -109,12 +109,19 @@ export const sumBytesThenText = b.fn({
 });
 /** The sum before `callback` runs, then after it. */
 export const sumBeforeAndAfterCallback = b.fn({
-  args: { buffer: b.bufferSource, callback: b.any },
+  args: { buffer: b.bufferSource, callback: b.callable },
   returns: b.array(b.u32),
   capability: "js",
   throws: true,
 });
 
+/** What `callback` returns, or `fallback` if there is no `callback`. */
+export const callOr = b.fn({
+  args: { callback: b.callable.nullable, fallback: b.any },
+  returns: b.any,
+  capability: "js",
+  throws: true,
+});
 export const fillBuffer = b.fn({
   args: { buffer: b.bufferSource.allowShared, value: b.u8 },
   returns: b.usize,
@@ -166,7 +173,7 @@ const bytesBeforeAndAfterCallbackWith = (shared: BytesOptions["shared"]) =>
   b.fn({
     args: {
       data: b.bytes({ from: ["string", "buffer", "blob"], otherwise: "toString", shared, held: "handle" }),
-      callback: b.any,
+      callback: b.callable,
     },
     returns: b.array(b.array(b.u8)),
     capability: "js",
@@ -177,7 +184,7 @@ export const bytesBeforeAndAfterCallback = bytesBeforeAndAfterCallbackWith("borr
 export const bytesBeforeAndAfterCallbackCopyingShared = bytesBeforeAndAfterCallbackWith("copied");
 /** The bytes another thread reads after `callback` has run. */
 export const pinnedBytesAfterCallback = b.fn({
-  args: { data: b.bytes({ from: ["string", "buffer"], held: "pinned" }), callback: b.any },
+  args: { data: b.bytes({ from: ["string", "buffer"], held: "pinned" }), callback: b.callable },
   returns: b.array(b.u8),
   capability: "js",
   throws: true,
@@ -189,6 +196,17 @@ export const stringAsIsOrBytes = b.fn({
   },
   returns: b.array(b.u8),
   capability: "heap",
+});
+/** As `stringAsIsOrBytes`, or nothing. */
+export const stringAsIsOrBytesIfAny = b.fn({
+  args: { data: b.bytes({ from: ["string", "buffer"], string: "asIs", held: "handle" }).nullable },
+  returns: b.array(b.u8).nullable,
+  capability: "heap",
+});
+/** Which of the two are present. */
+export const presentUnlessEmptyString = b.fn({
+  args: { number: b.f64.emptyStringAsNull, value: b.any.emptyStringAsNull },
+  returns: b.array(b.bool),
 });
 export const asBigInt = b.fn({ args: { value: b.u64.allowBigInt }, returns: b.u64.asBigInt });
 
@@ -233,6 +251,40 @@ export const TestHolder = b.class({
   proto: {
     counter: { getter: TestCounter, capability: "heap" },
     incrementCounter: { returns: b.i32, capability: "js" },
+  },
+});
+
+/** A `refCounted` class: Rust can keep a ref after the object is collected. */
+export const TestRefCounted = b.class({
+  rustPath: "crate::bindgen_test::TestRefCounted",
+  refCounted: true,
+  finalize: true,
+  construct: { args: { value: b.i32.default(0) } },
+  internalFields: ["listener"],
+  proto: {
+    value: { getter: b.i32, setter: true },
+    listener: { getter: b.any, setter: { capability: "js" }, passThis: true },
+    sameListener: { internalField: "listener", setter: true },
+    readOnlyListener: { internalField: "listener" },
+    /** Calls the listener, which may call back into this object, then returns the value. */
+    notify: { returns: b.i32, passThis: true, capability: "js", throws: true },
+    /** Makes Rust hold a ref until `TestRefCounted.release()`. */
+    keep: {},
+    "@@dispose": {},
+    "@@toPrimitive": { returns: b.i32, name: "", rustName: "get_value" },
+    valueOrUndefined: { returns: b.i32, invalidThis: "undefined", rustName: "get_value" },
+    /** Returns `this`, or nothing if the value is negative. */
+    orUndefined: { returns: b.self.optional, passThis: true },
+    orNull: { returns: b.self.nullable, passThis: true, rustName: "or_undefined" },
+    isSame: { args: { other: b.self.nullable }, returns: b.bool },
+  },
+  static: {
+    /** The instance kept by `keep()`, as `[value, finalized]`. */
+    kept: { returns: b.array(b.i32) },
+    release: {},
+    alive: { returns: b.usize },
+    /** `object.value` read through `from_js`, or `null` if `object` is not an instance. */
+    valueFromJS: { args: { object: b.any }, returns: b.i32.nullable },
   },
 });
 

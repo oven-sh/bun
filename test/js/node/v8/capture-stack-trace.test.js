@@ -1412,6 +1412,20 @@ test.concurrent.each([
   expect(exitCode).toBe(0);
 });
 
+test("Error.appendStackTrace keeps the stack trace when the source and destination are the same error", () => {
+  function f(n) {
+    if (n > 0) return f(n - 1) + 1;
+    try {
+      null();
+    } catch (e) {
+      Error.appendStackTrace(e, e);
+      expect(e.stack).toContain("at f ");
+    }
+    return 0;
+  }
+  f(64);
+});
+
 test("Error.stackTraceLimit default matches the limit captureStackTrace applies", async () => {
   // Run in a fresh process so nothing has written to Error.stackTraceLimit yet.
   const src = `

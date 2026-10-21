@@ -12,8 +12,7 @@ const PREFER_EXPECT_ERROR_COMMENT: Message = Message::new(
 
 const TS_IGNORE: &[u8] = b"@ts-ignore";
 
-/// `/^\s*\/?\s*@ts-ignore/` for a line comment, `/^\s*(?:\/|\*)*\s*@ts-ignore/` for the last line of
-/// any other.
+/// `/^\s*\/?\s*@ts-ignore/` for a line comment, `/^\s*(?:\/|\*)*\s*@ts-ignore/` for the last line of a block comment.
 fn is_valid_ts_ignore_present(comment: Token) -> bool {
     let value = comment.comment_value();
     let rest = match comment.kind() {
@@ -75,7 +74,7 @@ impl Rule for PreferTsExpectError {
                 let is_line_comment = comment.kind() == TokenKind::Line;
                 let open: &[u8] = if is_line_comment { b"//" } else { b"/*" };
                 let close: &[u8] = if is_line_comment { b"" } else { b"*/" };
-                // oxlint changes every one in the comment.
+                // oxlint replaces every occurrence in the comment.
                 if is_oxlint {
                     let parts: Vec<&[u8]> = strings::split(value, TS_IGNORE).collect();
                     return Some(fixer.replace(comment, [open, &parts.join(&b"@ts-expect-error"[..]), close].concat()));

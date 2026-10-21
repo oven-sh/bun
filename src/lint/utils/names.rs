@@ -2,7 +2,7 @@
 
 use crate::semantic::{Scope, ScopeKind};
 
-/// True if a variable that is declared in `scope` and used in the scopes `uses` can be named `name`.
+/// True if a variable that's declared in `scope` and used in the scopes `uses` can be named `name`.
 pub fn is_free<'a>(
     name: &[u8],
     scope: Scope<'a>,

@@ -28,11 +28,11 @@ struct TreeBuilder<'a, 't, 'k> {
     tree: &'t mut Tree<'a>,
     tokens: &'k [Token],
     index: usize,
-    /// Where the tokens end that this is about, and what comes in the place of the token there.
+    /// The index where this builder's tokens end, and the token it sees there instead.
     end: usize,
     eof: Token,
     container_stack: Vec<Id>,
-    /// What is in no container goes here.
+    /// The parent of nodes that aren't in any container.
     root: Id,
     errors: Vec<SyntaxError<'a>>,
     can_self_close: bool,
@@ -40,8 +40,8 @@ struct TreeBuilder<'a, 't, 'k> {
     is_tag_name_case_sensitive: bool,
     is_nested_too_deeply: bool,
     stack_check: bun_core::StackCheck,
-    /// Where the cases of ICU expressions end that have been passed on the way to the end of one around them: by the
-    /// index of their first token, the index of the token that ends them.
+    /// Ends of the nested ICU cases that were passed while scanning for the end of an outer one: maps the index of a
+    /// case's first token to the index of the token that ends it.
     case_ends: FxHashMap<usize, usize>,
 }
 
@@ -85,7 +85,7 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         (node.kind == Kind::Element).then_some(node.tag_definition)
     }
 
-    /// While the tree is built, the name of an element is a part of the text, and so is its namespace.
+    /// While the tree is being built, an element's name and namespace are substrings of the text.
     fn full_name_of(&self, id: Id) -> FullName<'a> {
         let node = &self.tree[id];
         FullName {
@@ -102,7 +102,7 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         self.errors.push(SyntaxError::new(at, kind, name));
     }
 
-    /// The same for a message with the name of an element in it.
+    /// The same, for a message that includes an element's name.
     fn error_about(&mut self, at: u32, kind: ErrorKind, name: FullName<'a>) {
         self.errors.push(SyntaxError {
             prefix: name.prefix,
@@ -185,7 +185,7 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         id
     }
 
-    /// Whether a line feed at the start of a text in `parent` does not count.
+    /// True if a line feed at the start of a text in `parent` is ignored.
     fn ignores_first_lf(&self, parent: Option<Id>) -> bool {
         parent.is_some_and(|parent| {
             !self.tree.has_children(parent)
@@ -325,17 +325,17 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         Some(case)
     }
 
-    /// `_collectExpansionExpTokens`: goes on to the token that ends the case.
+    /// `_collectExpansionExpTokens`: skips to the token that ends the case.
     fn skip_expansion_exp_tokens(&mut self, start: Token) -> Option<()> {
         use TokenType::{
             Eof, ExpansionCaseExpEnd, ExpansionCaseExpStart, ExpansionFormEnd, ExpansionFormStart,
         };
-        // It is in a case that has been gone through, and nothing was wrong in that.
+        // This case is nested in one that was already scanned without errors.
         if let Some(&end) = self.case_ends.get(&self.index) {
             self.index = end;
             return Some(());
         }
-        // What is open, and the index of the first token in it.
+        // The open forms and cases, each with the index of its first token.
         let mut stack = vec![(ExpansionCaseExpStart, self.index)];
         loop {
             let kind = self.peek().kind;
@@ -400,8 +400,8 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         }
     }
 
-    /// `_getElementFullName`, and the definition of what has that name, `:prefix:name`: there is none with a colon in
-    /// the name.
+    /// `_getElementFullName`, plus the definition for that name. With a namespace, the parser looks up `:prefix:name`.
+    /// No definition has a colon in its name, so that's the default definition.
     fn full_name(
         &self,
         token: Token,
@@ -487,7 +487,7 @@ impl<'a> TreeBuilder<'a, '_, '_> {
             .container()
             .and_then(|it| self.definition_of_node(it))
             .is_some_and(|it| {
-                // The full name of the child is asked for: with a namespace, no list has it.
+                // The lookup uses the child's full name, and no list has a name with a namespace.
                 it.is_void || (full_name.prefix.is_empty() && it.is_closed_by_child(full_name.name))
             });
         self.push_container(node, is_closed_by_child);
@@ -535,7 +535,7 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         for stack_index in (0..self.container_stack.len()).rev() {
             let id = self.container_stack[stack_index];
             let kind = self.tree[id].kind;
-            // The name of a block has no namespace, and is never asked for.
+            // A block's name has no namespace and is never compared.
             let name = self.full_name_of(id);
             let is_expected = match kind == Kind::Element && !name.prefix.is_empty() {
                 true => Some(name) == expected_name,
@@ -603,7 +603,7 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         }
     }
 
-    /// A block whose start ends where the next token starts, with its parameters.
+    /// Makes a block, with its parameters, whose start span ends where the next token starts.
     fn block(&mut self, token: Token, has_end: bool) -> (Node<'a>, Option<Id>) {
         // Prettier's `normalizeAngularControlFlowBlock`.
         let mut parameters = None;
@@ -646,7 +646,7 @@ impl<'a> TreeBuilder<'a, '_, '_> {
     fn consume_block_close(&mut self, token: Token) {
         let (depth, top) = (self.container_stack.len(), self.container());
         if !self.pop_container(None, Kind::AngularControlFlowBlock, Some(token.span)) {
-            // An element that was open has been closed on the way.
+            // An open element was closed along the way.
             let (prefix, name) = (&b""[..], &b""[..]);
             let name = (top.filter(|_| self.container_stack.len() < depth))
                 .map_or(FullName { prefix, name }, |top| self.full_name_of(top));
@@ -684,7 +684,7 @@ impl<'a> TreeBuilder<'a, '_, '_> {
     }
 }
 
-/// `new HtmlParser().parse(..)`, of the part of `text` from `start` on.
+/// `new HtmlParser().parse(..)`, for the part of `text` from `start` on.
 pub(crate) fn parse<'a>(
     tree: &mut Tree<'a>,
     text: &'a [u8],
@@ -708,7 +708,7 @@ pub(crate) fn parse<'a>(
     };
     let get_tag_content_type: GetTagContentType<'_> = &get_tag_content_type;
     let (tokens, mut errors) = lexer::tokenize(text, start, get_tag_content_type, options.lexer);
-    // As a rule a node is three or four tokens.
+    // A node is typically three or four tokens.
     tree.nodes.reserve(tokens.len() / 3);
     let root = tree.add(Node::new(Kind::Root, Span::new(0, text.len() as u32)));
     let end = tokens.len().saturating_sub(1);
@@ -737,7 +737,7 @@ pub(crate) fn parse<'a>(
     errors.append(&mut builder.errors);
     let ended = builder.eof.span.start;
     if (ended as usize) < text.len() {
-        errors.push(SyntaxError::new(ended, ErrorKind::TextBehindNul, b""));
+        errors.push(SyntaxError::new(ended, ErrorKind::TextAfterNul, b""));
     }
     ParseResult {
         root,

@@ -24,7 +24,7 @@ const CHILDREN_OR_DANGER: [&str; 2] = ["children", "dangerouslySetInnerHTML"];
 impl Rule for VoidDomElementsNoChildren {
     const META: Meta = Meta::plugin(Plugin::React, "void-dom-elements-no-children", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
-    /// The pragma. oxlint knows none.
+    /// The pragma. oxlint doesn't use one.
     type State<'a> = OnceCell<&'a [u8]>;
 
     fn new(_: &Options) -> Self {
@@ -32,14 +32,14 @@ impl Rule for VoidDomElementsNoChildren {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        // For upstream `React.#createElement()` is a call of `createElement`.
+        // Upstream treats `React.#createElement()` as a `createElement` call.
         let has_private_call = || !file.language().is_oxlint && file.mentions("#createElement");
         let on = On::new().exprs(&[ExprTag::Jsx]);
         if file.mentions("createElement") || has_private_call() { on.calls_named(&["createElement"]) } else { on }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        // oxlint does not run the rule on a file that cannot have JSX.
+        // oxlint doesn't run the rule on files that can't contain JSX.
         (!file.language().is_oxlint || is_jsx(file)).then(OnceCell::new)
     }
 
@@ -52,7 +52,7 @@ impl Rule for VoidDomElementsNoChildren {
     }
 }
 
-/// A void element with children, by one or by both of `reasons`. `name_node` is where `name` is written.
+/// Reports a void element that has children for one or both of `reasons`. `name_node` is the node that spells `name`.
 fn report<'a>(
     element: Expr<'a>,
     name_node: Expr<'a>,
@@ -61,7 +61,7 @@ fn report<'a>(
     cx: &Cx<'a, VoidDomElementsNoChildren>,
 ) {
     if cx.language().is_oxlint {
-        // oxlint points at the name, once.
+        // oxlint reports once, at the name.
         if reasons.contains(&true) {
             cx.report(name_node, VOID_DOM_ELEMENTS_NO_CHILDREN).data("tag", name);
         }
@@ -95,21 +95,21 @@ fn call<'a>(e: Expr<'a>, cx: &Cx<'a, VoidDomElementsNoChildren>) {
         return;
     };
     let is_oxlint = cx.language().is_oxlint;
-    // oxlint has a node for parentheses.
+    // oxlint has nodes for parentheses, so it doesn't match a parenthesized argument.
     let is_seen = |it: &Expr<'a>| !is_oxlint || !it.is_parenthesized();
     let arguments = call.args();
     if let Some(element_name) = arguments.first().filter(is_seen)
         && let Some(name) = element_name.as_string()
         && name.is_any(&VOID_DOM_ELEMENTS)
         && let Some(ExprKind::Object(properties)) = arguments.get(1).filter(is_seen).map(Expr::kind)
-        // oxlint takes the `createElement` of everything but `document`.
+        // oxlint accepts `createElement` on anything but `document`.
         && match is_oxlint {
             true => is_create_element_call(call),
             false => is_create_element(e, cx.state.get_or_init(|| get_from_context(cx.file()))),
         }
     {
         let has_children_prop_or_danger = properties.iter().filter_map(Prop::key).any(|key| match is_oxlint {
-            // oxlint: not `[children]: ..`
+            // oxlint doesn't match `[children]: ..`.
             true => matches!(key.kind(), KeyKind::Ident(name) if name.is_any(&CHILDREN_OR_DANGER)),
             false => name_of_key(key).is_some_and(|it| CHILDREN_OR_DANGER.iter().any(|name| name.as_bytes() == it)),
         });

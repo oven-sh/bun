@@ -2,7 +2,7 @@
 // must not have `Content-Length: N\r\n\r\n` written into the body when the
 // stream closes after raw body bytes already went out (#38675, #28019).
 import { describe, expect, it } from "bun:test";
-import { tempDir, tls } from "harness";
+import { isWindows, tempDir, tls } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import { join } from "node:path";
@@ -162,21 +162,26 @@ describe.concurrent("the end of a connection that carries a close-delimited body
   // A body that the application has ended while the server still holds bytes
   // of it: the client does not read. `ended` reports that this state exists.
   const megabyte = Buffer.alloc(1024 * 1024, "a");
-  function endedBeforeDrained() {
-    const ended = Promise.withResolvers<{ sent: string; backedUp: boolean; endParked: boolean }>();
+  function endedBeforeDrained(chunk = megabyte) {
+    const ended = Promise.withResolvers<{ sent: number; backedUp: boolean; endParked: boolean }>();
     const stream = new ReadableStream({
       type: "direct",
       pull(controller: any) {
         // write() returns a Promise once the socket has refused bytes.
         let backedUp = false;
-        let megabytes = 0;
-        while (!backedUp && megabytes++ < 512) backedUp = controller.write(megabyte) instanceof Promise;
+        let sent = 0;
+        while (!backedUp && sent < 512 * megabyte.length) {
+          backedUp = controller.write(chunk) instanceof Promise;
+          sent += chunk.length;
+        }
         const endParked = controller.end() instanceof Promise;
-        ended.resolve({ sent: Buffer.alloc(megabytes * megabyte.length, "a").toString(), backedUp, endParked });
+        ended.resolve({ sent, backedUp, endParked });
       },
     } as any);
     return { stream, ended: ended.promise };
   }
+  const isWhole = (received: string, sent: number) =>
+    received.length === sent && received === Buffer.alloc(sent, "a").toString();
   const endedAndNotDrained = { backedUp: true, endParked: false, pendingRequests: 0 };
 
   describe("a cut ends with a reset", () => {
@@ -236,9 +241,10 @@ describe.concurrent("the end of a connection that carries a close-delimited body
       server.stop(true);
       client.socket.resume();
       const { framing, body: received, endedBy } = await client.ending;
-      expect({ ...state, pendingRequests, framing, whole: received === sent, endedBy }).toEqual({
+      expect({ ...state, pendingRequests, framing, whole: isWhole(received, sent), endedBy }).toEqual({
         ...endedAndNotDrained,
-        framing: "close",
+        // A reset on Windows drops the bytes that the client has not read, the header section with them.
+        framing: isWindows ? expect.any(String) : "close",
         whole: false,
         endedBy: ["ECONNRESET"],
       });
@@ -315,23 +321,29 @@ describe.concurrent("the end of a connection that carries a close-delimited body
     });
 
     // A graceful stop leaves the connection to its reader, and a reader that never reads again to the idle timer.
-    it("server.stop() and then the idle timer, the body has ended but has not drained", async () => {
-      const body = endedBeforeDrained();
-      using server = serve(false, { idleTimeout: 1, fetch: () => new Response(body.stream) });
-      using client = request(server.port!);
-      client.socket.pause();
-      const { sent, ...state } = await client.before(body.ended);
-      const pendingRequests = server.pendingRequests;
-      await server.stop();
-      client.socket.resume();
-      const { framing, body: received, endedBy } = await client.ending;
-      expect({ ...state, pendingRequests, framing, whole: received === sent, endedBy }).toEqual({
-        ...endedAndNotDrained,
-        framing: "close",
-        whole: false,
-        endedBy: ["ECONNRESET"],
-      });
-    }, 15_000);
+    // The bytes have to wait in the server until the timer fires: one write holds more than the loopback buffers
+    // of Linux and macOS take for a client that does not read. How much Windows takes depends on the machine.
+    it.skipIf(isWindows)(
+      "server.stop() and then the idle timer, the body has ended but has not drained",
+      async () => {
+        const body = endedBeforeDrained(Buffer.alloc(64 * megabyte.length, "a"));
+        using server = serve(false, { idleTimeout: 1, fetch: () => new Response(body.stream) });
+        using client = request(server.port!);
+        client.socket.pause();
+        const { sent, ...state } = await client.before(body.ended);
+        const pendingRequests = server.pendingRequests;
+        await server.stop();
+        client.socket.resume();
+        const { framing, body: received, endedBy } = await client.ending;
+        expect({ ...state, pendingRequests, framing, whole: isWhole(received, sent), endedBy }).toEqual({
+          ...endedAndNotDrained,
+          framing: "close",
+          whole: false,
+          endedBy: ["ECONNRESET"],
+        });
+      },
+      15_000,
+    );
   });
 
   it.each(transports)("a graceful stop delivers a body that has ended but has not drained, %s", async (_, secure) => {
@@ -346,7 +358,7 @@ describe.concurrent("the end of a connection that carries a close-delimited body
     client.socket.resume();
     const { framing, body: received, endedBy } = await client.ending;
     await stopped;
-    expect({ ...state, pendingRequests, closedBySweep, framing, whole: received === sent, endedBy }).toEqual({
+    expect({ ...state, pendingRequests, closedBySweep, framing, whole: isWhole(received, sent), endedBy }).toEqual({
       ...endedAndNotDrained,
       closedBySweep: 0,
       framing: "close",

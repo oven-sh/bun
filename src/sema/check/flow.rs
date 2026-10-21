@@ -4858,22 +4858,20 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let container_of =
             |x: ExprId| self.get_control_flow_container(file, bound.parent_of_expr(x));
+        let is_checked_as_member = options.strict_property_initialization
+            // `IsAccessExpression`: `typeof this.x` in a type is a qualified name.
+            && !bound.is_in_type_query(e)
+            && matches!(hir[e].kind, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }
+                if matches!(hir[obj].kind, ExprKind::This) && !is_parenthesized(hir, obj));
         // `prop.ValueDeclaration`, if it is an assignment.
         let (decl_file, assignment) = match self.value_declaration_of_prop(prop) {
             Some((decl_file, Decl::Member(m))) => {
-                let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir[e].kind else {
-                    return false;
-                };
                 let MemberOwner::Class(class) = self.bound(decl_file).member_owner[m.idx()] else {
                     return false;
                 };
                 let member = &self.hir(decl_file)[m];
-                return options.strict_property_initialization
+                return is_checked_as_member
                     && decl_file == file
-                    // `IsAccessExpression`: `typeof this.x` in a type is a qualified name.
-                    && !bound.is_in_type_query(e)
-                    && matches!(hir[obj].kind, ExprKind::This)
-                    && !is_parenthesized(hir, obj)
                     // `isPropertyWithoutInitializer`
                     && member.kind == MemberKind::Property
                     && member.init.is_none()
@@ -4894,7 +4892,8 @@ impl<'p, 's> Checker<'p, 's> {
             )) => (decl_file, first),
             _ => return false,
         };
-        decl_file == file
+        !is_checked_as_member
+            && decl_file == file
             // The left side of `f[key] = value` isn't a property access.
             && matches!(hir[assignment].kind, ExprKind::Assign { target, .. }
                 if matches!(hir[target].kind, ExprKind::Dot { .. }))

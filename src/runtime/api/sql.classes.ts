@@ -13,7 +13,6 @@ const classes: ClassDefinition[] = [
     noConstructor: true,
     refCounted: true,
     configurable: false,
-    hasPendingActivity: true,
     JSType: "0b11101110",
     proto: {
       close: {

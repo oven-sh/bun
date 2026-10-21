@@ -2,7 +2,7 @@ use bun_collections::VecExt;
 use bun_jsc::JsCell;
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::Ordering;
 
 use crate::jsc::api::server_config::SSLConfig;
 use crate::jsc::{
@@ -99,8 +99,7 @@ pub struct PostgresSQLConnection {
     prepared_statement_id: Cell<u64>,
     /// `ReadyForQuery::transaction_status` of the last one.
     transaction_status: Cell<u8>,
-    pub(crate) pending_activity_count: AtomicU32,
-    // The wrapper. Weak: `has_pending_activity` is what keeps it alive.
+    // The wrapper. Strong while `has_pending_activity`.
     pub(crate) js_value: JsCell<crate::jsc::JsRef>,
 
     backend_key_data: Cell<Option<protocol::BackendKeyData>>,
@@ -360,27 +359,27 @@ impl PostgresSQLConnection {
         self.drain_internal();
     }
 
-    pub fn has_pending_activity(this: &Self) -> bool {
-        // Called on GC thread; reads only atomic field.
-        this.pending_activity_count.load(Ordering::Acquire) > 0
-    }
-
-    fn update_has_pending_activity(&self) {
-        let a: u32 = if !self.requests.get().is_empty() {
-            1
-        } else {
-            0
-        };
-        let b: u32 = match self.status.get() {
+    fn has_pending_activity(&self) -> bool {
+        if !self.requests.get().is_empty() {
+            return true;
+        }
+        match self.status.get() {
             // Terminal states: nothing more will happen on this connection, so
             // allow GC to collect the JS wrapper (and ultimately call deinit()).
             // We must still outlive the socket's onClose callback, which
             // re-enters here (via failWithJSValue's defer) with
             // isClosed() == true, at which point GC can proceed.
-            Status::Disconnected | Status::Failed => (!self.socket.get().is_closed()) as u32,
-            _ => 1,
-        };
-        self.pending_activity_count.store(a + b, Ordering::Release);
+            Status::Disconnected | Status::Failed => !self.socket.get().is_closed(),
+            _ => true,
+        }
+    }
+
+    fn update_has_pending_activity(&self) {
+        if self.has_pending_activity() {
+            self.js_value.with_mut(|r| r.upgrade(self.global()));
+        } else {
+            self.js_value.with_mut(|r| r.downgrade());
+        }
     }
 
     pub(crate) fn set_status(&self, status: Status) {
@@ -1075,7 +1074,6 @@ fn open(
             statements: JsCell::new(StatementCache::default()),
             prepared_statement_id: Cell::new(0),
             transaction_status: Cell::new(b'I'),
-            pending_activity_count: AtomicU32::new(0),
             js_value: JsCell::new(crate::jsc::JsRef::empty()),
             backend_key_data: Cell::new(None),
             cancel_target: JsCell::new(params.cancel),
@@ -1152,12 +1150,12 @@ fn open(
     }
 
     // only call toJS if connectUnixAnon does not fail immediately
-    this.update_has_pending_activity();
     this.reset_connection_timeout();
     this.poll_ref.with_mut(|r| r.ref_(this.vm_ctx()));
     let js_value = js::to_js(ptr, global_object);
     js_value.ensure_still_alive();
-    this.js_value.set(crate::jsc::JsRef::init_weak(js_value));
+    this.js_value
+        .set(crate::jsc::JsRef::init_strong(js_value, global_object));
     js::onconnect_set_cached(js_value, global_object, params.on_connect);
     if params.column_transform.is_callable() {
         js::column_transform_set_cached(js_value, global_object, params.column_transform);

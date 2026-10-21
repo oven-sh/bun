@@ -56,7 +56,7 @@ fn run<'a>(possible_jest_node: PossibleJestNode<'a>, cx: &Cx<'a, RequireAwaitedE
     }
 }
 
-/// With the parentheses around it, and the sequences that it is the last of.
+/// Climbs out of enclosing parentheses and of sequence expressions that end with `node`.
 fn skip_sequence_expressions(node: AstKind<'_>) -> AstKind<'_> {
     let mut current_node = node;
     loop {

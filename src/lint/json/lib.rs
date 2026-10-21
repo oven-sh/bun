@@ -12,7 +12,7 @@
 mod parse;
 mod tree;
 
-use bun_lint::languages::{Configured, Language, LineBreaks, Parsed, Refusal, SyntaxError};
+use bun_lint::languages::{Configured, Language, LineBreaks, Parsed, Rejection, SyntaxError};
 use bun_lint::options::Json as Value;
 use bun_lint::rule::Plugin;
 pub use tree::{Document, Member, Node, NodeKind, Tree};
@@ -57,13 +57,13 @@ impl Language for Json {
         LineBreaks::Newlines
     }
 
-    fn configure(&self, name: &[u8], options: &Value) -> Result<Configured, Refusal> {
+    fn configure(&self, name: &[u8], options: &Value) -> Result<Configured, Rejection> {
         let mode = match name {
             b"jsonc" => Mode::Jsonc,
             b"json5" => Mode::Json5,
             _ => Mode::Json,
         };
-        let invalid = |message: &str| Err(Refusal::Invalid(message.into()));
+        let invalid = |message: &str| Err(Rejection::Invalid(message.into()));
         let allows_trailing_commas = match options.get(b"allowTrailingCommas") {
             None => false,
             Some(Value::Bool(_)) if mode != Mode::Jsonc => {

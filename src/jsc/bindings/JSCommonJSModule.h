@@ -83,6 +83,8 @@ public:
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
 
     bool ignoreESModuleAnnotation { false };
+    // What `sourceCode` is, when a ResolvedSource said so. evaluateCommonJSModuleOnce takes it with the source.
+    CommonJSBindings sourceBindings { CommonJSBindings::WrapperParameters };
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);

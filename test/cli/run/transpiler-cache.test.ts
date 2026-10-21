@@ -344,6 +344,72 @@ describe("transpiler cache", () => {
     expect(newCacheCount()).toBe(0); // cache hit, order doesn't matter
   });
 
+  // The stdin program is printed with no CommonJS wrapper and runs as a script. The same bytes in
+  // a file are printed as `(function (exports, require, module, __filename, __dirname) {})`, which
+  // the loader calls. Neither may be served the other's entry.
+  describe("a CommonJS program from stdin", () => {
+    // stdin is transpiled with the tsx loader, so a .tsx file has the rest of its cache key.
+    const filler = "\n//" + Buffer.alloc(5 * 1024, "f").toString();
+    const cjs = `console.log("ran", typeof module.exports);\nmodule.exports = { a: 1 };${filler}`;
+
+    async function bunRunStdin(code: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-"],
+        cwd: temp_dir,
+        env,
+        stdin: Buffer.from(code),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode, signalCode: proc.signalCode };
+    }
+
+    test("after a file with the same bytes", async () => {
+      writeFileSync(join(temp_dir, "a.tsx"), cjs);
+      expect(await bunRun(join(temp_dir, "a.tsx"), env)).toSpawn("ran object");
+      expect(newCacheCount()).toBe(1);
+
+      // The file's entry is a function that a script evaluates and never calls.
+      expect(await bunRunStdin(cjs)).toSpawn("ran object");
+      expect(newCacheCount()).toBe(0); // another features hash: deleted + written
+
+      expect(await bunRunStdin(cjs)).toSpawn("ran object");
+      expect(newCacheCount()).toBe(0); // cache hit
+    });
+
+    test("before a file with the same bytes", async () => {
+      writeFileSync(join(temp_dir, "a.tsx"), cjs);
+      expect(await bunRunStdin(cjs)).toSpawn("ran object");
+      expect(newCacheCount()).toBe(1);
+
+      // The program's entry has no function for the loader to call.
+      expect(await bunRun(join(temp_dir, "a.tsx"), env)).toSpawn("ran object");
+      expect(newCacheCount()).toBe(0);
+
+      expect(await bunRun(join(temp_dir, "a.tsx"), env)).toSpawn("ran object");
+      expect(newCacheCount()).toBe(0);
+    });
+
+    // An entry does not say that its text reads import.meta from a global, so there is none.
+    test("that reads import.meta is not cached", async () => {
+      const code = `console.log("ran", typeof module.exports, typeof import.meta.url);${filler}`;
+      expect(await bunRunStdin(code)).toSpawn("ran object string");
+      expect(await bunRunStdin(code)).toSpawn("ran object string");
+      expect(existsSync(cache_dir) ? readdirSync(cache_dir) : []).toEqual([]);
+    });
+
+    // `import.meta.main` is printed as `require.main == module`: the text reads no global.
+    test("that only says import.meta.main is cached", async () => {
+      const code = `if (import.meta.main) console.log("ran", typeof module.exports);${filler}`;
+      expect(await bunRunStdin(code)).toSpawn("ran object");
+      expect(newCacheCount()).toBe(1);
+
+      expect(await bunRunStdin(code)).toSpawn("ran object");
+      expect(newCacheCount()).toBe(0); // cache hit
+    });
+  });
+
   // A define replaces an identifier at parse time, so the define table is part
   // of the cache key. The cache is shared by every project of the user, and
   // keyed by source bytes, so two projects with the same file must not see

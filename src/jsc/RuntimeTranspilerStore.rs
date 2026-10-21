@@ -847,9 +847,7 @@ impl TranspilerJob {
             } else {
                 None
             },
-            // SAFETY: leaf-field read on `*vm.module_loader`; see `vm` note above.
-            remove_cjs_module_wrapper: is_main
-                && unsafe { (*vm).module_loader.eval_source.is_some() },
+            remove_cjs_module_wrapper: false,
             module_type,
             keep_json_and_toml_as_one_statement: false,
             allow_bytecode_cache: true,

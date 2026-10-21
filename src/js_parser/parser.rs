@@ -400,6 +400,11 @@ pub mod Runtime {
                 hasher.update(b"define");
                 hasher.update(&define_hash.to_le_bytes());
             }
+
+            // `-e` / stdin only. Unset adds nothing, like an empty flag set.
+            if self.remove_cjs_module_wrapper {
+                hasher.update(b"no_cjs_wrapper");
+            }
         }
 
         pub(crate) fn should_unwrap_require(&self, package_name: &[u8]) -> bool {

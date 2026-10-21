@@ -596,10 +596,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::ExprData::EImportMeta(_) => {
                     if name == b"main" {
+                        // Saturating: past the stack guard of `visit_expr_in_out`, the target was not visited.
+                        p.import_meta_uses = p.import_meta_uses.saturating_sub(1);
                         return Some(p.value_for_import_meta_main(false, target.loc));
                     }
 
                     if name == b"hot" {
+                        p.import_meta_uses = p.import_meta_uses.saturating_sub(1);
                         return Some(Expr {
                             data: js_ast::ExprData::ESpecial(
                                 if p.options.features.hot_module_reloading {

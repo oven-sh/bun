@@ -25,6 +25,8 @@ bun_core::declare_scope!(ModuleLoader, hidden);
 pub struct ModuleLoader {
     pub transpile_source_code_arena: Option<Box<ArenaAllocator>>,
     pub eval_source: Option<Box<bun_ast::Source>>,
+    /// The last transpile of `eval_source` printed CommonJS text that reads `import.meta` from `$Bun_eval_import_meta`.
+    pub eval_entry_reads_import_meta_global: bool,
     /// User's `-e` bytes under `--interactive` (see `Eval::interactive_script`).
     pub interactive_eval_script: Option<Box<[u8]>>,
 }

@@ -262,6 +262,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) has_top_level_return: bool,
     pub(crate) latest_return_had_semicolon: bool,
     pub(crate) has_import_meta: bool,
+    /// `import.meta` expressions the visit pass left in place: no define replaced them and none was lowered (`.main`, `.hot`).
+    pub(crate) import_meta_uses: u32,
     pub(crate) has_es_module_syntax: bool,
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
@@ -9198,6 +9200,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             parts.truncate(1);
             parts[0].stmts = bun_ast::StoreSlice::new_mut(top_level_stmts);
+        } else if wrap_mode == WrapMode::BunCommonjs && self.import_meta_uses > 0 {
+            // Not the wrapper's `$Bun_import_meta`: a module under a five-parameter `Module.wrapper` must not read the `-e` / stdin program's.
+            self.import_meta_ref =
+                self.new_symbol(js_ast::symbol::Kind::Unbound, b"$Bun_eval_import_meta");
         }
 
         // REPL mode transforms
@@ -9706,6 +9712,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_top_level_return: false,
             latest_return_had_semicolon: false,
             has_import_meta: false,
+            import_meta_uses: 0,
             has_es_module_syntax: false,
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,

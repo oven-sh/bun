@@ -120,6 +120,15 @@ typedef struct ErrorableString {
 } ErrorableString;
 static_assert(sizeof(ErrorableString) == 32 && alignof(ErrorableString) == 8, "ErrorableString layout is mirrored in src/jsc/Errorable.rs");
 struct bun_ModuleInfoDeserialized;
+// Where CommonJS text reads `exports`, `require`, `module`, `__filename` and `__dirname` from. Rust `CommonJSBindings`.
+enum class CommonJSBindings : uint8_t {
+    // The text is a function expression that takes them as parameters. `import.meta` is a sixth parameter.
+    WrapperParameters = 0,
+    // The text is the `-e` / stdin program: a script that reads them as globals.
+    ScriptGlobals = 1,
+    // ScriptGlobals, and the text also reads `import.meta` from a global.
+    ScriptGlobalsWithImportMeta = 2,
+};
 // Every BunString here is owned by whichever frame holds the struct (see
 // ~ErrorableResolvedSource / Rust `Drop`). Consumers that keep a string take it
 // with `transferToWTFString()`, which leaves the field empty.
@@ -138,6 +147,8 @@ typedef struct ResolvedSource {
     bool is_prelinked_module;
     // JSC::SourceProvenance::Static: source_code comes from where the program is stored or from Bun itself, not from a JavaScript value.
     bool is_static;
+    // Meaningful when isCommonJSModule.
+    CommonJSBindings cjs_bindings;
     // -- Bytecode cache fields --
     // Owned (`ResolvedSource__freeBytecode`) iff `bytecode_cache_owned`; otherwise
     // borrowed from the standalone module graph / compile cache.
@@ -154,7 +165,7 @@ typedef struct ResolvedSource {
     // validated against). If empty, origin is derived from source_url.
     BunString origin_path;
 } ResolvedSource;
-static_assert(sizeof(ResolvedSource) == 136 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, is_static) == 78 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, bytecode_cache_entry_offset) == 100 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
+static_assert(sizeof(ResolvedSource) == 136 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, is_static) == 78 && offsetof(ResolvedSource, cjs_bindings) == 79 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, bytecode_cache_entry_offset) == 100 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;

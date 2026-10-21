@@ -348,3 +348,248 @@ test("uncaught error from a CommonJS-sniffed stdin entry reports and exits 1", a
   expect(stdout).toBe("");
   expect(exitCode).toBe(1);
 });
+
+async function runIn(cwd: string, args: string[], stdin?: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    env: bunEnv,
+    stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+// A CommonJS `-e` / stdin program runs as a script, with `require`, `module`, `exports`, `__filename`
+// and `__dirname` as globals and no wrapper function around it. A script cannot say `import.meta`
+// ("SyntaxError: import.meta is only valid inside modules."), so the program reads it from a global too.
+describe("import.meta in a CommonJS eval program", () => {
+  // Each of these alone makes the parser call the program CommonJS.
+  const rest = "typeof import.meta.url, import.meta.main";
+  const programs = [
+    { uses: "require", code: `console.log(typeof require, ${rest})`, expected: "function string true\n" },
+    { uses: "module", code: `console.log(typeof module, ${rest})`, expected: "object string true\n" },
+    { uses: "exports", code: `console.log(typeof exports, ${rest})`, expected: "object string true\n" },
+    { uses: "__filename", code: `console.log(typeof __filename, ${rest})`, expected: "string string true\n" },
+    { uses: "__dirname", code: `console.log(typeof __dirname, ${rest})`, expected: "string string true\n" },
+    { uses: '"use strict"', code: `"use strict"; console.log("strict", ${rest})`, expected: "strict string true\n" },
+    { uses: "with", code: `with ({}) console.log("with", ${rest})`, expected: "with string true\n" },
+  ];
+  // The program has no module type and is transpiled as a .tsx file is, so the same text in one is
+  // what it must print.
+  const ways: Record<string, (code: string) => { args: string[]; stdin?: string; completion?: string }> = {
+    "a .tsx file": () => ({ args: ["program.tsx"] }),
+    "-e": code => ({ args: ["-e", code] }),
+    "--print": code => ({ args: ["--print", code], completion: "undefined\n" }),
+    "bun -": code => ({ args: ["-"], stdin: code }),
+    "bun run -": code => ({ args: ["run", "-"], stdin: code }),
+  };
+  describe.each(programs)("in a program with $uses", ({ code, expected }) => {
+    test.concurrent.each(Object.keys(ways))("%s", async way => {
+      using dir = tempDir("eval-cjs-import-meta", { "program.tsx": code });
+      const { args, stdin, completion = "" } = ways[way](code);
+      expect(await runIn(String(dir), args, stdin)).toEqual({ stdout: expected + completion, stderr: "", exitCode: 0 });
+    });
+  });
+
+  test.concurrent("is the program's own, also in a callback that runs later", async () => {
+    using dir = tempDir("eval-cjs-import-meta", {});
+    const code = `
+      const first = import.meta;
+      console.log(typeof require, first.file, first.main);
+      queueMicrotask(() => console.log(import.meta === first));
+    `;
+    expect(await runIn(String(dir), ["-e", code])).toEqual({
+      stdout: "function [eval] true\ntrue\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(await runIn(String(dir), ["-"], code)).toEqual({
+      stdout: "function [stdin] true\ntrue\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("is there each time the program is evaluated", async () => {
+    using dir = tempDir("eval-cjs-import-meta", {});
+    const code = `
+      globalThis.runs = (globalThis.runs ?? 0) + 1;
+      console.log(runs, typeof module, import.meta.file);
+      if (runs < 3) {
+        delete require.cache[__filename];
+        require(__filename);
+      }
+    `;
+    expect(await runIn(String(dir), ["-e", code])).toEqual({
+      stdout: "1 object [eval]\n2 object [eval]\n3 object [eval]\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The global is there when the transpiled text can read it. The parser prints `import.meta.main`
+  // as `require.main == module` and `import.meta.hot` as `undefined`, and a define replaces the
+  // whole expression: such programs ran before, and get no global. Dead code counts as a reader.
+  describe("is a global, not enumerable, only for a program whose text reads it", () => {
+    const names = `JSON.stringify([Object.getOwnPropertyNames(globalThis), Object.keys(globalThis)].map(names => names.filter(name => name.includes("import_meta"))))`;
+    const none = "[[],[]]";
+    const one = '[["$Bun_eval_import_meta"],[]]';
+    test.concurrent.each([
+      { says: "no import.meta", print: `"none"`, expected: `function none ${none}\n` },
+      { says: "import.meta.main", print: `import.meta.main`, expected: `function true ${none}\n` },
+      { says: "!import.meta.main", print: `!import.meta.main`, expected: `function false ${none}\n` },
+      { says: "import.meta.hot", print: `String(import.meta.hot)`, expected: `function undefined ${none}\n` },
+      {
+        says: "import.meta.hot?.data",
+        print: `String(import.meta.hot?.data)`,
+        expected: `function undefined ${none}\n`,
+      },
+      {
+        says: "a defined import.meta.env.FOO",
+        flags: ["--define", `import.meta.env.FOO="x"`],
+        print: `import.meta.env.FOO`,
+        expected: `function x ${none}\n`,
+      },
+      { says: "import.meta.url", print: `typeof import.meta.url`, expected: `function string ${one}\n` },
+      {
+        says: "import.meta.main and import.meta.url",
+        print: `import.meta.main, typeof import.meta.url`,
+        expected: `function true string ${one}\n`,
+      },
+      {
+        says: "import.meta.url in dead code",
+        before: `if (false) import.meta.url;`,
+        print: `"dead"`,
+        expected: `function dead ${one}\n`,
+      },
+    ])("a program that says $says", async ({ flags = [], before = "", print, expected }) => {
+      using dir = tempDir("eval-cjs-import-meta", {});
+      const code = `${before} console.log(typeof require, ${print}, ${names});`;
+      expect(await runIn(String(dir), [...flags, "-e", code])).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+    });
+  });
+
+  // With a watcher, the loader hands the transpiled program over through another return path.
+  test.concurrent.each(["--hot", "--watch"])("%s -e", async flag => {
+    using dir = tempDir("eval-cjs-import-meta", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), flag, "-e", `console.log(typeof require, ${rest}); process.exit(0);`],
+      cwd: String(dir),
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // An uncaught error does not end a process that watches, so this reads what stderr gets first
+    // and does not wait for the exit.
+    const { value } = await proc.stderr.getReader().read();
+    expect(value ? Buffer.from(value).toString() : "").toBe("");
+    expect(await proc.stdout.text()).toBe("function string true\n");
+    expect(await proc.exited).toBe(0);
+  });
+
+  // --hot evaluates the program again, on the same global, when a file that it required changes.
+  test.concurrent("--hot -e evaluates the program again", async () => {
+    using dir = tempDir("eval-cjs-import-meta", { "dep.cjs": `module.exports = 1;` });
+    const code = `
+      globalThis.runs = (globalThis.runs ?? 0) + 1;
+      try {
+        console.log(runs > 1, typeof require, import.meta.file, require("./dep.cjs"));
+      } catch (e) {
+        console.log(runs > 1, e.message);
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "-e", code],
+      cwd: String(dir),
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = proc.stdout.getReader();
+    let text = "";
+    // The first line of stdout that starts with `prefix`.
+    async function line(prefix: string) {
+      for (;;) {
+        const found = text
+          .split("\n")
+          .slice(0, -1)
+          .find(line => line.startsWith(prefix));
+        if (found !== undefined) return found;
+        const { value, done } = await stdout.read();
+        if (done) return text;
+        text += Buffer.from(value).toString();
+      }
+    }
+    // An uncaught error does not end the process. It is a line on stderr, and that ends each wait.
+    // A debug build reports each reload there too, as "DEBUG: ...".
+    const failed = (async () => {
+      let errors = "";
+      for await (const chunk of proc.stderr) {
+        errors += Buffer.from(chunk).toString();
+        const lines = errors
+          .split("\n")
+          .slice(0, -1)
+          .filter(line => line && !line.startsWith("DEBUG: "));
+        if (lines.length > 0) return lines.join("\n");
+      }
+      return await new Promise<string>(() => {});
+    })();
+    expect(await Promise.race([line("false"), failed])).toBe("false function [eval] 1");
+    // The same length, in place, so that the program never sees a half-written file.
+    writeFileSync(join(String(dir), "dep.cjs"), `module.exports = 2;`, { flag: "r+" });
+    expect(await Promise.race([line("true"), failed])).toBe("true function [eval] 2");
+  });
+});
+
+// The transpiler says on the source whether CommonJS text is a wrapper function to call or the
+// `-e` / stdin program to run as a script. The evaluator used to tell by the filename of the module,
+// and ran these three as scripts: the wrapper was evaluated and never called.
+describe("CommonJS text in a wrapper, under the filename of the eval program", () => {
+  test.concurrent("module._compile(source, __filename) calls the wrapper it makes", async () => {
+    using dir = tempDir("eval-cjs-wrapper", {});
+    const code = `module._compile("module.exports = 42", __filename); console.log(module.exports);`;
+    expect(await runIn(String(dir), ["-e", code])).toEqual({ stdout: "42\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("an overridden module._compile gets the whole text of the program", async () => {
+    using dir = tempDir("eval-cjs-wrapper", {});
+    const code = `var Module = require("module");
+if (!globalThis.again) {
+  globalThis.again = true;
+  module._compile = source => console.log(source.startsWith("var Module"), source.trimEnd().endsWith("}"));
+  Module._extensions[".js"](module, __filename);
+}`;
+    expect(await runIn(String(dir), ["-e", code])).toEqual({ stdout: "true true\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("a `// @bun @bun-cjs` program on stdin runs the body of its wrapper", async () => {
+    using dir = tempDir("eval-cjs-wrapper", {});
+    const code = `// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {console.log("ran", typeof require, typeof module);})`;
+    expect(await runIn(String(dir), ["-"], code)).toEqual({ stdout: "ran function object\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("a preloaded Module.wrapper is not put around the program", async () => {
+    using dir = tempDir("eval-cjs-wrapper", {
+      "preload.cjs": `require("module").wrapper = ["(function (exports, require, module, __filename, __dirname) { ", "\\n});"];`,
+      // The transpiler gives this module import.meta as a sixth wrapper parameter, which the wrapper
+      // above does not take. The module must not get the program's import.meta in its place.
+      "dep.cjs": `module.exports = import.meta.url;`,
+    });
+    const code = `
+      let dep;
+      try { dep = require("./dep.cjs"); } catch (e) { dep = e.name; }
+      const own = require("url").pathToFileURL(require.resolve("./dep.cjs")).href;
+      console.log(import.meta.file, dep === "ReferenceError" || dep === own);
+    `;
+    expect(await runIn(String(dir), ["-r", "./preload.cjs", "-e", code])).toEqual({
+      stdout: "[eval] true\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

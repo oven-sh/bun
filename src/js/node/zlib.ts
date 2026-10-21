@@ -153,7 +153,7 @@ interface FlushOptions {
 }
 
 interface ZlibHandle {
-  [owner_symbol]: ZlibBase;
+  [owner_symbol]?: ZlibBase;
   onerror: typeof zlibOnError;
   reset(): void;
   close(): void;

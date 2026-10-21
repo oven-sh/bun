@@ -14,6 +14,8 @@ pub struct ProcessAutoKiller {
     pub(crate) ever_enabled: bool,
     /// Map value of each tracked process; the test runner begins a new one per test or hook callback.
     scope: u32,
+    /// The scope of the last [`Self::kill_since`], which left the processes of earlier scopes alive.
+    spared_until: Option<u32>,
 }
 
 impl ProcessAutoKiller {
@@ -37,6 +39,7 @@ impl ProcessAutoKiller {
 
     /// Every tracked process: for the `--isolate` swap between files, and where no cleanup hook is left to run.
     pub fn kill(&mut self) -> Result {
+        self.spared_until = None;
         let mut count: u32 = 0;
         while let Some(entry) = self.processes.pop() {
             count += Self::kill_and_release(entry.key);
@@ -49,14 +52,28 @@ impl ProcessAutoKiller {
         self.kill_since(self.scope.wrapping_sub(1))
     }
 
-    /// The processes of every scope begun after `mark` was read from [`Self::scope`]. Earlier scopes stay tracked for [`Self::kill`].
+    /// The processes of every scope begun after `mark` was read from [`Self::scope`]. Earlier scopes stay tracked for [`Self::kill_spared`] and [`Self::kill`].
     pub fn kill_since(&mut self, mark: u32) -> Result {
+        self.spared_until = Some(self.scope);
+        self.kill_where(mark, false)
+    }
+
+    /// The processes that [`Self::kill_since`] left alive: those of the scopes up to its last call.
+    pub fn kill_spared(&mut self) -> Result {
+        match self.spared_until.take() {
+            Some(mark) => self.kill_where(mark, true),
+            None => Result { processes: 0 },
+        }
+    }
+
+    /// The scopes begun after `mark`, or with `up_to` the scopes up to `mark`.
+    fn kill_where(&mut self, mark: u32, up_to: bool) -> Result {
         let span = self.scope.wrapping_sub(mark);
         let mut count: u32 = 0;
         let mut index = self.processes.len();
         while index > 0 {
             index -= 1;
-            if self.scope.wrapping_sub(self.processes.values()[index]) >= span {
+            if (self.scope.wrapping_sub(self.processes.values()[index]) >= span) != up_to {
                 continue;
             }
             // Walking backwards, so the entry swapped into `index` was already visited.
@@ -86,6 +103,7 @@ impl ProcessAutoKiller {
     }
 
     pub fn clear(&mut self) {
+        self.spared_until = None;
         for process in self.processes.keys() {
             // SAFETY: see kill_and_release: key is live until deref().
             unsafe { Process::deref(*process) };

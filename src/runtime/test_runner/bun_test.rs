@@ -1095,11 +1095,11 @@ impl BunTest {
             Phase::Execution => {
                 self.in_run_loop = false;
                 self.phase = Phase::Done;
-                // A script frame below this one waits in place (`expect().resolves`) and turns the event loop itself. The file ends when that frame returns, and only the end of what it waits for lets it return.
-                if global_this.vm().is_entered() {
-                    // SAFETY: bun_vm() returns the live per-thread VM.
-                    let killed = global_this.bun_vm().as_mut().auto_killer.kill();
-                    Execution::report_killed_processes(killed.processes);
+                // A frame that waits in place (`expect().resolves`) is still on the stack, and the file ends only when it returns. It can wait for a process that a timeout of this file spared.
+                // SAFETY: bun_vm() returns the live per-thread VM.
+                let vm = global_this.bun_vm().as_mut();
+                if vm.event_loop_ref().waits_in_place > 0 {
+                    Execution::report_killed_processes(vm.auto_killer.kill_spared().processes);
                 }
                 Ok(Advance::Exit)
             }

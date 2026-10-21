@@ -126,7 +126,7 @@ A cleanup hook that times out is the exception, because the processes it was goi
 - `afterEach`: Bun also kills the processes that the test and its `beforeEach` hooks started, in every attempt of a test with `retry`.
 - `afterAll`: Bun also kills the processes that the tests and hooks of its `describe` block started. At the top level of a file, those are all tests and hooks of the file.
 
-A test that times out while it waits in `expect(promise).resolves` or `.rejects` can keep Bun from running anything else until the promise settles. Bun then kills the processes of all tests and hooks, because only that can end the wait. It does the same at the end of a file when such a wait still lasts.
+A test that times out while it waits in `expect(promise).resolves` or `.rejects` can keep Bun from running anything else until the promise settles. Bun then kills the processes of all tests and hooks, because only that can end the wait. When such a wait still lasts at the end of a file, Bun kills the processes that earlier timeouts left running.
 
 `bun test --bail` kills the processes of all tests and hooks before it exits. `test.concurrent` tests that run together do not get this cleanup. Bun cannot tell their processes apart, so an `afterAll` timeout also kills the processes of tests that ran together with the first test of its block.
 

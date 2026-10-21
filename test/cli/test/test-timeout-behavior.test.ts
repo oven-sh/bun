@@ -617,6 +617,68 @@ testKill(
   },
 );
 
+// The file ends under a frame that waits in place, but no timeout spared a process:
+// nothing is killed. The same when a test fails through done(), which steps the
+// runner under a script frame that does not wait.
+testKill.each([
+  [
+    "ends under a wait in place of its own",
+    `test("leaves a wait in place behind", async () => {
+      spawnEcho();
+      const later = Bun.sleep(300);
+      setTimeout(() => void expect(later).resolves.toBeUndefined(), 0);
+      await Bun.sleep(20);
+    });`,
+    "(pass) leaves a wait in place behind",
+  ],
+  [
+    "fails through done()",
+    `test("fails through done", done => {
+      spawnEcho();
+      setImmediate(() => done(new Error("fails on purpose")));
+    });`,
+    "(fail) fails through done",
+  ],
+])("a file whose last test %s kills nothing at its end", async (_, lastTest, result) => {
+  const { combined } = await runTestFile(/* ts */ `
+    import { expect, test } from "bun:test";
+
+    ${lastTest}
+  `);
+
+  expect(combined).not.toContain("dangling process");
+  expect(combined).toContain(result);
+});
+
+// spawnSync reports the deadline when it returns, with the callback still on the stack.
+// A wait in place that starts after that is past the deadline from its first moment.
+testKill("a test that overruns in spawnSync and then waits in expect() is ended", async () => {
+  const { combined, exitCode } = await runTestFile(/* ts */ `
+    import { beforeAll, expect, test } from "bun:test";
+
+    let fromBeforeAll: ReturnType<typeof Bun.spawn>;
+    beforeAll(() => {
+      fromBeforeAll = Bun.spawn({
+        cmd: [process.execPath, "-e", "await Bun.sleep(5000)"],
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+    });
+
+    test("overruns in spawnSync, then waits for the child of beforeAll", async () => {
+      Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(30000)"] });
+      await expect(fromBeforeAll.exited).resolves.toBeNumber();
+    }, 100);
+  `);
+
+  expect(combined.match(/killed \d+ dangling process(?:es)?/g)).toEqual([
+    "killed 1 dangling process",
+    "killed 1 dangling process",
+  ]);
+  expect(combined).toContain("(fail) overruns in spawnSync, then waits for the child of beforeAll");
+  expect(exitCode).toBe(1);
+});
+
 // The timer fires after the callback returned and before the runner steps past the entry.
 // The callback was not interrupted, so the entry passes and nothing is killed.
 // Not concurrent: the callback has to reach the event loop before its deadline, and

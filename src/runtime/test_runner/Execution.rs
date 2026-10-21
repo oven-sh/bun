@@ -320,16 +320,16 @@ impl Execution {
         let _g = group_begin!();
         let buntest = self.bun_test();
         // SAFETY: `in_run_loop` is a sibling field of `self` in `BunTest`, read without forming a `&BunTest`.
-        if timer_fired && unsafe { (*buntest).in_run_loop } {
-            self.handle_timeout_under_callback(global_this);
+        if unsafe { (*buntest).in_run_loop } {
+            self.handle_timeout_under_callback(global_this, timer_fired);
         }
         // SAFETY: deref parent at point-of-use; `self` is not accessed while this `&mut BunTest` is live.
         unsafe { (*buntest).add_result(RefDataValue::Start) };
         Ok(())
     }
 
-    /// The file timer fired while a callback on the stack of `run` turns the event loop (`expect().resolves`). The runner cannot step until that callback returns, and it returns only when what it waits for ends. Past its deadline nothing narrower than every tracked process is sure to end that wait. A timer that fired for an earlier entry is armed again, because `run` does that only after the callback returns.
-    fn handle_timeout_under_callback(&mut self, global_this: &JSGlobalObject) {
+    /// A callback is on the stack of `run`, so the runner does not step until it returns. A timer that fires there past the deadline finds a callback that waits in place (`expect().resolves`): it returns only when what it waits for ends, so every tracked process is killed. Otherwise the timer is armed for that deadline, which `run` does only after the callback returns.
+    fn handle_timeout_under_callback(&mut self, global_this: &JSGlobalObject, timer_fired: bool) {
         let Some(entry) = self.on_stack_entry.get() else {
             return;
         };
@@ -338,7 +338,7 @@ impl Execution {
         if deadline.eql(&Timespec::EPOCH) {
             return;
         }
-        if deadline.order(&Timespec::now_force_real_time()) != core::cmp::Ordering::Less {
+        if !timer_fired || deadline.order(&Timespec::now_force_real_time()) != core::cmp::Ordering::Less {
             // SAFETY: deref parent at point-of-use; `update_min_timeout` touches the timer of `BunTest`, not `self`.
             unsafe { (*self.bun_test()).update_min_timeout(global_this, &deadline) };
             return;

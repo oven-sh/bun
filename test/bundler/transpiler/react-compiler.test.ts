@@ -3522,9 +3522,6 @@ describe("bundler", () => {
     });
   }
 
-  // The fbt transform rejects a variable in place of a nested fbt.param()
-  // call, so the call stays inside the fbt() call. The value given to
-  // fbt.param() can be a variable, and it keeps its place ahead of a statement.
   itBundled("react-compiler/SourceMapOfCatch", {
     files: {
       "/entry.jsx": /* jsx */ `
@@ -3554,27 +3551,30 @@ describe("bundler", () => {
       const source = api.readFile("/entry.jsx").split("\n");
       expect(api.readFile("/out/entry.js")).toMatch(/\b_c\(\d+\)/);
       await SourceMapConsumer.with(JSON.parse(api.readFile("/out/entry.js.map")), null, map => {
-        const original = (line: number, column: number, length: number) => {
+        const original = (line: number, column: number) => {
           const position = map.originalPositionFor({ line: line + 1, column });
-          return source[position.line! - 1].slice(position.column!, position.column! + length);
+          return source[position.line! - 1].slice(position.column!);
         };
         const words = api
           .readFile("/out/entry.js")
           .split("\n")
           .flatMap((text, line) =>
             Array.from(text.matchAll(/\bcatch(?: \([\w$]+\))? \{/g), ({ 0: clause, index }) => [
-              original(line, index, "catch".length),
-              original(line, index + clause.length - 1, 1),
+              original(line, index),
+              original(line, index + clause.length - 1),
             ]),
           );
         expect(words).toEqual([
-          ["catch", "{"],
-          ["catch", "{"],
+          ["catch {", "{"],
+          ["catch (e) {", "{"],
         ]);
       });
     },
   });
 
+  // The fbt transform rejects a variable in place of a nested fbt.param()
+  // call, so the call stays inside the fbt() call. The value given to
+  // fbt.param() can be a variable, and it keeps its place ahead of a statement.
   itBundled("react-compiler/MacroOperandStaysInsideTheMacroCall", {
     files: {
       "/entry.jsx": /* jsx */ `

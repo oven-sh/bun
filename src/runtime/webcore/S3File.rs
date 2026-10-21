@@ -517,7 +517,13 @@ impl S3BlobStatTask {
         blob: &Blob,
         signal: Option<bun_jsc::AbortSignalRef>,
     ) -> JsResult<JSValue> {
-        Self::start(cx, blob, "exists", signal, S3BlobStatTask::on_s3_exists_resolved)
+        Self::start(
+            cx,
+            blob,
+            "exists",
+            signal,
+            S3BlobStatTask::on_s3_exists_resolved,
+        )
     }
 
     pub(crate) fn stat(
@@ -525,7 +531,13 @@ impl S3BlobStatTask {
         blob: &Blob,
         signal: Option<bun_jsc::AbortSignalRef>,
     ) -> JsResult<JSValue> {
-        Self::start(cx, blob, "stat", signal, S3BlobStatTask::on_s3_stat_resolved)
+        Self::start(
+            cx,
+            blob,
+            "stat",
+            signal,
+            S3BlobStatTask::on_s3_stat_resolved,
+        )
     }
 
     pub(crate) fn size(
@@ -533,7 +545,13 @@ impl S3BlobStatTask {
         blob: &Blob,
         signal: Option<bun_jsc::AbortSignalRef>,
     ) -> JsResult<JSValue> {
-        Self::start(cx, blob, "size", signal, S3BlobStatTask::on_s3_size_resolved)
+        Self::start(
+            cx,
+            blob,
+            "size",
+            signal,
+            S3BlobStatTask::on_s3_size_resolved,
+        )
     }
 
     // Teardown (store deref, promise deinit, freeing the box) is handled by Box<Self> Drop.

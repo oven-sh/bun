@@ -12268,7 +12268,12 @@ describe.concurrent("what bun lint gets from the Bun process", () => {
     const reader = proc.stdout.getReader();
     expect((await reader.read()).done).toBe(false);
     await reader.cancel();
-    expect(await proc.exited).toBe(1);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // If writing the rest of the report fails with anything but EPIPE, stderr has the error and the exit code is 2.
+    expect({ stderr: stderr.replace(/\[[\d.]+m?s\]/, "[time]"), exitCode }).toEqual({
+      stderr: "Linted 1 file [time]\n",
+      exitCode: 1,
+    });
   });
 
   test.skipIf(!isLinux)("lints a file with a non-UTF-8 name, found by the walk or passed as an argument", async () => {

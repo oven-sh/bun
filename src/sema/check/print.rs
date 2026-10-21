@@ -2087,18 +2087,10 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// escapes of an identifier. A name isn't always at `start` (the name of an `@overload` is at
     /// the tag), and a missing name still has a token at that position.
     fn declaration_name_to_string(&self, file: FileId, name: hir::Node) -> Vec<u8> {
-        let text = match self.c.get_text_of_node(file, name) {
+        match self.c.get_text_of_node(file, name) {
             raw_text if bun_core::strings::contains_char(raw_text, b'\\') => raw_text.to_vec(),
             _ => self.property_key_text(file, name),
-        };
-        let hir = self.c.hir(file);
-        if hir.jsdoc_asterisks.is_empty() {
-            return text;
         }
-        // `GetTextOfNode` doesn't skip the `*` before the name.
-        let (start, end) = (hir.start(name), self.c.end_of_node(file, name));
-        let from = super::spans::start_of_error_range(hir, start, end);
-        [&hir.text[from as usize..start as usize], &text[..]].concat()
     }
 
     /// The same for a clone of the name, which the printer emits as its `node.Text()`, so an

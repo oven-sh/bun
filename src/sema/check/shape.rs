@@ -5712,7 +5712,9 @@ impl<'p, 's> Checker<'p, 's> {
         let at = self.span_of_untyped_property(file, declaration);
         // `DeclarationNameToString(GetNameOfDeclaration(declaration))`
         let name = match declaration {
-            UntypedProperty::Member(_) if at.1 != at.2 => Some(self.source_text(file, at.1, at.2)),
+            UntypedProperty::Member(_) if at.1 != at.2 => {
+                Some(super::spans::text_of_node_at(self.hir(file), at.1, at.2).into_owned())
+            }
             UntypedProperty::Member(_) => None,
             UntypedProperty::Assignment(e) => self.name_of_assignment_declaration(file, e),
         };

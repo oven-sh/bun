@@ -184,8 +184,7 @@ impl Checker<'_, '_> {
             return b"(Missing)".to_vec();
         }
         let (start, end) = (hir.start(name), self.end_of_node(file, name));
-        let start = super::spans::start_of_error_range(hir, start, end);
-        let raw_text = self.source_text(file, start, end);
+        let raw_text = super::spans::text_of_node_at(hir, start, end).into_owned();
         // The default library's text isn't stored.
         match hir.text(name) {
             text if raw_text.is_empty() && text.is_some() => self.atoms().bytes(text).to_vec(),

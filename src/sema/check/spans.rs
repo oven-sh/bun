@@ -66,6 +66,51 @@ pub fn compute_ecma_line_starts(text: &[u8]) -> Vec<u32> {
     starts
 }
 
+/// `strings.TrimLeftFunc(line, stringutil.IsWhiteSpaceLike)`
+fn trim_white_space_left(mut line: &[u8]) -> &[u8] {
+    loop {
+        let len = match line.first() {
+            Some(b' ' | b'\t' | 0x0B | 0x0C | b'\n' | b'\r') => 1,
+            _ => white_space_len(line, 0),
+        };
+        match len {
+            0 => return line,
+            _ => line = &line[len..],
+        }
+    }
+}
+
+/// `stripLeadingJSDocComment`
+fn strip_leading_jsdoc_comment(line: &[u8]) -> &[u8] {
+    let line = trim_white_space_left(line);
+    trim_white_space_left(line.strip_prefix(b"*").unwrap_or(line))
+}
+
+/// `GetTextOfNode` for the node of `hir` whose text without trivia is `start..end`. In a JSDoc type it's
+/// `normalizeJSDocTypeSourceText`: no line keeps its indentation or its `*`.
+pub(super) fn text_of_node_at<'h>(hir: &'h File, start: u32, end: u32) -> Cow<'h, [u8]> {
+    let text = hir.text.get(start as usize..end as usize);
+    let text = text.unwrap_or_default();
+    if !hir.is_in_jsdoc(start) {
+        return Cow::Borrowed(text);
+    }
+    let starts = compute_ecma_line_starts(text);
+    if starts.len() == 1 {
+        return Cow::Borrowed(strip_leading_jsdoc_comment(text));
+    }
+    let mut result = Vec::with_capacity(text.len());
+    for (i, &line_start) in starts.iter().enumerate() {
+        if i > 0 {
+            result.push(b'\n');
+        }
+        let line_end = line_end(text, line_start as usize);
+        result.extend_from_slice(strip_leading_jsdoc_comment(
+            &text[line_start as usize..line_end],
+        ));
+    }
+    Cow::Owned(result)
+}
+
 /// End of the line that contains `at`, before its line break.
 pub(crate) fn line_end(text: &[u8], mut at: usize) -> usize {
     while at < text.len() && line_break_len(text, at) == 0 {

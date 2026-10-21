@@ -14,6 +14,7 @@ use crate::bind::{
     assignment_declaration_kind, flags_of_member,
 };
 use smallvec::SmallVec;
+use std::borrow::Cow;
 
 /// A declaration of a symbol as in TypeScript: its location, and whether that symbol is the declaration's own symbol,
 /// to which it contributes its flags. The local symbol of a name in a module or a namespace also lists the declarations
@@ -153,19 +154,21 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         // `getDisplayName`: the source text of the name node. `export = e` and `export default e` have no name node and
         // use `getDeclarationName`.
-        let display_name: &[u8] = match node {
-            Decl::ExportExpr(it) if matches!(hir[it].kind, StmtKind::ExportAssign(_)) => b"export=",
-            Decl::ExportExpr(_) => b"default",
+        let display_name: Cow<'_, [u8]> = match node {
+            Decl::ExportExpr(it) if matches!(hir[it].kind, StmtKind::ExportAssign(_)) => {
+                Cow::Borrowed(&b"export="[..])
+            }
+            Decl::ExportExpr(_) => Cow::Borrowed(&b"default"[..]),
             _ if !matches!(node, Decl::Member(_) | Decl::Property(_))
                 && self.is_declaration_name_missing(file, node) =>
             {
                 end = NO_LENGTH;
-                b"(Missing)"
+                Cow::Borrowed(&b"(Missing)"[..])
             }
-            _ => (hir.text.get(start as usize..end as usize)).unwrap_or_default(),
+            _ => super::spans::text_of_node_at(hir, start, end),
         };
         let message_needs_name = !matches!(message, 2528 | 2567);
-        let args = [Arg::Bytes(display_name)];
+        let args = [Arg::Bytes(&display_name)];
         Some(self.new_diagnostic(
             (file, start, end),
             message,
@@ -922,10 +925,9 @@ impl Checker<'_, '_> {
                 let first = first.filter(|_| is_stored);
                 let first = first.and_then(|(of, first)| self.span_of_declaration(of, first));
                 let (of, from, to) = first.unwrap_or(declaration_span);
-                // `GetTextOfNode` doesn't skip the `*` before the name.
-                let from = super::spans::start_of_error_range(self.hir(of), from, to);
+                let text = super::spans::text_of_node_at(self.hir(of), from, to);
                 let text = match is_stored || self.atoms().is_symbol_name(name) {
-                    true => Arg::Bytes(&self.hir(of).text[from as usize..to as usize]),
+                    true => Arg::Bytes(&text),
                     false => Arg::Atom(name),
                 };
                 self.error_at(declaration_span, code, &[text]);

@@ -157,6 +157,12 @@ describe("the flags of Node.js that node:net reads take their value as the next 
     return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
   }
   const printed = (value: unknown) => ({ stdout: JSON.stringify(value), stderr: "", exitCode: 0 });
+  // `bun test` prints its version to stdout. What it prints to stderr ends with the counts.
+  const tested = ({ stdout, stderr, exitCode }: Awaited<ReturnType<typeof bun>>) => ({
+    stdout: stdout.replace(/^bun test v.*$/, "bun test"),
+    counts: stderr.match(/^ \d+ pass\n[\s\S]*$/m)?.[0].replace(/ \[[\d.]+m?s\]$/, ""),
+    exitCode,
+  });
 
   describe.concurrent.each([keylog, attemptTimeout])("%s", flag => {
     const ran = printed({ argv: ["scriptarg"], execArgv: [flag, "./value.mjs"] });
@@ -214,9 +220,11 @@ describe("the flags of Node.js that node:net reads take their value as the next 
           test("app", () => {});
         `,
       });
-      const { stderr, exitCode } = await bun(dir, ["test", flag, "value", "app"]);
-      expect(stderr).toContain("Ran 1 test across 1 file.");
-      expect(exitCode).toBe(0);
+      expect(tested(await bun(dir, ["test", flag, "value", "app"]))).toEqual({
+        stdout: "bun test",
+        counts: " 1 pass\n 0 fail\nRan 1 test across 1 file.",
+        exitCode: 0,
+      });
     });
 
     // The package manager has its own flag table. It takes no flag of the runtime that has a value.
@@ -281,9 +289,11 @@ describe("the flags of Node.js that node:net reads take their value as the next 
           test("timeout", () => expect(net.getDefaultAutoSelectFamilyAttemptTimeout()).toBe(700));
         `,
       });
-      const { stderr, exitCode } = await bun(dir, [`${attemptTimeout}=700`, "test", "timeout.test.ts"]);
-      expect(stderr).toContain(" 1 pass\n 0 fail\n");
-      expect(exitCode).toBe(0);
+      expect(tested(await bun(dir, [`${attemptTimeout}=700`, "test", "timeout.test.ts"]))).toEqual({
+        stdout: "bun test",
+        counts: " 1 pass\n 0 fail\n 1 expect() calls\nRan 1 test across 1 file.",
+        exitCode: 0,
+      });
     });
   });
 

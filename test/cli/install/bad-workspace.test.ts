@@ -933,13 +933,12 @@ describe("below a package.json that cannot say what its workspaces are", () => {
       "tools/x/package.json": JSON.stringify({ name: "x", version: "1.0.0", dependencies: { dep: "file:./dep" } }),
       "tools/x/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
     };
-    async function installed(ownLockfile: boolean) {
-      const project = workspace(undefined, TOOL);
+    async function install(project: Workspace, ownLockfile: boolean) {
       const folder = join(project.root, "tools", "x");
       expect((await runInstall(project.root)).exitCode).toBe(0);
       if (ownLockfile) expect((await runInstall(folder)).exitCode).toBe(0);
       expect(lockfileOf(folder) !== null).toBe(ownLockfile);
-      return { project, folder };
+      return folder;
     }
     const lockfiles: [string, boolean][] = [
       ["without a lockfile of its own", false],
@@ -948,8 +947,8 @@ describe("below a package.json that cannot say what its workspaces are", () => {
 
     describe.concurrent.each(lockfiles)("%s", (_, ownLockfile) => {
       test("is empty beside a lockfile", async () => {
-        const { project, folder } = await installed(ownLockfile);
-        using _ = project;
+        using project = workspace(undefined, TOOL);
+        const folder = await install(project, ownLockfile);
         writeFileSync(project.packageJson, "");
 
         await expectStopped(
@@ -961,8 +960,8 @@ describe("below a package.json that cannot say what its workspaces are", () => {
       });
 
       test("has a workspaces that is a string", async () => {
-        const { project, folder } = await installed(ownLockfile);
-        using _ = project;
+        using project = workspace(undefined, TOOL);
+        const folder = await install(project, ownLockfile);
         writeFileSync(project.packageJson, STRING);
 
         const { stdout, stderr, exitCode } = await runBun(["pm", "bin"], folder);
@@ -977,8 +976,8 @@ describe("below a package.json that cannot say what its workspaces are", () => {
 
     describe.skipIf(isWindows).each(lockfiles)("%s", (_, ownLockfile) => {
       test.serial("cannot be opened", async () => {
-        const { project, folder } = await installed(ownLockfile);
-        using _ = project;
+        using project = workspace(undefined, TOOL);
+        const folder = await install(project, ownLockfile);
         chmodSync(project.packageJson, 0o000);
         using user = unprivilegedSpawnOptions(project.root);
 
@@ -991,8 +990,8 @@ describe("below a package.json that cannot say what its workspaces are", () => {
       });
 
       test.serial("lists a folder that cannot be opened before the others", async () => {
-        const { project, folder } = await installed(ownLockfile);
-        using _ = project;
+        using project = workspace(undefined, TOOL);
+        const folder = await install(project, ownLockfile);
         writeFileSync(project.packageJson, rootPackageJson(["locked/*", "packages/*"]));
         const locked = join(project.root, "locked");
         mkdirSync(locked, { mode: 0o000 });

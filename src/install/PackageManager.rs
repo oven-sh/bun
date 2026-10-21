@@ -733,8 +733,7 @@ impl Subcommand {
         matches!(self, Self::Audit | Self::Pm | Self::Info)
     }
 
-    /// A bare `bun link` registers the folder it runs in and a bare `bun unlink` removes that entry,
-    /// so both stay there. `bun link <package>` installs, like `bun add`.
+    /// A bare `bun link` or `bun unlink` acts on the folder it runs in. With a package it installs.
     pub(crate) fn should_chdir_to_root(self, has_package_args: bool) -> bool {
         !matches!(self, Self::Link | Self::Unlink) || has_package_args
     }
@@ -2103,8 +2102,7 @@ enum RootAbove<'a> {
     /// The root's directory, its open package.json and the hash of the workspace's name.
     Found(&'a [u8], bun_sys::File, PackageNameHash),
     NotListed,
-    /// No package.json lists the folder, and the one at `walk.path` may list it and cannot say so.
-    /// The log says why where the error alone does not.
+    /// The package.json at `walk.path` may list the folder and cannot say so. The log says why.
     Unasked(Error, bun_ast::Log),
 }
 
@@ -2112,9 +2110,7 @@ enum RootAbove<'a> {
 /// the first package.json with a `workspaces` field counts. If it lists `child_cwd`, this returns
 /// the root's directory, its open package.json and the hash of the workspace's name.
 ///
-/// `Ok(None)` is an answer: no package.json above lists `child_cwd`. One that may list it and
-/// cannot say so is an error, and `walk.path` is then that file. `child_cwd` must not become a
-/// project of its own in that case: it would take its settings and its lockfile from itself.
+/// An error means that the package.json at `walk.path` may list `child_cwd` and cannot say so.
 ///
 /// `last_name` receives the `name` of the last package.json that was read. `members` receives every
 /// workspace, read from disk. Without `members` no workspace is read and the returned hash is 0:
@@ -2146,7 +2142,7 @@ fn find_workspace_root<'a>(
         RootAbove::Unasked(err, why) => Some((err, why)),
     };
     // A workspace can be a symlink to a folder outside the root. The root is then only found above
-    // the path that the user typed to get here, and a file above the real path is not asked.
+    // the path that the user typed to get here.
     if let Some(typed) = path_as_typed(child_cwd) {
         let real_walk = core::mem::replace(walk, PackageJsonWalk::new(typed));
         walk.next_dir = bun_core::dirname(typed);
@@ -2175,8 +2171,7 @@ fn find_workspace_root<'a>(
     let Some((err, mut why)) = unasked else {
         return Ok(None);
     };
-    // No package.json lists a folder that has no `name`. A caller without `members` has checked
-    // that already.
+    // Nothing lists a folder with no `name`. A caller without `members` has checked that.
     if let Some((_, cache)) = members
         && is_no_workspace(cache, child_cwd)
     {
@@ -2222,8 +2217,7 @@ fn find_workspace_root_above<'a>(
     )>,
     mut last_name: Option<&mut Box<[u8]>>,
 ) -> Result<RootAbove<'a>, Error> {
-    // The first package.json whose content is not known, and why. It may list `child_cwd`. The
-    // walk goes on, because a package.json above it that lists `child_cwd` still answers.
+    // The first package.json with unknown content. One above it that lists `child_cwd` answers.
     let mut unknown: Option<(Error, Vec<u8>)> = None;
     // Finding the workspace root must not depend on its package.json being writable.
     while let Some((parent, opened)) = walk.next(bun_sys::O::RDONLY) {
@@ -2240,8 +2234,7 @@ fn find_workspace_root_above<'a>(
         let json_stat_size = json_file.get_end_pos()?;
         let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];
         let json_len = json_file.pread_all(&mut json_buf, 0)?;
-        // An empty file parses as `{}`, which lists nothing. Beside a lockfile it lost its
-        // content, and `bun install` in `parent` refuses it too.
+        // Empty beside a lockfile: the content is lost, and `bun install` in `parent` refuses it.
         if json_len == 0 && Lockfile::exists_in(parent) {
             unknown.get_or_insert_with(|| (Error::EmptyPackageJSON, walk.path.clone()));
             continue;
@@ -2358,16 +2351,14 @@ fn find_workspace_root_above<'a>(
             }
 
             match listing {
-                // The listing stopped before it had every workspace, or could not read the
-                // package.json of `child_cwd`, so `child_cwd` can be a workspace.
+                // The listing did not reach `child_cwd` or could not read it: maybe a workspace.
                 Err(err)
                     if !workspace_names.is_complete()
                         || workspace_names.could_not_read(&json_source, child_cwd) =>
                 {
                     return Ok(RootAbove::Unasked(err, why));
                 }
-                // Any other error is about another workspace. A command that needs that
-                // workspace reports it later.
+                // Any other error is about another workspace. Commands that need it report it.
                 _ => break,
             }
         }
@@ -2379,8 +2370,7 @@ fn find_workspace_root_above<'a>(
     Ok(RootAbove::Unasked(err, bun_ast::Log::init()))
 }
 
-/// Stops the command, because [`find_workspace_root`] could not ask `file` whether `folder` is one
-/// of its workspaces. Without `folder` the note is left out: nothing lists a folder with no `name`.
+/// Exits: `file` cannot say if `folder` is its workspace. A folder with no `name` gets no note.
 #[cold]
 fn exit_on_unasked_root(file: &[u8], err: Error, log: &bun_ast::Log, folder: Option<&[u8]>) -> ! {
     match err {
@@ -2451,8 +2441,7 @@ fn has_name(package_json: &bun_ast::Expr) -> bool {
     )
 }
 
-/// Whether the package.json in `dir` says that `dir` is no workspace of any root: it has content
-/// and no `name`. One that is empty or does not parse may have lost its name.
+/// Whether the package.json in `dir` has content and no `name`, so that nothing lists `dir`.
 #[cold]
 fn is_no_workspace(cache: &mut WorkspacePackageJSONCache, dir: &[u8]) -> bool {
     let mut path = dir.to_vec();

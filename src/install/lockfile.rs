@@ -620,8 +620,7 @@ impl Lockfile {
             || (self.packages.len() == 1 && self.packages.get(0).resolutions.len == 0)
     }
 
-    /// Whether `dir` has a file by the name of a lockfile that [`Self::load_from_dir`] reads or
-    /// migrates from. The file is not opened.
+    /// Whether `dir` has a file named like a lockfile that `load_from_dir` takes. It is not opened.
     pub(crate) fn exists_in(dir: &[u8]) -> bool {
         let mut buf = bun_paths::path_buffer_pool::get();
         [LockfileFormat::Text, LockfileFormat::Binary]

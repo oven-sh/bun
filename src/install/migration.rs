@@ -139,8 +139,7 @@ pub(crate) fn parse_manifest_bin(
     Ok(())
 }
 
-/// The lockfiles of other package managers, in the order in which a migration tries them. npm
-/// itself reads npm-shrinkwrap.json over package-lock.json; the two share a format.
+/// In the order a migration tries them. npm reads npm-shrinkwrap.json over package-lock.json.
 pub(crate) const OTHER_LOCKFILES: [(&str, &ZStr); 4] = [
     ("npm-shrinkwrap.json", zstr!("npm-shrinkwrap.json")),
     ("package-lock.json", zstr!("package-lock.json")),

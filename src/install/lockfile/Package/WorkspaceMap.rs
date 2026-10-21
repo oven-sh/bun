@@ -21,12 +21,9 @@ pub(crate) struct WorkspaceMap {
     map: Map,
     /// Relative dirs of nameless members that declare dependencies, for `warn_skipped`.
     skipped_with_dependencies: Vec<Box<[u8]>>,
-    /// Whether the last `process_names_array` got to every folder that the patterns name. If it
-    /// did not, a folder that is not in `map` can still be a workspace. The glob walk passes over
-    /// a symlink that it cannot open, so what is behind such a link does not count.
+    /// Whether the last `process_names_array` got to every folder that the patterns name.
     is_complete: bool,
-    /// Relative dirs of folders that the patterns name and whose package.json the last
-    /// `process_names_array` could not read or parse.
+    /// Relative dirs that the patterns name and whose package.json could not be read or parsed.
     unread: Vec<Box<[u8]>>,
 }
 
@@ -62,8 +59,7 @@ impl WorkspaceMap {
         self.is_complete
     }
 
-    /// Whether the last `process_names_array` could not read or parse the package.json of
-    /// `abs_dir`, a folder that the patterns of `source` name.
+    /// Whether the last `process_names_array` could not read the package.json of `abs_dir`.
     pub(crate) fn could_not_read(&self, source: &bun_ast::Source, abs_dir: &[u8]) -> bool {
         let mut buf = path::path_buffer_pool::get();
         let dir = relative_workspace_path(&mut buf.0, package_json_dir(source), abs_dir);

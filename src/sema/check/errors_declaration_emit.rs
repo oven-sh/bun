@@ -671,6 +671,14 @@ fn modifiers_text(modifiers: &[Flags]) -> Vec<u8> {
     text
 }
 
+/// `CreateModifiersFromModifierFlags`
+fn modifiers_from_flags(flags: Flags) -> Vec<u8> {
+    let created: Vec<Flags> = (MODIFIERS.iter().map(|it| it.0))
+        .filter(|&it| flags.contains(it))
+        .collect();
+    modifiers_text(&created)
+}
+
 /// The properties `ensureModifierFlags` reads from the node whose modifiers it's given.
 #[derive(Copy, Clone)]
 enum ModifiedNode {

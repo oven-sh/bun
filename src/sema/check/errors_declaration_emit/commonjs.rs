@@ -452,11 +452,13 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 Parent::Stmt(s) => self.leading_comments(hir[s].loc.pos),
                 _ => Vec::new(),
             };
-            let modifier: &[u8] = if is_static { b"static " } else { b"" };
+            // `ensureModifierFlags`
+            let mut flags = hir.jsdoc_modifiers_of(e) - (Flags::PUBLIC | Flags::OVERRIDE);
+            flags.set(Flags::STATIC, is_static);
             collected.push(
                 [
                     &comments[..],
-                    modifier,
+                    &modifiers_from_flags(flags)[..],
                     &name_text[..],
                     &ensured.text()[..],
                     b";",

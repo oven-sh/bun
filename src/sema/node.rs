@@ -2659,6 +2659,7 @@ impl File<'_> {
             NodeData::Expr(e) => match self[e].kind {
                 ExprKind::Fn(f) => self[f].flags,
                 ExprKind::Class(c) => self[c].flags,
+                ExprKind::Assign { .. } => self.jsdoc_modifiers_of(e),
                 _ => Flags::empty(),
             },
             NodeData::Type(_) | NodeData::Prop(_) => {

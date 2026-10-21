@@ -328,6 +328,22 @@ describe("node:quic in a Worker", () => {
     // stderr contains each worker's ExperimentalWarning.
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "PASS\n", stderr: expect.any(String), exitCode: 0 });
   }, 30000);
+
+  test("worker.terminate() doesn't crash with sessions that are still in their handshake", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        join(import.meta.dir, "quic-worker-terminate-handshake-fixture.ts"),
+        join(keysDir, "agent1-key.pem"),
+        join(keysDir, "agent1-cert.pem"),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "PASS\n", stderr: expect.any(String), exitCode: 0 });
+  }, 30000);
 });
 
 // lsquic queues a stateless reset for retry when its send fails. The endpoint socket sets IP_RECVERR,

@@ -2404,6 +2404,7 @@ impl QuicEndpoint {
                 vt.owner = null_mut();
                 vt.on_stream_close = stream::QuicStream::on_close_detached;
                 vt.on_conn_closed = QuicSession::on_closed_detached;
+                vt.on_mini_conn_failed = QuicSession::on_mini_conn_failed_detached;
             }
         });
     }

@@ -2428,15 +2428,24 @@ impl QuicSession {
         }
     }
 
+    /// Replaces `on_mini_conn_failed` after `QuicEndpoint::detach_for_finalize`.
+    pub(super) unsafe extern "C" fn on_mini_conn_failed_detached(ctx: *mut c_void, _code: u64) {
+        // SAFETY: as in `on_closed_detached`.
+        if let Some(session) = unsafe { super::ffi::ctx_ref::<QuicSession>(ctx) } {
+            session.mini_conn.set(null_mut());
+        }
+    }
+
     #[expect(
         clippy::boxed_local,
         reason = "codegen's host_fn_finalize calls this as `|b| QuicSession::finalize(b)` and requires `self: Box<Self>`"
     )]
     pub(crate) fn finalize(self: Box<Self>) {
-        let conn = self.conn.get();
-        if !conn.is_null() {
-            // SAFETY: `on_conn_closed` and `teardown` null `conn`, so a non-null `conn` is live.
-            unsafe { lsquic::lsquic_conn_set_ctx(conn, null_mut()) };
+        for conn in [self.conn.get(), self.mini_conn.get()] {
+            if !conn.is_null() {
+                // SAFETY: lsquic's callbacks and `teardown` null both, so a non-null conn is live.
+                unsafe { lsquic::lsquic_conn_set_ctx(conn, null_mut()) };
+            }
         }
     }
 }

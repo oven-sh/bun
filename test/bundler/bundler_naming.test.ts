@@ -481,9 +481,8 @@ test.skipIf(!isLinux)("naming/OutfileThatIsNotUTF8", async () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   }
 
   // One byte of a name is one character of the string. Two builds, two files each.

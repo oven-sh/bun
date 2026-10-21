@@ -1146,8 +1146,7 @@ mod tests {
 
     #[test]
     fn test_wyhash11_chunked_matches_oneshot() {
-        // `bun_base64::wyhash_url_safe` feeds the parts of a key one by one;
-        // the digest must not depend on where the parts are cut.
+        // `bun_base64::wyhash_url_safe` feeds a key in parts: the digest must not depend on the cuts.
         let mut data = [0u8; 200];
         for (i, b) in data.iter_mut().enumerate() {
             *b = (i as u8).wrapping_mul(31).wrapping_add(7);

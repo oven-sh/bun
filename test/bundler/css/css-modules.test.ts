@@ -682,9 +682,8 @@ test.skipIf(!isLinux).concurrent.each([
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
 
   const out = Buffer.from(join(String(dir), "out"));
   const hashes = readdirSync(out, { encoding: "buffer" }).map(sub => {

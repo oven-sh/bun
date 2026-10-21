@@ -1527,13 +1527,13 @@ describe("a script's output that is not UTF-8 is relayed without a changed byte"
     }),
     "packages/app/write.js": /* js */ `
       const bytes = text => Buffer.from(text, "latin1");
-      const [stream, text] = {
-        out: [Bun.stdout, "a\\xffb\\n"],
-        err: [Bun.stderr, "c\\xfed\\n"],
-        long: [Bun.stdout, "e\\xff" + "x".repeat(${longLine}) + "f\\n"],
-        tail: [Bun.stdout, "g\\xfdh"],
+      const [stream, ...parts] = {
+        out: [Bun.stdout, bytes("a\\xffb\\n")],
+        err: [Bun.stderr, bytes("c\\xfed\\n")],
+        long: [Bun.stdout, bytes("e\\xff"), Buffer.alloc(${longLine}, "x"), bytes("f\\n")],
+        tail: [Bun.stdout, bytes("g\\xfdh")],
       }[process.argv[2]];
-      await Bun.write(stream, bytes(text));
+      await Bun.write(stream, Buffer.concat(parts));
     `,
   };
 
@@ -1579,7 +1579,7 @@ describe("a script's output that is not UTF-8 is relayed without a changed byte"
   test("a line that takes several reads", async () => {
     using dir = tempDir("filter-bytes", files);
     const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--filter", "*", "long"]);
-    const expected = `app long: e\xff${"x".repeat(longLine)}f\napp long: Exited with code 0\n`;
+    const expected = `app long: e\xff${Buffer.alloc(longLine, "x").toString()}f\napp long: Exited with code 0\n`;
     // A failure prints the two ends of the output, not 600,000 characters.
     const ends = (text: string) => ({
       length: text.length,

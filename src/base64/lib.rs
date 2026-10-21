@@ -948,9 +948,6 @@ pub mod zig_base64 {
 // truncated to u32, url-safe-base64-encoded into a bump-allocated slice. If
 // `at_start` and the first encoded byte is a digit, prefix `_` (CSS idents
 // can't start with a digit).
-//
-// The parts are bytes, not `fmt::Arguments`: formatting a path replaces each
-// byte that is not UTF-8, so two such paths would hash the same.
 // ──────────────────────────────────────────────────────────────────────────
 
 // TODO: replace with bun's hash

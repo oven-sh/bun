@@ -1087,8 +1087,8 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         rc
     }
 
-    /// For a handle with no poll, after a write returned `Pending`: nothing else sends what is buffered, so this
-    /// waits for room and sends it, as `bun_sys::write_all_to_stdio` does. Never returns `Pending`.
+    /// For a handle with no poll, after a write returned `Pending`: nothing reports when the fd has room again, so
+    /// this waits for room and sends what is buffered, as `bun_sys::write_all_to_stdio` does. Never returns `Pending`.
     #[cfg(unix)]
     #[cold]
     pub fn drain_without_poll(&mut self) -> WriteResult {

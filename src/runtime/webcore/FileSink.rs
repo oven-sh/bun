@@ -50,7 +50,7 @@ pub struct FileSink {
     pub(crate) force_sync: Cell<bool>,
     #[cfg(unix)]
     pub(crate) is_tty: Cell<bool>,
-    /// The event loop refused this sink's fd, so no poll finishes a partial write: `to_result` waits for room itself.
+    /// The event loop refused this sink's fd, so no poll reports when it has room: `to_result` waits for room itself.
     #[cfg(unix)]
     poll_refused: Cell<bool>,
 
@@ -287,7 +287,7 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
 }
 
 /// `Bun.file(fd).writer()` for an `fs.WriteStream`: if the event loop refuses the fd, the sink opens anyway and
-/// writes synchronously. POSIX only. On Windows the stream calls `writer()`, which registers nothing at open.
+/// writes synchronously. POSIX only: on Windows the stream calls `writer()`.
 pub(crate) fn open_for_stream(cx: &mut JsScope<'_>, fd: i32) -> sys::Result<JSValue> {
     #[cfg(windows)]
     {

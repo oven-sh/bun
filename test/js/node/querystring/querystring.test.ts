@@ -41,6 +41,27 @@ describe("querystring.parse", () => {
     expect(plain(qs.parse("%41%42=%zz\u4e2d"))).toEqual({ AB: "%zz\u4e2d" });
   });
 
+  test("a sliced or concatenated input parses the same as a flat one", () => {
+    const url = "https://example.com/path?X-Amz-Expires=900&versionId=abc&x-id=GetObject&e=%41%42";
+    const expected = { "X-Amz-Expires": "900", versionId: "abc", "x-id": "GetObject", e: "AB" };
+    expect(plain(qs.parse(url.slice(url.indexOf("?") + 1)))).toEqual(expected);
+    expect(plain(qs.parse(url.split("?")[1]))).toEqual(expected);
+    let rope = "";
+    for (const part of ["X-Amz-Expires=900&", "versionId=", "abc&x-id=", "GetObject&e=%41%42"]) rope += part;
+    expect(plain(qs.parse(rope))).toEqual(expected);
+    expect(plain(qs.parse(url.substring(25, 60)))).toEqual({ "X-Amz-Expires": "900", versionId: "abc", "x-i": "" });
+  });
+
+  test("maxKeys stops the work at the last counted pair", () => {
+    const tail = "&" + Buffer.alloc(100000, "%zz&").toString();
+    expect(plain(qs.parse("a=1&b=2" + tail, undefined, undefined, { maxKeys: 2 }))).toEqual({ a: "1", b: "2" });
+    expect(plain(qs.parse("a=%41&b=2" + tail, undefined, undefined, { maxKeys: 3 }))).toEqual({
+      a: "A",
+      b: "2",
+      "%zz": "",
+    });
+  });
+
   test("__proto__ is an own property", () => {
     const result = qs.parse("__proto__=1&a=2");
     expect(Object.hasOwn(result, "__proto__")).toBe(true);
@@ -50,7 +71,7 @@ describe("querystring.parse", () => {
   test("the default parser and the generic loop (explicit '&' and '=') agree", () => {
     // The explicit separators take the generic loop. The default takes the fast path.
     let seed = 20261019;
-    const rand = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff);
+    const rand = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) >>> 8;
     const alphabet = [
       "a",
       "b",
@@ -135,7 +156,7 @@ describe("querystring.parse", () => {
     expect(plain(qs.parse("a%41=b%42"))).toEqual({ aA: "bB" });
   });
 
-  test("parse ignores a patched global decodeURIComponent, the same as Node", async () => {
+  test.concurrent("parse ignores a patched global decodeURIComponent, the same as Node", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -153,7 +174,7 @@ describe("querystring.parse", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("the default form allocates one string per value and none per key", async () => {
+  test.concurrent("the default form allocates one string per value and none per key", async () => {
     // The generic loop also slices a key string per pair. This tells the
     // native parser apart from the loop, which produce the same values.
     await using proc = Bun.spawn({
@@ -247,7 +268,7 @@ describe("querystring.unescape", () => {
       "\u4e2d%zz",
     );
     let seed = 7;
-    const rand = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff);
+    const rand = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) >>> 8;
     const pieces = [
       "%",
       "%4",

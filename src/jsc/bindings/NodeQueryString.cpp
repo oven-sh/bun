@@ -10,6 +10,7 @@
 #include <wtf/ASCIICType.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringCommon.h>
+#include <cmath>
 #include <unicode/utf16.h>
 #include <unicode/utf8.h>
 
@@ -109,10 +110,10 @@ public:
     JSValue parse(double pairs)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        if (!escapesAreWellFormed(m_characters))
+        const size_t size = m_characters.size();
+        if (!escapesAreWellFormed(m_characters.first(consumedLength(pairs))))
             return jsUndefined();
         JSObject* object = constructEmptyObject(m_vm, m_globalObject->nullPrototypeObjectStructure());
-        const size_t size = m_characters.size();
         size_t position = 0;
         while (true) {
             size_t end = WTF::find(m_characters, static_cast<CharType>('&'), position);
@@ -138,6 +139,22 @@ public:
     }
 
 private:
+    // The length parse() reads before maxKeys stops it: up to the `pairs`th '&'.
+    size_t consumedLength(double pairs) const
+    {
+        const size_t size = m_characters.size();
+        if (!(pairs >= 1 && pairs <= size) || pairs != std::floor(pairs))
+            return size;
+        size_t position = 0;
+        for (double remaining = pairs; remaining > 0; --remaining) {
+            size_t end = WTF::find(m_characters, static_cast<CharType>('&'), position);
+            if (end == WTF::notFound)
+                return size;
+            position = end + 1;
+        }
+        return position;
+    }
+
     bool addPair(JSObject* object, std::span<const CharType> key, size_t valueStart, size_t valueLength)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);

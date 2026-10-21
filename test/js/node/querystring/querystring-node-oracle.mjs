@@ -78,7 +78,7 @@ for (const maxKeys of [1, 2, 3, 0, -1, 1.5, Infinity, NaN, 2 ** 33]) {
 
 // Seeded LCG so that Node and Bun generate the same inputs.
 let seed = 20261019;
-const rand = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff);
+const rand = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) >>> 8;
 const alphabet = [
   "a",
   "b",

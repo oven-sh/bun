@@ -42,6 +42,23 @@ test("fake timers", async () => {
   expect(order.takeOrderMessages()).toEqual([]); // it was created as a fake timer, so it should not have triggered
 });
 
+test("setTimeout captured before fake timers remains a real timer", () => {
+  const capturedSetTimeout = globalThis.setTimeout.bind(globalThis);
+  const capturedSetInterval = globalThis.setInterval.bind(globalThis);
+
+  vi.useFakeTimers();
+  const capturedTimeout = capturedSetTimeout(() => {}, 0);
+  const capturedInterval = capturedSetInterval(() => {}, 0);
+
+  expect(vi.getTimerCount()).toBe(0);
+  setTimeout(() => {}, 0);
+  setInterval(() => {}, 0);
+  expect(vi.getTimerCount()).toBe(2);
+  clearTimeout(capturedTimeout);
+  clearInterval(capturedInterval);
+  vi.useRealTimers();
+});
+
 describe("advanceTimersToNextTimer", () => {
   test("one setTimeout", async () => {
     const order = new Order();

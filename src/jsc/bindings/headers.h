@@ -542,7 +542,9 @@ ZIG_DECL JSC::EncodedJSValue Bun__Timer__clearImmediate(JSC::JSGlobalObject* arg
 ZIG_DECL JSC::EncodedJSValue Bun__Timer__clearInterval(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
 ZIG_DECL JSC::EncodedJSValue Bun__Timer__clearTimeout(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
 ZIG_DECL JSC::EncodedJSValue Bun__Timer__setInterval(JSC::JSGlobalObject* globalThis, JSC::EncodedJSValue callback, JSC::EncodedJSValue arguments, JSC::EncodedJSValue countdown);
+ZIG_DECL JSC::EncodedJSValue Bun__Timer__setFakeInterval(JSC::JSGlobalObject* globalThis, JSC::EncodedJSValue callback, JSC::EncodedJSValue arguments, JSC::EncodedJSValue countdown);
 ZIG_DECL JSC::EncodedJSValue Bun__Timer__setTimeout(JSC::JSGlobalObject* globalThis, JSC::EncodedJSValue callback, JSC::EncodedJSValue arguments, JSC::EncodedJSValue countdown);
+ZIG_DECL JSC::EncodedJSValue Bun__Timer__setFakeTimeout(JSC::JSGlobalObject* globalThis, JSC::EncodedJSValue callback, JSC::EncodedJSValue arguments, JSC::EncodedJSValue countdown);
 ZIG_DECL JSC::EncodedJSValue Bun__Timer__sleep(JSC::JSGlobalObject* globalThis, JSC::EncodedJSValue promise, JSC::EncodedJSValue countdown);
 ZIG_DECL JSC::EncodedJSValue Bun__Timer__setImmediate(JSC::JSGlobalObject* globalThis, JSC::EncodedJSValue callback, JSC::EncodedJSValue arguments);
 

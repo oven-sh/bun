@@ -16,8 +16,9 @@ impl TimeoutObject {
         interval: u32,
         callback: JSValue,
         arguments: JSValue,
+        fakeable: bool,
     ) -> JSValue {
-        Self::init_with(cx, id, kind, interval, callback, arguments)
+        Self::init_with(cx, id, kind, interval, callback, arguments, fakeable)
     }
 
     pub(crate) fn refresh(

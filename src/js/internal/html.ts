@@ -25,7 +25,16 @@ async function start() {
     const arg = argv[i];
 
     if (!arg.endsWith(".html")) {
-      const used = parseServeFlag(argv, i, flags);
+      let used: number;
+      try {
+        used = parseServeFlag(argv, i, flags);
+      } catch (error: any) {
+        // A flag that the parser rejects is a mistake in the arguments: it prints as one line, as
+        // `bun bake` prints it. No change to a file can fix it, so the process exits, also under
+        // `--hot` and `--watch`. `return`, because user code can replace `process.exit`.
+        console.error(`error: ${error.message}`);
+        return process.exit(1);
+      }
       if (used > 1) i += used - 1;
 
       if (arg === "--help") {

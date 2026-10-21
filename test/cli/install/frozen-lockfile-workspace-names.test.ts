@@ -728,6 +728,26 @@ ${packages.map(row => `    ${row}\n`).join("\n")}  }
       });
     });
 
+    // Here the entry that has the range is not optional.
+    test.concurrent("as an optional peer, in bun.lockb", async () => {
+      const dir = await project(
+        linker,
+        {
+          "": root({
+            peerDependencies: { "no-deps": "^1.0.0" },
+            peerDependenciesMeta: { "no-deps": { optional: true } },
+          }),
+          "packages/no-deps": member,
+        },
+        "saveTextLockfile = false\n",
+      );
+      await writeLockb(dir, "workspace-name-optional-peer.lockb");
+
+      await expectAccepted(dir, "bun.lockb", "kept", async () => {
+        expect(await seenFrom(dir, ".", "no-deps")).toBe("1.1.0");
+      });
+    });
+
     // This one has the workspace without the packages that it depends on.
     test.concurrent("by a published version, next to a workspace with a peer dependency on it", async () => {
       const dir = await project(linker, {
@@ -848,6 +868,46 @@ ${packages.map(row => `    ${row}\n`).join("\n")}  }
       await expectRoundTrip(dir, async () => {
         expect(await seenFrom(dir, ".", "alpha")).toBe("1.0.0");
       });
+    });
+
+    test.concurrent.each(["alpha", "other"])(
+      "%s, a path to a workspace's directory, is a folder once that is no workspace",
+      async name => {
+        const dependencies = { [name]: "file:./packages/alpha" };
+        const dir = await project(linker, {
+          "": root({ dependencies }),
+          "packages/alpha": { name: "alpha", version: "1.0.0" },
+        });
+        await ok(dir, "install");
+        await write(join(dir, "package.json"), JSON.stringify({ name: "sandbox", version: "1.0.0", dependencies }));
+
+        const frozen = await bun(dir, "install", "--frozen-lockfile");
+        expect(frozen.stderr).toContain("error: lockfile had changes, but lockfile is frozen");
+        expect(frozen.exitCode).toBe(1);
+
+        await ok(dir, "install");
+        expect(await resolved(dir)).toEqual({ workspaces: [""], packages: { [name]: "alpha@file:packages/alpha" } });
+        await ok(dir, "install", "--frozen-lockfile");
+      },
+    );
+
+    test.concurrent("a path to a workspace's directory follows the workspace to its new name", async () => {
+      const dir = await project(linker, {
+        "": root({ dependencies: { other: "file:./packages/alpha" } }),
+        "packages/alpha": { name: "alpha", version: "1.0.0" },
+      });
+      await ok(dir, "install");
+      await write(
+        join(dir, "packages", "alpha", "package.json"),
+        JSON.stringify({ name: "renamed", version: "1.0.0" }),
+      );
+      await ok(dir, "install");
+
+      expect(await resolved(dir)).toEqual({
+        workspaces: ["", "packages/alpha"],
+        packages: { "other": "renamed@workspace:packages/alpha", "renamed": "renamed@workspace:packages/alpha" },
+      });
+      await ok(dir, "install", "--frozen-lockfile");
     });
 
     // This is what Bun 1.4 wrote for this project, and ignored on every install. One install replaces it.

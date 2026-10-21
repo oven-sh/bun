@@ -7721,29 +7721,18 @@ impl NodeFS {
             };
             let _close = scopeguard::guard(fd, |fd| fd.close());
 
-            let buf = match Syscall::get_fd_path_z(fd, &mut outbuf) {
+            let buf = match Syscall::get_fd_path(fd, &mut outbuf) {
                 Err(err) => return Err(err.with_path(path)),
                 Ok(buf_) => buf_,
             };
 
-            // Linux appends " (deleted)" to the path of a file that has been unlinked.
+            // Linux appends " (deleted)" to the path of a file that has been unlinked. A name can
+            // end like that too.
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            if buf.as_bytes().ends_with(b" (deleted)") {
-                let opened = match Syscall::fstat(fd) {
-                    Err(err) => return Err(err.with_path(path)),
-                    Ok(stat_) => stat_,
-                };
-                let is_real_name = match Syscall::lstat(buf) {
-                    Ok(named) => named.st_dev == opened.st_dev && named.st_ino == opened.st_ino,
-                    Err(err) if matches!(err.get_errno(), E::ENOENT | E::ENOTDIR) => false,
-                    Err(err) => return Err(err.with_path(path)),
-                };
-                if !is_real_name {
-                    return Err(sys::Error::from_code(E::ENOENT, sys::Tag::realpath));
-                }
+            if buf.ends_with(b" (deleted)") && Syscall::fstat(fd)?.st_nlink == 0 {
+                return Err(sys::Error::from_code(E::ENOENT, sys::Tag::realpath));
             }
 
-            let buf = buf.as_bytes();
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {

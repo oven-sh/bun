@@ -3388,6 +3388,12 @@ it.if(isLinux)("realpath.native throws ENOENT for a working directory that was r
     out.push(await run("."));
     process.chdir(root + "/gone/sub (deleted)");
     out.push(await run("."));
+    // With the suffix, this name is longer than a name can be.
+    const long = root + "/" + Buffer.alloc(250, "x").toString();
+    fs.mkdirSync(long);
+    process.chdir(long);
+    fs.rmdirSync(long);
+    out.push(await run("."));
     console.log(JSON.stringify(out));
   `;
 
@@ -3402,7 +3408,9 @@ it.if(isLinux)("realpath.native throws ENOENT for a working directory that was r
 
   expect(stderr).toBe("");
   expect(JSON.parse(stdout)).toEqual(
-    ["ENOENT .", "ENOENT ./", "ENOENT ..", "", "ENOENT .", "/gone/sub (deleted)"].map(result => Array(3).fill(result)),
+    ["ENOENT .", "ENOENT ./", "ENOENT ..", "", "ENOENT .", "/gone/sub (deleted)", "ENOENT ."].map(result =>
+      Array(3).fill(result),
+    ),
   );
   expect(exitCode).toBe(0);
 });

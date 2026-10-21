@@ -1142,15 +1142,17 @@ impl Diff {
             });
 
             let Some(cur_to_i) = found else {
-                // A name in `optionalDependencies` and in another group is one optional dependency.
-                // Bun 1.4 and older kept both if the name is a workspace's.
+                // A name in `optionalDependencies` and in another group is one optional dependency,
+                // and a peer that `peerDependenciesMeta` makes optional is one optional peer. Bun 1.4
+                // and older kept both if the name is a workspace's.
                 let is_optional_twin = |dep: &Dependency| {
-                    dep.name_hash == from_dep.name_hash && dep.behavior.is_optional()
+                    dep.name_hash == from_dep.name_hash
+                        && dep.behavior.contains(Behavior::OPTIONAL)
+                        && dep.behavior.is_peer() == from_dep.behavior.is_peer()
                 };
                 if is_root
                     && to_lockfile.workspace_paths.contains(&from_dep.name_hash)
                     && !from_dep.behavior.is_workspace()
-                    && !from_dep.behavior.is_peer()
                     && from_deps.iter().any(is_optional_twin)
                     && to_deps!().iter().any(is_optional_twin)
                     && Self::is_still_in_root_manifest(pm, log, from_dep, from_buf!())
@@ -1223,7 +1225,7 @@ impl Diff {
                         })))
             {
                 let row = to.dependencies.off as usize + cur_to_i;
-                Self::keep_older_link(from_dep, from_buf!(), &mut to_lockfile.buffers, row);
+                Self::keep_older_link(from_lockfile, from_dep, to_lockfile, row);
                 to_deps = to
                     .dependencies
                     .get(to_lockfile.buffers.dependencies.as_slice())
@@ -1231,13 +1233,14 @@ impl Diff {
             }
             let to_version = &to_deps!()[cur_to_i].version;
             let same = Dependency::eql(&to_deps!()[cur_to_i], from_dep, to_buf!(), from_buf!());
-            // Bun 1.4 and older wrote an optional peer with a workspace's name twice.
+            // Bun 1.4 and older wrote an optional peer with a workspace's name twice. In bun.lockb, the
+            // one that has the range is not optional.
             if !same
                 && is_root
                 && to_lockfile.workspace_paths.contains(&from_dep.name_hash)
                 && from_deps.iter().any(|twin| {
-                    twin.name_hash == from_dep.name_hash
-                        && twin.behavior == from_dep.behavior
+                    twin.behavior.difference(Behavior::OPTIONAL)
+                        == from_dep.behavior.difference(Behavior::OPTIONAL)
                         && Dependency::eql(&to_deps!()[cur_to_i], twin, to_buf!(), from_buf!())
                 })
             {
@@ -1741,6 +1744,8 @@ impl Diff {
     ) -> bool {
         let group: &[u8] = if dep.behavior.is_dev() {
             b"devDependencies"
+        } else if dep.behavior.is_peer() {
+            b"peerDependencies"
         } else {
             b"dependencies"
         };
@@ -1776,14 +1781,15 @@ impl Diff {
     /// workspace for a `file:` path to its folder under any name. While package.json says the same,
     /// the root's dependency `row` is read the way the lockfile has it.
     fn keep_older_link(
+        from_lockfile: &Lockfile,
         from_dep: &Dependency,
-        from_buf: &[u8],
-        to: &mut lockfile::Buffers,
+        to_lockfile: &mut Lockfile,
         row: usize,
     ) {
         use dependency::version::Tag;
-        let to_buf = to.string_bytes.as_slice();
-        let to_dep = &mut to.dependencies[row];
+        let from_buf = from_lockfile.buffers.string_bytes.as_slice();
+        let to_buf = to_lockfile.buffers.string_bytes.as_slice();
+        let to_dep = &mut to_lockfile.buffers.dependencies[row];
         if !(to_dep.version.literal).eql(from_dep.version.literal, to_buf, from_buf) {
             return;
         }
@@ -1803,7 +1809,13 @@ impl Diff {
             }
             (Tag::Workspace, Tag::Folder) => {
                 let folder = *to_dep.version.folder();
-                if folder.eql(*from_dep.version.workspace(), to_buf, from_buf) {
+                // The folder can have stopped being a workspace, or be one of another name now.
+                if folder.eql(*from_dep.version.workspace(), to_buf, from_buf)
+                    && (to_lockfile.workspace_paths.iter()).any(|(name_hash, path)| {
+                        path.eql(folder, to_buf, to_buf)
+                            && from_lockfile.workspace_paths.contains(name_hash)
+                    })
+                {
                     to_dep.version.tag = Tag::Workspace;
                     to_dep.version.value.workspace = folder;
                 }

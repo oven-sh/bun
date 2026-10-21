@@ -220,6 +220,25 @@ describe.concurrent("install.sh shell config", () => {
     expect(exitCode).toBe(1);
   });
 
+  test.skipIf(!pathDir)("fish: a second run does not append a second block", async () => {
+    using home = tempDir("install-sh-home", { ".config/fish/config.fish": "# fish\n" });
+    const h = String(home);
+    const config = join(h, ".config/fish/config.fish");
+
+    const first = await runInstaller(h, "/usr/bin/fish");
+    expect(first.stdout).toContain('Added "~/.bun/bin" to $PATH in "~/.config/fish/config.fish"');
+    expect(first.exitCode).toBe(0);
+    expect(readFileSync(config, "utf8")).toBe(
+      '# fish\n\n# bun\nset --export BUN_INSTALL "$HOME/.bun"\nset --export PATH $BUN_INSTALL/bin $PATH\n',
+    );
+    appendFileSync(config, 'set --export BUN_INSTALL_CACHE_DIR "$HOME/cache"\n');
+
+    const second = await runInstaller(h, "/usr/bin/fish");
+    expect(second.stdout).toContain('"~/.config/fish/config.fish" already adds "~/.bun/bin" to $PATH');
+    expect(second.exitCode).toBe(0);
+    expect(countBunBlocks(config)).toBe(1);
+  });
+
   test.skipIf(!pathDir)("zsh: a second run does not append a second block", async () => {
     using home = tempDir("install-sh-home", { ".zshrc": "# zsh\n" });
     const h = String(home);

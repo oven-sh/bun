@@ -8042,18 +8042,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// The wrapper now reads and stores `relocated_top_level_vars[first..]`, so a store that the linker lifts above it would run first.
     pub(crate) fn keep_var_stores_in_wrapper(&mut self, first: usize) {
         for i in first..self.relocated_top_level_vars.len() {
-            let root = self.follow_symbol_links(self.relocated_top_level_vars[i].ref_);
+            let root = js_ast::symbol::follow_symbols(
+                &self.symbols,
+                self.relocated_top_level_vars[i].ref_,
+            );
             self.symbols[root.inner_index() as usize].set_var_stores_stay_in_wrapper(true);
-        }
-    }
-
-    fn follow_symbol_links(&self, mut r#ref: Ref) -> Ref {
-        loop {
-            let symbol = &self.symbols[r#ref.inner_index() as usize];
-            if !symbol.has_link() {
-                return r#ref;
-            }
-            r#ref = symbol.link.get();
         }
     }
 
@@ -9545,11 +9538,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     if !matches!(value.data, js_ast::ExprData::EMissing(_))
                                         && (!value.can_be_moved()
                                             || match decl.binding.data {
-                                                js_ast::b::B::BIdentifier(id) => self.symbols[self
-                                                    .follow_symbol_links(id.r#ref)
-                                                    .inner_index()
-                                                    as usize]
-                                                    .var_stores_stay_in_wrapper(),
+                                                js_ast::b::B::BIdentifier(id) => {
+                                                    let root = js_ast::symbol::follow_symbols(
+                                                        &self.symbols,
+                                                        id.r#ref,
+                                                    );
+                                                    self.symbols[root.inner_index() as usize]
+                                                        .var_stores_stay_in_wrapper()
+                                                }
                                                 _ => true,
                                             })
                                     {

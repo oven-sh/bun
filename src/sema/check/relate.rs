@@ -6464,6 +6464,14 @@ impl<'p, 's> Checker<'p, 's> {
         if self.have_same_uninstantiated_symbol(a.0, b.0) {
             return true;
         }
+        // A type that inherits the property has it from an instantiation of the mapped type, which is the mapped type
+        // itself unless the mapper changes a type parameter that it refers to.
+        if let PropSource::Mapped(of, ..) = a.0.source
+            && a.0.mapper == b.0.mapper
+            && self.types().separate_key(a.0) == self.types().separate_key(b.0)
+        {
+            return self.instantiate(of, a.1) == self.instantiate(of, b.1);
+        }
         let (own_a, own_b) = (self.mapper_of_prop(a.0), self.mapper_of_prop(b.0));
         let (a, b) = (self.compose(own_a, a.1), self.compose(own_b, b.1));
         // A mapper stores `H.this -> H.this`, which maps nothing.

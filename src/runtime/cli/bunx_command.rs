@@ -108,6 +108,8 @@ pub(crate) struct Options {
     /// Passes `--trust` to `bun add`, so the lifecycle scripts of the package and of everything it
     /// depends on run.
     pub(crate) trust: bool,
+    /// Passes `--ignore-scripts` to `bun add`, which wins over `--trust`.
+    pub(crate) ignore_scripts: bool,
     /// In seconds, as typed. It's forwarded to `bun add` and is part of the cache directory's name.
     pub(crate) minimum_release_age: Option<&'static [u8]>,
     /// Forwarded to `bun add`, like `ca` and `cafile`. It's part of the cache directory's name.
@@ -199,8 +201,15 @@ impl Options {
                     .or_else(|| positional.strip_prefix(b"-p="))
                 {
                     opts.specified_package = Some(Self::non_empty_package(package));
+                } else if positional == b"--yes"
+                    && (argv.get(i + 1)).is_some_and(|next| next.as_bytes() == b"false")
+                {
+                    opts.no_install = true;
+                    i += 1;
                 } else if positional == b"--trust" {
                     opts.trust = true;
+                } else if matches!(positional, b"--ignore-scripts" | b"--ignore-scripts=true") {
+                    opts.ignore_scripts = true;
                 } else if let Some(file) = Self::flag_value(argv, &mut i, "--env-file") {
                     ctx.args.env_files.push(Box::<[u8]>::from(file));
                 } else if let Some(dir) = Self::flag_value(argv, &mut i, "--cwd") {
@@ -826,6 +835,9 @@ impl BunxCommand {
         if opts.trust {
             package_fmt.extend_from_slice(b"+trust");
         }
+        if opts.ignore_scripts {
+            package_fmt.extend_from_slice(b"+ignore-scripts");
+        }
         if let Some(age) = opts.minimum_release_age {
             package_fmt.extend_from_slice(b"+min-age=");
             package_fmt.extend_from_slice(age);
@@ -1133,6 +1145,9 @@ impl BunxCommand {
         }
         if opts.trust {
             args.push(b"--trust");
+        }
+        if opts.ignore_scripts {
+            args.push(b"--ignore-scripts");
         }
         args.extend(flags_with_value.iter().map(Vec::as_slice));
 

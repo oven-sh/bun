@@ -2802,13 +2802,13 @@ describe("flags", () => {
     });
   });
 
-  it.concurrent.each(["--no", "--no-yes", "--yes=false", "-n", "--offline"])(
+  it.concurrent.each(["--no", "--no-yes", "--yes=false", "--yes false", "-n", "--offline"])(
     "npm's %s means --no-install",
     async flag => {
       using registry = await localRegistry(...toolWithDep());
       using box = sandbox(registry);
 
-      expect(await box.run([flag, "--", "tool"])).toEqual({
+      expect(await box.run([...flag.split(" "), "--", "tool"])).toEqual({
         stdout: "",
         stderr: "error: Could not find an existing 'tool' binary to run. Stopping because --no-install was passed.\n",
         exitCode: 1,
@@ -3064,6 +3064,19 @@ console.log("scripts ran: tool " + ran(".") + ", dep " + ran("../dep"));
         stdout: "scripts ran: tool true, dep true\n",
         exitCode: 0,
         requests: [],
+      });
+    });
+
+    it.concurrent.each(["--ignore-scripts", "--ignore-scripts=true"])("%s wins, in a separate tree", async flag => {
+      using registry = await withScripts();
+      using box = sandbox(registry);
+      expect(await box.run(["--trust", "tool"])).toMatchObject({
+        stdout: "scripts ran: tool true, dep true\n",
+        exitCode: 0,
+      });
+      expect(await box.run(["--trust", flag, "tool"])).toMatchObject({
+        stdout: "scripts ran: tool false, dep false\n",
+        exitCode: 0,
       });
     });
   });

@@ -236,6 +236,43 @@ describe("Bun.Transpiler replMode", () => {
       });
     });
 
+    test.each([
+      ["TC39", {}],
+      ["legacy", { tsconfig: { compilerOptions: { experimentalDecorators: true } } }],
+    ] as [string, Bun.TranspilerOptions][])(
+      "a class declaration with %s decorators reports the class, as one without does",
+      async (_, options) => {
+        const { results } = await runSession(
+          [
+            "function dec() {}",
+            "function tagged(value) { return class extends value { static tag = value.name } }",
+            "class Plain {}",
+            "@tagged class Tagged {}",
+            "class Method { @dec m() {} }",
+            "class Field { @dec p = 1 }",
+            "class StaticField { @dec static s = 1 }",
+            "[Plain, Tagged, Method, Field, StaticField]",
+          ],
+          { options },
+        );
+        const [Plain, Tagged, Method, Field, StaticField] = results[7];
+        expect({
+          Plain: results[2] === Plain,
+          Tagged: results[3] === Tagged,
+          Method: results[4] === Method,
+          Field: results[5] === Field,
+          StaticField: results[6] === StaticField,
+          tag: Tagged.tag,
+        }).toEqual({ Plain: true, Tagged: true, Method: true, Field: true, StaticField: true, tag: "Tagged" });
+
+        // Only a declaration at the top level of a replMode input is followed by a read of its name.
+        const nested = await replTranspiler(options)("function inner() { @tagged class Local {} }");
+        expect(nested).not.toMatch(/^\s*Local;$/m);
+        const notReplMode = await replTranspiler({ ...options, replMode: false })("@tagged class Tagged {}");
+        expect(notReplMode).not.toMatch(/^\s*Tagged;$/m);
+      },
+    );
+
     // Each input declares `K<n>`, a class expression with a decorated field,
     // and the other names listed.
     test.each([

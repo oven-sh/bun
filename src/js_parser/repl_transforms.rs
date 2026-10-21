@@ -893,6 +893,31 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             B::B::BMissing(_) => self.new_expr(E::Missing {}, binding.loc),
         }
     }
+
+    /// An input reports its last expression, so a read of the class follows a decorator lowering.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn repl_report_class_declaration(
+        &mut self,
+        stmts: &mut BumpVec<'a, Stmt>,
+        lowered: &[Stmt],
+        class_name: js_ast::LocRef,
+        loc: bun_ast::Loc,
+    ) {
+        if self.current_scope != self.module_scope
+            || matches!(lowered.last(), Some(last) if matches!(last.data, StmtData::SClass(_)))
+        {
+            return;
+        }
+        self.record_usage(class_name.ref_);
+        stmts.push(self.s(
+            S::SExpr {
+                value: Expr::init_identifier(class_name.ref_, class_name.loc),
+                ..Default::default()
+            },
+            loc,
+        ));
+    }
 }
 
 /// Bump-allocate a single-element `G::DeclList`.

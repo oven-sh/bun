@@ -2564,9 +2564,9 @@ impl<'p, 's> Checker<'p, 's> {
             self.note_variance_cycle();
             return &[];
         }
-        // TypeScript 7.1: variances measured inside a cycle of generic types depend on which type was measured first.
-        // On re-entry, restart from the cycle's first-declared type with an empty stack and keep those results. For a
-        // type in two cycles the result can still depend on which type is compared first, as in 7.1.
+        // Variances measured inside a cycle of generic types depend on which type was measured first. On re-entry,
+        // restart from the cycle's first-declared type with an empty stack and keep those results. For a type in two
+        // cycles the result can still depend on which type is compared first, as in tsc.
         if let Some(at) = (self.variances_in_progress.iter()).position(|&it| it == sym) {
             self.note_variance_cycle();
             let mut first = sym;
@@ -2576,8 +2576,8 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             if first != sym && self.is_half_of_stack_in_use() {
-                // Not enough native stack to nest a restart (typescript-go's stack grows). Fall back to 7.0's
-                // order-dependent result.
+                // Not enough native stack to nest a restart (typescript-go's stack grows). The result depends on
+                // which type was measured first.
                 let cycle = std::iter::once(crate::util::fx_hash(&first));
                 self.task.close_cycle(|| false, cycle);
             } else if first != sym {
@@ -4076,10 +4076,10 @@ impl<'p, 's> Checker<'p, 's> {
                 return Ternary::MAYBE;
             }
         }
-        // As in TypeScript 7.1. 7.0 gives up here and reports 2321. Which comparison is the 100th depends on where the
-        // outermost one started and on what is cached, so only the last round's task answers. Any other task is
-        // discarded, and ends the comparison right away. The results that follow from the answer stay in the task, like
-        // those of `REC_BOTH` below.
+        // A backstop for infinite recursion that `is_deeply_nested_type` didn't catch. Which comparison is the 100th
+        // depends on where the outermost one started and on what is cached, so only the last round's task answers. Any
+        // other task is discarded, and ends the comparison right away. The results that follow from the answer stay in
+        // the task, like those of `REC_BOTH` below.
         if r.source_stack.len() == 100 || r.target_stack.len() == 100 {
             self.note_gave_up();
             if self.task.was_discarded() {

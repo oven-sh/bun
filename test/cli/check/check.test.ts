@@ -7235,8 +7235,7 @@ export const alsoWrong = wrong.nope;
     // first asked about every enclosing call. That took minutes to days. Now the checker gives up on the whole
     // expression. The file is reported as incomplete, and errors deeper than the checker got aren't reported. The last
     // column is an error in the expression that tsc reports too. The checker finds it with two thirds of its stack, so
-    // larger frames on another platform don't lose it. For array and object literals more than 100 deep tsc also
-    // reports TS2321, which `bun check` doesn't do yet.
+    // larger frames on another platform don't lose it.
     test.skipIf(isDebug || isASAN).each([
       ["calls", "f(", ")", 3_000, ""],
       ["new", "new f(", ")", 3_000, ""],

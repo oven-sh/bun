@@ -24,8 +24,8 @@ use bun_sema::hir::FileKind;
 use bun_sema::json::Json;
 use bun_sema::messages;
 use bun_sema::program::{
-    COMPARE_PATHS_CASE_SENSITIVE, FileId, Files, GlobalName, Run,
-    declaration_emit_output_file_path, has_libraries, own_emit_output_file_path,
+    FileId, Files, GlobalName, Run, declaration_emit_output_file_path, has_libraries,
+    own_emit_output_file_path,
 };
 pub use bun_sema::resolve::ScriptKind;
 use bun_sema::resolve::{
@@ -3884,7 +3884,7 @@ fn check_named_files(
     let explain_files = |has_made_diagnostics: bool| {
         let cwd = host::from_native(request.cwd);
         let to_relative_file_name = |file_name: &[u8]| {
-            get_relative_path_from_directory(&cwd, file_name, COMPARE_PATHS_CASE_SENSITIVE)
+            get_relative_path_from_directory(&cwd, file_name, host.is_case_sensitive())
         };
         program
             .files

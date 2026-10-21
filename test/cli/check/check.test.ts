@@ -22806,6 +22806,35 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(stdout.split("\n").filter(line => !/\/lib\.[\w.]+\.d\.ts$/.test(line))).toEqual(["<dir>/a.ts"]);
     });
 
+    test.skipIf(isCaseInsensitive)("compares `rootDir` and `baseUrl` case-sensitively", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "lib": ["esnext"], "types": [], "noEmit": true, "rootDir": "SRC" }, "files": ["src/a.ts"] }`,
+        "src/a.ts": "",
+        "src/tsconfig.json": `{ "compilerOptions": { "lib": ["esnext"], "types": [], "noEmit": true, "baseUrl": "../SRC/b" }, "files": ["a.ts"] }`,
+      });
+      const [rootDir, baseUrl] = await Promise.all([check(dir), check(dir, ["-p", "src"])]);
+      expect(rootDir.stdout).toMatchInlineSnapshot(`
+        "error TS6059: File '<dir>/src/a.ts' is not under 'rootDir' '<dir>/SRC'. 'rootDir' is expected to contain all source files.
+          The file is in the program because:
+            Part of 'files' list in tsconfig.json"
+      `);
+      expect(baseUrl.stdout).toMatchInlineSnapshot(`
+        "src/tsconfig.json(1,72): error TS5102: Option 'baseUrl' has been removed. Please remove it from your configuration.
+          Use '"paths": {"*": ["../SRC/b/*"]}' instead."
+      `);
+    });
+
+    // U+017F folds to `s`, but its lowercase form is itself.
+    test("`rootDir` isn't compared by case folding", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "lib": ["esnext"], "types": [], "noEmit": true, "rootDir": "ſrc" }, "files": ["src/a.ts"] }`,
+        "src/a.ts": "",
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toStartWith(`error TS6059: File '<dir>/src/a.ts' is not under 'rootDir' '<dir>/ſrc'.`);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports a missing value in a JSON file at the end of the token before it", async () => {
       using dir = project({
         "tsconfig.json": withResolveJsonModule,

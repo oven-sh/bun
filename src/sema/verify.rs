@@ -8,7 +8,6 @@ use crate::config::{
     Project, resolve_config_file_name_of_project_reference, starts_with_config_dir_template,
 };
 use crate::json::{Json, TsConfigSourceFile};
-use crate::program::COMPARE_PATHS_CASE_SENSITIVE;
 use crate::resolve::{
     JsxEmit, ModuleKind, Options, combine_paths, displayed_path, ensure_path_is_non_module_name,
     get_relative_path_from_directory, get_root_length, path_is_relative, to_path,
@@ -416,8 +415,8 @@ pub fn verify_compiler_options(
         let mut use_instead = Vec::new();
         if !config_path.is_empty() {
             let base_url = text(b"baseUrl");
-            let mut relative =
-                relative_from_file(config_path, base_url, COMPARE_PATHS_CASE_SENSITIVE);
+            let is_case_sensitive = options.use_case_sensitive_file_names;
+            let mut relative = relative_from_file(config_path, base_url, is_case_sensitive);
             // So `..` becomes `./..`.
             if !(relative.starts_with(b"./") || relative.starts_with(b"../")) {
                 relative.splice(0..0, *b"./");

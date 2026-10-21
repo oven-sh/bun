@@ -4581,12 +4581,14 @@ pub fn equate_string_case_insensitive(a: &[u8], b: &[u8]) -> bool {
     }
 }
 
-/// `ContainsPath` for two absolute, normalized paths: `child` equals `parent` or is inside it.
+/// `CaseSensitivity.ContainsPath`: `child` equals `parent` or is inside it.
 pub fn contains_path(parent: &[u8], child: &[u8], is_case_sensitive: bool) -> bool {
     if !is_case_sensitive && !(parent.is_ascii() && child.is_ascii()) {
-        let (parent, child) = (get_path_components(parent), get_path_components(child));
-        return child.len() >= parent.len()
-            && (parent.iter().zip(&child)).all(|(a, b)| equate_string_case_insensitive(a, b));
+        let (parent, child) = (
+            to_file_name_lower_case(parent),
+            to_file_name_lower_case(child),
+        );
+        return contains_path(&parent, &child, true);
     }
     let Some(start) = child.get(..parent.len()) else {
         return false;

@@ -4316,10 +4316,6 @@ pub fn own_emit_output_file_path(
     [remove_file_extension(&moved), extension].concat()
 }
 
-/// `UseCaseSensitiveFileNames` of `Program.comparePathsOptions`. Nothing assigns that field, so
-/// it's Go's zero value on every file system.
-pub const COMPARE_PATHS_CASE_SENSITIVE: bool = false;
-
 /// The parts of `verifyCompilerOptions` that depend on which files are emitted and where: 6307 for
 /// a source file that a composite project doesn't list, 6059 (`checkSourceFilesBelongToPath`) for
 /// one that isn't under `rootDir`, 5009 and 5011 for the common source directory, and
@@ -4396,8 +4392,7 @@ fn output_path_errors(
             common = common_directory_of(&paths, &options.current_directory, is_case_sensitive);
         } else {
             explained.extend(explain(6059, specified, &|module, _| {
-                !contains_path(specified, module.file_name(), COMPARE_PATHS_CASE_SENSITIVE)
-                    && is_own(module)
+                !contains_path(specified, module.file_name(), is_case_sensitive) && is_own(module)
             }));
             common = Some(specified.to_vec());
         }
@@ -4435,11 +4430,8 @@ fn output_path_errors(
         };
         let config_name = &options.config_path
             [strings::last_index_of_char(&options.config_path, b'/').map_or(0, |i| i + 1)..];
-        let relative = crate::verify::relative_from_file(
-            &options.config_path,
-            &computed,
-            COMPARE_PATHS_CASE_SENSITIVE,
-        );
+        let relative =
+            crate::verify::relative_from_file(&options.config_path, &computed, is_case_sensitive);
         errors.push(
             Problem::new(
                 5011,

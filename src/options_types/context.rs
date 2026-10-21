@@ -209,6 +209,8 @@ pub struct BundlerOptions {
     pub emit_dce_annotations: bool,
     pub deprecated_namespace_object_setters: bool,
     pub output_format: bundle_enums::Format,
+    /// `--target` was given.
+    pub has_explicit_target: bool,
     pub bytecode: bool,
     pub bytecode_depth: u32,
     pub optimize_bytecode: bool,
@@ -274,6 +276,7 @@ impl Default for BundlerOptions {
             emit_dce_annotations: true,
             deprecated_namespace_object_setters: true,
             output_format: bundle_enums::Format::Esm,
+            has_explicit_target: false,
             bytecode: false,
             bytecode_depth: u32::MAX,
             optimize_bytecode: true,

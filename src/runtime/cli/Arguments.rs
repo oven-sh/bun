@@ -2159,6 +2159,7 @@ fn parse_build_command_options(
     }
 
     if let Some(target) = args.option(b"--target") {
+        ctx.bundler_options.has_explicit_target = true;
         'brk: {
             if cmd == CommandTag::BuildCommand {
                 if args.flag(b"--compile") {

@@ -189,6 +189,8 @@ pub(crate) struct ParserSnapshot<'a> {
     scopes_in_order_for_enum_len: usize,
     symbols_len: usize,
     ref_to_ts_namespace_member_len: usize,
+    module_scope_members_len: usize,
+    span_uses_len: usize,
     allocated_names_len: usize,
     import_records_len: usize,
 }
@@ -8231,6 +8233,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             scopes_in_order_for_enum_len: self.scopes_in_order_for_enum.len(),
             symbols_len: self.symbols.len(),
             ref_to_ts_namespace_member_len: self.ref_to_ts_namespace_member.len(),
+            module_scope_members_len: self.module_scope.members.len(),
+            span_uses_len: self.span_uses.len(),
             allocated_names_len: self.allocated_names.len(),
             import_records_len: self.import_records.len(),
         }
@@ -8291,6 +8295,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.ref_to_ts_namespace_member.remove(&ref_);
             }
         }
+        // The type names of decorator metadata are bound as they are parsed
+        // (`find_symbol`): a name that nothing declares becomes a member of the
+        // module scope, and a use of a declared one is recorded.
+        if self.module_scope.members.len() > snapshot.module_scope_members_len {
+            self.module_scope_mut()
+                .members
+                .retain(|member| (member.ref_.inner_index() as usize) < snapshot.symbols_len);
+        }
+        self.span_uses.truncate(snapshot.span_uses_len);
         self.allocated_names.truncate(snapshot.allocated_names_len);
         self.import_records.truncate(snapshot.import_records_len);
     }

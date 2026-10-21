@@ -539,14 +539,22 @@ describe("Bun.Transpiler", () => {
     it("parses an arrow function with a return type between the ? and : of a conditional once", () => {
       // The type of a decorated property is bound to a symbol as it is parsed.
       // When the arrow function was parsed a second time, `Foo` was bound to
-      // the symbol that had taken its index: `K`.
+      // the symbol that had taken its index: `K`. A discarded attempt left
+      // the same binding to the parse after it.
       const withMetadata = new Bun.Transpiler({
         loader: "ts",
         tsconfig: { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } },
       });
+      const typeIsFoo = '("design:type", typeof Foo === "undefined" ? Object : Foo)';
+      expect(withMetadata.transformSync("x = a ? (b) : T => { class K { @dec p: Foo } return K } : e")).toContain(
+        typeIsFoo,
+      );
+      expect(withMetadata.transformSync("x = a ? (b) : c => { class K { @dec p: Foo } return K }")).toContain(
+        typeIsFoo,
+      );
       expect(
-        withMetadata.transformSync("x = a ? (b) : T => { class K { @dec p: Foo } return K } : e"),
-      ).toContain('("design:type", typeof Foo === "undefined" ? Object : Foo)');
+        withMetadata.transformSync("x = a ? (b, c) : d => { class K { @dec p: Foo } return new Foo() }"),
+      ).toContain("return new Foo");
     });
 
     it("nested arrow functions with return types between ? and : take memory in proportion to their depth", async () => {

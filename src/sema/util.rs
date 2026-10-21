@@ -127,9 +127,7 @@ pub fn number_repeated<K: Copy + Eq + std::hash::Hash>(keys: &[K]) -> FxHashMap<
     numbers
 }
 
-/// Where the entry of a key is in a list that gets one entry for each new key, at its end. A list shorter than
-/// `LaterPlaces::SEARCHED` is searched entry by entry. In a longer one only the first entries are, and the later ones
-/// are found through a map, which allocates nothing before that.
+/// Where each key's entry is in a list that grows at its end: past the first `SEARCHED` entries, a map has the place.
 pub(crate) struct LaterPlaces<K> {
     places: FxHashMap<K, u32>,
 }
@@ -145,8 +143,7 @@ impl<K> Default for LaterPlaces<K> {
 impl<K: Copy + Eq + std::hash::Hash> LaterPlaces<K> {
     const SEARCHED: usize = 32;
 
-    /// The entry of `list` for `key`. `None`: it has none, and the caller must add one at the end. `room`: how long the
-    /// list can get.
+    /// The entry of `list` for `key`. `None`: the caller must push one. `room`: how long the list can get.
     #[inline]
     pub(crate) fn find<'a, T>(
         &mut self,

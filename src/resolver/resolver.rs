@@ -3927,14 +3927,13 @@ impl<'a> Resolver<'a> {
                                 bstr::BStr::new(ext)
                             ));
                         }
-                        self.build_wildcard_match(
+                        return self.build_wildcard_match(
                             resolved_dir_info,
                             dirname_fd,
                             package_json,
                             &ext_query,
                             out,
                         );
-                        return true;
                     }
                 }
             }
@@ -3968,14 +3967,13 @@ impl<'a> Resolver<'a> {
                                     bstr::BStr::new(file_name)
                                 ));
                             }
-                            self.build_wildcard_match(
+                            return self.build_wildcard_match(
                                 resolved_dir_info,
                                 dirname_fd,
                                 package_json,
                                 &ts_query,
                                 out,
                             );
-                            return true;
                         }
                     }
                 }
@@ -3992,20 +3990,23 @@ impl<'a> Resolver<'a> {
         package_json: &PackageJSON,
         query: &crate::fs::EntryLookup<'static>,
         out: &mut MatchResult,
-    ) {
-        let abs_path: &[u8] = query
-            .entry()
-            .abs_path_or_fill(|| {
-                let parts = [query.entry().dir, query.entry().base()];
-                let abs = self.fs_ref().abs_buf(&parts, bufs!(remap_path));
-                Interned::from_static(
-                    self.fs_ref()
-                        .dirname_store
-                        .append_slice(abs)
-                        .expect("unreachable"),
-                )
-            })
-            .as_bytes();
+    ) -> bool {
+        let Ok(abs_path) = query.entry().abs_path_or_try_fill(|| {
+            let parts = [query.entry().dir, query.entry().base()];
+            let abs = self
+                .fs_ref()
+                .abs_buf_checked(&parts, bufs!(remap_path))
+                .ok_or(())?;
+            Ok::<_, ()>(Interned::from_static(
+                self.fs_ref()
+                    .dirname_store
+                    .append_slice(abs)
+                    .expect("unreachable"),
+            ))
+        }) else {
+            return false;
+        };
+        let abs_path: &[u8] = abs_path.as_bytes();
         let module_type = if let Some(pkg) = resolved_dir_info.package_json() {
             pkg.module_type
         } else {
@@ -4030,6 +4031,7 @@ impl<'a> Resolver<'a> {
             module_type,
             ..Default::default()
         };
+        true
     }
 
     pub(crate) fn resolve_without_remapping(
@@ -5438,19 +5440,22 @@ impl<'a> Resolver<'a> {
             if unsafe { lookup.entry().kind(rfs, self.store_fd) }
                 == Fs::file_system::EntryKind::File
             {
-                let out_buf: &[u8] = lookup
-                    .entry()
-                    .abs_path_or_fill(|| {
-                        let parts = [dir_info.abs_path, &base[..]];
-                        let out_buf_ = self.fs_ref().abs_buf(&parts, bufs!(index));
-                        Interned::from_static(
-                            self.fs_ref()
-                                .dirname_store
-                                .append_slice(out_buf_)
-                                .expect("unreachable"),
-                        )
-                    })
-                    .as_bytes();
+                let Ok(out_buf) = lookup.entry().abs_path_or_try_fill(|| {
+                    let parts = [dir_info.abs_path, &base[..]];
+                    let out_buf_ = self
+                        .fs_ref()
+                        .abs_buf_checked(&parts, bufs!(index))
+                        .ok_or(())?;
+                    Ok::<_, ()>(Interned::from_static(
+                        self.fs_ref()
+                            .dirname_store
+                            .append_slice(out_buf_)
+                            .expect("unreachable"),
+                    ))
+                }) else {
+                    return MatchStatus::NotFound;
+                };
+                let out_buf: &[u8] = out_buf.as_bytes();
 
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug
@@ -5939,22 +5944,24 @@ impl<'a> Resolver<'a> {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(base)));
                 }
 
-                let abs_path: &'static [u8] = query
-                    .entry()
-                    .abs_path_or_fill(|| {
-                        let abs_path_parts = [query.entry().dir, query.entry().base()];
-                        let joined = self.fs_ref().abs_buf(&abs_path_parts, bufs!(load_as_file));
-                        Interned::from_static(
-                            self.fs_ref()
-                                .dirname_store
-                                .append_slice(joined)
-                                .expect("unreachable"),
-                        )
-                    })
-                    .as_bytes();
+                let Ok(abs_path) = query.entry().abs_path_or_try_fill(|| {
+                    let abs_path_parts = [query.entry().dir, query.entry().base()];
+                    let joined = self
+                        .fs_ref()
+                        .abs_buf_checked(&abs_path_parts, bufs!(load_as_file))
+                        .ok_or(())?;
+                    Ok::<_, ()>(Interned::from_static(
+                        self.fs_ref()
+                            .dirname_store
+                            .append_slice(joined)
+                            .expect("unreachable"),
+                    ))
+                }) else {
+                    dec_ret!(None);
+                };
 
                 dec_ret!(Some(LoadResult {
-                    path: abs_path,
+                    path: abs_path.as_bytes(),
                     dirname_fd: plain_dirname_fd,
                     file_fd: query.entry().cache().fd,
                 }));

@@ -1644,6 +1644,11 @@ impl CapturedWriter {
                 e.syscall
             );
             self.err = Some(e);
+            // The Cmd signaled below can free this PipeReader, so the chunks still queued must not call back.
+            if let Some(writer) = self.writer.clone() {
+                let child = std::ptr::from_mut(self).cast::<c_void>();
+                writer.cancel_chunks(io_writer::ChildPtr::subproc_capture(child));
+            }
         } else if !all_written {
             return Yield::Suspended;
         }

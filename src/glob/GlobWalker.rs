@@ -623,7 +623,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         let mut at_cwd = false;
         let fd: A::Handle = 'fd: {
             if let Some(fd) = work_item.fd {
-                break 'fd fd;
+                if !had_dot_dot {
+                    break 'fd fd;
+                }
+                // The handle is open on the directory before the `..`, not on `dir_path`.
+                self.close_disallowing_cwd(fd);
             }
             if ROOT {
                 if had_dot_dot {

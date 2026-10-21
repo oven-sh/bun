@@ -1657,7 +1657,8 @@ function destroySocket(websocket: WebSocket): void {
 }
 
 function setCloseTimer(websocket: WebSocket): void {
-  websocket._closeTimer = setTimeout(destroySocket, websocket._closeTimeout, websocket);
+  // A bare `setTimeout` here is the native function, which fake timers don't replace. They do reach the npm package's timers.
+  websocket._closeTimer = globalThis.setTimeout(destroySocket, websocket._closeTimeout, websocket);
 }
 
 // lib/receiver.js errors by code: [constructor, message, has "Invalid WebSocket frame: " prefix, status code].
@@ -1838,7 +1839,7 @@ const clientHandlers: ClientHandlers = {
     }
 
     // node:http drops the request's timeout once the response is an upgrade, even if an 'upgrade' listener throws.
-    clearTimeout(this[kHandshakeTimer]);
+    globalThis.clearTimeout(this[kHandshakeTimer]);
 
     if (this.listenerCount("upgrade") > 0) {
       const res = makeHandshakeResponse(statusCode, statusMessage, rawHeaders);
@@ -1885,7 +1886,7 @@ const clientHandlers: ClientHandlers = {
     }
   },
   open() {
-    clearTimeout(this[kHandshakeTimer]);
+    globalThis.clearTimeout(this[kHandshakeTimer]);
     this._socket = new ClientSocket(this[kNative] as NativeClient);
     this._readyState = OPEN;
 
@@ -1918,7 +1919,7 @@ const clientHandlers: ClientHandlers = {
     // Connecting failed. Emit the error that node:http would pass to `req.on('error')`.
     const native = this[kNative] as NativeClient;
 
-    clearTimeout(this[kHandshakeTimer]);
+    globalThis.clearTimeout(this[kHandshakeTimer]);
     // `_req` is already null if the socket closed after validateUpgrade() accepted the 101 but before 'open'.
     const req = this._req;
     if (req) removeAbortListener(req);
@@ -1939,7 +1940,7 @@ const clientHandlers: ClientHandlers = {
   close() {
     if (this[kTransport] === STREAM) return;
 
-    clearTimeout(this._closeTimer!);
+    globalThis.clearTimeout(this._closeTimer!);
     this.emitClose();
   },
   write(chunk) {
@@ -2011,7 +2012,7 @@ function socketOnClose(this: ServerSocket): void {
 
   this[kWebSocket] = undefined;
 
-  clearTimeout(websocket._closeTimer!);
+  globalThis.clearTimeout(websocket._closeTimer!);
   websocket.emitClose();
 }
 
@@ -2569,7 +2570,7 @@ class ClientRequest extends EventEmitter {
       return this;
     }
 
-    clearTimeout(this[kWebSocket][kHandshakeTimer]);
+    globalThis.clearTimeout(this[kWebSocket][kHandshakeTimer]);
     removeAbortListener(this);
 
     const { res } = this;
@@ -3063,7 +3064,7 @@ function initAsClient(
 
   // Start the timer now so it also covers a `finishRequest` that calls `req.end()` late or never.
   if (handshakeTimeout) {
-    websocket[kHandshakeTimer] = setTimeout(handshakeOnTimeout, handshakeTimeout, websocket);
+    websocket[kHandshakeTimer] = globalThis.setTimeout(handshakeOnTimeout, handshakeTimeout, websocket);
   }
 
   // Connecting throws on an invalid header. Let that propagate only while the constructor is still on the stack, i.e.
@@ -3073,7 +3074,7 @@ function initAsClient(
     if (opts.finishRequest) opts.finishRequest(req, websocket);
     else req.end();
   } catch (err) {
-    clearTimeout(websocket[kHandshakeTimer]);
+    globalThis.clearTimeout(websocket[kHandshakeTimer]);
     removeAbortListener(req);
     throw err;
   } finally {

@@ -4,6 +4,7 @@ import { heapStats } from "bun:jsc";
 import { vi as bunVi, jest, setSystemTime } from "bun:test";
 import { bunEnv, bunExe, isDebug, isLinux, tempDir } from "harness";
 import { spawnSync as childProcessSpawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import http from "node:http";
 import net, { type AddressInfo } from "node:net";
@@ -12,6 +13,7 @@ import nodeTimers, { setTimeout as nodeSetTimeout } from "node:timers";
 import { setTimeout as nodeSetTimeoutPromise } from "node:timers/promises";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import WebSocket from "ws";
 
 afterEach(() => vi.useRealTimers());
 
@@ -2616,6 +2618,48 @@ describe("the timers of builtin modules stay real", () => {
     ]) {
       expect(nodeTimers[name]).toBe(saved[name]);
     }
+  });
+});
+
+// "ws" is an npm package that Bun replaces, not a builtin module.
+describe("the timers of the ws package follow the fake clock", () => {
+  const url = (server: net.Server) => `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+  test("handshakeTimeout", async () => {
+    const server = net.createServer(() => {}).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    vi.useFakeTimers();
+    const client = new WebSocket(url(server), { handshakeTimeout: 60_000 });
+    const failed = once(client, "error");
+    vi.advanceTimersByTime(60_000);
+    expect(await failed).toEqual([expect.objectContaining({ message: "Opening handshake has timed out" })]);
+    server.close();
+  });
+
+  test("the wait for the peer's close frame", async () => {
+    // Accepts the upgrade, then ignores every frame.
+    const server = net
+      .createServer(socket =>
+        socket.once("data", request => {
+          const key = /^sec-websocket-key: (.+)\r$/im.exec(request.toString())![1];
+          const accept = createHash("sha1")
+            .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+            .digest("base64");
+          socket.write(
+            `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`,
+          );
+        }),
+      )
+      .listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = new WebSocket(url(server));
+    await once(client, "open");
+    vi.useFakeTimers();
+    client.close();
+    const closed = once(client, "close");
+    vi.advanceTimersByTime(30_000);
+    expect((await closed)[0]).toBe(1006);
+    server.close();
   });
 });
 

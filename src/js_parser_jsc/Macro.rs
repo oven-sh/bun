@@ -603,6 +603,7 @@ pub(crate) struct Run<'a> {
     pub(crate) source: &'a Source,
     pub(crate) visited: VisitMap<'a>,
     pub(crate) is_top_level: bool,
+    pub(crate) stack_check: bun_core::StackCheck,
 }
 
 impl<'a> Run<'a> {
@@ -638,6 +639,7 @@ impl<'a> Run<'a> {
                 source,
                 visited: VisitMap::new(roots),
                 is_top_level: false,
+                stack_check: bun_core::StackCheck::init(),
             };
 
             runner.run(result)
@@ -646,6 +648,14 @@ impl<'a> Run<'a> {
 
     pub(crate) fn run(&mut self, value: JSValue) -> Result<Expr, MacroError> {
         use ConsoleObject::formatter::Tag as T;
+        if !self.stack_check.is_safe_to_recurse() {
+            self.log.add_error(
+                Some(self.source),
+                self.caller.loc,
+                b"The value returned by this macro is nested too deeply",
+            );
+            return Err(MacroError::MacroFailed);
+        }
         // `Tag::get` returns `TagResult { tag: TagPayload, .. }`;
         // collapse the payload to its discriminant via `.tag()`.
         match T::get(value, self.global)?.tag.tag() {

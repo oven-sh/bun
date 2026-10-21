@@ -1094,6 +1094,11 @@ extern "C" JSC::EncodedJSValue Bun__getOrCreateNodeHTTPServerSocket(bool isSSL, 
 {
     auto& vm = globalObject->vm();
 
+    // `bun --hot` can give a node:http server the listener of a Bun.serve server. Its sockets have no node:http block.
+    if (isSSL ? !uWS::HttpContext<true>::fromSocket(us_socket)->isNodeHttp() : !uWS::HttpContext<false>::fromSocket(us_socket)->isNodeHttp()) {
+        return JSValue::encode(JSC::jsNull());
+    }
+
     if (isSSL) {
         uWS::HttpResponse<true>* response = reinterpret_cast<uWS::HttpResponse<true>*>(us_socket);
         auto* currentSocketDataPtr = reinterpret_cast<JSC::JSCell*>(response->getHttpResponseData()->socketData);

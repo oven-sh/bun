@@ -4,6 +4,7 @@
 #include "V8EscapableHandleScope.h"
 #include "V8Context.h"
 #include "v8_compatibility_assertions.h"
+#include "napi.h"
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/ArrayConstructor.h"
 #include "JavaScriptCore/ObjectConstructor.h"
@@ -29,6 +30,7 @@ Local<Array> Array::New(Isolate* isolate, Local<Value>* elements, size_t length)
 {
     Zig::GlobalObject* globalObject = isolate->globalObject();
     auto& vm = isolate->vm();
+    NapiUngatedScope ungated { vm };
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     if (length == 0) {
@@ -57,6 +59,7 @@ Local<Array> Array::New(Isolate* isolate, int length)
 {
     Zig::GlobalObject* globalObject = isolate->globalObject();
     auto& vm = isolate->vm();
+    NapiUngatedScope ungated { vm };
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     int realLength = length > 0 ? length : 0;

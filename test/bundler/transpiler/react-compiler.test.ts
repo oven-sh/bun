@@ -852,6 +852,46 @@ describe("bundler", () => {
     },
   });
 
+  // A `try` body that can't throw loses its handler and `try` terminal, but the code after the `try` must be kept.
+  itBundled("react-compiler/DeadTryBodyKeepsTheCodeAfterIt", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const report = () => {};
+        function Branches(props) { try { const unused = 1; } catch (e) { if (props.debug) report(e); } return <div>{props.a}</div>; }
+        function Guard(props) {
+          try {
+            const isProduction = process.env.NODE_ENV === "production";
+            if (isProduction) report(props);
+          } catch (e) {
+            props.onError?.(e);
+          }
+          return <div>{props.a}</div>;
+        }
+        function Inner(props) {
+          let a;
+          try {
+            try { const unused = 1; } catch (e) { report(e); }
+            a = props.f();
+          } catch {
+            a = "caught";
+          }
+          return <div>{a}</div>;
+        }
+        const rendered = [Branches({ a: 1 }), Guard({ a: 2 }), Inner({ f: () => 3 })];
+        console.log(rendered.map(it => it?.p.children).join(", "));
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    define: { "process.env.NODE_ENV": '"development"' },
+    run: { stdout: "1, 2, 3" },
+  });
+
   // `c` is assigned in a scope that lies in the scope of `d`. Only the inner one had it as an output, so a render in which
   // the outer one is not run again gave `undefined`. babel-plugin-react-compiler 1.0.0 does the same.
   itBundled("react-compiler/ReassignedInAScopeInAScope", {

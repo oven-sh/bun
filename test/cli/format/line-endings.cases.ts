@@ -1,6 +1,6 @@
-// Small inputs in every language that `bun fmt` reads, with line breaks wherever they mean something: in comments, in
-// `prettier-ignore`d code, in strings, templates and block scalars, in embedded code, between things that keep an empty line.
-// They are written with \n. `format.test.ts` gives them other line breaks and a byte order mark.
+// Small inputs in every language that `bun fmt` supports, with line breaks wherever they matter: in comments, in
+// `prettier-ignore`d code, in strings, templates and block scalars, in embedded code, between things that keep an empty
+// line. They use \n. `format.test.ts` converts them to other line breaks and adds a byte order mark.
 export const inputs: Record<string, string> = {
   "js-ignore.js":
     "// prettier-ignore\nconst a = [\n  1,0,\n  0,1\n];\nclass A {\n  // prettier-ignore\n  m( a,\n     b ) {}\n}\nconst o = {\n  // prettier-ignore\n  k:   [1,\n  2],\n  z: 1\n};\n",

@@ -21,7 +21,7 @@ impl<const SLICE: bool> Rule for NoUnnecessaryArraySpliceCount<SLICE> {
     )
     .fixable(Fixable::Code);
     const ON: On = On::new().method_calls(Self::METHODS);
-    /// The first and the last of the methods.
+    /// The first and last of the methods.
     type State<'a> = [Name<'a>; 2];
 
     fn new(_: &Options) -> Self {

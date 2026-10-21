@@ -430,6 +430,31 @@ test("confirm (no) windows newline", async () => {
   expect(await proc.stderr.text()).toBe("No\n");
 });
 
+// Only the CRLF terminator's `\r` is stripped. An earlier `\r` is part of the answer.
+test.concurrent.each([
+  ["hello\r\n", "hello"],
+  ["x\r\r\n", "x\r"],
+  ["\r\r\n", "\r"],
+])("prompt with stdin %j returns %j", async (stdin, expected) => {
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", `console.error(JSON.stringify(prompt("Q?")));`],
+    stdio: ["pipe", "pipe", "pipe"],
+    env: bunEnv,
+  });
+
+  proc.stdin.write(stdin);
+  await proc.stdin.flush();
+  proc.stdin.end();
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "Q? ",
+    stderr: JSON.stringify(expected) + "\n",
+    exitCode: 0,
+  });
+});
+
 // A read of a stdin in non-blocking mode fails with EAGAIN while there is no input. That is not the end of the input.
 describe.skipIf(isWindows).concurrent("dialogs on a non-blocking stdin", () => {
   const exitOf = async child => {
@@ -639,4 +664,24 @@ describe("new.target.prototype", () => {
     expect(response.bodyUsed).toBe(false);
     expect(await response.text()).toBe("hello");
   });
+});
+
+test("dispatchEvent skips a listener that is a WebAssembly GC object", () => {
+  // (module (type $s (struct (field (mut i32))))
+  //   (func (export "mk") (result (ref null $s)) struct.new_default $s))
+  // prettier-ignore
+  const bytes = new Uint8Array([
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+    0x01, 0x0a, 0x02, 0x5f, 0x01, 0x7f, 0x01, 0x60, 0x00, 0x01, 0x63, 0x00,
+    0x03, 0x02, 0x01, 0x01,
+    0x07, 0x06, 0x01, 0x02, 0x6d, 0x6b, 0x00, 0x00,
+    0x0a, 0x07, 0x01, 0x05, 0x00, 0xfb, 0x01, 0x00, 0x0b,
+  ]);
+  const listener = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
+  const target = new EventTarget();
+  let calls = 0;
+  target.addEventListener("a", listener);
+  target.addEventListener("a", () => calls++);
+  target.dispatchEvent(new Event("a"));
+  expect(calls).toBe(1);
 });

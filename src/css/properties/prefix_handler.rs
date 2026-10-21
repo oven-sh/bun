@@ -5,6 +5,7 @@ use crate::css_properties::{Property, PropertyId, PropertyIdTag};
 use crate::generics::{DeepClone as _, IsCompatible as _};
 use crate::prefixes::Feature;
 use bun_alloc::ArenaVecExt as _;
+use bun_core::strings;
 
 macro_rules! define_prefixes {
     ($($name:ident,)+) => {
@@ -152,7 +153,9 @@ impl PrefixHandler {
             }
             Property::Custom(custom) => match &custom.name {
                 CustomPropertyName::Custom(_) => {}
-                name if name.as_str().eq_ignore_ascii_case(b"all") => self.close(),
+                name if strings::eql_case_insensitive_ascii_check_length(name.as_str(), b"all") => {
+                    self.close()
+                }
                 CustomPropertyName::Unknown(_) => self.floor = index + 1,
             },
             _ => {}

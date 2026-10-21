@@ -8610,6 +8610,20 @@ describe("css tests", () => {
       ".a{user-select:none}.b{top:0}.a{user-select:text!important}",
     );
 
+    // A `@supports` condition keeps each name as written, at every place of an `and` or `or` chain.
+    test.each([
+      "(-webkit-user-select: none)",
+      "not (-webkit-user-select: none)",
+      "(display: grid) and (-webkit-user-select: none)",
+      "(user-select: none) or (-webkit-user-select: none)",
+      "(-webkit-appearance: none) and (-moz-appearance: none)",
+      "((display: grid) and (-webkit-hyphens: auto)) or (-moz-tab-size: 4)",
+    ])("@supports %s", condition => {
+      const expected = `@supports ${condition} { .a { color: red; } }`;
+      const output = prefix_test_output(`@supports ${condition} { .a { color: red } }`, expected, defaults);
+      expect(output).toEqualIgnoringWhitespace(expected);
+    });
+
     test("two rules of one selector keep the winning declaration", () => {
       const atoms = [
         "user-select:none",

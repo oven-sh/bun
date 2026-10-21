@@ -110,9 +110,13 @@ describe("css", () => {
       "/index.css": /* css */ `
         @import "./a.css" supports(-webkit-user-select: none);
         @import "./b.css" supports(-moz-appearance: none);
+        @import "./c.css" supports((display: grid) and (-webkit-user-select: none));
+        @import "./d.css" supports((user-select: none) or (-webkit-user-select: none));
       `,
       "/a.css": `.a { color: red; }`,
       "/b.css": `.b { color: blue; }`,
+      "/c.css": `.c { color: red; }`,
+      "/d.css": `.d { color: red; }`,
     },
     outdir: "/out",
     entryPoints: ["/index.css"],
@@ -129,6 +133,20 @@ describe("css", () => {
         @supports ((-moz-appearance: none)) {
           .b {
             color: #00f;
+          }
+        }
+
+        /* c.css */
+        @supports (display: grid) and (-webkit-user-select: none) {
+          .c {
+            color: red;
+          }
+        }
+
+        /* d.css */
+        @supports (user-select: none) or (-webkit-user-select: none) {
+          .d {
+            color: red;
           }
         }
 

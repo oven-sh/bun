@@ -359,7 +359,8 @@ fn mounted_on(dir: Fd, name: &ZStr) -> Error {
 fn is_mount_point(dir: Fd, name: &ZStr) -> bool {
     super::linux_syscall::is_mount_root(dir, name).unwrap_or_else(|| {
         // Another file system. A bind mount of the same one is not told apart.
-        matches!((fstat(dir), lstatat(dir, name)), (Ok(around), Ok(it)) if around.st_dev != it.st_dev)
+        let around = fstatat(dir, bun_core::zstr!("."));
+        matches!((around, lstatat(dir, name)), (Ok(around), Ok(it)) if around.st_dev != it.st_dev)
     })
 }
 

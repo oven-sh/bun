@@ -29,7 +29,10 @@ import {
   isIPv4,
   isIPv6,
   Server,
+  setDefaultAutoSelectFamily,
+  setDefaultAutoSelectFamilyAttemptTimeout,
   Socket,
+  SocketAddress,
   // @ts-expect-error legacy alias
   Stream,
 } from "node:net";
@@ -124,6 +127,41 @@ describe("net.BlockList subnet rules", () => {
     v6.addSubnet("::", 0, "ipv6");
     expect(v6.check("8592:757c:efae:4e45::f", "ipv6")).toBe(true);
     expect(v6.check("1.2.3.4", "ipv4")).toBe(true);
+  });
+});
+
+describe("net.BlockList and an IPv6 zone id", () => {
+  it("check() matches on the address alone", () => {
+    const blockList = new BlockList();
+    blockList.addAddress("fe80::1", "ipv6");
+    blockList.addAddress("1.2.3.4");
+    expect(blockList.check("fe80::1%eth0", "ipv6")).toBe(true);
+    expect(blockList.check("fe80::1%", "ipv6")).toBe(true);
+    expect(blockList.check("::ffff:1.2.3.4%lo", "ipv6")).toBe(true);
+    expect(blockList.check(new SocketAddress({ address: "fe80::1%eth0", family: "ipv6" }))).toBe(true);
+    expect(blockList.check("fe80::2%eth0", "ipv6")).toBe(false);
+    expect(blockList.check("1.2.3.4%lo")).toBe(false);
+  });
+
+  it("a rule drops it", () => {
+    const blockList = new BlockList();
+    blockList.addAddress("fe80::9%eth0", "ipv6");
+    blockList.addRange("fe80::10%eth0", "fe80::20%eth1", "ipv6");
+    blockList.addSubnet("fd00::%eth0", 64, "ipv6");
+    expect(blockList.rules).toEqual([
+      "Subnet: IPv6 fd00::/64",
+      "Range: IPv6 fe80::10-fe80::20",
+      "Address: IPv6 fe80::9",
+    ]);
+    expect(new SocketAddress({ address: "fe80::9%eth0", family: "ipv6" }).address).toBe("fe80::9");
+  });
+
+  it("connect() refuses a blocked address", async () => {
+    const blockList = new BlockList();
+    blockList.addAddress("::1", "ipv6");
+    const socket = connect({ host: "::1%lo", port: 1, blockList });
+    const [error] = await once(socket, "error");
+    expect(error.code).toBe("ERR_IP_BLOCKED");
   });
 });
 
@@ -3547,3 +3585,22 @@ it.skipIf(isWindows || isMusl).each([
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
 });
+
+it.each(Object.entries({ setDefaultAutoSelectFamily, setDefaultAutoSelectFamilyAttemptTimeout }))(
+  "net.%s() without an argument throws what it throws for undefined",
+  (_, set) => {
+    const thrownBy = (call: () => void) => {
+      try {
+        call();
+      } catch (error: any) {
+        return { name: error.name, code: error.code, message: error.message };
+      }
+    };
+    // @ts-expect-error
+    const thrown = thrownBy(() => set());
+    expect(thrown).toMatchObject({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" });
+    expect(thrown!.message).toMatch(/^The "value" argument must be of type (boolean|number)\. Received undefined$/);
+    // @ts-expect-error
+    expect(thrown).toEqual(thrownBy(() => set(undefined)));
+  },
+);

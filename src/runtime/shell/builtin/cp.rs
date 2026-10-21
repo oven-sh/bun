@@ -4,7 +4,8 @@ use crate::node::PathLike;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, parse_flags, unsupported_flag,
+    ParseFlagResult, ShellTask, parse_flags, shell_join_path, shell_resolve_operand,
+    unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -597,6 +598,98 @@ impl ShellCpTask {
         }
     }
 
+    fn same_inode(a: &bun_sys::Stat, b: &bun_sys::Stat) -> bool {
+        // A filesystem without inode numbers reports `st_ino == 0`.
+        a.st_ino != 0 && a.st_ino == b.st_ino && a.st_dev == b.st_dev
+    }
+
+    /// Runs the src/dest checks `fs.cp` does up front (node's `checkPaths` and
+    /// `checkParentPaths`), so copying a directory into itself fails before
+    /// anything is created. `appended` is the source basename if it was joined
+    /// onto the target operand.
+    fn check_paths(
+        &self,
+        src: &bun_core::ZStr,
+        tgt: &bun_core::ZStr,
+        appended: Option<&[u8]>,
+    ) -> Option<ShellErr> {
+        use bun_sys::S;
+        use resolve_path::Platform;
+
+        let custom = |msg: String| Some(ShellErr::Custom(msg.into_bytes().into_boxed_slice()));
+        let src_shown = bstr::BStr::new(&self.src);
+        let tgt_shown = || -> Vec<u8> {
+            let mut shown = self.tgt.clone();
+            if let Some(basename) = appended {
+                if !Self::has_trailing_sep(&shown) {
+                    shown.push(bun_paths::SEP);
+                }
+                shown.extend_from_slice(basename);
+            }
+            shown
+        };
+
+        // If lstat fails, let the copy report the error.
+        let Ok(src_stat) = bun_sys::lstat(src) else {
+            return None;
+        };
+        // A symlink to a directory is copied as a link, so don't treat it as a directory.
+        let src_is_dir = S::ISDIR(src_stat.st_mode as _);
+        if let Ok(tgt_stat) = bun_sys::lstat(tgt) {
+            if Self::same_inode(&src_stat, &tgt_stat) || src.as_bytes() == tgt.as_bytes() {
+                return custom(format!(
+                    "{src_shown} and {} are identical (not copied)",
+                    bstr::BStr::new(&tgt_shown()),
+                ));
+            }
+            let tgt_is_dir = S::ISDIR(tgt_stat.st_mode as _);
+            if src_is_dir && !tgt_is_dir {
+                return custom(format!(
+                    "cannot overwrite non-directory {} with directory {src_shown}",
+                    bstr::BStr::new(&tgt_shown()),
+                ));
+            }
+            if !src_is_dir && tgt_is_dir {
+                return custom(format!(
+                    "cannot overwrite directory {} with non-directory {src_shown}",
+                    bstr::BStr::new(&tgt_shown()),
+                ));
+            }
+        }
+
+        if !src_is_dir {
+            return None;
+        }
+        let into_itself = || {
+            custom(format!(
+                "cannot copy a directory, '{src_shown}', into itself, '{}'",
+                bstr::BStr::new(&tgt_shown()),
+            ))
+        };
+        let (s, t) = (src.as_bytes(), tgt.as_bytes());
+        if t.len() > s.len() && t.starts_with(s) && Platform::AUTO.is_separator(t[s.len()]) {
+            return into_itself();
+        }
+        // A symlink can alias `src`, so also compare each of `tgt`'s ancestors by inode.
+        let src_parent = bun_paths::dirname(s);
+        let mut path = bun_paths::path_buffer_pool::get();
+        let mut ancestor = t;
+        while let Some(parent) = bun_paths::dirname(ancestor) {
+            if Some(parent) == src_parent {
+                break;
+            }
+            path[..parent.len()].copy_from_slice(parent);
+            path[parent.len()] = 0;
+            if let Ok(stat) = bun_sys::stat(bun_core::ZStr::from_buf(&path[..], parent.len())) {
+                if Self::same_inode(&src_stat, &stat) {
+                    return into_itself();
+                }
+            }
+            ancestor = parent;
+        }
+        None
+    }
+
     /// Resolves src/tgt to absolute paths, classifies them per the three
     /// POSIX `cp` synopses
     /// (<https://man7.org/linux/man-pages/man1/cp.1p.html>), then hands off to
@@ -605,26 +698,16 @@ impl ShellCpTask {
         &mut self,
         poster: &bun_jsc::ConcurrentPoster,
     ) -> Option<ShellErr> {
-        use resolve_path::{Platform, platform};
-
-        let mut buf2 = bun_paths::path_buffer_pool::get();
-        let mut buf3 = bun_paths::path_buffer_pool::get();
         // We have to give an absolute path to our cp implementation for it to
         // work with cwd.
-        let src: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.src) {
-            // `self.src` is the bare argv bytes (no NUL); re-terminate via
-            // the thread-local join buffer.
-            resolve_path::join_z::<platform::Auto>(&[&self.src])
-        } else {
-            resolve_path::join_z::<platform::Auto>(&[&self.cwd_path, &self.src])
+        let src = match shell_resolve_operand(bun_sys::Tag::copyfile, &self.cwd_path, &self.src) {
+            Ok(path) => path,
+            Err(e) => return Some(ShellErr::new_sys(&e)),
         };
-        let mut tgt: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.tgt) {
-            resolve_path::join_z_buf::<platform::Auto>(buf2.as_mut_slice(), &[&self.tgt])
-        } else {
-            resolve_path::join_z_buf::<platform::Auto>(
-                buf2.as_mut_slice(),
-                &[&self.cwd_path, &self.tgt],
-            )
+        let mut tgt = match shell_resolve_operand(bun_sys::Tag::copyfile, &self.cwd_path, &self.tgt)
+        {
+            Ok(path) => path,
+            Err(e) => return Some(ShellErr::new_sys(&e)),
         };
 
         // Cases:
@@ -635,7 +718,7 @@ impl ShellCpTask {
         //   folder -> folder
         // We need to check dest to see what it is; if it doesn't exist we
         // need to create it.
-        let src_is_dir = match Self::is_dir(src) {
+        let src_is_dir = match Self::is_dir(&src) {
             Ok(x) => x,
             Err(e) => return Some(ShellErr::new_sys(&e)),
         };
@@ -649,18 +732,7 @@ impl ShellCpTask {
             ));
         }
 
-        if !src_is_dir && src.as_bytes() == tgt.as_bytes() {
-            return Some(ShellErr::Custom(
-                format!(
-                    "{0} and {0} are identical (not copied)",
-                    bstr::BStr::new(&self.src)
-                )
-                .into_bytes()
-                .into_boxed_slice(),
-            ));
-        }
-
-        let (tgt_is_dir, tgt_exists) = match Self::is_dir(tgt) {
+        let (tgt_is_dir, tgt_exists) = match Self::is_dir(&tgt) {
             Ok(is_dir) => (is_dir, true),
             Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
                 // If it has a trailing directory separator, it's a directory.
@@ -670,6 +742,8 @@ impl ShellCpTask {
         };
 
         let mut _copying_many = false;
+        // Set to the source basename when it's joined onto `tgt`.
+        let mut appended: Option<&[u8]> = None;
 
         // The following logic is based on the POSIX spec.
         if !src_is_dir && !tgt_is_dir && self.operands == 2 {
@@ -678,10 +752,11 @@ impl ShellCpTask {
             // 2nd synopsis: -R source_files... -> target.
             if tgt_exists {
                 let basename = resolve_path::basename(src.as_bytes());
-                tgt = resolve_path::join_z_buf::<platform::Auto>(
-                    buf3.as_mut_slice(),
-                    &[tgt.as_bytes(), basename],
-                );
+                tgt = match shell_join_path(bun_sys::Tag::copyfile, &[tgt.as_bytes(), basename]) {
+                    Ok(path) => path,
+                    Err(e) => return Some(ShellErr::new_sys(&e)),
+                };
+                appended = Some(basename);
             } else if self.operands == 2 {
                 // source_dir -> new_target_dir.
             } else {
@@ -709,11 +784,16 @@ impl ShellCpTask {
                 ));
             }
             let basename = resolve_path::basename(src.as_bytes());
-            tgt = resolve_path::join_z_buf::<platform::Auto>(
-                buf3.as_mut_slice(),
-                &[tgt.as_bytes(), basename],
-            );
+            tgt = match shell_join_path(bun_sys::Tag::copyfile, &[tgt.as_bytes(), basename]) {
+                Ok(path) => path,
+                Err(e) => return Some(ShellErr::new_sys(&e)),
+            };
+            appended = Some(basename);
             _copying_many = true;
+        }
+
+        if let Some(err) = self.check_paths(&src, &tgt, appended) {
+            return Some(err);
         }
 
         let args = crate::node::fs::args::Cp::owned(

@@ -182,7 +182,6 @@ pub mod c {
             param: ZSTD_dParameter,
             value: c_int,
         ) -> usize;
-        pub fn ZSTD_CCtx_reset(cctx: *mut ZSTD_CCtx, reset: ZSTD_ResetDirective) -> usize;
         pub fn ZSTD_DCtx_reset(dctx: *mut ZSTD_DCtx, reset: ZSTD_ResetDirective) -> usize;
         pub fn ZSTD_compressStream2(
             cctx: *mut ZSTD_CCtx,
@@ -762,6 +761,9 @@ impl Drop for StreamingDecoder {
 /// Bun never executes or parses itself: the shell completion scripts and the
 /// JS/CSS bundles that are shipped to a browser (dev-server client runtime,
 /// error overlay/page). Anything that runs inside Bun stays uncompressed.
+///
+/// The exception is text that only `bun lint`, `bun fmt` and `bun check`
+/// read. It may be compressed because it isn't on the path of running a program.
 ///
 /// Release (`bun_codegen_embed`) builds include the `.zst` twin that
 /// `scripts/build/codegen.ts` (`emitCompressedEmbeds`) writes to

@@ -5,6 +5,7 @@ use crate::cli::command::TestOptions;
 use crate::cli::test_command::CommandLineReporter;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
+use bun_jsc::bindgen::JsLocal;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -123,7 +124,7 @@ pub(crate) struct TestRunner<'a> {
     /// Borrowed view over `ctx.test_options.concurrent_test_glob` (owned
     /// `Vec<Box<[u8]>>` with process lifetime); see the detach in
     /// `test_command.rs` where this is populated.
-    pub(crate) concurrent_test_glob: Option<&'a [&'a [u8]]>,
+    pub(crate) concurrent_test_glob: Option<&'a [bun_glob::Prepared<&'a [u8]>]>,
     pub(crate) bail: u32,
     pub(crate) max_concurrency: u32,
 
@@ -229,7 +230,7 @@ impl<'a> TestRunner<'a> {
 
         // Check if the file path matches any of the glob patterns
         for pattern in glob_patterns {
-            if bun_glob::matcher::r#match(pattern, file_path).matches() {
+            if pattern.r#match(file_path).matches() {
                 return true;
             }
         }
@@ -515,44 +516,36 @@ pub(crate) mod Jest {
     }
 }
 
-/// Reached only from `node:test`, through `$newRustFunction` rather than the
+/// Reached only from `node:test`, through `$bindgen` rather than the
 /// public `bun:test` module object, whenever a node:test API registers something. Returns 0 outside `bun test`.
-pub(crate) fn js_file_generation(
-    global: &JSGlobalObject,
-    _callframe: &CallFrame,
-) -> JsResult<JSValue> {
+pub(crate) fn file_generation() -> u32 {
     // `runner_ptr()` rather than `runner()`: node:test calls this on every test
     // registration, and an exclusive `&mut TestRunner` would invalidate the
     // `bun_test_root` pointer `test_command.rs` keeps live across the file run.
     // SAFETY: same invariant as `runner()` — RUNNER is only read on the JS thread.
-    let generation = Jest::runner_ptr().map_or(0, |p| unsafe {
-        if global.bun_vm().worker_ref().is_none() {
+    Jest::runner_ptr().map_or(0, |p| unsafe {
+        if VirtualMachine::get().worker_ref().is_none() {
             (*p.as_ptr()).node_test_used = true;
         }
         (*p.as_ptr()).bun_test_root.file_generation
-    });
-    Ok(JSValue::from(generation))
+    })
 }
 
 /// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides
 /// the running sequence's result so bun:test reports skip/todo instead of pass.
 /// `done`'s bound `DoneCallback.r#ref.phase` names the intended sequence so a
 /// late call after the watchdog moved on cannot mark the currently-running one.
-pub(crate) fn js_node_test_mark_result(
-    _global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+pub(crate) fn node_test_mark_result(todo: bool, done: JsLocal<'_>) {
     use super::execution::Result as ExecResult;
-    let [mode, done] = callframe.arguments_as_array::<2>();
     let Some(buntest_strong) = bun_test::clone_active_strong() else {
-        return Ok(JSValue::UNDEFINED);
+        return;
     };
     // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
     let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
     // `done` is a JSBoundFunction whose bound-this is the DoneCallback wrapper.
-    let wrapper = bun_jsc::cpp::Bun__JSBoundFunction__boundThis(done);
+    let wrapper = bun_jsc::cpp::Bun__JSBoundFunction__boundThis(done.to_js());
     let Some(dcb) = bun_test::DoneCallback::from_js(wrapper) else {
-        return Ok(JSValue::UNDEFINED);
+        return;
     };
     // SAFETY: `dcb` is the live `*mut DoneCallback` from `from_js`; single-
     // threaded JS VM, GC roots `done` (and its bound-this) for this frame.
@@ -573,19 +566,18 @@ pub(crate) fn js_node_test_mark_result(
             None => buntest.get_current_state_data(),
         },
         // done() already ran and reported — nothing left to mark.
-        None => return Ok(JSValue::UNDEFINED),
+        None => return,
     };
     let Some((sequence_ptr, _)) =
         buntest.execution.get_current_and_valid_execution_sequence(&bound)
     else {
-        return Ok(JSValue::UNDEFINED);
+        return;
     };
     // SAFETY: NonNull into `execution.sequences`; deref at point-of-use only.
     let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
     if sequence.result == ExecResult::Pending {
-        sequence.result = if mode.to_boolean() { ExecResult::Todo } else { ExecResult::Skip };
+        sequence.result = if todo { ExecResult::Todo } else { ExecResult::Skip };
     }
-    Ok(JSValue::UNDEFINED)
 }
 
 pub(crate) mod on_unhandled_rejection {
@@ -649,7 +641,7 @@ pub(crate) mod on_unhandled_rejection {
         let exception_list = jsc_vm
             .on_unhandled_rejection_exception_list
             .map(|p| unsafe { &mut *p.as_ptr() });
-        jsc_vm.run_error_handler(rejection, exception_list);
+        bun_test::print_error(jsc_vm, global_object, rejection, exception_list);
     }
 }
 

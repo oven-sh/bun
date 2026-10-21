@@ -885,7 +885,7 @@ impl InitCommand {
                     ep_z.push(0);
                     let ep_zstr = ZStr::from_slice_with_nul(&ep_z[..]);
                     // SAFETY: ep_z[len-1] == 0 written above
-                    let _ = Assets::create_new(ep_zstr, b"console.log(\"Hello via Bun!\");");
+                    let _ = Assets::create_new(ep_zstr, b"console.log(\"Hello via Bun!\");\n");
                     // suppress
                 }
 
@@ -1470,7 +1470,7 @@ impl Template {
             return false;
         };
         // SAFETY: FileSystem::instance() returns the process-global singleton.
-        let top_level_dir = Fs::FileSystem::get().top_level_dir;
+        let top_level_dir = Fs::FileSystem::get().top_level_dir();
         bun_which::which(&mut *pathbuffer, path, top_level_dir, b"claude").is_some()
     }
 
@@ -1556,7 +1556,7 @@ impl Template {
             let _ = Assets::create_new(
                 ZStr::from_static(b"CLAUDE.md\0"),
                 // SAFETY: literal is NUL-terminated
-                &Self::AGENT_RULE[end_of_frontmatter..],
+                Self::AGENT_RULE[end_of_frontmatter..].trim_ascii_start(),
             );
         }
     }

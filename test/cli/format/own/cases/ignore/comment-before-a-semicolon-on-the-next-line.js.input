@@ -1,0 +1,8 @@
+a  (  b  ) // prettier-ignore
+;[c].d
+e  (  f  ) /* prettier-ignore */
+;[g].h
+function i() {
+  return j  (  k  ) // prettier-ignore
+  ;[l].m
+}

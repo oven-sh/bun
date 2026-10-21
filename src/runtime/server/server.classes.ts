@@ -104,6 +104,7 @@ function generate(name) {
       "wsOnError",
       "wsOnPing",
       "wsOnPong",
+      "wsPackageHandlers",
     ],
   });
 }
@@ -112,122 +113,6 @@ export default [
   generate(`DebugHTTPServer`),
   generate(`HTTPSServer`),
   generate(`DebugHTTPSServer`),
-
-  define({
-    name: "NodeHTTPResponse",
-    // R-2 Phase 2: user impls take `&self`; emit `this: &T` shims.
-    sharedThis: true,
-    JSType: "0b11101110",
-    proto: {
-      writeHead: {
-        fn: "writeHead",
-        length: 3,
-      },
-      writeContinue: {
-        fn: "writeContinue",
-      },
-      writeInformational: {
-        fn: "writeInformational",
-        length: 1,
-      },
-      write: {
-        fn: "write",
-        length: 3,
-      },
-      end: {
-        fn: "end",
-        length: 2,
-      },
-      getBytesWritten: {
-        fn: "getBytesWritten",
-        length: 0,
-      },
-      flushHeaders: {
-        fn: "flushHeaders",
-        length: 0,
-      },
-      cork: {
-        fn: "cork",
-        length: 1,
-      },
-      ref: {
-        fn: "jsRef",
-      },
-      unref: {
-        fn: "jsUnref",
-      },
-      abort: {
-        fn: "abort",
-        length: 0,
-      },
-      pause: {
-        fn: "doPause",
-        length: 0,
-        passThis: true,
-      },
-      pauseReads: {
-        fn: "pauseSocketReads",
-        length: 0,
-      },
-      notifyWhenReadParsed: {
-        fn: "notifyWhenReadParsed",
-        length: 0,
-      },
-      takeRequestTrailers: {
-        fn: "takeRequestTrailers",
-        length: 0,
-      },
-      takeRawHeaders: {
-        fn: "takeRawHeaders",
-        length: 0,
-      },
-      writeHeadAndEnd: {
-        fn: "writeHeadAndEnd",
-        length: 8,
-      },
-      resume: {
-        fn: "doResume",
-        length: 0,
-      },
-      bufferedAmount: {
-        getter: "getBufferedAmount",
-      },
-      aborted: {
-        getter: "getAborted",
-      },
-      flags: {
-        getter: "getFlags",
-      },
-      finished: {
-        getter: "getFinished",
-      },
-      hasBody: {
-        getter: "getHasBody",
-      },
-      ondata: {
-        getter: "getOnData",
-        setter: "setOnData",
-        this: true,
-      },
-      onabort: {
-        getter: "getOnAbort",
-        setter: "setOnAbort",
-        this: true,
-      },
-      upgraded: {
-        getter: "getUpgraded",
-      },
-      onwritable: {
-        getter: "getOnWritable",
-        setter: "setOnWritable",
-        this: true,
-      },
-    },
-    klass: {},
-    refCounted: true,
-    noConstructor: true,
-    values: ["onAborted", "onWritable", "onData", "pendingWriteBuffer"],
-  }),
 
   define({
     name: "ServerWebSocket",
@@ -288,6 +173,17 @@ export default [
         fn: "getBufferedAmount",
         length: 0,
       },
+      pause: {
+        fn: "pause",
+        length: 0,
+      },
+      resume: {
+        fn: "resume",
+        length: 0,
+      },
+      isPaused: {
+        getter: "getIsPaused",
+      },
       binaryType: {
         getter: "getBinaryType",
         setter: "setBinaryType",
@@ -328,18 +224,5 @@ export default [
     construct: true,
     klass: {},
     values: ["server"],
-  }),
-
-  define({
-    name: "HTMLBundle",
-    noConstructor: true,
-    refCounted: true,
-    proto: {
-      index: {
-        getter: "getIndex",
-        cache: true,
-      },
-    },
-    klass: {},
   }),
 ];

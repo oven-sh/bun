@@ -2,34 +2,6 @@ import { define } from "../../codegen/class-definitions.ts";
 
 export default [
   define({
-    name: "Transpiler",
-    rustPath: "crate::api::js_transpiler::JSTranspiler",
-    construct: true,
-    refCounted: true,
-    hasPendingActivity: false,
-    configurable: false,
-    klass: {},
-    JSType: "0b11101110",
-    proto: {
-      scanImports: {
-        fn: "scanImports",
-        length: 2,
-      },
-      scan: {
-        fn: "scan",
-        length: 2,
-      },
-      transform: {
-        fn: "transform",
-        length: 2,
-      },
-      transformSync: {
-        fn: "transformSync",
-        length: 2,
-      },
-    },
-  }),
-  define({
     name: "BuildArtifact",
     noConstructor: true,
     finalize: true,

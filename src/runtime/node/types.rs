@@ -6,7 +6,7 @@ use crate::jsc::{self, JSGlobalObject, JSValue, JsResult};
 use bun_core::WStr;
 use bun_core::ZStr;
 use bun_core::{self, Utf8Bytes, Utf8WithString, fmt as bun_fmt};
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::{JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{StringJsc as _, Utf8WithStringJsc as _};
 pub(crate) use bun_jsc::{ThreadIsolated, ThreadIsolatedArg};
@@ -353,13 +353,8 @@ impl StringOrBuffer<'static> {
     /// directly into `*out` and returns
     /// `Ok(true)` on success, `Ok(false)` if `value` is not a string/buffer
     /// type. `*out` is left untouched on `Ok(false)` / `Err`.
-    ///
-    /// Hot callers (e.g. `NodeHTTPResponse::write_or_end`) should use this
-    /// directly — returning `JsResult<Option<StringOrBuffer>>` by value lowers
-    /// to ~128B of `vmovups` stack-to-stack copies per call which the
-    /// `Option<>`-returning wrappers below cannot always NRVO away.
     #[inline]
-    pub(crate) fn from_js_maybe_async_into(
+    fn from_js_maybe_async_into(
         out: &mut Self,
         global: &JSGlobalObject,
         value: JSValue,
@@ -446,16 +441,20 @@ impl StringOrBuffer<'static> {
         Ok(parsed)
     }
 
-    /// Like [`from_js`](Self::from_js), but for a work-pool job that reads the bytes. Strings are
-    /// thread-isolated, and buffers are pinned and GC-rooted (see [`buffer_from_js`](Self::buffer_from_js)).
+    /// For a work-pool job that reads the bytes.
     #[inline]
-    pub(crate) fn from_js_async(
+    pub(crate) fn thread_isolated_string(
         global: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<Option<ThreadIsolated<Self>>> {
-        let parsed = Self::from_js_maybe_async(global, value, Flavor::Async, StringObjects::Allow)?;
-        // SAFETY: parsed with `Flavor::Async`.
-        Ok(parsed.map(|v| unsafe { ThreadIsolated::new(v) }))
+        str: bun_core::String,
+    ) -> ThreadIsolated<Self> {
+        let isolated = shared_or_utf8(
+            global,
+            str.into_utf8_with_string_thread_isolated(),
+            Self::ThreadIsolatedString,
+            Self::Utf8,
+        );
+        // SAFETY: `ThreadIsolatedString` or `Utf8`.
+        unsafe { ThreadIsolated::new(isolated) }
     }
 
     #[inline]
@@ -473,29 +472,11 @@ impl StringOrBuffer<'static> {
         )
     }
 
-    /// Out-param convenience wrapper — see [`from_js_with_encoding_maybe_async_into`].
-    #[inline]
-    pub(crate) fn from_js_with_encoding_into(
-        out: &mut Self,
-        global: &JSGlobalObject,
-        value: JSValue,
-        encoding: Encoding,
-    ) -> JsResult<bool> {
-        Self::from_js_with_encoding_maybe_async_into(
-            out,
-            global,
-            value,
-            encoding,
-            Flavor::Sync,
-            StringObjects::Allow,
-        )
-    }
-
     /// Out-param core of [`from_js_with_encoding_maybe_async`]. Writes into
     /// `*out` and returns `Ok(true)` on success, `Ok(false)` for not-a-
     /// string-or-buffer. See [`from_js_maybe_async_into`] for rationale.
     #[inline]
-    pub(crate) fn from_js_with_encoding_maybe_async_into(
+    fn from_js_with_encoding_maybe_async_into(
         out: &mut Self,
         global: &JSGlobalObject,
         value: JSValue,
@@ -518,15 +499,36 @@ impl StringOrBuffer<'static> {
                 return Self::from_js_maybe_async_into(out, global, value, flavor, string_objects);
             }
 
-            use crate::webcore::encoding::BunStringEncode as _;
-            let encoded = str.encode(encoding);
-            global.vm().report_extra_memory(encoded.len());
-
-            *out = Self::owned(encoded);
+            *out = Self::encoded(global, &str, encoding);
             return Ok(true);
         }
 
         Ok(false)
+    }
+
+    fn encoded(global: &JSGlobalObject, str: &bun_core::String, encoding: Encoding) -> Self {
+        use crate::webcore::encoding::BunStringEncode as _;
+        let encoded = str.encode(encoding);
+        global.vm().report_extra_memory(encoded.len());
+        Self::owned(encoded)
+    }
+
+    /// For a synchronous call: a string encoded as `encoding`, a buffer borrowed.
+    #[inline]
+    pub(crate) fn from_string_or_js_bytes(
+        global: &JSGlobalObject,
+        value: StringOrJsBytes<'_>,
+        encoding: Encoding,
+    ) -> Self {
+        match value {
+            StringOrJsBytes::Bytes(bytes) => {
+                Self::Buffer(Buffer::from_array_buffer(global, bytes.to_js()))
+            }
+            StringOrJsBytes::String(str) if encoding == Encoding::Utf8 || str.is_empty() => {
+                Self::String(str.into_utf8_with_string())
+            }
+            StringOrJsBytes::String(str) => Self::encoded(global, &str, encoding),
+        }
     }
 
     #[inline]

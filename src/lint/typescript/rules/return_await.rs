@@ -41,7 +41,7 @@ const REQUIRED_PROMISE_AWAIT_SUGGESTION: Message = Message::new(
     "Add `await` before the expression. Use caution as this may impact control flow.",
 );
 
-/// Where the first `using` declaration of `statement` ends.
+/// The end of `statement`'s first `using` declaration.
 fn end_of_first_resource(statement: Stmt) -> Option<u32> {
     let StmtKind::Var(declarations) = statement.kind() else {
         return None;
@@ -51,7 +51,8 @@ fn end_of_first_resource(statement: Stmt) -> Option<u32> {
     resources.map(|declarator| declarator.span().end).min()
 }
 
-/// For each function, block, loop and `switch` statement that has `using` declarations directly in it: where the first ends.
+/// Maps each function, block, loop and `switch` statement that directly contains `using` declarations to the end of the
+/// first one.
 type Resources<'a> = FxHashMap<Node<'a>, u32>;
 
 fn resources_of<'a>(file: &'a File<'a>) -> Resources<'a> {
@@ -69,8 +70,8 @@ fn resources_of<'a>(file: &'a File<'a>) -> Resources<'a> {
     resources
 }
 
-/// Whether a `using` declaration that comes before `node` is in scope, up to the function. To tsgolint a class static block
-/// is not a function.
+/// True if a `using` declaration before `node` is in scope, looking no further than the function. tsgolint doesn't
+/// treat a class static block as a function.
 fn affects_explicit_resource_management<'a>(node: Expr<'a>, resources: &Resources<'a>, is_oxlint: bool) -> bool {
     if resources.is_empty() {
         return false;
@@ -96,13 +97,13 @@ fn affects_explicit_resource_management<'a>(node: Expr<'a>, resources: &Resource
     false
 }
 
-/// Whether `node` is in a `try` statement of its function in such a way that an exception has an
-/// impact on the control flow: in a `try` block, or in a `catch` block that a `finally` follows.
+/// True if `node` is in a `try` statement of its function where an exception affects the control flow: in a `try`
+/// block, or in a `catch` block followed by a `finally`.
 fn affects_explicit_error_handling(node: Expr<'_>, is_oxlint: bool) -> bool {
     let mut child = Node::Expr(node);
     for ancestor in child.ancestors() {
         match ancestor {
-            // tsgolint stops at `ast.IsFunctionLike`, which a class static block is not.
+            // tsgolint stops at `ast.IsFunctionLike`, which doesn't include a class static block.
             Node::Func(func) if !(is_oxlint && func.kind() == FnKind::StaticBlock) => return false,
             Node::Stmt(statement) => {
                 if let StmtKind::Try {
@@ -146,7 +147,7 @@ fn remove_await<'a>(fixer: Fixer<'a>, node: Expr<'a>) -> Vec<Fix> {
 }
 
 fn insert_await<'a>(fixer: Fixer<'a>, node: Expr<'a>) -> Vec<Fix> {
-    // tsgolint has the precedences of typescript-go, where `f<T>` is a member expression.
+    // tsgolint uses typescript-go's precedences, where `f<T>` is a member expression.
     let is_instantiation =
         node.file().language().is_oxlint && matches!(node.kind(), ExprKind::Instantiation { .. });
     match is_instantiation || is_higher_precedence_than_await(node) {
@@ -155,7 +156,7 @@ fn insert_await<'a>(fixer: Fixer<'a>, node: Expr<'a>) -> Vec<Fix> {
     }
 }
 
-/// tsgolint's `hasAsync` is the modifier as written. The HIR does not keep it on the function of an accessor.
+/// tsgolint's `hasAsync` is the written modifier. The HIR doesn't keep it on an accessor's function.
 fn has_async_modifier(func: Func<'_>) -> bool {
     matches!(func.kind(), FnKind::Getter | FnKind::Setter)
         && match func.owner() {
@@ -167,8 +168,8 @@ fn has_async_modifier(func: Func<'_>) -> bool {
 }
 
 impl ReturnAwait {
-    /// `returned`: what `node` is, or is a branch of. `affects_error_handling`: of `returned`, once it is known. Nothing between
-    /// the two makes a difference for it.
+    /// `returned` is `node` itself or the expression `node` is a branch of. `affects_error_handling` caches the answer
+    /// for `returned`, which is the same for all of its branches.
     fn test<'a>(
         &self,
         node: Expr<'a>,
@@ -189,7 +190,7 @@ impl ReturnAwait {
             return;
         }
 
-        // It is a thenable.
+        // It's a thenable.
         let affects_error_handling = *affects_error_handling.get_or_insert_with(|| {
             let file = cx.file();
             let is_oxlint = file.language().is_oxlint;
@@ -203,7 +204,7 @@ impl ReturnAwait {
         };
         match should_await_in_current_context {
             WhetherToAwait::Await if !is_await => {
-                // tsgolint adds the `await` in a class static block too, where it is a syntax error.
+                // tsgolint also adds the `await` in a class static block, where it's a syntax error.
                 let is_in_class_static_block = cx.language().is_oxlint
                     && Node::Expr(node).enclosing_function().is_some_and(|func| func.kind() == FnKind::StaticBlock);
                 let fix_or_suggest = match is_in_class_static_block {
@@ -250,7 +251,7 @@ impl Rule for ReturnAwait {
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
     const ON: On = On::new().funcs().stmts(&[StmtTag::Return]);
-    /// Once it has been asked for.
+    /// Computed on first use.
     type State<'a> = Option<Resources<'a>>;
 
     fn new(options: &Options) -> Self {

@@ -6,6 +6,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   analyze,
+  cppClasses,
   cppCounts,
   cppHeader,
   cppSource,
@@ -113,6 +114,7 @@ for (const file of files) {
 }
 writeIfNotChanged(path.join(codegenPath, "GeneratedBindings+Tables.h"), cppTables(tables));
 writeIfNotChanged(path.join(codegenPath, "GeneratedBindings+Counts.h"), cppCounts(tables));
+writeIfNotChanged(path.join(codegenPath, "GeneratedBindings+Classes.h"), cppClasses(tables));
 for (const [crate, crateFiles] of Map.groupBy(files, file => file.origin.crate)) {
   writeIfNotChanged(path.join(codegenPath, `generated_bindgen_${crate}.rs`), rustForCrate(crateFiles));
 }

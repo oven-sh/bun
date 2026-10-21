@@ -384,6 +384,7 @@ fn source_from_js(
             out.truncate(r.written);
             return Ok(Source::Owned(out));
         }
+        crate::node::types::Valid::path_null_bytes(s, global)?;
         return Ok(Source::Path(ZBox::from_bytes(s)));
     }
     if let Some(ab) = value.as_array_buffer(global) {
@@ -703,7 +704,7 @@ impl Image {
     /// documented and `.shared`/`.resizable` are refused at construction. The
     /// codec layer is hardened so a hostile mid-decode mutation degrades to
     /// `DecodeFailed`, not OOB/heap-leak — see `codec_jpeg.rs` cropping +
-    /// post-check, `codec_webp.rs` dim re-check. (If the attacker already runs
+    /// post-check, `codec_webp.rs` owned canvas. (If the attacker already runs
     /// JS in-process the threat model is moot anyway; the surface that matters
     /// is hostile *bytes*, which the codec validation handles.)
     fn pin_for_task(

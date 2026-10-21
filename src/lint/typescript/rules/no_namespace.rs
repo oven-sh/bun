@@ -11,7 +11,7 @@ const MODULE_SYNTAX_IS_PREFERRED: Message = Message::new(
     "ES2015 module syntax is preferred over namespaces.",
 );
 
-/// It has the `declare` modifier, or is in a namespace, a module or a `global` that has.
+/// True if it has the `declare` modifier, or is inside a namespace, a module or a `global` that does.
 fn is_declaration(stmt: Stmt) -> bool {
     let has_declare = |it: Stmt| it.tag() == StmtTag::Module && it.flags().contains(Flags::AMBIENT);
     has_declare(stmt) || Node::Stmt(stmt).ancestors().filter_map(Node::as_stmt).any(has_declare)
@@ -47,13 +47,13 @@ impl Rule for NoNamespace {
         if self.allow_declarations && is_declaration(stmt) {
             return;
         }
-        // oxlint points at the keyword, which is before the name.
+        // oxlint points at the keyword, which comes right before the name.
         let end = cx.file().end_of_token_before(name.span().start);
         let keyword = if cx.slice(Span::new(0, end)).ends_with(b"namespace") { "namespace" } else { "module" };
-        let place = match cx.language().is_oxlint {
+        let report_span = match cx.language().is_oxlint {
             true => Span::new(end.saturating_sub(keyword.len() as u32), end),
             false => stmt.span_without_export(),
         };
-        cx.report(place, MODULE_SYNTAX_IS_PREFERRED);
+        cx.report(report_span, MODULE_SYNTAX_IS_PREFERRED);
     }
 }

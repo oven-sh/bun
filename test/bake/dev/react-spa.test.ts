@@ -939,3 +939,45 @@ test("bun bake hydrates a .tsx page, and Fast Refresh keeps its state after an e
   // A full reload would reset the count to 0.
   await client.expectElemText("button", "clicks 2");
 });
+
+test("bun bake hydrates a page with server props, and loads it again when only its data changes", async () => {
+  using dir = tempDir("bake-hydrate-props", {
+    "app/data.ts": `export const start = 5;`,
+    "app/pages/index.tsx": `
+      import { useState } from "react";
+      import { start } from "../data.ts";
+      export const getServerSideProps = async () => ({ props: { start } });
+      export default function Home({ start }) {
+        const [count, setCount] = useState(start);
+        return <button onClick={() => setCount(count + 1)}>{"count " + count}</button>;
+      }
+    `,
+  });
+  symlinkSync(join(import.meta.dir, "../../node_modules"), join(String(dir), "node_modules"), "junction");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "bake", "--port=0"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1", NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  let text = "";
+  const decoder = new TextDecoder();
+  for await (const chunk of proc.stdout) {
+    text += decoder.decode(chunk);
+    if (/url: \S+/.test(text)) break;
+  }
+  const url = text.match(/url: (\S+)/)![1];
+
+  await using client = new Client(url, { hmr: true });
+  await client.waitForPageLoad();
+  // The browser gets the props of the server: a click goes on from 5.
+  await client.click("button");
+  await client.expectElemText("button", "count 6");
+
+  // Only the server imports app/data.ts, so the browser loads the page again for the new props.
+  await client.expectReload(async () => {
+    await Bun.write(join(String(dir), "app/data.ts"), `export const start = 10;`);
+  });
+  await client.expectElemText("button", "count 10");
+});

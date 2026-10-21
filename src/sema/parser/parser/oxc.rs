@@ -1,21 +1,21 @@
 //! Errors that oxc reports and TypeScript's parser doesn't.
 //!
 //! TypeScript's parser accepts `function f(a?, b) {}` or `declare let a = 1` and leaves the error to the checker
-//! (`checkGrammar*`). oxc has no checker: its parser and the pass that builds its scopes report them, and oxlint doesn't lint
-//! such a file. `Dialect::oxc` asks for the same errors here. oxc has one parser for both languages, so most of them are
-//! errors in a JavaScript file too, where it also has something to say about a modifier that only TypeScript has.
+//! (`checkGrammar*`). oxc has no checker, so its parser and its scope-building pass report these errors, and oxlint
+//! doesn't lint such a file. `Dialect::oxc` enables the same errors here. oxc has one parser for both languages, so
+//! most of them are errors in a JavaScript file too, where it also reports TypeScript-only modifiers.
 //!
-//! The parser calls in from the spot where it has everything at hand, behind a test that ordinary code fails. So a file
-//! without such an error pays a few branches. What is slow is out of line and not generic.
+//! The parser calls into this file from the point where it has everything it needs, behind a test that ordinary code
+//! fails, so a file without such an error only pays for a few branches. The slow code is out of line and not generic.
 //!
-//! Every condition, text and label was measured on oxlint 1.87.
+//! Every condition, message and label was checked against oxlint 1.87.
 //!
-//! How an error is written down ([`DiagnosticKind::Oxc`]):
+//! How an error is encoded ([`DiagnosticKind::Oxc`]):
 //! - `code`: the number in `TS(1016)`, or 0.
 //! - `start`, `end`: the first label.
-//! - `args`: the message, the help, and what the first label says. The last two can be missing.
-//! - `related`: the other labels, each with its text as the one argument. An entry without arguments is no label: oxc
-//!   reports the error when its parser is at `start` of that entry, which decides where oxlint prints it.
+//! - `args`: the message, the help, and the first label's text. The last two are optional.
+//! - `related`: the other labels, each with its text as its only argument. An entry without arguments isn't a label. It
+//!   means oxc reports the error when its parser reaches that entry's `start`, which determines where oxlint prints it.
 
 use super::Parser;
 use bun_sema::check::spans::{skip_trivia, skip_trivia_back, token_end};
@@ -35,7 +35,8 @@ const METHOD: Flags = ACCESSIBILITY
     .union(Flags::OVERRIDE)
     .union(Flags::ASYNC);
 
-/// oxc's `ModifierKind`, in its order: a help lists them so, and of two modifiers that are in the way the first is named.
+/// oxc's `ModifierKind`, in oxc's order. A help text lists modifiers in this order, and when several earlier modifiers
+/// conflict with one, the message names the first in this order.
 const MODIFIERS: [Flags; 15] = [
     Flags::AMBIENT,
     Flags::PRIVATE,
@@ -56,7 +57,7 @@ const MODIFIERS: [Flags; 15] = [
 
 type Errors = Vec<Diagnostic>;
 
-/// From `start` to `end`. An empty label stays empty.
+/// The label `start..end`. An empty label stays empty.
 fn label(start: u32, end: u32) -> (u32, u32) {
     match end <= start {
         true => (start, Diagnostic::NO_LENGTH),
@@ -68,14 +69,14 @@ fn error(code: u32, at: (u32, u32), message: &str, help: &str) -> Diagnostic {
     error_with_text(code, at, message.as_bytes(), help)
 }
 
-/// The same with a message that quotes the file.
+/// `error` with a message that quotes the source.
 #[inline(never)]
 fn error_with_text(code: u32, at: (u32, u32), message: &[u8], help: &str) -> Diagnostic {
     let texts = [message, help.as_bytes()];
     Diagnostic::new(DiagnosticKind::Oxc, label(at.0, at.1), code, &texts)
 }
 
-/// The parser gives up here.
+/// An error at which oxc's parser gives up.
 fn fatal(at: (u32, u32), message: &str) -> Diagnostic {
     Diagnostic {
         kind: DiagnosticKind::OxcFatal,
@@ -87,7 +88,7 @@ fn unexpected(at: (u32, u32)) -> Diagnostic {
     fatal(at, "Unexpected token")
 }
 
-/// The parser gives up at `at`, where it finds `found` and not `wanted`. `found`: what oxc calls the token.
+/// oxc's parser gives up at `at`, where it expected `wanted` but found `found` (oxc's name for the token).
 fn expected(wanted: &str, found: &[u8], at: (u32, u32)) -> Diagnostic {
     let texts: [&[u8]; 5] = [
         b"Expected `",
@@ -97,12 +98,12 @@ fn expected(wanted: &str, found: &[u8], at: (u32, u32)) -> Diagnostic {
         b"`",
     ];
     let message = texts.concat();
-    let says = format!("`{wanted}` expected");
-    let texts = [&message[..], b"", says.as_bytes()];
+    let label_text = format!("`{wanted}` expected");
+    let texts = [&message[..], b"", label_text.as_bytes()];
     Diagnostic::new(DiagnosticKind::OxcFatal, label(at.0, at.1), 0, &texts)
 }
 
-/// The same at the token at `at`, which is a punctuator or a name that is no keyword.
+/// `expected` for the token at `at`, which is a punctuator or a non-keyword name.
 fn expected_at(wanted: &str, src: &[u8], at: u32) -> Diagnostic {
     let end = token_end(src, at as usize, false) as u32;
     let text = src.get(at as usize..end as usize).unwrap_or_default();
@@ -114,7 +115,7 @@ fn expected_at(wanted: &str, src: &[u8], at: u32) -> Diagnostic {
     expected(wanted, found, (at, end))
 }
 
-/// The parser takes what ends at `after` for a statement, and gives up at what follows on the line.
+/// oxc's parser treats what ends at `after` as a complete statement and gives up at what follows on the same line.
 fn missing_semicolon(after: u32) -> Diagnostic {
     let message = "Expected a semicolon or an implicit semicolon after a statement, but found none";
     Diagnostic {
@@ -123,7 +124,7 @@ fn missing_semicolon(after: u32) -> Diagnostic {
     }
 }
 
-/// From the pass that builds the scopes.
+/// An error from oxc's scope-building pass.
 fn semantic(code: u32, at: (u32, u32), message: &str) -> Diagnostic {
     Diagnostic {
         kind: DiagnosticKind::OxcSemantic,
@@ -139,7 +140,7 @@ fn noticed_at(mut error: Diagnostic, now: u32) -> Diagnostic {
     error
 }
 
-/// With what the first label says, and a second label.
+/// Adds the first label's text and a second label.
 fn with_labels(mut error: Diagnostic, first: &str, at: (u32, u32), second: &str) -> Diagnostic {
     let mut texts = std::mem::take(&mut error.args).into_vec();
     texts.push(first.as_bytes().into());
@@ -156,7 +157,7 @@ fn with_labels(mut error: Diagnostic, first: &str, at: (u32, u32), second: &str)
 enum Help {
     None,
     Text(&'static str),
-    /// These are the modifiers that can be there.
+    /// Lists the modifiers that are allowed there.
     Allowed(Flags),
 }
 
@@ -220,8 +221,8 @@ fn cannot_precede(modifier: Flags) -> Flags {
 /// oxc's `check_modifier`: `modifier`, at `pos`, follows the modifiers `seen`.
 #[inline(never)]
 pub(super) fn modifier_after(errors: &mut Errors, seen: Flags, modifier: Flags, pos: u32) {
-    let in_the_way = cannot_precede(modifier) & seen;
-    if in_the_way.is_empty() {
+    let conflicting = cannot_precede(modifier) & seen;
+    if conflicting.is_empty() {
         return;
     }
     let this = (modifier, pos);
@@ -234,7 +235,7 @@ pub(super) fn modifier_after(errors: &mut Errors, seen: Flags, modifier: Flags, 
     if seen.contains(modifier) {
         return errors.push(about_modifier(1030, this, "already seen.", twice));
     }
-    let Some(&other) = MODIFIERS.iter().find(|&&it| in_the_way.contains(it)) else {
+    let Some(&other) = MODIFIERS.iter().find(|&&it| conflicting.contains(it)) else {
         return;
     };
     let both = modifier | other;
@@ -269,21 +270,21 @@ pub(super) fn modifier_after(errors: &mut Errors, seen: Flags, modifier: Flags, 
     });
 }
 
-/// oxc's `verify_modifiers`: calls `report` with each keyword of `modifiers` that is not among `allowed`. oxc remembers one
-/// place for each keyword, the last.
+/// oxc's `verify_modifiers`: calls `report` with each keyword of `modifiers` that isn't in `allowed`. oxc only
+/// remembers the last position of each keyword.
 fn verify(modifiers: &[Modifier], allowed: Flags, report: &mut dyn FnMut((Flags, u32))) {
     for (index, it) in modifiers.iter().enumerate() {
         let ModifierKind::Keyword(modifier) = it.kind else {
             continue;
         };
-        let is_again = |later: &Modifier| later.kind == it.kind;
-        if !allowed.contains(modifier) && !modifiers[index + 1..].iter().any(is_again) {
+        let is_repeated_later = |later: &Modifier| later.kind == it.kind;
+        if !allowed.contains(modifier) && !modifiers[index + 1..].iter().any(is_repeated_later) {
             report((modifier, it.pos));
         }
     }
 }
 
-const DECORATOR_ELSEWHERE: &str = "Decorators are not valid here.";
+const MISPLACED_DECORATOR: &str = "Decorators are not valid here.";
 
 fn decorator(modifier: &Modifier) -> Option<ExprId> {
     match modifier.kind {
@@ -294,8 +295,8 @@ fn decorator(modifier: &Modifier) -> Option<ExprId> {
 
 /// The spans of the decorators among `modifiers`.
 fn decorators(f: &FileBuilder, modifiers: Span<ModifierId>) -> Vec<(u32, u32)> {
-    let written = f.modifiers.get(modifiers.range()).unwrap_or_default();
-    let spans = written
+    let modifier_list = f.modifiers.get(modifiers.range()).unwrap_or_default();
+    let spans = modifier_list
         .iter()
         .filter_map(|it| Some((it.pos, outer_span(f, decorator(it)?)?.1)));
     spans.collect()
@@ -315,9 +316,9 @@ fn implementation_in_ambient_context(open_brace: u32) -> Diagnostic {
     error(1183, (open_brace, open_brace), AMBIENT_IMPLEMENTATION, "")
 }
 
-/// The parameters of `func`, one after the other as oxc's parser reads them. False: it has given up.
-fn parameters(f: &mut FileBuilder, src: &[u8], func: &Func, place: Place) -> bool {
-    let is_ambient = place.is_ambient;
+/// Checks `func`'s parameters in the order oxc's parser reads them. Returns false if oxc gives up.
+fn parameters(f: &mut FileBuilder, src: &[u8], func: &Func, site: CallSite) -> bool {
+    let is_ambient = site.is_ambient;
     let FileBuilder {
         params,
         pats,
@@ -336,19 +337,19 @@ fn parameters(f: &mut FileBuilder, src: &[u8], func: &Func, place: Place) -> boo
         let Some(name) = pats.get(param.pat.idx()) else {
             continue;
         };
-        let written = modifiers_of_params.get(id.idx()).copied();
-        let written = modifiers
-            .get(written.unwrap_or(Span::EMPTY).range())
+        let modifier_list = modifiers_of_params.get(id.idx()).copied();
+        let modifier_list = modifiers
+            .get(modifier_list.unwrap_or(Span::EMPTY).range())
             .unwrap_or_default();
         let allowed = match func.kind {
-            FnKind::Constructor if !place.is_javascript => PARAMETER_PROPERTY,
+            FnKind::Constructor if !site.is_javascript => PARAMETER_PROPERTY,
             _ => Flags::empty(),
         };
-        // oxc looks at the modifiers before it goes on, and at the rest after the parameter.
-        let after_modifiers = written.last().map_or(param.pos, |it| it.pos + 1);
-        verify(written, allowed, &mut |it| {
+        // oxc checks the modifiers before it continues, and everything else after the parameter.
+        let after_modifiers = modifier_list.last().map_or(param.pos, |it| it.pos + 1);
+        verify(modifier_list, allowed, &mut |it| {
             let help = Help::Allowed(allowed);
-            let found = match place.is_javascript {
+            let found = match site.is_javascript {
                 true => {
                     let message = "Parameter modifiers can only be used in TypeScript files.";
                     let end = it.1 + modifier_text(it.0).len() as u32;
@@ -358,26 +359,32 @@ fn parameters(f: &mut FileBuilder, src: &[u8], func: &Func, place: Place) -> boo
             };
             errors.push(noticed_at(found, after_modifiers));
         });
-        if !place.is_class_member || place.is_javascript {
-            for (it, e) in written.iter().filter_map(|it| Some((it, decorator(it)?))) {
+        if !site.is_class_member || site.is_javascript {
+            for (it, e) in modifier_list
+                .iter()
+                .filter_map(|it| Some((it, decorator(it)?)))
+            {
                 let Some(inner) = exprs.get(e.idx()) else {
                     continue;
                 };
-                let around = parens.iter().filter(|it| it.0 == e);
-                let end = around.fold(inner.end, |end, it| end.max(it.2));
-                let found = error(0, (it.pos, end), DECORATOR_ELSEWHERE, "");
+                let enclosing_parens = parens.iter().filter(|it| it.0 == e);
+                let end = enclosing_parens.fold(inner.end, |end, it| end.max(it.2));
+                let found = error(0, (it.pos, end), MISPLACED_DECORATOR, "");
                 errors.push(noticed_at(found, param.loc.end));
             }
         }
         let is_optional = param.flags.contains(Flags::OPTIONAL);
         let whole = (param.pos, param.loc.end);
-        let is_property = keywords(written).intersects(PARAMETER_PROPERTY);
+        let is_property = keywords(modifier_list).intersects(PARAMETER_PROPERTY);
         if is_property && func.kind == FnKind::Constructor && matches!(func.body, FnBody::None) {
             let message = "A parameter property is only allowed in a constructor implementation.";
             errors.push(semantic(2369, whole, message));
         }
         if param.flags.contains(Flags::REST) {
-            if let Some(last) = written.last().filter(|it| it.kind.flag() != Flags::empty()) {
+            if let Some(last) = modifier_list
+                .last()
+                .filter(|it| it.kind.flag() != Flags::empty())
+            {
                 let after = last.pos as usize + modifier_text(last.kind.flag()).len();
                 let dots = skip_trivia(src, after) as u32;
                 errors.push(fatal((dots, dots + 3), "Unexpected token"));
@@ -455,7 +462,7 @@ fn parameters(f: &mut FileBuilder, src: &[u8], func: &Func, place: Place) -> boo
     true
 }
 
-/// A `this` at `at` that is not the first parameter.
+/// A `this` at `at` that isn't the first parameter.
 #[cold]
 #[inline(never)]
 pub(super) fn this_after_parameter(errors: &mut Errors, at: u32) {
@@ -463,8 +470,7 @@ pub(super) fn this_after_parameter(errors: &mut Errors, at: u32) {
     errors.push(fatal((at, at + 4), message));
 }
 
-/// oxc's `check_getter` and `check_setter`, without what every parser of JavaScript reports: the number of parameters, and a
-/// rest parameter.
+/// oxc's `check_getter` and `check_setter`, minus what all JavaScript parsers report: parameter count, rest parameter.
 fn accessor(f: &FileBuilder, func: &Func) -> Option<Diagnostic> {
     if let (Some(first), Some(last)) = (
         f.type_params.get(func.type_params.start as usize),
@@ -472,7 +478,7 @@ fn accessor(f: &FileBuilder, func: &Func) -> Option<Diagnostic> {
             .get(func.type_params.range().end.wrapping_sub(1)),
     ) && !func.type_params.is_empty()
     {
-        // The label has the angle brackets.
+        // The label includes the angle brackets.
         let message = "An accessor cannot have type parameters.";
         return Some(error(1094, (first.start, last.end), message, ""));
     }
@@ -494,7 +500,7 @@ fn accessor(f: &FileBuilder, func: &Func) -> Option<Diagnostic> {
     })
 }
 
-/// Whether `declare` is one of the modifiers of the declaration `func`.
+/// True if `declare` is one of the modifiers on the declaration `func`.
 fn is_after_declare(src: &[u8], func: &Func) -> bool {
     let mut at = func.start as usize;
     loop {
@@ -508,9 +514,9 @@ fn is_after_declare(src: &[u8], func: &Func) -> bool {
     }
 }
 
-/// Where the parser is when it calls in.
+/// The parser's state when it calls into this file.
 #[derive(Copy, Clone)]
-pub(super) struct Place {
+pub(super) struct CallSite {
     /// The end of the last token.
     pub(super) now: u32,
     /// `ctx::AMBIENT`
@@ -522,7 +528,7 @@ pub(super) struct Place {
     pub(super) is_javascript: bool,
 }
 
-/// At the end of the function `id`. `open_brace`: that of its body.
+/// Call at the end of the function `id`. `open_brace`: the `{` of its body.
 #[cold]
 #[inline(never)]
 pub(super) fn function(
@@ -530,16 +536,16 @@ pub(super) fn function(
     src: &[u8],
     id: FnId,
     open_brace: u32,
-    place: Place,
+    site: CallSite,
     can_end_here: bool,
 ) {
     let Some(&func) = f.fns.get(id.idx()) else {
         return;
     };
-    let Place {
+    let CallSite {
         now, is_ambient, ..
-    } = place;
-    if !parameters(f, src, &func, place) {
+    } = site;
+    if !parameters(f, src, &func, site) {
         return;
     }
     let has_body = !matches!(func.body, FnBody::None);
@@ -563,15 +569,15 @@ pub(super) fn function(
     if matches!(func.kind, FnKind::Getter | FnKind::Setter)
         && let Some(mut found) = accessor(f, &func)
         // A signature in a type can have an initializer.
-        && (found.code != 0 || !place.is_in_type && !place.is_javascript)
+        && (found.code != 0 || !site.is_in_type && !site.is_javascript)
     {
-        // Labels that reach to a bracket.
+        // These labels extend to a bracket.
         match found.code {
             1094 => {
                 let less_than = skip_trivia_back(src, found.start as usize) as u32;
                 found.start = less_than.saturating_sub(1);
                 found.end = skip_trivia(src, found.end as usize) as u32 + 1;
-                if place.is_in_type {
+                if site.is_in_type {
                     let at = (found.start, found.start + 1);
                     let mut found = fatal(at, "Expected `(` but found `<`");
                     found.args = [&b"Expected `(` but found `<`"[..], b"", b"`(` expected"]
@@ -590,7 +596,7 @@ pub(super) fn function(
         }
         f.diagnostics.push(noticed_at(found, now));
     }
-    // After `declare function f() {}` oxc wants the end of a statement, and only then looks at what it has read.
+    // After `declare function f() {}` oxc requires the end of a statement, and only then checks what it parsed.
     if func.kind == FnKind::Decl && has_body && !can_end_here && is_after_declare(src, &func) {
         return f.diagnostics.push(missing_semicolon(now));
     }
@@ -616,7 +622,7 @@ pub(super) fn function(
                 error(1222, (start, now), message, "")
             }
         };
-        // At the token after the signature: in `function* enum() {}` oxc has given up there.
+        // Reported at the token after the signature. In `function* enum() {}` oxc has given up by then.
         let next = skip_trivia(src, now as usize) as u32;
         f.diagnostics.push(noticed_at(found, next));
     }
@@ -634,10 +640,10 @@ pub(super) struct ClassMember<'a> {
     pub(super) member: &'a Member,
     /// From the first token of its name to the end of the name.
     pub(super) name: (u32, u32),
-    pub(super) place: Place,
+    pub(super) site: CallSite,
 }
 
-/// The span of oxc's `PropertyKey`: of `[a]` it is `a`.
+/// The span of oxc's `PropertyKey`: for `[a]` it's `a`.
 fn key_span(src: &[u8], (start, end): (u32, u32)) -> (u32, u32) {
     match src.get(start as usize) {
         Some(b'[') => (
@@ -648,7 +654,7 @@ fn key_span(src: &[u8], (start, end): (u32, u32)) -> (u32, u32) {
     }
 }
 
-/// What oxc calls a member in a message: a string without its quotes, anything else as it is written.
+/// How oxc's messages name a member: a string without its quotes, anything else verbatim.
 fn key_text(src: &[u8], (start, end): (u32, u32)) -> &[u8] {
     let text = src.get(start as usize..end as usize).unwrap_or_default();
     match text {
@@ -657,60 +663,60 @@ fn key_text(src: &[u8], (start, end): (u32, u32)) -> &[u8] {
     }
 }
 
-/// The span of `e` with the parentheses around it. The list of parentheses is not sorted yet.
+/// The span of `e` with the parentheses around it. The list of parentheses isn't sorted yet.
 fn outer_span(f: &FileBuilder, e: ExprId) -> Option<(u32, u32)> {
     let inner = f.exprs.get(e.idx())?;
-    let around = f.parens.iter().filter(|it| it.0 == e);
-    Some(around.fold((inner.pos, inner.end), |span, it| {
+    let enclosing_parens = f.parens.iter().filter(|it| it.0 == e);
+    Some(enclosing_parens.fold((inner.pos, inner.end), |span, it| {
         (span.0.min(it.1), span.1.max(it.2))
     }))
 }
 
-/// The modifiers of a `static {}` block, of which there can be none.
+/// Reports the modifiers of a `static {}` block, which can't have any.
 #[cold]
 #[inline(never)]
 pub(super) fn static_block(f: &mut FileBuilder, modifiers: Span<ModifierId>) {
     let misplaced = decorators(f, modifiers);
-    let (written, errors) = (&f.modifiers, &mut f.diagnostics);
+    let (modifier_list, errors) = (&f.modifiers, &mut f.diagnostics);
     errors.extend(
         misplaced
             .iter()
-            .map(|&at| error(0, at, DECORATOR_ELSEWHERE, "")),
+            .map(|&at| error(0, at, MISPLACED_DECORATOR, "")),
     );
-    let written = written.get(modifiers.range()).unwrap_or_default();
-    let after = written.last().map_or(0, |it| it.pos + 1);
-    verify(written, Flags::empty(), &mut |(modifier, pos)| {
+    let modifier_list = modifier_list.get(modifiers.range()).unwrap_or_default();
+    let after = modifier_list.last().map_or(0, |it| it.pos + 1);
+    verify(modifier_list, Flags::empty(), &mut |(modifier, pos)| {
         let end = pos + modifier_text(modifier).len() as u32;
         let found = error(1184, (pos, end), "Modifiers cannot appear here.", "");
         errors.push(noticed_at(found, after));
     });
 }
 
-/// The modifiers of an index signature. `allowed`: `readonly`, and in a class `static`.
+/// Checks the modifiers of an index signature. `allowed`: `readonly`, and in a class `static`.
 #[cold]
 #[inline(never)]
 pub(super) fn index_signature(f: &mut FileBuilder, modifiers: Span<ModifierId>, allowed: Flags) {
     let misplaced = decorators(f, modifiers);
-    let (written, errors) = (&f.modifiers, &mut f.diagnostics);
+    let (modifier_list, errors) = (&f.modifiers, &mut f.diagnostics);
     errors.extend(
         misplaced
             .iter()
-            .map(|&at| error(0, at, DECORATOR_ELSEWHERE, "")),
+            .map(|&at| error(0, at, MISPLACED_DECORATOR, "")),
     );
-    let written = written.get(modifiers.range()).unwrap_or_default();
-    let after = written.last().map_or(0, |it| it.pos + 1);
-    verify(written, allowed, &mut |it| {
+    let modifier_list = modifier_list.get(modifiers.range()).unwrap_or_default();
+    let after = modifier_list.last().map_or(0, |it| it.pos + 1);
+    verify(modifier_list, allowed, &mut |it| {
         let rest = "cannot appear on an index signature.";
         let found = about_modifier(1071, it, rest, Help::Allowed(allowed));
         errors.push(noticed_at(found, after));
     });
 }
 
-/// What oxc's parser reports about a member of a class that is neither a static block nor an index signature.
+/// Reports what oxc's parser reports about a class member that's neither a static block nor an index signature.
 #[cold]
 #[inline(never)]
 pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
-    let (member, now, is_ambient) = (it.member, it.place.now, it.place.is_ambient);
+    let (member, now, is_ambient) = (it.member, it.site.now, it.site.is_ambient);
     let func = f.fns.get(member.func.idx()).copied();
     let has_body = func.is_some_and(|it| !matches!(it.body, FnBody::None));
     let open_brace = f.body_starts.last().map_or(0, |it| it.1);
@@ -727,9 +733,11 @@ pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
             .get(type_params.range().end.wrapping_sub(1))
             .copied(),
     );
-    let (written, errors) = (&f.modifiers, &mut f.diagnostics);
-    let written = written.get(member.modifiers.range()).unwrap_or_default();
-    let seen = keywords(written);
+    let (modifier_list, errors) = (&f.modifiers, &mut f.diagnostics);
+    let modifier_list = modifier_list
+        .get(member.modifiers.range())
+        .unwrap_or_default();
+    let seen = keywords(modifier_list);
     let key = key_span(src, it.name);
     let name = key_text(src, key);
     let is_private = src.get(key.0 as usize) == Some(&b'#');
@@ -743,22 +751,22 @@ pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
         false => postfix.0,
     };
     let exclamation = (exclamation, exclamation + 1);
-    let place_of = |modifier: Flags| {
-        let found = written.iter().rfind(|it| it.kind.flag() == modifier);
+    let position_of = |modifier: Flags| {
+        let found = modifier_list.iter().rfind(|it| it.kind.flag() == modifier);
         found.map_or(0, |it| it.pos)
     };
     // After the modifiers, and after the name.
     let (before_name, after_name) = it.name;
-    if it.place.is_javascript {
-        let after_modifiers = written.last().map_or(0, |it| it.pos + 1);
-        verify(written, JAVASCRIPT, &mut |(modifier, pos)| {
+    if it.site.is_javascript {
+        let after_modifiers = modifier_list.last().map_or(0, |it| it.pos + 1);
+        verify(modifier_list, JAVASCRIPT, &mut |(modifier, pos)| {
             let name = modifier_text(modifier);
             let message = format!("The '{name}' modifier can only be used in TypeScript files.");
             let found = error(8009, (pos, pos + name.len() as u32), &message, "");
             errors.push(noticed_at(found, after_modifiers));
         });
     }
-    verify(written, !Flags::EXPORT, &mut |it| {
+    verify(modifier_list, !Flags::EXPORT, &mut |it| {
         let rest = "cannot appear on class elements of this kind.";
         let found = about_modifier(1031, it, rest, Help::None);
         errors.push(noticed_at(found, before_name));
@@ -773,7 +781,7 @@ pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
     if kind != MemberKind::Constructor {
         // oxc's `parse_class_element_name`
         verify(
-            written,
+            modifier_list,
             !(Flags::CONST | Flags::IN | Flags::OUT),
             &mut |it| {
                 let found = match it.0 == Flags::CONST {
@@ -783,13 +791,13 @@ pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
                         "A class member cannot have the 'const' keyword.",
                         "Did you mean `readonly`?",
                     ),
-                    false => about_modifier(1274, it, VARIANCE_ELSEWHERE, Help::None),
+                    false => about_modifier(1274, it, MISPLACED_VARIANCE, Help::None),
                 };
                 errors.push(noticed_at(found, before_name));
             },
         );
-        if is_private && !it.place.is_javascript {
-            verify(written, !ACCESSIBILITY, &mut |(modifier, pos)| {
+        if is_private && !it.site.is_javascript {
+            verify(modifier_list, !ACCESSIBILITY, &mut |(modifier, pos)| {
                 let end = pos + modifier_text(modifier).len() as u32;
                 let message = "An accessibility modifier cannot be used with a private identifier.";
                 let help = "Private identifiers are enforced at runtime, while accessibility modifiers only affect type checking, so using both is redundant.";
@@ -823,7 +831,7 @@ pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
                 errors.push(marked_abstract(1318, "Accessor", "implementation"));
             }
             let allowed = !(Flags::ASYNC | Flags::AMBIENT | Flags::ACCESSOR);
-            verify(written, allowed, &mut |it| {
+            verify(modifier_list, allowed, &mut |it| {
                 let found = match it.0 == Flags::ACCESSOR {
                     true => about_modifier(1275, it, only_on_property, Help::None),
                     false => about_modifier(0, it, "cannot be used here.", Help::None),
@@ -833,7 +841,7 @@ pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
         }
         MemberKind::Constructor => {
             let allowed = !(Flags::AMBIENT | Flags::READONLY | Flags::ACCESSOR);
-            verify(written, allowed, &mut |it| {
+            verify(modifier_list, allowed, &mut |it| {
                 let found = match it.0 {
                     Flags::AMBIENT => {
                         let rest = "cannot appear on a constructor declaration.";
@@ -847,7 +855,7 @@ pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
                 errors.push(noticed_at(found, before_name));
             });
             if is_abstract {
-                errors.push(noticed_at(error(1242, key, ABSTRACT_ELSEWHERE, ""), now));
+                errors.push(noticed_at(error(1242, key, MISPLACED_ABSTRACT, ""), now));
             }
             if is_ambient && has_body {
                 errors.push(implementation_in_ambient_context(open_brace));
@@ -864,7 +872,7 @@ pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
         }
         MemberKind::Method => {
             let allowed = !(Flags::AMBIENT | Flags::READONLY | Flags::ACCESSOR);
-            verify(written, allowed, &mut |it| {
+            verify(modifier_list, allowed, &mut |it| {
                 let rest = match it.0 {
                     Flags::AMBIENT => "cannot appear on class elements of this kind.",
                     Flags::READONLY => only_on_property_or_index,
@@ -898,28 +906,33 @@ pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
                 errors.push(error(1276, postfix, message, "Remove this `?`"));
             }
             let others = ACCESSIBILITY | Flags::STATIC | Flags::ABSTRACT | Flags::OVERRIDE;
-            verify(written, others | Flags::ACCESSOR, &mut |(modifier, pos)| {
-                let name = modifier_text(modifier);
-                let message = format!("'accessor' modifier cannot be used with '{name}' modifier.");
-                let at = (pos, pos + name.len() as u32);
-                let help = Help::Allowed(others).text();
-                errors.push(noticed_at(error(1243, at, &message, &help), now));
-            });
-            let is_refused = is_ambient && !seen.contains(Flags::AMBIENT)
+            verify(
+                modifier_list,
+                others | Flags::ACCESSOR,
+                &mut |(modifier, pos)| {
+                    let name = modifier_text(modifier);
+                    let message =
+                        format!("'accessor' modifier cannot be used with '{name}' modifier.");
+                    let at = (pos, pos + name.len() as u32);
+                    let help = Help::Allowed(others).text();
+                    errors.push(noticed_at(error(1243, at, &message, &help), now));
+                },
+            );
+            let is_disallowed = is_ambient && !seen.contains(Flags::AMBIENT)
                 || is_abstract
                 || seen.contains(Flags::STATIC);
             if member.flags.contains(Flags::DEFINITE) {
-                let found = definite(exclamation, initializer.is_some(), member.ty, is_refused);
+                let found = definite(exclamation, initializer.is_some(), member.ty, is_disallowed);
                 errors.extend(found.map(|it| noticed_at(it, now)));
             }
         }
         MemberKind::Property => {
-            verify(written, !Flags::ASYNC, &mut |it| {
+            verify(modifier_list, !Flags::ASYNC, &mut |it| {
                 let found = about_modifier(0, it, "cannot be used here.", Help::None);
                 errors.push(noticed_at(found, after_name));
             });
             if is_abstract && is_private {
-                let at = place_of(Flags::ABSTRACT);
+                let at = position_of(Flags::ABSTRACT);
                 errors.push(noticed_at(
                     error(18019, (at, at + 8), ABSTRACT_PRIVATE, ""),
                     now,
@@ -938,8 +951,8 @@ pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
                 }
             }
             if member.flags.contains(Flags::DEFINITE) {
-                let is_refused = is_ambient || is_abstract || seen.contains(Flags::STATIC);
-                let found = definite(exclamation, initializer.is_some(), member.ty, is_refused);
+                let is_disallowed = is_ambient || is_abstract || seen.contains(Flags::STATIC);
+                let found = definite(exclamation, initializer.is_some(), member.ty, is_disallowed);
                 errors.extend(found.map(|it| noticed_at(it, now)));
             }
         }
@@ -950,7 +963,7 @@ pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
         let found = error(1249, at, message, "Move this after all the overloads");
         errors.push(noticed_at(found, now));
     }
-    // The pass that builds the scopes.
+    // Reported by oxc's scope-building pass.
     if matches!(kind, MemberKind::Getter | MemberKind::Setter)
         && !has_body
         && !is_abstract
@@ -961,14 +974,14 @@ pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
     }
 }
 
-/// From the `<` to the `>` of the type parameters of a constructor. `now`: the end of the constructor.
+/// `at`: from the `<` to the `>` of a constructor's type parameters. `now`: the end of the constructor.
 fn type_parameters_of_constructor(at: (u32, u32), now: u32) -> Diagnostic {
     let message = "Type parameters cannot appear on a constructor declaration";
     let help = "Instead, add type parameters to the class itself";
     noticed_at(error(1092, at, message, help), now)
 }
 
-/// `'constructor'<T>() {}`, which is a method for TypeScript and the constructor for oxc. `name_end`: where the string ends.
+/// `'constructor'<T>() {}`, a method for TypeScript but the constructor for oxc. `name_end`: the end of the string.
 #[cold]
 #[inline(never)]
 pub(super) fn type_parameters_of_quoted_constructor(
@@ -986,28 +999,28 @@ pub(super) fn type_parameters_of_quoted_constructor(
         .push(type_parameters_of_constructor((start, end), now));
 }
 
-/// The modifiers of a member of an object literal. Only a method can have one, which is `async`.
+/// Checks the modifiers of an object literal member. The only valid one is `async` on a method.
 #[cold]
 #[inline(never)]
 pub(super) fn object_member(f: &mut FileBuilder, modifiers: Span<ModifierId>, is_method: bool) {
-    let (written, errors) = (&f.modifiers, &mut f.diagnostics);
-    let written = written.get(modifiers.range()).unwrap_or_default();
+    let (modifier_list, errors) = (&f.modifiers, &mut f.diagnostics);
+    let modifier_list = modifier_list.get(modifiers.range()).unwrap_or_default();
     let allowed = match is_method {
         true => Flags::ASYNC,
         false => Flags::empty(),
     };
-    verify(written, allowed, &mut |it| {
+    verify(modifier_list, allowed, &mut |it| {
         let help = Help::Allowed(allowed);
         errors.push(about_modifier(0, it, "cannot be used here.", help));
     });
 }
 
-/// What is wrong with the `!` at `at`, after the name of a variable or of a property. `is_refused`: it cannot be there at all.
+/// The error for the `!` at `at`, after a variable or property name. `is_disallowed`: `!` is never allowed there.
 fn definite(
     at: (u32, u32),
     has_initializer: bool,
     ty: TypeNodeId,
-    is_refused: bool,
+    is_disallowed: bool,
 ) -> Option<Diagnostic> {
     let (code, message) = if has_initializer {
         let message =
@@ -1017,7 +1030,7 @@ fn definite(
         let message =
             "Declarations with definite assignment assertions must also have type annotations.";
         (1264, message)
-    } else if is_refused {
+    } else if is_disallowed {
         let message = "A definite assignment assertion '!' is not permitted in this context.";
         (1255, message)
     } else {
@@ -1026,8 +1039,8 @@ fn definite(
     Some(error(code, at, message, ""))
 }
 
-/// oxc's `check_class`, which the pass that builds the scopes runs when it leaves a class: abstract members of a class that is
-/// not abstract, and overloads that no implementation follows. `names`: where the name of each member ends.
+/// oxc's `check_class`, which its scope-building pass runs when it leaves a class. Reports abstract members of a
+/// non-abstract class, and overloads that aren't followed by an implementation.
 #[cold]
 #[inline(never)]
 pub(super) fn class_members(
@@ -1035,7 +1048,7 @@ pub(super) fn class_members(
     src: &[u8],
     members: &[Member],
     is_abstract: bool,
-    place: Place,
+    site: CallSite,
 ) {
     let (fns, errors) = (&f.fns, &mut f.diagnostics);
     let key_of = |it: &Member| {
@@ -1046,12 +1059,12 @@ pub(super) fn class_members(
         };
         key_span(src, (it.name_pos, end as u32))
     };
-    let mut report = |found: Diagnostic| errors.push(noticed_at(found, place.now));
+    let mut report = |found: Diagnostic| errors.push(noticed_at(found, site.now));
     for it in members
         .iter()
         .filter(|it| !is_abstract && it.flags.contains(Flags::ABSTRACT))
     {
-        // The parser has reported an abstract constructor.
+        // The parser has already reported an abstract constructor.
         let (code, message) = match it.kind {
             MemberKind::Property => (
                 1253,
@@ -1064,7 +1077,7 @@ pub(super) fn class_members(
         };
         report(semantic(code, key_of(it), message));
     }
-    if place.is_ambient {
+    if site.is_ambient {
         return;
     }
     let is_method = |it: &Member| {
@@ -1126,16 +1139,16 @@ fn closing_bracket(src: &[u8], open: usize) -> usize {
     src.len()
 }
 
-const VARIANCE_ELSEWHERE: &str =
+const MISPLACED_VARIANCE: &str =
     "can only appear on a type parameter of a class, interface or type alias.";
-const ABSTRACT_ELSEWHERE: &str =
+const MISPLACED_ABSTRACT: &str =
     "'abstract' modifier can only appear on a class, method, or property declaration.";
 const ABSTRACT_PRIVATE: &str = "'abstract' modifier cannot be used with a private identifier.";
 const AMBIENT_INITIALIZER: &str = "Initializers are not allowed in ambient contexts.";
 
 // ───────────────────────────── statements ─────────────────────────────
 
-/// A declaration of a variable with a `!`, or in an ambient context with an initializer or with `using`.
+/// Checks a variable declaration that has a `!`, or that's in an ambient context with an initializer or `using`.
 #[cold]
 #[inline(never)]
 pub(super) fn variable(f: &mut FileBuilder, src: &[u8], it: &VarDecl) {
@@ -1176,22 +1189,23 @@ pub(super) fn variable(f: &mut FileBuilder, src: &[u8], it: &VarDecl) {
     }
 }
 
-/// The modifiers of the declaration `statement`, which has more than `export` and `default`.
+/// Checks the modifiers of the declaration `statement`, which has modifiers other than `export` and `default`.
 #[cold]
 #[inline(never)]
-pub(super) fn declaration(f: &mut FileBuilder, src: &[u8], statement: StmtId, place: Place) {
+pub(super) fn declaration(f: &mut FileBuilder, src: &[u8], statement: StmtId, site: CallSite) {
+    let modifiers = f.stmt_modifiers(statement);
     let Some(&statement) = f.stmts.get(statement.idx()) else {
         return;
     };
-    let is_through = decorators_of_declaration(f, src, &statement, place);
-    let (written, errors) = (&f.modifiers, &mut f.diagnostics);
-    let written = written.get(statement.modifiers.range()).unwrap_or_default();
-    let is_decorated = written.iter().any(|it| decorator(it).is_some());
-    if is_through {
+    let is_done = decorators_of_declaration(f, src, (&statement, modifiers), site);
+    let (modifier_list, errors) = (&f.modifiers, &mut f.diagnostics);
+    let modifier_list = modifier_list.get(modifiers.range()).unwrap_or_default();
+    let is_decorated = modifier_list.iter().any(|it| decorator(it).is_some());
+    if is_done {
         return;
     }
-    if place.is_javascript && !is_decorated {
-        return errors.extend(modifier_in_javascript(src, written, &statement.kind));
+    if site.is_javascript && !is_decorated {
+        return errors.extend(modifier_in_javascript(src, modifier_list, &statement.kind));
     }
     let allowed = match statement.kind {
         StmtKind::Fn(_) => Flags::AMBIENT | Flags::ASYNC,
@@ -1206,30 +1220,32 @@ pub(super) fn declaration(f: &mut FileBuilder, src: &[u8], statement: StmtId, pl
     };
     let is_import = matches!(statement.kind, StmtKind::ImportEquals(_));
     let names_abstract = is_import || matches!(statement.kind, StmtKind::Interface(_));
-    // oxc looks at those of variables before it reads the variables.
+    // oxc checks a variable statement's modifiers before it parses the variables.
     let now = match statement.kind {
         StmtKind::Var(_) | StmtKind::ImportEquals(_) => {
-            written.last().map_or(place.now, |it| it.pos + 1)
+            modifier_list.last().map_or(site.now, |it| it.pos + 1)
         }
-        _ => place.now,
+        _ => site.now,
     };
-    // `export` and `export default` at the start, after the decorators, are no modifiers for oxc.
+    // `export` and `export default` at the start, after the decorators, aren't modifiers for oxc.
     let flag = |index: usize| {
-        written
+        modifier_list
             .get(index)
             .map_or(Flags::empty(), |it| it.kind.flag())
     };
-    let leading = written.iter().take_while(|it| decorator(it).is_some());
+    let leading = modifier_list
+        .iter()
+        .take_while(|it| decorator(it).is_some());
     let mut first = leading.count();
     while flag(first) == Flags::EXPORT {
         first += 1;
     }
     first += usize::from(flag(first) == Flags::DEFAULT);
-    let written = written.get(first..).unwrap_or_default();
-    verify(written, allowed, &mut |it| {
+    let modifier_list = modifier_list.get(first..).unwrap_or_default();
+    verify(modifier_list, allowed, &mut |it| {
         let found = match it.0 {
             Flags::ABSTRACT if names_abstract => {
-                error(1242, (it.1, it.1 + 8), ABSTRACT_ELSEWHERE, "")
+                error(1242, (it.1, it.1 + 8), MISPLACED_ABSTRACT, "")
             }
             Flags::AMBIENT if is_import => {
                 let message = "A 'declare' modifier cannot be used with an import declaration.";
@@ -1241,27 +1257,31 @@ pub(super) fn declaration(f: &mut FileBuilder, src: &[u8], statement: StmtId, pl
     });
 }
 
-/// What oxc's parser says about the first of the modifiers `written` of a statement of a JavaScript file that is none of
-/// JavaScript. It is a name there, or nothing that `export` can be before.
-fn modifier_in_javascript(src: &[u8], written: &[Modifier], kind: &StmtKind) -> Option<Diagnostic> {
+/// Returns oxc's error about the first modifier in `modifier_list`, a JavaScript statement's modifiers, that JavaScript
+/// doesn't have. oxc treats it as a name, or as something that can't follow `export`.
+fn modifier_in_javascript(
+    src: &[u8],
+    modifier_list: &[Modifier],
+    kind: &StmtKind,
+) -> Option<Diagnostic> {
     let flag = |index: usize| {
-        written
+        modifier_list
             .get(index)
             .map_or(Flags::empty(), |it| it.kind.flag())
     };
     let mut first = usize::from(flag(0) == Flags::EXPORT);
     if first == 1 && flag(1) == Flags::DEFAULT {
-        // It takes this in every file.
+        // oxc accepts this in every file.
         if flag(2) == Flags::ABSTRACT && matches!(kind, StmtKind::Class(_)) {
             return None;
         }
         first = 2;
     }
-    let it = written.get(first)?;
+    let it = modifier_list.get(first)?;
     let end = it.pos + modifier_text(it.kind.flag()).len() as u32;
     Some(match it.kind.flag() {
         Flags::ASYNC if matches!(kind, StmtKind::Fn(_)) => return None,
-        // It is there twice, which is said.
+        // A duplicate `export`, which is already reported.
         Flags::EXPORT => return None,
         Flags::CONST => {
             let keyword = skip_trivia(src, end as usize) as u32;
@@ -1274,14 +1294,14 @@ fn modifier_in_javascript(src: &[u8], written: &[Modifier], kind: &StmtKind) -> 
     })
 }
 
-/// What is wrong with the decorators of `statement`. True: nothing else is said about its modifiers.
+/// Reports errors about `statement`'s decorators. Returns true if nothing else should be reported about its modifiers.
 fn decorators_of_declaration(
     f: &mut FileBuilder,
     src: &[u8],
-    statement: &Stmt,
-    place: Place,
+    (statement, modifiers): (&Stmt, Span<ModifierId>),
+    site: CallSite,
 ) -> bool {
-    let spans = decorators(f, statement.modifiers);
+    let spans = decorators(f, modifiers);
     if spans.is_empty() {
         return false;
     }
@@ -1295,7 +1315,7 @@ fn decorators_of_declaration(
         }
         _ => None,
     };
-    // Where oxc, which takes what follows `export @a` for a class, looks for the `{`.
+    // oxc assumes a class follows `export @a`. This is where it expects the class's `{`.
     let after_name = match statement.kind {
         StmtKind::Fn(it) => f.fns.get(it.idx()).map(|it| it.anchor),
         StmtKind::Var(_) => first_variable.map(|it| match it.kind {
@@ -1308,17 +1328,19 @@ fn decorators_of_declaration(
         }),
         _ => None,
     };
-    let (written, errors) = (&f.modifiers, &mut f.diagnostics);
-    let written = written.get(statement.modifiers.range()).unwrap_or_default();
+    let (modifier_list, errors) = (&f.modifiers, &mut f.diagnostics);
+    let modifier_list = modifier_list.get(modifiers.range()).unwrap_or_default();
     let is_class = matches!(statement.kind, StmtKind::Class(_));
     let flag = |index: usize| {
-        written
+        modifier_list
             .get(index)
             .map_or(Flags::empty(), |it| it.kind.flag())
     };
-    let leading = written.iter().take_while(|it| decorator(it).is_some());
+    let leading = modifier_list
+        .iter()
+        .take_while(|it| decorator(it).is_some());
     let leading = leading.count();
-    let not_valid = |at: &(u32, u32)| error(0, *at, DECORATOR_ELSEWHERE, "");
+    let not_valid = |at: &(u32, u32)| error(0, *at, MISPLACED_DECORATOR, "");
     if leading == 0 {
         // `export default @a`
         if flag(1) == Flags::DEFAULT {
@@ -1328,11 +1350,15 @@ fn decorators_of_declaration(
             return !is_class;
         }
         let allowed = Flags::AMBIENT | Flags::ABSTRACT;
-        verify(written.get(1..).unwrap_or_default(), allowed, &mut |it| {
-            let found = about_modifier(0, it, "cannot be used here.", Help::Allowed(allowed));
-            errors.push(noticed_at(found, place.now));
-        });
-        // `{ a }` is the body, and a statement starts after it.
+        verify(
+            modifier_list.get(1..).unwrap_or_default(),
+            allowed,
+            &mut |it| {
+                let found = about_modifier(0, it, "cannot be used here.", Help::Allowed(allowed));
+                errors.push(noticed_at(found, site.now));
+            },
+        );
+        // oxc takes `{ a }` as the class body, and a new statement starts after it.
         if let Some(body) = first_variable.filter(|it| matches!(it.kind, PatKind::Object(_))) {
             let at = skip_trivia(src, body.end as usize);
             errors.push(unexpected((at as u32, token_end(src, at, false) as u32)));
@@ -1341,7 +1367,7 @@ fn decorators_of_declaration(
         errors.extend(after_name.map(|at| expected_at("{", src, at)));
         return true;
     }
-    // The `export` of these is no modifier.
+    // The `export` of these isn't a modifier.
     let is_export = matches!(
         statement.kind,
         StmtKind::ExportNamed(_)
@@ -1355,7 +1381,7 @@ fn decorators_of_declaration(
             return false;
         }
         // oxc's parser expects `class`, `export` or a modifier of a class.
-        let end = match written.last() {
+        let end = match modifier_list.last() {
             Some(last) if decorator(last).is_none() => {
                 last.pos + modifier_text(last.kind.flag()).len() as u32
             }
@@ -1377,10 +1403,10 @@ fn decorators_of_declaration(
             return false;
         }
     }
-    // After `export` JavaScript has no modifier of a class.
-    let after_export = written.get(leading + 1..).unwrap_or_default();
+    // JavaScript has no class modifiers after `export`.
+    let after_export = modifier_list.get(leading + 1..).unwrap_or_default();
     let is_modifier = |it: &&Modifier| !(Flags::DEFAULT | Flags::EXPORT).contains(it.kind.flag());
-    if place.is_javascript
+    if site.is_javascript
         && let Some(it) = after_export.iter().find(is_modifier)
     {
         errors.extend(spans.iter().take(leading).map(not_valid));
@@ -1395,28 +1421,29 @@ fn decorators_of_declaration(
     false
 }
 
-/// A declaration that only TypeScript has, or one after `declare`, as the body of an `if`, a loop, a `with` or a label.
+/// Reports a TypeScript-only declaration, or one after `declare`, as the body of an `if`, a loop, a `with` or a label.
 #[cold]
 #[inline(never)]
 pub(super) fn declaration_as_body(f: &mut FileBuilder, statement: StmtId) {
     let Some(it) = f.stmts.get(statement.idx()) else {
         return;
     };
-    let written = f.modifiers.get(it.modifiers.range()).unwrap_or_default();
-    let is_declared = keywords(written).contains(Flags::AMBIENT);
+    let modifier_list = f.stmt_modifiers(statement);
+    let modifier_list = f.modifiers.get(modifier_list.range()).unwrap_or_default();
+    let is_declared = keywords(modifier_list).contains(Flags::AMBIENT);
     let is_var = |list: Span<VarDeclId>| {
         let first = f.var_decls.get(list.start as usize);
         first.is_some_and(|it| it.kind == VarKind::Var)
     };
-    // Every parser of JavaScript has something to say about the others.
-    let is_one = match it.kind {
+    // Every JavaScript parser already reports the others.
+    let is_reported_here = match it.kind {
         StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Module(_) => true,
-        StmtKind::Enum(_) => !keywords(written).contains(Flags::CONST) || is_declared,
+        StmtKind::Enum(_) => !keywords(modifier_list).contains(Flags::CONST) || is_declared,
         StmtKind::Var(list) => is_declared && is_var(list),
         StmtKind::Fn(_) => is_declared,
         _ => false,
     };
-    if is_one {
+    if is_reported_here {
         let message = "Declaration cannot appear in a single-statement context";
         let help = "Wrap this declaration in a block statement";
         let found = error(0, (it.start, it.loc.end), message, help);
@@ -1442,7 +1469,7 @@ pub(super) fn type_only_import_of_both(errors: &mut Errors, src: &[u8], name: u3
     errors.push(error(1363, (name, end), message, ""));
 }
 
-/// Whose `type` is there twice.
+/// Which kind of specifier has the duplicate `type`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum Specifier {
     Import,
@@ -1452,7 +1479,7 @@ pub(super) enum Specifier {
 /// The `type` at `at` of `import type { type a }` or `export type { type a }`.
 #[cold]
 #[inline(never)]
-pub(super) fn type_modifier_twice(errors: &mut Errors, at: u32, of: Specifier) {
+pub(super) fn duplicate_type_modifier(errors: &mut Errors, at: u32, of: Specifier) {
     let (code, message) = match of {
         Specifier::Import => (
             2206,
@@ -1471,7 +1498,8 @@ pub(super) fn type_modifier_twice(errors: &mut Errors, at: u32, of: Specifier) {
     ));
 }
 
-/// The statements `list` of a declaration file: only declarations can be there. oxc says it about the first that is none.
+/// Checks the statements `list` of an ambient context, which can only contain declarations. oxc reports the first
+/// statement that isn't one.
 #[cold]
 #[inline(never)]
 pub(super) fn statements_in_ambient_context(f: &mut FileBuilder, src: &[u8], list: IdList<StmtId>) {
@@ -1479,7 +1507,7 @@ pub(super) fn statements_in_ambient_context(f: &mut FileBuilder, src: &[u8], lis
     let list = f.ids.get(list.range()).unwrap_or_default();
     let mut is_prologue = true;
     for it in list.iter().filter_map(|&it| statements.get(it as usize)) {
-        // A template without substitutions is kept as a string.
+        // A template without substitutions is stored as a string.
         let is_string = |e: ExprId| {
             matches!(
                 exprs.get(e.idx()),
@@ -1514,7 +1542,7 @@ pub(super) fn statements_in_ambient_context(f: &mut FileBuilder, src: &[u8], lis
         if !is_statement || is_prologue {
             continue;
         }
-        // oxc has given up in the statement, or where something is missing after what there is of it.
+        // oxc has given up inside the statement, or right after it where something is missing.
         let next = skip_trivia(src, it.loc.end as usize) as u32;
         let is_cut_off = |error: &Diagnostic| {
             error.kind == DiagnosticKind::Parse
@@ -1530,8 +1558,8 @@ pub(super) fn statements_in_ambient_context(f: &mut FileBuilder, src: &[u8], lis
     }
 }
 
-/// The statements `list` of `namespace N {}`, which is no module: oxc's `check_namespace_body_statement`. `declare module "m" {}`
-/// and `declare global {}` take all of this.
+/// oxc's `check_namespace_body_statement` for the statements `list` of `namespace N {}`, which isn't a module. `declare
+/// module "m" {}` and `declare global {}` allow all of these.
 #[cold]
 #[inline(never)]
 pub(super) fn namespace_body(
@@ -1547,18 +1575,23 @@ pub(super) fn namespace_body(
         ids,
         stmts,
         modifiers,
+        modifiers_of_stmts,
         exports,
         import_equals,
         diagnostics: errors,
         ..
     } = f;
     let list = ids.get(list.range()).unwrap_or_default();
-    for it in list.iter().filter_map(|&it| stmts.get(it as usize)) {
-        let written = modifiers.get(it.modifiers.range()).unwrap_or_default();
+    for (id, it) in list
+        .iter()
+        .filter_map(|&it| Some((it, stmts.get(it as usize)?)))
+    {
+        let modifier_list = stmt_modifiers_in(modifiers_of_stmts, StmtId(id));
+        let modifier_list = modifiers.get(modifier_list.range()).unwrap_or_default();
         let (code, message) = match it.kind {
             StmtKind::ExportDefault(_) => DEFAULT_EXPORT_IN_NAMESPACE,
             StmtKind::Fn(_) | StmtKind::Class(_) | StmtKind::Interface(_)
-                if keywords(written).contains(Flags::DEFAULT) =>
+                if keywords(modifier_list).contains(Flags::DEFAULT) =>
             {
                 DEFAULT_EXPORT_IN_NAMESPACE
             }
@@ -1602,8 +1635,8 @@ const IMPORT_IN_NAMESPACE: (u32, &str) = (
     "Import declarations in a namespace cannot reference a module.",
 );
 
-/// The name of a member of an enum that starts with a `[`, a number or a bigint, from `start` to `end`. oxc's parser gives up
-/// at all but `["a"]`.
+/// Checks an enum member's name, at `name`, that starts with a `[`, a number or a bigint. oxc's parser gives up at all
+/// of them except `["a"]`.
 #[cold]
 #[inline(never)]
 pub(super) fn enum_member_name(errors: &mut Errors, src: &[u8], name: (u32, u32)) {
@@ -1686,11 +1719,11 @@ pub(super) fn line_break_after_throw(errors: &mut Errors, keyword: u32, next: (u
         next,
         "A newline is not expected here",
     );
-    // Before what is wrong with the token.
+    // Reported before any error about the token itself.
     errors.push(noticed_at(found, keyword + 5));
 }
 
-/// Each `return` in the static block with this body that is in no function in it.
+/// Reports each `return` in the static block `body` that isn't inside a nested function.
 #[inline(never)]
 pub(super) fn returns_in_static_block(f: &mut FileBuilder, body: FnBody) {
     let FnBody::Block(body) = body else {
@@ -1700,7 +1733,7 @@ pub(super) fn returns_in_static_block(f: &mut FileBuilder, body: FnBody) {
     let list = |it: IdList<StmtId>| ids.get(it.range()).unwrap_or_default();
     let mut left: Vec<u32> = list(body).to_vec();
     while let Some(id) = left.pop() {
-        // An `if` without `else` has none.
+        // `NONE`: an `if` without an `else`, for example.
         let Some(it) = stmts.get(id as usize) else {
             continue;
         };
@@ -1769,8 +1802,9 @@ fn exported_using(errors: &mut Errors, src: &[u8], start: u32, name: (u32, u32))
     errors.push(Diagnostic::new(DiagnosticKind::OxcFatal, at, 0, &texts));
 }
 
-/// A `)` that ends at `end` where an expression has to be, after the token that ends at `after_open`. If that is the `(` of an
-/// expression in parentheses oxc has its own words for it, not if it is that of the head of a statement.
+/// A `)` that ends at `end` where an expression is required, after the token that ends at `after_open`. If that token
+/// is the `(` of a parenthesized expression, oxc has a dedicated message. It doesn't if the `(` belongs to a
+/// statement's head.
 fn empty_parentheses(errors: &mut Errors, src: &[u8], (after_open, end): (u32, u32)) {
     let is_open = |it: &usize| src.get(*it) == Some(&b'(');
     let Some(open) = (after_open as usize).checked_sub(1).filter(is_open) else {
@@ -1783,7 +1817,7 @@ fn empty_parentheses(errors: &mut Errors, src: &[u8], (after_open, end): (u32, u
     }
 }
 
-/// Whether a statement starts at `at`, as far as the text before it says: after a `;`, a `{` or a `}`, or at the start.
+/// True if a statement starts at `at`, judging by the text before it: after a `;`, a `{` or a `}`, or at the start.
 fn starts_statement(src: &[u8], at: u32) -> bool {
     let before = skip_trivia_back(src, at as usize);
     matches!(
@@ -1792,7 +1826,7 @@ fn starts_statement(src: &[u8], at: u32) -> bool {
     )
 }
 
-/// `new import("a")`: from the `import` to the end of the whole.
+/// `new import("a")`. `at`: from the `import` to the end of the expression.
 #[cold]
 #[inline(never)]
 pub(super) fn new_import(errors: &mut Errors, at: (u32, u32)) {
@@ -1801,7 +1835,8 @@ pub(super) fn new_import(errors: &mut Errors, at: (u32, u32)) {
     errors.push(noticed_at(found, at.1));
 }
 
-/// The arguments of the `import(..)` that starts at `start` and whose `)` is at `close`. oxc's parser gives up at each of these.
+/// Checks the arguments of the `import(..)` that starts at `start` and whose `)` is at `close`. oxc's parser gives up
+/// at each of these errors.
 #[inline(never)]
 pub(super) fn import_call(
     f: &mut FileBuilder,
@@ -1812,8 +1847,8 @@ pub(super) fn import_call(
 ) {
     let (exprs, errors) = (&f.exprs, &mut f.diagnostics);
     let args = f.ids.get(args.range()).unwrap_or_default();
-    let mut written = args.iter().filter_map(|&it| exprs.get(it as usize));
-    let (first, second) = (written.next(), written.next());
+    let mut argument_exprs = args.iter().filter_map(|&it| exprs.get(it as usize));
+    let (first, second) = (argument_exprs.next(), argument_exprs.next());
     if matches!(
         first,
         None | Some(Expr {
@@ -1858,8 +1893,8 @@ pub(super) fn optional_and_definite(errors: &mut Errors, question: u32) {
     errors.push(error(0, (question, question + 2), message, help));
 }
 
-/// A pattern without an initializer, where nothing else gives it a value: `let [a];`. `next`: the token after the declaration,
-/// where oxc is when it looks.
+/// A pattern without an initializer, where nothing else gives it a value: `let [a];`. `next`: the token after the
+/// declaration, which is where oxc's parser is when it checks.
 #[cold]
 #[inline(never)]
 pub(super) fn pattern_without_initializer(f: &mut FileBuilder, pattern: PatId, next: u32) {
@@ -1880,7 +1915,7 @@ pub(super) fn let_before_of(errors: &mut Errors, at: (u32, u32)) {
     errors.push(noticed_at(error(0, at, message, ""), at.1));
 }
 
-/// A piece of a template without a tag that has an invalid escape: `at` is what is between its delimiters.
+/// A piece of an untagged template with an invalid escape. `at`: the text between its delimiters.
 #[cold]
 #[inline(never)]
 pub(super) fn bad_escape_in_template(errors: &mut Errors, at: (u32, u32)) {
@@ -1908,20 +1943,22 @@ pub(super) fn await_without_of(errors: &mut Errors, head: (u32, u32)) {
 
 // ───────────────────────────── types ─────────────────────────────
 
-/// The modifiers of a member of an interface or of a type literal that is no index signature.
+/// Checks the modifiers of an interface or type literal member that isn't an index signature.
 #[cold]
 #[inline(never)]
 pub(super) fn type_member(f: &mut FileBuilder, member: &Member) {
-    let (written, errors) = (&f.modifiers, &mut f.diagnostics);
-    let written = written.get(member.modifiers.range()).unwrap_or_default();
-    let after = written.last().map_or(0, |it| it.pos + 1);
-    verify(written, Flags::READONLY, &mut |it| {
+    let (modifier_list, errors) = (&f.modifiers, &mut f.diagnostics);
+    let modifier_list = modifier_list
+        .get(member.modifiers.range())
+        .unwrap_or_default();
+    let after = modifier_list.last().map_or(0, |it| it.pos + 1);
+    verify(modifier_list, Flags::READONLY, &mut |it| {
         let rest = "cannot appear on a type member.";
         let found = about_modifier(1070, it, rest, Help::Allowed(Flags::READONLY));
         errors.push(noticed_at(found, after));
     });
     if member.kind == MemberKind::Method {
-        verify(written, !Flags::READONLY, &mut |it| {
+        verify(modifier_list, !Flags::READONLY, &mut |it| {
             let rest = "can only appear on a property declaration or index signature.";
             let found = about_modifier(1024, it, rest, Help::None);
             errors.push(noticed_at(found, member.name_pos + 1));
@@ -1937,7 +1974,7 @@ pub(super) fn index_signature_without_type(errors: &mut Errors, brackets: (u32, 
     errors.push(error(1021, brackets, message, ""));
 }
 
-/// The one parameter of an index signature whose `[` is at `bracket`.
+/// Checks the only parameter of an index signature whose `[` is at `bracket`.
 #[cold]
 #[inline(never)]
 pub(super) fn index_signature_parameter(
@@ -1968,7 +2005,7 @@ pub(super) fn index_signature_parameter(
         let found = with_labels(found, "`,` or `]` expected", open, "Opened here");
         return errors.push(noticed_at(found, equals));
     }
-    // In parentheses oxc takes every type.
+    // oxc accepts any type in parentheses.
     if src.get(skip_trivia_back(src, ty.pos as usize).wrapping_sub(1)) == Some(&b'(') {
         return;
     }
@@ -1991,25 +2028,25 @@ pub(super) fn index_signature_parameter(
     });
 }
 
-/// The argument of `import(..)` in a type, which is no string.
+/// The argument of `import(..)` in a type, which isn't a string.
 #[cold]
 #[inline(never)]
 pub(super) fn argument_of_import_type(errors: &mut Errors, at: (u32, u32)) {
     errors.push(error(1141, at, "String literal expected.", ""));
 }
 
-/// An element of the `extends` clause of an interface that is no name.
+/// An element of an interface's `extends` clause that isn't a name.
 #[cold]
 #[inline(never)]
 pub(super) fn interface_extends_expression(errors: &mut Errors, at: (u32, u32)) {
     let message =
         "An interface can only extend an identifier/qualified-name with optional type arguments.";
-    // After what is wrong in the element, and before what is wrong with the token after it.
+    // Reported after errors inside the element and before errors about the token after it.
     let now = at.1.saturating_sub(1).max(at.0);
     errors.push(noticed_at(error(2499, at, message, ""), now));
 }
 
-/// What declares a type.
+/// The kind of declaration that names a type.
 #[derive(Copy, Clone)]
 pub(super) enum TypeName {
     Class,
@@ -2019,7 +2056,7 @@ pub(super) enum TypeName {
     TypeParameter,
 }
 
-/// The name of a type at `at`, which is the name of a type that TypeScript has itself: `interface string {}`.
+/// A declared type name at `at` that's the name of a built-in type: `interface string {}`.
 fn reserved_type_name(errors: &mut Errors, src: &[u8], at: (u32, u32), what: TypeName) {
     let (code, what) = match what {
         TypeName::Class => (2414, "Class"),
@@ -2041,7 +2078,7 @@ pub(super) fn readonly_type(errors: &mut Errors, at: u32) {
     errors.push(error(1354, (at, at + 8), message, ""));
 }
 
-/// `infer U` outside the `extends` clause of every conditional type.
+/// `infer U` that isn't inside any conditional type's `extends` clause.
 #[cold]
 #[inline(never)]
 pub(super) fn infer_type(errors: &mut Errors, at: (u32, u32)) {
@@ -2057,7 +2094,7 @@ pub(super) fn empty_type_parameters(errors: &mut Errors, at: (u32, u32)) {
     errors.push(error(1098, at, "Type parameter list cannot be empty.", ""));
 }
 
-/// The elements of a tuple type of which one is optional.
+/// Checks the elements of a tuple type that has an optional element.
 #[cold]
 #[inline(never)]
 pub(super) fn tuple_elements(errors: &mut Errors, elements: &[TupleElem]) {
@@ -2079,7 +2116,7 @@ pub(super) fn tuple_elements(errors: &mut Errors, elements: &[TupleElem]) {
     }
 }
 
-/// The comma at `comma`, after the last element of the `extends` clause of an interface.
+/// The comma at `comma`, after the last element of an interface's `extends` clause.
 #[cold]
 #[inline(never)]
 pub(super) fn trailing_comma(errors: &mut Errors, comma: (u32, u32)) {
@@ -2099,9 +2136,9 @@ pub(super) fn second_base_class(errors: &mut Errors, at: (u32, u32)) {
     ));
 }
 
-/// A heritage clause in the wrong place: a second `extends` (1172), `extends` after `implements` (1173), or a second `implements`
-/// (1175).
-/// `implements`: the first such keyword. `keyword`: that of the clause.
+/// A misplaced heritage clause: a second `extends` (1172), `extends` after `implements` (1173), or a second
+/// `implements` (1175).
+/// `implements`: the first `implements` keyword. `keyword`: the misplaced clause's keyword.
 #[cold]
 #[inline(never)]
 pub(super) fn misplaced_clause(
@@ -2146,9 +2183,9 @@ pub(super) fn interface_implements(errors: &mut Errors, keyword: (u32, u32), now
     errors.push(noticed_at(error(1176, keyword, message, ""), now));
 }
 
-// ───────────────────────────── where the parser calls in ─────────────────────────────
+// ───────────────────────────── entry points for the parser ─────────────────────────────
 
-/// Whether [`function`] has something to look at in a function whose parameters are plain. `context`: `Parser::context`.
+/// True if [`function`] has anything to check in a function whose parameters are plain. `context`: `Parser::context`.
 #[inline(always)]
 fn is_odd_function((kind, flags): (FnKind, Flags), body: &FnBody, context: u32) -> bool {
     let has_body = !matches!(body, FnBody::None);
@@ -2158,33 +2195,38 @@ fn is_odd_function((kind, flags): (FnKind, Flags), body: &FnBody, context: u32) 
         || context & super::ctx::AMBIENT != 0 && (is_generator || kind == FnKind::Decl && has_body)
 }
 
-/// What there is to look at in a member of a class.
-struct Oddities {
-    /// For [`class_member`].
-    in_itself: bool,
-    /// For [`class_members`].
-    among_members: bool,
+/// Which checks a class member needs.
+struct NeededChecks {
+    /// Needs [`class_member`].
+    needs_class_member: bool,
+    /// Needs [`class_members`].
+    needs_class_members: bool,
 }
 
-impl Oddities {
-    /// `func`: the function of `member`. `written`: its modifiers.
+impl NeededChecks {
+    /// `func`: the function of `member`. `modifier_flags`: its modifiers.
     #[inline]
-    fn of(member: &Member, func: Option<&Func>, written: Flags, place: Place) -> Oddities {
-        // What lacks a body is no JavaScript, which is said elsewhere.
-        if place.is_javascript {
+    fn of(
+        member: &Member,
+        func: Option<&Func>,
+        modifier_flags: Flags,
+        site: CallSite,
+    ) -> NeededChecks {
+        // A member without a body isn't valid JavaScript, which is reported elsewhere.
+        if site.is_javascript {
             let usual = match member.kind {
                 MemberKind::Method => Flags::STATIC | Flags::ASYNC,
                 _ => Flags::STATIC,
             };
             let is_accessor = matches!(member.kind, MemberKind::Getter | MemberKind::Setter);
-            return Oddities {
-                in_itself: written.intersects(!usual)
+            return NeededChecks {
+                needs_class_member: modifier_flags.intersects(!usual)
                     || member.flags.contains(Flags::DEFINITE)
                     || is_accessor && member.flags.contains(Flags::OPTIONAL),
-                among_members: false,
+                needs_class_members: false,
             };
         }
-        let is_ambient = place.is_ambient;
+        let is_ambient = site.is_ambient;
         let lacks_body = func.is_some_and(|it| matches!(it.body, FnBody::None));
         let has_body = func.is_some() && !lacks_body;
         let usual = ACCESSIBILITY
@@ -2196,10 +2238,10 @@ impl Oddities {
                 }
                 _ => Flags::empty(),
             };
-        let in_itself = written.intersects(!usual)
+        let needs_class_member = modifier_flags.intersects(!usual)
             || member.flags.contains(Flags::DEFINITE)
             || is_ambient && (has_body || member.init.is_some())
-            || written.intersects(ACCESSIBILITY) && matches!(member.key, PropKey::Private(_))
+            || modifier_flags.intersects(ACCESSIBILITY) && matches!(member.key, PropKey::Private(_))
             // It may have a decorator.
             || lacks_body && !member.modifiers.is_empty()
             || match member.kind {
@@ -2211,35 +2253,36 @@ impl Oddities {
                 }
                 _ => false,
             };
-        Oddities {
-            in_itself,
-            among_members: written.contains(Flags::ABSTRACT) || lacks_body && !is_ambient,
+        NeededChecks {
+            needs_class_member,
+            needs_class_members: modifier_flags.contains(Flags::ABSTRACT)
+                || lacks_body && !is_ambient,
         }
     }
 }
 
 impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
-    /// Whether the errors of this file are wanted.
+    /// True if this module's errors are enabled.
     #[inline(always)]
     pub(super) fn reports_like_oxc(&self) -> bool {
         self.is_typescript_for_oxc
     }
 
-    /// The same for what no other check has in JavaScript.
+    /// Like `reports_like_oxc`, for the errors that no other check covers in JavaScript.
     #[inline(always)]
     pub(super) fn is_for_oxc(&self) -> bool {
         self.options.dialect.oxc
     }
 
-    /// Where a type has to be, oxc takes `await` and `yield` for names, whatever they are around the type. They start none for
-    /// it where it looks ahead: `a as T ? await b : c`.
+    /// Where a type is required, oxc treats `await` and `yield` as names, whatever they are in the surrounding code.
+    /// Where oxc only looks ahead for a type, they don't start one: `a as T ? await b : c`.
     #[inline(always)]
     pub(super) fn is_name_in_type_for_oxc(&self) -> bool {
         use crate::token::T;
         matches!(self.token(), T::Await | T::Yield) && self.options.dialect.oxc
     }
 
-    /// oxc's parser gives up at the token.
+    /// oxc's parser gives up at the current token.
     #[cold]
     #[inline(never)]
     pub(super) fn unexpected_like_oxc(&mut self) {
@@ -2247,17 +2290,17 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.f.diagnostics.push(unexpected(at));
     }
 
-    /// The same, where it says what it expects.
+    /// Like `unexpected_like_oxc`, where oxc's message says what it expected.
     #[cold]
     #[inline(never)]
     pub(super) fn expected_like_oxc(&mut self, wanted: &str) {
-        let found = super::recover::name_for_oxc(self.token(), self.lx.text());
+        let found = super::recover::oxc_token_name(self.token(), self.lx.text());
         let at = self.range_of_token();
         self.f.diagnostics.push(expected(wanted, &found, at));
     }
 
-    /// At an element of the `implements` clause of a class that TypeScript takes for an expression. For oxc it is a name of words
-    /// with dots between them, which type arguments can follow, and then the clause goes on or ends.
+    /// At an element of a class's `implements` clause that TypeScript parses as an expression. oxc expects
+    /// dot-separated words, optionally followed by type arguments, and then the clause has to continue or end.
     #[cold]
     #[inline(never)]
     pub(super) fn check_implemented_like_oxc(&mut self) {
@@ -2299,17 +2342,17 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         });
     }
 
-    /// Where a declaration has to be, after the modifiers from `base` on.
+    /// Where a declaration is required, after the modifiers above `base`.
     #[cold]
     #[inline(never)]
     pub(super) fn missing_declaration_like_oxc(&mut self, base: usize) {
         use crate::token::T;
-        let written = self.s.modifiers.get(base..).unwrap_or_default();
+        let modifier_list = self.s.modifiers.get(base..).unwrap_or_default();
         let is_export = |it: &Modifier| it.kind == ModifierKind::Keyword(Flags::EXPORT);
-        if !written.first().is_some_and(is_export) || written.len() < 2 {
+        if !modifier_list.first().is_some_and(is_export) || modifier_list.len() < 2 {
             return self.unexpected_like_oxc();
         }
-        // After `export @d` it reads a class, whatever is in the place of the keyword.
+        // After `export @d` oxc parses a class, whatever token is where the keyword belongs.
         let has_given_up = self.look_ahead(|p| {
             if p.token() == T::Default {
                 p.next();
@@ -2327,13 +2370,14 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if !has_given_up {
             self.unexpected_like_oxc();
         }
-        // Before what TypeScript's parser says about the tokens that oxc has read.
+        // Reported before TypeScript's errors about the tokens that oxc has consumed.
         if let Some(found) = self.f.diagnostics.pop() {
             self.f.diagnostics.push(noticed_at(found, self.lx.start));
         }
     }
 
-    /// At the `using` of a declaration with the modifiers `flags`. `keyword`: where the `await` before it is, or itself.
+    /// At the `using` of a declaration with the modifiers `flags`. `keyword`: the position of the `await` before it, or
+    /// of the `using` itself.
     #[cold]
     #[inline(never)]
     pub(super) fn check_exported_using_like_oxc(&mut self, flags: Flags, keyword: u32) {
@@ -2351,7 +2395,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         exported_using(&mut self.f.diagnostics, self.lx.src, start, name);
     }
 
-    /// At a `)` where an expression has to be.
+    /// At a `)` where an expression is required.
     #[cold]
     #[inline(never)]
     pub(super) fn empty_parentheses_like_oxc(&mut self) {
@@ -2359,8 +2403,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         empty_parentheses(&mut self.f.diagnostics, self.lx.src, at);
     }
 
-    /// At the token after an `import` at `start` that neither a `(` nor a `.` follows. Where a statement starts oxc takes it for
-    /// a declaration.
+    /// At the token after an `import` at `start` that isn't followed by a `(` or a `.`. At the start of a statement,
+    /// oxc parses it as a declaration.
     #[cold]
     #[inline(never)]
     pub(super) fn import_without_call_like_oxc(&mut self, start: u32) {
@@ -2371,21 +2415,21 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             true => self.expected_like_oxc("from"),
             false => self.unexpected_like_oxc(),
         }
-        // Before what TypeScript's parser says about the token.
+        // Reported before TypeScript's error about the token.
         if let Some(found) = self.f.diagnostics.pop() {
             self.f.diagnostics.push(noticed_at(found, start));
         }
     }
 
     #[inline(always)]
-    pub(super) fn place(&self) -> Place {
-        self.place_in(self.context)
+    pub(super) fn call_site(&self) -> CallSite {
+        self.call_site_in(self.context)
     }
 
-    /// At the end of the last token, in `context`.
+    /// The parser's state at the end of the last token, in `context`.
     #[inline(always)]
-    pub(super) fn place_in(&self, context: u32) -> Place {
-        Place {
+    pub(super) fn call_site_in(&self, context: u32) -> CallSite {
+        CallSite {
             now: self.prev_end(),
             is_ambient: context & super::ctx::AMBIENT != 0,
             is_in_type: context & super::ctx::TYPE != 0,
@@ -2394,8 +2438,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// Whether `check_function_like_oxc` has something to look at in a function. `odd_parameters`: `Parser::odd_parameters` before
-    /// its parameters.
+    /// True if `check_function_like_oxc` has anything to check in a function. `odd_parameters`:
+    /// `Parser::odd_parameters` before the function's parameters.
     #[inline(always)]
     pub(super) fn is_odd_function(
         &self,
@@ -2409,7 +2453,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 || self.reports_like_oxc() && is_odd_function(signature, body, self.context))
     }
 
-    /// At the name of a type that is a word of TypeScript.
+    /// At a declared type's name that's a TypeScript keyword.
     #[cold]
     #[inline(never)]
     pub(super) fn check_type_name_like_oxc(&mut self, what: TypeName) {
@@ -2433,41 +2477,30 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// After the function `id`. `open_brace`: that of its body.
+    /// Call after the function `id`. `open_brace`: the `{` of its body.
     #[cold]
     #[inline(never)]
     pub(super) fn check_function_like_oxc(&mut self, id: FnId, open_brace: u32) {
-        let (place, can_end_here) = (self.place(), self.can_parse_semicolon());
-        function(
-            &mut self.f,
-            self.lx.src,
-            id,
-            open_brace,
-            place,
-            can_end_here,
-        );
+        let (site, can_end_here) = (self.call_site(), self.can_parse_semicolon());
+        function(&mut self.f, self.lx.src, id, open_brace, site, can_end_here);
     }
 
-    /// After a member of a class that is neither a static block nor an index signature. `written`: its modifiers. `name`: from
-    /// the start to the end of its name. `context`: that of the member.
+    /// Call after a class member that's neither a static block nor an index signature. `modifier_flags`: its modifiers.
+    /// `name`: its name's range. `context`: the member's context.
     #[inline]
     pub(super) fn check_class_member_like_oxc(
         &mut self,
         member: &Member,
-        written: Flags,
+        modifier_flags: Flags,
         name: (u32, u32),
         context: u32,
     ) {
-        let place = self.place_in(context);
+        let site = self.call_site_in(context);
         let func = self.f.fns.get(member.func.idx());
-        let odd = Oddities::of(member, func, written, place);
-        self.has_odd_members |= odd.among_members;
-        if odd.in_itself {
-            let it = ClassMember {
-                member,
-                name,
-                place,
-            };
+        let odd = NeededChecks::of(member, func, modifier_flags, site);
+        self.has_odd_members |= odd.needs_class_members;
+        if odd.needs_class_member {
+            let it = ClassMember { member, name, site };
             class_member(&mut self.f, self.lx.src, &it);
         }
     }

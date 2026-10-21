@@ -8,7 +8,7 @@ pub struct NoEmptyFile;
 
 const NO_EMPTY_FILE: Message = Message::new("", "Empty files are not allowed.");
 
-/// Not a file without an extension, and not one of which only a part is JavaScript.
+/// Skips a file without an extension and a file that's only partly JavaScript.
 fn should_run(path: &[u8]) -> bool {
     let name = bun_lint::paths::file_name(path);
     match strings::last_index_of_char(name, b'.') {
@@ -36,7 +36,7 @@ impl Rule for NoEmptyFile {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let is_triple_slash = |it: Token| it.kind() == TokenKind::Line && it.text().starts_with(b"///");
         if !cx.file().comments().any(is_triple_slash) {
-            // No more than the first 100 bytes.
+            // At most the first 100 bytes.
             cx.report(Span::new(0, cx.file().span().end.min(100)), NO_EMPTY_FILE);
         }
     }

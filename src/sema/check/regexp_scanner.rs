@@ -1,11 +1,11 @@
-//! Regular expression literals, parsed as an engine parses them: 1499 to 1538, and the scanner's
-//! errors about their escapes and about missing syntax: 1005 1125 1126 1198 1199 1487 1488.
+//! Parses regular expression literals the way an engine does and reports errors 1499 to 1538, plus
+//! the scanner's errors about escapes and missing syntax (1005, 1125, 1126, 1198, 1199, 1487, 1488).
 //!
-//! A port of regexp.go and unicodeproperties.go of TypeScript 7.0.2's scanner, of
-//! `ReScanSlashToken`, `scanEscapeSequence`, `scanUnicodeEscape`, `scanIdentifier` and
-//! `scanIdentifierParts` of its scanner.go to the extent that regular expressions use them, and of
-//! `checkGrammarRegularExpressionLiteral` of grammarchecks.go, which decides which of those errors
-//! are reported.
+//! Ported from TypeScript 7.0.2:
+//! - regexp.go and unicodeproperties.go from the scanner
+//! - `ReScanSlashToken`, `scanEscapeSequence`, `scanUnicodeEscape`, `scanIdentifier` and
+//!   `scanIdentifierParts` from scanner.go, as far as regular expressions use them
+//! - `checkGrammarRegularExpressionLiteral` from grammarchecks.go, which decides which of those errors are reported
 //!
 //! tsgo always enables Annex B, so its `anyUnicodeModeOrNonAnnexB` is `anyUnicodeMode`.
 
@@ -28,9 +28,9 @@ impl Checker<'_, '_> {
             ScriptTarget::None => ScriptTarget::ES2025,
             target => target,
         };
-        let mut noted: Vec<Noted> = Vec::new();
-        check_regular_expression_literal(&hir.text, hir[e].pos as usize, target, &mut noted);
-        for (start, end, code, args) in noted {
+        let mut scan_errors: Vec<RegExpError> = Vec::new();
+        check_regular_expression_literal(&hir.text, hir[e].pos as usize, target, &mut scan_errors);
+        for (start, end, code, args) in scan_errors {
             // `Did_you_mean_0` is attached to the previous error and has no file.
             match self.reported.last_mut() {
                 Some(last) if code == 1369 => {
@@ -44,8 +44,8 @@ impl Checker<'_, '_> {
     }
 }
 
-/// An error: its start, its end, its code, and its message arguments.
-type Noted = (u32, u32, u32, Vec<Vec<u8>>);
+/// An error's start, end, code and message arguments.
+type RegExpError = (u32, u32, u32, Vec<Vec<u8>>);
 
 const HAS_INDICES: u8 = 1 << 0; // d
 const GLOBAL: u8 = 1 << 1; // g
@@ -77,10 +77,10 @@ fn regexp_flag(ch: u32) -> Option<u8> {
 const RUNE_ERROR: u32 = 0xFFFD;
 const BACKSLASH: u32 = b'\\' as u32;
 
-/// The value a member of a character class represents. tsgo uses a string.
+/// The value of a character class member. tsgo uses a string.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ClassAtom {
-    /// `""`: itself a class, such as `\d`.
+    /// tsgo's `""`. The member is itself a class, such as `\d`.
     None,
     /// One character. Half of a surrogate pair counts as one.
     Char(u32),
@@ -94,12 +94,12 @@ enum ClassSetExpressionType {
     ClassSubtraction,
 }
 
-/// The call of `scanClassSetOperand` after which a `scanClassSetExpression` continues.
+/// Which `scanClassSetOperand` call a `scanClassSetExpression` resumes after.
 #[derive(Copy, Clone)]
 enum ClassSetOperand {
     /// The first operand.
     First,
-    /// The end of a range. It starts at this position.
+    /// The end of a range that starts at this position.
     RangeEnd(usize),
     /// Another operand of a union.
     Union,
@@ -107,36 +107,36 @@ enum ClassSetOperand {
     SubExpression(ClassSetExpressionType),
 }
 
-/// The variables of a `scanClassSetExpression`, and of the `scanClassSetSubExpression` it calls.
+/// The locals of a `scanClassSetExpression` call and of the `scanClassSetSubExpression` it calls.
 struct ClassSetExpression {
     is_character_complement: bool,
     expression_may_contain_strings: bool,
     /// `expressionMayContainStrings` of `scanClassSetSubExpression`.
     sub_expression_may_contain_strings: bool,
     start: usize,
-    /// The character the expression starts with.
+    /// The expression's first character.
     first: u8,
     operand: ClassAtom,
     continues_after: ClassSetOperand,
 }
 
-/// `ReScanSlashToken` when it reports errors. The first `/` is at `token_start`.
+/// `ReScanSlashToken` in its error-reporting mode. The first `/` is at `token_start`.
 fn check_regular_expression_literal(
     text: &[u8],
     token_start: usize,
     target: ScriptTarget,
-    noted: &mut Vec<Noted>,
+    scan_errors: &mut Vec<RegExpError>,
 ) {
     if text.get(token_start) != Some(&b'/') {
         return;
     }
-    // Scans to the end first, to read the flags. A `[` inside a class does nothing here and a `]`
-    // always closes it, even with `v`.
+    // Scan to the end first to read the flags. Here a `[` inside a class is ignored and a `]`
+    // always closes the class, even with `v`.
     let start_of_body = token_start + 1;
     let mut p = start_of_body;
     let (mut in_escape, mut in_character_class, mut named_capture_groups) = (false, false, false);
     loop {
-        // An unterminated literal is reported by the parser.
+        // The parser reports an unterminated literal.
         let Some(&ch) = text.get(p) else { return };
         match ch {
             b'\n' | b'\r' => return,
@@ -172,7 +172,7 @@ fn check_regular_expression_literal(
         named_capturing_groups: Vec::new(),
         pending_low_surrogate: 0,
         last_error: None,
-        noted,
+        scan_errors,
     };
     p += 1;
     let mut flags = 0u8;
@@ -199,7 +199,7 @@ fn check_regular_expression_literal(
     parser.run();
 }
 
-/// `regExpParser`, and the parts of its underlying `Scanner` that it uses.
+/// `regExpParser`, plus the parts of its underlying `Scanner` that it uses.
 struct RegExpParser<'a> {
     text: &'a [u8],
     pos: usize,
@@ -208,37 +208,37 @@ struct RegExpParser<'a> {
     target: ScriptTarget,
     any_unicode_mode: bool,
     unicode_sets_mode: bool,
-    /// The pattern contains a `(?<name>`.
+    /// True if the pattern contains a `(?<name>`.
     named_capture_groups: bool,
     /// See `scan_class_set_expression`.
     may_contain_strings: bool,
-    /// Named or not.
+    /// Counts both named and unnamed groups.
     number_of_capturing_groups: usize,
     /// The names of all named capturing groups.
     group_specifiers: Vec<Cow<'a, [u8]>>,
-    /// `\k<name>`: the span of the name, and the name.
+    /// For each `\k<name>`: the name's span and the name.
     group_name_references: Vec<(usize, usize, Cow<'a, [u8]>)>,
-    /// `\1`: the span of the number, and the number.
+    /// For each `\1`: the number's span and the number.
     decimal_escapes: Vec<(usize, usize, usize)>,
-    /// Which of `group_specifiers` are in the alternatives being parsed. tsgo has a stack of sets,
-    /// one per alternative.
+    /// Indexes into `group_specifiers` of the groups in the alternatives being parsed. tsgo has a
+    /// stack of sets, one per alternative.
     named_capturing_groups: Vec<usize>,
-    /// Without `u` or `v` a character above U+FFFF counts as two. The first has been returned
-    /// without advancing. This is the second.
+    /// Without `u` or `v`, a character above U+FFFF counts as two. This is the second half, set
+    /// when the first half was returned without advancing.
     pending_low_surrogate: u32,
     /// Position of the most recently reported error.
     last_error: Option<usize>,
-    noted: &'a mut Vec<Noted>,
+    scan_errors: &'a mut Vec<RegExpError>,
 }
 
 impl<'a> RegExpParser<'a> {
-    /// The filter `checkGrammarRegularExpressionLiteral` applies to the scanner's errors: an error
-    /// at the same position as the previous one is dropped.
+    /// Reports an error, with the filter that `checkGrammarRegularExpressionLiteral` applies to the
+    /// scanner's errors: an error at the same position as the previous one is dropped.
     fn error(&mut self, code: u32, start: usize, length: usize) {
         self.error_with(code, start, length, Vec::new);
     }
 
-    /// The same for an error whose message has arguments.
+    /// Same as `error`, for a message with arguments.
     fn error_with(
         &mut self,
         code: u32,
@@ -252,13 +252,13 @@ impl<'a> RegExpParser<'a> {
                 0 => super::explain::NO_LENGTH,
                 _ => (start + length) as u32,
             };
-            self.noted.push((start as u32, end, code, args()));
+            self.scan_errors.push((start as u32, end, code, args()));
         }
     }
 
-    /// `Did_you_mean_0`, which `checkGrammarRegularExpressionLiteral` attaches to the previous
-    /// error if that error covers the same text: the entry of `candidates` that `name` may be a
-    /// misspelling of.
+    /// Adds `Did_you_mean_0` with the entry of `candidates` that `name` may be a misspelling of.
+    /// `checkGrammarRegularExpressionLiteral` attaches it to the previous error, and only if that
+    /// error covers the same text.
     fn suggest<'c>(
         &mut self,
         start: usize,
@@ -268,21 +268,21 @@ impl<'a> RegExpParser<'a> {
     ) {
         let (start, end) = (start as u32, (start + length) as u32);
         if self
-            .noted
+            .scan_errors
             .last()
             .is_some_and(|last| (last.0, last.1) == (start, end))
             && let Some(suggestion) = spelling_suggestion(name, candidates)
         {
-            self.noted.push((start, end, 1369, vec![suggestion]));
+            self.scan_errors.push((start, end, 1369, vec![suggestion]));
         }
     }
 
-    /// 1508 for the character `ch` at `start`.
+    /// Reports 1508 for the character `ch` at `start`.
     fn error_unexpected(&mut self, start: usize, ch: u8) {
         self.error_with(1508, start, 1, || vec![vec![ch]]);
     }
 
-    /// `char`. `None` for its -1: end of the body.
+    /// `char`. Returns `None` where tsgo returns -1, at the end of the body.
     #[inline]
     fn peek(&self) -> Option<u8> {
         self.peek_at(0)
@@ -322,8 +322,8 @@ impl<'a> RegExpParser<'a> {
                 self.suggest(*pos, *end - *pos, name, names);
             }
         }
-        // With Annex B a number greater than the number of groups is an octal escape or the literal
-        // digits. It is most likely a mistake anyway.
+        // With Annex B, a number greater than the number of groups is an octal escape or literal
+        // digits. It's most likely a mistake anyway.
         for (pos, end, value) in std::mem::take(&mut self.decimal_escapes) {
             if value > self.number_of_capturing_groups {
                 let groups = self.number_of_capturing_groups;
@@ -341,8 +341,8 @@ impl<'a> RegExpParser<'a> {
         }
     }
 
-    /// `scanDisjunction`: `Alternative ('|' Alternative)*`. The disjunction of a group is scanned
-    /// by the same loop: tsgo recurses, on a stack that grows.
+    /// `scanDisjunction`: `Alternative ('|' Alternative)*`. A group's disjunction is scanned by the
+    /// same loop. tsgo recurses instead, on a stack that grows.
     fn scan_disjunction(&mut self) {
         // For each open group, the state of the alternative that contains it:
         // `isPreviousTermQuantifiable` after the group, and the length of `named_capturing_groups`
@@ -372,9 +372,9 @@ impl<'a> RegExpParser<'a> {
         }
     }
 
-    /// `scanAlternative`: `Term*`, a term being an assertion, or an atom and perhaps a quantifier.
-    /// `Some`: the disjunction of a group is next, and this is `isPreviousTermQuantifiable` after
-    /// the group, with which the alternative is continued. `None`: the alternative has ended.
+    /// `scanAlternative`: `Term*`, where a term is an assertion, or an atom with an optional quantifier.
+    /// Returns `Some` if a group's disjunction is next. The value is `isPreviousTermQuantifiable` after the
+    /// group, to pass back in when the alternative resumes. Returns `None` at the end of the alternative.
     fn scan_alternative(
         &mut self,
         is_in_group: bool,
@@ -495,8 +495,8 @@ impl<'a> RegExpParser<'a> {
         None
     }
 
-    /// The `{` case of `scanAlternative`. True: it opens a quantifier, and the closing token is
-    /// next. False: it is an ordinary character, and so are the characters consumed after it.
+    /// The `{` case of `scanAlternative`. Returns true if the `{` opens a quantifier, with the closing
+    /// token next. Returns false if it's an ordinary character, as are the characters consumed after it.
     fn scan_braced_quantifier(&mut self) -> bool {
         let start = self.pos;
         self.pos += 1;
@@ -537,7 +537,7 @@ impl<'a> RegExpParser<'a> {
         true
     }
 
-    /// `scanPatternModifiers`: the flags of `(?ims-ims:`
+    /// `scanPatternModifiers`: the flags in `(?ims-ims:`
     fn scan_pattern_modifiers(&mut self, mut curr_flags: u8) -> u8 {
         while self.pos < self.end {
             let (ch, size) = decode_rune(&self.text[self.pos..]);
@@ -600,7 +600,7 @@ impl<'a> RegExpParser<'a> {
     }
 
     /// `scanCharacterEscape`: after the backslash, `c` and a letter, a syntax character, or an
-    /// escape `scan_escape_sequence` handles.
+    /// escape that `scan_escape_sequence` handles.
     fn scan_character_escape(&mut self, atom_escape: bool) -> ClassAtom {
         let Some(ch) = self.peek() else {
             self.error(1513, self.pos - 1, 1);
@@ -630,16 +630,15 @@ impl<'a> RegExpParser<'a> {
                 ClassAtom::Char(u32::from(ch))
             }
             _ => {
-                // Back to the backslash.
+                // Back up to the backslash.
                 self.pos -= 1;
                 self.scan_escape_sequence(atom_escape)
             }
         }
     }
 
-    /// `scanEscapeSequence`, at the backslash, with the flags `scanCharacterEscape` passes it:
-    /// `RegularExpression`, `AnnexB`, `AnyUnicodeMode` if that is the mode, and `AtomEscape`
-    /// outside a class.
+    /// `scanEscapeSequence`, at the backslash, with the flags that `scanCharacterEscape` passes it:
+    /// `RegularExpression`, `AnnexB`, `AnyUnicodeMode` in that mode, and `AtomEscape` outside a class.
     fn scan_escape_sequence(&mut self, atom_escape: bool) -> ClassAtom {
         let start = self.pos;
         self.pos += 1;
@@ -651,7 +650,7 @@ impl<'a> RegExpParser<'a> {
         let is_octal_digit = |ch: Option<u8>| matches!(ch, Some(b'0'..=b'7'));
         match ch {
             b'0'..=b'7' => {
-                // `\08` is `\0` and `8`, though a zero before any digit makes an octal escape.
+                // `\08` is `\0` then `8`, but a zero before any digit still counts as an octal escape.
                 if ch == b'0' && !self.peek().is_some_and(|next| next.is_ascii_digit()) {
                     return ClassAtom::Char(0);
                 }
@@ -711,8 +710,8 @@ impl<'a> RegExpParser<'a> {
                 let Some(code_point) = code_point else {
                     return ClassAtom::Text;
                 };
-                // With `u` or `v`, two escapes of four digits that make a surrogate pair are one character. Those in braces never
-                // pair up, and without the flags nothing does.
+                // With `u` or `v`, two four-digit escapes that form a surrogate pair are one
+                // character. Braced escapes never pair up, and nothing pairs up without those flags.
                 if (0xD800..=0xDBFF).contains(&code_point)
                     && self.any_unicode_mode
                     && self.peek() == Some(b'\\')
@@ -767,7 +766,7 @@ impl<'a> RegExpParser<'a> {
         }
     }
 
-    /// `scanUnicodeEscape`, at the backslash of a `\u`. `None` for its -1.
+    /// `scanUnicodeEscape`, at the backslash of a `\u`. Returns `None` where tsgo returns -1.
     fn scan_unicode_escape(&mut self, should_emit_invalid_escape_error: bool) -> Option<u32> {
         self.pos += 2;
         let start = self.pos;
@@ -775,7 +774,7 @@ impl<'a> RegExpParser<'a> {
         if extended {
             self.pos += 1;
         }
-        // `scanHexDigits`: four, or in braces as many as there are and at least one.
+        // `scanHexDigits`: exactly four digits, or one or more in braces.
         let digits_start = self.pos;
         while (extended || self.pos < digits_start + 4)
             && self.peek().is_some_and(|digit| digit.is_ascii_hexdigit())
@@ -846,8 +845,8 @@ impl<'a> RegExpParser<'a> {
         }
     }
 
-    /// `scanIdentifier`, `scanIdentifierParts`: the name, with its escapes decoded. It cannot start
-    /// with an escape.
+    /// `scanIdentifier`, `scanIdentifierParts`. Returns the name with its escapes decoded. The name
+    /// can't start with an escape.
     fn scan_identifier(&mut self) -> Cow<'a, [u8]> {
         let text = self.text;
         let start = self.pos;
@@ -920,8 +919,8 @@ impl<'a> RegExpParser<'a> {
                 self.error(1516, max_start, self.pos - max_start);
                 continue;
             }
-            // The empty string decodes as U+FFFD with length 0, which equals its own length, so it
-            // is compared like a single character.
+            // tsgo decodes the empty string as U+FFFD with length 0, which equals the string's
+            // length, so it's compared like a single character.
             let max_character = if max_character == ClassAtom::None {
                 ClassAtom::Char(RUNE_ERROR)
             } else {
@@ -935,7 +934,7 @@ impl<'a> RegExpParser<'a> {
         }
     }
 
-    /// `--` or `&&` is next.
+    /// True if `--` or `&&` is next.
     fn is_at_class_set_operator(&self) -> bool {
         matches!(
             (self.peek(), self.peek_at(1)),
@@ -943,14 +942,15 @@ impl<'a> RegExpParser<'a> {
         )
     }
 
-    /// `scanClassSetExpression`: `'^'? (ClassUnion | ClassIntersection | ClassSubtraction)`, the
-    /// contents of brackets with `v`. A class nested in it is scanned by the same loop: tsgo
-    /// recurses, on a stack that grows.
+    /// `scanClassSetExpression`: `'^'? (ClassUnion | ClassIntersection | ClassSubtraction)`, the contents of
+    /// brackets with `v`. A nested class is scanned by the same loop. tsgo recurses instead, on a stack that grows.
     ///
-    /// Sets `may_contain_strings` to whether it can match more than one character at once. A union
-    /// can if any of its operands can, an intersection if all of them can, a subtraction if the
-    /// first can; `\q{..}` can unless each alternative is one character, `\p{..}` if it is a
-    /// property of strings.
+    /// Sets `may_contain_strings` to true if the expression can match more than one character at a time:
+    /// - a union, if any operand can
+    /// - an intersection, if all operands can
+    /// - a subtraction, if the first operand can
+    /// - `\q{..}`, unless every alternative is one character
+    /// - `\p{..}`, if it's a property of strings
     fn scan_class_set_expression(&mut self) {
         let mut enclosing: Vec<ClassSetExpression> = Vec::new();
         let (mut class, mut calls_operand) = self.start_class_set_expression();
@@ -958,7 +958,7 @@ impl<'a> RegExpParser<'a> {
             let operand = if calls_operand {
                 self.scan_class_set_operand()
             } else {
-                // The rest of the `scanClassSetOperand` that called it.
+                // Finish the `scanClassSetOperand` that called this expression.
                 let Some(outer) = enclosing.pop() else {
                     return;
                 };
@@ -979,8 +979,8 @@ impl<'a> RegExpParser<'a> {
         }
     }
 
-    /// `scanClassSetExpression`, up to its first call of `scanClassSetOperand`. False: it returned
-    /// without another call.
+    /// `scanClassSetExpression` up to its first `scanClassSetOperand` call. The flag is false if it
+    /// returned without making that call.
     fn start_class_set_expression(&mut self) -> (ClassSetExpression, bool) {
         let is_character_complement = self.peek() == Some(b'^');
         if is_character_complement {
@@ -1007,8 +1007,8 @@ impl<'a> RegExpParser<'a> {
         (class, true)
     }
 
-    /// `scanClassSetExpression`, from where `scanClassSetOperand` returned `operand` up to the next
-    /// call of it. False: it returned without another call.
+    /// `scanClassSetExpression` from where `scanClassSetOperand` returned `operand` up to the next
+    /// call. Returns false if it returned without another call.
     fn continue_class_set_expression(
         &mut self,
         class: &mut ClassSetExpression,
@@ -1040,7 +1040,7 @@ impl<'a> RegExpParser<'a> {
                                 ClassSetExpressionType::ClassIntersection,
                             );
                         }
-                        // tsgo names the character the expression starts with, not the `&`.
+                        // tsgo's message shows the expression's first character, not the `&`.
                         self.error_unexpected(self.pos, class.first);
                     }
                     _ => {
@@ -1080,8 +1080,8 @@ impl<'a> RegExpParser<'a> {
         }
     }
 
-    /// The loop of `scanClassSetExpression`, up to the next call of `scanClassSetOperand`. False:
-    /// it returned without another call. `is_after_range`: the loop continues after its `switch`.
+    /// `scanClassSetExpression`'s loop up to the next `scanClassSetOperand` call. Returns false if it
+    /// returned without another call. With `is_after_range`, the loop resumes after its `switch`.
     fn scan_class_union(
         &mut self,
         class: &mut ClassSetExpression,
@@ -1145,8 +1145,8 @@ impl<'a> RegExpParser<'a> {
     }
 
     /// `scanClassSetSubExpression`: `('&&' ClassSetOperand)+` or `('--' ClassSetOperand)+`, after
-    /// an operand and up to the next call of `scanClassSetOperand`. False: it returned without
-    /// another call, and so did the `scanClassSetExpression` that called it.
+    /// an operand and up to the next `scanClassSetOperand` call. Returns false if it returned
+    /// without another call, and so did the `scanClassSetExpression` that called it.
     fn scan_class_set_sub_expression(
         &mut self,
         class: &mut ClassSetExpression,
@@ -1180,7 +1180,7 @@ impl<'a> RegExpParser<'a> {
                         self.error_unexpected(self.pos - 1, b'&');
                     }
                 }
-                // The operator is expected.
+                // Expected the operator.
                 _ => self.error_with(1005, self.pos, 0, || {
                     vec![
                         match expression_type {
@@ -1210,7 +1210,7 @@ impl<'a> RegExpParser<'a> {
     }
 
     /// `scanClassSetOperand`: a class in brackets, a class escape, `\q{..}`, or a character.
-    /// `None`: the contents of a class in brackets are next.
+    /// Returns `None` if the contents of a class in brackets are next.
     fn scan_class_set_operand(&mut self) -> Option<ClassAtom> {
         self.may_contain_strings = false;
         Some(match self.peek() {
@@ -1267,8 +1267,8 @@ impl<'a> RegExpParser<'a> {
         }
     }
 
-    /// `scanClassSetCharacter`: a character that is not a syntax character of classes and not a
-    /// doubled punctuator, or an escape.
+    /// `scanClassSetCharacter`: an escape, or a character that's neither a class syntax character
+    /// nor a doubled punctuator.
     fn scan_class_set_character(&mut self) -> ClassAtom {
         let Some(ch) = self.peek() else {
             return ClassAtom::None;
@@ -1490,7 +1490,7 @@ impl<'a> RegExpParser<'a> {
             return ClassAtom::Char(std::mem::take(&mut self.pending_low_surrogate));
         }
         if ch == RUNE_ERROR {
-            // One byte of it.
+            // Invalid UTF-8: consume one byte.
             self.pos += 1;
             return ClassAtom::Char(u32::from(self.text[self.pos - 1]));
         }
@@ -1522,7 +1522,7 @@ impl<'a> RegExpParser<'a> {
     }
 }
 
-/// `compareDecimalStrings`: numbers of any length.
+/// `compareDecimalStrings`. Handles numbers of any length.
 fn compare_decimal_strings(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
     fn without_leading_zeros(digits: &[u8]) -> &[u8] {
         &digits[digits
@@ -1534,7 +1534,7 @@ fn compare_decimal_strings(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
     a.len().cmp(&b.len()).then_with(|| a.cmp(b))
 }
 
-/// `strconv.ParseInt(digits, 16, 32)`: an overflowing value is only known to be large.
+/// `strconv.ParseInt(digits, 16, 32)`. Saturates, so an overflowing value is only known to be large.
 fn parse_hex(digits: &[u8]) -> u32 {
     digits.iter().fold(0u32, |value, &digit| {
         value
@@ -1587,7 +1587,7 @@ pub fn get_spelling_suggestion<'c, T: Copy>(
     };
     let name_runes = runes(name);
     let maximum_length_difference = 2.max((name_runes.len() as f64 * 0.34) as usize);
-    // A candidate with a greater distance is not suggested.
+    // Candidates farther away than this aren't suggested.
     let mut best_distance = (name_runes.len() as f64 * 0.4).floor() + 0.9;
     let mut best: Option<T> = None;
     for candidate in candidates {
@@ -1631,8 +1631,8 @@ pub(super) fn spelling_suggestion<'c>(
     get_spelling_suggestion(name, candidates, |c| c, |a, b| a.cmp(b)).map(|best| best.to_vec())
 }
 
-/// `levenshteinWithMax`: a substitution costs 2, and a case change costs almost nothing. `None` for
-/// its -1: more than `max_value`.
+/// `levenshteinWithMax`: a substitution costs 2, and a case change costs almost nothing. Returns
+/// `None` where tsgo returns -1, when the distance exceeds `max_value`.
 fn levenshtein_with_max(s1: &[char], s2: &[char], max_value: f64) -> Option<f64> {
     let mut previous: Vec<f64> = (0..=s2.len()).map(|j| j as f64).collect();
     let mut current = vec![0.0; s2.len() + 1];
@@ -1681,8 +1681,8 @@ fn levenshtein_with_max(s1: &[char], s2: &[char], max_value: f64) -> Option<f64>
 }
 
 bun_core::comptime_string_map! {
-    /// `nonBinaryUnicodeProperties`: maps a property name or alias to its value set. `true`: `General_Category` values. `false`:
-    /// `Script` values, which `Script_Extensions` also accepts.
+    /// `nonBinaryUnicodeProperties`: maps a property name or alias to its value set. `true` means
+    /// `General_Category` values. `false` means `Script` values, which `Script_Extensions` also accepts.
     static NON_BINARY_UNICODE_PROPERTIES: bool = {
         b"General_Category" => true, b"gc" => true,
         b"Script" => false, b"sc" => false, b"Script_Extensions" => false, b"scx" => false,

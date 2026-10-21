@@ -59,6 +59,62 @@ test("setTimeout captured before fake timers remains a real timer", () => {
   vi.useRealTimers();
 });
 
+test("captured timeouts use the real clock when fake time is reset", async () => {
+  const capturedSetTimeout = globalThis.setTimeout.bind(globalThis);
+  const capturedClearTimeout = globalThis.clearTimeout.bind(globalThis);
+
+  let firstTimer = "";
+  let resolveFirstTimer!: () => void;
+  const firstTimerDone = new Promise<void>(resolve => (resolveFirstTimer = resolve));
+  const earlierTimer = capturedSetTimeout(() => {
+    firstTimer = "earlier";
+    resolveFirstTimer();
+  }, 10);
+
+  vi.useFakeTimers();
+  setSystemTime(0);
+
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  let resolveLaterTimer!: () => void;
+  const laterTimerDone = new Promise<void>(resolve => (resolveLaterTimer = resolve));
+  const laterTimer = capturedSetTimeout(() => {
+    if (!firstTimer) {
+      firstTimer = "later";
+      resolveFirstTimer();
+    }
+    resolveLaterTimer();
+  }, 25);
+  await Promise.race([firstTimerDone, laterTimerDone]);
+  expect(firstTimer).toBe("earlier");
+  capturedClearTimeout(earlierTimer);
+  capturedClearTimeout(laterTimer);
+  vi.useRealTimers();
+});
+
+test("captured real intervals rearm against the real clock when fake time is reset", async () => {
+  const capturedSetTimeout = globalThis.setTimeout.bind(globalThis);
+  const capturedSetInterval = globalThis.setInterval.bind(globalThis);
+  const capturedClearInterval = globalThis.clearInterval.bind(globalThis);
+
+  vi.useFakeTimers();
+  setSystemTime(0);
+
+  let intervalTicks = 0;
+  let resolveFirstTick!: () => void;
+  const firstTick = new Promise<void>(resolve => (resolveFirstTick = resolve));
+  const interval = capturedSetInterval(() => {
+    intervalTicks++;
+    if (intervalTicks === 1) {
+      resolveFirstTick();
+    }
+  }, 25);
+  await firstTick;
+  await new Promise<void>(resolve => capturedSetTimeout(resolve, 0));
+  expect(intervalTicks).toBe(1);
+  capturedClearInterval(interval);
+  vi.useRealTimers();
+});
+
 describe("advanceTimersToNextTimer", () => {
   test("one setTimeout", async () => {
     const order = new Order();

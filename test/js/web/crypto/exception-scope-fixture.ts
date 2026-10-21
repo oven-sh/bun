@@ -60,6 +60,8 @@ const cases: Record<string, () => Promise<unknown>> = {
   "generateKey nested bogus hash": () => crypto.subtle.generateKey(badHash, false, ["sign"]),
   "generateKey thrower": () => crypto.subtle.generateKey(thrower, false, ["sign"]),
   "generateKey supports rejected length": async () => supports("generateKey", { name: "AES-GCM", length: 100 }),
+  "generateKey supports rejected HMAC length": async () =>
+    supports("generateKey", { name: "HMAC", hash: "SHA-256", length: 7 }),
 
   "deriveKey ok": () => crypto.subtle.deriveKey(pbkdf2, pb, { name: "AES-GCM", length: 256 }, false, ["encrypt"]),
   "deriveKey bogus algorithm": () =>

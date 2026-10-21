@@ -30,7 +30,6 @@
 #if ENABLE(WEB_CRYPTO)
 
 #include "CryptoAlgorithm.h"
-#include "CryptoAlgorithmHMAC.h"
 #include "CryptoAlgorithmRegistry.h"
 #include "CryptoAlgorithmX25519Params.h"
 #include "CryptoKeyAES.h"
@@ -57,6 +56,7 @@
 #include "CryptoAlgorithmMLDSA.h"
 #include "CryptoKeyAKP.h"
 #include "CryptoKeyEC.h"
+#include "CryptoKeyHMAC.h"
 #include "CryptoKeyRSA.h"
 #include "BunString.h"
 #include "ErrorCode.h"
@@ -2055,15 +2055,13 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
         }
         if (op == "deriveBits"_s)
             return checkDeriveBitsLength(*params, length);
-        if (op == "generateKey"_s && params->identifier == CryptoAlgorithmIdentifier::HMAC)
-            return getKeyLengthFor(algorithm).has_value();
         if (operationKind == Operations::GenerateKey || operationKind == Operations::ImportKey) {
             if (auto* aesKeyParams = dynamicDowncast<CryptoAlgorithmAesKeyParams>(*params))
                 return CryptoKeyAES::lengthIsValid(aesKeyParams->length);
             if (auto* ecKeyParams = dynamicDowncast<CryptoAlgorithmEcKeyParams>(*params))
                 return CryptoKeyEC::namedCurveIsSupported(ecKeyParams->namedCurve);
             if (auto* hmacKeyParams = dynamicDowncast<CryptoAlgorithmHmacKeyParams>(*params))
-                return !hmacKeyParams->length || CryptoAlgorithmHMAC::importLengthIsValid(*hmacKeyParams->length);
+                return !hmacKeyParams->length || CryptoKeyHMAC::lengthIsValid(*hmacKeyParams->length);
             if (auto* rsaKeyGenParams = dynamicDowncast<CryptoAlgorithmRsaHashedKeyGenParams>(*params))
                 return CryptoKeyRSA::publicExponentIsValid(rsaKeyGenParams->publicExponent->span());
         }

@@ -97,11 +97,6 @@ void CryptoAlgorithmHMAC::generateKey(const CryptoAlgorithmParameters& parameter
     callback(WTF::move(result));
 }
 
-bool CryptoAlgorithmHMAC::importLengthIsValid(size_t lengthBits)
-{
-    return lengthBits;
-}
-
 void CryptoAlgorithmHMAC::importKey(CryptoKeyFormat format, KeyData&& data, const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyCallback&& callback, ExceptionCallback&& exceptionCallback)
 {
     using namespace CryptoAlgorithmHMACInternal;
@@ -115,11 +110,11 @@ void CryptoAlgorithmHMAC::importKey(CryptoKeyFormat format, KeyData&& data, cons
     }
 
     // Node validates HmacImportParams.length in its WebIDL converter.
-    if (hmacParameters.length && !importLengthIsValid(*hmacParameters.length)) {
+    if (hmacParameters.length && !*hmacParameters.length) {
         exceptionCallback(DataError, "HmacImportParams.length cannot be 0"_s);
         return;
     }
-    if (hmacParameters.length && *hmacParameters.length % 8) {
+    if (hmacParameters.length && !CryptoKeyHMAC::lengthIsValid(*hmacParameters.length)) {
         exceptionCallback(NotSupportedError, "Unsupported HmacImportParams.length"_s);
         return;
     }

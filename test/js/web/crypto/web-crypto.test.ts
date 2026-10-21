@@ -1806,15 +1806,19 @@ describe("SubtleCrypto.supports parameter values", () => {
       });
     });
 
-    it("answers false for importKey with a namedCurve that importKey rejects", async () => {
+    it("answers false for importKey and unwrapKey with a namedCurve that they reject", async () => {
       const { publicKey } = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
         "sign",
         "verify",
       ]);
       const algorithm = { name: "ECDSA", namedCurve: "P-51" };
       const jwk = { ...(await crypto.subtle.exportKey("jwk", publicKey)), crv: "P-51" };
+      const aes = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["wrapKey", "unwrapKey"]);
+      const aesGcm = { name: "AES-GCM", iv: bytes(12) };
+      const wrapped = await crypto.subtle.wrapKey("spki", publicKey, aes, aesGcm);
       expect({
-        supports: supports("importKey", algorithm),
+        importKey: supports("importKey", algorithm),
+        unwrapKey: supports("unwrapKey", aesGcm, algorithm),
         spki: await outcome(
           crypto.subtle.importKey("spki", await crypto.subtle.exportKey("spki", publicKey), algorithm, true, [
             "verify",
@@ -1824,49 +1828,108 @@ describe("SubtleCrypto.supports parameter values", () => {
           crypto.subtle.importKey("raw", await crypto.subtle.exportKey("raw", publicKey), algorithm, true, ["verify"]),
         ),
         jwk: await outcome(crypto.subtle.importKey("jwk", jwk, algorithm, true, ["verify"])),
+        unwrapped: await outcome(crypto.subtle.unwrapKey("spki", wrapped, aes, aesGcm, algorithm, true, ["verify"])),
       }).toEqual({
-        supports: false,
+        importKey: false,
+        unwrapKey: false,
         spki: "DataError: Invalid keyData",
         raw: "DataError: Invalid keyData",
         // The key has no "alg". ECDSA reports a curve that it does not know with this message.
         jwk: 'DataError: JWK "alg" does not match the requested algorithm',
+        unwrapped: "DataError: Invalid keyData",
       });
     });
 
-    it("answers for the length of an HMAC key as importKey does", async () => {
+    it("answers for the length of an HMAC key as generateKey, importKey, unwrapKey and deriveKey do", async () => {
       const keyData = bytes(32).fill(1);
       const jwk = { kty: "oct", k: Buffer.from(keyData).toString("base64url") };
       const hmac = { name: "HMAC", hash: "SHA-256" };
+      const kw = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, true, ["wrapKey", "unwrapKey"]);
+      const wrapped = await crypto.subtle.wrapKey(
+        "raw",
+        await crypto.subtle.importKey("raw", keyData, hmac, true, ["sign"]),
+        kw,
+        "AES-KW",
+      );
+      const { privateKey, publicKey } = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-521" }, true, [
+        "deriveKey",
+      ]);
+      const ecdh = { name: "ECDH", public: publicKey };
       const algorithms = {
         absent: hmac,
         undefined: { ...hmac, length: undefined },
         "256": { ...hmac, length: 256 },
+        "8": { ...hmac, length: 8 },
         "0": { ...hmac, length: 0 },
+        "7": { ...hmac, length: 7 },
+        "255": { ...hmac, length: 255 },
+        "257": { ...hmac, length: 257 },
+        "unknown hash": { ...hmac, hash: "SHA-0" },
       };
       const results: Record<string, unknown> = {};
       for (const [label, algorithm] of Object.entries(algorithms)) {
         results[label] = {
+          generateKey: supports("generateKey", algorithm),
           importKey: supports("importKey", algorithm),
           unwrapKey: supports("unwrapKey", "AES-KW", algorithm),
+          deriveKey: supports("deriveKey", ecdh, algorithm),
+          generated: await outcome(crypto.subtle.generateKey(algorithm, true, ["sign"])),
           raw: await outcome(crypto.subtle.importKey("raw", keyData, algorithm, true, ["sign"])),
           jwk: await outcome(crypto.subtle.importKey("jwk", jwk, algorithm, true, ["sign"])),
+          unwrapped: await outcome(crypto.subtle.unwrapKey("raw", wrapped, kw, "AES-KW", algorithm, true, ["sign"])),
+          derived: await outcome(crypto.subtle.deriveKey(ecdh, privateKey, algorithm, true, ["sign"])),
         };
       }
-      const zero = "DataError: HmacImportParams.length cannot be 0";
-      const yes = { importKey: true, unwrapKey: true, raw: "resolved", jwk: "resolved" };
+      const allFour = (answer: boolean) => ({
+        generateKey: answer,
+        importKey: answer,
+        unwrapKey: answer,
+        deriveKey: answer,
+      });
+      const rejected = (generated: string, imported: string, derived = imported) => ({
+        ...allFour(false),
+        generated,
+        raw: imported,
+        jwk: imported,
+        unwrapped: imported,
+        derived,
+      });
+      const yes = {
+        ...allFour(true),
+        generated: "resolved",
+        raw: "resolved",
+        jwk: "resolved",
+        unwrapped: "resolved",
+        derived: "resolved",
+      };
+      // Only the 32 bytes of key data do not fit a length of 8, so the answers stay true.
+      const keyDataDoesNotFit = "DataError: Invalid key length";
+      const notWholeBytes = rejected(operationFailed, "NotSupportedError: Unsupported HmacImportParams.length");
+      const unknownAlgorithm = "NotSupportedError: Unrecognized algorithm name";
       expect(results).toEqual({
         absent: yes,
         undefined: yes,
         "256": yes,
-        "0": { importKey: false, unwrapKey: false, raw: zero, jwk: zero },
+        "8": { ...yes, raw: keyDataDoesNotFit, jwk: keyDataDoesNotFit, unwrapped: keyDataDoesNotFit },
+        "0": rejected(
+          operationFailed,
+          "DataError: HmacImportParams.length cannot be 0",
+          "TypeError: Cannot get key length from derivedKeyType",
+        ),
+        "7": notWholeBytes,
+        "255": notWholeBytes,
+        "257": notWholeBytes,
+        "unknown hash": rejected(unknownAlgorithm, unknownAlgorithm),
       });
     });
 
     it("reads the algorithm as the operation does", async () => {
       const aes = { name: "AES-GCM", length: 100 };
       const ec = { name: "ECDSA", namedCurve: "P-51" };
+      const hmac = { name: "HMAC", hash: "SHA-256", length: 7 };
       const aesReads = ["name", "name", "length"];
       const ecReads = ["name", "name", "namedCurve"];
+      const hmacReads = ["name", "name", "hash", "length"];
       expect({
         supportsGenerateAes: await readsOf(aes, recorded => supports("generateKey", recorded)),
         generateAes: await readsOf(aes, recorded => crypto.subtle.generateKey(recorded, true, ["encrypt"])),
@@ -1874,6 +1937,12 @@ describe("SubtleCrypto.supports parameter values", () => {
         generateEc: await readsOf(ec, recorded => crypto.subtle.generateKey(recorded, true, ["sign"])),
         supportsImportEc: await readsOf(ec, recorded => supports("importKey", recorded)),
         importEc: await readsOf(ec, recorded => crypto.subtle.importKey("raw", bytes(65), recorded, true, ["verify"])),
+        supportsGenerateHmac: await readsOf(hmac, recorded => supports("generateKey", recorded)),
+        generateHmac: await readsOf(hmac, recorded => crypto.subtle.generateKey(recorded, true, ["sign"])),
+        supportsImportHmac: await readsOf(hmac, recorded => supports("importKey", recorded)),
+        importHmac: await readsOf(hmac, recorded =>
+          crypto.subtle.importKey("raw", bytes(32), recorded, true, ["sign"]),
+        ),
       }).toEqual({
         supportsGenerateAes: aesReads,
         generateAes: aesReads,
@@ -1881,33 +1950,30 @@ describe("SubtleCrypto.supports parameter values", () => {
         generateEc: ecReads,
         supportsImportEc: ecReads,
         importEc: ecReads,
+        supportsGenerateHmac: hmacReads,
+        generateHmac: hmacReads,
+        supportsImportHmac: hmacReads,
+        importHmac: hmacReads,
       });
     });
   });
 
-  // The lines of supports that this block does not cover sit beside the ones it does.
-  it("keeps the answers of deriveBits and of an HMAC generateKey", async () => {
+  // The deriveBits lines of supports sit beside the ones that this block covers.
+  it("keeps the answers of deriveBits", async () => {
     const hkdf = { name: "HKDF", hash: "SHA-256", salt: bytes(8), info: bytes(8) };
     const pbkdf2 = { name: "PBKDF2", hash: "SHA-256", salt: bytes(8), iterations: 1 };
     const ecdh = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
     const x25519 = (await crypto.subtle.generateKey("X25519", true, ["deriveBits"])) as CryptoKeyPair;
-    const hmac = { name: "HMAC", hash: "SHA-256" };
     expect({
       hkdf: [supports("deriveBits", hkdf, 256), supports("deriveBits", hkdf, 7), supports("deriveBits", hkdf)],
       pbkdf2: [supports("deriveBits", pbkdf2, 256), supports("deriveBits", pbkdf2, 7), supports("deriveBits", pbkdf2)],
       ecdh: [256, 257].map(length => supports("deriveBits", { name: "ECDH", public: ecdh.publicKey }, length)),
       x25519: [256, 257].map(length => supports("deriveBits", { name: "X25519", public: x25519.publicKey }, length)),
-      hmac: [
-        supports("generateKey", hmac),
-        supports("generateKey", { ...hmac, length: 0 }),
-        supports("generateKey", { ...hmac, hash: "SHA-0" }),
-      ],
     }).toEqual({
       hkdf: [true, false, false],
       pbkdf2: [true, false, false],
       ecdh: [true, false],
       x25519: [true, false],
-      hmac: [true, false, false],
     });
   });
 });
@@ -1954,6 +2020,7 @@ describe("exception scope discipline", () => {
         "generateKey nested bogus hash = REJECTED NotSupportedError: Unrecognized algorithm name",
         "generateKey thrower = REJECTED Error: boom",
         "generateKey supports rejected length = RESOLVED",
+        "generateKey supports rejected HMAC length = RESOLVED",
         "deriveKey ok = RESOLVED",
         "deriveKey bogus algorithm = REJECTED NotSupportedError: Unrecognized algorithm name",
         "deriveKey bogus derived type = REJECTED NotSupportedError: Unrecognized algorithm name",

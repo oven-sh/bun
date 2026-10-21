@@ -54,11 +54,13 @@ export function minify_error_test_with_options(source: string, expectedError: st
 // their non-default state, and is itself dropped from the output. The output must not change.
 const precedingRule = (() => {
   const declarations = [
-    "margin-inline-start:1px",
-    "padding-inline-start:1px",
-    "inset-inline-start:1px",
-    "scroll-margin-inline-start:1px",
-    "scroll-padding-inline-start:1px",
+    // Block axis: for targets that compile logical properties, an inline-axis declaration becomes
+    // `:dir()` rules, and minifying those puts the handler back in its physical state.
+    "margin-block-start:1px",
+    "padding-block-start:1px",
+    "inset-block-start:1px",
+    "scroll-margin-block-start:1px",
+    "scroll-padding-block-start:1px",
     // No logical border property: the `border` arm of BorderHandler does not record its category.
     "border-start-start-radius:1px",
     "inline-size:1px",

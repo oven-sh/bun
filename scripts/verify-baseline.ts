@@ -244,9 +244,63 @@ if (values["skip-emulation"]) {
   const simdTestPath = join(repoRoot, "test", "js", "bun", "jsc-stress", "fixtures", "simd-baseline.test.ts");
   await runTest("SIMD baseline tests", ["test", simdTestPath], { live: true });
 
-  // TEMPORARY MEASUREMENT, removed before merge: repeat the emulated run to count crash reports at exit.
-  for (let run = 2; run <= 7; run++) {
-    await runTest(`SIMD baseline tests (measurement, run ${run} of 7)`, ["test", simdTestPath], { live: true });
+  // TEMPORARY MEASUREMENT, removed before merge.
+  if (isWindows) {
+    // 1. The exit code of a process that calls ExitProcess(3) from an FLS callback, inside its ExitProcess(0).
+    //    The crash handler does that for a fault inside ExitProcess. Natively and under the emulator.
+    const { mkdtempSync, writeFileSync } = require("node:fs");
+    const { tmpdir } = require("node:os");
+    const probeDir = mkdtempSync(join(tmpdir(), "exit-probe-"));
+    const exit3 = join(probeDir, "exit3.js");
+    const nested = join(probeDir, "nested.js");
+    const probeCmd = join(probeDir, "probe.cmd");
+    writeFileSync(exit3, "process.exit(3);\n");
+    writeFileSync(
+      nested,
+      [
+        `const { dlopen, FFIType } = require("bun:ffi");`,
+        `const k32 = dlopen("kernel32.dll", {`,
+        `  GetModuleHandleA: { args: [FFIType.ptr], returns: FFIType.ptr },`,
+        `  GetProcAddress: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },`,
+        `  FlsAlloc: { args: [FFIType.ptr], returns: FFIType.u32 },`,
+        `  FlsSetValue: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.i32 },`,
+        `}).symbols;`,
+        `const cstr = s => Buffer.from(s + "\\0", "latin1");`,
+        `const exitProcess = k32.GetProcAddress(k32.GetModuleHandleA(cstr("kernel32.dll")), cstr("ExitProcess"));`,
+        `const slot = k32.FlsAlloc(exitProcess);`,
+        `const set = k32.FlsSetValue(slot, 3);`,
+        `console.log("probe: ExitProcess=" + exitProcess + " slot=" + slot + " set=" + set);`,
+        ``,
+      ].join("\n"),
+    );
+    writeFileSync(probeCmd, "@echo off\r\n%*\r\necho FULL_EXIT_CODE=%ERRORLEVEL%\r\n");
+    const probes: [string, string[]][] = [
+      ["native, process.exit(3)", [binary, exit3]],
+      ["native, ExitProcess(3) from an FLS callback", [binary, nested]],
+      ["emulated, process.exit(3)", [...config.runnerCmd, binary, exit3]],
+      ["emulated, ExitProcess(3) from an FLS callback", [...config.runnerCmd, binary, nested]],
+    ];
+    for (const [what, argv] of probes) {
+      console.log(`+++ exit code probe: ${what}`);
+      const proc = Bun.spawn(["cmd.exe", "/d", "/c", probeCmd, ...argv], {
+        cwd: config.cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      console.log(out.trim());
+      if (err.trim()) console.log(err.trim());
+      console.log(`    exitCode of cmd.exe: ${proc.exitCode}`);
+    }
+
+    // 2. Repeat the emulated run to count crash reports at exit.
+    for (let run = 2; run <= 100; run++) {
+      await runTest(`SIMD baseline tests (measurement, run ${run} of 100)`, ["test", simdTestPath], { live: true });
+    }
   }
 }
 

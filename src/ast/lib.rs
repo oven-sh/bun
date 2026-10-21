@@ -1591,9 +1591,7 @@ impl Log {
         self.msgs.clear();
         self.warnings = 0;
         self.errors = 0;
-        // Drop the per-source scan cache with the messages it was built for;
-        // its identity check is pointer-based, so don't let it outlive the
-        // logical reuse boundary.
+        // Drop the per-source scan cache with the messages it was built for.
         self.line_column_tracker = None;
     }
 
@@ -2443,7 +2441,6 @@ pub fn usize2loc(loc: usize) -> Loc {
 // Source
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone)]
 pub struct Source {
     pub path: bun_paths::fs::Path<'static>,
 
@@ -2464,6 +2461,9 @@ pub struct Source {
     pub identifier_name: Cow<'static, [u8]>,
 
     pub index: Index,
+
+    /// Keys the [`Log`]'s line and column scan. Only a `Source` that borrows the same bytes has it.
+    pub id: SourceId,
 }
 
 impl Default for Source {
@@ -2474,7 +2474,57 @@ impl Default for Source {
             contents_is_recycled: false,
             identifier_name: Cow::Borrowed(b""),
             index: Index::source(0),
+            id: SourceId::new(),
         }
+    }
+}
+
+impl Clone for Source {
+    fn clone(&self) -> Self {
+        Source {
+            path: self.path,
+            contents: self.contents.clone(),
+            contents_is_recycled: self.contents_is_recycled,
+            identifier_name: self.identifier_name.clone(),
+            index: self.index,
+            id: match self.contents {
+                Cow::Borrowed(_) => self.id,
+                // The clone has its own copy of the bytes.
+                Cow::Owned(_) => SourceId::new(),
+            },
+        }
+    }
+}
+
+/// Identifies a [`Source`]'s text. Its address cannot: a reused buffer holds the next text there.
+#[derive(Clone, Copy)]
+pub struct SourceId(u64);
+
+#[thread_local]
+static NEXT_SOURCE_ID: core::cell::Cell<u64> = core::cell::Cell::new(0);
+
+impl SourceId {
+    /// A thread takes this many ids at a time, so that [`SourceId::new`] has no atomic operation.
+    const BLOCK: u64 = 1 << 32;
+
+    #[inline]
+    fn new() -> SourceId {
+        let mut id = NEXT_SOURCE_ID.get();
+        // A multiple of `BLOCK` is never an id. At one, this thread has no block or has used it up.
+        if id.is_multiple_of(Self::BLOCK) {
+            id = Self::next_block() + 1;
+        }
+        NEXT_SOURCE_ID.set(id + 1);
+        SourceId(id)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn next_block() -> u64 {
+        use core::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_BLOCK: AtomicU64 = AtomicU64::new(0);
+        // Relaxed: a block only has to differ from every other block.
+        NEXT_BLOCK.fetch_add(Self::BLOCK, Ordering::Relaxed)
     }
 }
 
@@ -2606,13 +2656,11 @@ fn clamp_error_offset(contents: &[u8], offset_loc: Loc) -> usize {
 /// are identical to `Source::init_error_position`.
 #[derive(Default)]
 pub struct LineColumnTracker {
-    /// Identity of the tracked source (`contents` and `path.text` pointers +
-    /// lengths, stored as `usize` so the tracker stays `Send`). A diagnostic
-    /// for a different source resets the scan.
+    /// The [`SourceId`] of the cursors' source. 0, the id of no `Source`, before the first one.
+    source_id: u64,
+    /// The address of that source's `contents` (a `usize`, so that the tracker is `Send`).
     contents_ptr: usize,
     contents_len: usize,
-    path_ptr: usize,
-    path_len: usize,
     cursors: [ScanCursor; 4],
 }
 
@@ -2625,18 +2673,16 @@ struct ScanCursor {
 
 impl LineColumnTracker {
     fn matches(&self, source: &Source) -> bool {
-        self.contents_ptr == source.contents.as_ptr() as usize
+        self.source_id == source.id.0
+            && self.contents_ptr == source.contents.as_ptr() as usize
             && self.contents_len == source.contents.len()
-            && self.path_ptr == source.path.text.as_ptr() as usize
-            && self.path_len == source.path.text.len()
     }
 
     fn reset_for(&mut self, source: &Source) {
         *self = LineColumnTracker {
+            source_id: source.id.0,
             contents_ptr: source.contents.as_ptr() as usize,
             contents_len: source.contents.len(),
-            path_ptr: source.path.text.as_ptr() as usize,
-            path_len: source.path.text.len(),
             ..Default::default()
         };
     }
@@ -2665,6 +2711,20 @@ impl LineColumnTracker {
             cursor.line_end = None;
         }
         cursor.offset = offset;
+
+        // A cursor that another text left does not agree with a scan from the start.
+        #[cfg(debug_assertions)]
+        if offset <= 4096 {
+            let place = |state: &ErrorPositionState| {
+                (state.line_start, state.line_count, state.column_number)
+            };
+            let mut scanned = ErrorPositionState::default();
+            scanned.advance(contents, 0, offset);
+            assert!(
+                place(&scanned) == place(&cursor.state),
+                "the text of this Source has changed"
+            );
+        }
 
         let line_end = match cursor.line_end {
             Some(line_end) => line_end,
@@ -3613,5 +3673,95 @@ mod line_column_tracker_tests {
         let bmp_source = Source::init_path_string(b"t.js" as &[u8], bmp);
         let bmp_pos = bmp_source.init_error_position(usize2loc(bmp.len() - 1));
         assert_eq!(bmp_pos.column_count, 19);
+    }
+
+    #[test]
+    fn log_locates_each_file_that_one_read_buffer_holds() {
+        // One buffer holds each file in turn, so every `Source` has the same addresses and lengths.
+        let files: [(&[u8], usize, (i32, i32)); 3] = [
+            (b"one\ntwo\nthree\nfour four", 19, (4, 6)),
+            (b"a single line, no break", 21, (1, 22)),
+            (b"\n\n\n\n\n\n\n\nlast line only!", 22, (9, 15)),
+        ];
+        let path = b"package.json".to_vec();
+        let mut buffer = vec![0u8; files[0].0.len()];
+        let mut log = Log::init();
+        let mut located = Vec::new();
+        for (file, offset, _) in files {
+            buffer.copy_from_slice(file);
+            let source = Source::init_path_string(path.as_slice(), buffer.as_slice());
+            log.add_warning_fmt_no_excerpt(&source, usize2loc(offset), format_args!("here"));
+            let location = log.msgs.last().unwrap().data.location.as_ref().unwrap();
+            located.push((location.line, location.column));
+        }
+        assert_eq!(
+            located,
+            files.map(|(_, _, line_and_column)| line_and_column)
+        );
+    }
+
+    #[test]
+    fn log_resumes_the_scan_for_a_source_and_its_borrowed_clone_only() {
+        let text = b"one\ntwo\nthree\nfour";
+        let source = Source::init_path_string(b"a.js" as &[u8], &text[..]);
+        let mut log = Log::init();
+        log.add_warning_fmt_no_excerpt(&source, usize2loc(5), format_args!("here"));
+        let tracker = log.line_column_tracker.as_deref().unwrap();
+        assert!(tracker.matches(&source));
+        assert!(tracker.matches(&source.clone()));
+
+        // The same path and the same bytes at the same address, but not a copy of `source`.
+        assert!(!tracker.matches(&Source::init_path_string(b"a.js" as &[u8], &text[..])));
+
+        let mut edited = source.clone();
+        edited.contents = Cow::Borrowed(b"one\ntwo\nthree\nfive");
+        assert!(!tracker.matches(&edited));
+    }
+
+    #[test]
+    fn a_clone_with_its_own_copy_of_the_bytes_has_its_own_id() {
+        let owned = Source::init_path_string_owned(b"a.js" as &[u8], b"one\ntwo".to_vec());
+        assert_ne!(owned.clone().id.0, owned.id.0);
+        let borrowed = Source::init_path_string(b"a.js" as &[u8], owned.contents());
+        assert_eq!(borrowed.clone().id.0, borrowed.id.0);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "the text of this Source has changed")]
+    fn a_debug_build_refuses_the_id_of_one_text_on_another() {
+        let mut buffer = b"one\ntwo\nthree".to_vec();
+        let mut tracker = LineColumnTracker::default();
+        let id = {
+            let source = Source::init_path_string(b"a.js" as &[u8], buffer.as_slice());
+            tracker.error_position(&source, usize2loc(9));
+            source.id
+        };
+        buffer.copy_from_slice(b"a line, no br");
+        let forged = Source {
+            id,
+            ..Source::init_path_string(b"a.js" as &[u8], buffer.as_slice())
+        };
+        tracker.error_position(&forged, usize2loc(11));
+    }
+
+    #[test]
+    fn source_ids_are_unique_across_threads_and_blocks() {
+        let draw = || {
+            let mut ids: Vec<u64> = (0..8).map(|_| SourceId::new().0).collect();
+            // The last id of this thread's block, then the first id of the block it takes next.
+            NEXT_SOURCE_ID.set(ids[0].next_multiple_of(SourceId::BLOCK) - 1);
+            ids.extend([SourceId::new().0, SourceId::new().0]);
+            ids
+        };
+        let mut ids = std::thread::spawn(draw).join().unwrap();
+        ids.extend(draw());
+        assert!(
+            ids.iter().all(|id| !id.is_multiple_of(SourceId::BLOCK)),
+            "{ids:?}"
+        );
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), 20);
     }
 }

@@ -48,7 +48,7 @@ impl Rule for RelativeUrlStyle {
                     cx.report(first_arg, ALWAYS).fix(|fixer| fixer.insert_before(Span::empty(after_quote), "./"));
                 }
             }
-            // As it is written.
+            // Checks the source text.
             ExprKind::String(_) => {
                 if cx.slice(first_arg.span().shrink(1, 1)).strip_prefix(b"./").is_some_and(|it| is_safe_to_add_dot_slash(it, base)) {
                     cx.report(first_arg, NEVER).fix(|fixer| fixer.remove(dot_slash_span));
@@ -66,7 +66,7 @@ fn is_c0_control_or_space(byte: u8) -> bool {
     byte <= b' '
 }
 
-/// What a URL parser passes over wherever it is.
+/// The bytes a URL parser removes anywhere in the input.
 fn is_tab_or_newline(byte: u8) -> bool {
     matches!(byte, b'\t' | b'\n' | b'\r')
 }
@@ -80,17 +80,17 @@ fn trim_end(url: &[u8]) -> &[u8] {
     url.get(..end).unwrap_or_default()
 }
 
-/// Whether `url` and `./url` are the same URL: relative to `base`, or else both relative to `https://example.com/a/b/` and to
-/// `https://example.com/a/b.html`.
+/// True if `url` and `./url` resolve to the same URL against `base`. Without a `base`, they must resolve the same
+/// against both `https://example.com/a/b/` and `https://example.com/a/b.html`.
 fn is_safe_to_add_dot_slash(url: &[u8], base: Option<&[u8]>) -> bool {
     let url = trim_end(url);
-    // At the start it is dropped, after `./` it is part of the path.
+    // A control character or space is dropped at the start, but after `./` it's part of the path.
     if !url.iter().take_while(|it| is_c0_control_or_space(**it)).all(|it| is_tab_or_newline(*it)) {
         return false;
     }
     let mut rest = url.iter().copied().filter(|it| !is_tab_or_newline(*it));
     match rest.next() {
-        // The last part of the path of the base stays, and before `#` the query.
+        // The URL keeps the last segment of the base's path, and before `#` also its query.
         None | Some(b'#') => base.and_then(parse_base).is_some_and(|it| it.is_directory && !it.has_query),
         Some(b'?') => base.and_then(parse_base).is_some_and(|it| it.is_directory),
         Some(b'/' | b'\\') => false,
@@ -106,7 +106,8 @@ struct Base {
     has_query: bool,
 }
 
-/// `None`: it is not a URL, or one that nothing is relative to. Names of hosts that are not ASCII are not examined.
+/// `None` if it isn't a URL, or if it's one that a relative URL can't be resolved against. Non-ASCII host names aren't
+/// validated.
 fn parse_base(base: &[u8]) -> Option<Base> {
     let base = trim_end(base);
     let base: Vec<u8> = base.iter().copied().skip_while(|it| is_c0_control_or_space(*it)).filter(|it| !is_tab_or_newline(*it)).collect();
@@ -119,7 +120,7 @@ fn parse_base(base: &[u8]) -> Option<Base> {
     let is_special = is_file || matches!(&scheme[..], b"http" | b"https" | b"ws" | b"wss" | b"ftp");
     let is_slash = |it: u8| it == b'/' || is_special && it == b'\\';
     let slashes = rest.iter().take_while(|it| is_slash(**it)).count();
-    // After `https:` any number of slashes, also none, is before the host.
+    // After `https:` any number of slashes, even none, comes before the host.
     let before_authority = if is_special && !is_file { Some(slashes) } else { (slashes >= 2).then_some(2) };
     let path_and_more = match before_authority {
         Some(before_authority) => {
@@ -192,7 +193,7 @@ fn is_valid_domain(host: &[u8]) -> bool {
     !decoded.iter().any(|it| is_forbidden_host_code_point(*it) || matches!(it, 0..=0x1F | b'%' | 0x7F)) && is_valid_if_ipv4(&decoded)
 }
 
-/// A host whose last part is a number has to be an IPv4 address.
+/// A host whose last part is a number must be an IPv4 address.
 fn is_valid_if_ipv4(host: &[u8]) -> bool {
     fn parse(part: &[u8]) -> Option<u64> {
         let (digits, radix) = match part {

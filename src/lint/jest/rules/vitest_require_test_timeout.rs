@@ -37,7 +37,8 @@ fn value_of<'a>(properties: List<'a, Prop<'a>>, name: &str) -> Option<Expr<'a>> 
 
 fn run_once(ctx: &Ctx) {
     let is_bun = ctx.runner == Runner::Bun;
-    // Where the `vi.setConfig({ testTimeout: .. })` that ends first ends. With Bun `setDefaultTimeout(..)` or `jest.setTimeout(..)`.
+    // The end of the earliest `vi.setConfig({ testTimeout: .. })`. In Bun, `setDefaultTimeout(..)` or
+    // `jest.setTimeout(..)`.
     let mut config_position: Option<u32> = None;
     for possible_jest_node in jest::iter_possible_jest_call_node(ctx.file, ctx.runner) {
         let node = possible_jest_node.node;
@@ -81,7 +82,8 @@ fn run_once(ctx: &Ctx) {
                 {
                     continue;
                 }
-                // The options are the second argument, or the timeout is the third. With Bun either is what is no function.
+                // The options are the second argument, or the timeout is the third. In Bun, either is the argument that
+                // isn't a function.
                 let [options, timeout] = match is_bun {
                     true => [Arguments::of(arguments, ctx.runner).options; 2],
                     false => [arguments.get(1), arguments.get(2)],
@@ -120,7 +122,7 @@ fn parse_timeout_value(expression: Expr, ctx: &Ctx) {
         },
         _ => TIMEOUT_MUST_BE_A_NUMBER,
     };
-    // The function of a method starts with its parameters.
+    // A method's function node starts at its parameters.
     let method = expression.as_fn().filter(|it| matches!(it.kind(), FnKind::Method | FnKind::Getter | FnKind::Setter));
     ctx.report(method.map_or_else(|| expression.outer_span(), Func::span_from_params), message);
 }

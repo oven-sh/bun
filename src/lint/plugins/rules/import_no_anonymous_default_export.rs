@@ -46,7 +46,7 @@ impl Rule for NoAnonymousDefaultExport {
         match stmt.tag() {
             StmtTag::Fn | StmtTag::Class => {
                 let message = match stmt.kind() {
-                    // A signature is a `TSDeclareFunction`. oxlint takes it for a function.
+                    // An overload signature is a `TSDeclareFunction`. oxlint treats it as a function.
                     StmtKind::Fn(func) if !func.has_body() && !cx.language().is_oxlint => return,
                     StmtKind::Fn(func) if func.name().is_none() && !self.allow_anonymous_function => ANONYMOUS_FUNCTION,
                     StmtKind::Class(class) if class.name().is_none() && !self.allow_anonymous_class => ANONYMOUS_CLASS,
@@ -67,7 +67,7 @@ impl NoAnonymousDefaultExport {
         let StmtKind::ExportDefault(e) = stmt.kind() else {
             return;
         };
-        // oxlint takes parentheses for a node.
+        // oxlint's AST keeps parentheses as a node.
         if e.is_parenthesized() && cx.language().is_oxlint {
             return;
         }

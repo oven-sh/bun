@@ -1,6 +1,7 @@
+import { addBlockedSPKIForTesting, clearBlockedSPKIsForTesting } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { createPrivateKey, X509Certificate } from "node:crypto";
+import { createHash, createPrivateKey, X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { connect, listen, QuicEndpoint, type SessionOptions } from "node:quic";
@@ -107,6 +108,48 @@ test("an identity with several cert/key pairs installs a matching pair", async (
   }
 });
 
+// The client destroys itself as soon as it has 1-RTT keys. The listener reads its Finished and
+// CONNECTION_CLOSE together, so lsquic frees the connection before the session reports the handshake.
+test("session.certificate returns the servername's identity after lsquic frees the connection", async () => {
+  const reported = Promise.withResolvers<unknown>();
+  await using server = await listen(
+    session => {
+      ignoreErrors(session);
+      session.closed.then(
+        () => reported.reject(new Error("the session closed before it reported its handshake")),
+        reported.reject,
+      );
+      session.onhandshake = info =>
+        reported.resolve({
+          servername: info.servername,
+          certificate: (session.certificate as X509Certificate | undefined)?.subject.match(/CN=([^\s,]+)/)?.[1],
+          peerMaxIdleTimeout: (session as any).remoteTransportParams?.maxIdleTimeout,
+        });
+    },
+    { sni: { "*": identity1, "agent2.example": identity2 }, alpn: ["quic-test"] },
+  );
+
+  const client = await connect(server.address!, {
+    alpn: "quic-test",
+    servername: "agent2.example",
+    verifyPeer: "manual",
+    transportParams: { maxIdleTimeout: 5 },
+    keylog: true,
+    onkeylog(line) {
+      if (line.startsWith("CLIENT_TRAFFIC_SECRET_0")) this.destroy(undefined, { code: 1n });
+    },
+    onerror() {},
+  } as SessionOptions);
+  client.opened.catch(() => {});
+  client.closed.catch(() => {});
+
+  expect(await reported.promise).toEqual({
+    servername: "agent2.example",
+    certificate: "agent2",
+    peerMaxIdleTimeout: 5n,
+  });
+});
+
 test("setSNIContexts() rejects a non-object and a closed endpoint", async () => {
   const endpoint = new QuicEndpoint();
   expect(() => endpoint.setSNIContexts("nope" as any)).toThrow(
@@ -141,6 +184,75 @@ test("opened reports the X509 code name for validationErrorCode", async () => {
     code: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
     reason: "unable to get local issuer certificate",
   });
+});
+
+test("opened reports CERT_REVOKED for a chain through a blocked public key", async () => {
+  // agent6 -> ca3 (intermediate, bundled in agent6-cert.pem) -> ca1 (root).
+  const identity = { keys: [createPrivateKey(readKey("agent6-key.pem"))], certs: [readKey("agent6-cert.pem")] };
+  await using server = await listen(ignoreErrors, { sni: { "*": identity }, alpn: ["quic-test"] });
+  async function validationError() {
+    const session = await connect(server.address!, {
+      alpn: "quic-test",
+      servername: "agent6",
+      verifyPeer: "manual",
+      ca: [readKey("ca1-cert.pem")],
+    } as SessionOptions);
+    const info = await session.opened;
+    await session.close();
+    return { code: info.validationErrorCode, reason: info.validationErrorReason };
+  }
+
+  expect(await validationError()).toEqual({ code: undefined, reason: undefined });
+  const intermediate = new X509Certificate(readKey("ca3-cert.pem")).publicKey.export({ type: "spki", format: "der" });
+  addBlockedSPKIForTesting(createHash("sha256").update(intermediate).digest());
+  try {
+    expect(await validationError()).toEqual({ code: "CERT_REVOKED", reason: "certificate revoked" });
+  } finally {
+    clearBlockedSPKIsForTesting();
+  }
+});
+
+test("verifyPeer 'strict' and 'auto' refuse a certificate with a blocked public key", async () => {
+  // Unlike agent6's, this certificate names its host, which both modes check.
+  const fixtures = join(import.meta.dir, "..", "tls", "fixtures");
+  const cert = readFileSync(join(fixtures, "ed25519-cert.pem"));
+  const key = createPrivateKey(readFileSync(join(fixtures, "ed25519-key.pem")));
+  await using server = await listen(ignoreErrors, {
+    sni: { "*": { keys: [key], certs: [cert] } },
+    alpn: ["quic-test"],
+  });
+  async function open(verifyPeer: "strict" | "auto") {
+    const session = await connect(server.address!, {
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer,
+      ca: [cert],
+    } as SessionOptions);
+    session.onerror = () => {};
+    const closed = session.closed.catch(() => {});
+    const outcome = await session.opened.then(
+      () => "opened",
+      err => err.message,
+    );
+    if (outcome === "opened") await session.close();
+    await closed;
+    return outcome;
+  }
+
+  expect([await open("strict"), await open("auto")]).toEqual(["opened", "opened"]);
+  addBlockedSPKIForTesting(
+    createHash("sha256")
+      .update(new X509Certificate(cert).publicKey.export({ type: "spki", format: "der" }))
+      .digest(),
+  );
+  try {
+    expect([await open("strict"), await open("auto")]).toEqual([
+      "Invalid state: Session was destroyed before it opened",
+      "QUIC transport error 0: Peer certificate validation failed: certificate revoked [CERT_REVOKED]",
+    ]);
+  } finally {
+    clearBlockedSPKIsForTesting();
+  }
 });
 
 test("connect() with the default verifyPeer refuses an unverifiable certificate before a pending stream reaches the server", async () => {

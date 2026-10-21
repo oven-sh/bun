@@ -18,10 +18,9 @@ fn is_empty_object_type(ty: Type) -> bool {
         && ty.get_index_infos().len() == 0
         && ty.get_call_signatures().is_empty()
         && ty.get_construct_signatures().is_empty()
-        // A type that still waits for type arguments, such as `Record<T, unknown>` in a generic
-        // declaration, has no members yet either. Every primitive is assignable to `{}`. A mapped
-        // type whose keys are not resolved, such as `{ [K in Keys<T>]: K }`, accepts `number` but
-        // not `string`.
+        // A type that's still waiting for type arguments, such as `Record<T, unknown>` in a generic declaration, has no
+        // members yet either. Every primitive is assignable to `{}`. A mapped type with unresolved keys, such as
+        // `{ [K in Keys<T>]: K }`, accepts `number` but not `string`.
         && checker.get_number_type().is_assignable_to(ty)
         && checker.get_string_type().is_assignable_to(ty)
 }
@@ -54,7 +53,7 @@ impl Rule for NoGeneratedEmptyObjectType {
                 let TypeKind::Ref { name, args } = node.kind() else {
                     return;
                 };
-                // tsgolint also checks the empty list of `Box<>`: the reference ends after its name.
+                // tsgolint also checks the empty list in `Box<>`. There is one if the reference ends after its name.
                 let has_empty_type_arguments = node.file().language().is_oxlint
                     && name.last().is_some_and(|last| last.span().end < node.span().end);
                 if args.is_empty() && !has_empty_type_arguments {
@@ -62,7 +61,7 @@ impl Rule for NoGeneratedEmptyObjectType {
                 }
                 let is_checked = match node.parent() {
                     Node::Type(parent) => parent.tag() != TypeTag::Intersection,
-                    // What a class implements and what an interface extends is not a `TSTypeReference`.
+                    // A class's `implements` and an interface's `extends` entries aren't `TSTypeReference`s.
                     Node::Class(class) => !class.implements().iter().any(|it| it == node),
                     Node::Stmt(parent) => parent.tag() != StmtTag::Interface,
                     _ => true,

@@ -57,6 +57,30 @@ pub fn exit_during_uncaught_exception(this: &mut VirtualMachine) {
     this.exit_on_uncaught_exception = true;
 }
 
+fn absolute_directory(directory: &BunString) -> Box<[u8]> {
+    let directory = directory.to_owned_slice();
+    let directory = if bun_paths::is_absolute(&directory) {
+        directory
+    } else {
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
+        match bun_sys::getcwd_z(&mut cwd_buf) {
+            Ok(cwd) => bun_paths::resolve_path::join::<bun_paths::resolve_path::platform::Auto>(&[
+                cwd.as_bytes(),
+                &directory,
+            ])
+            .to_vec(),
+            Err(_) => directory,
+        }
+    };
+    directory.into_boxed_slice()
+}
+
+/// Makes the path absolute now, because the report is written at exit and the working directory may change before then.
+// HOST_EXPORT(Bun__VirtualMachine__setSamplingProfilerDirectory, c)
+pub fn set_sampling_profiler_directory(this: &mut VirtualMachine, directory: &BunString) {
+    this.sampling_profiler_directory = Some(absolute_directory(directory));
+}
+
 // `Bun__Process__send` lives in `bun_runtime::ipc_host` (its body — via
 // `do_send` — names the `bun_runtime::Listener` type; LAYERING).
 
@@ -239,8 +263,8 @@ pub fn get_verbose_fetch_value() -> i32 {
     }
 }
 
-// `Bun__addBakeSourceProviderSourceMap` / `Bun__addDevServerSourceProvider` /
-// `Bun__removeDevServerSourceProvider` live in
+// `Bun__{add,remove}BakeSourceProviderSourceMap` /
+// `Bun__{add,remove}DevServerSourceProvider` live in
 // `bun_runtime::bake::source_provider_exports` (their callers are bake's C++
 // source providers; LAYERING).
 

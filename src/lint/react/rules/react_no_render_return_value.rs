@@ -15,7 +15,7 @@ const OXLINT: Message = Message::new("", "Do not depend on the return value from
 
 pub struct State<'a> {
     callee_object_names: &'static [&'static str],
-    /// Whether the innermost function or class around something is an arrow function without braces.
+    /// Caches whether the innermost enclosing function or class is an arrow function with an expression body.
     is_in_expression_arrow: AncestorMemo<'a, bool>,
 }
 
@@ -30,13 +30,13 @@ impl Rule for NoRenderReturnValue {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         let is_oxlint = file.language().is_oxlint;
-        // oxlint passes over a file that cannot have JSX. upstream takes a private name for its text.
+        // oxlint skips files that can't contain JSX. upstream treats a private name like the plain name.
         let is_candidate = !is_oxlint || is_jsx(file);
         let is_mentioned = file.mentions("render") || (!is_oxlint && file.mentions("#render"));
         if !is_candidate || !is_mentioned || !file.mentions_any(&["ReactDOM", "React"]) {
             return None;
         }
-        // oxlint asks for no version.
+        // oxlint doesn't check the React version.
         let version = if is_oxlint { ULTIMATE_LATEST_SEMVER } else { get_react_version_from_context(file) };
         let callee_object_names = callee_object_names(version);
         file.mentions_any(callee_object_names)
@@ -45,7 +45,7 @@ impl Rule for NoRenderReturnValue {
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let is_oxlint = cx.language().is_oxlint;
-        // oxlint has a node for parentheses.
+        // oxlint's AST has a node for parentheses.
         let is_wrapped = |it: Expr<'a>| it.is_chain_root() || (is_oxlint && it.is_parenthesized());
         let Some(callee) = e.callee().filter(|&it| !is_wrapped(it)) else {
             return;
@@ -56,7 +56,7 @@ impl Rule for NoRenderReturnValue {
         let Some(name) = object.as_ident().filter(|it| it.is_any(cx.state.callee_object_names)) else {
             return;
         };
-        // oxlint knows `["render"]` and ends at the name, upstream knows `[render]` and `.#render`.
+        // oxlint accepts `["render"]` and its span ends at the name. upstream accepts `[render]` and `.#render`.
         let callee_span = if is_oxlint {
             static_property_info(callee).filter(|it| it.1.is("render")).map(|it| object.span().to(it.0))
         } else {
@@ -70,7 +70,7 @@ impl Rule for NoRenderReturnValue {
         let is_used = match parent {
             Node::VarDecl(_) => true,
             Node::Prop(_) => as_object_property(parent).is_some(),
-            // The key of a `Property` in a pattern, which is another kind of node for oxlint.
+            // The key of a `Property` in a pattern, which is a different node type for oxlint.
             Node::PatProp(property) => !is_oxlint && property.default() != Some(e),
             Node::Stmt(statement) => statement.tag() == StmtTag::Return,
             Node::Expr(assignment) => assignment.tag() == ExprTag::Assign && !assignment.is_assignment_target(),
@@ -83,8 +83,8 @@ impl Rule for NoRenderReturnValue {
         if !is_oxlint {
             return;
         }
-        // oxlint: a second time, if the scope that the parent is in is that of an arrow function without braces. A
-        // function and a class are not in their own scope.
+        // oxlint reports it a second time if the parent's scope belongs to an arrow function with an expression body. A
+        // function or class isn't in its own scope.
         let from = match parent {
             Node::Func(_) | Node::Class(_) if is_child_of_parent => parent,
             _ => Node::Expr(e),

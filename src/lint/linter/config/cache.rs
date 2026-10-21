@@ -1,7 +1,7 @@
-//! What a [`Config`](super::Config) computes once and all threads share.
+//! Values that a [`Config`](super::Config) computes once and shares between threads.
 
 use crate::js_plugin::{Configured, Rule};
-use crate::language::GlobalsOfOptions;
+use crate::language::GlobalsFromOptions;
 use crate::linter::resolved::ResolvedConfig;
 use crate::options::Json;
 use bun_threading::RwLock;
@@ -11,14 +11,14 @@ type Resolved = Vec<(Box<[u32]>, Arc<OnceLock<Arc<ResolvedConfig>>>)>;
 type JsInstances = Vec<(Arc<[Json]>, Arc<Configured>)>;
 
 pub(super) struct Cache {
-    /// By the indices of the objects that are merged. Sorted.
+    /// Keyed by the indices of the merged objects. Sorted.
     resolved: RwLock<Resolved>,
-    /// What has been made of the rules of JavaScript plugins, by the options as they are written.
+    /// The configured JavaScript plugin rules, keyed by the options as written.
     js_rules: RwLock<JsInstances>,
-    /// For each rule, by its index in the registry: the options that its schema allows.
+    /// Indexed by a rule's index in the registry: the options known to pass its schema.
     valid: RwLock<Vec<Vec<Arc<[Json]>>>>,
-    /// By `$env` and `globals` of `languageOptions`.
-    globals: RwLock<Vec<(Option<Json>, Option<Json>, GlobalsOfOptions)>>,
+    /// Keyed by `$env` and `globals` in `languageOptions`.
+    globals: RwLock<Vec<(Option<Json>, Option<Json>, GlobalsFromOptions)>>,
 }
 
 impl Default for Cache {
@@ -43,27 +43,27 @@ impl Cache {
             let all = self.resolved.read();
             find(&all).ok().map(|at| Arc::clone(&all[at].1))
         };
-        let place = known.unwrap_or_else(|| {
+        let slot = known.unwrap_or_else(|| {
             let mut all = self.resolved.write();
             match find(&all) {
                 Ok(at) => Arc::clone(&all[at].1),
                 Err(at) => {
-                    let place = Arc::default();
-                    all.insert(at, (indices.into(), Arc::clone(&place)));
-                    place
+                    let slot = Arc::default();
+                    all.insert(at, (indices.into(), Arc::clone(&slot)));
+                    slot
                 }
             }
         });
-        // Not under the lock: it takes the other ones. A thread that wants the same waits for it.
-        Arc::clone(place.get_or_init(|| Arc::new(make())))
+        // Not under the lock, because `make` takes the other locks. A thread that wants the same entry waits for it.
+        Arc::clone(slot.get_or_init(|| Arc::new(make())))
     }
 
-    /// [`GlobalsOfOptions::new`] of `language_options`, which is what `make` does.
+    /// Returns [`GlobalsFromOptions::new`] for `language_options`, which is what `make` computes.
     pub(super) fn globals(
         &self,
         language_options: &Json,
-        make: impl FnOnce() -> GlobalsOfOptions,
-    ) -> GlobalsOfOptions {
+        make: impl FnOnce() -> GlobalsFromOptions,
+    ) -> GlobalsFromOptions {
         let key = (
             language_options.get(b"$env"),
             language_options.get(b"globals"),
@@ -82,7 +82,7 @@ impl Cache {
         made
     }
 
-    /// Whether `options` are [known](Cache::set_valid) to be what the schema of the rule at `index` of the registry allows.
+    /// True if `options` are [known](Cache::set_valid) to pass the schema of the rule at `index` in the registry.
     pub(super) fn is_valid(&self, index: usize, options: &Arc<[Json]>) -> bool {
         let valid = self.valid.read();
         (valid.get(index)).is_some_and(|all| all.iter().any(|it| it == options))
@@ -103,10 +103,10 @@ impl Cache {
         make: impl FnOnce() -> Arc<Configured>,
     ) -> Arc<Configured> {
         let mut rules = self.js_rules.write();
-        let is_it = |it: &&(Arc<[Json]>, Arc<Configured>)| {
+        let matches = |it: &&(Arc<[Json]>, Arc<Configured>)| {
             Arc::ptr_eq(&it.1.rule, rule) && it.0 == *options
         };
-        if let Some(found) = rules.iter().find(is_it) {
+        if let Some(found) = rules.iter().find(matches) {
             return Arc::clone(&found.1);
         }
         let made = make();

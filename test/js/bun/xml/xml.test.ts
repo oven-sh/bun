@@ -1,5 +1,6 @@
 import { XML } from "bun";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 // Hand-written coverage beyond the W3C conformance suite (xml-test-suite.test.ts):
 // the JS-facing API surface, the two result shapes, Bun-specific input types,
@@ -48,6 +49,46 @@ describe("input types", () => {
     const sab = new SharedArrayBuffer(bytes.length);
     new Uint8Array(sab).set(bytes);
     expect(XML.parse(sab)).toEqual(expected);
+  });
+
+  test("parses a SharedArrayBuffer that another thread is writing", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          const { Worker } = require("node:worker_threads");
+          const text = "<r>" + "<aaaaaaaa/>".repeat(50) + "</r>";
+          const bytes = new Uint8Array(new SharedArrayBuffer(text.length));
+          bytes.set(Buffer.from(text));
+          const writer = new Worker(
+            \`const { workerData: bytes, parentPort } = require("node:worker_threads");
+             parentPort.postMessage("ready");
+             // Every "a" of a name becomes a "b" and back, so the document stays well-formed.
+             for (;;) for (let i = 3; i < bytes.length - 4; i++) if (bytes[i] === 97 || bytes[i] === 98) bytes[i] ^= 3;\`,
+            { eval: true, workerData: bytes },
+          );
+          writer.once("message", () => {
+            for (let i = 0; i < 4000; i++) {
+              const { r } = Bun.XML.parse(bytes);
+              for (const key of Object.keys(r)) {
+                if (!Object.hasOwn(r, key.split("").join(""))) {
+                  console.log("an equal string doesn't find the key", key);
+                  process.exit(1);
+                }
+              }
+            }
+            console.log("done");
+            process.exit(0);
+          });
+        `,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("done\n");
+    expect(exitCode).toBe(0);
   });
 
   test("a Blob whose bytes are not in memory is refused, and does not parse as nothing", () => {

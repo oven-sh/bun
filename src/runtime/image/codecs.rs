@@ -378,16 +378,24 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             w = ih.width;
             h = ih.height;
         }
-        Format::Gif => {
-            // sig(6) · LSD: w(u16le) h(u16le) …
-            if bytes.len() < 10 {
-                return Err(Error::DecodeFailed);
+        // The decoder sizes its output from the first frame, not from the logical screen.
+        Format::Gif => match gif::first_frame(bytes) {
+            Ok(frame) => {
+                w = frame.width;
+                h = frame.height;
             }
-            w = u16::from_le_bytes(bytes[6..8].try_into().expect("infallible: size matches"))
-                as u32;
-            h = u16::from_le_bytes(bytes[8..10].try_into().expect("infallible: size matches"))
-                as u32;
-        }
+            // No frame to decode, e.g. only the start of a file.
+            Err(_) => {
+                // sig(6) · LSD: w(u16le) h(u16le) …
+                if bytes.len() < 10 {
+                    return Err(Error::DecodeFailed);
+                }
+                w = u16::from_le_bytes(bytes[6..8].try_into().expect("infallible: size matches"))
+                    as u32;
+                h = u16::from_le_bytes(bytes[8..10].try_into().expect("infallible: size matches"))
+                    as u32;
+            }
+        },
         Format::Tiff | Format::Heic | Format::Avif => {
             // ImageIO reads the dimensions from the container; the codec only runs in decode().
             #[cfg(not(target_os = "macos"))]

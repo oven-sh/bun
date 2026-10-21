@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
@@ -383,6 +383,40 @@ describe("bun test", () => {
       });
       expect(stderr).toContain("Bailed out after 3 failures");
       expect(stderr).not.toContain("test #4");
+    });
+
+    // The failure is reported from a promise reaction, so the exit starts inside a JS frame.
+    test.skipIf(!isASAN)("tears down the VM without leaks", async () => {
+      using dir = tempDir("bun-test-bail-leak-check", {
+        "a.test.ts": `
+          import { test, expect } from "bun:test";
+          test("fails", async () => {
+            setTimeout(() => console.log("ran: timer"), 60_000);
+            await Bun.sleep(1);
+            console.log("ran: fails");
+            expect(1).toBe(2);
+          });
+          test("unreachable", () => {
+            console.log("ran: unreachable");
+          });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--bail"],
+        env: {
+          ...bunEnv,
+          BUN_DESTRUCT_VM_ON_EXIT: "1",
+          ASAN_OPTIONS: "allow_user_segv_handler=1:detect_leaks=1:abort_on_error=1",
+          LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "../../leaksan.supp")}`,
+        },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.split("\n").filter(line => line.startsWith("ran: "))).toEqual(["ran: fails"]);
+      expect(stderr).toContain("Bailed out after 1 failure");
+      expect(exitCode, stderr).toBe(1);
     });
   });
   describe("--timeout", () => {
@@ -808,6 +842,42 @@ describe("bun test", () => {
       expect(testFile).toStartWith(`::error file=${basename(cwd)}${sep}workspace.test.ts,line=4,col=`);
       expect(sourceUrl).toStartWith("::error file=webpack%3A//app/./src/x.ts,line=1,col=");
       expect(sourceUrl).toContain("%0A      at fromSourceUrl (webpack://app/./src/x.ts:1:");
+    });
+    // The reporters reuse the buffer that stored the file's title while its tests ran.
+    test("should print the test file's name in the group for each --rerun-each run", () => {
+      const cwd = createTest([
+        {
+          filename: "helper.ts",
+          contents: `
+            import { expect } from "bun:test";
+            export function failing() {
+              expect(1).toBe(2);
+            }
+          `,
+        },
+        {
+          filename: "rerun.test.ts",
+          contents: `
+            import { test } from "bun:test";
+            import { failing } from "./helper";
+            test("fails", failing);
+          `,
+        },
+      ]);
+      const stderr = runTest({
+        cwd,
+        args: ["--rerun-each", "3"],
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_WORKSPACE: undefined,
+        },
+        expectExitCode: 1,
+      });
+      expect(stderr.split("\n").filter(line => line.startsWith("::group::"))).toEqual([
+        "::group::rerun.test.ts: (run #1)",
+        "::group::rerun.test.ts: (run #2)",
+        "::group::rerun.test.ts: (run #3)",
+      ]);
     });
   });
   describe(".each", () => {
@@ -1798,6 +1868,24 @@ describe("bun test", () => {
       expect(exitCode).toBe(1);
     });
 
+    test("run when --bail stops a file that registered a node:test test", async () => {
+      const { stdout, stderr, exitCode } = await runFiles(
+        {
+          "node-bail.test.ts": `
+            import { test } from "node:test";
+            import assert from "node:assert";
+            process.on("exit", code => console.log("exit listener ran with", code));
+            test("fails", () => assert.strictEqual(1, 2));
+          `,
+        },
+        "--bail",
+        "node-bail.test.ts",
+      );
+      expect(stdout).toContain("exit listener ran with 1");
+      expect(stderr).toContain("Bailed out after 1 failure");
+      expect(exitCode).toBe(1);
+    });
+
     test("run for a bun:test file under BUN_TEST_DRAIN_EVENT_LOOP, which the vendored node tests set", async () => {
       using dir = tempDir("bun-test-exit-listener", { "drain.test.ts": bunTestFile(1) });
       await using proc = Bun.spawn({
@@ -2119,4 +2207,60 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
   });
+});
+
+test("reports a bunfig [test] root longer than the path buffer like a missing directory", async () => {
+  const root = Buffer.alloc(100_000, "r").toString();
+  using dir = tempDir("bunfig-root-too-long", {
+    "bunfig.toml": `[test]\nroot = "${root}"\n`,
+    "top.test.ts": `import { test } from "bun:test"; test("top", () => {});`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("Failed to scan non-existent root directory for tests:");
+  expect(stderr).toContain(root);
+  expect(exitCode).toBe(1);
+});
+
+test("hooks throw in a Worker", async () => {
+  using dir = tempDir("bun-test-hooks-in-worker", {
+    "hooks.test.ts": `
+      import { afterAll, afterEach, onTestFinished, test } from "bun:test";
+      import { isMainThread, parentPort, Worker } from "node:worker_threads";
+      if (isMainThread) {
+        test("starts a Worker", async () => {
+          const worker = new Worker(import.meta.filename);
+          worker.on("message", console.log);
+          await new Promise(resolve => worker.once("exit", resolve));
+        });
+      } else {
+        for (const hook of [afterEach, afterAll, onTestFinished]) {
+          try {
+            hook(() => {});
+          } catch (e) {
+            parentPort.postMessage(e.message);
+          }
+        }
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "hooks.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain(
+    "Cannot use afterEach() in a Worker.\nCannot use afterAll() in a Worker.\nCannot use onTestFinished() in a Worker.\n",
+  );
+  expect(stderr).toContain(" 1 pass");
+  expect(exitCode).toBe(0);
 });

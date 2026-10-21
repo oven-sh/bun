@@ -17,11 +17,10 @@ const toStringTag = Symbol.toStringTag;
 const isTypedArray = ArrayBuffer.isView;
 const isInteger = Number.isInteger;
 
-let internalFieldTuple;
-
-function initializeSQL() {
-  ({ 0: SQL, 1: internalFieldTuple } = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor"));
-}
+const { 0: SQL, 1: internalFieldTuple }: { 0: CppSQL; 1: TODO } = $cpp(
+  "JSSQLStatement.cpp",
+  "createJSSQLStatementConstructor",
+);
 
 function createChangesObject() {
   return {
@@ -169,8 +168,6 @@ interface TransactionFunction<A extends any[], T> {
   immediate: (...args: A) => T;
   exclusive: (...args: A) => T;
 }
-
-let SQL: CppSQL;
 
 function booleanOption(options, key: string, fallback = false): boolean {
   const value = options[key];
@@ -400,7 +397,7 @@ class Database implements SqliteTypes.Database {
           }
         }
 
-        this.#handle = Database.#deserialize(filenameGiven, deserializeFlags);
+        this.#handle = SQL.deserialize(filenameGiven, deserializeFlags);
         this.filename = ":memory:";
 
         return;
@@ -443,10 +440,6 @@ class Database implements SqliteTypes.Database {
       throw new Error("Cannot open an anonymous database in read-only mode.");
     }
 
-    if (!SQL) {
-      initializeSQL();
-    }
-
     this.#handle = SQL.open(anonymous ? ":memory:" : filename, flags);
     this.filename = filename;
   }
@@ -475,14 +468,6 @@ class Database implements SqliteTypes.Database {
     return SQL.serialize(this.#handle, optionalName || "main");
   }
 
-  static #deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, deserializeFlags: number) {
-    if (!SQL) {
-      initializeSQL();
-    }
-
-    return SQL.deserialize(serialized, deserializeFlags);
-  }
-
   static deserialize(
     serialized: NodeJS.TypedArray | ArrayBufferLike,
     options: boolean | { readonly?: boolean; strict?: boolean; safeIntegers?: boolean } = false,
@@ -508,10 +493,6 @@ class Database implements SqliteTypes.Database {
   }
 
   static setCustomSQLite(path) {
-    if (!SQL) {
-      initializeSQL();
-    }
-
     return SQL.setCustomSQLite(path);
   }
 

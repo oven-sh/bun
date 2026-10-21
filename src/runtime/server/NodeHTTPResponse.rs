@@ -1796,8 +1796,7 @@ impl NodeHTTPResponse {
             Some(StringOrJsBytes::Bytes(bytes)) => Some(bytes.to_js()),
             _ => None,
         };
-        let mut string_or_buffer = StringOrBuffer::EMPTY;
-        if let Some(chunk) = chunk {
+        let mut string_or_buffer = if let Some(chunk) = chunk {
             let mut encoding = Encoding::Utf8;
             // Like Writable.prototype.write: a falsy encoding means the default.
             if !encoding_value.is_falsey() {
@@ -1827,10 +1826,10 @@ impl NodeHTTPResponse {
                 };
             }
 
-            string_or_buffer =
-                StringOrBuffer::from_string_or_js_bytes(global_object, chunk, encoding);
-        }
-        // string_or_buffer drops at scope exit.
+            StringOrBuffer::from_string_or_js_bytes(global_object, chunk, encoding)
+        } else {
+            StringOrBuffer::EMPTY
+        };
 
         if self.is_requested_completed_or_ended() {
             return err_throw(

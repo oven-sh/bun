@@ -182,7 +182,7 @@ export abstract class Type {
   abstract readonly tsType: string;
 
   /** How `IDLNullable<this>::ImplementationType` says "null". */
-  get nullRepresentation(): "optional" | "pointer" {
+  get nullRepresentation(): "optional" | "pointer" | "emptyValue" {
     return "optional";
   }
   /** Converting `undefined` succeeds, so a dictionary member of this type is not required. */
@@ -958,6 +958,9 @@ export class BufferSourceType extends Type {
 export class CallableType extends Type {
   readonly idlType = "Bun::Bindgen::IDLRawCallable";
   readonly tsType = "(...args: any[]) => any";
+  get nullRepresentation() {
+    return "emptyValue" as const;
+  }
   get holdsJSValue(): boolean {
     return true;
   }
@@ -984,6 +987,9 @@ export class CallableType extends Type {
 export class AnyType extends Type {
   readonly idlType = "Bun::Bindgen::IDLRawAny";
   readonly tsType = "any";
+  get nullRepresentation() {
+    return "emptyValue" as const;
+  }
   get holdsJSValue(): boolean {
     return true;
   }
@@ -1224,7 +1230,8 @@ export class OptionalType extends Type {
     }
     if (this.inner instanceof BytesType) return this.inner.rustFromExternOptional(expr);
     if (this.inner instanceof Utf8Type) return `${expr}.get_optional(heap)`;
-    return `{ let value = ${expr}; if value.is_null() { None } else { Some(${this.inner.rustFromExtern("value", scope)}) } }`;
+    const isNull = this.inner.nullRepresentation === "emptyValue" ? "is_empty" : "is_null";
+    return `{ let value = ${expr}; if value.${isNull}() { None } else { Some(${this.inner.rustFromExtern("value", scope)}) } }`;
   }
   rustResultFieldType(scope: RustScope): string {
     return `Option<${this.inner.rustResultFieldType(scope)}>`;

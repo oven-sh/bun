@@ -20,6 +20,9 @@ struct IDLRawAny : WebCore::IDLType<JSC::JSValue> {
     // Storage in a sequence is explicitly unsupported, as this would create a
     // `Vector<JSValue>`, whose contents are invisible to the GC.
     using SequenceStorageType = void;
+    using NullableType = JSC::JSValue;
+    using NullableInnerParameterType = JSC::JSValue;
+    static JSC::JSValue nullValue() { return {}; }
 };
 
 // For use in unions, to represent a nullable union.
@@ -136,6 +139,9 @@ struct IDLRawBufferSource : WebCore::IDLType<JSC::JSValue> {
 // A function, or a proxy of one, as the `JSValue` itself. See IDLRawAny.
 struct IDLRawCallable : WebCore::IDLType<JSC::JSValue> {
     using SequenceStorageType = void;
+    using NullableType = JSC::JSValue;
+    using NullableInnerParameterType = JSC::JSValue;
+    static JSC::JSValue nullValue() { return {}; }
 };
 
 // An instance of a generated class, as the cell itself. The caller's frame keeps it alive.

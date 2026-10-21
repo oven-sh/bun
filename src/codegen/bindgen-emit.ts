@@ -609,10 +609,11 @@ function cppCallBody(
       lines.push(cppStaticContext(ctx, `ArgumentMessageContext { ${asciiLiteral(name)}, ${asciiLiteral(expected)} }`));
     } else if (expected) {
       lines.push(
-        `[[maybe_unused]] static constexpr WTF::ASCIILiteral expected${i}[] = { ${expected.map(asciiLiteral).join(", ")} };`,
+        `static constexpr WTF::ASCIILiteral expected${i}[] = { ${expected.map(asciiLiteral).join(", ")} };`,
+        `[[maybe_unused]] static constexpr Bun::Bindgen::NodeArgument node${i} { ${asciiLiteral(name)}, expected${i} };`,
       );
       // It holds the argument, so it is made where a conversion takes it.
-      ctx = `Bun::Bindgen::asLvalue(Bun::Bindgen::NodeArgumentContext { ${asciiLiteral(name)}, expected${i}, ${value} })`;
+      ctx = `Bun::Bindgen::asLvalue(Bun::Bindgen::NodeArgumentContext { node${i}, ${value} })`;
     } else {
       lines.push(cppStaticContext(ctx, `LiteralConversionContext { ${asciiLiteral(name)} }`));
     }

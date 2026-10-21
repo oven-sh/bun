@@ -7618,6 +7618,31 @@ it("end() throws when statusCode is NaN", async () => {
   }
 });
 
+it.each(["write", "end"] as const)("%s() reports a wrong chunk before an unknown encoding", async method => {
+  const { promise, resolve } = Promise.withResolvers<unknown>();
+  const server = http.createServer((req, res) => {
+    try {
+      // @ts-expect-error
+      resolve(res[method](5, "nope"));
+    } catch (error) {
+      resolve(error);
+    }
+    res.end();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+    expect(await promise).toMatchObject({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message:
+        'The "chunk" argument must be of type string or an instance of Buffer or Uint8Array. Received type number (5)',
+    });
+  } finally {
+    server.close();
+  }
+});
+
 it.each([
   { invalid: "chunk", status: 201, chunk: { ok: true } },
   { invalid: "status code", status: null, chunk: "body" },

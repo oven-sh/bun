@@ -2110,8 +2110,6 @@ enum RootAbove<'a> {
 /// the first package.json with a `workspaces` field counts. If it lists `child_cwd`, this returns
 /// the root's directory, its open package.json and the hash of the workspace's name.
 ///
-/// An error means that the package.json at `walk.path` may list `child_cwd` and cannot say so.
-///
 /// `last_name` receives the `name` of the last package.json that was read. `members` receives every
 /// workspace, read from disk. Without `members` no workspace is read and the returned hash is 0:
 /// `child_cwd` is then only matched against the patterns in `workspaces`.

@@ -188,7 +188,6 @@
 #include "EventLoopTask.h"
 #include "NodeModuleModule.h"
 #include "NodeURLHelpers.h"
-#include "PathInlines.h"
 #include <JavaScriptCore/JSCBytecodeCacheVersion.h>
 #include "JSPerformanceServerTiming.h"
 #include "JSPerformanceResourceTiming.h"
@@ -3608,26 +3607,6 @@ extern "C" bool Bun__standaloneModuleHasModuleInfo(const Latin1Character*, size_
 extern "C" bool Bun__hasStandaloneModuleGraph();
 extern "C" int ModuleLoader__builtinAliasIndex(const Latin1Character*, size_t);
 extern "C" bool Bun__hasPlugins(Zig::GlobalObject*);
-
-// Whether `error` is the resolver's own miss of `specifier`, and not the error of an onResolve plugin that answered for it.
-static bool isResolveMissOf(Zig::GlobalObject* globalObject, JSValue error, const WTF::String& specifier)
-{
-    if (!Bun__hasPlugins(globalObject))
-        return true;
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* message = dynamicDowncast<WebCore::JSResolveMessage>(error);
-    if (!message)
-        return false;
-    JSValue missed = message->get(globalObject, WebCore::builtinNames(vm).specifierPublicName());
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!missed.isString())
-        return false;
-    auto missedSpecifier = asString(missed)->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
-    return missedSpecifier.data == specifier;
-}
-
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
     JSModuleLoader* loader, JSValue key,
     JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool useImportMap)
@@ -3641,8 +3620,6 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         RELEASE_AND_RETURN(scope, key.toPropertyKey(globalObject));
 
     WTF::String keyString;
-    // The href of a file: URL specifier that has no path: its percent-decoded path is not UTF-8.
-    WTF::String undecodableFileURL;
     if (key.isString()) {
         auto moduleName = uncheckedDowncast<JSString>(key)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -3663,13 +3640,11 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         if (moduleName->startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
-                if (auto path = Bun::fileSystemPath(url)) {
+                // No path when the percent-decoded path is not UTF-8. Then it resolves as it is written, as a URL that is not valid does: the error names it.
+                if (auto path = Bun::fileSystemPath(url))
                     keyString = WTF::move(*path);
-                } else {
-                    // Resolves as it is written, as a file: URL that is not valid does: an onResolve plugin can answer for it.
-                    undecodableFileURL = url.string();
+                else
                     keyString = moduleName;
-                }
             } else {
                 keyString = moduleName;
             }
@@ -3701,19 +3676,6 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryZ);
     RETURN_IF_EXCEPTION(scope, {});
     if (!res.success) {
-        if (!undecodableFileURL.isNull()) [[unlikely]] {
-            bool nothingAnswered = isResolveMissOf(globalObject, JSValue::decode(res.result.err), keyString);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (nothingAnswered) {
-                // As Node: the error of the conversion, with the href and the URL of the importer on it.
-                auto* error = Bun::createURIMalformedError(globalObject);
-                error->putDirect(vm, vm.propertyNames->input, jsString(vm, undecodableFileURL));
-                if (isAbsolutePath(referrerString))
-                    error->putDirect(vm, Identifier::fromString(vm, "module"_s), jsString(vm, ImportMetaObject::urlOfSpecifier(referrerString).string()));
-                scope.throwException(globalObject, error);
-                return {};
-            }
-        }
         throwException(scope, res.result.err, globalObject);
         return {};
     }

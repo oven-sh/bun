@@ -1403,8 +1403,7 @@ describe.concurrent("what onResolve answers without a namespace", () => {
         stdout:
           "require() ResolveMessage Cannot find module 'file:///50%deposit.mjs'\n" +
           "import() ResolveMessage Cannot find module 'file:///50%deposit.mjs'\n" +
-          // As node: import() of the URL itself rejects with decodeURIComponent()'s error.
-          "import() URIError URI malformed\n",
+          "import() ResolveMessage Cannot find module 'file:///50%deposit.mjs'\n",
         stderr: "",
         exitCode: 0,
       });

@@ -261,47 +261,6 @@ describe("a file URL whose path does not percent-decode to UTF-8", { skip: nativ
     }
   });
 
-  test("import() rejects with the URIError, and the href and the importer are on it", async () => {
-    const files = fixture();
-    fs.writeFileSync(path.join(files.root, "50%deposit.txt"), "export {}");
-    const { href } = files.url;
-    // The same file, written with a host, with ".." and with a query.
-    const spellings: [string, string][] = [
-      [href, href],
-      [href + "?v=1", href + "?v=1"],
-      [href.replace("file:///", "file://localhost/").replace("50%deposit.txt", "a/../50%deposit.txt"), href],
-    ];
-    try {
-      for (const [specifier, input] of spellings) {
-        await assert.rejects(import(specifier), (err: any) => {
-          isURIMalformed(err);
-          assert.strictEqual(err.input, input);
-          assert.strictEqual(err.module, import.meta.url);
-          return true;
-        });
-      }
-    } finally {
-      files.remove();
-    }
-  });
-
-  test("a static import rejects with the URIError, and the href and the importer are on it", async () => {
-    const files = fixture();
-    const importer = path.join(files.root, "importer.mjs");
-    fs.writeFileSync(importer, `import ${JSON.stringify(files.url.href)};\n`);
-    const importerURL = pathToFileURL(importer).href;
-    try {
-      await assert.rejects(import(importerURL), (err: any) => {
-        isURIMalformed(err);
-        assert.strictEqual(err.input, files.url.href);
-        assert.strictEqual(err.module, importerURL);
-        return true;
-      });
-    } finally {
-      files.remove();
-    }
-  });
-
   test("require() and require.resolve() name the URL as it is written", () => {
     const files = fixture();
     fs.writeFileSync(path.join(files.root, "50%deposit.txt"), "");

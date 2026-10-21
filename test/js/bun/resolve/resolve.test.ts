@@ -288,18 +288,15 @@ it.skipIf(isWindows)("file url whose path does not percent-decode to UTF-8 is an
       const href = new URL("50%deposit.js", import.meta.url).href;
       const loads = {
         "import()": () => import(href),
-        "static import, in a module with a query": () => import("./static.mjs?v=2"),
         "require()": async () => require(href),
         "require.resolve()": async () => require.resolve(href),
         "Bun.resolveSync()": async () => Bun.resolveSync(href, import.meta.dir),
         "Bun.resolve()": () => Bun.resolve(href, import.meta.dir),
       };
-      const names = { "<href>": href, "<importer>": import.meta.url, "<static>": new URL("./static.mjs", import.meta.url).href };
-      const placeholders = text => Object.entries(names).reduce((text, [name, url]) => text?.replaceAll(url, name), text);
       for (const [name, load] of Object.entries(loads)) {
         const error = await load().then(() => undefined, error => error);
-        const message = error?.message.split("\\n")[0].split(" imported from ")[0];
-        console.log(name, error?.name, placeholders(message), placeholders(error?.input), placeholders(error?.module));
+        const message = error?.message.split("\\n")[0].split(" imported from ")[0].replaceAll(href, "<href>");
+        console.log(name, error?.name, error?.code, message);
       }
     `,
   });
@@ -320,21 +317,19 @@ it.skipIf(isWindows)("file url whose path does not percent-decode to UTF-8 is an
 
   expect(await run("dynamic.mjs")).toEqual({
     stdout:
-      // As node: import() rejects with decodeURIComponent()'s error, and the href and the URL of the importer are on it.
-      "import() URIError URI malformed <href> <importer>\n" +
-      "static import, in a module with a query URIError URI malformed <href> <static>?v=2\n" +
-      "require() ResolveMessage Cannot find module '<href>' undefined undefined\n" +
-      "require.resolve() ResolveMessage Cannot find module '<href>' undefined undefined\n" +
-      "Bun.resolveSync() ResolveMessage Cannot find module '<href>' undefined undefined\n" +
-      "Bun.resolve() ResolveMessage Cannot find module '<href>' undefined undefined\n",
+      // node rejects import() with decodeURIComponent()'s URIError. Here it stays the error of a module that is
+      // not found: code that tries require() after an import() that fails with this code goes on.
+      "import() ResolveMessage ERR_MODULE_NOT_FOUND Cannot find module '<href>'\n" +
+      "require() ResolveMessage MODULE_NOT_FOUND Cannot find module '<href>'\n" +
+      "require.resolve() ResolveMessage MODULE_NOT_FOUND Cannot find module '<href>'\n" +
+      "Bun.resolveSync() ResolveMessage ERR_MODULE_NOT_FOUND Cannot find module '<href>'\n" +
+      "Bun.resolve() ResolveMessage ERR_MODULE_NOT_FOUND Cannot find module '<href>'\n",
     stderr: "",
     exitCode: 0,
   });
 
   const fromStatement = await run("static.mjs");
-  expect(fromStatement.stderr).toContain("URIError: URI malformed");
-  expect(fromStatement.stderr).toContain(`input: "${href}"`);
-  expect(fromStatement.stderr).toContain(`module: "${pathToFileURL(String(dir))}/static.mjs"`);
+  expect(fromStatement.stderr).toContain(`Cannot find module '${href}' from '${join(String(dir), "static.mjs")}'`);
   expect({ stdout: fromStatement.stdout, exitCode: fromStatement.exitCode }).toEqual({ stdout: "", exitCode: 1 });
 });
 

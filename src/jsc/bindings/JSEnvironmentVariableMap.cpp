@@ -219,6 +219,15 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
         static_cast<JSEnvironmentVariableMap*>(cell)->putDirect(vm, propertyName, string, 0);
         return true;
     }
+    // No write is cached, so skip the prototype chain walk when the variable is already a plain property.
+    Structure* structure = cell->structure();
+    unsigned attributes = 0;
+    PropertyOffset offset = structure->get(vm, propertyName, attributes);
+    if (isValidOffset(offset) && !attributes) [[likely]] {
+        structure->didReplaceProperty(offset);
+        static_cast<JSEnvironmentVariableMap*>(cell)->putDirectOffset(vm, offset, string);
+        return true;
+    }
     RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, string, slot));
 }
 

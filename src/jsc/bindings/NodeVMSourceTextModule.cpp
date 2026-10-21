@@ -144,18 +144,14 @@ void NodeVMSourceTextModule::destroy(JSCell* cell)
     static_cast<NodeVMSourceTextModule*>(cell)->NodeVMSourceTextModule::~NodeVMSourceTextModule();
 }
 
-JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
+JSModuleRecord* NodeVMSourceTextModule::analyzeSourceText(JSGlobalObject* globalObject, std::unique_ptr<ModuleProgramNode>& node)
 {
-    if (m_moduleRequestsArray) {
-        return m_moduleRequestsArray.get();
-    }
-
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ParserError parserError;
 
-    std::unique_ptr<ModuleProgramNode> node = parseRootNode<ModuleProgramNode>(vm, m_sourceCode,
+    node = parseRootNode<ModuleProgramNode>(vm, m_sourceCode,
         ImplementationVisibility::Public,
         JSParserBuiltinMode::NotBuiltin,
         StrictModeLexicallyScopedFeature,
@@ -165,25 +161,37 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
 
     if (parserError.isValid()) {
         throwException(globalObject, scope, parserError.toErrorObject(globalObject, m_sourceCode));
-        return {};
+        return nullptr;
     }
 
     JSModuleLoader* loader = moduleLoader(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, nullptr);
     ModuleAnalyzer analyzer(globalObject, loader, Identifier::fromString(vm, m_identifier), m_sourceCode, AllFeatures);
 
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, nullptr);
     ASSERT(node != nullptr);
 
-    JSModuleRecord* moduleRecord = nullptr;
-
-    if (auto result = analyzer.analyze(*node)) {
-        moduleRecord = *result;
-    } else {
+    auto result = analyzer.analyze(*node);
+    if (!result) {
         auto [type, message] = result.error();
         throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, message);
-        return {};
+        return nullptr;
     }
+    return *result;
+}
+
+JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
+{
+    if (m_moduleRequestsArray) {
+        return m_moduleRequestsArray.get();
+    }
+
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    std::unique_ptr<ModuleProgramNode> node;
+    JSModuleRecord* moduleRecord = analyzeSourceText(globalObject, node);
+    RETURN_IF_EXCEPTION(scope, {});
 
     m_moduleRecord.set(vm, this, moduleRecord);
     m_hasTopLevelAwait = node->features() & AwaitFeature;
@@ -318,6 +326,12 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
 
     JSModuleRecord* record = m_moduleRecord.get();
 
+    // The Link() of an importer already linked this record. It keeps the modules it linked with, as in Node.
+    if (record->status() >= JSC::CyclicModuleRecord::Status::Linked) {
+        m_linkCalled = true;
+        return jsUndefined();
+    }
+
     if (length != 0) {
         const auto& requested = record->requestedModules();
         for (unsigned i = 0; i < length; i++) {
@@ -435,6 +449,51 @@ static bool isModuleGraphLinked(AbstractModuleRecord* root, String& missingSpeci
     return true;
 }
 
+// A failed Link() leaves environments, namespace objects and resolved exports on the records that did not link, all
+// made for the modules those records had. link() can give such a module other modules, as in Node, so each of them
+// starts over with a new record.
+void NodeVMSourceTextModule::replaceUnlinkedRecords(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    WTF::HashMap<AbstractModuleRecord*, NodeVMSourceTextModule*> modules;
+    WTF::Vector<NodeVMSourceTextModule*, 16> worklist;
+    worklist.append(this);
+    while (!worklist.isEmpty()) {
+        NodeVMSourceTextModule* module = worklist.takeLast();
+        JSModuleRecord* record = module->m_moduleRecord.get();
+        if (!record || record->status() != JSC::CyclicModuleRecord::Status::Unlinked || !modules.add(record, module).isNewEntry)
+            continue;
+        for (const auto& dependency : module->m_resolveCache.values()) {
+            if (auto* dependencyModule = dynamicDowncast<NodeVMSourceTextModule>(dependency.get()))
+                worklist.append(dependencyModule);
+        }
+    }
+
+    MarkedArgumentBuffer replacedRecords;
+    for (auto& [replaced, module] : modules) {
+        replacedRecords.append(replaced);
+        std::unique_ptr<ModuleProgramNode> node;
+        JSModuleRecord* record = module->analyzeSourceText(globalObject, node);
+        RETURN_IF_EXCEPTION(scope, );
+        record->setStatus(JSC::CyclicModuleRecord::Status::Unlinked);
+        module->m_moduleRecord.set(vm, module, record);
+    }
+
+    for (auto& [replaced, module] : modules) {
+        for (const auto& request : replaced->loadedModules().values()) {
+            AbstractModuleRecord* imported = request.m_module.get();
+            if (!imported)
+                continue;
+            if (NodeVMSourceTextModule* importedModule = modules.get(imported))
+                imported = importedModule->m_moduleRecord.get();
+            module->m_moduleRecord->setImportedModule(globalObject, request, imported);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+    }
+}
+
 JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -449,6 +508,7 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
         return {};
     }
 
+    JSGlobalObject* callerGlobalObject = globalObject;
     NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
     RETURN_IF_EXCEPTION(scope, {});
     if (nodeVmGlobalObject)
@@ -471,7 +531,14 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
         record->setStatus(JSC::CyclicModuleRecord::Status::Unlinked);
 
     record->link(globalObject, nullptr);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+        if (!scope.tryClearException())
+            return {};
+        replaceUnlinkedRecords(callerGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        scope.throwException(globalObject, exception);
+        return {};
+    }
 
     status(Status::Linked);
     propagateLinked();

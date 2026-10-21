@@ -28,7 +28,8 @@ use crate::package_manager_command::PackageManagerCommand;
 type TrustedDependenciesSet =
     ArrayHashMap<install::TruncatedPackageNameHash, Box<[u8]>, ArrayIdentityContext>;
 
-/// Trust is what the package.json files say now, as for an install. Returns what the lockfile recorded.
+/// Trust comes from what the package.json files say now, like for an install. Returns what the
+/// lockfile had recorded.
 pub(crate) fn read_trusted_dependencies(pm: &mut PackageManager) -> Option<TrustedDependenciesSet> {
     let log = pm.log_mut();
     match pm
@@ -50,7 +51,8 @@ const CANNOT_TRUST: &str = "cannot trust by name: add it to your package.json de
 enum Action {
     Skip,
     Run,
-    /// Trusted, but the next install runs the scripts: see `Blocked::in_global_store`.
+    /// The package is trusted, but its scripts only run on the next install. See
+    /// `Blocked::in_global_store`.
     Defer,
 }
 
@@ -61,13 +63,15 @@ struct Blocked {
     /// Scripts run deepest first, like during an install.
     depth: usize,
     scripts_list: ScriptsList,
-    /// Other projects share the directory: nothing runs there until an install moves the package.
+    /// Other projects share the directory, so nothing runs there until an install moves the
+    /// package.
     in_global_store: bool,
     action: Action,
 }
 
 impl Blocked {
-    /// The installers' gate: the project's and its workspaces' scripts always run, every other package needs trust.
+    /// The same check as in the installers: the scripts of the project and its workspaces always
+    /// run, and every other package needs trust.
     fn scripts_at(
         log: &mut bun_ast::Log,
         lockfile: &Lockfile,
@@ -95,7 +99,7 @@ impl Blocked {
         }
 
         let mut scripts = packages.items_scripts()[package_id];
-        // `true`: the scripts that run once it is trusted.
+        // Pass `true` to get the scripts that will run once the package is trusted.
         match scripts.get_list(log, lockfile, folder, alias, resolution, true) {
             Ok(list) => Ok(list.filter(|list| list.total > 0)),
             Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => Ok(None),
@@ -220,8 +224,8 @@ impl Blocked {
         (alias, trusted_name)
     }
 
-    /// Whether an install runs the package's scripts once its name is in `trustedDependencies`.
-    /// `bun pm trust` does not run the scripts of any other package.
+    /// Returns true if an install runs the package's scripts once its name is in
+    /// `trustedDependencies`. `bun pm trust` doesn't run the scripts of any other package.
     fn can_trust(&self, lockfile: &Lockfile) -> bool {
         lockfile.can_trust_by_name(
             self.names(lockfile).0,
@@ -344,7 +348,8 @@ impl TrustCommand {
         if aliased_args.count() == 0 {
             return;
         }
-        // the listing above went to stdout; keep the notes after it on a terminal
+        // The listing above went to stdout. Flush it, so that the notes come after it on a
+        // terminal.
         Output::flush();
         for (alias, trusted_name) in aliased_args.keys().iter().zip(aliased_args.values()) {
             bun_core::note!(
@@ -420,7 +425,7 @@ impl TrustCommand {
             Global::crash();
         }
 
-        // `load_lockfile` lives until `save_to_disk`: see `UntrustedCommand::exec`.
+        // `load_lockfile` lives until `save_to_disk`. See `UntrustedCommand::exec`.
         let pm_raw: *mut PackageManager = pm;
         let log_level = pm.options.log_level;
         let dry_run = pm.options.dry_run;
@@ -621,7 +626,8 @@ impl TrustCommand {
         let mut total_packages_with_scripts: usize = 0;
         let mut total_skipped_packages: usize = 0;
         let mut total_deferred_packages: usize = 0;
-        // The lockfile records whose scripts ran: an install runs those of a name it does not record.
+        // The lockfile records whose scripts have run. An install runs the scripts of any name that
+        // isn't recorded.
         let mut ran = recorded.unwrap_or_default();
 
         Output::print(format_args!("\n"));

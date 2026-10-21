@@ -51,7 +51,9 @@ static std::optional<Vector<uint8_t>> cfb8(const Vector<uint8_t>& key, const Vec
     memcpy(shiftRegister, iv.begin(), AES_BLOCK_SIZE);
     size_t shift = 0;
 
-    Vector<uint8_t> output(input.size());
+    Vector<uint8_t> output;
+    if (!tryAllocateOutputBuffer(output, input.size())) [[unlikely]]
+        return std::nullopt;
 
     uint8_t encryptedBlock[AES_BLOCK_SIZE];
     for (size_t i = 0; i < output.size(); i++) {
@@ -74,7 +76,7 @@ static std::optional<Vector<uint8_t>> cfb8(const Vector<uint8_t>& key, const Vec
     return output;
 }
 
-static std::optional<Vector<uint8_t>> cryptEncrypt(const Vector<uint8_t>& key, const Vector<uint8_t>& iv, Vector<uint8_t>&& plainText)
+static std::optional<Vector<uint8_t>> cryptEncrypt(const Vector<uint8_t>& key, const Vector<uint8_t>& iv, const Vector<uint8_t>& plainText)
 {
     return cfb8(key, iv, plainText, true);
 }
@@ -86,7 +88,7 @@ static std::optional<Vector<uint8_t>> cryptDecrypt(const Vector<uint8_t>& key, c
 
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_CFB::platformEncrypt(const CryptoAlgorithmAesCbcCfbParams& parameters, const CryptoKeyAES& key, const Vector<uint8_t>& plainText)
 {
-    auto output = cryptEncrypt(key.key(), parameters.ivVector(), Vector<uint8_t>(plainText));
+    auto output = cryptEncrypt(key.key(), parameters.ivVector(), plainText);
     if (!output)
         return Exception { OperationError };
     return WTF::move(*output);

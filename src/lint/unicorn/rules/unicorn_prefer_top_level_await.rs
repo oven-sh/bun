@@ -15,7 +15,7 @@ const PROMISE_METHODS: [&str; 3] = ["then", "catch", "finally"];
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// What is in the body of a function or of a class, or anywhere in an arrow function.
+    /// Caches which nodes are in the body of a function or a class, or anywhere in an arrow function.
     bodies: AncestorMemo<'a, ()>,
 }
 
@@ -28,7 +28,7 @@ impl Rule for PreferTopLevelAwait {
         PreferTopLevelAwait
     }
 
-    /// The calls of `then`, `catch` and `finally`, and of the names that are declared with an `async` function.
+    /// Listens to calls of `then`, `catch` and `finally`, and of the names declared with an `async` function.
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let (mut on, mut has_async_function) = (On::new(), false);
         for func in file.funcs().filter(|it| it.is_async() && !it.is_generator()) {
@@ -42,7 +42,7 @@ impl Rule for PreferTopLevelAwait {
             if let Some((_, Node::VarDecl(var_decl))) = outermost_wrapper_and_parent(function) {
                 match var_decl.pat().as_ident() {
                     Some(name) => on = on.function_call(name.bytes()),
-                    // Whatever the pattern declares.
+                    // A pattern could declare any name.
                     None => return Self::ON,
                 }
             }
@@ -80,26 +80,27 @@ impl Rule for PreferTopLevelAwait {
     }
 }
 
-/// `a.then`, `a.catch`, `a.finally`, not in parentheses.
+/// `a.then`, `a.catch` or `a.finally`, not parenthesized.
 fn is_promise_method(e: Expr) -> bool {
     !e.is_parenthesized() && !e.is_private_member() && e.member_name().is_some_and(|it| it.name().is_any(&PROMISE_METHODS))
 }
 
-/// A function expression that is `async` and not a generator.
+/// A function expression that's `async` and not a generator.
 fn is_async_function(e: Expr) -> bool {
     get_inner_expression(e).as_fn().is_some_and(|it| it.is_async() && !it.is_generator())
 }
 
 fn is_body<'a>(child: Node<'a>, parent: Node<'a>) -> Option<()> {
     match (parent, child) {
-        // The default of a parameter of a function is not in its body.
+        // A parameter's default isn't in the function's body.
         (Node::Func(_), Node::Stmt(_)) | (Node::Class(_), Node::Member(_)) => Some(()),
         (Node::Func(func), _) if func.is_arrow() => Some(()),
         _ => None,
     }
 }
 
-/// It is awaited, or what is done with it is reported, or `Promise.all()` and the like take it.
+/// True if it's awaited, if the expression that uses it is reported instead, or if it's passed to `Promise.all()` and
+/// the like.
 fn is_handled(e: Expr) -> bool {
     let Node::Expr(parent) = e.parent() else {
         return false;
@@ -121,25 +122,26 @@ fn is_handled(e: Expr) -> bool {
     // `await e`, `await e.a.b`, `await (e as T)`
     let mut at = parent;
     loop {
-        let is_passed = match at.tag() {
+        let is_transparent = match at.tag() {
             ExprTag::As | ExprTag::AsConst => !at.is_angle_bracket_assertion(),
             ExprTag::Satisfies => true,
             ExprTag::Dot => !at.is_private_member(),
             tag => return tag == ExprTag::Await,
         };
         match at.parent() {
-            Node::Expr(parent) if is_passed => at = parent,
+            Node::Expr(parent) if is_transparent => at = parent,
             _ => return false,
         }
     }
 }
 
-/// `ident`: an identifier. Nothing else refers to what it refers to, which is an `async` function or a `const` with one.
+/// `ident` is an identifier. True if it's the only reference to its symbol, which is an `async` function or a `const`
+/// initialized with one.
 fn is_only_reference_to_async_function(ident: Expr) -> bool {
     let Some(symbol) = ident.symbol() else {
         return false;
     };
-    // The name in the declaration is not a reference for oxlint.
+    // oxlint doesn't count the name in the declaration as a reference.
     if symbol.references().filter(|it| !it.is_jsx_pragma() && !matches!(it.node(), Node::Pat(_))).nth(1).is_some() {
         return false;
     }

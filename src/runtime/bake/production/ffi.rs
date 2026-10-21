@@ -3,13 +3,14 @@
 use super::*;
 
 /// unsafe function, must be run outside of the event loop
-/// quits the process on exception
+/// fails with `JSError` on exception
 pub(super) fn load_module(
     vm: *mut VirtualMachine,
     global: &JSGlobalObject,
     key: JSValue,
 ) -> crate::Result<JSValue> {
-    let promise_value = BakeLoadModuleByKey(global, key);
+    let promise_value =
+        jsc::from_js_host_call(global, || BakeLoadModuleByKey(global, key)).map_err(js_err)?;
     let promise: *mut jsc::JSInternalPromise = match promise_value.as_any_promise().unwrap() {
         AnyPromise::Internal(p) => p,
         AnyPromise::Normal(_) => unreachable!(),
@@ -36,7 +37,9 @@ pub(super) fn load_module(
     let jsc_vm = vm_ref.as_mut().jsc_vm_mut();
     match jsc::JSInternalPromise::opaque_mut(promise).unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
-        Unwrapped::Fulfilled(_) => Ok(BakeGetModuleNamespace(global, key)),
+        Unwrapped::Fulfilled(_) => {
+            jsc::from_js_host_call(global, || BakeGetModuleNamespace(global, key)).map_err(js_err)
+        }
         Unwrapped::Rejected(err) => Err(js_err(vm_ref.global().throw_value(err))),
     }
 }
@@ -44,19 +47,23 @@ pub(super) fn load_module(
 // extern apis:
 
 unsafe extern "C" {
-    pub(super) safe fn BakeGetDefaultExportFromModule(
-        global: &JSGlobalObject,
-        key: JSValue,
-    ) -> JSValue;
+    safe fn BakeGetDefaultExportFromModule(global: &JSGlobalObject, key: JSValue) -> JSValue;
     safe fn BakeGetModuleNamespace(global: &JSGlobalObject, key: JSValue) -> JSValue;
     safe fn BakeLoadModuleByKey(global: &JSGlobalObject, key: JSValue) -> JSValue;
+}
+
+pub(super) fn bake_get_default_export_from_module(
+    global: &JSGlobalObject,
+    key: JSValue,
+) -> JsResult<JSValue> {
+    jsc::from_js_host_call(global, || BakeGetDefaultExportFromModule(global, key))
 }
 
 pub(super) fn bake_get_on_module_namespace(
     global: &JSGlobalObject,
     module: JSValue,
     property: &[u8],
-) -> Option<JSValue> {
+) -> JsResult<JSValue> {
     unsafe extern "C" {
         // PRECONDITION: `ptr` must be readable for `len` bytes (C++ builds an
         // `Identifier` from the slice). Cannot be `safe fn` — raw ptr+len pair
@@ -65,12 +72,12 @@ pub(super) fn bake_get_on_module_namespace(
         fn f(global: *const JSGlobalObject, module: JSValue, ptr: *const u8, len: usize)
         -> JSValue;
     }
-    // SAFETY: `global` is a live `&JSGlobalObject`, `module` is a stack-held
-    // `JSValue`, and `property.as_ptr()`/`len()` describe a valid borrowed
-    // `&[u8]` for the call duration — discharges the ptr+len precondition above.
-    let result: JSValue = unsafe { f(global, module, property.as_ptr(), property.len()) };
-    debug_assert!(!result.is_empty());
-    Some(result)
+    jsc::from_js_host_call(global, || {
+        // SAFETY: `global` is a live `&JSGlobalObject`, `module` is a stack-held
+        // `JSValue`, and `property.as_ptr()`/`len()` describe a valid borrowed
+        // `&[u8]` for the call duration — discharges the ptr+len precondition above.
+        unsafe { f(global, module, property.as_ptr(), property.len()) }
+    })
 }
 
 // Renders all routes for static site generation by calling the JavaScript implementation.

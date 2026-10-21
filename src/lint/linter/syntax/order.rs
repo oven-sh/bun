@@ -1,30 +1,30 @@
-//! Which of several errors typescript-estree comes to first.
+//! Picks the error that typescript-estree would hit first when a file has several.
 //!
-//! `Converter` checks a node, then converts its children in the order in which the code names them, which mostly is the
-//! alphabetical order of the properties of the ESTree node: the `body` of a function before its `params`, the `alternate` of an
-//! `if` before its `test`. Only a file with more than one error is looked at here.
+//! `Converter` checks a node, then converts its children in the order its source code lists them. That's mostly the
+//! alphabetical order of the ESTree node's properties: a function's `body` before its `params`, an `if`'s `alternate`
+//! before its `test`. This code only runs for a file with more than one error.
 
 use crate::ast::{ExprKind, File, FnKind, Func, KeyKind, Node, StmtKind, TypeKind};
 use crate::span::Span;
 
-/// When a check happens, apart from the node that it is about.
+/// When a check runs, relative to the conversion of its node.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum When {
-    /// Before anything of the node is converted.
+    /// Before any part of the node is converted.
     First,
-    /// Where `convertTypeArguments` is called for the node that has the list.
+    /// When `convertTypeArguments` is called for the node that owns the list.
     TypeArguments,
     /// The same for `convertTypeParameters`.
     TypeParameters,
-    /// Before anything of the `CatchClause` is converted, which here is a part of the `try`.
+    /// Before any part of the `CatchClause` is converted. In our tree the clause is part of the `try` statement.
     CatchClause,
 }
 
 pub(super) struct Candidate {
-    /// The node that is checked. For a list of types, the place of its `<`.
+    /// The node being checked. For a type list, an empty span at its `<`.
     pub(super) node: Span,
     pub(super) when: When,
-    /// Orders the checks of one node.
+    /// Orders checks of the same node.
     pub(super) step: u32,
 }
 
@@ -51,7 +51,7 @@ fn is_method(func: Func) -> bool {
     ) && !matches!(func.owner(), Node::Member(member) if member.is_signature())
 }
 
-/// The ranks of the body, the parameters, the return type and the type parameters of a function.
+/// The ranks of a function's body, parameters, return type and type parameters.
 fn ranks_in_function(func: Func) -> [u16; 4] {
     match func.kind() {
         _ if is_method(func) => [1, 4, 2, 3],
@@ -62,7 +62,8 @@ fn ranks_in_function(func: Func) -> [u16; 4] {
     }
 }
 
-/// When `child` is converted, among the children of `parent`. From 1: the checks of `parent` itself come first.
+/// The position of `child` in the order `parent`'s children are converted. Starts at 1 because `parent`'s own checks
+/// come first.
 #[optimize(size)]
 fn rank<'a>(parent: Node<'a>, child: Node<'a>) -> u16 {
     let is = |it: Node<'a>| it == child;
@@ -154,7 +155,7 @@ fn rank<'a>(parent: Node<'a>, child: Node<'a>) -> u16 {
                 Node::Func(_) => 3,
                 Node::Type(_) => 4,
                 Node::Expr(it) if member.init() == Some(it) => 5,
-                // Of a method the decorators come first, of a property the key.
+                // A method's decorators come before its key. A property's key comes before its decorators.
                 Node::Expr(_) if is_key == is_method => 3,
                 _ => 2,
             }
@@ -232,7 +233,7 @@ fn rank<'a>(parent: Node<'a>, child: Node<'a>) -> u16 {
     }
 }
 
-/// When a check of `node` happens that is not the first thing.
+/// The rank of a check of `node` itself, on the same scale as [`rank`].
 fn rank_of_check(node: Node, when: When) -> u16 {
     match (when, node) {
         (When::First, _) => 0,
@@ -267,7 +268,7 @@ pub(super) fn first<'a>(file: &'a File<'a>, candidates: &[Candidate]) -> Option<
     loop {
         children.clear();
         at.for_each_child(|child| children.push((outer_span(child), child)));
-        // Many children are the elements of a list: in order, and apart from each other.
+        // A node with this many children is a list, so the children are sorted and don't overlap.
         let are_many = children.len() > 16;
         let child_with = |node: Span| -> Option<usize> {
             if are_many {
@@ -281,7 +282,8 @@ pub(super) fn first<'a>(file: &'a File<'a>, candidates: &[Candidate]) -> Option<
                 .filter(|&i| contains(children[i].0, node))
                 .min_by_key(|&i| children[i].0.len())
         };
-        // By when it happens: the rank, the place in a list, the step. A child, or a check of `at`.
+        // The earliest candidate so far: its sort key (rank, offset, step), the child containing it (`None` for a check
+        // of `at` itself), and its index.
         let mut best: Option<((u16, u32, u32), Option<usize>, usize)> = None;
         for &i in &inside {
             let it = &candidates[i];

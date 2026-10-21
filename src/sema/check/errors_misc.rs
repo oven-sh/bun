@@ -1,8 +1,8 @@
-//! Smaller checks of expressions and statements, called where the type is computed or by the walk: 1345 2872 2873, 2869 2871 5076,
-//! 2703 2704 2790 18011, 2378, 2678.
+//! Smaller checks of expressions and statements, called where the type is computed or by the walk: 1345 2872 2873, 2869
+//! 2871 5076, 2703 2704 2790 18011, 2378, and 2678 through `check_type_comparable_to`.
 //!
-//! Follows `checkTruthinessOfType`, `checkNullishCoalesceOperands`, `checkDeleteExpression`, `checkAccessorDeclaration`
-//! and `checkSwitchStatement` of TypeScript 7.0.2's checker.go.
+//! Mirrors `checkTruthinessOfType`, `checkNullishCoalesceOperands`, `checkDeleteExpression`, `checkAccessorDeclaration`
+//! and `checkSwitchStatement` in TypeScript 7.0.2's checker.go.
 
 use super::*;
 use crate::bind::{FnOwner, Parent, UNREACHABLE};
@@ -21,7 +21,8 @@ impl Checker<'_, '_> {
         right: ExprId,
     ) {
         let hir = self.hir(file);
-        // `None` unless `x` is an unparenthesized `BinaryExpression`. The inner option is its operator, `None` for an assignment.
+        // `None` unless `x` is an unparenthesized `BinaryExpression`. The inner option is its operator, `None` for an
+        // assignment.
         let operator_of = |x: ExprId| match hir[x].kind {
             _ if is_parenthesized(hir, x) || hir.kind(hir.node(x)) != Kind::BinaryExpression => {
                 None
@@ -68,8 +69,8 @@ impl Checker<'_, '_> {
         };
     }
 
-    /// `checkSwitchStatement` for one `case test:`: 2678. `expression_type`: of the expression of
-    /// the `switch`, which is checked once, before the clauses.
+    /// `checkSwitchStatement` for one `case test:`: 2678. `expression_type` is the type of the `switch` expression,
+    /// which is checked once, before the clauses.
     pub(super) fn check_case_clause(
         &mut self,
         file: FileId,
@@ -85,8 +86,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkAccessorDeclaration`: 2378 for a getter whose end is reachable and that has no
-    /// `return` statement.
+    /// `checkAccessorDeclaration`: 2378 for a getter whose end is reachable and that has no `return` statement.
     pub(super) fn check_getter_returns_a_value(&mut self, file: FileId, f: FnId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let func = &hir[f];
@@ -101,7 +101,7 @@ impl Checker<'_, '_> {
         }
         let (start, end) = match bound.fns[f.idx()].owner {
             FnOwner::Member(m) => (hir[m].name_pos, self.end_of_member_name(file, m)),
-            FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
+            FnOwner::Expr(e) => match bound.parent_of_expr(e) {
                 Parent::Prop(p) => (hir[p].pos, self.end_of_prop_name(file, p)),
                 _ => return,
             },
@@ -115,7 +115,7 @@ impl Checker<'_, '_> {
         let bound = self.bound(file);
         bound
             .ids(bound.fns[f.idx()].returns)
-            .any(|s| bound.stmt_flow[s.idx()] != UNREACHABLE)
+            .any(|s| bound.flow_of_stmt(s) != UNREACHABLE)
     }
 
     /// `SkipOuterExpressions`
@@ -135,7 +135,7 @@ impl Checker<'_, '_> {
 
     fn is_undefined_itself(&self, file: FileId, e: ExprId) -> bool {
         matches!(self.hir(file)[e].kind, ExprKind::Ident(known::undefined))
-            && self.bound(file).expr_symbol[e.idx()].is_none()
+            && self.bound(file).symbol_of_expr(e).is_none()
     }
 
     /// `checkTruthinessOfType`
@@ -152,8 +152,8 @@ impl Checker<'_, '_> {
         self.error_at(self.span_of_parenthesized_expr(file, node), code, &[]);
     }
 
-    /// `GetErrorRangeForNode` for an expression as it appears in the source: the start of an error
-    /// about the whole of `e`. If `e` is parenthesized, the error points at the parentheses.
+    /// `GetErrorRangeForNode` for an expression as it appears in the source: the start of an error about all of `e`. If
+    /// `e` is parenthesized, the error points at the parentheses.
     pub(super) fn error_start_of(&self, file: FileId, e: ExprId) -> u32 {
         if is_parenthesized(self.hir(file), e) {
             self.start_of(file, e)
@@ -162,12 +162,12 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// The same for `e` itself, ignoring enclosing parentheses. The error points at the name of a
-    /// function expression, or else at the name of what it is assigned to, at the own name of a
-    /// class expression, and at the keyword of `x satisfies T`.
+    /// Same as `error_start_of`, for `e` itself, ignoring enclosing parentheses. For a function expression the error
+    /// points at its name, or else at the name of what it's assigned to. For a class expression it points at the
+    /// class's own name, and for `x satisfies T` at the keyword.
     pub(super) fn error_start_inside_parentheses(&self, file: FileId, e: ExprId) -> u32 {
         let hir = self.hir(file);
-        let elsewhere = match hir[e].kind {
+        let special_start = match hir[e].kind {
             ExprKind::Fn(f) if hir[f].kind == FnKind::Expr && hir[f].name.is_some() => {
                 Some(hir[f].name_pos)
             }
@@ -177,18 +177,18 @@ impl Checker<'_, '_> {
             ExprKind::Class(c) if hir[c].name.is_some() => Some(hir[c].name_pos),
             // Its first token. Its decorators belong to it.
             ExprKind::Class(c) => Some(hir[c].start),
-            // The name of the tag, or else the token after the expression.
+            // The tag's name, or else the token after the expression.
             ExprKind::Satisfies { expr, ty } => Some(
                 self.find_originating_jsdoc_satisfies_tag(file, e, ty)
                     .unwrap_or_else(|| self.skip_trivia_from(file, self.end_of_expr(file, expr))),
             ),
             _ => None,
         };
-        elsewhere.unwrap_or_else(|| self.start_inside_parentheses(file, e))
+        special_start.unwrap_or_else(|| self.start_inside_parentheses(file, e))
     }
 
-    /// `findOriginatingJSDocSatisfiesTag` for `node`, an `x satisfies T` whose `T` is
-    /// `target_type`: the position of the name of the tag.
+    /// `findOriginatingJSDocSatisfiesTag` for `node`, an `x satisfies T` whose `T` is `target_type`. Returns the
+    /// position of the tag's name.
     fn find_originating_jsdoc_satisfies_tag(
         &self,
         file: FileId,
@@ -210,8 +210,8 @@ impl Checker<'_, '_> {
                 let first = host.first_satisfies_tag;
                 return (first != u32::MAX).then_some(first);
             }
-            // The tag with that type: the last word before the type, its `{` and a leading `(`,
-            // `|` or `&`, which are not stored.
+            // The tag with that type: the last word before the type, its `{` and a leading `(`, `|` or `&`, which
+            // aren't stored.
             let mut before = trim_trivia_end(hir.text.get(..target as usize).unwrap_or_default());
             while let [rest @ .., b'(' | b'|' | b'&' | b'{'] = before {
                 before = trim_trivia_end(rest);
@@ -251,7 +251,8 @@ impl Checker<'_, '_> {
                     ALWAYS
                 }
             }
-            ExprKind::Cond { yes, no, .. } => {
+            ExprKind::Cond { branches, .. } => {
+                let Branches { yes, no } = hir.branches(branches);
                 self.syntactic_truthiness(file, yes) | self.syntactic_truthiness(file, no)
             }
             ExprKind::Ident(_) if self.is_undefined_itself(file, e) => NEVER,
@@ -295,7 +296,8 @@ impl Checker<'_, '_> {
                 value,
                 ..
             } => self.syntactic_nullishness(file, value),
-            ExprKind::Cond { yes, no, .. } => {
+            ExprKind::Cond { branches, .. } => {
+                let Branches { yes, no } = hir.branches(branches);
                 self.syntactic_nullishness(file, yes) | self.syntactic_nullishness(file, no)
             }
             ExprKind::Null => ALWAYS,
@@ -327,14 +329,12 @@ impl Checker<'_, '_> {
         };
         let (obj, name) = match hir[operand].kind {
             ExprKind::Dot { obj, name, .. } => (obj, Some(name)),
-            // `getPropertyNameFromIndex`: the single property name that the type of the index
-            // expression represents.
+            // `getPropertyNameFromIndex`: the single property name that the index expression's type represents.
             ExprKind::Index { obj, index, .. } => {
                 let key = self.type_of_expr(file, index);
                 (obj, self.property_name_of_type(key))
             }
-            // A missing operand is an identifier with empty text, which is not an access expression
-            // either.
+            // A missing operand is an identifier with empty text, which isn't an access expression either.
             _ => {
                 self.error_at((file, start, end), 2703, &[]);
                 return;
@@ -342,7 +342,7 @@ impl Checker<'_, '_> {
         };
         let Some(name) = name else { return };
         let is_private =
-            self.is_private_name(name) && matches!(hir[operand].kind, ExprKind::Dot { .. });
+            self.atoms().is_private_name(name) && matches!(hir[operand].kind, ExprKind::Dot { .. });
         if is_private {
             self.error_at((file, start, end), 18011, &[]);
         }
@@ -359,8 +359,8 @@ impl Checker<'_, '_> {
             }
             _ => self.non_null_type(object),
         };
-        // `getIndexedAccessTypeOrUndefined`: the index expression then represents any string, and
-        // no property is looked up.
+        // `getIndexedAccessTypeOrUndefined`: the index expression then represents any string, and no property is looked
+        // up.
         if matches!(hir[operand].kind, ExprKind::Index { .. })
             && self.is_string_index_signature_only(object)
         {

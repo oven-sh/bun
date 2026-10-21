@@ -16,13 +16,13 @@ const NOT_INITIALIZED: Message = Message::new(
     "Variable '{{idName}}' should not be initialized on declaration.",
 );
 
-/// The options, which typescript-eslint's rule of the same name shares.
+/// The options, shared with typescript-eslint's rule of the same name.
 pub struct Config {
     pub is_never: bool,
     ignore_for_loop_init: bool,
 }
 
-/// What there is to say about a declarator, if `declare` does not excuse it.
+/// A problem with a declarator, to report unless `declare` exempts it.
 pub struct Finding<'a> {
     pub message: Message,
     pub name: Name<'a>,
@@ -43,18 +43,18 @@ impl Config {
         let Node::Stmt(declaration) = decl.parent() else {
             return None;
         };
-        // As most are.
+        // Fast path for the common case.
         let is_in_loop = matches!(declaration.parent(), Node::Stmt(block) if block.is_loop());
         if !is_in_loop && decl.init().is_some() != self.is_never {
             return None;
         }
-        self.check_closer(decl, declaration)
+        self.check_slow_path(decl, declaration)
     }
 
-    /// `declaration`: the parent of `decl`.
+    /// `declaration` is `decl`'s parent.
     #[inline(never)]
-    fn check_closer<'a>(&self, decl: VarDecl<'a>, declaration: Stmt<'a>) -> Option<Finding<'a>> {
-        // Whether it is in the head of the `for` statement that is its parent.
+    fn check_slow_path<'a>(&self, decl: VarDecl<'a>, declaration: Stmt<'a>) -> Option<Finding<'a>> {
+        // `Some` if its parent is a `for`, `for`-`in` or `for`-`of`, and true if it's in that loop's head.
         let in_for_loop = match declaration.parent() {
             Node::Stmt(block) if block.is_loop() => match block.kind() {
                 StmtKind::For { init, .. } => Some(init == Some(declaration)),
@@ -84,7 +84,7 @@ impl Config {
         }
         let message = match self.is_never {
             false if !is_initialized => INITIALIZED,
-            // With `ignoreForLoopInit` oxlint says nothing at all.
+            // With `ignoreForLoopInit` oxlint reports nothing at all.
             true if is_initialized && !(self.ignore_for_loop_init && (in_for_loop.is_some() || is_oxlint)) => {
                 NOT_INITIALIZED
             }
@@ -103,15 +103,15 @@ pub fn has_declare(statement: Stmt) -> bool {
     statement.flags().contains(Flags::AMBIENT)
 }
 
-/// The innermost `declare namespace` around `statement`.
-pub fn declared_namespace_around(statement: Stmt<'_>) -> Option<Module<'_>> {
+/// Returns the innermost `declare namespace` around `statement`.
+pub fn enclosing_declared_namespace(statement: Stmt<'_>) -> Option<Module<'_>> {
     Node::Stmt(statement).ancestors().find_map(|ancestor| match ancestor.as_stmt()?.kind() {
         StmtKind::Module(module) if has_declare(module.stmt()) => Some(module),
         _ => None,
     })
 }
 
-/// Where the first of the `declare namespace`s somewhere in `namespace` ends.
+/// Returns the end of the first `declare namespace` nested anywhere in `namespace`.
 fn end_of_first_declared_namespace_in(namespace: Module<'_>) -> Option<u32> {
     let (mut first, mut pending) = (None, vec![namespace]);
     while let Some(namespace) = pending.pop() {
@@ -131,12 +131,12 @@ fn end_of_first_declared_namespace_in(namespace: Module<'_>) -> Option<u32> {
 #[derive(Default)]
 pub struct State<'a> {
     declared_namespaces: AncestorMemo<'a, Module<'a>>,
-    /// [`end_of_first_declared_namespace_in`] a `declare namespace`, by its statement.
+    /// Caches [`end_of_first_declared_namespace_in`] for a `declare namespace`, keyed by its statement.
     first_ends: IdMap<Stmt<'a>, Option<u32>>,
 }
 
-/// ESLint's `insideDeclaredNamespace`, which is a flag and not a depth: the end of a
-/// `declare namespace` clears it for the rest of the one around.
+/// ESLint's `insideDeclaredNamespace`, which is a flag rather than a depth: the end of a `declare namespace` clears it
+/// for the rest of the enclosing one.
 fn is_inside_declared_namespace<'a>(statement: Stmt<'a>, state: &mut State<'a>) -> bool {
     let namespace = state.declared_namespaces.find(Node::Stmt(statement), |_, ancestor| match ancestor.as_stmt()?.kind() {
         StmtKind::Module(module) if has_declare(module.stmt()) => Some(module),

@@ -261,7 +261,7 @@ describe.concurrent("bun add --catalog", () => {
       expect((await dir.lock()).catalog).toStrictEqual({ "a-dep": "^1.0.10", "no-deps": "^2.0.0" });
     });
 
-    for (const flag of ["--catalog=", "--catalog= "]) {
+    for (const flag of ["--catalog=", "--catalog= ", "--save-catalog"]) {
       test(`${JSON.stringify(flag)} is the default catalog`, async () => {
         const dir = await createDir(workspacesObject());
 
@@ -277,22 +277,6 @@ describe.concurrent("bun add --catalog", () => {
         await dir.installSavesNothing();
       });
     }
-
-    test("pnpm's --save-catalog is rejected", async () => {
-      const root = pretty(workspacesObject({ catalog: {} }));
-      const dir = await createDir(root);
-      const pkg1Before = await dir.pkg1Text();
-
-      expect(await dir.add(dir.pkg1Dir, "no-deps", "--save-catalog")).toEqual({
-        stdout: "",
-        stderr: "error: bun add has no --save-catalog flag.\nnote: Run 'bun add --help' for more information\n",
-        exitCode: 1,
-      });
-
-      expect(await dir.pkg1Text()).toBe(pkg1Before);
-      expect(await dir.rootText()).toBe(root);
-      expect(await dir.lockExists()).toBeFalse();
-    });
   });
 
   describe("catalog literal", () => {
@@ -706,7 +690,7 @@ describe.concurrent("bun add --catalog", () => {
       const plainPkg1 = await plain.pkg1();
       const catalogPkg1 = await catalog.pkg1();
       expect(Object.keys(catalogPkg1)).toStrictEqual(Object.keys(plainPkg1));
-      // The peer entry is left alone; --dev adds a devDependencies entry next to it.
+      // The peer entry isn't changed. --dev adds a devDependencies entry next to it.
       expect(plainPkg1).toStrictEqual({
         name: "pkg1",
         peerDependencies: { "no-deps": ">=1" },
@@ -841,7 +825,7 @@ describe.concurrent("bun add --catalog", () => {
     });
   });
 
-  describe("leading whitespace in what a package.json declares", () => {
+  describe("leading whitespace in a package.json value", () => {
     test("the target's named reference stays in that catalog", async () => {
       const pkg1 = pretty({ name: "pkg1", dependencies: { "no-deps": " catalog:testing" } });
       const dir = await createDir(workspacesObject({ catalogs: { testing: { "no-deps": "1.0.0" } } }), pkg1);

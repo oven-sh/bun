@@ -6,7 +6,7 @@ use bun_core::strings;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::Scripts as LockfileScripts;
 use bun_install::{Resolution, ResolutionTag, initialize_store};
-use bun_paths::resolve_path::{join_abs_string_buf_z, platform};
+use bun_paths::resolve_path::{join_abs_string_buf_z_checked, platform};
 use bun_paths::{self, SEP_STR};
 use bun_semver::String as SemverString;
 use bun_sys::{self, Fd};
@@ -113,15 +113,19 @@ impl Scripts {
         false
     }
 
-    /// npm's rule for the default `node-gyp rebuild` script. `None`: read `gypfile` if it matters.
+    /// npm's rule for the default `node-gyp rebuild` script. Pass `None` to read `gypfile` from
+    /// disk only if it matters.
     pub(crate) fn wants_default_node_gyp(&self, package_dir: &[u8], gypfile: Option<bool>) -> bool {
         if !self.install.is_empty() || !self.preinstall.is_empty() {
             return false;
         }
         let mut buf = bun_paths::path_buffer_pool::get();
-        let binding_gyp =
-            join_abs_string_buf_z::<platform::Auto>(package_dir, &mut buf.0, &[b"binding.gyp"]);
-        if !bun_sys::exists_z(binding_gyp) {
+        let binding_gyp = join_abs_string_buf_z_checked::<platform::Auto>(
+            package_dir,
+            &mut buf.0,
+            &[b"binding.gyp"],
+        );
+        if !binding_gyp.is_some_and(bun_sys::exists_z) {
             return false;
         }
         gypfile.unwrap_or_else(|| read_gypfile(package_dir, &mut buf.0))
@@ -304,7 +308,8 @@ impl Scripts {
         }
     }
 
-    /// Runs on the isolated linker's task threads. `trusted`: also `true` to list what would run.
+    /// Runs on the isolated linker's task threads. Pass `trusted: true` to also list the scripts
+    /// that would run.
     pub fn get_list(
         &mut self,
         log: &mut bun_ast::Log,
@@ -403,7 +408,11 @@ pub(crate) fn gypfile_from_json(json: Expr) -> bool {
 
 /// An unreadable package.json keeps the default script.
 fn read_gypfile(package_dir: &[u8], buf: &mut [u8]) -> bool {
-    let path = join_abs_string_buf_z::<platform::Auto>(package_dir, buf, &[b"package.json"]);
+    let Some(path) =
+        join_abs_string_buf_z_checked::<platform::Auto>(package_dir, buf, &[b"package.json"])
+    else {
+        return true;
+    };
     let Ok(json_buf) = bun_sys::File::read_from(Fd::cwd(), path) else {
         return true;
     };
@@ -431,7 +440,7 @@ pub struct List {
     pub items: [Option<Box<[u8]>>; SCRIPT_NAMES_LEN],
     pub(crate) first_index: u8,
     pub total: u8,
-    /// Neither the project's nor a workspace's own scripts.
+    /// True if these aren't the project's or a workspace's own scripts.
     pub(crate) is_dependency: bool,
     // Owned NUL-terminated heap string, not a borrow.
     pub(crate) cwd: ZBox,

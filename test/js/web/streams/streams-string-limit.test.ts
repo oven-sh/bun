@@ -184,6 +184,23 @@ test.skipIf(!enoughMemory)("arrayBuffer() and bytes() reject mixed chunks summin
   });
 });
 
+// A 16-bit string can't exceed 2,147,483,635 characters. The consumer rejects longer text before allocating.
+test("text() rejects string chunks that sum to a 16-bit string of 2,147,483,636 characters", async () => {
+  const { stdout, stderr, exitCode } = await run(`
+    const megabyte = Buffer.alloc(2 ** 20, "x").toString("latin1");
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue("\\u20AC");
+        for (let i = 0; i < 2047; i++) controller.enqueue(megabyte);
+        controller.enqueue(megabyte.slice(0, 2 ** 20 - 13));
+        controller.close();
+      },
+    });
+    console.log(await Bun.readableStreamToText(stream).then(text => text.length, e => e.name + ": " + e.message));
+  `);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "RangeError: Out of memory\n", stderr: "", exitCode: 0 });
+});
+
 // TextDecoderStream joins a chunk with the bytes it carried over from an incomplete UTF-8
 // sequence. The join sized a WTF::Vector that aborts past 2^31-1 bytes, so a 2^31-byte chunk
 // after a carried byte killed the process before it read a byte. The child reserves the

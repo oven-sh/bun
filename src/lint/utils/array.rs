@@ -1,19 +1,19 @@
-//! The operations of JavaScript arrays whose result depends on how the engine does them.
+//! JavaScript array operations whose result depends on the engine's implementation.
 
 /// `items.sort(compare)`, where `is_before(a, b)` is `compare(a, b) < 0`.
 ///
-/// It matters for a `compare` that is no order: `(a, b) => a > b ? 1 : -1` in the fixes of
-/// `sort-imports` and `sort-vars` never answers 0, that of `import/order` is not transitive. Where
-/// the items end up then depends on the algorithm. This is that of V8 14, of Node.js 25 and 26: it
-/// asks the same questions in the same order.
+/// The algorithm matters for a `compare` that isn't a consistent order. `(a, b) => a > b ? 1 : -1`
+/// in the fixes of `sort-imports` and `sort-vars` never returns 0, and `import/order`'s isn't
+/// transitive. Where the items end up then depends on the algorithm. This is V8 14's, used by
+/// Node.js 25 and 26, and it makes the same comparisons in the same order.
 pub fn array_sort_by<T: Copy>(items: &mut [T], mut is_before: impl FnMut(T, T) -> bool) {
-    let given = items.to_vec();
-    let mut places: Vec<u32> = (0..given.len() as u32).collect();
-    sort_places(&mut places, &mut |a, b| {
-        is_before(given[a as usize], given[b as usize])
+    let original = items.to_vec();
+    let mut indices: Vec<u32> = (0..original.len() as u32).collect();
+    sort_indices(&mut indices, &mut |a, b| {
+        is_before(original[a as usize], original[b as usize])
     });
-    for (item, &place) in items.iter_mut().zip(&places) {
-        *item = given[place as usize];
+    for (item, &source_index) in items.iter_mut().zip(&indices) {
+        *item = original[source_index as usize];
     }
 }
 
@@ -22,7 +22,7 @@ type IsBefore<'f> = &'f mut dyn FnMut(u32, u32) -> bool;
 const MIN_GALLOP_WINS: usize = 7;
 
 /// `ArrayTimSort`
-fn sort_places(work: &mut [u32], is_before: IsBefore) {
+fn sort_indices(work: &mut [u32], is_before: IsBefore) {
     let length = work.len();
     if length < 8 {
         return binary_insertion_sort(work, 0, is_before);
@@ -75,7 +75,8 @@ fn binary_insertion_sort(run: &mut [u32], sorted: usize, is_before: IsBefore) {
     }
 }
 
-/// `CountAndMakeRun`: how many items at the start of `rest` ascend, or descend and are reversed.
+/// `CountAndMakeRun`: the number of items at the start of `rest` that ascend, or that descend and
+/// get reversed.
 fn count_and_make_run(rest: &mut [u32], is_before: IsBefore) -> usize {
     if rest.len() < 2 {
         return rest.len();
@@ -93,14 +94,14 @@ fn count_and_make_run(rest: &mut [u32], is_before: IsBefore) -> usize {
 
 #[derive(Copy, Clone)]
 enum Side {
-    /// `GallopLeft`: before what is equal to the key.
+    /// `GallopLeft`: before the items equal to the key.
     Left,
-    /// `GallopRight`: after it.
+    /// `GallopRight`: after them.
     Right,
 }
 
 impl Side {
-    /// Where `key` belongs in `run`, which is sorted. The search begins at `hint`.
+    /// The index where `key` belongs in the sorted `run`. The search starts at `hint`.
     fn gallop(self, run: &[u32], key: u32, hint: usize, is_before: IsBefore) -> usize {
         let mut is_below = |at: usize| match self {
             Side::Left => is_before(run[at], key),
@@ -148,7 +149,7 @@ struct Run {
 /// `SortState`
 struct Runs<'w, 'f> {
     work: &'w mut [u32],
-    /// Those that wait to be merged.
+    /// The runs waiting to be merged.
     pending: Vec<Run>,
     min_gallop: usize,
     is_before: IsBefore<'f>,
@@ -190,7 +191,8 @@ impl Runs<'_, '_> {
         }
     }
 
-    /// `MergeLow`: from the front. `a`, `b`: how many of each run are left; they end at `end`.
+    /// `MergeLow` merges from the front. `a` and `b` are how many items of each run are left. The
+    /// runs end at `end`.
     fn merge_low(&mut self, start: usize, mut a: usize, mut b: usize) {
         let (work, is_before) = (&mut *self.work, &mut *self.is_before);
         let mut min_gallop = self.min_gallop;
@@ -257,7 +259,8 @@ impl Runs<'_, '_> {
         work[end - a..end].copy_from_slice(&temp[count - a..]);
     }
 
-    /// `MergeHigh`: from the back. `a`, `b`: how many of each run are left; they start at `start`.
+    /// `MergeHigh` merges from the back. `a` and `b` are how many items of each run are left. The
+    /// runs start at `start`.
     fn merge_high(&mut self, start: usize, mut a: usize, mut b: usize) {
         let (work, is_before) = (&mut *self.work, &mut *self.is_before);
         let mut min_gallop = self.min_gallop;

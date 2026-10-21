@@ -819,6 +819,55 @@ describe("HTMLRewriter", () => {
       await expect(second.text()).rejects.toThrow("inner boom");
     });
 
+    it.concurrent("an element can be modified while the output before it is being delivered", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+            let release = null;
+            // The document arrives after both rewriters exist, so the first pipes its output straight into the second.
+            const wired = Promise.withResolvers();
+            const input = new ReadableStream({
+              async pull(controller) {
+                await wired.promise;
+                controller.enqueue(new TextEncoder().encode("<p>intro</p><b>one</b><p>tail</p>"));
+                controller.close();
+              },
+            });
+            const first = new HTMLRewriter().on("b", {
+              async element(el) {
+                await new Promise(resolve => {
+                  release = resolve;
+                  setImmediate(resolve);
+                });
+                el.setAttribute("seen", "1");
+              },
+            });
+            // The first rewriter's handler resumes before this one returns.
+            const second = new HTMLRewriter().on("p", {
+              async element() {
+                if (!release) return;
+                release();
+                release = null;
+                await 0;
+              },
+            });
+            const out = second.transform(first.transform(new Response(input)));
+            wired.resolve();
+            console.log(await out.text());
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('<p>intro</p><b seen="1">one</b><p>tail</p>\n');
+      expect(exitCode).toBe(0);
+    });
+
     // The resume path's own `handler_callback` sees a Fulfilled promise only
     // when a microtask-only handler follows a real-await one.
     it("a microtask-only handler after a suspending one", async () => {

@@ -18,13 +18,13 @@ enum Allow {
 
 const MOVE_TO_NEW_LINE: Message = Message::new("moveToNewLine", "`{{descriptor}}` must be placed on a new line");
 
-/// A child that is not white space.
+/// A child that isn't whitespace.
 #[derive(Copy, Clone)]
 struct Child<'a> {
-    /// `None`: it is text.
+    /// `None` for text.
     node: Option<Expr<'a>>,
     span: Span,
-    /// What is before it in its line: the opening tag or a child.
+    /// The opening tag or child that precedes it on its line.
     prev_child: Option<Span>,
 }
 
@@ -45,8 +45,8 @@ impl Rule for JsxOneExpressionPerLine {
         }
     }
 
-    /// Upstream groups the children by the lines in which they begin and end. These never decrease from a child to the
-    /// next, so two are in one line where nothing between them counts as a line break.
+    /// Upstream groups the children by the lines they start and end on. Those never decrease from one child to the
+    /// next, so two children share a line if nothing between them counts as a line break.
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Jsx(jsx) = e.kind() else {
             return;
@@ -69,7 +69,7 @@ impl Rule for JsxOneExpressionPerLine {
         }
         let (mut prev_child, mut last_child) = (Some(opening_element), None::<Child<'a>>);
         for child in jsx.children_with_whitespace() {
-            // What is white space for the parser is not all `\s`.
+            // `\s` doesn't match everything the parser treats as whitespace.
             let (node, span) = match child {
                 JsxChild::Expr(it) if it.is_jsx_text() => (None, it.span()),
                 JsxChild::Expr(it) => (Some(it), it.jsx_container_span().unwrap_or_else(|| it.span())),
@@ -82,7 +82,7 @@ impl Rule for JsxOneExpressionPerLine {
                 }
                 continue;
             }
-            // The one before it is not the last in its line.
+            // The previous child isn't the last on its line.
             if let Some(it) = last_child {
                 it.report(None, e, cx);
             }
@@ -103,7 +103,7 @@ impl Rule for JsxOneExpressionPerLine {
 }
 
 impl<'a> Child<'a> {
-    /// `next_child`: the closing tag, if that is after it in its line.
+    /// `next_child`: the closing tag, if it follows on the same line.
     fn report(self, next_child: Option<Span>, parent: Expr<'a>, cx: &Cx<'a, JsxOneExpressionPerLine>) {
         let Child { node, span, prev_child } = self;
         if prev_child.is_none() && next_child.is_none() {
@@ -143,7 +143,7 @@ fn node_descriptor<'a>(n: Option<Expr<'a>>, source: &'a [u8]) -> Cow<'a, [u8]> {
             // The `name` of `a:b` is a node.
             ExprKind::String(name) if strings::contains_char(name.bytes(), b':') => b"[object Object]",
             ExprKind::String(name) => name.bytes(),
-            // `a.b` has none.
+            // `a.b` has no `name`.
             _ => b"undefined",
         };
         return Cow::Borrowed(name);
@@ -156,8 +156,8 @@ fn node_descriptor<'a>(n: Option<Expr<'a>>, source: &'a [u8]) -> Cow<'a, [u8]> {
     Cow::Owned(descriptor)
 }
 
-/// upstream's `spaceBetweenPrev` and `spaceBetweenNext`. Only text begins or ends with a blank, and what is between two
-/// that do not touch is text that is white space: `isSpaceBetweenTokens`.
+/// upstream's `spaceBetweenPrev` and `spaceBetweenNext`. Only text starts or ends with a space, and whatever is between
+/// two children that don't touch is whitespace text: `isSpaceBetweenTokens`.
 fn is_space_between(file: &File<'_>, first: Span, second: Span) -> bool {
     file.slice(first).ends_with(b" ") || file.slice(second).starts_with(b" ") || first.end != second.start
 }

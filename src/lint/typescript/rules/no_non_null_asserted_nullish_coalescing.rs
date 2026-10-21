@@ -13,17 +13,17 @@ const NO_NON_NULL_ASSERTED_NULLISH_COALESCING: Message = Message::new(
 const SUGGEST_REMOVING_NON_NULL: Message =
     Message::new("suggestRemovingNonNull", "Remove the non-null assertion.");
 
-/// Where the first of what gives a variable a value ends.
+/// Caches the end of the first thing that assigns a value to each variable.
 #[derive(Default)]
 pub struct State<'a> {
-    of_variables: IdMap<Symbol<'a>, Option<u32>>,
-    /// By the name, for the names that nothing in the file declares. `None` until it is asked for.
-    of_globals: Option<FxHashMap<Name<'a>, u32>>,
+    variable_first_writes: IdMap<Symbol<'a>, Option<u32>>,
+    /// Keyed by name, for names the file doesn't declare. `None` until first use.
+    global_first_writes: Option<FxHashMap<Name<'a>, u32>>,
 }
 
-/// Whether `variable` is given a value by something that ends before `end`.
+/// True if something that ends before `end` assigns a value to `variable`.
 fn has_assignment_before<'a>(variable: Symbol<'a>, end: u32, state: &mut State<'a>) -> bool {
-    let first = state.of_variables.get_or_insert_with(variable, || {
+    let first = state.variable_first_writes.get_or_insert_with(variable, || {
         let declarators = variable.declarations().filter_map(|declaration| match (declaration, declaration.node()) {
             (Declaration::Var(_), Some(Node::VarDecl(declarator))) => {
                 (declarator.is_definite() || declarator.init().is_some()).then(|| declarator.span().end)
@@ -70,10 +70,10 @@ impl Rule for NoNonNullAssertedNullishCoalescing {
         if let ExprKind::Ident(name) = operand.kind() {
             let has_assignment = match operand.symbol() {
                 Some(variable) => has_assignment_before(variable, end, &mut cx.state),
-                // To ESLint it is a variable without definitions.
+                // For ESLint it's a variable without definitions.
                 None if is_configured_global(cx.file(), name.bytes()) => {
                     let file = cx.file();
-                    let first_writes = cx.state.of_globals.get_or_insert_with(|| {
+                    let first_writes = cx.state.global_first_writes.get_or_insert_with(|| {
                         let mut first_writes: FxHashMap<Name<'a>, u32> = FxHashMap::default();
                         for reference in file.unresolved_references().filter(|it| it.is_write()) {
                             let first = first_writes.entry(reference.name()).or_insert(u32::MAX);

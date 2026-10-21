@@ -29,6 +29,9 @@ public:
             m_functions[index].values[i].set(vm, owner, values[i]);
     }
 
+    // Only call this on the thread that calls set() and clear().
+    bool isEmpty() const { return m_functions.isEmpty(); }
+
     // After SQLite closed the connection.
     void clear(JSC::JSCell* owner)
     {

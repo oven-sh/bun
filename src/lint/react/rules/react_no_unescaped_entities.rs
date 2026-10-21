@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 
 /// Disallow unescaped HTML entities from appearing in markup.
 pub struct NoUnescapedEntities {
-    /// `None`: not given.
+    /// `None` if the option isn't given.
     forbid: Option<Entities>,
     defaults: Entities,
 }
@@ -26,7 +26,7 @@ const DEFAULTS: [(&str, &[&str]); 4] = [
 
 struct Entity {
     char: Box<[u8]>,
-    /// `None`: a string of `forbid`.
+    /// `None` for a plain string in `forbid`.
     alternatives: Option<Vec<Box<[u8]>>>,
 }
 
@@ -34,7 +34,7 @@ struct Entities {
     list: Vec<Entity>,
     /// The first byte of each.
     starts: Vec<u8>,
-    /// One of them may be in a text that is nothing but blanks.
+    /// True if one of them can occur in whitespace-only text.
     has_blank: bool,
 }
 
@@ -49,7 +49,7 @@ impl Rule for NoUnescapedEntities {
             char: char.as_bytes().into(),
             alternatives: Some(alternatives.iter().map(|it| it.as_bytes().into()).collect()),
         });
-        let given = |it: &Json| match it.as_str() {
+        let parse_entity = |it: &Json| match it.as_str() {
             Some(char) => Some(Entity { char: char.into(), alternatives: None }),
             None => {
                 let it = Object::of(Some(it));
@@ -59,13 +59,13 @@ impl Rule for NoUnescapedEntities {
         };
         let forbid = options.object(0).get("forbid").and_then(Json::as_array);
         NoUnescapedEntities {
-            forbid: forbid.map(|it| Entities::new(it.iter().filter_map(given).collect())),
+            forbid: forbid.map(|it| Entities::new(it.iter().filter_map(parse_entity).collect())),
             defaults: Entities::new(defaults.collect()),
         }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        // oxlint goes by the kind of the file.
+        // oxlint decides by the file type.
         (!file.language().is_oxlint || is_jsx(file)).then_some(())
     }
 
@@ -94,7 +94,8 @@ impl Rule for NoUnescapedEntities {
 }
 
 impl Entities {
-    /// Without those that are not one UTF-16 code unit of a line, which is what upstream compares them with.
+    /// Drops the entries that aren't a single UTF-16 code unit other than a line break, since that's what upstream
+    /// compares them with.
     fn new(mut list: Vec<Entity>) -> Self {
         list.retain(|it| strings::wtf8_len_utf16(&it.char) == 1 && strings::js_line_break_len(&it.char) == 0);
         let starts: Vec<u8> = list.iter().filter_map(|it| it.char.first().copied()).collect();
@@ -116,10 +117,10 @@ impl Entities {
                     cx.report_at(start, UNESCAPED_ENTITY).data("entity", char.to_vec());
                     continue;
                 };
-                // oxlint: `a or b`
+                // oxlint prints `a or b`.
                 let (quote, separator): (&[u8], &[u8]) = if is_oxlint { (b"", b" or ") } else { (b"`", b", ") };
                 let alts: Vec<Vec<u8>> = alternatives.iter().map(|alt| [quote, &**alt, quote].concat()).collect();
-                // oxlint marks the character, and a suggestion of it replaces no more than that.
+                // oxlint reports the character, and its suggestion only replaces that.
                 let character = Span::new(start, start + char.len() as u32);
                 let mut report = match is_oxlint {
                     true => cx.report(character, NO_UNESCAPED_ENTITIES).data("unescaped", char.to_vec()),
@@ -138,7 +139,8 @@ impl Entities {
     }
 }
 
-/// `newText` of upstream's `fix`: it counts the lines as ESLint does, and takes that one of those that `\n` ends.
+/// `newText` in upstream's `fix`. It counts lines the way ESLint does, but uses the result as an index into the text
+/// split on `\n`.
 fn replaced(raw: &[u8], at: usize, alt: &[u8]) -> Vec<u8> {
     let before = strings::js_lines(raw.get(..at).unwrap_or_default());
     let (line_to_change, index) = (before.skip(1).count(), strings::wtf8_len_utf16(before.last().unwrap_or_default()));

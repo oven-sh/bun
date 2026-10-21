@@ -11,7 +11,7 @@ const hasRef = { returns: b.bool, invalidThis: "undefined" } as const;
 const ref = { ...chainable, rustName: "do_ref" } as const;
 const unref = { ...chainable, rustName: "do_unref" } as const;
 const dispose = { passGlobal: true, invalidThis: "undefined", name: "" } as const;
-const toPrimitive = { returns: b.i32, throws: true, invalidThis: "undefined", name: "" } as const;
+const toPrimitive = { returns: b.u64, throws: true, invalidThis: "undefined", name: "" } as const;
 
 export const Timeout = b.class({
   rustPath: "crate::timer::TimeoutObject",

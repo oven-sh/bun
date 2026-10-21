@@ -7595,3 +7595,59 @@ it("the native response's cork() treats a missing callback as undefined", async 
     server.close();
   }
 });
+
+it("addTrailers() and end() don't crash on the response of a request that was upgraded to a WebSocket", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const http = require("node:http");
+        const net = require("node:net");
+        const { WebSocketServer } = require("ws");
+        const wss = new WebSocketServer({ noServer: true });
+        const server = http.createServer((req, res) => {
+          if (req.url === "/first") {
+            res.write("body");
+            res.addTrailers({ "x-first": Buffer.alloc(200, "a").toString() });
+            res.end();
+            return;
+          }
+          wss.handleUpgrade(req, req.socket, Buffer.alloc(0), ws => {
+            try {
+              res.addTrailers({ "x-second": Buffer.alloc(100, "b").toString() });
+              res.end("late");
+            } catch {}
+            ws.send("alive");
+          });
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const client = net.connect(server.address().port, "127.0.0.1");
+          let received = "";
+          let upgrading = false;
+          client.on("data", data => {
+            received += data.toString("latin1");
+            if (!upgrading && received.endsWith("\\r\\n\\r\\n") && received.includes("x-first")) {
+              upgrading = true;
+              received = "";
+              client.write(
+                "GET /second HTTP/1.1\\r\\nHost: x\\r\\nConnection: Upgrade\\r\\nUpgrade: websocket\\r\\n" +
+                  "Sec-WebSocket-Version: 13\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\n\\r\\n",
+              );
+            } else if (upgrading && received.endsWith("alive")) {
+              console.log(received.includes("x-second") ? "trailer on the WebSocket" : "alive");
+              process.exit(0);
+            }
+          });
+          client.write("GET /first HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "alive\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});

@@ -30,7 +30,7 @@ impl Rule for NoCssTags {
         let Some(name) = jsx.tag().filter(|it| it.is_ident("link")) else {
             return;
         };
-        // The last of each counts.
+        // If an attribute is repeated, the last one counts.
         let value_of = |name: &[u8]| {
             let attribute = jsx.attrs().iter().rfind(|it| get_jsx_attribute_name(*it) == Some(name));
             attribute.and_then(get_string_literal_prop_value)

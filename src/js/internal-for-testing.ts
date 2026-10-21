@@ -151,6 +151,7 @@ export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") a
   panic: () => void;
   rootError: () => void;
   outOfMemory: () => void;
+  operatorNew: (nothrow?: boolean) => boolean | undefined;
   abort: () => void;
   fastfail: () => void;
   trap: () => void;
@@ -635,6 +636,10 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
 export const timerInternals = {
   timerClockMs: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.timerClockMs", 0),
   monotonicNowMs: $bindgen("Timer.bind.ts", "monotonicNowMs"),
+  // Sets the id of this thread's next timer. The counter can only move forward.
+  setNextTimerId: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.setNextTimerId", 1) as (
+    id: number,
+  ) => void,
 };
 
 // Raw datagram descriptor helpers for tests that need an unbound fd (which

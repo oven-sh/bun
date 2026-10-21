@@ -479,13 +479,25 @@ function setupConnectionsTracking(this: any) {
 // Node.js's checkConnections sweep: every connectionsCheckingInterval, expire
 // connections whose in-flight request exceeded headersTimeout/requestTimeout.
 // The per-connection timing lives on the native socket handle (the parser is
-// native), so each tracked connection is asked whether it expired.
+// native), so each tracked connection is asked whether it expired. A connection that is parsed in JS has its own arm.
 function checkConnections(this: Server) {
-  const headersTimeout = this.headersTimeout;
-  const requestTimeout = this.requestTimeout;
+  // One reading for both arms, the native handle's: a value that is not a finite number above 0 turns the timeout off.
+  let headersTimeout = +this.headersTimeout;
+  headersTimeout = headersTimeout > 0 && headersTimeout !== Infinity ? MathFloor(headersTimeout) : 0;
+  let requestTimeout = +this.requestTimeout;
+  requestTimeout = requestTimeout > 0 && requestTimeout !== Infinity ? MathFloor(requestTimeout) : 0;
   if (headersTimeout === 0 && requestTimeout === 0) {
     return;
   }
+  // Node swaps a pair that a property assignment left inverted (ConnectionsList::Expired in node_http_parser.cc).
+  if (requestTimeout > 0 && headersTimeout > requestTimeout) {
+    const longer = headersTimeout;
+    headersTimeout = requestTimeout;
+    requestTimeout = longer;
+  }
+
+  // internal/http1_server_fallback fills this slot when it loads. It checks the connections that are parsed in JS.
+  http1ServerPipeline.checkHttp1Connections?.(this, headersTimeout, requestTimeout, onRequestTimeout);
 
   const connections = this[kTrackedConnections];
   if (!connections || connections.size === 0) {
@@ -1546,7 +1558,10 @@ const requestChunkExtensionsTooLargeResponse = Buffer.from(
 function socketOnError(this: any, err) {
   // Ignore further errors
   this.removeListener("error", socketOnError);
-  this.on("error", noopOnError);
+  // Once: a 'clientError' listener can keep the connection, and each later error comes here again.
+  if (this.listenerCount("error", noopOnError) === 0) {
+    this.on("error", noopOnError);
+  }
 
   const server = this.server;
   if (!server || !server.emit("clientError", err, this)) {
@@ -2759,6 +2774,13 @@ function onResponseFinishHandleSocket(server, socket, res) {
     socket[kKeepAliveIdleStart] = DateNow();
     socket[kKeepAliveTimeoutSet] = true;
   }
+}
+
+// Node's resetSocketTimeout for a connection that is parsed in JS. The native dispatcher has its own form of it.
+function resetFallbackSocketTimeout(server, socket) {
+  if (!socket[kKeepAliveTimeoutSet]) return;
+  socket[kKeepAliveTimeoutSet] = false;
+  socket.setTimeout(server.timeout || 0);
 }
 
 // Node.js's socketOnClose frees the parser, which aborts parsing of any
@@ -4229,8 +4251,8 @@ function storeHTTPOptions(options) {
         "cannot be used with options.insecureHTTPParser",
       );
     }
-    this.httpValidation = httpValidation;
   }
+  this.httpValidation = httpValidation;
 
   // Node passes options.highWaterMark through to net.Server, which applies it
   // to every accepted connection socket (and from there to req/res streams).
@@ -4319,7 +4341,7 @@ function storeHTTPOptions(options) {
   this[kOptimizeEmptyRequests] = optimizeEmptyRequests || false;
 }
 
-// Share the pipelining machinery with internal/http1_server_fallback through
+// Share the pipelining machinery and the connection rules with internal/http1_server_fallback through
 // internal/http instead of the user-visible module exports.
 http1ServerPipeline.queuePipelinedResponse = queuePipelinedResponse;
 http1ServerPipeline.advanceResponsePipeline = advanceResponsePipeline;
@@ -4329,6 +4351,13 @@ http1ServerPipeline.maybePauseFallbackReads = maybePauseFallbackReads;
 http1ServerPipeline.resumeFallbackReadsOnDrain = resumeFallbackReadsOnDrain;
 http1ServerPipeline.finishDrainedResponse = finishDrainedResponse;
 http1ServerPipeline.kMustCloseConnection = kMustCloseConnection;
+http1ServerPipeline.socketOnError = socketOnError;
+http1ServerPipeline.socketOnTimeout = onNodeHTTPServerSocketTimeout;
+http1ServerPipeline.onResponseFinishHandleSocket = onResponseFinishHandleSocket;
+http1ServerPipeline.resetSocketTimeout = resetFallbackSocketTimeout;
+http1ServerPipeline.storeHTTPOptions = storeHTTPOptions;
+http1ServerPipeline.setupConnectionsTracking = setupConnectionsTracking;
+http1ServerPipeline.kConnectionsCheckingInterval = kConnectionsCheckingInterval;
 
 export default {
   Server,

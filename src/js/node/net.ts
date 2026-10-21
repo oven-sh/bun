@@ -508,7 +508,7 @@ function onUpgradedConnect(self, connection) {
   self.connecting = false;
   self.emit("connect");
 }
-// A net.Socket emits 'end' after its owner's destroy(), which is no EOF from the peer.
+// A destroyed transport is torn down by its 'close'. An 'end' that still comes out of it is no EOF from the peer.
 function onUpgradedEnd(connection, eof) {
   if (!connection.destroyed) eof();
 }
@@ -986,7 +986,8 @@ function unrefAfterDrain(self, handle) {
 }
 
 function finishSocketEnd(self) {
-  if (self[kended]) return;
+  // A destroyed stream gets no EOF: destroy() emits 'close' only, never 'end'.
+  if (self[kended] || self.destroyed) return;
   self[kended] = true;
   if (!self.allowHalfOpen) self.write = writeAfterFIN;
   self.push(null);

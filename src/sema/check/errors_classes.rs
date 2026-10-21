@@ -178,20 +178,12 @@ impl<'p> Checker<'p, '_> {
     /// `checkBaseTypeAccessibility`: TS2675. A class with a private constructor can only be extended inside its own
     /// declaration.
     fn check_base_type_accessibility(&mut self, file: FileId, c: ClassId, apparent: TypeId) {
-        let Some(&first) = self.signatures(apparent, true).first() else {
-            return;
-        };
-        let declared = self.declared_sig(first);
+        let sigs = self.signatures(apparent, true);
         let hir = self.hir(file);
-        if let Some((declared_in, func, _)) = self.sig_decl(declared)
-            && self.hir(declared_in)[func].flags.contains(Flags::PRIVATE)
-            // `t.symbol`. tsgo dereferences nil for a type that has none.
-            && let Some(symbol) = self.symbol_of_type(apparent).and_then(|it| it.as_binder_symbol())
-            // `GetClassLikeDeclarationOfSymbol(t.symbol)` is nil for an interface.
-            && !(self.enclosing_classes(file, hir[c].extends).into_iter())
-                .any(|enclosing_class| self.class_sym(file, enclosing_class) == symbol)
+        if let Some((_, class)) =
+            self.constructor_accessibility_error(file, hir[c].extends, &sigs, Flags::PRIVATE)
         {
-            let name = super::errors_names_and_exports::fully_qualified_name(self, symbol, None);
+            let name = super::errors_names_and_exports::fully_qualified_name(self, class, None);
             self.error(
                 file,
                 hir.node(c).with(Part::Base),

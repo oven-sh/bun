@@ -230,9 +230,12 @@ impl Checker<'_, '_> {
             return;
         }
         if !construct_sigs.is_empty() {
-            if let Some((modifiers, class)) =
-                self.inaccessible_constructor(file, e, construct_sigs[0])
-            {
+            if let Some((modifiers, class)) = self.constructor_accessibility_error(
+                file,
+                e,
+                &construct_sigs,
+                Flags::PRIVATE | Flags::PROTECTED,
+            ) {
                 let node_start = self.start_inside_parentheses(file, e);
                 let end = self.end_inside_parentheses(file, e);
                 let declaring = self.declared_type(class);
@@ -629,53 +632,58 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `isConstructorAccessible`. Returns `None` if it is, otherwise the constructor's accessibility modifiers, each of
-    /// which is an error, and the class that declares it.
-    pub(super) fn inaccessible_constructor(
+    /// `getConstructorAccessibilityError`. Returns the accessibility modifiers in `mask`, each of which is an error, of
+    /// the first of `sigs` whose constructor isn't accessible at `e`, and the class that declares it.
+    pub(super) fn constructor_accessibility_error(
         &mut self,
         file: FileId,
         e: ExprId,
-        sig: SigId,
+        sigs: &[SigId],
+        mask: Flags,
     ) -> Option<(Flags, Sym)> {
+        let mut enclosing: Option<Vec<Sym>> = None;
+        for &sig in sigs {
+            let Some((declaring, of, func)) = self.constructor_declaration(sig) else {
+                continue;
+            };
+            let modifiers = self.hir(of)[func].flags & mask;
+            if modifiers.is_empty() {
+                continue;
+            }
+            let enclosing = enclosing.get_or_insert_with(|| {
+                (self.enclosing_classes(file, e).into_iter())
+                    .map(|c| self.class_sym(file, c))
+                    .collect()
+            });
+            if enclosing.contains(&declaring) {
+                continue;
+            }
+            if modifiers.contains(Flags::PROTECTED)
+                && let Some(&containing) = enclosing.first()
+                && self.has_protected_accessible_base(declaring, containing, 0)
+            {
+                continue;
+            }
+            return Some((modifiers, declaring));
+        }
+        None
+    }
+
+    /// Returns the class, the file and the constructor that `sig` is declared by, if it's declared by a constructor.
+    fn constructor_declaration(&self, mut sig: SigId) -> Option<(Sym, FileId, FnId)> {
         // A cloned signature has its original's declaration.
-        let mut sig = sig;
-        let mut steps = 0;
-        let (declaring, of, func) = loop {
+        for _ in 0..64 {
             match *self.types().sig(self.types().sig_origin(sig)) {
                 SigData::Construct {
                     class, file, func, ..
-                } => break (class, file, func),
+                } => return Some((class, file, func)),
                 // `getDefaultConstructSignatures` clones the signatures of the base constructor type. The base types
                 // aren't requested, so that `new a()` in the base expression of `a` doesn't get 2310.
-                SigData::DefaultConstruct { base, .. } => {
-                    steps += 1;
-                    if steps > 64 {
-                        return None;
-                    }
-                    sig = base?;
-                }
+                SigData::DefaultConstruct { base, .. } => sig = base?,
                 _ => return None,
             }
-        };
-        let modifiers = self.hir(of)[func].flags & (Flags::PRIVATE | Flags::PROTECTED);
-        if modifiers.is_empty() {
-            return None;
         }
-        let enclosing: Vec<Sym> = self
-            .enclosing_classes(file, e)
-            .into_iter()
-            .map(|c| self.class_sym(file, c))
-            .collect();
-        if enclosing.contains(&declaring) {
-            return None;
-        }
-        if modifiers.contains(Flags::PROTECTED)
-            && let Some(&containing) = enclosing.first()
-            && self.has_protected_accessible_base(declaring, containing, 0)
-        {
-            return None;
-        }
-        Some((modifiers, declaring))
+        None
     }
 
     /// `typeHasProtectedAccessibleBase`: true if `class` derives from `target` through first base types. (Members that

@@ -981,8 +981,12 @@ impl<'p, 's> Checker<'p, 's> {
         if is_new
             && !sigs.is_empty()
             && (self
-                .inaccessible_constructor(file, call, sigs[0])
-                .map(|(code, _)| code)
+                .constructor_accessibility_error(
+                    file,
+                    call,
+                    &sigs,
+                    Flags::PRIVATE | Flags::PROTECTED,
+                )
                 .is_some()
                 || self.has_abstract_construct_signature(callee))
         {

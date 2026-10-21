@@ -16856,6 +16856,27 @@ export const d7s: never = new D7().m;
       expect(exitCode).toBe(1);
     });
 
+    test("a constructor that isn't accessible need not be the first construct signature", async () => {
+      using dir = project({
+        "a.ts": `class A { protected constructor(x: string) {} }
+class B { constructor(x: number) {} }
+declare const M: typeof B & typeof A;
+new M(1);
+export class D extends M { m() { new M(1); } }
+class P { private constructor() {} static make() { return class extends P {}; } }
+declare const N: typeof B & typeof P;
+export class Q extends N {}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,1): error TS2674: Constructor of class 'A' is protected and only accessible within the class declaration.
+        a.ts(5,34): error TS2674: Constructor of class 'A' is protected and only accessible within the class declaration.
+        a.ts(8,24): error TS2675: Cannot extend a class 'P'. Class constructor is marked as private."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS2540 on a write to an export defined with `Object.defineProperty`", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,

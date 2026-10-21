@@ -2549,8 +2549,7 @@ pub mod bv2_impl {
             let is_loaded_by_plugin = |index: usize| {
                 flags[index].contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
             };
-            // The manifest module of a page a server imports has the page's path and no text.
-            // It is not written anywhere: the page's `*.html` declaration types the import.
+            // A page's manifest module has the page's path and no text: not a file to check.
             let mut is_manifest = vec![false; sources.len()];
             for &index in self.graph.html_imports.server_source_indices.slice() {
                 is_manifest[index as usize] = true;

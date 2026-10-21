@@ -657,6 +657,133 @@ it("deserialize rejects a CryptoKey record with no key bytes", async () => {
   expect({ stdout, exitCode }).toEqual({ stdout: "rejected\ntrue Ed25519\n", exitCode: 0 });
 });
 
+describe("deserialize rejects a CryptoKey whose hash tag is not a digest", () => {
+  const digests = {
+    14: "SHA-1",
+    15: "SHA-224",
+    16: "SHA-256",
+    17: "SHA-384",
+    18: "SHA-512",
+    24: "SHA3-256",
+    25: "SHA3-384",
+    26: "SHA3-512",
+  };
+
+  function acceptedHashes(bytes: Uint8Array, offset: number) {
+    expect(bytes[offset]).toBe(16);
+    const accepted: Record<number, string> = {};
+    for (let tag = 0; tag < 256; tag++) {
+      bytes[offset] = tag;
+      let key: CryptoKey;
+      try {
+        key = deserialize(bytes);
+      } catch (e) {
+        expect((e as Error).message).toBe("Unable to deserialize data.");
+        continue;
+      }
+      accepted[tag] = (key.algorithm as HmacKeyAlgorithm).hash.name;
+    }
+    return accepted;
+  }
+
+  it("HMAC", async () => {
+    const key = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+    const bytes = new Uint8Array(serialize(key));
+    // The hash tag is the last byte of an HMAC record.
+    expect(acceptedHashes(bytes, bytes.length - 1)).toEqual(digests);
+  });
+
+  it("RSA", async () => {
+    const { publicKey } = await crypto.subtle.generateKey(
+      { name: "RSA-OAEP", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      true,
+      ["encrypt", "decrypt"],
+    );
+    const bytes = new Uint8Array(serialize(publicKey));
+    // key class, algorithm tag, isRestrictedToHash, hash tag
+    const offset = Buffer.from(bytes).indexOf(Buffer.from([2, 3, 1, 0, 0, 0, 16]));
+    expect(offset).toBeGreaterThan(0);
+    expect(acceptedHashes(bytes, offset + 6)).toEqual(digests);
+  });
+
+  // Cloning a key whose hash is no algorithm aborts, so this one runs in its own process.
+  it.concurrent("HMAC with a tag that names no algorithm", async () => {
+    const script = `
+      import { deserialize } from "bun:jsc";
+      const record = Uint8Array.fromHex("0e00000021570000000e00000002000000017f000001000000020040000000af585e45c2b062325fdd84c81a0febee9000000000000020008c8e3e4aff4f4f4081b6f22e031d9b1b3883a0a7d6bee7a7a5d870f9100de4aafd5cd0209bfd9008");
+      for (const tag of [8, 13, 19, 16]) {
+        record[95] = tag;
+        let key;
+        try {
+          key = deserialize(record);
+        } catch {
+          console.log(tag, "rejected");
+          continue;
+        }
+        console.log(tag, structuredClone(key).algorithm.hash.name);
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "8 rejected\n13 rejected\n19 rejected\n16 SHA-256\n", exitCode: 0 });
+  });
+});
+
+it("deserialize rejects a CryptoKey record whose key bytes its key class refuses", async () => {
+  // Empties the record's last length-prefixed byte vector, which `trailing` bytes follow.
+  function withoutKeyBytes(bytes: Uint8Array, trailing: number) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset);
+    const end = bytes.length - trailing;
+    let size = 1;
+    while (view.getUint32(end - size - 4, true) !== size) size++;
+    const out = new Uint8Array([...bytes.subarray(0, end - size - 4), 0, 0, 0, 0, ...bytes.subarray(end)]);
+    // <version:uint32_t> CryptoKeyTag <recordSize:uint32_t> <record>
+    new DataView(out.buffer).setUint32(5, out.length - 9, true);
+    return out;
+  }
+
+  const keys: Record<string, CryptoKey> = {
+    "HMAC": await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign"]),
+    "AES-GCM": await crypto.subtle.generateKey({ name: "AES-GCM", length: 128 }, true, ["encrypt"]),
+  };
+  const pairs: [{ name: string; [parameter: string]: unknown }, string[]][] = [
+    [{ name: "RSA-PSS", hash: "SHA-256", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]) }, ["sign"]],
+    [{ name: "ECDSA", namedCurve: "P-256" }, ["sign"]],
+    [{ name: "ECDH", namedCurve: "P-384" }, ["deriveBits"]],
+    [{ name: "Ed25519" }, ["sign"]],
+    [{ name: "X25519" }, ["deriveBits"]],
+    [{ name: "ML-DSA-44" }, ["sign"]],
+    [{ name: "ML-KEM-768" }, ["decapsulateBits"]],
+  ];
+  for (const [algorithm, usages] of pairs) {
+    const pair = (await crypto.subtle.generateKey(algorithm, true, usages as KeyUsage[])) as CryptoKeyPair;
+    keys[algorithm.name + " public"] = pair.publicKey;
+    keys[algorithm.name + " private"] = pair.privateKey;
+  }
+
+  const read = (bytes: Uint8Array) => {
+    try {
+      return Bun.inspect(deserialize(bytes)).split(" ")[0];
+    } catch (e) {
+      return (e as Error).message;
+    }
+  };
+  const outcomes: Record<string, [string, string]> = {};
+  const expected: typeof outcomes = {};
+  for (const [label, key] of Object.entries(keys)) {
+    const bytes = new Uint8Array(serialize(key));
+    // An HMAC record's hash tag comes after its key bytes.
+    outcomes[label] = [read(bytes), read(withoutKeyBytes(bytes, label === "HMAC" ? 1 : 0))];
+    expected[label] = ["CryptoKey", "Unable to deserialize data."];
+  }
+  expect(outcomes).toEqual(expected);
+});
+
 it("deserialize applies the same nesting depth limit to arrays as to objects", async () => {
   const script = `
     import { serialize, deserialize } from "bun:jsc";

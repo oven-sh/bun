@@ -150,7 +150,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketUpgradeToTunnel, (JSC::JS
     }
     // upgradeToTunnel(afterBody, response): with a truthy afterBody the switch happens only
     // once the request body has been fully parsed (Upgrade requests with a body).
-    thisObject->upgradeToTunnelMode(callFrame->argument(0).toBoolean(globalObject), dynamicDowncast<WebCore::JSNodeHTTPResponse>(callFrame->argument(1)));
+    thisObject->upgradeToTunnelMode(callFrame->argument(0).toBoolean(globalObject), dynamicDowncast<JSNodeHTTPResponse>(callFrame->argument(1)));
     return JSValue::encode(JSC::jsUndefined());
 }
 
@@ -229,7 +229,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStartPipelinedResponse, (
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(JSC::jsBoolean(false));
     }
-    auto* response = dynamicDowncast<WebCore::JSNodeHTTPResponse>(callFrame->argument(0));
+    auto* response = dynamicDowncast<JSNodeHTTPResponse>(callFrame->argument(0));
     if (!response) [[unlikely]] {
         return JSValue::encode(JSC::jsBoolean(false));
     }

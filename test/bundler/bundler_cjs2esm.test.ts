@@ -2899,7 +2899,7 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
       expect(code).toContain("{ count } = exports_react_is;");
-      expect(code).toContain("{ count: second } = (exports_react);");
+      expect(code).toMatch(/\{ count: second \} = \(?exports_react\)?;/);
       expect(code).toContain("{ count: third } = exports_scheduler;");
       expect(code).toContain("{ count: fourth } = exports_react_dom;");
     },

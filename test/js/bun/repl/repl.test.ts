@@ -891,14 +891,188 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    // The tsconfig.json of this repository asks for the legacy decorators, so each of the
+    // sessions below runs in a directory of its own.
+    test("accessor fields and TC39 decorators work where no tsconfig.json asks for the legacy decorators", async () => {
+      using dir = tempDir("repl-tc39-decorators", {});
+      const { outputs, stderr, exitCode } = await runRepl(
+        [
+          "class E { accessor a = 1 }",
+          "new E().a",
+          // A TC39 decorator gets (value, context). A legacy one never gets a context.
+          "function dec(value, context) { console.log(arguments.length, context.kind); return value }",
+          "class F { @dec accessor b = 2 }",
+          "new F().b",
+          "@dec class D {}",
+          ".exit",
+        ],
+        { cwd: String(dir) },
+      );
+      expect(outputs).toEqual(["[class E]", "1", "undefined", "2 accessor\n[class F]", "2", "2 class\n[class D]"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a class with a decorated field is not changed by a later one", async () => {
+      using dir = tempDir("repl-decorated-classes", {});
+      const { outputs, stderr, exitCode } = await runRepl(
+        [
+          // A field decorator: the field starts at its initial value plus `amount`.
+          "const add = amount => () => initial => initial + amount",
+          "class P { @add(100) v = 1 }",
+          "class Q { @add(200) v = 2 }",
+          "[new P().v, new Q().v]",
+          ".exit",
+        ],
+        { cwd: String(dir) },
+      );
+      expect(outputs).toEqual(["[Function: add]", "[class P]", "[class Q]", "[ 101, 202 ]"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a class with an accessor field is not changed by a later one of the same name", async () => {
+      using dir = tempDir("repl-accessor-classes", {});
+      const { outputs, stderr, exitCode } = await runRepl(
+        [
+          "class A { accessor x = 1 }",
+          "const a = new A(); a.x",
+          "class A { accessor x = 2 }",
+          "[a.x, new A().x]",
+          ".exit",
+        ],
+        { cwd: String(dir) },
+      );
+      expect(outputs).toEqual(["[class A]", "1", "[class A]", "[ 1, 2 ]"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    describe("an input gets the decorators that a TypeScript file gets in the same directory", () => {
+      // `calls` gets what each decorator received, and each metadata key that a class emitted.
+      const program = [
+        `const calls = []; Reflect.metadata = (key, value) => () => { calls.push(key === "design:type" ? key + " " + value.name : key) }; calls.length`,
+        "function dec(...args) { calls.push(args.length + ' ' + args[1]?.kind) }",
+        "class Q { @dec m() {} @dec when: Date }",
+        "@dec class D {}",
+      ];
+      const calls = "calls.join(', ')";
+      // With emitDecoratorMetadata, the parser once lost its place after this conditional (#46270).
+      const conditional = "typeof (true ? (): new () => object => { class A { @dec p: Date } return A } : null)";
+      const file = [...program, `console.log(JSON.stringify(${calls}))`, `console.log(JSON.stringify(${conditional}))`];
+      const legacy = { compilerOptions: { experimentalDecorators: true } };
+
+      test.each([
+        // TC39 decorators: (value, context).
+        ["no tsconfig.json", {}, "", '"2 method, 2 field, 2 class"'],
+        // The legacy decorators: (prototype, name, descriptor) for a member, (constructor) for a class.
+        ["experimentalDecorators", { "tsconfig.json": legacy }, "", '"3 undefined, 3 undefined, 1 undefined"'],
+        // emitDecoratorMetadata implies the legacy decorators.
+        [
+          "emitDecoratorMetadata",
+          { "tsconfig.json": { compilerOptions: { emitDecoratorMetadata: true } } },
+          "",
+          '"design:returntype, design:paramtypes, design:type Function, 3 undefined, design:type Date, 3 undefined, 1 undefined"',
+        ],
+        // A tsconfig.json that extends another loses its flag (#30477), and one above the working
+        // directory is not read (#28605). Whatever a file gets there, the prompt gets.
+        [
+          "a tsconfig.json that extends another",
+          { "tsconfig.json": { extends: "./base.json", ...legacy }, "base.json": { compilerOptions: {} } },
+          "",
+          undefined,
+        ],
+        ["a tsconfig.json above the working directory", { "tsconfig.json": legacy }, "src", undefined],
+      ] as [string, Record<string, object>, string, string | undefined][])(
+        "%s",
+        async (_, files, subdirectory, expected) => {
+          using dir = tempDir("repl-decorator-tsconfig", {
+            ...Object.fromEntries(Object.entries(files).map(([name, json]) => [name, JSON.stringify(json)])),
+            [subdirectory ? `${subdirectory}/program.ts` : "program.ts"]: file.join("\n"),
+          });
+          const cwd = path.join(String(dir), subdirectory);
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "program.ts"],
+            env: bunEnv,
+            cwd,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [prompt, stdout, stderr, exitCode] = await Promise.all([
+            runRepl([...program, calls, conditional, ".exit"], { cwd }),
+            proc.stdout.text(),
+            proc.stderr.text(),
+            proc.exited,
+          ]);
+          const asFile = stdout.trim().split(/\r?\n/);
+          expect({ outputs: asFile, stderr, exitCode }).toEqual({
+            outputs: [expected ?? expect.any(String), '"function"'],
+            stderr: "",
+            exitCode: 0,
+          });
+          expect({ outputs: prompt.outputs, stderr: prompt.stderr, exitCode: prompt.exitCode }).toEqual({
+            // A class declaration reports the class, whichever decorators it has.
+            outputs: ["0", "undefined", "[class Q]", "[class D]", ...asFile],
+            stderr: "",
+            exitCode: 0,
+          });
+        },
+      );
+    });
+
+    test("a decorator imported from a module is applied at the prompt as it is in the module", async () => {
+      using dir = tempDir("repl-imported-decorator", {
+        "logged.ts": `
+          export function logged(method: Function, context: ClassMethodDecoratorContext) {
+            return function (this: unknown, ...args: unknown[]) {
+              return "logged:" + String(context.name) + ":" + method.apply(this, args);
+            };
+          }
+          export class InModule {
+            @logged greet() {
+              return "hi";
+            }
+          }
+        `,
+      });
+      const url = JSON.stringify(Bun.pathToFileURL(path.join(String(dir), "logged.ts")).href);
+      const { outputs, stderr, exitCode } = await runRepl(
+        [
+          `import { logged, InModule } from ${url}`,
+          "class AtPrompt { @logged greet(): string { return 'hi' } }",
+          "[new InModule().greet(), new AtPrompt().greet()]",
+          ".exit",
+        ],
+        { cwd: String(dir) },
+      );
+      expect(outputs).toEqual(["[class InModule]", "[class AtPrompt]", '[ "logged:greet:hi", "logged:greet:hi" ]']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test(".load and .copy lower an accessor field", async () => {
+      using dir = tempDir("repl-accessor-commands", {
+        "counter.ts": "class Counter { accessor count: number = 7 }\n",
+      });
+      const { stdout, outputs, stderr, exitCode } = await runRepl(
+        [".load ./counter.ts", ".copy new (class { accessor n = 7 })().n", ".exit"],
+        { cwd: String(dir) },
+      );
+      expect(outputs).toEqual(["Loading ./counter.ts...\n[class Counter]", "Copied 1 characters to clipboard"]);
+      expect(stdout).toContain(`\x1b]52;c;${btoa("7")}\x07`);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("-e / --eval and -p / --print", () => {
-    async function runReplWith(args: string[]) {
+    async function runReplWith(args: string[], cwd?: string) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "repl", ...args],
         stdout: "pipe",
         stderr: "pipe",
+        cwd,
         env: { ...bunEnv, NO_COLOR: "1" },
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -973,6 +1147,16 @@ describe.concurrent("Bun REPL", () => {
       expect(stdout).toBe("{\n  a: 1,\n  b: 2,\n}\n");
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
+    });
+
+    test("-p lowers an accessor field", async () => {
+      // A directory with no tsconfig.json: the one of this repository asks for the legacy decorators.
+      using dir = tempDir("repl-print-accessor", {});
+      const { stdout, stderr, exitCode } = await runReplWith(
+        ["-p", "class E { accessor a = 1 }; new E().a"],
+        String(dir),
+      );
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1\n", stderr: "", exitCode: 0 });
     });
 
     test("-e with thrown error writes to stderr and exits with code 1", async () => {

@@ -2146,9 +2146,8 @@ impl<'a> Repl<'a> {
             vm.transpiler.options.jsx.clone(),
             bun_ast::Loader::Tsx,
             bun_js_parser::TsconfigOptions {
-                // The REPL transform below supports only the legacy decorators.
-                experimental_decorators: true,
-                emit_decorator_metadata: false,
+                experimental_decorators: vm.transpiler.options.experimental_decorators,
+                emit_decorator_metadata: vm.transpiler.options.emit_decorator_metadata,
                 use_define_for_class_fields: vm.transpiler.options.use_define_for_class_fields,
             },
         );
